@@ -1,4 +1,4 @@
-# MMORPG Game
+# OnlineRPG
 
 An online RPG game supporting up to 10,000 concurrent connections
 
