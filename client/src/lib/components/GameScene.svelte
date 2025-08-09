@@ -2,7 +2,7 @@
   import { T } from '@threlte/core'
   import { OrbitControls, Grid } from '@threlte/extras'
   import { Vector2, Raycaster } from 'three'
-import type * as THREE from 'three'
+  import type * as THREE from 'three'
   import { onMount } from 'svelte'
   import { gameStore, type Player } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
@@ -12,85 +12,140 @@ import type * as THREE from 'three'
   let otherPlayers = $state(new Map())
   let camera = $state<THREE.PerspectiveCamera | undefined>(undefined)
   let groundMesh = $state<THREE.Mesh | undefined>(undefined)
-  
+
   // Movement system
   let movementTarget = $state<{ x: number; y: number; z: number } | null>(null)
   let isMoving = $state(false)
+  let movementStartTime = $state(0)
+  let movementStartPosition = $state<{
+    x: number
+    y: number
+    z: number
+  } | null>(null)
   const MOVEMENT_SPEED = 3 // units per second
+
+  // Camera follow system
+  let cameraTarget = $state<[number, number, number]>([0, 0, 0])
+  const CAMERA_OFFSET = { x: 0, y: 15, z: 10 } // Relative to player
+
+  // Game loop
+  let gameLoopId = $state<number | null>(null)
+  let lastFrameTime = $state(0)
+  const TARGET_FPS = 60
+  const FRAME_TIME = 1000 / TARGET_FPS // 16.67ms
 
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
     otherPlayers = state.otherPlayers
   })
 
-  // Smooth movement animation
-  $effect(() => {
-    if (!movementTarget || !currentPlayer || !isMoving) return
+  // Main game loop with 60fps throttling
+  function gameLoop(currentTime: number) {
+    const deltaTime = currentTime - lastFrameTime
 
-    let animationFrame: number
-    const startTime = performance.now()
-    const startPosition = {
-      x: currentPlayer.position.x,
-      y: currentPlayer.position.y,
-      z: currentPlayer.position.z,
+    // Throttle to 60fps
+    if (deltaTime >= FRAME_TIME) {
+      // Update player movement
+      updatePlayerMovement(currentTime)
+
+      // Always update camera
+      updateCamera()
+
+      lastFrameTime = currentTime
     }
 
-    // Calculate distance and duration
-    const dx = movementTarget.x - startPosition.x
-    const dz = movementTarget.z - startPosition.z
+    // Always continue the loop
+    gameLoopId = requestAnimationFrame(gameLoop)
+  }
+
+  function updatePlayerMovement(currentTime: number) {
+    if (
+      !isMoving ||
+      !movementTarget ||
+      !currentPlayer ||
+      !movementStartPosition
+    ) {
+      return
+    }
+
+    const elapsed = currentTime - movementStartTime
+    const dx = movementTarget.x - movementStartPosition.x
+    const dz = movementTarget.z - movementStartPosition.z
     const distance = Math.sqrt(dx * dx + dz * dz)
     const duration = (distance / MOVEMENT_SPEED) * 1000 // Convert to milliseconds
 
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime
-      const progress = Math.min(elapsed / duration, 1)
+    const progress = Math.min(elapsed / duration, 1)
 
-      if (progress < 1 && currentPlayer && movementTarget) {
-        // Linear interpolation
-        const newX = startPosition.x + dx * progress
-        const newZ = startPosition.z + dz * progress
+    if (progress < 1) {
+      // Linear interpolation
+      const newX = movementStartPosition.x + dx * progress
+      const newZ = movementStartPosition.z + dz * progress
 
-        gameStore.update((state) => {
-          if (state.currentPlayer) {
-            state.currentPlayer.position.set(newX, movementTarget!.y, newZ)
-          }
-          return state
-        })
-
-        animationFrame = requestAnimationFrame(animate)
-      } else {
-        // Movement complete
-        if (currentPlayer && movementTarget) {
-          gameStore.update((state) => {
-            if (state.currentPlayer && movementTarget) {
-              state.currentPlayer.position.set(
-                movementTarget.x,
-                movementTarget.y,
-                movementTarget.z
-              )
-            }
-            return state
-          })
-          
-          // Send final position to server
-          networkManager.sendPlayerMove(movementTarget)
+      gameStore.update((state) => {
+        if (state.currentPlayer) {
+          state.currentPlayer.position.set(newX, movementTarget!.y, newZ)
         }
-        
-        isMoving = false
-        movementTarget = null
-      }
+        return state
+      })
+    } else {
+      // Movement complete
+      gameStore.update((state) => {
+        if (state.currentPlayer && movementTarget) {
+          state.currentPlayer.position.set(
+            movementTarget.x,
+            movementTarget.y,
+            movementTarget.z
+          )
+        }
+        return state
+      })
+
+      // Send final position to server
+      networkManager.sendPlayerMove(movementTarget)
+
+      isMoving = false
+      movementTarget = null
+      movementStartPosition = null
+    }
+  }
+
+  function updateCamera() {
+    if (!currentPlayer || !camera) return
+
+    // Update camera position to follow player with offset
+    const newCameraPosition = {
+      x: currentPlayer.position.x + CAMERA_OFFSET.x,
+      y: currentPlayer.position.y + CAMERA_OFFSET.y,
+      z: currentPlayer.position.z + CAMERA_OFFSET.z,
     }
 
-    animationFrame = requestAnimationFrame(animate)
+    camera.position.set(
+      newCameraPosition.x,
+      newCameraPosition.y,
+      newCameraPosition.z
+    )
 
-    return () => {
-      if (animationFrame) {
-        cancelAnimationFrame(animationFrame)
-      }
+    // Update camera target to look at player
+    cameraTarget = [
+      currentPlayer.position.x,
+      currentPlayer.position.y,
+      currentPlayer.position.z,
+    ]
+  }
+
+  // Stop game loop
+  function stopGameLoop() {
+    if (gameLoopId !== null) {
+      cancelAnimationFrame(gameLoopId)
+      gameLoopId = null
     }
-  })
+  }
 
   onMount(() => {
+    // Start game loop
+    lastFrameTime = performance.now()
+    gameLoopId = requestAnimationFrame(gameLoop)
+
     networkManager.connect()
 
     // Join the game with a default player name
@@ -111,6 +166,7 @@ import type * as THREE from 'three'
     findCanvas()
 
     return () => {
+      stopGameLoop()
       networkManager.disconnect()
       if (canvas) {
         canvas.removeEventListener('click', handleCanvasClick)
@@ -150,28 +206,23 @@ import type * as THREE from 'three'
 
       // Set movement target and start moving
       movementTarget = clickPosition
+      movementStartPosition = {
+        x: currentPlayer.position.x,
+        y: currentPlayer.position.y,
+        z: currentPlayer.position.z,
+      }
+      movementStartTime = performance.now()
       isMoving = true
     }
   }
 </script>
 
-<T.PerspectiveCamera
-  bind:ref={camera}
-  makeDefault
-  position={[0, 15, 10]}
-  fov={75}
->
+<T.PerspectiveCamera bind:ref={camera} makeDefault fov={75}>
   <OrbitControls
     enableRotate={false}
     enablePan={false}
     enableZoom={true}
-    target={currentPlayer
-      ? [
-          currentPlayer.position.x,
-          currentPlayer.position.y,
-          currentPlayer.position.z,
-        ]
-      : [0, 0, 0]}
+    target={cameraTarget}
     minDistance={5}
     maxDistance={50}
   />
