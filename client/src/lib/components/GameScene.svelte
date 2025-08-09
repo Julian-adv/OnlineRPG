@@ -19,6 +19,11 @@
 	onMount(() => {
 		networkManager.connect();
 		
+		// Join the game with a default player name
+		setTimeout(() => {
+			networkManager.joinGame("Player");
+		}, 1000);
+		
 		return () => {
 			networkManager.disconnect();
 		};

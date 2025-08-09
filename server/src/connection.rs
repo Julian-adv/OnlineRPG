@@ -29,12 +29,13 @@ pub async fn handle_connection(stream: TcpStream, game_state: Arc<GameState>) {
             msg = ws_receiver.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        info!("Received message: {}", text);
                         if let Err(e) = handle_client_message(
                             &text, 
                             &game_state, 
                             &mut player_id
                         ).await {
-                            error!("Error handling client message: {}", e);
+                            error!("Error handling client message: {} - message was: {}", e, text);
                         }
                     }
                     Some(Ok(Message::Close(_))) => {
