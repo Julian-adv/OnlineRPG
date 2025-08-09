@@ -1,106 +1,118 @@
 <script lang="ts">
-  import { T } from "@threlte/core";
-  import { OrbitControls, Grid } from "@threlte/extras";
-  import { Vector2, Raycaster } from 'three';
-  import { onMount } from "svelte";
-  import { gameStore, type Player } from "../stores/gameStore";
-  import { networkManager } from "../network/socket";
-  import PlayerModel from "./PlayerModel.svelte";
+  import { T } from '@threlte/core'
+  import { OrbitControls, Grid } from '@threlte/extras'
+  import { Vector2, Raycaster } from 'three'
+import type * as THREE from 'three'
+  import { onMount } from 'svelte'
+  import { gameStore, type Player } from '../stores/gameStore'
+  import { networkManager } from '../network/socket'
+  import PlayerModel from './PlayerModel.svelte'
 
-  let currentPlayer = $state<Player | null>(null);
-  let otherPlayers = $state(new Map());
-  let isConnected = $state(false);
-  let camera = $state<any>(null);
-  let renderer = $state<any>(null);
-  let groundMesh = $state<any>(null);
+  let currentPlayer = $state<Player | null>(null)
+  let otherPlayers = $state(new Map())
+  let camera = $state<THREE.PerspectiveCamera | undefined>(undefined)
+  let groundMesh = $state<THREE.Mesh | undefined>(undefined)
 
   gameStore.subscribe((state) => {
-    currentPlayer = state.currentPlayer;
-    otherPlayers = state.otherPlayers;
-    isConnected = state.isConnected;
-  });
+    currentPlayer = state.currentPlayer
+    otherPlayers = state.otherPlayers
+  })
 
   onMount(() => {
-    networkManager.connect();
+    networkManager.connect()
 
     // Join the game with a default player name
     setTimeout(() => {
-      networkManager.joinGame("Player");
-    }, 1000);
+      networkManager.joinGame('Player')
+    }, 1000)
 
     // Add click event listener to canvas - wait until canvas exists
-    let canvas: HTMLCanvasElement | null = null;
+    let canvas: HTMLCanvasElement | null = null
     const findCanvas = () => {
-      canvas = document.querySelector('canvas');
+      canvas = document.querySelector('canvas')
       if (canvas) {
-        canvas.addEventListener('mousedown', handleCanvasClick);
+        canvas.addEventListener('mousedown', handleCanvasClick)
       } else {
-        setTimeout(findCanvas, 100);
+        setTimeout(findCanvas, 100)
       }
-    };
-    findCanvas();
+    }
+    findCanvas()
 
     return () => {
-      networkManager.disconnect();
+      networkManager.disconnect()
       if (canvas) {
-        canvas.removeEventListener('click', handleCanvasClick);
+        canvas.removeEventListener('click', handleCanvasClick)
       }
-    };
-  });
+    }
+  })
 
   function handlePlayerMove(detail: { x: number; y: number; z: number }) {
-    const { x, y, z } = detail;
-    networkManager.sendPlayerMove({ x, y, z });
+    const { x, y, z } = detail
+    networkManager.sendPlayerMove({ x, y, z })
   }
 
   function handleCanvasClick(event: MouseEvent) {
-    if (!camera || !groundMesh) return;
+    if (!camera || !groundMesh) return
 
     // Calculate mouse position in normalized device coordinates (-1 to +1)
-    const rect = (event.target as HTMLCanvasElement).getBoundingClientRect();
+    const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
     const mouse = new Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
-    );
+    )
 
     // Create raycaster
-    const raycaster = new Raycaster();
-    raycaster.setFromCamera(mouse, camera);
+    const raycaster = new Raycaster()
+    raycaster.setFromCamera(mouse, camera)
 
     // Check intersection with ground
-    const intersects = raycaster.intersectObject(groundMesh);
-    
+    const intersects = raycaster.intersectObject(groundMesh)
+
     if (intersects.length > 0) {
-      const point = intersects[0].point;
+      const point = intersects[0].point
       const clickPosition = {
         x: point.x,
         y: 1, // Keep player above ground
-        z: point.z
-      };
-      
-      
+        z: point.z,
+      }
+
       // Update current player position immediately
       if (currentPlayer) {
-        gameStore.update(state => {
+        gameStore.update((state) => {
           if (state.currentPlayer) {
-            state.currentPlayer.position.set(clickPosition.x, clickPosition.y, clickPosition.z);
+            state.currentPlayer.position.set(
+              clickPosition.x,
+              clickPosition.y,
+              clickPosition.z
+            )
           }
-          return state;
-        });
+          return state
+        })
       }
-      
+
       // Send to server
-      networkManager.sendPlayerMove(clickPosition);
+      networkManager.sendPlayerMove(clickPosition)
     }
   }
 </script>
 
-<T.PerspectiveCamera bind:ref={camera} makeDefault position={[0, 15, 10]} fov={75}>
+<T.PerspectiveCamera
+  bind:ref={camera}
+  makeDefault
+  position={[0, 15, 10]}
+  fov={75}
+>
   <OrbitControls
     enableRotate={false}
     enablePan={false}
     enableZoom={true}
-    target={currentPlayer ? [currentPlayer.position.x, currentPlayer.position.y, currentPlayer.position.z] : [0, 0, 0]}
+    target={currentPlayer
+      ? [
+          currentPlayer.position.x,
+          currentPlayer.position.y,
+          currentPlayer.position.z,
+        ]
+      : [0, 0, 0]}
     minDistance={5}
     maxDistance={50}
   />
@@ -117,10 +129,10 @@
   fadeDistance={100}
 />
 
-<T.Mesh 
+<T.Mesh
   bind:ref={groundMesh}
-  position={[0, -0.5, 0]} 
-  rotation={[-Math.PI / 2, 0, 0]} 
+  position={[0, -0.5, 0]}
+  rotation={[-Math.PI / 2, 0, 0]}
   receiveShadow
 >
   <T.PlaneGeometry args={[100, 100]} />
