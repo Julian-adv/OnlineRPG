@@ -12,10 +12,82 @@ import type * as THREE from 'three'
   let otherPlayers = $state(new Map())
   let camera = $state<THREE.PerspectiveCamera | undefined>(undefined)
   let groundMesh = $state<THREE.Mesh | undefined>(undefined)
+  
+  // Movement system
+  let movementTarget = $state<{ x: number; y: number; z: number } | null>(null)
+  let isMoving = $state(false)
+  const MOVEMENT_SPEED = 3 // units per second
 
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
     otherPlayers = state.otherPlayers
+  })
+
+  // Smooth movement animation
+  $effect(() => {
+    if (!movementTarget || !currentPlayer || !isMoving) return
+
+    let animationFrame: number
+    const startTime = performance.now()
+    const startPosition = {
+      x: currentPlayer.position.x,
+      y: currentPlayer.position.y,
+      z: currentPlayer.position.z,
+    }
+
+    // Calculate distance and duration
+    const dx = movementTarget.x - startPosition.x
+    const dz = movementTarget.z - startPosition.z
+    const distance = Math.sqrt(dx * dx + dz * dz)
+    const duration = (distance / MOVEMENT_SPEED) * 1000 // Convert to milliseconds
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime
+      const progress = Math.min(elapsed / duration, 1)
+
+      if (progress < 1 && currentPlayer && movementTarget) {
+        // Linear interpolation
+        const newX = startPosition.x + dx * progress
+        const newZ = startPosition.z + dz * progress
+
+        gameStore.update((state) => {
+          if (state.currentPlayer) {
+            state.currentPlayer.position.set(newX, movementTarget!.y, newZ)
+          }
+          return state
+        })
+
+        animationFrame = requestAnimationFrame(animate)
+      } else {
+        // Movement complete
+        if (currentPlayer && movementTarget) {
+          gameStore.update((state) => {
+            if (state.currentPlayer && movementTarget) {
+              state.currentPlayer.position.set(
+                movementTarget.x,
+                movementTarget.y,
+                movementTarget.z
+              )
+            }
+            return state
+          })
+          
+          // Send final position to server
+          networkManager.sendPlayerMove(movementTarget)
+        }
+        
+        isMoving = false
+        movementTarget = null
+      }
+    }
+
+    animationFrame = requestAnimationFrame(animate)
+
+    return () => {
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame)
+      }
+    }
   })
 
   onMount(() => {
@@ -52,7 +124,7 @@ import type * as THREE from 'three'
   }
 
   function handleCanvasClick(event: MouseEvent) {
-    if (!camera || !groundMesh) return
+    if (!camera || !groundMesh || !currentPlayer || isMoving) return
 
     // Calculate mouse position in normalized device coordinates (-1 to +1)
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
@@ -76,22 +148,9 @@ import type * as THREE from 'three'
         z: point.z,
       }
 
-      // Update current player position immediately
-      if (currentPlayer) {
-        gameStore.update((state) => {
-          if (state.currentPlayer) {
-            state.currentPlayer.position.set(
-              clickPosition.x,
-              clickPosition.y,
-              clickPosition.z
-            )
-          }
-          return state
-        })
-      }
-
-      // Send to server
-      networkManager.sendPlayerMove(clickPosition)
+      // Set movement target and start moving
+      movementTarget = clickPosition
+      isMoving = true
     }
   }
 </script>

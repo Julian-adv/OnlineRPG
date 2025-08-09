@@ -18,7 +18,7 @@
       : ([position.x, position.y, position.z] as [number, number, number])
   )
 
-  let meshRef = $state<Mesh | null>(null)
+  let meshRef = $state<Mesh | undefined>(undefined)
   let isDragging = $state(false)
   let dragStart = $state({ x: 0, y: 0 })
 
