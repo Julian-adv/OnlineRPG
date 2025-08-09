@@ -25,7 +25,7 @@
   const MOVEMENT_SPEED = 3 // units per second
 
   // Camera follow system
-  let cameraTarget = $state<[number, number, number]>([0, 0, 0])
+  let cameraTarget = $state<[number, number, number]>([0, 1, 0])
   const CAMERA_OFFSET = { x: 0, y: 15, z: 10 } // Relative to player
 
   // Game loop
@@ -45,11 +45,14 @@
 
     // Throttle to 60fps
     if (deltaTime >= FRAME_TIME) {
+      // Calculate camera offset before player movement
+      const cameraOffset = calculateCameraOffset()
+
       // Update player movement
       updatePlayerMovement(currentTime)
 
-      // Always update camera
-      updateCamera()
+      // Update camera with preserved offset
+      updateCameraWithOffset(cameraOffset)
 
       lastFrameTime = currentTime
     }
@@ -109,14 +112,35 @@
     }
   }
 
-  function updateCamera() {
+  function calculateCameraOffset() {
+    if (!currentPlayer || !camera) {
+      return { x: CAMERA_OFFSET.x, y: CAMERA_OFFSET.y, z: CAMERA_OFFSET.z }
+    }
+
+    // Calculate current distance vector from player to camera
+    const currentCameraPos = camera.position
+    const playerPos = currentPlayer.position
+
+    // Get the current distance vector (preserving zoom)
+    const distanceVector = {
+      x: currentCameraPos.x - playerPos.x,
+      y: currentCameraPos.y - playerPos.y,
+      z: currentCameraPos.z - playerPos.z,
+    }
+
+    return distanceVector
+  }
+
+  function updateCameraWithOffset(offset: { x: number; y: number; z: number }) {
     if (!currentPlayer || !camera) return
 
-    // Update camera position to follow player with offset
+    const playerPos = currentPlayer.position
+
+    // Update camera position by adding the preserved offset to new player position
     const newCameraPosition = {
-      x: currentPlayer.position.x + CAMERA_OFFSET.x,
-      y: currentPlayer.position.y + CAMERA_OFFSET.y,
-      z: currentPlayer.position.z + CAMERA_OFFSET.z,
+      x: playerPos.x + offset.x,
+      y: playerPos.y + offset.y,
+      z: playerPos.z + offset.z,
     }
 
     camera.position.set(
@@ -125,12 +149,11 @@
       newCameraPosition.z
     )
 
+    // Make camera look at player directly
+    camera.lookAt(playerPos.x, playerPos.y, playerPos.z)
+
     // Update camera target to look at player
-    cameraTarget = [
-      currentPlayer.position.x,
-      currentPlayer.position.y,
-      currentPlayer.position.z,
-    ]
+    cameraTarget = [playerPos.x, playerPos.y, playerPos.z]
   }
 
   // Stop game loop
@@ -152,6 +175,32 @@
     setTimeout(() => {
       networkManager.joinGame('Player')
     }, 1000)
+
+    // Initialize camera position after a short delay to ensure camera ref is available
+    setTimeout(() => {
+      if (camera && currentPlayer) {
+        // Set initial camera position
+        camera.position.set(
+          currentPlayer.position.x + CAMERA_OFFSET.x,
+          currentPlayer.position.y + CAMERA_OFFSET.y,
+          currentPlayer.position.z + CAMERA_OFFSET.z
+        )
+
+        // Make camera look at player directly
+        camera.lookAt(
+          currentPlayer.position.x,
+          currentPlayer.position.y,
+          currentPlayer.position.z
+        )
+
+        // Set initial camera target to look at player
+        cameraTarget = [
+          currentPlayer.position.x,
+          currentPlayer.position.y,
+          currentPlayer.position.z,
+        ]
+      }
+    }, 1100)
 
     // Add click event listener to canvas - wait until canvas exists
     let canvas: HTMLCanvasElement | null = null
