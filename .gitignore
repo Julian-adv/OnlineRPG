@@ -1,0 +1,39 @@
+# Client (Node.js/Svelte)
+client/node_modules/
+client/dist/
+client/build/
+client/.svelte-kit/
+client/.env
+client/.env.local
+client/.env.production
+client/package-lock.json
+
+# Server (Rust)
+server/target/
+server/Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Runtime
+*.pid
+*.seed
+*.pid.lock
+
+# Docker
+.dockerignore
+
+# Temporary files
+*.tmp
+*.temp
