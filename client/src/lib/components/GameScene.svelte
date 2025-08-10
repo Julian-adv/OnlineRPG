@@ -34,6 +34,9 @@
   const TARGET_FPS = 60
   const FRAME_TIME = 1000 / TARGET_FPS // 16.67ms
 
+  // Keyboard controls
+  let keysPressed = $state(new Set<string>())
+
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
     otherPlayers = state.otherPlayers
@@ -48,7 +51,10 @@
       // Calculate camera offset before player movement
       const cameraOffset = calculateCameraOffset()
 
-      // Update player movement
+      // Update keyboard movement
+      updateKeyboardMovement()
+
+      // Update player movement (click-to-move)
       updatePlayerMovement(currentTime)
 
       // Update camera with preserved offset
@@ -156,6 +162,72 @@
     cameraTarget = [playerPos.x, playerPos.y, playerPos.z]
   }
 
+  // Keyboard movement system
+  function updateKeyboardMovement() {
+    if (!currentPlayer || keysPressed.size === 0) {
+      return
+    }
+
+    // Cancel click-to-move if keyboard input detected
+    if (keysPressed.size > 0 && movementTarget) {
+      movementTarget = null
+      movementStartPosition = null
+      // isMoving will be set by keyboard movement below
+    }
+
+    // Calculate movement direction based on pressed keys
+    let moveX = 0
+    let moveZ = 0
+
+    if (keysPressed.has('KeyW') || keysPressed.has('ArrowUp')) moveZ -= 1
+    if (keysPressed.has('KeyS') || keysPressed.has('ArrowDown')) moveZ += 1
+    if (keysPressed.has('KeyA') || keysPressed.has('ArrowLeft')) moveX -= 1
+    if (keysPressed.has('KeyD') || keysPressed.has('ArrowRight')) moveX += 1
+
+    // Normalize diagonal movement
+    if (moveX !== 0 && moveZ !== 0) {
+      moveX *= 0.707 // 1/sqrt(2)
+      moveZ *= 0.707
+    }
+
+    // Movement direction calculated
+
+    // Apply keyboard movement if any keys are pressed
+    if (moveX !== 0 || moveZ !== 0) {
+      const speed = MOVEMENT_SPEED * (1000 / TARGET_FPS / 1000) // Adjust for frame rate
+      const newX = currentPlayer.position.x + moveX * speed
+      const newZ = currentPlayer.position.z + moveZ * speed
+
+      gameStore.update((state) => {
+        if (state.currentPlayer) {
+          state.currentPlayer.position.set(newX, currentPlayer!.position.y, newZ)
+          isMoving = true
+        }
+        return state
+      })
+
+      // Send position to server periodically
+      networkManager.sendPlayerMove({
+        x: newX,
+        y: currentPlayer.position.y,
+        z: newZ,
+      })
+    } else {
+      isMoving = false
+    }
+  }
+
+  // Keyboard event handlers
+  function handleKeyDown(event: KeyboardEvent) {
+    keysPressed.add(event.code)
+    event.preventDefault()
+  }
+
+  function handleKeyUp(event: KeyboardEvent) {
+    keysPressed.delete(event.code)
+    event.preventDefault()
+  }
+
   // Stop game loop
   function stopGameLoop() {
     if (gameLoopId !== null) {
@@ -214,9 +286,15 @@
     }
     findCanvas()
 
+    // Add keyboard event listeners
+    document.addEventListener('keydown', handleKeyDown)
+    document.addEventListener('keyup', handleKeyUp)
+
     return () => {
       stopGameLoop()
       networkManager.disconnect()
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('keyup', handleKeyUp)
       if (canvas) {
         canvas.removeEventListener('click', handleCanvasClick)
       }
@@ -229,7 +307,7 @@
   }
 
   function handleCanvasClick(event: MouseEvent) {
-    if (!camera || !groundMesh || !currentPlayer || isMoving) return
+    if (!camera || !groundMesh || !currentPlayer || isMoving || keysPressed.size > 0) return
 
     // Calculate mouse position in normalized device coordinates (-1 to +1)
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()

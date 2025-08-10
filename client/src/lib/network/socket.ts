@@ -28,6 +28,7 @@ type ServerMessage =
   | { type: 'player_moved'; player_id: string; position: Position }
   | { type: 'chat_message'; player_name: string; message: string }
   | { type: 'game_state'; players: Record<string, ServerPlayer> }
+  | { type: 'join_success'; player: ServerPlayer }
 
 class NetworkManager {
   private socket: WebSocket | null = null
@@ -102,6 +103,25 @@ class NetworkManager {
 
   private handleServerMessage(message: ServerMessage) {
     switch (message.type) {
+      case 'join_success': {
+        console.log('Join successful, received player data:', message.player)
+        const playerPosition = new Vector3(
+          message.player.position.x,
+          message.player.position.y,
+          message.player.position.z
+        )
+        const player: Player = {
+          ...message.player,
+          position: playerPosition,
+          maxHealth: message.player.max_health,
+        }
+        gameStore.update((state) => ({
+          ...state,
+          currentPlayer: player,
+        }))
+        break
+      }
+
       case 'player_joined': {
         const playerPosition = new Vector3(
           message.player.position.x,
@@ -114,10 +134,17 @@ class NetworkManager {
           maxHealth: message.player.max_health,
         }
         gameStore.update((state) => {
-          state.otherPlayers.set(message.player.id, player)
+          // If we don't have a current player yet, this might be us
+          if (!state.currentPlayer) {
+            console.log('Setting current player from player_joined:', player)
+            state.currentPlayer = player
+          } else if (message.player.id !== state.currentPlayer.id) {
+            // This is another player
+            state.otherPlayers.set(message.player.id, player)
+            addChatMessage(`${message.player.name} joined the game`)
+          }
           return state
         })
-        addChatMessage(`${message.player.name} joined the game`)
         break
       }
 
@@ -192,22 +219,13 @@ class NetworkManager {
 
   joinGame(playerName: string) {
     if (this.socket?.readyState === WebSocket.OPEN) {
+      console.log('Sending join request for player:', playerName)
       const message: ClientMessage = {
         type: 'join',
         player_name: playerName,
       }
       this.socket.send(JSON.stringify(message))
-      gameStore.update((state) => ({
-        ...state,
-        currentPlayer: {
-          id: '',
-          name: playerName,
-          position: new Vector3(0, 1, 0),
-          level: 1,
-          health: 100,
-          maxHealth: 100,
-        },
-      }))
+      // Don't create currentPlayer here, wait for server response
     }
   }
 

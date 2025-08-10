@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { T } from '@threlte/core'
+  import { T, useLoader } from '@threlte/core'
   import { Text } from '@threlte/extras'
-  import type { Vector3, Mesh } from 'three'
+  import type { Vector3 } from 'three'
+  import { GLTFLoader } from 'three/examples/jsm/Addons.js'
 
   interface Props {
     position: Vector3 | [number, number, number]
@@ -18,15 +19,11 @@
       : ([position.x, position.y, position.z] as [number, number, number])
   )
 
-  let meshRef = $state<Mesh | undefined>(undefined)
   let isDragging = $state(false)
   let dragStart = $state({ x: 0, y: 0 })
 
-  function handlePointerDown(event: PointerEvent) {
-    if (!isCurrentPlayer) return
-    isDragging = true
-    dragStart = { x: event.clientX, y: event.clientY }
-  }
+  // GLTF loading
+  const gltf = useLoader(GLTFLoader).load('/models/Xbot.glb')
 
   function handlePointerMove(event: PointerEvent) {
     if (!isDragging || !isCurrentPlayer) return
@@ -51,11 +48,6 @@
   function handlePointerUp() {
     isDragging = false
   }
-
-  function handleClick() {
-    if (!isCurrentPlayer) return
-    console.log(`Clicked on ${name}`)
-  }
 </script>
 
 <svelte:window
@@ -64,23 +56,16 @@
 />
 
 <T.Group position={positionArray}>
-  <!-- Player body (capsule-like shape) -->
-  <T.Mesh
-    bind:ref={meshRef}
-    castShadow
-    receiveShadow
-    on:pointerdown={handlePointerDown}
-    on:click={handleClick}
-  >
-    <T.CapsuleGeometry args={[0.3, 1.2, 8, 16]} />
-    <T.MeshLambertMaterial color={isCurrentPlayer ? '#4299e1' : '#ed8936'} />
-  </T.Mesh>
-
-  <!-- Player head -->
-  <T.Mesh position={[0, 1, 0]} castShadow>
-    <T.SphereGeometry args={[0.25, 16, 16]} />
-    <T.MeshLambertMaterial color={isCurrentPlayer ? '#2b6cb0' : '#c05621'} />
-  </T.Mesh>
+  <!-- 3D Character Model -->
+  <!-- Test both GLTF and simple model -->
+  {#if $gltf}
+    <T is={$gltf.scene} />
+    <!-- Debug: Show that GLTF is loaded -->
+    <T.Mesh position={[2, 3, 0]}>
+      <T.SphereGeometry args={[0.1]} />
+      <T.MeshBasicMaterial color="green" />
+    </T.Mesh>
+  {/if}
 
   <!-- Name tag -->
   <Text
