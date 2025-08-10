@@ -200,7 +200,11 @@
 
       gameStore.update((state) => {
         if (state.currentPlayer) {
-          state.currentPlayer.position.set(newX, currentPlayer!.position.y, newZ)
+          state.currentPlayer.position.set(
+            newX,
+            currentPlayer!.position.y,
+            newZ
+          )
           isMoving = true
         }
         return state
@@ -301,13 +305,15 @@
     }
   })
 
-  function handlePlayerMove(detail: { x: number; y: number; z: number }) {
-    const { x, y, z } = detail
-    networkManager.sendPlayerMove({ x, y, z })
-  }
-
   function handleCanvasClick(event: MouseEvent) {
-    if (!camera || !groundMesh || !currentPlayer || isMoving || keysPressed.size > 0) return
+    if (
+      !camera ||
+      !groundMesh ||
+      !currentPlayer ||
+      isMoving ||
+      keysPressed.size > 0
+    )
+      return
 
     // Calculate mouse position in normalized device coordinates (-1 to +1)
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
@@ -381,7 +387,7 @@
     position={currentPlayer.position}
     name={currentPlayer.name}
     isCurrentPlayer={true}
-    onmove={handlePlayerMove}
+    {isMoving}
   />
 {/if}
 

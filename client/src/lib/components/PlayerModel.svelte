@@ -2,69 +2,144 @@
   import { T, useLoader } from '@threlte/core'
   import { Text } from '@threlte/extras'
   import type { Vector3 } from 'three'
+  import * as THREE from 'three'
   import { GLTFLoader } from 'three/examples/jsm/Addons.js'
+  import { onMount } from 'svelte'
 
   interface Props {
-    position: Vector3 | [number, number, number]
+    position: Vector3
     name: string
     isCurrentPlayer: boolean
-    onmove?: (detail: { x: number; y: number; z: number }) => void
+    isMoving?: boolean
   }
 
-  let { position, name, isCurrentPlayer, onmove }: Props = $props()
-
-  const positionArray = $derived(
-    Array.isArray(position)
-      ? position
-      : ([position.x, position.y, position.z] as [number, number, number])
-  )
-
-  let isDragging = $state(false)
-  let dragStart = $state({ x: 0, y: 0 })
+  let { position, name, isCurrentPlayer, isMoving = false }: Props = $props()
 
   // GLTF loading
   const gltf = useLoader(GLTFLoader).load('/models/Xbot.glb')
 
-  function handlePointerMove(event: PointerEvent) {
-    if (!isDragging || !isCurrentPlayer) return
+  // Animation system
+  let mixer = $state<THREE.AnimationMixer | null>(null)
+  let actions = $state<{ [key: string]: THREE.AnimationAction } | null>(null)
+  let currentAction = $state<THREE.AnimationAction | null>(null)
 
-    const deltaX = (event.clientX - dragStart.x) * 0.01
-    const deltaZ = (event.clientY - dragStart.y) * 0.01
+  // Animation update loop
+  let lastTime = 0
+  let animationId: number | null = null
+  let lastMovingState = false
 
-    const pos = Array.isArray(position)
-      ? { x: position[0], y: position[1], z: position[2] }
-      : { x: position.x, y: position.y, z: position.z }
+  function updateAnimation(time: number) {
+    if (mixer) {
+      const deltaTime = (time - lastTime) / 1000
+      mixer.update(deltaTime)
+      lastTime = time
 
-    const newPosition = {
-      x: pos.x + deltaX,
-      y: pos.y || 1,
-      z: pos.z + deltaZ,
+      // Handle movement animation state changes
+      if (actions && isMoving !== lastMovingState) {
+        const walkAction = actions['walk'] || actions['animation_1']
+        const idleAction = actions['idle'] || actions['animation_0']
+
+        if (isMoving && walkAction && currentAction !== walkAction) {
+          console.log('Switching to walk animation')
+          if (currentAction) {
+            currentAction.fadeOut(0.3)
+          }
+          walkAction.reset().fadeIn(0.3).play()
+          currentAction = walkAction
+        } else if (!isMoving && idleAction && currentAction !== idleAction) {
+          console.log('Switching to idle animation')
+          if (currentAction) {
+            currentAction.fadeOut(0.3)
+          }
+          idleAction.reset().fadeIn(0.3).play()
+          currentAction = idleAction
+        }
+
+        lastMovingState = isMoving
+      }
     }
-
-    onmove?.(newPosition)
-    dragStart = { x: event.clientX, y: event.clientY }
+    animationId = requestAnimationFrame(updateAnimation)
   }
 
-  function handlePointerUp() {
-    isDragging = false
+  function setupAnimations() {
+    if ($gltf && !mixer) {
+      console.log('Setting up animations for GLTF model')
+      console.log('Available animations:', $gltf.animations.length)
+
+      // Create mixer
+      mixer = new THREE.AnimationMixer($gltf.scene)
+
+      // Set up actions (like in Three.js example)
+      const animations = $gltf.animations
+      actions = {}
+
+      if (animations.length > 0) {
+        // Try to find common animation names
+        animations.forEach((clip, index) => {
+          console.log(`Animation ${index}: ${clip.name}`)
+          const action = mixer!.clipAction(clip)
+
+          // Store actions by name or index
+          if (clip.name.toLowerCase().includes('idle')) {
+            actions!['idle'] = action
+          } else if (
+            clip.name.toLowerCase().includes('walk') ||
+            clip.name.toLowerCase().includes('run')
+          ) {
+            actions!['walk'] = action
+          } else {
+            actions![`animation_${index}`] = action
+          }
+        })
+
+        // If no named animations found, use indices
+        if (Object.keys(actions).length === 0) {
+          animations.forEach((clip, index) => {
+            actions![`animation_${index}`] = mixer!.clipAction(clip)
+          })
+        }
+
+        console.log('Available actions:', Object.keys(actions))
+
+        // Start with idle or first available animation
+        const idleAction = actions['idle'] || actions['animation_0']
+        if (idleAction) {
+          idleAction.play()
+          currentAction = idleAction
+        }
+
+        // Start animation loop
+        lastTime = performance.now()
+        animationId = requestAnimationFrame(updateAnimation)
+      }
+    }
   }
+
+  onMount(() => {
+    // Wait for GLTF to load and setup animations
+    const checkGltf = () => {
+      if ($gltf) {
+        setupAnimations()
+      } else {
+        setTimeout(checkGltf, 100)
+      }
+    }
+    checkGltf()
+
+    // Cleanup on unmount
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId)
+      }
+    }
+  })
 </script>
 
-<svelte:window
-  on:pointermove={handlePointerMove}
-  on:pointerup={handlePointerUp}
-/>
-
-<T.Group position={positionArray}>
+<T.Group position={[position.x, position.y, position.z]}>
   <!-- 3D Character Model -->
   <!-- Test both GLTF and simple model -->
   {#if $gltf}
     <T is={$gltf.scene} />
-    <!-- Debug: Show that GLTF is loaded -->
-    <T.Mesh position={[2, 3, 0]}>
-      <T.SphereGeometry args={[0.1]} />
-      <T.MeshBasicMaterial color="green" />
-    </T.Mesh>
   {/if}
 
   <!-- Name tag -->
@@ -76,12 +151,4 @@
     anchorX="center"
     anchorY="middle"
   />
-
-  <!-- Selection indicator for current player -->
-  {#if isCurrentPlayer}
-    <T.Mesh position={[0, -0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <T.RingGeometry args={[0.8, 1.0, 16]} />
-      <T.MeshBasicMaterial color="#4299e1" transparent opacity={0.5} />
-    </T.Mesh>
-  {/if}
 </T.Group>
