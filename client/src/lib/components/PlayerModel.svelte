@@ -11,9 +11,10 @@
     name: string
     isCurrentPlayer: boolean
     isMoving?: boolean
+    rotation?: number
   }
 
-  let { position, name, isCurrentPlayer, isMoving = false }: Props = $props()
+  let { position, name, isCurrentPlayer, isMoving = false, rotation = 0 }: Props = $props()
 
   // GLTF loading
   const gltf = useLoader(GLTFLoader).load('/models/Xbot.glb')
@@ -135,9 +136,8 @@
   })
 </script>
 
-<T.Group position={[position.x, position.y, position.z]}>
+<T.Group position={[position.x, position.y, position.z]} rotation={[0, rotation, 0]}>
   <!-- 3D Character Model -->
-  <!-- Test both GLTF and simple model -->
   {#if $gltf}
     <T is={$gltf.scene} />
   {/if}

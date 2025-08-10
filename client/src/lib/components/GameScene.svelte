@@ -36,6 +36,9 @@
 
   // Keyboard controls
   let keysPressed = $state(new Set<string>())
+  
+  // Character rotation
+  let playerRotation = $state(0)
 
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
@@ -198,6 +201,9 @@
       const newX = currentPlayer.position.x + moveX * speed
       const newZ = currentPlayer.position.z + moveZ * speed
 
+      // Calculate rotation based on movement direction
+      playerRotation = Math.atan2(moveX, moveZ)
+
       gameStore.update((state) => {
         if (state.currentPlayer) {
           state.currentPlayer.position.set(
@@ -337,6 +343,11 @@
         z: point.z,
       }
 
+      // Calculate rotation to face target direction
+      const dx = clickPosition.x - currentPlayer.position.x
+      const dz = clickPosition.z - currentPlayer.position.z
+      playerRotation = Math.atan2(dx, dz)
+
       // Set movement target and start moving
       movementTarget = clickPosition
       movementStartPosition = {
@@ -388,6 +399,7 @@
     name={currentPlayer.name}
     isCurrentPlayer={true}
     {isMoving}
+    rotation={playerRotation}
   />
 {/if}
 
