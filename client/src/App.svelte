@@ -6,7 +6,7 @@
 </script>
 
 <main>
-  <Canvas>
+  <Canvas renderMode="always">
     <GameScene />
   </Canvas>
   <ChatPanel />

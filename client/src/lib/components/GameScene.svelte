@@ -2,7 +2,7 @@
   import { T, useLoader } from '@threlte/core'
   import { OrbitControls, Grid } from '@threlte/extras'
   import { Vector2, Raycaster, Object3D, Mesh, InstancedMesh } from 'three'
-  import type * as THREE from 'three'
+  import * as THREE from 'three'
   import { GLTFLoader } from 'three/examples/jsm/Addons.js'
   import { onMount } from 'svelte'
   import { gameStore, type Player } from '../stores/gameStore'
@@ -44,6 +44,9 @@
 
   // InstancedMesh for grass
   let grassInstancedMeshes = $state<InstancedMesh[]>([])
+  
+  // Animated grass mixer
+  let grassMixer: THREE.AnimationMixer | undefined
 
   // Grass position type
   interface GrassPosition {
@@ -88,6 +91,9 @@
   const grass7 = useLoader(GLTFLoader).load('/models/grass_7_Object_16.glb')
   const grass8 = useLoader(GLTFLoader).load('/models/grass_8_Object_18.glb')
   const grass9 = useLoader(GLTFLoader).load('/models/grass_9_Object_20.glb')
+  
+  // Load animated grass model
+  const grassBrushA = useLoader(GLTFLoader).load('/models/grass_bursh_displacement_a_eo_001.glb')
 
   function setupInstancedGrass() {
     const instancedMeshes: InstancedMesh[] = []
@@ -356,6 +362,11 @@
 
       // Update player movement (click-to-move)
       updatePlayerMovement(currentTime)
+      
+      // Update animated grass
+      if (grassMixer) {
+        grassMixer.update(deltaTime / 1000)
+      }
 
       // Update camera with preserved offset
       updateCameraWithOffset(cameraOffset)
@@ -547,6 +558,25 @@
     // Load grass bounding box data first
     loadGrassBoundingBoxes()
 
+    // Setup animated grass mixer
+    const checkAndSetupGrassAnimation = () => {
+      if ($grassBrushA && !grassMixer && $grassBrushA.animations?.length > 0) {
+        grassMixer = new THREE.AnimationMixer($grassBrushA.scene)
+        const action = grassMixer.clipAction($grassBrushA.animations[0])
+        action.play()
+        console.log('Animated grass started:', $grassBrushA.animations[0].name)
+      }
+    }
+    
+    // Check immediately and periodically until setup
+    checkAndSetupGrassAnimation()
+    const grassSetupInterval = setInterval(() => {
+      checkAndSetupGrassAnimation()
+      if (grassMixer) {
+        clearInterval(grassSetupInterval)
+      }
+    }, 100)
+
     // Start game loop
     lastFrameTime = performance.now()
     gameLoopId = requestAnimationFrame(gameLoop)
@@ -699,6 +729,11 @@
 {#each grassInstancedMeshes as instancedMesh, index (index)}
   <T is={instancedMesh} />
 {/each}
+
+<!-- Animated Grass at (0, 0, 32) -->
+{#if $grassBrushA}
+  <T is={$grassBrushA.scene} position={[0, 0, 32]} rotation={[0, 0, 0]} />
+{/if}
 
 {#if currentPlayer && cameraInitialized}
   <PlayerModel
