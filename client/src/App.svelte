@@ -2,6 +2,7 @@
   import { Canvas } from '@threlte/core';
   import GameScene from './lib/components/GameScene.svelte';
   import ChatPanel from './lib/components/ChatPanel.svelte';
+  import FPSCounter from './lib/components/FPSCounter.svelte';
 </script>
 
 <main>
@@ -9,6 +10,7 @@
     <GameScene />
   </Canvas>
   <ChatPanel />
+  <FPSCounter />
 </main>
 
 <style>

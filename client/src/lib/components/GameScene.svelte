@@ -1,8 +1,16 @@
 <script lang="ts">
-  import { T } from '@threlte/core'
+  import { T, useLoader } from '@threlte/core'
   import { OrbitControls, Grid } from '@threlte/extras'
-  import { Vector2, Raycaster } from 'three'
+  import {
+    Vector2,
+    Raycaster,
+    Matrix4,
+    Object3D,
+    Mesh,
+    InstancedMesh,
+  } from 'three'
   import type * as THREE from 'three'
+  import { GLTFLoader } from 'three/examples/jsm/Addons.js'
   import { onMount } from 'svelte'
   import { gameStore, type Player } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
@@ -40,6 +48,169 @@
 
   // Character rotation
   let playerRotation = $state(0)
+
+  // InstancedMesh for grass
+  let grassInstancedMeshes = $state<InstancedMesh[]>([])
+  let grassMatrices = $state<Matrix4[][]>([])
+
+  // Load individual grass models
+  const grass1 = useLoader(GLTFLoader).load('/models/grass_1_Object_4.glb')
+  const grass2 = useLoader(GLTFLoader).load('/models/grass_2_Object_6.glb')
+  const grass3 = useLoader(GLTFLoader).load('/models/grass_3_Object_8.glb')
+  const grass4 = useLoader(GLTFLoader).load('/models/grass_4_Object_10.glb')
+  const grass5 = useLoader(GLTFLoader).load('/models/grass_5_Object_12.glb')
+  const grass6 = useLoader(GLTFLoader).load('/models/grass_6_Object_14.glb')
+  const grass7 = useLoader(GLTFLoader).load('/models/grass_7_Object_16.glb')
+  const grass8 = useLoader(GLTFLoader).load('/models/grass_8_Object_18.glb')
+  const grass9 = useLoader(GLTFLoader).load('/models/grass_9_Object_20.glb')
+
+  // Group them for easy access
+  const grassModels = [
+    grass1,
+    grass2,
+    grass3,
+    grass4,
+    grass5,
+    grass6,
+    grass7,
+    grass8,
+    grass9,
+  ]
+
+  // Setup InstancedMesh when all models are loaded
+  $effect(() => {
+    const models = [
+      { name: 'grass1', model: $grass1 },
+      { name: 'grass2', model: $grass2 },
+      { name: 'grass3', model: $grass3 },
+      { name: 'grass4', model: $grass4 },
+      { name: 'grass5', model: $grass5 },
+      { name: 'grass6', model: $grass6 },
+      { name: 'grass7', model: $grass7 },
+      { name: 'grass8', model: $grass8 },
+      { name: 'grass9', model: $grass9 },
+    ]
+
+    const loadedModels = models.filter((m) => m.model)
+    const loadedCount = loadedModels.length
+
+    console.log(`${loadedCount}/9 grass models loaded`)
+
+    if (loadedCount === 9) {
+      setupInstancedGrass()
+    }
+  })
+
+  function setupInstancedGrass() {
+    const instancedMeshes: InstancedMesh[] = []
+    const matrices: Matrix4[][] = []
+
+    // Group positions by grass type
+    const positionsByType: any[][] = Array(9)
+      .fill(null)
+      .map(() => [])
+    grassPositions.forEach((pos) => {
+      positionsByType[pos.grassType].push(pos)
+    })
+
+    // Create InstancedMesh for each grass type
+    const grassModels = [
+      $grass1,
+      $grass2,
+      $grass3,
+      $grass4,
+      $grass5,
+      $grass6,
+      $grass7,
+      $grass8,
+      $grass9,
+    ]
+
+    grassModels.forEach((model, index) => {
+      if (model && positionsByType[index].length > 0) {
+        const positions = positionsByType[index]
+        const count = positions.length
+
+        // Get the first mesh from the GLTF model
+        let foundMesh: Mesh | null = null
+        model.scene.traverse((child) => {
+          if (child instanceof Mesh && !foundMesh) {
+            foundMesh = child
+          }
+        })
+
+        if (foundMesh) {
+          // Create InstancedMesh with explicit type assertion
+          const mesh = foundMesh as Mesh
+          const instancedMesh = new InstancedMesh(
+            mesh.geometry,
+            mesh.material,
+            count
+          )
+
+          instancedMesh.castShadow = true
+          instancedMesh.receiveShadow = true
+
+          // Create matrices for each instance
+          const instanceMatrices: Matrix4[] = []
+          const dummy = new Object3D()
+
+          positions.forEach((pos, i) => {
+            dummy.position.set(pos.x, 0.15, pos.z)
+            dummy.rotation.set(0, pos.rotation, 0)
+            dummy.scale.setScalar(pos.scale)
+            dummy.updateMatrix()
+
+            instancedMesh.setMatrixAt(i, dummy.matrix)
+            instanceMatrices.push(dummy.matrix.clone())
+          })
+
+          instancedMesh.instanceMatrix.needsUpdate = true
+
+          instancedMeshes.push(instancedMesh)
+          matrices.push(instanceMatrices)
+        }
+      }
+    })
+
+    grassInstancedMeshes = instancedMeshes
+    grassMatrices = matrices
+    console.log(`Created ${instancedMeshes.length} InstancedMesh objects`)
+  }
+
+  // Generate grass positions with variety (simplified for testing)
+  function generateGrassPositions() {
+    const positions = []
+    const spacing = 0.2 // Reasonable spacing for dense grass
+    const gridSize = 15 // Smaller area for better performance
+    let id = 0
+
+    for (let x = -gridSize; x <= gridSize; x += spacing) {
+      for (let z = -gridSize; z <= gridSize; z += spacing) {
+        // Add some random offset for more natural look
+        const offsetX = (Math.random() - 0.5) * 0.8
+        const offsetZ = (Math.random() - 0.5) * 0.8
+        const rotation = Math.random() * Math.PI * 2
+        const scale = 1.4 + Math.random() * 0.8 // Random scale between 1.2 and 2.0
+
+        positions.push({
+          id: id++,
+          x: x + offsetX,
+          y: 0,
+          z: z + offsetZ,
+          rotation: rotation,
+          grassType: Math.floor(Math.random() * 9), // Random grass type (0-8)
+          scale: scale,
+        })
+      }
+    }
+
+    console.log(`Generated ${positions.length} grass positions`)
+    console.log('First few positions:', positions.slice(0, 5))
+    return positions
+  }
+
+  const grassPositions = generateGrassPositions()
 
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
@@ -365,7 +536,7 @@
 
 <T.PerspectiveCamera bind:ref={camera} makeDefault fov={75}>
   <OrbitControls
-    enableRotate={false}
+    enableRotate={true}
     enablePan={false}
     enableZoom={true}
     target={cameraTarget}
@@ -393,8 +564,13 @@
   receiveShadow
 >
   <T.PlaneGeometry args={[100, 100]} />
-  <T.MeshLambertMaterial color="#2d3748" />
+  <T.MeshLambertMaterial color="#4a7c59" />
 </T.Mesh>
+
+<!-- Instanced Grass Meshes -->
+{#each grassInstancedMeshes as instancedMesh, index (index)}
+  <T is={instancedMesh} />
+{/each}
 
 {#if currentPlayer && cameraInitialized}
   <PlayerModel
