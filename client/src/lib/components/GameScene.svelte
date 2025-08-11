@@ -400,6 +400,7 @@
     isCurrentPlayer={true}
     {isMoving}
     rotation={playerRotation}
+    cameraPosition={camera?.position}
   />
 {/if}
 
@@ -408,5 +409,6 @@
     position={player.position}
     name={player.name}
     isCurrentPlayer={false}
+    cameraPosition={camera?.position}
   />
 {/each}

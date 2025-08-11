@@ -20,6 +20,7 @@
     "eslint": "^9.33.0",
     "eslint-plugin-svelte": "^3.11.0",
     "globals": "^16.3.0",
+    "jiti": "^2.5.1",
     "prettier": "^3.6.2",
     "svelte": "^5.37.3",
     "svelte-check": "^4.3.1",
