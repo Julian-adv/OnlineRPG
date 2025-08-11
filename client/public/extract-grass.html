@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Extract Grass Meshes</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <h1>Extracting Grass Meshes...</h1>
+    <div id="progress"></div>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+        const progressDiv = document.getElementById('progress');
+        
+        function updateProgress(message) {
+            console.log(message);
+            progressDiv.innerHTML += message + '<br>';
+        }
+
+        // Load the original GLB file
+        const loader = new GLTFLoader();
+        const exporter = new GLTFExporter();
+
+        updateProgress('Loading grass pack GLB file...');
+
+        loader.load('./models/realistic_grass_pack_for_games_free.glb', (gltf) => {
+            updateProgress('GLB file loaded successfully');
+            
+            const scene = gltf.scene;
+            const meshes = [];
+            
+            // Find all meshes in the scene
+            scene.traverse((child) => {
+                if (child.isMesh) {
+                    meshes.push(child);
+                    updateProgress(`Found mesh: ${child.name}`);
+                }
+            });
+            
+            updateProgress(`Total meshes found: ${meshes.length}`);
+            
+            // Extract each mesh as a separate GLB file
+            meshes.forEach((mesh, index) => {
+                // Create a new scene with just this mesh
+                const newScene = new THREE.Scene();
+                
+                // Clone the mesh to avoid modifying the original
+                const clonedMesh = mesh.clone();
+                clonedMesh.material = mesh.material.clone(); // Clone material too
+                
+                // Reset position to origin
+                clonedMesh.position.set(0, 0, 0);
+                clonedMesh.rotation.set(0, 0, 0);
+                clonedMesh.scale.set(1, 1, 1);
+                
+                newScene.add(clonedMesh);
+                
+                // Export as GLB
+                exporter.parse(
+                    newScene,
+                    (result) => {
+                        const filename = `grass_${index + 1}_${mesh.name.replace(/[^a-zA-Z0-9]/g, '_')}.glb`;
+                        
+                        // Create download link
+                        const blob = new Blob([result], { type: 'application/octet-stream' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        a.style.display = 'none';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        
+                        updateProgress(`Exported: ${filename}`);
+                    },
+                    (error) => {
+                        updateProgress(`Error exporting ${mesh.name}: ${error}`);
+                    },
+                    { binary: true }
+                );
+            });
+            
+            updateProgress('Export process completed!');
+            
+        }, undefined, (error) => {
+            updateProgress(`Error loading GLB: ${error}`);
+        });
+    </script>
+</body>
+</html>
