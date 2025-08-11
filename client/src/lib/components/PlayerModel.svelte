@@ -12,9 +12,44 @@
     isCurrentPlayer: boolean
     isMoving?: boolean
     rotation?: number
+    cameraPosition?: Vector3
   }
 
-  let { position, name, isCurrentPlayer, isMoving = false, rotation = 0 }: Props = $props()
+  let {
+    position,
+    name,
+    isCurrentPlayer,
+    isMoving = false,
+    rotation = 0,
+    cameraPosition,
+  }: Props = $props()
+
+  // Calculate nametag rotation to face camera in world space
+  function calculateNametagRotation(): [number, number, number] {
+    if (!cameraPosition) {
+      return [0, 0, 0] // No rotation if no camera
+    }
+
+    // Calculate vector from nametag world position to camera
+    const nametagWorldX = position.x
+    const nametagWorldY = position.y + 2.5 // 2.5 is nametag height
+    const nametagWorldZ = position.z
+
+    const dx = cameraPosition.x - nametagWorldX
+    const dy = cameraPosition.y - nametagWorldY
+    const dz = cameraPosition.z - nametagWorldZ
+
+    // Calculate yaw angle (y rotation) first - horizontal direction to camera
+    const yaw = Math.atan2(dx, dz)
+
+    // Calculate horizontal distance for pitch calculation
+    const horizontalDistance = Math.sqrt(dx * dx + dz * dz)
+    
+    // Calculate pitch angle (x rotation) - vertical angle to camera
+    const pitch = -Math.atan2(dy, horizontalDistance)
+
+    return [pitch, yaw, 0]
+  }
 
   // GLTF loading
   const gltf = useLoader(GLTFLoader).load('/models/Xbot.glb')
@@ -136,19 +171,24 @@
   })
 </script>
 
-<T.Group position={[position.x, position.y, position.z]} rotation={[0, rotation, 0]}>
+<!-- Character Model -->
+<T.Group
+  position={[position.x, position.y, position.z]}
+  rotation={[0, rotation, 0]}
+>
   <!-- 3D Character Model -->
   {#if $gltf}
     <T is={$gltf.scene} />
   {/if}
-
-  <!-- Name tag -->
-  <Text
-    text={name}
-    position={[0, 2.2, 0]}
-    fontSize={0.3}
-    color={isCurrentPlayer ? '#4299e1' : '#ffffff'}
-    anchorX="center"
-    anchorY="middle"
-  />
 </T.Group>
+
+<!-- Name tag (separate from character to avoid rotation inheritance) -->
+<Text
+  text={name}
+  position={[position.x, position.y + 2.5, position.z]}
+  rotation={calculateNametagRotation()}
+  fontSize={0.3}
+  color={isCurrentPlayer ? '#4299e1' : '#ffffff'}
+  anchorX="center"
+  anchorY="middle"
+/>
