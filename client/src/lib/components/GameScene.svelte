@@ -1,14 +1,7 @@
 <script lang="ts">
   import { T, useLoader } from '@threlte/core'
   import { OrbitControls, Grid } from '@threlte/extras'
-  import {
-    Vector2,
-    Raycaster,
-    Matrix4,
-    Object3D,
-    Mesh,
-    InstancedMesh,
-  } from 'three'
+  import { Vector2, Raycaster, Object3D, Mesh, InstancedMesh } from 'three'
   import type * as THREE from 'three'
   import { GLTFLoader } from 'three/examples/jsm/Addons.js'
   import { onMount } from 'svelte'
@@ -40,7 +33,7 @@
   // Game loop
   let gameLoopId = $state<number | null>(null)
   let lastFrameTime = $state(0)
-  const TARGET_FPS = 60
+  const TARGET_FPS = 120
   const FRAME_TIME = 1000 / TARGET_FPS // 16.67ms
 
   // Keyboard controls
@@ -51,7 +44,17 @@
 
   // InstancedMesh for grass
   let grassInstancedMeshes = $state<InstancedMesh[]>([])
-  let grassMatrices = $state<Matrix4[][]>([])
+
+  // Grass position type
+  interface GrassPosition {
+    id: number
+    x: number
+    y: number
+    z: number
+    rotation: number
+    grassType: number
+    scale: number
+  }
 
   // Load individual grass models
   const grass1 = useLoader(GLTFLoader).load('/models/grass_1_Object_4.glb')
@@ -63,19 +66,6 @@
   const grass7 = useLoader(GLTFLoader).load('/models/grass_7_Object_16.glb')
   const grass8 = useLoader(GLTFLoader).load('/models/grass_8_Object_18.glb')
   const grass9 = useLoader(GLTFLoader).load('/models/grass_9_Object_20.glb')
-
-  // Group them for easy access
-  const grassModels = [
-    grass1,
-    grass2,
-    grass3,
-    grass4,
-    grass5,
-    grass6,
-    grass7,
-    grass8,
-    grass9,
-  ]
 
   // Setup InstancedMesh when all models are loaded
   $effect(() => {
@@ -103,10 +93,9 @@
 
   function setupInstancedGrass() {
     const instancedMeshes: InstancedMesh[] = []
-    const matrices: Matrix4[][] = []
 
     // Group positions by grass type
-    const positionsByType: any[][] = Array(9)
+    const positionsByType: GrassPosition[][] = Array(9)
       .fill(null)
       .map(() => [])
     grassPositions.forEach((pos) => {
@@ -148,33 +137,29 @@
             count
           )
 
-          instancedMesh.castShadow = true
+          instancedMesh.castShadow = false
           instancedMesh.receiveShadow = true
 
           // Create matrices for each instance
-          const instanceMatrices: Matrix4[] = []
           const dummy = new Object3D()
 
           positions.forEach((pos, i) => {
-            dummy.position.set(pos.x, 0.15, pos.z)
+            dummy.position.set(pos.x, 0.0, pos.z)
             dummy.rotation.set(0, pos.rotation, 0)
             dummy.scale.setScalar(pos.scale)
             dummy.updateMatrix()
 
             instancedMesh.setMatrixAt(i, dummy.matrix)
-            instanceMatrices.push(dummy.matrix.clone())
           })
 
           instancedMesh.instanceMatrix.needsUpdate = true
 
           instancedMeshes.push(instancedMesh)
-          matrices.push(instanceMatrices)
         }
       }
     })
 
     grassInstancedMeshes = instancedMeshes
-    grassMatrices = matrices
     console.log(`Created ${instancedMeshes.length} InstancedMesh objects`)
   }
 
@@ -206,7 +191,6 @@
     }
 
     console.log(`Generated ${positions.length} grass positions`)
-    console.log('First few positions:', positions.slice(0, 5))
     return positions
   }
 
