@@ -12,6 +12,7 @@
   let otherPlayers = $state(new Map())
   let camera = $state<THREE.PerspectiveCamera | undefined>(undefined)
   let groundMesh = $state<THREE.Mesh | undefined>(undefined)
+  let cameraInitialized = $state(false)
 
   // Movement system
   let movementTarget = $state<{ x: number; y: number; z: number } | null>(null)
@@ -25,8 +26,8 @@
   const MOVEMENT_SPEED = 3 // units per second
 
   // Camera follow system
-  let cameraTarget = $state<[number, number, number]>([0, 1, 0])
-  const CAMERA_OFFSET = { x: 0, y: 15, z: 10 } // Relative to player
+  let cameraTarget = $state<[number, number, number]>([0, 0, 0])
+  const CAMERA_OFFSET = { x: 0, y: 5, z: 5 } // Relative to player
 
   // Game loop
   let gameLoopId = $state<number | null>(null)
@@ -36,7 +37,7 @@
 
   // Keyboard controls
   let keysPressed = $state(new Set<string>())
-  
+
   // Character rotation
   let playerRotation = $state(0)
 
@@ -208,7 +209,7 @@
         if (state.currentPlayer) {
           state.currentPlayer.position.set(
             newX,
-            currentPlayer!.position.y,
+            0, // Keep player on ground level
             newZ
           )
           isMoving = true
@@ -219,7 +220,7 @@
       // Send position to server periodically
       networkManager.sendPlayerMove({
         x: newX,
-        y: currentPlayer.position.y,
+        y: 0, // Keep player on ground level
         z: newZ,
       })
     } else {
@@ -267,6 +268,7 @@
           currentPlayer.position.y + CAMERA_OFFSET.y,
           currentPlayer.position.z + CAMERA_OFFSET.z
         )
+        cameraInitialized = true
 
         // Make camera look at player directly
         camera.lookAt(
@@ -339,7 +341,7 @@
       const point = intersects[0].point
       const clickPosition = {
         x: point.x,
-        y: 1, // Keep player above ground
+        y: 0, // Position player on ground level
         z: point.z,
       }
 
@@ -368,7 +370,7 @@
     enableZoom={true}
     target={cameraTarget}
     minDistance={5}
-    maxDistance={50}
+    maxDistance={20}
   />
 </T.PerspectiveCamera>
 
@@ -381,11 +383,12 @@
   sectionColor="#4a5568"
   sectionThickness={1.2}
   fadeDistance={100}
+  position={[0, 0.1, 0]}
 />
 
 <T.Mesh
   bind:ref={groundMesh}
-  position={[0, -0.5, 0]}
+  position={[0, 0, 0]}
   rotation={[-Math.PI / 2, 0, 0]}
   receiveShadow
 >
@@ -393,7 +396,7 @@
   <T.MeshLambertMaterial color="#2d3748" />
 </T.Mesh>
 
-{#if currentPlayer}
+{#if currentPlayer && cameraInitialized}
   <PlayerModel
     position={currentPlayer.position}
     name={currentPlayer.name}
@@ -404,11 +407,13 @@
   />
 {/if}
 
-{#each [...otherPlayers.values()] as player (player.id)}
-  <PlayerModel
-    position={player.position}
-    name={player.name}
-    isCurrentPlayer={false}
-    cameraPosition={camera?.position}
-  />
-{/each}
+{#if cameraInitialized}
+  {#each [...otherPlayers.values()] as player (player.id)}
+    <PlayerModel
+      position={player.position}
+      name={player.name}
+      isCurrentPlayer={false}
+      cameraPosition={camera?.position}
+    />
+  {/each}
+{/if}

@@ -24,7 +24,7 @@ impl Player {
         Self {
             id: Uuid::new_v4().to_string(),
             name,
-            position: Position { x: 0.0, y: 1.0, z: 0.0 },
+            position: Position { x: 0.0, y: 0.0, z: 0.0 },
             level: 1,
             health: 100,
             max_health: 100,

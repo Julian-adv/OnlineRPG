@@ -27,7 +27,7 @@
   // Calculate nametag rotation to face camera in world space
   function calculateNametagRotation(): [number, number, number] {
     if (!cameraPosition) {
-      return [0, 0, 0] // No rotation if no camera
+      return [0, 0, 0]
     }
 
     // Calculate vector from nametag world position to camera
@@ -44,7 +44,7 @@
 
     // Calculate horizontal distance for pitch calculation
     const horizontalDistance = Math.sqrt(dx * dx + dz * dz)
-    
+
     // Calculate pitch angle (x rotation) - vertical angle to camera
     const pitch = -Math.atan2(dy, horizontalDistance)
 
@@ -101,6 +101,14 @@
     if ($gltf && !mixer) {
       console.log('Setting up animations for GLTF model')
       console.log('Available animations:', $gltf.animations.length)
+
+      // Enable shadows on all meshes in the model
+      $gltf.scene.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = true
+          child.receiveShadow = true
+        }
+      })
 
       // Create mixer
       mixer = new THREE.AnimationMixer($gltf.scene)
