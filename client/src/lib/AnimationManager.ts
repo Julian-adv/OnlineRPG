@@ -47,7 +47,9 @@ export class AnimationManager {
     try {
       const response = await fetch(path)
       this.animationConfig = await response.json()
-      console.log(`Loaded ${this.animationConfig?.totalAnimations || 0} animation configs`)
+      console.log(
+        `Loaded ${this.animationConfig?.totalAnimations || 0} animation configs`
+      )
     } catch (error) {
       console.error('Failed to load animation data:', error)
     }
@@ -55,7 +57,7 @@ export class AnimationManager {
 
   // 정적 모델에 애니메이션 적용 (방법 1: 원본 파일 사용)
   applyOriginalAnimation(
-    staticModel: THREE.Group, 
+    staticModel: THREE.Group,
     animationIndex: number = 0
   ): THREE.AnimationMixer | null {
     if (!this.originalAnimationScene) {
@@ -64,7 +66,9 @@ export class AnimationManager {
     }
 
     // 원본 씬에서 애니메이션 찾기
-    const originalGltf = this.originalAnimationScene.parent as { animations?: THREE.AnimationClip[] }
+    const originalGltf = this.originalAnimationScene.parent as {
+      animations?: THREE.AnimationClip[]
+    }
     if (!originalGltf?.animations || originalGltf.animations.length === 0) {
       console.warn('No animations found in original scene')
       return null
@@ -78,7 +82,7 @@ export class AnimationManager {
 
     // 애니메이션 믹서 생성
     const mixer = new THREE.AnimationMixer(staticModel)
-    
+
     try {
       const action = mixer.clipAction(animation)
       action.play()
@@ -108,10 +112,10 @@ export class AnimationManager {
 
     // JSON 데이터에서 Three.js 애니메이션 트랙 생성
     const tracks: THREE.KeyframeTrack[] = []
-    
-    animData.tracks.forEach(trackData => {
+
+    animData.tracks.forEach((trackData) => {
       let track: THREE.KeyframeTrack | null = null
-      
+
       // 트랙 타입에 따라 적절한 KeyframeTrack 생성
       switch (trackData.type) {
         case 'VectorKeyframeTrack':
@@ -136,7 +140,7 @@ export class AnimationManager {
           )
           break
       }
-      
+
       if (track) {
         tracks.push(track)
       }
@@ -158,7 +162,7 @@ export class AnimationManager {
     const mixer = new THREE.AnimationMixer(staticModel)
     const action = mixer.clipAction(animationClip)
     action.play()
-    
+
     console.log(`Created animation from data: ${animData.name}`)
     return mixer
   }
@@ -177,22 +181,22 @@ export class AnimationManager {
         isPlaying = true
         startTime = Date.now()
       },
-      
+
       stop() {
         isPlaying = false
       },
-      
+
       update(_time: number) {
         if (!isPlaying) return
-        
+
         const elapsed = (Date.now() - startTime) / 1000
-        
+
         // 간단한 idle 애니메이션 (위아래로 부드럽게 움직임)
         staticModel.position.y = Math.sin(elapsed * 2) * 0.1
-        
+
         // 회전 애니메이션
         staticModel.rotation.y = elapsed * 0.5
-      }
+      },
     }
   }
 }
@@ -204,37 +208,43 @@ export async function setupCharacterAnimation(
 ): Promise<{
   model: THREE.Group
   mixer?: THREE.AnimationMixer
-  simpleAnim?: { update: (time: number) => void; start: () => void; stop: () => void }
+  simpleAnim?: {
+    update: (time: number) => void
+    start: () => void
+    stop: () => void
+  }
 }> {
   const loader = new GLTFLoader()
   const animManager = AnimationManager.getInstance()
-  
+
   // 정적 모델 로드
   const gltf = await loader.loadAsync(staticModelPath)
   const model = gltf.scene
-  
+
   let mixer: THREE.AnimationMixer | undefined
-  let simpleAnim: { update: (time: number) => void; start: () => void; stop: () => void } | undefined
-  
+  let simpleAnim:
+    | { update: (time: number) => void; start: () => void; stop: () => void }
+    | undefined
+
   switch (animationType) {
     case 'original':
       // 원본 애니메이션 파일도 로드 (필요시)
       await animManager.loadOriginalAnimations('/models/girls_-_14_anims.glb')
       mixer = animManager.applyOriginalAnimation(model) ?? undefined
       break
-      
+
     case 'json':
       // JSON 애니메이션 데이터 로드
       await animManager.loadAnimationData('/character_animations.json')
       mixer = animManager.createAnimationFromData(model) ?? undefined
       break
-      
+
     case 'simple':
       // 간단한 프로그래밍 애니메이션
       simpleAnim = animManager.createSimpleAnimation(model)
       simpleAnim.start()
       break
   }
-  
+
   return { model, mixer, simpleAnim }
 }

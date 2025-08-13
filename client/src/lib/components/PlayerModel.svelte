@@ -20,7 +20,6 @@
     position,
     name,
     isCurrentPlayer,
-    isMoving = false,
     rotation = 0,
     cameraPosition,
   }: Props = $props()
@@ -53,9 +52,7 @@
   }
 
   // Load animated model
-  const gltf = useLoader(GLTFLoader).load(
-    '/models/animated_13_Armature006_870.glb'
-  )
+  const gltf = useLoader(GLTFLoader).load('/models/merged.glb')
 
   // Animation system - following gpt-all-in-one.html approach
   let mixer: THREE.AnimationMixer | null = null
@@ -91,14 +88,47 @@
         }
       })
 
-      // Use first animation directly
+      // Filter animations to only include tracks that match model nodes
       const animations = $gltf.animations || []
       console.log(`Found ${animations.length} animation clips`)
 
-      if (animations.length > 0) {
-        // Setup mixer and play first animation
+      // Collect all node names in the cloned model
+      const modelNodeNames = new Set()
+      cloned.traverse((obj) => {
+        if (obj.name) modelNodeNames.add(obj.name)
+      })
+      console.log(`Model has ${modelNodeNames.size} named nodes`)
+      console.log('Model node names:', Array.from(modelNodeNames).slice(0, 10))
+
+      // Filter animations to only include tracks that target existing nodes
+      const validAnimations = animations.filter((clip) => {
+        console.log(
+          `Checking clip: ${clip.name} with ${clip.tracks.length} tracks`
+        )
+
+        const validTracks = clip.tracks.filter((track) => {
+          const targetName = track.name.split('.')[0]
+          const isValid = modelNodeNames.has(targetName)
+          if (!isValid) {
+            console.log(
+              `  ❌ Track "${track.name}" targets "${targetName}" (not found in model)`
+            )
+          }
+          return isValid
+        })
+
+        console.log(
+          `  ✅ Clip "${clip.name}": ${validTracks.length}/${clip.tracks.length} tracks valid`
+        )
+        return validTracks.length > 0
+      })
+
+      console.log(`Found ${validAnimations.length} valid animations`)
+
+      if (validAnimations.length > 0) {
+        // Setup mixer and play first valid animation
         mixer = new THREE.AnimationMixer(newModelRoot)
-        const clip = animations[0]
+        const clip = validAnimations[0]
         console.log(
           `Playing animation: ${clip.name}, duration: ${clip.duration}s`
         )
@@ -113,7 +143,31 @@
         clock.start()
         animationId = requestAnimationFrame(updateAnimation)
       } else {
-        console.warn('No suitable animations found')
+        console.warn('No suitable animations found with strict filtering')
+
+        // Fallback: try to play any animation without filtering
+        if (animations.length > 0) {
+          console.log(
+            'Trying fallback: playing first animation without filtering'
+          )
+          mixer = new THREE.AnimationMixer(newModelRoot)
+          const clip = animations[0]
+          console.log(
+            `Playing fallback animation: ${clip.name}, duration: ${clip.duration}s`
+          )
+
+          currentAction = mixer.clipAction(clip)
+          currentAction.reset()
+          currentAction.loop = THREE.LoopRepeat
+          currentAction.paused = false
+          currentAction.play()
+
+          // Start animation loop
+          clock.start()
+          animationId = requestAnimationFrame(updateAnimation)
+        } else {
+          console.log('No animations available at all')
+        }
       }
 
       modelRoot = newModelRoot

@@ -3,10 +3,22 @@
   <head>
     <title>Test Extracted Model</title>
     <style>
-      body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
-      canvas { border: 1px solid #ccc; }
-      #controls { margin: 10px 0; }
-      #info { margin: 10px 0; font-family: monospace; white-space: pre-line; }
+      body {
+        margin: 0;
+        padding: 20px;
+        font-family: Arial, sans-serif;
+      }
+      canvas {
+        border: 1px solid #ccc;
+      }
+      #controls {
+        margin: 10px 0;
+      }
+      #info {
+        margin: 10px 0;
+        font-family: monospace;
+        white-space: pre-line;
+      }
     </style>
     <script type="importmap">
       {
@@ -40,10 +52,18 @@
       const scene = new THREE.Scene()
       scene.background = new THREE.Color(0x404040)
 
-      const camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000)
+      const camera = new THREE.PerspectiveCamera(
+        75,
+        canvas.width / canvas.height,
+        0.1,
+        1000
+      )
       camera.position.set(0, 2, 5)
 
-      const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true })
+      const renderer = new THREE.WebGLRenderer({
+        canvas: canvas,
+        antialias: true,
+      })
       renderer.setSize(canvas.width, canvas.height)
       renderer.shadowMap.enabled = true
       renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -81,17 +101,19 @@
         infoDiv.textContent = ''
       }
 
-      window.resetCamera = function() {
+      window.resetCamera = function () {
         camera.position.set(0, 2, 5)
         controls.reset()
       }
 
-      window.toggleWireframe = function() {
+      window.toggleWireframe = function () {
         if (currentModel) {
-          currentModel.traverse(child => {
+          currentModel.traverse((child) => {
             if (child.isMesh && child.material) {
               if (Array.isArray(child.material)) {
-                child.material.forEach(mat => mat.wireframe = !mat.wireframe)
+                child.material.forEach(
+                  (mat) => (mat.wireframe = !mat.wireframe)
+                )
               } else {
                 child.material.wireframe = !child.material.wireframe
               }
@@ -118,86 +140,108 @@
 
         reader.onload = (e) => {
           const arrayBuffer = e.target.result
-          
-          loader.parse(arrayBuffer, '', (gltf) => {
-            updateInfo('File loaded successfully!')
-            
-            currentModel = gltf.scene
-            scene.add(currentModel)
 
-            // Analysis
-            updateInfo('\n=== Model Analysis ===')
-            updateInfo(`Animations: ${gltf.animations?.length || 0}`)
-            
-            let meshCount = 0
-            let totalVertices = 0
-            let materialCount = 0
-            const materials = new Set()
+          loader.parse(
+            arrayBuffer,
+            '',
+            (gltf) => {
+              updateInfo('File loaded successfully!')
 
-            currentModel.traverse(child => {
-              updateInfo(`Object: ${child.type} "${child.name || 'unnamed'}"`)
-              updateInfo(`  Position: (${child.position.x.toFixed(2)}, ${child.position.y.toFixed(2)}, ${child.position.z.toFixed(2)})`)
-              updateInfo(`  Rotation: (${child.rotation.x.toFixed(2)}, ${child.rotation.y.toFixed(2)}, ${child.rotation.z.toFixed(2)}) rad`)
-              updateInfo(`  Rotation (deg): (${(child.rotation.x * 180 / Math.PI).toFixed(1)}, ${(child.rotation.y * 180 / Math.PI).toFixed(1)}, ${(child.rotation.z * 180 / Math.PI).toFixed(1)})°`)
-              updateInfo(`  Scale: (${child.scale.x.toFixed(2)}, ${child.scale.y.toFixed(2)}, ${child.scale.z.toFixed(2)})`)
-              updateInfo(`  Visible: ${child.visible}`)
-              
-              if (child.isMesh) {
-                meshCount++
-                updateInfo(`  Mesh geometry: ${child.geometry?.attributes?.position?.count || 0} vertices`)
-                
-                if (child.geometry?.attributes?.position) {
-                  totalVertices += child.geometry.attributes.position.count
-                }
-                
-                if (child.material) {
-                  if (Array.isArray(child.material)) {
-                    child.material.forEach(mat => materials.add(mat.name || 'unnamed'))
-                  } else {
-                    materials.add(child.material.name || 'unnamed')
+              currentModel = gltf.scene
+              scene.add(currentModel)
+
+              // Analysis
+              updateInfo('\n=== Model Analysis ===')
+              updateInfo(`Animations: ${gltf.animations?.length || 0}`)
+
+              let meshCount = 0
+              let totalVertices = 0
+              let materialCount = 0
+              const materials = new Set()
+
+              currentModel.traverse((child) => {
+                updateInfo(`Object: ${child.type} "${child.name || 'unnamed'}"`)
+                updateInfo(
+                  `  Position: (${child.position.x.toFixed(2)}, ${child.position.y.toFixed(2)}, ${child.position.z.toFixed(2)})`
+                )
+                updateInfo(
+                  `  Rotation: (${child.rotation.x.toFixed(2)}, ${child.rotation.y.toFixed(2)}, ${child.rotation.z.toFixed(2)}) rad`
+                )
+                updateInfo(
+                  `  Rotation (deg): (${((child.rotation.x * 180) / Math.PI).toFixed(1)}, ${((child.rotation.y * 180) / Math.PI).toFixed(1)}, ${((child.rotation.z * 180) / Math.PI).toFixed(1)})°`
+                )
+                updateInfo(
+                  `  Scale: (${child.scale.x.toFixed(2)}, ${child.scale.y.toFixed(2)}, ${child.scale.z.toFixed(2)})`
+                )
+                updateInfo(`  Visible: ${child.visible}`)
+
+                if (child.isMesh) {
+                  meshCount++
+                  updateInfo(
+                    `  Mesh geometry: ${child.geometry?.attributes?.position?.count || 0} vertices`
+                  )
+
+                  if (child.geometry?.attributes?.position) {
+                    totalVertices += child.geometry.attributes.position.count
+                  }
+
+                  if (child.material) {
+                    if (Array.isArray(child.material)) {
+                      child.material.forEach((mat) =>
+                        materials.add(mat.name || 'unnamed')
+                      )
+                    } else {
+                      materials.add(child.material.name || 'unnamed')
+                    }
                   }
                 }
-              }
-            })
-
-            updateInfo(`\nTotal meshes: ${meshCount}`)
-            updateInfo(`Total vertices: ${totalVertices}`)
-            updateInfo(`Materials: ${Array.from(materials).join(', ')}`)
-
-            // Calculate bounding box
-            const box = new THREE.Box3().setFromObject(currentModel)
-            const size = box.getSize(new THREE.Vector3())
-            const center = box.getCenter(new THREE.Vector3())
-            
-            updateInfo(`\nBounding box:`)
-            updateInfo(`  Size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`)
-            updateInfo(`  Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})`)
-
-            // Setup animations
-            if (gltf.animations && gltf.animations.length > 0) {
-              mixer = new THREE.AnimationMixer(currentModel)
-              gltf.animations.forEach((clip, index) => {
-                updateInfo(`Animation ${index + 1}: "${clip.name}" (${clip.duration.toFixed(2)}s)`)
-                const action = mixer.clipAction(clip)
-                if (index === 0) {
-                  action.play() // Play first animation
-                  updateInfo(`  Playing animation: ${clip.name}`)
-                }
               })
-            }
 
-            // Adjust camera to fit model
-            if (size.length() > 0) {
-              const distance = Math.max(size.x, size.y, size.z) * 2
-              camera.position.set(distance, distance, distance)
-              camera.lookAt(center)
-              controls.target.copy(center)
-              controls.update()
-            }
+              updateInfo(`\nTotal meshes: ${meshCount}`)
+              updateInfo(`Total vertices: ${totalVertices}`)
+              updateInfo(`Materials: ${Array.from(materials).join(', ')}`)
 
-          }, (error) => {
-            updateInfo(`Error loading file: ${error}`)
-          })
+              // Calculate bounding box
+              const box = new THREE.Box3().setFromObject(currentModel)
+              const size = box.getSize(new THREE.Vector3())
+              const center = box.getCenter(new THREE.Vector3())
+
+              updateInfo(`\nBounding box:`)
+              updateInfo(
+                `  Size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`
+              )
+              updateInfo(
+                `  Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})`
+              )
+
+              // Setup animations
+              if (gltf.animations && gltf.animations.length > 0) {
+                mixer = new THREE.AnimationMixer(currentModel)
+                gltf.animations.forEach((clip, index) => {
+                  updateInfo(
+                    `Animation ${index + 1}: "${clip.name}" (${clip.duration.toFixed(2)}s)`
+                  )
+                  const action = mixer.clipAction(clip)
+                  if (index === 0) {
+                    action.play() // Play first animation
+                    updateInfo(`  Playing animation: ${clip.name}`)
+                  }
+                })
+              }
+
+              // Adjust camera to fit model
+              if (size.length() > 0) {
+                const distance = Math.max(size.x, size.y, size.z) * 2
+                camera.position.set(distance, distance, distance)
+                camera.lookAt(center)
+                controls.target.copy(center)
+                controls.update()
+              }
+            },
+            (error) => {
+              updateInfo(`Error loading file: ${error}`)
+            }
+          )
         }
 
         reader.readAsArrayBuffer(file)
@@ -206,10 +250,10 @@
       // Animation loop
       function animate() {
         requestAnimationFrame(animate)
-        
+
         const delta = clock.getDelta()
         if (mixer) mixer.update(delta)
-        
+
         controls.update()
         renderer.render(scene, camera)
       }

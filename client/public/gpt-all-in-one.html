@@ -1,202 +1,201 @@
 <!doctype html>
 <html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>GLB 올인원 추출 & 뷰어 (Animation 포함)</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root {
+        --bg: #1e1f24;
+        --panel: #2a2c34;
+        --text: #e5e7eb;
+        --muted: #9aa0aa;
+        --accent: #7dd3fc;
+      }
 
-<head>
-  <meta charset="utf-8" />
-  <title>GLB 올인원 추출 & 뷰어 (Animation 포함)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <style>
-    :root {
-      --bg: #1e1f24;
-      --panel: #2a2c34;
-      --text: #e5e7eb;
-      --muted: #9aa0aa;
-      --accent: #7dd3fc;
-    }
+      * {
+        box-sizing: border-box;
+      }
 
-    * {
-      box-sizing: border-box;
-    }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          13px/1.45 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Helvetica,
+          Arial;
+      }
 
-    html,
-    body {
-      height: 100%;
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font:
-        13px/1.45 ui-sans-serif,
-        system-ui,
-        -apple-system,
-        Segoe UI,
-        Roboto,
-        Helvetica,
-        Arial;
-    }
+      .app {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        grid-template-rows: 48px 1fr 160px;
+        height: 100%;
+      }
 
-    .app {
-      display: grid;
-      grid-template-columns: 280px 1fr;
-      grid-template-rows: 48px 1fr 160px;
-      height: 100%;
-    }
+      header {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #11131a;
+        border-bottom: 1px solid #000;
+        position: sticky;
+        top: 0;
+        z-index: 5;
+      }
 
-    header {
-      grid-column: 1 / -1;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      background: #11131a;
-      border-bottom: 1px solid #000;
-      position: sticky;
-      top: 0;
-      z-index: 5;
-    }
+      header h1 {
+        font-size: 14px;
+        font-weight: 700;
+        margin: 0 10px 0 0;
+        color: #cbd5e1;
+      }
 
-    header h1 {
-      font-size: 14px;
-      font-weight: 700;
-      margin: 0 10px 0 0;
-      color: #cbd5e1;
-    }
+      .btn {
+        background: var(--panel);
+        border: 1px solid #000;
+        color: var(--text);
+        padding: 6px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
 
-    .btn {
-      background: var(--panel);
-      border: 1px solid #000;
-      color: var(--text);
-      padding: 6px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-    }
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
 
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+      .btn-accent {
+        background: #0b7285;
+        border-color: #063d47;
+      }
 
-    .btn-accent {
-      background: #0b7285;
-      border-color: #063d47;
-    }
+      .btn-ghost {
+        background: transparent;
+        border-color: #2a2c34;
+      }
 
-    .btn-ghost {
-      background: transparent;
-      border-color: #2a2c34;
-    }
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
 
-    .toolbar {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
+      .file {
+        position: relative;
+        overflow: hidden;
+      }
 
-    .file {
-      position: relative;
-      overflow: hidden;
-    }
+      .file input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+      }
 
-    .file input {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-    }
+      .sidebar {
+        background: var(--panel);
+        border-right: 1px solid #000;
+        padding: 8px;
+        overflow: auto;
+      }
 
-    .sidebar {
-      background: var(--panel);
-      border-right: 1px solid #000;
-      padding: 8px;
-      overflow: auto;
-    }
+      .list {
+        display: grid;
+        gap: 6px;
+      }
 
-    .list {
-      display: grid;
-      gap: 6px;
-    }
+      .item {
+        border: 1px solid #000;
+        background: #1f2128;
+        padding: 8px;
+        border-radius: 8px;
+        cursor: pointer;
+      }
 
-    .item {
-      border: 1px solid #000;
-      background: #1f2128;
-      padding: 8px;
-      border-radius: 8px;
-      cursor: pointer;
-    }
+      .item.active {
+        outline: 2px solid var(--accent);
+      }
 
-    .item.active {
-      outline: 2px solid var(--accent);
-    }
+      .small {
+        color: var(--muted);
+        font-size: 12px;
+      }
 
-    .small {
-      color: var(--muted);
-      font-size: 12px;
-    }
+      .viewer {
+        position: relative;
+        background: #0b0d12;
+      }
 
-    .viewer {
-      position: relative;
-      background: #0b0d12;
-    }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
 
-    canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-    }
+      .overlay {
+        position: absolute;
+        left: 10px;
+        top: 10px;
+        display: flex;
+        gap: 8px;
+        background: rgba(0, 0, 0, 0.35);
+        padding: 8px;
+        border-radius: 10px;
+        backdrop-filter: blur(6px);
+      }
 
-    .overlay {
-      position: absolute;
-      left: 10px;
-      top: 10px;
-      display: flex;
-      gap: 8px;
-      background: rgba(0, 0, 0, 0.35);
-      padding: 8px;
-      border-radius: 10px;
-      backdrop-filter: blur(6px);
-    }
+      .overlay select,
+      .overlay label {
+        font-size: 12px;
+      }
 
-    .overlay select,
-    .overlay label {
-      font-size: 12px;
-    }
+      .log {
+        grid-column: 1 / -1;
+        background: #121318;
+        border-top: 1px solid #000;
+        padding: 8px;
+        overflow: auto;
+      }
 
-    .log {
-      grid-column: 1 / -1;
-      background: #121318;
-      border-top: 1px solid #000;
-      padding: 8px;
-      overflow: auto;
-    }
+      .log pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #d1d5db;
+      }
 
-    .log pre {
-      margin: 0;
-      white-space: pre-wrap;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      color: #d1d5db;
-    }
+      .dropzone {
+        position: absolute;
+        inset: 0;
+        border: 2px dashed #3a3d46;
+        border-radius: 8px;
+        display: none;
+        place-items: center;
+        color: #9aa0aa;
+        background: rgba(0, 0, 0, 0.2);
+        pointer-events: none;
+      }
 
-    .dropzone {
-      position: absolute;
-      inset: 0;
-      border: 2px dashed #3a3d46;
-      border-radius: 8px;
-      display: none;
-      place-items: center;
-      color: #9aa0aa;
-      background: rgba(0, 0, 0, 0.2);
-      pointer-events: none;
-    }
+      .dropzone.active {
+        display: grid;
+      }
 
-    .dropzone.active {
-      display: grid;
-    }
-
-    .spacer {
-      flex: 1;
-    }
-  </style>
-  <script type="importmap">
+      .spacer {
+        flex: 1;
+      }
+    </style>
+    <script type="importmap">
       {
         "imports": {
           "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
@@ -204,130 +203,132 @@
         }
       }
     </script>
-</head>
+  </head>
 
-<body>
-  <div class="app">
-    <header>
-      <h1>GLB 올인원 추출 & 뷰어</h1>
-      <div class="toolbar">
-        <label class="btn file">파일 열기<input id="fileInput" type="file" accept=".glb,.gltf" /></label>
-        <button id="exportSelected" class="btn btn-accent" disabled>
-          선택 항목 내보내기
-        </button>
-        <button id="exportAll" class="btn" disabled>
-          전체 일괄 내보내기
-        </button>
-        <button id="clear" class="btn btn-ghost">초기화</button>
-        <span class="small" id="meta"></span>
-      </div>
-      <div class="spacer"></div>
-      <div class="toolbar">
-        <label><input id="autoRotate" type="checkbox" /> AutoRotate</label>
-        <label><input id="loop" type="checkbox" checked /> Loop</label>
-      </div>
-    </header>
+  <body>
+    <div class="app">
+      <header>
+        <h1>GLB 올인원 추출 & 뷰어</h1>
+        <div class="toolbar">
+          <label class="btn file"
+            >파일 열기<input id="fileInput" type="file" accept=".glb,.gltf"
+          /></label>
+          <button id="exportSelected" class="btn btn-accent" disabled>
+            선택 항목 내보내기
+          </button>
+          <button id="exportAll" class="btn" disabled>
+            전체 일괄 내보내기
+          </button>
+          <button id="clear" class="btn btn-ghost">초기화</button>
+          <span class="small" id="meta"></span>
+        </div>
+        <div class="spacer"></div>
+        <div class="toolbar">
+          <label><input id="autoRotate" type="checkbox" /> AutoRotate</label>
+          <label><input id="loop" type="checkbox" checked /> Loop</label>
+        </div>
+      </header>
 
-    <aside class="sidebar">
-      <div class="small" style="margin: 4px 0 8px">
-        오브젝트 목록 (메시 포함 노드)
-      </div>
-      <div id="list" class="list"></div>
-    </aside>
+      <aside class="sidebar">
+        <div class="small" style="margin: 4px 0 8px">
+          오브젝트 목록 (메시 포함 노드)
+        </div>
+        <div id="list" class="list"></div>
+      </aside>
 
-    <main class="viewer" id="viewer">
-      <div class="overlay">
-        <select id="clipSelect">
-          <option value="">애니메이션 없음</option>
-        </select>
-        <button id="playBtn" class="btn">재생</button>
-        <button id="pauseBtn" class="btn">일시정지</button>
-        <div id="clipInfo" class="small"></div>
-      </div>
-      <div class="dropzone" id="dropzone">여기에 파일을 드래그 앤 드롭</div>
-    </main>
+      <main class="viewer" id="viewer">
+        <div class="overlay">
+          <select id="clipSelect">
+            <option value="">애니메이션 없음</option>
+          </select>
+          <button id="playBtn" class="btn">재생</button>
+          <button id="pauseBtn" class="btn">일시정지</button>
+          <div id="clipInfo" class="small"></div>
+        </div>
+        <div class="dropzone" id="dropzone">여기에 파일을 드래그 앤 드롭</div>
+      </main>
 
-    <section class="log">
-      <pre id="log"></pre>
-    </section>
-  </div>
+      <section class="log">
+        <pre id="log"></pre>
+      </section>
+    </div>
 
-  <script type="module">
-    import * as THREE from 'three'
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
-    import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-    import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js' // ✅ 핵심: 네임스페이스 임포트
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+      import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+      import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js' // ✅ 핵심: 네임스페이스 임포트
 
-    // ---------------- UI / 상태 ----------------
-    const logEl = document.getElementById('log')
-    const listEl = document.getElementById('list')
-    const metaEl = document.getElementById('meta')
-    const viewerEl = document.getElementById('viewer')
-    const dropzone = document.getElementById('dropzone')
-    const fileInput = document.getElementById('fileInput')
-    const clipSelect = document.getElementById('clipSelect')
-    const playBtn = document.getElementById('playBtn')
-    const pauseBtn = document.getElementById('pauseBtn')
-    const exportSelectedBtn = document.getElementById('exportSelected')
-    const exportAllBtn = document.getElementById('exportAll')
-    const clearBtn = document.getElementById('clear')
-    const autoRotateChk = document.getElementById('autoRotate')
-    const loopChk = document.getElementById('loop')
+      // ---------------- UI / 상태 ----------------
+      const logEl = document.getElementById('log')
+      const listEl = document.getElementById('list')
+      const metaEl = document.getElementById('meta')
+      const viewerEl = document.getElementById('viewer')
+      const dropzone = document.getElementById('dropzone')
+      const fileInput = document.getElementById('fileInput')
+      const clipSelect = document.getElementById('clipSelect')
+      const playBtn = document.getElementById('playBtn')
+      const pauseBtn = document.getElementById('pauseBtn')
+      const exportSelectedBtn = document.getElementById('exportSelected')
+      const exportAllBtn = document.getElementById('exportAll')
+      const clearBtn = document.getElementById('clear')
+      const autoRotateChk = document.getElementById('autoRotate')
+      const loopChk = document.getElementById('loop')
 
-    const log = (...a) => {
-      console.log(...a)
-      logEl.textContent += a.join(' ') + '\\n'
-      logEl.scrollTop = logEl.scrollHeight
-    }
+      const log = (...a) => {
+        console.log(...a)
+        logEl.textContent += a.join(' ') + '\\n'
+        logEl.scrollTop = logEl.scrollHeight
+      }
 
-    let renderer, scene, camera, controls, clock
-    let srcGLTF = null // { scene, animations }
-    let candidates = [] // export 대상 노드들
-    let selectedIndex = -1
+      let renderer, scene, camera, controls, clock
+      let srcGLTF = null // { scene, animations }
+      let candidates = [] // export 대상 노드들
+      let selectedIndex = -1
 
-    let modelRoot = null // 현재 뷰어에 올라간 모델 루트
-    let mixer = null
-    let currentActions = []
-    let relatedClips = [] // 선택 대상에 매칭된 클립들
+      let modelRoot = null // 현재 뷰어에 올라간 모델 루트
+      let mixer = null
+      let currentActions = []
+      let relatedClips = [] // 선택 대상에 매칭된 클립들
 
-    init3D()
-    bindUI()
+      init3D()
+      bindUI()
 
-    function init3D() {
-      renderer = new THREE.WebGLRenderer({ antialias: true })
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-      renderer.setSize(viewerEl.clientWidth, viewerEl.clientHeight)
-      viewerEl.appendChild(renderer.domElement)
+      function init3D() {
+        renderer = new THREE.WebGLRenderer({ antialias: true })
+        renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+        renderer.setSize(viewerEl.clientWidth, viewerEl.clientHeight)
+        viewerEl.appendChild(renderer.domElement)
 
-      scene = new THREE.Scene()
-      scene.background = new THREE.Color(0x0b0d12)
+        scene = new THREE.Scene()
+        scene.background = new THREE.Color(0x0b0d12)
 
-      camera = new THREE.PerspectiveCamera(
-        60,
-        viewerEl.clientWidth / viewerEl.clientHeight,
-        0.1,
-        2000
-      )
-      camera.position.set(0, 1.5, 3)
+        camera = new THREE.PerspectiveCamera(
+          60,
+          viewerEl.clientWidth / viewerEl.clientHeight,
+          0.1,
+          2000
+        )
+        camera.position.set(0, 1.5, 3)
 
-      const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.6)
-      scene.add(hemi)
-      const dir = new THREE.DirectionalLight(0xffffff, 0.8)
-      dir.position.set(5, 10, 7.5)
-      scene.add(dir)
+        const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.6)
+        scene.add(hemi)
+        const dir = new THREE.DirectionalLight(0xffffff, 0.8)
+        dir.position.set(5, 10, 7.5)
+        scene.add(dir)
 
-      const grid = new THREE.GridHelper(10, 10, 0x20252f, 0x20252f)
-      grid.position.y = 0
-      scene.add(grid)
+        const grid = new THREE.GridHelper(10, 10, 0x20252f, 0x20252f)
+        grid.position.y = 0
+        scene.add(grid)
 
-      controls = new OrbitControls(camera, renderer.domElement)
-      controls.enableDamping = true
-      controls.target.set(0, 1, 0)
+        controls = new OrbitControls(camera, renderer.domElement)
+        controls.enableDamping = true
+        controls.target.set(0, 1, 0)
 
-      clock = new THREE.Clock()
+        clock = new THREE.Clock()
 
-      window.addEventListener('resize', onResize)
+        window.addEventListener('resize', onResize)
         ;['dragenter', 'dragover'].forEach((evt) =>
           viewerEl.addEventListener(evt, (e) => {
             e.preventDefault()
@@ -340,276 +341,276 @@
             dropzone.classList.remove('active')
           })
         )
-      viewerEl.addEventListener('drop', onDrop)
+        viewerEl.addEventListener('drop', onDrop)
 
-      animate()
-    }
-
-    function onResize() {
-      const w = viewerEl.clientWidth,
-        h = viewerEl.clientHeight
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-      renderer.setSize(w, h)
-    }
-
-    function animate() {
-      requestAnimationFrame(animate)
-      const dt = clock.getDelta()
-      if (mixer) mixer.update(dt)
-      controls.autoRotate = autoRotateChk.checked
-      controls.update()
-      renderer.render(scene, camera)
-    }
-
-    function bindUI() {
-      fileInput.addEventListener('change', (e) => {
-        const f = e.target.files?.[0]
-        if (f) loadLocalGLB(f)
-      })
-      playBtn.addEventListener('click', () => playSelectedClip())
-      pauseBtn.addEventListener('click', () =>
-        currentActions.forEach((a) => (a.paused = true))
-      )
-      clipSelect.addEventListener('change', () => playSelectedClip())
-      exportSelectedBtn.addEventListener('click', exportSelected)
-      exportAllBtn.addEventListener('click', exportAll)
-      clearBtn.addEventListener('click', resetAll)
-    }
-
-    function onDrop(e) {
-      const file = e.dataTransfer.files?.[0]
-      if (file) loadLocalGLB(file)
-    }
-
-    // ---------------- 로딩 / 후보 추출 ----------------
-    const gltfLoader = new GLTFLoader()
-    const exporter = new GLTFExporter()
-
-    function loadLocalGLB(file) {
-      resetAll()
-      const url = URL.createObjectURL(file)
-      log('파일 로드 시작:', file.name, file.size + ' bytes')
-
-      gltfLoader.load(
-        url,
-        (gltf) => {
-          URL.revokeObjectURL(url)
-          srcGLTF = gltf
-          log('로드 완료. animations:', gltf.animations?.length || 0)
-
-          const exportRoot = findExportRoot(gltf.scene)
-          candidates = findCandidates(exportRoot)
-
-          metaEl.textContent = `오브젝트 ${candidates.length}개`
-          renderList()
-
-          if (candidates.length > 0) selectIndex(0)
-          exportAllBtn.disabled = candidates.length === 0
-        },
-        undefined,
-        (err) => {
-          URL.revokeObjectURL(url)
-          log('❌ 로드 실패:', err)
-        }
-      )
-    }
-
-    function findExportRoot(scene) {
-      let root = null
-      scene.traverse((n) => {
-        if (n.name === 'GLTF_SceneRootNode') root = n
-      })
-      return root || scene
-    }
-
-    function findCandidates(root) {
-      const out = []
-      const children = root.children.length ? root.children : [root]
-      children.forEach((child) => {
-        let meshCount = 0
-        child.traverse((d) => {
-          if (d.isMesh) meshCount++
-        })
-        if (meshCount > 0) out.push(child)
-      })
-      if (out.length === 0) {
-        // 최후의 수단: 루트 하위 모든 1레벨 노드
-        root.children.forEach((c) => out.push(c))
-      }
-      log('후보 수집:', out.length)
-      return out
-    }
-
-    // ---------------- 리스트/선택/미리보기 ----------------
-    function renderList() {
-      listEl.innerHTML = ''
-      candidates.forEach((n, i) => {
-        const div = document.createElement('div')
-        div.className = 'item' + (i === selectedIndex ? ' active' : '')
-        const name = n.name || `(unnamed_${i + 1})`
-        const stats = getMeshStats(n)
-        div.innerHTML = `<div><b>${name}</b></div><div class="small">${stats}</div>`
-        div.addEventListener('click', () => selectIndex(i))
-        listEl.appendChild(div)
-      })
-    }
-
-    function getMeshStats(node) {
-      let meshes = 0,
-        skinned = 0,
-        tris = 0
-      node.traverse((d) => {
-        if (d.isMesh) {
-          meshes++
-          if (d.isSkinnedMesh) skinned++
-          if (d.geometry)
-            tris += d.geometry.index
-              ? d.geometry.index.count / 3
-              : (d.geometry.attributes.position?.count || 0) / 3
-        }
-      })
-      return `meshes:${meshes} skinned:${skinned} ~tris:${Math.round(tris)}`
-    }
-
-    function selectIndex(i) {
-      selectedIndex = i
-      renderList()
-      loadPreview(candidates[i])
-    }
-
-    function disposePreview() {
-      if (mixer) {
-        mixer.stopAllAction()
-        mixer.uncacheRoot(modelRoot)
-        mixer = null
-      }
-      if (modelRoot) {
-        scene.remove(modelRoot)
-        modelRoot.traverse((o) => {
-          if (o.isMesh) o.geometry?.dispose()
-        })
-        modelRoot = null
-      }
-      currentActions = []
-      relatedClips = []
-      clipSelect.innerHTML = '<option value="">애니메이션 없음</option>'
-      document.getElementById('clipInfo').textContent = ''
-      exportSelectedBtn.disabled = true
-    }
-
-    function loadPreview(sourceNode) {
-      disposePreview()
-
-      // 스켈레톤/바인딩 안전 복제
-      const cloned = SkeletonUtils.clone(sourceNode)
-      modelRoot = new THREE.Group()
-      modelRoot.add(cloned)
-      scene.add(modelRoot)
-
-      frameObject(modelRoot)
-
-      // 해당 노드의 이름 집합 수집 → 애니메이션 트랙 필터링
-      const allowedNames = collectNodeNames(cloned)
-      relatedClips = filterAnimations(srcGLTF.animations || [], allowedNames)
-
-      if (relatedClips.length) {
-        mixer = new THREE.AnimationMixer(modelRoot)
-        fillClipSelect(relatedClips)
-        playSelectedClip()
-      } else {
-        mixer = null
-        clipSelect.innerHTML = '<option value="">애니메이션 없음</option>'
-        document.getElementById('clipInfo').textContent = '애니메이션 없음'
+        animate()
       }
 
-      exportSelectedBtn.disabled = false
-    }
-
-    function frameObject(root) {
-      // 화면에서 보기 좋게 카메라/컨트롤 타깃 맞춤
-      const box = new THREE.Box3().setFromObject(root)
-      if (!box.isEmpty()) {
-        const sphere = box.getBoundingSphere(new THREE.Sphere())
-        controls.target.copy(sphere.center)
-        const dist = sphere.radius * 2.5 + 0.5
-        camera.position
-          .copy(sphere.center)
-          .add(new THREE.Vector3(dist, dist * 0.8, dist))
-        camera.near = Math.max(0.01, sphere.radius / 100)
-        camera.far = Math.max(10, dist * 20)
+      function onResize() {
+        const w = viewerEl.clientWidth,
+          h = viewerEl.clientHeight
+        camera.aspect = w / h
         camera.updateProjectionMatrix()
+        renderer.setSize(w, h)
       }
-    }
 
-    function collectNodeNames(root) {
-      const set = new Set()
-      root.traverse((o) => {
-        if (o.name) set.add(o.name)
-      })
-      return set
-    }
+      function animate() {
+        requestAnimationFrame(animate)
+        const dt = clock.getDelta()
+        if (mixer) mixer.update(dt)
+        controls.autoRotate = autoRotateChk.checked
+        controls.update()
+        renderer.render(scene, camera)
+      }
 
-    function filterAnimations(anims, allowed) {
-      const out = []
-      for (const clip of anims) {
-        const kept = clip.tracks.filter((t) => {
-          // track name: "Node.property" 또는 "Node.morphTargetInfluences[0]"
-          const target = t.name.split('.')[0]
-          return allowed.has(target)
+      function bindUI() {
+        fileInput.addEventListener('change', (e) => {
+          const f = e.target.files?.[0]
+          if (f) loadLocalGLB(f)
         })
-        if (kept.length) {
-          const nc = clip.clone()
-          nc.tracks = kept
-          out.push(nc)
+        playBtn.addEventListener('click', () => playSelectedClip())
+        pauseBtn.addEventListener('click', () =>
+          currentActions.forEach((a) => (a.paused = true))
+        )
+        clipSelect.addEventListener('change', () => playSelectedClip())
+        exportSelectedBtn.addEventListener('click', exportSelected)
+        exportAllBtn.addEventListener('click', exportAll)
+        clearBtn.addEventListener('click', resetAll)
+      }
+
+      function onDrop(e) {
+        const file = e.dataTransfer.files?.[0]
+        if (file) loadLocalGLB(file)
+      }
+
+      // ---------------- 로딩 / 후보 추출 ----------------
+      const gltfLoader = new GLTFLoader()
+      const exporter = new GLTFExporter()
+
+      function loadLocalGLB(file) {
+        resetAll()
+        const url = URL.createObjectURL(file)
+        log('파일 로드 시작:', file.name, file.size + ' bytes')
+
+        gltfLoader.load(
+          url,
+          (gltf) => {
+            URL.revokeObjectURL(url)
+            srcGLTF = gltf
+            log('로드 완료. animations:', gltf.animations?.length || 0)
+
+            const exportRoot = findExportRoot(gltf.scene)
+            candidates = findCandidates(exportRoot)
+
+            metaEl.textContent = `오브젝트 ${candidates.length}개`
+            renderList()
+
+            if (candidates.length > 0) selectIndex(0)
+            exportAllBtn.disabled = candidates.length === 0
+          },
+          undefined,
+          (err) => {
+            URL.revokeObjectURL(url)
+            log('❌ 로드 실패:', err)
+          }
+        )
+      }
+
+      function findExportRoot(scene) {
+        let root = null
+        scene.traverse((n) => {
+          if (n.name === 'GLTF_SceneRootNode') root = n
+        })
+        return root || scene
+      }
+
+      function findCandidates(root) {
+        const out = []
+        const children = root.children.length ? root.children : [root]
+        children.forEach((child) => {
+          let meshCount = 0
+          child.traverse((d) => {
+            if (d.isMesh) meshCount++
+          })
+          if (meshCount > 0) out.push(child)
+        })
+        if (out.length === 0) {
+          // 최후의 수단: 루트 하위 모든 1레벨 노드
+          root.children.forEach((c) => out.push(c))
+        }
+        log('후보 수집:', out.length)
+        return out
+      }
+
+      // ---------------- 리스트/선택/미리보기 ----------------
+      function renderList() {
+        listEl.innerHTML = ''
+        candidates.forEach((n, i) => {
+          const div = document.createElement('div')
+          div.className = 'item' + (i === selectedIndex ? ' active' : '')
+          const name = n.name || `(unnamed_${i + 1})`
+          const stats = getMeshStats(n)
+          div.innerHTML = `<div><b>${name}</b></div><div class="small">${stats}</div>`
+          div.addEventListener('click', () => selectIndex(i))
+          listEl.appendChild(div)
+        })
+      }
+
+      function getMeshStats(node) {
+        let meshes = 0,
+          skinned = 0,
+          tris = 0
+        node.traverse((d) => {
+          if (d.isMesh) {
+            meshes++
+            if (d.isSkinnedMesh) skinned++
+            if (d.geometry)
+              tris += d.geometry.index
+                ? d.geometry.index.count / 3
+                : (d.geometry.attributes.position?.count || 0) / 3
+          }
+        })
+        return `meshes:${meshes} skinned:${skinned} ~tris:${Math.round(tris)}`
+      }
+
+      function selectIndex(i) {
+        selectedIndex = i
+        renderList()
+        loadPreview(candidates[i])
+      }
+
+      function disposePreview() {
+        if (mixer) {
+          mixer.stopAllAction()
+          mixer.uncacheRoot(modelRoot)
+          mixer = null
+        }
+        if (modelRoot) {
+          scene.remove(modelRoot)
+          modelRoot.traverse((o) => {
+            if (o.isMesh) o.geometry?.dispose()
+          })
+          modelRoot = null
+        }
+        currentActions = []
+        relatedClips = []
+        clipSelect.innerHTML = '<option value="">애니메이션 없음</option>'
+        document.getElementById('clipInfo').textContent = ''
+        exportSelectedBtn.disabled = true
+      }
+
+      function loadPreview(sourceNode) {
+        disposePreview()
+
+        // 스켈레톤/바인딩 안전 복제
+        const cloned = SkeletonUtils.clone(sourceNode)
+        modelRoot = new THREE.Group()
+        modelRoot.add(cloned)
+        scene.add(modelRoot)
+
+        frameObject(modelRoot)
+
+        // 해당 노드의 이름 집합 수집 → 애니메이션 트랙 필터링
+        const allowedNames = collectNodeNames(cloned)
+        relatedClips = filterAnimations(srcGLTF.animations || [], allowedNames)
+
+        if (relatedClips.length) {
+          mixer = new THREE.AnimationMixer(modelRoot)
+          fillClipSelect(relatedClips)
+          playSelectedClip()
+        } else {
+          mixer = null
+          clipSelect.innerHTML = '<option value="">애니메이션 없음</option>'
+          document.getElementById('clipInfo').textContent = '애니메이션 없음'
+        }
+
+        exportSelectedBtn.disabled = false
+      }
+
+      function frameObject(root) {
+        // 화면에서 보기 좋게 카메라/컨트롤 타깃 맞춤
+        const box = new THREE.Box3().setFromObject(root)
+        if (!box.isEmpty()) {
+          const sphere = box.getBoundingSphere(new THREE.Sphere())
+          controls.target.copy(sphere.center)
+          const dist = sphere.radius * 2.5 + 0.5
+          camera.position
+            .copy(sphere.center)
+            .add(new THREE.Vector3(dist, dist * 0.8, dist))
+          camera.near = Math.max(0.01, sphere.radius / 100)
+          camera.far = Math.max(10, dist * 20)
+          camera.updateProjectionMatrix()
         }
       }
-      return out
-    }
 
-    function fillClipSelect(clips) {
-      clipSelect.innerHTML = ''
-      clips.forEach((c, i) => {
-        const opt = document.createElement('option')
-        opt.value = String(i)
-        opt.textContent = c.name || `Clip ${i + 1}`
-        clipSelect.appendChild(opt)
-      })
-      document.getElementById('clipInfo').textContent =
-        `${clips.length} clip(s)`
-    }
+      function collectNodeNames(root) {
+        const set = new Set()
+        root.traverse((o) => {
+          if (o.name) set.add(o.name)
+        })
+        return set
+      }
 
-    function playSelectedClip() {
-      if (!mixer || !relatedClips.length) return
-      currentActions.forEach((a) => {
-        a.stop()
-        mixer.uncacheAction(a.getClip(), modelRoot)
-      })
-      currentActions.length = 0
+      function filterAnimations(anims, allowed) {
+        const out = []
+        for (const clip of anims) {
+          const kept = clip.tracks.filter((t) => {
+            // track name: "Node.property" 또는 "Node.morphTargetInfluences[0]"
+            const target = t.name.split('.')[0]
+            return allowed.has(target)
+          })
+          if (kept.length) {
+            const nc = clip.clone()
+            nc.tracks = kept
+            out.push(nc)
+          }
+        }
+        return out
+      }
 
-      const idx = parseInt(clipSelect.value || '0', 10)
-      const clip = relatedClips[idx] || relatedClips[0]
+      function fillClipSelect(clips) {
+        clipSelect.innerHTML = ''
+        clips.forEach((c, i) => {
+          const opt = document.createElement('option')
+          opt.value = String(i)
+          opt.textContent = c.name || `Clip ${i + 1}`
+          clipSelect.appendChild(opt)
+        })
+        document.getElementById('clipInfo').textContent =
+          `${clips.length} clip(s)`
+      }
 
-      const action = mixer.clipAction(clip)
-      action.reset()
-      action.paused = false
-      action.loop = loopChk.checked ? THREE.LoopRepeat : THREE.LoopOnce
-      action.clampWhenFinished = true
-      action.play()
+      function playSelectedClip() {
+        if (!mixer || !relatedClips.length) return
+        currentActions.forEach((a) => {
+          a.stop()
+          mixer.uncacheAction(a.getClip(), modelRoot)
+        })
+        currentActions.length = 0
 
-      currentActions.push(action)
-    }
+        const idx = parseInt(clipSelect.value || '0', 10)
+        const clip = relatedClips[idx] || relatedClips[0]
 
-    // ---------------- Export ----------------
-    function exportSelected() {
-      if (selectedIndex < 0) return
-      doExportOne(candidates[selectedIndex], relatedClips, selectedIndex)
-    }
+        const action = mixer.clipAction(clip)
+        action.reset()
+        action.paused = false
+        action.loop = loopChk.checked ? THREE.LoopRepeat : THREE.LoopOnce
+        action.clampWhenFinished = true
+        action.play()
 
-    function exportAll() {
-      if (!candidates.length) return
-      log('=== 전체 일괄 내보내기 시작 ===')
-        ; (async () => {
+        currentActions.push(action)
+      }
+
+      // ---------------- Export ----------------
+      function exportSelected() {
+        if (selectedIndex < 0) return
+        doExportOne(candidates[selectedIndex], relatedClips, selectedIndex)
+      }
+
+      function exportAll() {
+        if (!candidates.length) return
+        log('=== 전체 일괄 내보내기 시작 ===')
+        ;(async () => {
           for (let i = 0; i < candidates.length; i++) {
             const node = candidates[i]
             // 각 노드마다 새로 필터링 (노드별 이름 집합이 다름)
@@ -622,67 +623,66 @@
           }
           log('=== 전체 일괄 내보내기 완료 ===')
         })()
-    }
+      }
 
-    function doExportOne(sourceNode, clips, index, silent = false) {
-      return new Promise((resolve) => {
-        const cloned = SkeletonUtils.clone(sourceNode)
+      function doExportOne(sourceNode, clips, index, silent = false) {
+        return new Promise((resolve) => {
+          const cloned = SkeletonUtils.clone(sourceNode)
 
-        // 클론된 노드를 원점으로 이동하고 X축으로 90도 회전
-        cloned.position.set(0, 0, 0)
-        cloned.rotation.set(Math.PI / 2, 0, 0) // X축으로 +90도 회전 (라디안)
-        cloned.scale.set(1, 1, 1)
+          // 클론된 노드를 원점으로 이동하고 X축으로 90도 회전
+          cloned.position.set(0, 0, 0)
+          cloned.rotation.set(Math.PI / 2, 0, 0) // X축으로 +90도 회전 (라디안)
+          cloned.scale.set(1, 1, 1)
 
-        const exportScene = new THREE.Scene()
-        exportScene.add(cloned)
+          const exportScene = new THREE.Scene()
+          exportScene.add(cloned)
 
-        const safeName = (sourceNode.name || `object_${index + 1}`).replace(
-          /[^a-zA-Z0-9_-]/g,
-          '_'
-        )
-        const fileName = `animated_${String(index + 1).padStart(2, '0')}_${safeName}.glb`
+          const safeName = (sourceNode.name || `object_${index + 1}`).replace(
+            /[^a-zA-Z0-9_-]/g,
+            '_'
+          )
+          const fileName = `animated_${String(index + 1).padStart(2, '0')}_${safeName}.glb`
 
-        exporter.parse(
-          exportScene,
-          (ab) => {
-            const blob = new Blob([ab], { type: 'model/gltf-binary' })
-            const url = URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = fileName
-            document.body.appendChild(a)
-            a.click()
-            document.body.removeChild(a)
-            URL.revokeObjectURL(url)
-            if (!silent) log('✓ 내보내기 완료:', fileName)
-            resolve()
-          },
-          (err) => {
-            log('❌ 내보내기 실패:', fileName, err)
-            resolve()
-          },
-          {
-            binary: true,
-            animations: clips,
-          }
-        )
-      })
-    }
+          exporter.parse(
+            exportScene,
+            (ab) => {
+              const blob = new Blob([ab], { type: 'model/gltf-binary' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = fileName
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+              URL.revokeObjectURL(url)
+              if (!silent) log('✓ 내보내기 완료:', fileName)
+              resolve()
+            },
+            (err) => {
+              log('❌ 내보내기 실패:', fileName, err)
+              resolve()
+            },
+            {
+              binary: true,
+              animations: clips,
+            }
+          )
+        })
+      }
 
-    // ---------------- 기타 ----------------
-    function resetAll() {
-      // 상태 초기화
-      candidates = []
-      selectedIndex = -1
-      srcGLTF = null
-      disposePreview()
-      listEl.innerHTML = ''
-      metaEl.textContent = ''
-      exportAllBtn.disabled = true
-      exportSelectedBtn.disabled = true
-      log('상태 초기화 완료')
-    }
-  </script>
-</body>
-
+      // ---------------- 기타 ----------------
+      function resetAll() {
+        // 상태 초기화
+        candidates = []
+        selectedIndex = -1
+        srcGLTF = null
+        disposePreview()
+        listEl.innerHTML = ''
+        metaEl.textContent = ''
+        exportAllBtn.disabled = true
+        exportSelectedBtn.disabled = true
+        log('상태 초기화 완료')
+      }
+    </script>
+  </body>
 </html>
