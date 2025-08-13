@@ -4,6 +4,7 @@
   import type { Vector3 } from 'three'
   import * as THREE from 'three'
   import { GLTFLoader } from 'three/examples/jsm/Addons.js'
+  import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
   import { onMount } from 'svelte'
 
   interface Props {
@@ -51,87 +52,126 @@
     return [pitch, yaw, 0]
   }
 
-  // Load static model instead of animated one
+  // Load animated model
   const gltf = useLoader(GLTFLoader).load(
-    '/models/static_1_Armature011_66.glb'
+    '/models/animated_13_Armature006_870.glb'
   )
 
-  // Simple animation system
-  let simpleAnimation = $state<{
-    update: (deltaTime: number) => void
-    isPlaying: boolean
-    startTime: number
-  } | null>(null)
+  // Animation system - following gpt-all-in-one.html approach
+  let mixer: THREE.AnimationMixer | null = null
+  let currentAction: THREE.AnimationAction | null = null
   let animationId: number | null = null
-  let lastTime = 0
-  // No need for yOffset anymore - models are pre-positioned with feet at origin
+  let lastMovingState = false
+  let modelRoot = $state<THREE.Group | null>(null) // ✅ $state로 반응성 추가
+  let clock = new THREE.Clock()
 
-  function updateAnimation(time: number) {
-    const deltaTime = (time - lastTime) / 1000
-    lastTime = time
+  function updateAnimation() {
+    const deltaTime = clock.getDelta()
 
-    if (simpleAnimation && $gltf) {
-      simpleAnimation.update(deltaTime)
+    if (mixer) {
+      mixer.update(deltaTime)
+
+      // Handle movement state changes
+      if (isMoving !== lastMovingState) {
+        if (currentAction) {
+          if (isMoving) {
+            currentAction.timeScale = 2.0 // Faster when moving
+          } else {
+            currentAction.timeScale = 1.0 // Normal speed when idle
+          }
+        }
+        lastMovingState = isMoving
+      }
     }
 
     animationId = requestAnimationFrame(updateAnimation)
   }
 
-  function setupSimpleAnimation() {
-    if ($gltf && !simpleAnimation) {
-      console.log('Setting up simple animation for static model')
+  function collectNodeNames(root: THREE.Object3D): Set<string> {
+    const set = new Set<string>()
+    root.traverse((obj) => {
+      if (obj.name) set.add(obj.name)
+    })
+    return set
+  }
 
-      console.log('Model should already be positioned with feet at origin')
+  function filterAnimations(
+    anims: THREE.AnimationClip[],
+    allowedNames: Set<string>
+  ): THREE.AnimationClip[] {
+    const out: THREE.AnimationClip[] = []
+    for (const clip of anims) {
+      const kept = clip.tracks.filter((track) => {
+        // track name: "NodeName.property" format
+        const target = track.name.split('.')[0]
+        return allowedNames.has(target)
+      })
+      if (kept.length > 0) {
+        const newClip = clip.clone()
+        newClip.tracks = kept
+        out.push(newClip)
+      }
+    }
+    return out
+  }
 
-      // Enable shadows on all meshes in the model
-      $gltf.scene.traverse((child) => {
+  function setupRealAnimation() {
+    if ($gltf && !mixer && !modelRoot) {
+      console.log('Setting up real animation system')
+
+      // Create a safely cloned model using SkeletonUtils - gpt-all-in-one.html 패턴 따름
+      const cloned = SkeletonUtils.clone($gltf.scene)
+      const newModelRoot = new THREE.Group()
+      newModelRoot.add(cloned)
+
+      // Enable shadows on all meshes
+      newModelRoot.traverse((child) => {
         if (child instanceof THREE.Mesh) {
           child.castShadow = true
           child.receiveShadow = true
         }
       })
 
-      // Create simple animation system
-      simpleAnimation = {
-        isPlaying: true,
-        startTime: performance.now(),
-        update(_deltaTime: number) {
-          if (!$gltf || !this.isPlaying) return
+      // Collect node names for animation filtering
+      const allowedNames = collectNodeNames(cloned)
+      console.log(`Found ${allowedNames.size} node names for filtering`)
 
-          const elapsed = (performance.now() - this.startTime) / 1000
-          const model = $gltf.scene
+      // Filter animations based on node names
+      const animations = $gltf.animations || []
+      const relatedClips = filterAnimations(animations, allowedNames)
+      console.log(`Found ${relatedClips.length} relevant animation clips`)
 
-          if (isMoving) {
-            // Walking animation: slight bounce and forward lean
-            model.position.y = Math.sin(elapsed * 8) * 0.05 // Faster bounce when walking
-            model.rotation.x = Math.sin(elapsed * 8) * 0.02 // Slight forward lean rhythm
-            
-            // Slight side-to-side sway
-            model.rotation.z = Math.sin(elapsed * 6) * 0.01
-          } else {
-            // Idle animation: gentle breathing and subtle movement
-            model.position.y = Math.sin(elapsed * 2) * 0.02 // Gentle breathing
-            model.rotation.x = Math.sin(elapsed * 1.5) * 0.005 // Very subtle head movement
-            
-            // Occasional slight turn
-            model.rotation.y = Math.sin(elapsed * 0.8) * 0.01
-          }
-        }
+      if (relatedClips.length > 0) {
+        // Setup mixer and play first animation - gpt-all-in-one.html 패턴
+        mixer = new THREE.AnimationMixer(newModelRoot)
+        const clip = relatedClips[0]
+        console.log(
+          `Playing animation: ${clip.name}, duration: ${clip.duration}s`
+        )
+
+        currentAction = mixer.clipAction(clip)
+        currentAction.reset()
+        currentAction.loop = THREE.LoopRepeat
+        currentAction.paused = false
+        currentAction.play()
+
+        // Start animation loop
+        clock.start()
+        animationId = requestAnimationFrame(updateAnimation)
+      } else {
+        console.warn('No suitable animations found')
       }
 
-      // Start animation loop
-      lastTime = performance.now()
-      animationId = requestAnimationFrame(updateAnimation)
-      
-      console.log('Simple animation system initialized')
+      // ✅ 반응성 있는 상태로 설정
+      modelRoot = newModelRoot
     }
   }
 
   onMount(() => {
-    // Wait for GLTF to load and setup simple animations
+    // Wait for GLTF to load and setup real animation
     const checkGltf = () => {
       if ($gltf) {
-        setupSimpleAnimation()
+        setupRealAnimation()
       } else {
         setTimeout(checkGltf, 100)
       }
@@ -143,23 +183,27 @@
       if (animationId) {
         cancelAnimationFrame(animationId)
       }
-      if (simpleAnimation) {
-        simpleAnimation.isPlaying = false
+      if (mixer) {
+        mixer.stopAllAction()
+        mixer = null
+      }
+      if (modelRoot) {
+        modelRoot = null
       }
     }
   })
 </script>
 
 <!-- Character Model -->
-<T.Group
-  position={[position.x, position.y, position.z]}
-  rotation={[0, rotation, 0]}
->
-  <!-- 3D Character Model (pre-positioned with feet at origin) -->
-  {#if $gltf}
-    <T is={$gltf.scene} />
-  {/if}
-</T.Group>
+{#if modelRoot}
+  <T.Group
+    position={[position.x, position.y, position.z]}
+    rotation={[0, rotation, 0]}
+  >
+    <!-- 3D Character Model with real animations -->
+    <T is={modelRoot} />
+  </T.Group>
+{/if}
 
 <!-- Name tag (separate from character to avoid rotation inheritance) -->
 <Text

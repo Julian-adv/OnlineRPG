@@ -1,7 +1,7 @@
 <!doctype html>
 <html>
   <head>
-    <title>Extract Static Models (No Animation)</title>
+    <title>Extract Animated Models (With Filtered Animations)</title>
     <script type="importmap">
       {
         "imports": {
@@ -12,7 +12,7 @@
     </script>
   </head>
   <body>
-    <h1>Extracting Static Models (No Animation)...</h1>
+    <h1>Extracting Animated Models (With Filtered Animations)...</h1>
     <div id="progress"></div>
 
     <script type="module">
@@ -33,7 +33,7 @@
       updateProgress('Loading models GLB file...')
 
       loader.load(
-        './models/girls_-_14_anims.glb',
+        './models/beautiful_realistic_undressed_girls_-_14_anims.glb',
         (gltf) => {
           updateProgress('GLB file loaded successfully')
 
@@ -70,29 +70,89 @@
 
           updateProgress(`Total objects found: ${objects.length}`)
 
+          // Get all animations from the GLTF file
+          const allAnimations = gltf.animations || []
+          updateProgress(`Found ${allAnimations.length} animations in the file`)
+
+          // Helper function to collect all bone names from an object
+          function getBoneNamesFromObject(object) {
+            const boneNames = new Set()
+            object.traverse((child) => {
+              if (child.isBone) {
+                boneNames.add(child.name)
+              }
+            })
+            return Array.from(boneNames)
+          }
+
           let exportedCount = 0
 
-          // Extract each object as a separate GLB file WITHOUT animations
+          // Extract each object as a separate GLB file WITH filtered animations
           objects.forEach((obj, index) => {
             updateProgress(`\nProcessing object ${index + 1}: ${obj.name}`)
 
-            // Create a completely new, clean scene
+            // Collect bone names from this object
+            const boneNames = getBoneNamesFromObject(obj)
+            updateProgress(`  Found ${boneNames.length} bones in this object`)
+            
+            if (boneNames.length > 0) {
+              updateProgress(`  Bone names: ${boneNames.slice(0, 5).join(', ')}${boneNames.length > 5 ? '...' : ''}`)
+            }
+
+            // Filter animations based on bone names
+            const relatedAnimations = allAnimations
+              .map((clip) => {
+                const filteredTracks = clip.tracks.filter(track => {
+                  return boneNames.some(boneName => track.name.startsWith(boneName))
+                })
+                if (filteredTracks.length > 0) {
+                  const newClip = clip.clone()
+                  newClip.tracks = filteredTracks
+                  updateProgress(`  Found ${filteredTracks.length} animation tracks for bones`)
+                  return newClip
+                }
+                return null
+              })
+              .filter(Boolean)
+
+            updateProgress(`  Filtered ${relatedAnimations.length} animations for this character`)
+
+            // Create a new scene with cloned object
             const newScene = new THREE.Scene()
+            const characterGroup = obj.clone(true)
+            
+            // Position character with feet on ground
+            const boundingBox = new THREE.Box3().setFromObject(characterGroup)
+            const center = boundingBox.getCenter(new THREE.Vector3())
+            const min = boundingBox.min
+            
+            // Move character so feet are at Y=0 and centered on X/Z axes
+            characterGroup.position.set(-center.x, -min.y, -center.z)
+            
+            updateProgress(`  Character positioned: feet at Y=0, centered on X/Z axes`)
+            
+            newScene.add(characterGroup)
 
-            // Create a new group to hold this character
-            const characterGroup = new THREE.Group()
-            characterGroup.name = obj.name || `Character_${index + 1}`
-
-            // Clone all meshes from the original object
+            // Find and copy all meshes and bones, maintaining hierarchy
             const meshes = []
+            const bones = []
+            const skinnedMeshes = []
+            
             obj.traverse((child) => {
               if (child.isMesh) {
                 meshes.push(child)
+                if (child.isSkinnedMesh) {
+                  skinnedMeshes.push(child)
+                }
+              }
+              if (child.isBone || (child.type === 'Object3D' && child.name.includes('mixamorig'))) {
+                bones.push(child)
               }
             })
 
-            updateProgress(`  Found ${meshes.length} meshes to copy`)
+            updateProgress(`  Found ${meshes.length} meshes (${skinnedMeshes.length} skinned) and ${bones.length} bones`)
 
+            // Create a simplified version without complex skeleton structure
             meshes.forEach((mesh, meshIndex) => {
               // Create a completely new mesh
               const newGeometry = mesh.geometry.clone()
@@ -112,14 +172,15 @@
               const newMesh = new THREE.Mesh(newGeometry, newMaterial)
               newMesh.name = mesh.name || `Mesh_${meshIndex}`
 
-              // Copy the mesh's local transformation directly (not world matrix)
+              // Copy the mesh's local transformation
               newMesh.position.copy(mesh.position)
-              newMesh.rotation.set(0, obj.rotation.z, 0)
+              newMesh.rotation.copy(mesh.rotation)
               newMesh.scale.copy(mesh.scale)
 
-              updateProgress(
-                `      Mesh transform: pos(${mesh.position.x.toFixed(2)}, ${mesh.position.y.toFixed(2)}, ${mesh.position.z.toFixed(2)}) rot(${mesh.rotation.x.toFixed(2)}, ${mesh.rotation.y.toFixed(2)}, ${mesh.rotation.z.toFixed(2)})`
-              )
+              // Apply world matrix if needed
+              mesh.updateMatrixWorld()
+              newMesh.matrix.copy(mesh.matrixWorld)
+              newMesh.matrix.decompose(newMesh.position, newMesh.quaternion, newMesh.scale)
 
               newMesh.castShadow = true
               newMesh.receiveShadow = true
@@ -164,7 +225,7 @@
               `  Character centered at origin, size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`
             )
 
-            // Export as GLB WITHOUT animations
+            // Export as GLB WITH filtered animations
             exporter.parse(
               newScene,
               (result) => {
@@ -172,7 +233,7 @@
                   /[^a-zA-Z0-9]/g,
                   '_'
                 )
-                const filename = `static_${index + 1}_${safeName}.glb`
+                const filename = `animated_${index + 1}_${safeName}.glb`
 
                 exportedCount++
 
@@ -190,12 +251,12 @@
                 document.body.removeChild(a)
                 URL.revokeObjectURL(url)
 
-                updateProgress(`✓ Exported: ${filename}`)
+                updateProgress(`✓ Exported with animation: ${filename}`)
 
                 // Check if all objects have been exported
                 if (exportedCount === objects.length) {
                   updateProgress(
-                    '\n🎉 All static models exported successfully!'
+                    '\n🎉 All animated models exported successfully!'
                   )
                 }
               },
@@ -211,7 +272,7 @@
               },
               {
                 binary: true,
-                animations: [], // No animations
+                animations: relatedAnimations
               }
             )
           })
