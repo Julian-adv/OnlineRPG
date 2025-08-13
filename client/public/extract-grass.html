@@ -1,167 +1,184 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
+  <head>
     <title>Extract Grass Meshes</title>
     <script type="importmap">
-    {
+      {
         "imports": {
-            "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
-            "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+          "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
         }
-    }
+      }
     </script>
-</head>
-<body>
+  </head>
+  <body>
     <h1>Extracting Grass Meshes...</h1>
     <div id="progress"></div>
-    
+
     <script type="module">
-        import * as THREE from 'three';
-        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-        import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+      import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 
-        const progressDiv = document.getElementById('progress');
-        
-        function updateProgress(message) {
-            console.log(message);
-            progressDiv.innerHTML += message + '<br>';
-        }
+      const progressDiv = document.getElementById('progress')
 
-        // Load the original GLB file
-        const loader = new GLTFLoader();
-        const exporter = new GLTFExporter();
+      function updateProgress(message) {
+        console.log(message)
+        progressDiv.innerHTML += message + '<br>'
+      }
 
-        updateProgress('Loading grass pack GLB file...');
+      // Load the original GLB file
+      const loader = new GLTFLoader()
+      const exporter = new GLTFExporter()
 
-        loader.load('./models/realistic_grass_pack_for_games_free.glb', (gltf) => {
-            updateProgress('GLB file loaded successfully');
-            
-            const scene = gltf.scene;
-            const meshes = [];
-            const meshInfo = []; // Array to store mesh information
-            
-            // Find all meshes in the scene
-            scene.traverse((child) => {
-                if (child.isMesh) {
-                    meshes.push(child);
-                    updateProgress(`Found mesh: ${child.name}`);
+      updateProgress('Loading grass pack GLB file...')
+
+      loader.load(
+        './models/realistic_grass_pack_for_games_free.glb',
+        (gltf) => {
+          updateProgress('GLB file loaded successfully')
+
+          const scene = gltf.scene
+          const meshes = []
+          const meshInfo = [] // Array to store mesh information
+
+          // Find all meshes in the scene
+          scene.traverse((child) => {
+            if (child.isMesh) {
+              meshes.push(child)
+              updateProgress(`Found mesh: ${child.name}`)
+            }
+          })
+
+          updateProgress(`Total meshes found: ${meshes.length}`)
+
+          let exportedCount = 0
+
+          // Extract each mesh as a separate GLB file
+          meshes.forEach((mesh, index) => {
+            // Create a new scene with just this mesh
+            const newScene = new THREE.Scene()
+
+            // Clone the mesh to avoid modifying the original
+            const clonedMesh = mesh.clone()
+            clonedMesh.material = mesh.material.clone() // Clone material too
+
+            // Calculate bounding box
+            const boundingBox = new THREE.Box3().setFromObject(mesh)
+            const size = boundingBox.getSize(new THREE.Vector3())
+            const center = boundingBox.getCenter(new THREE.Vector3())
+
+            // Reset position to origin
+            clonedMesh.position.set(0, 0, 0)
+            clonedMesh.rotation.set(0, 0, 0)
+            clonedMesh.scale.set(1, 1, 1)
+
+            newScene.add(clonedMesh)
+
+            // Export as GLB
+            exporter.parse(
+              newScene,
+              (result) => {
+                const filename = `grass_${index + 1}_${mesh.name.replace(/[^a-zA-Z0-9]/g, '_')}.glb`
+
+                // Store mesh information
+                const info = {
+                  index: index + 1,
+                  filename: filename,
+                  originalName: mesh.name,
+                  boundingBox: {
+                    min: {
+                      x: boundingBox.min.x,
+                      y: boundingBox.min.y,
+                      z: boundingBox.min.z,
+                    },
+                    max: {
+                      x: boundingBox.max.x,
+                      y: boundingBox.max.y,
+                      z: boundingBox.max.z,
+                    },
+                    size: {
+                      width: size.x,
+                      height: size.y,
+                      depth: size.z,
+                    },
+                    center: {
+                      x: center.x,
+                      y: center.y,
+                      z: center.z,
+                    },
+                  },
+                  vertexCount: mesh.geometry
+                    ? mesh.geometry.attributes.position.count
+                    : 0,
+                  materialName: mesh.material
+                    ? mesh.material.name || 'unnamed'
+                    : 'none',
                 }
-            });
-            
-            updateProgress(`Total meshes found: ${meshes.length}`);
-            
-            let exportedCount = 0;
-            
-            // Extract each mesh as a separate GLB file
-            meshes.forEach((mesh, index) => {
-                // Create a new scene with just this mesh
-                const newScene = new THREE.Scene();
-                
-                // Clone the mesh to avoid modifying the original
-                const clonedMesh = mesh.clone();
-                clonedMesh.material = mesh.material.clone(); // Clone material too
-                
-                // Calculate bounding box
-                const boundingBox = new THREE.Box3().setFromObject(mesh);
-                const size = boundingBox.getSize(new THREE.Vector3());
-                const center = boundingBox.getCenter(new THREE.Vector3());
-                
-                // Reset position to origin
-                clonedMesh.position.set(0, 0, 0);
-                clonedMesh.rotation.set(0, 0, 0);
-                clonedMesh.scale.set(1, 1, 1);
-                
-                newScene.add(clonedMesh);
-                
-                // Export as GLB
-                exporter.parse(
-                    newScene,
-                    (result) => {
-                        const filename = `grass_${index + 1}_${mesh.name.replace(/[^a-zA-Z0-9]/g, '_')}.glb`;
-                        
-                        // Store mesh information
-                        const info = {
-                            index: index + 1,
-                            filename: filename,
-                            originalName: mesh.name,
-                            boundingBox: {
-                                min: {
-                                    x: boundingBox.min.x,
-                                    y: boundingBox.min.y,
-                                    z: boundingBox.min.z
-                                },
-                                max: {
-                                    x: boundingBox.max.x,
-                                    y: boundingBox.max.y,
-                                    z: boundingBox.max.z
-                                },
-                                size: {
-                                    width: size.x,
-                                    height: size.y,
-                                    depth: size.z
-                                },
-                                center: {
-                                    x: center.x,
-                                    y: center.y,
-                                    z: center.z
-                                }
-                            },
-                            vertexCount: mesh.geometry ? mesh.geometry.attributes.position.count : 0,
-                            materialName: mesh.material ? mesh.material.name || 'unnamed' : 'none'
-                        };
-                        
-                        meshInfo.push(info);
-                        exportedCount++;
-                        
-                        // Create download link
-                        const blob = new Blob([result], { type: 'application/octet-stream' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = filename;
-                        a.style.display = 'none';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                        
-                        updateProgress(`Exported: ${filename} (${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)})`);
-                        
-                        // Check if all meshes have been exported
-                        if (exportedCount === meshes.length) {
-                            // Create and download JSON file with all mesh information
-                            const jsonData = {
-                                exportDate: new Date().toISOString(),
-                                totalMeshes: meshes.length,
-                                meshes: meshInfo.sort((a, b) => a.index - b.index) // Sort by index
-                            };
-                            
-                            const jsonBlob = new Blob([JSON.stringify(jsonData, null, 2)], { 
-                                type: 'application/json' 
-                            });
-                            const jsonUrl = URL.createObjectURL(jsonBlob);
-                            const jsonLink = document.createElement('a');
-                            jsonLink.href = jsonUrl;
-                            jsonLink.download = 'grass_meshes_info.json';
-                            jsonLink.style.display = 'none';
-                            document.body.appendChild(jsonLink);
-                            jsonLink.click();
-                            document.body.removeChild(jsonLink);
-                            URL.revokeObjectURL(jsonUrl);
-                            
-                            updateProgress('✅ All exports completed! Downloaded grass_meshes_info.json');
-                        }
-                    },
-                    (error) => {
-                        updateProgress(`Error exporting ${mesh.name}: ${error}`);
-                    },
-                    { binary: true }
-                );
-            });
-            
-        }, undefined, (error) => {
-            updateProgress(`Error loading GLB: ${error}`);
-        });
+
+                meshInfo.push(info)
+                exportedCount++
+
+                // Create download link
+                const blob = new Blob([result], {
+                  type: 'application/octet-stream',
+                })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = filename
+                a.style.display = 'none'
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                URL.revokeObjectURL(url)
+
+                updateProgress(
+                  `Exported: ${filename} (${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)})`
+                )
+
+                // Check if all meshes have been exported
+                if (exportedCount === meshes.length) {
+                  // Create and download JSON file with all mesh information
+                  const jsonData = {
+                    exportDate: new Date().toISOString(),
+                    totalMeshes: meshes.length,
+                    meshes: meshInfo.sort((a, b) => a.index - b.index), // Sort by index
+                  }
+
+                  const jsonBlob = new Blob(
+                    [JSON.stringify(jsonData, null, 2)],
+                    {
+                      type: 'application/json',
+                    }
+                  )
+                  const jsonUrl = URL.createObjectURL(jsonBlob)
+                  const jsonLink = document.createElement('a')
+                  jsonLink.href = jsonUrl
+                  jsonLink.download = 'grass_meshes_info.json'
+                  jsonLink.style.display = 'none'
+                  document.body.appendChild(jsonLink)
+                  jsonLink.click()
+                  document.body.removeChild(jsonLink)
+                  URL.revokeObjectURL(jsonUrl)
+
+                  updateProgress(
+                    '✅ All exports completed! Downloaded grass_meshes_info.json'
+                  )
+                }
+              },
+              (error) => {
+                updateProgress(`Error exporting ${mesh.name}: ${error}`)
+              },
+              { binary: true }
+            )
+          })
+        },
+        undefined,
+        (error) => {
+          updateProgress(`Error loading GLB: ${error}`)
+        }
+      )
     </script>
-</body>
+  </body>
 </html>
