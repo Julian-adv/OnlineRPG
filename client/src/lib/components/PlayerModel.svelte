@@ -61,7 +61,6 @@
   let mixer: THREE.AnimationMixer | null = null
   let currentAction: THREE.AnimationAction | null = null
   let animationId: number | null = null
-  let lastMovingState = false
   let modelRoot = $state<THREE.Group | null>(null) // ✅ $state로 반응성 추가
   let clock = new THREE.Clock()
 
@@ -70,49 +69,9 @@
 
     if (mixer) {
       mixer.update(deltaTime)
-
-      // Handle movement state changes
-      if (isMoving !== lastMovingState) {
-        if (currentAction) {
-          if (isMoving) {
-            currentAction.timeScale = 2.0 // Faster when moving
-          } else {
-            currentAction.timeScale = 1.0 // Normal speed when idle
-          }
-        }
-        lastMovingState = isMoving
-      }
     }
 
     animationId = requestAnimationFrame(updateAnimation)
-  }
-
-  function collectNodeNames(root: THREE.Object3D): Set<string> {
-    const set = new Set<string>()
-    root.traverse((obj) => {
-      if (obj.name) set.add(obj.name)
-    })
-    return set
-  }
-
-  function filterAnimations(
-    anims: THREE.AnimationClip[],
-    allowedNames: Set<string>
-  ): THREE.AnimationClip[] {
-    const out: THREE.AnimationClip[] = []
-    for (const clip of anims) {
-      const kept = clip.tracks.filter((track) => {
-        // track name: "NodeName.property" format
-        const target = track.name.split('.')[0]
-        return allowedNames.has(target)
-      })
-      if (kept.length > 0) {
-        const newClip = clip.clone()
-        newClip.tracks = kept
-        out.push(newClip)
-      }
-    }
-    return out
   }
 
   function setupRealAnimation() {
@@ -132,19 +91,14 @@
         }
       })
 
-      // Collect node names for animation filtering
-      const allowedNames = collectNodeNames(cloned)
-      console.log(`Found ${allowedNames.size} node names for filtering`)
-
-      // Filter animations based on node names
+      // Use first animation directly
       const animations = $gltf.animations || []
-      const relatedClips = filterAnimations(animations, allowedNames)
-      console.log(`Found ${relatedClips.length} relevant animation clips`)
+      console.log(`Found ${animations.length} animation clips`)
 
-      if (relatedClips.length > 0) {
-        // Setup mixer and play first animation - gpt-all-in-one.html 패턴
+      if (animations.length > 0) {
+        // Setup mixer and play first animation
         mixer = new THREE.AnimationMixer(newModelRoot)
-        const clip = relatedClips[0]
+        const clip = animations[0]
         console.log(
           `Playing animation: ${clip.name}, duration: ${clip.duration}s`
         )
@@ -162,7 +116,6 @@
         console.warn('No suitable animations found')
       }
 
-      // ✅ 반응성 있는 상태로 설정
       modelRoot = newModelRoot
     }
   }

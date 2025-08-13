@@ -45,7 +45,6 @@
   // Reference to InstancedGrass component
   let instancedGrass: InstancedGrass
 
-
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
     otherPlayers = state.otherPlayers
@@ -65,7 +64,7 @@
 
       // Update player movement (click-to-move)
       updatePlayerMovement(currentTime)
-      
+
       // Update animated grass
       if (instancedGrass) {
         instancedGrass.updateMixer(deltaTime)
@@ -258,7 +257,6 @@
   }
 
   onMount(() => {
-
     // Start game loop
     lastFrameTime = performance.now()
     gameLoopId = requestAnimationFrame(gameLoop)
