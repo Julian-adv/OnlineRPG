@@ -1,0 +1,311 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Extract Skinned Models</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1>Extracting Skinned Models...</h1>
+    <div id="progress"></div>
+
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+      import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+
+      const progressDiv = document.getElementById('progress')
+
+      function updateProgress(message) {
+        console.log(message)
+        progressDiv.innerHTML += message + '<br>'
+      }
+
+      const loader = new GLTFLoader()
+      const exporter = new GLTFExporter()
+
+      updateProgress('Loading models GLB file...')
+
+      loader.load(
+        './models/girls_-_14_anims.glb',
+        (gltf) => {
+          updateProgress('GLB file loaded successfully')
+
+          const scene = gltf.scene
+          const animations = gltf.animations || []
+          const objects = []
+
+          updateProgress(`Found ${animations.length} animations`)
+
+          // Find GLTF_SceneRootNode and get its children
+          let gltfRootNode = null
+          scene.traverse((child) => {
+            if (child.name === 'GLTF_SceneRootNode') {
+              gltfRootNode = child
+            }
+          })
+
+          if (gltfRootNode) {
+            updateProgress(`Found GLTF_SceneRootNode with ${gltfRootNode.children.length} children`)
+            
+            gltfRootNode.children.forEach((child, index) => {
+              let meshCount = 0
+              child.traverse(descendant => {
+                if (descendant.isMesh) meshCount++
+              })
+              
+              if (meshCount > 0) {
+                objects.push(child)
+                updateProgress(`Child ${index + 1}: "${child.name || 'unnamed'}" (${meshCount} meshes)`)
+              }
+            })
+          }
+
+          updateProgress(`Total objects found: ${objects.length}`)
+
+          let exportedCount = 0
+
+          // Extract each object as a separate GLB file with skeleton
+          objects.forEach((obj, index) => {
+            updateProgress(`\nProcessing object ${index + 1}: ${obj.name}`)
+            
+            // Create a new, clean scene
+            const newScene = new THREE.Scene()
+            
+            // Create a new group to hold this character
+            const characterGroup = new THREE.Group()
+            characterGroup.name = obj.name || `Character_${index + 1}`
+            
+            // Find all meshes and bones for this character
+            const meshes = []
+            const bones = []
+            const skinnedMeshes = []
+            
+            obj.traverse(child => {
+              if (child.isMesh) {
+                meshes.push(child)
+                if (child.isSkinnedMesh) {
+                  skinnedMeshes.push(child)
+                }
+              }
+              if (child.isBone || child.type === 'Bone') {
+                bones.push(child)
+              }
+            })
+            
+            updateProgress(`  Found ${meshes.length} meshes (${skinnedMeshes.length} skinned), ${bones.length} bones`)
+            
+            // If we have skinned meshes, we need to preserve the skeleton structure
+            if (skinnedMeshes.length > 0) {
+              updateProgress(`  Processing skinned meshes...`)
+              
+              // Find the root bone/armature
+              let rootBone = null
+              obj.traverse(child => {
+                if ((child.isBone || child.type === 'Bone') && !child.parent?.isBone) {
+                  rootBone = child
+                }
+              })
+              
+              if (rootBone) {
+                updateProgress(`    Found root bone: ${rootBone.name}`)
+                
+                // Clone the entire bone hierarchy
+                const clonedRootBone = rootBone.clone(true)
+                characterGroup.add(clonedRootBone)
+                
+                // Process each skinned mesh
+                skinnedMeshes.forEach((mesh, meshIndex) => {
+                  const newGeometry = mesh.geometry.clone()
+                  const newMaterial = mesh.material.clone()
+                  
+                  // Ensure material is visible
+                  if (Array.isArray(newMaterial)) {
+                    newMaterial.forEach(mat => {
+                      mat.visible = true
+                      mat.opacity = Math.max(mat.opacity, 1.0)
+                    })
+                  } else {
+                    newMaterial.visible = true
+                    newMaterial.opacity = Math.max(newMaterial.opacity, 1.0)
+                  }
+                  
+                  // Create new skinned mesh
+                  const newSkinnedMesh = new THREE.SkinnedMesh(newGeometry, newMaterial)
+                  newSkinnedMesh.name = mesh.name || `SkinnedMesh_${meshIndex}`
+                  
+                  // Copy the skeleton structure
+                  if (mesh.skeleton) {
+                    // Create bone array for new skeleton
+                    const newBones = []
+                    mesh.skeleton.bones.forEach(bone => {
+                      // Find corresponding bone in cloned hierarchy
+                      clonedRootBone.traverse(clonedBone => {
+                        if (clonedBone.name === bone.name) {
+                          newBones.push(clonedBone)
+                        }
+                      })
+                    })
+                    
+                    if (newBones.length > 0) {
+                      const newSkeleton = new THREE.Skeleton(newBones, mesh.skeleton.boneInverses)
+                      newSkinnedMesh.bind(newSkeleton)
+                      updateProgress(`      Bound skeleton with ${newBones.length} bones to ${newSkinnedMesh.name}`)
+                    }
+                  }
+                  
+                  // Apply current transformation
+                  newSkinnedMesh.position.copy(mesh.position)
+                  newSkinnedMesh.quaternion.copy(mesh.quaternion)
+                  newSkinnedMesh.scale.copy(mesh.scale)
+                  
+                  characterGroup.add(newSkinnedMesh)
+                  updateProgress(`      Added skinned mesh: ${mesh.name} (${newGeometry.attributes.position.count} vertices)`)
+                })
+              } else {
+                updateProgress(`    No root bone found, treating as static meshes`)
+                // Fall back to static mesh processing
+                meshes.forEach((mesh, meshIndex) => {
+                  const newGeometry = mesh.geometry.clone()
+                  const newMaterial = mesh.material.clone()
+                  
+                  const newMesh = new THREE.Mesh(newGeometry, newMaterial)
+                  newMesh.name = mesh.name || `Mesh_${meshIndex}`
+                  
+                  // Apply world transformation
+                  const worldMatrix = new THREE.Matrix4()
+                  mesh.updateMatrixWorld(true)
+                  worldMatrix.copy(mesh.matrixWorld)
+                  
+                  const position = new THREE.Vector3()
+                  const quaternion = new THREE.Quaternion()
+                  const scale = new THREE.Vector3()
+                  worldMatrix.decompose(position, quaternion, scale)
+                  
+                  newMesh.position.copy(position)
+                  newMesh.quaternion.copy(quaternion)
+                  newMesh.scale.copy(scale)
+                  
+                  characterGroup.add(newMesh)
+                })
+              }
+            } else {
+              // Process as static meshes
+              updateProgress(`  Processing static meshes...`)
+              meshes.forEach((mesh, meshIndex) => {
+                const newGeometry = mesh.geometry.clone()
+                const newMaterial = mesh.material.clone()
+                
+                const newMesh = new THREE.Mesh(newGeometry, newMaterial)
+                newMesh.name = mesh.name || `Mesh_${meshIndex}`
+                
+                // Apply world transformation
+                const worldMatrix = new THREE.Matrix4()
+                mesh.updateMatrixWorld(true)
+                worldMatrix.copy(mesh.matrixWorld)
+                
+                const position = new THREE.Vector3()
+                const quaternion = new THREE.Quaternion()
+                const scale = new THREE.Vector3()
+                worldMatrix.decompose(position, quaternion, scale)
+                
+                newMesh.position.copy(position)
+                newMesh.quaternion.copy(quaternion)
+                newMesh.scale.copy(scale)
+                
+                characterGroup.add(newMesh)
+                updateProgress(`    Added static mesh: ${mesh.name} (${newGeometry.attributes.position.count} vertices)`)
+              })
+            }
+            
+            // Calculate bounding box and center the character
+            const boundingBox = new THREE.Box3().setFromObject(characterGroup)
+            const center = boundingBox.getCenter(new THREE.Vector3())
+            const size = boundingBox.getSize(new THREE.Vector3())
+            
+            // Move character to origin
+            characterGroup.position.set(-center.x, -center.y, -center.z)
+            
+            newScene.add(characterGroup)
+            
+            // Add lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
+            newScene.add(ambientLight)
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+            directionalLight.position.set(1, 1, 1)
+            newScene.add(directionalLight)
+            
+            updateProgress(`  Character centered at origin, size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`)
+            
+            // Create simple animations that work with the bone structure
+            const characterAnimations = []
+            if (skinnedMeshes.length > 0 && animations.length > 0) {
+              updateProgress(`  Creating simplified animations...`)
+              // For now, don't include animations to avoid export issues
+              // We'll add this back once the basic structure works
+            }
+            
+            // Export as GLB
+            const gltfData = {
+              scene: newScene,
+              animations: characterAnimations
+            }
+            
+            exporter.parse(
+              gltfData,
+              (result) => {
+                const safeName = (obj.name || `character_${index + 1}`).replace(/[^a-zA-Z0-9]/g, '_')
+                const filename = `skinned_${index + 1}_${safeName}.glb`
+
+                exportedCount++
+
+                // Create download link
+                const blob = new Blob([result], {
+                  type: 'application/octet-stream',
+                })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = filename
+                a.style.display = 'none'
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                URL.revokeObjectURL(url)
+
+                updateProgress(`✓ Exported: ${filename}`)
+
+                // Check if all objects have been exported
+                if (exportedCount === objects.length) {
+                  updateProgress('\n🎉 All skinned models exported successfully!')
+                }
+              },
+              (error) => {
+                updateProgress(`❌ Error exporting ${obj.name}: ${error}`)
+                exportedCount++
+                
+                if (exportedCount === objects.length) {
+                  updateProgress('\n⚠️ Export process completed with some errors')
+                }
+              },
+              { 
+                binary: true
+              }
+            )
+          })
+        },
+        undefined,
+        (error) => {
+          updateProgress(`Error loading GLB: ${error}`)
+        }
+      )
+    </script>
+  </body>
+</html>

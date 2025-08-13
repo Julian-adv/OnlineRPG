@@ -51,56 +51,37 @@
     return [pitch, yaw, 0]
   }
 
-  // GLTF loading
-  const gltf = useLoader(GLTFLoader).load('/models/Xbot.glb')
+  // Load static model instead of animated one
+  const gltf = useLoader(GLTFLoader).load(
+    '/models/static_1_Armature011_66.glb'
+  )
 
-  // Animation system
-  let mixer = $state<THREE.AnimationMixer | null>(null)
-  let actions = $state<{ [key: string]: THREE.AnimationAction } | null>(null)
-  let currentAction = $state<THREE.AnimationAction | null>(null)
-
-  // Animation update loop
-  let lastTime = 0
+  // Simple animation system
+  let simpleAnimation = $state<{
+    update: (deltaTime: number) => void
+    isPlaying: boolean
+    startTime: number
+  } | null>(null)
   let animationId: number | null = null
-  let lastMovingState = false
+  let lastTime = 0
+  // No need for yOffset anymore - models are pre-positioned with feet at origin
 
   function updateAnimation(time: number) {
-    if (mixer) {
-      const deltaTime = (time - lastTime) / 1000
-      mixer.update(deltaTime)
-      lastTime = time
+    const deltaTime = (time - lastTime) / 1000
+    lastTime = time
 
-      // Handle movement animation state changes
-      if (actions && isMoving !== lastMovingState) {
-        const walkAction = actions['walk'] || actions['animation_1']
-        const idleAction = actions['idle'] || actions['animation_0']
-
-        if (isMoving && walkAction && currentAction !== walkAction) {
-          console.log('Switching to walk animation')
-          if (currentAction) {
-            currentAction.fadeOut(0.3)
-          }
-          walkAction.reset().fadeIn(0.3).play()
-          currentAction = walkAction
-        } else if (!isMoving && idleAction && currentAction !== idleAction) {
-          console.log('Switching to idle animation')
-          if (currentAction) {
-            currentAction.fadeOut(0.3)
-          }
-          idleAction.reset().fadeIn(0.3).play()
-          currentAction = idleAction
-        }
-
-        lastMovingState = isMoving
-      }
+    if (simpleAnimation && $gltf) {
+      simpleAnimation.update(deltaTime)
     }
+
     animationId = requestAnimationFrame(updateAnimation)
   }
 
-  function setupAnimations() {
-    if ($gltf && !mixer) {
-      console.log('Setting up animations for GLTF model')
-      console.log('Available animations:', $gltf.animations.length)
+  function setupSimpleAnimation() {
+    if ($gltf && !simpleAnimation) {
+      console.log('Setting up simple animation for static model')
+
+      console.log('Model should already be positioned with feet at origin')
 
       // Enable shadows on all meshes in the model
       $gltf.scene.traverse((child) => {
@@ -110,60 +91,47 @@
         }
       })
 
-      // Create mixer
-      mixer = new THREE.AnimationMixer($gltf.scene)
+      // Create simple animation system
+      simpleAnimation = {
+        isPlaying: true,
+        startTime: performance.now(),
+        update(_deltaTime: number) {
+          if (!$gltf || !this.isPlaying) return
 
-      // Set up actions (like in Three.js example)
-      const animations = $gltf.animations
-      actions = {}
+          const elapsed = (performance.now() - this.startTime) / 1000
+          const model = $gltf.scene
 
-      if (animations.length > 0) {
-        // Try to find common animation names
-        animations.forEach((clip, index) => {
-          console.log(`Animation ${index}: ${clip.name}`)
-          const action = mixer!.clipAction(clip)
-
-          // Store actions by name or index
-          if (clip.name.toLowerCase().includes('idle')) {
-            actions!['idle'] = action
-          } else if (
-            clip.name.toLowerCase().includes('walk') ||
-            clip.name.toLowerCase().includes('run')
-          ) {
-            actions!['walk'] = action
+          if (isMoving) {
+            // Walking animation: slight bounce and forward lean
+            model.position.y = Math.sin(elapsed * 8) * 0.05 // Faster bounce when walking
+            model.rotation.x = Math.sin(elapsed * 8) * 0.02 // Slight forward lean rhythm
+            
+            // Slight side-to-side sway
+            model.rotation.z = Math.sin(elapsed * 6) * 0.01
           } else {
-            actions![`animation_${index}`] = action
+            // Idle animation: gentle breathing and subtle movement
+            model.position.y = Math.sin(elapsed * 2) * 0.02 // Gentle breathing
+            model.rotation.x = Math.sin(elapsed * 1.5) * 0.005 // Very subtle head movement
+            
+            // Occasional slight turn
+            model.rotation.y = Math.sin(elapsed * 0.8) * 0.01
           }
-        })
-
-        // If no named animations found, use indices
-        if (Object.keys(actions).length === 0) {
-          animations.forEach((clip, index) => {
-            actions![`animation_${index}`] = mixer!.clipAction(clip)
-          })
         }
-
-        console.log('Available actions:', Object.keys(actions))
-
-        // Start with idle or first available animation
-        const idleAction = actions['idle'] || actions['animation_0']
-        if (idleAction) {
-          idleAction.play()
-          currentAction = idleAction
-        }
-
-        // Start animation loop
-        lastTime = performance.now()
-        animationId = requestAnimationFrame(updateAnimation)
       }
+
+      // Start animation loop
+      lastTime = performance.now()
+      animationId = requestAnimationFrame(updateAnimation)
+      
+      console.log('Simple animation system initialized')
     }
   }
 
   onMount(() => {
-    // Wait for GLTF to load and setup animations
+    // Wait for GLTF to load and setup simple animations
     const checkGltf = () => {
       if ($gltf) {
-        setupAnimations()
+        setupSimpleAnimation()
       } else {
         setTimeout(checkGltf, 100)
       }
@@ -175,6 +143,9 @@
       if (animationId) {
         cancelAnimationFrame(animationId)
       }
+      if (simpleAnimation) {
+        simpleAnimation.isPlaying = false
+      }
     }
   })
 </script>
@@ -184,7 +155,7 @@
   position={[position.x, position.y, position.z]}
   rotation={[0, rotation, 0]}
 >
-  <!-- 3D Character Model -->
+  <!-- 3D Character Model (pre-positioned with feet at origin) -->
   {#if $gltf}
     <T is={$gltf.scene} />
   {/if}

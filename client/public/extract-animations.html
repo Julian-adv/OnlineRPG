@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Extract Animation Data</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1>Extracting Animation Data...</h1>
+    <div id="progress"></div>
+
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+
+      const progressDiv = document.getElementById('progress')
+
+      function updateProgress(message) {
+        console.log(message)
+        progressDiv.innerHTML += message + '<br>'
+      }
+
+      const loader = new GLTFLoader()
+
+      updateProgress('Loading models GLB file for animation extraction...')
+
+      loader.load(
+        './models/beautiful_realistic_undressed_girls_-_14_anims.glb',
+        (gltf) => {
+          updateProgress('GLB file loaded successfully')
+
+          const animations = gltf.animations || []
+          updateProgress(`Found ${animations.length} animations`)
+
+          // Extract animation data
+          const animationData = {
+            extractDate: new Date().toISOString(),
+            totalAnimations: animations.length,
+            animations: [],
+          }
+
+          animations.forEach((animation, index) => {
+            updateProgress(
+              `Processing animation ${index + 1}: "${animation.name}"`
+            )
+
+            const animInfo = {
+              name: animation.name,
+              duration: animation.duration,
+              tracks: [],
+            }
+
+            animation.tracks.forEach((track) => {
+              const trackInfo = {
+                name: track.name,
+                type: track.constructor.name,
+                times: Array.from(track.times),
+                values: Array.from(track.values),
+              }
+
+              animInfo.tracks.push(trackInfo)
+            })
+
+            animationData.animations.push(animInfo)
+            updateProgress(
+              `  - Duration: ${animation.duration.toFixed(2)}s, Tracks: ${animation.tracks.length}`
+            )
+          })
+
+          // Download animation data as JSON
+          const jsonBlob = new Blob([JSON.stringify(animationData, null, 2)], {
+            type: 'application/json',
+          })
+          const url = URL.createObjectURL(jsonBlob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = 'character_animations.json'
+          a.style.display = 'none'
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+
+          updateProgress('\n✅ Animation data extracted successfully!')
+          updateProgress(
+            'You can now use this JSON file to apply animations to static models.'
+          )
+        },
+        undefined,
+        (error) => {
+          updateProgress(`Error loading GLB: ${error}`)
+        }
+      )
+    </script>
+  </body>
+</html>

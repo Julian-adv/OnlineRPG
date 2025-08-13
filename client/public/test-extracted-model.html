@@ -1,0 +1,222 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Test Extracted Model</title>
+    <style>
+      body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+      canvas { border: 1px solid #ccc; }
+      #controls { margin: 10px 0; }
+      #info { margin: 10px 0; font-family: monospace; white-space: pre-line; }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <h1>Extracted Model Viewer</h1>
+    <div id="controls">
+      <input type="file" id="fileInput" accept=".glb,.gltf" />
+      <button onclick="resetCamera()">Reset Camera</button>
+      <button onclick="toggleWireframe()">Toggle Wireframe</button>
+    </div>
+    <div id="info"></div>
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+
+      const canvas = document.getElementById('canvas')
+      const infoDiv = document.getElementById('info')
+      const fileInput = document.getElementById('fileInput')
+
+      // Setup Three.js scene
+      const scene = new THREE.Scene()
+      scene.background = new THREE.Color(0x404040)
+
+      const camera = new THREE.PerspectiveCamera(75, canvas.width / canvas.height, 0.1, 1000)
+      camera.position.set(0, 2, 5)
+
+      const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true })
+      renderer.setSize(canvas.width, canvas.height)
+      renderer.shadowMap.enabled = true
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap
+
+      const controls = new OrbitControls(camera, canvas)
+      controls.enableDamping = true
+
+      // Lighting
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
+      scene.add(ambientLight)
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
+      directionalLight.position.set(5, 10, 5)
+      directionalLight.castShadow = true
+      scene.add(directionalLight)
+
+      // Grid helper
+      const gridHelper = new THREE.GridHelper(10, 10)
+      scene.add(gridHelper)
+
+      // Axes helper
+      const axesHelper = new THREE.AxesHelper(5)
+      scene.add(axesHelper)
+
+      let currentModel = null
+      let mixer = null
+      const clock = new THREE.Clock()
+
+      function updateInfo(text) {
+        infoDiv.textContent += text + '\n'
+        console.log(text)
+      }
+
+      function clearInfo() {
+        infoDiv.textContent = ''
+      }
+
+      window.resetCamera = function() {
+        camera.position.set(0, 2, 5)
+        controls.reset()
+      }
+
+      window.toggleWireframe = function() {
+        if (currentModel) {
+          currentModel.traverse(child => {
+            if (child.isMesh && child.material) {
+              if (Array.isArray(child.material)) {
+                child.material.forEach(mat => mat.wireframe = !mat.wireframe)
+              } else {
+                child.material.wireframe = !child.material.wireframe
+              }
+            }
+          })
+        }
+      }
+
+      fileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0]
+        if (!file) return
+
+        clearInfo()
+        updateInfo(`Loading file: ${file.name}`)
+
+        // Remove previous model
+        if (currentModel) {
+          scene.remove(currentModel)
+          currentModel = null
+        }
+
+        const loader = new GLTFLoader()
+        const reader = new FileReader()
+
+        reader.onload = (e) => {
+          const arrayBuffer = e.target.result
+          
+          loader.parse(arrayBuffer, '', (gltf) => {
+            updateInfo('File loaded successfully!')
+            
+            currentModel = gltf.scene
+            scene.add(currentModel)
+
+            // Analysis
+            updateInfo('\n=== Model Analysis ===')
+            updateInfo(`Animations: ${gltf.animations?.length || 0}`)
+            
+            let meshCount = 0
+            let totalVertices = 0
+            let materialCount = 0
+            const materials = new Set()
+
+            currentModel.traverse(child => {
+              updateInfo(`Object: ${child.type} "${child.name || 'unnamed'}"`)
+              updateInfo(`  Position: (${child.position.x.toFixed(2)}, ${child.position.y.toFixed(2)}, ${child.position.z.toFixed(2)})`)
+              updateInfo(`  Rotation: (${child.rotation.x.toFixed(2)}, ${child.rotation.y.toFixed(2)}, ${child.rotation.z.toFixed(2)}) rad`)
+              updateInfo(`  Rotation (deg): (${(child.rotation.x * 180 / Math.PI).toFixed(1)}, ${(child.rotation.y * 180 / Math.PI).toFixed(1)}, ${(child.rotation.z * 180 / Math.PI).toFixed(1)})°`)
+              updateInfo(`  Scale: (${child.scale.x.toFixed(2)}, ${child.scale.y.toFixed(2)}, ${child.scale.z.toFixed(2)})`)
+              updateInfo(`  Visible: ${child.visible}`)
+              
+              if (child.isMesh) {
+                meshCount++
+                updateInfo(`  Mesh geometry: ${child.geometry?.attributes?.position?.count || 0} vertices`)
+                
+                if (child.geometry?.attributes?.position) {
+                  totalVertices += child.geometry.attributes.position.count
+                }
+                
+                if (child.material) {
+                  if (Array.isArray(child.material)) {
+                    child.material.forEach(mat => materials.add(mat.name || 'unnamed'))
+                  } else {
+                    materials.add(child.material.name || 'unnamed')
+                  }
+                }
+              }
+            })
+
+            updateInfo(`\nTotal meshes: ${meshCount}`)
+            updateInfo(`Total vertices: ${totalVertices}`)
+            updateInfo(`Materials: ${Array.from(materials).join(', ')}`)
+
+            // Calculate bounding box
+            const box = new THREE.Box3().setFromObject(currentModel)
+            const size = box.getSize(new THREE.Vector3())
+            const center = box.getCenter(new THREE.Vector3())
+            
+            updateInfo(`\nBounding box:`)
+            updateInfo(`  Size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`)
+            updateInfo(`  Center: (${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)})`)
+
+            // Setup animations
+            if (gltf.animations && gltf.animations.length > 0) {
+              mixer = new THREE.AnimationMixer(currentModel)
+              gltf.animations.forEach((clip, index) => {
+                updateInfo(`Animation ${index + 1}: "${clip.name}" (${clip.duration.toFixed(2)}s)`)
+                const action = mixer.clipAction(clip)
+                if (index === 0) {
+                  action.play() // Play first animation
+                  updateInfo(`  Playing animation: ${clip.name}`)
+                }
+              })
+            }
+
+            // Adjust camera to fit model
+            if (size.length() > 0) {
+              const distance = Math.max(size.x, size.y, size.z) * 2
+              camera.position.set(distance, distance, distance)
+              camera.lookAt(center)
+              controls.target.copy(center)
+              controls.update()
+            }
+
+          }, (error) => {
+            updateInfo(`Error loading file: ${error}`)
+          })
+        }
+
+        reader.readAsArrayBuffer(file)
+      })
+
+      // Animation loop
+      function animate() {
+        requestAnimationFrame(animate)
+        
+        const delta = clock.getDelta()
+        if (mixer) mixer.update(delta)
+        
+        controls.update()
+        renderer.render(scene, camera)
+      }
+
+      animate()
+
+      updateInfo('Ready! Select a .glb file to test.')
+    </script>
+  </body>
+</html>
