@@ -12,7 +12,8 @@
     position: Vector3
     name: string
     isCurrentPlayer: boolean
-    isMoving?: boolean
+    playerState?: 'idle' | 'moving'
+    speed?: number
     rotation?: number
     cameraPosition?: Vector3
   }
@@ -21,7 +22,8 @@
     position,
     name,
     isCurrentPlayer,
-    isMoving,
+    playerState = 'idle',
+    speed: _speed = 0,
     rotation = 0,
     cameraPosition,
   }: Props = $props()
@@ -71,23 +73,25 @@
   }
 
   let validAnimations: THREE.AnimationClip[] = []
-  let lastMovingState: boolean | undefined = undefined
+  let lastPlayerState: 'idle' | 'moving' | undefined = undefined
 
   const playAnimationForState = () => {
     if (!mixer || validAnimations.length === 0) return
 
-    // Select animation based on movement state
+    // Select animation based on player state
     let clip: THREE.AnimationClip
-    if (isMoving === false) {
+    if (playerState === 'idle') {
       // Find Animation_2 or fallback to index 2
       clip =
         validAnimations.find((anim) => anim.name === 'Animation_2') ||
         validAnimations[2]
       console.log(`Playing idle animation: ${clip.name}`)
-    } else {
-      // Use default animation (index 2) for movement
+    } else if (playerState === 'moving') {
+      // Use default animation (index 0) for movement
       clip = validAnimations[0]
       console.log(`Playing movement animation: ${clip.name}`)
+    } else {
+      return // Unknown state
     }
 
     const newAction = mixer.clipAction(clip)
@@ -224,9 +228,9 @@
   // Function to update animation state - called from GameScene gameLoop
   export function updateAnimationState() {
     if (mixer && validAnimations.length > 0) {
-      // Only update animation if the movement state has changed
-      if (lastMovingState !== isMoving) {
-        lastMovingState = isMoving
+      // Only update animation if the player state has changed
+      if (lastPlayerState !== playerState) {
+        lastPlayerState = playerState
         playAnimationForState()
       }
     }
