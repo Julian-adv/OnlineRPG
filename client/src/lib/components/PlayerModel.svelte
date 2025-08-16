@@ -6,6 +6,7 @@
   import { GLTFLoader } from 'three/examples/jsm/Addons.js'
   import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
   import { onMount } from 'svelte'
+  import { SvelteSet } from 'svelte/reactivity'
 
   interface Props {
     position: Vector3
@@ -20,6 +21,7 @@
     position,
     name,
     isCurrentPlayer,
+    isMoving,
     rotation = 0,
     cameraPosition,
   }: Props = $props()
@@ -52,7 +54,7 @@
   }
 
   // Load animated model
-  const gltf = useLoader(GLTFLoader).load('/models/merged.glb')
+  const gltf = useLoader(GLTFLoader).load('/models/merged (3).glb')
 
   // Animation system - following gpt-all-in-one.html approach
   let mixer: THREE.AnimationMixer | null = null
@@ -69,6 +71,37 @@
     }
 
     animationId = requestAnimationFrame(updateAnimation)
+  }
+
+  let validAnimations: THREE.AnimationClip[] = []
+
+  const playAnimationForState = () => {
+    if (!mixer || validAnimations.length === 0) return
+
+    // Stop current action
+    if (currentAction) {
+      currentAction.stop()
+    }
+
+    // Select animation based on movement state
+    let clip: THREE.AnimationClip
+    if (isMoving === false) {
+      // Find Animation_2 or fallback to index 2
+      clip =
+        validAnimations.find((anim) => anim.name === 'Animation_2') ||
+        validAnimations[2]
+      console.log(`Playing idle animation: ${clip.name}`)
+    } else {
+      // Use default animation (index 2) for movement
+      clip = validAnimations[0]
+      console.log(`Playing movement animation: ${clip.name}`)
+    }
+
+    currentAction = mixer.clipAction(clip)
+    currentAction.reset()
+    currentAction.loop = THREE.LoopRepeat
+    currentAction.paused = false
+    currentAction.play()
   }
 
   function setupRealAnimation() {
@@ -93,7 +126,7 @@
       console.log(`Found ${animations.length} animation clips`)
 
       // Collect all node names in the cloned model
-      const modelNodeNames = new Set()
+      const modelNodeNames = new SvelteSet()
       cloned.traverse((obj) => {
         if (obj.name) modelNodeNames.add(obj.name)
       })
@@ -101,7 +134,7 @@
       console.log('Model node names:', Array.from(modelNodeNames).slice(0, 10))
 
       // Filter animations to only include tracks that target existing nodes
-      const validAnimations = animations.filter((clip) => {
+      validAnimations = animations.filter((clip) => {
         console.log(
           `Checking clip: ${clip.name} with ${clip.tracks.length} tracks`
         )
@@ -126,18 +159,11 @@
       console.log(`Found ${validAnimations.length} valid animations`)
 
       if (validAnimations.length > 0) {
-        // Setup mixer and play first valid animation
+        // Setup mixer
         mixer = new THREE.AnimationMixer(newModelRoot)
-        const clip = validAnimations[0]
-        console.log(
-          `Playing animation: ${clip.name}, duration: ${clip.duration}s`
-        )
 
-        currentAction = mixer.clipAction(clip)
-        currentAction.reset()
-        currentAction.loop = THREE.LoopRepeat
-        currentAction.paused = false
-        currentAction.play()
+        // Play appropriate animation based on isMoving state
+        playAnimationForState()
 
         // Start animation loop
         clock.start()
@@ -197,6 +223,15 @@
       if (modelRoot) {
         modelRoot = null
       }
+    }
+  })
+
+  // React to isMoving changes
+  $effect(() => {
+    // Explicitly read isMoving to create dependency
+    const moving = isMoving
+    if (mixer && validAnimations.length > 0) {
+      playAnimationForState()
     }
   })
 </script>

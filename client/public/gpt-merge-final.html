@@ -1,290 +1,382 @@
 <!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <title>GLB 애니메이션 병합기 (휴리스틱 매칭 + 클립명 고유화)</title>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
-      }
-    }
-  </script>
-  <style>
-    :root{color-scheme:dark}
-    body{font-family: ui-sans-serif,system-ui,Segoe UI,Roboto,Apple Color Emoji,Noto Color Emoji,Helvetica,Arial,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",sans-serif;line-height:1.45;padding:24px;background:#0b1020;color:#eef2ff}
-    h1{font-size:20px;margin:0 0 6px 0}
-    .row{margin:8px 0}
-    button{padding:8px 12px;border-radius:10px;border:0;background:#5865f2;color:#fff;font-weight:600}
-    button:disabled{opacity:.5}
-    pre{white-space:pre-wrap;background:#111633;border-radius:12px;padding:12px;max-height:42vh;overflow:auto}
-    .tip{opacity:.8;font-size:13px}
-    .ok{color:#8df59b}
-    .warn{color:#ffd166}
-    .err{color:#ff6b6b}
-    ul{margin:6px 0 0 16px;padding:0}
-    .small{font-size:12px;opacity:.9}
-  </style>
-</head>
-<body>
-  <h1>GLB 애니메이션 병합기 (a 구조 유지)</h1>
-  <div class="row">a.glb = 구조 유지할 파일, b.glb = 애니메이션 가져올 파일</div>
-  <div class="row"><input type="file" id="fileA" accept=".glb,.gltf" /> a.glb</div>
-  <div class="row"><input type="file" id="fileB" accept=".glb,.gltf" /> b.glb</div>
-  <div class="row">
-    <label class="small"><input type="checkbox" id="prefixB" checked /> b.glb 클립명 앞에 <code>b_</code> 접두사 자동 부여</label>
-  </div>
-  <div class="row"><button id="mergeBtn" disabled>병합 실행</button></div>
-  <div class="row tip">매칭 규칙: 대소문자 무시 · 공백/하이픈 제거 · Blender 접미사(.001 / _001 등) 제거 · 좌/우(.L/.R 등) 표준화 · Levenshtein 퍼지 매칭(임계치 0.82)</div>
-  <pre id="log"></pre>
-
-  <script type="module">
-    import * as THREE from 'three';
-    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-    import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-
-    const logEl = document.getElementById('log');
-    const log = (...a) => { console.log(...a); logEl.textContent += a.join(' ') + '\\n'; };
-
-    const loader = new GLTFLoader();
-    const exporter = new GLTFExporter();
-
-    let gltfA = null;
-    let gltfB = null;
-
-    document.getElementById('fileA').addEventListener('change', e => {
-      const f = e.target.files[0];
-      if (f) {
-        const url = URL.createObjectURL(f);
-        loader.load(url, g => {
-          gltfA = g;
-          log('a.glb 로드 완료:', f.name, 'animations:', g.animations.length);
-          URL.revokeObjectURL(url);
-          checkReady();
-        });
-      }
-    });
-
-    document.getElementById('fileB').addEventListener('change', e => {
-      const f = e.target.files[0];
-      if (f) {
-        const url = URL.createObjectURL(f);
-        loader.load(url, g => {
-          gltfB = g;
-          log('b.glb 로드 완료:', f.name, 'animations:', g.animations.length);
-          URL.revokeObjectURL(url);
-          checkReady();
-        });
-      }
-    });
-
-    function checkReady() {
-      document.getElementById('mergeBtn').disabled = !(gltfA && gltfB);
-    }
-
-    // ---------- 휴리스틱 유틸 ----------
-    function normalizeSide(name){
-      let n = name.replace(/\.l\b/gi,'_l').replace(/\.r\b/gi,'_r');
-      n = n.replace(/[\s\-]+l\b/gi,'_l').replace(/[\s\-]+r\b/gi,'_r');
-      return n;
-    }
-    function stripNumericSuffix(name){
-      let n = name;
-      for(let i=0;i<3;i++){
-        n = n.replace(/([_\-\.\s]?\(?\d{1,4}\)?)$/,''); // 끝 숫자/구분자 제거
-      }
-      return n;
-    }
-    function canonicalKey(name){
-      if(!name) return '';
-      let n = normalizeSide(name);
-      n = stripNumericSuffix(n);
-      n = n.toLowerCase();
-      n = n.replace(/[^a-z0-9_]/g,''); // 공백/특수문자 제거
-      n = n.replace(/_+/g,'_').replace(/^_+|_+$/g,'');
-      return n;
-    }
-    function levenshtein(a,b){
-      const m=a.length, n=b.length;
-      if(m===0) return n;
-      if(n===0) return m;
-      const dp = new Array(n+1);
-      for(let j=0;j<=n;j++) dp[j]=j;
-      for(let i=1;i<=m;i++){
-        let prev = dp[0];
-        dp[0]=i;
-        for(let j=1;j<=n;j++){
-          const tmp = dp[j];
-          const cost = a[i-1]===b[j-1]?0:1;
-          dp[j] = Math.min(dp[j]+1, dp[j-1]+1, prev+cost);
-          prev = tmp;
+  <head>
+    <meta charset="utf-8" />
+    <title>GLB 애니메이션 병합기 (휴리스틱 매칭 + 클립명 고유화)</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
         }
       }
-      return dp[n];
-    }
-    function similarity(a,b){
-      if(!a || !b) return 0;
-      const d = levenshtein(a,b);
-      const L = Math.max(a.length,b.length);
-      return 1 - d / (L||1);
-    }
-    function buildANodeIndex(scene){
-      const idx = new Map();
-      const originals = new Set();
-      scene.traverse(obj=>{
-        if(!obj.name) return;
-        const raw = obj.name;
-        originals.add(raw);
-        const key = canonicalKey(raw);
-        if(!key) return;
-        if(!idx.has(key)) idx.set(key,new Set());
-        idx.get(key).add(raw);
-      });
-      return { idx, originals };
-    }
-    function pickBestMatch(bNodeRaw, aIndex){
-      const bKey = canonicalKey(bNodeRaw);
-      if(aIndex.idx.has(bKey)){
-        const cands = Array.from(aIndex.idx.get(bKey));
-        // 가장 비슷한 길이의 후보
-        let best = cands[0], bestScore = -1;
-        for(const c of cands){
-          const s = similarity(canonicalKey(c), bKey);
-          if(s>bestScore){bestScore=s;best=c;}
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          Segoe UI,
+          Roboto,
+          Apple Color Emoji,
+          Noto Color Emoji,
+          Helvetica,
+          Arial,
+          'Apple SD Gothic Neo',
+          'Malgun Gothic',
+          '맑은 고딕',
+          sans-serif;
+        line-height: 1.45;
+        padding: 24px;
+        background: #0b1020;
+        color: #eef2ff;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 6px 0;
+      }
+      .row {
+        margin: 8px 0;
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 0;
+        background: #5865f2;
+        color: #fff;
+        font-weight: 600;
+      }
+      button:disabled {
+        opacity: 0.5;
+      }
+      pre {
+        white-space: pre-wrap;
+        background: #111633;
+        border-radius: 12px;
+        padding: 12px;
+        max-height: 42vh;
+        overflow: auto;
+      }
+      .tip {
+        opacity: 0.8;
+        font-size: 13px;
+      }
+      .ok {
+        color: #8df59b;
+      }
+      .warn {
+        color: #ffd166;
+      }
+      .err {
+        color: #ff6b6b;
+      }
+      ul {
+        margin: 6px 0 0 16px;
+        padding: 0;
+      }
+      .small {
+        font-size: 12px;
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GLB 애니메이션 병합기 (a 구조 유지)</h1>
+    <div class="row">
+      a.glb = 구조 유지할 파일, b.glb = 애니메이션 가져올 파일
+    </div>
+    <div class="row">
+      <input type="file" id="fileA" accept=".glb,.gltf" /> a.glb
+    </div>
+    <div class="row">
+      <input type="file" id="fileB" accept=".glb,.gltf" /> b.glb
+    </div>
+    <div class="row">
+      <label class="small"
+        ><input type="checkbox" id="prefixB" checked /> b.glb 클립명 앞에
+        <code>b_</code> 접두사 자동 부여</label
+      >
+    </div>
+    <div class="row"><button id="mergeBtn" disabled>병합 실행</button></div>
+    <div class="row tip">
+      매칭 규칙: 대소문자 무시 · 공백/하이픈 제거 · Blender 접미사(.001 / _001
+      등) 제거 · 좌/우(.L/.R 등) 표준화 · Levenshtein 퍼지 매칭(임계치 0.82)
+    </div>
+    <pre id="log"></pre>
+
+    <script type="module">
+      import * as THREE from 'three'
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+      import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
+
+      const logEl = document.getElementById('log')
+      const log = (...a) => {
+        console.log(...a)
+        logEl.textContent += a.join(' ') + '\\n'
+      }
+
+      const loader = new GLTFLoader()
+      const exporter = new GLTFExporter()
+
+      let gltfA = null
+      let gltfB = null
+
+      document.getElementById('fileA').addEventListener('change', (e) => {
+        const f = e.target.files[0]
+        if (f) {
+          const url = URL.createObjectURL(f)
+          loader.load(url, (g) => {
+            gltfA = g
+            log('a.glb 로드 완료:', f.name, 'animations:', g.animations.length)
+            URL.revokeObjectURL(url)
+            checkReady()
+          })
         }
-        return { name: best, score: 1.0, reason: 'exact-key' };
-      }
-      const bStripped = canonicalKey(stripNumericSuffix(normalizeSide(bNodeRaw)));
-      if(aIndex.idx.has(bStripped)){
-        const cands = Array.from(aIndex.idx.get(bStripped));
-        return { name: cands[0], score: 0.98, reason: 'stripped-suffix' };
-      }
-      const bSideNorm = canonicalKey(normalizeSide(bNodeRaw));
-      if(aIndex.idx.has(bSideNorm)){
-        const cands = Array.from(aIndex.idx.get(bSideNorm));
-        return { name: cands[0], score: 0.96, reason: 'side-normalized' };
-      }
-      const threshold = 0.82;
-      let bestName = null, bestScore = 0, bestReason = 'fuzzy';
-      for(const [aKey, setRaw] of aIndex.idx.entries()){
-        const s = similarity(bKey, aKey);
-        if(s > bestScore){
-          bestScore = s;
-          bestName = setRaw.values().next().value;
+      })
+
+      document.getElementById('fileB').addEventListener('change', (e) => {
+        const f = e.target.files[0]
+        if (f) {
+          const url = URL.createObjectURL(f)
+          loader.load(url, (g) => {
+            gltfB = g
+            log('b.glb 로드 완료:', f.name, 'animations:', g.animations.length)
+            URL.revokeObjectURL(url)
+            checkReady()
+          })
         }
+      })
+
+      function checkReady() {
+        document.getElementById('mergeBtn').disabled = !(gltfA && gltfB)
       }
-      if(bestScore >= threshold){
-        return { name: bestName, score: bestScore, reason: bestReason };
+
+      // ---------- 휴리스틱 유틸 ----------
+      function normalizeSide(name) {
+        let n = name.replace(/\.l\b/gi, '_l').replace(/\.r\b/gi, '_r')
+        n = n.replace(/[\s\-]+l\b/gi, '_l').replace(/[\s\-]+r\b/gi, '_r')
+        return n
       }
-      return null;
-    }
-
-    // ---------- 클립 이름 고유화 ----------
-    function uniqueName(base, taken){
-      let name = base && base.trim() ? base.trim() : 'Clip';
-      if(!taken.has(name)){
-        taken.add(name);
-        return name;
-      }
-      // 뒤에 번호 증가
-      let i = 1;
-      while(taken.has(`${name}_${i}`)) i++;
-      const finalName = `${name}_${i}`;
-      taken.add(finalName);
-      return finalName;
-    }
-
-    document.getElementById('mergeBtn').addEventListener('click', () => {
-      if (!gltfA || !gltfB) return;
-
-      const aIndex = buildANodeIndex(gltfA.scene);
-      log('a.glb 노드 수(이름 보유):', aIndex.originals.size);
-
-      // 1) a.glb의 애니메이션 이름 목록 수집
-      const takenNames = new Set();
-      for(const c of gltfA.animations || []){
-        const old = c.name && c.name.trim() ? c.name : 'Animation';
-        const uniq = uniqueName(old, takenNames);
-        // a의 이름은 바꾸지 않고 예약만
-        if(uniq !== old){
-          // 예약 충돌 시에도 a는 그대로 두고, 이후 b에서 피해서 이름 생성
-          // (필요하면 여기서 a 이름도 바꾸도록 옵션화 가능)
+      function stripNumericSuffix(name) {
+        let n = name
+        for (let i = 0; i < 3; i++) {
+          n = n.replace(/([_\-\.\s]?\(?\d{1,4}\)?)$/, '') // 끝 숫자/구분자 제거
         }
+        return n
+      }
+      function canonicalKey(name) {
+        if (!name) return ''
+        let n = normalizeSide(name)
+        n = stripNumericSuffix(n)
+        n = n.toLowerCase()
+        n = n.replace(/[^a-z0-9_]/g, '') // 공백/특수문자 제거
+        n = n.replace(/_+/g, '_').replace(/^_+|_+$/g, '')
+        return n
+      }
+      function levenshtein(a, b) {
+        const m = a.length,
+          n = b.length
+        if (m === 0) return n
+        if (n === 0) return m
+        const dp = new Array(n + 1)
+        for (let j = 0; j <= n; j++) dp[j] = j
+        for (let i = 1; i <= m; i++) {
+          let prev = dp[0]
+          dp[0] = i
+          for (let j = 1; j <= n; j++) {
+            const tmp = dp[j]
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1
+            dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost)
+            prev = tmp
+          }
+        }
+        return dp[n]
+      }
+      function similarity(a, b) {
+        if (!a || !b) return 0
+        const d = levenshtein(a, b)
+        const L = Math.max(a.length, b.length)
+        return 1 - d / (L || 1)
+      }
+      function buildANodeIndex(scene) {
+        const idx = new Map()
+        const originals = new Set()
+        scene.traverse((obj) => {
+          if (!obj.name) return
+          const raw = obj.name
+          originals.add(raw)
+          const key = canonicalKey(raw)
+          if (!key) return
+          if (!idx.has(key)) idx.set(key, new Set())
+          idx.get(key).add(raw)
+        })
+        return { idx, originals }
+      }
+      function pickBestMatch(bNodeRaw, aIndex) {
+        const bKey = canonicalKey(bNodeRaw)
+        if (aIndex.idx.has(bKey)) {
+          const cands = Array.from(aIndex.idx.get(bKey))
+          // 가장 비슷한 길이의 후보
+          let best = cands[0],
+            bestScore = -1
+          for (const c of cands) {
+            const s = similarity(canonicalKey(c), bKey)
+            if (s > bestScore) {
+              bestScore = s
+              best = c
+            }
+          }
+          return { name: best, score: 1.0, reason: 'exact-key' }
+        }
+        const bStripped = canonicalKey(
+          stripNumericSuffix(normalizeSide(bNodeRaw))
+        )
+        if (aIndex.idx.has(bStripped)) {
+          const cands = Array.from(aIndex.idx.get(bStripped))
+          return { name: cands[0], score: 0.98, reason: 'stripped-suffix' }
+        }
+        const bSideNorm = canonicalKey(normalizeSide(bNodeRaw))
+        if (aIndex.idx.has(bSideNorm)) {
+          const cands = Array.from(aIndex.idx.get(bSideNorm))
+          return { name: cands[0], score: 0.96, reason: 'side-normalized' }
+        }
+        const threshold = 0.82
+        let bestName = null,
+          bestScore = 0,
+          bestReason = 'fuzzy'
+        for (const [aKey, setRaw] of aIndex.idx.entries()) {
+          const s = similarity(bKey, aKey)
+          if (s > bestScore) {
+            bestScore = s
+            bestName = setRaw.values().next().value
+          }
+        }
+        if (bestScore >= threshold) {
+          return { name: bestName, score: bestScore, reason: bestReason }
+        }
+        return null
       }
 
-      // 2) b.glb 애니메이션 → a 노드로 매핑 + 클립명 고유화/접두사
-      const mappedBAnims = [];
-      let totalTracks = 0, mappedTracks = 0;
-      const addPrefix = document.getElementById('prefixB').checked;
+      // ---------- 클립 이름 고유화 ----------
+      function uniqueName(base, taken) {
+        let name = base && base.trim() ? base.trim() : 'Clip'
+        if (!taken.has(name)) {
+          taken.add(name)
+          return name
+        }
+        // 뒤에 번호 증가
+        let i = 1
+        while (taken.has(`${name}_${i}`)) i++
+        const finalName = `${name}_${i}`
+        taken.add(finalName)
+        return finalName
+      }
 
-      let seq = 1;
-      for (const clip of gltfB.animations) {
-        const newTracks = [];
+      document.getElementById('mergeBtn').addEventListener('click', () => {
+        if (!gltfA || !gltfB) return
 
-        for (const track of clip.tracks) {
-          totalTracks++;
-          const parts = track.name.split('.');
-          const bNode = parts[0];
-          const match = pickBestMatch(bNode, aIndex);
-          if (match) {
-            const cloned = track.clone();
-            cloned.name = cloned.name.replace(bNode, match.name);
-            newTracks.push(cloned);
-            mappedTracks++;
-            log('🧩 매핑:', bNode, '→', match.name, `(reason=${match.reason}, score=${match.score.toFixed(3)})`);
-          } else {
-            log('⚠️ 매치 실패:', bNode);
+        const aIndex = buildANodeIndex(gltfA.scene)
+        log('a.glb 노드 수(이름 보유):', aIndex.originals.size)
+
+        // 1) a.glb의 애니메이션 이름 목록 수집
+        const takenNames = new Set()
+        for (const c of gltfA.animations || []) {
+          const old = c.name && c.name.trim() ? c.name : 'Animation'
+          const uniq = uniqueName(old, takenNames)
+          // a의 이름은 바꾸지 않고 예약만
+          if (uniq !== old) {
+            // 예약 충돌 시에도 a는 그대로 두고, 이후 b에서 피해서 이름 생성
+            // (필요하면 여기서 a 이름도 바꾸도록 옵션화 가능)
           }
         }
 
-        if (newTracks.length > 0) {
-          const newClip = clip.clone();
-          newClip.tracks = newTracks;
+        // 2) b.glb 애니메이션 → a 노드로 매핑 + 클립명 고유화/접두사
+        const mappedBAnims = []
+        let totalTracks = 0,
+          mappedTracks = 0
+        const addPrefix = document.getElementById('prefixB').checked
 
-          // 기본 이름 결정
-          let baseName = clip.name && clip.name.trim() ? clip.name.trim() : 'Animation';
-          // "Animation"처럼 흔한 이름에는 접두사/번호 부여
-          if (addPrefix) baseName = `b_${baseName}`;
-          // takenNames를 피해 고유 이름 생성
-          newClip.name = uniqueName(baseName, takenNames);
+        let seq = 1
+        for (const clip of gltfB.animations) {
+          const newTracks = []
 
-          mappedBAnims.push(newClip);
-          log(`클립 "${clip.name}" → "${newClip.name}" (${newTracks.length} 트랙 매핑 성공)`);
-          seq++;
-        } else {
-          log(`클립 "${clip.name}" 매핑된 트랙 없음 → 스킵`);
+          for (const track of clip.tracks) {
+            totalTracks++
+            const parts = track.name.split('.')
+            const bNode = parts[0]
+            const match = pickBestMatch(bNode, aIndex)
+            if (match) {
+              const cloned = track.clone()
+              cloned.name = cloned.name.replace(bNode, match.name)
+              newTracks.push(cloned)
+              mappedTracks++
+              log(
+                '🧩 매핑:',
+                bNode,
+                '→',
+                match.name,
+                `(reason=${match.reason}, score=${match.score.toFixed(3)})`
+              )
+            } else {
+              log('⚠️ 매치 실패:', bNode)
+            }
+          }
+
+          if (newTracks.length > 0) {
+            const newClip = clip.clone()
+            newClip.tracks = newTracks
+
+            // 기본 이름 결정
+            let baseName =
+              clip.name && clip.name.trim() ? clip.name.trim() : 'Animation'
+            // "Animation"처럼 흔한 이름에는 접두사/번호 부여
+            if (addPrefix) baseName = `b_${baseName}`
+            // takenNames를 피해 고유 이름 생성
+            newClip.name = uniqueName(baseName, takenNames)
+
+            mappedBAnims.push(newClip)
+            log(
+              `클립 "${clip.name}" → "${newClip.name}" (${newTracks.length} 트랙 매핑 성공)`
+            )
+            seq++
+          } else {
+            log(`클립 "${clip.name}" 매핑된 트랙 없음 → 스킵`)
+          }
         }
-      }
 
-      log(`요약: 총 트랙 ${totalTracks}개 중 ${mappedTracks}개 매핑 성공`);
+        log(`요약: 총 트랙 ${totalTracks}개 중 ${mappedTracks}개 매핑 성공`)
 
-      // 3) 병합 (a 원본 + b 매핑본)
-      const mergedAnims = [...gltfA.animations, ...mappedBAnims];
-      log(`최종 병합 애니메이션 개수: ${mergedAnims.length}`);
+        // 3) 병합 (a 원본 + b 매핑본)
+        const mergedAnims = [...gltfA.animations, ...mappedBAnims]
+        log(`최종 병합 애니메이션 개수: ${mergedAnims.length}`)
 
-      exporter.parse(
-        gltfA.scene,
-        (result) => {
-          const blob = new Blob([result], { type: 'model/gltf-binary' });
-          const url = URL.createObjectURL(blob);
-          const aTag = document.createElement('a');
-          aTag.href = url;
-          aTag.download = 'merged.glb';
-          document.body.appendChild(aTag);
-          aTag.click();
-          document.body.removeChild(aTag);
-          URL.revokeObjectURL(url);
-          log('%c✅ 병합 완료, merged.glb 다운로드','color:#8df59b');
-          log('재생 팁: three.js에서 AnimationMixer.clipAction( animations.find(c=>c.name==="b_Animation") ) 처럼 이름으로 선택하세요.');
-        },
-        (err) => {
-          console.error(err);
-          log('%c❌ 내보내기 실패:','color:#ff6b6b', err);
-        },
-        { binary: true, animations: mergedAnims }
-      );
-    });
-  </script>
-</body>
+        exporter.parse(
+          gltfA.scene,
+          (result) => {
+            const blob = new Blob([result], { type: 'model/gltf-binary' })
+            const url = URL.createObjectURL(blob)
+            const aTag = document.createElement('a')
+            aTag.href = url
+            aTag.download = 'merged.glb'
+            document.body.appendChild(aTag)
+            aTag.click()
+            document.body.removeChild(aTag)
+            URL.revokeObjectURL(url)
+            log('%c✅ 병합 완료, merged.glb 다운로드', 'color:#8df59b')
+            log(
+              '재생 팁: three.js에서 AnimationMixer.clipAction( animations.find(c=>c.name==="b_Animation") ) 처럼 이름으로 선택하세요.'
+            )
+          },
+          (err) => {
+            console.error(err)
+            log('%c❌ 내보내기 실패:', 'color:#ff6b6b', err)
+          },
+          { binary: true, animations: mergedAnims }
+        )
+      })
+    </script>
+  </body>
 </html>
