@@ -74,14 +74,10 @@
   }
 
   let validAnimations: THREE.AnimationClip[] = []
+  let lastMovingState: boolean | undefined = undefined
 
   const playAnimationForState = () => {
     if (!mixer || validAnimations.length === 0) return
-
-    // Stop current action
-    if (currentAction) {
-      currentAction.stop()
-    }
 
     // Select animation based on movement state
     let clip: THREE.AnimationClip
@@ -97,11 +93,24 @@
       console.log(`Playing movement animation: ${clip.name}`)
     }
 
-    currentAction = mixer.clipAction(clip)
-    currentAction.reset()
-    currentAction.loop = THREE.LoopRepeat
-    currentAction.paused = false
-    currentAction.play()
+    const newAction = mixer.clipAction(clip)
+    
+    // Setup new action
+    newAction.reset()
+    newAction.loop = THREE.LoopRepeat
+    newAction.paused = false
+    
+    // If there's a current action, crossfade to the new one
+    if (currentAction && currentAction !== newAction) {
+      const crossfadeDuration = 0.3 // 300ms crossfade
+      
+      // Use THREE.js built-in crossfade
+      newAction.crossFadeFrom(currentAction, crossfadeDuration, true)
+    }
+    
+    // Play the new action
+    newAction.play()
+    currentAction = newAction
   }
 
   function setupRealAnimation() {
@@ -226,14 +235,16 @@
     }
   })
 
-  // React to isMoving changes
-  $effect(() => {
-    // Explicitly read isMoving to create dependency
-    const moving = isMoving
+  // Function to update animation state - called from GameScene gameLoop
+  export function updateAnimationState() {
     if (mixer && validAnimations.length > 0) {
-      playAnimationForState()
+      // Only update animation if the movement state has changed
+      if (lastMovingState !== isMoving) {
+        lastMovingState = isMoving
+        playAnimationForState()
+      }
     }
-  })
+  }
 </script>
 
 <!-- Character Model -->

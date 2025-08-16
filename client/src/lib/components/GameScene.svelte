@@ -44,6 +44,10 @@
 
   // Reference to InstancedGrass component
   let instancedGrass: InstancedGrass
+  
+  // References to PlayerModel components
+  let currentPlayerModel = $state<PlayerModel | null>(null)
+  let otherPlayerModels = $state<PlayerModel[]>([])
 
   gameStore.subscribe((state) => {
     currentPlayer = state.currentPlayer
@@ -68,6 +72,16 @@
       // Update animated grass
       if (instancedGrass) {
         instancedGrass.updateMixer(deltaTime)
+      }
+      
+      // Update player model animations
+      if (currentPlayerModel) {
+        currentPlayerModel.updateAnimationState()
+      }
+      
+      // Update other player model animations
+      for (const playerModel of otherPlayerModels) {
+        playerModel.updateAnimationState()
       }
 
       // Update camera with preserved offset
@@ -409,6 +423,7 @@
 
 {#if currentPlayer && cameraInitialized}
   <PlayerModel
+    bind:this={currentPlayerModel}
     position={currentPlayer.position}
     name={currentPlayer.name}
     isCurrentPlayer={true}
@@ -419,8 +434,9 @@
 {/if}
 
 {#if cameraInitialized}
-  {#each [...otherPlayers.values()] as player (player.id)}
+  {#each [...otherPlayers.values()] as player, index (player.id)}
     <PlayerModel
+      bind:this={otherPlayerModels[index]}
       position={player.position}
       name={player.name}
       isCurrentPlayer={false}
