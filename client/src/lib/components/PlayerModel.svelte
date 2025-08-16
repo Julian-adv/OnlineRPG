@@ -101,8 +101,8 @@
     newAction.loop = THREE.LoopRepeat
     newAction.paused = false
 
-    // If there's a current action, crossfade to the new one
-    if (currentAction && currentAction !== newAction) {
+    // If there's a current action and it's different, crossfade to the new one
+    if (currentAction) {
       const crossfadeDuration = 0.3 // 300ms crossfade
 
       // Use THREE.js built-in crossfade

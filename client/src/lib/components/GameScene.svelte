@@ -65,7 +65,7 @@
       // Update player controls
       if (playerControl) {
         playerControl.updateKeyboardMovement()
-        playerControl.updatePlayerMovement(currentTime)
+        playerControl.updatePlayerMovement(deltaTime)
       }
 
       // Update animated grass

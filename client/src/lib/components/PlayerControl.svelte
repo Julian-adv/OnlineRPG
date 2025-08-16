@@ -26,16 +26,22 @@
   // Movement system
   let movementTarget = $state<{ x: number; y: number; z: number } | null>(null)
   let isMoving = $state(false)
-  let movementStartTime = $state(0)
   let movementStartPosition = $state<{
     x: number
     y: number
     z: number
   } | null>(null)
   const MOVEMENT_SPEED = 3 // units per second
+  const ACCELERATION = 6 // units per second squared
+  const DECELERATION = 6 // units per second squared (same as acceleration for smooth feel)
+  
+  // Pre-calculate constant distances
+  const ACCELERATION_DISTANCE = (MOVEMENT_SPEED * MOVEMENT_SPEED) / (2 * ACCELERATION)
+  const DECELERATION_DISTANCE = (MOVEMENT_SPEED * MOVEMENT_SPEED) / (2 * DECELERATION)
 
-  // Character rotation
+  // Character rotation and current speed
   let playerRotation = $state(0)
+  let currentSpeed = $state(0) // Current movement speed
 
   // Current player state
   let playerState = $state<PlayerState>({
@@ -58,57 +64,76 @@
 
   // Update player state and notify parent
   function updatePlayerState() {
+    const currentPosition = currentPlayer ? {
+      x: currentPlayer.position.x,
+      y: currentPlayer.position.y,
+      z: currentPlayer.position.z
+    } : playerState.position
+
     const newState: PlayerState = {
       state: isMoving ? 'moving' : 'idle',
-      speed: isMoving ? MOVEMENT_SPEED : 0,
+      speed: currentSpeed, // Use actual current speed instead of fixed MOVEMENT_SPEED
       direction: playerRotation,
-      position: playerState.position
+      position: currentPosition
     }
     
     // Only update if state actually changed
     if (
       newState.state !== playerState.state ||
-      newState.speed !== playerState.speed ||
-      newState.direction !== playerState.direction
+      Math.abs(newState.speed - playerState.speed) > 0.01 || // Small tolerance for speed changes
+      newState.direction !== playerState.direction ||
+      Math.abs(newState.position.x - playerState.position.x) > 0.01 ||
+      Math.abs(newState.position.z - playerState.position.z) > 0.01
     ) {
       playerState = newState
       onStateChange(newState)
     }
   }
 
-  // Update player movement (click-to-move)
-  export function updatePlayerMovement(currentTime: number) {
+  // Update player movement (click-to-move) with acceleration/deceleration
+  export function updatePlayerMovement(deltaTime: number) {
     if (
       !isMoving ||
       !movementTarget ||
       !currentPlayer ||
       !movementStartPosition
     ) {
+      // Reset speed when not moving
+      if (currentSpeed > 0) {
+        currentSpeed = 0
+        updatePlayerState()
+      }
       return
     }
 
-    const elapsed = currentTime - movementStartTime
     const dx = movementTarget.x - movementStartPosition.x
     const dz = movementTarget.z - movementStartPosition.z
-    const distance = Math.sqrt(dx * dx + dz * dz)
-    const duration = (distance / MOVEMENT_SPEED) * 1000 // Convert to milliseconds
+    const totalDistance = Math.sqrt(dx * dx + dz * dz)
 
-    const progress = Math.min(elapsed / duration, 1)
+    // Calculate current position
+    const currentX = currentPlayer.position.x
+    const currentZ = currentPlayer.position.z
+    const remainingDx = movementTarget.x - currentX
+    const remainingDz = movementTarget.z - currentZ
+    const remainingDistance = Math.sqrt(remainingDx * remainingDx + remainingDz * remainingDz)
 
-    if (progress < 1) {
-      // Linear interpolation
-      const newX = movementStartPosition.x + dx * progress
-      const newZ = movementStartPosition.z + dz * progress
+    // Determine which phase we're in and update speed directly
+    const traveledDistance = totalDistance - remainingDistance
+    const deltaTimeSeconds = deltaTime / 1000 // Convert milliseconds to seconds
 
-      gameStore.update((state) => {
-        if (state.currentPlayer) {
-          state.currentPlayer.position.set(newX, movementTarget!.y, newZ)
-        }
-        return state
-      })
-
-      playerState.position = { x: newX, y: movementTarget.y, z: newZ }
+    if (traveledDistance < ACCELERATION_DISTANCE) {
+      // Acceleration phase - increase speed
+      currentSpeed = Math.min(currentSpeed + ACCELERATION * deltaTimeSeconds, MOVEMENT_SPEED)
+    } else if (remainingDistance > DECELERATION_DISTANCE) {
+      // Cruise phase - maintain max speed
+      currentSpeed = MOVEMENT_SPEED
     } else {
+      // Deceleration phase - decrease speed
+      currentSpeed = Math.max(currentSpeed - DECELERATION * deltaTimeSeconds, 0)
+    }
+
+    // Check if we've reached the destination
+    if (remainingDistance < 0.01) {
       // Movement complete
       gameStore.update((state) => {
         if (state.currentPlayer && movementTarget) {
@@ -121,18 +146,30 @@
         return state
       })
 
-      playerState.position = {
-        x: movementTarget.x,
-        y: movementTarget.y,
-        z: movementTarget.z
-      }
-
       // Send final position to server
       networkManager.sendPlayerMove(movementTarget)
 
       isMoving = false
       movementTarget = null
       movementStartPosition = null
+      currentSpeed = 0
+    } else {
+      // Continue movement
+      const direction = {
+        x: remainingDx / remainingDistance,
+        z: remainingDz / remainingDistance
+      }
+
+      const moveDistance = currentSpeed * deltaTimeSeconds
+      const newX = currentX + direction.x * moveDistance
+      const newZ = currentZ + direction.z * moveDistance
+
+      gameStore.update((state) => {
+        if (state.currentPlayer) {
+          state.currentPlayer.position.set(newX, movementTarget!.y, newZ)
+        }
+        return state
+      })
     }
 
     updatePlayerState()
@@ -168,6 +205,8 @@
 
     // Apply keyboard movement if any keys are pressed
     if (moveX !== 0 || moveZ !== 0) {
+      // Use fixed speed for keyboard movement (instant response)
+      currentSpeed = MOVEMENT_SPEED
       const speed = MOVEMENT_SPEED * (1000 / 120 / 1000) // Adjust for frame rate (120 FPS target)
       const newX = currentPlayer.position.x + moveX * speed
       const newZ = currentPlayer.position.z + moveZ * speed
@@ -187,8 +226,6 @@
         return state
       })
 
-      playerState.position = { x: newX, y: 0, z: newZ }
-
       // Send position to server periodically
       networkManager.sendPlayerMove({
         x: newX,
@@ -197,6 +234,7 @@
       })
     } else {
       isMoving = false
+      currentSpeed = 0
     }
 
     updatePlayerState()
@@ -218,7 +256,6 @@
       y: currentPlayer.position.y,
       z: currentPlayer.position.z
     }
-    movementStartTime = performance.now()
     isMoving = true
 
     updatePlayerState()
