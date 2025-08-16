@@ -76,11 +76,13 @@
       
       // Update player model animations
       if (currentPlayerModel) {
+        currentPlayerModel.updateMixer()
         currentPlayerModel.updateAnimationState()
       }
       
       // Update other player model animations
       for (const playerModel of otherPlayerModels) {
+        playerModel.updateMixer()
         playerModel.updateAnimationState()
       }
 

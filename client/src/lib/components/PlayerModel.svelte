@@ -59,18 +59,15 @@
   // Animation system - following gpt-all-in-one.html approach
   let mixer: THREE.AnimationMixer | null = null
   let currentAction: THREE.AnimationAction | null = null
-  let animationId: number | null = null
-  let modelRoot = $state<THREE.Group | null>(null) // ✅ $state로 반응성 추가
+  let modelRoot = $state<THREE.Group | null>(null)
   let clock = new THREE.Clock()
 
-  function updateAnimation() {
-    const deltaTime = clock.getDelta()
-
-    if (mixer) {
+  // Function to update mixer - called from GameScene gameLoop
+  export function updateMixer() {
+    if (mixer && currentAction) {
+      const deltaTime = clock.getDelta()
       mixer.update(deltaTime)
     }
-
-    animationId = requestAnimationFrame(updateAnimation)
   }
 
   let validAnimations: THREE.AnimationClip[] = []
@@ -94,20 +91,20 @@
     }
 
     const newAction = mixer.clipAction(clip)
-    
+
     // Setup new action
     newAction.reset()
     newAction.loop = THREE.LoopRepeat
     newAction.paused = false
-    
+
     // If there's a current action, crossfade to the new one
     if (currentAction && currentAction !== newAction) {
       const crossfadeDuration = 0.3 // 300ms crossfade
-      
+
       // Use THREE.js built-in crossfade
       newAction.crossFadeFrom(currentAction, crossfadeDuration, true)
     }
-    
+
     // Play the new action
     newAction.play()
     currentAction = newAction
@@ -173,10 +170,6 @@
 
         // Play appropriate animation based on isMoving state
         playAnimationForState()
-
-        // Start animation loop
-        clock.start()
-        animationId = requestAnimationFrame(updateAnimation)
       } else {
         console.warn('No suitable animations found with strict filtering')
 
@@ -196,10 +189,6 @@
           currentAction.loop = THREE.LoopRepeat
           currentAction.paused = false
           currentAction.play()
-
-          // Start animation loop
-          clock.start()
-          animationId = requestAnimationFrame(updateAnimation)
         } else {
           console.log('No animations available at all')
         }
@@ -222,9 +211,6 @@
 
     // Cleanup on unmount
     return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId)
-      }
       if (mixer) {
         mixer.stopAllAction()
         mixer = null
