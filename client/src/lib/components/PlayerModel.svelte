@@ -23,7 +23,7 @@
     name,
     isCurrentPlayer,
     playerState,
-    speed,
+    speed: _speed,
     rotation,
     cameraPosition,
   }: Props = $props()
@@ -66,12 +66,11 @@
 
   let validAnimations: THREE.AnimationClip[] = []
   let lastPlayerState: 'idle' | 'moving' | undefined = undefined
-  let lastSpeed = 0
+  let _lastSpeed = 0
 
   // Movement speed constants (should match PlayerControl)
   const MOVEMENT_SPEED = 3
-  const WALKING_THRESHOLD = MOVEMENT_SPEED * 0.9
-  const SPEED_CHOICE = false
+  const _WALKING_THRESHOLD = MOVEMENT_SPEED * 0.9
 
   function playAnimationForState() {
     if (!mixer || validAnimations.length === 0) return
@@ -84,19 +83,7 @@
         validAnimations.find((anim) => anim.name === 'Animation_2') ||
         validAnimations[2]
     } else if (playerState === 'moving') {
-      if (SPEED_CHOICE) {
-        // Choose walking or running animation based on speed
-        if (speed < WALKING_THRESHOLD) {
-          // Less than 90% of MOVEMENT_SPEED
-          // Walking animation
-          clip = validAnimations[1] // Animation_1
-        } else {
-          // Running animation
-          clip = validAnimations[0] // Original movement animation
-        }
-      } else {
-        clip = validAnimations[Math.floor(Math.random() * 2)]
-      }
+      clip = validAnimations[Math.floor(Math.random() * 2)]
     } else {
       return // Unknown state
     }
@@ -109,7 +96,7 @@
     newAction.paused = false
 
     // If there's a current action and it's different, crossfade to the new one
-    if (currentAction) {
+    if (currentAction && newAction !== currentAction) {
       const crossfadeDuration = 0.3 // 300ms crossfade
 
       // Use THREE.js built-in crossfade
@@ -244,15 +231,9 @@
 
     // Update animation state
     if (validAnimations.length > 0) {
-      let speedChanged = false
-      if (SPEED_CHOICE) {
-        // Update animation if player state has changed or speed crossed walking threshold
-        speedChanged =
-          lastSpeed < WALKING_THRESHOLD !== speed < WALKING_THRESHOLD
-      }
-      if (lastPlayerState !== playerState || speedChanged) {
+      // Only update animation if the player state has changed
+      if (lastPlayerState !== playerState) {
         lastPlayerState = playerState
-        lastSpeed = speed
         playAnimationForState()
       }
     }
