@@ -64,14 +64,6 @@
   let modelRoot = $state<THREE.Group | null>(null)
   let clock = new THREE.Clock()
 
-  // Function to update mixer - called from GameScene gameLoop
-  export function updateMixer() {
-    if (mixer && currentAction) {
-      const deltaTime = clock.getDelta()
-      mixer.update(deltaTime)
-    }
-  }
-
   let validAnimations: THREE.AnimationClip[] = []
   let lastPlayerState: 'idle' | 'moving' | undefined = undefined
 
@@ -225,9 +217,18 @@
     }
   })
 
-  // Function to update animation state - called from GameScene gameLoop
-  export function updateAnimationState() {
-    if (mixer && validAnimations.length > 0) {
+  // Function to update mixer and animation state - called from GameScene gameLoop
+  export function updateAnimation() {
+    if (!mixer) return
+
+    // Update mixer
+    if (currentAction) {
+      const deltaTime = clock.getDelta()
+      mixer.update(deltaTime)
+    }
+
+    // Update animation state
+    if (validAnimations.length > 0) {
       // Only update animation if the player state has changed
       if (lastPlayerState !== playerState) {
         lastPlayerState = playerState

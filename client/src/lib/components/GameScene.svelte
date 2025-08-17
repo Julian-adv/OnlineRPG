@@ -75,14 +75,12 @@
       
       // Update player model animations
       if (currentPlayerModel) {
-        currentPlayerModel.updateMixer()
-        currentPlayerModel.updateAnimationState()
+        currentPlayerModel.updateAnimation()
       }
       
       // Update other player model animations
       for (const playerModel of otherPlayerModels) {
-        playerModel.updateMixer()
-        playerModel.updateAnimationState()
+        playerModel.updateAnimation()
       }
 
       // Update camera with preserved offset
