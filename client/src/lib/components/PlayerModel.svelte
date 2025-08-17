@@ -56,7 +56,7 @@
   }
 
   // Load animated model
-  const gltf = useLoader(GLTFLoader).load('/models/merged (3).glb')
+  const gltf = useLoader(GLTFLoader).load('/models/merged (4).glb')
 
   // Animation system - following gpt-all-in-one.html approach
   let mixer: THREE.AnimationMixer | null = null
@@ -67,6 +67,8 @@
   let validAnimations: THREE.AnimationClip[] = []
   let lastPlayerState: 'idle' | 'moving' | undefined = undefined
   let _lastSpeed = 0
+  let overlapArmed = false
+  const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
 
   // Movement speed constants (should match PlayerControl)
   const MOVEMENT_SPEED = 3
@@ -78,10 +80,9 @@
     // Select animation based on player state and speed
     let clip: THREE.AnimationClip
     if (playerState === 'idle') {
-      // Find Animation_2 or fallback to index 2
-      clip =
-        validAnimations.find((anim) => anim.name === 'Animation_2') ||
-        validAnimations[2]
+      // Randomly select between Animation_2 (index 2) or Animation_3 (index 3)
+      const idleIndex = Math.floor(Math.random() * 2) + 2 // 2 or 3
+      clip = validAnimations[idleIndex]
     } else if (playerState === 'moving') {
       clip = validAnimations[Math.floor(Math.random() * 2)]
     } else {
@@ -92,7 +93,8 @@
 
     // Setup new action
     newAction.reset()
-    newAction.loop = THREE.LoopRepeat
+    newAction.loop = THREE.LoopOnce
+    newAction.clampWhenFinished = true
     newAction.paused = false
 
     // If there's a current action and it's different, crossfade to the new one
@@ -106,6 +108,9 @@
     // Play the new action
     newAction.play()
     currentAction = newAction
+
+    // Enable frame-based overlap detection for idle state
+    overlapArmed = playerState === 'idle'
   }
 
   function setupRealAnimation() {
@@ -227,6 +232,29 @@
     if (currentAction) {
       const deltaTime = clock.getDelta()
       mixer.update(deltaTime)
+
+      const clip = currentAction.getClip()
+      if (clip && clip.duration > 0) {
+        // Calculate remaining time (without modulo)
+        const remainingTime = clip.duration - currentAction.time
+
+        // Loop detection (if remaining time is negative): re-arm
+        if (remainingTime < 0) {
+          overlapArmed = playerState === 'idle'
+        }
+
+        // Trigger next animation once when conditions are met (0.3 seconds remaining)
+        if (
+          overlapArmed &&
+          remainingTime <= OVERLAP_BEFORE_END &&
+          remainingTime > 0 &&
+          playerState === 'idle'
+        ) {
+          overlapArmed = false // Only once
+          playAnimationForState()
+          return // Early return to prevent duplicate calls below
+        }
+      }
     }
 
     // Update animation state
