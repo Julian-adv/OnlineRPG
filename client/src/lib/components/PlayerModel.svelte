@@ -56,7 +56,7 @@
   }
 
   // Load animated model
-  const gltf = useLoader(GLTFLoader).load('/models/merged (4).glb')
+  const gltf = useLoader(GLTFLoader).load('/models/GirlsInAction.glb')
 
   // Animation system - following gpt-all-in-one.html approach
   let mixer: THREE.AnimationMixer | null = null
@@ -79,11 +79,17 @@
     // Select animation based on player state and speed
     let clip: THREE.AnimationClip
     if (playerState === 'idle') {
-      // Randomly select between Animation_2 (index 2) or Animation_3 (index 3)
-      const idleIndex = Math.floor(Math.random() * 2) + 2 // 2 or 3
+      // Randomly select between idle animations (index 3, 9, or 13)
+      const idleIndices = [3, 9, 13]
+      const idleIndex =
+        idleIndices[Math.floor(Math.random() * idleIndices.length)]
       clip = validAnimations[idleIndex]
     } else if (playerState === 'moving') {
-      clip = validAnimations[Math.floor(Math.random() * 2)]
+      // Randomly select between moving animations (index 5 or 12)
+      const movingIndices = [5, 12]
+      const movingIndex =
+        movingIndices[Math.floor(Math.random() * movingIndices.length)]
+      clip = validAnimations[movingIndex]
     } else {
       return // Unknown state
     }
