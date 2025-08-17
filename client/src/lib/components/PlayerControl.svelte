@@ -22,7 +22,7 @@
 
   let currentPlayer = $state<Player | null>(null)
   let keysPressed = $state(new Set<string>())
-  
+
   // Movement system
   let movementTarget = $state<{ x: number; y: number; z: number } | null>(null)
   let isMoving = $state(false)
@@ -34,10 +34,12 @@
   const MOVEMENT_SPEED = 3 // units per second
   const ACCELERATION = 6 // units per second squared
   const DECELERATION = 6 // units per second squared (same as acceleration for smooth feel)
-  
+
   // Pre-calculate constant distances
-  const ACCELERATION_DISTANCE = (MOVEMENT_SPEED * MOVEMENT_SPEED) / (2 * ACCELERATION)
-  const DECELERATION_DISTANCE = (MOVEMENT_SPEED * MOVEMENT_SPEED) / (2 * DECELERATION)
+  const ACCELERATION_DISTANCE =
+    (MOVEMENT_SPEED * MOVEMENT_SPEED) / (2 * ACCELERATION)
+  const DECELERATION_DISTANCE =
+    (MOVEMENT_SPEED * MOVEMENT_SPEED) / (2 * DECELERATION)
 
   // Character rotation and current speed
   let playerRotation = $state(0)
@@ -48,7 +50,7 @@
     state: 'idle',
     speed: 0,
     direction: 0,
-    position: { x: 0, y: 0, z: 0 }
+    position: { x: 0, y: 0, z: 0 },
   })
 
   gameStore.subscribe((state) => {
@@ -57,26 +59,28 @@
       playerState.position = {
         x: currentPlayer.position.x,
         y: currentPlayer.position.y,
-        z: currentPlayer.position.z
+        z: currentPlayer.position.z,
       }
     }
   })
 
   // Update player state and notify parent
   function updatePlayerState() {
-    const currentPosition = currentPlayer ? {
-      x: currentPlayer.position.x,
-      y: currentPlayer.position.y,
-      z: currentPlayer.position.z
-    } : playerState.position
+    const currentPosition = currentPlayer
+      ? {
+          x: currentPlayer.position.x,
+          y: currentPlayer.position.y,
+          z: currentPlayer.position.z,
+        }
+      : playerState.position
 
     const newState: PlayerState = {
       state: isMoving ? 'moving' : 'idle',
       speed: currentSpeed, // Use actual current speed instead of fixed MOVEMENT_SPEED
       direction: playerRotation,
-      position: currentPosition
+      position: currentPosition,
     }
-    
+
     // Only update if state actually changed
     if (
       newState.state !== playerState.state ||
@@ -115,7 +119,9 @@
     const currentZ = currentPlayer.position.z
     const remainingDx = movementTarget.x - currentX
     const remainingDz = movementTarget.z - currentZ
-    const remainingDistance = Math.sqrt(remainingDx * remainingDx + remainingDz * remainingDz)
+    const remainingDistance = Math.sqrt(
+      remainingDx * remainingDx + remainingDz * remainingDz
+    )
 
     // Determine which phase we're in and update speed directly
     const traveledDistance = totalDistance - remainingDistance
@@ -123,7 +129,10 @@
 
     if (traveledDistance < ACCELERATION_DISTANCE) {
       // Acceleration phase - increase speed
-      currentSpeed = Math.min(currentSpeed + ACCELERATION * deltaTimeSeconds, MOVEMENT_SPEED)
+      currentSpeed = Math.min(
+        currentSpeed + ACCELERATION * deltaTimeSeconds,
+        MOVEMENT_SPEED
+      )
     } else if (remainingDistance > DECELERATION_DISTANCE) {
       // Cruise phase - maintain max speed
       currentSpeed = MOVEMENT_SPEED
@@ -133,7 +142,7 @@
     }
 
     // Check if we've reached the destination
-    if (remainingDistance < 0.01) {
+    if (remainingDistance < 0.01 || currentSpeed <= 0.001) {
       // Movement complete
       gameStore.update((state) => {
         if (state.currentPlayer && movementTarget) {
@@ -157,7 +166,7 @@
       // Continue movement
       const direction = {
         x: remainingDx / remainingDistance,
-        z: remainingDz / remainingDistance
+        z: remainingDz / remainingDistance,
       }
 
       const moveDistance = currentSpeed * deltaTimeSeconds
@@ -171,8 +180,7 @@
         return state
       })
     }
-
-    updatePlayerState()
+    updatePlayerState() // Call updatePlayerState immediately after setting isMoving = false
   }
 
   // Keyboard movement system
@@ -230,7 +238,7 @@
       networkManager.sendPlayerMove({
         x: newX,
         y: 0, // Keep player on ground level
-        z: newZ
+        z: newZ,
       })
     } else {
       isMoving = false
@@ -241,7 +249,11 @@
   }
 
   // Handle click-to-move
-  export function handleClickToMove(clickPosition: { x: number; y: number; z: number }) {
+  export function handleClickToMove(clickPosition: {
+    x: number
+    y: number
+    z: number
+  }) {
     if (!currentPlayer || isMoving || keysPressed.size > 0) return
 
     // Calculate rotation to face target direction
@@ -254,7 +266,7 @@
     movementStartPosition = {
       x: currentPlayer.position.x,
       y: currentPlayer.position.y,
-      z: currentPlayer.position.z
+      z: currentPlayer.position.z,
     }
     isMoving = true
 

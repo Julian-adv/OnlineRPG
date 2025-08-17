@@ -237,7 +237,7 @@
   {groundMesh}
 />
 
-{#if currentPlayer && cameraInitialized}
+{#if currentPlayer && cameraInitialized && camera}
   <PlayerModel
     bind:this={currentPlayerModel}
     position={currentPlayer.position}
@@ -246,18 +246,21 @@
     playerState={currentPlayerState.state}
     speed={currentPlayerState.speed}
     rotation={currentPlayerState.direction}
-    cameraPosition={camera?.position}
+    cameraPosition={camera.position}
   />
 {/if}
 
-{#if cameraInitialized}
+{#if cameraInitialized && camera}
   {#each [...otherPlayers.values()] as player, index (player.id)}
     <PlayerModel
       bind:this={otherPlayerModels[index]}
       position={player.position}
       name={player.name}
       isCurrentPlayer={false}
-      cameraPosition={camera?.position}
+      playerState="idle"
+      speed={0}
+      rotation={0}
+      cameraPosition={camera.position}
     />
   {/each}
 {/if}

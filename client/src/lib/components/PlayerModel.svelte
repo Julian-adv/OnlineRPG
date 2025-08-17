@@ -12,19 +12,19 @@
     position: Vector3
     name: string
     isCurrentPlayer: boolean
-    playerState?: 'idle' | 'moving'
-    speed?: number
-    rotation?: number
-    cameraPosition?: Vector3
+    playerState: 'idle' | 'moving'
+    speed: number
+    rotation: number
+    cameraPosition: Vector3
   }
 
   let {
     position,
     name,
     isCurrentPlayer,
-    playerState = 'idle',
-    speed: _speed = 0,
-    rotation = 0,
+    playerState,
+    speed,
+    rotation,
     cameraPosition,
   }: Props = $props()
 
@@ -66,22 +66,37 @@
 
   let validAnimations: THREE.AnimationClip[] = []
   let lastPlayerState: 'idle' | 'moving' | undefined = undefined
+  let lastSpeed = 0
 
-  const playAnimationForState = () => {
+  // Movement speed constants (should match PlayerControl)
+  const MOVEMENT_SPEED = 3
+  const WALKING_THRESHOLD = MOVEMENT_SPEED * 0.9
+  const SPEED_CHOICE = false
+
+  function playAnimationForState() {
     if (!mixer || validAnimations.length === 0) return
 
-    // Select animation based on player state
+    // Select animation based on player state and speed
     let clip: THREE.AnimationClip
     if (playerState === 'idle') {
       // Find Animation_2 or fallback to index 2
       clip =
         validAnimations.find((anim) => anim.name === 'Animation_2') ||
         validAnimations[2]
-      console.log(`Playing idle animation: ${clip.name}`)
     } else if (playerState === 'moving') {
-      // Use default animation (index 0) for movement
-      clip = validAnimations[0]
-      console.log(`Playing movement animation: ${clip.name}`)
+      if (SPEED_CHOICE) {
+        // Choose walking or running animation based on speed
+        if (speed < WALKING_THRESHOLD) {
+          // Less than 90% of MOVEMENT_SPEED
+          // Walking animation
+          clip = validAnimations[1] // Animation_1
+        } else {
+          // Running animation
+          clip = validAnimations[0] // Original movement animation
+        }
+      } else {
+        clip = validAnimations[Math.floor(Math.random() * 2)]
+      }
     } else {
       return // Unknown state
     }
@@ -229,9 +244,15 @@
 
     // Update animation state
     if (validAnimations.length > 0) {
-      // Only update animation if the player state has changed
-      if (lastPlayerState !== playerState) {
+      let speedChanged = false
+      if (SPEED_CHOICE) {
+        // Update animation if player state has changed or speed crossed walking threshold
+        speedChanged =
+          lastSpeed < WALKING_THRESHOLD !== speed < WALKING_THRESHOLD
+      }
+      if (lastPlayerState !== playerState || speedChanged) {
         lastPlayerState = playerState
+        lastSpeed = speed
         playAnimationForState()
       }
     }
