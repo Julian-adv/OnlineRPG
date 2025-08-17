@@ -67,7 +67,6 @@
   let validAnimations: THREE.AnimationClip[] = []
   let lastPlayerState: 'idle' | 'moving' | undefined = undefined
   let _lastSpeed = 0
-  let overlapArmed = false
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
 
   // Movement speed constants (should match PlayerControl)
@@ -108,9 +107,6 @@
     // Play the new action
     newAction.play()
     currentAction = newAction
-
-    // Enable frame-based overlap detection for idle state
-    overlapArmed = playerState === 'idle'
   }
 
   function setupRealAnimation() {
@@ -238,19 +234,8 @@
         // Calculate remaining time (without modulo)
         const remainingTime = clip.duration - currentAction.time
 
-        // Loop detection (if remaining time is negative): re-arm
-        if (remainingTime < 0) {
-          overlapArmed = playerState === 'idle'
-        }
-
         // Trigger next animation once when conditions are met (0.3 seconds remaining)
-        if (
-          overlapArmed &&
-          remainingTime <= OVERLAP_BEFORE_END &&
-          remainingTime > 0 &&
-          playerState === 'idle'
-        ) {
-          overlapArmed = false // Only once
+        if (remainingTime <= OVERLAP_BEFORE_END && playerState === 'idle') {
           playAnimationForState()
           return // Early return to prevent duplicate calls below
         }
