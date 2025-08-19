@@ -8,6 +8,10 @@
 - "Yard Grass" (https://skfb.ly/6VxNM) by ebmclachlan is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
 - "Animated_grass\_-_vegetation" (https://skfb.ly/pyEME) by Savatar illusions is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
 
+## terrain
+
+- "3D field inspection" (https://skfb.ly/oJx7N) by matousekfoto is licensed under Creative Commons Attribution (http://creativecommons.org/licenses/by/4.0/).
+
 ## human
 
 - https://sketchfab.com/3d-models/blake-slim-walk-c4d-c076264ca7394357bf3f17837edd72c9

@@ -7,7 +7,7 @@
   import { networkManager } from '../network/socket'
   import PlayerModel from './PlayerModel.svelte'
   import PlayerControl, { type PlayerState } from './PlayerControl.svelte'
-  import InstancedGrass from './InstancedGrass.svelte'
+  import TerrainField from './TerrainField.svelte'
 
   let currentPlayer = $state<Player | null>(null)
   let otherPlayers = $state(new Map())
@@ -30,16 +30,13 @@
     state: 'idle',
     speed: 0,
     direction: 0,
-    position: { x: 0, y: 0, z: 0 }
+    position: { x: 0, y: 0, z: 0 },
   })
 
-  // Reference to InstancedGrass component
-  let instancedGrass: InstancedGrass
-  
   // References to PlayerModel components
   let currentPlayerModel = $state<PlayerModel | null>(null)
   let otherPlayerModels = $state<PlayerModel[]>([])
-  
+
   // Reference to PlayerControl component
   let playerControl: PlayerControl
 
@@ -68,16 +65,11 @@
         playerControl.updatePlayerMovement(deltaTime)
       }
 
-      // Update animated grass
-      if (instancedGrass) {
-        instancedGrass.updateMixer(deltaTime)
-      }
-      
       // Update player model animations
       if (currentPlayerModel) {
         currentPlayerModel.updateAnimation()
       }
-      
+
       // Update other player model animations
       for (const playerModel of otherPlayerModels) {
         playerModel.updateAnimation()
@@ -92,7 +84,6 @@
     // Always continue the loop
     gameLoopId = requestAnimationFrame(gameLoop)
   }
-
 
   function calculateCameraOffset() {
     if (!currentPlayer || !camera) {
@@ -137,7 +128,6 @@
     // Update camera target to look at player
     cameraTarget = [playerPos.x, playerPos.y, playerPos.z]
   }
-
 
   // Stop game loop
   function stopGameLoop() {
@@ -191,7 +181,6 @@
       networkManager.disconnect()
     }
   })
-
 </script>
 
 <T.PerspectiveCamera bind:ref={camera} makeDefault fov={75}>
@@ -214,12 +203,12 @@
   sectionColor="#4a5568"
   sectionThickness={1.2}
   fadeDistance={100}
-  position={[0, 0.1, 0]}
+  position={[0, -1.1, 0]}
 />
 
 <T.Mesh
   bind:ref={groundMesh}
-  position={[0, 0, 0]}
+  position={[0, -1, 0]}
   rotation={[-Math.PI / 2, 0, 0]}
   receiveShadow
 >
@@ -227,11 +216,12 @@
   <T.MeshLambertMaterial color="#4a7c59" />
 </T.Mesh>
 
-<InstancedGrass bind:this={instancedGrass} />
+<!-- Terrain Field - 3x3 grid of field inspection models -->
+<TerrainField />
 
 <!-- PlayerControl component handles input and updates player state -->
-<PlayerControl 
-  bind:this={playerControl} 
+<PlayerControl
+  bind:this={playerControl}
   onStateChange={handlePlayerStateChange}
   {camera}
   {groundMesh}
