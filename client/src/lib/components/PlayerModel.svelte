@@ -7,6 +7,7 @@
   import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
   import { onMount } from 'svelte'
   import { SvelteSet } from 'svelte/reactivity'
+  import { ANIMATION_ORDER, AnimationIndex } from '../types/animations'
 
   interface Props {
     position: Vector3
@@ -56,7 +57,7 @@
   }
 
   // Load animated model
-  const gltf = useLoader(GLTFLoader).load('/models/GirlsInAction.glb')
+  const gltf = useLoader(GLTFLoader).load('/models/maria.glb')
 
   // Animation system - following gpt-all-in-one.html approach
   let mixer: THREE.AnimationMixer | null = null
@@ -79,14 +80,23 @@
     // Select animation based on player state and speed
     let clip: THREE.AnimationClip
     if (playerState === 'idle') {
-      // Randomly select between idle animations (index 3, 9, or 13)
-      const idleIndices = [3, 9, 13]
+      // Randomly select between idle animations
+      const idleIndices = [
+        AnimationIndex.IDLE1,
+        AnimationIndex.IDLE2,
+        AnimationIndex.IDLE3,
+        AnimationIndex.IDLE4,
+      ]
       const idleIndex =
         idleIndices[Math.floor(Math.random() * idleIndices.length)]
       clip = validAnimations[idleIndex]
     } else if (playerState === 'moving') {
-      // Randomly select between moving animations (index 5 or 12)
-      const movingIndices = [5, 12]
+      // Randomly select between moving animations
+      const movingIndices = [
+        AnimationIndex.WALK,
+        AnimationIndex.JOG,
+        AnimationIndex.RUN,
+      ]
       const movingIndex =
         movingIndices[Math.floor(Math.random() * movingIndices.length)]
       clip = validAnimations[movingIndex]
@@ -98,8 +108,8 @@
 
     // Setup new action
     newAction.reset()
-    newAction.loop = THREE.LoopOnce
-    newAction.clampWhenFinished = true
+    newAction.loop = playerState === 'idle' ? THREE.LoopOnce : THREE.LoopRepeat
+    newAction.clampWhenFinished = playerState === 'idle'
     newAction.paused = false
 
     // If there's a current action and it's different, crossfade to the new one
@@ -144,27 +154,16 @@
       console.log(`Model has ${modelNodeNames.size} named nodes`)
       console.log('Model node names:', Array.from(modelNodeNames).slice(0, 10))
 
-      // Filter animations to only include tracks that target existing nodes
-      validAnimations = animations.filter((clip) => {
-        console.log(
-          `Checking clip: ${clip.name} with ${clip.tracks.length} tracks`
-        )
-
-        const validTracks = clip.tracks.filter((track) => {
-          const targetName = track.name.split('.')[0]
-          const isValid = modelNodeNames.has(targetName)
-          if (!isValid) {
-            console.log(
-              `  ❌ Track "${track.name}" targets "${targetName}" (not found in model)`
-            )
-          }
-          return isValid
-        })
-
-        console.log(
-          `  ✅ Clip "${clip.name}": ${validTracks.length}/${clip.tracks.length} tracks valid`
-        )
-        return validTracks.length > 0
+      // Find animations by specific track names in order
+      validAnimations = ANIMATION_ORDER.map((targetName) => {
+        const foundClip = animations.find((clip) => clip.name === targetName)
+        if (foundClip) {
+          console.log(`✅ Found animation: ${targetName}`)
+          return foundClip
+        } else {
+          console.log(`❌ Missing animation: ${targetName}`)
+          return animations[0] // Use first animation as dummy to keep index alignment
+        }
       })
 
       console.log(`Found ${validAnimations.length} valid animations`)
