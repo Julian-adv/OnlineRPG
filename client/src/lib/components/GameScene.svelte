@@ -7,7 +7,7 @@
   import { networkManager } from '../network/socket'
   import PlayerModel from './PlayerModel.svelte'
   import PlayerControl, { type PlayerState } from './PlayerControl.svelte'
-  import TerrainField from './TerrainField.svelte'
+  import HeightmapTerrain from './HeightmapTerrain.svelte'
 
   let currentPlayer = $state<Player | null>(null)
   let otherPlayers = $state(new Map())
@@ -216,8 +216,11 @@
   <T.MeshLambertMaterial color="#4a7c59" />
 </T.Mesh>
 
-<!-- Terrain Field - 3x3 grid of field inspection models -->
-<TerrainField />
+<!-- Heightmap Terrain - 64x64 grid with gravel road material -->
+<HeightmapTerrain />
+
+<!-- Terrain Field - 3x3 grid of field inspection models (commented out) -->
+<!-- <TerrainField /> -->
 
 <!-- PlayerControl component handles input and updates player state -->
 <PlayerControl
