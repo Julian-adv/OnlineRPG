@@ -7,12 +7,13 @@
   import { networkManager } from '../network/socket'
   import PlayerModel from './PlayerModel.svelte'
   import PlayerControl, { type PlayerState } from './PlayerControl.svelte'
-  import HeightmapTerrain from './HeightmapTerrain.svelte'
+  import SplatTerrain from './SplatTerrain.svelte'
 
   let currentPlayer = $state<Player | null>(null)
   let otherPlayers = $state(new Map())
   let camera = $state<THREE.PerspectiveCamera | undefined>(undefined)
   let groundMesh = $state<THREE.Mesh | undefined>(undefined)
+  let terrainGeometry = $state<THREE.BufferGeometry | null>(null)
   let cameraInitialized = $state(false)
 
   // Camera follow system
@@ -138,6 +139,10 @@
   }
 
   onMount(() => {
+    // Build a terrain geometry (XZ plane)
+    const plane = new THREE.PlaneGeometry(100, 100, 128, 128)
+    plane.rotateX(-Math.PI / 2) // Lay flat on XZ
+    terrainGeometry = plane
     // Start game loop
     lastFrameTime = performance.now()
     gameLoopId = requestAnimationFrame(gameLoop)
@@ -206,18 +211,9 @@
   position={[0, -1.1, 0]}
 />
 
-<T.Mesh
-  bind:ref={groundMesh}
-  position={[0, -1, 0]}
-  rotation={[-Math.PI / 2, 0, 0]}
-  receiveShadow
->
-  <T.PlaneGeometry args={[100, 100]} />
-  <T.MeshLambertMaterial color="#4a7c59" />
-</T.Mesh>
-
-<!-- Heightmap Terrain - 64x64 grid with gravel road material -->
-<HeightmapTerrain />
+{#if terrainGeometry}
+  <SplatTerrain geometry={terrainGeometry} bind:mesh={groundMesh} />
+{/if}
 
 <!-- Terrain Field - 3x3 grid of field inspection models (commented out) -->
 <!-- <TerrainField /> -->
