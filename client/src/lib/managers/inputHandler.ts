@@ -98,6 +98,12 @@ export type ClickIntent =
       position: Position
     }
   | { type: 'move_to_ground'; position: Position }
+  | {
+      /** Rod equipped + clicked point is underwater terrain: cast, don't walk. */
+      type: 'cast_fishing'
+      position: Position
+      distance: number
+    }
   | { type: 'none' }
 
 export interface RaycastContext {
@@ -114,6 +120,8 @@ export interface RaycastContext {
   playerPosition: Position
   playerFloorLevel: number
   isMonsterDead: (monsterId: string) => boolean
+  /** Main-hand item is a fishing rod — water clicks become casts. */
+  hasFishingRodEquipped?: boolean
 }
 
 /** Result of hovering a placed object that carries display text (e.g. signpost). */
@@ -438,6 +446,26 @@ class InputHandler {
     // behind them (pathfinding then routes around solid walls to the door).
     const groundHit = intersects.find((hit) => !isHouseWall(hit.object))
     if (groundHit) {
+      // Rod in hand + underwater terrain (sea level is Y=0, water meshes sit
+      // at ~0.01): this click is a cast, not a walk into the sea. Threshold
+      // slightly below zero so shoreline clicks still walk.
+      if (
+        context.hasFishingRodEquipped &&
+        context.playerFloorLevel === 0 &&
+        groundHit.point.y < -0.05
+      ) {
+        const dx = groundHit.point.x - context.playerPosition.x
+        const dz = groundHit.point.z - context.playerPosition.z
+        return {
+          type: 'cast_fishing',
+          position: {
+            x: groundHit.point.x,
+            y: groundHit.point.y,
+            z: groundHit.point.z,
+          },
+          distance: Math.sqrt(dx * dx + dz * dz),
+        }
+      }
       return {
         type: 'move_to_ground',
         position: {

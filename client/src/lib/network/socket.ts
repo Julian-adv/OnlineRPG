@@ -435,6 +435,18 @@ class NetworkManager {
     this.sendMessage({ OpenDungeonChest: { entrance_id: entranceId } })
   }
 
+  sendFishingCast(position: Position) {
+    this.sendMessage({ FishingCast: { position } })
+  }
+
+  sendFishingRespond(action: import('./networkTypes').FishingAction) {
+    this.sendMessage({ FishingRespond: { action } })
+  }
+
+  sendFishingStop() {
+    this.sendMessage('FishingStop')
+  }
+
   sendBreakDungeonProp(entranceId: string, depth: number, propId: number) {
     this.sendMessage({
       BreakDungeonProp: {

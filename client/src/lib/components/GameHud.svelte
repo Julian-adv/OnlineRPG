@@ -10,6 +10,7 @@
   import InventoryPanel from './InventoryPanel.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
   import TradeWindow from './TradeWindow.svelte'
+  import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
   import NpcContextMenu from './NpcContextMenu.svelte'
   import DragGhost from './DragGhost.svelte'
@@ -96,6 +97,7 @@
     <TradeWindow />
     <TradeOfferToast />
     <NpcContextMenu />
+    <FishingPrompt />
   {/if}
 
   <div class="bottom-hud">

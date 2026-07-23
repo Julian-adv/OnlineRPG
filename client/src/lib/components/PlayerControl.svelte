@@ -26,7 +26,8 @@
     debugSpeedMode,
     torchLightEnabled,
   } from '../stores/debugStore'
-  import { localTorchEquipped } from '../stores/inventoryStore'
+  import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
+  import { getItemDef } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
     type Position,
@@ -1131,6 +1132,9 @@
         const m = monsterManager.monsters.get(id)
         return m?.state === 'dead' || false
       },
+      hasFishingRodEquipped:
+        getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
+          ?.category === 'fishing_rod',
     })
   }
 
@@ -1226,6 +1230,19 @@
       moveToGround: (position) => {
         combatController.cancelCombat()
         handleClickToMove(position)
+      },
+      castFishing: (intent) => {
+        if (!currentPlayer || currentPlayer.health <= 0) return
+        // Stop and face the water before the cast — the server aborts a
+        // session on any movement, so a cast while pathing would cancel
+        // itself on the next waypoint send.
+        combatController.cancelCombat()
+        stopMovement()
+        const dx = intent.position.x - currentPlayer.position.x
+        const dz = intent.position.z - currentPlayer.position.z
+        if (dx !== 0 || dz !== 0) playerRotation = Math.atan2(dx, dz)
+        sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
+        networkManager.sendFishingCast(intent.position)
       },
       requestMove: handleClickToMove,
       onInteractionFinished,

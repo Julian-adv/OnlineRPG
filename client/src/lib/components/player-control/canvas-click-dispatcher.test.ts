@@ -19,6 +19,7 @@ function makeActions() {
     breakProp: vi.fn(),
     openProp: vi.fn(),
     moveToGround: vi.fn(),
+    castFishing: vi.fn(),
   } satisfies CanvasClickActions
 }
 

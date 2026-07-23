@@ -60,6 +60,7 @@ mod chat;
 pub(crate) use chat::parse_notice_command;
 mod combat;
 mod deals;
+pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
 mod inventory;
@@ -135,6 +136,12 @@ pub struct GameState {
     player_skills: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::skills::Skills>>>,
     /// Players whose skills changed since the last periodic save.
     dirty_skills: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Live fishing sessions, one per player, advanced by `tick_fishing`.
+    fishing_sessions: Arc<RwLock<HashMap<PlayerId, fishing::FishingSession>>>,
+    /// Server-side terrain heights (tile-cached). Fishing's water check is
+    /// its first gameplay consumer; sampled only in async handlers, never
+    /// in ticks.
+    height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
     housing_io: Arc<HousingIO>,
     /// Players whose state has changed since the last periodic save.
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
@@ -210,6 +217,7 @@ impl GameState {
         housing_io: Arc<HousingIO>,
         no_spawn_zones: Vec<NoSpawnZone>,
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
+        height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
 
@@ -233,6 +241,8 @@ impl GameState {
             player_gold: Arc::new(RwLock::new(HashMap::new())),
             player_skills: Arc::new(RwLock::new(HashMap::new())),
             dirty_skills: Arc::new(RwLock::new(HashSet::new())),
+            fishing_sessions: Arc::new(RwLock::new(HashMap::new())),
+            height_sampler,
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),

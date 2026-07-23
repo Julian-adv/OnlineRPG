@@ -36,6 +36,19 @@ pub struct ItemDefinition {
     /// equipped items and added to the wearer's base guard when attacked.
     #[serde(default)]
     pub guard: Option<i32>,
+    /// Fish only — rarity tier 1 (common) … 5 (legendary). Drives catch
+    /// weighting and skill XP (doc/FISHING.md).
+    #[serde(rename = "rarityTier", default)]
+    pub rarity_tier: Option<u32>,
+    /// Fish only — relative weight in the catch table at fishing level 0.
+    #[serde(rename = "catchWeight", default)]
+    pub catch_weight: Option<u32>,
+    /// Fish only — dice notation for rolled length in centimeters.
+    #[serde(rename = "sizeDice", default)]
+    pub size_dice: Option<String>,
+    /// Fish only — rolled length at or above this is a trophy catch.
+    #[serde(rename = "trophyCm", default)]
+    pub trophy_cm: Option<u32>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -54,6 +67,17 @@ impl ItemDefinition {
         self.category.as_deref() == Some("weapon")
     }
 
+    /// Main-hand tool that enables casting (`ClientMessage::FishingCast`).
+    /// Not a weapon: no damage dice, so attacking with it rod-in-hand uses
+    /// the bare-handed path.
+    pub fn is_fishing_rod(&self) -> bool {
+        self.category.as_deref() == Some("fishing_rod")
+    }
+
+    pub fn is_fish(&self) -> bool {
+        self.category.as_deref() == Some("fish")
+    }
+
     /// Damage dice if this item is a weapon, else `None`.
     pub fn damage_dice(&self) -> Option<&str> {
         if self.is_weapon() {
@@ -68,6 +92,8 @@ impl ItemDefinition {
     pub fn use_effect(&self) -> Option<UseEffect> {
         match self.category.as_deref()? {
             "healing_potion" => self.dice.clone().map(UseEffect::Heal),
+            // Eating a fish heals by its dice — same plumbing as potions.
+            "fish" => self.dice.clone().map(UseEffect::Heal),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             _ => None,
@@ -143,5 +169,24 @@ impl ItemDefs {
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
         self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
+    }
+
+    /// The fishing catch table: every fish def with a catch weight, sorted
+    /// by id for a deterministic cumulative walk.
+    pub fn fish_catch_table(&self) -> Vec<crate::game_state::fishing::CatchCandidate> {
+        let mut table: Vec<_> = self
+            .defs
+            .values()
+            .filter(|def| def.is_fish())
+            .filter_map(|def| {
+                Some(crate::game_state::fishing::CatchCandidate {
+                    item_def_id: def.id.clone(),
+                    rarity: def.rarity_tier.unwrap_or(1),
+                    catch_weight: def.catch_weight?,
+                })
+            })
+            .collect();
+        table.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
+        table
     }
 }

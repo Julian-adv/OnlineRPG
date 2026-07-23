@@ -46,6 +46,8 @@
   import GameScenePlayersLayer from './game-scene/GameScenePlayersLayer.svelte'
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
+  import FishingBobber from './FishingBobber.svelte'
+  import { fishingBobbers } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
   import ZoneOverlay from './map-editor/ZoneOverlay.svelte'
   import RoadOverlay from './map-editor/RoadOverlay.svelte'
@@ -1210,6 +1212,10 @@
     bind:this={groundItemsLayerRef}
     heightManager={terrainHeightManager}
   />
+
+  {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
+    <FishingBobber {bobber} />
+  {/each}
 </T>
 
 {#if $mapEditorMode}

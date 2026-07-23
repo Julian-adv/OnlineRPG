@@ -261,6 +261,84 @@ impl super::GameState {
         true
     }
 
+    /// Award one unit of a stackable item, respecting the carry-weight cap:
+    /// stacks onto an existing bag entry (or adds one), and when the unit
+    /// would not fit, spills it to the ground at the player's feet instead —
+    /// an award is never silently lost. Fishing catches land here.
+    pub async fn award_stackable_item(&self, player_id: &PlayerId, item_def_id: &str) {
+        let Some(def_weight) = self.item_defs.get(item_def_id).map(|d| d.weight) else {
+            warn!(
+                "award_stackable_item: unknown item_def_id {:?}",
+                item_def_id
+            );
+            return;
+        };
+        let max_weight = self.max_carry_weight(player_id).await;
+        // Reserved before the inventory lock; unused when the unit stacks
+        // onto an existing entry. A skipped id is cheaper than lock nesting.
+        let reserved_instance_id = self.next_instance_id().await;
+
+        enum Placement {
+            Bagged(PlayerInventory),
+            Overweight,
+        }
+        let placement = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            if self.calc_total_weight(inv) + def_weight > max_weight {
+                Placement::Overweight
+            } else {
+                match inv
+                    .bag
+                    .iter_mut()
+                    .find(|item| item.item_def_id == item_def_id && item.enchant == 0)
+                {
+                    Some(stack) => stack.quantity += 1,
+                    None => {
+                        inv.bag.push(ItemInstance {
+                            instance_id: reserved_instance_id,
+                            item_def_id: item_def_id.to_string(),
+                            quantity: 1,
+                            enchant: 0,
+                        });
+                    }
+                }
+                Placement::Bagged(inv.clone())
+            }
+        };
+
+        match placement {
+            Placement::Bagged(snapshot) => {
+                self.mark_inventory_dirty(player_id).await;
+                self.send_inventory_snapshot(player_id, snapshot).await;
+            }
+            Placement::Overweight => {
+                let (position, floor_level) = {
+                    let players = self.players.read().await;
+                    match players.get(player_id) {
+                        Some(p) => (p.position, p.floor_level),
+                        None => return,
+                    }
+                };
+                self.send_system_message(player_id, "Too heavy to carry — it slips to the ground.")
+                    .await;
+                self.spawn_ground_item(
+                    GroundItem {
+                        instance_id: reserved_instance_id,
+                        item_def_id: item_def_id.to_string(),
+                        position,
+                        floor_level,
+                        enchant: 0,
+                    },
+                    None,
+                )
+                .await;
+            }
+        }
+    }
+
     pub async fn equip_item(&self, player_id: &PlayerId, instance_id: u64) {
         let (snapshot, torch_on) = {
             let mut inventories = self.inventories.write().await;

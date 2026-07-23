@@ -26,6 +26,13 @@ import {
   SKILL_DISPLAY_NAMES,
 } from '../stores/skillsStore'
 import {
+  myFishingPhase,
+  upsertBobber,
+  markBobberBite,
+  removeBobber,
+} from '../stores/fishingStore'
+import { getItemDef } from '../data/itemDefs'
+import {
   shopSession,
   applyDealUpdate,
   setMerchantDeals,
@@ -985,6 +992,54 @@ export function handleServerMessage(
 
     case 'SkillsUpdate':
       setSkills(data.skills)
+      break
+
+    case 'FishingCasted': {
+      upsertBobber(data.player_id, data.position)
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('casting')
+        addCombatMessage({ text: 'You cast your line.', sender: 'local' })
+      }
+      break
+    }
+
+    case 'FishingBite': {
+      markBobberBite(data.player_id)
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('bite')
+        addCombatMessage({
+          text: 'Something bites! Hook it!',
+          sender: 'local',
+        })
+      }
+      break
+    }
+
+    case 'FishingEnded': {
+      removeBobber(data.player_id)
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('idle')
+        const outcome = data.outcome
+        if (outcome === 'Escaped') {
+          addCombatMessage({ text: 'The fish got away.', sender: 'local' })
+        } else if (outcome === 'Aborted') {
+          addCombatMessage({ text: 'You reel in your line.', sender: 'local' })
+        } else if (outcome?.Caught) {
+          const { item_def_id, size_cm, trophy } = outcome.Caught
+          const name = getItemDef(item_def_id)?.name ?? item_def_id
+          addCombatMessage({
+            text: trophy
+              ? `Trophy catch! ${name}, ${size_cm} cm!`
+              : `You caught a ${name} (${size_cm} cm).`,
+            sender: 'local',
+          })
+        }
+      }
+      break
+    }
+
+    case 'FishingError':
+      addCombatMessage({ text: data.message, sender: 'local' })
       break
 
     case 'SkillXpGained': {

@@ -483,6 +483,7 @@ pub async fn handle_connection(
     // no-op for that player id.
     if !shutdown_started.has_changed().unwrap_or(true) {
         if let Some(ref id) = state.player_id {
+            game_state.cancel_fishing_if_active(id).await;
             game_state.persist_and_detach_player(id, auth_service).await;
 
             game_state.unregister_direct_channel(id).await;
@@ -1036,6 +1037,8 @@ async fn handle_client_message(
             append,
         } => {
             if let Some(id) = &state.player_id {
+                // Walking away breaks fishing concentration (doc/FISHING.md).
+                game_state.cancel_fishing_if_active(id).await;
                 game_state
                     .update_player_position(
                         id,
@@ -1124,9 +1127,34 @@ async fn handle_client_message(
 
         ClientMessage::PlayerAttack { monster_id } => {
             if let Some(id) = &state.player_id {
+                game_state.cancel_fishing_if_active(id).await;
                 game_state.broadcast_player_attack(id, monster_id).await;
             } else {
                 warn!("Received attack from client that is not in game");
+            }
+        }
+
+        ClientMessage::FishingCast { position } => {
+            if let Some(id) = &state.player_id {
+                game_state.start_fishing(id, position).await;
+            } else {
+                warn!("Received fishing cast from client that is not in game");
+            }
+        }
+
+        ClientMessage::FishingRespond { action } => {
+            if let Some(id) = &state.player_id {
+                game_state.respond_fishing(id, action).await;
+            } else {
+                warn!("Received fishing response from client that is not in game");
+            }
+        }
+
+        ClientMessage::FishingStop => {
+            if let Some(id) = &state.player_id {
+                game_state.stop_fishing(id).await;
+            } else {
+                warn!("Received fishing stop from client that is not in game");
             }
         }
 

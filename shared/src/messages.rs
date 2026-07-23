@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::character::{Character, CharacterAttributes, CharacterClass, Gender};
 use crate::entity::{Monster, MonsterState, Player};
 use crate::world::{GameDateTime, NoSpawnZone, Position};
-use crate::{housing, inventory, skills};
+use crate::{fishing, housing, inventory, skills};
 
 /// Which side of a merchant trade a haggled deal applies to.
 /// `Buy` = the player buys from the merchant, `Sell` = the player sells to
@@ -288,6 +288,20 @@ pub enum ClientMessage {
     OpenTrade {
         target_player_id: PlayerId,
     },
+    /// Cast the equipped fishing rod at a water point. The server validates
+    /// rod, range, floor and water (terrain height < 0) and answers with a
+    /// `FishingCasted` broadcast or a direct `FishingError`.
+    FishingCast {
+        position: Position,
+    },
+    /// Respond to the fish (currently only `Hook`, on a bite). Timing is
+    /// judged server-side against the bite deadline plus latency grace.
+    FishingRespond {
+        action: fishing::FishingAction,
+    },
+    /// Reel in deliberately. Also implied by moving, attacking or
+    /// disconnecting — any of them ends the session as `Aborted`.
+    FishingStop,
 }
 
 impl ClientMessage {
@@ -524,6 +538,29 @@ pub enum ServerMessage {
         total_xp: u64,
         new_level: u32,
         leveled_up: bool,
+    },
+    /// A player's cast landed: render their bobber at `position`. Broadcast
+    /// nearby (the caster included) so fishing is visible to passers-by.
+    FishingCasted {
+        player_id: PlayerId,
+        position: Position,
+    },
+    /// The bobber dipped — the angler has the shared bite window (plus
+    /// latency grace, judged server-side) to send `Hook`.
+    FishingBite {
+        player_id: PlayerId,
+    },
+    /// The session is over: despawn the bobber and, for the angler, show the
+    /// outcome. A caught fish also arrives via the normal `InventoryUpdated`
+    /// (or `GroundItemSpawned` when the bag couldn't take the weight).
+    FishingEnded {
+        player_id: PlayerId,
+        outcome: fishing::FishingOutcome,
+    },
+    /// Direct: a fishing request was refused (no rod, not water, too far…).
+    /// Mirrors `InventoryError`.
+    FishingError {
+        message: String,
     },
     Kicked {
         player_id: PlayerId,
