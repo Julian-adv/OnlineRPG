@@ -203,7 +203,7 @@ mod tests {
     fn fishing_rod_is_not_dungeon_chest_treasure() {
         // Rods are bought, not looted from bosses. The category exclusion
         // keeps that true even if a future rod tier is priced above the
-        // chest floor (today's 800 rod also sits below it — belt and braces).
+        // chest floor (today's 300c rod also sits below it — belt and braces).
         let defs = ItemDefs::load();
         let pool = defs.equipment_ids_with_min_price(2000);
         assert!(

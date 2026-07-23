@@ -19,7 +19,8 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
 ```
 
 **Getting a rod:** buy a Fishing Rod from a general merchant (Rica stocks it
-for 800 — belt/scroll tier, a starter tool) and equip it in the main hand.
+for 3 silver — a starter tool between a torch and a potion) and equip it in
+the main hand.
 Rods are excluded from dungeon treasure chests — they are bought tools, not
 endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
 
@@ -79,13 +80,16 @@ edible — `category "fish"` maps to the same `Heal(dice)` use-effect as
 potions. Size is deliberately **not stored on the item** so fish stay
 stackable commodities; it lives only in the catch announcement.
 
-Prices sit inside the existing catalog ladder (torch 50 … potion 500 …
-belt 800 … dagger 2500 … iron sword 10000): minnow 30, perch 80, trout 250,
-salmon 800, golden sturgeon 5000 (the 1-in-100 jackpot — shield-tier, not
-armor-tier). At the level-0 catch weights that's an expected ~165 base value
-per catch, ~65 gold at a 40% sell rate — steady pocket money for a safe,
-semi-idle activity, with the sturgeon as the story-worthy spike. The 800 rod
-pays for itself in roughly a dozen average catches.
+Prices are anchored to the game's *income* economy, not just the catalog:
+monster kills drop unsellable worn weapons by design, so the repeatable gold
+faucets are coin piles (1–10c) and gated dungeon chests — and an NPC's
+salary is 50s/day. Fish: minnow 10c, perch 25c, trout 60c, salmon 2s,
+golden sturgeon 15s (the 1-in-100 jackpot, a goblin-sword's worth). At level-0
+catch weights that's ~46c expected base value per catch — ~18c at the 40%
+sell rate, i.e. a catch is worth a couple of coin piles and an hour of
+active fishing earns roughly half a guard's daily salary. Steady pocket
+money, not a money printer. The 3s rod repays itself in ~17 average
+catches; final tuning is explicitly the maintainer's call (PR0).
 
 ## Skill
 

@@ -24,9 +24,9 @@ scroll_of_return,Scroll of Return,Reading the arcane runes whisks you back to to
 scroll_of_enchant_weapon,Scroll of Enchant Weapon,Arcane runes that hone your wielded weapon's edge — though greedy re-reading may destroy it.,0.2,,true,scroll_of_enchant_weapon.png,objects/scroll_enchant.glb,enchant_scroll,,,1200
 table,Table,A sturdy wooden table.,20,,false,table_icon.png,objects/table.glb,furniture,,wood,3000
 leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2
-fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,fishing_rod.png,weapons/spear.glb,fishing_rod,,wood,800,,,,
-raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,true,raw_minnow.png,,fish,1d3,,30,,1,50,3d4,12
-raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,true,raw_perch.png,,fish,1d6,,80,,2,30,4d6,22
-raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,true,raw_trout.png,,fish,2d4,,250,,3,14,6d8,42
-river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,true,river_salmon.png,,fish,2d6,,800,,4,5,8d10,70
-golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,true,golden_sturgeon.png,,fish,4d6,,5000,,5,1,20d10,150
+fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,fishing_rod.png,weapons/spear.glb,fishing_rod,,wood,300,,,,
+raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,true,raw_minnow.png,,fish,1d3,,10,,1,50,3d4,12
+raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,true,raw_perch.png,,fish,1d6,,25,,2,30,4d6,22
+raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,true,raw_trout.png,,fish,2d4,,60,,3,14,6d8,42
+river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,true,river_salmon.png,,fish,2d6,,200,,4,5,8d10,70
+golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,true,golden_sturgeon.png,,fish,4d6,,1500,,5,1,20d10,150
