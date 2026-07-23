@@ -25,8 +25,8 @@ scroll_of_enchant_weapon,Scroll of Enchant Weapon,Arcane runes that hone your wi
 table,Table,A sturdy wooden table.,20,,false,table_icon.png,objects/table.glb,furniture,,wood,3000
 leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2
 fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,spear_icon.png,weapons/spear.glb,fishing_rod,,wood,2500,,,,
-raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,true,sword.png,,fish,1d3,,150,,1,50,3d4,12
-raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,true,sword.png,,fish,1d6,,400,,2,30,4d6,22
-raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,true,sword.png,,fish,2d4,,1200,,3,14,6d8,42
-river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,true,sword.png,,fish,2d6,,4000,,4,5,8d10,70
-golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,true,sword.png,,fish,4d6,,20000,,5,1,20d10,150
+raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,true,raw_minnow.png,,fish,1d3,,150,,1,50,3d4,12
+raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,true,raw_perch.png,,fish,1d6,,400,,2,30,4d6,22
+raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,true,raw_trout.png,,fish,2d4,,1200,,3,14,6d8,42
+river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,true,river_salmon.png,,fish,2d6,,4000,,4,5,8d10,70
+golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,true,golden_sturgeon.png,,fish,4d6,,20000,,5,1,20d10,150
