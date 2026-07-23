@@ -19,9 +19,9 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
 ```
 
 **Getting a rod:** buy a Fishing Rod from a general merchant (Rica stocks it
-for 2500) and equip it in the main hand. Rods are excluded from dungeon
-treasure chests — they are bought tools, not endgame combat loot
-(`server/src/item_defs.rs::equipment_ids_with_min_price`).
+for 800 — belt/scroll tier, a starter tool) and equip it in the main hand.
+Rods are excluded from dungeon treasure chests — they are bought tools, not
+endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
 
 - **Cast** (`FishingCast { position }`): needs a fishing rod in the main hand
   (`category == "fishing_rod"`), the overworld floor, a target within 8 m, and
@@ -78,6 +78,14 @@ Fish are stackable, sellable (`basePrice`, ordinary merchant flow), and
 edible — `category "fish"` maps to the same `Heal(dice)` use-effect as
 potions. Size is deliberately **not stored on the item** so fish stay
 stackable commodities; it lives only in the catch announcement.
+
+Prices sit inside the existing catalog ladder (torch 50 … potion 500 …
+belt 800 … dagger 2500 … iron sword 10000): minnow 30, perch 80, trout 250,
+salmon 800, golden sturgeon 5000 (the 1-in-100 jackpot — shield-tier, not
+armor-tier). At the level-0 catch weights that's an expected ~165 base value
+per catch, ~65 gold at a 40% sell rate — steady pocket money for a safe,
+semi-idle activity, with the sturgeon as the story-worthy spike. The 800 rod
+pays for itself in roughly a dozen average catches.
 
 ## Skill
 
