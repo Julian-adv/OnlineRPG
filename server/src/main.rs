@@ -330,11 +330,16 @@ async fn main() {
     // areas come from world.json `ambientSpawns`, not per-region rectangles.
     let no_spawn_zones = world_config::load_no_spawn_zones_from_regions(&terrain_io).await;
 
-    // Second TerrainIO on the same directory: the sampler wants ownership
-    // and TerrainIO is only a path handle. Fishing's water check reads it.
+    // Extra TerrainIO handles on the same directory: the samplers want
+    // ownership and TerrainIO is only a path handle. Fishing's water check
+    // reads both — the heightmap (terrain bed) and the water field (sea +
+    // river surface).
     let height_sampler = Arc::new(onlinerpg_terrain::height::HeightSampler::new(
         TerrainIO::new(std::path::PathBuf::from(&args.terrain_dir)),
     ));
+    let water_sampler = Arc::new(onlinerpg_terrain::water::WaterSampler::new(TerrainIO::new(
+        std::path::PathBuf::from(&args.terrain_dir),
+    )));
 
     let game_state = Arc::new(GameState::new(
         monster_defs,
@@ -345,6 +350,7 @@ async fn main() {
         no_spawn_zones,
         dungeon_defs,
         height_sampler,
+        water_sampler,
     ));
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.

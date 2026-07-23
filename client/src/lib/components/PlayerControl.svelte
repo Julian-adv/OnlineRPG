@@ -119,6 +119,8 @@
     objectMeshes: THREE.Object3D[]
     propMeshes: THREE.Object3D[]
     attackCooldown?: number
+    /** Baked water surface height at a world XZ (for fishing cast detection). */
+    waterSurfaceAt?: (x: number, z: number) => number
   }
 
   let {
@@ -133,6 +135,7 @@
     objectMeshes,
     propMeshes,
     attackCooldown,
+    waterSurfaceAt,
   }: Props = $props()
 
   /** How far from a clicked barrel/crate the player stops while walking up to
@@ -1135,6 +1138,7 @@
       hasFishingRodEquipped:
         getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
           ?.category === 'fishing_rod',
+      waterSurfaceAt,
     })
   }
 

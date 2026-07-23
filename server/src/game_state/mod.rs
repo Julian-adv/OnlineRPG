@@ -142,6 +142,10 @@ pub struct GameState {
     /// its first gameplay consumer; sampled only in async handlers, never
     /// in ticks.
     height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
+    /// Server-side unified water surface (sea + rivers, tile-cached). Paired
+    /// with `height_sampler` so fishing's water check covers rivers, whose
+    /// beds sit above sea level, not just the ocean.
+    water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     housing_io: Arc<HousingIO>,
     /// Players whose state has changed since the last periodic save.
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
@@ -218,6 +222,7 @@ impl GameState {
         no_spawn_zones: Vec<NoSpawnZone>,
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
         height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
+        water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
 
@@ -243,6 +248,7 @@ impl GameState {
             dirty_skills: Arc::new(RwLock::new(HashSet::new())),
             fishing_sessions: Arc::new(RwLock::new(HashMap::new())),
             height_sampler,
+            water_sampler,
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),

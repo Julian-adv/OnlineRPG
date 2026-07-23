@@ -114,6 +114,60 @@ impl onlinerpg_terrain::height::HeightTiles for SplitWorldTiles {
     }
 }
 
+/// No baked water field anywhere: every tile samples as flat sea level. With
+/// `SplitWorldTiles` this makes negative-x the ocean (bed −5, surface 0 →
+/// deep water) and positive-x dry land (bed +5, surface 0 → no water),
+/// matching the original ocean/land fishing tests.
+struct SeaOnlyWater;
+
+#[async_trait::async_trait]
+impl onlinerpg_terrain::water::WaterTiles for SeaOnlyWater {
+    async fn read_water_field(&self, _tx: i32, _tz: i32) -> std::io::Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+}
+
+/// A river world for the ocean-vs-river test: terrain is a 5 m-high plateau
+/// everywhere (well above sea level), and the water field reports a river
+/// surface at 5.4 m everywhere — the exact case the old `height < 0` check
+/// wrongly rejected. Fishing must still work here.
+struct RiverPlateauTiles;
+
+#[async_trait::async_trait]
+impl onlinerpg_terrain::height::HeightTiles for RiverPlateauTiles {
+    async fn read_heightmap(&self, _tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
+        let encoded = ((5.0 + 500.0) / 0.05) as u16;
+        let verts = onlinerpg_terrain::defaults::VERTS_PER_SIDE;
+        let mut buf = Vec::with_capacity(verts * verts * 2);
+        for _ in 0..(verts * verts) {
+            buf.extend_from_slice(&encoded.to_le_bytes());
+        }
+        Ok(buf)
+    }
+}
+
+struct RiverPlateauWater;
+
+#[async_trait::async_trait]
+impl onlinerpg_terrain::water::WaterTiles for RiverPlateauWater {
+    async fn read_water_field(&self, _tx: i32, _tz: i32) -> std::io::Result<Option<Vec<u8>>> {
+        // WFD1: 16-byte header + 65×65 pixels of 6 bytes; surfaceY 5.4 m.
+        let verts = onlinerpg_terrain::defaults::VERTS_PER_SIDE;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"WFD1");
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&(verts as u16).to_le_bytes());
+        out.extend_from_slice(&(verts as u16).to_le_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        let enc = ((5.4f32 + 500.0) / 0.05).round() as u16;
+        for _ in 0..(verts * verts) {
+            out.extend_from_slice(&enc.to_le_bytes());
+            out.extend_from_slice(&[0, 0, 255, 0]); // flowX, flowZ, riverness, turbulence
+        }
+        Ok(Some(out))
+    }
+}
+
 fn make_test_game_state(test_name: &str) -> GameState {
     let housing_dir = std::env::temp_dir().join(format!(
         "onlinerpg_{test_name}_housing_{}",
@@ -133,6 +187,36 @@ fn make_test_game_state(test_name: &str) -> GameState {
         dungeon_defs,
         Arc::new(onlinerpg_terrain::height::HeightSampler::new(
             SplitWorldTiles,
+        )),
+        Arc::new(onlinerpg_terrain::water::WaterSampler::new(SeaOnlyWater)),
+    )
+}
+
+/// A game state whose terrain is a 5 m plateau with a river surface at 5.4 m
+/// everywhere — for testing that fishing works in rivers whose beds are above
+/// sea level (the ocean-vs-river regression).
+fn make_river_game_state(test_name: &str) -> GameState {
+    let housing_dir = std::env::temp_dir().join(format!(
+        "onlinerpg_{test_name}_housing_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let housing_io = Arc::new(HousingIO::new(housing_dir));
+    let item_defs = ItemDefs::load();
+    let world_drop_defs = crate::world_drop_defs::WorldDropDefs::load(&item_defs);
+    let dungeon_defs = crate::dungeon_defs::DungeonDefs::load(&item_defs);
+    GameState::new(
+        MonsterDefs::load(),
+        item_defs,
+        world_drop_defs,
+        GameState::default_start_datetime(),
+        housing_io,
+        vec![],
+        dungeon_defs,
+        Arc::new(onlinerpg_terrain::height::HeightSampler::new(
+            RiverPlateauTiles,
+        )),
+        Arc::new(onlinerpg_terrain::water::WaterSampler::new(
+            RiverPlateauWater,
         )),
     )
 }
@@ -5212,6 +5296,42 @@ mod fishing_tests {
         assert!(drain(&mut rx)
             .iter()
             .any(|m| matches!(m, ServerMessage::FishingCasted { .. })));
+    }
+
+    // The regression this PR fixes: a river's bed sits ABOVE sea level (its
+    // carved channel bottoms out at sea level and climbs into the hills), so
+    // the old `terrain height < 0` water test rejected every inland river.
+    // With the unified water field, a river surface above its bed reads as
+    // water and the cast lands — end to end, all the way to a caught fish.
+    #[tokio::test(start_paused = true)]
+    async fn fishing_works_in_a_river_above_sea_level() {
+        let game_state = make_river_game_state("fishing_river");
+        // Plateau terrain is +5 m; the player and the water are both up there.
+        let (id, mut rx) = make_angler(&game_state, "angler_river").await;
+
+        game_state.start_fishing(&id, water_target()).await;
+        let casted = drain(&mut rx);
+        let bobber = casted.iter().find_map(|m| match m {
+            ServerMessage::FishingCasted { position, .. } => Some(*position),
+            _ => None,
+        });
+        let bobber = bobber.expect("river cast should be accepted, not refused as land");
+        // The bobber floats on the river surface (~5.4 m), not at sea level.
+        assert!(
+            bobber.y > 5.0,
+            "bobber should sit on the river surface, got y={}",
+            bobber.y
+        );
+
+        // And the whole loop still resolves to a catch over the river.
+        advance_until_bite(&game_state, &mut rx).await;
+        game_state.respond_fishing(&id, FishingAction::Hook).await;
+        let (outcome, _) =
+            fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
+        assert!(
+            matches!(outcome, FishingOutcome::Caught { .. }),
+            "perfect play should land a river fish, got {outcome:?}"
+        );
     }
 
     #[tokio::test(start_paused = true)]

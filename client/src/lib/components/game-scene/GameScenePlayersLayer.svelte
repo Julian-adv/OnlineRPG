@@ -65,6 +65,8 @@
     monsterModels: (Monster | undefined)[]
     playerAttackDuration: number
     heightManager: TerrainHeightManager
+    /** Baked water surface height at a world XZ (for fishing cast detection). */
+    waterSurfaceAt?: (x: number, z: number) => number
     onStateChange: (newState: PlayerState) => void
     onPlayerControlEvent?: (event: PlayerControlEvent) => void
     onAttackDuration: (duration: number) => void
@@ -100,6 +102,7 @@
     monsterModels,
     playerAttackDuration,
     heightManager,
+    waterSurfaceAt,
     onStateChange,
     onPlayerControlEvent,
     onAttackDuration,
@@ -371,6 +374,7 @@
 {#if camera && currentPlayer}
   <PlayerControl
     bind:this={playerControl}
+    {waterSurfaceAt}
     {onStateChange}
     {camera}
     {heightManager}

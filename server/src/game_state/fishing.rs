@@ -22,10 +22,13 @@ use tracing::warn;
 use super::GameState;
 use crate::types::{PlayerId, ServerMessage};
 
-/// Sea level: terrain below this is water (doc/WATER_SYSTEM.md — the client
-/// generates water meshes for tiles under Y=0; this is the server-side twin
-/// of that rule and the server's first gameplay use of terrain height).
-const SEA_LEVEL: f32 = 0.0;
+/// Minimum water depth (surface − terrain bed, meters) a cast target must
+/// have. The unified water field puts the surface just above the bed inside
+/// river channels (`RIVER_DEPTH_OFFSET_M = 0.5`) and well above it at sea, and
+/// *below* the bed on land — so `depth > 0` is "water" for ocean and rivers
+/// alike. A small positive floor keeps casts off the paper-thin shoreline
+/// fringe. Matches the client's cast threshold (doc/RIVER_SYSTEM.md).
+const MIN_FISHABLE_DEPTH_M: f32 = 0.1;
 
 /// Casts are only valid on the overworld floor — no fishing in dungeons or
 /// on house upper floors, whose "water" would be a terrain-height fiction.
@@ -161,35 +164,41 @@ impl GameState {
             return;
         }
 
-        // The one async terrain read in the flow, deliberately in the cast
-        // handler (first-touch tile IO) and never in the tick.
-        match self
-            .height_sampler
-            .sample_height(onlinerpg_shared::wrap_world_x(target.x), target.z)
-            .await
-        {
-            Ok(height) if height < SEA_LEVEL => {}
-            Ok(_) => {
+        // Water test: is the baked water surface meaningfully above the
+        // terrain bed here? True over ocean (surface at sea level, bed below)
+        // and over rivers (carved channel surface above its bed, even high in
+        // the mountains), false on land (surface collapses under the bed).
+        // The two async terrain reads live here in the cast handler
+        // (first-touch tile IO), never in the tick.
+        let wx = onlinerpg_shared::wrap_world_x(target.x);
+        let water_surface = match (
+            self.height_sampler.sample_height(wx, target.z).await,
+            self.water_sampler.sample_surface(wx, target.z).await,
+        ) {
+            (Ok(bed), Ok(surface)) if surface - bed > MIN_FISHABLE_DEPTH_M => surface,
+            (Ok(_), Ok(_)) => {
                 self.send_fishing_error(player_id, "You can only cast into water.")
                     .await;
                 return;
             }
-            Err(err) => {
-                warn!("start_fishing: height sample failed: {err}");
+            (Err(err), _) | (_, Err(err)) => {
+                warn!("start_fishing: water sample failed: {err}");
                 self.send_fishing_error(player_id, "You can only cast into water.")
                     .await;
                 return;
             }
-        }
+        };
 
         let skill_level = self
             .get_player_skills(player_id)
             .await
             .get(SkillId::Fishing)
             .level;
+        // The bobber floats on the actual water surface — sea level over the
+        // ocean, but the carved channel height over a river.
         let bobber = Position {
-            x: onlinerpg_shared::wrap_world_x(target.x),
-            y: SEA_LEVEL,
+            x: wx,
+            y: water_surface,
             z: target.z,
         };
         {
