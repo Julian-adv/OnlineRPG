@@ -32,7 +32,9 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v6: SkillsUpdate / SkillXpGained (per-character trained skills).
 /// v7: fishing core loop (FishingCast/Respond/Stop, FishingCasted/Bite/
 ///     Ended/Error) — see `doc/FISHING.md`.
-pub const PROTOCOL_VERSION: u32 = 7;
+/// v8: fishing struggle rounds (FishingStruggleRound/FishingRoundResult,
+///     Reel/GiveLine actions).
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

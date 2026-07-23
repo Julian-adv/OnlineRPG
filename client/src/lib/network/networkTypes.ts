@@ -220,7 +220,10 @@ export type PlayerInventory = {
 export type SkillId = 'fishing'
 
 /** Shared `FishingAction` wire strings (`ClientMessage::FishingRespond`). */
-export type FishingAction = 'hook'
+export type FishingAction = 'hook' | 'reel' | 'giveline'
+
+/** Shared `FishState` wire strings (`ServerMessage::FishingStruggleRound`). */
+export type FishState = 'pulling' | 'tiring'
 
 /** Shared `FishingOutcome` (`ServerMessage::FishingEnded`), in its
  *  externally-tagged serde shape. */

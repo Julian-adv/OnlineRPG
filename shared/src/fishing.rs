@@ -6,12 +6,39 @@
 use serde::{Deserialize, Serialize};
 
 /// A response to the fish, sent via `ClientMessage::FishingRespond`.
-/// One action today; the struggle minigame adds `Reel` / `GiveLine`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FishingAction {
     /// Set the hook when the bobber dips (`ServerMessage::FishingBite`).
     Hook,
+    /// Pull in line — correct while the fish is `Tiring`.
+    Reel,
+    /// Yield line — correct while the fish is `Pulling`.
+    GiveLine,
+}
+
+/// What the hooked fish is doing this struggle round, announced in
+/// `ServerMessage::FishingStruggleRound`. The broadcast tells everyone the
+/// state — the "skill" is answering correctly in time, not guessing hidden
+/// information, which is what keeps humans and agent-clients on equal
+/// footing (agents auto-answer; humans read the prompt).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FishState {
+    /// The fish runs — give line or the tension spikes.
+    Pulling,
+    /// The fish tires — reel or lose your progress window.
+    Tiring,
+}
+
+impl FishState {
+    /// The action that answers this state.
+    pub fn correct_action(&self) -> FishingAction {
+        match self {
+            FishState::Pulling => FishingAction::GiveLine,
+            FishState::Tiring => FishingAction::Reel,
+        }
+    }
 }
 
 /// How a fishing session ended, carried by `ServerMessage::FishingEnded`.
@@ -61,3 +88,65 @@ pub const CATCH_XP_PER_RARITY_SQ: u64 = 10;
 
 /// Consolation skill XP when a hooked fish escapes.
 pub const ESCAPE_XP: u64 = 2;
+
+// --- Struggle (the fight after the hook) ------------------------------------
+
+/// Struggle rounds for a rarity tier: commons fight briefly, legends fight
+/// long. Rarity 1 → 3 rounds … rarity 5 → 7.
+pub const STRUGGLE_BASE_ROUNDS: u32 = 2;
+
+/// Response window per round: `BASE − 150·(rarity−1) + 60·skill`, clamped to
+/// `[MIN, BASE]`. Generous on purpose — same agent-parity reasoning as the
+/// bite window.
+pub const STRUGGLE_BASE_WINDOW_MS: u32 = 3_000;
+pub const STRUGGLE_MIN_WINDOW_MS: u32 = 1_800;
+
+/// Tension meter: starts at 0; the fish escapes at or above `TENSION_MAX`.
+pub const TENSION_MAX: u32 = 100;
+/// A correct response relaxes the line.
+pub const TENSION_CORRECT_RELIEF: u32 = 10;
+/// A wrong or missed response: `BASE + PER_RARITY · rarity`.
+pub const TENSION_MISS_BASE: u32 = 30;
+pub const TENSION_MISS_PER_RARITY: u32 = 5;
+
+/// Rounds a fish of this rarity fights for.
+pub fn struggle_rounds(rarity: u32) -> u32 {
+    STRUGGLE_BASE_ROUNDS + rarity.max(1)
+}
+
+/// Response window for one struggle round.
+pub fn struggle_window_ms(rarity: u32, skill_level: u32) -> u32 {
+    let tightened = STRUGGLE_BASE_WINDOW_MS.saturating_sub(150 * rarity.saturating_sub(1));
+    (tightened + 60 * skill_level).clamp(STRUGGLE_MIN_WINDOW_MS, STRUGGLE_BASE_WINDOW_MS)
+}
+
+/// Tension added by a wrong or missed response.
+pub fn tension_miss_penalty(rarity: u32) -> u32 {
+    TENSION_MISS_BASE + TENSION_MISS_PER_RARITY * rarity
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn struggle_scales_with_rarity_and_skill() {
+        assert_eq!(struggle_rounds(1), 3);
+        assert_eq!(struggle_rounds(5), 7);
+        // Common fish, novice: full window. Legend, novice: tightened.
+        assert_eq!(struggle_window_ms(1, 0), 3_000);
+        assert_eq!(struggle_window_ms(5, 0), 2_400);
+        // Skill widens but never past the base, and the floor holds.
+        assert_eq!(struggle_window_ms(5, 10), 3_000);
+        assert!(struggle_window_ms(5, 0) >= STRUGGLE_MIN_WINDOW_MS);
+        // Escape math: a legend punishes misses hardest.
+        assert_eq!(tension_miss_penalty(1), 35);
+        assert_eq!(tension_miss_penalty(5), 55);
+    }
+
+    #[test]
+    fn correct_actions_answer_states() {
+        assert_eq!(FishState::Pulling.correct_action(), FishingAction::GiveLine);
+        assert_eq!(FishState::Tiring.correct_action(), FishingAction::Reel);
+    }
+}

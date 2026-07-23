@@ -1,12 +1,35 @@
 import { writable } from 'svelte/store'
-import type { Position } from '../network/networkTypes'
+import type { FishState, Position } from '../network/networkTypes'
 
 /** The local player's place in the fishing loop. `casting` covers the whole
  *  cast-through-wait stretch (the client doesn't know when the wait ends —
- *  only the server does); `bite` is the act-now window. */
-export type FishingPhase = 'idle' | 'casting' | 'bite'
+ *  only the server does); `bite` is the act-now window; `struggle` is the
+ *  round-by-round fight after the hook. */
+export type FishingPhase = 'idle' | 'casting' | 'bite' | 'struggle'
 
 export const myFishingPhase = writable<FishingPhase>('idle')
+
+/** The local player's current struggle round (null outside a struggle).
+ *  `startedAt` is client receipt time — only used to animate the countdown
+ *  ring; the authoritative deadline lives on the server. */
+export type StruggleRound = {
+  round: number
+  totalRounds: number
+  fishState: FishState
+  respondWithinMs: number
+  tension: number
+  startedAt: number
+}
+
+export const myStruggle = writable<StruggleRound | null>(null)
+
+export function setStruggleRound(round: StruggleRound) {
+  myStruggle.set(round)
+}
+
+export function applyStruggleTension(tension: number) {
+  myStruggle.update((s) => (s ? { ...s, tension } : s))
+}
 
 export type BobberState = {
   position: Position
@@ -47,5 +70,6 @@ export function removeBobber(playerId: number) {
 
 export function resetFishingStore() {
   myFishingPhase.set('idle')
+  myStruggle.set(null)
   fishingBobbers.set(new Map())
 }

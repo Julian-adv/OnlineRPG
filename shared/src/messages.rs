@@ -550,6 +550,26 @@ pub enum ServerMessage {
     FishingBite {
         player_id: PlayerId,
     },
+    /// A struggle round opened: the fish is `fish_state`, answer with its
+    /// correct action within `respond_within_ms` (plus latency grace,
+    /// judged server-side). Broadcast — the state is public information by
+    /// design (agent parity), bystanders render the fight.
+    FishingStruggleRound {
+        player_id: PlayerId,
+        /// 1-based round number.
+        round: u32,
+        total_rounds: u32,
+        fish_state: fishing::FishState,
+        respond_within_ms: u32,
+        tension_pct: u32,
+    },
+    /// How the angler's response (or silence) landed: `correct` and the
+    /// tension meter after it. The next round (or the end) follows.
+    FishingRoundResult {
+        player_id: PlayerId,
+        correct: bool,
+        tension_pct: u32,
+    },
     /// The session is over: despawn the bobber and, for the angler, show the
     /// outcome. A caught fish also arrives via the normal `InventoryUpdated`
     /// (or `GroundItemSpawned` when the bag couldn't take the weight).

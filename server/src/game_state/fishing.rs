@@ -7,8 +7,9 @@
 //! deadline already carries `LATENCY_GRACE_MS` of slack beyond it.
 
 use onlinerpg_shared::fishing::{
-    FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP,
-    LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, WAIT_MAX_MS, WAIT_MIN_MS,
+    struggle_rounds, struggle_window_ms, tension_miss_penalty, FishState, FishingAction,
+    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP, LATENCY_GRACE_MS,
+    MAX_CAST_DISTANCE_METERS, TENSION_CORRECT_RELIEF, TENSION_MAX, WAIT_MAX_MS, WAIT_MIN_MS,
 };
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::skills::SkillId;
@@ -38,6 +39,17 @@ pub(crate) enum FishingPhase {
     /// Bobber dipped at `since`; `Hook` must arrive before
     /// `since + BITE_WINDOW_MS + LATENCY_GRACE_MS`.
     Bite { since: Instant },
+    /// Hooked — the fight is on. One round at a time: answer `fish_state`
+    /// with its correct action before `deadline` (+ grace) or take tension.
+    Struggle {
+        round: u32,
+        total_rounds: u32,
+        fish_state: FishState,
+        deadline: Instant,
+        /// The round was answered — the tick's reaper must not also miss it.
+        responded: bool,
+        tension: u32,
+    },
 }
 
 /// What bit the line. Rolled when the bite fires — not at resolution — so a
@@ -208,36 +220,62 @@ impl GameState {
     /// the server's own deadlines — a late hook is an escape no matter what
     /// the client believed.
     pub async fn respond_fishing(&self, player_id: &PlayerId, action: FishingAction) {
-        match action {
-            FishingAction::Hook => {}
-        }
-
         let verdict = {
-            let sessions = self.fishing_sessions.read().await;
-            let Some(session) = sessions.get(player_id) else {
+            let mut sessions = self.fishing_sessions.write().await;
+            let Some(session) = sessions.get_mut(player_id) else {
                 self.send_fishing_error(player_id, "You are not fishing.")
                     .await;
                 return;
             };
-            match &session.phase {
-                // Yanking before the bite scares the fish off.
+            match &mut session.phase {
+                // Yanking before the bite scares the fish off (any action).
                 FishingPhase::Casting { .. } | FishingPhase::Waiting { .. } => Verdict::TooEarly,
                 FishingPhase::Bite { since } => {
                     let deadline = *since
                         + Duration::from_millis(u64::from(BITE_WINDOW_MS + LATENCY_GRACE_MS));
-                    if Instant::now() <= deadline {
-                        Verdict::Hooked
-                    } else {
+                    if Instant::now() > deadline {
                         // The tick will call it escaped; treat the stale
                         // response the same way rather than racing it.
                         Verdict::TooLate
+                    } else if action == FishingAction::Hook {
+                        Verdict::Hooked
+                    } else {
+                        // Reeling or giving line before the hook is set:
+                        // the fish spits the bait.
+                        Verdict::TooEarly
+                    }
+                }
+                FishingPhase::Struggle {
+                    fish_state,
+                    deadline,
+                    responded,
+                    tension,
+                    ..
+                } => {
+                    if *responded {
+                        // Round already answered; ignore the duplicate.
+                        return;
+                    }
+                    let rarity = rarity_of(&session.rolled_fish);
+                    let in_time = Instant::now()
+                        <= *deadline + Duration::from_millis(u64::from(LATENCY_GRACE_MS));
+                    let correct = in_time && action == fish_state.correct_action();
+                    *responded = true;
+                    if correct {
+                        *tension = tension.saturating_sub(TENSION_CORRECT_RELIEF);
+                    } else {
+                        *tension += tension_miss_penalty(rarity);
+                    }
+                    Verdict::RoundAnswered {
+                        correct,
+                        tension: *tension,
                     }
                 }
             }
         };
 
         match verdict {
-            Verdict::Hooked => self.finish_fishing_caught(player_id).await,
+            Verdict::Hooked => self.begin_struggle(player_id).await,
             Verdict::TooEarly => {
                 self.end_fishing(player_id, FishingOutcome::Escaped, 0)
                     .await;
@@ -245,6 +283,11 @@ impl GameState {
             Verdict::TooLate => {
                 self.end_fishing(player_id, FishingOutcome::Escaped, ESCAPE_XP)
                     .await;
+            }
+            Verdict::RoundAnswered { correct, tension } => {
+                self.broadcast_round_result(player_id, correct, tension)
+                    .await;
+                self.advance_struggle(player_id).await;
             }
         }
     }
@@ -273,6 +316,7 @@ impl GameState {
             BobberLanded(PlayerId),
             Bite(PlayerId),
             Expired(PlayerId),
+            StruggleMissed(PlayerId),
             PlayerGone(PlayerId),
         }
         let mut due = Vec::new();
@@ -306,6 +350,16 @@ impl GameState {
                         // judged in respond_fishing; the tick only reaps
                         // sessions nobody answered for.
                         due.push(Due::Expired(*player_id));
+                    }
+                    FishingPhase::Struggle {
+                        deadline,
+                        responded: false,
+                        ..
+                    } if now
+                        >= *deadline + Duration::from_millis(u64::from(2 * LATENCY_GRACE_MS)) =>
+                    {
+                        // Same doubled-grace contract as the bite reaper.
+                        due.push(Due::StruggleMissed(*player_id));
                     }
                     _ => {}
                 }
@@ -372,6 +426,30 @@ impl GameState {
                     self.end_fishing(&player_id, FishingOutcome::Escaped, ESCAPE_XP)
                         .await;
                 }
+                Due::StruggleMissed(player_id) => {
+                    let tension = {
+                        let mut sessions = self.fishing_sessions.write().await;
+                        let Some(session) = sessions.get_mut(&player_id) else {
+                            continue;
+                        };
+                        let rarity = rarity_of(&session.rolled_fish);
+                        match &mut session.phase {
+                            FishingPhase::Struggle {
+                                responded, tension, ..
+                            } if !*responded => {
+                                *responded = true;
+                                *tension += tension_miss_penalty(rarity);
+                                Some(*tension)
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some(tension) = tension {
+                        self.broadcast_round_result(&player_id, false, tension)
+                            .await;
+                        self.advance_struggle(&player_id).await;
+                    }
+                }
             }
         }
     }
@@ -422,7 +500,148 @@ impl GameState {
         })
     }
 
-    /// Successful hook: award the fish (bag, or ground when overweight),
+    /// Successful hook: the fight begins. Roll the first round's state and
+    /// announce it; `advance_struggle` runs the rest.
+    async fn begin_struggle(&self, player_id: &PlayerId) {
+        let announce = {
+            let mut sessions = self.fishing_sessions.write().await;
+            let Some(session) = sessions.get_mut(player_id) else {
+                return;
+            };
+            let rarity = rarity_of(&session.rolled_fish);
+            let total_rounds = struggle_rounds(rarity);
+            let window_ms = struggle_window_ms(rarity, session.skill_level);
+            let fish_state = roll_fish_state();
+            session.phase = FishingPhase::Struggle {
+                round: 1,
+                total_rounds,
+                fish_state,
+                deadline: Instant::now() + Duration::from_millis(u64::from(window_ms)),
+                responded: false,
+                tension: 0,
+            };
+            (session.bobber, total_rounds, fish_state, window_ms)
+        };
+        let (bobber, total_rounds, fish_state, window_ms) = announce;
+        self.broadcast_fishing(
+            &bobber,
+            ServerMessage::FishingStruggleRound {
+                player_id: *player_id,
+                round: 1,
+                total_rounds,
+                fish_state,
+                respond_within_ms: window_ms,
+                tension_pct: 0,
+            },
+        )
+        .await;
+    }
+
+    /// After a round resolved (answered or reaped): escape at max tension,
+    /// catch when every round is survived, otherwise open the next round.
+    async fn advance_struggle(&self, player_id: &PlayerId) {
+        enum Next {
+            Escaped,
+            Caught,
+            Round {
+                bobber: Position,
+                round: u32,
+                total_rounds: u32,
+                fish_state: FishState,
+                window_ms: u32,
+                tension: u32,
+            },
+        }
+        let next = {
+            let mut sessions = self.fishing_sessions.write().await;
+            let Some(session) = sessions.get_mut(player_id) else {
+                return;
+            };
+            let rarity = rarity_of(&session.rolled_fish);
+            let skill_level = session.skill_level;
+            let bobber = session.bobber;
+            match &mut session.phase {
+                FishingPhase::Struggle {
+                    round,
+                    total_rounds,
+                    fish_state,
+                    deadline,
+                    responded,
+                    tension,
+                } => {
+                    if *tension >= TENSION_MAX {
+                        Next::Escaped
+                    } else if *round >= *total_rounds {
+                        Next::Caught
+                    } else {
+                        *round += 1;
+                        *fish_state = roll_fish_state();
+                        let window_ms = struggle_window_ms(rarity, skill_level);
+                        *deadline = Instant::now() + Duration::from_millis(u64::from(window_ms));
+                        *responded = false;
+                        Next::Round {
+                            bobber,
+                            round: *round,
+                            total_rounds: *total_rounds,
+                            fish_state: *fish_state,
+                            window_ms,
+                            tension: *tension,
+                        }
+                    }
+                }
+                _ => return,
+            }
+        };
+        match next {
+            Next::Escaped => {
+                self.end_fishing(player_id, FishingOutcome::Escaped, ESCAPE_XP)
+                    .await;
+            }
+            Next::Caught => self.finish_fishing_caught(player_id).await,
+            Next::Round {
+                bobber,
+                round,
+                total_rounds,
+                fish_state,
+                window_ms,
+                tension,
+            } => {
+                self.broadcast_fishing(
+                    &bobber,
+                    ServerMessage::FishingStruggleRound {
+                        player_id: *player_id,
+                        round,
+                        total_rounds,
+                        fish_state,
+                        respond_within_ms: window_ms,
+                        tension_pct: tension,
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn broadcast_round_result(&self, player_id: &PlayerId, correct: bool, tension: u32) {
+        let bobber = {
+            let sessions = self.fishing_sessions.read().await;
+            match sessions.get(player_id) {
+                Some(session) => session.bobber,
+                None => return,
+            }
+        };
+        self.broadcast_fishing(
+            &bobber,
+            ServerMessage::FishingRoundResult {
+                player_id: *player_id,
+                correct,
+                tension_pct: tension,
+            },
+        )
+        .await;
+    }
+
+    /// Every round survived: award the fish (bag, or ground when overweight),
     /// grant skill XP, end the session with the full catch details.
     async fn finish_fishing_caught(&self, player_id: &PlayerId) {
         let Some(fish) = ({
@@ -501,6 +720,21 @@ enum Verdict {
     Hooked,
     TooEarly,
     TooLate,
+    RoundAnswered { correct: bool, tension: u32 },
+}
+
+fn rarity_of(rolled: &Option<RolledFish>) -> u32 {
+    rolled.as_ref().map_or(1, |f| f.rarity)
+}
+
+/// Coin-flip the fish's next move. No await between creation and use — see
+/// the thread_rng note in `tick_fishing`.
+fn roll_fish_state() -> FishState {
+    if rand::thread_rng().gen_bool(0.5) {
+        FishState::Pulling
+    } else {
+        FishState::Tiring
+    }
 }
 
 #[cfg(test)]

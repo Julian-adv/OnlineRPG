@@ -27,6 +27,9 @@ import {
 } from '../stores/skillsStore'
 import {
   myFishingPhase,
+  myStruggle,
+  setStruggleRound,
+  applyStruggleTension,
   upsertBobber,
   markBobberBite,
   removeBobber,
@@ -1015,10 +1018,45 @@ export function handleServerMessage(
       break
     }
 
+    case 'FishingStruggleRound': {
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('struggle')
+        setStruggleRound({
+          round: data.round,
+          totalRounds: data.total_rounds,
+          fishState: data.fish_state,
+          respondWithinMs: data.respond_within_ms,
+          tension: data.tension_pct,
+          startedAt: performance.now(),
+        })
+      }
+      break
+    }
+
+    case 'FishingRoundResult': {
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        applyStruggleTension(data.tension_pct)
+      }
+      break
+    }
+
     case 'FishingEnded': {
       removeBobber(data.player_id)
-      if (get(gameStore).currentPlayer?.id === data.player_id) {
+      const isSelf = get(gameStore).currentPlayer?.id === data.player_id
+      // Bystander celebration: everyone in radius hears about a trophy.
+      if (!isSelf && data.outcome?.Caught?.trophy) {
+        const { item_def_id, size_cm } = data.outcome.Caught
+        const who =
+          get(gameStore).otherPlayers.get(data.player_id)?.name ?? 'Someone'
+        const fishName = getItemDef(item_def_id)?.name ?? item_def_id
+        addCombatMessage({
+          text: `${who} landed a trophy ${fishName} — ${size_cm} cm!`,
+          sender: 'local',
+        })
+      }
+      if (isSelf) {
         myFishingPhase.set('idle')
+        myStruggle.set(null)
         const outcome = data.outcome
         if (outcome === 'Escaped') {
           addCombatMessage({ text: 'The fish got away.', sender: 'local' })

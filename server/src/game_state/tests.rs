@@ -5032,7 +5032,8 @@ async fn take_player_skills_snapshots_and_detaches() {
 mod fishing_tests {
     use super::*;
     use onlinerpg_shared::fishing::{
-        FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS, LATENCY_GRACE_MS, WAIT_MAX_MS,
+        FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS, LATENCY_GRACE_MS,
+        STRUGGLE_BASE_WINDOW_MS, WAIT_MAX_MS,
     };
     use onlinerpg_shared::inventory::EquipSlot;
     use tokio::time::{advance, Duration};
@@ -5119,6 +5120,42 @@ mod fishing_tests {
         panic!("no bite within the cast + maximum wait");
     }
 
+    /// Play the struggle with a fixed strategy until the session ends,
+    /// returning the outcome (plus every message seen on the way). The
+    /// strategy sees each round's announced `fish_state` — exactly what a
+    /// real client (human UI or agent reflex) gets.
+    async fn fight_to_the_end(
+        game_state: &GameState,
+        id: &PlayerId,
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>,
+        strategy: impl Fn(onlinerpg_shared::fishing::FishState) -> FishingAction,
+    ) -> (FishingOutcome, Vec<ServerMessage>) {
+        let mut seen = Vec::new();
+        for _ in 0..200 {
+            for msg in drain(rx) {
+                match &msg {
+                    ServerMessage::FishingStruggleRound {
+                        player_id,
+                        fish_state,
+                        ..
+                    } if player_id == id => {
+                        let action = strategy(*fish_state);
+                        seen.push(msg.clone());
+                        game_state.respond_fishing(id, action).await;
+                    }
+                    ServerMessage::FishingEnded { outcome, .. } => {
+                        seen.push(msg.clone());
+                        return (outcome.clone(), seen);
+                    }
+                    _ => seen.push(msg.clone()),
+                }
+            }
+            advance(Duration::from_millis(250)).await;
+            game_state.tick_fishing().await;
+        }
+        panic!("struggle never ended");
+    }
+
     #[tokio::test(start_paused = true)]
     async fn cast_requires_rod_water_and_range() {
         let game_state = make_test_game_state("fishing_cast_validation");
@@ -5186,20 +5223,24 @@ mod fishing_tests {
         advance_until_bite(&game_state, &mut rx).await;
 
         game_state.respond_fishing(&id, FishingAction::Hook).await;
-        let msgs = drain(&mut rx);
-        let caught = msgs.iter().find_map(|m| match m {
-            ServerMessage::FishingEnded {
-                outcome:
-                    FishingOutcome::Caught {
-                        item_def_id,
-                        size_cm,
-                        ..
-                    },
-                ..
-            } => Some((item_def_id.clone(), *size_cm)),
-            _ => None,
-        });
-        let (fish_id, size_cm) = caught.expect("hook inside the window catches the fish");
+        // Answer every struggle round correctly: the fish must land.
+        let (outcome, msgs) =
+            fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
+        let FishingOutcome::Caught {
+            item_def_id: fish_id,
+            size_cm,
+            ..
+        } = outcome
+        else {
+            panic!("perfect struggle play must catch, got {outcome:?}");
+        };
+        // The fight announced at least the first round and its results.
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::FishingStruggleRound { .. })));
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: true, .. })));
         assert!(size_cm > 0);
         // The fish landed in the bag…
         let inv = game_state.get_player_inventory(&id).await.unwrap();
@@ -5306,7 +5347,9 @@ mod fishing_tests {
             game_state.start_fishing(&id, water_target()).await;
             advance_until_bite(&game_state, &mut rx).await;
             game_state.respond_fishing(&id, FishingAction::Hook).await;
-            drain(&mut rx);
+            let (outcome, _) =
+                fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
+            assert!(matches!(outcome, FishingOutcome::Caught { .. }));
         }
         let inv = game_state.get_player_inventory(&id).await.unwrap();
         let total_fish: u32 = inv.bag.iter().map(|item| item.quantity).sum();
@@ -5317,5 +5360,69 @@ mod fishing_tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), inv.bag.len(), "one bag entry per species");
+    }
+
+    // PR3: the struggle. Wrong answers pump tension until the fish escapes;
+    // silence is reaped by the tick with the same penalty.
+    #[tokio::test(start_paused = true)]
+    async fn struggle_wrong_answers_escape_the_fish() {
+        use onlinerpg_shared::fishing::FishState;
+
+        let game_state = make_test_game_state("fishing_struggle_wrong");
+        let (id, mut rx) = make_angler(&game_state, "angler_clumsy").await;
+
+        game_state.start_fishing(&id, water_target()).await;
+        advance_until_bite(&game_state, &mut rx).await;
+        game_state.respond_fishing(&id, FishingAction::Hook).await;
+
+        // Always answer with the wrong action: minimum penalty 35/round means
+        // escape by the third miss at the latest.
+        let (outcome, msgs) = fight_to_the_end(&game_state, &id, &mut rx, |state| match state {
+            FishState::Pulling => FishingAction::Reel,
+            FishState::Tiring => FishingAction::GiveLine,
+        })
+        .await;
+        assert_eq!(outcome, FishingOutcome::Escaped);
+        let wrongs = msgs
+            .iter()
+            .filter(|m| matches!(m, ServerMessage::FishingRoundResult { correct: false, .. }))
+            .count();
+        assert!(wrongs >= 2, "tension needs at least two misses to top out");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn struggle_silence_is_reaped_round_by_round() {
+        let game_state = make_test_game_state("fishing_struggle_afk");
+        let (id, mut rx) = make_angler(&game_state, "angler_frozen").await;
+
+        game_state.start_fishing(&id, water_target()).await;
+        advance_until_bite(&game_state, &mut rx).await;
+        game_state.respond_fishing(&id, FishingAction::Hook).await;
+
+        // Never respond; just let the tick reap every round.
+        let mut msgs = Vec::new();
+        let mut outcome = None;
+        'outer: for _ in 0..400 {
+            for msg in {
+                let mut v = Vec::new();
+                while let Ok(m) = rx.try_recv() {
+                    v.push(m);
+                }
+                v
+            } {
+                if let ServerMessage::FishingEnded { outcome: o, .. } = &msg {
+                    outcome = Some(o.clone());
+                    msgs.push(msg);
+                    break 'outer;
+                }
+                msgs.push(msg);
+            }
+            advance(Duration::from_millis(250)).await;
+            game_state.tick_fishing().await;
+        }
+        assert_eq!(outcome, Some(FishingOutcome::Escaped));
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: false, .. })));
     }
 }

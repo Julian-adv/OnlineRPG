@@ -402,6 +402,8 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::SkillXpGained { .. } => "SkillXpGained",
         ServerMessage::FishingCasted { .. } => "FishingCasted",
         ServerMessage::FishingBite { .. } => "FishingBite",
+        ServerMessage::FishingStruggleRound { .. } => "FishingStruggleRound",
+        ServerMessage::FishingRoundResult { .. } => "FishingRoundResult",
         ServerMessage::FishingEnded { .. } => "FishingEnded",
         ServerMessage::FishingError { .. } => "FishingError",
         ServerMessage::Kicked { .. } => "Kicked",

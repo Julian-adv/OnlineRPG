@@ -98,10 +98,27 @@ reactions only software can deliver, none too fast for software either. The
 agent-client's auto-hook reflex and `fish()` MCP tool land in a follow-up
 (the pattern is its existing local A* layer).
 
-## Deliberate limits (v1)
+## The struggle
 
-- Single-round hook — the ArcheAge-style tension struggle is the next PR
-  (purely additive protocol).
+Hooking is only the start: the fish fights for `2 + rarity` rounds (a minnow
+3, a golden sturgeon 7). Each round the server announces the fish's state in a
+`FishingStruggleRound` broadcast — **Pulling** (answer: give line) or
+**Tiring** (answer: reel) — with a response window of
+`3000 − 150·(rarity−1) + 60·skill` ms, clamped to [1800, 3000], plus the
+usual latency grace. A **tension meter** starts at 0: correct answers relax
+it by 10, wrong or missed answers add `30 + 5·rarity`, and at 100 the line
+snaps (`Escaped`, consolation XP). Survive every round and the fish lands.
+
+The announced state is public information by design: the challenge is
+answering correctly in time, not guessing hidden state — which is exactly
+what keeps humans (reading the prompt) and agent-clients (auto-answering
+after a human-like delay) on equal footing. Each answer is confirmed with a
+`FishingRoundResult` carrying the new tension, and trophy catches are
+celebrated to everyone in delivery radius via the `FishingEnded` broadcast
+they already receive.
+
+## Deliberate limits
+
 - No bait, no rod tiers, no designated fishing spots (any water works).
 - Cast/idle animations reuse existing clips; dedicated Mixamo clips and
   splash/reel SFX come with the polish pass.
