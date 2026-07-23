@@ -155,11 +155,15 @@ impl ItemDefs {
 
     /// Equippable items at or above a price floor — the dungeon treasure
     /// chest loot pool. Sorted for determinism before the caller shuffles.
+    /// Fishing rods are excluded: they are tools you buy from a merchant, not
+    /// endgame combat treasure, and their price would otherwise sneak them
+    /// into the chest pool (`doc/FISHING.md`).
     pub fn equipment_ids_with_min_price(&self, min_price: i64) -> Vec<String> {
         let mut ids: Vec<String> = self
             .defs
             .values()
             .filter(|def| def.equip_slot.is_some())
+            .filter(|def| !def.is_fishing_rod())
             .filter(|def| def.base_price.is_some_and(|p| p >= min_price))
             .map(|def| def.id.clone())
             .collect();
@@ -188,5 +192,36 @@ impl ItemDefs {
             .collect();
         table.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
         table
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fishing_rod_is_not_dungeon_chest_treasure() {
+        // The rod is priced (2500) above the chest floor and is equippable, so
+        // without the explicit exclusion it would appear in endgame chests. It
+        // must not — rods are bought, not looted from bosses.
+        let defs = ItemDefs::load();
+        let pool = defs.equipment_ids_with_min_price(2000);
+        assert!(
+            !pool.contains(&"fishing_rod".to_string()),
+            "fishing rod must not be in the dungeon chest loot pool"
+        );
+        // Sanity: real combat gear above the floor still is.
+        assert!(
+            pool.contains(&"iron_sword".to_string()),
+            "expected iron_sword in the chest pool"
+        );
+    }
+
+    #[test]
+    fn fishing_rod_is_a_rod_not_a_weapon() {
+        let defs = ItemDefs::load();
+        let rod = defs.get("fishing_rod").expect("fishing_rod def");
+        assert!(rod.is_fishing_rod());
+        assert!(!rod.is_weapon(), "the rod must not deal weapon damage");
     }
 }

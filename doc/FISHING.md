@@ -18,6 +18,11 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
                            Caught              Escaped
 ```
 
+**Getting a rod:** buy a Fishing Rod from a general merchant (Rica stocks it
+for 2500) and equip it in the main hand. Rods are excluded from dungeon
+treasure chests — they are bought tools, not endgame combat loot
+(`server/src/item_defs.rs::equipment_ids_with_min_price`).
+
 - **Cast** (`FishingCast { position }`): needs a fishing rod in the main hand
   (`category == "fishing_rod"`), the overworld floor, a target within 8 m, and
   **water**. Water is `waterSurfaceY − terrainBed > 0.1 m` at the target,
