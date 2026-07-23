@@ -56,6 +56,16 @@ pub(super) enum AgentAction {
     },
     #[serde(rename = "respawn")]
     Respawn,
+    /// Cast the equipped fishing rod. With coordinates, cast there; without,
+    /// cast a short way north of where the agent stands. The server
+    /// validates water/range/rod and answers with FishingError when refused.
+    /// The bite/struggle reflexes are automatic (state.rs) — this action is
+    /// the *decision* to fish.
+    #[serde(rename = "fish")]
+    Fish { x: Option<f32>, z: Option<f32> },
+    /// Reel in and stop fishing.
+    #[serde(rename = "stop_fishing")]
+    StopFishing,
     /// Haggling (merchants only): offer a price modifier on one item to a
     /// nearby player. The server clamps/validates; see `doc/ECONOMY.md`.
     #[serde(rename = "offer_deal")]
@@ -333,6 +343,23 @@ pub(super) fn action_to_command(
             ))
         }
         AgentAction::Respawn => Some(ClientMessage::RequestRespawn),
+        AgentAction::Fish { x, z } => {
+            // Explicit coordinates, or a short cast north of the agent.
+            // The server is the judge of whether that spot is water.
+            let (cx, cz) = match (x, z, player_pos) {
+                (Some(x), Some(z), _) => (*x, *z),
+                (_, _, Some(pp)) => (pp.x, pp.z + 4.0),
+                _ => return None,
+            };
+            Some(ClientMessage::FishingCast {
+                position: onlinerpg_shared::Position {
+                    x: cx,
+                    y: 0.0,
+                    z: cz,
+                },
+            })
+        }
+        AgentAction::StopFishing => Some(ClientMessage::FishingStop),
         // Need player-name → id resolution from SharedState; handled in
         // `execute::handle_response`, not here.
         AgentAction::OfferDeal { .. } => None,
@@ -595,5 +622,48 @@ mod tests {
         assert!(!wants_reroll(""));
         assert!(!wants_reroll("Hmm, hard to say."));
         assert!(!wants_reroll(r#"{"actions": []}"#));
+    }
+
+    #[test]
+    fn fish_action_parses_and_casts() {
+        let response =
+            parse_agent_response(r#"{"actions": [{"type": "fish", "x": 10.0, "z": -5.0}]}"#)
+                .unwrap();
+        let cmd = action_to_command(&response.actions[0], None);
+        match cmd {
+            Some(ClientMessage::FishingCast { position }) => {
+                assert_eq!(position.x, 10.0);
+                assert_eq!(position.z, -5.0);
+            }
+            other => panic!("expected FishingCast, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fish_without_coords_casts_ahead_of_the_agent() {
+        let response = parse_agent_response(r#"{"actions": [{"type": "fish"}]}"#).unwrap();
+        let pos = onlinerpg_shared::Position {
+            x: 1.0,
+            y: 0.0,
+            z: 2.0,
+        };
+        match action_to_command(&response.actions[0], Some(&pos)) {
+            Some(ClientMessage::FishingCast { position }) => {
+                assert_eq!(position.x, 1.0);
+                assert_eq!(position.z, 6.0);
+            }
+            other => panic!("expected FishingCast, got {other:?}"),
+        }
+        // No coordinates and no known position: nothing to send.
+        assert!(action_to_command(&response.actions[0], None).is_none());
+    }
+
+    #[test]
+    fn stop_fishing_parses() {
+        let response = parse_agent_response(r#"{"actions": [{"type": "stop_fishing"}]}"#).unwrap();
+        assert!(matches!(
+            action_to_command(&response.actions[0], None),
+            Some(ClientMessage::FishingStop)
+        ));
     }
 }

@@ -94,9 +94,17 @@ windows.
 Agents speak the same protocol: `FishingBite` carries everything needed to
 respond, and the windows (2.5 s + grace) are sized for an agent-client's
 network round trip as much as for human reflexes — no mechanic requiring
-reactions only software can deliver, none too fast for software either. The
-agent-client's auto-hook reflex and `fish()` MCP tool land in a follow-up
-(the pattern is its existing local A* layer).
+reactions only software can deliver, none too fast for software either.
+
+The agent-client implements this as a reflex layer (`src/state.rs`): it
+auto-hooks its own bites and answers each struggle round with the correct
+action — mechanically, like its A* movement layer, while the LLM makes the
+decisions via two actions: `{"type": "fish", "x": …, "z": …}` (coordinates
+optional — omitted means "just ahead") and `{"type": "stop_fishing"}`.
+Outcomes come back to the model as `[Fishing]` events; in-flight messages
+are classified as noise so they cost no LLM calls. Instant reflex answers
+confer no advantage: correctness is binary and the tension math ignores
+response speed inside the window.
 
 ## The struggle
 

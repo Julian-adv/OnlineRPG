@@ -411,6 +411,29 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             crate::shop_info::format_price(*npc_gold),
         )),
         ServerMessage::TradeError { message } => Some(format!("[TradeError] {message}")),
+        // Fishing: only the endings reach the LLM (reflexes answered the
+        // rest). Word the outcome so the model knows what it can do next.
+        ServerMessage::FishingEnded { player_id, outcome } => {
+            if state.self_player_id.as_ref() != Some(player_id) {
+                return None;
+            }
+            use onlinerpg_shared::fishing::FishingOutcome;
+            Some(match outcome {
+                FishingOutcome::Caught {
+                    item_def_id,
+                    size_cm,
+                    trophy,
+                } => format!(
+                    "[Fishing] You caught a {item_def_id} ({size_cm} cm){}. It is in your bag — you can eat it, sell it, or fish again.",
+                    if *trophy { " — a TROPHY catch!" } else { "" }
+                ),
+                FishingOutcome::Escaped => {
+                    "[Fishing] The fish got away. You can cast again with the fish action.".to_string()
+                }
+                FishingOutcome::Aborted => "[Fishing] You reeled in your line.".to_string(),
+            })
+        }
+        ServerMessage::FishingError { message } => Some(format!("[FishingError] {message}")),
         // Skip unknown/unhandled event types
         _ => None,
     }

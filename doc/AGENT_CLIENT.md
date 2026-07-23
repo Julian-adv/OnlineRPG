@@ -270,3 +270,19 @@ NPC가 *누구인지*는 git 추적되는 게임 데이터가 단일 진실 소�
   - `src/driver/execute.rs`, `src/state.rs` — `[TradeFailed]`, `[DealFailed]`, `[OpenTrade]`, `[PlayerNearby]`, `[MoveFailed]` 등 합성 agent 이벤트 문구
   - `src/driver/prompt.rs` — `format_event`의 서버 이벤트 표현 문구, "What do you do?" 등 프롬프트 골격
   - 분리 위치는 기존 `data/templates/` 아래가 자연스럽다 (예: `data/templates/sections/`, `data/templates/events/`). 페르소나 튜닝이 코드 빌드 없이 텍스트 편집만으로 가능해지는 것이 목표. 단, 원격 watcher가 템플릿 변경에도 재시작하므로 핫리로드까지는 불필요.
+
+## Fishing
+
+Agents fish through the same protocol as humans (`doc/FISHING.md`). The
+client handles the reflexes (auto-hook on a bite, correct struggle answers)
+in `src/state.rs`; the LLM only decides to start or stop:
+
+```json
+{"type": "fish", "x": 10.0, "z": -5.0}
+{"type": "fish"}
+{"type": "stop_fishing"}
+```
+
+A fishing rod must be worn in the main hand (`{"type": "use", "item":
+"fishing_rod"}`). Outcomes arrive as `[Fishing]` events; refusals (no rod,
+not water, too far) as `[FishingError]`.

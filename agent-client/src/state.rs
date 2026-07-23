@@ -950,6 +950,22 @@ impl SharedState {
                 }
             }
 
+            // Fishing: the outcome (and any refusal) is worth an LLM look —
+            // recast, eat the catch, or give up. The in-flight events are
+            // noise: the reflex layer already answered them.
+            ServerMessage::FishingEnded { player_id, .. } => {
+                if self_id == Some(player_id) {
+                    EventUrgency::Urgent
+                } else {
+                    EventUrgency::Routine
+                }
+            }
+            ServerMessage::FishingError { .. } => EventUrgency::Urgent,
+            ServerMessage::FishingCasted { .. }
+            | ServerMessage::FishingBite { .. }
+            | ServerMessage::FishingStruggleRound { .. }
+            | ServerMessage::FishingRoundResult { .. } => EventUrgency::Noise,
+
             // Noise: high-frequency, irrelevant, or housing updates
             ServerMessage::PlayerMoved { .. }
             | ServerMessage::MonsterMoved { .. }
@@ -1343,6 +1359,28 @@ impl SharedState {
                 monster_id,
             } => {
                 self.handle_managed_monster_hit(monster_id, player_id, false, 0);
+            }
+            // Fishing reflexes (doc/FISHING.md, agent parity): the bite and
+            // each struggle round carry everything needed to answer, so the
+            // mechanical response lives here — like the A* layer, the LLM
+            // decides *whether* to fish, not how fast to twitch. Instant
+            // answers confer no advantage: correctness is binary and the
+            // tension math ignores response speed inside the window.
+            ServerMessage::FishingBite { player_id }
+                if self.self_player_id.as_ref() == Some(player_id) =>
+            {
+                self.pending_commands.push(ClientMessage::FishingRespond {
+                    action: onlinerpg_shared::fishing::FishingAction::Hook,
+                });
+            }
+            ServerMessage::FishingStruggleRound {
+                player_id,
+                fish_state,
+                ..
+            } if self.self_player_id.as_ref() == Some(player_id) => {
+                self.pending_commands.push(ClientMessage::FishingRespond {
+                    action: fish_state.correct_action(),
+                });
             }
             _ => {}
         }

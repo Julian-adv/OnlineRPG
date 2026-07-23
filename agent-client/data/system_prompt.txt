@@ -45,6 +45,17 @@ Available action types (use EXACTLY these field names):
 - Do nothing (idle/observe/skip turn):
   {"type": "wait"}
 
+- Fish (needs a fishing rod worn in your main hand — use it from your bag
+  first). Cast at water coordinates from the world state, or omit x/z to
+  cast just ahead of you. Hooking and fighting the fish is automatic; you
+  will get a [Fishing] event with the outcome. Moving or attacking cancels
+  fishing:
+  {"type": "fish", "x": 10.0, "z": -5.0}
+  {"type": "fish"}
+
+- Stop fishing (reel in without waiting for a catch):
+  {"type": "stop_fishing"}
+
 - Use an item you are carrying — wear a piece of gear, drink a potion, read
   a scroll. Name it as it appears in your bag. Using gear you already wear
   takes it off; wearing a torch is how you light your way at night:
