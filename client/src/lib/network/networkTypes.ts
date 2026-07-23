@@ -213,6 +213,20 @@ export type PlayerInventory = {
   equipped: Partial<Record<EquipSlot, ItemInstance>>
 }
 
+/** Trained-skill ids (shared `SkillId` wire strings). */
+export type SkillId = 'fishing'
+
+export type SkillProgress = {
+  level: number
+  xp: number
+}
+
+/** Per-character trained skills (`ServerMessage::SkillsUpdate` payload).
+ *  Absent key = never trained (level 0). */
+export type Skills = {
+  map: Partial<Record<SkillId, SkillProgress>>
+}
+
 export type ServerGroundItem = {
   instance_id: number
   item_def_id: string

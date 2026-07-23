@@ -398,6 +398,8 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PlayerRespawned { .. } => "PlayerRespawned",
         ServerMessage::PlayerHealthUpdate { .. } => "PlayerHealthUpdate",
         ServerMessage::XpGained { .. } => "XpGained",
+        ServerMessage::SkillsUpdate { .. } => "SkillsUpdate",
+        ServerMessage::SkillXpGained { .. } => "SkillXpGained",
         ServerMessage::Kicked { .. } => "Kicked",
         ServerMessage::ServerNotice { .. } => "ServerNotice",
         ServerMessage::PlayerTorchToggled { .. } => "PlayerTorchToggled",

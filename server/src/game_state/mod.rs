@@ -68,6 +68,8 @@ mod passability;
 mod player;
 pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
+mod skills;
+pub(crate) use skills::skills_from_rows;
 mod time;
 mod trading;
 
@@ -128,6 +130,11 @@ pub struct GameState {
     /// player_id → current gold (smallest currency unit). Kept out of the
     /// broadcast `Player` struct: gold is private to its owner.
     player_gold: Arc<RwLock<HashMap<PlayerId, i64>>>,
+    /// player_id → trained skills. Private to its owner like gold; delivered
+    /// via `SkillsUpdate` on join and `SkillXpGained` on change.
+    player_skills: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::skills::Skills>>>,
+    /// Players whose skills changed since the last periodic save.
+    dirty_skills: Arc<RwLock<HashSet<PlayerId>>>,
     housing_io: Arc<HousingIO>,
     /// Players whose state has changed since the last periodic save.
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
@@ -224,6 +231,8 @@ impl GameState {
             direct_channels: Arc::new(RwLock::new(HashMap::new())),
             player_characters: Arc::new(RwLock::new(HashMap::new())),
             player_gold: Arc::new(RwLock::new(HashMap::new())),
+            player_skills: Arc::new(RwLock::new(HashMap::new())),
+            dirty_skills: Arc::new(RwLock::new(HashSet::new())),
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),

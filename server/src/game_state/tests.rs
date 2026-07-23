@@ -4456,6 +4456,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
                 enchant: 0,
             }],
         )],
+        &[],
         None,
     )
     .unwrap();
@@ -4888,4 +4889,116 @@ async fn session_replacement_keeps_the_live_session_chest_claim() {
 
     assert_chest_rejected(&mut second_rx, "nightfall");
     assert_eq!(game_state.get_player_gold(&second_id).await, 0);
+}
+
+// Trained skills: XP grants update the map, notify the owner directly, and
+// mark the player for the next dirty flush; a capped skill goes quiet.
+#[tokio::test]
+async fn skill_xp_grant_notifies_owner_and_marks_dirty() {
+    use onlinerpg_shared::skills::{skill_xp_for_level, SkillId, SKILL_LEVEL_CAP};
+
+    let game_state = make_test_game_state("skill_xp_grant");
+    let player = pid("angler");
+    game_state.add_player(make_player("angler", 0.0, 0.0)).await;
+    game_state
+        .register_player_character(&player, 42, 0, attrs_with_cha(10), 0)
+        .await;
+    game_state
+        .register_player_skills(&player, Default::default())
+        .await;
+    let mut rx = game_state.register_direct_channel(&player).await;
+
+    // 150 XP: crosses the level-1 threshold (100).
+    let result = game_state
+        .add_skill_xp(&player, SkillId::Fishing, 150)
+        .await
+        .expect("grant should apply");
+    assert_eq!(result.new_level, 1);
+    assert!(result.leveled_up);
+
+    let msg = rx.try_recv().expect("owner should be notified");
+    match msg {
+        ServerMessage::SkillXpGained {
+            skill,
+            xp_amount,
+            total_xp,
+            new_level,
+            leveled_up,
+        } => {
+            assert_eq!(skill, SkillId::Fishing);
+            assert_eq!(xp_amount, 150);
+            assert_eq!(total_xp, 150);
+            assert_eq!(new_level, 1);
+            assert!(leveled_up);
+        }
+        other => panic!("expected SkillXpGained, got {other:?}"),
+    }
+
+    // The dirty flush picks the player up exactly once, with the saved rows
+    // and the drained id for the failed-save retry path.
+    let (dirty_ids, dirty) = game_state.collect_dirty_skill_states().await;
+    assert_eq!(dirty_ids, vec![player]);
+    assert_eq!(dirty.len(), 1);
+    assert_eq!(dirty[0].0, 42);
+    assert_eq!(dirty[0].1.len(), 1);
+    assert_eq!(dirty[0].1[0].skill_id, "fishing");
+    assert_eq!(dirty[0].1[0].xp, 150);
+    assert!(game_state.collect_dirty_skill_states().await.1.is_empty());
+    // A failed save puts the dirtiness back for the next flush.
+    game_state.restore_dirty_skills(vec![player]).await;
+    assert_eq!(game_state.collect_dirty_skill_states().await.1.len(), 1);
+
+    // Cap out: the clamp reports what was banked, then further grants no-op
+    // (no message, no dirty flag).
+    game_state
+        .add_skill_xp(&player, SkillId::Fishing, u64::MAX)
+        .await
+        .expect("clamped grant still applies");
+    assert!(game_state
+        .add_skill_xp(&player, SkillId::Fishing, 10)
+        .await
+        .is_none());
+    let _ = rx.try_recv().expect("cap-out grant notifies");
+    assert!(matches!(rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    let (_, dirty) = game_state.collect_dirty_skill_states().await;
+    assert_eq!(dirty.len(), 1);
+    assert_eq!(dirty[0].1[0].xp, skill_xp_for_level(SKILL_LEVEL_CAP));
+    assert_eq!(dirty[0].1[0].level, SKILL_LEVEL_CAP);
+}
+
+// Logout detach must snapshot skills for the save and drop the in-memory
+// entry, exactly like inventories (F-015 shape).
+#[tokio::test]
+async fn take_player_skills_snapshots_and_detaches() {
+    use onlinerpg_shared::skills::SkillId;
+
+    let game_state = make_test_game_state("skill_detach");
+    let player = pid("angler2");
+    game_state
+        .add_player(make_player("angler2", 0.0, 0.0))
+        .await;
+    game_state
+        .register_player_character(&player, 7, 0, attrs_with_cha(10), 0)
+        .await;
+    game_state
+        .register_player_skills(&player, Default::default())
+        .await;
+    game_state
+        .add_skill_xp(&player, SkillId::Fishing, 600)
+        .await
+        .unwrap();
+
+    let (character_id, rows) = game_state
+        .take_player_skills(&player)
+        .await
+        .expect("skills should detach");
+    assert_eq!(character_id, 7);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].skill_id, "fishing");
+    assert_eq!(rows[0].xp, 600);
+    assert_eq!(rows[0].level, 2);
+
+    // Detached: nothing left to take or flush.
+    assert!(game_state.take_player_skills(&player).await.is_none());
+    assert!(game_state.collect_dirty_skill_states().await.1.is_empty());
 }

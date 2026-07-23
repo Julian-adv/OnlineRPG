@@ -952,6 +952,19 @@ async fn handle_client_message(
                 .load_player_inventory(&id, character_id, auth_service)
                 .await;
 
+            // Load trained skills from DB (missing rows = never trained).
+            let skills = match auth_service.load_skills(character_id) {
+                Ok(rows) => crate::game_state::skills_from_rows(&rows),
+                Err(err) => {
+                    warn!(
+                        "Failed to load skills for character {}: {} — starting empty",
+                        character_id, err
+                    );
+                    Default::default()
+                }
+            };
+            game_state.register_player_skills(&id, skills.clone()).await;
+
             // The equipped off-hand is the authoritative carried-torch state.
             // Resolve it before add_player builds the late-join GameState snapshot.
             let inventory = game_state.get_player_inventory(&id).await;
@@ -984,6 +997,8 @@ async fn handle_client_message(
             responses.push(ServerMessage::GoldUpdate {
                 gold: selected_character.gold,
             });
+
+            responses.push(ServerMessage::SkillsUpdate { skills });
 
             if let Some(notice) = game_state.server_notice().await {
                 responses.push(ServerMessage::ServerNotice {

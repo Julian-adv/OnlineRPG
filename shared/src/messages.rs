@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::character::{Character, CharacterAttributes, CharacterClass, Gender};
 use crate::entity::{Monster, MonsterState, Player};
 use crate::world::{GameDateTime, NoSpawnZone, Position};
-use crate::{housing, inventory};
+use crate::{housing, inventory, skills};
 
 /// Which side of a merchant trade a haggled deal applies to.
 /// `Buy` = the player buys from the merchant, `Sell` = the player sells to
@@ -508,6 +508,22 @@ pub enum ServerMessage {
         leveled_up: bool,
         max_hp: u32,
         current_hp: u32,
+    },
+    /// Direct message: the receiving player's full trained-skill map, sent
+    /// once on EnterGame. Skills stay out of the broadcast `Player` struct —
+    /// like gold, they are private to their owner.
+    SkillsUpdate {
+        skills: skills::Skills,
+    },
+    /// Direct message: the receiving player gained skill XP (the trained-skill
+    /// mirror of `XpGained`). `xp_amount` is what was actually banked after
+    /// the level-cap clamp.
+    SkillXpGained {
+        skill: skills::SkillId,
+        xp_amount: u64,
+        total_xp: u64,
+        new_level: u32,
+        leveled_up: bool,
     },
     Kicked {
         player_id: PlayerId,

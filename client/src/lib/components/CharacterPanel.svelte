@@ -8,7 +8,13 @@
     CharacterClass,
     Gender,
   } from '../network/networkTypes'
-  import { xp_for_level } from '../wasm/onlinerpg_shared'
+  import {
+    xp_for_level,
+    skill_xp_for_level,
+    skill_level_cap,
+  } from '../wasm/onlinerpg_shared'
+  import { skillsStore, SKILL_DISPLAY_NAMES } from '../stores/skillsStore'
+  import type { SkillId, SkillProgress } from '../network/networkTypes'
   import {
     dragMeta,
     startDrag,
@@ -79,6 +85,21 @@
       ? 'Cavewoman'
       : CLASS_LABELS[characterClass]
   )
+
+  // Trained skills, sorted by name for a stable list. The section renders
+  // nothing until the first skill is trained.
+  const trainedSkills = $derived(
+    (Object.entries($skillsStore.map) as [SkillId, SkillProgress][]).sort(
+      ([a], [b]) => a.localeCompare(b)
+    )
+  )
+
+  function skillProgressPct(progress: SkillProgress): number {
+    if (progress.level >= skill_level_cap()) return 100
+    const start = skill_xp_for_level(progress.level)
+    const next = skill_xp_for_level(progress.level + 1)
+    return Math.min(100, ((progress.xp - start) / (next - start)) * 100)
+  }
 
   const EQUIP_SLOT_LABELS: Record<EquipSlot, string> = {
     head: 'Head',
@@ -224,6 +245,34 @@
         </div>
       </div>
     </div>
+
+    {#if trainedSkills.length > 0}
+      <div class="panel-section">
+        <div class="section-label">Skills</div>
+        <div class="skills-list">
+          {#each trainedSkills as [skillId, progress] (skillId)}
+            <div class="skill-row">
+              <span class="stat-label"
+                >{SKILL_DISPLAY_NAMES[skillId] ?? skillId}</span
+              >
+              <span class="stat-value">Lv {progress.level}</span>
+              <div
+                class="skill-track"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(skillProgressPct(progress))}
+              >
+                <span
+                  class="skill-fill"
+                  style={`width: ${skillProgressPct(progress)}%`}
+                ></span>
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     <div class="panel-section equip-section">
       <img class="equip-bg" src={equipBg} alt="" draggable="false" />
@@ -414,6 +463,36 @@
     inset: 0 auto 0 0;
     background: linear-gradient(90deg, #58a6ff 0%, #7fd0ff 100%);
     box-shadow: 0 0 10px rgba(88, 166, 255, 0.4);
+  }
+
+  .skills-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .skill-row {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Same track treatment as the character exp bar, green for skill growth. */
+  .skill-track {
+    position: relative;
+    height: 7px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(64, 98, 135, 0.45);
+    border: 1px solid rgba(166, 200, 238, 0.25);
+  }
+
+  .skill-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(90deg, #4fd58a 0%, #8be8b6 100%);
+    box-shadow: 0 0 10px rgba(79, 213, 138, 0.4);
   }
 
   .equip-section {

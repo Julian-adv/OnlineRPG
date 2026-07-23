@@ -68,6 +68,20 @@ pub fn xp_for_level(level: u32) -> f64 {
     xp.min(MAX_SAFE) as f64
 }
 
+/// Cumulative XP threshold for a trained-skill level (fishing etc.), so the
+/// client's progress bars use the exact server curve. Skill XP tops out far
+/// below safe-integer range, so no saturation is needed.
+#[wasm_bindgen]
+pub fn skill_xp_for_level(level: u32) -> f64 {
+    crate::skills::skill_xp_for_level(level) as f64
+}
+
+/// The shared skill level cap (`SKILL_LEVEL_CAP`), for capped-out displays.
+#[wasm_bindgen]
+pub fn skill_level_cap() -> u32 {
+    crate::skills::SKILL_LEVEL_CAP
+}
+
 // --- Passability cache (WASM global state) ---
 
 thread_local! {

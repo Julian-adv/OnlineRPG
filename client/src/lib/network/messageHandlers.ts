@@ -21,6 +21,11 @@ import { dungeonManager } from '../managers/dungeonManager'
 import { deathDropDelayQueue } from '../managers/deathDropDelay'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import {
+  setSkills,
+  applySkillXp,
+  SKILL_DISPLAY_NAMES,
+} from '../stores/skillsStore'
+import {
   shopSession,
   applyDealUpdate,
   setMerchantDeals,
@@ -972,6 +977,27 @@ export function handleServerMessage(
       } else if (previousLevel !== null && data.new_level < previousLevel) {
         addCombatMessage({
           text: `Level down. You are now level ${data.new_level}.`,
+          sender: 'local',
+        })
+      }
+      break
+    }
+
+    case 'SkillsUpdate':
+      setSkills(data.skills)
+      break
+
+    case 'SkillXpGained': {
+      const skillId = data.skill as import('../stores/skillsStore').SkillId
+      applySkillXp(skillId, Number(data.total_xp), data.new_level)
+      const skillName = SKILL_DISPLAY_NAMES[skillId] ?? skillId
+      addCombatMessage({
+        text: `You gained ${data.xp_amount} ${skillName} XP.`,
+        sender: 'local',
+      })
+      if (data.leveled_up) {
+        addCombatMessage({
+          text: `${skillName} is now level ${data.new_level}!`,
           sender: 'local',
         })
       }
