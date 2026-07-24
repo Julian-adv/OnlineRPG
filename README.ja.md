@@ -248,3 +248,7 @@ sudo systemctl restart openmmo-server
 各ユニットは `EnvironmentFile=-/etc/openmmo/{server,agent-client}.env` を読み取るため、そこに `RUST_LOG` を設定できます。systemd ユニットはシェル環境を継承しない点に注意してください。ターミナルで `RUST_LOG` を export しても、そのターミナルから直接起動したバイナリにしか影響しません。
 
 移動に関する警告（移動先の拒否、ウェイポイントキューの上限、移動の阻害）は意図的に `warn` のままです。これらはサーバーとクライアントのステップ検証が一致しないときに発生するため、通常動作ではなくバグの兆候です。
+
+## コントリビューション
+
+コントリビューションを歓迎します！初めてプルリクエストを開くと、ボットが PR 上のコメントで [Contributor License Agreement](CLA.md) への署名を求めます。コントリビューションをマージするには CLA への署名が必要です。

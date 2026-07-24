@@ -248,3 +248,7 @@ sudo systemctl restart openmmo-server
 每个单元都会读取 `EnvironmentFile=-/etc/openmmo/{server,agent-client}.env`，因此可以在该文件中设置 `RUST_LOG`。请注意，systemd 单元不会继承 shell 环境；在终端中导出 `RUST_LOG` 只会影响由该终端直接启动的二进制文件。
 
 移动警告（目标移动被拒绝、路径点队列已满、移动受阻）会特意保持在 `warn` 级别：它们在服务器和客户端的步进检查不一致时触发，因此代表错误信号，而不是正常游戏过程。
+
+## 贡献
+
+欢迎贡献！当你首次提交 Pull Request 时，机器人会要求你在 PR 中留言签署[贡献者许可协议](CLA.md)。签署 CLA 后你的贡献才能被合并。

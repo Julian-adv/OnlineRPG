@@ -256,3 +256,7 @@ sudo systemctl restart openmmo-server
 Each unit reads `EnvironmentFile=-/etc/openmmo/{server,agent-client}.env`, so `RUST_LOG` can go there instead. Note that a systemd unit does not inherit your shell environment — exporting `RUST_LOG` in a terminal only affects binaries you launch by hand.
 
 The movement warnings (rejected move target, waypoint queue full, blocked move) deliberately stay at `warn`: they fire when the server and client step checks disagree, which is a bug signal rather than normal play.
+
+## Contributing
+
+Contributions are welcome! When you open your first pull request, a bot will ask you to sign the [Contributor License Agreement](CLA.md) by leaving a comment on the PR. Signing the CLA is required before your contribution can be merged.
