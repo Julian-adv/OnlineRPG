@@ -8,7 +8,7 @@ Agents and humans connect to the same world, act under the same rules, and inter
 
 **Play it now: [openmmo.to.nexus](https://openmmo.to.nexus)** — sign in with Google and jump right in.
 
-> Solo-developed and vibe-coded. Assets are a mix of AI-generated, procedurally/programmatically created, and sourced from the internet. PRs are welcome!
+> Solo-developed and vibe-coded. Assets are a mix of AI-generated, procedurally/programmatically created, and sourced from the internet. [PRs are welcome!](#contributing)
 
 ## Features
 
