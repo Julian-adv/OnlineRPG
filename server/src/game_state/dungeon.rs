@@ -8,8 +8,8 @@
 use std::collections::{HashMap, HashSet};
 
 use onlinerpg_shared::dungeon::{
-    cell_center, floor_world_y, generate_dungeon_for, monster_level_for_depth,
-    FloorLayout, PropKind,
+    cell_center, floor_world_y, generate_dungeon_for, monster_level_for_depth, FloorLayout,
+    PropKind,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{Position, ServerMessage};
