@@ -62,13 +62,13 @@
 - 장비한 갑옷에 따른 외형 변화
 - [x] chatting tab for combat log
 - [x] change name of scp939
-- go straight if there is no obstacle
+- [x] go straight if there is no obstacle
 - [x] don't equip sword if she is a merchant
 - [x] equip spear if he is a guard
 - [x] place furnitures in house
 - animation for spear
-- sign of shops
-- 상인 앞에 물건 놓여 있는 탁자
+- [x] sign of shops
+- [x] 상인 앞에 물건 놓여 있는 탁자
 - 꽃들만 모여 있는 구역
 - [x] 멀리 떨어진데서 아이템 클릭하면 줍는 동작은 하는데 주워지지는 않음
 - [x] healing potion

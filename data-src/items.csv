@@ -3,10 +3,10 @@ iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,
 worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,
 wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,4000,1
 raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2
-leather_cap,Leather Cap,A simple leather cap.,1,head,false,sword.png,,armor,,leather,1500
+leather_cap,Leather Cap,A simple leather cap.,1,head,false,sword.png,,armor,,leather,1500,1
 iron_chestplate,Iron Chestplate,Heavy iron chest armor.,55,chest,false,sword.png,,armor,,metal,35000,7
-leather_pants,Leather Pants,Durable leather leggings.,4,pants,false,sword.png,,armor,,leather,2500
-iron_boots,Iron Boots,Heavy iron boots.,3,boots,false,sword.png,,armor,,metal,6000
+leather_pants,Leather Pants,Durable leather leggings.,4,pants,false,leather_pants.png,armor/leather_pants.glb,armor,,leather,2500,1
+iron_boots,Iron Boots,Heavy iron boots.,3,boots,false,sword.png,,armor,,metal,6000,2
 gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000
 silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000
 copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200
