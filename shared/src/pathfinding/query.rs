@@ -308,6 +308,51 @@ fn stairwell_consult(
     (consulted > 0).then_some(consulted)
 }
 
+/// What the direct-path shortcut is up against along a same-floor segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SegmentObstacles {
+    /// No cache entry comes within `pad` of the segment's bounding box.
+    None,
+    /// Obstacles nearby; line-of-sight must decide.
+    Walls,
+    /// A stairwell connected to this floor touches the bounding box.
+    Stairwell,
+}
+
+/// Classify a segment's padded bounding box against the cache. The stairwell
+/// test mirrors A*'s positional stair fencing: stair interiors are excluded by
+/// position, not by cell-edge masks, so LOS alone cannot see them and any
+/// footprint contact must fall back to A*.
+pub(super) fn segment_obstacles(
+    cache: &PassabilityCache,
+    min_x: f32,
+    max_x: f32,
+    min_z: f32,
+    max_z: f32,
+    floor_level: u8,
+    pad: f32,
+) -> SegmentObstacles {
+    let mut near = false;
+    for rp in cache.values() {
+        if max_x + pad < rp.min_x
+            || min_x - pad > rp.max_x
+            || max_z + pad < rp.min_z
+            || min_z - pad > rp.max_z
+        {
+            continue;
+        }
+        if stairwell_floor_mask(rp, min_x, max_x, min_z, max_z, floor_level) != 0 {
+            return SegmentObstacles::Stairwell;
+        }
+        near = true;
+    }
+    if near {
+        SegmentObstacles::Walls
+    } else {
+        SegmentObstacles::None
+    }
+}
+
 /// Bitmask of floor levels connected by a stairwell this move touches that the
 /// mover is actually keyed to, or 0 otherwise. Touching (rather than
 /// containment) is what matters: stepping off a landing into the adjoining room

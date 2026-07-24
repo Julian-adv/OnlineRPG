@@ -455,7 +455,9 @@ mod tests {
         // Path around the house should be smoothed but still start and end correctly
         let result = find_and_smooth_path(9.5, 11.5, 0, 13.5, 11.5, 0, &cache, 200);
         assert!(result.found);
-        assert!(!result.waypoints.is_empty());
+        // The straight line pierces the house, so the direct shortcut must
+        // decline and A* must produce a detour.
+        assert!(result.waypoints.len() > 1);
         let first = &result.waypoints[0];
         let last = result.waypoints.last().unwrap();
         // First waypoint should be near start, last near goal
@@ -556,6 +558,16 @@ mod tests {
                 .map(|w| (w.x, w.z))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn direct_shortcut_on_open_ground() {
+        let cache = PassabilityCache::new();
+        let result = find_and_smooth_path(100.5, 200.5, 0, 180.5, 260.5, 0, &cache, 2000);
+        assert!(result.found);
+        assert_eq!(result.waypoints.len(), 1);
+        let wp = &result.waypoints[0];
+        assert!((wp.x - 180.5).abs() < 0.01 && (wp.z - 260.5).abs() < 0.01);
     }
 
     /// Two single-row floors joined by one stairwell column:

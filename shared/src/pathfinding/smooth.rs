@@ -7,7 +7,9 @@
 //! so the path stays cardinal across the seam.
 
 use super::astar::find_path;
-use super::query::{is_cardinal_move_blocked, is_circle_blocked_on_floor};
+use super::query::{
+    is_cardinal_move_blocked, is_circle_blocked_on_floor, segment_obstacles, SegmentObstacles,
+};
 use super::{PassabilityCache, PathResult, PathWaypoint};
 
 /// Player collision half-width, mirroring the client's `PLAYER_RADIUS` used by
@@ -159,6 +161,42 @@ fn cells_line_passable(from: &PathWaypoint, to: &PathWaypoint, cache: &Passabili
     }
 }
 
+/// Same-floor direct shortcut: when the straight start→goal segment passes the
+/// exact line-of-sight test smoothing applies, A* could only produce a path
+/// that collapses to this segment, so the search is skipped. Stairwell contact
+/// falls back to A* (see `segment_obstacles`), and a segment nowhere near any
+/// obstacle is accepted without walking the line.
+fn direct_line_ok(
+    start_x: f32,
+    start_z: f32,
+    goal_x: f32,
+    goal_z: f32,
+    floor: u8,
+    cache: &PassabilityCache,
+) -> bool {
+    let min_x = start_x.min(goal_x);
+    let max_x = start_x.max(goal_x);
+    let min_z = start_z.min(goal_z);
+    let max_z = start_z.max(goal_z);
+    match segment_obstacles(cache, min_x, max_x, min_z, max_z, floor, PLAYER_RADIUS) {
+        SegmentObstacles::Stairwell => false,
+        SegmentObstacles::None => true,
+        SegmentObstacles::Walls => {
+            let from = PathWaypoint {
+                x: start_x,
+                z: start_z,
+                floor,
+            };
+            let to = PathWaypoint {
+                x: goal_x,
+                z: goal_z,
+                floor,
+            };
+            is_line_passable(&from, &to, cache)
+        }
+    }
+}
+
 /// Convenience: find path and smooth it in one call.
 #[allow(clippy::too_many_arguments)]
 pub fn find_and_smooth_path(
@@ -171,6 +209,19 @@ pub fn find_and_smooth_path(
     cache: &PassabilityCache,
     max_nodes: usize,
 ) -> PathResult {
+    if start_floor == goal_floor
+        && direct_line_ok(start_x, start_z, goal_x, goal_z, start_floor, cache)
+    {
+        return PathResult {
+            waypoints: vec![PathWaypoint {
+                x: goal_x,
+                z: goal_z,
+                floor: goal_floor,
+            }],
+            found: true,
+        };
+    }
+
     let result = find_path(
         start_x,
         start_z,
