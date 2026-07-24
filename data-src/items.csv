@@ -30,3 +30,7 @@ raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,true,raw_perch.pn
 raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,true,raw_trout.png,,fish,2d4,,60,,3,14,6d8,42
 river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,true,river_salmon.png,,fish,2d6,,200,,4,5,8d10,70
 golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,true,golden_sturgeon.png,,fish,4d6,,1500,,5,1,20d10,150
+old_boot,Old Boot,A waterlogged leather boot. Someone had a worse day than you.,1,,true,old_boot.png,,junk,,leather,,,0,6,9d3,
+clump_of_kelp,Clump of Kelp,A slimy tangle of seaweed dredged from the bottom.,0.5,,true,clump_of_kelp.png,,junk,,,,,0,5,6d6,
+message_in_a_bottle,Message in a Bottle,A sealed bottle with a scrap of paper inside. A collector might pay a little.,0.3,,true,message_in_a_bottle.png,,junk,,,15,,0,2,7d3,
+sunken_coin_pouch,Sunken Coin Pouch,A drowned purse still holding a few coins.,0.2,,false,sunken_coin_pouch.png,,coin_catch,3d8,,,,0,4,6d3,

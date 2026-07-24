@@ -120,9 +120,12 @@ pub fn struggle_window_ms(rarity: u32, skill_level: u32) -> u32 {
     (tightened + 60 * skill_level).clamp(STRUGGLE_MIN_WINDOW_MS, STRUGGLE_BASE_WINDOW_MS)
 }
 
-/// Tension added by a wrong or missed response.
+/// Tension added by a wrong or missed response. Rarity 0 (junk flotsam)
+/// fights like a common fish — the `max(1)` clamp (same as `struggle_rounds`)
+/// keeps the invariant that all-wrong play always tops out the tension meter
+/// within the round count (3 × 35 = 105 ≥ 100).
 pub fn tension_miss_penalty(rarity: u32) -> u32 {
-    TENSION_MISS_BASE + TENSION_MISS_PER_RARITY * rarity
+    TENSION_MISS_BASE + TENSION_MISS_PER_RARITY * rarity.max(1)
 }
 
 #[cfg(test)]
@@ -139,9 +142,16 @@ mod tests {
         // Skill widens but never past the base, and the floor holds.
         assert_eq!(struggle_window_ms(5, 10), 3_000);
         assert!(struggle_window_ms(5, 0) >= STRUGGLE_MIN_WINDOW_MS);
-        // Escape math: a legend punishes misses hardest.
+        // Escape math: a legend punishes misses hardest; junk (rarity 0)
+        // clamps up to the common-fish penalty so misses can still snap
+        // the line within its 3 rounds.
+        assert_eq!(tension_miss_penalty(0), 35);
         assert_eq!(tension_miss_penalty(1), 35);
         assert_eq!(tension_miss_penalty(5), 55);
+        assert!(
+            struggle_rounds(0) * tension_miss_penalty(0) >= TENSION_MAX,
+            "all-wrong play must always escape, even on junk"
+        );
     }
 
     #[test]

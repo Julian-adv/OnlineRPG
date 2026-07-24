@@ -423,12 +423,26 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                     item_def_id,
                     size_cm,
                     trophy,
-                } => format!(
-                    "[Fishing] You caught a {item_def_id} ({size_cm} cm){}. It is in your bag — you can eat it, sell it, or fish again.",
-                    if *trophy { " — a TROPHY catch!" } else { "" }
-                ),
+                } => {
+                    // Category-aware next steps: fish are edible/sellable,
+                    // junk flotsam is (at best) sellable, a coin catch pays
+                    // gold directly and never enters the bag.
+                    match crate::item_defs::get(item_def_id).and_then(|d| d.category.as_deref()) {
+                        Some("coin_catch") => format!(
+                            "[Fishing] You hauled up a {item_def_id} — its coins went straight to your gold. You can fish again."
+                        ),
+                        Some("fish") => format!(
+                            "[Fishing] You caught a {item_def_id} ({size_cm} cm){}. It is in your bag — you can eat it, sell it, or fish again.",
+                            if *trophy { " — a TROPHY catch!" } else { "" }
+                        ),
+                        _ => format!(
+                            "[Fishing] You fished up a {item_def_id}. It is in your bag — junk like this can be sold if a merchant pays for it, or dropped."
+                        ),
+                    }
+                }
                 FishingOutcome::Escaped => {
-                    "[Fishing] The fish got away. You can cast again with the fish action.".to_string()
+                    "[Fishing] The fish got away. You can cast again with the fish action."
+                        .to_string()
                 }
                 FishingOutcome::Aborted => "[Fishing] You reeled in your line.".to_string(),
             })

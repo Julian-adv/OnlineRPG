@@ -5343,7 +5343,7 @@ mod fishing_tests {
         advance_until_bite(&game_state, &mut rx).await;
 
         game_state.respond_fishing(&id, FishingAction::Hook).await;
-        // Answer every struggle round correctly: the fish must land.
+        // Answer every struggle round correctly: the catch must land.
         let (outcome, msgs) =
             fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
         let FishingOutcome::Caught {
@@ -5362,21 +5362,40 @@ mod fishing_tests {
             .iter()
             .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: true, .. })));
         assert!(size_cm > 0);
-        // The fish landed in the bag…
-        let inv = game_state.get_player_inventory(&id).await.unwrap();
-        assert!(inv
-            .bag
-            .iter()
-            .any(|item| item.item_def_id == fish_id && item.quantity == 1));
-        // …the bag snapshot went out…
-        assert!(msgs
-            .iter()
-            .any(|m| matches!(m, ServerMessage::InventoryUpdated { .. })));
-        // …and skill XP was granted (rarity ≥ 1 → ≥ 10 XP).
-        assert!(msgs.iter().any(|m| matches!(
-            m,
-            ServerMessage::SkillXpGained { xp_amount, .. } if *xp_amount >= 10
-        )));
+        // What lands depends on the species: coin catches pay copper, items
+        // (fish and junk) land in the bag; only rarity ≥ 1 (fish) grants XP.
+        let defs = ItemDefs::load();
+        let def = defs.get(&fish_id).expect("caught def");
+        if def.is_coin_catch() {
+            assert!(
+                msgs.iter().any(|m| matches!(
+                    m,
+                    ServerMessage::GoldGained { amount } if *amount > 0
+                )),
+                "coin catch must pay copper"
+            );
+        } else {
+            let inv = game_state.get_player_inventory(&id).await.unwrap();
+            assert!(inv
+                .bag
+                .iter()
+                .any(|item| item.item_def_id == fish_id && item.quantity == 1));
+            assert!(msgs
+                .iter()
+                .any(|m| matches!(m, ServerMessage::InventoryUpdated { .. })));
+        }
+        let rarity = def.rarity_tier.unwrap_or(1);
+        let got_xp = msgs.iter().any(|m| {
+            matches!(
+                m,
+                ServerMessage::SkillXpGained { xp_amount, .. } if *xp_amount >= 10
+            )
+        });
+        assert_eq!(
+            got_xp,
+            rarity >= 1,
+            "fish grant XP, junk and coins do not (caught {fish_id}, rarity {rarity})"
+        );
         // Session is gone: a second hook is an error, not a double catch.
         game_state.respond_fishing(&id, FishingAction::Hook).await;
         assert!(drain(&mut rx)
@@ -5463,17 +5482,25 @@ mod fishing_tests {
         let game_state = make_test_game_state("fishing_stacks");
         let (id, mut rx) = make_angler(&game_state, "angler_stacker").await;
 
+        let defs = ItemDefs::load();
+        let mut bagged_catches = 0u32;
         for _ in 0..3 {
             game_state.start_fishing(&id, water_target()).await;
             advance_until_bite(&game_state, &mut rx).await;
             game_state.respond_fishing(&id, FishingAction::Hook).await;
             let (outcome, _) =
                 fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
-            assert!(matches!(outcome, FishingOutcome::Caught { .. }));
+            let FishingOutcome::Caught { item_def_id, .. } = outcome else {
+                panic!("perfect play must catch");
+            };
+            // Coin catches pay copper instead of taking a bag slot.
+            if !defs.get(&item_def_id).unwrap().is_coin_catch() {
+                bagged_catches += 1;
+            }
         }
         let inv = game_state.get_player_inventory(&id).await.unwrap();
         let total_fish: u32 = inv.bag.iter().map(|item| item.quantity).sum();
-        assert_eq!(total_fish, 3);
+        assert_eq!(total_fish, bagged_catches);
         // Stacking means fewer entries than catches unless every species
         // differed; either way no entry may duplicate another's def id.
         let mut ids: Vec<_> = inv.bag.iter().map(|i| i.item_def_id.clone()).collect();

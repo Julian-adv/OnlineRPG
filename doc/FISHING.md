@@ -58,22 +58,24 @@ Timers advance on a 250 ms server tick (`run_ticks` in `main.rs`) using
 
 ## The catch table
 
-Fish are ordinary item defs (`data-src/items.csv`) with `category: "fish"`
-plus four fish-only columns:
+Anything with a `catchWeight` in `data-src/items.csv` can end up on the
+hook — fish (`category: "fish"`), junk flotsam, and coin catches alike.
+The catch columns:
 
 | column | meaning |
 |---|---|
-| `rarityTier` | 1 (common) … 5 (legendary); drives XP and skill weighting |
+| `rarityTier` | fish: 1 (common) … 5 (legendary); junk/coins: 0 — drives XP and skill weighting |
 | `catchWeight` | relative weight in the catch table at fishing level 0 |
 | `sizeDice` | rolled length in cm (e.g. `6d8`) |
-| `trophyCm` | length at or above this is a trophy |
+| `trophyCm` | fish only — length at or above this is a trophy |
 
-Species pick: weighted draw where each fish weighs
+Species pick: weighted draw where each entry weighs
 `catchWeight + fishing_level × rarityTier` — skill shifts the table toward
-rare fish without ever emptying the commons. Size: `sizeDice`, plus a d20
-quality roll; a natural 20 doubles the size and is always a trophy. (Trophy
-celebration UI/notice lands with the struggle minigame; the flag already
-rides `FishingEnded` so the shape won't change.)
+rare fish without ever emptying the commons (junk's tier 0 means skill
+never makes junk *more* likely, only relatively less). Size: `sizeDice`,
+plus a d20 quality roll; a natural 20 doubles the size and — for fish —
+is always a trophy. Trophies are a fish concept: a nat-20 Old Boot is
+just a very large boot, no celebration.
 
 Fish are stackable, sellable (`basePrice`, ordinary merchant flow), and
 edible — `category "fish"` maps to the same `Heal(dice)` use-effect as
@@ -84,12 +86,33 @@ Prices are anchored to the game's *income* economy, not just the catalog:
 monster kills drop unsellable worn weapons by design, so the repeatable gold
 faucets are coin piles (1–10c) and gated dungeon chests — and an NPC's
 salary is 50s/day. Fish: minnow 10c, perch 25c, trout 60c, salmon 2s,
-golden sturgeon 15s (the 1-in-100 jackpot, a goblin-sword's worth). At level-0
-catch weights that's ~46c expected base value per catch — ~18c at the 40%
-sell rate, i.e. a catch is worth a couple of coin piles and an hour of
-active fishing earns roughly half a guard's daily salary. Steady pocket
-money, not a money printer. The 3s rod repays itself in ~17 average
-catches; final tuning is explicitly the maintainer's call (PR0).
+golden sturgeon 15s (the 1-in-100 jackpot, a goblin-sword's worth). With the
+flotsam rows in the table, the expected *sell* value of one catch is
+~16c — a couple of coin piles, so an hour of active fishing earns roughly
+half a guard's daily salary. Steady pocket money, not a money printer.
+The 3s rod repays itself in ~18 average catches; final tuning is
+explicitly the maintainer's call (PR0). That band is a **contract test**
+(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy`):
+if a new species or treasure row pushes the per-catch EV outside 5–25c,
+the test fails and the table needs retuning.
+
+## Flotsam (junk & coin catches)
+
+Not everything that bites is a fish. Four flotsam rows share the catch
+table (~15% of level-0 draws): an **Old Boot** and a **Clump of Kelp**
+(worthless bag junk — the classic fishing gag), a **Message in a Bottle**
+(sells for a token 15c), and a **Sunken Coin Pouch**
+(`category: "coin_catch"` — its `dice` column is a copper roll, `3d8`,
+paid straight to the wallet via the same path as ground coin piles; it
+never enters the bag). All are `rarityTier 0`: **no fishing XP** (the
+`10·rarity²` formula grants nothing naturally), no trophy, and in the
+struggle they fight like a common fish (`rarity.max(1)` clamps rounds and
+tension so all-wrong play still snaps the line). An *escaped* junk catch
+still pays the flat 2 XP consolation — the species is never revealed on
+an escape, and a varying consolation would leak the hidden roll. Junk
+keeps the bite/struggle stakes honest without inflating income — the EV
+guardrail above counts flotsam in its average.
+>>>>>>> 354ec41a (Add flotsam catches: junk, a bottle, and a sunken coin pouch)
 
 ## Skill
 

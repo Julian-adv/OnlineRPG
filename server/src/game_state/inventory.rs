@@ -930,6 +930,23 @@ impl super::GameState {
         .await;
     }
 
+    /// Credit loose copper to a player's wallet and tell them (`GoldUpdate`
+    /// + `GoldGained`). Shared by coin-pile pickups and coin catches fished
+    /// out of the water.
+    pub(super) async fn award_copper(&self, player_id: &PlayerId, copper: i64) {
+        let new_gold = {
+            let mut gold_map = self.player_gold.write().await;
+            let wallet = gold_map.entry(*player_id).or_insert(0);
+            *wallet += copper;
+            *wallet
+        };
+        self.mark_dirty(player_id).await;
+        self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold: new_gold })
+            .await;
+        self.send_direct_message(player_id, ServerMessage::GoldGained { amount: copper })
+            .await;
+    }
+
     /// Pick up a dungeon coin pile: claim it (first picker wins), credit a
     /// random 1–10 copper to the wallet, then broadcast its removal to nearby
     /// players. Skips the bag/weight path entirely — it's currency, not loot.
@@ -952,17 +969,7 @@ impl super::GameState {
         }
 
         let copper: i64 = rand::thread_rng().gen_range(1..=10);
-        let new_gold = {
-            let mut gold_map = self.player_gold.write().await;
-            let wallet = gold_map.entry(*player_id).or_insert(0);
-            *wallet += copper;
-            *wallet
-        };
-        self.mark_dirty(player_id).await;
-        self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold: new_gold })
-            .await;
-        self.send_direct_message(player_id, ServerMessage::GoldGained { amount: copper })
-            .await;
+        self.award_copper(player_id, copper).await;
         info!(
             "Player {} picked up a coin pile: +{} copper",
             self.player_name_of(player_id).await,

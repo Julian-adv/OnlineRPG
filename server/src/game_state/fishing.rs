@@ -470,7 +470,7 @@ impl GameState {
             let sessions = self.fishing_sessions.read().await;
             sessions.get(player_id)?.skill_level
         };
-        let candidates = self.item_defs.fish_catch_table();
+        let candidates = self.item_defs.catch_table();
         if candidates.is_empty() {
             return None;
         }
@@ -497,10 +497,13 @@ impl GameState {
         if nat_twenty {
             size_cm = size_cm.saturating_mul(2);
         }
-        let trophy = nat_twenty
-            || def
-                .trophy_cm
-                .is_some_and(|threshold| u32::from(size_cm) >= threshold);
+        // Trophies are a fish concept: a nat-20 Old Boot is still just a
+        // (very large) boot — no bystander celebration for flotsam.
+        let trophy = def.is_fish()
+            && (nat_twenty
+                || def
+                    .trophy_cm
+                    .is_some_and(|threshold| u32::from(size_cm) >= threshold));
         Some(RolledFish {
             item_def_id: picked.item_def_id.clone(),
             rarity: picked.rarity,
@@ -664,8 +667,26 @@ impl GameState {
             return;
         };
 
-        self.award_stackable_item(player_id, &fish.item_def_id)
-            .await;
+        // Coin catches pay out copper directly (their `dice` is the roll,
+        // coin-pile magnitude) and never enter the bag. Everything else —
+        // fish and junk alike — is awarded as an item. Junk is rarityTier 0,
+        // so the XP formula below grants nothing for it naturally.
+        let is_coin_catch = self
+            .item_defs
+            .get(&fish.item_def_id)
+            .is_some_and(|def| def.is_coin_catch());
+        if is_coin_catch {
+            let copper = self
+                .item_defs
+                .get(&fish.item_def_id)
+                .and_then(|def| def.dice.as_deref())
+                .map(crate::game::combat::roll_dice)
+                .unwrap_or(5);
+            self.award_copper(player_id, i64::from(copper)).await;
+        } else {
+            self.award_stackable_item(player_id, &fish.item_def_id)
+                .await;
+        }
         let xp = CATCH_XP_PER_RARITY_SQ * u64::from(fish.rarity) * u64::from(fish.rarity);
         self.add_skill_xp(player_id, SkillId::Fishing, xp).await;
         self.end_fishing(

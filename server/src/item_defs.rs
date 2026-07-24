@@ -78,6 +78,13 @@ impl ItemDefinition {
         self.category.as_deref() == Some("fish")
     }
 
+    /// A catch that pays out coins directly instead of entering the bag.
+    /// Its `dice` column is the copper roll (the category-decides-meaning
+    /// pattern: weapon → damage, fish/potion → heal, coin_catch → gold).
+    pub fn is_coin_catch(&self) -> bool {
+        self.category.as_deref() == Some("coin_catch")
+    }
+
     /// Damage dice if this item is a weapon, else `None`.
     pub fn damage_dice(&self) -> Option<&str> {
         if self.is_weapon() {
@@ -175,13 +182,13 @@ impl ItemDefs {
         self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
     }
 
-    /// The fishing catch table: every fish def with a catch weight, sorted
-    /// by id for a deterministic cumulative walk.
-    pub fn fish_catch_table(&self) -> Vec<crate::game_state::fishing::CatchCandidate> {
+    /// The fishing catch table: every item def with a `catchWeight` — fish,
+    /// junk flotsam (rarityTier 0 → no skill XP), and coin catches alike.
+    /// Sorted by id for a deterministic cumulative walk.
+    pub fn catch_table(&self) -> Vec<crate::game_state::fishing::CatchCandidate> {
         let mut table: Vec<_> = self
             .defs
             .values()
-            .filter(|def| def.is_fish())
             .filter_map(|def| {
                 Some(crate::game_state::fishing::CatchCandidate {
                     item_def_id: def.id.clone(),
@@ -214,6 +221,72 @@ mod tests {
         assert!(
             pool.contains(&"iron_sword".to_string()),
             "expected iron_sword in the chest pool"
+        );
+    }
+
+    #[test]
+    fn catch_table_spans_fish_junk_and_coins() {
+        let defs = ItemDefs::load();
+        let table = defs.catch_table();
+        let ids: Vec<&str> = table.iter().map(|c| c.item_def_id.as_str()).collect();
+        for expected in [
+            "raw_minnow",
+            "golden_sturgeon",
+            "old_boot",
+            "message_in_a_bottle",
+            "sunken_coin_pouch",
+        ] {
+            assert!(
+                ids.contains(&expected),
+                "{expected} missing from catch table"
+            );
+        }
+        // Junk and coin catches are rarity 0: the XP formula (10·rarity²)
+        // grants nothing for them, and only fish carry tiers ≥ 1.
+        for c in &table {
+            let def = defs.get(&c.item_def_id).unwrap();
+            if def.is_fish() {
+                assert!(c.rarity >= 1, "{} fish tier", c.item_def_id);
+            } else {
+                assert_eq!(c.rarity, 0, "{} must be tier 0 (no XP)", c.item_def_id);
+            }
+        }
+    }
+
+    /// The economy guardrail as a contract test: the expected *sell* value of
+    /// one catch must stay at coin-pile magnitude (the game's repeatable gold
+    /// faucet is 1–10c piles; a catch should be worth a couple of piles, not
+    /// a wage). If a new species or treasure row pushes the average outside
+    /// this band, this test fails and the table needs retuning.
+    #[test]
+    fn expected_catch_value_stays_in_the_coin_pile_economy() {
+        fn dice_avg(notation: &str) -> f64 {
+            let (n, m) = notation.split_once('d').expect("NdM");
+            let n: f64 = n.parse().unwrap();
+            let m: f64 = m.parse().unwrap();
+            n * (m + 1.0) / 2.0
+        }
+        let defs = ItemDefs::load();
+        let table = defs.catch_table();
+        let total_weight: f64 = table.iter().map(|c| f64::from(c.catch_weight)).sum();
+        let ev: f64 = table
+            .iter()
+            .map(|c| {
+                let def = defs.get(&c.item_def_id).unwrap();
+                let value = if def.is_coin_catch() {
+                    // Coins arrive at face value.
+                    def.dice.as_deref().map_or(0.0, dice_avg)
+                } else {
+                    // Items sell at the merchant rate (Rica: 40%).
+                    def.base_price.unwrap_or(0) as f64 * 0.4
+                };
+                f64::from(c.catch_weight) * value
+            })
+            .sum::<f64>()
+            / total_weight;
+        assert!(
+            (5.0..=25.0).contains(&ev),
+            "expected sell value per catch is {ev:.1}c — outside the 5–25c coin-pile band"
         );
     }
 
