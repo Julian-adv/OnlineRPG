@@ -613,8 +613,7 @@ impl super::GameState {
 
         if did_die {
             let dead_player_id = *target_player_id;
-            self.movement_intents.write().await.remove(&dead_player_id);
-            self.apply_player_death_penalty(&dead_player_id).await;
+            self.on_player_died(&dead_player_id).await;
             if let Some((target_position, target_floor)) = target_loc {
                 self.send_direct_message_to_players_within_position(
                     &target_position,
@@ -703,6 +702,16 @@ impl super::GameState {
         for pid in regen_dirty {
             self.mark_dirty(&pid).await;
         }
+    }
+
+    /// Everything that stops when a player drops: movement intent, any
+    /// fishing session (a dead angler can't keep a line wet — doc/FISHING.md),
+    /// then the XP penalty. One chokepoint so future death sources can't
+    /// forget a side effect.
+    pub(super) async fn on_player_died(&self, player_id: &PlayerId) {
+        self.movement_intents.write().await.remove(player_id);
+        self.cancel_fishing_if_active(player_id).await;
+        self.apply_player_death_penalty(player_id).await;
     }
 
     async fn apply_player_death_penalty(&self, player_id: &PlayerId) {

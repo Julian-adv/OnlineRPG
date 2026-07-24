@@ -20,6 +20,7 @@ import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { deathDropDelayQueue } from '../managers/deathDropDelay'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import { catchMessage } from './fishingMessages'
 import {
   setSkills,
   applySkillXp,
@@ -1064,20 +1065,15 @@ export function handleServerMessage(
           addCombatMessage({ text: 'You reel in your line.', sender: 'local' })
         } else if (outcome?.Caught) {
           const { item_def_id, size_cm, trophy } = outcome.Caught
-          const def = getItemDef(item_def_id)
-          const name = def?.name ?? item_def_id
-          const an = /^[aeiou]/i.test(name) ? 'an' : 'a'
-          // Category-aware flavor: fish are caught (with size), junk is
-          // fished up, a coin catch announces itself (gold arrives via
-          // GoldGained right behind this message).
-          const text = trophy
-            ? `Trophy catch! ${name}, ${size_cm} cm!`
-            : def?.category === 'coin_catch'
-              ? `You haul up ${an} ${name}!`
-              : def?.category === 'fish'
-                ? `You caught ${an} ${name} (${size_cm} cm).`
-                : `You fished up ${an} ${name}.`
-          addCombatMessage({ text, sender: 'local' })
+          addCombatMessage({
+            text: catchMessage(
+              getItemDef(item_def_id),
+              item_def_id,
+              size_cm,
+              trophy
+            ),
+            sender: 'local',
+          })
         }
       }
       break

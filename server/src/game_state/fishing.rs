@@ -140,17 +140,7 @@ impl GameState {
             return;
         }
 
-        let has_rod = self
-            .get_player_inventory(player_id)
-            .await
-            .and_then(|inv| inv.equipped.get(&EquipSlot::MainHand).cloned())
-            .and_then(|item| {
-                self.item_defs
-                    .get(&item.item_def_id)
-                    .map(|def| def.is_fishing_rod())
-            })
-            .unwrap_or(false);
-        if !has_rod {
+        if !self.main_hand_is_rod(player_id).await {
             self.send_fishing_error(player_id, "You need a fishing rod in your main hand.")
                 .await;
             return;
@@ -314,6 +304,32 @@ impl GameState {
         if self.fishing_sessions.read().await.contains_key(player_id) {
             self.end_fishing(player_id, FishingOutcome::Aborted, 0)
                 .await;
+        }
+    }
+
+    /// Whether the player's main hand currently holds a fishing rod — the
+    /// cast precondition, also re-checked when equipment changes mid-session.
+    async fn main_hand_is_rod(&self, player_id: &PlayerId) -> bool {
+        self.get_player_inventory(player_id)
+            .await
+            .and_then(|inv| inv.equipped.get(&EquipSlot::MainHand).cloned())
+            .and_then(|item| {
+                self.item_defs
+                    .get(&item.item_def_id)
+                    .map(|def| def.is_fishing_rod())
+            })
+            .unwrap_or(false)
+    }
+
+    /// Called after any equip/unequip: putting the rod away (or swapping a
+    /// weapon into the main hand) reels the line in. Gear changes that leave
+    /// the rod in hand — armor, an off-hand torch — don't break concentration.
+    pub(super) async fn abort_fishing_if_rod_lost(&self, player_id: &PlayerId) {
+        if !self.fishing_sessions.read().await.contains_key(player_id) {
+            return;
+        }
+        if !self.main_hand_is_rod(player_id).await {
+            self.cancel_fishing_if_active(player_id).await;
         }
     }
 
@@ -497,13 +513,7 @@ impl GameState {
         if nat_twenty {
             size_cm = size_cm.saturating_mul(2);
         }
-        // Trophies are a fish concept: a nat-20 Old Boot is still just a
-        // (very large) boot — no bystander celebration for flotsam.
-        let trophy = def.is_fish()
-            && (nat_twenty
-                || def
-                    .trophy_cm
-                    .is_some_and(|threshold| u32::from(size_cm) >= threshold));
+        let trophy = def.trophy_at(size_cm, nat_twenty);
         Some(RolledFish {
             item_def_id: picked.item_def_id.clone(),
             rarity: picked.rarity,

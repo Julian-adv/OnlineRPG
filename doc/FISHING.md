@@ -50,7 +50,10 @@ endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
   size_cm, trophy }`, `Escaped`, or `Aborted`. A caught fish arrives through
   the normal `InventoryUpdated` (stacked), or spills as a ground item when the
   bag can't take the weight — never silently lost. Moving, attacking,
-  disconnecting, dying, or `FishingStop` aborts the session.
+  disconnecting, dying, stowing the rod (unequipping it, or swapping a
+  weapon into the main hand), or `FishingStop` aborts the session; gear
+  changes that leave the rod in hand — a hat, an off-hand torch — don't
+  break concentration.
 
 Timers advance on a 250 ms server tick (`run_ticks` in `main.rs`) using
 `tokio::time::Instant`, so the whole state machine is tested with paused time

@@ -85,6 +85,17 @@ impl ItemDefinition {
         self.category.as_deref() == Some("coin_catch")
     }
 
+    /// Whether a catch of this item at `size_cm` is a trophy. Trophies are
+    /// a fish concept — a nat-20 Old Boot is still just a (very large) boot —
+    /// and fire on the natural-20 quality roll or on meeting `trophyCm`.
+    pub fn trophy_at(&self, size_cm: u16, nat_twenty: bool) -> bool {
+        self.is_fish()
+            && (nat_twenty
+                || self
+                    .trophy_cm
+                    .is_some_and(|threshold| u32::from(size_cm) >= threshold))
+    }
+
     /// Damage dice if this item is a weapon, else `None`.
     pub fn damage_dice(&self) -> Option<&str> {
         if self.is_weapon() {
@@ -288,6 +299,50 @@ mod tests {
             (5.0..=25.0).contains(&ev),
             "expected sell value per catch is {ev:.1}c — outside the 5–25c coin-pile band"
         );
+    }
+
+    /// The flotsam price sheet: gag junk is worthless by design, the bottle
+    /// pays a token, and the pouch pays through its dice — not a resale price.
+    #[test]
+    fn junk_pricing_matches_the_gag() {
+        let defs = ItemDefs::load();
+        assert!(
+            defs.get("old_boot").unwrap().base_price.is_none(),
+            "a boot is worthless by design"
+        );
+        assert!(defs.get("clump_of_kelp").unwrap().base_price.is_none());
+        assert_eq!(
+            defs.get("message_in_a_bottle").unwrap().base_price,
+            Some(15)
+        );
+        let pouch = defs.get("sunken_coin_pouch").unwrap();
+        assert!(pouch.is_coin_catch());
+        assert_eq!(pouch.dice.as_deref(), Some("3d8"));
+        assert!(
+            pouch.base_price.is_none(),
+            "the pouch pays via its dice, not a merchant sale"
+        );
+    }
+
+    /// Trophies are gated to fish: junk never celebrates, a natural 20 always
+    /// does on a fish, and the size threshold is an exact boundary.
+    #[test]
+    fn trophies_are_a_fish_concept() {
+        let defs = ItemDefs::load();
+        let boot = defs.get("old_boot").unwrap();
+        assert!(
+            !boot.trophy_at(200, true),
+            "a nat-20 boot is still just a boot"
+        );
+        let minnow = defs.get("raw_minnow").unwrap();
+        assert!(
+            minnow.trophy_at(1, true),
+            "a natural 20 is always a trophy on a fish"
+        );
+        let trout = defs.get("raw_trout").unwrap();
+        let threshold = trout.trophy_cm.unwrap() as u16;
+        assert!(trout.trophy_at(threshold, false));
+        assert!(!trout.trophy_at(threshold - 1, false));
     }
 
     #[test]
