@@ -1344,6 +1344,131 @@ async fn monster_move_requires_ownership() {
     );
 }
 
+#[tokio::test]
+async fn non_finite_monster_move_is_rejected() {
+    let game_state = make_test_game_state("monster_move_non_finite");
+    let owner_id = pid("owner");
+    let observer_id = pid("observer");
+    let authoritative_position = Position {
+        x: 1.0,
+        y: 2.0,
+        z: 3.0,
+    };
+
+    game_state.add_player(make_player("owner", 1.0, 3.0)).await;
+    game_state
+        .add_player(make_player("observer", 1.0, 3.0))
+        .await;
+    let mut owner_rx = game_state.register_direct_channel(&owner_id).await;
+    let mut observer_rx = game_state.register_direct_channel(&observer_id).await;
+
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let mut monster = make_monster("owned_monster", authoritative_position, 0);
+        monster.owner_id = Some(owner_id);
+        monster.rotation = 0.25;
+        monster.move_budget = 7.0;
+        monster.last_move_at = 42;
+        monsters.insert("owned_monster".to_string(), monster);
+    }
+
+    let with_component = |axis: usize, value: f32| {
+        let mut position = authoritative_position;
+        match axis {
+            0 => position.x = value,
+            1 => position.y = value,
+            2 => position.z = value,
+            _ => unreachable!(),
+        }
+        position
+    };
+    let mut cases = Vec::new();
+    for (axis, axis_name) in [(0, "x"), (1, "y"), (2, "z")] {
+        for (value, value_name) in [
+            (f32::NAN, "NaN"),
+            (f32::INFINITY, "+infinity"),
+            (f32::NEG_INFINITY, "-infinity"),
+        ] {
+            cases.push((
+                format!("position {axis_name} {value_name}"),
+                with_component(axis, value),
+                0.5,
+                authoritative_position,
+            ));
+            cases.push((
+                format!("target {axis_name} {value_name}"),
+                authoritative_position,
+                0.5,
+                with_component(axis, value),
+            ));
+        }
+    }
+    for (rotation, value_name) in [
+        (f32::NAN, "NaN"),
+        (f32::INFINITY, "+infinity"),
+        (f32::NEG_INFINITY, "-infinity"),
+    ] {
+        cases.push((
+            format!("rotation {value_name}"),
+            authoritative_position,
+            rotation,
+            authoritative_position,
+        ));
+    }
+
+    for (case, position, rotation, target_position) in cases {
+        let before = game_state.monsters.read().await["owned_monster"].clone();
+
+        game_state
+            .update_monster_position(
+                &owner_id,
+                "owned_monster".to_string(),
+                position,
+                rotation,
+                MonsterState::Run,
+                target_position,
+            )
+            .await;
+
+        let after = game_state.monsters.read().await["owned_monster"].clone();
+        assert_eq!(after.position.x, before.position.x, "{case}");
+        assert_eq!(after.position.y, before.position.y, "{case}");
+        assert_eq!(after.position.z, before.position.z, "{case}");
+        assert_eq!(after.rotation, before.rotation, "{case}");
+        assert_eq!(after.state, before.state, "{case}");
+        assert_eq!(after.move_budget, before.move_budget, "{case}");
+        assert_eq!(after.last_move_at, before.last_move_at, "{case}");
+        assert!(after.move_budget.is_finite(), "{case}");
+
+        match observer_rx.try_recv() {
+            Err(MpscTryRecvError::Empty) => {}
+            other => panic!("{case} must not fan out, got {other:?}"),
+        }
+        match owner_rx.try_recv() {
+            Ok(ServerMessage::MonsterMoved {
+                monster_id,
+                position,
+                rotation,
+                state,
+                target_position,
+                ..
+            }) => {
+                assert_eq!(monster_id, "owned_monster", "{case}");
+                assert_eq!(position.x, before.position.x, "{case}");
+                assert_eq!(position.y, before.position.y, "{case}");
+                assert_eq!(position.z, before.position.z, "{case}");
+                assert_eq!(rotation, before.rotation, "{case}");
+                assert_eq!(state, before.state, "{case}");
+                assert_eq!(target_position.x, before.position.x, "{case}");
+                assert_eq!(target_position.y, before.position.y, "{case}");
+                assert_eq!(target_position.z, before.position.z, "{case}");
+            }
+            other => panic!("{case} must correct the owner, got {other:?}"),
+        }
+        assert!(matches!(owner_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    }
+}
+
 /// Even the owner can't teleport a monster onto a distant victim: a move is
 /// capped to what the monster could run since its last accepted move, so an
 /// owned monster stays a melee threat only where it could actually walk.
