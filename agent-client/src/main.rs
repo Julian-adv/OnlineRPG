@@ -17,6 +17,7 @@ mod watch;
 mod ws;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use onlinerpg_terrain::height::HeightSampler;
 use onlinerpg_terrain::io::TerrainIO;
@@ -68,6 +69,12 @@ struct Config {
     /// Maximum number of concurrent LLM calls across all NPCs (default: 2)
     #[serde(default = "default_max_concurrent")]
     max_concurrent: usize,
+
+    /// Give up on one LLM call after this many seconds (default: 120, 0 = off).
+    /// Applies to every backend: a hung CLI subprocess holds a `max_concurrent`
+    /// slot exactly as long as an unanswered HTTP request does.
+    #[serde(default = "default_request_timeout_secs")]
+    request_timeout_secs: u64,
 
     /// Spectator panel port on 127.0.0.1 (default: 0, off)
     #[serde(default)]
@@ -142,6 +149,10 @@ pub fn default_activity_window_secs() -> u64 {
 
 fn default_max_concurrent() -> usize {
     2
+}
+
+fn default_request_timeout_secs() -> u64 {
+    120
 }
 
 const CONFIG_PATH: &str = "data/config.toml";
@@ -244,7 +255,10 @@ async fn main() -> anyhow::Result<()> {
         behavior_trees: Arc::new(behavior_trees),
         type_mapping: Arc::new(type_mapping),
         movement_speeds: Arc::new(movement_speeds),
-        scheduler: llm_scheduler::LlmScheduler::new(config.max_concurrent),
+        scheduler: llm_scheduler::LlmScheduler::new(
+            config.max_concurrent,
+            Duration::from_secs(config.request_timeout_secs),
+        ),
         auth: match config.auth.mode {
             AuthMode::NpcToken => AuthSource::NpcToken(resolve_npc_token(config.npc_token)?),
             AuthMode::Google => {

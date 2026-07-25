@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::sync::LazyLock;
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -29,8 +29,6 @@ pub struct OpenAiConfig {
     /// budget goes to the reply; "" omits the field for models that reject an
     /// unrecognized value.
     pub reasoning_effort: String,
-    /// Per-request timeout in seconds
-    pub request_timeout_secs: u64,
 }
 
 impl Default for OpenAiConfig {
@@ -43,7 +41,6 @@ impl Default for OpenAiConfig {
             max_tokens: 1024,
             temperature: 0.7,
             reasoning_effort: "none".to_string(),
-            request_timeout_secs: 120,
         }
     }
 }
@@ -77,7 +74,6 @@ impl OpenAiConfig {
             temperature: self.temperature,
             reasoning_effort: (!self.reasoning_effort.is_empty())
                 .then(|| self.reasoning_effort.clone()),
-            timeout: Duration::from_secs(self.request_timeout_secs),
         })
     }
 }
@@ -92,7 +88,6 @@ pub struct Endpoint {
     pub max_tokens: u32,
     pub temperature: f32,
     pub reasoning_effort: Option<String>,
-    pub timeout: Duration,
 }
 
 #[derive(Serialize)]
@@ -129,35 +124,34 @@ struct ChatMessageResponse {
 /// Invokes any OpenAI-compatible chat completions endpoint over HTTP.
 /// Maintains conversation history for multi-turn context.
 pub struct OpenAiInvoker {
-    client: Client,
     endpoint: Endpoint,
     system_prompt: String,
     messages: Mutex<Vec<ChatMessage>>,
 }
 
+/// Shared by every invoker: it carries no per-endpoint settings (the call cap
+/// is `TimeoutBackend`'s job), so NPCs on the same endpoint pool connections
+/// instead of each holding their own.
+static HTTP: LazyLock<Client> = LazyLock::new(Client::new);
+
 impl OpenAiInvoker {
-    pub fn new(endpoint: Endpoint, system_prompt: String) -> anyhow::Result<Self> {
-        // Without a timeout a hung endpoint pins one of the scheduler's few
-        // concurrent slots — and this NPC's history lock — forever.
-        let client = Client::builder().timeout(endpoint.timeout).build()?;
+    pub fn new(endpoint: Endpoint, system_prompt: String) -> Self {
         info!(
             "{} invoker ready (url={}, model={})",
             endpoint.name, endpoint.url, endpoint.model
         );
 
-        Ok(Self {
-            client,
+        Self {
             endpoint,
             system_prompt,
             messages: Mutex::new(Vec::new()),
-        })
+        }
     }
 
-    /// One round trip. Split out so `send_message` can undo its history
-    /// append when the call fails.
+    /// One round trip.
     async fn complete(&self, request: &ChatRequest) -> anyhow::Result<String> {
         let name = self.endpoint.name;
-        let mut req = self.client.post(&self.endpoint.url).json(request);
+        let mut req = HTTP.post(&self.endpoint.url).json(request);
         if !self.endpoint.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.endpoint.api_key));
         }
@@ -204,47 +198,46 @@ impl LlmBackend for OpenAiInvoker {
             });
         }
 
-        messages.push(ChatMessage {
+        // Built aside and committed only once the call comes back. Undoing the
+        // user turn in an error arm instead would miss a cancelled call — the
+        // scheduler's timeout drops this future — and leave two user messages
+        // in a row, which stricter chat templates reject.
+        let mut turn = messages.clone();
+        turn.push(ChatMessage {
             role: "user".to_string(),
             content: content.to_string(),
         });
 
         // Trim conversation history if it gets too long (keep system + last 20 turns)
         const MAX_MESSAGES: usize = 41; // system + 20 user/assistant pairs
-        if messages.len() > MAX_MESSAGES {
-            let system = messages[0].clone();
-            let keep_from = messages.len() - (MAX_MESSAGES - 1);
-            *messages = std::iter::once(system)
-                .chain(messages[keep_from..].iter().cloned())
+        if turn.len() > MAX_MESSAGES {
+            let system = turn[0].clone();
+            let keep_from = turn.len() - (MAX_MESSAGES - 1);
+            turn = std::iter::once(system)
+                .chain(turn[keep_from..].iter().cloned())
                 .collect();
             warn!(
                 "{name}: trimmed conversation history to {} messages",
-                messages.len()
+                turn.len()
             );
         }
 
         let request = ChatRequest {
             model: self.endpoint.model.clone(),
-            messages: messages.clone(),
+            messages: turn,
             max_tokens: self.endpoint.max_tokens,
             temperature: self.endpoint.temperature,
             reasoning_effort: self.endpoint.reasoning_effort.clone(),
         };
 
-        // Drop the unanswered user turn: leaving it would send two user
-        // messages in a row next time, which stricter chat templates reject.
-        let result = match self.complete(&request).await {
-            Ok(result) => result,
-            Err(e) => {
-                messages.pop();
-                return Err(e);
-            }
-        };
+        let result = self.complete(&request).await?;
 
-        messages.push(ChatMessage {
+        let mut turn = request.messages;
+        turn.push(ChatMessage {
             role: "assistant".to_string(),
             content: result.clone(),
         });
+        *messages = turn;
 
         debug!("<<< FROM {name} ({} bytes):\n{result}", result.len());
         Ok(result)

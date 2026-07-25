@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use serde::Deserialize;
 
 use crate::openai::{resolve_api_key, Endpoint, OpenAiConfig, OpenAiInvoker};
@@ -18,8 +16,6 @@ pub struct OpenRouterConfig {
     /// Max tokens for the response
     pub max_tokens: u32,
     pub temperature: f32,
-    /// Per-request timeout in seconds
-    pub request_timeout_secs: u64,
 }
 
 impl Default for OpenRouterConfig {
@@ -31,7 +27,6 @@ impl Default for OpenRouterConfig {
             system_prompt_file: shared.system_prompt_file,
             max_tokens: shared.max_tokens,
             temperature: shared.temperature,
-            request_timeout_secs: shared.request_timeout_secs,
         }
     }
 }
@@ -48,7 +43,7 @@ pub fn invoker(config: &OpenRouterConfig, system_prompt: String) -> anyhow::Resu
         );
     }
 
-    OpenAiInvoker::new(
+    Ok(OpenAiInvoker::new(
         Endpoint {
             name: "OpenRouter",
             url: OPENROUTER_API_URL.to_string(),
@@ -57,8 +52,7 @@ pub fn invoker(config: &OpenRouterConfig, system_prompt: String) -> anyhow::Resu
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             reasoning_effort: None,
-            timeout: Duration::from_secs(config.request_timeout_secs),
         },
         system_prompt,
-    )
+    ))
 }

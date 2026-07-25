@@ -26,6 +26,7 @@ Orchestrator Process
   └── LLM Scheduler
         ├── Priority queue (urgent 이벤트 우선)
         ├── max_concurrent: 1~3 동시 LLM 호출
+        ├── request_timeout_secs: 호출당 상한 (기본 120, 슬롯 점유 방지)
         └── NPC별 개별 system prompt + 대화 기억
 ```
 

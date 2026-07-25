@@ -19,7 +19,7 @@ use crate::claude::{self, ClaudeConfig};
 use crate::codex::{self, CodexConfig};
 use crate::driver;
 use crate::google_auth::GoogleAuth;
-use crate::llm_scheduler::{LlmPriority, LlmScheduler};
+use crate::llm_scheduler::{LlmPriority, LlmScheduler, TimeoutBackend};
 use crate::openai::{self, OpenAiConfig};
 use crate::openrouter::{self, OpenRouterConfig};
 use crate::state::{SharedState, WorldCache};
@@ -442,7 +442,7 @@ async fn run_npc_session(
             let agent = npc
                 .id
                 .is_none()
-                .then(|| build_llm_backend(npc, watch.clone()))
+                .then(|| build_llm_backend(npc, watch.clone(), shared.scheduler.request_timeout()))
                 .flatten();
             roll_stats_with_agent(
                 &mut ws_tx,
@@ -796,6 +796,7 @@ fn build_system_prompt(npc: &NpcConfig) -> anyhow::Result<String> {
 fn build_llm_backend(
     npc: &NpcConfig,
     watch: Option<Arc<crate::watch::NpcWatch>>,
+    request_timeout: Duration,
 ) -> Option<Arc<dyn driver::LlmBackend>> {
     let label = npc.label();
     let system_prompt = match build_system_prompt(npc) {
@@ -828,10 +829,10 @@ fn build_llm_backend(
         LlmType::Openai => (
             "OpenAI-compatible API",
             &npc.openai.model,
-            npc.openai
-                .endpoint()
-                .and_then(|ep| openai::OpenAiInvoker::new(ep, system_prompt))
-                .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
+            npc.openai.endpoint().map(|ep| {
+                Arc::new(openai::OpenAiInvoker::new(ep, system_prompt))
+                    as Arc<dyn driver::LlmBackend>
+            }),
         ),
         LlmType::None => return None,
     };
@@ -839,6 +840,9 @@ fn build_llm_backend(
     match invoker {
         Ok(inv) => {
             info!("[{label}] {provider} integration enabled (model={model})");
+            // Timeout under the watcher, so a giving-up call still lands on the
+            // panel as an error instead of a prompt with no answer.
+            let inv = TimeoutBackend::wrap(inv, request_timeout);
             Some(crate::watch::WatchedBackend::wrap(inv, watch))
         }
         Err(e) => {
@@ -863,7 +867,7 @@ fn spawn_llm_task(
     let idle_interval = Duration::from_secs(npc.idle_interval_secs);
     let activity_window = Duration::from_secs(npc.activity_window_secs);
 
-    let invoker = build_llm_backend(npc, watch)?;
+    let invoker = build_llm_backend(npc, watch, scheduler.request_timeout())?;
 
     let state = Arc::clone(state);
     let scheduler = scheduler.clone();

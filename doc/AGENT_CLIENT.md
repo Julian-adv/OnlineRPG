@@ -218,13 +218,33 @@ openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`
 - API 키: openai 백엔드는 `OPENAI_COMPAT_API_KEY`를 본다. codex가 진짜 OpenAI
   키를 `OPENAI_API_KEY`로 받으므로, 그 키가 남의 엔드포인트로 새 나가지 않게
   변수를 분리했다.
-- `request_timeout_secs`(기본 120): 응답 없는 엔드포인트가 스케줄러의 동시 호출
-  슬롯(`max_concurrent`, 기본 2)과 해당 NPC의 대화 락을 영구히 잡는 걸 막는다.
-- 호출이 실패하면 방금 쌓은 user 턴을 되돌린다. 안 그러면 다음 턴에 user 메시지가
-  연속으로 나가고, 역할 교대를 강제하는 chat template은 이를 거절한다.
+- 이번 턴은 따로 만들어 두고 응답이 돌아온 뒤에야 히스토리에 커밋한다. 실패 시
+  되돌리는 방식이면 타임아웃으로 future가 통째로 취소될 때 롤백이 아예 실행되지
+  않는다 — user 메시지가 연속으로 남고, 역할 교대를 강제하는 chat template은 이를
+  거절한다.
+- `reqwest::Client`는 전 인보커가 공유한다(`static HTTP`). 엔드포인트별 설정이
+  없으니 같은 엔드포인트를 쓰는 NPC들이 커넥션 풀을 나눠 쓴다.
 - `reasoning_effort` 기본값은 `"none"`이다. 같은 라우터에서도 모델마다 수용 여부가
   달라(opencode.ai Zen의 deepseek-v4-pro는 거절, minimax-m3는 허용) `""`로 두면
   필드 자체를 생략한다.
+
+### 호출 타임아웃 (`request_timeout_secs`, 기본 120)
+
+백엔드별 설정이 아니라 스케줄러 설정이다(`max_concurrent` 옆, 루트 레벨). 지키는
+대상이 특정 provider가 아니라 **슬롯**이기 때문이다: 응답 없는 엔드포인트든 먹통이
+된 CLI 자식 프로세스든, 하나가 `max_concurrent`(기본 2) 중 하나를 영구히 잡으면 두
+개만 물려도 모든 NPC가 멈춘다.
+
+`llm_scheduler.rs`의 `TimeoutBackend`가 모든 백엔드를 감싼다. 백엔드는
+`build_llm_backend()` 한 곳에서만 만들어지므로 claude / codex / openrouter / openai가
+전부 덮인다. 감싸는 순서는 `WatchedBackend`(관전 패널) **안쪽** — 타임아웃이 평범한
+에러로 올라와 패널에 `llm-error`로 남는다.
+
+시간이 지나면 안쪽 future를 drop하는 것으로 일이 실제로 멈춘다. reqwest는 요청을
+취소하고, stdio 백엔드(`claude.rs` / `codex.rs`)는 `kill_on_drop(true)`로 CLI를 띄우므로
+자식 프로세스가 살아남지 않는다. 다만 CLI가 또 띄운 손자 프로세스까지는 죽이지
+않는다(프로세스 그룹 kill이 아니다). `0`은 타임아웃 해제 — 디버거로 백엔드를
+따라갈 때 쓴다.
 
 ## 구현 우선순위
 

@@ -50,6 +50,8 @@ activity_window_secs = 30                   # How long after last activity to st
 
 # LLM Scheduler: controls concurrent LLM calls across all NPCs
 max_concurrent = 2                          # Max simultaneous LLM calls (default: 2)
+request_timeout_secs = 120                  # Give up on one call (0 = never); applies to every
+                                            # backend, so a hung CLI or endpoint cannot hold a slot
 
 # How this client authenticates to the game server.
 #   npc_token — shared secret from the server's data/npc_token (default)
@@ -74,7 +76,6 @@ model = "openrouter/hunter-alpha"              # Any model ID from openrouter.ai
 system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
-request_timeout_secs = 120                     # Give up on a hung endpoint instead of holding a scheduler slot
 
 # Codex CLI settings (used when llm = "codex")
 # Requires `codex` CLI installed (npm i -g @openai/codex) and OPENAI_API_KEY set.
@@ -93,7 +94,6 @@ system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
 reasoning_effort = "none"                      # "none"/"low"/"medium"/"high"; "" omits it for models that reject it
-request_timeout_secs = 120                     # Give up on a hung endpoint instead of holding a scheduler slot
 
 # --- Multi-NPC Orchestrator Mode ---
 # When [[npcs]] is present, legacy single-NPC fields above are ignored.

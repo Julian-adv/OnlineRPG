@@ -9,6 +9,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
 
@@ -85,21 +86,67 @@ impl PartialOrd for LlmRequest {
     }
 }
 
+/// Caps how long one backend call may run. Without it a hung endpoint or a
+/// wedged CLI subprocess holds one of the scheduler's few slots forever, and
+/// two of those stall every NPC.
+///
+/// Cancelling the inner future is what actually stops the work: reqwest aborts
+/// the request, and the stdio backends spawn their CLI with `kill_on_drop`, so
+/// the child is killed instead of left running.
+pub struct TimeoutBackend {
+    inner: Arc<dyn LlmBackend>,
+    timeout: Duration,
+}
+
+impl TimeoutBackend {
+    /// `Duration::ZERO` leaves the backend unwrapped — an escape hatch for
+    /// stepping through a backend under a debugger.
+    pub fn wrap(inner: Arc<dyn LlmBackend>, timeout: Duration) -> Arc<dyn LlmBackend> {
+        if timeout.is_zero() {
+            return inner;
+        }
+        Arc::new(Self { inner, timeout })
+    }
+}
+
+#[async_trait]
+impl LlmBackend for TimeoutBackend {
+    async fn send_message(&self, content: &str) -> anyhow::Result<String> {
+        tokio::time::timeout(self.timeout, self.inner.send_message(content))
+            .await
+            .map_err(|_| anyhow::anyhow!("LLM call timed out after {}s", self.timeout.as_secs()))?
+    }
+}
+
 /// Handle for submitting LLM requests to the scheduler.
 #[derive(Clone)]
 pub struct LlmScheduler {
     request_tx: mpsc::UnboundedSender<LlmRequest>,
+    request_timeout: Duration,
 }
 
 impl LlmScheduler {
     /// Create a new scheduler and spawn its background task.
     ///
     /// `max_concurrent`: maximum number of simultaneous LLM calls across all NPCs.
-    pub fn new(max_concurrent: usize) -> Self {
+    /// `request_timeout`: what every backend is wrapped in before it can be
+    /// submitted — it guards the slot, not any one provider.
+    pub fn new(max_concurrent: usize, request_timeout: Duration) -> Self {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         tokio::spawn(scheduler_loop(request_rx, max_concurrent));
-        info!("LLM scheduler started (max_concurrent={})", max_concurrent);
-        Self { request_tx }
+        info!(
+            "LLM scheduler started (max_concurrent={}, request_timeout={}s)",
+            max_concurrent,
+            request_timeout.as_secs()
+        );
+        Self {
+            request_tx,
+            request_timeout,
+        }
+    }
+
+    pub fn request_timeout(&self) -> Duration {
+        self.request_timeout
     }
 
     /// Submit an LLM request and wait for the response.
@@ -199,7 +246,6 @@ async fn scheduler_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use std::sync::Arc;
 
     /// A backend that sleeps, then reports the queue wait the scheduler scoped
@@ -219,9 +265,87 @@ mod tests {
         }
     }
 
+    /// An idle probe, for tests that need a backend but assert nothing on it.
+    fn probe() -> Arc<dyn LlmBackend> {
+        Arc::new(Probe {
+            hold: Duration::ZERO,
+            seen: Arc::new(std::sync::Mutex::new(Vec::new())),
+        })
+    }
+
+    /// Reports whether its call was cancelled: a hung stdio backend only stops
+    /// spawning-and-leaking children if the future is actually dropped.
+    #[derive(Default)]
+    struct Hang {
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    struct SetOnDrop(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl LlmBackend for Hang {
+        async fn send_message(&self, _prompt: &str) -> anyhow::Result<String> {
+            let _guard = SetOnDrop(Arc::clone(&self.cancelled));
+            std::future::pending::<()>().await;
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_hung_backend_gives_up_and_is_cancelled() {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let backend = TimeoutBackend::wrap(
+            Arc::new(Hang {
+                cancelled: Arc::clone(&cancelled),
+            }),
+            Duration::from_millis(50),
+        );
+
+        let err = backend.send_message("p").await.unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err}");
+        // Dropping the inner future is what kills a `kill_on_drop` child.
+        assert!(cancelled.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_hung_backend_only_holds_its_slot_until_the_timeout() {
+        let sched = LlmScheduler::new(1, Duration::from_millis(50));
+        let hung = TimeoutBackend::wrap(Arc::new(Hang::default()), sched.request_timeout());
+
+        let stuck = {
+            let s = sched.clone();
+            tokio::spawn(async move {
+                s.submit("hung", LlmPriority::Routine, "p".into(), hung)
+                    .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(10)).await; // let it claim the only slot
+
+        // Would never return if the hung call kept the slot.
+        let next = tokio::time::timeout(
+            Duration::from_secs(5),
+            sched.submit("next", LlmPriority::Routine, "p".into(), probe()),
+        )
+        .await;
+        assert!(next.expect("slot never freed").is_ok());
+        assert!(stuck.await.unwrap().is_err());
+    }
+
+    #[test]
+    fn a_zero_timeout_leaves_the_backend_alone() {
+        let inner = probe();
+        let wrapped = TimeoutBackend::wrap(Arc::clone(&inner), Duration::ZERO);
+        assert!(Arc::ptr_eq(&inner, &wrapped));
+    }
+
     #[tokio::test]
     async fn queue_wait_reflects_time_spent_behind_a_full_scheduler() {
-        let sched = LlmScheduler::new(1); // one slot, so the second turn waits
+        let sched = LlmScheduler::new(1, Duration::from_secs(120)); // one slot, so the second turn waits
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let backend = |hold| {
             Arc::new(Probe {

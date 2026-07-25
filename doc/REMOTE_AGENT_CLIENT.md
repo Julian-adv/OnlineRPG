@@ -150,7 +150,7 @@ agent-client                     구글                      사용자
 
 - `--sandbox read-only` — 프롬프트 인젝션이 파일을 건드리지 못한다
 - `--ephemeral`, `current_dir(temp_dir)`, `--skip-git-repo-check` — 실행자의 리포지토리·`AGENTS.md`를 끌어오지 않는다
-- `max_concurrent` 스케줄러가 프로세스 단위로 동시 호출을 제한한다
+- `max_concurrent` 스케줄러가 프로세스 단위로 동시 호출을 제한하고, `request_timeout_secs`(기본 120)가 먹통이 된 CLI를 죽여 슬롯을 돌려준다
 
 문서에 명시할 것: **codex CLI가 정상 동작하도록 만드는 것은 실행자 책임**이고, 게임 서버는 LLM 비용을 전혀 부담하지 않는다. 프롬프트에는 게임 월드에서 온 다른 플레이어의 채팅이 그대로 들어가므로, 인젝션 시도는 항상 있다고 가정한다 — 위 샌드박스 옵션을 임의로 낮추지 말 것.
 
