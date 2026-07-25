@@ -106,6 +106,57 @@ pub(super) enum AgentAction {
         )]
         item: PickupRef,
     },
+    /// Sell one bag item to a nearby merchant, walking up to them first.
+    /// The server owns pricing, proximity and wallet checks.
+    #[serde(rename = "sell", alias = "sell_item")]
+    Sell {
+        #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
+        item: String,
+        #[serde(alias = "npc", alias = "to", alias = "merchant_name", alias = "target")]
+        merchant: String,
+    },
+    /// Buy one catalog item from a nearby merchant, walking up to them
+    /// first. The server owns catalog, pricing and gold checks.
+    #[serde(rename = "buy", alias = "buy_item", alias = "purchase")]
+    Buy {
+        #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
+        item: String,
+        #[serde(
+            alias = "npc",
+            alias = "from",
+            alias = "merchant_name",
+            alias = "target"
+        )]
+        merchant: String,
+    },
+    /// Drop one bag item on the ground where you stand. Stricter than the
+    /// web client: worn gear must be taken off first.
+    #[serde(rename = "drop", alias = "drop_item", alias = "discard")]
+    Drop {
+        #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
+        item: String,
+    },
+    /// Repurchase an item sold to this merchant this session, at the exact
+    /// payout price. The server owns the entry list and gold checks.
+    #[serde(rename = "buyback", alias = "buy_back", alias = "repurchase")]
+    Buyback {
+        #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
+        item: String,
+        #[serde(
+            alias = "npc",
+            alias = "from",
+            alias = "merchant_name",
+            alias = "target"
+        )]
+        merchant: String,
+    },
+    /// Smash a breakable dungeon prop (barrel/crate) on the current floor,
+    /// walking up to it first. The server validates floor and proximity.
+    #[serde(rename = "break_prop", alias = "smash", alias = "break")]
+    BreakProp {
+        #[serde(alias = "id", alias = "prop", alias = "target")]
+        prop_id: u32,
+    },
     /// Open a chest standing in the agent's own room: the nearest one, or the
     /// great chest when `chest` asks for it. The server validates floor,
     /// proximity, prop kind, boss state and the per-player cooldown, and
@@ -288,6 +339,11 @@ pub(super) fn action_to_command(
         AgentAction::OpenTrade { .. } => None,
         // Needs the bag and worn gear from SharedState; likewise handled there.
         AgentAction::Use { .. } => None,
+        AgentAction::Sell { .. } => None,
+        AgentAction::Buy { .. } => None,
+        AgentAction::Drop { .. } => None,
+        AgentAction::Buyback { .. } => None,
+        AgentAction::BreakProp { .. } => None,
         AgentAction::OpenChest { .. } => None,
         // Needs ground-item resolution and the walk-to loop; handled there too.
         AgentAction::Pickup { .. } => None,

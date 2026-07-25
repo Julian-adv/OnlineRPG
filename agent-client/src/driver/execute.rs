@@ -68,6 +68,10 @@ pub(super) async fn handle_response(
     }
 
     let mut last_attack_target = None;
+    // Bag instances already sold/dropped this turn: the bag snapshot only
+    // refreshes on InventoryUpdated, so without this a second sell of the
+    // same non-stackable item would resend a spent instance id.
+    let mut spent_instances: Vec<u64> = Vec::new();
 
     for action in &agent_resp.actions {
         // Skip movement/attack when the NPC must stay put — resting on a
@@ -79,6 +83,10 @@ pub(super) async fn handle_response(
                     | AgentAction::Attack { .. }
                     | AgentAction::Pickup { .. }
                     | AgentAction::OpenChest { .. }
+                    | AgentAction::Sell { .. }
+                    | AgentAction::Buy { .. }
+                    | AgentAction::Buyback { .. }
+                    | AgentAction::BreakProp { .. }
             )
         {
             debug!("Skipping {:?} action — NPC is holding position", action);
@@ -213,6 +221,280 @@ pub(super) async fn handle_response(
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send use action: {e}");
+            }
+            continue;
+        }
+
+        // Sell a bag item: resolve the merchant, walk up to them, and send
+        // the sale. The server owns pricing, proximity and wallet checks and
+        // answers with GoldUpdate/InventoryUpdated.
+        if let AgentAction::Sell { item, merchant } = action {
+            let target = {
+                let s = state.lock().await;
+                s.resolve_nearby_player(merchant)
+            };
+            let Some((merchant_id, _)) = target else {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[SellFailed] No one named '{merchant}' is nearby to sell to."
+                ));
+                continue;
+            };
+            match approach_player(state, &merchant_id).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    let Some((def_id, placed)) = s.find_carried_bag_first(item, &spent_instances)
+                    else {
+                        s.push_agent_event(format!(
+                            "[SellFailed] Nothing called '{item}' is left in your bag."
+                        ));
+                        continue;
+                    };
+                    let Carried::InBag(instance_id) = placed else {
+                        s.push_agent_event(format!(
+                            "[SellFailed] {def_id} is equipped — worn gear is not for sale."
+                        ));
+                        continue;
+                    };
+                    let cmd = onlinerpg_shared::ClientMessage::SellItem {
+                        merchant_player_id: merchant_id,
+                        instance_id,
+                    };
+                    if let Err(e) = s.send_command(cmd).await {
+                        error!("Failed to send sell: {e}");
+                    } else {
+                        spent_instances.push(instance_id);
+                        info!("Agent selling {def_id} [id {instance_id}] to {merchant}");
+                    }
+                }
+                ChaseResult::Lost | ChaseResult::Error => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!("[SellFailed] You could not reach {merchant}."));
+                }
+            }
+            continue;
+        }
+
+        // Drop a bag item where we stand. Stricter than the web client:
+        // worn gear must be taken off first.
+        if let AgentAction::Drop { item } = action {
+            let mut s = state.lock().await;
+            let Some((def_id, placed)) = s.find_carried_bag_first(item, &spent_instances) else {
+                s.push_agent_event(format!(
+                    "[DropFailed] Nothing called '{item}' is left in your bag."
+                ));
+                continue;
+            };
+            let Carried::InBag(instance_id) = placed else {
+                s.push_agent_event(format!(
+                    "[DropFailed] {def_id} is equipped — worn gear cannot be dropped."
+                ));
+                continue;
+            };
+            let cmd = onlinerpg_shared::ClientMessage::DropItem { instance_id };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send drop: {e}");
+            } else {
+                spent_instances.push(instance_id);
+                info!("Agent dropped {def_id} [id {instance_id}]");
+            }
+            continue;
+        }
+
+        // Buy a catalog item: resolve the merchant, walk up to them, and
+        // send the purchase. The server owns catalog, pricing and gold
+        // checks and answers with GoldUpdate/InventoryUpdated or TradeError.
+        if let AgentAction::Buy { item, merchant } = action {
+            let target = {
+                let s = state.lock().await;
+                s.resolve_nearby_player(merchant)
+            };
+            let Some((merchant_id, _)) = target else {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[BuyFailed] No one named '{merchant}' is nearby to buy from."
+                ));
+                continue;
+            };
+            match approach_player(state, &merchant_id).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    // Fuzzy-resolve LLM spellings ("health potion") to a def
+                    // id; unresolved names go through for the server to judge.
+                    let ids = crate::item_defs::all_ids();
+                    let def_id = crate::item_defs::resolve_named(&ids, item)
+                        .unwrap_or_else(|| item.trim())
+                        .to_string();
+                    let cmd = onlinerpg_shared::ClientMessage::BuyItem {
+                        merchant_player_id: merchant_id,
+                        item_def_id: def_id,
+                    };
+                    if let Err(e) = s.send_command(cmd).await {
+                        error!("Failed to send buy: {e}");
+                    } else {
+                        info!("Agent buying {item} from {merchant}");
+                    }
+                }
+                ChaseResult::Lost | ChaseResult::Error => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!("[BuyFailed] You could not reach {merchant}."));
+                }
+            }
+            continue;
+        }
+
+        // Buy back a unit sold to this merchant this session, at the exact
+        // payout recorded server-side. Entry list arrives via BuybackUpdated.
+        if let AgentAction::Buyback { item, merchant } = action {
+            let target = {
+                let s = state.lock().await;
+                s.resolve_nearby_player(merchant)
+            };
+            let Some((merchant_id, _)) = target else {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[BuybackFailed] No one named '{merchant}' is nearby."
+                ));
+                continue;
+            };
+            match approach_player(state, &merchant_id).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    let entries = s
+                        .merchant_buyback
+                        .get(&merchant_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    if entries.is_empty() {
+                        s.push_agent_event(format!(
+                            "[BuybackFailed] {merchant} holds nothing you sold this session."
+                        ));
+                        continue;
+                    }
+                    let ids = crate::item_defs::all_ids();
+                    let want = crate::item_defs::resolve_named(&ids, item)
+                        .unwrap_or_else(|| item.trim())
+                        .to_string();
+                    let Some(entry) = entries.iter().find(|e| e.item_def_id == want) else {
+                        let held: Vec<&str> =
+                            entries.iter().map(|e| e.item_def_id.as_str()).collect();
+                        s.push_agent_event(format!(
+                            "[BuybackFailed] {merchant}'s buyback list has no '{item}' — it \
+                             holds: {}.",
+                            held.join(", ")
+                        ));
+                        continue;
+                    };
+                    let cmd = onlinerpg_shared::ClientMessage::BuybackItem {
+                        merchant_player_id: merchant_id,
+                        entry_id: entry.entry_id,
+                    };
+                    if let Err(e) = s.send_command(cmd).await {
+                        error!("Failed to send buyback: {e}");
+                    } else {
+                        info!(
+                            "Agent buying back {want} [entry {}] from {merchant}",
+                            entry.entry_id
+                        );
+                    }
+                }
+                ChaseResult::Lost | ChaseResult::Error => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!("[BuybackFailed] You could not reach {merchant}."));
+                }
+            }
+            continue;
+        }
+
+        // Smash a breakable dungeon prop: resolve it on the current floor,
+        // walk up to its cell, and ask the server. The server owns floor,
+        // proximity and kind checks. Chest props are not handled here — they
+        // come through `open_chest` with the rest of the room's chests.
+        if let AgentAction::BreakProp { prop_id } = action {
+            use onlinerpg_shared::dungeon::PropKind;
+            let resolved = {
+                let s = state.lock().await;
+                if s.self_floor_level >= 0 {
+                    None
+                } else {
+                    let depth = s.self_floor_level.unsigned_abs();
+                    s.dungeon_here().and_then(|d| {
+                        let layout = d.layouts().get(depth as usize - 1)?;
+                        let prop = layout.props.get(*prop_id as usize)?;
+                        // The prop's own cell is sealed for passability —
+                        // aim for the closest reachable neighbor cell.
+                        let pfloor = onlinerpg_shared::dungeon::passability_floor_for_level(
+                            s.self_floor_level,
+                        );
+                        let me = s.self_player.as_ref().map(|p| p.position)?;
+                        let pos = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                            .iter()
+                            .map(|(dx, dz)| {
+                                onlinerpg_shared::dungeon::cell_center(
+                                    &d.entrance,
+                                    depth,
+                                    (prop.x + dx, prop.z + dz),
+                                )
+                            })
+                            .filter(|c| s.find_path_to(c.x, c.z, pfloor).found)
+                            .min_by(|a, b| {
+                                let da = crate::geom::PlanarDelta::between(&me, a).dist;
+                                let db = crate::geom::PlanarDelta::between(&me, b).dist;
+                                da.total_cmp(&db)
+                            })?;
+                        let prop_pos = onlinerpg_shared::dungeon::cell_center(
+                            &d.entrance,
+                            depth,
+                            (prop.x, prop.z),
+                        );
+                        let broken = s.dungeon_broken_props(&d.id, depth);
+                        Some((d.id.clone(), depth, prop.kind, pos, prop_pos, broken))
+                    })
+                }
+            };
+            let Some((entrance_id, depth, kind, pos, prop_pos, broken)) = resolved else {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[PropFailed] Prop {prop_id} is not on your floor, or no open cell \
+                     next to it is reachable."
+                ));
+                continue;
+            };
+            if !matches!(kind, PropKind::Barrel | PropKind::Crate) {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[PropFailed] Prop {prop_id} is a {kind:?} — you cannot break it."
+                ));
+                continue;
+            }
+            if broken.contains(prop_id) {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!("[PropFailed] Prop {prop_id} is already smashed."));
+                continue;
+            }
+            // The server measures its range from the prop itself, so the metre
+            // between it and the cell we can stand on comes out of ours.
+            let gap = crate::geom::PlanarDelta::between(&pos, &prop_pos).dist;
+            match walk_to_point(state, pos, -(depth as i8), chest_arrive_range(gap)).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    let cmd = onlinerpg_shared::ClientMessage::BreakDungeonProp {
+                        entrance_id,
+                        depth,
+                        prop_id: *prop_id,
+                    };
+                    if let Err(e) = s.send_command(cmd).await {
+                        error!("Failed to send break_prop: {e}");
+                    } else {
+                        info!("Agent requested break on prop {prop_id}");
+                    }
+                }
+                ChaseResult::Lost | ChaseResult::Error => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[PropFailed] You could not reach prop {prop_id} — the way is blocked."
+                    ));
+                }
             }
             continue;
         }

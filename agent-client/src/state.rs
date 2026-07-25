@@ -210,6 +210,15 @@ impl WorldCache {
         self.dungeon_opened_props.get(&(id.to_string(), depth))
     }
 
+    /// Broken prop ids for one dungeon floor — `break_prop` checks this before
+    /// walking out to a barrel someone already smashed.
+    pub fn dungeon_broken_props(&self, id: &str, depth: u8) -> Vec<u32> {
+        self.dungeon_broken_props
+            .get(&(id.to_string(), depth))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Recompute one dungeon floor's cells from the live door/prop state
     /// (shared `dungeon::floor_cells`).
     fn rebuild_dungeon_floor(&mut self, id: &str, depth: u8) {
@@ -322,6 +331,9 @@ pub struct SharedState {
     pub trade_busy: bool,
     /// Known nearby players
     pub nearby_players: HashMap<PlayerId, Player>,
+    /// Per-merchant list of units we sold this session, repurchasable at the
+    /// recorded payout (fed by BuybackUpdated/ShopState).
+    pub merchant_buyback: HashMap<PlayerId, Vec<onlinerpg_shared::messages::BuybackEntry>>,
     /// Known nearby monsters
     pub nearby_monsters: HashMap<String, Monster>,
     /// Known items lying on the ground, keyed by instance id (from the join
@@ -400,6 +412,7 @@ impl SharedState {
             trade_satiated_until: None,
             trade_busy: false,
             nearby_players: HashMap::new(),
+            merchant_buyback: HashMap::new(),
             nearby_monsters: HashMap::new(),
             ground_items: HashMap::new(),
             events: Vec::new(),
@@ -1047,6 +1060,21 @@ impl SharedState {
                     *prop_id,
                 );
             }
+            ServerMessage::BuybackUpdated {
+                merchant_player_id,
+                ref buyback,
+            } => {
+                self.merchant_buyback
+                    .insert(*merchant_player_id, buyback.clone());
+            }
+            ServerMessage::ShopState {
+                merchant_player_id,
+                ref buyback,
+                ..
+            } => {
+                self.merchant_buyback
+                    .insert(*merchant_player_id, buyback.clone());
+            }
             ServerMessage::GameState {
                 players,
                 monsters,
@@ -1438,6 +1466,9 @@ impl SharedState {
                     "\nChest in this room: {looks} ({dist:.0}m away){note}"
                 ));
             }
+            if let Some(d) = &dungeon {
+                line.push_str(&self.format_floor_props(d, depth, p));
+            }
             return Some(line);
         }
         let dungeon = self
@@ -1453,6 +1484,59 @@ impl SharedState {
             dungeon.entrance.z,
             dungeon.max_depth()
         ))
+    }
+
+    /// Broken prop ids for one dungeon floor.
+    pub fn dungeon_broken_props(&self, id: &str, depth: u8) -> Vec<u32> {
+        self.world_cache
+            .read()
+            .unwrap()
+            .dungeon_broken_props(id, depth)
+    }
+
+    /// Nearest breakable clutter on the agent's dungeon floor. Chest props are
+    /// left out — they reach the agent as chests in its room, not as prop ids.
+    fn format_floor_props(&self, d: &crate::dungeon::Dungeon, depth: u8, p: &Player) -> String {
+        use onlinerpg_shared::dungeon::PropKind;
+        let Some(layout) = d.layouts().get(depth as usize - 1) else {
+            return String::new();
+        };
+        let broken = self
+            .world_cache
+            .read()
+            .unwrap()
+            .dungeon_broken_props(&d.id, depth);
+        let mut props: Vec<(f32, String)> = Vec::new();
+        for (i, prop) in layout.props.iter().enumerate() {
+            let id = i as u32;
+            if broken.contains(&id) {
+                continue;
+            }
+            let kind = match prop.kind {
+                PropKind::Barrel => "barrel",
+                PropKind::Crate => "crate",
+                PropKind::Chest | PropKind::TorchWall => continue,
+            };
+            let pos = onlinerpg_shared::dungeon::cell_center(&d.entrance, depth, (prop.x, prop.z));
+            let dist = crate::geom::PlanarDelta::between(&p.position, &pos).dist;
+            props.push((
+                dist,
+                format!(
+                    "{kind} [prop {id}] at ({:.0}, {:.0}) {dist:.0}m",
+                    pos.x, pos.z
+                ),
+            ));
+        }
+        if props.is_empty() {
+            return String::new();
+        }
+        props.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let list: Vec<String> = props.into_iter().take(6).map(|(_, s)| s).collect();
+        format!(
+            "\nBreakable props on this floor: {} — {{\"type\": \"break_prop\", \"prop_id\": N}} \
+             smashes one open.",
+            list.join("; ")
+        )
     }
 
     /// Find a smoothed path from current position to the goal.
@@ -1580,6 +1664,30 @@ impl SharedState {
     /// Find the item the agent named among the ones we carry, and where it
     /// sits. Matching is forgiving about the exact id (see
     /// `item_defs::resolve_named`) but never reaches past what we hold.
+    /// Like [`Self::find_carried`], but bag items win over worn ones —
+    /// selling should reach the spare in the bag, not the equipped copy.
+    /// `exclude` skips instances already spent earlier this turn (the bag
+    /// snapshot only refreshes when InventoryUpdated arrives).
+    pub fn find_carried_bag_first(
+        &self,
+        asked: &str,
+        exclude: &[u64],
+    ) -> Option<(String, Carried)> {
+        let (id, placed) = self.find_carried(asked)?;
+        if let Some(item) = self
+            .self_bag
+            .iter()
+            .find(|i| i.item_def_id == id && !exclude.contains(&i.instance_id))
+        {
+            return Some((id, Carried::InBag(item.instance_id)));
+        }
+        match placed {
+            Carried::Worn(_) => Some((id, placed)),
+            // Every bag copy was already spent this turn.
+            Carried::InBag(_) => None,
+        }
+    }
+
     pub fn find_carried(&self, asked: &str) -> Option<(String, Carried)> {
         let ids: Vec<&str> = self
             .self_bag

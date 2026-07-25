@@ -38,6 +38,10 @@ fn defs() -> &'static HashMap<String, ItemDef> {
     })
 }
 
+pub fn all_ids() -> Vec<&'static str> {
+    defs().keys().map(String::as_str).collect()
+}
+
 pub fn get(item_def_id: &str) -> Option<&'static ItemDef> {
     defs().get(item_def_id)
 }
