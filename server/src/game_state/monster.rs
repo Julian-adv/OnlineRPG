@@ -167,6 +167,19 @@ impl super::GameState {
             if !monster.is_controllable_by(mover_id) {
                 return;
             }
+            if !new_position.is_finite() || !rotation.is_finite() || !target_position.is_finite() {
+                let correction = ServerMessage::MonsterMoved {
+                    monster_id,
+                    position: monster.position,
+                    rotation: monster.rotation,
+                    state: monster.state,
+                    target_position: monster.position,
+                    owner_id: monster.owner_id,
+                };
+                drop(monsters);
+                self.send_direct_message(mover_id, correction).await;
+                return;
+            }
             // Rate-limit client-reported movement with a token bucket that
             // refills at the monster's run speed. Movement is simulated by the
             // owning client, so without this an owner could teleport the monster
