@@ -18,3 +18,23 @@ llm = "codex"
 
 [codex]
 model = "gpt-5.4-mini"
+
+# 다른 LLM을 쓰려면 위 llm 값을 바꾸고 해당 섹션을 채운다.
+# claude / codex는 CLI를, openrouter / openai는 HTTP 엔드포인트를 쓴다.
+# openai는 chat completions API를 말하는 곳이면 어디든 붙는다
+# (LiteLLM 프록시, vLLM, Ollama Cloud 등).
+#
+# llm = "openai"
+#
+# [openai]
+# base_url = "http://0.0.0.0:4000/v1"  # 코드가 /chat/completions를 덧붙인다
+# model = "..."                        # 엔드포인트에 그대로 전달된다
+# api_key = "..."                      # 또는 OPENAI_COMPAT_API_KEY 환경변수
+# reasoning_effort = "none"            # 모델이 거절하면 ""로 두어 필드를 생략
+
+# LLM 호출 하나가 이 시간을 넘기면 포기하고 슬롯을 회수한다 (초, 0이면 끔).
+# 멈춘 CLI 자식 프로세스도 응답 없는 HTTP 요청과 똑같이 슬롯을 잡고 있다.
+# request_timeout_secs = 120
+
+# 모든 NPC를 통틀어 동시에 진행할 LLM 호출 수.
+# max_concurrent = 2
