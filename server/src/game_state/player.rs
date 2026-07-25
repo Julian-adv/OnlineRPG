@@ -1,6 +1,7 @@
 use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
+use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
 use onlinerpg_shared::{shortest_world_delta_x, wrap_world_x, PLAYER_MOVE_SPEED};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
@@ -13,6 +14,22 @@ const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
+
+/// Keep the shared housing limit representable on the signed wire.
+const _: () = assert!(MAX_FLOOR_LEVEL <= i8::MAX as u8);
+
+fn exceeds_positive_floor_limit(floor_level: i8) -> bool {
+    floor_level > MAX_FLOOR_LEVEL as i8
+}
+
+/// Keep legacy out-of-range rows from re-entering live state.
+pub(crate) fn restored_floor_level(saved: i8) -> i8 {
+    if exceeds_positive_floor_limit(saved) {
+        0
+    } else {
+        saved
+    }
+}
 
 /// Least time between `PositionCorrected` snaps for one player. Long enough
 /// that a client which cannot act on them is not yanked repeatedly, short
@@ -540,6 +557,13 @@ impl super::GameState {
             floor_level,
             append,
         } = cmd;
+        if exceeds_positive_floor_limit(floor_level) {
+            warn!(
+                "Rejected move carrying floor {} from player {}",
+                floor_level, player_id
+            );
+            return;
+        }
         if !(new_position.is_finite() && new_rotation.is_finite()) {
             warn!(
                 "Rejected non-finite move from player {}",
@@ -903,6 +927,13 @@ impl super::GameState {
     /// alone. Keeps AOI membership tracking where the player visually is while
     /// they walk a stairwell, which is one uninterrupted leg.
     pub async fn update_player_floor(&self, player_id: &PlayerId, floor_level: i8) {
+        if exceeds_positive_floor_limit(floor_level) {
+            warn!(
+                "Rejected floor change to {} from player {}",
+                floor_level, player_id
+            );
+            return;
+        }
         let (current_floor, position) = {
             let players = self.players.read().await;
             match players.get(player_id) {

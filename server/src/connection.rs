@@ -2,7 +2,7 @@ use crate::auth::AuthService;
 use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
-use crate::game_state::{parse_notice_command, GameState};
+use crate::game_state::{parse_notice_command, restored_floor_level, GameState};
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
     new_player, Character, CharacterAttributes, CharacterClass, ClientKind, ClientMessage,
@@ -890,7 +890,17 @@ async fn handle_client_message(
             if let Some(saved_health) = selected_character.health {
                 player.health = saved_health.min(max_hp);
             }
-            player.floor_level = selected_character.floor_level;
+            let saved_floor = selected_character.floor_level;
+            player.floor_level = restored_floor_level(saved_floor);
+            if player.floor_level != saved_floor {
+                let spawn = &crate::world_config::world_config().spawn_position;
+                player.position = spawn.position();
+                player.rotation = spawn.rotation;
+                warn!(
+                    "Reset out-of-range stored floor {} to the world spawn for character '{}'",
+                    saved_floor, selected_character.name
+                );
+            }
             // A negative floor means the player logged out inside a
             // dungeon: re-prime that dungeon's runtime, or fall back to
             // the world spawn if the entrance no longer exists.
