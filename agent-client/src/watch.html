@@ -27,6 +27,7 @@
     background: #1d242e; color: #d8dee6; border: 1px solid #313a47;
     border-radius: 6px; padding: 3px 8px; font-size: 13px;
   }
+  #langsel { margin-left: auto; }
   main { flex: 1; display: flex; min-height: 0; }
   #mapbox { flex: 1.4; position: relative; min-width: 0; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -83,7 +84,7 @@
   <span class="stat" id="clock">—</span>
   <span class="stat" id="floor"></span>
   <span class="stat" id="bag"></span>
-  <select id="langsel" style="margin-left: auto;">
+  <select id="langsel" aria-label="Language">
     <option value="en">English</option>
     <option value="ko">한국어</option>
   </select>
@@ -98,7 +99,7 @@
     <div id="legend">
       <span><i style="background:#ffd76a"></i><span id="lg-agent"></span></span>
       <span><i style="background:#59c2e6"></i><span id="lg-player"></span></span>
-      <span><i style="background:#b48ae0"></i><span id="lg-npc">NPC</span></span>
+      <span><i style="background:#b48ae0"></i>NPC</span>
       <span><i style="background:#e05252"></i><span id="lg-monster"></span></span>
     </div>
   </div>
@@ -144,7 +145,8 @@ const LANG = {
     error: "⚠️ LLM 오류",
   },
 };
-let lang = LANG[localStorage.getItem("watchLang")] ? localStorage.getItem("watchLang") : "en";
+const savedLang = localStorage.getItem("watchLang");
+let lang = LANG[savedLang] ? savedLang : "en";
 const t = () => LANG[lang];
 
 const KINDS = ["chat", "combat", "trade", "llm", "agent", "system"];
@@ -433,6 +435,8 @@ async function init() {
     lang = $("langsel").value;
     localStorage.setItem("watchLang", lang);
     applyLang();
+    // Append-only, so refetch the feed in the new language instead of mixing.
+    $("feed").innerHTML = ""; lastSeq = -1;
   };
   buildFilters();
   applyLang();
