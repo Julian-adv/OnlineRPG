@@ -994,12 +994,10 @@ impl SharedState {
                 player_id,
                 health,
                 max_health,
-            } => {
-                if self.self_player_id.as_ref() == Some(player_id) {
-                    if let Some(ref mut p) = self.self_player {
-                        p.health = *health;
-                        p.max_health = *max_health;
-                    }
+            } if self.self_player_id.as_ref() == Some(player_id) => {
+                if let Some(p) = self.self_player.as_mut() {
+                    p.health = *health;
+                    p.max_health = *max_health;
                 }
             }
             // Only ever sent direct to the player who earned (or lost) the XP,
