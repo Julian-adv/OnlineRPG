@@ -26,11 +26,12 @@ account = "npc_example"
 # the agent's map, event feed and full LLM prompts, so keep it off loopback.
 # watch_port = 8808
 
-# LLM backend to use: "none", "claude", "openrouter", "codex"
+# LLM backend to use: "none", "claude", "openrouter", "codex", "openai"
 # - none: no LLM driver; schedule and monster AI drive the NPC on their own
 # - claude: Claude CLI (stdio subprocess)
 # - openrouter: OpenRouter API (HTTP, any model)
 # - codex: Codex CLI (stdio subprocess)
+# - openai: any OpenAI-compatible chat completions endpoint (HTTP)
 llm = "none"
 
 # LLM timing (seconds)
@@ -72,6 +73,20 @@ temperature = 0.7
 [codex]
 model = "gpt-5.4-mini"                                # Any OpenAI model ID
 system_prompt_file = "data/system_prompt.txt"
+
+# Generic OpenAI-compatible endpoint settings (used when llm = "openai")
+# Any self-hosted or third-party gateway that speaks the OpenAI chat
+# completions API — a LiteLLM proxy, vLLM, Ollama Cloud, opencode.ai Zen, etc.
+[openai]
+base_url = "https://ollama.com/v1"             # Origin + path prefix; code appends /chat/completions.
+                                                # Check your provider's docs for the exact prefix
+                                                # (often /v1, sometimes something more specific).
+# api_key = "..."                              # Or set OPENAI_API_KEY env var. Omit entirely for
+                                                # endpoints that don't require auth.
+model = "deepseek-v4-pro"                      # Any model ID the endpoint accepts
+system_prompt_file = "data/system_prompt.txt"
+max_tokens = 1024                              # Max response tokens
+temperature = 0.7
 
 # --- Multi-NPC Orchestrator Mode ---
 # When [[npcs]] is present, legacy single-NPC fields above are ignored.

@@ -6,6 +6,7 @@ mod google_auth;
 mod item_defs;
 mod llm_scheduler;
 mod monster_ai;
+mod openai;
 mod openrouter;
 mod orchestrator;
 mod shop_info;
@@ -35,6 +36,8 @@ pub enum LlmType {
     Openrouter,
     /// Codex CLI (stdio subprocess)
     Codex,
+    /// Any OpenAI-compatible chat completions endpoint (HTTP)
+    Openai,
 }
 
 /// Config parsed from TOML. Uses `[[npcs]]` array for multi-NPC orchestrator.
@@ -78,6 +81,9 @@ struct Config {
     /// Codex CLI integration config
     #[serde(default)]
     codex: codex::CodexConfig,
+    /// Generic OpenAI-compatible endpoint config
+    #[serde(default)]
+    openai: openai::OpenAiConfig,
 }
 
 /// How the client proves who it is to the game server.
@@ -194,6 +200,9 @@ async fn main() -> anyhow::Result<()> {
         }
         if npc.codex == codex::CodexConfig::default() {
             npc.codex = config.codex.clone();
+        }
+        if npc.openai == openai::OpenAiConfig::default() {
+            npc.openai = config.openai.clone();
         }
     }
 

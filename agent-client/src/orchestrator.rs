@@ -20,6 +20,7 @@ use crate::codex::{self, CodexConfig};
 use crate::driver;
 use crate::google_auth::GoogleAuth;
 use crate::llm_scheduler::{LlmPriority, LlmScheduler};
+use crate::openai::{self, OpenAiConfig};
 use crate::openrouter::{self, OpenRouterConfig};
 use crate::state::{SharedState, WorldCache};
 use crate::ws;
@@ -145,6 +146,8 @@ pub struct NpcConfig {
     pub openrouter: OpenRouterConfig,
     #[serde(default)]
     pub codex: CodexConfig,
+    #[serde(default)]
+    pub openai: OpenAiConfig,
 
     // --- Auto-provisioning ---
     /// Character name to create if no characters exist on this account.
@@ -574,6 +577,7 @@ impl NpcConfig {
             LlmType::Claude => Some(&self.claude.system_prompt_file),
             LlmType::Openrouter => Some(&self.openrouter.system_prompt_file),
             LlmType::Codex => Some(&self.codex.system_prompt_file),
+            LlmType::Openai => Some(&self.openai.system_prompt_file),
             LlmType::None => None,
         }
     }
@@ -749,6 +753,12 @@ fn build_llm_backend(
             "Codex CLI",
             &npc.codex.model,
             codex::CodexInvoker::new(&npc.codex, system_prompt)
+                .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
+        ),
+        LlmType::Openai => (
+            "OpenAI-compatible API",
+            &npc.openai.model,
+            openai::OpenAiInvoker::new(&npc.openai, system_prompt)
                 .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
         ),
         LlmType::None => return None,
