@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -83,6 +83,10 @@
   <span class="stat" id="clock">—</span>
   <span class="stat" id="floor"></span>
   <span class="stat" id="bag"></span>
+  <select id="langsel" style="margin-left: auto;">
+    <option value="en">English</option>
+    <option value="ko">한국어</option>
+  </select>
 </header>
 <main>
   <div id="mapbox">
@@ -92,10 +96,10 @@
       <button id="zout">−</button>
     </div>
     <div id="legend">
-      <span><i style="background:#ffd76a"></i>에이전트</span>
-      <span><i style="background:#59c2e6"></i>플레이어</span>
-      <span><i style="background:#b48ae0"></i>NPC</span>
-      <span><i style="background:#e05252"></i>몬스터</span>
+      <span><i style="background:#ffd76a"></i><span id="lg-agent"></span></span>
+      <span><i style="background:#59c2e6"></i><span id="lg-player"></span></span>
+      <span><i style="background:#b48ae0"></i><span id="lg-npc">NPC</span></span>
+      <span><i style="background:#e05252"></i><span id="lg-monster"></span></span>
     </div>
   </div>
   <aside>
@@ -117,11 +121,34 @@ let dirty = true;
 // per metre — the same PNGs the in-game world map draws.
 const REGION_PX = 1024, TILE_DIM = 64, REGION_CACHE = 12;
 const regions = new Map();
-const KINDS = [
-  ["chat", "채팅"], ["combat", "전투"], ["trade", "거래"],
-  ["llm", "LLM"], ["agent", "감지"], ["system", "시스템"],
-];
-const active = new Set(KINDS.map(k => k[0]));
+
+const LANG = {
+  en: {
+    locale: "en-US",
+    kinds: { chat: "Chat", combat: "Combat", trade: "Trade", llm: "LLM", agent: "Detect", system: "System" },
+    agent: "Agent", player: "Player", monster: "Monster",
+    floor: n => `F${n}`,
+    wait: s => ` + wait ${s}s`,
+    prompt: n => `📋 Prompt (${n} chars)`,
+    response: "💭 LLM response",
+    error: "⚠️ LLM error",
+  },
+  ko: {
+    locale: "ko-KR",
+    kinds: { chat: "채팅", combat: "전투", trade: "거래", llm: "LLM", agent: "감지", system: "시스템" },
+    agent: "에이전트", player: "플레이어", monster: "몬스터",
+    floor: n => `${n}층`,
+    wait: s => ` + 대기 ${s}s`,
+    prompt: n => `📋 프롬프트 (${n}자)`,
+    response: "💭 LLM 응답",
+    error: "⚠️ LLM 오류",
+  },
+};
+let lang = LANG[localStorage.getItem("watchLang")] ? localStorage.getItem("watchLang") : "en";
+const t = () => LANG[lang];
+
+const KINDS = ["chat", "combat", "trade", "llm", "agent", "system"];
+const active = new Set(KINDS);
 
 // LRU: a decoded 1024x1024 PNG is ~4 MB, so keep only what a view needs.
 function regionImage(rx, rz) {
@@ -281,8 +308,8 @@ function draw() {
   }
 }
 
-function fmtTime(t) {
-  return new Date(t).toLocaleTimeString("ko-KR", { hour12: false });
+function fmtTime(ts) {
+  return new Date(ts).toLocaleTimeString(t().locale, { hour12: false });
 }
 
 function renderHeader() {
@@ -295,10 +322,10 @@ function renderHeader() {
     $("hptext").textContent = `${s.health}/${s.max_health}`;
   }
   $("gold").textContent = snap.gold ?? "—";
-  const t = snap.time || {};
-  $("clock").textContent = t.hour != null
-    ? `${t.night ? "🌙" : "☀️"} ${String(t.hour).padStart(2, "0")}:${String(t.minute).padStart(2, "0")}` : "—";
-  $("floor").textContent = snap.floor > 0 ? `${snap.floor + 1}층` : "";
+  const gt = snap.time || {};
+  $("clock").textContent = gt.hour != null
+    ? `${gt.night ? "🌙" : "☀️"} ${String(gt.hour).padStart(2, "0")}:${String(gt.minute).padStart(2, "0")}` : "—";
+  $("floor").textContent = snap.floor > 0 ? t().floor(snap.floor + 1) : "";
   $("bag").textContent = snap.bag ? `🎒 ${snap.bag.length}` : "";
 }
 
@@ -308,7 +335,7 @@ function feedKindGroup(k) { return k.startsWith("llm") ? "llm" : k; }
 // at max_concurrent would otherwise read as a slow model.
 function fmtDur(it) {
   if (it.d == null) return "";
-  const wait = it.q > 100 ? ` + 대기 ${(it.q / 1000).toFixed(1)}s` : "";
+  const wait = it.q > 100 ? t().wait((it.q / 1000).toFixed(1)) : "";
   return ` · ${(it.d / 1000).toFixed(1)}s${wait}`;
 }
 
@@ -327,15 +354,15 @@ function renderFeed() {
     div.dataset.group = feedKindGroup(it.k);
     const time = `<span class="t">${fmtTime(it.t)}</span>`;
     if (it.k === "llm-prompt") {
-      div.innerHTML = `${time}<details><summary>📋 프롬프트 (${it.m.length}자)</summary><pre></pre></details>`;
+      div.innerHTML = `${time}<details><summary>${t().prompt(it.m.length)}</summary><pre></pre></details>`;
       div.querySelector("pre").textContent = it.m;
     } else if (it.k === "llm-response") {
-      div.innerHTML = `${time}<details open><summary>💭 LLM 응답${fmtDur(it)}</summary><pre></pre></details>`;
+      div.innerHTML = `${time}<details open><summary>${t().response}${fmtDur(it)}</summary><pre></pre></details>`;
       let text = it.m;
       try { text = JSON.stringify(JSON.parse(it.m), null, 2); } catch (e) {}
       div.querySelector("pre").textContent = text;
     } else if (it.k === "llm-error") {
-      div.innerHTML = `${time}⚠️ LLM 오류${fmtDur(it)}: `;
+      div.innerHTML = `${time}${t().error}${fmtDur(it)}: `;
       div.append(it.m);
     } else if (it.k === "chat") {
       div.innerHTML = time;
@@ -355,11 +382,11 @@ function renderFeed() {
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
+const filterButtons = new Map();
 function buildFilters() {
   const box = $("filters");
-  for (const [key, name] of KINDS) {
+  for (const key of KINDS) {
     const b = document.createElement("button");
-    b.textContent = name;
     b.className = "on";
     b.onclick = () => {
       if (active.has(key)) { active.delete(key); b.classList.remove("on"); }
@@ -368,8 +395,19 @@ function buildFilters() {
         el.style.display = active.has(el.dataset.group) ? "" : "none";
       }
     };
+    filterButtons.set(key, b);
     box.append(b);
   }
+}
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  const l = t();
+  $("lg-agent").textContent = l.agent;
+  $("lg-player").textContent = l.player;
+  $("lg-monster").textContent = l.monster;
+  for (const [key, b] of filterButtons) b.textContent = l.kinds[key];
+  if (snap) { renderHeader(); }
 }
 
 async function poll() {
@@ -390,7 +428,14 @@ async function poll() {
 }
 
 async function init() {
+  $("langsel").value = lang;
+  $("langsel").onchange = () => {
+    lang = $("langsel").value;
+    localStorage.setItem("watchLang", lang);
+    applyLang();
+  };
   buildFilters();
+  applyLang();
   try {
     const r = await fetch("/api/npcs");
     const d = await r.json();
