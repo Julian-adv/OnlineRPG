@@ -1283,14 +1283,36 @@ impl SharedState {
         let p = self.self_player.as_ref()?;
         if self.self_floor_level < 0 {
             let depth = self.self_floor_level.unsigned_abs();
-            let name = self
-                .dungeon_here()
+            let dungeon = self.dungeon_here();
+            let name = dungeon
+                .as_ref()
                 .map(|d| format!("{} ", d.name))
                 .unwrap_or_default();
-            return Some(format!(
+            let mut line = format!(
                 "You are underground: {name}floor {depth} (deeper floors hold stronger \
                  monsters; move with \"depth\" to change floors, 0 to leave)"
-            ));
+            );
+            // The deepest floor holds the treasure chest — surface it so the
+            // LLM knows it exists and how to claim it.
+            if let Some(d) = dungeon {
+                if depth == d.max_depth() {
+                    if let Some(cell) = d.layouts().last().and_then(|l| l.chest) {
+                        let pos = onlinerpg_shared::dungeon::cell_center(
+                            &d.entrance,
+                            d.max_depth(),
+                            cell,
+                        );
+                        let dist = crate::geom::PlanarDelta::between(&p.position, &pos).dist;
+                        line.push_str(&format!(
+                            "\nTreasure chest on this floor at ({:.0}, {:.0}), {dist:.0}m away \
+                             — {{\"type\": \"open_chest\"}} walks there and opens it. It only \
+                             opens once this floor's boss is dead (refills per player hourly).",
+                            pos.x, pos.z
+                        ));
+                    }
+                }
+            }
+            return Some(line);
         }
         let dungeon = self
             .world_cache

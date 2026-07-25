@@ -161,6 +161,25 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             Some(format!("[Whisper] {from}: {message}"))
         }
         ServerMessage::SystemMessage { message } => Some(format!("[System] {message}")),
+        ServerMessage::InteractionRejected { reason } => {
+            Some(format!("[InteractionRejected] {reason}"))
+        }
+        ServerMessage::DungeonChestOpened {
+            player_id,
+            item_def_ids,
+            gold,
+            ..
+        } => {
+            let who = if state.self_player_id.as_ref() == Some(player_id) {
+                "You".to_string()
+            } else {
+                player_name(state, player_id)
+            };
+            Some(format!(
+                "[Chest] {who} opened the treasure chest: {} + {gold} gold.",
+                item_def_ids.join(", ")
+            ))
+        }
         ServerMessage::PlayerJoined { player } => {
             if !within_event_range(state, player.position.x, player.position.z) {
                 return None;
