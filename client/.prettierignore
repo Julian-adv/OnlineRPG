@@ -2,3 +2,5 @@ dist
 node_modules
 .vite
 src/lib/wasm
+vite.config.d.ts
+*.tsbuildinfo
