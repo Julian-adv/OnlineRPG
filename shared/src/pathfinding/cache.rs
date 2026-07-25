@@ -98,6 +98,33 @@ pub fn build_runtime_passability(house: &HouseData) -> RuntimePassability {
     }
 }
 
+/// The two cells a wall segment separates, and the edge bit each carries
+/// toward the other, in coordinates relative to the room's own origin. Add the
+/// room origin for house-local cells, or the house origin for world cells (the
+/// floor grid's origin cancels either way).
+///
+/// Split out because callers that only need to know *where* a door is — walking
+/// up to one to open it — must derive the same cells this applies bits to.
+pub fn door_cells(
+    room: &RoomData,
+    wall_dir: WallDirection,
+    segment_index: usize,
+) -> ((i32, i32, u8), (i32, i32, u8)) {
+    let seg = segment_index as i32;
+    match wall_dir {
+        WallDirection::North => ((seg, 0, EDGE_N), (seg, -1, EDGE_S)),
+        WallDirection::South => {
+            let cz = room.size_z as i32 - 1;
+            ((seg, cz, EDGE_S), (seg, cz + 1, EDGE_N))
+        }
+        WallDirection::West => ((0, seg, EDGE_W), (-1, seg, EDGE_E)),
+        WallDirection::East => {
+            let cx = room.size_x as i32 - 1;
+            ((cx, seg, EDGE_E), (cx + 1, seg, EDGE_W))
+        }
+    }
+}
+
 /// Update passability edge bits when a door is opened or closed.
 pub fn update_door_edge(
     cache: &mut PassabilityCache,
@@ -124,26 +151,9 @@ pub fn update_door_edge(
     let rx = room.local_x - floor.origin_x;
     let rz = room.local_z - floor.origin_z;
 
-    let (cx, cz, edge, adj_cx, adj_cz, adj_edge) = match wall_dir {
-        WallDirection::North => {
-            let cx = rx + segment_index as i32;
-            (cx, rz, EDGE_N, cx, rz - 1, EDGE_S)
-        }
-        WallDirection::South => {
-            let cx = rx + segment_index as i32;
-            let cz = rz + room.size_z as i32 - 1;
-            (cx, cz, EDGE_S, cx, cz + 1, EDGE_N)
-        }
-        WallDirection::West => {
-            let cz = rz + segment_index as i32;
-            (rx, cz, EDGE_W, rx - 1, cz, EDGE_E)
-        }
-        WallDirection::East => {
-            let cx = rx + room.size_x as i32 - 1;
-            let cz = rz + segment_index as i32;
-            (cx, cz, EDGE_E, cx + 1, cz, EDGE_W)
-        }
-    };
+    let ((dx, dz, edge), (adj_dx, adj_dz, adj_edge)) = door_cells(room, wall_dir, segment_index);
+    let (cx, cz) = (rx + dx, rz + dz);
+    let (adj_cx, adj_cz) = (rx + adj_dx, rz + adj_dz);
 
     let w = floor.width as i32;
     let d = floor.depth as i32;

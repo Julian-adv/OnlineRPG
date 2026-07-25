@@ -38,7 +38,7 @@ impl<'a> PathProvider for CachePathProvider<'a> {
             goal_z,
             goal_floor,
             self.cache,
-            pathfinding::DEFAULT_MAX_NODES,
+            crate::dungeon::path_max_nodes(start_floor, goal_floor),
         )
     }
 }

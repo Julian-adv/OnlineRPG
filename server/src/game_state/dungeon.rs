@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use onlinerpg_shared::dungeon::{
     cell_center, floor_world_y, generate_dungeon_for, monster_level_for_depth, FloorLayout,
-    PropKind,
+    PropKind, FLOOR_Y_TOLERANCE,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{Position, ServerMessage};
@@ -19,10 +19,6 @@ use tracing::{info, warn};
 use crate::types::PlayerId;
 
 use super::GameState;
-
-/// Vertical slack when checking that a reported floor change matches the
-/// dungeon floor's Y (covers mid-stair positions near the switch point).
-const FLOOR_Y_TOLERANCE: f32 = 2.5;
 
 const MONSTER_RESPAWN_MS: u64 = 5 * 60 * 1000;
 const BOSS_RESPAWN_MS: u64 = 30 * 60 * 1000;

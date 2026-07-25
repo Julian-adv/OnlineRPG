@@ -73,6 +73,12 @@ pub const SHAFT_LEN: i32 = 8;
 /// in dungeons.csv next to `floors` (see `FLOOR_OVERRIDES`).
 pub const BOSS_MONSTER_TYPE: &str = "goblin_boss";
 
+/// How far a player's Y may sit from a floor's world Y and still be accepted
+/// as standing on it. Part of the wire contract: a client declaring a dungeon
+/// floor is refused outside this band (`validated_dungeon_floor`), and any
+/// client computing its own Y underground must stay inside it.
+pub const FLOOR_Y_TOLERANCE: f32 = 2.5;
+
 /// A* node budget for long in-dungeon path queries. Maze floors plus the
 /// open-surface leak through the entrance stairwell can exhaust the
 /// housing default (2000) on cross-floor routes; short chase paths are
@@ -393,6 +399,30 @@ pub fn passability_floor_for_level(floor_level: i8) -> u8 {
         passability_floor_for_depth(floor_level.unsigned_abs())
     } else {
         floor_level as u8
+    }
+}
+
+/// Inverse of [`passability_floor_for_level`]: recover the wire `floor_level`
+/// a passability floor index stands for. Path waypoints carry cache indices,
+/// so anything turning a path back into move packets needs this.
+pub fn floor_level_for_passability(floor: u8) -> i8 {
+    if floor >= DUNGEON_FLOOR_INDEX_BASE {
+        -((floor - DUNGEON_FLOOR_INDEX_BASE + 1) as i8)
+    } else {
+        floor as i8
+    }
+}
+
+/// A* node budget for a search between two passability floors. Dungeon routes
+/// are long mazes that also leak into the open surface through the entrance
+/// shaft, and exhaust the housing default; anything above ground does not.
+/// Lives here so every caller — agent, browser and the shared monster brains —
+/// gets the same budget instead of each remembering the rule.
+pub fn path_max_nodes(start_floor: u8, goal_floor: u8) -> usize {
+    if start_floor >= DUNGEON_FLOOR_INDEX_BASE || goal_floor >= DUNGEON_FLOOR_INDEX_BASE {
+        DUNGEON_PATH_MAX_NODES
+    } else {
+        crate::pathfinding::DEFAULT_MAX_NODES
     }
 }
 

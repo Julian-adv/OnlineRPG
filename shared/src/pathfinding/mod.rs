@@ -24,8 +24,8 @@ mod stair;
 
 pub use astar::{find_path, DEFAULT_MAX_NODES};
 pub use cache::{
-    apply_door_overlays, build_furniture_passability, build_runtime_passability, update_door_edge,
-    FurniturePiece,
+    apply_door_overlays, build_furniture_passability, build_runtime_passability, door_cells,
+    update_door_edge, FurniturePiece,
 };
 pub use query::{
     blocking_entry_for_mover, get_floor_at_position, get_floor_y_base, is_cardinal_move_blocked,
