@@ -8,3 +8,5 @@
 - leather_armor.glb — Meshy.ai (유료 생성, 2026-07-24, "Shadowbound Leather A"). 완전 소유권·상업 OK (characters.md License 참조)
     - 원화는 chatgpt ![원화](../images/leather_armor.png)
 - leather_pants.glb — Meshy.ai (유료 생성, 2026-07-24, "Leather Combat Pants"). 완전 소유권·상업 OK (characters.md License 참조)
+- Fishing icons (10): fishing_rod.png, raw_minnow.png, raw_perch.png, raw_trout.png, river_salmon.png, golden_sturgeon.png, old_boot.png, clump_of_kelp.png, message_in_a_bottle.png, sunken_coin_pouch.png — ChatGPT image generation (2026-07-25, contributor-owned account), concept renders cut to 128×128 transparent icons
+    - 원화: [rod](../images/fishing_rod.png) · [minnow](../images/raw_minnow.png) · [perch](../images/raw_perch.png) · [trout](../images/raw_trout.png) · [salmon](../images/river_salmon.png) · [sturgeon](../images/golden_sturgeon.png) · [boot](../images/old_boot.png) · [kelp](../images/clump_of_kelp.png) · [bottle](../images/message_in_a_bottle.png) · [pouch](../images/sunken_coin_pouch.png)
