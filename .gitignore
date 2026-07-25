@@ -6,6 +6,8 @@ client/node_modules/
 client/dist/
 client/build/
 client/.svelte-kit/
+# Vite's pre-bundled dependency cache, rebuilt on demand
+client/.vite/
 client/.env
 client/.env.local
 client/.env.production
