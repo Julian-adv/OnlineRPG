@@ -328,12 +328,27 @@ pub async fn handle_connection(
                     && state.connected_at.elapsed().as_secs() > UNAUTH_TIMEOUT_SECS
                 {
                     warn!("Dropping connection: unauthenticated after {}s", UNAUTH_TIMEOUT_SECS);
+                    let _ = ws_sender.send(close_frame(
+                        onlinerpg_shared::CLOSE_CODE_IDLE_TIMEOUT,
+                        "login did not complete in time",
+                    )).await;
                     break;
+                }
+                if state.account_name.is_none() {
+                    // World broadcasts are withheld until auth, so this ping is
+                    // the only thing telling a client mid-login that the socket
+                    // is still alive. Costs nothing at rest: a connection is
+                    // unauthenticated for at most UNAUTH_TIMEOUT_SECS.
+                    let _ = ws_sender.send(Message::Ping(Bytes::new())).await;
                 }
                 if state.player_id.is_some()
                     && state.last_heartbeat.elapsed().as_secs() > HEARTBEAT_TIMEOUT_SECS
                 {
                     warn!("Heartbeat timeout for player {:?}", state.character_name);
+                    let _ = ws_sender.send(close_frame(
+                        onlinerpg_shared::CLOSE_CODE_IDLE_TIMEOUT,
+                        "no heartbeat",
+                    )).await;
                     break;
                 }
                 continue;

@@ -41,6 +41,13 @@ pub const CLOSE_CODE_PROTOCOL_MISMATCH: u16 = 4001;
 /// clients should keep retrying on their normal backoff.
 pub const CLOSE_CODE_RATE_LIMITED: u16 = 4002;
 
+/// WebSocket close code sent when the server drops a connection for going
+/// quiet — no login inside the unauth grace period, or no heartbeat in game.
+/// Transient like a rate limit, so clients retry on their normal backoff; the
+/// point is that they learn the server closed them and why, instead of reading
+/// a bare TCP FIN and having to guess whether the path died.
+pub const CLOSE_CODE_IDLE_TIMEOUT: u16 = 4003;
+
 #[cfg(target_arch = "wasm32")]
 mod wasm_api;
 
