@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use onlinerpg_shared::monster_ai::BehaviorTree;
-use onlinerpg_shared::{ClientMessage, Gender, ServerMessage};
+use onlinerpg_shared::{Character, CharacterClass, ClientMessage, Gender, ServerMessage};
 use onlinerpg_terrain::height::HeightSampler;
 use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
@@ -224,6 +224,46 @@ impl AuthSource {
             }),
         }
     }
+
+    /// Whether the agent may delete characters that don't match its config.
+    /// Only an npc_token account exists solely for the fixture; a Google
+    /// account belongs to a person (`doc/REMOTE_AGENT_CLIENT.md`).
+    fn may_delete_mismatches(&self) -> bool {
+        match self {
+            AuthSource::NpcToken(_) => true,
+            AuthSource::Google(_) => false,
+        }
+    }
+}
+
+/// The character a `[[npcs]]` entry asks for; `None` fields are "don't care".
+struct Desired {
+    name: Option<String>,
+    class: Option<CharacterClass>,
+    gender: Option<Gender>,
+}
+
+impl Desired {
+    fn differs_beyond_name(&self, c: &Character) -> bool {
+        self.class.as_ref().is_some_and(|d| c.class != *d)
+            || self.gender.is_some_and(|gender| c.gender != gender)
+    }
+
+    /// Split the account's characters into this entry's and the rest.
+    ///
+    /// Without deletion the name alone decides: names are globally unique
+    /// server-side, so disowning a name match with the wrong class would leave
+    /// the entry unable to either enter it or create a replacement.
+    fn partition(
+        &self,
+        may_delete: bool,
+        characters: Vec<Character>,
+    ) -> (Vec<Character>, Vec<Character>) {
+        characters.into_iter().partition(|c| {
+            self.name.as_deref().is_none_or(|n| c.name == n)
+                && !(may_delete && self.differs_beyond_name(c))
+        })
+    }
 }
 
 /// Run the orchestrator: spawn all NPC sessions in parallel.
@@ -324,71 +364,69 @@ async fn run_npc_session(
         warn!("[{label}] Auth send failed ({e}); reading the server's reason");
     }
 
-    let mut characters = ws::wait_for_auth(&mut ws_rx, label).await?;
+    let characters = ws::wait_for_auth(&mut ws_rx, label).await?;
 
     // --- Resolve which of the account's characters this NPC entry owns ---
-    let desired_class = npc
-        .character_class
-        .as_deref()
-        .map(|c| {
-            c.parse::<onlinerpg_shared::CharacterClass>().map_err(|_| {
-                anyhow::anyhow!("invalid character_class {c:?} in config for [{}]", label)
+    let desired = Desired {
+        name: npc.character_name.clone(),
+        class: npc
+            .character_class
+            .as_deref()
+            .map(|c| {
+                c.parse::<CharacterClass>().map_err(|_| {
+                    anyhow::anyhow!("invalid character_class {c:?} in config for [{}]", label)
+                })
             })
-        })
-        .transpose()?;
-    let desired_name = npc.character_name.as_deref();
-    let desired_gender = npc.gender;
-
-    let mismatch = |c: &onlinerpg_shared::Character| {
-        desired_class.as_ref().is_some_and(|d| c.class != *d)
-            || desired_name.is_some_and(|n| c.name != n)
-            || desired_gender.is_some_and(|gender| c.gender != gender)
+            .transpose()?,
+        gender: npc.gender,
     };
 
-    // Mismatched characters are deleted only on dedicated npc_token accounts,
-    // where the account exists solely for this fixture. A Google account
-    // belongs to a person who may keep their own web-client characters on it
-    // (doc/REMOTE_AGENT_CLIENT.md) — those are left untouched, and the agent
-    // only picks (or creates) the character this entry describes.
-    match shared.auth {
-        AuthSource::NpcToken(_) => {
-            for c in characters.iter().filter(|c| mismatch(c)) {
-                info!(
-                    "[{}] Deleting character '{}' (id={}, {:?}, {:?}) — mismatch (want name={:?}, class={:?}, gender={:?})",
-                    label, c.name, c.id, c.class, c.gender, desired_name, desired_class, desired_gender
-                );
-                ws::send(
-                    &mut ws_tx,
-                    &ClientMessage::DeleteCharacter { character_id: c.id },
+    let may_delete = shared.auth.may_delete_mismatches();
+    let (mut characters, others) = desired.partition(may_delete, characters);
+
+    if may_delete {
+        for c in &others {
+            info!(
+                "[{}] Deleting character '{}' (id={}, {:?}, {:?}) — mismatch (want name={:?}, class={:?}, gender={:?})",
+                label, c.name, c.id, c.class, c.gender, desired.name, desired.class, desired.gender
+            );
+            ws::send(
+                &mut ws_tx,
+                &ClientMessage::DeleteCharacter { character_id: c.id },
+            )
+            .await?;
+            ws::wait_for_msg(&mut ws_rx, label, "CharacterDeleted", |msg| {
+                matches!(
+                    msg,
+                    ServerMessage::CharacterDeleted { .. } | ServerMessage::CharacterError { .. }
                 )
-                .await?;
-                ws::wait_for_msg(&mut ws_rx, label, "CharacterDeleted", |msg| {
-                    matches!(
-                        msg,
-                        ServerMessage::CharacterDeleted { .. }
-                            | ServerMessage::CharacterError { .. }
-                    )
-                })
-                .await?;
-            }
+            })
+            .await?;
         }
-        AuthSource::Google(_) => {
-            let skipped = characters.iter().filter(|c| mismatch(c)).count();
-            if skipped > 0 {
-                info!(
-                    "[{}] Leaving {} other character(s) on this Google account untouched",
-                    label, skipped
-                );
-            }
+    } else {
+        if !others.is_empty() {
+            info!(
+                "[{}] Leaving {} other character(s) on this account untouched",
+                label,
+                others.len()
+            );
+        }
+        if let Some(c) = characters
+            .first()
+            .filter(|c| desired.differs_beyond_name(c))
+        {
+            warn!(
+                "[{}] '{}' is {:?}/{:?} but config wants {:?}/{:?} — entering as-is",
+                label, c.name, c.class, c.gender, desired.class, desired.gender
+            );
         }
     }
-    characters.retain(|c| !mismatch(c));
 
     // --- Auto-create character if needed ---
     if characters.is_empty() {
         if let Some(ref char_name) = npc.character_name {
-            let class = desired_class.unwrap_or(onlinerpg_shared::CharacterClass::Knight);
-            let gender = desired_gender.unwrap_or_default();
+            let class = desired.class.unwrap_or(CharacterClass::Knight);
+            let gender = desired.gender.unwrap_or_default();
 
             info!(
                 "[{}] No characters found. Creating '{}' ({:?}, {:?})...",
@@ -627,7 +665,7 @@ async fn roll_stats_with_agent(
     ws_tx: &mut ws::WsTx,
     ws_rx: &mut ws::WsRx,
     label: &str,
-    class: &onlinerpg_shared::CharacterClass,
+    class: &CharacterClass,
     gender: Gender,
     agent: Option<&Arc<dyn driver::LlmBackend>>,
     scheduler: &LlmScheduler,
@@ -887,4 +925,90 @@ fn spawn_llm_task(
     Some(tokio::spawn(async move {
         driver::llm_driver(state, invoker, scheduler, driver_config).await;
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onlinerpg_shared::CharacterAttributes;
+
+    fn character(name: &str, class: CharacterClass, gender: Gender) -> Character {
+        Character {
+            id: 1,
+            name: name.to_string(),
+            created_at: 0,
+            level: 1,
+            xp: 0,
+            max_hp: 10,
+            attributes: CharacterAttributes {
+                r#str: 10,
+                dex: 10,
+                con: 10,
+                int: 10,
+                wis: 10,
+                cha: 10,
+                guard: 0,
+            },
+            class,
+            gender,
+        }
+    }
+
+    fn desired(name: &str, class: CharacterClass) -> Desired {
+        Desired {
+            name: Some(name.to_string()),
+            class: Some(class),
+            gender: None,
+        }
+    }
+
+    #[test]
+    fn npc_token_deletes_every_mismatch() {
+        let chars = vec![
+            character("Delver", CharacterClass::Rogue, Gender::Male),
+            character("Someone", CharacterClass::Rogue, Gender::Male),
+            character("Delver", CharacterClass::Knight, Gender::Male),
+        ];
+        let (mine, others) = desired("Delver", CharacterClass::Rogue).partition(true, chars);
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].class, CharacterClass::Rogue);
+        assert_eq!(others.len(), 2);
+    }
+
+    #[test]
+    fn without_deletion_the_name_decides() {
+        let chars = vec![
+            character("Ryulamg", CharacterClass::Rogue, Gender::Male),
+            character("RyuK", CharacterClass::Ranger, Gender::Male),
+        ];
+        let (mine, others) = desired("Ryulamg", CharacterClass::Rogue).partition(false, chars);
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0].name, "Ryulamg");
+        assert_eq!(others.len(), 1);
+    }
+
+    /// The name is globally unique, so a wrong class must not send the agent
+    /// into a create-fails-forever loop.
+    #[test]
+    fn a_name_match_with_the_wrong_class_is_still_mine() {
+        let want = desired("Ryulamg", CharacterClass::Knight);
+        let chars = vec![character("Ryulamg", CharacterClass::Rogue, Gender::Male)];
+        let (mine, others) = want.partition(false, chars);
+        assert_eq!(mine.len(), 1);
+        assert!(others.is_empty());
+        assert!(want.differs_beyond_name(&mine[0]));
+    }
+
+    #[test]
+    fn nothing_of_mine_means_create_one() {
+        let chars = vec![character("Someone", CharacterClass::Rogue, Gender::Male)];
+        let (mine, others) = desired("Ryulamg", CharacterClass::Rogue).partition(false, chars);
+        assert!(mine.is_empty());
+        assert_eq!(others.len(), 1);
+    }
+
+    #[test]
+    fn npc_token_may_delete() {
+        assert!(AuthSource::NpcToken("t".to_string()).may_delete_mismatches());
+    }
 }
