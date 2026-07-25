@@ -144,9 +144,24 @@ pub async fn send(tx: &mut WsTx, msg: &ClientMessage) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The server broadcasts GameTimeSync to every client every 8s, so a healthy
+/// connection is never quiet for long. A socket silent past this window is a
+/// half-open corpse (server restarted without a RST, NAT dropped the path):
+/// reads would otherwise block on it forever. Detection is read-side only —
+/// no client pings, so a fleet of idle agents adds zero server traffic — and
+/// the session loop's jittered backoff already spreads out the reconnects.
+const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub async fn recv(rx: &mut WsRx) -> anyhow::Result<ServerMessage> {
     loop {
-        match rx.next().await {
+        match tokio::time::timeout(READ_IDLE_TIMEOUT, rx.next())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "No server traffic for {}s — connection presumed dead",
+                    READ_IDLE_TIMEOUT.as_secs()
+                )
+            })? {
             Some(Ok(Message::Binary(bytes))) => {
                 return Ok(deserialize_server_msg(&bytes)?);
             }
