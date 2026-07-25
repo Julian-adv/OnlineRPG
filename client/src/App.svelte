@@ -8,6 +8,7 @@
   import CharacterSelectScene from './lib/components/CharacterSelectScene.svelte'
   import CharacterCreateScreen from './lib/components/CharacterCreateScreen.svelte'
   import CharacterCreateScene from './lib/components/CharacterCreateScene.svelte'
+  import RenderFrameLimiter from './lib/components/RenderFrameLimiter.svelte'
   import { gameStore } from './lib/stores/gameStore'
   import { createWebGPURenderer } from './lib/utils/renderer'
   import {
@@ -300,7 +301,8 @@
        Pipelines compiled during character select are reused in game. -->
   {#if showCanvas}
     <div class="canvas-layer" class:dead={screen === 'game' && isPlayerDead}>
-      <Canvas renderMode="always" shadows createRenderer={createWebGPURenderer}>
+      <Canvas renderMode="manual" shadows createRenderer={createWebGPURenderer}>
+        <RenderFrameLimiter />
         {#if screen === 'character-select'}
           <CharacterSelectScene
             characters={accountCharacters}
