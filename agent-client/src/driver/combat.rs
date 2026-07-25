@@ -138,7 +138,7 @@ impl ChaseTarget<'_> {
         match self {
             Self::Monster(id) => s.nearby_monsters.get(*id).map(|m| m.position),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.position),
-            Self::GroundItem(id) => s.ground_items.get(id).map(|i| i.position),
+            Self::GroundItem(id) => s.visible_ground_item(*id).map(|i| i.position),
         }
     }
 
@@ -148,46 +148,55 @@ impl ChaseTarget<'_> {
         let level = match self {
             Self::Monster(id) => s.nearby_monsters.get(*id).map(|m| m.floor_level),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.floor_level),
-            Self::GroundItem(id) => s.ground_items.get(id).map(|i| i.floor_level),
+            Self::GroundItem(id) => s.visible_ground_item(*id).map(|i| i.floor_level),
         };
         onlinerpg_shared::dungeon::passability_floor_for_level(level.unwrap_or(0))
     }
 
+    /// How the chase paces itself for this kind of target. One row per
+    /// variant, so a new target type is a single edit.
+    fn tuning(&self) -> ChaseTuning {
+        match self {
+            // Characters carry a little arrive slack over APPROACH_RANGE so
+            // reaching the pulled-back path goal always counts as in range.
+            Self::Player(_) => ChaseTuning {
+                arrive_range: APPROACH_RANGE + 0.2,
+                path_pullback: APPROACH_RANGE,
+                step_stop_dist: APPROACH_RANGE,
+                max_distance: crate::state::NPC_SIGHT_RADIUS,
+                max_secs: MAX_APPROACH_SECS,
+            },
+            Self::Monster(_) => ChaseTuning {
+                arrive_range: ATTACK_RANGE,
+                path_pullback: 0.0,
+                step_stop_dist: ATTACK_RANGE - 0.5,
+                max_distance: MAX_CHASE_DISTANCE,
+                max_secs: MAX_CHASE_SECS,
+            },
+            Self::GroundItem(_) => ChaseTuning {
+                arrive_range: PICKUP_ARRIVE_RANGE,
+                path_pullback: 0.0,
+                step_stop_dist: PICKUP_ARRIVE_RANGE - 0.5,
+                max_distance: crate::state::NPC_SIGHT_RADIUS,
+                max_secs: MAX_PICKUP_WALK_SECS,
+            },
+        }
+    }
+}
+
+/// The distances and deadlines one chase runs by.
+struct ChaseTuning {
     /// The chase ends successfully within this distance of the target.
-    /// The character range carries a little slack over APPROACH_RANGE so
-    /// arriving at the pulled-back path goal always counts as in range.
-    fn arrive_range(&self) -> f32 {
-        match self {
-            Self::Monster(_) => ATTACK_RANGE,
-            Self::Player(_) => APPROACH_RANGE + 0.2,
-            Self::GroundItem(_) => PICKUP_ARRIVE_RANGE,
-        }
-    }
-
-    /// How far short of the target the path goal stops. Monsters and items
-    /// are pathed to directly (the arrive check stops us first); characters
-    /// get a pulled-back goal so a step can never land on top of them.
-    fn path_pullback(&self) -> f32 {
-        match self {
-            Self::Monster(_) | Self::GroundItem(_) => 0.0,
-            Self::Player(_) => APPROACH_RANGE,
-        }
-    }
-
-    fn max_distance(&self) -> f32 {
-        match self {
-            Self::Monster(_) => MAX_CHASE_DISTANCE,
-            Self::Player(_) | Self::GroundItem(_) => crate::state::NPC_SIGHT_RADIUS,
-        }
-    }
-
-    fn max_secs(&self) -> f32 {
-        match self {
-            Self::Monster(_) => MAX_CHASE_SECS,
-            Self::Player(_) => MAX_APPROACH_SECS,
-            Self::GroundItem(_) => MAX_PICKUP_WALK_SECS,
-        }
-    }
+    arrive_range: f32,
+    /// How far short of the target the path goal stops, so a step can never
+    /// land on top of a character. Zero pathfinds straight at the target —
+    /// the arrive check stops us first.
+    path_pullback: f32,
+    /// How close a direct step (no path) walks before it stops short.
+    step_stop_dist: f32,
+    /// Give up once the target is further away than this.
+    max_distance: f32,
+    max_secs: f32,
 }
 
 /// Log label. `Display` rather than a `-> String` helper so the monster arm
@@ -239,9 +248,10 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
     let mut doors_opened = 0usize;
     let mut last_target_x = 0.0f32;
     let mut last_target_z = 0.0f32;
+    let tuning = target.tuning();
 
     loop {
-        if chase_start.elapsed().as_secs_f32() > target.max_secs() {
+        if chase_start.elapsed().as_secs_f32() > tuning.max_secs {
             warn!("Chase timeout for target {}", target);
             return ChaseResult::Lost;
         }
@@ -258,13 +268,11 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
 
             let player = s.self_player.as_ref().unwrap();
             let to_target = PlanarDelta::between(&player.position, &target_pos);
-            let in_range = to_target.dist <= target.arrive_range();
-            if to_target.dist > target.max_distance() {
+            let in_range = to_target.dist <= tuning.arrive_range;
+            if to_target.dist > tuning.max_distance {
                 info!(
                     "Giving up chase: target {} is {:.1}m away (>{:.1}m)",
-                    target,
-                    to_target.dist,
-                    target.max_distance()
+                    target, to_target.dist, tuning.max_distance
                 );
                 return ChaseResult::Lost;
             }
@@ -275,9 +283,9 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
                 || path_index >= path_waypoints.len()
                 || target_shift > REROUTE_THRESHOLD;
 
-            // Path goal, pulled back toward us by path_pullback so the
-            // path never ends inside the target character.
-            let pullback = target.path_pullback();
+            // Path goal, pulled back toward us so the path never ends
+            // inside the target character.
+            let pullback = tuning.path_pullback;
             let goal = if pullback > 0.0 && to_target.dist > pullback {
                 let ratio = (to_target.dist - pullback) / to_target.dist;
                 (
@@ -387,19 +395,14 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
 /// Return a single MAX_STEP_DIST-limited move toward the target, plus the
 /// step's distance for sleep timing. Used as the fall-through when A* can't
 /// return a path (e.g. target on un-pathable terrain) so the chase can still
-/// inch the player closer at walk speed. Steps stop short of the target:
-/// half a step inside attack range for monsters, APPROACH_RANGE for
-/// characters.
+/// inch the player closer at walk speed. Steps stop short of the target by
+/// the tuning's `step_stop_dist`.
 fn compute_step_toward(state: &SharedState, target: &ChaseTarget) -> Option<(ClientMessage, f32)> {
     let target_pos = target.position(state)?;
     let self_player = state.self_player.as_ref()?;
 
     let to_target = PlanarDelta::between(&self_player.position, &target_pos);
-    let stop_dist = match target {
-        ChaseTarget::Monster(_) => ATTACK_RANGE - 0.5,
-        ChaseTarget::Player(_) => APPROACH_RANGE,
-        ChaseTarget::GroundItem(_) => PICKUP_ARRIVE_RANGE - 0.5,
-    };
+    let stop_dist = target.tuning().step_stop_dist;
     if to_target.dist <= stop_dist {
         return None;
     }

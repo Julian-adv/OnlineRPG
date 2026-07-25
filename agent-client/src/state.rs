@@ -8,6 +8,7 @@ use onlinerpg_shared::dungeon::{
 };
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
+use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::pathfinding::{self, PassabilityCache, PathResult};
 use onlinerpg_shared::{
     Character, ClientMessage, Monster, MonsterState, Player, PlayerId, ServerMessage,
@@ -21,6 +22,13 @@ use tokio::sync::{mpsc, Notify};
 const MAX_EVENTS: usize = 200;
 /// Distance threshold for "player appeared nearby" agent events (in game units).
 const NEARBY_PLAYER_RADIUS: f32 = 10.0;
+/// How many ground items the world state lists before summarising the rest.
+const MAX_LISTED_GROUND_ITEMS: usize = 10;
+/// How long a monster's drop stays hidden, so the agent never reaches loot
+/// the players around it cannot see yet. Matches the impact frame a web
+/// client holds the death for (`PLAYER_ATTACK_IMPACT_DELAY_MS` in
+/// client/src/lib/data/combatTiming.ts).
+const DEATH_DROP_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(540);
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
 /// a wishlist item (see `trade_satiated_until`).
 const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -252,6 +260,14 @@ impl WorldCache {
     }
 }
 
+/// A ground item the client knows about, with the moment it may be acted
+/// on. Everything is visible on arrival except a monster's drop, which
+/// waits out `DEATH_DROP_REVEAL_DELAY`.
+struct KnownGroundItem {
+    item: GroundItem,
+    visible_at: std::time::Instant,
+}
+
 /// Shared state between WebSocket reader and Claude driver tasks.
 pub struct SharedState {
     pub characters: Vec<Character>,
@@ -282,8 +298,10 @@ pub struct SharedState {
     /// Known nearby monsters
     pub nearby_monsters: HashMap<String, Monster>,
     /// Known items lying on the ground, keyed by instance id (from the join
-    /// snapshot plus GroundItemSpawned/Appeared/Removed).
-    pub ground_items: HashMap<u64, onlinerpg_shared::inventory::GroundItem>,
+    /// snapshot plus GroundItemSpawned/Appeared/Removed). Read through
+    /// `visible_ground_item(s)` — a monster's drop is known before it is
+    /// visible.
+    ground_items: HashMap<u64, KnownGroundItem>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -687,6 +705,47 @@ impl SharedState {
             .await
     }
 
+    /// Remember an item on the ground, visible from `visible_at` on.
+    pub(crate) fn remember_ground_item(
+        &mut self,
+        item: GroundItem,
+        visible_at: std::time::Instant,
+    ) {
+        self.ground_items
+            .insert(item.instance_id, KnownGroundItem { item, visible_at });
+    }
+
+    /// One ground item by instance id, if it is visible yet.
+    pub fn visible_ground_item(&self, instance_id: u64) -> Option<&GroundItem> {
+        self.ground_items
+            .get(&instance_id)
+            .filter(|k| k.visible_at <= std::time::Instant::now())
+            .map(|k| &k.item)
+    }
+
+    /// The ground items the agent can act on: visible, on its floor, inside
+    /// the sight radius, closest first. The known-item map reaches out to
+    /// the server's event radius, so this is what "nearby" means everywhere
+    /// downstream — the world state listing and pickup alike.
+    pub fn ground_items_in_sight(&self) -> Vec<(f32, &GroundItem)> {
+        let Some(sp) = self.self_player.as_ref() else {
+            return Vec::new();
+        };
+        let now = std::time::Instant::now();
+        let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
+        let mut in_sight: Vec<_> = self
+            .ground_items
+            .values()
+            .filter(|k| k.visible_at <= now && k.item.floor_level == self.self_floor_level)
+            .filter_map(|k| {
+                let d_sq = k.item.position.dist_xz_sq(&sp.position);
+                (d_sq <= sight_sq).then_some((d_sq, &k.item))
+            })
+            .collect();
+        in_sight.sort_by(|a, b| a.0.total_cmp(&b.0));
+        in_sight
+    }
+
     /// Classify how urgent a server event is for LLM processing.
     pub fn classify_event(&self, msg: &ServerMessage) -> EventUrgency {
         let self_id = self.self_player_id.as_ref();
@@ -918,10 +977,12 @@ impl SharedState {
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
-                self.ground_items = ground_items
-                    .iter()
-                    .map(|i| (i.instance_id, i.clone()))
-                    .collect();
+                // Snapshot items are already lying there for everyone.
+                self.ground_items.clear();
+                let now = std::time::Instant::now();
+                for item in ground_items {
+                    self.remember_ground_item(item.clone(), now);
+                }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
                     if let Some(p) = self.nearby_players.get(&self_id).cloned() {
@@ -996,9 +1057,21 @@ impl SharedState {
                 self.nearby_monsters.remove(monster_id);
                 self.monster_ai.remove_monster(monster_id);
             }
-            ServerMessage::GroundItemSpawned { item, .. }
-            | ServerMessage::GroundItemAppeared { item } => {
-                self.ground_items.insert(item.instance_id, item.clone());
+            ServerMessage::GroundItemSpawned {
+                item,
+                source_monster_id,
+            } => {
+                // A kill's drop only lands on a web client's screen when the
+                // killing blow's impact frame plays; hold it the same span.
+                let delay = if source_monster_id.is_some() {
+                    DEATH_DROP_REVEAL_DELAY
+                } else {
+                    std::time::Duration::ZERO
+                };
+                self.remember_ground_item(item.clone(), std::time::Instant::now() + delay);
+            }
+            ServerMessage::GroundItemAppeared { item } => {
+                self.remember_ground_item(item.clone(), std::time::Instant::now());
             }
             ServerMessage::GroundItemRemoved { instance_id } => {
                 self.ground_items.remove(instance_id);
@@ -1360,7 +1433,7 @@ impl SharedState {
 
     /// Find the item the agent named among the ones we carry, and where it
     /// sits. Matching is forgiving about the exact id (see
-    /// `item_defs::resolve_carried`) but never reaches past what we hold.
+    /// `item_defs::resolve_named`) but never reaches past what we hold.
     pub fn find_carried(&self, asked: &str) -> Option<(String, Carried)> {
         let ids: Vec<&str> = self
             .self_bag
@@ -1368,7 +1441,7 @@ impl SharedState {
             .chain(self.self_equipped.values())
             .map(|i| i.item_def_id.as_str())
             .collect();
-        let id = crate::item_defs::resolve_carried(&ids, asked)?;
+        let id = crate::item_defs::resolve_named(&ids, asked)?;
         let placed = self
             .self_equipped
             .iter()
@@ -1476,27 +1549,20 @@ impl SharedState {
             ));
         }
 
-        // Items on the ground, closest first. Same floor only — pickup is
-        // floor-gated server-side.
-        if let Some(sp) = sp {
-            let mut ground: Vec<_> = self
-                .ground_items
-                .values()
-                .filter(|i| i.floor_level == self.self_floor_level as i8)
-                .filter_map(|i| {
-                    let d_sq = i.position.dist_xz_sq(&sp.position);
-                    (d_sq <= sight_sq).then_some((d_sq, i))
-                })
-                .collect();
-            ground.sort_by(|a, b| a.0.total_cmp(&b.0));
-            for (d_sq, i) in ground {
-                lines.push(format!(
-                    "Item on ground: {} ({:.1}m away) [id {}]",
-                    i.item_def_id,
-                    d_sq.sqrt(),
-                    i.instance_id
-                ));
-            }
+        // Items on the ground. Drops linger for minutes, so a busy hunting
+        // ground would otherwise stack dozens of lines into every prompt.
+        let ground = self.ground_items_in_sight();
+        let hidden = ground.len().saturating_sub(MAX_LISTED_GROUND_ITEMS);
+        for (d_sq, i) in ground.into_iter().take(MAX_LISTED_GROUND_ITEMS) {
+            lines.push(format!(
+                "Item on ground: {} ({:.1}m away) [id {}]",
+                i.item_def_id,
+                d_sq.sqrt(),
+                i.instance_id
+            ));
+        }
+        if hidden > 0 {
+            lines.push(format!("(and {hidden} more items further away)"));
         }
 
         if lines.is_empty() {
@@ -1508,7 +1574,7 @@ impl SharedState {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     struct NoTiles;
@@ -1520,7 +1586,7 @@ mod tests {
         }
     }
 
-    fn test_state() -> (SharedState, mpsc::Receiver<ClientMessage>) {
+    pub(crate) fn test_state() -> (SharedState, mpsc::Receiver<ClientMessage>) {
         let (tx, rx) = mpsc::channel(8);
         let state = SharedState::new(
             Vec::new(),
@@ -1532,7 +1598,7 @@ mod tests {
         (state, rx)
     }
 
-    fn p(x: f32, y: f32, z: f32) -> Position {
+    pub(crate) fn p(x: f32, y: f32, z: f32) -> Position {
         Position { x, y, z }
     }
 
@@ -1555,9 +1621,7 @@ mod tests {
         }
     }
 
-    use onlinerpg_shared::inventory::GroundItem;
-
-    fn ground_item(id: u64, def: &str, x: f32, z: f32, floor: i8) -> GroundItem {
+    pub(crate) fn ground_item(id: u64, def: &str, x: f32, z: f32, floor: i8) -> GroundItem {
         GroundItem {
             instance_id: id,
             item_def_id: def.to_string(),
@@ -1567,15 +1631,11 @@ mod tests {
         }
     }
 
-    /// The world state lists reachable ground items closest first, and
-    /// leaves out other floors and anything out of sight.
-    #[test]
-    fn world_state_lists_nearby_ground_items() {
-        let (mut s, _rx) = test_state();
-        s.self_player = Some(Player {
+    pub(crate) fn test_player(x: f32, z: f32) -> Player {
+        Player {
             id: PlayerId::from(1),
             name: "Me".to_string(),
-            position: p(0.0, 0.0, 0.0),
+            position: p(x, 0.0, z),
             rotation: 0.0,
             level: 1,
             health: 10,
@@ -1589,7 +1649,15 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: Default::default(),
-        });
+        }
+    }
+
+    /// The world state lists reachable ground items closest first, and
+    /// leaves out other floors and anything out of sight.
+    #[test]
+    fn world_state_lists_nearby_ground_items() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
         for item in [
             ground_item(1, "small_sword", 5.0, 0.0, 0),
             ground_item(2, "wooden_shield", 2.0, 0.0, 0),
@@ -1597,7 +1665,7 @@ mod tests {
             ground_item(4, "iron_sword", 0.0, NPC_SIGHT_RADIUS + 5.0, 0),
             ground_item(5, "healing_potion", 3.0, 0.0, 1),
         ] {
-            s.ground_items.insert(item.instance_id, item);
+            s.remember_ground_item(item, std::time::Instant::now());
         }
 
         let lines: Vec<String> = s
@@ -1615,6 +1683,59 @@ mod tests {
                 "Item on ground: small_sword (5.0m away) [id 1]",
             ]
         );
+    }
+
+    /// A kill's drop is held back for as long as a web client holds the
+    /// death animation, so the agent can't loot what nobody can see yet.
+    /// Items that were already lying there show up at once.
+    #[test]
+    fn a_monster_drop_waits_for_the_death_impact() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: ground_item(1, "goblin_sword", 2.0, 0.0, 0),
+            source_monster_id: Some("m208_129".to_string()),
+        });
+        s.push_event(ServerMessage::GroundItemAppeared {
+            item: ground_item(2, "small_sword", 2.0, 0.0, 0),
+        });
+
+        let ids: Vec<u64> = s
+            .ground_items_in_sight()
+            .iter()
+            .map(|(_, i)| i.instance_id)
+            .collect();
+        assert_eq!(ids, vec![2]);
+        assert!(s.visible_ground_item(1).is_none());
+        assert!(!s.format_world_state().contains("goblin_sword"));
+
+        // Once the impact has passed it is loot like any other.
+        s.remember_ground_item(
+            ground_item(1, "goblin_sword", 2.0, 0.0, 0),
+            std::time::Instant::now(),
+        );
+        assert!(s.visible_ground_item(1).is_some());
+    }
+
+    /// A field strewn with drops is summarised, not listed line by line.
+    #[test]
+    fn world_state_caps_the_ground_item_list() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        for id in 1..=(MAX_LISTED_GROUND_ITEMS as u64 + 3) {
+            let item = ground_item(id, "small_sword", id as f32 * 0.5, 0.0, 0);
+            s.remember_ground_item(item, std::time::Instant::now());
+        }
+
+        let world = s.format_world_state();
+        let listed = world
+            .lines()
+            .filter(|l| l.starts_with("Item on ground:"))
+            .count();
+
+        assert_eq!(listed, MAX_LISTED_GROUND_ITEMS);
+        assert!(world.contains("(and 3 more items further away)"), "{world}");
     }
 
     /// The server never echoes our own monster moves back (the owner is
@@ -1668,22 +1789,8 @@ mod tests {
             None,
         );
         state.self_player = Some(Player {
-            id: PlayerId::from(1),
-            name: "Tester".to_string(),
             position: dungeon.entrance,
-            rotation: 0.0,
-            level: 7,
-            health: 100,
-            max_health: 100,
-            class: onlinerpg_shared::character::CharacterClass::Ranger,
-            gender: Default::default(),
-            is_official_npc: false,
-            torch_on: false,
-            floor_level: 0,
-            object_type: None,
-            object_id: None,
-            last_combat_at: 0,
-            client_kind: Default::default(),
+            ..test_player(0.0, 0.0)
         });
         (state, dungeon, rx)
     }

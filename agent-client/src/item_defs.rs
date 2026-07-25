@@ -42,20 +42,21 @@ pub fn get(item_def_id: &str) -> Option<&'static ItemDef> {
     defs().get(item_def_id)
 }
 
-/// Pick the item the agent meant out of the ones it is carrying. An exact def
-/// id or display name wins; failing that, the first carried item whose id or
-/// name contains the request — an agent that says "torch" while holding a
-/// worn_torch means that one. Never names something it is not carrying.
-pub fn resolve_carried<'a>(carried: &[&'a str], asked: &str) -> Option<&'a str> {
+/// Pick the item the agent meant out of a candidate list — what it carries,
+/// or what lies in front of it. An exact def id or display name wins; failing
+/// that, the first candidate whose id or name contains the request, so an
+/// agent that says "torch" while holding a worn_torch means that one. Never
+/// names something outside the list.
+pub fn resolve_named<'a>(candidates: &[&'a str], asked: &str) -> Option<&'a str> {
     let exact = |id: &str| {
         id.eq_ignore_ascii_case(asked)
             || get(id).is_some_and(|d| d.name.eq_ignore_ascii_case(asked))
     };
-    if let Some(id) = carried.iter().find(|id| exact(id)).copied() {
+    if let Some(id) = candidates.iter().find(|id| exact(id)).copied() {
         return Some(id);
     }
     let asked = asked.to_lowercase();
-    carried
+    candidates
         .iter()
         .find(|id| {
             id.to_lowercase().contains(&asked)
@@ -85,9 +86,9 @@ mod tests {
     #[test]
     fn carried_lookup_prefers_an_exact_match() {
         let bag = ["torch", "worn_torch"];
-        assert_eq!(resolve_carried(&bag, "torch"), Some("torch"));
-        assert_eq!(resolve_carried(&bag, "Torch"), Some("torch"));
-        assert_eq!(resolve_carried(&bag, "worn_torch"), Some("worn_torch"));
+        assert_eq!(resolve_named(&bag, "torch"), Some("torch"));
+        assert_eq!(resolve_named(&bag, "Torch"), Some("torch"));
+        assert_eq!(resolve_named(&bag, "worn_torch"), Some("worn_torch"));
     }
 
     /// A starter character carries a worn_torch, not a torch — asking for
@@ -95,16 +96,16 @@ mod tests {
     #[test]
     fn carried_lookup_falls_back_to_what_is_held() {
         let bag = ["worn_torch", "healing_potion"];
-        assert_eq!(resolve_carried(&bag, "torch"), Some("worn_torch"));
+        assert_eq!(resolve_named(&bag, "torch"), Some("worn_torch"));
         assert_eq!(
-            resolve_carried(&bag, "Healing Potion"),
+            resolve_named(&bag, "Healing Potion"),
             Some("healing_potion")
         );
     }
 
     #[test]
     fn carried_lookup_never_invents_an_item() {
-        assert!(resolve_carried(&["worn_torch"], "iron_sword").is_none());
-        assert!(resolve_carried(&[], "torch").is_none());
+        assert!(resolve_named(&["worn_torch"], "iron_sword").is_none());
+        assert!(resolve_named(&[], "torch").is_none());
     }
 }

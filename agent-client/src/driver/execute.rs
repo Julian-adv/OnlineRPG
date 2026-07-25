@@ -218,7 +218,7 @@ pub(super) async fn handle_response(
                 resolve_ground_item(&s, item)
             };
             let Some((instance_id, def_id)) = resolved else {
-                warn!("pickup: no ground item matching '{item}'");
+                warn!("pickup: nothing in sight matches '{item}'");
                 let mut s = state.lock().await;
                 s.push_agent_event(format!(
                     "[PickupFailed] No item matching '{item}' is on the ground nearby."
@@ -258,6 +258,10 @@ pub(super) async fn handle_response(
                 }
                 ChaseResult::Error => {
                     error!("pickup: error while walking to {def_id} [id {instance_id}]");
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[PickupFailed] Something went wrong on the way to the {def_id}."
+                    ));
                 }
             }
             continue;
@@ -470,33 +474,99 @@ async fn move_to_dungeon_floor(
     }
 }
 
-/// Resolve a pickup reference to a known ground item on the agent's floor:
-/// by instance id (also when the LLM quotes it as a string), or by name to
-/// the nearest item whose def id contains it.
+/// Resolve a pickup reference to an item the agent can actually walk to:
+/// by instance id, or by name to the nearest match. Only what the agent can
+/// see counts: an id it read several turns ago may have fallen out of sight
+/// since, and a pickup it cannot perceive is one it never learns about.
 fn resolve_ground_item(s: &SharedState, r: &PickupRef) -> Option<(u64, String)> {
-    let by_id = |id: u64| {
-        s.ground_items
-            .get(&id)
-            .map(|i| (i.instance_id, i.item_def_id.clone()))
+    let in_sight = s.ground_items_in_sight();
+    let (_, item) = match r.as_id() {
+        Some(id) => in_sight.iter().find(|(_, i)| i.instance_id == id)?,
+        None => {
+            let ids: Vec<&str> = in_sight
+                .iter()
+                .map(|(_, i)| i.item_def_id.as_str())
+                .collect();
+            // Nearest first, so the resolver's first match is the closest.
+            let def_id = crate::item_defs::resolve_named(&ids, &r.to_string())?;
+            in_sight.iter().find(|(_, i)| i.item_def_id == def_id)?
+        }
     };
-    match r {
-        PickupRef::Id(id) => by_id(*id),
-        PickupRef::Name(name) => {
-            let name = name.trim();
-            if let Ok(id) = name.parse::<u64>() {
-                return by_id(id);
-            }
-            let sp = s.self_player.as_ref()?;
-            let name_lc = name.to_lowercase();
-            s.ground_items
-                .values()
-                .filter(|i| {
-                    i.floor_level == s.self_floor_level as i8
-                        && i.item_def_id.to_lowercase().contains(&name_lc)
-                })
-                .map(|i| (i.position.dist_xz_sq(&sp.position), i))
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(_, i)| (i.instance_id, i.item_def_id.clone()))
+    Some((item.instance_id, item.item_def_id.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::tests::{ground_item, test_player, test_state};
+    use crate::state::NPC_SIGHT_RADIUS;
+    use onlinerpg_shared::inventory::GroundItem;
+
+    /// Resolution only reads state, so the dropped command receiver is fine.
+    fn state_with(items: Vec<GroundItem>) -> SharedState {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        for item in items {
+            s.remember_ground_item(item, std::time::Instant::now());
+        }
+        s
+    }
+
+    #[test]
+    fn resolves_by_instance_id_however_the_llm_spells_it() {
+        let s = state_with(vec![ground_item(9215, "goblin_sword", 2.0, 0.0, 0)]);
+
+        for r in [PickupRef::Id(9215), PickupRef::Name("9215".to_string())] {
+            assert_eq!(
+                resolve_ground_item(&s, &r),
+                Some((9215, "goblin_sword".to_string())),
+                "for {r}"
+            );
+        }
+    }
+
+    /// Names resolve the way `use` resolves them — a partial id, or the
+    /// display name from items.json — and a loose match takes the nearest.
+    #[test]
+    fn resolves_a_name_the_same_way_the_use_action_does() {
+        let s = state_with(vec![
+            ground_item(1, "iron_sword", 6.0, 0.0, 0),
+            ground_item(2, "small_sword", 3.0, 0.0, 0),
+            ground_item(3, "wooden_shield", 1.0, 0.0, 0),
+        ]);
+
+        for asked in ["Sword", "sword"] {
+            assert_eq!(
+                resolve_ground_item(&s, &PickupRef::Name(asked.to_string())),
+                Some((2, "small_sword".to_string())),
+                "for {asked}"
+            );
+        }
+        // An exact display name wins over the nearer loose match.
+        assert_eq!(
+            resolve_ground_item(&s, &PickupRef::Name("Iron Sword".to_string())),
+            Some((1, "iron_sword".to_string()))
+        );
+    }
+
+    /// The item map reaches further than both the world state and the chase,
+    /// so a stale id the agent read turns ago is refused instead of walked
+    /// at — and refused the same way a nonexistent one is.
+    #[test]
+    fn refuses_items_outside_perception() {
+        let s = state_with(vec![
+            ground_item(1, "iron_sword", NPC_SIGHT_RADIUS + 5.0, 0.0, 0),
+            ground_item(2, "healing_potion", 3.0, 0.0, -1),
+        ]);
+
+        for r in [
+            PickupRef::Id(1),
+            PickupRef::Id(2),
+            PickupRef::Id(42),
+            PickupRef::Name("sword".to_string()),
+            PickupRef::Name("potion".to_string()),
+        ] {
+            assert!(resolve_ground_item(&s, &r).is_none(), "for {r}");
         }
     }
 }

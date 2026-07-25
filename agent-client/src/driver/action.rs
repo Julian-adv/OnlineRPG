@@ -124,6 +124,16 @@ pub(super) enum PickupRef {
     Name(String),
 }
 
+impl PickupRef {
+    /// The instance id the agent meant, however it was spelled.
+    pub(super) fn as_id(&self) -> Option<u64> {
+        match self {
+            Self::Id(id) => Some(*id),
+            Self::Name(name) => name.trim().parse().ok(),
+        }
+    }
+}
+
 impl std::fmt::Display for PickupRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
