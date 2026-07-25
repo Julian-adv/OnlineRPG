@@ -106,6 +106,11 @@ pub(super) enum AgentAction {
         )]
         item: PickupRef,
     },
+    /// Open the treasure chest on the current dungeon's deepest floor.
+    /// The server validates floor, proximity, boss state and the per-player
+    /// cooldown, and answers with loot or a rejection explaining why.
+    #[serde(rename = "open_chest", alias = "open_dungeon_chest")]
+    OpenChest,
     /// Reroll starting stats. Only meaningful during character creation,
     /// where it is the agent's version of the web client's reroll button.
     #[serde(rename = "reroll", alias = "reroll_stats", alias = "roll_again")]
@@ -268,6 +273,7 @@ pub(super) fn action_to_command(
         AgentAction::OpenTrade { .. } => None,
         // Needs the bag and worn gear from SharedState; likewise handled there.
         AgentAction::Use { .. } => None,
+        AgentAction::OpenChest => None,
         // Needs ground-item resolution and the walk-to loop; handled there too.
         AgentAction::Pickup { .. } => None,
         // Only reaches the server as a pre-creation RollCharacterStats; in

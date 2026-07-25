@@ -55,6 +55,12 @@ Available action types (use EXACTLY these field names):
   state ("Item on ground: ... [id 6043]"), or its name:
   {"type": "pickup", "item": 6043}
 
+- Open the treasure chest on a dungeon's deepest floor. You walk to it
+  first, then the server decides: it opens only after that floor's boss is
+  dead, and refills per player once an hour. Loot lands straight in your
+  bag; a rejection tells you why it stayed shut:
+  {"type": "open_chest"}
+
 IMPORTANT:
 - For attack, the field is "monster_id" (NOT "targetId", NOT "target", NOT "id").
 - Monster IDs look like "m2_1", "m3_2" etc. Copy them exactly from the world state.

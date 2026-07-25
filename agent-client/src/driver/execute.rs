@@ -13,7 +13,9 @@ use crate::state::{Carried, SharedState};
 use super::action::{
     action_to_command, parse_agent_response, resolve_move_goal, AgentAction, PickupRef,
 };
-use super::combat::{approach_player, chase_monster, walk_to_ground_item, ChaseResult};
+use super::combat::{
+    approach_player, chase_monster, walk_to_ground_item, walk_to_point, ChaseResult,
+};
 use super::movement::{execute_move, MoveResult};
 
 /// Pause between the crouch broadcast and the actual pickup, approximating
@@ -205,6 +207,60 @@ pub(super) async fn handle_response(
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send use action: {e}");
+            }
+            continue;
+        }
+
+        // Open the dungeon treasure chest: walk up to it on the deepest
+        // floor and ask the server. The server owns proximity, boss-state
+        // and cooldown checks and answers with DungeonChestOpened or an
+        // InteractionRejected explaining why.
+        if matches!(action, AgentAction::OpenChest) {
+            let chest = {
+                let s = state.lock().await;
+                s.dungeon_here().and_then(|d| {
+                    let depth = d.max_depth();
+                    let cell = d.layouts().last().and_then(|l| l.chest)?;
+                    let pos = onlinerpg_shared::dungeon::cell_center(&d.entrance, depth, cell);
+                    Some((d.id.clone(), pos, -(depth as i8), s.self_floor_level))
+                })
+            };
+            let Some((entrance_id, chest_pos, chest_floor, player_floor)) = chest else {
+                let mut s = state.lock().await;
+                s.push_agent_event(
+                    "[ChestFailed] There is no treasure chest here — it sits on a dungeon's deepest floor.".to_string(),
+                );
+                continue;
+            };
+            if player_floor != chest_floor {
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[ChestFailed] The chest is on floor {} — descend there first.",
+                    chest_floor.unsigned_abs()
+                ));
+                continue;
+            }
+            match walk_to_point(state, chest_pos, chest_floor).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    if let Err(e) = s
+                        .send_command(onlinerpg_shared::ClientMessage::OpenDungeonChest {
+                            entrance_id,
+                        })
+                        .await
+                    {
+                        error!("Failed to send open_chest: {e}");
+                    } else {
+                        info!("Agent requested dungeon chest open");
+                    }
+                }
+                ChaseResult::Lost | ChaseResult::Error => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(
+                        "[ChestFailed] You could not reach the chest — the way is blocked."
+                            .to_string(),
+                    );
+                }
             }
             continue;
         }

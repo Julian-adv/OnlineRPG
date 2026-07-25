@@ -131,6 +131,11 @@ pub(super) enum ChaseTarget<'a> {
     Monster(&'a str),
     Player(&'a PlayerId),
     GroundItem(u64),
+    /// A fixed world position on a known floor (e.g. the dungeon chest).
+    Point {
+        pos: onlinerpg_shared::Position,
+        floor_level: i8,
+    },
 }
 
 impl ChaseTarget<'_> {
@@ -139,6 +144,7 @@ impl ChaseTarget<'_> {
             Self::Monster(id) => s.nearby_monsters.get(*id).map(|m| m.position),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.position),
             Self::GroundItem(id) => s.visible_ground_item(*id).map(|i| i.position),
+            Self::Point { pos, .. } => Some(*pos),
         }
     }
 
@@ -149,6 +155,7 @@ impl ChaseTarget<'_> {
             Self::Monster(id) => s.nearby_monsters.get(*id).map(|m| m.floor_level),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.floor_level),
             Self::GroundItem(id) => s.visible_ground_item(*id).map(|i| i.floor_level),
+            Self::Point { floor_level, .. } => Some(*floor_level),
         };
         onlinerpg_shared::dungeon::passability_floor_for_level(level.unwrap_or(0))
     }
@@ -180,6 +187,15 @@ impl ChaseTarget<'_> {
                 max_distance: crate::state::NPC_SIGHT_RADIUS,
                 max_secs: MAX_PICKUP_WALK_SECS,
             },
+            // Fixed points sit anywhere on the floor (the chest can be a
+            // whole dungeon floor away), so no sight-radius cap.
+            Self::Point { .. } => ChaseTuning {
+                arrive_range: 2.0,
+                path_pullback: 0.0,
+                step_stop_dist: 1.5,
+                max_distance: f32::MAX,
+                max_secs: 60.0,
+            },
         }
     }
 }
@@ -207,6 +223,7 @@ impl std::fmt::Display for ChaseTarget<'_> {
             Self::Monster(id) => f.write_str(id),
             Self::Player(id) => write!(f, "{id}"),
             Self::GroundItem(id) => write!(f, "item {id}"),
+            Self::Point { pos, .. } => write!(f, "point ({:.1}, {:.1})", pos.x, pos.z),
         }
     }
 }
@@ -236,6 +253,15 @@ pub(super) async fn walk_to_ground_item(
     instance_id: u64,
 ) -> ChaseResult {
     chase_target(state, &ChaseTarget::GroundItem(instance_id)).await
+}
+
+/// Walk to a fixed position on a floor (e.g. the dungeon treasure chest).
+pub(super) async fn walk_to_point(
+    state: &Arc<Mutex<SharedState>>,
+    pos: onlinerpg_shared::Position,
+    floor_level: i8,
+) -> ChaseResult {
+    chase_target(state, &ChaseTarget::Point { pos, floor_level }).await
 }
 
 /// Chase the target until we're within its arrive range, using A*
