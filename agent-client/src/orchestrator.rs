@@ -313,7 +313,7 @@ async fn run_npc_session(
 
     let mut characters = ws::wait_for_auth(&mut ws_rx, label).await?;
 
-    // --- Delete characters whose class or name doesn't match config ---
+    // --- Resolve which of the account's characters this NPC entry owns ---
     let desired_class = npc
         .character_class
         .as_deref()
@@ -326,31 +326,50 @@ async fn run_npc_session(
     let desired_name = npc.character_name.as_deref();
     let desired_gender = npc.gender;
 
-    let should_delete = |c: &onlinerpg_shared::Character| {
+    let mismatch = |c: &onlinerpg_shared::Character| {
         desired_class.as_ref().is_some_and(|d| c.class != *d)
             || desired_name.is_some_and(|n| c.name != n)
             || desired_gender.is_some_and(|gender| c.gender != gender)
     };
 
-    for c in characters.iter().filter(|c| should_delete(c)) {
-        info!(
-            "[{}] Deleting character '{}' (id={}, {:?}, {:?}) — mismatch (want name={:?}, class={:?}, gender={:?})",
-            label, c.name, c.id, c.class, c.gender, desired_name, desired_class, desired_gender
-        );
-        ws::send(
-            &mut ws_tx,
-            &ClientMessage::DeleteCharacter { character_id: c.id },
-        )
-        .await?;
-        ws::wait_for_msg(&mut ws_rx, label, "CharacterDeleted", |msg| {
-            matches!(
-                msg,
-                ServerMessage::CharacterDeleted { .. } | ServerMessage::CharacterError { .. }
-            )
-        })
-        .await?;
+    // Mismatched characters are deleted only on dedicated npc_token accounts,
+    // where the account exists solely for this fixture. A Google account
+    // belongs to a person who may keep their own web-client characters on it
+    // (doc/REMOTE_AGENT_CLIENT.md) — those are left untouched, and the agent
+    // only picks (or creates) the character this entry describes.
+    match shared.auth {
+        AuthSource::NpcToken(_) => {
+            for c in characters.iter().filter(|c| mismatch(c)) {
+                info!(
+                    "[{}] Deleting character '{}' (id={}, {:?}, {:?}) — mismatch (want name={:?}, class={:?}, gender={:?})",
+                    label, c.name, c.id, c.class, c.gender, desired_name, desired_class, desired_gender
+                );
+                ws::send(
+                    &mut ws_tx,
+                    &ClientMessage::DeleteCharacter { character_id: c.id },
+                )
+                .await?;
+                ws::wait_for_msg(&mut ws_rx, label, "CharacterDeleted", |msg| {
+                    matches!(
+                        msg,
+                        ServerMessage::CharacterDeleted { .. }
+                            | ServerMessage::CharacterError { .. }
+                    )
+                })
+                .await?;
+            }
+        }
+        AuthSource::Google(_) => {
+            let skipped = characters.iter().filter(|c| mismatch(c)).count();
+            if skipped > 0 {
+                info!(
+                    "[{}] Leaving {} other character(s) on this Google account untouched",
+                    label, skipped
+                );
+            }
+        }
     }
-    characters.retain(|c| !should_delete(c));
+    characters.retain(|c| !mismatch(c));
 
     // --- Auto-create character if needed ---
     if characters.is_empty() {
