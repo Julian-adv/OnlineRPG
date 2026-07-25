@@ -30,6 +30,13 @@ pub struct OpenAiConfig {
     /// Temperature (default: 0.7)
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// Reasoning effort passed through as-is (e.g. "none", "low", "medium",
+    /// "high"). Defaults to "none" so the token budget goes to the actual
+    /// reply instead of a reasoning trace; set to "" to omit the field
+    /// entirely for models that reject an unrecognized value (this varies
+    /// per model, not just per endpoint).
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
 }
 
 fn default_system_prompt_file() -> String {
@@ -41,6 +48,9 @@ fn default_max_tokens() -> u32 {
 fn default_temperature() -> f32 {
     0.7
 }
+fn default_reasoning_effort() -> String {
+    "none".to_string()
+}
 
 impl Default for OpenAiConfig {
     fn default() -> Self {
@@ -51,6 +61,7 @@ impl Default for OpenAiConfig {
             system_prompt_file: default_system_prompt_file(),
             max_tokens: default_max_tokens(),
             temperature: default_temperature(),
+            reasoning_effort: default_reasoning_effort(),
         }
     }
 }
@@ -61,6 +72,8 @@ struct ChatRequest {
     messages: Vec<ChatMessage>,
     max_tokens: u32,
     temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -169,6 +182,8 @@ impl LlmBackend for OpenAiInvoker {
             messages: messages.clone(),
             max_tokens: self.config.max_tokens,
             temperature: self.config.temperature,
+            reasoning_effort: (!self.config.reasoning_effort.is_empty())
+                .then(|| self.config.reasoning_effort.clone()),
         };
 
         let mut req = self.client.post(&self.url).json(&request);
