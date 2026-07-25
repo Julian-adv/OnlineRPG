@@ -329,6 +329,11 @@ pub struct SharedState {
     /// `visible_ground_item(s)` — a monster's drop is known before it is
     /// visible.
     ground_items: HashMap<u64, KnownGroundItem>,
+    /// Instance ids this NPC has itself dropped, excluded from
+    /// `ground_items_in_sight` forever after — otherwise a "drop junk to
+    /// make room" turn immediately re-surfaces the same junk as loot the
+    /// very next prompt, looping the drop/pickup pair indefinitely.
+    self_dropped_items: HashSet<u64>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -402,6 +407,7 @@ impl SharedState {
             nearby_players: HashMap::new(),
             nearby_monsters: HashMap::new(),
             ground_items: HashMap::new(),
+            self_dropped_items: HashSet::new(),
             events: Vec::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
@@ -743,6 +749,12 @@ impl SharedState {
             .await
     }
 
+    /// Mark an instance id as dropped by this NPC itself, so it never
+    /// re-surfaces as loot to pick back up.
+    pub(crate) fn mark_self_dropped(&mut self, instance_id: u64) {
+        self.self_dropped_items.insert(instance_id);
+    }
+
     /// Remember an item on the ground, visible from `visible_at` on.
     pub(crate) fn remember_ground_item(
         &mut self,
@@ -774,7 +786,11 @@ impl SharedState {
         let mut in_sight: Vec<_> = self
             .ground_items
             .values()
-            .filter(|k| k.visible_at <= now && k.item.floor_level == self.self_floor_level)
+            .filter(|k| {
+                k.visible_at <= now
+                    && k.item.floor_level == self.self_floor_level
+                    && !self.self_dropped_items.contains(&k.item.instance_id)
+            })
             .filter_map(|k| {
                 let d_sq = k.item.position.dist_xz_sq(&sp.position);
                 (d_sq <= sight_sq).then_some((d_sq, &k.item))
@@ -1862,6 +1878,25 @@ pub(crate) mod tests {
             std::time::Instant::now(),
         );
         assert!(s.visible_ground_item(1).is_some());
+    }
+
+    /// An item this NPC dropped itself never re-surfaces as loot, even once
+    /// the server echoes the drop back as an ordinary ground-item spawn —
+    /// otherwise "drop junk to make room" loops the drop/pickup pair forever.
+    #[test]
+    fn self_dropped_items_never_resurface_as_loot() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        s.remember_ground_item(
+            ground_item(1, "small_sword", 1.0, 0.0, 0),
+            std::time::Instant::now(),
+        );
+        s.mark_self_dropped(1);
+
+        assert!(s.ground_items_in_sight().is_empty());
+        assert!(!s
+            .format_world_state()
+            .contains("Item on ground: small_sword"));
     }
 
     /// A field strewn with drops is summarised, not listed line by line.

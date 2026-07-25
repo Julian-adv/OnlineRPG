@@ -115,6 +115,35 @@ pub(super) enum AgentAction {
         #[serde(default, alias = "target", alias = "which", alias = "name")]
         chest: Option<String>,
     },
+    /// Drop a carried item (bag or worn) onto the ground. Mirrors the web
+    /// client's inventory-panel drop. Name it as it appears in your bag or
+    /// worn list; no walking or server-side range check is involved.
+    #[serde(rename = "drop", alias = "drop_item", alias = "discard")]
+    Drop {
+        #[serde(
+            alias = "item_def_id",
+            alias = "item_id",
+            alias = "name",
+            alias = "target"
+        )]
+        item: String,
+    },
+    /// Sell every copy of a bag item to a nearby merchant NPC. Walks to the
+    /// merchant first if needed. The server prices it (and rejects the sale
+    /// if the target isn't actually a trader), reported back as a
+    /// `[TradeError]` event.
+    #[serde(rename = "sell", alias = "sell_item")]
+    Sell {
+        #[serde(
+            alias = "target",
+            alias = "merchant",
+            alias = "npc",
+            alias = "target_player"
+        )]
+        player: String,
+        #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
+        item: String,
+    },
     /// Reroll starting stats. Only meaningful during character creation,
     /// where it is the agent's version of the web client's reroll button.
     #[serde(rename = "reroll", alias = "reroll_stats", alias = "roll_again")]
@@ -289,8 +318,12 @@ pub(super) fn action_to_command(
         // Needs the bag and worn gear from SharedState; likewise handled there.
         AgentAction::Use { .. } => None,
         AgentAction::OpenChest { .. } => None,
+        // Needs the bag/worn gear lookup for its instance_id; likewise handled there.
+        AgentAction::Drop { .. } => None,
         // Needs ground-item resolution and the walk-to loop; handled there too.
         AgentAction::Pickup { .. } => None,
+        // Needs player-name → id resolution and the bag; handled there.
+        AgentAction::Sell { .. } => None,
         // Only reaches the server as a pre-creation RollCharacterStats; in
         // game there is nothing left to reroll.
         AgentAction::Reroll => None,
@@ -438,6 +471,52 @@ mod tests {
     #[test]
     fn use_produces_no_direct_command() {
         let action = parse_single_action(r#"{"actions": [{"type": "use", "item": "torch"}]}"#);
+        assert!(action_to_command(&action, None).is_none());
+    }
+
+    #[test]
+    fn drop_parses_item_and_its_aliases() {
+        for json in [
+            r#"{"actions": [{"type": "drop", "item": "small_sword"}]}"#,
+            r#"{"actions": [{"type": "drop_item", "item_id": "small_sword"}]}"#,
+            r#"{"actions": [{"type": "discard", "name": "small_sword"}]}"#,
+        ] {
+            let AgentAction::Drop { item } = parse_single_action(json) else {
+                panic!("expected Drop for {json}");
+            };
+            assert_eq!(item, "small_sword");
+        }
+    }
+
+    /// `drop` needs the bag/worn lookup for its instance_id, so it resolves in `execute`.
+    #[test]
+    fn drop_produces_no_direct_command() {
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "drop", "item": "small_sword"}]}"#);
+        assert!(action_to_command(&action, None).is_none());
+    }
+
+    #[test]
+    fn sell_parses_player_and_item_aliases() {
+        for json in [
+            r#"{"actions": [{"type": "sell", "player": "Rica", "item": "small_sword"}]}"#,
+            r#"{"actions": [{"type": "sell_item", "target": "Rica", "item_id": "small_sword"}]}"#,
+            r#"{"actions": [{"type": "sell", "merchant": "Rica", "name": "small_sword"}]}"#,
+        ] {
+            let AgentAction::Sell { player, item } = parse_single_action(json) else {
+                panic!("expected Sell for {json}");
+            };
+            assert_eq!(player, "Rica");
+            assert_eq!(item, "small_sword");
+        }
+    }
+
+    /// `sell` needs the bag and a nearby-player lookup, so it resolves in `execute`.
+    #[test]
+    fn sell_produces_no_direct_command() {
+        let action = parse_single_action(
+            r#"{"actions": [{"type": "sell", "player": "Rica", "item": "small_sword"}]}"#,
+        );
         assert!(action_to_command(&action, None).is_none());
     }
 

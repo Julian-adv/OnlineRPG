@@ -79,6 +79,7 @@ pub(super) async fn handle_response(
                     | AgentAction::Attack { .. }
                     | AgentAction::Pickup { .. }
                     | AgentAction::OpenChest { .. }
+                    | AgentAction::Sell { .. }
             )
         {
             debug!("Skipping {:?} action — NPC is holding position", action);
@@ -281,6 +282,36 @@ pub(super) async fn handle_response(
             continue;
         }
 
+        // Drop a carried item (bag or worn) onto the ground. Pure inventory
+        // manipulation like Use — no range check, no walking, so it isn't
+        // gated by holding_position/trade_busy either.
+        if let AgentAction::Drop { item } = action {
+            let mut s = state.lock().await;
+            let Some((def_id, placed)) = s.find_carried(item) else {
+                warn!("drop: nothing carried matching '{item}'");
+                s.push_agent_event(format!(
+                    "[DropFailed] You are not carrying anything called '{item}'."
+                ));
+                continue;
+            };
+            let instance_id = match placed {
+                Carried::Worn(slot) => s.self_equipped[&slot].instance_id,
+                Carried::InBag(instance_id) => instance_id,
+            };
+            let cmd = onlinerpg_shared::ClientMessage::DropItem { instance_id };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send drop action: {e}");
+            } else {
+                // Never re-surface this instance as loot for ourselves — the
+                // server echoes the drop back as an ordinary GroundItemSpawned,
+                // which would otherwise put it right back in "Item on ground"
+                // next turn and loop the drop/pickup pair forever.
+                s.mark_self_dropped(instance_id);
+                info!("Agent dropped {def_id} [id {instance_id}]");
+            }
+            continue;
+        }
+
         // Pick up a ground item: resolve the reference, walk into pickup
         // range, and send the pickup. The server owns the range, floor and
         // weight checks and answers with InventoryUpdated or a SystemMessage.
@@ -334,6 +365,70 @@ pub(super) async fn handle_response(
                     s.push_agent_event(format!(
                         "[PickupFailed] Something went wrong on the way to the {def_id}."
                     ));
+                }
+            }
+            continue;
+        }
+
+        // Sell every copy of a bag item to a nearby merchant: resolve the
+        // merchant's name and the item's canonical id, walk over if needed,
+        // then sell each matching instance. Server-side rejections (too far,
+        // not a trader, no base price) surface automatically as [TradeError].
+        if let AgentAction::Sell { player, item } = action {
+            let resolved = {
+                let mut s = state.lock().await;
+                let Some((target_id, _)) = s.resolve_nearby_player(player) else {
+                    warn!("sell: no nearby merchant named '{player}'");
+                    s.push_agent_event(format!(
+                        "[SellFailed] No merchant named '{player}' is nearby."
+                    ));
+                    continue;
+                };
+                let ids: Vec<&str> = s.self_bag.iter().map(|i| i.item_def_id.as_str()).collect();
+                let Some(def_id) = crate::item_defs::resolve_named(&ids, item) else {
+                    warn!("sell: nothing carried matching '{item}'");
+                    s.push_agent_event(format!(
+                        "[SellFailed] You are not carrying anything called '{item}'."
+                    ));
+                    continue;
+                };
+                let def_id = def_id.to_string();
+                let instance_ids: Vec<u64> = s
+                    .self_bag
+                    .iter()
+                    .filter(|i| i.item_def_id == def_id)
+                    .map(|i| i.instance_id)
+                    .collect();
+                (target_id, def_id, instance_ids)
+            };
+            let (target_id, def_id, instance_ids) = resolved;
+            info!(
+                "Agent selling {} x {def_id} to {player}, approaching...",
+                instance_ids.len()
+            );
+            match approach_player(state, &target_id).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    for instance_id in instance_ids {
+                        let cmd = onlinerpg_shared::ClientMessage::SellItem {
+                            merchant_player_id: target_id,
+                            instance_id,
+                        };
+                        if let Err(e) = s.send_command(cmd).await {
+                            error!("Failed to send sell command: {e}");
+                            break;
+                        }
+                    }
+                }
+                ChaseResult::Lost => {
+                    warn!("Could not reach merchant '{player}', skipping sell");
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[SellFailed] Could not reach {player} — they moved away or out of sight."
+                    ));
+                }
+                ChaseResult::Error => {
+                    error!("sell: error while approaching '{player}'");
                 }
             }
             continue;
