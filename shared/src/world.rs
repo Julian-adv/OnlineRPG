@@ -33,7 +33,7 @@ pub fn shortest_world_delta_x(from_x: f32, to_x: f32) -> f32 {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub x: f32,
     pub y: f32,

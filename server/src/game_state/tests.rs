@@ -72,6 +72,29 @@ fn make_monster(id: &str, position: Position, floor_level: i8) -> crate::types::
     }
 }
 
+const NON_FINITE: [(f32, &str); 3] = [
+    (f32::NAN, "NaN"),
+    (f32::INFINITY, "+infinity"),
+    (f32::NEG_INFINITY, "-infinity"),
+];
+
+/// `base` with one component replaced by each non-finite value, labelled.
+fn non_finite_positions(base: Position) -> Vec<(String, Position)> {
+    let mut out = Vec::new();
+    for (value, value_name) in NON_FINITE {
+        for (axis, axis_name) in [(0, "x"), (1, "y"), (2, "z")] {
+            let mut position = base;
+            match axis {
+                0 => position.x = value,
+                1 => position.y = value,
+                _ => position.z = value,
+            }
+            out.push((format!("{axis_name} {value_name}"), position));
+        }
+    }
+    out
+}
+
 fn make_test_game_state(test_name: &str) -> GameState {
     let housing_dir = std::env::temp_dir().join(format!(
         "onlinerpg_{test_name}_housing_{}",
@@ -1372,42 +1395,22 @@ async fn non_finite_monster_move_is_rejected() {
         monsters.insert("owned_monster".to_string(), monster);
     }
 
-    let with_component = |axis: usize, value: f32| {
-        let mut position = authoritative_position;
-        match axis {
-            0 => position.x = value,
-            1 => position.y = value,
-            2 => position.z = value,
-            _ => unreachable!(),
-        }
-        position
-    };
     let mut cases = Vec::new();
-    for (axis, axis_name) in [(0, "x"), (1, "y"), (2, "z")] {
-        for (value, value_name) in [
-            (f32::NAN, "NaN"),
-            (f32::INFINITY, "+infinity"),
-            (f32::NEG_INFINITY, "-infinity"),
-        ] {
-            cases.push((
-                format!("position {axis_name} {value_name}"),
-                with_component(axis, value),
-                0.5,
-                authoritative_position,
-            ));
-            cases.push((
-                format!("target {axis_name} {value_name}"),
-                authoritative_position,
-                0.5,
-                with_component(axis, value),
-            ));
-        }
+    for (label, position) in non_finite_positions(authoritative_position) {
+        cases.push((
+            format!("position {label}"),
+            position,
+            0.5,
+            authoritative_position,
+        ));
+        cases.push((
+            format!("target {label}"),
+            authoritative_position,
+            0.5,
+            position,
+        ));
     }
-    for (rotation, value_name) in [
-        (f32::NAN, "NaN"),
-        (f32::INFINITY, "+infinity"),
-        (f32::NEG_INFINITY, "-infinity"),
-    ] {
+    for (rotation, value_name) in NON_FINITE {
         cases.push((
             format!("rotation {value_name}"),
             authoritative_position,
@@ -1431,14 +1434,11 @@ async fn non_finite_monster_move_is_rejected() {
             .await;
 
         let after = game_state.monsters.read().await["owned_monster"].clone();
-        assert_eq!(after.position.x, before.position.x, "{case}");
-        assert_eq!(after.position.y, before.position.y, "{case}");
-        assert_eq!(after.position.z, before.position.z, "{case}");
+        assert_eq!(after.position, before.position, "{case}");
         assert_eq!(after.rotation, before.rotation, "{case}");
         assert_eq!(after.state, before.state, "{case}");
         assert_eq!(after.move_budget, before.move_budget, "{case}");
         assert_eq!(after.last_move_at, before.last_move_at, "{case}");
-        assert!(after.move_budget.is_finite(), "{case}");
 
         match observer_rx.try_recv() {
             Err(MpscTryRecvError::Empty) => {}
@@ -1454,18 +1454,51 @@ async fn non_finite_monster_move_is_rejected() {
                 ..
             }) => {
                 assert_eq!(monster_id, "owned_monster", "{case}");
-                assert_eq!(position.x, before.position.x, "{case}");
-                assert_eq!(position.y, before.position.y, "{case}");
-                assert_eq!(position.z, before.position.z, "{case}");
+                assert_eq!(position, before.position, "{case}");
                 assert_eq!(rotation, before.rotation, "{case}");
                 assert_eq!(state, before.state, "{case}");
-                assert_eq!(target_position.x, before.position.x, "{case}");
-                assert_eq!(target_position.y, before.position.y, "{case}");
-                assert_eq!(target_position.z, before.position.z, "{case}");
+                assert_eq!(target_position, before.position, "{case}");
             }
             other => panic!("{case} must correct the owner, got {other:?}"),
         }
         assert!(matches!(owner_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    }
+}
+
+#[tokio::test]
+async fn non_finite_spawn_request_is_rejected() {
+    let game_state = make_test_game_state("spawn_request_non_finite");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 10.0, 20.0))
+        .await;
+
+    let valid = Position {
+        x: 12.0,
+        y: 0.5,
+        z: 22.0,
+    };
+    assert!(
+        game_state
+            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
+            .await
+    );
+
+    for (label, position) in non_finite_positions(valid) {
+        assert!(
+            !game_state
+                .validate_spawn_request(&player_id, "goblin", &position, 1.5)
+                .await,
+            "position {label}"
+        );
+    }
+    for (rotation, value_name) in NON_FINITE {
+        assert!(
+            !game_state
+                .validate_spawn_request(&player_id, "goblin", &valid, rotation)
+                .await,
+            "rotation {value_name}"
+        );
     }
 }
 

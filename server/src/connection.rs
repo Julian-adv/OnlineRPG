@@ -1027,14 +1027,13 @@ async fn handle_client_message(
             rotation,
         } => {
             if let Some(id) = &state.player_id {
-                // Validate the client-picked position (no-spawn zones + range)
                 if !game_state
-                    .validate_spawn_position(id, &monster_type, &position)
+                    .validate_spawn_request(id, &monster_type, &position, rotation)
                     .await
                 {
                     warn!(
-                        "Spawn request rejected: position ({:.1}, {:.1}) invalid for {}",
-                        position.x, position.z, monster_type
+                        "Spawn request rejected: position ({:.1}, {:.1}) rotation {:.1} invalid for {}",
+                        position.x, position.z, rotation, monster_type
                     );
                 } else if let Some(monster) = game_state
                     .spawn_monster(monster_type, position, rotation, Some(*id), 0, None, false)

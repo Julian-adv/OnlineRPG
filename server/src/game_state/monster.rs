@@ -148,6 +148,20 @@ impl super::GameState {
         Some(monster)
     }
 
+    /// The owner applies its moves optimistically and the normal fanout skips
+    /// it, so a silent reject would desync it until reconnect. Echoes the
+    /// authoritative state back to the mover instead.
+    fn move_correction(monster_id: String, monster: &crate::types::Monster) -> ServerMessage {
+        ServerMessage::MonsterMoved {
+            monster_id,
+            position: monster.position,
+            rotation: monster.rotation,
+            state: monster.state,
+            target_position: monster.position,
+            owner_id: monster.owner_id,
+        }
+    }
+
     pub async fn update_monster_position(
         &self,
         mover_id: &PlayerId,
@@ -168,14 +182,7 @@ impl super::GameState {
                 return;
             }
             if !new_position.is_finite() || !rotation.is_finite() || !target_position.is_finite() {
-                let correction = ServerMessage::MonsterMoved {
-                    monster_id,
-                    position: monster.position,
-                    rotation: monster.rotation,
-                    state: monster.state,
-                    target_position: monster.position,
-                    owner_id: monster.owner_id,
-                };
+                let correction = Self::move_correction(monster_id, monster);
                 drop(monsters);
                 self.send_direct_message(mover_id, correction).await;
                 return;
@@ -207,17 +214,7 @@ impl super::GameState {
                     "Rejected monster move {:.0}m (budget {:.1}m): monster {} by {}",
                     dist, budget, monster_id, mover_id
                 );
-                // The owner applies its moves optimistically and the normal
-                // fanout skips it, so a silent reject would desync it until
-                // reconnect. Echo the authoritative state back to the mover.
-                let correction = ServerMessage::MonsterMoved {
-                    monster_id,
-                    position: monster.position,
-                    rotation: monster.rotation,
-                    state: monster.state,
-                    target_position: monster.position,
-                    owner_id: monster.owner_id,
-                };
+                let correction = Self::move_correction(monster_id, monster);
                 drop(monsters);
                 self.send_direct_message(mover_id, correction).await;
                 return;
@@ -421,16 +418,22 @@ impl super::GameState {
         }
     }
 
-    /// Validate a client-requested spawn: it must be a configured ambient type,
-    /// outside every no-spawn zone, and within range of the requesting player.
-    /// Terrain checks (grassland, water) are the client's responsibility — the
-    /// server has no terrain data.
-    pub async fn validate_spawn_position(
+    /// Validate a client-requested spawn: it must carry finite values, be a
+    /// configured ambient type, sit outside every no-spawn zone, and be within
+    /// range of the requesting player. Terrain checks (grassland, water) are
+    /// the client's responsibility — the server has no terrain data.
+    pub async fn validate_spawn_request(
         &self,
         player_id: &PlayerId,
         monster_type: &str,
         position: &Position,
+        rotation: f32,
     ) -> bool {
+        // The range check below only reads x/z, so without this a non-finite y
+        // or rotation would reach MonsterSpawned.
+        if !position.is_finite() || !rotation.is_finite() {
+            return false;
+        }
         let rule = match Self::find_ambient_rule(monster_type) {
             Some(r) => r,
             None => return false,

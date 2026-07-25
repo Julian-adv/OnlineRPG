@@ -39,7 +39,7 @@ Both arrays are optional (default empty). Coordinates are world-space. Both zone
 ### Server
 - `world_config.rs` — `MonsterSpawnRule` with rectangular bounds + `maxTotal`, `load_spawn_config_from_regions()` reads all zone files at startup
 - `game_state/mod.rs` — `no_spawn_zones` field, constructor takes spawn rules + zones as params, `no_spawn_zones()` accessor
-- `game_state/monster.rs` — `validate_spawn_position()` checks rect bounds + no-spawn zones, `tick_monster_spawns()` sends rect coords
+- `game_state/monster.rs` — `validate_spawn_request()` checks rect bounds + no-spawn zones, `tick_monster_spawns()` sends rect coords
 - `terrain/routes.rs` — `GET/PUT /api/terrain/zones/{rx}/{rz}`
 - `connection.rs` — sends `NoSpawnZones` on join
 - `main.rs` — loads zones from region files at startup, passes to `GameState::new()`
