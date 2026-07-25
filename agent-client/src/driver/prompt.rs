@@ -202,6 +202,26 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             "[PlayerDisappeared] {}",
             player_name(state, player_id)
         )),
+        ServerMessage::PlayerTeleported {
+            player_id,
+            position,
+            floor_level,
+            ..
+        } => {
+            if state.self_player_id.as_ref() != Some(player_id) {
+                return None;
+            }
+            let floor = if *floor_level < 0 {
+                format!("dungeon floor {}", floor_level.unsigned_abs())
+            } else {
+                "the surface".to_string()
+            };
+            Some(format!(
+                "[Teleported] You were teleported to ({:.0}, {:.0}) on {floor}. Your old \
+                 walk targets no longer apply.",
+                position.x, position.z
+            ))
+        }
         ServerMessage::PlayerMoved {
             player_id,
             position,
