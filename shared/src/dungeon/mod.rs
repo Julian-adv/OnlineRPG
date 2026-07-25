@@ -206,9 +206,11 @@ pub struct SpawnSpec {
     pub aggressive: bool,
 }
 
-/// Decorative clutter prop dropped into a room. Purely cosmetic — like the
-/// treasure chest it carries no collision (it's never added to the passability
-/// grid), so placement only has to read well, not gate movement. The string
+/// Clutter prop dropped into a room. Every kind but [`PropKind::TorchWall`]
+/// becomes a 1×1 collision pillar in the passability grid (see
+/// [`floor_passability_cells_full`]), so a mover routes around it and a path
+/// can never end on its cell — unlike the treasure chest, which carries no
+/// collision. Breaking a barrel or crate opens its cell again. The string
 /// variants match the object-catalog ids (`barrel`/`crate`/`chest`/`torch_wall`)
 /// the client loads the GLB for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -260,6 +262,12 @@ pub struct FloorLayout {
 impl FloorLayout {
     pub fn is_carved(&self, x: i32, z: i32) -> bool {
         (0..GRID).contains(&x) && (0..GRID).contains(&z) && self.carved[(x + z * GRID) as usize]
+    }
+
+    /// Room covering this cell. `None` in a corridor or on a stair landing
+    /// that no room's rect reaches.
+    pub fn room_at(&self, x: i32, z: i32) -> Option<&Room> {
+        self.rooms.iter().find(|r| r.contains(x, z))
     }
 
     /// Pick a walkable world position to drop loot near a monster's death

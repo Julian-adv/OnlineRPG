@@ -29,8 +29,8 @@ pub use cache::{
 };
 pub use query::{
     blocking_entry_for_mover, get_floor_at_position, get_floor_y_base, is_cardinal_move_blocked,
-    is_circle_blocked_on_floor, is_movement_blocked, is_movement_blocked_for_mover, start_floor_at,
-    BlockInfo,
+    is_cell_sealed, is_circle_blocked_on_floor, is_movement_blocked, is_movement_blocked_for_mover,
+    start_floor_at, BlockInfo,
 };
 pub use smooth::find_and_smooth_path;
 

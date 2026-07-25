@@ -8,13 +8,16 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
+use crate::dungeon::ChestKind;
 use crate::state::{Carried, SharedState};
 
 use super::action::{
-    action_to_command, parse_agent_response, resolve_move_goal, AgentAction, PickupRef,
+    action_to_command, asks_for_great_chest, parse_agent_response, resolve_move_goal, AgentAction,
+    PickupRef,
 };
 use super::combat::{
-    approach_player, chase_monster, walk_to_ground_item, walk_to_point, ChaseResult,
+    approach_player, chase_monster, chest_arrive_range, walk_to_ground_item, walk_to_point,
+    ChaseResult,
 };
 use super::movement::{execute_move, MoveResult};
 
@@ -72,7 +75,10 @@ pub(super) async fn handle_response(
         if skip_movement
             && matches!(
                 action,
-                AgentAction::Move { .. } | AgentAction::Attack { .. } | AgentAction::Pickup { .. }
+                AgentAction::Move { .. }
+                    | AgentAction::Attack { .. }
+                    | AgentAction::Pickup { .. }
+                    | AgentAction::OpenChest { .. }
             )
         {
             debug!("Skipping {:?} action — NPC is holding position", action);
@@ -211,53 +217,63 @@ pub(super) async fn handle_response(
             continue;
         }
 
-        // Open the dungeon treasure chest: walk up to it on the deepest
-        // floor and ask the server. The server owns proximity, boss-state
-        // and cooldown checks and answers with DungeonChestOpened or an
-        // InteractionRejected explaining why.
-        if matches!(action, AgentAction::OpenChest) {
-            let chest = {
+        // Open a chest in our own room: cross to it and ask the server. Only a
+        // chest we share a room with counts, so this walks what a web player's
+        // click walks and never routes to one the agent has not found.
+        if let AgentAction::OpenChest { chest: want } = action {
+            let target = {
                 let s = state.lock().await;
-                s.dungeon_here().and_then(|d| {
-                    let depth = d.max_depth();
-                    let cell = d.layouts().last().and_then(|l| l.chest)?;
-                    let pos = onlinerpg_shared::dungeon::cell_center(&d.entrance, depth, cell);
-                    Some((d.id.clone(), pos, -(depth as i8), s.self_floor_level))
-                })
+                let sighted = s.chests_in_sight();
+                let pick = if asks_for_great_chest(want.as_deref()) {
+                    sighted
+                        .iter()
+                        .find(|c| c.kind == ChestKind::Treasure)
+                        .or(sighted.first())
+                } else {
+                    sighted.first()
+                };
+                pick.copied()
+                    .zip(s.dungeon_here())
+                    .map(|(c, d)| (c, d.id.clone(), s.self_floor_level))
             };
-            let Some((entrance_id, chest_pos, chest_floor, player_floor)) = chest else {
+            let Some((chest, entrance_id, chest_floor)) = target else {
                 let mut s = state.lock().await;
                 s.push_agent_event(
-                    "[ChestFailed] There is no treasure chest here — it sits on a dungeon's deepest floor.".to_string(),
+                    "[ChestFailed] You see no chest in this room — go and find one.".to_string(),
                 );
                 continue;
             };
-            if player_floor != chest_floor {
-                let mut s = state.lock().await;
-                s.push_agent_event(format!(
-                    "[ChestFailed] The chest is on floor {} — descend there first.",
-                    chest_floor.unsigned_abs()
-                ));
-                continue;
-            }
-            match walk_to_point(state, chest_pos, chest_floor).await {
+            // The server measures its range from the chest, so the metre
+            // between a prop and the cell we can stand on comes out of ours.
+            let gap = crate::geom::PlanarDelta::between(&chest.approach, &chest.position).dist;
+            match walk_to_point(state, chest.approach, chest_floor, chest_arrive_range(gap)).await {
                 ChaseResult::InRange => {
+                    let depth = chest_floor.unsigned_abs();
                     let mut s = state.lock().await;
-                    if let Err(e) = s
-                        .send_command(onlinerpg_shared::ClientMessage::OpenDungeonChest {
-                            entrance_id,
-                        })
-                        .await
-                    {
+                    s.chest_open_sent(&entrance_id, depth, chest.kind);
+                    let cmd = match chest.kind {
+                        ChestKind::Treasure => {
+                            onlinerpg_shared::ClientMessage::OpenDungeonChest { entrance_id }
+                        }
+                        ChestKind::Prop(prop_id) => {
+                            onlinerpg_shared::ClientMessage::OpenDungeonProp {
+                                entrance_id,
+                                depth,
+                                prop_id,
+                            }
+                        }
+                    };
+                    if let Err(e) = s.send_command(cmd).await {
                         error!("Failed to send open_chest: {e}");
                     } else {
-                        info!("Agent requested dungeon chest open");
+                        info!("Agent requested chest open ({:?})", chest.kind);
                     }
                 }
                 ChaseResult::Lost | ChaseResult::Error => {
                     let mut s = state.lock().await;
                     s.push_agent_event(
-                        "[ChestFailed] You could not reach the chest — the way is blocked."
+                        "[ChestFailed] You did not reach the chest — the way is blocked, \
+                         it is too far to walk in one go, or you died on the way."
                             .to_string(),
                     );
                 }
@@ -410,7 +426,8 @@ pub(super) async fn handle_response(
                         warn!("Path blocked to ({gx:.1}, {gz:.1})");
                         let mut s = state.lock().await;
                         s.push_agent_event(format!(
-                            "[MoveFailed] 이동 실패: ({gx:.1}, {gz:.1})까지의 경로가 건물에 의해 막혀있습니다. 다른 목표를 선택하세요."
+                            "[MoveFailed] No route to ({gx:.1}, {gz:.1}) — a wall or a shut \
+                             door stands in the way. Try a different goal."
                         ));
                     }
                     MoveResult::Error => {

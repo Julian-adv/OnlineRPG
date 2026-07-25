@@ -47,3 +47,20 @@ works — you have hunted these lands before.
   at low level — pick fights accordingly.
 - A practical loop: leave town, grind monsters at or below your level until
   you out-level them, then step up a tier. One monster at a time.
+
+## Dungeon Chests
+- The small chests tucked among the barrels and crates hold loose change and
+  little else. Open them when they are on your way; don't cross a floor for
+  one.
+- The great chest is the one worth the dive: it stands alone on the deepest
+  floor, behind that floor's boss, and pays in gear and gold. You can tell it
+  from the clutter at a glance — the world state says which is which.
+- The boss is the lock on it. It stays shut while the boss lives, and the
+  boss walks again 30 minutes after it dies — take the chest while the floor
+  is still clear.
+- Nobody hands you a chest's location. Walk room by room until the world
+  state names a chest in the room you are in — a great chest is worth
+  crossing the room for, a small one only if it is on your way.
+- The great chest is one open per dungeon per night. After you empty it, it
+  stays shut for you until nightfall, but every other dungeon's is a separate
+  claim — when one runs dry, dive a different dungeon rather than waiting.

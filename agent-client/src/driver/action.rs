@@ -106,17 +106,32 @@ pub(super) enum AgentAction {
         )]
         item: PickupRef,
     },
-    /// Open the treasure chest on the current dungeon's deepest floor.
-    /// The server validates floor, proximity, boss state and the per-player
-    /// cooldown, and answers with loot or a rejection explaining why.
+    /// Open a chest standing in the agent's own room: the nearest one, or the
+    /// great chest when `chest` asks for it. The server validates floor,
+    /// proximity, prop kind, boss state and the per-player cooldown, and
+    /// answers with loot or a rejection explaining why.
     #[serde(rename = "open_chest", alias = "open_dungeon_chest")]
-    OpenChest,
+    OpenChest {
+        #[serde(default, alias = "target", alias = "which", alias = "name")]
+        chest: Option<String>,
+    },
     /// Reroll starting stats. Only meaningful during character creation,
     /// where it is the agent's version of the web client's reroll button.
     #[serde(rename = "reroll", alias = "reroll_stats", alias = "roll_again")]
     Reroll,
     #[serde(rename = "wait", alias = "idle", alias = "observe", alias = "none")]
     Wait,
+}
+
+/// Whether an `open_chest` selector asks for the great chest rather than the
+/// nearest one. The word the prompts teach, plus what an LLM reaches for.
+pub(super) fn asks_for_great_chest(chest: Option<&str>) -> bool {
+    chest.is_some_and(|c| {
+        let c = c.to_lowercase();
+        ["great", "treasure", "big", "large"]
+            .iter()
+            .any(|k| c.contains(k))
+    })
 }
 
 /// How a pickup names its target: the instance id from the world state
@@ -273,7 +288,7 @@ pub(super) fn action_to_command(
         AgentAction::OpenTrade { .. } => None,
         // Needs the bag and worn gear from SharedState; likewise handled there.
         AgentAction::Use { .. } => None,
-        AgentAction::OpenChest => None,
+        AgentAction::OpenChest { .. } => None,
         // Needs ground-item resolution and the walk-to loop; handled there too.
         AgentAction::Pickup { .. } => None,
         // Only reaches the server as a pre-creation RollCharacterStats; in
@@ -367,6 +382,40 @@ mod tests {
             };
             assert!(matches!(item, PickupRef::Id(6043)), "for {json}");
         }
+    }
+
+    #[test]
+    fn open_chest_parses_its_aliases_and_target() {
+        for (json, want) in [
+            (r#"{"actions": [{"type": "open_chest"}]}"#, None),
+            (r#"{"actions": [{"type": "open_dungeon_chest"}]}"#, None),
+            (
+                r#"{"actions": [{"type": "open_chest", "chest": "great"}]}"#,
+                Some("great"),
+            ),
+            (
+                r#"{"actions": [{"type": "open_chest", "which": "the big one"}]}"#,
+                Some("the big one"),
+            ),
+        ] {
+            let AgentAction::OpenChest { chest } = parse_single_action(json) else {
+                panic!("expected OpenChest for {json}");
+            };
+            assert_eq!(chest.as_deref(), want, "for {json}");
+        }
+    }
+
+    /// The wording the prompts teach picks the great chest; anything else
+    /// (including no target at all) leaves the nearest one winning.
+    #[test]
+    fn great_chest_selector_covers_what_the_prompts_teach() {
+        for want in ["great", "the great chest", "Treasure", "big one", "large"] {
+            assert!(asks_for_great_chest(Some(want)), "{want} should select it");
+        }
+        for other in ["small", "nearest", "clutter", ""] {
+            assert!(!asks_for_great_chest(Some(other)), "{other} should not");
+        }
+        assert!(!asks_for_great_chest(None));
     }
 
     #[test]

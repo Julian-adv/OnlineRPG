@@ -52,6 +52,24 @@ const PICKUP_ARRIVE_RANGE: f32 = 2.0;
 /// Maximum walk-to-item duration before giving up (seconds). Shorter than
 /// an approach: the target never moves away.
 const MAX_PICKUP_WALK_SECS: f32 = 12.0;
+/// The server's gate for opening a chest or a prop (`CHEST_INTERACT_RANGE`,
+/// `PROP_INTERACT_RANGE`), which it measures from the chest — not from where
+/// we walked to.
+pub(super) const CHEST_INTERACT_RANGE: f32 = 2.5;
+/// Slack left under that gate for overshoot and for the lag between our
+/// position and the server's.
+const CHEST_ARRIVE_MARGIN: f32 = 0.5;
+/// Maximum walk-to-point duration before giving up (seconds). A point is only
+/// ever walked to from inside its own room, so this is a stuck-detector, not
+/// a travel budget.
+const MAX_POINT_WALK_SECS: f32 = 15.0;
+
+/// How close to stop to the walk target, given how far that target sits from
+/// the thing being opened. A clutter prop is a collision pillar, so we walk to
+/// the cell beside it instead — and that metre comes out of our margin.
+pub(super) fn chest_arrive_range(gap: f32) -> f32 {
+    (CHEST_INTERACT_RANGE - gap - CHEST_ARRIVE_MARGIN).max(0.5)
+}
 
 /// Load the attack (slash1) animation duration from the shared JSON file.
 /// Returns the duration as milliseconds, or the default if loading fails.
@@ -131,10 +149,12 @@ pub(super) enum ChaseTarget<'a> {
     Monster(&'a str),
     Player(&'a PlayerId),
     GroundItem(u64),
-    /// A fixed world position on a known floor (e.g. the dungeon chest).
+    /// A fixed world position on a known floor (e.g. the cell beside a chest),
+    /// with the distance the caller needs us to end up inside.
     Point {
         pos: onlinerpg_shared::Position,
         floor_level: i8,
+        arrive_range: f32,
     },
 }
 
@@ -187,14 +207,14 @@ impl ChaseTarget<'_> {
                 max_distance: crate::state::NPC_SIGHT_RADIUS,
                 max_secs: MAX_PICKUP_WALK_SECS,
             },
-            // Fixed points sit anywhere on the floor (the chest can be a
-            // whole dungeon floor away), so no sight-radius cap.
-            Self::Point { .. } => ChaseTuning {
-                arrive_range: 2.0,
+            // A fixed point is only ever offered once we share its room, so
+            // the sight radius is slack, not a leash.
+            Self::Point { arrive_range, .. } => ChaseTuning {
+                arrive_range: *arrive_range,
                 path_pullback: 0.0,
-                step_stop_dist: 1.5,
-                max_distance: f32::MAX,
-                max_secs: 60.0,
+                step_stop_dist: (arrive_range - 0.5).max(0.5),
+                max_distance: crate::state::NPC_SIGHT_RADIUS,
+                max_secs: MAX_POINT_WALK_SECS,
             },
         }
     }
@@ -255,13 +275,22 @@ pub(super) async fn walk_to_ground_item(
     chase_target(state, &ChaseTarget::GroundItem(instance_id)).await
 }
 
-/// Walk to a fixed position on a floor (e.g. the dungeon treasure chest).
+/// Walk to a fixed position on a floor, stopping within `arrive_range` of it.
 pub(super) async fn walk_to_point(
     state: &Arc<Mutex<SharedState>>,
     pos: onlinerpg_shared::Position,
     floor_level: i8,
+    arrive_range: f32,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Point { pos, floor_level }).await
+    chase_target(
+        state,
+        &ChaseTarget::Point {
+            pos,
+            floor_level,
+            arrive_range,
+        },
+    )
+    .await
 }
 
 /// Chase the target until we're within its arrive range, using A*
@@ -446,4 +475,24 @@ fn compute_step_toward(state: &SharedState, target: &ChaseTarget) -> Option<(Cli
         0,
     );
     Some((cmd, step_dist))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Wherever we stop, the server has to agree we are in range — it measures
+    /// from the chest, we walk to a cell that can be a metre off it.
+    #[test]
+    fn a_chest_walk_ends_inside_the_server_range() {
+        // 0.0: the treasure chest, walked onto directly. 1.0: the cell beside
+        // a clutter prop, the only case `beside_prop` can produce.
+        for gap in [0.0, 1.0] {
+            let stop = gap + chest_arrive_range(gap);
+            assert!(
+                stop < CHEST_INTERACT_RANGE,
+                "stopping {stop}m from a chest {gap}m off the walk target is outside the gate"
+            );
+        }
+    }
 }

@@ -178,7 +178,7 @@ fn blocking_entries<'a>(
 /// Each direction is asked through the full [`is_movement_blocked`] path rather
 /// than read off one grid's bits, because a seal is usually a mix of entries —
 /// a bed's own cells on three sides and the room's wall on the fourth.
-pub(crate) fn is_cell_sealed(
+pub fn is_cell_sealed(
     cache: &PassabilityCache,
     x: f32,
     z: f32,

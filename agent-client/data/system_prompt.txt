@@ -55,11 +55,13 @@ Available action types (use EXACTLY these field names):
   state ("Item on ground: ... [id 6043]"), or its name:
   {"type": "pickup", "item": 6043}
 
-- Open the treasure chest on a dungeon's deepest floor. You walk to it
-  first, then the server decides: it opens only after that floor's boss is
-  dead, and refills per player once an hour. Loot lands straight in your
-  bag; a rejection tells you why it stayed shut:
+- Open a chest in a dungeon. You have to be in the room it stands in — the
+  world state names the chests there and what each looks like. You walk over
+  first, then the server decides; a rejection tells you why it stayed shut.
+  Plain form opens the nearest one:
   {"type": "open_chest"}
+  To cross the room to the great chest instead of the small one at your feet:
+  {"type": "open_chest", "chest": "great"}
 
 IMPORTANT:
 - For attack, the field is "monster_id" (NOT "targetId", NOT "target", NOT "id").

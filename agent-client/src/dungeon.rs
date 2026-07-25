@@ -14,10 +14,12 @@ use std::collections::HashSet;
 
 #[cfg(test)]
 use onlinerpg_shared::dungeon::floor_world_y;
+#[cfg(test)]
+use onlinerpg_shared::dungeon::Room;
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, dungeon_passability, entrances, generate_dungeon_for,
-    ground_y_for_floor, interior_doors, passability_floor_for_depth, DungeonEntranceDef,
-    FloorLayout, InteriorDoorSpec,
+    ground_y_for_floor, interior_doors, passability_floor_for_depth, world_to_cell,
+    DungeonEntranceDef, FloorLayout, InteriorDoorSpec, PropKind,
 };
 use onlinerpg_shared::pathfinding::RuntimePassability;
 use onlinerpg_shared::Position;
@@ -35,6 +37,29 @@ pub struct Dungeon {
 pub struct DoorApproach {
     pub door_id: u32,
     pub sides: [(f32, f32); 2],
+}
+
+/// Which chest a sighting is. The two render differently, so the agent is
+/// told which it is looking at, the same as a player can see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChestKind {
+    /// The boss-guarded chest on the deepest floor (`OpenDungeonChest`).
+    Treasure,
+    /// A clutter chest, by its index into the floor's props
+    /// (`OpenDungeonProp`).
+    Prop(u32),
+}
+
+/// A chest standing in the same room as the agent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChestSighting {
+    pub kind: ChestKind,
+    /// The chest itself — what the distance shown to the agent measures to.
+    pub position: Position,
+    /// Where to stand to open it. The treasure chest carries no collision, so
+    /// it is the chest's own cell; a clutter prop is a 1×1 pillar A* can never
+    /// route onto, so it is the walkable cell beside it.
+    pub approach: Position,
 }
 
 impl Dungeon {
@@ -90,6 +115,77 @@ impl Dungeon {
             depth,
             layout.up_shaft.exit_cell(),
         ))
+    }
+
+    /// Every chest someone at `pos` on `depth` can see: the ones sharing their
+    /// room, nearest first. Empty from a corridor or a stair landing outside
+    /// every room, and empty from the next room over however close the chest
+    /// is — walls hide it, as they hide it from a player at the web client.
+    ///
+    /// `opened` holds the prop indices already claimed on this floor.
+    /// `walkable` decides where the agent can stand to open a prop; pass the
+    /// live passability, not the layout, so broken props and shut doors count.
+    pub fn chests_in_room_of(
+        &self,
+        depth: u8,
+        pos: &Position,
+        opened: &HashSet<u32>,
+        walkable: impl Fn(&Position) -> bool,
+    ) -> Vec<ChestSighting> {
+        let Some(layout) = self.layout_at(depth) else {
+            return Vec::new();
+        };
+        let (px, pz) = world_to_cell(&self.entrance, pos.x, pos.z);
+        let Some(room) = layout.room_at(px, pz) else {
+            return Vec::new();
+        };
+        let mut seen: Vec<ChestSighting> = layout
+            .chest
+            .filter(|c| room.contains(c.0, c.1))
+            .map(|c| (ChestKind::Treasure, c))
+            .into_iter()
+            .chain(
+                layout
+                    .props
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, p)| {
+                        matches!(p.kind, PropKind::Chest)
+                            && !opened.contains(&(*i as u32))
+                            && room.contains(p.x, p.z)
+                    })
+                    .map(|(i, p)| (ChestKind::Prop(i as u32), (p.x, p.z))),
+            )
+            .filter_map(|(kind, cell)| {
+                let position = cell_center(&self.entrance, depth, cell);
+                let approach = match kind {
+                    ChestKind::Treasure => position,
+                    ChestKind::Prop(_) => {
+                        // Props are 1×1 collision pillars, so A* can never
+                        // route onto one: stand in the open cell beside it.
+                        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+                            .into_iter()
+                            .map(|(dx, dz)| (cell.0 + dx, cell.1 + dz))
+                            .filter(|c| layout.is_carved(c.0, c.1))
+                            .map(|c| cell_center(&self.entrance, depth, c))
+                            .filter(|p| walkable(p))
+                            .min_by(|a, b| {
+                                let d =
+                                    |p: &Position| crate::geom::PlanarDelta::between(pos, p).dist;
+                                d(a).total_cmp(&d(b))
+                            })?
+                    }
+                };
+                Some(ChestSighting {
+                    kind,
+                    position,
+                    approach,
+                })
+            })
+            .collect();
+        let dist = |c: &ChestSighting| crate::geom::PlanarDelta::between(pos, &c.position).dist;
+        seen.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+        seen
     }
 
     /// World XZ of the cell pair a door segment separates, at its midpoint.
@@ -160,5 +256,122 @@ mod tests {
             .map(|depth| d.closed_doors(depth, &HashSet::new()).len())
             .sum();
         assert!(closed > 0, "expected shut interior doors in old_crypt");
+    }
+
+    /// The deepest floor of old_crypt: its treasure chest cell, the room that
+    /// holds it, and a spot at that room's center to look from.
+    fn chest_room(d: &Dungeon) -> (u8, (i32, i32), Room, Position) {
+        let depth = d.max_depth();
+        let layout = d.layouts().last().expect("old_crypt has floors");
+        let cell = layout.chest.expect("final floor has a chest");
+        let room = *layout
+            .room_at(cell.0, cell.1)
+            .expect("the chest is in a room");
+        (
+            depth,
+            cell,
+            room,
+            cell_center(&d.entrance, depth, room.center()),
+        )
+    }
+
+    /// The live grid seals props and shut doors; tests that only care about
+    /// sighting take the layout's word for what is floor.
+    fn carved_only(d: &Dungeon, depth: u8) -> impl Fn(&Position) -> bool + '_ {
+        move |p: &Position| {
+            let (x, z) = world_to_cell(&d.entrance, p.x, p.z);
+            let props_here = d
+                .layout_at(depth)
+                .map(|l| l.props.iter().any(|pr| (pr.x, pr.z) == (x, z)))
+                .unwrap_or(false);
+            d.layout_at(depth).is_some_and(|l| l.is_carved(x, z)) && !props_here
+        }
+    }
+
+    /// A chest shows itself to someone in its own room and to nobody else —
+    /// the agent has to walk the floor to find it, like a web player does.
+    #[test]
+    fn chests_are_only_visible_from_inside_their_room() {
+        let d = crypt();
+        let (depth, cell, room, _) = chest_room(&d);
+        let chest_pos = cell_center(&d.entrance, depth, cell);
+        let none = HashSet::new();
+
+        let here = d.chests_in_room_of(depth, &chest_pos, &none, carved_only(&d, depth));
+        assert_eq!(here.first().map(|c| c.kind), Some(ChestKind::Treasure));
+        assert_eq!(here[0].position, chest_pos);
+
+        let layout = d.layouts().last().unwrap();
+        let elsewhere = layout
+            .rooms
+            .iter()
+            .find(|r| r.x != room.x || r.z != room.z)
+            .expect("the final floor has more than one room");
+        let other_room = cell_center(&d.entrance, depth, elsewhere.center());
+        assert!(!d
+            .chests_in_room_of(depth, &other_room, &none, carved_only(&d, depth))
+            .iter()
+            .any(|c| c.kind == ChestKind::Treasure));
+    }
+
+    /// Clutter chests come back alongside the treasure chest, nearest first,
+    /// and drop out of sight once opened.
+    #[test]
+    fn clutter_chests_are_sighted_like_the_treasure_and_hidden_once_opened() {
+        let d = crypt();
+        let (depth, _, room, stand) = chest_room(&d);
+        let prop = d
+            .layouts()
+            .last()
+            .unwrap()
+            .props
+            .iter()
+            .enumerate()
+            .find(|(_, p)| matches!(p.kind, PropKind::Chest) && room.contains(p.x, p.z))
+            .map(|(i, _)| i as u32)
+            .expect("old_crypt's chest room also holds a clutter chest");
+
+        let sighted = d.chests_in_room_of(depth, &stand, &HashSet::new(), carved_only(&d, depth));
+        assert!(sighted.iter().any(|c| c.kind == ChestKind::Prop(prop)));
+        assert!(sighted.iter().any(|c| c.kind == ChestKind::Treasure));
+        let mut dists = sighted
+            .iter()
+            .map(|c| crate::geom::PlanarDelta::between(&stand, &c.position).dist);
+        let first = dists.next().unwrap();
+        assert!(dists.all(|d| d >= first), "sightings are nearest first");
+
+        let opened = HashSet::from([prop]);
+        assert!(!d
+            .chests_in_room_of(depth, &stand, &opened, carved_only(&d, depth))
+            .iter()
+            .any(|c| c.kind == ChestKind::Prop(prop)));
+    }
+
+    /// Every prop is a 1×1 collision pillar, so a clutter chest is opened from
+    /// a cell beside it — pathing at the chest's own cell never arrives. The
+    /// treasure chest carries no collision and is walked onto directly.
+    #[test]
+    fn clutter_chests_are_approached_from_a_walkable_neighbour() {
+        let d = crypt();
+        let (depth, _, _, stand) = chest_room(&d);
+        let walkable = carved_only(&d, depth);
+
+        for sighting in d.chests_in_room_of(depth, &stand, &HashSet::new(), carved_only(&d, depth))
+        {
+            assert!(
+                walkable(&sighting.approach),
+                "{:?} is approached from an unwalkable cell",
+                sighting.kind
+            );
+            match sighting.kind {
+                ChestKind::Treasure => assert_eq!(sighting.approach, sighting.position),
+                ChestKind::Prop(_) => {
+                    let gap =
+                        crate::geom::PlanarDelta::between(&sighting.approach, &sighting.position)
+                            .dist;
+                    assert!(gap > 0.0 && gap <= 1.5, "approach cell is {gap}m from it");
+                }
+            }
+        }
     }
 }

@@ -65,6 +65,10 @@ pub struct WorldCache {
     /// from the server so our A* sees the same walls its movement sim does.
     dungeon_doors: HashMap<(String, u8), HashSet<u32>>,
     dungeon_broken_props: HashMap<(String, u8), Vec<u32>>,
+    /// Chest props already opened, per (entrance id, depth). No passability
+    /// bearing — an open chest stays solid — but an opened chest is one the
+    /// agent should stop seeing, the way its lid stays up for a web player.
+    dungeon_opened_props: HashMap<(String, u8), HashSet<u32>>,
 }
 
 impl WorldCache {
@@ -75,6 +79,7 @@ impl WorldCache {
             dungeons: Vec::new(),
             dungeon_doors: HashMap::new(),
             dungeon_broken_props: HashMap::new(),
+            dungeon_opened_props: HashMap::new(),
         }
     }
 
@@ -181,6 +186,28 @@ impl WorldCache {
         }
         broken.push(prop_id);
         self.rebuild_dungeon_floor(id, depth);
+    }
+
+    pub fn set_dungeon_opened_props(&mut self, id: &str, depth: u8, opened: Vec<u32>) {
+        self.dungeon_opened_props
+            .insert((id.to_string(), depth), opened.into_iter().collect());
+    }
+
+    pub fn add_dungeon_opened_prop(&mut self, id: &str, depth: u8, prop_id: u32) {
+        self.dungeon_opened_props
+            .entry((id.to_string(), depth))
+            .or_default()
+            .insert(prop_id);
+    }
+
+    pub fn remove_dungeon_opened_prop(&mut self, id: &str, depth: u8, prop_id: u32) {
+        if let Some(opened) = self.dungeon_opened_props.get_mut(&(id.to_string(), depth)) {
+            opened.remove(&prop_id);
+        }
+    }
+
+    pub fn opened_dungeon_props(&self, id: &str, depth: u8) -> Option<&HashSet<u32>> {
+        self.dungeon_opened_props.get(&(id.to_string(), depth))
     }
 
     /// Recompute one dungeon floor's cells from the live door/prop state
@@ -332,6 +359,15 @@ pub struct SharedState {
     /// A path that produced a refused step will produce it again, so movers
     /// watch this and abandon the path instead of grinding the same wall.
     pub position_corrections: u32,
+    /// The chest we last asked the server to open, until it answers. Opening a
+    /// clutter prop is recorded before the answer arrives (an already-claimed
+    /// prop is a silent no-op, and without the record we would target it
+    /// forever), so a rejection has to take that record back.
+    pending_chest_open: Option<(String, u8, crate::dungeon::ChestKind)>,
+    /// Dungeons whose treasure chest we have already emptied. The server
+    /// refuses the next open until nightfall, so the world state says so
+    /// rather than sending us back to a chest that has nothing for us.
+    treasure_chests_spent: HashSet<String>,
     cmd_tx: mpsc::Sender<ClientMessage>,
     /// Notified when an urgent event arrives
     pub urgent_notify: Arc<Notify>,
@@ -379,6 +415,8 @@ impl SharedState {
             game_minute: None,
             self_floor_level: 0,
             position_corrections: 0,
+            pending_chest_open: None,
+            treasure_chests_spent: HashSet::new(),
             cmd_tx,
             urgent_notify: Arc::new(Notify::new()),
             monster_ai: MonsterAiManager::new(),
@@ -950,13 +988,52 @@ impl SharedState {
                 ref entrance_id,
                 depth,
                 ref broken,
-                ..
+                ref opened,
             } => {
-                self.world_cache.write().unwrap().set_dungeon_broken_props(
+                let mut cache = self.world_cache.write().unwrap();
+                cache.set_dungeon_broken_props(entrance_id, *depth, broken.clone());
+                cache.set_dungeon_opened_props(entrance_id, *depth, opened.clone());
+            }
+            ServerMessage::DungeonPropOpened {
+                ref entrance_id,
+                depth,
+                prop_id,
+            } => {
+                self.world_cache.write().unwrap().add_dungeon_opened_prop(
                     entrance_id,
                     *depth,
-                    broken.clone(),
+                    *prop_id,
                 );
+                self.pending_chest_open = None;
+            }
+            // Our own open landed: the chest owes us nothing until nightfall.
+            ServerMessage::DungeonChestOpened {
+                ref entrance_id,
+                player_id,
+                ..
+            } if self.self_player_id.as_ref() == Some(player_id) => {
+                self.treasure_chests_spent.insert(entrance_id.clone());
+                self.pending_chest_open = None;
+            }
+            // A rejection means the open we recorded never happened. The agent
+            // sends no other interaction, so a pending open owns this reason.
+            ServerMessage::InteractionRejected { ref reason } => {
+                if let Some((entrance_id, depth, kind)) = self.pending_chest_open.take() {
+                    match kind {
+                        crate::dungeon::ChestKind::Prop(prop_id) => {
+                            self.world_cache
+                                .write()
+                                .unwrap()
+                                .remove_dungeon_opened_prop(&entrance_id, depth, prop_id);
+                        }
+                        // "The chest is empty (it refills at nightfall)" — the
+                        // other refusals (boss alive, too far) are ours to fix.
+                        crate::dungeon::ChestKind::Treasure if reason.contains("empty") => {
+                            self.treasure_chests_spent.insert(entrance_id);
+                        }
+                        crate::dungeon::ChestKind::Treasure => {}
+                    }
+                }
             }
             ServerMessage::DungeonPropBroken {
                 ref entrance_id,
@@ -1276,6 +1353,55 @@ impl SharedState {
         std::mem::take(&mut self.agent_events)
     }
 
+    /// Record an open we are about to send. A clutter prop is marked opened
+    /// right away — the server answers a second open on one with silence, and
+    /// an agent that cannot see the silence would retarget it forever. The
+    /// mark is undone if the server rejects us.
+    pub fn chest_open_sent(
+        &mut self,
+        entrance_id: &str,
+        depth: u8,
+        kind: crate::dungeon::ChestKind,
+    ) {
+        if let crate::dungeon::ChestKind::Prop(prop_id) = kind {
+            self.world_cache
+                .write()
+                .unwrap()
+                .add_dungeon_opened_prop(entrance_id, depth, prop_id);
+        }
+        self.pending_chest_open = Some((entrance_id.to_string(), depth, kind));
+    }
+
+    /// Whether we have already emptied this dungeon's treasure chest.
+    pub fn treasure_chest_spent(&self, entrance_id: &str) -> bool {
+        self.treasure_chests_spent.contains(entrance_id)
+    }
+
+    /// Chests standing in the room we occupy, nearest first — the treasure
+    /// chest and the clutter chests together. Empty above ground, in a
+    /// corridor, and once a chest has been opened.
+    pub fn chests_in_sight(&self) -> Vec<crate::dungeon::ChestSighting> {
+        let Some(p) = self.self_player.as_ref() else {
+            return Vec::new();
+        };
+        if self.self_floor_level >= 0 {
+            return Vec::new();
+        }
+        let depth = self.self_floor_level.unsigned_abs();
+        let world = self.world_cache.read().unwrap();
+        let Some(dungeon) = world.dungeon_at(p.position.x, p.position.z) else {
+            return Vec::new();
+        };
+        let empty = HashSet::new();
+        let opened = world
+            .opened_dungeon_props(&dungeon.id, depth)
+            .unwrap_or(&empty);
+        let floor = dungeon.passability_floor(depth);
+        dungeon.chests_in_room_of(depth, &p.position, opened, |c| {
+            !pathfinding::is_cell_sealed(world.passability_cache(), c.x, c.z, floor, None)
+        })
+    }
+
     /// Where we stand relative to the dungeons: the floor we are on when
     /// underground, or the nearest entrance when we are not. Monsters get
     /// stronger with depth, so the LLM needs both to decide whether to dive.
@@ -1292,25 +1418,25 @@ impl SharedState {
                 "You are underground: {name}floor {depth} (deeper floors hold stronger \
                  monsters; move with \"depth\" to change floors, 0 to leave)"
             );
-            // The deepest floor holds the treasure chest — surface it so the
-            // LLM knows it exists and how to claim it.
-            if let Some(d) = dungeon {
-                if depth == d.max_depth() {
-                    if let Some(cell) = d.layouts().last().and_then(|l| l.chest) {
-                        let pos = onlinerpg_shared::dungeon::cell_center(
-                            &d.entrance,
-                            d.max_depth(),
-                            cell,
-                        );
-                        let dist = crate::geom::PlanarDelta::between(&p.position, &pos).dist;
-                        line.push_str(&format!(
-                            "\nTreasure chest on this floor at ({:.0}, {:.0}), {dist:.0}m away \
-                             — {{\"type\": \"open_chest\"}} walks there and opens it. It only \
-                             opens once this floor's boss is dead (refills per player hourly).",
-                            pos.x, pos.z
-                        ));
-                    }
-                }
+            // Chests in our own room, described the way they render so the
+            // agent can go for the one it wants. No coordinates — walking
+            // over is the action's job.
+            let spent = dungeon
+                .as_ref()
+                .is_some_and(|d| self.treasure_chest_spent(&d.id));
+            for chest in self.chests_in_sight() {
+                let (looks, note) = match chest.kind {
+                    crate::dungeon::ChestKind::Treasure if spent => (
+                        "a great chest standing alone",
+                        " — you emptied it; it refills at nightfall",
+                    ),
+                    crate::dungeon::ChestKind::Treasure => ("a great chest standing alone", ""),
+                    crate::dungeon::ChestKind::Prop(_) => ("a small chest among the clutter", ""),
+                };
+                let dist = crate::geom::PlanarDelta::between(&p.position, &chest.position).dist;
+                line.push_str(&format!(
+                    "\nChest in this room: {looks} ({dist:.0}m away){note}"
+                ));
             }
             return Some(line);
         }
@@ -1833,6 +1959,134 @@ pub(crate) mod tests {
         assert_eq!(
             s.wire_floor_at(x, z, dungeon.floor_y(deepest) - 50.0),
             -(deepest as i8)
+        );
+    }
+
+    /// Chest sightings run off the live passability, so the cell they tell the
+    /// mover to stand on must be one A* can actually route to — a clutter prop
+    /// is a sealed pillar, and aiming at it strands the agent every time.
+    #[test]
+    fn a_sighted_chest_is_approached_from_a_cell_a_path_can_reach() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let depth = dungeon.max_depth();
+        let layout = dungeon.layouts().last().unwrap();
+        let cell = layout.chest.unwrap();
+        let room = layout.room_at(cell.0, cell.1).unwrap();
+        let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, room.center());
+        let floor = dungeon.passability_floor(depth);
+
+        s.self_floor_level = -(depth as i8);
+        s.self_player = Some(Player {
+            position: stand,
+            floor_level: -(depth as i8),
+            ..test_player(stand.x, stand.z)
+        });
+
+        let chests = s.chests_in_sight();
+        assert!(
+            chests
+                .iter()
+                .any(|c| c.kind == crate::dungeon::ChestKind::Treasure),
+            "the chest room should show its treasure chest"
+        );
+        assert!(
+            chests.len() > 1,
+            "old_crypt's chest room also holds a clutter chest"
+        );
+        for chest in chests {
+            let a = chest.approach;
+            assert!(
+                !pathfinding::is_cell_sealed(
+                    s.world_cache.read().unwrap().passability_cache(),
+                    a.x,
+                    a.z,
+                    floor,
+                    None
+                ),
+                "{:?} is approached from a sealed cell",
+                chest.kind
+            );
+            assert!(
+                s.find_path_to(a.x, a.z, floor).found,
+                "{:?} has no route to its approach cell",
+                chest.kind
+            );
+        }
+    }
+
+    /// Standing where the chest room is, on the deepest floor.
+    fn in_the_chest_room(s: &mut SharedState, dungeon: &crate::dungeon::Dungeon) -> u8 {
+        let depth = dungeon.max_depth();
+        let layout = dungeon.layouts().last().unwrap();
+        let cell = layout.chest.unwrap();
+        let room = layout.room_at(cell.0, cell.1).unwrap();
+        let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, room.center());
+        s.self_floor_level = -(depth as i8);
+        s.self_player = Some(Player {
+            position: stand,
+            floor_level: -(depth as i8),
+            ..test_player(stand.x, stand.z)
+        });
+        depth
+    }
+
+    /// A clutter prop is marked opened before the server answers, because an
+    /// already-claimed one answers with silence. A rejection says it never
+    /// opened, so the mark has to come back off — otherwise a chest the agent
+    /// merely stood too far from is invisible for the rest of the floor.
+    #[tokio::test]
+    async fn a_rejected_prop_open_becomes_visible_again() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let depth = in_the_chest_room(&mut s, &dungeon);
+        let prop = match s
+            .chests_in_sight()
+            .into_iter()
+            .find(|c| matches!(c.kind, crate::dungeon::ChestKind::Prop(_)))
+            .expect("the chest room holds a clutter chest")
+            .kind
+        {
+            crate::dungeon::ChestKind::Prop(id) => id,
+            _ => unreachable!(),
+        };
+
+        s.chest_open_sent(&dungeon.id, depth, crate::dungeon::ChestKind::Prop(prop));
+        assert!(
+            !s.chests_in_sight()
+                .iter()
+                .any(|c| c.kind == crate::dungeon::ChestKind::Prop(prop)),
+            "a sent open hides the chest so we stop targeting it"
+        );
+
+        s.push_event(ServerMessage::InteractionRejected {
+            reason: "Too far from the chest".to_string(),
+        });
+        assert!(
+            s.chests_in_sight()
+                .iter()
+                .any(|c| c.kind == crate::dungeon::ChestKind::Prop(prop)),
+            "a refused open leaves the chest there to try again"
+        );
+    }
+
+    /// An emptied treasure chest still stands there, so it keeps showing — but
+    /// the line says it has nothing left, or the agent walks back to it all
+    /// night for the same refusal.
+    #[tokio::test]
+    async fn an_emptied_treasure_chest_says_so() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let depth = in_the_chest_room(&mut s, &dungeon);
+        assert!(!s.format_world_state().contains("refills at nightfall"));
+
+        s.chest_open_sent(&dungeon.id, depth, crate::dungeon::ChestKind::Treasure);
+        s.push_event(ServerMessage::InteractionRejected {
+            reason: "The chest is empty (it refills at nightfall)".to_string(),
+        });
+
+        let world = s.format_world_state();
+        assert!(
+            world.contains("a great chest standing alone")
+                && world.contains("you emptied it; it refills at nightfall"),
+            "{world}"
         );
     }
 
