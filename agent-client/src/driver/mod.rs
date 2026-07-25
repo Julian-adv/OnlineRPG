@@ -38,7 +38,7 @@ pub(crate) use action::wants_reroll;
 use combat::{load_attack_cooldown, tick_combat};
 use execute::handle_response;
 use movement::{
-    check_schedule_transition, fetch_furniture_for_schedule, fetch_houses_for_schedule,
+    check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
 };
 use prompt::build_prompt;
 
@@ -65,6 +65,9 @@ pub struct DriverConfig {
     pub debounce: Duration,
     pub idle_interval: Duration,
     pub activity_window: Duration,
+    /// Think even with nobody watching. Off only for operator-run registry
+    /// NPCs, whose LLM calls come out of the project's budget.
+    pub always_active: bool,
     pub schedule: Vec<ScheduleEntry>,
     /// HTTP base URL for the game server API (e.g. "http://127.0.0.1:10007").
     pub api_base_url: String,
@@ -89,6 +92,7 @@ pub async fn llm_driver(
         debounce,
         idle_interval,
         activity_window,
+        always_active,
         schedule,
         api_base_url,
     } = config;
@@ -129,6 +133,28 @@ pub async fn llm_driver(
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
 
+    // Fetch housing + furniture data so pathfinding avoids buildings and solid
+    // props the same way the browser client does. An agent without a schedule
+    // (a plain player agent) has no route to prefetch along, so cover where it
+    // stands — otherwise its A* knows of no buildings at all and it walks
+    // straight through the town it spawned in.
+    {
+        let (world_cache, around) = {
+            let s = state.lock().await;
+            (
+                Arc::clone(&s.world_cache),
+                s.self_player.as_ref().map(|p| p.position),
+            )
+        };
+        let area = coverage_positions(&schedule, around);
+        // Different endpoints, disjoint data — no reason to wait for one before
+        // asking for the other.
+        tokio::join!(
+            fetch_houses_around(&world_cache, &area, &api_base_url, &label),
+            fetch_furniture_around(&world_cache, &area, &api_base_url, &label),
+        );
+    }
+
     // Execute initial schedule move (go to correct position for current time)
     if !schedule.is_empty() {
         // Wait for first GameTimeSync to arrive (up to 10s)
@@ -140,17 +166,12 @@ pub async fn llm_driver(
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
-        // Fetch housing + furniture data so pathfinding avoids buildings and
-        // solid props the same way the browser client does.
-        let world_cache = { Arc::clone(&state.lock().await.world_cache) };
-        fetch_houses_for_schedule(&world_cache, &schedule, &api_base_url, &label).await;
-        fetch_furniture_for_schedule(&world_cache, &schedule, &api_base_url, &label).await;
-
         active_schedule =
             check_schedule_transition(&state, &schedule, active_schedule, &label).await;
     }
 
-    // Send initial world state only if human players are nearby and NPC is not sleeping
+    // Send initial world state unless the NPC is asleep, or it only thinks
+    // with an audience and has none.
     let is_sleeping = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
     {
         let mut s = state.lock().await;
@@ -158,7 +179,7 @@ pub async fn llm_driver(
             s.drain_events();
             s.drain_agent_events();
             info!("[{label}] LLM driver: NPC is sleeping, skipping initial prompt");
-        } else if s.has_nearby_human_players() {
+        } else if always_active || s.has_nearby_human_players() {
             let agent_events = s.drain_agent_events();
             let initial_prompt = build_prompt(&s, &[], &agent_events, &schedule, active_schedule.0);
             drop(s);
@@ -284,9 +305,10 @@ pub async fn llm_driver(
         let (prompt, has_events, priority) = {
             let mut s = state.lock().await;
 
-            // Skip LLM when NPC is sleeping or no human players are nearby —
-            // drain events to avoid unbounded accumulation but don't build a prompt.
-            if is_sleeping || !s.has_nearby_human_players() {
+            // Skip the LLM while asleep, and — for an operator-run NPC — while
+            // nobody is around to see it. Events still drain so they can't pile
+            // up unbounded.
+            if is_sleeping || !(always_active || s.has_nearby_human_players()) {
                 s.drain_events();
                 s.drain_agent_events();
                 pending_urgency = LlmPriority::Idle;

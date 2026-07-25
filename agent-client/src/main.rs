@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod driver;
+mod dungeon;
 mod geom;
 mod google_auth;
 mod item_defs;
@@ -222,9 +223,15 @@ async fn main() -> anyhow::Result<()> {
         hub
     });
 
+    let world_cache = {
+        let mut cache = state::WorldCache::new();
+        cache.register_dungeons();
+        Arc::new(std::sync::RwLock::new(cache))
+    };
+
     let shared = Arc::new(SharedResources {
         height_sampler,
-        world_cache: Arc::new(std::sync::RwLock::new(state::WorldCache::new())),
+        world_cache,
         behavior_trees: Arc::new(behavior_trees),
         type_mapping: Arc::new(type_mapping),
         movement_speeds: Arc::new(movement_speeds),
@@ -413,6 +420,34 @@ server = "wss://example.test/ws"
 [auth]
 mode = "google"
 "#;
+
+    /// Who pays decides the default: an agent someone runs for themselves
+    /// spends their own LLM quota, so it keeps thinking with nobody watching.
+    /// A registry NPC runs on the operator's budget and stays gated.
+    #[test]
+    fn only_registry_npcs_wait_for_an_audience() {
+        let config = parse(
+            r#"
+server = "ws://127.0.0.1:10006"
+
+[[npcs]]
+id = "karl"
+account = "npc_guard"
+
+[[npcs]]
+account = "npc_delver"
+character_name = "Delver"
+
+[[npcs]]
+id = "rica"
+account = "npc_merchant"
+always_active = true
+"#,
+        );
+        assert!(!config.npcs[0].always_active(), "registry NPC");
+        assert!(config.npcs[1].always_active(), "player-run agent");
+        assert!(config.npcs[2].always_active(), "explicit override wins");
+    }
 
     #[test]
     fn auth_defaults_to_the_npc_token_flow() {

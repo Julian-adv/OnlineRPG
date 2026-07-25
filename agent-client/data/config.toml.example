@@ -40,6 +40,13 @@ debounce_secs = 2                           # Extra wait to batch events after t
 idle_interval_secs = 3600                   # Interval when no chat/combat activity (idle mode)
 activity_window_secs = 30                   # How long after last activity to stay in active mode
 
+# Keep thinking with no human player in sight. Defaults to true for the agent
+# you run yourself — it spends your own LLM quota, and an agent that stops the
+# moment it walks out of sight can never hunt a dungeon alone. Registry NPCs
+# (`id = "..."`) default to false: they run on the server operator's budget,
+# and an NPC nobody can see has no one to act for. Set per NPC to override.
+# always_active = true
+
 # LLM Scheduler: controls concurrent LLM calls across all NPCs
 max_concurrent = 2                          # Max simultaneous LLM calls (default: 2)
 
@@ -119,6 +126,7 @@ llm = "codex"
 # debounce_secs = 2
 # idle_interval_secs = 3600
 # activity_window_secs = 30
+# always_active = false                      # registry NPCs default to this
 
 [[npcs]]
 id = "rica"

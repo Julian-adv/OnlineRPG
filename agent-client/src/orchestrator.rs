@@ -139,6 +139,13 @@ pub struct NpcConfig {
     pub idle_interval_secs: u64,
     #[serde(default = "super::default_activity_window_secs")]
     pub activity_window_secs: u64,
+    /// Keep thinking with no human player in sight. On for agents a player
+    /// runs — those spend the runner's own LLM quota, so there is nothing for
+    /// the project to save, and an agent that stops the moment it walks out of
+    /// sight can never hunt a dungeon alone. Registry NPCs (`id = "..."`)
+    /// default to off: they run on the operator's budget, and an NPC nobody
+    /// can see has no one to act for. See `always_active()`.
+    pub always_active: Option<bool>,
     #[serde(default)]
     pub claude: ClaudeConfig,
     #[serde(default)]
@@ -167,6 +174,12 @@ pub struct NpcConfig {
 }
 
 impl NpcConfig {
+    /// Whether to prompt the LLM with no human player nearby. Defaults to
+    /// true for anything but a registry NPC — see `always_active`.
+    pub fn always_active(&self) -> bool {
+        self.always_active.unwrap_or(self.id.is_none())
+    }
+
     /// Log label: the account when there is one, else the character it plays.
     pub fn label(&self) -> &str {
         self.account
@@ -848,6 +861,7 @@ fn spawn_llm_task(
         debounce,
         idle_interval,
         activity_window,
+        always_active: npc.always_active(),
         schedule,
         api_base_url,
     };

@@ -211,6 +211,7 @@ pub(super) async fn handle_response(
             z,
             direction,
             distance,
+            depth,
         } = action
         {
             // Name-targeted move: walk up to the character and stop a
@@ -259,6 +260,17 @@ pub(super) async fn handle_response(
                 continue;
             }
 
+            // A depth names a dungeon floor: walk to the entrance first (a
+            // cross-floor A* from across the map would blow its node budget),
+            // then descend to that floor's stair landing.
+            if let Some(depth) = depth {
+                // Only an explicit coordinate pair overrides the floor's landing;
+                // a direction/distance is meaningless across floors.
+                let goal = resolve_move_goal(x, z, &None, &None, None);
+                move_to_dungeon_floor(state, *depth, goal).await;
+                continue;
+            }
+
             // A bare coordinate carries no floor, so stay on the one we're on
             // rather than dropping to the ground floor.
             let (goal, floor) = {
@@ -266,7 +278,7 @@ pub(super) async fn handle_response(
                 let pp = s.self_player.as_ref().map(|p| &p.position);
                 (
                     resolve_move_goal(x, z, direction, distance, pp),
-                    s.self_floor_level,
+                    s.passability_floor(),
                 )
             };
             if let Some((gx, gz)) = goal {
@@ -301,4 +313,99 @@ pub(super) async fn handle_response(
     }
 
     last_attack_target
+}
+
+/// Walk to a dungeon floor. `depth` counts downward from the surface (1 is the
+/// first floor below ground, 0 leaves the dungeon); the sign the LLM writes is
+/// ignored. Runs in two legs — surface approach, then descent — because a
+/// cross-floor A* started from across the map exhausts its node budget long
+/// before it reaches the stairs.
+async fn move_to_dungeon_floor(
+    state: &Arc<Mutex<SharedState>>,
+    depth: i32,
+    goal_xz: Option<(f32, f32)>,
+) {
+    let depth = depth.unsigned_abs().min(u8::MAX as u32) as u8;
+
+    let (dungeon, outside) = {
+        let mut s = state.lock().await;
+        let Some(position) = s.self_player.as_ref().map(|p| p.position) else {
+            return;
+        };
+        if depth == 0 && s.self_floor_level >= 0 {
+            debug!("move depth 0: already above ground");
+            return;
+        }
+        let dungeon = {
+            let world = s.world_cache.read().unwrap();
+            world
+                .dungeon_at(position.x, position.z)
+                .or_else(|| world.nearest_dungeon(position.x, position.z))
+        };
+        let Some(dungeon) = dungeon else {
+            s.push_agent_event("[MoveFailed] There is no dungeon here to go into.".to_string());
+            return;
+        };
+        if depth > dungeon.max_depth() {
+            s.push_agent_event(format!(
+                "[MoveFailed] {} only goes down to floor {}.",
+                dungeon.name,
+                dungeon.max_depth()
+            ));
+            return;
+        }
+        s.request_dungeon_doors_here();
+        let outside = !dungeon.footprint_contains(position.x, position.z);
+        (dungeon, outside)
+    };
+
+    // Leg 1: get onto the dungeon's own grid on the surface.
+    if outside || depth == 0 {
+        let entrance = dungeon.entrance;
+        if matches!(
+            execute_move(state, entrance.x, entrance.z, 0).await,
+            MoveResult::Blocked
+        ) {
+            warn!("Could not reach the {} entrance", dungeon.name);
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[MoveFailed] You could not reach the entrance of {}.",
+                dungeon.name
+            ));
+            return;
+        }
+        state.lock().await.request_dungeon_doors_here();
+        if depth == 0 {
+            info!("Agent left {}", dungeon.name);
+            return;
+        }
+    }
+
+    // Leg 2: descend. The shared A* walks the stair shafts on its own; the
+    // mover opens whatever doors stand in the way.
+    let Some(landing) = dungeon.arrival_position(depth) else {
+        return;
+    };
+    let (gx, gz) = goal_xz.unwrap_or((landing.x, landing.z));
+    let floor = dungeon.passability_floor(depth);
+    match execute_move(state, gx, gz, floor).await {
+        MoveResult::Arrived => {
+            info!("Agent reached {} floor {depth}", dungeon.name);
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[Arrived] You are on floor {depth} of {}.",
+                dungeon.name
+            ));
+        }
+        MoveResult::Blocked => {
+            warn!("Descent to {} floor {depth} blocked", dungeon.name);
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[MoveFailed] You could not get to floor {depth} of {} — the way is \
+                 sealed. Try a floor closer to where you are.",
+                dungeon.name
+            ));
+        }
+        MoveResult::Error => error!("Descent to {} floor {depth} errored", dungeon.name),
+    }
 }

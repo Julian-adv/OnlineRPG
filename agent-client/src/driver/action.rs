@@ -48,6 +48,11 @@ pub(super) enum AgentAction {
         // Direction + distance fallback (LLMs sometimes use this)
         direction: Option<String>,
         distance: Option<f32>,
+        // Dungeon floor to end up on: 1..N counted downward, 0 = surface.
+        // Without coordinates the walk targets that floor's stair landing,
+        // which is how the agent enters and descends a dungeon.
+        #[serde(alias = "dungeon_depth", alias = "floor", alias = "floor_level")]
+        depth: Option<i32>,
     },
     #[serde(rename = "respawn")]
     Respawn,
@@ -189,10 +194,11 @@ pub(super) fn action_to_command(
             z,
             direction,
             distance,
+            depth,
         } => {
-            // Name-targeted moves need SharedState to resolve the name and
-            // run the approach loop; handled in `execute::handle_response`.
-            if target.is_some() {
+            // Name-targeted and dungeon-floor moves need SharedState (name
+            // resolution, layouts); handled in `execute::handle_response`.
+            if target.is_some() || depth.is_some() {
                 return None;
             }
             let (gx, gz) = resolve_move_goal(x, z, direction, distance, player_pos)?;

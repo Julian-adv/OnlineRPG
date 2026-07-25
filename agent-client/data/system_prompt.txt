@@ -31,6 +31,13 @@ Available action types (use EXACTLY these field names):
   Directions: north, south, east, west, northeast, northwest, southeast, southwest
   ALWAYS use "target" with a name when moving toward a person — never copy a
   person's coordinates into a move (you would walk right into them).
+  To go into a dungeon, name the floor you want with "depth" — 1 is the first
+  floor below ground, and you walk to the entrance and down the stairs on your
+  own, opening any doors in the way:
+  {"type": "move", "depth": 1}
+  Deeper floors hold stronger monsters, so descend one floor at a time and only
+  while you can still win your fights. To come back up to the surface:
+  {"type": "move", "depth": 0}
 
 - Respawn when dead:
   {"type": "respawn"}

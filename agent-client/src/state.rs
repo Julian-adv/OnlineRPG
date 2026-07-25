@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
+use onlinerpg_shared::dungeon::{
+    dungeon_cache_key, floor_level_for_passability, passability_floor_for_level, path_max_nodes,
+};
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
 use onlinerpg_shared::pathfinding::{self, PassabilityCache, PathResult};
@@ -41,11 +45,17 @@ pub enum EventUrgency {
     Noise,
 }
 
-/// Shared world data: passability cache and house state.
-/// Wrapped in `Arc<RwLock<WorldCache>>` so multiple NPC connections can share it.
+/// Shared world data: passability cache, house state and the generated
+/// dungeons. Wrapped in `Arc<RwLock<WorldCache>>` so multiple NPC connections
+/// share one copy.
 pub struct WorldCache {
     passability_cache: PassabilityCache,
     houses: HashMap<String, HouseData>,
+    dungeons: Vec<Arc<Dungeon>>,
+    /// Open interior doors and broken props per (entrance id, depth), mirrored
+    /// from the server so our A* sees the same walls its movement sim does.
+    dungeon_doors: HashMap<(String, u8), HashSet<u32>>,
+    dungeon_broken_props: HashMap<(String, u8), Vec<u32>>,
 }
 
 impl WorldCache {
@@ -53,6 +63,141 @@ impl WorldCache {
         Self {
             passability_cache: PassabilityCache::new(),
             houses: HashMap::new(),
+            dungeons: Vec::new(),
+            dungeon_doors: HashMap::new(),
+            dungeon_broken_props: HashMap::new(),
+        }
+    }
+
+    /// Generate every registry dungeon and register its passability — stair
+    /// shafts included, so the shared A* walks from the surface down to the
+    /// deepest floor with no extra machinery. Run once at startup, mirroring
+    /// the server's own `init_passability`; the entries also give surface
+    /// paths the entrance walls the server already collides against.
+    pub fn register_dungeons(&mut self) {
+        for dungeon in crate::dungeon::build_all() {
+            self.passability_cache
+                .insert(dungeon_cache_key(&dungeon.id), dungeon.passability());
+            self.dungeons.push(Arc::new(dungeon));
+        }
+    }
+
+    /// Dungeon whose footprint covers (x, z).
+    pub fn dungeon_at(&self, x: f32, z: f32) -> Option<Arc<Dungeon>> {
+        self.dungeons
+            .iter()
+            .find(|d| d.footprint_contains(x, z))
+            .map(Arc::clone)
+    }
+
+    /// Dungeon with the closest entrance.
+    pub fn nearest_dungeon(&self, x: f32, z: f32) -> Option<Arc<Dungeon>> {
+        self.dungeons
+            .iter()
+            .min_by(|a, b| {
+                let da = crate::geom::PlanarDelta::xz(x, z, a.entrance.x, a.entrance.z).dist;
+                let db = crate::geom::PlanarDelta::xz(x, z, b.entrance.x, b.entrance.z).dist;
+                da.total_cmp(&db)
+            })
+            .map(Arc::clone)
+    }
+
+    pub fn dungeon_by_id(&self, id: &str) -> Option<Arc<Dungeon>> {
+        self.dungeons.iter().find(|d| d.id == id).map(Arc::clone)
+    }
+
+    pub fn open_dungeon_doors(&self, id: &str, depth: u8) -> HashSet<u32> {
+        self.dungeon_doors
+            .get(&(id.to_string(), depth))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Replace the open-door set for a dungeon (the `DungeonDoorsState`
+    /// snapshot covers every depth at once, so unlisted floors are all shut).
+    pub fn set_dungeon_doors(&mut self, id: &str, doors: &[(u8, u32)]) {
+        let touched: HashSet<u8> = self
+            .dungeon_doors
+            .keys()
+            .filter(|(k, _)| k == id)
+            .map(|(_, depth)| *depth)
+            .chain(doors.iter().map(|(depth, _)| *depth))
+            .collect();
+        for depth in &touched {
+            self.dungeon_doors.remove(&(id.to_string(), *depth));
+        }
+        for (depth, door_id) in doors {
+            self.dungeon_doors
+                .entry((id.to_string(), *depth))
+                .or_default()
+                .insert(*door_id);
+        }
+        for depth in touched {
+            self.rebuild_dungeon_floor(id, depth);
+        }
+    }
+
+    pub fn set_dungeon_door(&mut self, id: &str, depth: u8, door_id: u32, is_open: bool) {
+        let set = self
+            .dungeon_doors
+            .entry((id.to_string(), depth))
+            .or_default();
+        // Re-broadcasts are common; rebuilding a floor's 6400 cells under the
+        // shared write lock for a state we already hold is not worth it.
+        let changed = if is_open {
+            set.insert(door_id)
+        } else {
+            set.remove(&door_id)
+        };
+        if changed {
+            self.rebuild_dungeon_floor(id, depth);
+        }
+    }
+
+    pub fn set_dungeon_broken_props(&mut self, id: &str, depth: u8, broken: Vec<u32>) {
+        let key = (id.to_string(), depth);
+        if self.dungeon_broken_props.get(&key) == Some(&broken) {
+            return;
+        }
+        self.dungeon_broken_props.insert(key, broken);
+        self.rebuild_dungeon_floor(id, depth);
+    }
+
+    pub fn add_dungeon_broken_prop(&mut self, id: &str, depth: u8, prop_id: u32) {
+        let broken = self
+            .dungeon_broken_props
+            .entry((id.to_string(), depth))
+            .or_default();
+        if broken.contains(&prop_id) {
+            return;
+        }
+        broken.push(prop_id);
+        self.rebuild_dungeon_floor(id, depth);
+    }
+
+    /// Recompute one dungeon floor's cells from the live door/prop state.
+    /// Depth 0 is the cosmetic surface entrance door — it has no grid.
+    fn rebuild_dungeon_floor(&mut self, id: &str, depth: u8) {
+        if depth == 0 {
+            return;
+        }
+        let Some(dungeon) = self.dungeon_by_id(id) else {
+            return;
+        };
+        let open = self.open_dungeon_doors(id, depth);
+        let broken = self
+            .dungeon_broken_props
+            .get(&(id.to_string(), depth))
+            .cloned()
+            .unwrap_or_default();
+        let Some(cells) = dungeon.floor_cells(depth, &open, &broken) else {
+            return;
+        };
+        let floor_level = dungeon.passability_floor(depth);
+        if let Some(rp) = self.passability_cache.get_mut(&dungeon_cache_key(id)) {
+            if let Some(floor) = rp.floors.iter_mut().find(|f| f.floor_level == floor_level) {
+                floor.cells = cells;
+            }
         }
     }
 
@@ -165,8 +310,15 @@ pub struct SharedState {
     pub game_hour: Option<u32>,
     /// Current game minute (0-59)
     pub game_minute: Option<u32>,
-    /// Current floor level for the agent
-    pub self_floor_level: u8,
+    /// Our own wire `floor_level`: 0 = overworld, 1..3 housing floors,
+    /// negative = dungeon depth. Kept in the protocol's encoding rather than
+    /// the passability cache's so it can be put straight into move packets;
+    /// `passability_floor()` converts for path queries.
+    pub self_floor_level: i8,
+    /// Bumped every time the server snaps us back with `PositionCorrected`.
+    /// A path that produced a refused step will produce it again, so movers
+    /// watch this and abandon the path instead of grinding the same wall.
+    pub position_corrections: u32,
     cmd_tx: mpsc::Sender<ClientMessage>,
     /// Notified when an urgent event arrives
     pub urgent_notify: Arc<Notify>,
@@ -212,6 +364,7 @@ impl SharedState {
             game_hour: None,
             game_minute: None,
             self_floor_level: 0,
+            position_corrections: 0,
             cmd_tx,
             urgent_notify: Arc::new(Notify::new()),
             monster_ai: MonsterAiManager::new(),
@@ -275,6 +428,123 @@ impl SharedState {
         }
     }
 
+    /// Our floor as a passability cache index, for path queries. Standing on a
+    /// stair shaft this is the floor the shaft's cells are keyed to, which is
+    /// not always the floor we are nearest — see `pathfinding_floor_at`.
+    pub fn passability_floor(&self) -> u8 {
+        let floor = passability_floor_for_level(self.self_floor_level);
+        if self.self_floor_level >= 0 {
+            return floor;
+        }
+        let Some(position) = self.self_player.as_ref().map(|p| p.position) else {
+            return floor;
+        };
+        match self.dungeon_here() {
+            Some(dungeon) => dungeon.pathfinding_floor_at(
+                self.self_floor_level.unsigned_abs(),
+                position.x,
+                position.z,
+            ),
+            None => floor,
+        }
+    }
+
+    /// Ask for the door state of the dungeon we stand in. Doors default shut
+    /// locally, so without this we would path around one another player left
+    /// open — and, worse, believe a route is sealed when it is not.
+    pub fn request_dungeon_doors_here(&mut self) {
+        let Some(dungeon) = self.dungeon_here() else {
+            return;
+        };
+        self.pending_commands
+            .push(ClientMessage::RequestDungeonDoors {
+                entrance_id: dungeon.id.clone(),
+            });
+    }
+
+    /// Dungeon whose footprint covers our position, if any.
+    pub fn dungeon_here(&self) -> Option<Arc<Dungeon>> {
+        let p = self.self_player.as_ref()?;
+        self.world_cache
+            .read()
+            .unwrap()
+            .dungeon_at(p.position.x, p.position.z)
+    }
+
+    /// Ground height at (x, z) for something standing on passability floor
+    /// `floor` — a dungeon floor, or the entrance ramp when `floor` is the
+    /// surface. `None` means the dungeons have no say and terrain height wins.
+    /// The single answer to "how high is the ground here", so the send path,
+    /// the mover and the monster relay cannot drift apart.
+    fn dungeon_ground_y(&self, x: f32, z: f32, floor: u8) -> Option<f32> {
+        self.world_cache
+            .read()
+            .unwrap()
+            .dungeon_at(x, z)?
+            .ground_y(floor, x, z)
+    }
+
+    /// Position and wire floor for a step to (x, z) on passability floor
+    /// `floor`. Inside a dungeon the Y comes from that floor (or the stair
+    /// ramp we are walking), and the declared floor follows the Y — the server
+    /// derives collision from Y and validates the declaration against it, so
+    /// anything else is either refused or silently collided on the wrong
+    /// floor. Above ground the caller's Y stands and `send_command` snaps it.
+    pub fn step_pose(&self, x: f32, z: f32, floor: u8, current_y: f32) -> (Position, i8) {
+        match self.dungeon_ground_y(x, z, floor) {
+            Some(y) => (Position { x, y, z }, self.wire_floor_at(x, z, y)),
+            None => (
+                Position { x, y: current_y, z },
+                floor_level_for_passability(floor),
+            ),
+        }
+    }
+
+    /// Send one movement step toward (x, z) on passability floor `floor`,
+    /// posed and floor-stamped by `step_pose`. The single way a mover puts a
+    /// step on the wire, so none of them can forget to update the floor we
+    /// declare — which the server checks our height against.
+    pub async fn send_step(
+        &mut self,
+        x: f32,
+        z: f32,
+        floor: u8,
+        rotation: f32,
+    ) -> anyhow::Result<()> {
+        let current_y = self
+            .self_player
+            .as_ref()
+            .map(|p| p.position.y)
+            .unwrap_or(0.0);
+        let (position, floor_level) = self.step_pose(x, z, floor, current_y);
+        self.self_floor_level = floor_level;
+        self.send_command(ClientMessage::player_move(position, rotation, floor_level))
+            .await
+    }
+
+    /// Put an entity on the ground of dungeon floor `floor`, leaving it where
+    /// it is when no dungeon covers the spot.
+    fn on_dungeon_floor(&self, position: Position, floor: u8) -> Position {
+        match self.dungeon_ground_y(position.x, position.z, floor) {
+            Some(y) => Position { y, ..position },
+            None => position,
+        }
+    }
+
+    /// The wire `floor_level` to declare while standing at (x, z, y): whichever
+    /// floor's grid sits nearest that Y. Deliberately the shared query the
+    /// server itself collides against (`authoritative_floor`), so our
+    /// declaration and its collision can never resolve differently.
+    fn wire_floor_at(&self, x: f32, z: f32, y: f32) -> i8 {
+        let world = self.world_cache.read().unwrap();
+        floor_level_for_passability(pathfinding::get_floor_at_position(
+            world.passability_cache(),
+            x,
+            z,
+            y,
+        ))
+    }
+
     async fn snap_position_to_ground(&self, mut position: Position, context: &str) -> Position {
         let original_y = position.y;
         match self
@@ -311,7 +581,11 @@ impl SharedState {
                 append,
                 ..
             } => {
-                let position = if self.self_floor_level == 0 {
+                // On the entrance stairs the wire floor is still 0 while the Y
+                // already follows the ramp, so terrain height must not win there.
+                let position = if self.self_floor_level == 0
+                    && self.dungeon_ground_y(position.x, position.z, 0).is_none()
+                {
                     self.snap_position_to_ground(position, "PlayerMove").await
                 } else {
                     position
@@ -324,7 +598,7 @@ impl SharedState {
                 ClientMessage::PlayerMove {
                     position,
                     rotation,
-                    floor_level: self.self_floor_level as i8,
+                    floor_level: self.self_floor_level,
                     append,
                 }
             }
@@ -346,12 +620,28 @@ impl SharedState {
                 state,
                 target_position,
             } => {
-                // position and target_position are independent coordinates, so
-                // sample both terrain heights concurrently rather than serially.
-                let (position, target_position) = tokio::join!(
-                    self.snap_position_to_ground(position, "MonsterMove"),
-                    self.snap_position_to_ground(target_position, "MonsterMove target"),
-                );
+                // A dungeon monster stands on its floor, not on the terrain
+                // above it — snapping those to heightmap Y would haul the whole
+                // floor's monsters up to the surface.
+                let floor_level = self
+                    .nearby_monsters
+                    .get(&monster_id)
+                    .map(|m| m.floor_level)
+                    .unwrap_or(0);
+                let (position, target_position) = if floor_level < 0 {
+                    let floor = passability_floor_for_level(floor_level);
+                    (
+                        self.on_dungeon_floor(position, floor),
+                        self.on_dungeon_floor(target_position, floor),
+                    )
+                } else {
+                    // position and target_position are independent coordinates, so
+                    // sample both terrain heights concurrently rather than serially.
+                    tokio::join!(
+                        self.snap_position_to_ground(position, "MonsterMove"),
+                        self.snap_position_to_ground(target_position, "MonsterMove target"),
+                    )
+                };
                 // The server skips echoing our own monster moves back;
                 // mirror them locally or owned monsters freeze at spawn.
                 self.apply_monster_pose(&monster_id, position, rotation, state);
@@ -554,6 +844,71 @@ impl SharedState {
                 self.in_game = true;
                 self.self_player_id = Some(player.id);
                 self.self_player = Some(player.clone());
+                // A character saved underground rejoins there (the server
+                // rehydrates it), so adopt the floor instead of assuming 0.
+                self.self_floor_level = player.floor_level;
+                self.request_dungeon_doors_here();
+            }
+            // The server refused a step: our path leads somewhere it will not
+            // follow, so take its position and let the mover drop the path.
+            ServerMessage::PositionCorrected {
+                position,
+                rotation,
+                floor_level,
+            } => {
+                if let Some(ref mut p) = self.self_player {
+                    p.position = *position;
+                    p.rotation = *rotation;
+                    p.floor_level = *floor_level;
+                }
+                self.self_floor_level = *floor_level;
+                self.position_corrections = self.position_corrections.wrapping_add(1);
+            }
+            ServerMessage::DungeonDoorsState {
+                ref entrance_id,
+                ref doors,
+            } => {
+                self.world_cache
+                    .write()
+                    .unwrap()
+                    .set_dungeon_doors(entrance_id, doors);
+            }
+            ServerMessage::DungeonDoorToggled {
+                ref entrance_id,
+                depth,
+                door_id,
+                is_open,
+            } => {
+                self.world_cache.write().unwrap().set_dungeon_door(
+                    entrance_id,
+                    *depth,
+                    *door_id,
+                    *is_open,
+                );
+            }
+            ServerMessage::DungeonPropsState {
+                ref entrance_id,
+                depth,
+                ref broken,
+                ..
+            } => {
+                self.world_cache.write().unwrap().set_dungeon_broken_props(
+                    entrance_id,
+                    *depth,
+                    broken.clone(),
+                );
+            }
+            ServerMessage::DungeonPropBroken {
+                ref entrance_id,
+                depth,
+                prop_id,
+                ..
+            } => {
+                self.world_cache.write().unwrap().add_dungeon_broken_prop(
+                    entrance_id,
+                    *depth,
+                    *prop_id,
+                );
             }
             ServerMessage::GameState {
                 players, monsters, ..
@@ -831,6 +1186,37 @@ impl SharedState {
         std::mem::take(&mut self.agent_events)
     }
 
+    /// Where we stand relative to the dungeons: the floor we are on when
+    /// underground, or the nearest entrance when we are not. Monsters get
+    /// stronger with depth, so the LLM needs both to decide whether to dive.
+    fn format_dungeon_state(&self) -> Option<String> {
+        let p = self.self_player.as_ref()?;
+        if self.self_floor_level < 0 {
+            let depth = self.self_floor_level.unsigned_abs();
+            let name = self
+                .dungeon_here()
+                .map(|d| format!("{} ", d.name))
+                .unwrap_or_default();
+            return Some(format!(
+                "You are underground: {name}floor {depth} (deeper floors hold stronger \
+                 monsters; move with \"depth\" to change floors, 0 to leave)"
+            ));
+        }
+        let dungeon = self
+            .world_cache
+            .read()
+            .unwrap()
+            .nearest_dungeon(p.position.x, p.position.z)?;
+        let dist = crate::geom::PlanarDelta::between(&p.position, &dungeon.entrance).dist;
+        Some(format!(
+            "Dungeon: {} entrance at ({:.0}, {:.0}), {dist:.0}m away, {} floors deep",
+            dungeon.name,
+            dungeon.entrance.x,
+            dungeon.entrance.z,
+            dungeon.max_depth()
+        ))
+    }
+
     /// Find a smoothed path from current position to the goal.
     pub fn find_path_to(&self, goal_x: f32, goal_z: f32, goal_floor: u8) -> PathResult {
         let (start_x, start_z) = match &self.self_player {
@@ -842,16 +1228,18 @@ impl SharedState {
                 }
             }
         };
+        let start_floor = self.passability_floor();
+        let max_nodes = path_max_nodes(start_floor, goal_floor);
         let world = self.world_cache.read().unwrap();
         pathfinding::find_and_smooth_path(
             start_x,
             start_z,
-            self.self_floor_level,
+            start_floor,
             goal_x,
             goal_z,
             goal_floor,
             world.passability_cache(),
-            pathfinding::DEFAULT_MAX_NODES,
+            max_nodes,
         )
     }
 
@@ -879,7 +1267,7 @@ impl SharedState {
         Some(ClientMessage::player_move(
             self_player.position,
             to_target.rotation(),
-            self.self_floor_level as i8,
+            self.self_floor_level,
         ))
     }
 
@@ -997,6 +1385,9 @@ impl SharedState {
                 p.position.y,
                 p.position.z
             ));
+        }
+        if let Some(line) = self.format_dungeon_state() {
+            lines.push(line);
         }
         if let Some(gold) = self.self_gold {
             lines.push(format!(
@@ -1149,5 +1540,232 @@ mod tests {
             Ok(ClientMessage::MonsterMove { monster_id, .. }) => assert_eq!(monster_id, "m1"),
             other => panic!("expected MonsterMove on the wire, got {other:?}"),
         }
+    }
+
+    /// The server's `FLOOR_Y_TOLERANCE`: how far a declared dungeon floor may
+    /// sit from the Y we send before `validated_dungeon_floor` refuses it.
+    const SERVER_FLOOR_Y_TOLERANCE: f32 = 2.5;
+
+    fn dungeon_state() -> (
+        SharedState,
+        Arc<crate::dungeon::Dungeon>,
+        mpsc::Receiver<ClientMessage>,
+    ) {
+        let mut cache = WorldCache::new();
+        cache.register_dungeons();
+        let world = Arc::new(std::sync::RwLock::new(cache));
+        let dungeon = world.read().unwrap().dungeon_at(-1450.0, 4720.0).unwrap();
+        let (tx, rx) = mpsc::channel(64);
+        let mut state = SharedState::new(
+            Vec::new(),
+            tx,
+            Arc::new(HeightSampler::new(NoTiles)),
+            world,
+            None,
+        );
+        state.self_player = Some(Player {
+            id: PlayerId::from(1),
+            name: "Tester".to_string(),
+            position: dungeon.entrance,
+            rotation: 0.0,
+            level: 7,
+            health: 100,
+            max_health: 100,
+            class: onlinerpg_shared::character::CharacterClass::Ranger,
+            gender: Default::default(),
+            is_official_npc: false,
+            torch_on: false,
+            floor_level: 0,
+            object_type: None,
+            object_id: None,
+            last_combat_at: 0,
+            client_kind: Default::default(),
+        });
+        (state, dungeon, rx)
+    }
+
+    /// The floor we declare must follow our height: the server derives the
+    /// floor it collides against from the Y we send and validates the
+    /// declaration against it, so the two have to resolve identically.
+    #[test]
+    fn declared_floor_tracks_height() {
+        let (s, dungeon, _rx) = dungeon_state();
+        let (x, z) = (dungeon.entrance.x, dungeon.entrance.z);
+
+        assert_eq!(s.wire_floor_at(x, z, dungeon.entrance.y), 0);
+        assert_eq!(s.wire_floor_at(x, z, dungeon.floor_y(1)), -1);
+        assert_eq!(s.wire_floor_at(x, z, dungeon.floor_y(3)), -3);
+        // Mid-ramp resolves to whichever floor is nearer, never past the last.
+        assert_eq!(s.wire_floor_at(x, z, dungeon.entrance.y - 1.0), 0);
+        assert_eq!(s.wire_floor_at(x, z, dungeon.entrance.y - 3.0), -1);
+        let deepest = dungeon.max_depth();
+        assert_eq!(
+            s.wire_floor_at(x, z, dungeon.floor_y(deepest) - 50.0),
+            -(deepest as i8)
+        );
+    }
+
+    /// Registering the dungeon is all the shared A* needs to walk the entrance
+    /// stairwell: a path from the surface to floor 1 must exist and end there.
+    #[test]
+    fn a_path_leads_from_the_entrance_down_to_the_first_floor() {
+        let (s, dungeon, _rx) = dungeon_state();
+        let landing = dungeon.arrival_position(1).unwrap();
+        let floor = dungeon.passability_floor(1);
+
+        let path = s.find_path_to(landing.x, landing.z, floor);
+
+        assert!(path.found, "no route from the entrance down to floor 1");
+        assert_eq!(path.waypoints.last().map(|w| w.floor), Some(floor));
+    }
+
+    /// Every step of that descent must declare a floor the server accepts and
+    /// collides against identically — it derives the floor from the Y we send,
+    /// so a step whose declaration and height disagree gets snapped back.
+    #[test]
+    fn descending_steps_declare_a_floor_the_server_accepts() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let landing = dungeon.arrival_position(1).unwrap();
+        let path = s.find_path_to(landing.x, landing.z, dungeon.passability_floor(1));
+        assert!(path.found);
+
+        let mut seen_underground = false;
+        for wp in &path.waypoints {
+            // Mirror the mover: subdivide the leg and pose each step.
+            loop {
+                let position = s.self_player.as_ref().unwrap().position;
+                let to_wp = crate::geom::PlanarDelta::to_xz(&position, wp.x, wp.z);
+                if to_wp.dist < 0.1 {
+                    break;
+                }
+                let (sx, sz) = if to_wp.dist <= 3.0 {
+                    (wp.x, wp.z)
+                } else {
+                    let r = 3.0 / to_wp.dist;
+                    (position.x + to_wp.dx * r, position.z + to_wp.dz * r)
+                };
+                let (pose, floor_level) = s.step_pose(sx, sz, wp.floor, position.y);
+                if floor_level < 0 {
+                    seen_underground = true;
+                    let expected = dungeon.floor_y(floor_level.unsigned_abs());
+                    assert!(
+                        (pose.y - expected).abs() <= SERVER_FLOOR_Y_TOLERANCE,
+                        "floor {floor_level} declared at y={} (floor sits at {expected})",
+                        pose.y
+                    );
+                }
+                s.self_player.as_mut().unwrap().position = pose;
+                s.self_floor_level = floor_level;
+            }
+        }
+
+        assert!(seen_underground, "the walk never went underground");
+        assert_eq!(s.self_floor_level, -1);
+    }
+
+    /// A point partway down the entrance ramp, low enough to read as floor 1.
+    fn mid_shaft_point(dungeon: &crate::dungeon::Dungeon) -> (f32, f32, f32) {
+        let e = dungeon.entrance;
+        // Past the ramp's midpoint (so the nearest floor is the one below) but
+        // short of the bottom landing.
+        let low = dungeon.floor_y(1) + 0.5;
+        let high = (e.y + dungeon.floor_y(1)) / 2.0 - 0.2;
+        let mut step = 0;
+        while step < 80 * 80 {
+            let x = e.x - 20.0 + (step % 80) as f32 * 0.5;
+            let z = e.z - 20.0 + (step / 80) as f32 * 0.5;
+            step += 1;
+            if let Some(y) = dungeon.entrance_ramp_height_at(x, z) {
+                if y > low && y < high {
+                    return (x, z, y);
+                }
+            }
+        }
+        panic!("no mid-ramp point found on the entrance shaft");
+    }
+
+    /// Re-pathing from halfway down the stairs (after a fight or a correction)
+    /// must still work: those cells are keyed to the floor above, so searching
+    /// under the floor we are nearest would strand the agent on the steps.
+    #[test]
+    fn a_path_still_leads_on_from_halfway_down_the_stairs() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let (x, z, y) = mid_shaft_point(&dungeon);
+        s.self_player.as_mut().unwrap().position = Position { x, y, z };
+        s.self_floor_level = s.wire_floor_at(x, z, y);
+
+        assert_eq!(s.self_floor_level, -1, "mid-ramp should read as floor 1");
+        assert_eq!(
+            s.passability_floor(),
+            0,
+            "stair cells are keyed one floor up"
+        );
+
+        let landing = dungeon.arrival_position(1).unwrap();
+        let path = s.find_path_to(landing.x, landing.z, dungeon.passability_floor(1));
+        assert!(path.found, "no route on from the middle of the stairs");
+    }
+
+    /// The stairs down sit behind shut doors on most floors, so opening one has
+    /// to reopen the cells A* walks — otherwise the agent never gets past
+    /// floor 1 no matter how many doors it toggles.
+    #[test]
+    fn opening_a_door_reopens_the_route_behind_it() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let landing = dungeon.arrival_position(1).unwrap();
+        s.self_player.as_mut().unwrap().position = landing;
+        s.self_floor_level = -1;
+
+        let below = dungeon.arrival_position(2).unwrap();
+        let goal_floor = dungeon.passability_floor(2);
+        assert!(
+            !s.find_path_to(below.x, below.z, goal_floor).found,
+            "floor 1's stairs down are supposed to start sealed"
+        );
+
+        let doors: Vec<(u8, u32)> = dungeon
+            .closed_doors(1, &HashSet::new())
+            .iter()
+            .map(|d| (1u8, d.door_id))
+            .collect();
+        assert!(!doors.is_empty());
+        s.world_cache
+            .write()
+            .unwrap()
+            .set_dungeon_doors(&dungeon.id, &doors);
+
+        assert!(
+            s.find_path_to(below.x, below.z, goal_floor).found,
+            "the way down stayed sealed after opening floor 1's doors"
+        );
+    }
+
+    /// A dungeon monster's moves must keep its floor's height. Terrain snapping
+    /// would haul the whole floor's monsters up to the surface.
+    #[tokio::test]
+    async fn dungeon_monster_moves_keep_their_floor_height() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let landing = dungeon.arrival_position(2).unwrap();
+        let mut m = monster("m1");
+        m.floor_level = -2;
+        m.position = landing;
+        s.nearby_monsters.insert("m1".to_string(), m);
+
+        s.send_command(ClientMessage::MonsterMove {
+            monster_id: "m1".to_string(),
+            position: p(landing.x, 999.0, landing.z),
+            rotation: 0.0,
+            state: MonsterState::Run,
+            target_position: p(landing.x, 999.0, landing.z),
+        })
+        .await
+        .unwrap();
+
+        let y = s.nearby_monsters["m1"].position.y;
+        assert!(
+            (y - dungeon.floor_y(2)).abs() < 0.01,
+            "monster ended at y={y}, floor 2 sits at {}",
+            dungeon.floor_y(2)
+        );
     }
 }

@@ -1,5 +1,6 @@
 //! Monster AI adapter — delegates to `onlinerpg_shared::monster_ai`.
 
+use onlinerpg_shared::dungeon::passability_floor_for_level;
 use onlinerpg_shared::monster_ai::{
     self, AiCommand, BehaviorTree, CachePathProvider, MonsterBrain, NearbyPlayer,
     AGGRESSIVE_BEHAVIOR, DEFAULT_ATTACK_COOLDOWN_MS, DEFAULT_ATTACK_RANGE, DEFAULT_BEHAVIOR,
@@ -151,7 +152,7 @@ impl MonsterAiManager {
             .get(&monster.monster_type)
             .copied()
             .unwrap_or_default();
-        let brain = MonsterBrain::new(
+        let mut brain = MonsterBrain::new(
             monster.id.clone(),
             monster.monster_type.clone(),
             behavior,
@@ -164,6 +165,9 @@ impl MonsterAiManager {
             movement.chase_range,
             movement.attack_cooldown_ms,
         );
+        // A dungeon monster paths on its own floor's grid; left at 0 it would
+        // path against the surface and walk through every wall around it.
+        brain.path_floor = passability_floor_for_level(monster.floor_level);
         self.brains.insert(monster.id.clone(), brain);
     }
 

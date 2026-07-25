@@ -25,7 +25,7 @@ const DEFAULT_ATTACK_COOLDOWN_MS: u64 = 1500;
 /// Relative to agent-client working directory.
 const ANIMATION_DURATIONS_PATH: &str = "data/animation_durations.json";
 
-use super::movement::{MAX_STEP_DIST, MOVE_SPEED};
+use super::movement::{open_blocking_door, MAX_STEP_DIST, MOVE_SPEED};
 
 /// How often to poll when waiting (no active step to send), in ms.
 const CHASE_IDLE_TICK_MS: u64 = 200;
@@ -36,6 +36,9 @@ const MAX_CHASE_SECS: f32 = 15.0;
 const MAX_CHASE_DISTANCE: f32 = 20.0;
 /// How far the monster must move from our last target before we re-route.
 const REROUTE_THRESHOLD: f32 = 1.5;
+
+/// How many shut doors one chase may open on its way to the target.
+const MAX_CHASE_DOORS: usize = 2;
 /// Polite stop distance when walking up to another character (player or
 /// NPC): close enough to talk, far enough that the models don't overlap.
 const APPROACH_RANGE: f32 = 1.0;
@@ -210,6 +213,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
     let chase_start = Instant::now();
     let mut path_waypoints: Vec<onlinerpg_shared::pathfinding::PathWaypoint> = Vec::new();
     let mut path_index = 0usize;
+    let mut doors_opened = 0usize;
     let mut last_target_x = 0.0f32;
     let mut last_target_z = 0.0f32;
 
@@ -269,10 +273,25 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
         }
 
         if needs_repath {
-            let result = {
+            let (result, underground) = {
                 let s = state.lock().await;
-                s.find_path_to(goal.0, goal.1, target_floor)
+                (
+                    s.find_path_to(goal.0, goal.1, target_floor),
+                    s.self_floor_level < 0,
+                )
             };
+            // No route underground means a wall or a shut door stands between
+            // us and the target — never the open ground the straight-line
+            // fallback below assumes. Unlatch what we can, and give up rather
+            // than walk a line through the geometry.
+            if underground && !result.found {
+                if doors_opened < MAX_CHASE_DOORS && open_blocking_door(state).await {
+                    doors_opened += 1;
+                    continue;
+                }
+                info!("Chase gave up: no route to {target} on this floor");
+                return ChaseResult::Lost;
+            }
             if result.waypoints.is_empty() {
                 path_waypoints.clear();
             } else {
@@ -310,17 +329,10 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
                         MAX_STEP_DIST,
                     )
                 };
-                let cmd = ClientMessage::player_move(
-                    onlinerpg_shared::Position {
-                        x: step_x,
-                        y: player.position.y,
-                        z: step_z,
-                    },
-                    to_wp.rotation(),
-                    wp.floor as i8,
-                );
-                s.self_floor_level = wp.floor;
-                if let Err(e) = s.send_command(cmd).await {
+                if let Err(e) = s
+                    .send_step(step_x, step_z, wp.floor, to_wp.rotation())
+                    .await
+                {
                     error!("Failed to send chase move: {e}");
                     return ChaseResult::Error;
                 }

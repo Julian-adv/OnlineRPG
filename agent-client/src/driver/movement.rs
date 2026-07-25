@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use onlinerpg_shared::furniture::FurniturePlacement;
-use onlinerpg_shared::housing::HouseData;
+use onlinerpg_shared::housing::{HouseData, WallDirection, WallVariant};
+use onlinerpg_shared::pathfinding::{self, PathWaypoint};
 use onlinerpg_shared::ClientMessage;
 use onlinerpg_terrain::coords::{tile_to_region, world_to_tile};
 use tokio::sync::Mutex;
@@ -25,6 +26,22 @@ pub(super) const MOVE_SPEED: f32 = onlinerpg_shared::PLAYER_MOVE_SPEED;
 /// so the NPC walks at MOVE_SPEED instead of teleporting.
 pub(super) const MAX_STEP_DIST: f32 = 3.0;
 const SCHEDULE_ARRIVAL_RADIUS: f32 = 2.0;
+
+/// How many shut doors one move may open on its way to the goal. A floor
+/// carries a handful; the cap only stops a pathological loop.
+const MAX_DOORS_PER_MOVE: usize = 6;
+
+/// Wait for the server's door-toggle reply before re-pathing — that message,
+/// not the request, is what reopens the cells for A*.
+const DOOR_TOGGLE_WAIT: Duration = Duration::from_millis(400);
+
+/// How many doors a blocked move probes with A* before giving up. They are
+/// tried nearest-first, so the one in our way is normally the first.
+const MAX_DOOR_PROBES: usize = 6;
+
+/// Ignore doors further away than this: a door across the map is not what
+/// stands between us and the goal, and every probe costs a path search.
+const MAX_DOOR_SEARCH_DIST: f32 = 40.0;
 
 /// Housing chunk size in world units (must match server's CHUNK_SIZE).
 const HOUSING_CHUNK_SIZE: f32 = 64.0;
@@ -115,7 +132,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         let mut s = state.lock().await;
         if let Some(ref p) = s.self_player {
             let to_target = PlanarDelta::to_xz(&p.position, x, z);
-            let same_floor = s.self_floor_level == entry.floor_level;
+            let same_floor = s.passability_floor() == entry.floor_level;
             if same_floor && to_target.dist < SCHEDULE_ARRIVAL_RADIUS {
                 debug!("Already near schedule target — skipping movement");
                 send_interact_if_needed(&mut s, entry).await;
@@ -145,7 +162,9 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         // Send final position with exact rotation
         let rot_rad = entry.rotation.to_radians();
         let mut s = state.lock().await;
-        s.self_floor_level = entry.floor_level;
+        // Schedules are authored in housing floors, which the wire and the
+        // passability cache number the same way.
+        s.self_floor_level = entry.floor_level as i8;
         let cmd = ClientMessage::player_move(
             onlinerpg_shared::Position { x, y, z },
             rot_rad,
@@ -159,18 +178,61 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
     }
 }
 
-/// Execute a move to the target position using A* pathfinding.
-/// Follows waypoints sequentially with appropriate timing, subdividing
-/// long segments so the NPC never teleports.
+/// Execute a move to the target position using A* pathfinding, opening any
+/// shut door that seals the route. Most of a dungeon sits behind those doors —
+/// the stairs down included — and a shut front door can leave a resident with
+/// no way out of their own house, so a blocked path is a cue to go unlatch
+/// something, not to give up.
 pub(super) async fn execute_move(
     state: &Arc<Mutex<SharedState>>,
     goal_x: f32,
     goal_z: f32,
     goal_floor: u8,
 ) -> MoveResult {
-    let path_result = {
+    for _ in 0..=MAX_DOORS_PER_MOVE {
+        let before = state.lock().await.position_corrections;
+        match walk_path(state, goal_x, goal_z, goal_floor).await {
+            MoveResult::Blocked => {
+                // A refused step is a disagreement with the server, not a shut
+                // door; hunting for one to open would not help.
+                if state.lock().await.position_corrections != before {
+                    return MoveResult::Blocked;
+                }
+                if !open_blocking_door(state).await {
+                    return MoveResult::Blocked;
+                }
+            }
+            other => return other,
+        }
+    }
+    MoveResult::Blocked
+}
+
+/// One A* path, walked to the end. Subdivides long legs so the NPC walks at
+/// `MOVE_SPEED` instead of teleporting.
+///
+/// A search that cannot reach the goal still returns the leg that gets closest
+/// (`found: false` with waypoints). That leg is worth walking — it carries us to
+/// the wall or door in the way — but it is not an arrival, so it reports
+/// `Blocked`: the caller opens a door and retries, and the agent is never told
+/// it reached a floor it never got to.
+///
+/// Such a leg is only walked as far as it stays on the floor it started on.
+/// With the way down sealed, the closest node A* can reach is the *surface*
+/// above the target — walking that whole leg climbs back out of the dungeon,
+/// and the door standing in the way is then two floors behind us.
+async fn walk_path(
+    state: &Arc<Mutex<SharedState>>,
+    goal_x: f32,
+    goal_z: f32,
+    goal_floor: u8,
+) -> MoveResult {
+    let (path_result, start_floor) = {
         let s = state.lock().await;
-        s.find_path_to(goal_x, goal_z, goal_floor)
+        (
+            s.find_path_to(goal_x, goal_z, goal_floor),
+            s.passability_floor(),
+        )
     };
 
     if path_result.waypoints.is_empty() {
@@ -180,11 +242,39 @@ pub(super) async fn execute_move(
         return MoveResult::Arrived;
     }
 
-    for wp in &path_result.waypoints {
-        // Subdivide long segments into small steps
+    let walked: &[_] = if path_result.found {
+        &path_result.waypoints
+    } else {
+        let keep = path_result
+            .waypoints
+            .iter()
+            .position(|wp| wp.floor != start_floor)
+            .unwrap_or(path_result.waypoints.len());
+        &path_result.waypoints[..keep]
+    };
+
+    match walk_waypoints(state, walked).await {
+        MoveResult::Arrived if !path_result.found => MoveResult::Blocked,
+        other => other,
+    }
+}
+
+/// Walk an already-found route, subdividing long legs so the NPC moves at
+/// `MOVE_SPEED` instead of teleporting. Split out so a caller that has just
+/// proved a route (the door probe) can walk it without searching again.
+async fn walk_waypoints(state: &Arc<Mutex<SharedState>>, waypoints: &[PathWaypoint]) -> MoveResult {
+    let corrections = state.lock().await.position_corrections;
+
+    for wp in waypoints {
         loop {
             let travel_ms = {
                 let mut s = state.lock().await;
+                // The server snapped us back: this path walks into a step it
+                // refuses, so drop it rather than grind the same wall.
+                if s.position_corrections != corrections {
+                    warn!("Path abandoned after a position correction");
+                    return MoveResult::Blocked;
+                }
                 let player = match &s.self_player {
                     Some(p) => p,
                     None => return MoveResult::Error,
@@ -206,17 +296,10 @@ pub(super) async fn execute_move(
                     )
                 };
 
-                let cmd = ClientMessage::player_move(
-                    onlinerpg_shared::Position {
-                        x: step_x,
-                        y: player.position.y,
-                        z: step_z,
-                    },
-                    to_wp.rotation(),
-                    wp.floor as i8,
-                );
-                s.self_floor_level = wp.floor;
-                if let Err(e) = s.send_command(cmd).await {
+                if let Err(e) = s
+                    .send_step(step_x, step_z, wp.floor, to_wp.rotation())
+                    .await
+                {
                     error!("Failed to send move waypoint: {e}");
                     return MoveResult::Error;
                 }
@@ -228,6 +311,149 @@ pub(super) async fn execute_move(
     }
 
     MoveResult::Arrived
+}
+
+/// A shut door standing between us and where we want to go: how to open it,
+/// and the cell centers on either side — one of them is our side.
+struct DoorCandidate {
+    label: String,
+    toggle: ClientMessage,
+    sides: [(f32, f32); 2],
+}
+
+/// Walk to the nearest shut door on our floor that we can actually reach and
+/// open it. Returns false when no such door exists — then the goal really is
+/// unreachable. Covers dungeon corridor doors and house doors alike: a shut
+/// front door leaves a resident NPC with no route out of their own house just
+/// as surely as a shut crypt door hides the stairs down.
+pub(super) async fn open_blocking_door(state: &Arc<Mutex<SharedState>>) -> bool {
+    let Some((door, route)) = pick_reachable_door(state).await else {
+        return false;
+    };
+
+    // The probe already proved this route; walk the waypoints it found rather
+    // than paying for the same search again.
+    if matches!(walk_waypoints(state, &route).await, MoveResult::Error) {
+        return false;
+    }
+
+    info!("Opening {} to get through", door.label);
+    let mut s = state.lock().await;
+    if let Err(e) = s.send_command(door.toggle).await {
+        error!("Failed to send door toggle: {e}");
+        return false;
+    }
+    drop(s);
+    // The server's reply (DoorToggled / DungeonDoorToggled) is what reopens the
+    // cells for A*; re-pathing before it lands would just find the same wall.
+    tokio::time::sleep(DOOR_TOGGLE_WAIT).await;
+    true
+}
+
+/// The closest shut door on our floor with a side we can path to, and the route
+/// there. Opening it widens the reachable set; if the goal is still walled off,
+/// the next round picks the next one (this one no longer counts as shut).
+///
+/// Each probe is a full path search, so the candidates are filtered by distance
+/// and sorted nearest-first before any of them runs — the door in our way is
+/// normally the first, and the rest are never searched for.
+async fn pick_reachable_door(
+    state: &Arc<Mutex<SharedState>>,
+) -> Option<(DoorCandidate, Vec<PathWaypoint>)> {
+    let s = state.lock().await;
+    let position = s.self_player.as_ref()?.position;
+    let floor = s.passability_floor();
+    let reach = |x: f32, z: f32| PlanarDelta::xz(position.x, position.z, x, z).dist;
+
+    let mut doors = closed_doors_on_our_floor(&s);
+    let mut sides: Vec<(f32, usize, (f32, f32))> = doors
+        .iter()
+        .enumerate()
+        .flat_map(|(i, door)| door.sides.map(|side| (reach(side.0, side.1), i, side)))
+        .filter(|(dist, _, _)| *dist <= MAX_DOOR_SEARCH_DIST)
+        .collect();
+    sides.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    for (_, index, side) in sides.into_iter().take(MAX_DOOR_PROBES) {
+        let route = s.find_path_to(side.0, side.1, floor);
+        if route.found {
+            return Some((doors.swap_remove(index), route.waypoints));
+        }
+    }
+    None
+}
+
+/// Every shut door on the floor we stand on: dungeon corridor doors when we
+/// are underground, house doors when we are not.
+fn closed_doors_on_our_floor(s: &SharedState) -> Vec<DoorCandidate> {
+    if s.self_floor_level < 0 {
+        let Some(dungeon) = s.dungeon_here() else {
+            return Vec::new();
+        };
+        let depth = s.self_floor_level.unsigned_abs();
+        let open = s
+            .world_cache
+            .read()
+            .unwrap()
+            .open_dungeon_doors(&dungeon.id, depth);
+        return dungeon
+            .closed_doors(depth, &open)
+            .into_iter()
+            .map(|d| DoorCandidate {
+                label: format!("dungeon door {} on floor {depth}", d.door_id),
+                toggle: ClientMessage::ToggleDungeonDoor {
+                    entrance_id: dungeon.id.clone(),
+                    depth,
+                    door_id: d.door_id,
+                },
+                sides: d.sides,
+            })
+            .collect();
+    }
+
+    let floor = s.self_floor_level as u8;
+    let world = s.world_cache.read().unwrap();
+    let mut out = Vec::new();
+    for house in world.houses().values() {
+        // Cells are indexed from the house origin; the floor grid's own origin
+        // cancels out (see `pathfinding::update_door_edge`).
+        let ox = house.origin.x.floor() as i32;
+        let oz = house.origin.z.floor() as i32;
+        for (room_index, room) in house.rooms.iter().enumerate() {
+            if room.floor_level != floor {
+                continue;
+            }
+            for dir in [
+                WallDirection::North,
+                WallDirection::South,
+                WallDirection::East,
+                WallDirection::West,
+            ] {
+                for (seg, wall) in room.wall(dir).iter().enumerate() {
+                    // Windows are openable too, but they are not a way through.
+                    if wall.variant != WallVariant::WithDoor || wall.is_open {
+                        continue;
+                    }
+                    let ((dx, dz, _), (adx, adz, _)) = pathfinding::door_cells(room, dir, seg);
+                    let (rx, rz) = (ox + room.local_x, oz + room.local_z);
+                    out.push(DoorCandidate {
+                        label: format!("{} door (room {room_index}, {dir:?} {seg})", house.id),
+                        toggle: ClientMessage::ToggleDoor {
+                            house_id: house.id.clone(),
+                            room_index: room_index as u32,
+                            wall_dir: dir,
+                            segment_index: seg as u32,
+                        },
+                        sides: [
+                            ((rx + dx) as f32 + 0.5, (rz + dz) as f32 + 0.5),
+                            ((rx + adx) as f32 + 0.5, (rz + adz) as f32 + 0.5),
+                        ],
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Raw region object placements, as served by `/api/terrain/objects/{rx}/{rz}`.
@@ -245,22 +471,36 @@ fn insert_region(regions: &mut HashSet<(i32, i32)>, x: f32, z: f32) {
     ));
 }
 
-/// Fetch region object placements for the schedule's regions and register their
-/// solid furniture in the passability cache, so the bot paths around furniture
-/// exactly like the browser client (both go through the shared `furniture`
-/// resolution). A region is ~1024m, so the schedule usually touches one or two.
-pub(super) async fn fetch_furniture_for_schedule(
-    world_cache: &Arc<std::sync::RwLock<crate::state::WorldCache>>,
+/// Every position pathfinding data should cover: a schedule's stops and patrol
+/// waypoints, or — for an agent with no schedule — wherever it currently is.
+pub(super) fn coverage_positions(
     schedule: &[ScheduleEntry],
+    position: Option<onlinerpg_shared::Position>,
+) -> Vec<(f32, f32)> {
+    if schedule.is_empty() {
+        return position.map(|p| (p.x, p.z)).into_iter().collect();
+    }
+    schedule
+        .iter()
+        .flat_map(|e| {
+            std::iter::once((e.pos[0], e.pos[2])).chain(e.waypoints.iter().map(|wp| (wp[0], wp[2])))
+        })
+        .collect()
+}
+
+/// Fetch region object placements around `positions` and register their solid
+/// furniture in the passability cache, so the bot paths around furniture
+/// exactly like the browser client (both go through the shared `furniture`
+/// resolution). A region is ~1024m, so this usually touches one or two.
+pub(super) async fn fetch_furniture_around(
+    world_cache: &Arc<std::sync::RwLock<crate::state::WorldCache>>,
+    positions: &[(f32, f32)],
     api_base_url: &str,
     label: &str,
 ) {
     let mut regions = HashSet::new();
-    for entry in schedule {
-        insert_region(&mut regions, entry.pos[0], entry.pos[2]);
-        for wp in &entry.waypoints {
-            insert_region(&mut regions, wp[0], wp[2]);
-        }
+    for (x, z) in positions {
+        insert_region(&mut regions, *x, *z);
     }
 
     let client = reqwest::Client::new();
@@ -300,20 +540,17 @@ fn insert_chunk_neighbors(chunks: &mut HashSet<(i32, i32)>, x: f32, z: f32) {
     }
 }
 
-/// Fetch houses from the HTTP API for all chunks that the schedule positions
-/// and waypoints pass through, so pathfinding can avoid buildings.
-pub(super) async fn fetch_houses_for_schedule(
+/// Fetch houses from the HTTP API for every chunk `positions` touches (plus
+/// their neighbors), so pathfinding can avoid buildings.
+pub(super) async fn fetch_houses_around(
     world_cache: &Arc<std::sync::RwLock<crate::state::WorldCache>>,
-    schedule: &[ScheduleEntry],
+    positions: &[(f32, f32)],
     api_base_url: &str,
     label: &str,
 ) {
     let mut chunks = HashSet::new();
-    for entry in schedule {
-        insert_chunk_neighbors(&mut chunks, entry.pos[0], entry.pos[2]);
-        for wp in &entry.waypoints {
-            insert_chunk_neighbors(&mut chunks, wp[0], wp[2]);
-        }
+    for (x, z) in positions {
+        insert_chunk_neighbors(&mut chunks, *x, *z);
     }
 
     debug!(
