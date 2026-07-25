@@ -3423,6 +3423,116 @@ fn first_dungeon_door(
 }
 
 #[tokio::test]
+async fn cross_floor_dungeon_door_toggle_is_rejected() {
+    let game_state = make_test_game_state("dungeon_door_cross_floor");
+    let (entrance, depth, door) = first_dungeon_door(&game_state);
+    game_state.init_passability("nonexistent_terrain_dir").await;
+    let griefer_id = pid("surface_griefer");
+    game_state
+        .add_player(make_player("surface_griefer", entrance.x, entrance.z))
+        .await;
+    let mut observer = make_player("floor_observer", entrance.x, entrance.z);
+    observer.floor_level = -(depth as i8);
+    game_state.add_player(observer).await;
+    let mut observer_rx = game_state
+        .register_direct_channel(&pid("floor_observer"))
+        .await;
+
+    assert!(
+        !game_state.dungeons.read().await.contains_key(&entrance.id),
+        "the test requires an uninitialized dungeon runtime"
+    );
+    let before = game_state.dungeon_open_doors(&entrance.id).await;
+    let result = game_state
+        .toggle_dungeon_door(&griefer_id, &entrance.id, depth, door.door_id)
+        .await;
+    if let Some(is_open) = result {
+        game_state
+            .publish_dungeon_door_toggle(
+                &griefer_id,
+                entrance.id.clone(),
+                depth,
+                door.door_id,
+                is_open,
+            )
+            .await;
+    }
+
+    assert_eq!(result, None, "a player on another floor must be rejected");
+    assert_eq!(
+        game_state.dungeon_open_doors(&entrance.id).await,
+        before,
+        "a rejected toggle must not change door state"
+    );
+    assert!(
+        !game_state.dungeons.read().await.contains_key(&entrance.id),
+        "a rejected toggle must not create dungeon runtime state"
+    );
+    assert!(matches!(
+        observer_rx.try_recv(),
+        Err(MpscTryRecvError::Empty)
+    ));
+
+    let [ax, az, _, _] = door.seg();
+    let (outside, inside) = if door.spans_x() {
+        ((ax, az - 1), (ax, az))
+    } else {
+        ((ax - 1, az), (ax, az))
+    };
+    let from = cell_center(&entrance.position(), depth, outside);
+    let to = cell_center(&entrance.position(), depth, inside);
+    let delver_id = pid("delver");
+    let mut delver = make_player("delver", from.x, from.z);
+    delver.position.y = from.y;
+    delver.floor_level = -(depth as i8);
+    game_state.add_player(delver).await;
+    game_state
+        .update_player_position(
+            &delver_id,
+            MoveCommand {
+                floor_level: -(depth as i8),
+                ..move_cmd(to, false)
+            },
+            false,
+            false,
+        )
+        .await;
+    game_state.tick_player_movement(60.0).await;
+    assert_eq!(
+        player_xz(&game_state, &delver_id).await,
+        (from.x, from.z),
+        "a rejected toggle must leave the door impassable"
+    );
+}
+
+#[tokio::test]
+async fn same_floor_dungeon_door_toggle_still_updates_state() {
+    let game_state = make_test_game_state("dungeon_door_same_floor");
+    let (entrance, depth, door) = first_dungeon_door(&game_state);
+    let player_id = pid("delver");
+    let mut player = make_player("delver", entrance.x, entrance.z);
+    player.floor_level = -(depth as i8);
+    game_state.add_player(player).await;
+
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
+            .await,
+        Some(true)
+    );
+    assert!(game_state
+        .dungeon_open_doors(&entrance.id)
+        .await
+        .contains(&(depth, door.door_id)));
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
+            .await,
+        Some(false)
+    );
+}
+
+#[tokio::test]
 async fn dungeon_door_toggle_delivery_gates_radius_and_floor() {
     let game_state = make_test_game_state("dungeon_door_delivery");
     let entrance = game_state
@@ -3540,8 +3650,12 @@ async fn dungeon_door_blocks_movement_until_opened() {
     let player_id = pid("delver");
     let mut player = make_player("delver", from.x, from.z);
     player.position.y = from.y;
+    player.floor_level = -(depth as i8);
     game_state.add_player(player).await;
-    let go = |p: Position| move_cmd(p, false);
+    let go = |p: Position| MoveCommand {
+        floor_level: -(depth as i8),
+        ..move_cmd(p, false)
+    };
 
     // Shut (boot default): the crossing is sealed.
     game_state
@@ -3553,7 +3667,7 @@ async fn dungeon_door_blocks_movement_until_opened() {
     // Open: same move goes through.
     assert_eq!(
         game_state
-            .toggle_dungeon_door(&entrance.id, depth, door.door_id)
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
             .await,
         Some(true)
     );
@@ -3566,7 +3680,7 @@ async fn dungeon_door_blocks_movement_until_opened() {
     // Shut again: the way back is sealed.
     assert_eq!(
         game_state
-            .toggle_dungeon_door(&entrance.id, depth, door.door_id)
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
             .await,
         Some(false)
     );
@@ -3585,11 +3699,15 @@ async fn dungeon_door_blocks_movement_until_opened() {
 async fn floor_entry_pushes_open_door_snapshot() {
     let game_state = make_test_game_state("dungeon_door_entry_snapshot");
     let (entrance, depth, door) = first_dungeon_door(&game_state);
+    let opener_id = pid("opener");
+    let mut opener = make_player("opener", entrance.x, entrance.z);
+    opener.floor_level = -(depth as i8);
+    game_state.add_player(opener).await;
 
     // Player A opens a door before B has ever seen the dungeon.
     assert_eq!(
         game_state
-            .toggle_dungeon_door(&entrance.id, depth, door.door_id)
+            .toggle_dungeon_door(&opener_id, &entrance.id, depth, door.door_id)
             .await,
         Some(true)
     );

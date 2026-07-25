@@ -1171,7 +1171,7 @@ async fn handle_client_message(
         } => {
             if let Some(id) = &state.player_id {
                 if let Some(is_open) = game_state
-                    .toggle_dungeon_door(&entrance_id, depth, door_id)
+                    .toggle_dungeon_door(id, &entrance_id, depth, door_id)
                     .await
                 {
                     game_state
