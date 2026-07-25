@@ -74,6 +74,7 @@ model = "openrouter/hunter-alpha"              # Any model ID from openrouter.ai
 system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
+request_timeout_secs = 120                     # Give up on a hung endpoint instead of holding a scheduler slot
 
 # Codex CLI settings (used when llm = "codex")
 # Requires `codex` CLI installed (npm i -g @openai/codex) and OPENAI_API_KEY set.
@@ -85,22 +86,14 @@ system_prompt_file = "data/system_prompt.txt"
 # Any self-hosted or third-party gateway that speaks the OpenAI chat
 # completions API — a LiteLLM proxy, vLLM, Ollama Cloud, opencode.ai Zen, etc.
 [openai]
-base_url = "https://ollama.com/v1"             # Origin + path prefix; code appends /chat/completions.
-                                                # Check your provider's docs for the exact prefix
-                                                # (often /v1, sometimes something more specific).
-# api_key = "..."                              # Or set OPENAI_API_KEY env var. Omit entirely for
-                                                # endpoints that don't require auth.
+base_url = "https://ollama.com/v1"             # Origin + path prefix; code appends /chat/completions
+# api_key = "..."                              # Or set OPENAI_COMPAT_API_KEY env var; omit if no auth needed
 model = "minimax-m3"                           # Any model ID the endpoint accepts
 system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
-reasoning_effort = "none"                      # "none" (default)/"low"/"medium"/"high". Keeps
-                                                # max_tokens going to the reply, not a thinking
-                                                # trace. Some models reject "none" as invalid even
-                                                # via the same router (e.g. deepseek-v4-pro on
-                                                # opencode.ai Zen does, minimax-m3 doesn't) — set
-                                                # to "" to omit the field entirely, or to a
-                                                # supported value like "low".
+reasoning_effort = "none"                      # "none"/"low"/"medium"/"high"; "" omits it for models that reject it
+request_timeout_secs = 120                     # Give up on a hung endpoint instead of holding a scheduler slot
 
 # --- Multi-NPC Orchestrator Mode ---
 # When [[npcs]] is present, legacy single-NPC fields above are ignored.

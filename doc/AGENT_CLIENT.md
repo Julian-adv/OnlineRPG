@@ -209,6 +209,23 @@ LLM이 매 프레임 좌표를 결정하는 것은 비현실적이고 비용이 
 
 관찰 용도만 `watch.rs`의 읽기 전용 관전 패널로 남겼다 — 조종은 못 하고 보기만 한다.
 
+### HTTP 백엔드 (`openai.rs`)
+
+openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`의
+`OpenAiInvoker`가 엔진이고, `openrouter.rs`는 URL이 고정된 `Endpoint`를 만들어
+넘길 뿐이다. 새 게이트웨이를 붙일 때도 `Endpoint` 하나만 만들면 된다.
+
+- API 키: openai 백엔드는 `OPENAI_COMPAT_API_KEY`를 본다. codex가 진짜 OpenAI
+  키를 `OPENAI_API_KEY`로 받으므로, 그 키가 남의 엔드포인트로 새 나가지 않게
+  변수를 분리했다.
+- `request_timeout_secs`(기본 120): 응답 없는 엔드포인트가 스케줄러의 동시 호출
+  슬롯(`max_concurrent`, 기본 2)과 해당 NPC의 대화 락을 영구히 잡는 걸 막는다.
+- 호출이 실패하면 방금 쌓은 user 턴을 되돌린다. 안 그러면 다음 턴에 user 메시지가
+  연속으로 나가고, 역할 교대를 강제하는 chat template은 이를 거절한다.
+- `reasoning_effort` 기본값은 `"none"`이다. 같은 라우터에서도 모델마다 수용 여부가
+  달라(opencode.ai Zen의 deepseek-v4-pro는 거절, minimax-m3는 허용) `""`로 두면
+  필드 자체를 생략한다.
+
 ## 구현 우선순위
 
 1. **Agent Client 기본 구조** - 기존 binary 프로토콜로 서버에 접속하여 한 명의 PC를 조종하는 클라이언트. 서버 수정 없이 시작

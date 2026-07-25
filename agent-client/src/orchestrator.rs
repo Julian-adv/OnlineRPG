@@ -816,7 +816,7 @@ fn build_llm_backend(
         LlmType::Openrouter => (
             "OpenRouter API",
             &npc.openrouter.model,
-            openrouter::OpenRouterInvoker::new(&npc.openrouter, system_prompt)
+            openrouter::invoker(&npc.openrouter, system_prompt)
                 .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
         ),
         LlmType::Codex => (
@@ -828,7 +828,9 @@ fn build_llm_backend(
         LlmType::Openai => (
             "OpenAI-compatible API",
             &npc.openai.model,
-            openai::OpenAiInvoker::new(&npc.openai, system_prompt)
+            npc.openai
+                .endpoint()
+                .and_then(|ep| openai::OpenAiInvoker::new(ep, system_prompt))
                 .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
         ),
         LlmType::None => return None,

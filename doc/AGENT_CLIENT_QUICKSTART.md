@@ -57,7 +57,7 @@ Windows는 `Select-String client_secret data\config.toml`. 값은 반드시 `GOC
 | `codex` | `codex` CLI (기본값) |
 | `claude` | `claude` CLI |
 | `openrouter` | `OPENROUTER_API_KEY` 환경변수 |
-| `openai` | `[openai]`에 `base_url`·`model` 설정 (LiteLLM 프록시, vLLM 등 OpenAI 호환 엔드포인트 아무거나) |
+| `openai` | `[openai]`에 `base_url`·`model` 설정 (LiteLLM 프록시, vLLM 등 OpenAI 호환 엔드포인트 아무거나). 키는 `api_key` 또는 `OPENAI_COMPAT_API_KEY` 환경변수 |
 
 ## 2. 캐릭터 설정
 

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -9,47 +11,26 @@ use crate::driver::LlmBackend;
 /// Configuration for a generic OpenAI-compatible chat completions endpoint
 /// (e.g. a LiteLLM proxy, vLLM, Ollama, or any self-hosted gateway).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
 pub struct OpenAiConfig {
-    /// Endpoint origin, without a trailing slash or `/chat/completions`
-    /// (e.g. "http://0.0.0.0:4000", or "https://host/v1" for servers that
-    /// require the `/v1` prefix).
-    #[serde(default)]
+    /// Endpoint origin plus whatever path prefix the provider needs; the code
+    /// appends `/chat/completions` (e.g. "http://0.0.0.0:4000/v1").
     pub base_url: String,
-    /// Bearer token (can also be set via the OPENAI_API_KEY env var).
-    #[serde(default)]
+    /// Bearer token (can also be set via the OPENAI_COMPAT_API_KEY env var).
     pub api_key: String,
     /// Model identifier, passed through to the endpoint as-is.
-    #[serde(default)]
     pub model: String,
-    /// Path to system prompt file (default: "data/system_prompt.txt")
-    #[serde(default = "default_system_prompt_file")]
+    /// Path to system prompt file
     pub system_prompt_file: String,
-    /// Max tokens for the response (default: 1024)
-    #[serde(default = "default_max_tokens")]
+    /// Max tokens for the response
     pub max_tokens: u32,
-    /// Temperature (default: 0.7)
-    #[serde(default = "default_temperature")]
     pub temperature: f32,
-    /// Reasoning effort passed through as-is (e.g. "none", "low", "medium",
-    /// "high"). Defaults to "none" so the token budget goes to the actual
-    /// reply instead of a reasoning trace; set to "" to omit the field
-    /// entirely for models that reject an unrecognized value (this varies
-    /// per model, not just per endpoint).
-    #[serde(default = "default_reasoning_effort")]
+    /// Reasoning effort passed through as-is. Defaults to "none" so the token
+    /// budget goes to the reply; "" omits the field for models that reject an
+    /// unrecognized value.
     pub reasoning_effort: String,
-}
-
-fn default_system_prompt_file() -> String {
-    "data/system_prompt.txt".to_string()
-}
-fn default_max_tokens() -> u32 {
-    1024
-}
-fn default_temperature() -> f32 {
-    0.7
-}
-fn default_reasoning_effort() -> String {
-    "none".to_string()
+    /// Per-request timeout in seconds
+    pub request_timeout_secs: u64,
 }
 
 impl Default for OpenAiConfig {
@@ -58,12 +39,60 @@ impl Default for OpenAiConfig {
             base_url: String::new(),
             api_key: String::new(),
             model: String::new(),
-            system_prompt_file: default_system_prompt_file(),
-            max_tokens: default_max_tokens(),
-            temperature: default_temperature(),
-            reasoning_effort: default_reasoning_effort(),
+            system_prompt_file: "data/system_prompt.txt".to_string(),
+            max_tokens: 1024,
+            temperature: 0.7,
+            reasoning_effort: "none".to_string(),
+            request_timeout_secs: 120,
         }
     }
+}
+
+/// Configured key wins, else the named env var. Backends name their own var:
+/// codex holds the real OpenAI key in OPENAI_API_KEY, and these endpoints are
+/// usually somebody else's.
+pub(crate) fn resolve_api_key(configured: &str, env_key: &str) -> String {
+    if configured.is_empty() {
+        std::env::var(env_key).unwrap_or_default()
+    } else {
+        configured.to_string()
+    }
+}
+
+impl OpenAiConfig {
+    pub fn endpoint(&self) -> anyhow::Result<Endpoint> {
+        if self.base_url.is_empty() {
+            anyhow::bail!("openai.base_url is not set");
+        }
+        if self.model.is_empty() {
+            anyhow::bail!("openai.model is not set");
+        }
+
+        Ok(Endpoint {
+            name: "OpenAI-compatible",
+            url: format!("{}/chat/completions", self.base_url.trim_end_matches('/')),
+            api_key: resolve_api_key(&self.api_key, "OPENAI_COMPAT_API_KEY"),
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+            reasoning_effort: (!self.reasoning_effort.is_empty())
+                .then(|| self.reasoning_effort.clone()),
+            timeout: Duration::from_secs(self.request_timeout_secs),
+        })
+    }
+}
+
+/// A resolved chat completions endpoint. OpenRouter is one of these too, so
+/// `openrouter.rs` builds an `Endpoint` instead of repeating the invoker.
+pub struct Endpoint {
+    pub name: &'static str,
+    pub url: String,
+    pub api_key: String,
+    pub model: String,
+    pub max_tokens: u32,
+    pub temperature: f32,
+    pub reasoning_effort: Option<String>,
+    pub timeout: Duration,
 }
 
 #[derive(Serialize)]
@@ -101,53 +130,70 @@ struct ChatMessageResponse {
 /// Maintains conversation history for multi-turn context.
 pub struct OpenAiInvoker {
     client: Client,
-    config: OpenAiConfig,
-    url: String,
+    endpoint: Endpoint,
     system_prompt: String,
-    api_key: String,
     messages: Mutex<Vec<ChatMessage>>,
 }
 
 impl OpenAiInvoker {
-    pub fn new(config: &OpenAiConfig, system_prompt: String) -> anyhow::Result<Self> {
-        if config.base_url.is_empty() {
-            anyhow::bail!("openai.base_url is not set");
-        }
-        if config.model.is_empty() {
-            anyhow::bail!("openai.model is not set");
-        }
-
-        let api_key = if !config.api_key.is_empty() {
-            config.api_key.clone()
-        } else {
-            std::env::var("OPENAI_API_KEY").unwrap_or_default()
-        };
-
-        let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
+    pub fn new(endpoint: Endpoint, system_prompt: String) -> anyhow::Result<Self> {
+        // Without a timeout a hung endpoint pins one of the scheduler's few
+        // concurrent slots — and this NPC's history lock — forever.
+        let client = Client::builder().timeout(endpoint.timeout).build()?;
         info!(
-            "OpenAI-compatible invoker ready (url={url}, model={})",
-            config.model
+            "{} invoker ready (url={}, model={})",
+            endpoint.name, endpoint.url, endpoint.model
         );
 
         Ok(Self {
-            client: Client::new(),
-            config: config.clone(),
-            url,
+            client,
+            endpoint,
             system_prompt,
-            api_key,
             messages: Mutex::new(Vec::new()),
         })
+    }
+
+    /// One round trip. Split out so `send_message` can undo its history
+    /// append when the call fails.
+    async fn complete(&self, request: &ChatRequest) -> anyhow::Result<String> {
+        let name = self.endpoint.name;
+        let mut req = self.client.post(&self.endpoint.url).json(request);
+        if !self.endpoint.api_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", self.endpoint.api_key));
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("{name} API request failed: {e}"))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to read {name} response body: {e}"))?;
+
+        if !status.is_success() {
+            anyhow::bail!("{name} API error (HTTP {status}): {body}");
+        }
+
+        let chat_response: ChatResponse = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("Failed to parse {name} response: {e}\nRaw: {body}"))?;
+
+        Ok(chat_response
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content)
+            .unwrap_or_default())
     }
 }
 
 #[async_trait]
 impl LlmBackend for OpenAiInvoker {
     async fn send_message(&self, content: &str) -> anyhow::Result<String> {
-        debug!(
-            ">>> TO OPENAI-COMPAT ({} bytes):\n{}",
-            content.len(),
-            content
-        );
+        let name = self.endpoint.name;
+        debug!(">>> TO {name} ({} bytes):\n{content}", content.len());
 
         let mut messages = self.messages.lock().await;
 
@@ -172,60 +218,78 @@ impl LlmBackend for OpenAiInvoker {
                 .chain(messages[keep_from..].iter().cloned())
                 .collect();
             warn!(
-                "OpenAI-compat: trimmed conversation history to {} messages",
+                "{name}: trimmed conversation history to {} messages",
                 messages.len()
             );
         }
 
         let request = ChatRequest {
-            model: self.config.model.clone(),
+            model: self.endpoint.model.clone(),
             messages: messages.clone(),
-            max_tokens: self.config.max_tokens,
-            temperature: self.config.temperature,
-            reasoning_effort: (!self.config.reasoning_effort.is_empty())
-                .then(|| self.config.reasoning_effort.clone()),
+            max_tokens: self.endpoint.max_tokens,
+            temperature: self.endpoint.temperature,
+            reasoning_effort: self.endpoint.reasoning_effort.clone(),
         };
 
-        let mut req = self.client.post(&self.url).json(&request);
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-        let response = req
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("OpenAI-compatible API request failed: {e}"))?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to read OpenAI-compatible response body: {e}"))?;
-
-        if !status.is_success() {
-            anyhow::bail!("OpenAI-compatible API error (HTTP {status}): {body}");
-        }
-
-        let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-            anyhow::anyhow!("Failed to parse OpenAI-compatible response: {e}\nRaw: {body}")
-        })?;
-
-        let result = chat_response
-            .choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content)
-            .unwrap_or_default();
+        // Drop the unanswered user turn: leaving it would send two user
+        // messages in a row next time, which stricter chat templates reject.
+        let result = match self.complete(&request).await {
+            Ok(result) => result,
+            Err(e) => {
+                messages.pop();
+                return Err(e);
+            }
+        };
 
         messages.push(ChatMessage {
             role: "assistant".to_string(),
             content: result.clone(),
         });
 
-        debug!(
-            "<<< FROM OPENAI-COMPAT ({} bytes):\n{}",
-            result.len(),
-            result
-        );
+        debug!("<<< FROM {name} ({} bytes):\n{result}", result.len());
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(base_url: &str) -> OpenAiConfig {
+        OpenAiConfig {
+            base_url: base_url.to_string(),
+            model: "some-model".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn endpoint_appends_path_once() {
+        assert_eq!(
+            config("http://host:4000/v1/").endpoint().unwrap().url,
+            "http://host:4000/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn endpoint_requires_base_url_and_model() {
+        assert!(config("").endpoint().is_err());
+        assert!(OpenAiConfig {
+            base_url: "http://host/v1".to_string(),
+            ..Default::default()
+        }
+        .endpoint()
+        .is_err());
+    }
+
+    #[test]
+    fn empty_reasoning_effort_omits_the_field() {
+        let mut cfg = config("http://host/v1");
+        assert_eq!(
+            cfg.endpoint().unwrap().reasoning_effort.as_deref(),
+            Some("none")
+        );
+        cfg.reasoning_effort = String::new();
+        assert!(cfg.endpoint().unwrap().reasoning_effort.is_none());
     }
 }
