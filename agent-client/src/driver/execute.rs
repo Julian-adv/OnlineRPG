@@ -10,9 +10,15 @@ use tracing::{debug, error, info, warn};
 
 use crate::state::{Carried, SharedState};
 
-use super::action::{action_to_command, parse_agent_response, resolve_move_goal, AgentAction};
-use super::combat::{approach_player, chase_monster, ChaseResult};
+use super::action::{
+    action_to_command, parse_agent_response, resolve_move_goal, AgentAction, PickupRef,
+};
+use super::combat::{approach_player, chase_monster, walk_to_ground_item, ChaseResult};
 use super::movement::{execute_move, MoveResult};
+
+/// Pause between the crouch broadcast and the actual pickup, approximating
+/// the web client's grab moment partway into its pickup animation.
+const PICKUP_GRAB_DELAY_MS: u64 = 700;
 
 /// Parse and execute the agent's response.
 /// Returns the monster_id if the last action was an attack (for combat loop).
@@ -64,7 +70,7 @@ pub(super) async fn handle_response(
         if skip_movement
             && matches!(
                 action,
-                AgentAction::Move { .. } | AgentAction::Attack { .. }
+                AgentAction::Move { .. } | AgentAction::Attack { .. } | AgentAction::Pickup { .. }
             )
         {
             debug!("Skipping {:?} action — NPC is holding position", action);
@@ -199,6 +205,60 @@ pub(super) async fn handle_response(
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send use action: {e}");
+            }
+            continue;
+        }
+
+        // Pick up a ground item: resolve the reference, walk into pickup
+        // range, and send the pickup. The server owns the range, floor and
+        // weight checks and answers with InventoryUpdated or a SystemMessage.
+        if let AgentAction::Pickup { item } = action {
+            let resolved = {
+                let s = state.lock().await;
+                resolve_ground_item(&s, item)
+            };
+            let Some((instance_id, def_id)) = resolved else {
+                warn!("pickup: no ground item matching '{item}'");
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[PickupFailed] No item matching '{item}' is on the ground nearby."
+                ));
+                continue;
+            };
+            match walk_to_ground_item(state, instance_id).await {
+                ChaseResult::InRange => {
+                    let mut s = state.lock().await;
+                    // The crouch nearby players see from a web client.
+                    if let Err(e) = s
+                        .send_command(onlinerpg_shared::ClientMessage::PickupStarted)
+                        .await
+                    {
+                        error!("Failed to send pickup animation: {e}");
+                    }
+                    drop(s);
+                    tokio::time::sleep(std::time::Duration::from_millis(PICKUP_GRAB_DELAY_MS))
+                        .await;
+                    let mut s = state.lock().await;
+                    if let Err(e) = s
+                        .send_command(onlinerpg_shared::ClientMessage::PickupItem { instance_id })
+                        .await
+                    {
+                        error!("Failed to send pickup: {e}");
+                    } else {
+                        info!("Agent picked up {def_id} [id {instance_id}]");
+                    }
+                }
+                ChaseResult::Lost => {
+                    warn!("pickup: could not reach {def_id} [id {instance_id}]");
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[PickupFailed] You could not reach the {def_id} — it was taken \
+                         or despawned before you got there."
+                    ));
+                }
+                ChaseResult::Error => {
+                    error!("pickup: error while walking to {def_id} [id {instance_id}]");
+                }
             }
             continue;
         }
@@ -407,5 +467,36 @@ async fn move_to_dungeon_floor(
             ));
         }
         MoveResult::Error => error!("Descent to {} floor {depth} errored", dungeon.name),
+    }
+}
+
+/// Resolve a pickup reference to a known ground item on the agent's floor:
+/// by instance id (also when the LLM quotes it as a string), or by name to
+/// the nearest item whose def id contains it.
+fn resolve_ground_item(s: &SharedState, r: &PickupRef) -> Option<(u64, String)> {
+    let by_id = |id: u64| {
+        s.ground_items
+            .get(&id)
+            .map(|i| (i.instance_id, i.item_def_id.clone()))
+    };
+    match r {
+        PickupRef::Id(id) => by_id(*id),
+        PickupRef::Name(name) => {
+            let name = name.trim();
+            if let Ok(id) = name.parse::<u64>() {
+                return by_id(id);
+            }
+            let sp = s.self_player.as_ref()?;
+            let name_lc = name.to_lowercase();
+            s.ground_items
+                .values()
+                .filter(|i| {
+                    i.floor_level == s.self_floor_level as i8
+                        && i.item_def_id.to_lowercase().contains(&name_lc)
+                })
+                .map(|i| (i.position.dist_xz_sq(&sp.position), i))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, i)| (i.instance_id, i.item_def_id.clone()))
+        }
     }
 }

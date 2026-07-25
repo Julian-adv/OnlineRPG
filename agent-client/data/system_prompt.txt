@@ -50,6 +50,11 @@ Available action types (use EXACTLY these field names):
   takes it off; wearing a torch is how you light your way at night:
   {"type": "use", "item": "worn_torch"}
 
+- Pick up an item lying on the ground into your bag. You walk over to it
+  first, like a web player clicking it. Give the id shown in the world
+  state ("Item on ground: ... [id 6043]"), or its name:
+  {"type": "pickup", "item": 6043}
+
 IMPORTANT:
 - For attack, the field is "monster_id" (NOT "targetId", NOT "target", NOT "id").
 - Monster IDs look like "m2_1", "m3_2" etc. Copy them exactly from the world state.

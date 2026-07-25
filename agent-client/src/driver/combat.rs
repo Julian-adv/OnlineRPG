@@ -45,6 +45,13 @@ const APPROACH_RANGE: f32 = 1.0;
 /// Maximum approach duration before giving up (seconds). Longer than the
 /// combat chase: an approach target can be anywhere inside the sight radius.
 const MAX_APPROACH_SECS: f32 = 30.0;
+/// Stop distance for ground items, inside the server's 2.5 m pickup gate
+/// (`MAX_PICKUP_DISTANCE`) so overshoot and float error can't push the
+/// PickupItem send back out of range.
+const PICKUP_ARRIVE_RANGE: f32 = 2.0;
+/// Maximum walk-to-item duration before giving up (seconds). Shorter than
+/// an approach: the target never moves away.
+const MAX_PICKUP_WALK_SECS: f32 = 12.0;
 
 /// Load the attack (slash1) animation duration from the shared JSON file.
 /// Returns the duration as milliseconds, or the default if loading fails.
@@ -117,12 +124,13 @@ pub(super) enum ChaseResult {
     Error,
 }
 
-/// What a chase walks toward: a monster (stop at attack range) or another
+/// What a chase walks toward: a monster (stop at attack range), another
 /// character (stop at a polite conversational distance instead of standing
-/// on top of them).
+/// on top of them), or a ground item (stop inside pickup range).
 pub(super) enum ChaseTarget<'a> {
     Monster(&'a str),
     Player(&'a PlayerId),
+    GroundItem(u64),
 }
 
 impl ChaseTarget<'_> {
@@ -130,6 +138,7 @@ impl ChaseTarget<'_> {
         match self {
             Self::Monster(id) => s.nearby_monsters.get(*id).map(|m| m.position),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.position),
+            Self::GroundItem(id) => s.ground_items.get(id).map(|i| i.position),
         }
     }
 
@@ -139,6 +148,7 @@ impl ChaseTarget<'_> {
         let level = match self {
             Self::Monster(id) => s.nearby_monsters.get(*id).map(|m| m.floor_level),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.floor_level),
+            Self::GroundItem(id) => s.ground_items.get(id).map(|i| i.floor_level),
         };
         onlinerpg_shared::dungeon::passability_floor_for_level(level.unwrap_or(0))
     }
@@ -150,15 +160,16 @@ impl ChaseTarget<'_> {
         match self {
             Self::Monster(_) => ATTACK_RANGE,
             Self::Player(_) => APPROACH_RANGE + 0.2,
+            Self::GroundItem(_) => PICKUP_ARRIVE_RANGE,
         }
     }
 
-    /// How far short of the target the path goal stops. Monsters are
-    /// pathed to directly (the arrive check stops us first); characters
+    /// How far short of the target the path goal stops. Monsters and items
+    /// are pathed to directly (the arrive check stops us first); characters
     /// get a pulled-back goal so a step can never land on top of them.
     fn path_pullback(&self) -> f32 {
         match self {
-            Self::Monster(_) => 0.0,
+            Self::Monster(_) | Self::GroundItem(_) => 0.0,
             Self::Player(_) => APPROACH_RANGE,
         }
     }
@@ -166,7 +177,7 @@ impl ChaseTarget<'_> {
     fn max_distance(&self) -> f32 {
         match self {
             Self::Monster(_) => MAX_CHASE_DISTANCE,
-            Self::Player(_) => crate::state::NPC_SIGHT_RADIUS,
+            Self::Player(_) | Self::GroundItem(_) => crate::state::NPC_SIGHT_RADIUS,
         }
     }
 
@@ -174,6 +185,7 @@ impl ChaseTarget<'_> {
         match self {
             Self::Monster(_) => MAX_CHASE_SECS,
             Self::Player(_) => MAX_APPROACH_SECS,
+            Self::GroundItem(_) => MAX_PICKUP_WALK_SECS,
         }
     }
 }
@@ -185,6 +197,7 @@ impl std::fmt::Display for ChaseTarget<'_> {
         match self {
             Self::Monster(id) => f.write_str(id),
             Self::Player(id) => write!(f, "{id}"),
+            Self::GroundItem(id) => write!(f, "item {id}"),
         }
     }
 }
@@ -204,6 +217,16 @@ pub(super) async fn approach_player(
     player_id: &PlayerId,
 ) -> ChaseResult {
     chase_target(state, &ChaseTarget::Player(player_id)).await
+}
+
+/// Walk to a ground item and stop inside pickup range. Same loop as the
+/// combat chase; the target vanishing (picked up or despawned) ends it
+/// as `Lost`.
+pub(super) async fn walk_to_ground_item(
+    state: &Arc<Mutex<SharedState>>,
+    instance_id: u64,
+) -> ChaseResult {
+    chase_target(state, &ChaseTarget::GroundItem(instance_id)).await
 }
 
 /// Chase the target until we're within its arrive range, using A*
@@ -375,6 +398,7 @@ fn compute_step_toward(state: &SharedState, target: &ChaseTarget) -> Option<(Cli
     let stop_dist = match target {
         ChaseTarget::Monster(_) => ATTACK_RANGE - 0.5,
         ChaseTarget::Player(_) => APPROACH_RANGE,
+        ChaseTarget::GroundItem(_) => PICKUP_ARRIVE_RANGE - 0.5,
     };
     if to_target.dist <= stop_dist {
         return None;

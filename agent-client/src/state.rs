@@ -281,6 +281,9 @@ pub struct SharedState {
     pub nearby_players: HashMap<PlayerId, Player>,
     /// Known nearby monsters
     pub nearby_monsters: HashMap<String, Monster>,
+    /// Known items lying on the ground, keyed by instance id (from the join
+    /// snapshot plus GroundItemSpawned/Appeared/Removed).
+    pub ground_items: HashMap<u64, onlinerpg_shared::inventory::GroundItem>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -344,6 +347,7 @@ impl SharedState {
             trade_busy: false,
             nearby_players: HashMap::new(),
             nearby_monsters: HashMap::new(),
+            ground_items: HashMap::new(),
             events: Vec::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
@@ -750,6 +754,9 @@ impl SharedState {
             | ServerMessage::GoldGained { .. }
             | ServerMessage::InventoryState { .. }
             | ServerMessage::InventoryUpdated { .. }
+            | ServerMessage::GroundItemSpawned { .. }
+            | ServerMessage::GroundItemAppeared { .. }
+            | ServerMessage::GroundItemRemoved { .. }
             | ServerMessage::TradeBusy { .. } => EventUrgency::Noise,
 
             // Urgent: another player attacks a monster (so we can join in)
@@ -905,10 +912,16 @@ impl SharedState {
                 );
             }
             ServerMessage::GameState {
-                players, monsters, ..
+                players,
+                monsters,
+                ground_items,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
+                self.ground_items = ground_items
+                    .iter()
+                    .map(|i| (i.instance_id, i.clone()))
+                    .collect();
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
                     if let Some(p) = self.nearby_players.get(&self_id).cloned() {
@@ -982,6 +995,13 @@ impl SharedState {
             ServerMessage::MonsterRemoved { monster_id } => {
                 self.nearby_monsters.remove(monster_id);
                 self.monster_ai.remove_monster(monster_id);
+            }
+            ServerMessage::GroundItemSpawned { item, .. }
+            | ServerMessage::GroundItemAppeared { item } => {
+                self.ground_items.insert(item.instance_id, item.clone());
+            }
+            ServerMessage::GroundItemRemoved { instance_id } => {
+                self.ground_items.remove(instance_id);
             }
             ServerMessage::CharacterCreated { ref character } => {
                 self.characters.push(character.clone());
@@ -1116,6 +1136,11 @@ impl SharedState {
             // A pure state flag; it changes movement gating but is not an LLM
             // event in its own right.
             ServerMessage::TradeBusy { .. } => return urgency,
+            // Ground items churn in and out of the AOI as everyone moves;
+            // the world state lists what is nearby each turn instead.
+            ServerMessage::GroundItemSpawned { .. }
+            | ServerMessage::GroundItemAppeared { .. }
+            | ServerMessage::GroundItemRemoved { .. } => return urgency,
             ServerMessage::GameTimeSync { datetime, is_night } => {
                 let prev_night = self.is_night;
                 let prev_hour = self.game_hour;
@@ -1451,6 +1476,29 @@ impl SharedState {
             ));
         }
 
+        // Items on the ground, closest first. Same floor only — pickup is
+        // floor-gated server-side.
+        if let Some(sp) = sp {
+            let mut ground: Vec<_> = self
+                .ground_items
+                .values()
+                .filter(|i| i.floor_level == self.self_floor_level as i8)
+                .filter_map(|i| {
+                    let d_sq = i.position.dist_xz_sq(&sp.position);
+                    (d_sq <= sight_sq).then_some((d_sq, i))
+                })
+                .collect();
+            ground.sort_by(|a, b| a.0.total_cmp(&b.0));
+            for (d_sq, i) in ground {
+                lines.push(format!(
+                    "Item on ground: {} ({:.1}m away) [id {}]",
+                    i.item_def_id,
+                    d_sq.sqrt(),
+                    i.instance_id
+                ));
+            }
+        }
+
         if lines.is_empty() {
             "No state available yet.".to_string()
         } else {
@@ -1505,6 +1553,68 @@ mod tests {
             last_move_at: 0,
             move_budget: 0.0,
         }
+    }
+
+    use onlinerpg_shared::inventory::GroundItem;
+
+    fn ground_item(id: u64, def: &str, x: f32, z: f32, floor: i8) -> GroundItem {
+        GroundItem {
+            instance_id: id,
+            item_def_id: def.to_string(),
+            position: p(x, 0.0, z),
+            floor_level: floor,
+            enchant: 0,
+        }
+    }
+
+    /// The world state lists reachable ground items closest first, and
+    /// leaves out other floors and anything out of sight.
+    #[test]
+    fn world_state_lists_nearby_ground_items() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(Player {
+            id: PlayerId::from(1),
+            name: "Me".to_string(),
+            position: p(0.0, 0.0, 0.0),
+            rotation: 0.0,
+            level: 1,
+            health: 10,
+            max_health: 10,
+            class: onlinerpg_shared::CharacterClass::Rogue,
+            gender: Default::default(),
+            is_official_npc: false,
+            torch_on: false,
+            floor_level: 0,
+            object_type: None,
+            object_id: None,
+            last_combat_at: 0,
+            client_kind: Default::default(),
+        });
+        for item in [
+            ground_item(1, "small_sword", 5.0, 0.0, 0),
+            ground_item(2, "wooden_shield", 2.0, 0.0, 0),
+            ground_item(3, "coin_pile", 1.0, 0.0, 0),
+            ground_item(4, "iron_sword", 0.0, NPC_SIGHT_RADIUS + 5.0, 0),
+            ground_item(5, "healing_potion", 3.0, 0.0, 1),
+        ] {
+            s.ground_items.insert(item.instance_id, item);
+        }
+
+        let lines: Vec<String> = s
+            .format_world_state()
+            .lines()
+            .filter(|l| l.starts_with("Item on ground:"))
+            .map(str::to_string)
+            .collect();
+
+        assert_eq!(
+            lines,
+            vec![
+                "Item on ground: coin_pile (1.0m away) [id 3]",
+                "Item on ground: wooden_shield (2.0m away) [id 2]",
+                "Item on ground: small_sword (5.0m away) [id 1]",
+            ]
+        );
     }
 
     /// The server never echoes our own monster moves back (the owner is

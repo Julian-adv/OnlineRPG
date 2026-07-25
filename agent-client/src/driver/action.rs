@@ -91,12 +91,46 @@ pub(super) enum AgentAction {
         )]
         item: String,
     },
+    /// Walk to an item on the ground and pick it up into the bag. Mirrors
+    /// the web client's click-to-pick-up. `item` is the instance id shown
+    /// in the world state, or an item name (nearest match).
+    #[serde(rename = "pickup", alias = "pick_up", alias = "loot", alias = "take")]
+    Pickup {
+        #[serde(
+            alias = "item_def_id",
+            alias = "item_id",
+            alias = "instance_id",
+            alias = "id",
+            alias = "name",
+            alias = "target"
+        )]
+        item: PickupRef,
+    },
     /// Reroll starting stats. Only meaningful during character creation,
     /// where it is the agent's version of the web client's reroll button.
     #[serde(rename = "reroll", alias = "reroll_stats", alias = "roll_again")]
     Reroll,
     #[serde(rename = "wait", alias = "idle", alias = "observe", alias = "none")]
     Wait,
+}
+
+/// How a pickup names its target: the instance id from the world state
+/// ("[id 6043]"), or an item name resolved to the nearest match. LLMs send
+/// either, and the id may arrive as a number or a numeric string.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum PickupRef {
+    Id(u64),
+    Name(String),
+}
+
+impl std::fmt::Display for PickupRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Id(id) => write!(f, "id {id}"),
+            Self::Name(name) => f.write_str(name),
+        }
+    }
 }
 
 /// Whether the agent asked to roll its starting stats again. Read from the
@@ -224,6 +258,8 @@ pub(super) fn action_to_command(
         AgentAction::OpenTrade { .. } => None,
         // Needs the bag and worn gear from SharedState; likewise handled there.
         AgentAction::Use { .. } => None,
+        // Needs ground-item resolution and the walk-to loop; handled there too.
+        AgentAction::Pickup { .. } => None,
         // Only reaches the server as a pre-creation RollCharacterStats; in
         // game there is nothing left to reroll.
         AgentAction::Reroll => None,
@@ -300,6 +336,36 @@ mod tests {
                 panic!("expected Use for {json}");
             };
             assert_eq!(item, "torch");
+        }
+    }
+
+    #[test]
+    fn pickup_parses_instance_id_as_number() {
+        for json in [
+            r#"{"actions": [{"type": "pickup", "item": 6043}]}"#,
+            r#"{"actions": [{"type": "loot", "instance_id": 6043}]}"#,
+            r#"{"actions": [{"type": "pick_up", "id": 6043}]}"#,
+        ] {
+            let AgentAction::Pickup { item } = parse_single_action(json) else {
+                panic!("expected Pickup for {json}");
+            };
+            assert!(matches!(item, PickupRef::Id(6043)), "for {json}");
+        }
+    }
+
+    #[test]
+    fn pickup_parses_item_name() {
+        for json in [
+            r#"{"actions": [{"type": "pickup", "item": "small_sword"}]}"#,
+            r#"{"actions": [{"type": "take", "name": "small_sword"}]}"#,
+        ] {
+            let AgentAction::Pickup { item } = parse_single_action(json) else {
+                panic!("expected Pickup for {json}");
+            };
+            let PickupRef::Name(name) = item else {
+                panic!("expected a name ref for {json}");
+            };
+            assert_eq!(name, "small_sword");
         }
     }
 
