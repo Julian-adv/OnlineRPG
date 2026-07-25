@@ -237,6 +237,17 @@ impl SharedState {
         })
     }
 
+    /// Returns true if any monster is within NPC sight radius.
+    pub fn has_nearby_monsters(&self) -> bool {
+        let Some(self_player) = self.self_player.as_ref() else {
+            return false;
+        };
+        let radius_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
+        self.nearby_monsters
+            .values()
+            .any(|m| m.position.dist_xz_sq(&self_player.position) <= radius_sq)
+    }
+
     /// Check all nearby players and emit an agent event for any player
     /// that just entered NEARBY_PLAYER_RADIUS for the first time.
     fn check_nearby_player_proximity(&mut self) {

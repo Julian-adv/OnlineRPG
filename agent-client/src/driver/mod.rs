@@ -150,7 +150,7 @@ pub async fn llm_driver(
             check_schedule_transition(&state, &schedule, active_schedule, &label).await;
     }
 
-    // Send initial world state only if human players are nearby and NPC is not sleeping
+    // Send initial world state only if company (humans or monsters) is nearby and NPC is not sleeping
     let is_sleeping = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
     {
         let mut s = state.lock().await;
@@ -158,7 +158,7 @@ pub async fn llm_driver(
             s.drain_events();
             s.drain_agent_events();
             info!("[{label}] LLM driver: NPC is sleeping, skipping initial prompt");
-        } else if s.has_nearby_human_players() {
+        } else if s.has_nearby_human_players() || s.has_nearby_monsters() {
             let agent_events = s.drain_agent_events();
             let initial_prompt = build_prompt(&s, &[], &agent_events, &schedule, active_schedule.0);
             drop(s);
@@ -284,9 +284,10 @@ pub async fn llm_driver(
         let (prompt, has_events, priority) = {
             let mut s = state.lock().await;
 
-            // Skip LLM when NPC is sleeping or no human players are nearby —
-            // drain events to avoid unbounded accumulation but don't build a prompt.
-            if is_sleeping || !s.has_nearby_human_players() {
+            // Skip LLM when NPC is sleeping or nothing is around to act on
+            // (no humans, no monsters) — drain events to avoid unbounded
+            // accumulation but don't build a prompt.
+            if is_sleeping || (!s.has_nearby_human_players() && !s.has_nearby_monsters()) {
                 s.drain_events();
                 s.drain_agent_events();
                 pending_urgency = LlmPriority::Idle;
