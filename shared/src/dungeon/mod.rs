@@ -27,16 +27,24 @@
 
 mod doors;
 mod gen;
+mod registry;
+mod stairs;
 #[cfg(test)]
 mod tests;
 
 pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec};
+pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
+pub use stairs::{
+    entrance_ramp_height_at, floor_height_at, ground_y_for_floor, shaft_run_pos, LANDING_CELLS,
+};
 
 use serde::Serialize;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::pathfinding::{
-    RuntimeFloorGrid, RuntimePassability, StairwellInfo, EDGE_E, EDGE_N, EDGE_S, EDGE_W,
+    PassabilityCache, RuntimeFloorGrid, RuntimePassability, StairwellInfo, EDGE_E, EDGE_N, EDGE_S,
+    EDGE_W,
 };
 use crate::world::Position;
 
@@ -70,7 +78,7 @@ pub const SHAFT_LEN: i32 = 8;
 
 /// Monster type spawned on the final floor next to the treasure chest.
 /// Global single-dungeon shortcut; when a second dungeon lands this belongs
-/// in dungeons.csv next to `floors` (see `FLOOR_OVERRIDES`).
+/// in dungeons.csv next to `floors` (see `registry`).
 pub const BOSS_MONSTER_TYPE: &str = "goblin_boss";
 
 /// How far a player's Y may sit from a floor's world Y and still be accepted
@@ -344,46 +352,12 @@ pub(crate) fn generate_dungeon(seed: u64) -> Vec<FloorLayout> {
     gen::generate_dungeon_with(seed, None)
 }
 
-/// Per-dungeon floor-count overrides from the `floors` column of
-/// data-src/dungeons.csv (blank = seed-derived 5..=20). Baked in via
-/// `include_str!` for the same reason as `SPAWN_TABLES`: both sides must
-/// agree at compile time. A tiny Vec keeps lookups deterministic-trivial.
-static FLOOR_OVERRIDES: LazyLock<Vec<(String, u8)>> =
-    LazyLock::new(|| build_floor_overrides(include_str!("../../../data-src/dungeons.csv")));
-
-fn build_floor_overrides(csv: &str) -> Vec<(String, u8)> {
-    let mut lines = csv.lines();
-    let Some(header) = lines.next() else {
-        return Vec::new();
-    };
-    let cols: Vec<&str> = header.split(',').map(str::trim).collect();
-    let id_col = cols.iter().position(|c| *c == "id");
-    let floors_col = cols.iter().position(|c| *c == "floors");
-    let (Some(id_col), Some(floors_col)) = (id_col, floors_col) else {
-        return Vec::new();
-    };
-    lines
-        .filter_map(|line| {
-            let fields: Vec<&str> = line.split(',').collect();
-            let id = fields.get(id_col)?.trim();
-            if id.is_empty() {
-                return None;
-            }
-            let floors = fields.get(floors_col)?.trim().parse::<u8>().ok()?;
-            Some((id.to_string(), floors))
-        })
-        .collect()
-}
-
 /// Generate a dungeon by entrance id: seed derived from the id, floor count
-/// from the csv override when present. This is what both the server and the
-/// wasm client use for real dungeons; `generate_dungeon` stays seed-only for
-/// property tests over arbitrary seeds.
+/// from the registry's `floors` override when present. This is what both the
+/// server and the wasm client use for real dungeons; `generate_dungeon` stays
+/// seed-only for property tests over arbitrary seeds.
 pub fn generate_dungeon_for(entrance_id: &str) -> Vec<FloorLayout> {
-    let floors = FLOOR_OVERRIDES
-        .iter()
-        .find(|(id, _)| id == entrance_id)
-        .map(|(_, f)| *f);
+    let floors = entrance(entrance_id).and_then(|d| d.floors);
     gen::generate_dungeon_with(dungeon_seed(entrance_id), floors)
 }
 
@@ -861,5 +835,41 @@ pub fn dungeon_passability(entrance: &Position, layouts: &[FloorLayout]) -> Runt
         floors,
         stairwells,
         yields_to_trapped_mover: false,
+    }
+}
+
+/// One dungeon floor's cells under its current dynamic state: `broken` props
+/// (indices into that floor's `props`) open their cells, and every interior
+/// door not in `open_doors` seals its corridor mouth. `None` when the dungeon
+/// has no such floor (depth 0 is the cosmetic surface entrance door).
+///
+/// Both sets go through this one call because the floor is regenerated from
+/// the layout each time — applying one alone would drop the other.
+///
+/// Split from [`set_floor_cells`] so a caller never has to compute 6400 cells
+/// while holding its passability lock: the server's movement tick reads that
+/// same lock for every moving player.
+pub fn floor_cells(
+    layouts: &[FloorLayout],
+    depth: u8,
+    broken: &[u32],
+    open_doors: Option<&HashSet<u32>>,
+) -> Option<Vec<u8>> {
+    let layout = layouts.get(depth.checked_sub(1)? as usize)?;
+    Some(floor_passability_cells_full(
+        layout,
+        broken,
+        &closed_door_segs(layout, open_doors),
+    ))
+}
+
+/// Install [`floor_cells`]' result over the dungeon's registered floor. A
+/// no-op when the dungeon isn't in `cache` (nobody is near it).
+pub fn set_floor_cells(cache: &mut PassabilityCache, entrance_id: &str, depth: u8, cells: Vec<u8>) {
+    let floor_level = passability_floor_for_depth(depth);
+    if let Some(rp) = cache.get_mut(&dungeon_cache_key(entrance_id)) {
+        if let Some(floor) = rp.floors.iter_mut().find(|f| f.floor_level == floor_level) {
+            floor.cells = cells;
+        }
     }
 }

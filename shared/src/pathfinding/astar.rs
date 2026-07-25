@@ -49,6 +49,12 @@ struct ClosedEntry {
 }
 
 /// Find a path on a virtual 1m world grid with floor-level awareness.
+///
+/// `start_floor`/`goal_floor` are floor *keys*, not "the floor nearest that Y":
+/// an endpoint standing mid-stairwell belongs to the shallower connected floor
+/// here. Resolve endpoints with [`super::start_floor_at`] rather than
+/// [`super::get_floor_at_position`], or the search reaches the stairs only
+/// through their far landing.
 #[allow(clippy::too_many_arguments)]
 pub fn find_path(
     start_x: f32,

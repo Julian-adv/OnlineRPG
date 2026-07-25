@@ -197,7 +197,8 @@ fn direct_line_ok(
     }
 }
 
-/// Convenience: find path and smooth it in one call.
+/// Convenience: find path and smooth it in one call. Endpoint floors follow
+/// [`find_path`]'s rule — resolve them with [`super::start_floor_at`].
 #[allow(clippy::too_many_arguments)]
 pub fn find_and_smooth_path(
     start_x: f32,

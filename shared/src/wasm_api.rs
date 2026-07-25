@@ -266,6 +266,14 @@ pub fn passability_get_floor_at(x: f32, z: f32, y: f32) -> u8 {
     with_cache(|c| pathfinding::get_floor_at_position(c, x, z, y))
 }
 
+/// Floor an A* endpoint at (x, z, y) must be keyed to — the same as
+/// `passability_get_floor_at` off the stairs, the stairwell's lower floor on an
+/// intermediate step. See `pathfinding::start_floor_at`.
+#[wasm_bindgen]
+pub fn passability_start_floor_at(x: f32, z: f32, y: f32) -> u8 {
+    with_cache(|c| pathfinding::start_floor_at(c, x, z, y))
+}
+
 #[wasm_bindgen]
 pub fn passability_get_floor_y_base(x: f32, z: f32, floor_level: u8) -> f32 {
     with_cache(|c| pathfinding::get_floor_y_base(c, x, z, floor_level).unwrap_or(f32::NAN))
@@ -281,12 +289,18 @@ thread_local! {
 /// Layouts are deterministic per entrance id, so generate once and memoize —
 /// regeneration costs milliseconds in wasm and several exports need them per
 /// floor transition. The registry is tiny, so entries are never evicted.
+///
+/// The hit path allocates nothing: the height queries below run per entity per
+/// frame, and `entry()` would key every one of them with a fresh `String`.
 fn dungeon_layouts(entrance_id: &str) -> Rc<Vec<crate::dungeon::FloorLayout>> {
     DUNGEON_LAYOUTS.with(|c| {
+        if let Some(layouts) = c.borrow().get(entrance_id) {
+            return layouts.clone();
+        }
+        let layouts = Rc::new(crate::dungeon::generate_dungeon_for(entrance_id));
         c.borrow_mut()
-            .entry(entrance_id.to_string())
-            .or_insert_with(|| Rc::new(crate::dungeon::generate_dungeon_for(entrance_id)))
-            .clone()
+            .insert(entrance_id.to_string(), layouts.clone());
+        layouts
     })
 }
 
@@ -324,6 +338,7 @@ pub fn dungeon_constants() -> Result<JsValue, JsError> {
         floor_index_base: u8,
         shaft_w: i32,
         shaft_len: i32,
+        landing_cells: f32,
         max_depth: u8,
         path_max_nodes: u32,
         event_delivery_radius: f32,
@@ -335,6 +350,7 @@ pub fn dungeon_constants() -> Result<JsValue, JsError> {
         floor_index_base: crate::dungeon::DUNGEON_FLOOR_INDEX_BASE,
         shaft_w: crate::dungeon::SHAFT_W,
         shaft_len: crate::dungeon::SHAFT_LEN,
+        landing_cells: crate::dungeon::LANDING_CELLS,
         max_depth: crate::dungeon::MAX_DEPTH,
         path_max_nodes: crate::dungeon::DUNGEON_PATH_MAX_NODES as u32,
         event_delivery_radius: crate::EVENT_DELIVERY_RADIUS,
@@ -370,6 +386,56 @@ pub fn dungeon_remove_passability(entrance_id: &str) {
     with_cache_mut(|c| c.remove(&crate::dungeon::dungeon_cache_key(entrance_id)));
 }
 
+/// Run one of the shared stair-shaft geometry queries for a registry dungeon,
+/// mapping "no answer" onto `NaN` for JS. The entrance comes from the shared
+/// registry rather than the caller: `data/dungeons.json`, which the browser
+/// embeds, is generated from the same `data-src/dungeons.csv` the registry
+/// reads, so there is no second placement to keep in step.
+fn dungeon_geometry(
+    entrance_id: &str,
+    query: impl FnOnce(&Position, &[crate::dungeon::FloorLayout]) -> Option<f32>,
+) -> f32 {
+    let Some(def) = crate::dungeon::entrance(entrance_id) else {
+        return f32::NAN;
+    };
+    query(&def.position(), &dungeon_layouts(entrance_id)).unwrap_or(f32::NAN)
+}
+
+/// Ground height on dungeon floor `depth` at (x, z), stair ramps included, or
+/// `NaN` when the dungeon has no such floor. The single Y model every client
+/// shares — see `dungeon::stairs`.
+#[wasm_bindgen]
+pub fn dungeon_floor_height_at(entrance_id: &str, depth: u8, x: f32, z: f32) -> f32 {
+    dungeon_geometry(entrance_id, |entrance, layouts| {
+        crate::dungeon::floor_height_at(entrance, layouts, depth, x, z)
+    })
+}
+
+/// Surface entrance ramp height at (x, z), or `NaN` off the entrance shaft —
+/// out there the terrain sampler owns Y.
+#[wasm_bindgen]
+pub fn dungeon_entrance_ramp_height_at(entrance_id: &str, x: f32, z: f32) -> f32 {
+    dungeon_geometry(entrance_id, |entrance, layouts| {
+        crate::dungeon::entrance_ramp_height_at(entrance, layouts, x, z)
+    })
+}
+
+/// Run position along one of floor `depth`'s shafts, in `[0, shaft_len)` from
+/// the entry (shallow) end; `NaN` off the footprint. `down` picks the shaft
+/// descending to `depth + 1` instead of the one arriving at `depth`.
+#[wasm_bindgen]
+pub fn dungeon_shaft_run_pos(entrance_id: &str, depth: u8, down: bool, x: f32, z: f32) -> f32 {
+    dungeon_geometry(entrance_id, |entrance, layouts| {
+        let layout = layouts.get(depth.checked_sub(1)? as usize)?;
+        let shaft = if down {
+            layout.down_shaft.as_ref()?
+        } else {
+            &layout.up_shaft
+        };
+        crate::dungeon::shaft_run_pos(entrance, shaft, x, z)
+    })
+}
+
 /// Rebuild one dungeon floor's passability with its current dynamic state:
 /// `broken` props (indices into that floor's `props`) destroyed, opening their
 /// cells, and every interior door not in `open_door_ids` sealed (the closed
@@ -379,24 +445,12 @@ pub fn dungeon_remove_passability(entrance_id: &str) {
 /// each other.
 #[wasm_bindgen]
 pub fn dungeon_rebuild_floor(entrance_id: &str, depth: u8, broken: &[u32], open_door_ids: &[u32]) {
-    if depth == 0 {
-        return;
-    }
-    let floors = dungeon_layouts(entrance_id);
-    let Some(layout) = floors.get((depth - 1) as usize) else {
-        return;
-    };
     let open: HashSet<u32> = open_door_ids.iter().copied().collect();
-    let closed = crate::dungeon::closed_door_segs(layout, Some(&open));
-    let new_cells = crate::dungeon::floor_passability_cells_full(layout, broken, &closed);
-    let floor_level = crate::dungeon::passability_floor_for_depth(depth);
-    with_cache_mut(|c| {
-        if let Some(rp) = c.get_mut(&crate::dungeon::dungeon_cache_key(entrance_id)) {
-            if let Some(f) = rp.floors.iter_mut().find(|f| f.floor_level == floor_level) {
-                f.cells = new_cells;
-            }
-        }
-    });
+    let cells =
+        crate::dungeon::floor_cells(&dungeon_layouts(entrance_id), depth, broken, Some(&open));
+    if let Some(cells) = cells {
+        with_cache_mut(|c| crate::dungeon::set_floor_cells(c, entrance_id, depth, cells));
+    }
 }
 
 /// Debug: dump one floor's per-cell edge bitmask (N=1, E=2, S=4, W=8) plus

@@ -10,6 +10,7 @@ vi.mock('../wasm/onlinerpg_shared', () => ({
     floorIndexBase: 4,
     shaftW: 2,
     shaftLen: 7,
+    landingCells: 1,
     maxDepth: 5,
     pathMaxNodes: 20000,
     eventDeliveryRadius: 60,
@@ -19,6 +20,10 @@ vi.mock('../wasm/onlinerpg_shared', () => ({
   dungeon_passability_floor_cells: () => null,
   dungeon_rebuild_floor: () => {},
   dungeon_interior_doors: () => [],
+  dungeon_floor_height_at: () => NaN,
+  dungeon_entrance_ramp_height_at: () => NaN,
+  dungeon_shaft_run_pos: () => NaN,
+  passability_start_floor_at: () => 0,
 }))
 
 vi.mock('../data/dungeonDefs', () => ({ DUNGEON_ENTRANCES: [] }))

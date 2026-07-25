@@ -835,17 +835,16 @@
   function currentPassabilityFloor(): number {
     const depth = get(currentDungeonDepth)
     if (depth >= 1) {
-      // On the up-shaft, start A* from the shaft's lower floor (see
-      // dungeonManager.upShaftPathfindingFloor) so a path to the surface
-      // climbs out instead of routing back down to the bottom landing.
-      const shaftFloor = currentPlayer
-        ? dungeonManager.upShaftPathfindingFloor(
+      // On a stair shaft this resolves to the shaft's lower floor (see
+      // dungeonManager.startFloorAt) so a path to the surface climbs out
+      // instead of routing back down to the bottom landing.
+      return currentPlayer
+        ? dungeonManager.startFloorAt(
             currentPlayer.position.x,
             currentPlayer.position.z,
-            depth
+            currentPlayer.position.y
           )
-        : null
-      return shaftFloor ?? dungeonManager.passabilityFloor(depth)
+        : dungeonManager.passabilityFloor(depth)
     }
     return Math.max(0, get(playerFloorLevel))
   }
@@ -873,6 +872,7 @@
       const shaftFloor = dungeonManager.shaftPathfindingFloorAt(
         x,
         z,
+        y,
         Math.max(depth, 1)
       )
       if (shaftFloor !== null) return shaftFloor
@@ -910,7 +910,7 @@
 
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /
-    // upShaftPathfindingFloor), which differs from the clicked room's floor, so
+    // dungeonManager.startFloorAt), which differs from the clicked room's floor, so
     // the search traverses the stairs instead of being confined to one floor.
     runMoveRequest({
       clickPosition,

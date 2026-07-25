@@ -212,7 +212,7 @@ impl GameState {
     /// expired. Loot (2–3 equipment rolls + depth-scaled gold) goes
     /// straight to the opener; the open is broadcast nearby.
     pub async fn open_dungeon_chest(&self, player_id: &PlayerId, entrance_id: &str) {
-        let Some(entrance) = self.dungeon_defs.get(entrance_id).cloned() else {
+        let Some(entrance) = self.dungeon_defs.get(entrance_id) else {
             return;
         };
         self.ensure_dungeon_runtime(entrance_id).await;
@@ -505,7 +505,7 @@ impl GameState {
         if depth == 0 {
             return None;
         }
-        let entrance = self.dungeon_defs.get(entrance_id).cloned()?;
+        let entrance = self.dungeon_defs.get(entrance_id)?;
         self.ensure_dungeon_runtime(entrance_id).await;
 
         let (player_pos, player_floor) = {
@@ -632,13 +632,13 @@ impl GameState {
             return;
         }
         if old_floor < 0 {
-            if let Some(entrance) = self.dungeon_defs.entrance_at(old_pos.x, old_pos.z).cloned() {
+            if let Some(entrance) = self.dungeon_defs.entrance_at(old_pos.x, old_pos.z) {
                 self.leave_dungeon_floor(player_id, &entrance.id, (-old_floor) as u8)
                     .await;
             }
         }
         if new_floor < 0 {
-            if let Some(entrance) = self.dungeon_defs.entrance_at(new_pos.x, new_pos.z).cloned() {
+            if let Some(entrance) = self.dungeon_defs.entrance_at(new_pos.x, new_pos.z) {
                 self.enter_dungeon_floor(player_id, &entrance.id, (-new_floor) as u8)
                     .await;
             }
@@ -721,7 +721,7 @@ impl GameState {
         depth: u8,
         owner: &PlayerId,
     ) {
-        let Some(entrance) = self.dungeon_defs.get(entrance_id).cloned() else {
+        let Some(entrance) = self.dungeon_defs.get(entrance_id) else {
             return;
         };
         let now = Self::now_ms();
@@ -989,11 +989,7 @@ impl GameState {
             return requested_floor;
         }
 
-        let Some(entrance) = self
-            .dungeon_defs
-            .entrance_at(position.x, position.z)
-            .cloned()
-        else {
+        let Some(entrance) = self.dungeon_defs.entrance_at(position.x, position.z) else {
             warn!(
                 "Player {} reported dungeon floor {} outside any dungeon footprint",
                 self.player_name_of(player_id).await,
@@ -1038,11 +1034,7 @@ impl GameState {
     /// teleports): if it lies in a dungeon footprint and its Y matches a
     /// floor's world Y, return that floor; otherwise 0 (surface).
     pub(crate) async fn dungeon_floor_for_position(&self, position: &Position) -> i8 {
-        let Some(entrance) = self
-            .dungeon_defs
-            .entrance_at(position.x, position.z)
-            .cloned()
-        else {
+        let Some(entrance) = self.dungeon_defs.entrance_at(position.x, position.z) else {
             return 0;
         };
         self.ensure_dungeon_runtime(&entrance.id).await;
@@ -1072,11 +1064,7 @@ impl GameState {
         position: &Position,
         floor_level: i8,
     ) -> bool {
-        let Some(entrance) = self
-            .dungeon_defs
-            .entrance_at(position.x, position.z)
-            .cloned()
-        else {
+        let Some(entrance) = self.dungeon_defs.entrance_at(position.x, position.z) else {
             warn!(
                 "Player {} saved at dungeon floor {} but no entrance covers ({:.1}, {:.1})",
                 player_id, floor_level, position.x, position.z

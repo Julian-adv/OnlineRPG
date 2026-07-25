@@ -19,6 +19,10 @@ import {
   dungeon_passability_floor_cells,
   dungeon_rebuild_floor,
   dungeon_interior_doors,
+  dungeon_floor_height_at,
+  dungeon_entrance_ramp_height_at,
+  dungeon_shaft_run_pos,
+  passability_start_floor_at,
 } from '../wasm/onlinerpg_shared'
 import {
   currentDungeonDepth,
@@ -107,6 +111,8 @@ export interface DungeonConstants {
   floorIndexBase: number
   shaftW: number
   shaftLen: number
+  /** Flat landing length (in cells) at each end of a stair-shaft ramp. */
+  landingCells: number
   maxDepth: number
   pathMaxNodes: number
   eventDeliveryRadius: number
@@ -118,8 +124,6 @@ export interface DungeonEntrance {
   z: number
 }
 
-/** Flat landing length (in cells) at each end of a stair shaft ramp. */
-const LANDING_CELLS = 1.0
 /** Hysteresis (in run cells) around the switch point for floor switches. */
 const SWITCH_HYSTERESIS = 0.3
 /** Fraction of the shaft run at which the rendered floor switches — well before
@@ -186,17 +190,19 @@ export interface DungeonFloorCells {
  * length. Anchored at the entry (shallow) end — a one-cell landing gap, then
  * half the tread span toward the deep end. Shared by shaftHoleRect (terrain
  * hole) and buildDungeonEntranceGroup (parapet/roof footprint) so the two
- * never desync.
+ * never desync. Purely cosmetic geometry, but it keys off the same landing
+ * length as the shared ramp profile, so it reads it from the wasm constants.
  */
 export function shaftCoverRun(
   shaftLen: number,
   reversed: boolean
 ): { inset: number; coverLen: number } {
-  const coverLen = (shaftLen - LANDING_CELLS * 2) / 2
+  const landing = constants().landingCells
+  const coverLen = (shaftLen - landing * 2) / 2
   // Reversed → entry is the high-coordinate end, so the cover sits one
   // landing gap plus its own length in from the low (deep) side.
-  const deepInset = LANDING_CELLS + coverLen
-  return { inset: reversed ? deepInset : LANDING_CELLS, coverLen }
+  const deepInset = landing + coverLen
+  return { inset: reversed ? deepInset : landing, coverLen }
 }
 
 /**
@@ -376,61 +382,34 @@ class DungeonManager {
   }
 
   /**
-   * A* start floor for a player standing on the up-shaft at `depth`. The shared
-   * stairwell model encodes a shaft's intermediate steps as its LOWER connected
-   * floor (surface=0 for the entrance shaft), so pathfinding must start there:
-   * starting on the upper (depth) floor, A* can only reach the shaft via its
-   * bottom landing and routes the player back DOWN the stairs before climbing
-   * out. Returns null when the position isn't on the up-shaft, or is on its
-   * bottom exit landing (which genuinely belongs to the upper/depth floor).
+   * A* endpoint floor for a world position. Off the stairs this is the usual
+   * closest-y-base lookup, but the shared stairwell model keys a shaft's
+   * intermediate steps to its LOWER connected floor (surface=0 for the entrance
+   * shaft), and A* can only enter them under that key — start (or aim) a search
+   * mid-flight under the floor you are nearest and it routes the player the
+   * whole way down the stairs first. Resolved in wasm, so the browser, the
+   * agent-client and the server all answer it identically.
    */
-  upShaftPathfindingFloor(x: number, z: number, depth: number): number | null {
-    const layout = this.layoutAt(depth)
-    if (!layout) return null
-    const t = this.shaftRunPos(layout.upShaft, x, z)
-    if (t === null) return null
-    if (t >= constants().shaftLen - 1) return null
-    return this.midUpShaftFloor(depth)
+  startFloorAt(x: number, z: number, y: number): number {
+    return passability_start_floor_at(x, z, y)
   }
 
   /**
-   * Floor key for an intermediate up-shaft step at `depth`: the shallower
-   * connected floor (surface=0 for the entrance shaft), which is how the shared
-   * stairwell model keys a shaft's middle cells.
+   * A* floor for a click target on one of the rendered stair shafts at `depth`,
+   * or null when it lands on neither (the caller then falls back to its own
+   * surface-vs-floor heuristic). The shaft membership test is what this adds
+   * over `startFloorAt`.
    */
-  private midUpShaftFloor(depth: number): number {
-    return depth === 1 ? 0 : this.passabilityFloor(depth - 1)
-  }
-
-  /**
-   * A* floor for a click target on one of the rendered stair shafts at `depth`.
-   * Stairwell intermediate cells are keyed to the shallower connected floor;
-   * only the exit landing belongs to the deeper floor. Using the raw closest
-   * y-base can misclassify a down-shaft click near the middle as the deeper
-   * floor, even though A* can only reach that mid-step under the shallower key.
-   */
-  shaftPathfindingFloorAt(x: number, z: number, depth: number): number | null {
-    const layout = this.layoutAt(depth)
-    if (!layout) return null
-    const len = constants().shaftLen
-
-    const tUp = this.shaftRunPos(layout.upShaft, x, z)
-    if (tUp !== null) {
-      return tUp >= len - 1
-        ? this.passabilityFloor(depth)
-        : this.midUpShaftFloor(depth)
-    }
-
-    if (layout.downShaft) {
-      const tDown = this.shaftRunPos(layout.downShaft, x, z)
-      if (tDown !== null) {
-        return tDown >= len - 1
-          ? this.passabilityFloor(depth + 1)
-          : this.passabilityFloor(depth)
-      }
-    }
-
-    return null
+  shaftPathfindingFloorAt(
+    x: number,
+    z: number,
+    y: number,
+    depth: number
+  ): number | null {
+    const onShaft =
+      this.shaftRunPos(depth, false, x, z) !== null ||
+      this.shaftRunPos(depth, true, x, z) !== null
+    return onShaft ? this.startFloorAt(x, z, y) : null
   }
 
   /**
@@ -441,9 +420,7 @@ class DungeonManager {
    * rather than the surface, regardless of the still-zero logical depth.
    */
   isOnEntranceShaft(x: number, z: number): boolean {
-    const first = this.layouts[0]
-    if (!first) return false
-    return this.shaftRunPos(first.upShaft, x, z) !== null
+    return this.shaftRunPos(1, false, x, z) !== null
   }
 
   /**
@@ -824,60 +801,34 @@ class DungeonManager {
   }
 
   /**
-   * Shaft run position in [0, shaftLen) measured from the entry (shallow)
-   * end, or null when (x, z) is outside the shaft footprint.
+   * Run position along one of floor `depth`'s shafts, in [0, shaftLen) from the
+   * entry (shallow) end, or null off the footprint. `down` picks the shaft
+   * descending to `depth + 1` instead of the one arriving at `depth`.
    */
   private shaftRunPos(
-    shaft: DungeonShaft,
+    depth: number,
+    down: boolean,
     x: number,
     z: number
   ): number | null {
-    const { shaftW, shaftLen } = constants()
-    const lx = x - this.originX - shaft.x
-    const lz = z - this.originZ - shaft.z
-    const lateral = shaft.alongZ ? lx : lz
-    const run = shaft.alongZ ? lz : lx
-    if (lateral < 0 || lateral >= shaftW || run < 0 || run >= shaftLen) {
-      return null
-    }
-    return shaft.reversed ? shaftLen - run : run
-  }
-
-  /** Linear stair ramp with flat landings at both ends. */
-  private rampY(highY: number, lowY: number, t: number): number {
-    const len = constants().shaftLen
-    if (t <= LANDING_CELLS) return highY
-    if (t >= len - LANDING_CELLS) return lowY
-    const f = (t - LANDING_CELLS) / (len - LANDING_CELLS * 2)
-    return highY + (lowY - highY) * f
-  }
-
-  /** Y at the top of a shaft (surface entrance uses the entrance Y). */
-  private shaftHighY(depth: number): number {
-    return depth <= 1 ? this.entrance!.y : this.floorY(depth - 1)
+    if (!this.id) return null
+    const t = dungeon_shaft_run_pos(this.id, depth, down, x, z)
+    return Number.isNaN(t) ? null : t
   }
 
   /**
    * Ground height on a specific dungeon floor (stair-shaft ramps
    * included), independent of the local player's depth — used for
    * monsters and other entities on arbitrary floors. Null when inactive.
+   *
+   * The ramp profile itself lives in the shared crate (`dungeon::stairs`):
+   * the server accepts a declared dungeon floor only when the reported Y is
+   * within its tolerance band, so every client has to compute the same height.
    */
   floorHeightAt(depth: number, x: number, z: number): number | null {
-    if (!this.active) return null
-    const layout = this.layoutAt(depth)
-    if (!layout) return null
-
-    const tUp = this.shaftRunPos(layout.upShaft, x, z)
-    if (tUp !== null) {
-      return this.rampY(this.shaftHighY(depth), this.floorY(depth), tUp)
-    }
-    if (layout.downShaft) {
-      const tDown = this.shaftRunPos(layout.downShaft, x, z)
-      if (tDown !== null) {
-        return this.rampY(this.floorY(depth), this.floorY(depth + 1), tDown)
-      }
-    }
-    return this.floorY(depth)
+    if (!this.id) return null
+    const y = dungeon_floor_height_at(this.id, depth, x, z)
+    return Number.isNaN(y) ? null : y
   }
 
   /**
@@ -885,12 +836,9 @@ class DungeonManager {
    * Independent of any observer's depth, unlike `sampleHeightAt`.
    */
   entranceRampHeightAt(x: number, z: number): number | null {
-    if (!this.active) return null
-    const first = this.layouts[0]
-    if (!first) return null
-    const t = this.shaftRunPos(first.upShaft, x, z)
-    if (t === null) return null
-    return this.rampY(this.entrance!.y, this.floorY(1), t)
+    if (!this.id) return null
+    const y = dungeon_entrance_ramp_height_at(this.id, x, z)
+    return Number.isNaN(y) ? null : y
   }
 
   /**
@@ -995,9 +943,7 @@ class DungeonManager {
     const switchPoint = constants().shaftLen * DEPTH_SWITCH_FRACTION
 
     if (depth === 0) {
-      const first = this.layouts[0]
-      if (!first) return null
-      const t = this.shaftRunPos(first.upShaft, x, z)
+      const t = this.shaftRunPos(1, false, x, z)
       if (t !== null && t > switchPoint + SWITCH_HYSTERESIS) {
         currentDungeonDepth.set(1)
         return 1
@@ -1005,22 +951,17 @@ class DungeonManager {
       return null
     }
 
-    const layout = this.layoutAt(depth)
-    if (!layout) return null
-
-    const tUp = this.shaftRunPos(layout.upShaft, x, z)
+    const tUp = this.shaftRunPos(depth, false, x, z)
     if (tUp !== null && tUp < switchPoint - SWITCH_HYSTERESIS) {
       const next = depth - 1
       currentDungeonDepth.set(next)
       return next
     }
-    if (layout.downShaft) {
-      const tDown = this.shaftRunPos(layout.downShaft, x, z)
-      if (tDown !== null && tDown > switchPoint + SWITCH_HYSTERESIS) {
-        const next = depth + 1
-        currentDungeonDepth.set(next)
-        return next
-      }
+    const tDown = this.shaftRunPos(depth, true, x, z)
+    if (tDown !== null && tDown > switchPoint + SWITCH_HYSTERESIS) {
+      const next = depth + 1
+      currentDungeonDepth.set(next)
+      return next
     }
     return null
   }

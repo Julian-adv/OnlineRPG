@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
 use onlinerpg_shared::dungeon::{
-    dungeon_cache_key, floor_level_for_passability, passability_floor_for_level, path_max_nodes,
+    dungeon_cache_key, floor_cells, floor_level_for_passability, passability_floor_for_level,
+    path_max_nodes, set_floor_cells,
 };
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
@@ -82,12 +83,11 @@ impl WorldCache {
         }
     }
 
-    /// Dungeon whose footprint covers (x, z).
+    /// Dungeon whose footprint covers (x, z), by the shared registry's
+    /// footprint test — the same one the server admits us underground by.
     pub fn dungeon_at(&self, x: f32, z: f32) -> Option<Arc<Dungeon>> {
-        self.dungeons
-            .iter()
-            .find(|d| d.footprint_contains(x, z))
-            .map(Arc::clone)
+        let def = onlinerpg_shared::dungeon::entrance_at(x, z)?;
+        self.dungeon_by_id(&def.id)
     }
 
     /// Dungeon with the closest entrance.
@@ -175,12 +175,9 @@ impl WorldCache {
         self.rebuild_dungeon_floor(id, depth);
     }
 
-    /// Recompute one dungeon floor's cells from the live door/prop state.
-    /// Depth 0 is the cosmetic surface entrance door — it has no grid.
+    /// Recompute one dungeon floor's cells from the live door/prop state
+    /// (shared `dungeon::floor_cells`).
     fn rebuild_dungeon_floor(&mut self, id: &str, depth: u8) {
-        if depth == 0 {
-            return;
-        }
         let Some(dungeon) = self.dungeon_by_id(id) else {
             return;
         };
@@ -190,15 +187,10 @@ impl WorldCache {
             .get(&(id.to_string(), depth))
             .cloned()
             .unwrap_or_default();
-        let Some(cells) = dungeon.floor_cells(depth, &open, &broken) else {
+        let Some(cells) = floor_cells(dungeon.layouts(), depth, &broken, Some(&open)) else {
             return;
         };
-        let floor_level = dungeon.passability_floor(depth);
-        if let Some(rp) = self.passability_cache.get_mut(&dungeon_cache_key(id)) {
-            if let Some(floor) = rp.floors.iter_mut().find(|f| f.floor_level == floor_level) {
-                floor.cells = cells;
-            }
-        }
+        set_floor_cells(&mut self.passability_cache, id, depth, cells);
     }
 
     pub fn passability_cache(&self) -> &PassabilityCache {
@@ -430,7 +422,7 @@ impl SharedState {
 
     /// Our floor as a passability cache index, for path queries. Standing on a
     /// stair shaft this is the floor the shaft's cells are keyed to, which is
-    /// not always the floor we are nearest — see `pathfinding_floor_at`.
+    /// not always the floor we are nearest — see `pathfinding::start_floor_at`.
     pub fn passability_floor(&self) -> u8 {
         let floor = passability_floor_for_level(self.self_floor_level);
         if self.self_floor_level >= 0 {
@@ -439,14 +431,16 @@ impl SharedState {
         let Some(position) = self.self_player.as_ref().map(|p| p.position) else {
             return floor;
         };
-        match self.dungeon_here() {
-            Some(dungeon) => dungeon.pathfinding_floor_at(
-                self.self_floor_level.unsigned_abs(),
-                position.x,
-                position.z,
-            ),
-            None => floor,
+        if onlinerpg_shared::dungeon::entrance_at(position.x, position.z).is_none() {
+            return floor;
         }
+        let world = self.world_cache.read().unwrap();
+        pathfinding::start_floor_at(
+            world.passability_cache(),
+            position.x,
+            position.z,
+            position.y,
+        )
     }
 
     /// Ask for the door state of the dungeon we stand in. Doors default shut
@@ -1675,7 +1669,7 @@ mod tests {
             let x = e.x - 20.0 + (step % 80) as f32 * 0.5;
             let z = e.z - 20.0 + (step / 80) as f32 * 0.5;
             step += 1;
-            if let Some(y) = dungeon.entrance_ramp_height_at(x, z) {
+            if let Some(y) = dungeon.ground_y(0, x, z) {
                 if y > low && y < high {
                     return (x, z, y);
                 }

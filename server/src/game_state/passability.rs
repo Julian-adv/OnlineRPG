@@ -9,8 +9,7 @@
 use std::path::Path;
 
 use onlinerpg_shared::dungeon::{
-    closed_door_segs, dungeon_cache_key, dungeon_passability, floor_passability_cells_full,
-    generate_dungeon_for, passability_floor_for_depth,
+    dungeon_cache_key, dungeon_passability, floor_cells, generate_dungeon_for, set_floor_cells,
 };
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::HouseData;
@@ -269,19 +268,17 @@ impl super::GameState {
         RegionObjects::deserialize(body).map(|objects| objects.placements)
     }
 
-    /// Re-derive one dungeon floor's cells from its current dynamic state:
-    /// broken props open their cells, shut interior doors seal their mouth.
-    /// Both route through this one call so neither clobbers the other.
+    /// Re-derive one dungeon floor's cells from its current dynamic state
+    /// (shared `dungeon::floor_cells`); this is the adapter that hands it the
+    /// server's own live door/prop state.
+    ///
+    /// The cells are computed before the passability write lock is taken:
+    /// `tick_player_movement` holds that lock read-side for every moving
+    /// player, so a 6400-cell rebuild under it would stall the whole tick.
     pub(super) async fn rebuild_dungeon_floor_passability(&self, entrance_id: &str, depth: u8) {
-        if depth == 0 {
-            return;
-        }
         let cells = {
             let dungeons = self.dungeons.read().await;
             let Some(rt) = dungeons.get(entrance_id) else {
-                return;
-            };
-            let Some(layout) = rt.layouts.get((depth - 1) as usize) else {
                 return;
             };
             let broken: Vec<u32> = rt
@@ -289,15 +286,11 @@ impl super::GameState {
                 .get(&depth)
                 .map(|s| s.iter().copied().collect())
                 .unwrap_or_default();
-            let closed = closed_door_segs(layout, rt.open_doors.get(&depth));
-            floor_passability_cells_full(layout, &broken, &closed)
+            floor_cells(&rt.layouts, depth, &broken, rt.open_doors.get(&depth))
         };
-        let floor_level = passability_floor_for_depth(depth);
-        let mut cache = self.passability_write();
-        if let Some(rp) = cache.get_mut(&dungeon_cache_key(entrance_id)) {
-            if let Some(f) = rp.floors.iter_mut().find(|f| f.floor_level == floor_level) {
-                f.cells = cells;
-            }
-        }
+        let Some(cells) = cells else {
+            return;
+        };
+        set_floor_cells(&mut self.passability_write(), entrance_id, depth, cells);
     }
 }

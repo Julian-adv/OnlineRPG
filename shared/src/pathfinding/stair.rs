@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use super::PassabilityCache;
+use super::{PassabilityCache, StairwellInfo};
 
 /// `(world_cell_x, world_cell_z, floor_key)` — node identity in A*.
 pub(super) type AStarKey = (i32, i32, u16);
@@ -36,6 +36,39 @@ pub(super) fn key_to_floor(k: u16) -> u8 {
 #[inline]
 pub(super) fn is_regular_key(k: u16) -> bool {
     k.is_multiple_of(FLOOR_SCALE)
+}
+
+/// A stairwell's run length (step count) and lateral width.
+#[inline]
+fn stair_dims(stair: &StairwellInfo) -> (i32, i32) {
+    let (dx, dz) = (
+        stair.local_max_x - stair.local_min_x,
+        stair.local_max_z - stair.local_min_z,
+    );
+    if stair.along_z {
+        (dz, dx)
+    } else {
+        (dx, dz)
+    }
+}
+
+/// Step index of a stairwell-local cell measured from the entry (lower-floor)
+/// end, plus the step count. `None` off the footprint. Inverse of the
+/// `step_pos` closure below, and shares its convention: `reversed` flips the
+/// physical position so index 0 is always the entry end. Kept here so the
+/// endpoint lookup in `query::start_floor_at` and the A* expansion cannot
+/// disagree about which end of a shaft is which.
+pub(super) fn stair_step(stair: &StairwellInfo, local_x: i32, local_z: i32) -> Option<(i32, i32)> {
+    let (n, width) = stair_dims(stair);
+    let (run, lateral) = if stair.along_z {
+        (local_z - stair.local_min_z, local_x - stair.local_min_x)
+    } else {
+        (local_x - stair.local_min_x, local_z - stair.local_min_z)
+    };
+    if run < 0 || run >= n || lateral < 0 || lateral >= width {
+        return None;
+    }
+    Some((if stair.reversed { n - 1 - run } else { run }, n))
 }
 
 /// Precomputed stairwell cell neighbor info for the A* expansion.
@@ -62,16 +95,7 @@ pub(super) fn build_stair_cells(cache: &PassabilityCache) -> HashMap<AStarKey, S
         for stair in &rp.stairwells {
             let lower_key = floor_to_key(stair.lower_floor);
             let upper_key = floor_to_key(stair.upper_floor);
-            let n = if stair.along_z {
-                stair.local_max_z - stair.local_min_z
-            } else {
-                stair.local_max_x - stair.local_min_x
-            };
-            let width = if stair.along_z {
-                stair.local_max_x - stair.local_min_x
-            } else {
-                stair.local_max_z - stair.local_min_z
-            };
+            let (n, width) = stair_dims(stair);
 
             // Compute the floor key for step i.
             // step_pos already flips physical positions for reversed stairs,

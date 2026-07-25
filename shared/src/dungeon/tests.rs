@@ -750,3 +750,45 @@ fn surface_entrance_is_walkable_but_not_leaky() {
         }
     }
 }
+
+/// Mid-shaft, the A* endpoint floor must be the shaft's *shallower* connected
+/// floor even though the mover is nearer the deeper one: the stairwell model
+/// keys intermediate steps there, and a search under the other key can only
+/// reach them through the far landing — it walks the whole flight backwards
+/// first. Landings and ordinary floor cells keep their own floor.
+///
+/// One rule, one implementation: the browser, the agent-client and the server
+/// all resolve their start (and stair-click) floor through this.
+#[test]
+fn start_floor_mid_shaft_is_the_shallower_connected_floor() {
+    use crate::pathfinding::start_floor_at;
+
+    let entrance = test_entrance();
+    let floors = generate_dungeon_for("old_crypt");
+    let rp = passability_with_doors_open(&entrance, &floors);
+    let mut cache = PassabilityCache::new();
+    cache.insert(dungeon_cache_key("t"), rp);
+
+    let shaft = floors[0].up_shaft;
+    let depth_1 = passability_floor_for_depth(1);
+
+    // The last step before the bottom landing: its Y is all but floor 1's, yet
+    // A* only reaches it under the surface key.
+    let step = cell_center(&entrance, 1, shaft.step_cell(SHAFT_LEN - 2, 0));
+    let near_bottom = floor_world_y(entrance.y, 1) + 0.1;
+    assert_eq!(start_floor_at(&cache, step.x, step.z, near_bottom), 0);
+
+    let landing = cell_center(&entrance, 1, shaft.exit_cell());
+    assert_eq!(
+        start_floor_at(&cache, landing.x, landing.z, landing.y),
+        depth_1
+    );
+
+    // Off the shaft, the ordinary closest-y-base lookup stands.
+    let (rx, rz) = (0..GRID)
+        .flat_map(|z| (0..GRID).map(move |x| (x, z)))
+        .find(|&(x, z)| floors[0].is_carved(x, z) && !shaft.contains(x, z))
+        .expect("a carved cell off the entrance shaft");
+    let room = cell_center(&entrance, 1, (rx, rz));
+    assert_eq!(start_floor_at(&cache, room.x, room.z, room.y), depth_1);
+}

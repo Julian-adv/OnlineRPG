@@ -4,7 +4,10 @@
 //! continuous player movement, plus floor-level lookups that translate a
 //! `(x, z, y)` world position to the floor it belongs to.
 
-use super::{PassabilityCache, RuntimeFloorGrid, EDGE_E, EDGE_N, EDGE_S, EDGE_W};
+use super::stair::stair_step;
+use super::{
+    PassabilityCache, RuntimeFloorGrid, RuntimePassability, EDGE_E, EDGE_N, EDGE_S, EDGE_W,
+};
 
 /// Check if a cardinal (1-cell) move is blocked on a specific floor level.
 /// Matches by `floor_level` only — no Y-range check, no proximity buffer.
@@ -648,4 +651,61 @@ pub fn get_floor_y_base(cache: &PassabilityCache, x: f32, z: f32, floor_level: u
         }
     }
     None
+}
+
+fn floor_y_base_of(rp: &RuntimePassability, floor_level: u8) -> Option<f32> {
+    rp.floors
+        .iter()
+        .find(|f| f.floor_level == floor_level)
+        .map(|f| f.y_base)
+}
+
+/// Passability floor an A* endpoint at (x, z, y) must be keyed to.
+///
+/// [`get_floor_at_position`] answers "which floor is this standing on", which
+/// is right everywhere except *inside* a stairwell. A* keys a stairwell's
+/// intermediate steps off its lower floor (`stair::build_stair_cells`) and only
+/// seeds those keys for a search on that floor, so an endpoint mid-flight keyed
+/// to the upper floor can reach the stairs only through the far landing — the
+/// mover walks the whole flight the wrong way first. Both landings are genuine
+/// floor cells and fall through to the Y lookup.
+///
+/// Y still decides between stairwells stacked on one footprint: the candidate
+/// whose interpolated step height sits nearest `y` wins.
+pub fn start_floor_at(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> u8 {
+    let cx = x.floor() as i32;
+    let cz = z.floor() as i32;
+    let mut best: Option<(f32, u8)> = None;
+
+    for rp in cache.values() {
+        if x < rp.min_x || x > rp.max_x || z < rp.min_z || z > rp.max_z {
+            continue;
+        }
+        let ox = rp.house_origin_x.floor() as i32;
+        let oz = rp.house_origin_z.floor() as i32;
+        for stair in &rp.stairwells {
+            let Some((step, n)) = stair_step(stair, cx - ox, cz - oz) else {
+                continue;
+            };
+            if step == 0 || step == n - 1 {
+                continue;
+            }
+            let (Some(lower_y), Some(upper_y)) = (
+                floor_y_base_of(rp, stair.lower_floor),
+                floor_y_base_of(rp, stair.upper_floor),
+            ) else {
+                continue;
+            };
+            let f = step as f32 / (n - 1) as f32;
+            let dist = (y - (lower_y + (upper_y - lower_y) * f)).abs();
+            if best.is_none_or(|(best_dist, _)| dist < best_dist) {
+                best = Some((dist, stair.lower_floor));
+            }
+        }
+    }
+
+    match best {
+        Some((_, floor)) => floor,
+        None => get_floor_at_position(cache, x, z, y),
+    }
 }
