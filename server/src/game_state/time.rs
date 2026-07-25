@@ -108,6 +108,39 @@ impl super::GameState {
         crate::celestial::is_night(datetime)
     }
 
+    /// Whole game days since the clock's epoch — the rollover key for
+    /// midnight-based daily resets (NPC salaries, haggling budgets).
+    pub fn game_day(total_game_seconds: i64) -> i64 {
+        total_game_seconds.div_euclid(GAME_SECONDS_PER_DAY)
+    }
+
+    pub fn current_game_day(&self) -> i64 {
+        Self::game_day(self.current_total_game_seconds())
+    }
+
+    /// How many nightfalls the world clock has passed, as a monotonically
+    /// increasing index. Sunset at this latitude always lands between noon
+    /// and midnight, so every game day holds exactly one boundary and the
+    /// index never moves backwards. Resets that key off nightfall rather
+    /// than midnight (the dungeon chest) compare two of these instead of a
+    /// wall-clock duration, which keeps them correct across a server restart
+    /// (the world clock is persisted, wall time spent offline is not).
+    pub fn night_epoch(total_game_seconds: i64) -> i64 {
+        let datetime = Self::total_game_seconds_to_datetime(total_game_seconds);
+        Self::game_day(total_game_seconds) + i64::from(crate::celestial::is_after_sunset(&datetime))
+    }
+
+    #[cfg(test)]
+    pub(super) fn night_epoch_at(year: u32, month: u8, day: u8, hour: u8, minute: u8) -> i64 {
+        Self::night_epoch(Self::datetime_to_total_game_seconds(&GameDateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+        }))
+    }
+
     pub fn broadcast_game_time(&self) -> GameDateTime {
         let datetime = self.current_game_datetime();
         self.broadcast(ServerMessage::GameTimeSync {

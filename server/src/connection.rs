@@ -926,6 +926,17 @@ async fn handle_client_message(
                 ),
             }
 
+            let auth = Arc::clone(auth_service);
+            match crate::game_state::auth_db(move || auth.load_dungeon_chest_opens(character_id))
+                .await
+            {
+                Ok(opens) => game_state.set_chest_opens(character_id, opens).await,
+                Err(err) => warn!(
+                    "Failed to load chest history for character {}: {}",
+                    character_id, err
+                ),
+            }
+
             // Load inventory from DB
             game_state
                 .load_player_inventory(&id, character_id, auth_service)
@@ -1117,7 +1128,9 @@ async fn handle_client_message(
 
         ClientMessage::OpenDungeonChest { entrance_id } => {
             if let Some(id) = &state.player_id {
-                game_state.open_dungeon_chest(id, &entrance_id).await;
+                game_state
+                    .open_dungeon_chest(id, &entrance_id, auth_service)
+                    .await;
             } else {
                 warn!("Received chest open from client that is not in game");
             }

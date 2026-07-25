@@ -1,9 +1,10 @@
 //! Server-side dungeon runtime. Layouts are regenerated deterministically
 //! from the entrance id (same shared-crate generator the client runs via
-//! wasm), so the runtime holds only live state: cached layouts now, spawn
-//! slots and chest cooldowns in later stages. Everything is in-memory —
-//! after a restart, reconnecting players rehydrate from the generator
-//! plus their persisted position/floor_level.
+//! wasm), so the runtime holds only live state: cached layouts and spawn
+//! slots. That state is in-memory — after a restart, reconnecting players
+//! rehydrate from the generator plus their persisted position/floor_level.
+//! The one exception is the treasure-chest claim, which is DB-backed
+//! (`GameState::chest_opens`) because a lost claim is free loot.
 
 use std::collections::{HashMap, HashSet};
 
@@ -24,9 +25,6 @@ const MONSTER_RESPAWN_MS: u64 = 5 * 60 * 1000;
 const BOSS_RESPAWN_MS: u64 = 30 * 60 * 1000;
 /// Retry delay when a spawn attempt failed (e.g. global monster cap).
 const SPAWN_RETRY_MS: u64 = 10 * 1000;
-/// Per-player chest cooldown (shared dungeon — the chest refills for each
-/// player separately). In-memory; resets on server restart, acceptable.
-const CHEST_COOLDOWN_MS: u64 = 60 * 60 * 1000;
 const CHEST_INTERACT_RANGE: f32 = 2.5;
 const CHEST_ITEM_MIN_PRICE: i64 = 2000;
 /// How close a player must stand to a prop to break (barrel/crate) or open
@@ -40,8 +38,6 @@ pub(super) struct DungeonRuntime {
     /// Live per-floor state, keyed by depth. Created when a player first
     /// enters the floor.
     pub floors: HashMap<u8, FloorRuntime>,
-    /// Per-player chest open timestamps (ms).
-    pub chest_opened_at: HashMap<PlayerId, u64>,
     /// Broken props per depth (indices into that floor's `props`). Shared across
     /// the instance, persists across re-entry; resets on server restart. Kept on
     /// the dungeon (not the per-floor runtime) so a break still records even if
@@ -62,6 +58,12 @@ pub(super) struct FloorRuntime {
     /// One slot per layout SpawnSpec, same order.
     pub slots: Vec<SpawnSlot>,
     pub players: HashSet<PlayerId>,
+    /// Whether this floor's boss has been killed and not yet respawned.
+    /// Tracked explicitly rather than inferred from "no boss slot is alive":
+    /// a slot also reads as empty while a spawn is pending or was refused by
+    /// the global monster cap, which would otherwise open the chest gate for
+    /// a boss nobody fought.
+    pub boss_defeated: bool,
 }
 
 pub(super) struct SpawnSlot {
@@ -114,7 +116,6 @@ impl GameState {
             .or_insert(DungeonRuntime {
                 layouts,
                 floors: HashMap::new(),
-                chest_opened_at: HashMap::new(),
                 broken_props: HashMap::new(),
                 opened_props: HashMap::new(),
                 open_doors: HashMap::new(),
@@ -207,12 +208,60 @@ impl GameState {
             .collect()
     }
 
-    /// Open the final-floor treasure chest: requires standing next to it
-    /// on the last floor with the boss dead and the per-player cooldown
-    /// expired. Loot (2–3 equipment rolls + depth-scaled gold) goes
-    /// straight to the opener; the open is broadcast nearby.
-    pub async fn open_dungeon_chest(&self, player_id: &PlayerId, entrance_id: &str) {
+    /// Seed a character's chest history at login. Without it a reconnect
+    /// would read as "never opened".
+    pub async fn set_chest_opens(&self, character_id: i64, opens: Vec<(String, i64)>) {
+        if opens.is_empty() {
+            return;
+        }
+        let mut chest_opens = self.chest_opens.write().await;
+        for (entrance_id, opened_game_seconds) in opens {
+            chest_opens.insert((character_id, entrance_id), opened_game_seconds);
+        }
+    }
+
+    /// Claim this character's chest open for the current night, returning
+    /// false when they already took it. The chest refills at nightfall, so
+    /// two opens are only ever a night apart.
+    ///
+    /// Entries from earlier nights carry no information — the chest has
+    /// already refilled — so the claim drops them on its way through,
+    /// keeping the map bounded without a logout hook (see `buybacks` for the
+    /// same sweep-as-you-touch-it approach).
+    async fn claim_chest_open(
+        &self,
+        character_id: i64,
+        entrance_id: &str,
+        now_seconds: i64,
+    ) -> bool {
+        let tonight = Self::night_epoch(now_seconds);
+        let key = (character_id, entrance_id.to_string());
+        let mut chest_opens = self.chest_opens.write().await;
+        if chest_opens
+            .get(&key)
+            .is_some_and(|&opened| Self::night_epoch(opened) >= tonight)
+        {
+            return false;
+        }
+        chest_opens.retain(|_, &mut opened| Self::night_epoch(opened) >= tonight);
+        chest_opens.insert(key, now_seconds);
+        true
+    }
+
+    /// Open the final-floor treasure chest: requires standing next to it on
+    /// the last floor with the boss dead, and one open per character per
+    /// night. Loot (2–3 equipment rolls + depth-scaled gold) goes straight to
+    /// the opener; the open is broadcast nearby.
+    pub async fn open_dungeon_chest(
+        &self,
+        player_id: &PlayerId,
+        entrance_id: &str,
+        auth_service: &crate::auth::AuthService,
+    ) {
         let Some(entrance) = self.dungeon_defs.get(entrance_id) else {
+            return;
+        };
+        let Some(character_id) = self.character_id_of(player_id).await else {
             return;
         };
         self.ensure_dungeon_runtime(entrance_id).await;
@@ -225,11 +274,9 @@ impl GameState {
             }
         };
 
-        let now = Self::now_ms();
-        // Validate under the dungeon lock; claim the cooldown on success.
-        let chest_check = {
-            let mut dungeons = self.dungeons.write().await;
-            let Some(rt) = dungeons.get_mut(entrance_id) else {
+        let position_check = {
+            let dungeons = self.dungeons.read().await;
+            let Some(rt) = dungeons.get(entrance_id) else {
                 return;
             };
             let total = rt.layouts.len() as u8;
@@ -247,23 +294,24 @@ impl GameState {
                 let dz = player_pos.z - chest_pos.z;
                 if dx * dx + dz * dz > CHEST_INTERACT_RANGE * CHEST_INTERACT_RANGE {
                     Some("Too far from the chest")
-                } else if rt.floors.get(&total).is_some_and(|fr| {
-                    fr.slots.iter().any(|s| {
-                        s.is_boss && s.alive_monster_id.as_ref().is_some_and(|id| !id.is_empty())
-                    })
-                }) {
+                } else if !rt.floors.get(&total).is_some_and(|fr| fr.boss_defeated) {
                     Some("The guardian still lives")
-                } else if rt
-                    .chest_opened_at
-                    .get(player_id)
-                    .is_some_and(|&t| now.saturating_sub(t) < CHEST_COOLDOWN_MS)
-                {
-                    Some("The chest is empty (come back later)")
                 } else {
-                    rt.chest_opened_at.insert(*player_id, now);
                     None
                 }
             }
+        };
+
+        let now_seconds = self.current_total_game_seconds();
+        let chest_check = if position_check.is_some() {
+            position_check
+        } else if self
+            .claim_chest_open(character_id, entrance_id, now_seconds)
+            .await
+        {
+            None
+        } else {
+            Some("The chest is empty (it refills at nightfall)")
         };
         if let Some(reason) = chest_check {
             self.send_direct_message(
@@ -274,6 +322,17 @@ impl GameState {
             )
             .await;
             return;
+        }
+        // Persist the claim before handing out loot: a crash between the two
+        // costs the player a chest, the other order costs everyone a refill.
+        let auth = auth_service.clone();
+        let owner = entrance_id.to_string();
+        if let Err(err) = super::auth_db(move || {
+            auth.record_dungeon_chest_open(character_id, &owner, now_seconds)
+        })
+        .await
+        {
+            warn!("Failed to persist chest open for character {character_id}: {err}");
         }
 
         // Roll loot: 2–3 distinct equipment items priced for endgame.
@@ -669,6 +728,7 @@ impl GameState {
                 .or_insert_with(|| FloorRuntime {
                     slots,
                     players: HashSet::new(),
+                    boss_defeated: false,
                 })
                 .players
                 .insert(*player_id);
@@ -778,10 +838,18 @@ impl GameState {
                 .await;
 
             let mut dungeons = self.dungeons.write().await;
-            let slot = dungeons
+            let slot = if let Some(fr) = dungeons
                 .get_mut(entrance_id)
                 .and_then(|rt| rt.floors.get_mut(&depth))
-                .and_then(|fr| fr.slots.get_mut(slot_idx));
+            {
+                if spawned.is_some() && fr.slots.get(slot_idx).is_some_and(|s| s.is_boss) {
+                    // The guardian walks again; the chest locks with it.
+                    fr.boss_defeated = false;
+                }
+                fr.slots.get_mut(slot_idx)
+            } else {
+                None
+            };
             match (slot, spawned) {
                 (Some(slot), Some(monster)) => {
                     slot.alive_monster_id = Some(monster.id.clone());
@@ -832,6 +900,8 @@ impl GameState {
                     // Empty floors repopulate instantly on next entry.
                     slot.respawn_at_ms = 0;
                 }
+                // The boss comes back with them, so its kill no longer counts.
+                fr.boss_defeated = false;
             }
             (remaining, alive, false)
         };
@@ -954,18 +1024,19 @@ impl GameState {
         let Some(entry) = entry else { return };
         let now = Self::now_ms();
         let mut dungeons = self.dungeons.write().await;
-        if let Some(slot) = dungeons
+        if let Some(fr) = dungeons
             .get_mut(&entry.entrance_id)
             .and_then(|rt| rt.floors.get_mut(&entry.depth))
-            .and_then(|fr| fr.slots.get_mut(entry.slot))
         {
-            slot.alive_monster_id = None;
-            slot.respawn_at_ms = now
-                + if slot.is_boss {
-                    BOSS_RESPAWN_MS
+            if let Some(slot) = fr.slots.get_mut(entry.slot) {
+                slot.alive_monster_id = None;
+                if slot.is_boss {
+                    slot.respawn_at_ms = now + BOSS_RESPAWN_MS;
+                    fr.boss_defeated = true;
                 } else {
-                    MONSTER_RESPAWN_MS
-                };
+                    slot.respawn_at_ms = now + MONSTER_RESPAWN_MS;
+                }
+            }
         }
     }
 

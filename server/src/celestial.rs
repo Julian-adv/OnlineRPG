@@ -61,8 +61,18 @@ pub fn get_solar_daylight_window(month: u8, day: u8) -> SolarDaylightWindow {
     }
 }
 
+fn hour_of_day(datetime: &GameDateTime) -> f64 {
+    f64::from(datetime.hour) + f64::from(datetime.minute) / 60.0
+}
+
 pub fn is_night(datetime: &GameDateTime) -> bool {
-    let current_hour = f64::from(datetime.hour) + f64::from(datetime.minute) / 60.0;
     let window = get_solar_daylight_window(datetime.month, datetime.day);
-    current_hour < window.sunrise_hour || current_hour >= window.sunset_hour
+    hour_of_day(datetime) < window.sunrise_hour || is_after_sunset(datetime)
+}
+
+/// Whether the day's night has already begun. Split out from `is_night` so
+/// callers that key off the nightfall boundary alone (rather than "is it dark
+/// right now") don't re-derive solar time.
+pub fn is_after_sunset(datetime: &GameDateTime) -> bool {
+    hour_of_day(datetime) >= get_solar_daylight_window(datetime.month, datetime.day).sunset_hour
 }

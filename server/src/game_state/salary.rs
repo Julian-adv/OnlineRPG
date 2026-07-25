@@ -14,7 +14,7 @@ impl super::GameState {
     /// A multi-day debug time jump pays a single salary — the faucet never
     /// emits more than one payment per rollover observed.
     pub async fn tick_npc_salaries(&self) {
-        let game_day = self.current_total_game_seconds() / super::time::GAME_SECONDS_PER_DAY;
+        let game_day = self.current_game_day();
         {
             let mut last = self.npc_salary_last_day.write().await;
             match *last {

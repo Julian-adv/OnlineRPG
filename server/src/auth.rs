@@ -287,6 +287,7 @@ impl AuthService {
         Self::ensure_characters_schema(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
+        Self::ensure_dungeon_chest_schema(&conn)?;
 
         Ok(Self { pool })
     }
@@ -419,6 +420,25 @@ impl AuthService {
             )?;
         }
 
+        Ok(())
+    }
+
+    /// When each character last opened a dungeon's treasure chest, in world
+    /// clock seconds. Stored against the game clock (also persisted, see
+    /// `world_time`) rather than wall time because the chest refills at
+    /// nightfall; keeping the raw timestamp instead of a derived night index
+    /// leaves the refill rule free to change later.
+    fn ensure_dungeon_chest_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_dungeon_chests (
+                character_id INTEGER NOT NULL,
+                entrance_id TEXT NOT NULL,
+                opened_game_seconds INTEGER NOT NULL,
+                PRIMARY KEY (character_id, entrance_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
         Ok(())
     }
 
@@ -647,6 +667,41 @@ impl AuthService {
         conn.execute(
             "DELETE FROM character_blocks WHERE character_id = ?1 AND blocked_name = ?2",
             params![character_id, blocked_name],
+        )?;
+        Ok(())
+    }
+
+    /// Every dungeon chest this character has opened, as (entrance id, world
+    /// clock seconds). Read once at login into `GameState`.
+    pub fn load_dungeon_chest_opens(
+        &self,
+        character_id: i64,
+    ) -> Result<Vec<(String, i64)>, AuthError> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT entrance_id, opened_game_seconds FROM character_dungeon_chests \
+             WHERE character_id = ?1",
+        )?;
+        let opens = stmt
+            .query_map(params![character_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(opens)
+    }
+
+    pub fn record_dungeon_chest_open(
+        &self,
+        character_id: i64,
+        entrance_id: &str,
+        opened_game_seconds: i64,
+    ) -> Result<(), AuthError> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "INSERT INTO character_dungeon_chests \
+                 (character_id, entrance_id, opened_game_seconds) \
+             VALUES (?1, ?2, ?3) \
+             ON CONFLICT(character_id, entrance_id) \
+             DO UPDATE SET opened_game_seconds = excluded.opened_game_seconds",
+            params![character_id, entrance_id, opened_game_seconds],
         )?;
         Ok(())
     }

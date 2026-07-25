@@ -240,7 +240,7 @@ impl super::GameState {
         let cost = deal_cost(base_price, rate, kind, applied);
 
         let now_ms = Self::now_ms();
-        let game_day = self.current_total_game_seconds() / super::time::GAME_SECONDS_PER_DAY;
+        let game_day = self.current_game_day();
 
         // Cooldown + daily budgets, all under the ledger lock.
         {

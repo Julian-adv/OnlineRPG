@@ -184,6 +184,14 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// (character_id, dungeon entrance id) → world clock seconds at that
+    /// character's last chest open. Keyed by character (not the per-session
+    /// player id) and DB-backed, so the refill gate survives a reconnect and
+    /// a restart. Seeded at login; entries are dropped once the night they
+    /// record has passed (`claim_chest_open`), not on logout — a logout hook
+    /// would race the session replacement that clears it.
+    #[allow(clippy::type_complexity)]
+    chest_opens: Arc<RwLock<HashMap<(i64, String), i64>>>,
 }
 
 impl GameState {
@@ -238,6 +246,7 @@ impl GameState {
             open_shops: Arc::new(RwLock::new(HashMap::new())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            chest_opens: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -390,6 +399,17 @@ impl GameState {
             .await
             .retain(|k| k.house_id != house_id);
     }
+}
+
+/// Run a small auth-DB op off the async runtime (rusqlite blocks).
+pub(super) async fn auth_db<T, F>(op: F) -> Result<T, crate::auth::AuthError>
+where
+    F: FnOnce() -> Result<T, crate::auth::AuthError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(op)
+        .await
+        .map_err(|e| crate::auth::AuthError::Database(e.to_string()))?
 }
 
 const MAX_DOOR_DISTANCE: f32 = 2.0;

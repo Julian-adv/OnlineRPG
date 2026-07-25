@@ -1,4 +1,5 @@
-use crate::auth::{AuthError, AuthService};
+use super::auth_db;
+use crate::auth::AuthService;
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use tracing::{error, info, warn};
@@ -118,17 +119,6 @@ where
         (None, _) => NameMatch::None,
         (Some(_), Some(_)) => NameMatch::Ambiguous,
     }
-}
-
-/// Run a small auth-DB op off the async runtime (rusqlite blocks).
-async fn auth_db<T, F>(op: F) -> Result<T, AuthError>
-where
-    F: FnOnce() -> Result<T, AuthError> + Send + 'static,
-    T: Send + 'static,
-{
-    tokio::task::spawn_blocking(op)
-        .await
-        .map_err(|e| AuthError::Database(e.to_string()))?
 }
 
 impl super::GameState {
