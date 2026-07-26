@@ -131,11 +131,17 @@ impl GameState {
     /// cosmetic.
     pub async fn toggle_dungeon_door(
         &self,
+        player_id: &PlayerId,
         entrance_id: &str,
         depth: u8,
         door_id: u32,
     ) -> Option<bool> {
         self.dungeon_defs.get(entrance_id)?;
+        let expected_floor = -i8::try_from(depth).ok()?;
+        let player_floor = self.players.read().await.get(player_id)?.floor_level;
+        if player_floor != expected_floor {
+            return None;
+        }
         self.ensure_dungeon_runtime(entrance_id).await;
         let is_open = {
             let mut dungeons = self.dungeons.write().await;
