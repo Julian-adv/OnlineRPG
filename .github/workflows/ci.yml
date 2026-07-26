@@ -22,7 +22,7 @@ jobs:
     steps:
       # LFS assets (models, audio) are not needed to compile or test — plain
       # checkout keeps CI fast and off the LFS bandwidth quota.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -39,7 +39,7 @@ jobs:
       run:
         working-directory: client
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -47,7 +47,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
