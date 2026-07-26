@@ -53,6 +53,23 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
       - run: npm ci
+      # data/*.json is generated, not committed. The tools build:wasm runs
+      # first — measure-monster-attack-clips reads data/monsters.json — so a
+      # clean checkout needs the conversion before them. On a developer's
+      # machine a cargo build has already produced it, which is why this only
+      # ever fails in CI.
+      - run: npm run generate:csv
+      # Those same tools parse GLBs, and on a fresh checkout every file shares
+      # one mtime, so the up-to-date check always misses and they really do
+      # regenerate. Fetch the models they open — 28 MB of the 245 MB tree —
+      # rather than the whole of LFS on every run.
+      - name: Fetch the GLBs the generators read
+        working-directory: .
+        run: |
+          git lfs pull --include="client/public/models/monsters/*.glb,\
+          client/public/models/animations/combat_melee.glb,\
+          client/public/models/animations/locomotion.glb,\
+          client/public/models/characters/female_knight.glb"
       - run: npm run build:wasm
       - run: npm test
       - run: npm run check
