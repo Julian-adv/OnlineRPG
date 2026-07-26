@@ -37,6 +37,24 @@ pub(crate) fn restored_floor_level(saved: i8) -> i8 {
 /// Also paces the refused-move warn, which rides the same gate.
 const POSITION_CORRECTION_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Whether `player_id` may be snapped now, stamping it when so. Deliberately
+/// not re-stamped when it suppresses a snap: that would hold a player who trips
+/// every tick past the cooldown forever, and they are exactly who needs the
+/// next one.
+fn correction_due(
+    last: &mut HashMap<PlayerId, std::time::Instant>,
+    player_id: &PlayerId,
+    now: std::time::Instant,
+) -> bool {
+    match last.get(player_id) {
+        Some(at) if now.duration_since(*at) < POSITION_CORRECTION_COOLDOWN => false,
+        _ => {
+            last.insert(*player_id, now);
+            true
+        }
+    }
+}
+
 /// Client-requested destination the server walks the player toward at capped
 /// speed.
 #[derive(Clone)]
@@ -558,10 +576,8 @@ impl super::GameState {
             append,
         } = cmd;
         if exceeds_positive_floor_limit(floor_level) {
-            warn!(
-                "Rejected move carrying floor {} from player {}",
-                floor_level, player_id
-            );
+            self.reject_out_of_range_floor(player_id, floor_level, "move")
+                .await;
             return;
         }
         if !(new_position.is_finite() && new_rotation.is_finite()) {
@@ -813,20 +829,11 @@ impl super::GameState {
         let now = std::time::Instant::now();
         let due: Vec<_> = {
             let mut last = self.last_position_correction.write().await;
+            // Only prune site: one pass per tick, not one per snapped player.
             last.retain(|_, at| now.duration_since(*at) < POSITION_CORRECTION_COOLDOWN);
-            // Expired entries are gone, so a survivor means the cooldown is
-            // still running. Not re-stamped when it suppresses a refusal: that
-            // would hold a player who blocks every tick past the cooldown
-            // forever, and they are exactly who needs the next snap.
             refused
                 .into_iter()
-                .filter(|r| {
-                    let due = !last.contains_key(&r.player_id);
-                    if due {
-                        last.insert(r.player_id, now);
-                    }
-                    due
-                })
+                .filter(|r| correction_due(&mut last, &r.player_id, now))
                 .collect()
         };
         for r in due {
@@ -858,6 +865,39 @@ impl super::GameState {
             )
             .await;
         }
+    }
+
+    /// Refuse a client-reported floor above the housing limit and snap the
+    /// client back. It reads its own floor from local geometry and so keeps
+    /// resending the rejected value: without a snap every later move packet is
+    /// dropped too and the player is stranded with no signal. Rides the
+    /// refused-move throttle, warn included.
+    async fn reject_out_of_range_floor(&self, player_id: &PlayerId, floor_level: i8, source: &str) {
+        let now = std::time::Instant::now();
+        let due = {
+            let mut last = self.last_position_correction.write().await;
+            correction_due(&mut last, player_id, now)
+        };
+        if !due {
+            return;
+        }
+        let Some((position, rotation, current_floor)) = self.get_player_position(player_id).await
+        else {
+            return;
+        };
+        warn!(
+            "Rejected {} with out-of-range floor {} from player {}",
+            source, floor_level, player_id
+        );
+        self.send_direct_message(
+            player_id,
+            ServerMessage::PositionCorrected {
+                position,
+                rotation,
+                floor_level: current_floor,
+            },
+        )
+        .await;
     }
 
     /// Store a position immediately (trusted server-side path) and run the
@@ -928,10 +968,8 @@ impl super::GameState {
     /// they walk a stairwell, which is one uninterrupted leg.
     pub async fn update_player_floor(&self, player_id: &PlayerId, floor_level: i8) {
         if exceeds_positive_floor_limit(floor_level) {
-            warn!(
-                "Rejected floor change to {} from player {}",
-                floor_level, player_id
-            );
+            self.reject_out_of_range_floor(player_id, floor_level, "floor change")
+                .await;
             return;
         }
         let (current_floor, position) = {

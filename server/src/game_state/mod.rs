@@ -141,9 +141,9 @@ pub struct GameState {
     /// solid furniture, dungeons), used to collision-check simulated player
     /// movement. std RwLock: accesses are sync and short.
     passability: Arc<std::sync::RwLock<onlinerpg_shared::pathfinding::PassabilityCache>>,
-    /// When each player was last sent a `PositionCorrected`. Self-pruning on
-    /// write and only touched when a move is refused, so it needs no disconnect
-    /// cleanup and stays empty in the normal case.
+    /// When each player was last sent a `PositionCorrected`. Only touched when
+    /// a correction is sent, and pruned on the refused-move path, so it needs
+    /// no disconnect cleanup and stays empty in the normal case.
     last_position_correction: Arc<RwLock<HashMap<PlayerId, Instant>>>,
     /// No-spawn zones (towns, safe areas) from region zone files.
     no_spawn_zones: Vec<NoSpawnZone>,

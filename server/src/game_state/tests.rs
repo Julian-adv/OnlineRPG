@@ -1289,6 +1289,63 @@ async fn player_move_cannot_bypass_positive_floor_limit() {
     assert_eq!(player.floor_level, max_floor);
 }
 
+#[tokio::test]
+async fn a_rejected_floor_change_snaps_the_client_back() {
+    let game_state = make_test_game_state("positive_floor_correction");
+    let player_id = pid("ghost");
+    let max_floor = onlinerpg_shared::housing::MAX_FLOOR_LEVEL as i8;
+    game_state.add_player(make_player("ghost", 2.0, 3.0)).await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state
+        .update_player_floor(&player_id, max_floor + 1)
+        .await;
+    let (position, _, floor_level) =
+        first_correction(&mut rx).expect("a rejected floor must snap the client back");
+    assert_eq!(floor_level, 0);
+    assert_eq!((position.x, position.z), (2.0, 3.0));
+
+    // The snap rides the refused-move throttle: a client that keeps reporting
+    // the bad floor is not yanked once per packet.
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                floor_level: max_floor + 1,
+                ..move_cmd(pos(1.0), false)
+            },
+            false,
+            false,
+        )
+        .await;
+    assert!(first_correction(&mut rx).is_none());
+}
+
+#[tokio::test]
+async fn a_rejected_move_floor_snaps_the_client_back() {
+    let game_state = make_test_game_state("positive_floor_move_correction");
+    let player_id = pid("ghost");
+    let max_floor = onlinerpg_shared::housing::MAX_FLOOR_LEVEL as i8;
+    game_state.add_player(make_player("ghost", 2.0, 3.0)).await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                floor_level: max_floor + 1,
+                ..move_cmd(pos(1.0), false)
+            },
+            false,
+            false,
+        )
+        .await;
+    let (position, _, floor_level) =
+        first_correction(&mut rx).expect("a rejected move floor must snap the client back");
+    assert_eq!(floor_level, 0);
+    assert_eq!((position.x, position.z), (2.0, 3.0));
+}
+
 #[test]
 fn restored_floor_falls_back_to_surface() {
     let max_floor = onlinerpg_shared::housing::MAX_FLOOR_LEVEL as i8;
