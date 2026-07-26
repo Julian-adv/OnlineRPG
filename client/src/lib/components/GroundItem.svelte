@@ -8,6 +8,7 @@
   import { createRng } from '../utils/simplex-noise'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
+  import { groundItemBaseY } from '../managers/ground-item-ground'
   import {
     evaluateSpawnAnimation,
     type GroundItemData,
@@ -301,10 +302,18 @@
         : 0.3
   )
   const displayX = $derived(data.position.x + (spawnTransform?.offsetX ?? 0))
-  const displayY = $derived(
-    data.position.y + restHover + (spawnTransform?.offsetY ?? 0)
-  )
   const displayZ = $derived(data.position.z + (spawnTransform?.offsetZ ?? 0))
+  const baseY = $derived(
+    groundItemBaseY(
+      heightManager ?? null,
+      data.floorLevel,
+      Boolean(data.inHand),
+      displayX,
+      displayZ,
+      data.position.y
+    )
+  )
+  const displayY = $derived(baseY + restHover + (spawnTransform?.offsetY ?? 0))
   const shouldTiltToTerrain = $derived(!data.inHand && !spawnTransform)
   // Flat pickup pad laid under a grounded item so small models still offer a
   // generous click target. It is a child of the root group (so a click on it
@@ -349,7 +358,7 @@
   const terrainAlignmentQuaternion = $derived(
     getTerrainAlignmentQuaternion(
       displayX,
-      data.position.y,
+      baseY,
       displayZ,
       shouldTiltToTerrain
     )
