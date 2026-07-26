@@ -24,6 +24,9 @@
 
 - Sword and Shield Slash https://www.mixamo.com/#/?page=1&query=slash&type=Motion%2CMotionPack
 
+- Fishing Cast https://www.mixamo.com/#/?query=fishing&type=Motion%2CMotionPack (fishing pack, `fishing_cast`)
+- Fishing Idle https://www.mixamo.com/#/?query=fishing&type=Motion%2CMotionPack (fishing pack, `fishing_idle`)
+
 ## Mixamo Animation Export Workflow
 
 새 Mixamo 애니메이션을 offhand/locomotion 등의 pack에 추가할 때:

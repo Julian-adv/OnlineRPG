@@ -51,6 +51,10 @@ EXPORT_PACKS = {
         "torch_walk",
         "torch_run",
     ],
+    "fishing": [
+        "fishing_cast",
+        "fishing_idle",
+    ],
 }
 
 # The primary armature name whose mesh and skeleton should be exported.

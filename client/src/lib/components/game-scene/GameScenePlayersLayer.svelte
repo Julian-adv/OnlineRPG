@@ -30,6 +30,8 @@
     playerInsideHouseId,
   } from '../../stores/housingStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
+  import { myFishingPhase } from '../../stores/fishingStore'
+  import { FishingAnimationName } from '../../types/animations'
   import { dungeonManager } from '../../managers/dungeonManager'
   import { housingManager } from '../../managers/housingManager'
   import {
@@ -121,6 +123,30 @@
   $effect(() => {
     remotePlayerManager.attackAnimationDuration = playerAttackDuration
   })
+
+  // Fishing stance for the local player: while a fishing session is live and
+  // the player is otherwise idle, present the interact state with the fishing
+  // clips instead. Movement/attack win automatically (the override only
+  // applies to 'idle', and the server aborts the session on those anyway).
+  // The PlayerControl FSM is deliberately untouched — its own state stays
+  // 'idle', so pickup/door interactions are unaffected.
+  let fishingCastDone = $state(false)
+  $effect(() => {
+    if ($myFishingPhase === 'casting') fishingCastDone = false
+  })
+  const fishingOverrideActive = $derived(
+    $myFishingPhase !== 'idle' && currentPlayerState.state === 'idle'
+  )
+  const effectivePlayerState = $derived(
+    fishingOverrideActive ? 'interact' : currentPlayerState.state
+  )
+  const effectiveInteractionAnim = $derived(
+    fishingOverrideActive
+      ? $myFishingPhase === 'casting' && !fishingCastDone
+        ? FishingAnimationName.CAST
+        : FishingAnimationName.IDLE
+      : currentPlayerState.interactionAnim
+  )
 
   // Visual floor: matches what remotes report, so a player on the stairs isn't
   // hidden from the floor they're still on. See playerVisualFloorLevel.
@@ -409,8 +435,8 @@
     position={currentPlayer.position}
     name={currentPlayer.name}
     isCurrentPlayer={true}
-    playerState={currentPlayerState.state}
-    interactionAnim={currentPlayerState.interactionAnim}
+    playerState={effectivePlayerState}
+    interactionAnim={effectiveInteractionAnim}
     interactOffsetY={currentPlayerState.interactOffsetY}
     attackCounter={currentPlayerState.attackCounter}
     speed={currentPlayerState.speed}
@@ -425,6 +451,9 @@
     {onAttackDuration}
     onDyingFinished={onCurrentPlayerDyingFinished}
     onInteractionFinished={() => {
+      // The finished cast hands over to the looping fishing idle; the event
+      // still goes to the FSM, which ignores anims it didn't start.
+      if (fishingOverrideActive) fishingCastDone = true
       onPlayerControlEvent?.({ type: 'anim_interaction_finished' })
     }}
     onPickupGrab={() => {
