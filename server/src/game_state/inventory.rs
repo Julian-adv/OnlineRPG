@@ -937,29 +937,33 @@ impl super::GameState {
         }
     }
 
-    pub async fn collect_dirty_inventory_states(&self) -> Vec<(i64, Vec<ItemRow>)> {
+    pub async fn collect_dirty_inventory_states(
+        &self,
+    ) -> (Vec<PlayerId>, Vec<(i64, Vec<ItemRow>)>) {
         let dirty_ids: Vec<PlayerId> = {
             let mut dirty = self.dirty_inventories.write().await;
             dirty.drain().collect()
         };
 
         if dirty_ids.is_empty() {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
 
         let inventories = self.inventories.read().await;
         let player_chars = self.player_characters.read().await;
 
+        let mut collected_ids = Vec::with_capacity(dirty_ids.len());
         let mut result = Vec::with_capacity(dirty_ids.len());
         for pid in &dirty_ids {
             if let (Some(inv), Some((char_id, _, _))) =
                 (inventories.get(pid), player_chars.get(pid))
             {
+                collected_ids.push(*pid);
                 result.push((*char_id, serialize_inventory(inv)));
             }
         }
 
-        result
+        (collected_ids, result)
     }
 }
 
