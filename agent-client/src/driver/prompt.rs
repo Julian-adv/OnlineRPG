@@ -211,10 +211,10 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             if state.self_player_id.as_ref() != Some(player_id) {
                 return None;
             }
-            let floor = if *floor_level < 0 {
-                format!("dungeon floor {}", floor_level.unsigned_abs())
-            } else {
-                "the surface".to_string()
+            let floor = match *floor_level {
+                0 => "the surface".to_string(),
+                f if f < 0 => format!("dungeon floor {}", f.unsigned_abs()),
+                f => format!("floor {f}"),
             };
             Some(format!(
                 "[Teleported] You were teleported to ({:.0}, {:.0}) on {floor}. Your old \

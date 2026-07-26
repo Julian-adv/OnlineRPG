@@ -542,19 +542,28 @@ async fn run_npc_session(
                         continue;
                     }
 
-                    let needs_height_sync = matches!(
-                        msg,
-                        onlinerpg_shared::ServerMessage::JoinSuccess { .. }
-                            | onlinerpg_shared::ServerMessage::PlayerRespawned { .. }
-                    );
-
                     let mut s = state_for_rx.lock().await;
+
+                    // Relocations land on a configured Y, not the terrain's.
+                    // Asked before `push_event`, which is where `JoinSuccess`
+                    // sets `self_player_id`.
+                    let needs_height_sync = match &msg {
+                        ServerMessage::JoinSuccess { .. } => true,
+                        ServerMessage::PlayerRespawned { player } => {
+                            s.self_player_id == Some(player.id)
+                        }
+                        ServerMessage::PlayerTeleported { player_id, .. } => {
+                            s.self_player_id == Some(*player_id)
+                        }
+                        _ => false,
+                    };
+
                     s.push_event(msg);
 
                     if needs_height_sync {
                         if let Err(e) = s.sync_height().await {
                             warn!(
-                                "[{}] Failed to sync height after spawn: {e}",
+                                "[{}] Failed to sync height after relocation: {e}",
                                 account_for_rx
                             );
                         }

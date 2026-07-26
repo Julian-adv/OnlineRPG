@@ -731,6 +731,39 @@ impl SharedState {
         }
     }
 
+    /// Apply an authoritative player pose. Supersedes whatever move that player
+    /// had buffered, which `drain_events` would otherwise replay after us.
+    fn apply_player_pose(
+        &mut self,
+        player_id: &PlayerId,
+        position: Position,
+        rotation: f32,
+        floor_level: i8,
+    ) {
+        if let Some(p) = self.nearby_players.get_mut(player_id) {
+            p.position = position;
+            p.rotation = rotation;
+            p.floor_level = floor_level;
+        }
+        self.latest_player_moves.remove(player_id);
+    }
+
+    /// The server put us somewhere we did not walk to — a refused step, a
+    /// return scroll, a respawn. Adopting the pose is not enough: the mover
+    /// watches `position_corrections` to drop the path it was walking.
+    fn relocate_self(&mut self, position: Position, rotation: f32, floor_level: i8) {
+        if let Some(ref mut p) = self.self_player {
+            p.position = position;
+            p.rotation = rotation;
+            p.floor_level = floor_level;
+        }
+        self.self_floor_level = floor_level;
+        self.position_corrections = self.position_corrections.wrapping_add(1);
+        if let Some(id) = self.self_player_id {
+            self.latest_player_moves.remove(&id);
+        }
+    }
+
     /// Send a position sync to correct Y to terrain height.
     /// Should be called after JoinSuccess or PlayerRespawned to snap to ground.
     pub async fn sync_height(&mut self) -> anyhow::Result<()> {
@@ -879,17 +912,23 @@ impl SharedState {
             | ServerMessage::MonsterDead { .. }
             | ServerMessage::MonsterRemoved { .. }
             | ServerMessage::XpGained { .. }
-            | ServerMessage::PlayerRespawned { .. }
             | ServerMessage::PlayerHealthUpdate { .. }
             | ServerMessage::PlayerTorchToggled { .. } => EventUrgency::Routine,
 
-            // Urgent for ourselves: a teleport invalidates the current plan
-            // (walk targets, floor assumptions). Noise for bystanders.
+            // Being relocated invalidates our walk targets and floor
+            // assumptions; someone else being relocated does not.
             ServerMessage::PlayerTeleported { player_id, .. } => {
                 if self_id == Some(player_id) {
                     EventUrgency::Urgent
                 } else {
                     EventUrgency::Noise
+                }
+            }
+            ServerMessage::PlayerRespawned { player } => {
+                if self_id == Some(&player.id) {
+                    EventUrgency::Urgent
+                } else {
+                    EventUrgency::Routine
                 }
             }
 
@@ -903,9 +942,8 @@ impl SharedState {
             | ServerMessage::HouseRemoved { .. }
             | ServerMessage::DoorToggled { .. } => EventUrgency::Noise,
 
-            // Routine: the server's verdict on our chest (and future object)
-            // interactions — the LLM must see rejections to stop retrying a
-            // dead end.
+            // A refused interaction should reach the LLM at poll priority, not
+            // sink to the idle queue behind everything else.
             ServerMessage::InteractionRejected { .. } => EventUrgency::Routine,
 
             // Auth/character events: routine (handled before game entry)
@@ -960,26 +998,13 @@ impl SharedState {
                 self.self_floor_level = player.floor_level;
                 self.request_dungeon_doors_here();
             }
-            // The server refused a step: our path leads somewhere it will not
-            // follow, so take its position and let the mover drop the path.
             ServerMessage::PositionCorrected {
                 position,
                 rotation,
                 floor_level,
             } => {
-                if let Some(ref mut p) = self.self_player {
-                    p.position = *position;
-                    p.rotation = *rotation;
-                    p.floor_level = *floor_level;
-                }
-                self.self_floor_level = *floor_level;
-                self.position_corrections = self.position_corrections.wrapping_add(1);
+                self.relocate_self(*position, *rotation, *floor_level);
             }
-            // A teleport (return scroll, escape command, debug teleport) must
-            // resync us exactly like PositionCorrected — including abandoning
-            // any in-flight walk via the corrections counter — or the client
-            // keeps walking from its stale spot and drags the character back
-            // server-side.
             ServerMessage::PlayerTeleported {
                 player_id,
                 position,
@@ -987,30 +1012,19 @@ impl SharedState {
                 floor_level,
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
-                    if let Some(ref mut p) = self.self_player {
-                        p.position = *position;
-                        p.rotation = *rotation;
-                        p.floor_level = *floor_level;
-                    }
-                    self.self_floor_level = *floor_level;
-                    self.position_corrections = self.position_corrections.wrapping_add(1);
+                    self.relocate_self(*position, *rotation, *floor_level);
                 }
-                if let Some(p) = self.nearby_players.get_mut(player_id) {
-                    p.position = *position;
-                    p.rotation = *rotation;
-                    p.floor_level = *floor_level;
-                }
+                self.apply_player_pose(player_id, *position, *rotation, *floor_level);
             }
-            // A respawn relocates us the same way, just via its own message.
             ServerMessage::PlayerRespawned { player } => {
-                if self.self_player_id == Some(player.id) {
+                if self.self_player_id.as_ref() == Some(&player.id) {
                     self.self_player = Some(player.clone());
-                    self.self_floor_level = player.floor_level;
-                    self.position_corrections = self.position_corrections.wrapping_add(1);
+                    self.relocate_self(player.position, player.rotation, player.floor_level);
                 }
                 if let Some(p) = self.nearby_players.get_mut(&player.id) {
                     *p = player.clone();
                 }
+                self.latest_player_moves.remove(&player.id);
             }
             ServerMessage::DungeonDoorsState {
                 ref entrance_id,
@@ -2275,9 +2289,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// A self-teleport (return scroll, respawn relocation) must resync the
-    /// client's position AND floor, or it keeps walking from the stale spot
-    /// and drags the character back server-side.
+    /// A self-teleport must resync position, rotation AND floor, or the client
+    /// keeps walking from the stale spot and drags the character back.
     #[test]
     fn a_self_teleport_resyncs_position_and_floor() {
         let (mut s, _rx) = test_state();
@@ -2289,7 +2302,7 @@ pub(crate) mod tests {
         s.push_event(ServerMessage::PlayerTeleported {
             player_id: PlayerId::from(1),
             position: p(-1456.0, 1.2, 4735.0),
-            rotation: 0.0,
+            rotation: 2.5,
             floor_level: 0,
         });
 
@@ -2300,6 +2313,7 @@ pub(crate) mod tests {
         let now = s.self_player.as_ref().unwrap();
         assert_eq!(now.position.x, -1456.0);
         assert_eq!(now.position.z, 4735.0);
+        assert_eq!(now.rotation, 2.5);
         assert_eq!(now.floor_level, 0);
         assert_eq!(
             s.position_corrections, 1,
@@ -2307,7 +2321,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// A respawn relocates us via its own message and must resync the same way.
+    /// A respawn relocates us the same way, just via its own message.
     #[test]
     fn a_self_respawn_resyncs_position_and_floor() {
         let (mut s, _rx) = test_state();
@@ -2325,6 +2339,37 @@ pub(crate) mod tests {
         assert_eq!(now.position.x, -1475.0);
         assert_eq!(now.floor_level, 0);
         assert_eq!(s.position_corrections, 1);
+    }
+
+    /// Someone else's teleport moves their tracked entry, not ours: mixing the
+    /// two would have us chase a neighbour's destination.
+    #[test]
+    fn a_neighbours_teleport_only_moves_their_entry() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(-1464.5, 4690.5);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        let mut them = test_player(-1460.0, 4695.0);
+        them.id = PlayerId::from(2);
+        s.nearby_players.insert(them.id, them);
+
+        s.push_event(ServerMessage::PlayerTeleported {
+            player_id: PlayerId::from(2),
+            position: p(-1456.0, 1.2, 4735.0),
+            rotation: 0.0,
+            floor_level: -3,
+        });
+
+        let them = &s.nearby_players[&PlayerId::from(2)];
+        assert_eq!(them.position.x, -1456.0);
+        assert_eq!(them.floor_level, -3);
+        assert_eq!(s.self_player.as_ref().unwrap().position.x, -1464.5);
+        assert_eq!(s.self_floor_level, 0);
+        assert_eq!(
+            s.position_corrections, 0,
+            "a neighbour's teleport must not abandon our path"
+        );
     }
 
     /// A dungeon monster's moves must keep its floor's height. Terrain snapping

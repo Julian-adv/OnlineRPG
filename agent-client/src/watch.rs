@@ -425,6 +425,7 @@ pub fn feed_kind(msg: &onlinerpg_shared::ServerMessage) -> Option<&'static str> 
         | M::PlayerLeft { .. }
         | M::PlayerAppeared { .. }
         | M::PlayerDisappeared { .. }
+        | M::PlayerTeleported { .. }
         | M::CharacterCreated { .. }
         | M::CharacterError { .. } => "system",
         _ => return None,
@@ -459,6 +460,19 @@ mod tests {
             Some("chat")
         );
         assert_eq!(feed_kind(&M::PlayerLeft { player_id: pid }), Some("system"));
+        assert_eq!(
+            feed_kind(&M::PlayerTeleported {
+                player_id: pid,
+                position: Position {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                rotation: 0.0,
+                floor_level: 0,
+            }),
+            Some("system")
+        );
         assert_eq!(
             feed_kind(&M::ServerNotice { message: None }),
             Some("system")
