@@ -248,6 +248,19 @@ impl GameState {
         true
     }
 
+    async fn rollback_chest_open_claim(
+        &self,
+        character_id: i64,
+        entrance_id: &str,
+        opened_game_seconds: i64,
+    ) {
+        let key = (character_id, entrance_id.to_string());
+        let mut chest_opens = self.chest_opens.write().await;
+        if chest_opens.get(&key) == Some(&opened_game_seconds) {
+            chest_opens.remove(&key);
+        }
+    }
+
     /// Open the final-floor treasure chest: requires standing next to it on
     /// the last floor with the boss dead, and one open per character per
     /// night. Loot (2–3 equipment rolls + depth-scaled gold) goes straight to
@@ -333,6 +346,16 @@ impl GameState {
         .await
         {
             warn!("Failed to persist chest open for character {character_id}: {err}");
+            self.rollback_chest_open_claim(character_id, entrance_id, now_seconds)
+                .await;
+            self.send_direct_message(
+                player_id,
+                ServerMessage::InteractionRejected {
+                    reason: "The chest could not be saved; try again".to_string(),
+                },
+            )
+            .await;
+            return;
         }
 
         // Roll loot: 2–3 distinct equipment items priced for endgame.
