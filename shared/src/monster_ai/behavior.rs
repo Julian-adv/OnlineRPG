@@ -297,11 +297,13 @@ impl MonsterBrain {
             self.state_timer_ms = self.attack_cooldown_ms;
             self.target_position = None;
             self.waypoints.clear();
+            self.clear_path_bend();
             commands.push(self.make_move_cmd());
         }
 
         if self.state_timer_ms >= self.attack_cooldown_ms {
             self.state_timer_ms = 0.0;
+            self.clear_path_bend();
             commands.push(self.make_move_cmd());
             commands.push(AiCommand::Attack {
                 monster_id: self.monster_id.clone(),

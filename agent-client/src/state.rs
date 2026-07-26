@@ -1295,6 +1295,8 @@ impl SharedState {
                 ..
             } => {
                 self.apply_monster_pose(monster_id, *position, *rotation, *state);
+                self.monster_ai
+                    .apply_authoritative_position(monster_id, *position);
             }
             ServerMessage::HouseSpawned { ref house } => {
                 self.world_cache.write().unwrap().add_house(house.clone());

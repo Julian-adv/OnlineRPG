@@ -7,7 +7,7 @@ use onlinerpg_shared::monster_ai::{
     DEFAULT_CHASE_RANGE, DEFAULT_RUN_SPEED, DEFAULT_WALK_SPEED,
 };
 use onlinerpg_shared::pathfinding::PassabilityCache;
-use onlinerpg_shared::{ClientMessage, Monster, Player, PlayerId};
+use onlinerpg_shared::{ClientMessage, Monster, Player, PlayerId, Position};
 use std::collections::HashMap;
 use tracing::info;
 
@@ -192,6 +192,13 @@ impl MonsterAiManager {
         };
         let cmds = brain.handle_hit_with_behavior_tree(attacker_id, hit, damage);
         cmds.into_iter().map(command_to_client_msg).collect()
+    }
+
+    /// Re-sync a managed monster to the server's authoritative position.
+    pub fn apply_authoritative_position(&mut self, monster_id: &str, position: Position) {
+        if let Some(brain) = self.brains.get_mut(monster_id) {
+            brain.apply_authoritative_position(position);
+        }
     }
 
     /// Notify that a monster died.

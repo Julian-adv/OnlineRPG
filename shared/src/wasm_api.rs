@@ -709,6 +709,16 @@ pub fn ai_handle_hit(
     to_js(&commands)
 }
 
+/// Re-sync an owned monster's brain to the server's position after a refused move.
+#[wasm_bindgen]
+pub fn ai_apply_authoritative_position(monster_id: &str, x: f32, y: f32, z: f32) {
+    MONSTER_BRAINS.with(|brains| {
+        if let Some(brain) = brains.borrow_mut().get_mut(monster_id) {
+            brain.apply_authoritative_position(Position { x, y, z });
+        }
+    });
+}
+
 #[wasm_bindgen]
 pub fn ai_handle_death(monster_id: &str) {
     MONSTER_BRAINS.with(|brains| {

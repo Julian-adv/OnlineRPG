@@ -17,6 +17,7 @@ impl MonsterBrain {
         self.target_position = None;
         self.waypoints.clear();
         self.current_waypoint_idx = 0;
+        self.clear_path_bend();
         commands.push(self.make_move_cmd());
     }
 
@@ -62,6 +63,7 @@ impl MonsterBrain {
         }
 
         self.face_first_waypoint();
+        self.clear_path_bend();
 
         // target_position was set above, safe to unwrap
         commands.push(AiCommand::Move {
@@ -92,6 +94,7 @@ impl MonsterBrain {
             return;
         }
 
+        self.clear_path_bend();
         commands.push(self.make_move_cmd());
     }
 
@@ -160,9 +163,16 @@ impl MonsterBrain {
             goal_z,
             self.path_floor,
         );
+        let turned_mid_leg = self.current_waypoint_idx < self.waypoints.len();
         self.waypoints = result.waypoints;
         self.current_waypoint_idx = 0;
         self.path_elapsed_ms = 0.0;
+        // Only a repath that cuts a leg short is a bend. Replacing a finished
+        // path starts where the last report already left off — and combat
+        // repaths every tick while flapping in and out of attack range.
+        if turned_mid_leg {
+            self.mark_path_bend();
+        }
     }
 
     /// Follow waypoints. Returns true if path is exhausted.
@@ -181,6 +191,7 @@ impl MonsterBrain {
             self.position.x = wp.x;
             self.position.z = wp.z;
             self.current_waypoint_idx += 1;
+            self.mark_path_bend();
 
             if self.current_waypoint_idx >= self.waypoints.len() {
                 return true;

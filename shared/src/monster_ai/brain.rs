@@ -50,6 +50,9 @@ pub struct MonsterBrain {
     /// once instead of waiting out the interval.
     #[serde(default)]
     pub(super) last_synced_state: AiState,
+    /// A path bend the next sync must not be allowed to cut across.
+    #[serde(default)]
+    pub(super) pending_bend_sync: bool,
 }
 
 impl MonsterBrain {
@@ -101,16 +104,45 @@ impl MonsterBrain {
             path_floor: 0,
             sync_elapsed_ms: 0.0,
             last_synced_state: AiState::Idle,
+            pending_bend_sync: false,
         }
     }
 
+    /// The path just changed direction here — force the next tick to sync.
+    ///
+    /// The server only sees the straight line between two reported positions,
+    /// and a bend swallowed inside one sync interval makes that line a chord off
+    /// the walkable path, which its collision sweep rightly refuses. Reporting
+    /// bends keeps every segment inside one smoothed leg, which
+    /// `pathfinding::is_line_passable` cleared with `y: None` and a
+    /// `PLAYER_RADIUS` sweep — stricter than the server's. Keep that inequality:
+    /// it is what makes an accepted path un-refusable.
+    pub(super) fn mark_path_bend(&mut self) {
+        self.pending_bend_sync = true;
+    }
+
+    /// Consume a pending bend without disturbing the sync timer, for states
+    /// that report only at bends rather than on an interval.
+    pub(super) fn take_path_bend(&mut self) -> bool {
+        std::mem::take(&mut self.pending_bend_sync)
+    }
+
+    /// Drop a pending bend for a caller that emits this pose itself, so the
+    /// bend isn't reported twice.
+    pub(super) fn clear_path_bend(&mut self) {
+        self.pending_bend_sync = false;
+    }
+
     /// Gate for the per-tick position emits of continuously-moving states
-    /// (chase/return/flee): true on entering a new movement state, or once
-    /// `NETWORK_SYNC_INTERVAL_MS` has elapsed. Resets the timer when it fires so
-    /// the brain simulates every frame but only syncs a couple of times a
-    /// second. Remote clients interpolate toward `target_position` between syncs.
+    /// (chase/return/flee): true on entering a new movement state, on a path
+    /// bend, or once `NETWORK_SYNC_INTERVAL_MS` has elapsed. Resets the timer
+    /// when it fires so the brain simulates every frame but only syncs a couple
+    /// of times a second. Remote clients interpolate toward `target_position`
+    /// between syncs.
     pub(super) fn should_sync_move(&mut self) -> bool {
-        if self.state != self.last_synced_state || self.sync_elapsed_ms >= NETWORK_SYNC_INTERVAL_MS
+        if self.take_path_bend()
+            || self.state != self.last_synced_state
+            || self.sync_elapsed_ms >= NETWORK_SYNC_INTERVAL_MS
         {
             self.sync_elapsed_ms = 0.0;
             self.last_synced_state = self.state;
@@ -118,6 +150,20 @@ impl MonsterBrain {
         } else {
             false
         }
+    }
+
+    /// Snap to the position the server settled on and drop the current path, so
+    /// the next tick re-plans from there. Otherwise the brain keeps walking from
+    /// a position the server refused, and every later move is swept from the one
+    /// it kept — the same refusal forever.
+    pub fn apply_authoritative_position(&mut self, position: Position) {
+        if self.state == AiState::Dead {
+            return;
+        }
+        self.position = position;
+        self.waypoints.clear();
+        self.current_waypoint_idx = 0;
+        self.clear_path_bend();
     }
 
     pub fn state(&self) -> AiState {
@@ -228,6 +274,7 @@ impl MonsterBrain {
         if hit {
             self.state = AiState::Hit;
             self.state_timer_ms = 0.0;
+            self.clear_path_bend();
             vec![self.make_move_cmd()]
         } else {
             // A miss (and the server's out-of-range provoke event) still
@@ -272,6 +319,12 @@ impl MonsterBrain {
                     rng,
                 );
             }
+        } else if self.take_path_bend() {
+            // A wander leg is otherwise reported only at its ends, so the
+            // server would see one chord across every corner of it. Bends alone
+            // are enough — no interval sync, since a straight run between two
+            // bends is a sub-segment of a leg the path check already cleared.
+            commands.push(self.make_move_cmd());
         }
     }
 

@@ -656,3 +656,153 @@ fn attack_command_uses_monster_cooldown() {
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
 }
+
+/// L-shaped path: out along X, then along Z, so a leg has one interior corner.
+struct BentPath;
+impl PathProvider for BentPath {
+    fn find_path(&self, _sx: f32, sz: f32, sf: u8, gx: f32, gz: f32, gf: u8) -> PathResult {
+        PathResult {
+            waypoints: vec![
+                PathWaypoint {
+                    x: gx,
+                    z: sz,
+                    floor: sf,
+                },
+                PathWaypoint {
+                    x: gx,
+                    z: gz,
+                    floor: gf,
+                },
+            ],
+            found: true,
+        }
+    }
+}
+
+/// The server only sees the straight line between two reported positions, and
+/// refuses it when it crosses solid ground. So a corner must land on a report
+/// rather than inside one, or rounding it looks like walking through the wall.
+#[test]
+fn a_reported_move_never_spans_a_path_bend() {
+    let mut brain = make_brain();
+    brain.target_player_id = Some(1.into());
+    let tree = BehaviorTree {
+        description: None,
+        root: BehaviorNode::Action {
+            name: "chase_target".into(),
+            // Hold the one path so the only bend is its corner.
+            params: HashMap::from([("pathRecalcMs".into(), 1.0e9)]),
+        },
+    };
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(30.0, 40.0);
+
+    let mut reported = Vec::new();
+    for _ in 0..400 {
+        let result = brain.tick_with_behavior_tree(16.0, &players, &tree, &BentPath, &mut rng);
+        for cmd in &result.commands {
+            if let AiCommand::Move { position, .. } = cmd {
+                reported.push(*position);
+            }
+        }
+        // Stop once past the corner; the rest of the leg proves nothing.
+        if brain.position.z > 10.0 {
+            break;
+        }
+    }
+
+    let corner = Position {
+        x: 30.0,
+        y: 0.0,
+        z: 10.0,
+    };
+    assert!(
+        reported
+            .iter()
+            .any(|p| (p.x - corner.x).abs() < 0.01 && (p.z - corner.z).abs() < 0.01),
+        "the corner must be reported, got {reported:?}"
+    );
+}
+
+/// The server refuses a move by echoing back the position it kept. The brain has
+/// to resume from there — carrying on from its own would repeat the refusal
+/// forever, leaving the monster frozen for everyone but its owner.
+#[test]
+fn a_correction_moves_the_brain_back_and_repaths() {
+    let mut brain = make_brain();
+    brain.target_player_id = Some(1.into());
+    let tree = BehaviorTree {
+        description: None,
+        root: BehaviorNode::Action {
+            name: "chase_target".into(),
+            params: HashMap::new(),
+        },
+    };
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(40.0, 10.0);
+
+    // BentPath's corner sits at the mover's own z, so a rebuilt path is
+    // distinguishable from the stale one the correction has to discard.
+    for _ in 0..20 {
+        brain.tick_with_behavior_tree(16.0, &players, &tree, &BentPath, &mut rng);
+    }
+    assert!(
+        brain.position.x > 11.0,
+        "the chase should have advanced first, got {}",
+        brain.position.x
+    );
+
+    let kept = Position {
+        x: 10.5,
+        y: 0.0,
+        z: 25.0,
+    };
+    brain.apply_authoritative_position(kept);
+    assert_eq!(brain.position, kept);
+
+    brain.tick_with_behavior_tree(16.0, &players, &tree, &BentPath, &mut rng);
+
+    assert!(
+        brain.position.x < 11.0,
+        "the next step must start from the corrected position, got {}",
+        brain.position.x
+    );
+    assert_eq!(
+        brain.waypoints.first().map(|w| w.z),
+        Some(25.0),
+        "the path must be rebuilt from the corrected position, not resumed"
+    );
+}
+
+/// Same for a fleeing monster: its path is rebuilt from the threat's direction
+/// rather than followed from a position the server threw away.
+#[test]
+fn a_correction_repaths_a_fleeing_monster() {
+    let mut brain = make_brain();
+    brain.position.x = 20.0;
+    brain.health = 2;
+    brain.target_player_id = Some(1.into());
+    let tree = flee_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(18.0, 10.0);
+
+    for _ in 0..20 {
+        brain.tick_with_behavior_tree(16.0, &players, &tree, &DirectPath, &mut rng);
+    }
+    assert_eq!(brain.state(), AiState::Flee);
+
+    let kept = Position {
+        x: 20.0,
+        y: 0.0,
+        z: 10.0,
+    };
+    brain.apply_authoritative_position(kept);
+    brain.tick_with_behavior_tree(16.0, &players, &tree, &DirectPath, &mut rng);
+
+    assert_eq!(
+        brain.state(),
+        AiState::Flee,
+        "a correction must not end the flee"
+    );
+    assert!(!brain.waypoints.is_empty(), "the brain must have repathed");
+}

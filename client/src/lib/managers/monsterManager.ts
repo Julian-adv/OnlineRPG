@@ -40,6 +40,7 @@ import {
   ai_tick_brain,
   ai_handle_hit,
   ai_handle_death,
+  ai_apply_authoritative_position,
 } from '../wasm/onlinerpg_shared'
 import behaviorTreesJson from '../../../../data-src/behavior_trees.json'
 import monstersJson from '../../../../data/monsters.json'
@@ -805,6 +806,16 @@ class MonsterManager {
         targetPosition: snappedTargetPosition,
       })
       this.monsters.set(id, { ...monster })
+
+      // Fanout skips the owner, so this is a correction — the brain must hear it
+      // too or its next tick overwrites this pose. Unsnapped: the server's own
+      // position is the authority, and emits get snapped anyway.
+      if (
+        monster.ownerId !== undefined &&
+        monster.ownerId === get(gameStore).currentPlayer?.id
+      ) {
+        ai_apply_authoritative_position(id, position.x, position.y, position.z)
+      }
     }
   }
 
