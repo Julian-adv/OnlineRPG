@@ -22,7 +22,9 @@ impl PathProvider for DirectPath {
 fn make_brain() -> MonsterBrain {
     MonsterBrain::new(
         "test_m1".into(),
-        "scp939".into(),
+        // A type with no measured clip: brain tests set their own swing length
+        // rather than inheriting one from the generated model data.
+        "test_monster".into(),
         "default".into(),
         Position {
             x: 10.0,
@@ -283,6 +285,18 @@ fn attacker_at(x: f32, z: f32) -> Vec<NearbyPlayer> {
         position: Position { x, y: 0.0, z },
         health: 10,
     }]
+}
+
+/// Bare attack action: a failed range check drops the brain to Idle without
+/// moving it, so a test's positions stay exact.
+fn attack_tree() -> BehaviorTree {
+    BehaviorTree {
+        description: None,
+        root: BehaviorNode::Action {
+            name: "attack_target".into(),
+            params: HashMap::new(),
+        },
+    }
 }
 
 fn flee_tree() -> BehaviorTree {
@@ -631,16 +645,11 @@ fn attack_command_uses_monster_cooldown() {
     brain.state = AiState::Attack;
     brain.target_player_id = Some(1.into());
     brain.attack_cooldown_ms = 1800.0;
+    // Mid-combat: it has just swung, so the next one waits out this monster's
+    // own cooldown rather than any default.
+    brain.attack_cooldown_left_ms = 1800.0;
 
-    let players = vec![NearbyPlayer {
-        id: 1.into(),
-        position: Position {
-            x: 11.0,
-            y: 0.0,
-            z: 10.0,
-        },
-        health: 10,
-    }];
+    let players = attacker_at(11.0, 10.0);
 
     let before_cooldown =
         brain.tick_with_behavior_tree(1700.0, &players, &tree, &DirectPath, &mut rng);
@@ -655,6 +664,125 @@ fn attack_command_uses_monster_cooldown() {
         .commands
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
+}
+
+/// Leaving attack range and coming back must not re-arm the swing: the cooldown
+/// used to live in the state timer that entering Attack reset.
+#[test]
+fn re_entering_attack_range_does_not_re_arm_the_cooldown() {
+    let mut brain = make_brain();
+    brain.target_player_id = Some(1.into());
+    // Attack alone: a failed range check drops the brain to Idle without moving
+    // it, so the positions below stay exact across the flap.
+    let tree = BehaviorTree {
+        description: None,
+        root: BehaviorNode::Sequence {
+            children: vec![
+                BehaviorNode::Condition {
+                    name: "target_in_range".into(),
+                    params: HashMap::from([("range".into(), 2.0)]),
+                },
+                BehaviorNode::Action {
+                    name: "attack_target".into(),
+                    params: HashMap::new(),
+                },
+            ],
+        },
+    };
+    let mut rng = SmallRng::seed_from_u64(42);
+    let near = attacker_at(11.0, 10.0);
+    let far = attacker_at(13.0, 10.0);
+
+    let mut attacks = 0;
+    let mut entries = 0;
+    for tick in 0..20 {
+        let players = if tick % 2 == 0 { &near } else { &far };
+        let was_attacking = brain.state() == AiState::Attack;
+        let result = brain.tick_with_behavior_tree(16.0, players, &tree, &DirectPath, &mut rng);
+        if !was_attacking && brain.state() == AiState::Attack {
+            entries += 1;
+        }
+        attacks += result
+            .commands
+            .iter()
+            .filter(|c| matches!(c, AiCommand::Attack { .. }))
+            .count();
+    }
+
+    assert!(
+        entries > 1,
+        "the flap should re-enter Attack, got {entries}"
+    );
+    assert_eq!(
+        attacks, 1,
+        "320ms of flapping is one cooldown, so one swing — not one per entry"
+    );
+}
+
+/// The attack holds out to a wider radius than it engages at, but must not
+/// engage from out there. See ATTACK_RELEASE_MARGIN_METERS.
+#[test]
+fn attack_holds_past_its_range_but_engages_only_inside_it() {
+    let tree = attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    // 2.3m from the monster at x=10: outside the 2m engage radius, inside the
+    // 2.5m release radius.
+    let players = attacker_at(12.3, 10.0);
+
+    let mut holding = make_brain();
+    holding.attack_range = 2.0;
+    holding.target_player_id = Some(1.into());
+    holding.state = AiState::Attack;
+    holding.tick_with_behavior_tree(16.0, &players, &tree, &DirectPath, &mut rng);
+    assert_eq!(
+        holding.state(),
+        AiState::Attack,
+        "an attack must not drop the frame the target steps outside it"
+    );
+
+    let mut engaging = make_brain();
+    engaging.attack_range = 2.0;
+    engaging.target_player_id = Some(1.into());
+    engaging.tick_with_behavior_tree(16.0, &players, &tree, &DirectPath, &mut rng);
+    assert_ne!(
+        engaging.state(),
+        AiState::Attack,
+        "the wider release radius must not let it engage from out of range"
+    );
+}
+
+/// A swing already under way finishes even if the target walks off.
+#[test]
+fn a_swing_in_progress_is_not_abandoned_when_the_target_walks_off() {
+    let tree = attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let mut brain = make_brain();
+    brain.attack_range = 2.0;
+    brain.swing_commit_ms = 450.0;
+    brain.target_player_id = Some(1.into());
+
+    let near = attacker_at(11.0, 10.0);
+    let result = brain.tick_with_behavior_tree(16.0, &near, &tree, &DirectPath, &mut rng);
+    assert!(result
+        .commands
+        .iter()
+        .any(|c| matches!(c, AiCommand::Attack { .. })));
+
+    // The target sprints clear, but the swing is only one frame old.
+    let far = attacker_at(20.0, 10.0);
+    brain.tick_with_behavior_tree(16.0, &far, &tree, &DirectPath, &mut rng);
+    assert_eq!(
+        brain.state(),
+        AiState::Attack,
+        "the swing must land before the monster gives it up"
+    );
+
+    brain.tick_with_behavior_tree(450.0, &far, &tree, &DirectPath, &mut rng);
+    assert_ne!(
+        brain.state(),
+        AiState::Attack,
+        "once it has landed the attack releases"
+    );
 }
 
 /// L-shaped path: out along X, then along Z, so a leg has one interior corner.

@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build:wasm": "npm run generate:footprints && rm -rf src/lib/wasm && cd ../shared && wasm-pack build --target web --out-dir ../client/src/lib/wasm",
+    "build:wasm": "npm run generate:footprints && npm run generate:monster-clips && npm run generate:animations && rm -rf src/lib/wasm && cd ../shared && wasm-pack build --target web --out-dir ../client/src/lib/wasm",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && vite build",
     "preview": "vite preview",
@@ -16,8 +16,10 @@
     "test": "npm run generate:csv && vitest run",
     "test:watch": "npm run generate:csv && vitest",
     "generate:csv": "node ../tools/convert.mjs",
-    "generate:data": "npm run generate:csv && node ../tools/extract-animation-durations.mjs",
-    "generate:footprints": "node ../tools/measure-furniture-footprints.mjs"
+    "generate:data": "npm run generate:csv && npm run generate:animations",
+    "generate:animations": "node ../tools/extract-animation-durations.mjs",
+    "generate:footprints": "node ../tools/measure-furniture-footprints.mjs",
+    "generate:monster-clips": "node ../tools/measure-monster-attack-clips.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",

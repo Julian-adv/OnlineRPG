@@ -53,6 +53,19 @@ pub struct MonsterBrain {
     /// A path bend the next sync must not be allowed to cut across.
     #[serde(default)]
     pub(super) pending_bend_sync: bool,
+    /// Time left before the next swing, kept apart from `state_timer_ms` so
+    /// that leaving and re-entering Attack cannot re-arm the cooldown. Zero is
+    /// ready: the first swing on contact does not wait one out.
+    #[serde(default)]
+    pub(super) attack_cooldown_left_ms: f32,
+    /// How long this type's swing animation runs. The attack holds the state
+    /// this long so a swing it started finishes; 0 releases as soon as the
+    /// target steps out.
+    #[serde(default)]
+    pub(super) swing_commit_ms: f32,
+    /// Time left in the swing currently being delivered.
+    #[serde(default)]
+    pub(super) swing_left_ms: f32,
 }
 
 impl MonsterBrain {
@@ -70,6 +83,7 @@ impl MonsterBrain {
         chase_range: f32,
         attack_cooldown_ms: f32,
     ) -> Self {
+        let swing_commit_ms = super::attack_clip_ms(&monster_type);
         Self {
             monster_id,
             monster_type,
@@ -105,6 +119,9 @@ impl MonsterBrain {
             sync_elapsed_ms: 0.0,
             last_synced_state: AiState::Idle,
             pending_bend_sync: false,
+            attack_cooldown_left_ms: 0.0,
+            swing_commit_ms,
+            swing_left_ms: 0.0,
         }
     }
 
@@ -207,6 +224,8 @@ impl MonsterBrain {
         self.state_timer_ms += delta_ms;
         self.path_elapsed_ms += delta_ms;
         self.sync_elapsed_ms += delta_ms;
+        self.attack_cooldown_left_ms = (self.attack_cooldown_left_ms - delta_ms).max(0.0);
+        self.swing_left_ms = (self.swing_left_ms - delta_ms).max(0.0);
         let mut commands = Vec::new();
 
         if self.state == AiState::Hit {

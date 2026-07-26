@@ -4,9 +4,10 @@
 use super::tree::BehaviorStatus;
 use super::{
     param, AiCommand, AiState, BehaviorNode, MonsterBrain, NearbyPlayer, PathProvider,
-    DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS, DEFAULT_IDLE_CHECK_MS,
-    DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST, DEFAULT_PATH_RECALC_MS,
-    DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD, FLEE_SAFE_DIST_MARGIN,
+    ATTACK_RELEASE_MARGIN_METERS, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
+    DEFAULT_IDLE_CHECK_MS, DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
+    DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
+    FLEE_SAFE_DIST_MARGIN,
 };
 use crate::MonsterState;
 use rand::Rng;
@@ -286,7 +287,14 @@ impl MonsterBrain {
         let dx = target.position.x - self.position.x;
         let dz = target.position.z - self.position.z;
         let range = param(params, "range", self.attack_range);
-        if dx * dx + dz * dz > range * range {
+        // Engage at `range`, release further out: see ATTACK_RELEASE_MARGIN_METERS.
+        let limit = if self.state == AiState::Attack {
+            range + ATTACK_RELEASE_MARGIN_METERS
+        } else {
+            range
+        };
+        // A swing already under way finishes; see `swing_left_ms`.
+        if self.swing_left_ms <= 0.0 && dx * dx + dz * dz > limit * limit {
             return BehaviorStatus::Failure;
         }
 
@@ -294,15 +302,16 @@ impl MonsterBrain {
         self.rotation = dx.atan2(dz);
         if self.state != AiState::Attack {
             self.state = AiState::Attack;
-            self.state_timer_ms = self.attack_cooldown_ms;
+            self.state_timer_ms = 0.0;
             self.target_position = None;
             self.waypoints.clear();
             self.clear_path_bend();
             commands.push(self.make_move_cmd());
         }
 
-        if self.state_timer_ms >= self.attack_cooldown_ms {
-            self.state_timer_ms = 0.0;
+        if self.attack_cooldown_left_ms <= 0.0 {
+            self.attack_cooldown_left_ms = self.attack_cooldown_ms;
+            self.swing_left_ms = self.swing_commit_ms;
             self.clear_path_bend();
             commands.push(self.make_move_cmd());
             commands.push(AiCommand::Attack {

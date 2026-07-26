@@ -14,7 +14,8 @@
     "idle5": 3.7,
     "walk": 1,
     "jog": 2.6,
-    "run": 0.733
+    "run": 0.733,
+    "jump": 2.633
   },
   "female_knight": {}
 }
