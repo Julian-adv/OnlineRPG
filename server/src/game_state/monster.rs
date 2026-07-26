@@ -219,6 +219,29 @@ impl super::GameState {
                 self.send_direct_message(mover_id, correction).await;
                 return;
             }
+            let blocked = {
+                let cache = self.passability_read();
+                let floor =
+                    onlinerpg_shared::dungeon::passability_floor_for_level(monster.floor_level);
+                super::passability::wrapped_block_info(
+                    &cache,
+                    monster.position.x,
+                    monster.position.z,
+                    new_position.x,
+                    new_position.z,
+                    floor,
+                    monster.position.y,
+                )
+                .is_some()
+            };
+            if blocked {
+                monster.move_budget = budget;
+                debug!("Rejected monster move through blocked terrain: {monster_id} by {mover_id}");
+                let correction = Self::move_correction(monster_id, monster);
+                drop(monsters);
+                self.send_direct_message(mover_id, correction).await;
+                return;
+            }
             monster.move_budget = budget - dist;
             let old_position = monster.position;
             monster.position = new_position;
