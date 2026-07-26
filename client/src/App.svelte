@@ -25,8 +25,7 @@
     qualityForScore,
     applyAutoQuality,
   } from './lib/stores/graphicsSettings'
-
-  let showSettings = $state(false)
+  import { settingsVisible } from './lib/stores/debugStore'
 
   type AppScreen = 'login' | 'character-select' | 'character-create' | 'game'
   type DeathUiState =
@@ -362,7 +361,7 @@
       onBackToCharacterSelect={handleBackToCharacterSelect}
       onRespawn={requestRespawn}
       onCloseRespawnDialog={closeRespawnDialog}
-      onOpenSettings={() => (showSettings = true)}
+      onOpenSettings={() => settingsVisible.set(true)}
     />
   {:else if screen === 'character-select'}
     <CharacterSelectScreen
@@ -398,7 +397,7 @@
     <button
       class="settings-btn-corner"
       class:raised={screen === 'character-create'}
-      onclick={() => (showSettings = true)}
+      onclick={() => settingsVisible.set(true)}
       title="Settings"
     >
       <svg
@@ -414,8 +413,8 @@
     </button>
   {/if}
 
-  {#if showSettings}
-    <SettingsPanel onClose={() => (showSettings = false)} />
+  {#if $settingsVisible}
+    <SettingsPanel onClose={() => settingsVisible.set(false)} />
   {/if}
 </main>
 

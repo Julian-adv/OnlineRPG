@@ -3,20 +3,35 @@ import { get } from 'svelte/store'
 import {
   characterPanelVisible,
   inventoryVisible,
+  settingsVisible,
   worldMapVisible,
 } from './debugStore'
+import { shopSession, type ShopSession } from './tradeStore'
 import {
   closeTopOverlay,
   openOverlays,
   setOverlayCloser,
+  topOverlay,
   withOverlay,
   withoutOverlay,
 } from './overlayStack'
+
+const SESSION: ShopSession = {
+  merchantPlayerId: 1,
+  merchantName: 'Rica',
+  catalog: [],
+  sellRatePercent: 50,
+  wishlist: [],
+  stock: [],
+  buyback: [],
+}
 
 beforeEach(() => {
   characterPanelVisible.set(false)
   inventoryVisible.set(false)
   worldMapVisible.set(false)
+  settingsVisible.set(false)
+  shopSession.set(null)
   setOverlayCloser('worldMap', null)
 })
 
@@ -49,6 +64,28 @@ describe('withoutOverlay', () => {
   })
 })
 
+describe('topOverlay', () => {
+  it('breaks a same-layer tie with the most recently opened', () => {
+    expect(topOverlay(['inventory', 'character'])).toBe('character')
+    expect(topOverlay(['character', 'inventory'])).toBe('inventory')
+  })
+
+  it('prefers the higher layer over the later open', () => {
+    expect(topOverlay(['settings', 'inventory'])).toBe('settings')
+    expect(topOverlay(['trade', 'character'])).toBe('trade')
+    expect(topOverlay(['worldMap', 'inventory'])).toBe('worldMap')
+  })
+
+  it('paints the world map over the trade window despite its lower z-index', () => {
+    expect(topOverlay(['worldMap', 'trade'])).toBe('worldMap')
+    expect(topOverlay(['trade', 'worldMap'])).toBe('worldMap')
+  })
+
+  it('has no top when nothing is open', () => {
+    expect(topOverlay([])).toBeUndefined()
+  })
+})
+
 describe('openOverlays', () => {
   it('follows the order the panels were opened in', () => {
     inventoryVisible.set(true)
@@ -61,6 +98,13 @@ describe('openOverlays', () => {
     characterPanelVisible.set(true)
     inventoryVisible.set(false)
     expect(get(openOverlays)).toEqual(['character'])
+  })
+
+  it('tracks the trade window through its shop session', () => {
+    shopSession.set(SESSION)
+    expect(get(openOverlays)).toEqual(['trade'])
+    shopSession.set(null)
+    expect(get(openOverlays)).toEqual([])
   })
 })
 
@@ -78,7 +122,7 @@ describe('closeTopOverlay', () => {
     expect(get(openOverlays)).toEqual([])
   })
 
-  it('closes the world map ahead of a panel opened before it', () => {
+  it('closes the world map ahead of a panel it paints over', () => {
     inventoryVisible.set(true)
     worldMapVisible.set(true)
 
@@ -87,11 +131,53 @@ describe('closeTopOverlay', () => {
     expect(get(inventoryVisible)).toBe(true)
   })
 
+  it('still closes the world map first when the panel was opened last', () => {
+    worldMapVisible.set(true)
+    inventoryVisible.set(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(worldMapVisible)).toBe(false)
+    expect(get(inventoryVisible)).toBe(true)
+  })
+
+  it('closes settings before an inventory opened underneath it', () => {
+    inventoryVisible.set(true)
+    settingsVisible.set(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(settingsVisible)).toBe(false)
+    expect(get(inventoryVisible)).toBe(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(inventoryVisible)).toBe(false)
+  })
+
+  it('closes settings first even when the panel was opened over it', () => {
+    settingsVisible.set(true)
+    inventoryVisible.set(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(settingsVisible)).toBe(false)
+    expect(get(inventoryVisible)).toBe(true)
+  })
+
+  it('closes the trade window before a character sheet under it', () => {
+    characterPanelVisible.set(true)
+    shopSession.set(SESSION)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(shopSession)).toBeNull()
+    expect(get(characterPanelVisible)).toBe(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(characterPanelVisible)).toBe(false)
+  })
+
   it('reports nothing to close when no overlay is open', () => {
     expect(closeTopOverlay()).toBe(false)
   })
 
-  it('runs a registered closer instead of flipping the store itself', () => {
+  it('runs a registered closer instead of resetting the state itself', () => {
     let closerCalls = 0
     setOverlayCloser('worldMap', () => {
       closerCalls++
