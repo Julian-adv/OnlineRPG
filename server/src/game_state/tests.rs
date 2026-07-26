@@ -1676,6 +1676,70 @@ async fn non_finite_spawn_request_is_rejected() {
     }
 }
 
+/// A client-owned monster is still untrusted movement. Staying within the
+/// speed bucket must not let its owner walk it through the same solid cell that
+/// blocks server-simulated player movement.
+#[tokio::test]
+async fn client_owned_monster_cannot_cross_solid_furniture() {
+    let game_state = make_test_game_state("monster_furniture_collision");
+    let owner_id = pid("monster_owner");
+    let observer_id = pid("monster_observer");
+    let start = Position {
+        x: 0.5,
+        y: 0.0,
+        z: 4.5,
+    };
+    let destination = Position {
+        x: 0.5,
+        y: 0.0,
+        z: 6.5,
+    };
+
+    game_state
+        .add_player(make_player("monster_owner", start.x, start.z))
+        .await;
+    game_state
+        .add_player(make_player("monster_observer", start.x, start.z))
+        .await;
+    let mut owner_rx = game_state.register_direct_channel(&owner_id).await;
+    let mut observer_rx = game_state.register_direct_channel(&observer_id).await;
+    game_state.sync_region_furniture(0, 0, &[table_placement(0.5, 5.5)]);
+
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let mut monster = make_monster("wall_walking_monster", start, 0);
+        monster.owner_id = Some(owner_id);
+        monster.move_budget = 10.0;
+        monster.last_move_at = GameState::now_ms();
+        monsters.insert(monster.id.clone(), monster);
+    }
+
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "wall_walking_monster".to_string(),
+            destination,
+            0.0,
+            MonsterState::Run,
+            destination,
+        )
+        .await;
+
+    assert_eq!(
+        game_state.monsters.read().await["wall_walking_monster"].position,
+        start,
+        "solid furniture must block a client-owned monster move"
+    );
+    assert!(matches!(
+        observer_rx.try_recv(),
+        Err(MpscTryRecvError::Empty)
+    ));
+    match owner_rx.try_recv() {
+        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, start),
+        other => panic!("a blocked monster move must correct its owner, got {other:?}"),
+    }
+}
+
 /// Even the owner can't teleport a monster onto a distant victim: a move is
 /// capped to what the monster could run since its last accepted move, so an
 /// owned monster stays a melee threat only where it could actually walk.
