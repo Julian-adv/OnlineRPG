@@ -1,5 +1,6 @@
 import { writable, derived, get } from 'svelte/store'
 import { refractionEnabled, reflectionEnabled } from './debugStore'
+import { TARGET_FPS } from '../utils/frameTiming'
 
 export type QualityLevel = 'high' | 'medium' | 'low'
 export type RenderBudget = 'full' | 'mobile'
@@ -7,6 +8,9 @@ export type RenderBudget = 'full' | 'mobile'
 export interface GraphicsPreset {
   renderBudget: RenderBudget
   pixelRatioCap: number
+  /** Main-scene render cap. Capping at TARGET_FPS is free — the simulation
+   *  produces no new state above it. Going lower trades motion for GPU time. */
+  maxRenderFps: number
   shadowMapSize: number
   torchShadowMapSize: number
   antialias: boolean
@@ -43,6 +47,7 @@ export interface GraphicsPreset {
 
 const FULL_RENDER_SETTINGS = {
   renderBudget: 'full',
+  maxRenderFps: TARGET_FPS,
   enableDirectionalShadows: true,
   enableWaterLayer: true,
   enableWaterEffects: true,
@@ -184,6 +189,7 @@ function getMobileSafePreset(preset: GraphicsPreset): GraphicsPreset {
   return {
     ...preset,
     renderBudget: 'mobile',
+    maxRenderFps: Math.min(preset.maxRenderFps, 30),
     pixelRatioCap: Math.min(preset.pixelRatioCap, 0.75),
     shadowMapSize: Math.min(preset.shadowMapSize, 512),
     torchShadowMapSize: 256,
@@ -341,10 +347,19 @@ graphicsQuality.subscribe((level) => {
 })
 
 export function getEffectivePreset(level: QualityLevel): GraphicsPreset {
-  return (_effectivePresetCache[level] ??=
+  return (_effectivePresetCache[level] ??= withSafeRenderCap(
     getDeviceRenderBudget() === 'mobile'
       ? getMobileSafePreset(PRESETS[level])
-      : PRESETS[level])
+      : PRESETS[level]
+  ))
+}
+
+/** A cap below 1 stops the canvas drawing at all, with nothing to show for it
+ *  but a black screen — reject it here rather than frames deep. */
+function withSafeRenderCap(preset: GraphicsPreset): GraphicsPreset {
+  return preset.maxRenderFps >= 1
+    ? preset
+    : { ...preset, maxRenderFps: TARGET_FPS }
 }
 
 export function getCurrentPreset(): GraphicsPreset {

@@ -301,8 +301,14 @@
        Pipelines compiled during character select are reused in game. -->
   {#if showCanvas}
     <div class="canvas-layer" class:dead={screen === 'game' && isPlayerDead}>
+      <!-- "manual", not "on-demand": the character scenes' useTask callbacks
+           auto-invalidate every frame, which would defeat the render cap. -->
       <Canvas renderMode="manual" shadows createRenderer={createWebGPURenderer}>
-        <RenderFrameLimiter />
+        <!-- Manual mode draws nothing until something invalidates. GameScene
+             does that from its simulation step; every other screen needs this. -->
+        {#if screen !== 'game'}
+          <RenderFrameLimiter />
+        {/if}
         {#if screen === 'character-select'}
           <CharacterSelectScene
             characters={accountCharacters}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { T, useThrelte } from '@threlte/core'
+  import { T, useTask, useThrelte } from '@threlte/core'
   import { OrbitControls } from '@threlte/extras'
   import * as THREE from 'three'
   import { ClippingGroup, type WebGPURenderer } from 'three/webgpu'
@@ -40,6 +40,8 @@
     playerInsideHouseId,
   } from '../stores/housingStore'
   import { drainTileWork } from '../utils/tileWorkQueue'
+  import { FRAME_TIME_MS, FRAME_TOLERANCE_MS } from '../utils/frameTiming'
+  import { createRenderCadence } from '../utils/renderCadence'
   import { bootstrapSceneAssets } from './game-scene/asset-bootstrap'
   import GameScenePlayersLayer from './game-scene/GameScenePlayersLayer.svelte'
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
@@ -86,7 +88,7 @@
     currentObjectData,
   } from '../stores/editorStore'
   import { ZoneManager } from '../managers/zoneManager'
-  import { initFpsCounting, tickFps } from './FPSCounter.svelte'
+  import { initFpsCounting, tickFps, tickRenderFps } from './FPSCounter.svelte'
   import { tickWavePhase } from './WavePhaseDebug.svelte'
   import {
     eclipseState,
@@ -232,6 +234,12 @@
   const multiPassRenderer = createMultiPassRenderer()
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
 
+  // Driven by the fixed simulation step below, so renders line up one-to-one
+  // with the frames that produced them instead of running on a second clock.
+  const renderCadence = $derived(
+    createRenderCadence(graphicsPreset.maxRenderFps)
+  )
+
   // Track whether all initial data is loaded (terrain + splat + grass assets).
   // The loading dialog stays until frames render smoothly (pipeline compilation
   // done by Threlte's render loop under the dialog overlay).
@@ -243,9 +251,19 @@
   // Camera follow system
   let cameraTarget = $state<[number, number, number]>([0, 0, 0])
 
-  const { size, renderer: _renderer, scene } = useThrelte()
+  const {
+    size,
+    renderer: _renderer,
+    scene,
+    invalidate,
+    renderStage,
+  } = useThrelte()
   // Cast renderer — Threlte types it as WebGLRenderer but we use WebGPURenderer via createRenderer
   const renderer = _renderer as unknown as WebGPURenderer
+
+  // Threlte skips the render stage entirely on frames it doesn't draw, so this
+  // counts real renders rather than loop iterations.
+  useTask(tickRenderFps, { stage: renderStage, autoInvalidate: false })
   let viewportSize = $state({ width: 1, height: 1 })
 
   const CAMERA_OFFSET = import.meta.hot?.data?.cameraOffset ?? {
@@ -373,9 +391,6 @@
   // Game loop
   let gameLoopId = $state<number | null>(null)
   let lastFrameTime = $state(0)
-  const TARGET_FPS = 60
-  const FRAME_TIME = 1000 / TARGET_FPS // 16.67ms
-  const FRAME_TIME_TOLERANCE = 0.5 // absorb timer jitter (e.g. 16.6ms vs 16.67ms)
   const MAX_CATCH_UP_STEPS = 5
 
   let loopProfileEnabled = false
@@ -445,18 +460,18 @@
     tickFps(currentTime)
 
     const rawDeltaTime = currentTime - lastFrameTime
-    const shouldRunFrame = rawDeltaTime >= FRAME_TIME - FRAME_TIME_TOLERANCE
+    const shouldRunFrame = rawDeltaTime >= FRAME_TIME_MS - FRAME_TOLERANCE_MS
 
     // Throttle to 60fps
     if (shouldRunFrame) {
       const unclampedSteps = Math.max(
         1,
-        Math.floor((rawDeltaTime + FRAME_TIME_TOLERANCE) / FRAME_TIME)
+        Math.floor((rawDeltaTime + FRAME_TOLERANCE_MS) / FRAME_TIME_MS)
       )
       const stepCount = Math.min(unclampedSteps, MAX_CATCH_UP_STEPS)
-      const fixedDeltaTime = FRAME_TIME * stepCount
+      const fixedDeltaTime = FRAME_TIME_MS * stepCount
 
-      loopProfiler.onFrame(fixedDeltaTime, FRAME_TIME)
+      loopProfiler.onFrame(fixedDeltaTime, FRAME_TIME_MS)
 
       const frameWorkStart = performance.now()
 
@@ -703,6 +718,11 @@
 
       loopProfiler.record('frameWork', performance.now() - frameWorkStart)
 
+      // Request the main scene render now that this frame's state and water
+      // render targets are current. The canvas is in manual mode, so this is
+      // the only thing that draws it during gameplay.
+      if (renderCadence.shouldRender(fixedDeltaTime)) invalidate()
+
       // `main` captures Threlte's automatic main scene render on its own rAF;
       // 'refraction'/'reflection'/'wetness' come from passes tagged via withTag.
       recordRenderProfilerStats(renderProfiler, loopProfiler)
@@ -723,7 +743,7 @@
 
       if (unclampedSteps > MAX_CATCH_UP_STEPS) {
         // Drop excessive backlog after long stalls (tab switch, debugger pause, etc.).
-        lastFrameTime = currentTime - FRAME_TIME
+        lastFrameTime = currentTime - FRAME_TIME_MS
       } else {
         lastFrameTime += fixedDeltaTime
       }

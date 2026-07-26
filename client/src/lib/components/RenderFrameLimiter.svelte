@@ -1,16 +1,19 @@
 <script lang="ts">
   import { useTask, useThrelte } from '@threlte/core'
+  import { createRenderCadence } from '../utils/renderCadence'
   import {
-    TARGET_RENDER_FPS,
-    createRenderCadence,
-  } from '../utils/renderCadence'
+    getEffectivePreset,
+    graphicsQuality,
+  } from '../stores/graphicsSettings'
 
   const { invalidate } = useThrelte()
-  const cadence = createRenderCadence(TARGET_RENDER_FPS)
+  const cadence = $derived(
+    createRenderCadence(getEffectivePreset($graphicsQuality).maxRenderFps)
+  )
 
   useTask(
     (delta) => {
-      if (cadence.shouldRender(delta)) invalidate()
+      if (cadence.shouldRender(delta * 1000)) invalidate()
     },
     { autoInvalidate: false }
   )

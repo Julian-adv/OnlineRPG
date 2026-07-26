@@ -1,19 +1,32 @@
 <script lang="ts" module>
   let frameCount = 0
+  let renderCount = 0
   let lastFpsTime = 0
   let currentFps = $state(0)
+  let currentRenderFps = $state(0)
 
   export function initFpsCounting() {
     lastFpsTime = performance.now()
+    frameCount = 0
+    renderCount = 0
   }
 
   export function tickFps(currentTime: number) {
     frameCount++
-    if (currentTime - lastFpsTime >= 1000) {
-      currentFps = Math.round((frameCount * 1000) / (currentTime - lastFpsTime))
+    const elapsed = currentTime - lastFpsTime
+    if (elapsed >= 1000) {
+      currentFps = Math.round((frameCount * 1000) / elapsed)
+      currentRenderFps = Math.round((renderCount * 1000) / elapsed)
       frameCount = 0
+      renderCount = 0
       lastFpsTime = currentTime
     }
+  }
+
+  /** Counted from Threlte's render stage, so it only ticks on frames the
+   *  canvas actually drew — the loop runs at the display's refresh rate. */
+  export function tickRenderFps() {
+    renderCount++
   }
 </script>
 
@@ -209,7 +222,9 @@
     <div class="hud-box">
       <div class="stats-text">
         <span class="fps-text">
-          FPS: {currentFps} | ZOOM: {$cameraDistance.toFixed(1)}
+          LOOP: {currentFps} | RENDER: {currentRenderFps} | ZOOM: {$cameraDistance.toFixed(
+            1
+          )}
         </span>
         {#if $currentBgmTrack}
           <span class="bgm-text">♫ {$currentBgmTrack}</span>

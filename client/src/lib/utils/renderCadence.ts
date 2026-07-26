@@ -1,17 +1,21 @@
-export const TARGET_RENDER_FPS = 60
+import { RENDER_TOLERANCE_RATIO } from './frameTiming'
 
-const FRAME_TOLERANCE_SECONDS = 0.0005
-
+/** Gates rendering to `targetFps`. Feed it milliseconds — fixed simulation
+ *  steps in game, wall-clock deltas on the character screens. */
 export function createRenderCadence(targetFps: number) {
-  const frameInterval = 1 / targetFps
-  let elapsed = 0
+  const frameIntervalMs = 1000 / targetFps
+  const toleranceMs = frameIntervalMs * RENDER_TOLERANCE_RATIO
+  let elapsedMs = 0
 
   return {
-    shouldRender(delta: number): boolean {
-      elapsed += Math.max(0, delta)
-      if (elapsed + FRAME_TOLERANCE_SECONDS < frameInterval) return false
+    shouldRender(deltaMs: number): boolean {
+      elapsedMs += Math.max(0, deltaMs)
+      if (elapsedMs + toleranceMs < frameIntervalMs) return false
 
-      elapsed = elapsed >= frameInterval ? elapsed % frameInterval : 0
+      // Keep the sub-interval remainder so pacing stays even, but drop any
+      // backlog — a stall must not burst a run of catch-up renders.
+      elapsedMs -= frameIntervalMs
+      if (elapsedMs < 0 || elapsedMs >= frameIntervalMs) elapsedMs = 0
       return true
     },
   }
