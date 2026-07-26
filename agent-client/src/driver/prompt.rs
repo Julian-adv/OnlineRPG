@@ -180,6 +180,34 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                 item_def_ids.join(", ")
             ))
         }
+        ServerMessage::DungeonPropBroken { depth, prop_id, .. } => Some(format!(
+            "[Prop] Prop {prop_id} on floor {depth} was smashed — its cell is now walkable."
+        )),
+        ServerMessage::DungeonPropOpened { depth, prop_id, .. } => Some(format!(
+            "[Prop] Chest prop {prop_id} on floor {depth} swung open."
+        )),
+        ServerMessage::BuybackUpdated {
+            merchant_player_id,
+            buyback,
+        } => {
+            let who = player_name(state, merchant_player_id);
+            if buyback.is_empty() {
+                return Some(format!(
+                    "[Buyback] {who}'s buyback list is now empty (your last repurchase or \
+                     sale cleared it)."
+                ));
+            }
+            let list: Vec<String> = buyback
+                .iter()
+                .take(6)
+                .map(|e| format!("{} @{}c", e.item_def_id, e.price))
+                .collect();
+            Some(format!(
+                "[Buyback] {who} will sell back: {} — {{\"type\": \"buyback\", \"item\": ..., \
+                 \"merchant\": \"{who}\"}}.",
+                list.join(", ")
+            ))
+        }
         ServerMessage::PlayerJoined { player } => {
             if !within_event_range(state, player.position.x, player.position.z) {
                 return None;
