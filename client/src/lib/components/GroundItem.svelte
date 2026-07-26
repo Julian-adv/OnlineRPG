@@ -303,16 +303,26 @@
   )
   const displayX = $derived(data.position.x + (spawnTransform?.offsetX ?? 0))
   const displayZ = $derived(data.position.z + (spawnTransform?.offsetZ ?? 0))
-  const baseY = $derived(
-    groundItemBaseY(
+  let heightRevision = $state({})
+  $effect(() => {
+    const manager = heightManager
+    heightRevision = {}
+    if (!manager) return
+    return manager.onHeightChanged(() => {
+      heightRevision = {}
+    })
+  })
+  const baseY = $derived.by(() => {
+    void heightRevision
+    return groundItemBaseY(
       heightManager ?? null,
       data.floorLevel,
       Boolean(data.inHand),
-      displayX,
-      displayZ,
+      data.position.x,
+      data.position.z,
       data.position.y
     )
-  )
+  })
   const displayY = $derived(baseY + restHover + (spawnTransform?.offsetY ?? 0))
   const shouldTiltToTerrain = $derived(!data.inHand && !spawnTransform)
   // Flat pickup pad laid under a grounded item so small models still offer a

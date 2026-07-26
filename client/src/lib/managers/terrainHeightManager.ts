@@ -86,7 +86,10 @@ export class TerrainHeightManager {
   // --- Data loading ---
 
   async loadHeightmap(tileX: number, tileZ: number): Promise<Uint16Array> {
-    return doLoad(
+    const key = tileKey(tileX, tileZ)
+    const shouldNotify =
+      !this.state.heightmaps.has(key) && !this.inflightHeightmaps.has(key)
+    const data = await doLoad(
       this.state,
       this.inflightHeightmaps,
       this.terrainApiUrl,
@@ -94,6 +97,10 @@ export class TerrainHeightManager {
       tileZ,
       (tx, tz) => this.loadOriginalHeightmap(tx, tz)
     )
+    if (shouldNotify) {
+      this.notifyHeightChanged([{ tileX, tileZ }])
+    }
+    return data
   }
 
   async loadOriginalHeightmap(
