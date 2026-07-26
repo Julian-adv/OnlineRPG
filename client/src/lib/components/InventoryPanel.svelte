@@ -14,6 +14,7 @@
     FALLBACK_ICON,
   } from '../stores/dragStore'
   import { itemTooltip } from '../actions/itemTooltip'
+  import { buildInventorySlots } from './inventorySlots'
 
   interface Props {
     visible: boolean
@@ -40,18 +41,7 @@
     return total
   })
 
-  const COLS = 5
-  const ROWS = 10
-  const TOTAL_SLOTS = COLS * ROWS
-
-  const slots = $derived.by(() => {
-    const bag = $inventoryStore.bag
-    const result: (ItemInstance | null)[] = new Array(TOTAL_SLOTS).fill(null)
-    for (let i = 0; i < bag.length && i < TOTAL_SLOTS; i++) {
-      result[i] = bag[i]
-    }
-    return result
-  })
+  const slots = $derived.by(() => buildInventorySlots($inventoryStore.bag))
 
   let panelEl = $state<HTMLDivElement | null>(null)
 
@@ -227,7 +217,7 @@
   .bag-grid {
     display: grid;
     grid-template-columns: repeat(5, var(--inventory-slot-size));
-    grid-template-rows: repeat(10, var(--inventory-slot-size));
+    grid-auto-rows: var(--inventory-slot-size);
     gap: var(--inventory-slot-gap);
     max-height: calc(
       var(--inventory-slot-size) * var(--inventory-visible-rows) +
