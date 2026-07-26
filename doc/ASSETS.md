@@ -12,6 +12,7 @@ Asset source links, generation notes, and production workflows are split by topi
 - [Blender](./assets/blender.md)
 - [UI](./assets/ui.md)
 - [Music](./assets/music.md)
+- [Sound Effects](./assets/sfx.md)
 
 See also:
 

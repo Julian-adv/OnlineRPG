@@ -13,6 +13,7 @@
   import { groundItemManager } from '../managers/groundItemManager'
   import { combatController } from '../managers/combatController'
   import {
+    preloadFishingSounds,
     preloadSwordHitSound,
     preloadSwordMissSound,
   } from '../managers/sfxManager'
@@ -1344,6 +1345,7 @@
   onMount(() => {
     preloadSwordHitSound()
     preloadSwordMissSound()
+    preloadFishingSounds()
 
     const removeInputListeners = inputHandler.setupEventListeners(
       renderer.domElement,

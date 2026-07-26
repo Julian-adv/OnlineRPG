@@ -179,5 +179,7 @@ they already receive.
 
 - No bait, no rod tiers, no designated fishing spots (any water — ocean or
   river — works).
-- Cast/idle animations reuse existing clips; dedicated Mixamo clips and
-  splash/reel SFX come with the polish pass.
+- Cast/idle animations reuse existing clips; dedicated Mixamo clips come
+  with the polish pass. SFX are in: splash on cast, plop on bite, reel click
+  per struggle round, line snap on escape, jingle on catch (all CC0 —
+  see `assets/sfx.md`; self-only, matching the combat sound precedent).

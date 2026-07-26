@@ -12,6 +12,13 @@ import {
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
+import {
+  playFishingCatchSound,
+  playFishingPlopSound,
+  playFishingReelSound,
+  playFishingSnapSound,
+  playFishingSplashSound,
+} from '../managers/sfxManager'
 import { monsterManager } from '../managers/monsterManager'
 import { housingManager } from '../managers/housingManager'
 import { bridgeManager } from '../managers/bridgeManager'
@@ -1002,6 +1009,7 @@ export function handleServerMessage(
       upsertBobber(data.player_id, data.position)
       if (get(gameStore).currentPlayer?.id === data.player_id) {
         myFishingPhase.set('casting')
+        playFishingSplashSound()
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
       }
       break
@@ -1011,6 +1019,7 @@ export function handleServerMessage(
       markBobberBite(data.player_id)
       if (get(gameStore).currentPlayer?.id === data.player_id) {
         myFishingPhase.set('bite')
+        playFishingPlopSound()
         addCombatMessage({
           text: 'Something bites! Hook it!',
           sender: 'local',
@@ -1037,6 +1046,7 @@ export function handleServerMessage(
     case 'FishingRoundResult': {
       if (get(gameStore).currentPlayer?.id === data.player_id) {
         applyStruggleTension(data.tension_pct)
+        playFishingReelSound()
       }
       break
     }
@@ -1060,10 +1070,12 @@ export function handleServerMessage(
         myStruggle.set(null)
         const outcome = data.outcome
         if (outcome === 'Escaped') {
+          playFishingSnapSound()
           addCombatMessage({ text: 'The fish got away.', sender: 'local' })
         } else if (outcome === 'Aborted') {
           addCombatMessage({ text: 'You reel in your line.', sender: 'local' })
         } else if (outcome?.Caught) {
+          playFishingCatchSound()
           const { item_def_id, size_cm, trophy } = outcome.Caught
           addCombatMessage({
             text: catchMessage(
