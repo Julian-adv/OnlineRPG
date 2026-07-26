@@ -4527,6 +4527,83 @@ async fn dungeon_chest_stays_shut_until_the_guardian_dies() {
     );
 }
 
+/// The nightly claim is the durable anti-duplication boundary. A failed DB
+/// write must reject the open without rewards and release only this attempt's
+/// in-memory claim so a repaired storage layer can retry.
+#[tokio::test]
+async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry() {
+    let db_path = std::env::temp_dir().join(format!(
+        "onlinerpg_chest_persist_fail_auth_{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let auth = crate::auth::AuthService::new(db_path.clone()).unwrap();
+    let account = auth.login_npc("npc_chest_persist_fail").unwrap();
+    let character = create_test_character(&auth, &account, "CarefulDelver");
+
+    let game_state = make_test_game_state("chest_persist_fail");
+    let player_id = stage_chest_opener(&game_state, "CarefulDelver", character.id).await;
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(player_id, PlayerInventory::default());
+    let mut direct_rx = game_state.register_direct_channel(&player_id).await;
+
+    rusqlite::Connection::open(&db_path)
+        .unwrap()
+        .execute("DROP TABLE character_dungeon_chests", [])
+        .unwrap();
+
+    game_state
+        .open_dungeon_chest(&player_id, CRYPT_ID, &auth)
+        .await;
+
+    assert_chest_rejected(&mut direct_rx, "saved");
+    assert_eq!(
+        game_state.get_player_gold(&player_id).await,
+        0,
+        "failed persistence must not pay gold"
+    );
+    assert!(
+        game_state
+            .get_player_inventory(&player_id)
+            .await
+            .expect("staged inventory")
+            .bag
+            .is_empty(),
+        "failed persistence must not grant chest items"
+    );
+
+    let repaired_auth = crate::auth::AuthService::new(db_path).unwrap();
+
+    while direct_rx.try_recv().is_ok() {}
+    game_state
+        .open_dungeon_chest(&player_id, CRYPT_ID, &repaired_auth)
+        .await;
+
+    assert!(
+        game_state.get_player_gold(&player_id).await > 0,
+        "retry after schema repair should pay out"
+    );
+    assert!(
+        !game_state
+            .get_player_inventory(&player_id)
+            .await
+            .expect("staged inventory")
+            .bag
+            .is_empty(),
+        "retry after schema repair should grant chest items"
+    );
+    assert_eq!(
+        repaired_auth
+            .load_dungeon_chest_opens(character.id)
+            .unwrap()
+            .len(),
+        1,
+        "successful retry should persist exactly one chest claim"
+    );
+}
+
 /// The nightly refill gate compares two of these, so the index has to move
 /// forward exactly once a day and never backwards — including across the
 /// seasonal swing in sunset time.
