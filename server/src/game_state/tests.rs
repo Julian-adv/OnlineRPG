@@ -3572,7 +3572,16 @@ async fn npc_movement_is_exempt_from_collision() {
     assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 6.5));
 }
 
-use onlinerpg_shared::dungeon::cell_center;
+use onlinerpg_shared::dungeon::{cell_center, ENTRANCE_DOOR_ID};
+
+fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntranceDef {
+    game_state
+        .dungeon_defs
+        .all()
+        .next()
+        .expect("a dungeon def")
+        .clone()
+}
 
 /// First registry dungeon plus its shallowest floor holding an interior door.
 fn first_dungeon_door(
@@ -3583,17 +3592,47 @@ fn first_dungeon_door(
     onlinerpg_shared::dungeon::InteriorDoorSpec,
 ) {
     use onlinerpg_shared::dungeon::{generate_dungeon_for, interior_doors};
-    let entrance = game_state
-        .dungeon_defs
-        .all()
-        .next()
-        .expect("a dungeon def")
-        .clone();
+    let entrance = first_dungeon(game_state);
     let (depth, door) = generate_dungeon_for(&entrance.id)
         .iter()
         .find_map(|l| interior_doors(l).first().copied().map(|d| (l.depth, d)))
         .expect("a floor with an interior door");
     (entrance, depth, door)
+}
+
+/// Cell centers either side of `door`, at the low end of the opening or (with
+/// `far_end`) the high one — the spots a player works it from.
+fn door_side_positions(
+    entrance: &crate::dungeon_defs::DungeonEntranceDef,
+    depth: u8,
+    door: &onlinerpg_shared::dungeon::InteriorDoorSpec,
+    far_end: bool,
+) -> (Position, Position) {
+    let [ax, az, bx, bz] = door.seg();
+    let (lat, line) = if door.spans_x() {
+        (if far_end { bx - 1 } else { ax }, az)
+    } else {
+        (if far_end { bz - 1 } else { az }, ax)
+    };
+    let (outside, inside) = if door.spans_x() {
+        ((lat, line - 1), (lat, line))
+    } else {
+        ((line - 1, lat), (line, lat))
+    };
+    let ep = entrance.position();
+    (
+        cell_center(&ep, depth, outside),
+        cell_center(&ep, depth, inside),
+    )
+}
+
+/// A player standing at `at` on the floor holding a door at `depth`.
+async fn add_delver(game_state: &GameState, name: &str, at: Position, depth: u8) -> PlayerId {
+    let mut player = make_player(name, at.x, at.z);
+    player.position.y = at.y;
+    player.floor_level = -(depth as i8);
+    game_state.add_player(player).await;
+    pid(name)
 }
 
 #[tokio::test]
@@ -3647,19 +3686,8 @@ async fn cross_floor_dungeon_door_toggle_is_rejected() {
         Err(MpscTryRecvError::Empty)
     ));
 
-    let [ax, az, _, _] = door.seg();
-    let (outside, inside) = if door.spans_x() {
-        ((ax, az - 1), (ax, az))
-    } else {
-        ((ax - 1, az), (ax, az))
-    };
-    let from = cell_center(&entrance.position(), depth, outside);
-    let to = cell_center(&entrance.position(), depth, inside);
-    let delver_id = pid("delver");
-    let mut delver = make_player("delver", from.x, from.z);
-    delver.position.y = from.y;
-    delver.floor_level = -(depth as i8);
-    game_state.add_player(delver).await;
+    let (from, to) = door_side_positions(&entrance, depth, &door, false);
+    let delver_id = add_delver(&game_state, "delver", from, depth).await;
     game_state
         .update_player_position(
             &delver_id,
@@ -3683,10 +3711,8 @@ async fn cross_floor_dungeon_door_toggle_is_rejected() {
 async fn same_floor_dungeon_door_toggle_still_updates_state() {
     let game_state = make_test_game_state("dungeon_door_same_floor");
     let (entrance, depth, door) = first_dungeon_door(&game_state);
-    let player_id = pid("delver");
-    let mut player = make_player("delver", entrance.x, entrance.z);
-    player.floor_level = -(depth as i8);
-    game_state.add_player(player).await;
+    let (outside, _) = door_side_positions(&entrance, depth, &door, false);
+    let player_id = add_delver(&game_state, "delver", outside, depth).await;
 
     assert_eq!(
         game_state
@@ -3706,15 +3732,175 @@ async fn same_floor_dungeon_door_toggle_still_updates_state() {
     );
 }
 
+/// Reach is also what pins a toggle to the dungeon the player stands in — a
+/// door is only in reach from its own grid. One registry dungeon, so the
+/// cross-dungeon case has nothing to exercise directly.
+#[tokio::test]
+async fn out_of_reach_dungeon_door_toggle_is_rejected() {
+    let game_state = make_test_game_state("dungeon_door_out_of_reach");
+    let (entrance, depth, door) = first_dungeon_door(&game_state);
+    let (outside, _) = door_side_positions(&entrance, depth, &door, false);
+    // Half the 80-cell floor: past the reach of even the widest opening, but
+    // still a place a player on this floor can legitimately stand.
+    let far = Position {
+        x: outside.x + 40.0,
+        ..outside
+    };
+    let player_id = add_delver(&game_state, "sniper", far, depth).await;
+
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
+            .await,
+        None,
+        "the door must be out of reach from across the floor"
+    );
+    assert!(game_state.dungeon_open_doors(&entrance.id).await.is_empty());
+}
+
+/// Reach is measured to the whole doorway, not its middle — openings run up
+/// to 17 cells wide, so a midpoint would put a player standing at one jamb
+/// half an opening away from their own door.
+#[test]
+fn door_line_distance_spans_the_whole_doorway() {
+    use super::dungeon::door_line_dist_sq;
+    use onlinerpg_shared::dungeon::dungeon_origin;
+
+    let entrance = Position {
+        x: 100.0,
+        y: 0.0,
+        z: 200.0,
+    };
+    let (ox, oz) = dungeon_origin(entrance.x, entrance.z);
+    // A 17-cell opening spanning X at grid line z = 40.
+    let seg = [20, 40, 37, 40];
+    let at = |x: f32, z: f32| Position { x, y: 0.0, z };
+
+    // Anywhere along the opening: only the perpendicular offset counts.
+    for cell_x in [20.0, 28.5, 37.0] {
+        assert_eq!(
+            door_line_dist_sq(&entrance, seg, &at(ox + cell_x, oz + 41.0)),
+            1.0
+        );
+    }
+    // Past an end, the offset to that end is added back.
+    assert_eq!(
+        door_line_dist_sq(&entrance, seg, &at(ox + 40.0, oz + 40.0)),
+        9.0
+    );
+
+    // X wraps with the world, so a dungeon straddling the seam still measures
+    // across it rather than the long way round.
+    let seam = Position {
+        x: onlinerpg_shared::WORLD_MAX_X - 1.0,
+        ..entrance
+    };
+    let (sx, _) = dungeon_origin(seam.x, seam.z);
+    let wrapped = sx + 20.0 - onlinerpg_shared::WORLD_WIDTH_X;
+    assert_eq!(door_line_dist_sq(&seam, seg, &at(wrapped, oz + 41.0)), 1.0);
+}
+
+/// Standing at the far jamb of a wide door is still standing at it.
+#[tokio::test]
+async fn wide_dungeon_door_toggles_from_its_far_end() {
+    use onlinerpg_shared::dungeon::{generate_dungeon_for, interior_doors};
+    let game_state = make_test_game_state("dungeon_door_wide");
+    let entrance = first_dungeon(&game_state);
+    let (depth, door) = generate_dungeon_for(&entrance.id)
+        .iter()
+        .flat_map(|l| interior_doors(l).into_iter().map(|d| (l.depth, d)))
+        .max_by_key(|(_, d)| d.len)
+        .expect("a widest interior door");
+
+    let (at, _) = door_side_positions(&entrance, depth, &door, true);
+    let player_id = add_delver(&game_state, "delver", at, depth).await;
+
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
+            .await,
+        Some(true),
+        "a {}-cell opening must be workable from its far end",
+        door.len
+    );
+}
+
+#[tokio::test]
+async fn unknown_dungeon_door_id_is_rejected() {
+    let game_state = make_test_game_state("dungeon_door_unknown_id");
+    let (entrance, depth, door) = first_dungeon_door(&game_state);
+    let (outside, _) = door_side_positions(&entrance, depth, &door, false);
+    let player_id = add_delver(&game_state, "delver", outside, depth).await;
+
+    for door_id in [door.door_id ^ 0xABCD, u32::MAX] {
+        assert_eq!(
+            game_state
+                .toggle_dungeon_door(&player_id, &entrance.id, depth, door_id)
+                .await,
+            None
+        );
+    }
+    assert!(game_state.dungeon_open_doors(&entrance.id).await.is_empty());
+}
+
+#[tokio::test]
+async fn surface_entrance_door_toggle_gates_on_the_entrance() {
+    use onlinerpg_shared::dungeon::generate_dungeon_for;
+    let game_state = make_test_game_state("dungeon_door_entrance");
+    let entrance = first_dungeon(&game_state);
+    // Standing on the shaft's surface landing, where the entrance door is. The
+    // gate circles the marker rather than the door, so it only holds while the
+    // generator keeps the two together.
+    let at_door = cell_center(
+        &entrance.position(),
+        0,
+        generate_dungeon_for(&entrance.id)[0].up_shaft.entry_cell(),
+    );
+    let offset = at_door.dist_xz_sq(&entrance.position()).sqrt();
+    assert!(
+        offset < EVENT_DELIVERY_RADIUS * 0.5,
+        "the entrance door sits {offset:.1}m from the marker its gate centers on"
+    );
+
+    let near_id = add_delver(&game_state, "visitor", at_door, 0).await;
+    let away = Position {
+        x: entrance.x + EVENT_DELIVERY_RADIUS + 10.0,
+        ..entrance.position()
+    };
+    let away_id = add_delver(&game_state, "passerby", away, 0).await;
+
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&away_id, &entrance.id, 0, ENTRANCE_DOOR_ID)
+            .await,
+        None,
+        "the entrance door must not be reachable from across the world"
+    );
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&near_id, &entrance.id, 0, 7)
+            .await,
+        None,
+        "depth 0 has exactly one door id"
+    );
+    assert!(game_state.dungeon_open_doors(&entrance.id).await.is_empty());
+
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&near_id, &entrance.id, 0, ENTRANCE_DOOR_ID)
+            .await,
+        Some(true)
+    );
+    assert_eq!(
+        game_state.dungeon_open_doors(&entrance.id).await,
+        vec![(0, ENTRANCE_DOOR_ID)]
+    );
+}
+
 #[tokio::test]
 async fn dungeon_door_toggle_delivery_gates_radius_and_floor() {
     let game_state = make_test_game_state("dungeon_door_delivery");
-    let entrance = game_state
-        .dungeon_defs
-        .all()
-        .next()
-        .expect("a dungeon def")
-        .clone();
+    let entrance = first_dungeon(&game_state);
     let ep = entrance.position();
     let toggler = pid("door_toggler");
     let near_surface = pid("near_surface");
@@ -3783,9 +3969,10 @@ async fn dungeon_door_toggle_delivery_gates_radius_and_floor() {
     ));
     assert!(matches!(near_rx.try_recv(), Err(MpscTryRecvError::Empty)));
 
-    // Entrance toggled from the shaft ramp (toggler floor-tracked
-    // underground): the toggler still hears their own toggle, and nearby
-    // surface players still get it.
+    // Delivery never depends on where the toggler's own floor tracking sits:
+    // they hear their toggle regardless, and the surface circle is unaffected.
+    // (`toggle_dungeon_door` only lets a floor-0 player reach depth 0, so this
+    // is a property of the delivery, not a reachable production case.)
     game_state
         .publish_dungeon_door_toggle(&near_underground, entrance.id.clone(), 0, 0, false)
         .await;
@@ -3811,21 +3998,8 @@ async fn dungeon_door_blocks_movement_until_opened() {
     let (entrance, depth, door) = first_dungeon_door(&game_state);
     game_state.init_passability("nonexistent_terrain_dir").await;
 
-    // Cell centres on either side of the door's first crossing.
-    let [ax, az, _, _] = door.seg();
-    let (outside, inside) = if door.spans_x() {
-        ((ax, az - 1), (ax, az))
-    } else {
-        ((ax - 1, az), (ax, az))
-    };
-    let from = cell_center(&entrance.position(), depth, outside);
-    let to = cell_center(&entrance.position(), depth, inside);
-
-    let player_id = pid("delver");
-    let mut player = make_player("delver", from.x, from.z);
-    player.position.y = from.y;
-    player.floor_level = -(depth as i8);
-    game_state.add_player(player).await;
+    let (from, to) = door_side_positions(&entrance, depth, &door, false);
+    let player_id = add_delver(&game_state, "delver", from, depth).await;
     let go = |p: Position| MoveCommand {
         floor_level: -(depth as i8),
         ..move_cmd(p, false)
@@ -3873,10 +4047,8 @@ async fn dungeon_door_blocks_movement_until_opened() {
 async fn floor_entry_pushes_open_door_snapshot() {
     let game_state = make_test_game_state("dungeon_door_entry_snapshot");
     let (entrance, depth, door) = first_dungeon_door(&game_state);
-    let opener_id = pid("opener");
-    let mut opener = make_player("opener", entrance.x, entrance.z);
-    opener.floor_level = -(depth as i8);
-    game_state.add_player(opener).await;
+    let (at_door, _) = door_side_positions(&entrance, depth, &door, false);
+    let opener_id = add_delver(&game_state, "opener", at_door, depth).await;
 
     // Player A opens a door before B has ever seen the dungeon.
     assert_eq!(

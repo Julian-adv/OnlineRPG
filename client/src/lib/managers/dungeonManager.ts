@@ -78,7 +78,9 @@ export interface PendingPropBreak {
 }
 
 /** Depth/id under which the surface entrance door's open state is keyed in the
- *  synced door map (depth 0 is the surface; interior doors live at depth ≥1). */
+ *  synced door map (depth 0 is the surface; interior doors live at depth ≥1).
+ *  The id is wire protocol — the server rejects any other id at depth 0; keep
+ *  it in step with `ENTRANCE_DOOR_ID` in shared/src/dungeon/doors.rs. */
 export const ENTRANCE_DOOR_DEPTH = 0
 export const ENTRANCE_DOOR_ID = 0
 

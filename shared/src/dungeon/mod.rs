@@ -32,7 +32,7 @@ mod stairs;
 #[cfg(test)]
 mod tests;
 
-pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec};
+pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec, ENTRANCE_DOOR_ID};
 pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
 pub use stairs::{
     entrance_ramp_height_at, floor_height_at, ground_y_for_floor, shaft_run_pos, LANDING_CELLS,

@@ -9,8 +9,8 @@
 use std::collections::{HashMap, HashSet};
 
 use onlinerpg_shared::dungeon::{
-    cell_center, floor_world_y, generate_dungeon_for, monster_level_for_depth, FloorLayout,
-    PropKind, FLOOR_Y_TOLERANCE,
+    cell_center, dungeon_origin, floor_world_y, generate_dungeon_for, interior_doors,
+    monster_level_for_depth, FloorLayout, PropKind, ENTRANCE_DOOR_ID, FLOOR_Y_TOLERANCE,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{Position, ServerMessage};
@@ -30,6 +30,10 @@ const CHEST_ITEM_MIN_PRICE: i64 = 2000;
 /// How close a player must stand to a prop to break (barrel/crate) or open
 /// (chest) it.
 const PROP_INTERACT_RANGE: f32 = 2.5;
+/// How close a player must stand to a doorway to work it; the client gates the
+/// click at 2m from the leaf it hit. `toggle_dungeon_door` adds half the
+/// opening on top, the reach of a leaf standing open.
+const DOOR_INTERACT_RANGE: f32 = 2.5;
 /// Chance that a freshly-broken barrel/crate spills a loose coin pile.
 const BROKEN_PROP_COIN_DROP_CHANCE: f64 = 0.20;
 
@@ -49,8 +53,9 @@ pub(super) struct DungeonRuntime {
     /// lid animates), so this drives no passability change.
     pub opened_props: HashMap<u8, HashSet<u32>>,
     /// Open doors per depth (depth 0 = the surface entrance door; ≥1 = interior
-    /// room doors). `door_id` is opaque to the server — the client derives it
-    /// from the door's geometry. Same lifetime as `broken_props`.
+    /// room doors). Both sides derive `door_id` from the door's geometry, and
+    /// `toggle_dungeon_door` only admits ids that resolve, so this stays
+    /// bounded by the layout. Same lifetime as `broken_props`.
     pub open_doors: HashMap<u8, HashSet<u32>>,
 }
 
@@ -95,6 +100,23 @@ fn prop_wall_opposite_dir(layout: &FloorLayout, x: i32, z: i32) -> (i32, i32) {
     }
 }
 
+/// Squared XZ distance from `pos` to a door's blocking line, measured to the
+/// whole segment so a wide opening is in reach from either end. `seg` is
+/// floor-local grid lines, and those sit on integer world coordinates, so
+/// cells need no half-cell offset here. `InteriorDoorSpec::seg` always runs
+/// low corner to high, which the clamp relies on.
+pub(super) fn door_line_dist_sq(entrance: &Position, seg: [i32; 4], pos: &Position) -> f32 {
+    let (ox, oz) = dungeon_origin(entrance.x, entrance.z);
+    let [ax, az, bx, bz] = seg;
+    // Offset past each end, zero along the segment. The fixed axis has zero
+    // length, so its offset falls through untouched.
+    let dx = onlinerpg_shared::shortest_world_delta_x(ox + ax as f32, pos.x);
+    let dz = pos.z - (oz + az as f32);
+    let dx = dx - dx.clamp(0.0, (bx - ax) as f32);
+    let dz = dz - dz.clamp(0.0, (bz - az) as f32);
+    dx * dx + dz * dz
+}
+
 impl GameState {
     /// Lazily generate and cache the layouts for a dungeon.
     pub(super) async fn ensure_dungeon_runtime(&self, entrance_id: &str) {
@@ -122,13 +144,14 @@ impl GameState {
             });
     }
 
-    /// Toggle a dungeon door's open state and return the new state. The
-    /// client gates the click by interaction range; the server flips the
-    /// stored state, reseals the floor's passability (a shut interior door
-    /// blocks movement and pathing) and lets the connection layer broadcast.
-    /// Interior door ids map to corridor-mouth segments via `interior_doors`;
-    /// depth 0 (the surface entrance door) has no server-side grid and stays
-    /// cosmetic.
+    /// Toggle a dungeon door's open state and return the new state: the server
+    /// flips the stored state, reseals the floor's passability (a shut interior
+    /// door blocks movement and pathing) and lets the connection layer
+    /// broadcast. Interior door ids map to corridor-mouth segments via
+    /// `interior_doors`.
+    ///
+    /// The door is shared state, so nothing changes until the request is
+    /// authorized against the floor, the door, and the reach to it.
     pub async fn toggle_dungeon_door(
         &self,
         player_id: &PlayerId,
@@ -136,13 +159,52 @@ impl GameState {
         depth: u8,
         door_id: u32,
     ) -> Option<bool> {
-        self.dungeon_defs.get(entrance_id)?;
+        let entrance = self.dungeon_defs.get(entrance_id)?;
         let expected_floor = -i8::try_from(depth).ok()?;
-        let player_floor = self.players.read().await.get(player_id)?.floor_level;
+        let (player_pos, player_floor) = {
+            let players = self.players.read().await;
+            let player = players.get(player_id)?;
+            (player.position, player.floor_level)
+        };
         if player_floor != expected_floor {
             return None;
         }
+
+        if depth == 0 {
+            // The entrance shed is client-side geometry — the server has the
+            // shaft but not the doorway within it — so the entrance marker's
+            // delivery circle stands in for reach. Loose next to the 2.5m
+            // interior gate, but the toggle still drives collision on every
+            // client nearby, so it is not left open to the whole world.
+            if door_id != ENTRANCE_DOOR_ID {
+                return None;
+            }
+            if player_pos.dist_xz_sq(&entrance.position())
+                > super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
+            {
+                return None;
+            }
+        }
         self.ensure_dungeon_runtime(entrance_id).await;
+        if depth > 0 {
+            // Needs the cached layouts, so this gate runs after the ensure;
+            // layouts are immutable, so the scan holds only the read lock.
+            let door = {
+                let dungeons = self.dungeons.read().await;
+                let layout = dungeons
+                    .get(entrance_id)?
+                    .layouts
+                    .get((depth - 1) as usize)?;
+                interior_doors(layout)
+                    .into_iter()
+                    .find(|d| d.door_id == door_id)?
+            };
+            let reach = DOOR_INTERACT_RANGE + door.len as f32 * 0.5;
+            if door_line_dist_sq(&entrance.position(), door.seg(), &player_pos) > reach * reach {
+                return None;
+            }
+        }
+
         let is_open = {
             let mut dungeons = self.dungeons.write().await;
             let rt = dungeons.get_mut(entrance_id)?;
@@ -161,9 +223,9 @@ impl GameState {
 
     /// Deliver a toggle to players near the door on the door's own floor.
     /// Depth 0 centers on the entrance so the circle matches the client's
-    /// snapshot re-pull boundary; interior doors center on the toggler (who
-    /// stands within interact range of the door). The toggler is always sent
-    /// directly — their tracked floor may lag mid-stairs.
+    /// snapshot re-pull boundary; interior doors center on the toggler, whom
+    /// `toggle_dungeon_door` has already put within reach. The toggler is also
+    /// sent directly, so their own reply never rides on the radius sweep.
     pub(crate) async fn publish_dungeon_door_toggle(
         &self,
         player_id: &PlayerId,

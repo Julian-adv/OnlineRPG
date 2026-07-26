@@ -422,6 +422,23 @@ fn interior_doors_seal_corridor_mouths_until_opened() {
     assert!(total > 0, "no interior doors across any test seed");
 }
 
+/// The entrance door shares its id space with the interior doors — a toggle
+/// resolves by `(depth, door_id)` — so its reserved id must never name one.
+#[test]
+fn entrance_door_id_is_not_an_interior_door() {
+    for seed in 0..10u64 {
+        for layout in &generate_dungeon(seed) {
+            for d in interior_doors(layout) {
+                assert_ne!(
+                    d.door_id, ENTRANCE_DOOR_ID,
+                    "seed {seed} depth {}",
+                    layout.depth
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn passability_floor_mapping() {
     assert_eq!(passability_floor_for_depth(1), DUNGEON_FLOOR_INDEX_BASE);

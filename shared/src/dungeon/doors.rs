@@ -14,6 +14,13 @@ use super::{gen, FloorLayout};
 /// Percent chance a qualifying corridor mouth gets a door.
 const INTERIOR_DOOR_PCT: u32 = 30;
 
+/// The surface entrance door, the only door id depth 0 has. Disjoint from the
+/// interior ids below (`entrance_door_id_is_not_an_interior_door` holds it
+/// over the generated floors), so one id space covers both. Frozen like
+/// `door_hash`: it is on the wire, and the client mirrors it in
+/// `dungeonManager.ts`.
+pub const ENTRANCE_DOOR_ID: u32 = 0;
+
 /// Wall side indices, matching the client's `WALL_N/E/S/W`.
 const WALL_N: u8 = 0;
 const WALL_E: u8 = 1;
