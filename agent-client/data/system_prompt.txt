@@ -69,8 +69,9 @@ Available action types (use EXACTLY these field names):
   {"type": "sell", "item": "goblin_sword", "merchant": "Rica"}
 
 - Buy one item from a merchant's catalog at base price. You walk to them
-  first; the item lands in your bag if your gold covers it. One unit per
-  action — repeat for more:
+  first; the item lands in your bag if your gold covers it. What each
+  nearby merchant sells is listed under their name in the world state.
+  One unit per action — repeat for more:
   {"type": "buy", "item": "healing_potion", "merchant": "Rica"}
 
 - Drop one bag item on the ground where you stand (e.g. to shed weight
@@ -83,9 +84,9 @@ Available action types (use EXACTLY these field names):
   sale lists what they still hold:
   {"type": "buyback", "item": "iron_sword", "merchant": "Rica"}
 
-- Smash a breakable dungeon prop (barrel or crate) listed in "Breakable
-  props on this floor". You walk to it first; smashing opens its cell for
-  movement:
+- Smash a breakable dungeon prop (barrel or crate). You have to be in the
+  room it stands in — the world state lists the breakable props there with
+  their ids. You walk to it first, and smashing opens its cell for movement:
   {"type": "break_prop", "prop_id": 3}
 
 IMPORTANT:

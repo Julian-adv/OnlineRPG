@@ -14,12 +14,10 @@ use std::collections::HashSet;
 
 #[cfg(test)]
 use onlinerpg_shared::dungeon::floor_world_y;
-#[cfg(test)]
-use onlinerpg_shared::dungeon::Room;
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, dungeon_passability, entrances, generate_dungeon_for,
     ground_y_for_floor, interior_doors, passability_floor_for_depth, world_to_cell,
-    DungeonEntranceDef, FloorLayout, InteriorDoorSpec, PropKind,
+    DungeonEntranceDef, FloorLayout, InteriorDoorSpec, PropKind, Room,
 };
 use onlinerpg_shared::pathfinding::RuntimePassability;
 use onlinerpg_shared::Position;
@@ -59,6 +57,18 @@ pub struct ChestSighting {
     /// Where to stand to open it. The treasure chest carries no collision, so
     /// it is the chest's own cell; a clutter prop is a 1×1 pillar A* can never
     /// route onto, so it is the walkable cell beside it.
+    pub approach: Position,
+}
+
+/// A breakable barrel or crate standing in the same room as the agent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BreakableSighting {
+    /// Index into the floor's props — what `BreakDungeonProp` names.
+    pub prop_id: u32,
+    pub kind: PropKind,
+    /// The prop itself; the server measures its interact range from here.
+    pub position: Position,
+    /// The walkable cell beside it to stand in.
     pub approach: Position,
 }
 
@@ -132,11 +142,7 @@ impl Dungeon {
         opened: &HashSet<u32>,
         walkable: impl Fn(&Position) -> bool,
     ) -> Vec<ChestSighting> {
-        let Some(layout) = self.layout_at(depth) else {
-            return Vec::new();
-        };
-        let (px, pz) = world_to_cell(&self.entrance, pos.x, pos.z);
-        let Some(room) = layout.room_at(px, pz) else {
+        let Some((layout, room)) = self.room_of(depth, pos) else {
             return Vec::new();
         };
         let mut seen: Vec<ChestSighting> = layout
@@ -161,19 +167,7 @@ impl Dungeon {
                 let approach = match kind {
                     ChestKind::Treasure => position,
                     ChestKind::Prop(_) => {
-                        // Props are 1×1 collision pillars, so A* can never
-                        // route onto one: stand in the open cell beside it.
-                        [(-1, 0), (1, 0), (0, -1), (0, 1)]
-                            .into_iter()
-                            .map(|(dx, dz)| (cell.0 + dx, cell.1 + dz))
-                            .filter(|c| layout.is_carved(c.0, c.1))
-                            .map(|c| cell_center(&self.entrance, depth, c))
-                            .filter(|p| walkable(p))
-                            .min_by(|a, b| {
-                                let d =
-                                    |p: &Position| crate::geom::PlanarDelta::between(pos, p).dist;
-                                d(a).total_cmp(&d(b))
-                            })?
+                        self.approach_cell(layout, depth, cell, pos, &walkable)?
                     }
                 };
                 Some(ChestSighting {
@@ -186,6 +180,75 @@ impl Dungeon {
         let dist = |c: &ChestSighting| crate::geom::PlanarDelta::between(pos, &c.position).dist;
         seen.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
         seen
+    }
+
+    /// Every barrel or crate someone at `pos` on `depth` can see, nearest
+    /// first — the same room rule as [`Self::chests_in_room_of`]. Walls hide
+    /// clutter from the agent as they do from a web player, and the walk-to
+    /// loop's leash assumes a target inside our own room.
+    ///
+    /// `broken` holds the prop indices already smashed on this floor.
+    pub fn breakables_in_room_of(
+        &self,
+        depth: u8,
+        pos: &Position,
+        broken: &[u32],
+        walkable: impl Fn(&Position) -> bool,
+    ) -> Vec<BreakableSighting> {
+        let Some((layout, room)) = self.room_of(depth, pos) else {
+            return Vec::new();
+        };
+        let mut seen: Vec<BreakableSighting> = layout
+            .props
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| {
+                matches!(p.kind, PropKind::Barrel | PropKind::Crate)
+                    && !broken.contains(&(*i as u32))
+                    && room.contains(p.x, p.z)
+            })
+            .filter_map(|(i, p)| {
+                Some(BreakableSighting {
+                    prop_id: i as u32,
+                    kind: p.kind,
+                    position: cell_center(&self.entrance, depth, (p.x, p.z)),
+                    approach: self.approach_cell(layout, depth, (p.x, p.z), pos, &walkable)?,
+                })
+            })
+            .collect();
+        let dist = |b: &BreakableSighting| crate::geom::PlanarDelta::between(pos, &b.position).dist;
+        seen.sort_by(|a, b| dist(a).total_cmp(&dist(b)));
+        seen
+    }
+
+    /// The floor layout and the room `pos` stands in — where every in-room
+    /// sighting starts. `None` from a corridor or a landing outside any room.
+    fn room_of(&self, depth: u8, pos: &Position) -> Option<(&FloorLayout, &Room)> {
+        let layout = self.layout_at(depth)?;
+        let (px, pz) = world_to_cell(&self.entrance, pos.x, pos.z);
+        Some((layout, layout.room_at(px, pz)?))
+    }
+
+    /// Props are 1×1 collision pillars, so A* can never route onto one: stand
+    /// in the open cell beside it, the one nearest `pos`.
+    fn approach_cell(
+        &self,
+        layout: &FloorLayout,
+        depth: u8,
+        cell: (i32, i32),
+        pos: &Position,
+        walkable: &impl Fn(&Position) -> bool,
+    ) -> Option<Position> {
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .into_iter()
+            .map(|(dx, dz)| (cell.0 + dx, cell.1 + dz))
+            .filter(|c| layout.is_carved(c.0, c.1))
+            .map(|c| cell_center(&self.entrance, depth, c))
+            .filter(|p| walkable(p))
+            .min_by(|a, b| {
+                let d = |p: &Position| crate::geom::PlanarDelta::between(pos, p).dist;
+                d(a).total_cmp(&d(b))
+            })
     }
 
     /// World XZ of the cell pair a door segment separates, at its midpoint.
@@ -286,6 +349,51 @@ mod tests {
                 .unwrap_or(false);
             d.layout_at(depth).is_some_and(|l| l.is_carved(x, z)) && !props_here
         }
+    }
+
+    /// Breakable clutter follows the same room rule as the chests: the walk-to
+    /// loop's leash only stretches across one room, so listing a barrel two
+    /// rooms away would only ever hand the agent an action it cannot finish.
+    #[test]
+    fn breakables_are_only_visible_from_inside_their_room() {
+        let d = crypt();
+        let depth = d.max_depth();
+        let layout = d.layouts().last().expect("old_crypt has floors");
+        let (id, prop) = layout
+            .props
+            .iter()
+            .enumerate()
+            .find(|(_, p)| matches!(p.kind, PropKind::Barrel | PropKind::Crate))
+            .expect("the final floor has breakable clutter");
+        let room = *layout
+            .room_at(prop.x, prop.z)
+            .expect("clutter is scattered through the rooms");
+        let inside = cell_center(&d.entrance, depth, room.center());
+
+        let here = d.breakables_in_room_of(depth, &inside, &[], carved_only(&d, depth));
+        assert!(here.iter().any(|b| b.prop_id == id as u32));
+        let dists: Vec<f32> = here
+            .iter()
+            .map(|b| crate::geom::PlanarDelta::between(&inside, &b.position).dist)
+            .collect();
+        assert!(
+            dists.windows(2).all(|w| w[0] <= w[1]),
+            "sightings come back nearest first"
+        );
+
+        let smashed = d.breakables_in_room_of(depth, &inside, &[id as u32], carved_only(&d, depth));
+        assert!(!smashed.iter().any(|b| b.prop_id == id as u32));
+
+        let elsewhere = layout
+            .rooms
+            .iter()
+            .find(|r| r.x != room.x || r.z != room.z)
+            .expect("the final floor has more than one room");
+        let other_room = cell_center(&d.entrance, depth, elsewhere.center());
+        assert!(!d
+            .breakables_in_room_of(depth, &other_room, &[], carved_only(&d, depth))
+            .iter()
+            .any(|b| b.prop_id == id as u32));
     }
 
     /// A chest shows itself to someone in its own room and to nobody else —

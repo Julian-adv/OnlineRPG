@@ -461,6 +461,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn sell_parses_its_aliases_for_item_and_merchant() {
+        for json in [
+            r#"{"actions": [{"type": "sell", "item": "goblin_sword", "merchant": "Rica"}]}"#,
+            r#"{"actions": [{"type": "sell_item", "item_id": "goblin_sword", "npc": "Rica"}]}"#,
+            r#"{"actions": [{"type": "sell", "name": "goblin_sword", "to": "Rica"}]}"#,
+        ] {
+            let AgentAction::Sell { item, merchant } = parse_single_action(json) else {
+                panic!("expected Sell for {json}");
+            };
+            assert_eq!((item.as_str(), merchant.as_str()), ("goblin_sword", "Rica"));
+        }
+    }
+
+    #[test]
+    fn buy_parses_its_aliases_for_item_and_merchant() {
+        for json in [
+            r#"{"actions": [{"type": "buy", "item": "healing_potion", "merchant": "Rica"}]}"#,
+            r#"{"actions": [{"type": "purchase", "item_def_id": "healing_potion", "from": "Rica"}]}"#,
+            r#"{"actions": [{"type": "buy_item", "name": "healing_potion", "target": "Rica"}]}"#,
+        ] {
+            let AgentAction::Buy { item, merchant } = parse_single_action(json) else {
+                panic!("expected Buy for {json}");
+            };
+            assert_eq!(
+                (item.as_str(), merchant.as_str()),
+                ("healing_potion", "Rica")
+            );
+        }
+    }
+
+    #[test]
+    fn buyback_parses_its_aliases_and_stays_distinct_from_buy() {
+        for json in [
+            r#"{"actions": [{"type": "buyback", "item": "iron_sword", "merchant": "Rica"}]}"#,
+            r#"{"actions": [{"type": "buy_back", "item_id": "iron_sword", "npc": "Rica"}]}"#,
+            r#"{"actions": [{"type": "repurchase", "name": "iron_sword", "from": "Rica"}]}"#,
+        ] {
+            let AgentAction::Buyback { item, merchant } = parse_single_action(json) else {
+                panic!("expected Buyback for {json}");
+            };
+            assert_eq!((item.as_str(), merchant.as_str()), ("iron_sword", "Rica"));
+        }
+    }
+
+    #[test]
+    fn drop_parses_its_aliases() {
+        for json in [
+            r#"{"actions": [{"type": "drop", "item": "torch"}]}"#,
+            r#"{"actions": [{"type": "drop_item", "item_def_id": "torch"}]}"#,
+            r#"{"actions": [{"type": "discard", "name": "torch"}]}"#,
+        ] {
+            let AgentAction::Drop { item } = parse_single_action(json) else {
+                panic!("expected Drop for {json}");
+            };
+            assert_eq!(item, "torch");
+        }
+    }
+
+    #[test]
+    fn break_prop_parses_its_aliases_and_id() {
+        for json in [
+            r#"{"actions": [{"type": "break_prop", "prop_id": 3}]}"#,
+            r#"{"actions": [{"type": "smash", "id": 3}]}"#,
+            r#"{"actions": [{"type": "break", "target": 3}]}"#,
+        ] {
+            let AgentAction::BreakProp { prop_id } = parse_single_action(json) else {
+                panic!("expected BreakProp for {json}");
+            };
+            assert_eq!(prop_id, 3, "for {json}");
+        }
+    }
+
     /// The wording the prompts teach picks the great chest; anything else
     /// (including no target at all) leaves the nearest one winning.
     #[test]

@@ -212,11 +212,16 @@ impl WorldCache {
 
     /// Broken prop ids for one dungeon floor — `break_prop` checks this before
     /// walking out to a barrel someone already smashed.
-    pub fn dungeon_broken_props(&self, id: &str, depth: u8) -> Vec<u32> {
+    pub fn dungeon_broken_props(&self, id: &str, depth: u8) -> &[u32] {
         self.dungeon_broken_props
             .get(&(id.to_string(), depth))
-            .cloned()
-            .unwrap_or_default()
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a mover can stand in the cell holding `pos` on `floor`. What the
+    /// in-room sighting queries use to decide where a prop can be opened from.
+    pub fn is_walkable(&self, pos: &Position, floor: u8) -> bool {
+        !pathfinding::is_cell_sealed(self.passability_cache(), pos.x, pos.z, floor, None)
     }
 
     /// Recompute one dungeon floor's cells from the live door/prop state
@@ -1473,15 +1478,11 @@ impl SharedState {
     /// chest and the clutter chests together. Empty above ground, in a
     /// corridor, and once a chest has been opened.
     pub fn chests_in_sight(&self) -> Vec<crate::dungeon::ChestSighting> {
-        let Some(p) = self.self_player.as_ref() else {
+        let Some((pos, depth)) = self.underground_at() else {
             return Vec::new();
         };
-        if self.self_floor_level >= 0 {
-            return Vec::new();
-        }
-        let depth = self.self_floor_level.unsigned_abs();
         let world = self.world_cache.read().unwrap();
-        let Some(dungeon) = world.dungeon_at(p.position.x, p.position.z) else {
+        let Some(dungeon) = world.dungeon_at(pos.x, pos.z) else {
             return Vec::new();
         };
         let empty = HashSet::new();
@@ -1489,9 +1490,14 @@ impl SharedState {
             .opened_dungeon_props(&dungeon.id, depth)
             .unwrap_or(&empty);
         let floor = dungeon.passability_floor(depth);
-        dungeon.chests_in_room_of(depth, &p.position, opened, |c| {
-            !pathfinding::is_cell_sealed(world.passability_cache(), c.x, c.z, floor, None)
-        })
+        dungeon.chests_in_room_of(depth, &pos, opened, |c| world.is_walkable(c, floor))
+    }
+
+    /// Where we stand when we are underground in a dungeon, and how deep.
+    /// `None` above ground — both in-room sighting queries start here.
+    fn underground_at(&self) -> Option<(Position, u8)> {
+        let p = self.self_player.as_ref()?;
+        (self.self_floor_level < 0).then(|| (p.position, self.self_floor_level.unsigned_abs()))
     }
 
     /// Where we stand relative to the dungeons: the floor we are on when
@@ -1530,9 +1536,7 @@ impl SharedState {
                     "\nChest in this room: {looks} ({dist:.0}m away){note}"
                 ));
             }
-            if let Some(d) = &dungeon {
-                line.push_str(&self.format_floor_props(d, depth, p));
-            }
+            line.push_str(&self.format_room_props(p));
             return Some(line);
         }
         let dungeon = self
@@ -1550,54 +1554,52 @@ impl SharedState {
         ))
     }
 
-    /// Broken prop ids for one dungeon floor.
-    pub fn dungeon_broken_props(&self, id: &str, depth: u8) -> Vec<u32> {
+    /// Whether a dungeon prop has already been smashed.
+    pub fn is_prop_broken(&self, id: &str, depth: u8, prop_id: u32) -> bool {
         self.world_cache
             .read()
             .unwrap()
             .dungeon_broken_props(id, depth)
+            .contains(&prop_id)
     }
 
-    /// Nearest breakable clutter on the agent's dungeon floor. Chest props are
-    /// left out — they reach the agent as chests in its room, not as prop ids.
-    fn format_floor_props(&self, d: &crate::dungeon::Dungeon, depth: u8, p: &Player) -> String {
-        use onlinerpg_shared::dungeon::PropKind;
-        let Some(layout) = d.layouts().get(depth as usize - 1) else {
-            return String::new();
+    /// Barrels and crates standing in the room we occupy, nearest first.
+    /// Empty above ground, in a corridor, and once a prop has been smashed.
+    /// Chest props are left out — they reach the agent as chests instead.
+    pub fn breakables_in_sight(&self) -> Vec<crate::dungeon::BreakableSighting> {
+        let Some((pos, depth)) = self.underground_at() else {
+            return Vec::new();
         };
-        let broken = self
-            .world_cache
-            .read()
-            .unwrap()
-            .dungeon_broken_props(&d.id, depth);
-        let mut props: Vec<(f32, String)> = Vec::new();
-        for (i, prop) in layout.props.iter().enumerate() {
-            let id = i as u32;
-            if broken.contains(&id) {
-                continue;
-            }
-            let kind = match prop.kind {
-                PropKind::Barrel => "barrel",
-                PropKind::Crate => "crate",
-                PropKind::Chest | PropKind::TorchWall => continue,
-            };
-            let pos = onlinerpg_shared::dungeon::cell_center(&d.entrance, depth, (prop.x, prop.z));
-            let dist = crate::geom::PlanarDelta::between(&p.position, &pos).dist;
-            props.push((
-                dist,
-                format!(
-                    "{kind} [prop {id}] at ({:.0}, {:.0}) {dist:.0}m",
-                    pos.x, pos.z
-                ),
-            ));
-        }
+        let world = self.world_cache.read().unwrap();
+        let Some(dungeon) = world.dungeon_at(pos.x, pos.z) else {
+            return Vec::new();
+        };
+        let broken = world.dungeon_broken_props(&dungeon.id, depth);
+        let floor = dungeon.passability_floor(depth);
+        dungeon.breakables_in_room_of(depth, &pos, broken, |c| world.is_walkable(c, floor))
+    }
+
+    /// The breakable clutter in the agent's room, for the world state.
+    fn format_room_props(&self, p: &Player) -> String {
+        use onlinerpg_shared::dungeon::PropKind;
+        let props = self.breakables_in_sight();
         if props.is_empty() {
             return String::new();
         }
-        props.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let list: Vec<String> = props.into_iter().take(6).map(|(_, s)| s).collect();
+        let list: Vec<String> = props
+            .iter()
+            .take(6)
+            .map(|b| {
+                let kind = match b.kind {
+                    PropKind::Crate => "crate",
+                    PropKind::Barrel | PropKind::Chest | PropKind::TorchWall => "barrel",
+                };
+                let dist = crate::geom::PlanarDelta::between(&p.position, &b.position).dist;
+                format!("{kind} [prop {}] {dist:.0}m away", b.prop_id)
+            })
+            .collect();
         format!(
-            "\nBreakable props on this floor: {} — {{\"type\": \"break_prop\", \"prop_id\": N}} \
+            "\nBreakable props in this room: {} — {{\"type\": \"break_prop\", \"prop_id\": N}} \
              smashes one open.",
             list.join("; ")
         )
@@ -1725,24 +1727,22 @@ impl SharedState {
             .map(|(id, p)| (*id, p.is_official_npc))
     }
 
-    /// Find the item the agent named among the ones we carry, and where it
-    /// sits. Matching is forgiving about the exact id (see
-    /// `item_defs::resolve_named`) but never reaches past what we hold.
     /// Like [`Self::find_carried`], but bag items win over worn ones —
     /// selling should reach the spare in the bag, not the equipped copy.
-    /// `exclude` skips instances already spent earlier this turn (the bag
-    /// snapshot only refreshes when InventoryUpdated arrives).
+    ///
+    /// `spent` counts the units of each instance already given away earlier
+    /// this turn, keyed by instance id: the bag snapshot only refreshes when
+    /// InventoryUpdated arrives, and a stack survives a sale one unit at a
+    /// time, so an instance stays sellable until its whole quantity is gone.
     pub fn find_carried_bag_first(
         &self,
         asked: &str,
-        exclude: &[u64],
+        spent: &HashMap<u64, u32>,
     ) -> Option<(String, Carried)> {
         let (id, placed) = self.find_carried(asked)?;
-        if let Some(item) = self
-            .self_bag
-            .iter()
-            .find(|i| i.item_def_id == id && !exclude.contains(&i.instance_id))
-        {
+        if let Some(item) = self.self_bag.iter().find(|i| {
+            i.item_def_id == id && spent.get(&i.instance_id).copied().unwrap_or(0) < i.quantity
+        }) {
             return Some((id, Carried::InBag(item.instance_id)));
         }
         match placed {
@@ -1752,6 +1752,9 @@ impl SharedState {
         }
     }
 
+    /// Find the item the agent named among the ones we carry, and where it
+    /// sits. Matching is forgiving about the exact id (see
+    /// `item_defs::resolve_named`) but never reaches past what we hold.
     pub fn find_carried(&self, asked: &str) -> Option<(String, Carried)> {
         let ids: Vec<&str> = self
             .self_bag
@@ -1845,6 +1848,11 @@ impl SharedState {
                 "Player: {} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
+            if p.is_official_npc {
+                if let Some(shop) = crate::shop_info::shop_line_for(&p.name) {
+                    lines.push(shop);
+                }
+            }
         }
 
         // Exclude monsters beyond LLM sight radius
@@ -2168,13 +2176,7 @@ pub(crate) mod tests {
         for chest in chests {
             let a = chest.approach;
             assert!(
-                !pathfinding::is_cell_sealed(
-                    s.world_cache.read().unwrap().passability_cache(),
-                    a.x,
-                    a.z,
-                    floor,
-                    None
-                ),
+                s.world_cache.read().unwrap().is_walkable(&a, floor),
                 "{:?} is approached from a sealed cell",
                 chest.kind
             );
@@ -2184,6 +2186,64 @@ pub(crate) mod tests {
                 chest.kind
             );
         }
+    }
+
+    /// Breakables are offered off the live passability the same way chests
+    /// are, and a smashed one drops out of the listing.
+    #[tokio::test]
+    async fn a_smashed_prop_stops_being_offered() {
+        let (mut s, dungeon, _rx) = dungeon_state();
+        let depth = in_the_chest_room(&mut s, &dungeon);
+        let floor = dungeon.passability_floor(depth);
+        let prop = s
+            .breakables_in_sight()
+            .first()
+            .copied()
+            .expect("the chest room holds breakable clutter");
+        assert!(
+            s.find_path_to(prop.approach.x, prop.approach.z, floor)
+                .found,
+            "a prop is offered with a cell we can route to"
+        );
+
+        s.push_event(ServerMessage::DungeonPropBroken {
+            entrance_id: dungeon.id.clone(),
+            depth,
+            prop_id: prop.prop_id,
+        });
+        assert!(!s
+            .breakables_in_sight()
+            .iter()
+            .any(|b| b.prop_id == prop.prop_id));
+    }
+
+    /// A stack survives a sale one unit at a time, so the units left in it
+    /// have to stay sellable for the rest of the turn. A drop takes the lot.
+    #[test]
+    fn selling_off_a_stack_leaves_the_rest_of_it_reachable() {
+        let (mut s, _rx) = test_state();
+        s.self_bag = vec![onlinerpg_shared::inventory::ItemInstance {
+            instance_id: 7,
+            item_def_id: "healing_potion".to_string(),
+            quantity: 3,
+            enchant: 0,
+        }];
+
+        let mut spent: HashMap<u64, u32> = HashMap::new();
+        for unit in 1..=3 {
+            let placed = s
+                .find_carried_bag_first("healing_potion", &spent)
+                .unwrap_or_else(|| panic!("unit {unit} of 3 should still be in the bag"))
+                .1;
+            assert!(matches!(placed, Carried::InBag(7)));
+            *spent.entry(7).or_default() += 1;
+        }
+        assert!(s.find_carried_bag_first("healing_potion", &spent).is_none());
+
+        let dropped = HashMap::from([(7, u32::MAX)]);
+        assert!(s
+            .find_carried_bag_first("healing_potion", &dropped)
+            .is_none());
     }
 
     /// Standing where the chest room is, on the deepest floor.

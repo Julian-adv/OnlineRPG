@@ -79,17 +79,56 @@ pub fn format_price(copper: i64) -> String {
     parts.join(" ")
 }
 
+/// What a merchant stocks (catalog item ids) and the share of base price they
+/// pay for what players sell them. `None` for anyone who is not a shopkeeper.
+/// The customer side reads this too, so a `buy` action can be matched against
+/// what is actually on the shelf instead of every item in the game.
+pub fn merchant_shop(npc_name: &str) -> Option<(Vec<&'static str>, u32)> {
+    let merchant = merchants()
+        .values()
+        .find(|m| m.npc_name.eq_ignore_ascii_case(npc_name))?;
+    Some((
+        id_list(&merchant.catalog).collect(),
+        merchant.sell_rate_percent,
+    ))
+}
+
+/// The `;`-separated item id lists the game data stores catalogs and
+/// wishlists as.
+fn id_list(field: &str) -> impl Iterator<Item = &str> {
+    field.split(';').map(str::trim).filter(|id| !id.is_empty())
+}
+
+/// What a customer standing near a merchant sees: the shelf, with prices, and
+/// the rate they buy at. Without it the LLM has to guess item ids for `buy`,
+/// since a shop window is something only the web client opens.
+pub fn shop_line_for(npc_name: &str) -> Option<String> {
+    let (catalog, sell_rate_percent) = merchant_shop(npc_name)?;
+    let stock: Vec<String> = catalog
+        .iter()
+        .filter_map(|id| {
+            let price = crate::item_defs::get(id)?.base_price?;
+            Some(format!("{id} {}", format_price(price)))
+        })
+        .collect();
+    if stock.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{npc_name} sells: {} — and pays {sell_rate_percent}% of base for what you sell them.",
+        stock.join(", ")
+    ))
+}
+
 /// Build the static "Your Shop" system-prompt section for a merchant NPC,
 /// or `None` if the character is not a merchant. Non-merchant traders get
 /// a per-turn section instead (`resident_trade_prompt_for`) so it can
 /// disappear once their needs are met.
 pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
-    let merchant = merchants()
-        .values()
-        .find(|m| m.npc_name.eq_ignore_ascii_case(npc_name))?;
+    let (catalog, sell_rate_percent) = merchant_shop(npc_name)?;
 
     let mut section = String::from("## Your Shop\nItems you sell, with base prices:\n");
-    for item_id in merchant.catalog.split(';').map(str::trim) {
+    for item_id in catalog {
         let Some(item) = crate::item_defs::get(item_id) else {
             continue;
         };
@@ -97,10 +136,10 @@ pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
         section.push_str(&format!("- {item_id} ({}): {price}\n", item.name));
     }
     section.push_str(&format!(
-        "You also buy any item that has a base price from players, paying {}% of its base price.\n\
+        "You also buy any item that has a base price from players, paying {sell_rate_percent}% \
+         of its base price.\n\
          Use the \"open_trade\" action to put your shop window on a nearby player's screen \
-         when the conversation turns to trading.\n",
-        merchant.sell_rate_percent
+         when the conversation turns to trading.\n"
     ));
     Some(section)
 }
@@ -119,11 +158,7 @@ pub fn resident_trade_prompt_for(
         .values()
         .find(|t| t.npc_name.eq_ignore_ascii_case(npc_name))?;
 
-    let wanted: Vec<&str> = trader
-        .wishlist
-        .split(';')
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
+    let wanted: Vec<&str> = id_list(&trader.wishlist)
         .filter(|id| !bag.iter().any(|item| item.item_def_id == *id))
         .collect();
     if wanted.is_empty() {
@@ -208,6 +243,25 @@ mod tests {
         assert!(section.contains("40%"));
         assert!(section.contains("open_trade"));
         assert!(merchant_prompt_for("Karl").is_none());
+    }
+
+    /// A customer sees the same shelf the shopkeeper does, with prices, so a
+    /// `buy` action can name something real instead of a guessed item id.
+    #[test]
+    fn a_customer_sees_ricas_shelf_and_her_rate() {
+        let line = shop_line_for("rica").expect("case does not matter");
+        assert!(line.contains("iron_sword 1g"), "{line}");
+        assert!(line.contains("healing_potion"), "{line}");
+        assert!(line.contains("40%"), "{line}");
+        assert!(shop_line_for("Karl").is_none(), "a resident keeps no shelf");
+
+        let (catalog, rate) = merchant_shop("Rica").expect("Rica is a merchant");
+        assert_eq!(rate, 40);
+        assert!(catalog.contains(&"iron_sword"));
+        assert!(
+            !catalog.contains(&"goblin_sword"),
+            "loot she does not stock stays off the shelf, so a buy cannot resolve to it"
+        );
     }
 
     #[test]

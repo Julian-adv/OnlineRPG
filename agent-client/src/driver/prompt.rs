@@ -197,10 +197,18 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                      sale cleared it)."
                 ));
             }
+            // Enchant is the only thing telling two entries of the same item
+            // apart — the payout ignores it, so the prices match.
             let list: Vec<String> = buyback
                 .iter()
                 .take(6)
-                .map(|e| format!("{} @{}c", e.item_def_id, e.price))
+                .map(|e| {
+                    let price = crate::shop_info::format_price(e.price);
+                    match e.enchant {
+                        0 => format!("{} @{price}", e.item_def_id),
+                        n => format!("{} +{n} @{price}", e.item_def_id),
+                    }
+                })
                 .collect();
             Some(format!(
                 "[Buyback] {who} will sell back: {} — {{\"type\": \"buyback\", \"item\": ..., \
@@ -410,7 +418,7 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
 
 /// Resolve a player_id to a display name using SharedState.
 /// Falls back to the raw ID if the player is not found.
-fn player_name(state: &SharedState, player_id: &PlayerId) -> String {
+pub(super) fn player_name(state: &SharedState, player_id: &PlayerId) -> String {
     if state.self_player_id.as_ref() == Some(player_id) {
         if let Some(ref p) = state.self_player {
             return p.name.clone();
