@@ -1195,6 +1195,123 @@ async fn non_finite_move_is_rejected() {
 }
 
 #[tokio::test]
+async fn positive_floor_above_limit_is_rejected() {
+    let game_state = make_test_game_state("positive_floor_limit");
+    let player_id = pid("ghost");
+    let observer_id = pid("observer");
+    let max_floor = onlinerpg_shared::housing::MAX_FLOOR_LEVEL as i8;
+    game_state.add_player(make_player("ghost", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("observer", 1.0, 0.0))
+        .await;
+    let mut observer_rx = game_state.register_direct_channel(&observer_id).await;
+
+    for invalid_floor in [max_floor + 1, 120] {
+        game_state
+            .update_player_floor(&player_id, invalid_floor)
+            .await;
+        assert_eq!(
+            game_state.players.read().await[&player_id].floor_level,
+            0,
+            "floor {invalid_floor} must be rejected"
+        );
+        assert!(matches!(
+            observer_rx.try_recv(),
+            Err(MpscTryRecvError::Empty)
+        ));
+    }
+
+    game_state.update_player_floor(&player_id, max_floor).await;
+    assert_eq!(
+        game_state.players.read().await[&player_id].floor_level,
+        max_floor
+    );
+}
+
+#[tokio::test]
+async fn player_move_cannot_bypass_positive_floor_limit() {
+    let game_state = make_test_game_state("positive_floor_move_limit");
+    let player_id = pid("ghost");
+    let observer_id = pid("observer");
+    let max_floor = onlinerpg_shared::housing::MAX_FLOOR_LEVEL as i8;
+    game_state.add_player(make_player("ghost", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("observer", 1.0, 0.0))
+        .await;
+    let mut observer_rx = game_state.register_direct_channel(&observer_id).await;
+
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                position: pos(1.0),
+                rotation: 0.0,
+                floor_level: max_floor + 1,
+                append: false,
+            },
+            false,
+            false,
+        )
+        .await;
+
+    assert!(
+        !game_state
+            .movement_intents
+            .read()
+            .await
+            .contains_key(&player_id),
+        "an invalid floor move must not enqueue an intent"
+    );
+    let player = game_state.players.read().await[&player_id].clone();
+    assert_eq!(player.position.x, 0.0);
+    assert_eq!(player.floor_level, 0);
+    assert!(matches!(
+        observer_rx.try_recv(),
+        Err(MpscTryRecvError::Empty)
+    ));
+
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                position: pos(1.0),
+                rotation: 0.0,
+                floor_level: max_floor,
+                append: false,
+            },
+            false,
+            false,
+        )
+        .await;
+    game_state.tick_player_movement(1.0).await;
+    let player = game_state.players.read().await[&player_id].clone();
+    assert_eq!(player.position.x, 1.0);
+    assert_eq!(player.floor_level, max_floor);
+}
+
+#[test]
+fn restored_floor_falls_back_to_surface() {
+    let max_floor = onlinerpg_shared::housing::MAX_FLOOR_LEVEL as i8;
+
+    for saved in [max_floor + 1, 120, i8::MAX] {
+        assert_eq!(
+            super::restored_floor_level(saved),
+            0,
+            "floor {saved} must fall back to the surface"
+        );
+    }
+
+    // Negative floors use the existing dungeon rehydration path.
+    for saved in [i8::MIN, -1, 0, max_floor] {
+        assert_eq!(
+            super::restored_floor_level(saved),
+            saved,
+            "floor {saved} must be restored as-is"
+        );
+    }
+}
+
+#[tokio::test]
 async fn far_move_target_is_rejected() {
     let game_state = make_test_game_state("movement_far_reject");
     let player_id = pid("warper");

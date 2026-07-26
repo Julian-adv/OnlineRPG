@@ -66,7 +66,7 @@ mod inventory;
 mod monster;
 mod passability;
 mod player;
-pub(crate) use player::MoveCommand;
+pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod time;
 mod trading;
