@@ -2259,6 +2259,82 @@ async fn sell_item_applies_deal_bonus() {
 }
 
 #[tokio::test]
+async fn cross_floor_shop_actions_leave_economy_state_unchanged() {
+    let game_state = make_test_game_state("cross_floor_shop");
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+        inv.bag.push(bag_item(7, "iron_sword", 1));
+        inv.bag.push(bag_item(8, "dagger", 1));
+        inventories.insert(pid("buyer"), inv);
+    }
+
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
+        .await;
+    let entry_id = {
+        let buybacks = game_state.buybacks.read().await;
+        buybacks[&(1, "Rica".to_string())][0].entry.entry_id
+    };
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("buyer"))
+        .unwrap()
+        .floor_level = 1;
+
+    while buyer_rx.try_recv().is_ok() {}
+    let gold_before = game_state.get_player_gold(&pid("buyer")).await;
+    let bag_before = game_state.inventories.read().await[&pid("buyer")]
+        .bag
+        .clone();
+
+    game_state
+        .open_shop(&pid("buyer"), &pid("npc_rica"), true)
+        .await;
+    game_state
+        .buy_item(&pid("buyer"), &pid("npc_rica"), "iron_sword")
+        .await;
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 8)
+        .await;
+    game_state
+        .buyback_item(&pid("buyer"), &pid("npc_rica"), entry_id)
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, gold_before);
+    let bag_after = game_state.inventories.read().await[&pid("buyer")]
+        .bag
+        .clone();
+    assert_eq!(bag_after.len(), bag_before.len());
+    for (after, before) in bag_after.iter().zip(&bag_before) {
+        assert_eq!(after.instance_id, before.instance_id);
+        assert_eq!(after.item_def_id, before.item_def_id);
+        assert_eq!(after.quantity, before.quantity);
+        assert_eq!(after.enchant, before.enchant);
+    }
+    assert!(
+        game_state.open_shops.read().await.is_empty(),
+        "a rejected shop open must not register a hold"
+    );
+    assert_eq!(
+        game_state.buybacks.read().await[&(1, "Rica".to_string())].len(),
+        1,
+        "a rejected buyback must remain available"
+    );
+    for _ in 0..4 {
+        match buyer_rx.try_recv() {
+            Ok(ServerMessage::TradeError { message }) => {
+                assert!(message.contains("another floor"), "got: {message}")
+            }
+            other => panic!("Expected cross-floor TradeError, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn sell_to_merchant_records_buyback_and_restores_item() {
     let game_state = make_test_game_state("buyback_roundtrip");
     let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
@@ -2959,6 +3035,33 @@ async fn open_trade_pushes_shop_state_to_the_player() {
         other => panic!("Expected TradeError, got {:?}", other),
     }
     drop(npc_rx);
+}
+
+#[tokio::test]
+async fn cross_floor_open_trade_is_rejected_before_reaching_the_player() {
+    let game_state = make_test_game_state("cross_floor_open_trade");
+    setup_resident_trade(&game_state, 1_000, vec![], vec![]).await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("seller"))
+        .unwrap()
+        .floor_level = 1;
+    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
+    let mut npc_rx = game_state.register_direct_channel(&pid("npc_karl")).await;
+
+    game_state
+        .open_trade(&pid("npc_karl"), &pid("seller"))
+        .await;
+
+    assert!(matches!(seller_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("another floor"), "got: {message}")
+        }
+        other => panic!("Expected cross-floor TradeError, got {other:?}"),
+    }
 }
 
 #[tokio::test]
