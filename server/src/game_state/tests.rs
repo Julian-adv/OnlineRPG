@@ -1678,7 +1678,8 @@ async fn non_finite_spawn_request_is_rejected() {
 
 /// A client-owned monster is still untrusted movement. Staying within the
 /// speed bucket must not let its owner walk it through the same solid cell that
-/// blocks server-simulated player movement.
+/// blocks server-simulated player movement — while an equally long move that
+/// clears the furniture still goes through.
 #[tokio::test]
 async fn client_owned_monster_cannot_cross_solid_furniture() {
     let game_state = make_test_game_state("monster_furniture_collision");
@@ -1725,10 +1726,16 @@ async fn client_owned_monster_cannot_cross_solid_furniture() {
         )
         .await;
 
+    let after = game_state.monsters.read().await["wall_walking_monster"].clone();
     assert_eq!(
-        game_state.monsters.read().await["wall_walking_monster"].position,
-        start,
+        after.position, start,
         "solid furniture must block a client-owned monster move"
+    );
+    // Banked, not spent: a block keeps the refill like the speed-reject path.
+    assert!(
+        after.move_budget >= 10.0,
+        "a blocked move must not consume budget, got {}",
+        after.move_budget
     );
     assert!(matches!(
         observer_rx.try_recv(),
@@ -1738,6 +1745,37 @@ async fn client_owned_monster_cannot_cross_solid_furniture() {
         Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, start),
         other => panic!("a blocked monster move must correct its owner, got {other:?}"),
     }
+
+    // The sweep's other side. An owner reports whole path legs at once, so a
+    // sweep that over-refuses would freeze legitimate monsters at every corner:
+    // the same 2m hop away from the table must apply and reach watchers.
+    let clear = Position {
+        x: 0.5,
+        y: 0.0,
+        z: 2.5,
+    };
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "wall_walking_monster".to_string(),
+            clear,
+            0.0,
+            MonsterState::Run,
+            clear,
+        )
+        .await;
+
+    assert_eq!(
+        game_state.monsters.read().await["wall_walking_monster"].position,
+        clear,
+        "a clear move must apply"
+    );
+    match observer_rx.try_recv() {
+        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, clear),
+        other => panic!("a clear move must fan out to watchers, got {other:?}"),
+    }
+    // The owner applied it optimistically and gets no correction.
+    assert!(matches!(owner_rx.try_recv(), Err(MpscTryRecvError::Empty)));
 }
 
 /// Even the owner can't teleport a monster onto a distant victim: a move is

@@ -219,15 +219,20 @@ impl super::GameState {
                 self.send_direct_message(mover_id, correction).await;
                 return;
             }
-            let blocked = {
+            // A move that reports an unchanged position can't cross anything,
+            // and attack cadence reports plenty of them.
+            let blocked = dist > 0.0 && {
                 let cache = self.passability_read();
-                let floor =
-                    onlinerpg_shared::dungeon::passability_floor_for_level(monster.floor_level);
+                let floor = super::passability::authoritative_floor(&cache, &monster.position);
+                // Sweep in unwrapped X so a seam-crossing move stays the short
+                // local segment `dist` measured.
+                let to_x = monster.position.x
+                    + onlinerpg_shared::shortest_world_delta_x(monster.position.x, new_position.x);
                 super::passability::wrapped_block_info(
                     &cache,
                     monster.position.x,
                     monster.position.z,
-                    new_position.x,
+                    to_x,
                     new_position.z,
                     floor,
                     monster.position.y,
