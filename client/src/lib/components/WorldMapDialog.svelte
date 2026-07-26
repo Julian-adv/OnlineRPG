@@ -71,6 +71,7 @@
     getEffectivePreset,
   } from '../stores/graphicsSettings'
   import { wrapWorldX } from '../terrain/world-wrap'
+  import { setOverlayCloser } from '../stores/overlayStack'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
   const mobileMapBudget = $derived(graphicsPreset.renderBudget === 'mobile')
@@ -431,11 +432,12 @@
     worldMapVisible.set(false)
   }
 
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      close()
-    }
-  }
+  // Escape is served by the shared overlay stack so stacked panels close one
+  // press at a time; registering `close` keeps the mobile cache teardown.
+  $effect(() => {
+    setOverlayCloser('worldMap', close)
+    return () => setOverlayCloser('worldMap', null)
+  })
 
   function handleBackdropClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {
@@ -514,8 +516,6 @@
     return () => ro.disconnect()
   })
 </script>
-
-<svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->

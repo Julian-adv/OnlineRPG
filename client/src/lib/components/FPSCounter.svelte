@@ -62,6 +62,7 @@
     windDebugVisible,
   } from '../stores/debugStore'
   import { isAdminUser } from '../stores/gameStore'
+  import { closeTopOverlay } from '../stores/overlayStack'
 
   function toDegrees(radians: number) {
     const degrees = (radians * 180) / Math.PI
@@ -75,8 +76,8 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    // Debug shortcuts follow the panel; M/I/C below are ordinary gameplay keys,
-    // which is why this component still renders for non-admins.
+    // Debug shortcuts follow the panel; Escape and M/I/C below are ordinary
+    // gameplay keys, which is why this component still renders for non-admins.
     if ($isAdminUser && event.ctrlKey && event.key === 'd') {
       event.preventDefault()
       debugVisible.update((v) => !v)
@@ -84,6 +85,11 @@
     if ($isAdminUser && event.ctrlKey && event.key === 'm') {
       event.preventDefault()
       mapEditorMode.update((v) => !v)
+    }
+    // Only claims the key when an overlay was actually open, so Escape stays
+    // available to anything else that wants it.
+    if (event.key === 'Escape' && isGameKey(event) && closeTopOverlay()) {
+      event.preventDefault()
     }
     if ((event.key === 'm' || event.key === 'M') && isGameKey(event)) {
       event.preventDefault()
