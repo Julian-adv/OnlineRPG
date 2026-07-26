@@ -91,6 +91,9 @@ impl ScheduleEntry {
                     .trim()
                     .parse::<u32>()
                     .map_err(|_| format!("invalid minute in: {time_str}"))?;
+                if minute >= 60 {
+                    return Err(format!("minute out of range in: {time_str}"));
+                }
                 if h.trim() == "*" {
                     ScheduleCondition::Recurring { minute }
                 } else {
@@ -98,6 +101,9 @@ impl ScheduleEntry {
                         .trim()
                         .parse::<u32>()
                         .map_err(|_| format!("invalid hour in: {time_str}"))?;
+                    if hour >= 24 {
+                        return Err(format!("hour out of range in: {time_str}"));
+                    }
                     ScheduleCondition::Time { hour, minute }
                 }
             }
@@ -955,6 +961,38 @@ fn spawn_llm_task(
 mod tests {
     use super::*;
     use onlinerpg_shared::CharacterAttributes;
+
+    fn schedule(at: &str) -> ScheduleEntry {
+        ScheduleEntry {
+            at: at.to_string(),
+            pos: [0.0; 3],
+            rotation: 0.0,
+            floor_level: 0,
+            label: None,
+            action: None,
+            object_id: None,
+            waypoints: Vec::new(),
+            condition: None,
+        }
+    }
+
+    #[test]
+    fn schedule_times_stay_within_clock_bounds() {
+        for value in ["0:00", "23:59", "*:00", "*:59", "day", "night"] {
+            let mut entry = schedule(value);
+            assert!(entry.parse_condition().is_ok(), "{value} should be valid");
+            assert!(entry.condition.is_some());
+        }
+
+        for value in ["24:00", "25:30", "12:60", "*:60", "*:99"] {
+            let mut entry = schedule(value);
+            assert!(
+                entry.parse_condition().is_err(),
+                "{value} should be rejected"
+            );
+            assert!(entry.condition.is_none());
+        }
+    }
 
     fn character(name: &str, class: CharacterClass, gender: Gender) -> Character {
         Character {
