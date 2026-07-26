@@ -2,6 +2,7 @@ pub mod routes;
 
 use onlinerpg_shared::housing::{HouseData, RoomData, RoomType, MAX_FLOOR_LEVEL};
 use onlinerpg_shared::world::{WORLD_MAX_X, WORLD_MIN_X};
+use onlinerpg_terrain::io::atomic_write;
 use std::path::PathBuf;
 use tokio::fs;
 use tracing::{error, info};
@@ -342,7 +343,7 @@ impl HousingIO {
 
         let json = serde_json::to_string_pretty(house)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(&path, json).await?;
+        atomic_write(&path, json.as_bytes()).await?;
         info!("Saved house {} to {:?}", house.id, path);
         Ok(())
     }
@@ -430,6 +431,9 @@ mod tests {
     use super::test_fixtures::{house_at, room_at};
     use super::{is_valid_house_id, validate_house, HousingIO, MAX_ROOMS, MAX_ROOM_OFFSET};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn accepts_valid_house() {
@@ -481,5 +485,28 @@ mod tests {
         let io = HousingIO::new(PathBuf::from("/base"));
         assert!(io.house_path(0, 0, "r+00_+00_1").is_ok());
         assert!(io.house_path(0, 0, "../../etc/passwd").is_err());
+    }
+
+    #[tokio::test]
+    async fn write_house_persists_readable_json() {
+        let dir = unique_temp_dir("housing_write");
+        let io = HousingIO::new(dir.clone());
+        let house = house_at(10.0, 10.0, vec![room_at(0, 0)]);
+
+        io.write_house(&house).await.unwrap();
+
+        let stored = io.find_house(&house.id).await.unwrap().unwrap();
+        assert_eq!(stored.id, house.id);
+        assert_eq!(stored.rooms.len(), 1);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let counter = TEST_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "_onlinerpg_{name}_{}_{}",
+            std::process::id(),
+            counter
+        ))
     }
 }

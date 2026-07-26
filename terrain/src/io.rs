@@ -1,9 +1,113 @@
-use std::path::PathBuf;
-use tokio::fs;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::fs::{self, File, OpenOptions};
+use tokio::io::AsyncWriteExt;
 use tracing::warn;
 
 use crate::coords;
 use crate::defaults;
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Atomically replace a mutable world file after writing and syncing a
+/// same-directory temp file. This does not claim directory fsync durability
+/// across power loss.
+pub async fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    atomic_write_inner(path, data, None).await
+}
+
+async fn atomic_write_inner(
+    path: &Path,
+    data: &[u8],
+    fail_after_bytes: Option<usize>,
+) -> std::io::Result<()> {
+    let existing_permissions = match fs::metadata(path).await {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let (temp_path, mut file) = create_unique_temp_file(path).await?;
+    let write_result = async {
+        if let Some(fail_after_bytes) = fail_after_bytes {
+            let prefix_len = fail_after_bytes.min(data.len());
+            file.write_all(&data[..prefix_len]).await?;
+            return Err(std::io::Error::other("injected atomic write failure"));
+        }
+
+        file.write_all(data).await?;
+        if let Some(permissions) = existing_permissions {
+            file.set_permissions(permissions).await?;
+        }
+        file.sync_all().await
+    }
+    .await;
+
+    drop(file);
+
+    if let Err(e) = write_result {
+        let _ = fs::remove_file(&temp_path).await;
+        return Err(e);
+    }
+
+    match fs::rename(&temp_path, path).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&temp_path).await;
+            Err(e)
+        }
+    }
+}
+
+async fn create_unique_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "target path has no file name",
+        )
+    })?;
+    let process_id = std::process::id();
+
+    for _ in 0..128 {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut temp_name = OsString::from(".");
+        temp_name.push(file_name);
+        temp_name.push(format!(".{process_id}.{counter}.tmp"));
+        let candidate = parent.join(temp_name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not allocate unique temp file",
+    ))
+}
+
+#[cfg(test)]
+pub(crate) async fn atomic_write_with_injected_failure(
+    path: &Path,
+    data: &[u8],
+    fail_after_bytes: usize,
+) -> std::io::Result<()> {
+    atomic_write_inner(path, data, Some(fail_after_bytes)).await
+}
+
+async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    atomic_write(path, data).await
+}
 
 pub struct TerrainIO {
     base_dir: PathBuf,
@@ -48,10 +152,7 @@ impl TerrainIO {
             ));
         }
         let path = coords::heightmap_path(&self.base_dir, tx, tz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     pub async fn read_splatmap(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>> {
@@ -84,10 +185,7 @@ impl TerrainIO {
             ));
         }
         let path = coords::splatmap_path(&self.base_dir, tx, tz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     pub async fn read_minimap(&self, rx: i32, rz: i32) -> std::io::Result<Option<Vec<u8>>> {
@@ -101,10 +199,7 @@ impl TerrainIO {
 
     pub async fn write_minimap(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::minimap_path(&self.base_dir, rx, rz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     /// Read pre-computed grass placement data (variable-length binary).
@@ -121,10 +216,7 @@ impl TerrainIO {
     /// Write pre-computed grass placement data (variable-length binary).
     pub async fn write_grass(&self, tx: i32, tz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::grass_path(&self.base_dir, tx, tz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     /// Read original (pre-housing) heightmap. Returns None if not found.
@@ -168,10 +260,7 @@ impl TerrainIO {
             ));
         }
         let path = coords::original_heightmap_path(&self.base_dir, tx, tz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     /// Read pre-computed tree placement data (variable-length binary).
@@ -188,10 +277,7 @@ impl TerrainIO {
     /// Write pre-computed tree placement data (variable-length binary).
     pub async fn write_trees(&self, tx: i32, tz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::tree_path(&self.base_dir, tx, tz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     /// Read per-tile river-field data (pixel-aligned surfaceY + flowDir,
@@ -234,10 +320,7 @@ impl TerrainIO {
     /// Write original (pre-housing) grass placement data.
     pub async fn write_original_grass(&self, tx: i32, tz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::original_grass_path(&self.base_dir, tx, tz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
-        fs::write(&path, data).await
+        write_terrain_file(&path, data).await
     }
 
     /// Copy current heightmap → original heightmap if original doesn't exist yet.
@@ -349,12 +432,9 @@ impl TerrainIO {
         json: &serde_json::Value,
     ) -> std::io::Result<()> {
         let path = coords::zone_path(&self.base_dir, rx, rz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
         let json_str = serde_json::to_string_pretty(json)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(&path, json_str).await
+        write_terrain_file(&path, json_str.as_bytes()).await
     }
 
     /// Read object data for a region. Returns empty JSON object if file not found.
@@ -378,11 +458,8 @@ impl TerrainIO {
         json: &serde_json::Value,
     ) -> std::io::Result<()> {
         let path = coords::object_path(&self.base_dir, rx, rz);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await?;
-        }
         let json_str = serde_json::to_string_pretty(json)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(&path, json_str).await
+        write_terrain_file(&path, json_str.as_bytes()).await
     }
 }

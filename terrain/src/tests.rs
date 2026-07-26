@@ -1,7 +1,19 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::coords;
 use crate::defaults;
+
+static TEST_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_temp_dir(name: &str) -> std::path::PathBuf {
+    let counter = TEST_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "_onlinerpg_{name}_{}_{}",
+        std::process::id(),
+        counter
+    ))
+}
 
 #[test]
 fn tile_to_region_positive() {
@@ -209,6 +221,95 @@ async fn splatmap_write_read_roundtrip() {
     assert_eq!(read_back, data);
 
     let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn atomic_write_replaces_file_only_after_success() {
+    let dir = unique_temp_dir("atomic_success");
+    let target = dir.join("nested").join("world.bin");
+    let replacement = b"complete replacement";
+
+    tokio::fs::create_dir_all(target.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&target, b"old complete file")
+        .await
+        .unwrap();
+    crate::io::atomic_write(&target, replacement).await.unwrap();
+
+    assert_eq!(tokio::fs::read(&target).await.unwrap(), replacement);
+    assert_no_atomic_temp_files(target.parent().unwrap(), "world.bin").await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn atomic_write_preserves_existing_unix_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = unique_temp_dir("atomic_permissions");
+    let target = dir.join("world.bin");
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(&target, b"old").await.unwrap();
+    tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640))
+        .await
+        .unwrap();
+
+    crate::io::atomic_write(&target, b"new").await.unwrap();
+
+    let mode = tokio::fs::metadata(&target)
+        .await
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o640);
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn injected_partial_atomic_write_failure_keeps_existing_target_unchanged() {
+    let dir = unique_temp_dir("atomic_failure_existing");
+    let target = dir.join("world.bin");
+    let original = b"original bytes";
+    let replacement = b"new bytes that must not reach final path";
+
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(&target, original).await.unwrap();
+
+    let result = crate::io::atomic_write_with_injected_failure(&target, replacement, 9).await;
+
+    assert!(result.is_err());
+    assert_eq!(tokio::fs::read(&target).await.unwrap(), original);
+    assert_no_atomic_temp_files(&dir, "world.bin").await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn injected_partial_atomic_write_failure_does_not_create_final_path() {
+    let dir = unique_temp_dir("atomic_failure_missing");
+    let target = dir.join("world.bin");
+
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    let result = crate::io::atomic_write_with_injected_failure(&target, b"partial", 3).await;
+
+    assert!(result.is_err());
+    assert!(tokio::fs::metadata(&target).await.is_err());
+    assert_no_atomic_temp_files(&dir, "world.bin").await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+async fn assert_no_atomic_temp_files(dir: &Path, file_name: &str) {
+    let mut entries = tokio::fs::read_dir(dir).await.unwrap();
+    let temp_prefix = format!(".{file_name}.");
+    while let Some(entry) = entries.next_entry().await.unwrap() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        assert!(
+            !(name.starts_with(&temp_prefix) && name.ends_with(".tmp")),
+            "unexpected atomic temp file left behind: {name}"
+        );
+    }
 }
 
 #[tokio::test]
