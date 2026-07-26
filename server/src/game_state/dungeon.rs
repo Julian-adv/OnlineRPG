@@ -316,6 +316,10 @@ impl GameState {
         true
     }
 
+    /// Release a claim whose DB write failed, so a repaired storage layer can
+    /// retry tonight. Removes only the timestamp this attempt inserted — a
+    /// relog can rehydrate the key from the DB mid-write (`set_chest_opens`),
+    /// and that value is the durable one.
     async fn rollback_chest_open_claim(
         &self,
         character_id: i64,
