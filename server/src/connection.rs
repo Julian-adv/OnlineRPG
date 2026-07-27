@@ -955,6 +955,22 @@ async fn handle_client_message(
                 }
             };
 
+            // Dungeon history is required persistent state. Admitting a session
+            // with an empty fallback would let already-opened chests grant rewards
+            // again while the database is unavailable.
+            let dungeon_history = load_required_dungeon_history(auth_service, character_id).await;
+            let (chest_opens, discovered_dungeons) = match dungeon_history {
+                Ok(history) => history,
+                Err(err) => {
+                    warn!(
+                        "Failed to load dungeon history for character {}: {} — refusing session",
+                        character_id, err
+                    );
+                    return Ok(vec![ServerMessage::CharacterError {
+                        message: err.client_message().to_string(),
+                    }]);
+                }
+            };
             let max_hp = selected_character.max_hp;
             let character_xp = selected_character.xp;
 
@@ -1034,24 +1050,10 @@ async fn handle_client_message(
                 ),
             }
 
-            let auth = Arc::clone(auth_service);
-            let discovered_dungeons =
-                match crate::game_state::auth_db(move || auth.load_dungeon_history(character_id))
-                    .await
-                {
-                    Ok((opens, ids)) => {
-                        game_state.set_chest_opens(character_id, opens).await;
-                        game_state.set_dungeon_discoveries(&id, ids.clone()).await;
-                        ids
-                    }
-                    Err(err) => {
-                        warn!(
-                            "Failed to load dungeon history for character {}: {}",
-                            character_id, err
-                        );
-                        Vec::new()
-                    }
-                };
+            game_state.set_chest_opens(character_id, chest_opens).await;
+            game_state
+                .set_dungeon_discoveries(&id, discovered_dungeons.clone())
+                .await;
 
             // Load inventory from DB
             game_state
@@ -1697,9 +1699,18 @@ fn default_character_max_hp(
     }
 }
 
+async fn load_required_dungeon_history(
+    auth_service: &Arc<AuthService>,
+    character_id: i64,
+) -> Result<(Vec<(String, i64)>, Vec<String>), crate::auth::AuthError> {
+    let auth = Arc::clone(auth_service);
+    crate::game_state::auth_db(move || auth.load_dungeon_history(character_id)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     use std::net::Ipv4Addr;
 
     #[test]
@@ -1708,6 +1719,26 @@ mod tests {
         assert!(!token_matches("secret-token", "secret-tokeN"));
         assert!(!token_matches("secret", "secret-token"));
         assert!(!token_matches("", "secret-token"));
+    }
+
+    #[tokio::test]
+    async fn required_dungeon_history_load_fails_when_storage_is_unavailable() {
+        for table in ["character_dungeon_chests", "character_dungeon_discoveries"] {
+            let db_path = std::env::temp_dir().join(format!(
+                "onlinerpg_enter_game_dungeon_history_{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            let auth = Arc::new(AuthService::new(db_path.clone()).unwrap());
+
+            let (opens, discoveries) = load_required_dungeon_history(&auth, 1).await.unwrap();
+            assert!(opens.is_empty());
+            assert!(discoveries.is_empty());
+
+            let conn = Connection::open(db_path).unwrap();
+            conn.execute(&format!("DROP TABLE {table}"), []).unwrap();
+
+            assert!(load_required_dungeon_history(&auth, 1).await.is_err());
+        }
     }
 
     #[test]
