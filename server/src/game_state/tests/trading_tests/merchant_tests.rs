@@ -61,16 +61,17 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
 }
 
 #[tokio::test]
-async fn cross_floor_offer_deal_is_rejected() {
+async fn cross_floor_offer_deal_is_rejected_without_consuming_ledger() {
     let game_state = make_test_game_state("cross_floor_offer");
-    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 18, 0).await;
     set_floor(&game_state, "buyer", 1).await;
+    let ledger_before = game_state.deal_ledger_state_for_test("Rica", "buyer").await;
 
     game_state
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -50,
             "loyal customer",
@@ -87,6 +88,51 @@ async fn cross_floor_offer_deal_is_rejected() {
         }
         other => panic!("Expected DealResult rejection for NPC, got {other:?}"),
     }
+    assert_eq!(
+        game_state.deal_ledger_state_for_test("Rica", "buyer").await,
+        ledger_before,
+        "rejection must preserve NPC budget, player cap, and cooldown"
+    );
+    assert!(game_state
+        .active_deals_for(&pid("buyer"), "Rica")
+        .await
+        .is_empty());
+
+    // CHA 18 clamps this to -25%, a 625 discount. The immediate retry proves
+    // the rejection did not consume the cooldown; the ledger snapshot above
+    // directly proves that it did not consume the player's daily budget.
+    set_floor(&game_state, "buyer", 0).await;
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "wooden_shield",
+            DealKind::Buy,
+            -50,
+            "loyal customer",
+        )
+        .await;
+
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::DealUpdated { modifier_pct, .. }) => {
+            assert_eq!(modifier_pct, -25);
+        }
+        other => panic!("Expected DealUpdated after same-floor retry, got {other:?}"),
+    }
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::DealResult {
+            accepted,
+            applied_modifier_pct,
+            ..
+        }) => {
+            assert!(accepted);
+            assert_eq!(applied_modifier_pct, -25);
+        }
+        other => panic!("Expected accepted DealResult after retry, got {other:?}"),
+    }
+    let active = game_state.active_deals_for(&pid("buyer"), "Rica").await;
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].modifier_pct, -25);
 }
 
 #[tokio::test]
