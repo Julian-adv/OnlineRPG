@@ -1,9 +1,14 @@
 <script lang="ts">
+  import { mountOverlay } from '../stores/overlayStack'
+
   interface Props {
     message?: string
   }
 
   let { message = 'Loading...' }: Props = $props()
+
+  // No closer: Escape must not reach the overlays this dialog covers.
+  $effect(() => mountOverlay('loading'))
 </script>
 
 <div class="loading-backdrop">

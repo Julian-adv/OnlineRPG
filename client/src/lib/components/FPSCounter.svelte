@@ -86,7 +86,7 @@
       event.preventDefault()
       mapEditorMode.update((v) => !v)
     }
-    // Only claims the key when an overlay was actually open, so Escape stays
+    // Only claims the key when it actually closed something, so Escape stays
     // available to anything else that wants it.
     if (event.key === 'Escape' && isGameKey(event) && closeTopOverlay()) {
       event.preventDefault()

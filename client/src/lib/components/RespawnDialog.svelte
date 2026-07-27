@@ -1,10 +1,15 @@
 <script lang="ts">
+  import { mountOverlay } from '../stores/overlayStack'
+
   interface Props {
     onRespawn: () => void
     onLater: () => void
   }
 
   let { onRespawn, onLater }: Props = $props()
+
+  // Escape defers the dialog exactly like the Later button.
+  $effect(() => mountOverlay('respawn', onLater))
 </script>
 
 <div class="respawn-backdrop">

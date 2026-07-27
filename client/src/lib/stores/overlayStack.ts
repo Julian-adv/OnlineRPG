@@ -7,13 +7,15 @@ import {
 } from './debugStore'
 import { shopSession } from './tradeStore'
 
-/** HUD overlays Escape closes. */
+/** HUD overlays Escape interacts with. */
 export type OverlayId =
   | 'worldMap'
   | 'character'
   | 'inventory'
   | 'trade'
   | 'settings'
+  | 'loading'
+  | 'respawn'
 
 /** Escape closes whatever is actually on top, which open order alone cannot
  *  tell us: the panel keys still fire behind a modal, so a bag opened under
@@ -21,14 +23,20 @@ export type OverlayId =
  *
  *  `layer` is paint order, not raw z-index. The panels sit inside `.game-hud`,
  *  whose own `z-index: 1` traps their 40/45 in its stacking context, while the
- *  world map (30) and settings (10000) are siblings of that div — so the map
- *  paints over the trade window despite the smaller number. */
-const OVERLAYS: Record<OverlayId, { layer: number; close: () => void }> = {
+ *  loading/respawn dialogs and the world map (each 30, ranked by DOM order)
+ *  and settings (10000) are siblings of that div — so the map paints over the
+ *  trade window despite the smaller number.
+ *
+ *  No `close` marks a dialog Escape cannot dismiss: while it is on top, the
+ *  key must not fall through to whatever it covers. */
+const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   character: { layer: 0, close: () => characterPanelVisible.set(false) },
   inventory: { layer: 0, close: () => inventoryVisible.set(false) },
   trade: { layer: 1, close: () => shopSession.set(null) },
-  worldMap: { layer: 2, close: () => worldMapVisible.set(false) },
-  settings: { layer: 3, close: () => settingsVisible.set(false) },
+  loading: { layer: 2 },
+  respawn: { layer: 3 },
+  worldMap: { layer: 4, close: () => worldMapVisible.set(false) },
+  settings: { layer: 5, close: () => settingsVisible.set(false) },
 }
 
 /** Open overlays, oldest first. */
@@ -78,13 +86,27 @@ export function setOverlayCloser(id: OverlayId, close: (() => void) | null) {
   else delete overlayClosers[id]
 }
 
-/** Closes the topmost overlay. Returns false when none was open, leaving
- *  Escape free for whatever else wants it. */
+/** For dialogs with no backing store, where mounted is open. Call from an
+ *  $effect and return the teardown; omit close for dialogs Escape must not
+ *  dismiss. */
+export function mountOverlay(id: OverlayId, close?: () => void): () => void {
+  if (close) overlayClosers[id] = close
+  track(id, true)
+  return () => {
+    delete overlayClosers[id]
+    track(id, false)
+  }
+}
+
+/** Closes the topmost overlay. Returns false when none was open — leaving
+ *  Escape free for whatever else wants it — or when the top one cannot be
+ *  closed, so the key never reaches the overlays it covers. */
 export function closeTopOverlay(): boolean {
   const top = topOverlay(get(openOverlays))
   if (top === undefined) return false
 
   const close = overlayClosers[top] ?? OVERLAYS[top].close
+  if (!close) return false
   close()
   return true
 }

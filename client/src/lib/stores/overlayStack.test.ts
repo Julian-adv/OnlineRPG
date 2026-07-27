@@ -9,6 +9,7 @@ import {
 import { shopSession, type ShopSession } from './tradeStore'
 import {
   closeTopOverlay,
+  mountOverlay,
   openOverlays,
   setOverlayCloser,
   topOverlay,
@@ -33,6 +34,8 @@ beforeEach(() => {
   settingsVisible.set(false)
   shopSession.set(null)
   setOverlayCloser('worldMap', null)
+  setOverlayCloser('respawn', null)
+  openOverlays.set([])
 })
 
 describe('withOverlay', () => {
@@ -79,6 +82,12 @@ describe('topOverlay', () => {
   it('paints the world map over the trade window despite its lower z-index', () => {
     expect(topOverlay(['worldMap', 'trade'])).toBe('worldMap')
     expect(topOverlay(['trade', 'worldMap'])).toBe('worldMap')
+  })
+
+  it('ranks the fullscreen dialogs by their paint order', () => {
+    expect(topOverlay(['loading', 'respawn'])).toBe('respawn')
+    expect(topOverlay(['respawn', 'worldMap'])).toBe('worldMap')
+    expect(topOverlay(['respawn', 'settings'])).toBe('settings')
   })
 
   it('has no top when nothing is open', () => {
@@ -171,6 +180,43 @@ describe('closeTopOverlay', () => {
 
     expect(closeTopOverlay()).toBe(true)
     expect(get(characterPanelVisible)).toBe(false)
+  })
+
+  it('defers the respawn dialog before touching a panel behind it', () => {
+    inventoryVisible.set(true)
+    let laterCalls = 0
+    const unmount = mountOverlay('respawn', () => laterCalls++)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(laterCalls).toBe(1)
+    expect(get(inventoryVisible)).toBe(true)
+
+    unmount()
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(inventoryVisible)).toBe(false)
+  })
+
+  it('never closes a panel hidden behind the loading dialog', () => {
+    characterPanelVisible.set(true)
+    const unmount = mountOverlay('loading')
+
+    expect(closeTopOverlay()).toBe(false)
+    expect(get(characterPanelVisible)).toBe(true)
+
+    unmount()
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(characterPanelVisible)).toBe(false)
+  })
+
+  it('still closes the world map painted above the loading dialog', () => {
+    const unmount = mountOverlay('loading')
+    worldMapVisible.set(true)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(worldMapVisible)).toBe(false)
+    expect(closeTopOverlay()).toBe(false)
+
+    unmount()
   })
 
   it('reports nothing to close when no overlay is open', () => {
