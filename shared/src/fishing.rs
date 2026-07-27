@@ -83,6 +83,16 @@ pub const BITE_WINDOW_MS: u32 = 2_500;
 /// server forgiving the wire, not trusting the client.
 pub const LATENCY_GRACE_MS: u32 = 500;
 
+/// Flotsam's fixed share of the catch table, percent. Skill makes you a
+/// better angler, not a tidier river, so junk never thins out with level.
+pub const FLOTSAM_SHARE_PCT: u64 = 20;
+
+/// Per fishing level, per rarity tier, a fish's catch weight grows this many
+/// percent. Multiplicative, so the table's order can never invert: an
+/// additive bonus scaled by rarity would lift a weight-1 legend past a
+/// weight-50 common long before the level cap.
+pub const RARITY_SKILL_BONUS_PCT: u64 = 4;
+
 /// Skill XP for a catch: `CATCH_XP_PER_RARITY_SQ · rarity²` (rarity 1–5).
 pub const CATCH_XP_PER_RARITY_SQ: u64 = 10;
 

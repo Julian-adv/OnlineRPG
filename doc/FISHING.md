@@ -52,7 +52,7 @@ endgame combat loot (`server/src/item_defs.rs::equipment_ids_with_min_price`).
   handler, not the tick.
 - **End** (`FishingEnded { outcome }` broadcast): `Caught { item_def_id,
   size_cm, trophy }`, `Escaped`, or `Aborted`. A caught fish arrives through
-  the normal `InventoryUpdated` (stacked), or spills as a ground item when the
+  the normal `InventoryUpdated` (its own slot), or spills as a ground item when the
   bag can't take the weight — never silently lost. Moving, attacking,
   disconnecting, dying, stowing the rod (unequipping it, or swapping a
   weapon into the main hand), or `FishingStop` aborts the session; gear
@@ -73,40 +73,46 @@ The catch columns:
 |---|---|
 | `rarityTier` | fish: 1 (common) … 5 (legendary); junk/coins: 0 — drives XP and skill weighting |
 | `catchWeight` | relative weight in the catch table at fishing level 0 |
+| `minFishingLevel` | fishing level a species is locked behind (blank = 0) |
 | `sizeDice` | rolled length in cm (e.g. `6d8`) |
 | `trophyCm` | fish only — length at or above this is a trophy |
 
-Species pick: weighted draw where each entry weighs
-`catchWeight + fishing_level × rarityTier` — skill shifts the table toward
-rare fish without ever emptying the commons (junk's tier 0 means skill
-never makes junk *more* likely, only relatively less). Size: `sizeDice`,
+Species pick: weighted draw over two pools. A fish's weight grows
+`RARITY_SKILL_BONUS_PCT` (4%) per level per rarity tier — multiplicative, so
+skill closes the gap on rare fish but can never invert the table's order.
+Flotsam holds a flat `FLOTSAM_SHARE_PCT` (20%) of the draw at every level,
+so junk never thins out as the fish pool grows. `minFishingLevel` locks a
+species until the angler earns it: salmon at 5, golden sturgeon at 10.
+Size: `sizeDice`,
 plus a d20 quality roll; a natural 20 doubles the size and — for fish —
 is always a trophy. Trophies are a fish concept: a nat-20 Old Boot is
 just a very large boot, no celebration.
 
-Fish are stackable, sellable (`basePrice`, ordinary merchant flow), and
-edible — `category "fish"` maps to the same `Heal(dice)` use-effect as
-potions. Size is deliberately **not stored on the item** so fish stay
-stackable commodities; it lives only in the catch announcement.
+Fish are sellable (`basePrice`, ordinary merchant flow) and edible —
+`category "fish"` maps to the same `Heal(dice)` use-effect as potions. Every
+catch takes its own bag slot (`stackable false`, like the equipment rows), so
+the bag reads as a catch log. Size is deliberately **not stored on the item**;
+it lives only in the catch announcement.
 
 Prices are anchored to the game's *income* economy, not just the catalog:
 monster kills drop unsellable worn weapons by design, so the repeatable gold
 faucets are coin piles (1–10c) and gated dungeon chests — and an NPC's
 salary is 50s/day. Fish: minnow 10c, perch 25c, trout 60c, salmon 2s,
-golden sturgeon 15s (the 1-in-100 jackpot, a goblin-sword's worth). With the
-flotsam rows in the table, the expected *sell* value of one catch is
-~16c — a couple of coin piles, so an hour of active fishing earns roughly
-half a guard's daily salary. Steady pocket money, not a money printer.
-The 3s rod repays itself in ~18 average catches; final tuning is
-explicitly the maintainer's call. That band is a **contract test**
-(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy`):
-if a new species or treasure row pushes the per-catch EV outside 5–25c,
-the test fails and the table needs retuning.
+golden sturgeon 15s (the jackpot, a goblin-sword's worth — 1.7% of draws even
+at the level cap). With the flotsam rows in the table, the expected *sell*
+value of one catch runs ~8c at level 0 to ~24c at level 20 — a couple of coin
+piles, so an hour of active fishing earns roughly half a guard's daily salary.
+Steady pocket money, not a money printer. Final tuning is explicitly the
+maintainer's call. That band is a **contract test**
+(`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy_at_every_level`):
+it sweeps every fishing level, and fails if the per-catch EV leaves 5–25c, if
+skill ever makes an angler poorer, or if the cap earns more than 4x level 0 —
+mastery should pay a better wage, not open a different economy.
 
 ## Flotsam (junk & coin catches)
 
 Not everything that bites is a fish. Four flotsam rows share the catch
-table (~15% of level-0 draws): an **Old Boot** and a **Clump of Kelp**
+table (a flat 20% of draws at every level): an **Old Boot** and a **Clump of Kelp**
 (worthless bag junk — the classic fishing gag), a **Message in a Bottle**
 (sells for a token 15c), and a **Sunken Coin Pouch**
 (`category: "coin_catch"` — its `dice` column is a copper roll, `3d8`,

@@ -8,8 +8,9 @@
 
 use onlinerpg_shared::fishing::{
     struggle_rounds, struggle_window_ms, tension_miss_penalty, FishState, FishingAction,
-    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP, LATENCY_GRACE_MS,
-    MAX_CAST_DISTANCE_METERS, TENSION_CORRECT_RELIEF, TENSION_MAX, WAIT_MAX_MS, WAIT_MIN_MS,
+    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP, FLOTSAM_SHARE_PCT,
+    LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, RARITY_SKILL_BONUS_PCT, TENSION_CORRECT_RELIEF,
+    TENSION_MAX, WAIT_MAX_MS, WAIT_MIN_MS,
 };
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::skills::SkillId;
@@ -78,25 +79,63 @@ pub(crate) struct CatchCandidate {
     pub item_def_id: String,
     pub rarity: u32,
     pub catch_weight: u32,
+    pub min_fishing_level: u32,
 }
 
-/// Effective weight of one species for a given fishing level: rarer fish
-/// gain `rarity` weight per level, so skill shifts the table toward the top
-/// without ever emptying the bottom.
-pub(crate) fn effective_weight(candidate: &CatchCandidate, skill_level: u32) -> u64 {
-    u64::from(candidate.catch_weight) + u64::from(skill_level) * u64::from(candidate.rarity)
+/// Catch weights for a fishing level. Two rules, both table-wide:
+///
+/// * a fish's weight grows `RARITY_SKILL_BONUS_PCT` per level per rarity
+///   tier — multiplicative, so a legend can never overtake a common;
+/// * flotsam (rarity 0) holds exactly `FLOTSAM_SHARE_PCT` of the table at
+///   every level, instead of thinning out as the fish pool inflates.
+///
+/// Locked species (`min_fishing_level` above the angler's) weigh nothing;
+/// the fish pool's fixed share redistributes across whatever is unlocked.
+pub(crate) fn effective_weights(candidates: &[CatchCandidate], skill_level: u32) -> Vec<u64> {
+    let raw: Vec<u64> = candidates
+        .iter()
+        .map(|c| {
+            if skill_level < c.min_fishing_level {
+                return 0;
+            }
+            let growth =
+                100 + RARITY_SKILL_BONUS_PCT * u64::from(skill_level) * u64::from(c.rarity);
+            u64::from(c.catch_weight) * growth
+        })
+        .collect();
+
+    let pool = |fish: bool| -> u64 {
+        raw.iter()
+            .zip(candidates)
+            .filter(|(_, c)| (c.rarity >= 1) == fish)
+            .map(|(w, _)| *w)
+            .sum()
+    };
+    let (fish_total, flotsam_total) = (pool(true), pool(false));
+    // A table of only fish or only flotsam has no split to hold; draw it raw.
+    if fish_total == 0 || flotsam_total == 0 {
+        return raw;
+    }
+
+    // Cross-multiply so the two pools land at exactly (100 - S) : S. Scaling
+    // each side by the other's total keeps the share exact in integers.
+    raw.iter()
+        .zip(candidates)
+        .map(|(w, c)| {
+            if c.rarity >= 1 {
+                w * flotsam_total * (100 - FLOTSAM_SHARE_PCT)
+            } else {
+                w * fish_total * FLOTSAM_SHARE_PCT
+            }
+        })
+        .collect()
 }
 
 /// Weighted pick over the catch table. `roll` is a uniform draw in
 /// `[0, total_weight)`; separating the draw from the pick keeps this pure.
-pub(crate) fn pick_catch(
-    candidates: &[CatchCandidate],
-    skill_level: u32,
-    mut roll: u64,
-) -> Option<usize> {
-    for (index, candidate) in candidates.iter().enumerate() {
-        let weight = effective_weight(candidate, skill_level);
-        if roll < weight {
+pub(crate) fn pick_catch(weights: &[u64], mut roll: u64) -> Option<usize> {
+    for (index, weight) in weights.iter().enumerate() {
+        if roll < *weight {
             return Some(index);
         }
         roll -= weight;
@@ -490,10 +529,8 @@ impl GameState {
         if candidates.is_empty() {
             return None;
         }
-        let total: u64 = candidates
-            .iter()
-            .map(|c| effective_weight(c, skill_level))
-            .sum();
+        let weights = effective_weights(&candidates, skill_level);
+        let total: u64 = weights.iter().sum();
         // All-zero weights (data-driven) would panic the gen_range below.
         if total == 0 {
             return None;
@@ -501,7 +538,7 @@ impl GameState {
         let (index, quality) = {
             let mut rng = rand::thread_rng();
             (
-                pick_catch(&candidates, skill_level, rng.gen_range(0..total))?,
+                pick_catch(&weights, rng.gen_range(0..total))?,
                 rng.gen_range(1..=20u32),
             )
         };
@@ -783,41 +820,81 @@ fn roll_fish_state() -> FishState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
+    fn candidate(
+        id: &str,
+        rarity: u32,
+        catch_weight: u32,
+        min_fishing_level: u32,
+    ) -> CatchCandidate {
+        CatchCandidate {
+            item_def_id: id.into(),
+            rarity,
+            catch_weight,
+            min_fishing_level,
+        }
+    }
+
+    /// Fish-only pair, so the flotsam split stays out of the way.
     fn table() -> Vec<CatchCandidate> {
         vec![
-            CatchCandidate {
-                item_def_id: "raw_minnow".into(),
-                rarity: 1,
-                catch_weight: 50,
-            },
-            CatchCandidate {
-                item_def_id: "golden_sturgeon".into(),
-                rarity: 5,
-                catch_weight: 1,
-            },
+            candidate("raw_minnow", 1, 50, 0),
+            candidate("golden_sturgeon", 5, 1, 0),
         ]
     }
 
     #[test]
     fn weighting_scales_rarity_with_skill() {
         let t = table();
-        assert_eq!(effective_weight(&t[0], 0), 50);
-        assert_eq!(effective_weight(&t[1], 0), 1);
-        // Level 20: minnow 50+20, sturgeon 1+100 — rare fish gain ground but the
-        // commons never vanish.
-        assert_eq!(effective_weight(&t[0], 20), 70);
-        assert_eq!(effective_weight(&t[1], 20), 101);
+        assert_eq!(effective_weights(&t, 0), vec![5000, 100]);
+        // Level 20: the legend grows 5x faster than the common (+400% vs +80%)
+        // but starts 50x behind, so it can never overtake it.
+        // minnow 50x180%, sturgeon 1x500%.
+        assert_eq!(effective_weights(&t, 20), vec![9000, 500]);
+    }
+
+    #[test]
+    fn rare_fish_are_locked_until_their_level() {
+        let t = vec![
+            candidate("raw_minnow", 1, 50, 0),
+            candidate("river_salmon", 4, 5, 5),
+        ];
+        assert_eq!(effective_weights(&t, 4)[1], 0, "locked below its level");
+        assert!(effective_weights(&t, 5)[1] > 0, "available at its level");
+    }
+
+    #[test]
+    fn flotsam_holds_a_fixed_share_at_every_level() {
+        let t = vec![
+            candidate("raw_minnow", 1, 50, 0),
+            candidate("old_boot", 0, 6, 0),
+        ];
+        for level in 0..=SKILL_LEVEL_CAP {
+            let w = effective_weights(&t, level);
+            let total: u64 = w.iter().sum();
+            assert_eq!(
+                w[1] * 100,
+                total * FLOTSAM_SHARE_PCT,
+                "flotsam share drifted at level {level}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_table_without_flotsam_still_draws() {
+        let w = effective_weights(&table(), 10);
+        assert!(w.iter().sum::<u64>() > 0);
     }
 
     #[test]
     fn pick_walks_cumulative_weights() {
-        let t = table();
-        assert_eq!(pick_catch(&t, 0, 0), Some(0));
-        assert_eq!(pick_catch(&t, 0, 49), Some(0));
-        assert_eq!(pick_catch(&t, 0, 50), Some(1));
+        let w = vec![50, 1];
+        assert_eq!(pick_catch(&w, 0), Some(0));
+        assert_eq!(pick_catch(&w, 49), Some(0));
+        assert_eq!(pick_catch(&w, 50), Some(1));
         // Out-of-range roll (caller bug) picks nothing rather than panicking.
-        assert_eq!(pick_catch(&t, 0, 51), None);
+        assert_eq!(pick_catch(&w, 51), None);
     }
 
     #[test]

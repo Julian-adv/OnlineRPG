@@ -43,6 +43,10 @@ pub struct ItemDefinition {
     /// Fish only — relative weight in the catch table at fishing level 0.
     #[serde(rename = "catchWeight", default)]
     pub catch_weight: Option<u32>,
+    /// Fish only — the fishing level a catch is locked behind. Absent or 0
+    /// means available from the first cast.
+    #[serde(rename = "minFishingLevel", default)]
+    pub min_fishing_level: Option<u32>,
     /// Fish only — dice notation for rolled length in centimeters.
     #[serde(rename = "sizeDice", default)]
     pub size_dice: Option<String>,
@@ -205,6 +209,7 @@ impl ItemDefs {
                     item_def_id: def.id.clone(),
                     rarity: def.rarity_tier.unwrap_or(1),
                     catch_weight: def.catch_weight?,
+                    min_fishing_level: def.min_fishing_level.unwrap_or(0),
                 })
             })
             .collect();
@@ -216,6 +221,7 @@ impl ItemDefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
     #[test]
     fn fishing_rod_is_not_dungeon_chest_treasure() {
@@ -267,10 +273,10 @@ mod tests {
     /// The economy guardrail as a contract test: the expected *sell* value of
     /// one catch must stay at coin-pile magnitude (the game's repeatable gold
     /// faucet is 1–10c piles; a catch should be worth a couple of piles, not
-    /// a wage). If a new species or treasure row pushes the average outside
-    /// this band, this test fails and the table needs retuning.
+    /// a wage) — and it must hold at every fishing level, not just at level 0.
+    /// Averaging over raw `catchWeight` would only ever measure a beginner.
     #[test]
-    fn expected_catch_value_stays_in_the_coin_pile_economy() {
+    fn expected_catch_value_stays_in_the_coin_pile_economy_at_every_level() {
         fn dice_avg(notation: &str) -> f64 {
             let (n, m) = notation.split_once('d').expect("NdM");
             let n: f64 = n.parse().unwrap();
@@ -279,25 +285,47 @@ mod tests {
         }
         let defs = ItemDefs::load();
         let table = defs.catch_table();
-        let total_weight: f64 = table.iter().map(|c| f64::from(c.catch_weight)).sum();
-        let ev: f64 = table
-            .iter()
-            .map(|c| {
-                let def = defs.get(&c.item_def_id).unwrap();
-                let value = if def.is_coin_catch() {
-                    // Coins arrive at face value.
-                    def.dice.as_deref().map_or(0.0, dice_avg)
-                } else {
-                    // Items sell at the merchant rate (Rica: 40%).
-                    def.base_price.unwrap_or(0) as f64 * 0.4
-                };
-                f64::from(c.catch_weight) * value
-            })
-            .sum::<f64>()
-            / total_weight;
+        let ev_at = |level: u32| -> f64 {
+            let weights = crate::game_state::fishing::effective_weights(&table, level);
+            let total: f64 = weights.iter().map(|w| *w as f64).sum();
+            weights
+                .iter()
+                .zip(&table)
+                .map(|(weight, c)| {
+                    let def = defs.get(&c.item_def_id).unwrap();
+                    let value = if def.is_coin_catch() {
+                        // Coins arrive at face value.
+                        def.dice.as_deref().map_or(0.0, dice_avg)
+                    } else {
+                        // Items sell at the merchant rate (Rica: 40%).
+                        def.base_price.unwrap_or(0) as f64 * 0.4
+                    };
+                    *weight as f64 * value
+                })
+                .sum::<f64>()
+                / total
+        };
+
+        let evs: Vec<f64> = (0..=SKILL_LEVEL_CAP).map(ev_at).collect();
+        for (level, ev) in evs.iter().enumerate() {
+            assert!(
+                (5.0..=25.0).contains(ev),
+                "expected sell value per catch at level {level} is {ev:.1}c — outside \
+                 the 5–25c coin-pile band"
+            );
+        }
         assert!(
-            (5.0..=25.0).contains(&ev),
-            "expected sell value per catch is {ev:.1}c — outside the 5–25c coin-pile band"
+            evs.windows(2).all(|w| w[1] >= w[0]),
+            "skill should never make an angler poorer"
+        );
+        // Mastery pays a better wage, not a different economy. Without this
+        // the old additive weighting reached 10x and no test noticed.
+        assert!(
+            evs[evs.len() - 1] <= 4.0 * evs[0],
+            "level {SKILL_LEVEL_CAP} earns {:.1}c vs {:.1}c at level 0 — that is a \
+             different economy, not a better wage",
+            evs[evs.len() - 1],
+            evs[0]
         );
     }
 

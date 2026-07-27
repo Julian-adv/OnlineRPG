@@ -6052,49 +6052,59 @@ mod fishing_tests {
     /// boundaries are exact, and skill shifts weight toward rare fish while
     /// never boosting rarity-0 junk.
     #[test]
-    fn pick_catch_maps_every_roll_and_skill_shifts_toward_rare_fish() {
-        use crate::game_state::fishing::{effective_weight, pick_catch, CatchCandidate};
+    fn pick_catch_maps_every_roll_and_skill_keeps_the_table_ordered() {
+        use crate::game_state::fishing::{effective_weights, pick_catch, CatchCandidate};
+        use onlinerpg_shared::fishing::FLOTSAM_SHARE_PCT;
+        use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
+        let candidate = |id: &str, rarity, catch_weight, min_fishing_level| CatchCandidate {
+            item_def_id: id.into(),
+            rarity,
+            catch_weight,
+            min_fishing_level,
+        };
         let candidates = vec![
-            CatchCandidate {
-                item_def_id: "common".into(),
-                rarity: 1,
-                catch_weight: 50,
-            },
-            CatchCandidate {
-                item_def_id: "rare".into(),
-                rarity: 5,
-                catch_weight: 2,
-            },
-            CatchCandidate {
-                item_def_id: "junk".into(),
-                rarity: 0,
-                catch_weight: 8,
-            },
+            candidate("common", 1, 50, 0),
+            candidate("rare", 5, 2, 0),
+            candidate("junk", 0, 8, 0),
         ];
 
-        let total: u64 = candidates.iter().map(|c| effective_weight(c, 0)).sum();
-        assert_eq!(total, 60);
+        let weights = effective_weights(&candidates, 0);
+        let total: u64 = weights.iter().sum();
         for roll in 0..total {
-            let idx = pick_catch(&candidates, 0, roll).expect("every in-range roll lands");
+            let idx = pick_catch(&weights, roll).expect("every in-range roll lands");
             assert!(idx < candidates.len());
         }
         assert!(
-            pick_catch(&candidates, 0, total).is_none(),
+            pick_catch(&weights, total).is_none(),
             "an out-of-range roll picks nothing"
         );
         // Exact boundaries of the cumulative walk.
-        assert_eq!(pick_catch(&candidates, 0, 0), Some(0));
-        assert_eq!(pick_catch(&candidates, 0, 49), Some(0));
-        assert_eq!(pick_catch(&candidates, 0, 50), Some(1));
-        assert_eq!(pick_catch(&candidates, 0, 51), Some(1));
-        assert_eq!(pick_catch(&candidates, 0, 52), Some(2));
-        assert_eq!(pick_catch(&candidates, 0, 59), Some(2));
-        // Skill adds level × rarity: the rare fish gains the most relative
-        // weight, junk (rarity 0) gains none.
-        assert_eq!(effective_weight(&candidates[0], 10), 60);
-        assert_eq!(effective_weight(&candidates[1], 10), 52);
-        assert_eq!(effective_weight(&candidates[2], 10), 8);
+        assert_eq!(pick_catch(&weights, 0), Some(0));
+        assert_eq!(pick_catch(&weights, weights[0] - 1), Some(0));
+        assert_eq!(pick_catch(&weights, weights[0]), Some(1));
+        assert_eq!(pick_catch(&weights, weights[0] + weights[1]), Some(2));
+
+        // Skill lifts rare fish toward the common without ever passing it, and
+        // junk keeps its fixed share instead of thinning out.
+        for level in 0..=SKILL_LEVEL_CAP {
+            let w = effective_weights(&candidates, level);
+            let total: u64 = w.iter().sum();
+            assert!(
+                w[0] > w[1],
+                "the rarer fish overtook the common at level {level}"
+            );
+            assert_eq!(
+                w[2] * 100,
+                total * FLOTSAM_SHARE_PCT,
+                "junk share drifted at level {level}"
+            );
+        }
+        let gap = |level| {
+            let w = effective_weights(&candidates, level);
+            w[0] as f64 / w[1] as f64
+        };
+        assert!(gap(SKILL_LEVEL_CAP) < gap(0), "skill should close the gap");
     }
 
     /// Dropping the equipped rod on the ground mid-session is "putting it away"

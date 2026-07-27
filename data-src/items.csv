@@ -1,36 +1,36 @@
-id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm
-iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000
-worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,
-wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,4000,1
-raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2
-leather_cap,Leather Cap,A simple leather cap.,1,head,false,sword.png,,armor,,leather,1500,1
-iron_chestplate,Iron Chestplate,Heavy iron chest armor.,55,chest,false,sword.png,,armor,,metal,35000,7
-leather_pants,Leather Pants,Durable leather leggings.,4,pants,false,leather_pants.png,armor/leather_pants.glb,armor,,leather,2500,1
-iron_boots,Iron Boots,Heavy iron boots.,3,boots,false,sword.png,,armor,,metal,6000,2
-gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000
-silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000
-copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200
-leather_belt,Leather Belt,A wide leather belt.,1,belt,false,sword.png,,accessory,,leather,800
-dagger,Dagger,A small but sharp dagger.,1,main_hand,false,sword.png,weapons/sword.glb,weapon,1d4,metal,2500
-goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,1500
-small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,2000
-chain_mail,Chain Mail,Interlocking metal rings forming armor.,55,chest,false,sword.png,,armor,,metal,25000,5
-torch,Torch,A flickering wooden torch.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,50
-worn_torch,Worn Torch,A stubby half-burnt torch. Merchants won't pay for it.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,
-spear,Spear,A long wooden-shafted spear tipped with iron.,4,main_hand,false,spear_icon.png,weapons/spear.glb,weapon,1d6,metal,3500
-coin_pile,Coin Pile,A small heap of loose copper coins.,0,,false,sword.png,objects/coin_pile_spill.glb,currency,,,
-healing_potion,Healing Potion,A crimson brew that knits wounds and restores vitality.,0.5,,true,healing_potion.png,objects/health_potion.glb,healing_potion,6d4,,500
-scroll_of_return,Scroll of Return,Reading the arcane runes whisks you back to town in a flash of light.,0.2,,true,scroll_of_return.png,objects/scroll.glb,return_scroll,,,800
-scroll_of_enchant_weapon,Scroll of Enchant Weapon,Arcane runes that hone your wielded weapon's edge — though greedy re-reading may destroy it.,0.2,,true,scroll_of_enchant_weapon.png,objects/scroll_enchant.glb,enchant_scroll,,,1200
-table,Table,A sturdy wooden table.,20,,false,table_icon.png,objects/table.glb,furniture,,wood,3000
-leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2
-fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,fishing_rod.png,weapons/fishing_rod.glb,fishing_rod,,wood,300,,,,
-raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,false,raw_minnow.png,,fish,1d3,,10,,1,50,3d4,12
-raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,false,raw_perch.png,,fish,1d6,,25,,2,30,4d6,22
-raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,false,raw_trout.png,,fish,2d4,,60,,3,14,6d8,42
-river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,false,river_salmon.png,,fish,2d6,,200,,4,5,8d10,70
-golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,false,golden_sturgeon.png,,fish,4d6,,1500,,5,1,20d10,150
-old_boot,Old Boot,A waterlogged leather boot. Someone had a worse day than you.,1,,false,old_boot.png,,junk,,leather,,,0,6,9d3,
-clump_of_kelp,Clump of Kelp,A slimy tangle of seaweed dredged from the bottom.,0.5,,false,clump_of_kelp.png,,junk,,,,,0,5,6d6,
-message_in_a_bottle,Message in a Bottle,A sealed bottle with a scrap of paper inside. A collector might pay a little.,0.3,,false,message_in_a_bottle.png,,junk,,,15,,0,2,7d3,
-sunken_coin_pouch,Sunken Coin Pouch,A drowned purse still holding a few coins.,0.2,,false,sunken_coin_pouch.png,,coin_catch,3d8,,,,0,4,6d3,
+id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel
+iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,
+worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,,
+wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,4000,1,
+raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2,
+leather_cap,Leather Cap,A simple leather cap.,1,head,false,sword.png,,armor,,leather,1500,1,
+iron_chestplate,Iron Chestplate,Heavy iron chest armor.,55,chest,false,sword.png,,armor,,metal,35000,7,
+leather_pants,Leather Pants,Durable leather leggings.,4,pants,false,leather_pants.png,armor/leather_pants.glb,armor,,leather,2500,1,
+iron_boots,Iron Boots,Heavy iron boots.,3,boots,false,sword.png,,armor,,metal,6000,2,
+gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,
+silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
+copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,
+leather_belt,Leather Belt,A wide leather belt.,1,belt,false,sword.png,,accessory,,leather,800,
+dagger,Dagger,A small but sharp dagger.,1,main_hand,false,sword.png,weapons/sword.glb,weapon,1d4,metal,2500,
+goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,1500,
+small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,2000,
+chain_mail,Chain Mail,Interlocking metal rings forming armor.,55,chest,false,sword.png,,armor,,metal,25000,5,
+torch,Torch,A flickering wooden torch.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,50,
+worn_torch,Worn Torch,A stubby half-burnt torch. Merchants won't pay for it.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,,
+spear,Spear,A long wooden-shafted spear tipped with iron.,4,main_hand,false,spear_icon.png,weapons/spear.glb,weapon,1d6,metal,3500,
+coin_pile,Coin Pile,A small heap of loose copper coins.,0,,false,sword.png,objects/coin_pile_spill.glb,currency,,,,
+healing_potion,Healing Potion,A crimson brew that knits wounds and restores vitality.,0.5,,true,healing_potion.png,objects/health_potion.glb,healing_potion,6d4,,500,
+scroll_of_return,Scroll of Return,Reading the arcane runes whisks you back to town in a flash of light.,0.2,,true,scroll_of_return.png,objects/scroll.glb,return_scroll,,,800,
+scroll_of_enchant_weapon,Scroll of Enchant Weapon,Arcane runes that hone your wielded weapon's edge — though greedy re-reading may destroy it.,0.2,,true,scroll_of_enchant_weapon.png,objects/scroll_enchant.glb,enchant_scroll,,,1200,
+table,Table,A sturdy wooden table.,20,,false,table_icon.png,objects/table.glb,furniture,,wood,3000,
+leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2,
+fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,fishing_rod.png,weapons/fishing_rod.glb,fishing_rod,,wood,300,,,,,
+raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,false,raw_minnow.png,,fish,1d3,,10,,1,50,3d4,12,
+raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,false,raw_perch.png,,fish,1d6,,25,,2,30,4d6,22,
+raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,false,raw_trout.png,,fish,2d4,,60,,3,14,6d8,42,
+river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,false,river_salmon.png,,fish,2d6,,200,,4,5,8d10,70,5
+golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,false,golden_sturgeon.png,,fish,4d6,,1500,,5,1,20d10,150,10
+old_boot,Old Boot,A waterlogged leather boot. Someone had a worse day than you.,1,,false,old_boot.png,,junk,,leather,,,0,6,9d3,,
+clump_of_kelp,Clump of Kelp,A slimy tangle of seaweed dredged from the bottom.,0.5,,false,clump_of_kelp.png,,junk,,,,,0,5,6d6,,
+message_in_a_bottle,Message in a Bottle,A sealed bottle with a scrap of paper inside. A collector might pay a little.,0.3,,false,message_in_a_bottle.png,,junk,,,15,,0,2,7d3,,
+sunken_coin_pouch,Sunken Coin Pouch,A drowned purse still holding a few coins.,0.2,,false,sunken_coin_pouch.png,,coin_catch,3d8,,,,0,4,6d3,,
