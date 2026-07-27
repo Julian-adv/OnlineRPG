@@ -25,6 +25,28 @@ pub enum DealKind {
     Sell,
 }
 
+/// Why a `PlayerAttack` request was dropped. Deliberately coarse: a stale id
+/// must not reveal hidden monster state such as its floor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttackRejectReason {
+    InvalidTarget,
+    OutOfRange,
+    AttackerDead,
+    NotInGame,
+}
+
+impl std::fmt::Display for AttackRejectReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::InvalidTarget => "invalid_target",
+            Self::OutOfRange => "out_of_range",
+            Self::AttackerDead => "attacker_dead",
+            Self::NotInGame => "not_in_game",
+        })
+    }
+}
+
 /// A haggled price modifier on one item, as included in `ShopState`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveDeal {
@@ -479,6 +501,12 @@ pub enum ServerMessage {
     MonsterProvoked {
         player_id: PlayerId,
         monster_id: String,
+    },
+    /// Direct ack to the attacker for a dropped `PlayerAttack` request, so a
+    /// rejection is distinguishable from packet loss.
+    PlayerAttackRejected {
+        monster_id: String,
+        reason: AttackRejectReason,
     },
     MonsterAttackedPlayer {
         monster_id: String,

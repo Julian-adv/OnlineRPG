@@ -55,7 +55,7 @@ pub use character::{Character, CharacterAttributes, CharacterClass, Gender};
 pub use entity::{Monster, MonsterState, Player, PlayerId};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
-    ActiveDeal, ClientMessage, DealKind, ServerMessage,
+    ActiveDeal, AttackRejectReason, ClientMessage, DealKind, ServerMessage,
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,

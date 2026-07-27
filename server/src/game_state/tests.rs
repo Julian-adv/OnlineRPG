@@ -3,7 +3,8 @@ use crate::housing::HousingIO;
 use crate::item_defs::ItemDefs;
 use crate::monster_defs::MonsterDefs;
 use crate::types::{
-    CharacterClass, ClientKind, Gender, MonsterState, PlayerId, Position, ServerMessage,
+    AttackRejectReason, CharacterClass, ClientKind, Gender, MonsterState, PlayerId, Position,
+    ServerMessage,
 };
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
@@ -21,6 +22,21 @@ fn pid(name: &str) -> PlayerId {
     name.hash(&mut hasher);
     // Mask to 32 bits and avoid 0, which is the "no player" sentinel.
     PlayerId::from((hasher.finish() & 0xFFFF_FFFF).max(1))
+}
+
+/// The next direct message must be the rejection ack for `expected_id`.
+fn expect_attack_rejected(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>,
+    expected_id: &str,
+    expected_reason: AttackRejectReason,
+) {
+    match rx.try_recv() {
+        Ok(ServerMessage::PlayerAttackRejected { monster_id, reason }) => {
+            assert_eq!(monster_id, expected_id);
+            assert_eq!(reason, expected_reason);
+        }
+        other => panic!("Expected a {expected_reason} rejection ack, got {other:?}"),
+    }
 }
 
 /// `GameState.players` is a list (numeric ids can't key a wasm-serialized
@@ -2019,7 +2035,7 @@ async fn cross_floor_player_attack_is_rejected() {
         .await;
 
     // The attack is dropped server-side: the monster keeps full HP and the
-    // attacker gets no PlayerAttacked echo.
+    // attacker gets a coarse rejection that must not name the floor.
     let health = game_state
         .monsters
         .read()
@@ -2028,10 +2044,11 @@ async fn cross_floor_player_attack_is_rejected() {
         .map(|m| m.health)
         .unwrap();
     assert_eq!(health, 10, "cross-floor attack must not damage the monster");
-    match guard_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => panic!("Expected no attack echo across floors, got {:?}", other),
-    }
+    expect_attack_rejected(
+        &mut guard_rx,
+        "dungeon_monster",
+        AttackRejectReason::InvalidTarget,
+    );
 }
 
 #[tokio::test]
@@ -2078,10 +2095,11 @@ async fn out_of_range_player_attack_only_provokes_monster() {
         }
         other => panic!("Expected only an aggro event outside melee range, got {other:?}"),
     }
-    match attacker_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => panic!("Expected no rejected attack echo, got {other:?}"),
-    }
+    expect_attack_rejected(
+        &mut attacker_rx,
+        "distant_monster",
+        AttackRejectReason::OutOfRange,
+    );
 }
 
 #[tokio::test]
@@ -2126,10 +2144,11 @@ async fn player_attack_beyond_provoke_range_is_fully_rejected() {
         Err(MpscTryRecvError::Empty) => {}
         other => panic!("Expected no provoke event beyond 10m, got {other:?}"),
     }
-    match attacker_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => panic!("Expected no attack event beyond 10m, got {other:?}"),
-    }
+    expect_attack_rejected(
+        &mut attacker_rx,
+        "remote_monster",
+        AttackRejectReason::OutOfRange,
+    );
 }
 
 #[tokio::test]
@@ -2202,15 +2221,43 @@ async fn dead_player_cannot_attack() {
         .broadcast_player_attack(&player_id, "nearby_monster".to_string())
         .await;
 
-    match attacker_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => panic!("a dead player's attack must be dropped, got {other:?}"),
-    }
+    expect_attack_rejected(
+        &mut attacker_rx,
+        "nearby_monster",
+        AttackRejectReason::AttackerDead,
+    );
     assert_eq!(
         game_state.monsters.read().await["nearby_monster"].health,
         10,
         "a dead player's attack must deal no damage"
     );
+}
+
+/// A stale id — dead or never known — earns the same coarse rejection, so
+/// probing ids reveals nothing about hidden monster state.
+#[tokio::test]
+async fn stale_monster_attack_is_rejected_as_invalid_target() {
+    let game_state = make_test_game_state("stale_monster_attack");
+    let player_id = pid("attacker");
+
+    game_state
+        .add_player(make_player("attacker", 0.0, 0.0))
+        .await;
+    let mut attacker_rx = game_state.register_direct_channel(&player_id).await;
+
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let mut monster = make_monster("dead_monster", pos(1.0), 0);
+        monster.state = MonsterState::Dead;
+        monsters.insert("dead_monster".to_string(), monster);
+    }
+
+    for target in ["dead_monster", "unknown_monster"] {
+        game_state
+            .broadcast_player_attack(&player_id, target.to_string())
+            .await;
+        expect_attack_rejected(&mut attacker_rx, target, AttackRejectReason::InvalidTarget);
+    }
 }
 
 #[tokio::test]

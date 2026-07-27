@@ -32,6 +32,7 @@ import { editorTreeDataManager } from '../stores/editorStore'
 import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
+import { combatController } from '../managers/combatController'
 import { whisperChatEntry } from '../chat-format'
 import type { NetworkEvent } from './networkEvents'
 import type {
@@ -557,6 +558,29 @@ export function handleServerMessage(
         data.hit,
         data.damage
       )
+      break
+    }
+
+    case 'PlayerAttackRejected': {
+      // The server sees a target we don't: stop the auto-attack loop instead
+      // of swinging at it once per cooldown forever.
+      if (
+        data.reason === 'invalid_target' &&
+        combatController.targetMonsterId === data.monster_id
+      ) {
+        combatController.cancelCombat()
+      }
+      const reasonText: Record<string, string> = {
+        invalid_target: 'target is gone',
+        out_of_range: 'too far away',
+        attacker_dead: 'you are dead',
+      }
+      addCombatMessage({
+        text: `attack rejected: ${reasonText[data.reason] ?? data.reason}`,
+        sender: 'local',
+        name: 'You',
+        hit: false,
+      })
       break
     }
 

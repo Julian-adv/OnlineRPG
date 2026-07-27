@@ -962,7 +962,8 @@ impl SharedState {
 
             // A refused interaction should reach the LLM at poll priority, not
             // sink to the idle queue behind everything else.
-            ServerMessage::InteractionRejected { .. } => EventUrgency::Routine,
+            ServerMessage::InteractionRejected { .. }
+            | ServerMessage::PlayerAttackRejected { .. } => EventUrgency::Routine,
 
             // Auth/character events: routine (handled before game entry)
             _ => EventUrgency::Routine,

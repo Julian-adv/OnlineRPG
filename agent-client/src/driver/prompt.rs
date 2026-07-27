@@ -305,6 +305,9 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                 player_name(state, player_id)
             ))
         }
+        ServerMessage::PlayerAttackRejected { monster_id, reason } => {
+            Some(format!("[AttackRejected] {monster_id}: {reason}"))
+        }
         ServerMessage::MonsterAttackedPlayer {
             monster_id,
             player_id,
