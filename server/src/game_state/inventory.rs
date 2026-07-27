@@ -49,6 +49,23 @@ fn consume_one(inv: &mut PlayerInventory, instance_id: u64) {
 
 /// Serialize a PlayerInventory into the flat row format used by AuthService
 /// persistence.
+/// Where a hand-dropped item lands: a step in front of the player plus a
+/// small scatter, so a run of drops doesn't pile onto one pixel.
+fn drop_landing_position(origin: crate::types::Position, rotation: f32) -> crate::types::Position {
+    let (landing_angle, landing_distance) = {
+        let mut rng = rand::thread_rng();
+        (
+            rng.gen::<f32>() * std::f32::consts::TAU,
+            rng.gen::<f32>().sqrt() * 0.7,
+        )
+    };
+    crate::types::Position {
+        x: origin.x + rotation.sin() + landing_angle.cos() * landing_distance,
+        y: origin.y,
+        z: origin.z + rotation.cos() + landing_angle.sin() * landing_distance,
+    }
+}
+
 pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = inv
         .bag
@@ -709,13 +726,18 @@ impl super::GameState {
     }
 
     pub async fn drop_item(&self, player_id: &PlayerId, instance_id: u64) {
-        let (position, floor_level) = {
+        let (player_position, rotation, floor_level) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.position, p.floor_level),
+                Some(p) => (p.position, p.rotation, p.floor_level),
                 None => return,
             }
         };
+        // Scatter, or a run of drops piles onto one pixel under the player.
+        let preferred = drop_landing_position(player_position, rotation);
+        let position = self
+            .loot_drop_position(player_position, floor_level, preferred)
+            .await;
 
         let (snapshot, dropped, dropped_from_off_hand) = {
             let mut inventories = self.inventories.write().await;
@@ -779,18 +801,7 @@ impl super::GameState {
             }
         };
 
-        let (landing_angle, landing_distance) = {
-            let mut rng = rand::thread_rng();
-            (
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>().sqrt() * 0.7,
-            )
-        };
-        let position = crate::types::Position {
-            x: player_position.x + rotation.sin() + landing_angle.cos() * landing_distance,
-            y: player_position.y,
-            z: player_position.z + rotation.cos() + landing_angle.sin() * landing_distance,
-        };
+        let position = drop_landing_position(player_position, rotation);
 
         let instance_id = self.next_instance_id().await;
         self.spawn_ground_item(

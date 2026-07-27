@@ -6107,6 +6107,51 @@ mod fishing_tests {
         assert!(gap(SKILL_LEVEL_CAP) < gap(0), "skill should close the gap");
     }
 
+    /// Every drop landed on the player's exact position, so a bagful of fish
+    /// became one sprite underfoot and read as "nothing dropped".
+    #[tokio::test(start_paused = true)]
+    async fn dropped_items_scatter_instead_of_stacking() {
+        let game_state = make_test_game_state("drop_scatter");
+        let (id, _rx) = make_angler(&game_state, "angler_litterbug").await;
+        for instance in 600u64..606 {
+            game_state
+                .inventories
+                .write()
+                .await
+                .get_mut(&id)
+                .unwrap()
+                .bag
+                .push(bag_item(instance, "raw_minnow", 1));
+        }
+
+        for instance in 600u64..606 {
+            game_state.drop_item(&id, instance).await;
+        }
+
+        let dropped: Vec<_> = game_state
+            .ground_items
+            .read()
+            .await
+            .values()
+            .filter(|g| g.item.item_def_id == "raw_minnow")
+            .map(|g| (g.item.position.x, g.item.position.z))
+            .collect::<Vec<(f32, f32)>>();
+        assert_eq!(dropped.len(), 6, "every drop should reach the ground");
+        for (i, a) in dropped.iter().enumerate() {
+            for b in dropped.iter().skip(i + 1) {
+                assert!(
+                    (a.0 - b.0).abs() > f32::EPSILON || (a.1 - b.1).abs() > f32::EPSILON,
+                    "two drops landed on the same spot"
+                );
+            }
+        }
+        let player = game_state.players.read().await.get(&id).unwrap().position;
+        for (x, z) in &dropped {
+            let reach = ((x - player.x).powi(2) + (z - player.z).powi(2)).sqrt();
+            assert!(reach <= 2.0, "a drop landed {reach:.2}m away, out of reach");
+        }
+    }
+
     /// Dropping the equipped rod on the ground mid-session is "putting it away"
     /// too — the drop path must run the same abort as unequip (this was a real
     /// hole: only equip/unequip called the hook).
