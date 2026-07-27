@@ -481,7 +481,36 @@ impl super::GameState {
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
             }
+            UseEffect::OpenCoinPouch(dice) => {
+                self.use_coin_pouch(player_id, instance_id, &dice).await
+            }
         }
+    }
+
+    /// Open a fished-up coin pouch: roll its dice for the copper inside,
+    /// spend the pouch, and credit the wallet. The system line puts the
+    /// amount in the combat log; `award_copper` drives the gold popup.
+    async fn use_coin_pouch(&self, player_id: &PlayerId, instance_id: u64, dice: &str) {
+        let name = {
+            let inventories = self.inventories.read().await;
+            let def_id = inventories
+                .get(player_id)
+                .and_then(|inv| inv.bag.iter().find(|i| i.instance_id == instance_id))
+                .map(|item| item.item_def_id.clone());
+            match def_id {
+                Some(def_id) => self.item_name(&def_id),
+                // The pouch raced away since `use_item` resolved the effect.
+                None => return,
+            }
+        };
+        let copper = crate::game::combat::roll_dice(dice);
+        self.consume_one_and_sync(player_id, instance_id).await;
+        self.award_copper(player_id, i64::from(copper)).await;
+        self.send_system_message(
+            player_id,
+            format!("You open the {name} — {copper} copper spills out."),
+        )
+        .await;
     }
 
     /// Drink a healing potion: roll its dice and restore HP up to the cap.

@@ -64,6 +64,8 @@ pub enum UseEffect {
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
     EnchantWeapon,
+    /// Open a fished-up coin pouch: roll the given dice for its copper.
+    OpenCoinPouch(String),
 }
 
 impl ItemDefinition {
@@ -82,9 +84,13 @@ impl ItemDefinition {
         self.category.as_deref() == Some("fish")
     }
 
-    /// A catch that pays out coins directly instead of entering the bag.
-    /// Its `dice` column is the copper roll (the category-decides-meaning
-    /// pattern: weapon → damage, fish/potion → heal, coin_catch → gold).
+    /// A catch that lands in the bag sealed and pays out coins when opened
+    /// (`use_item`). Its `dice` column is the copper roll (the
+    /// category-decides-meaning pattern: weapon → damage, fish/potion →
+    /// heal, coin_catch → gold). Production code dispatches through
+    /// `use_effect`; the tests keep this named predicate for the economy
+    /// guardrail.
+    #[cfg(test)]
     pub fn is_coin_catch(&self) -> bool {
         self.category.as_deref() == Some("coin_catch")
     }
@@ -118,6 +124,7 @@ impl ItemDefinition {
             "fish" => self.dice.clone().map(UseEffect::Heal),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
+            "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
             _ => None,
         }
     }

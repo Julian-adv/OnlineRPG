@@ -115,9 +115,10 @@ Not everything that bites is a fish. Four flotsam rows share the catch
 table (a flat 20% of draws at every level): an **Old Boot** and a **Clump of Kelp**
 (worthless bag junk — the classic fishing gag), a **Message in a Bottle**
 (sells for a token 15c), and a **Sunken Coin Pouch**
-(`category: "coin_catch"` — its `dice` column is a copper roll, `3d8`,
-paid straight to the wallet via the same path as ground coin piles; it
-never enters the bag). All are `rarityTier 0`: **no fishing XP** (the
+(`category: "coin_catch"` — it lands in the bag sealed like any other
+catch; opening it via `use_item` (double-click in the bag) rolls its
+`dice` column, `3d8`, pays the copper to the wallet through the same
+path as ground coin piles, and the combat log reports the amount). All are `rarityTier 0`: **no fishing XP** (the
 `10·rarity²` formula grants nothing naturally), no trophy, and in the
 struggle they fight like a common fish (`rarity.max(1)` clamps rounds and
 tension so all-wrong play still snaps the line). An *escaped* junk catch

@@ -5362,28 +5362,18 @@ mod fishing_tests {
             .iter()
             .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: true, .. })));
         assert!(size_cm > 0);
-        // What lands depends on the species: coin catches pay copper, items
-        // (fish and junk) land in the bag; only rarity ≥ 1 (fish) grants XP.
+        // Every catch — fish, junk, and sealed coin pouches alike — lands in
+        // the bag; only rarity ≥ 1 (fish) grants XP.
         let defs = ItemDefs::load();
         let def = defs.get(&fish_id).expect("caught def");
-        if def.is_coin_catch() {
-            assert!(
-                msgs.iter().any(|m| matches!(
-                    m,
-                    ServerMessage::GoldGained { amount } if *amount > 0
-                )),
-                "coin catch must pay copper"
-            );
-        } else {
-            let inv = game_state.get_player_inventory(&id).await.unwrap();
-            assert!(inv
-                .bag
-                .iter()
-                .any(|item| item.item_def_id == fish_id && item.quantity == 1));
-            assert!(msgs
-                .iter()
-                .any(|m| matches!(m, ServerMessage::InventoryUpdated { .. })));
-        }
+        let inv = game_state.get_player_inventory(&id).await.unwrap();
+        assert!(inv
+            .bag
+            .iter()
+            .any(|item| item.item_def_id == fish_id && item.quantity == 1));
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::InventoryUpdated { .. })));
         let rarity = def.rarity_tier.unwrap_or(1);
         let got_xp = msgs.iter().any(|m| {
             matches!(
@@ -5484,7 +5474,6 @@ mod fishing_tests {
         let game_state = make_test_game_state("fishing_stacks");
         let (id, mut rx) = make_angler(&game_state, "angler_stacker").await;
 
-        let defs = ItemDefs::load();
         let mut bagged_catches = 0u32;
         for _ in 0..3 {
             game_state.start_fishing(&id, water_target()).await;
@@ -5492,13 +5481,11 @@ mod fishing_tests {
             game_state.respond_fishing(&id, FishingAction::Hook).await;
             let (outcome, _) =
                 fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
-            let FishingOutcome::Caught { item_def_id, .. } = outcome else {
+            let FishingOutcome::Caught { .. } = outcome else {
                 panic!("perfect play must catch");
             };
-            // Coin catches pay copper instead of taking a bag slot.
-            if !defs.get(&item_def_id).unwrap().is_coin_catch() {
-                bagged_catches += 1;
-            }
+            // Every species takes a slot — even a coin pouch arrives sealed.
+            bagged_catches += 1;
         }
         let inv = game_state.get_player_inventory(&id).await.unwrap();
         let total_fish: u32 = inv.bag.iter().map(|item| item.quantity).sum();
@@ -6341,6 +6328,48 @@ mod fishing_tests {
             msgs.iter()
                 .any(|m| matches!(m, ServerMessage::GoldUpdate { gold } if *gold == 35)),
             "the wallet total accumulates to 35"
+        );
+    }
+
+    /// A coin pouch is bag cargo until opened: `use_item` rolls its dice,
+    /// pays the wallet, spends the pouch, and the combat log says how much.
+    #[tokio::test]
+    async fn opening_a_coin_pouch_pays_its_copper_and_spends_it() {
+        let game_state = make_test_game_state("fishing_pouch_open");
+        let (id, mut rx) = make_angler(&game_state, "angler_purse").await;
+
+        game_state.award_item(&id, "sunken_coin_pouch").await;
+        let inv = game_state.get_player_inventory(&id).await.unwrap();
+        let instance_id = inv
+            .bag
+            .iter()
+            .find(|i| i.item_def_id == "sunken_coin_pouch")
+            .expect("the pouch lands in the bag sealed")
+            .instance_id;
+        drain(&mut rx);
+
+        game_state.use_item(&id, instance_id).await;
+        let msgs = drain(&mut rx);
+        let paid = msgs
+            .iter()
+            .find_map(|m| match m {
+                ServerMessage::GoldGained { amount } => Some(*amount),
+                _ => None,
+            })
+            .expect("opening the pouch must pay copper");
+        assert!((3..=24).contains(&paid), "3d8 pays 3-24, got {paid}");
+        assert!(
+            msgs.iter().any(|m| matches!(
+                m,
+                ServerMessage::SystemMessage { message }
+                    if message.contains(&format!("{paid} copper"))
+            )),
+            "the combat log must say how much spilled out"
+        );
+        let inv = game_state.get_player_inventory(&id).await.unwrap();
+        assert!(
+            !inv.bag.iter().any(|i| i.item_def_id == "sunken_coin_pouch"),
+            "an opened pouch is spent"
         );
     }
 

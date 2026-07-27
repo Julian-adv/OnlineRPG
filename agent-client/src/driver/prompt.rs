@@ -439,14 +439,15 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
 
 /// The `[Fishing]` line for a landed catch — category-aware next steps so
 /// the model knows what it can actually do: fish are edible/sellable, junk
-/// flotsam is (at best) sellable, a coin catch pays gold directly and never
-/// enters the bag. Pure (only reads the embedded item defs) so it's
-/// unit-testable; keep the phrasing in sync with the browser client's
-/// `catchMessage` (client/src/lib/network/fishingMessages.ts).
+/// flotsam is (at best) sellable, a coin catch lands in the bag sealed and
+/// pays gold when opened with the `use` action. Pure (only reads the
+/// embedded item defs) so it's unit-testable; keep the phrasing in sync with
+/// the browser client's `catchMessage`
+/// (client/src/lib/network/fishingMessages.ts).
 fn caught_line(item_def_id: &str, size_cm: u16, trophy: bool) -> String {
     match crate::item_defs::get(item_def_id).and_then(|d| d.category.as_deref()) {
         Some("coin_catch") => format!(
-            "[Fishing] You hauled up a {item_def_id} — its coins went straight to your gold. You can fish again."
+            "[Fishing] You hauled up a {item_def_id}. It is in your bag — use it to open it and collect the coins, or fish again."
         ),
         Some("fish") => format!(
             "[Fishing] You caught a {item_def_id} ({size_cm} cm){}. It is in your bag — you can eat it, sell it, or fish again.",
@@ -577,12 +578,15 @@ mod tests {
     }
 
     #[test]
-    fn a_coin_catch_reports_the_gold_and_skips_the_bag() {
+    fn a_coin_catch_points_at_the_bag_and_the_use_action() {
         let line = caught_line("sunken_coin_pouch", 12, false);
-        assert!(line.contains("straight to your gold"), "{line}");
         assert!(
-            !line.contains("bag"),
-            "coin catches never enter the bag: {line}"
+            line.contains("bag"),
+            "the pouch lands in the bag sealed: {line}"
+        );
+        assert!(
+            line.contains("use it to open it"),
+            "the model must learn the `use` action opens it: {line}"
         );
     }
 }

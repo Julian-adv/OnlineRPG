@@ -37,7 +37,7 @@ describe('catchMessage', () => {
     ).toBe('You fished up an Old Boot.')
   })
 
-  it('hauls up a coin catch without putting it in the bag wording', () => {
+  it('hauls up a coin catch with the open-it-from-your-bag hint', () => {
     expect(
       catchMessage(
         { name: 'Sunken Coin Pouch', category: 'coin_catch' },
@@ -45,7 +45,9 @@ describe('catchMessage', () => {
         12,
         false
       )
-    ).toBe('You haul up a Sunken Coin Pouch!')
+    ).toBe(
+      'You haul up a Sunken Coin Pouch! Double-click it in your bag to open it.'
+    )
   })
 
   it('picks the article by the leading vowel', () => {

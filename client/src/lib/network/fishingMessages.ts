@@ -15,7 +15,8 @@ export function catchMessage(
   const name = def?.name ?? fallbackId
   const an = /^[aeiou]/i.test(name) ? 'an' : 'a'
   if (trophy) return `Trophy catch! ${name}, ${sizeCm} cm!`
-  if (def?.category === 'coin_catch') return `You haul up ${an} ${name}!`
+  if (def?.category === 'coin_catch')
+    return `You haul up ${an} ${name}! Double-click it in your bag to open it.`
   if (def?.category === 'fish')
     return `You caught ${an} ${name} (${sizeCm} cm).`
   return `You fished up ${an} ${name}.`

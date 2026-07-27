@@ -718,25 +718,11 @@ impl GameState {
             return;
         };
 
-        // Coin catches pay out copper directly (their `dice` is the roll,
-        // coin-pile magnitude) and never enter the bag. Everything else —
-        // fish and junk alike — is awarded as an item. Junk is rarityTier 0,
-        // so the XP formula below grants nothing for it naturally.
-        let is_coin_catch = self
-            .item_defs
-            .get(&fish.item_def_id)
-            .is_some_and(|def| def.is_coin_catch());
-        if is_coin_catch {
-            let copper = self
-                .item_defs
-                .get(&fish.item_def_id)
-                .and_then(|def| def.dice.as_deref())
-                .map(crate::game::combat::roll_dice)
-                .unwrap_or(5);
-            self.award_copper(player_id, i64::from(copper)).await;
-        } else {
-            self.award_item(player_id, &fish.item_def_id).await;
-        }
+        // Every catch — fish, junk, and coin pouches alike — lands in the
+        // bag; a pouch is a sealed prize the player opens from the bag
+        // (`use_item`) for its copper. Junk is rarityTier 0, so the XP
+        // formula below grants nothing for it naturally.
+        self.award_item(player_id, &fish.item_def_id).await;
         let xp = CATCH_XP_PER_RARITY_SQ * u64::from(fish.rarity) * u64::from(fish.rarity);
         self.add_skill_xp(player_id, SkillId::Fishing, xp).await;
         self.end_fishing(
