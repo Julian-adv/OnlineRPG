@@ -1,8 +1,6 @@
 <script lang="ts">
-  // Placeholder shape on purpose (like the sword.png icons): a small red-and-
-  // white float. The bob is a gentle sine idle that snaps into a deeper,
-  // faster jitter on a bite — readable from the isometric camera without
-  // any sound.
+  // Small red-and-white float; sine idle snaps to a faster jitter on a bite
+  // so it reads from the isometric camera without sound.
   import { T, useTask } from '@threlte/core'
   import type { BobberState } from '../stores/fishingStore'
 

@@ -213,6 +213,7 @@ pub struct GameState {
 }
 
 impl GameState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         monster_defs: MonsterDefs,
         item_defs: ItemDefs,

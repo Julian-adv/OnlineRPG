@@ -289,8 +289,8 @@ pub enum ClientMessage {
         target_player_id: PlayerId,
     },
     /// Cast the equipped fishing rod at a water point. The server validates
-    /// rod, range, floor and water (terrain height < 0) and answers with a
-    /// `FishingCasted` broadcast or a direct `FishingError`.
+    /// rod, range, floor and water (water-field depth at the point) and
+    /// answers with a `FishingCasted` broadcast or a direct `FishingError`.
     FishingCast {
         position: Position,
     },

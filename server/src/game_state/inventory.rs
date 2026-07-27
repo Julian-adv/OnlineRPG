@@ -935,9 +935,8 @@ impl super::GameState {
         .await;
     }
 
-    /// Credit loose copper to a player's wallet and tell them (`GoldUpdate`
-    /// + `GoldGained`). Shared by coin-pile pickups and coin catches fished
-    /// out of the water.
+    /// Credit loose copper to a player's wallet and tell them (`GoldUpdate` +
+    /// `GoldGained`). Shared by coin-pile pickups and fished-up coin catches.
     pub(super) async fn award_copper(&self, player_id: &PlayerId, copper: i64) {
         let new_gold = {
             let mut gold_map = self.player_gold.write().await;

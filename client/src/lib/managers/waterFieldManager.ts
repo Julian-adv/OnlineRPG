@@ -61,14 +61,9 @@ export class WaterFieldManager {
     return promise
   }
 
-  /** Baked water surface height at a world XZ, from already-cached tiles
-   *  (bilinear). Returns sea level for tiles with no field or not yet
-   *  loaded — the same synthesis the renderer and the server's
-   *  `WaterSampler` use. Synchronous: it never fetches, so callers on the
-   *  click path (fishing cast detection) don't block. Fishing compares this
-   *  against the terrain bed: `surface − bed > 0` means water, which is true
-   *  over ocean AND rivers (whose beds sit above sea level). The server
-   *  re-validates, so a stale/edge-clamped sample only affects cast-vs-walk. */
+  /** Baked water surface height at a world XZ (bilinear, cached tiles only;
+   *  sea level when absent). Synchronous — never fetches on the click path.
+   *  The server re-validates every cast. */
   surfaceAt(worldX: number, worldZ: number): number {
     // Same tile mapping as the server's world_to_tile: floor((c + 32) / 64).
     const tileX = Math.floor(

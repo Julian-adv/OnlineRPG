@@ -15,6 +15,10 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
                               Bite (2.5 s + 0.5 s latency grace)
                               │ Hook in time      │ too late / never
                               ▼                   ▼
+                           Struggle            Escaped
+                (reel/give-line rounds; tension)
+                              │ win               │ line snaps
+                              ▼                   ▼
                            Caught              Escaped
 ```
 
@@ -94,7 +98,7 @@ flotsam rows in the table, the expected *sell* value of one catch is
 ~16c — a couple of coin piles, so an hour of active fishing earns roughly
 half a guard's daily salary. Steady pocket money, not a money printer.
 The 3s rod repays itself in ~18 average catches; final tuning is
-explicitly the maintainer's call (PR0). That band is a **contract test**
+explicitly the maintainer's call. That band is a **contract test**
 (`item_defs::tests::expected_catch_value_stays_in_the_coin_pile_economy`):
 if a new species or treasure row pushes the per-catch EV outside 5–25c,
 the test fails and the table needs retuning.
@@ -115,12 +119,11 @@ still pays the flat 2 XP consolation — the species is never revealed on
 an escape, and a varying consolation would leak the hidden roll. Junk
 keeps the bite/struggle stakes honest without inflating income — the EV
 guardrail above counts flotsam in its average.
->>>>>>> 354ec41a (Add flotsam catches: junk, a bottle, and a sunken coin pouch)
 
 ## Skill
 
 Catches grant fishing XP: `10 × rarity²` (10 for a minnow, 250 for a golden
-carp); a hooked fish that escapes consoles with 2. Fishing grants **no
+sturgeon); a hooked fish that escapes consoles with 2. Fishing grants **no
 character XP** — combat balance is untouched. Level effects today: shorter
 waits, better rare weights. The struggle minigame will add wider response
 windows.

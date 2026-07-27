@@ -1,4 +1,8 @@
-import type { Position, PositionCorrection } from './networkTypes'
+import type {
+  FishingAction,
+  Position,
+  PositionCorrection,
+} from './networkTypes'
 import { hmrSingleton } from '../utils/hmr'
 import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
@@ -439,7 +443,7 @@ class NetworkManager {
     this.sendMessage({ FishingCast: { position } })
   }
 
-  sendFishingRespond(action: import('./networkTypes').FishingAction) {
+  sendFishingRespond(action: FishingAction) {
     this.sendMessage({ FishingRespond: { action } })
   }
 

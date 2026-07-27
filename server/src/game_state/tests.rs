@@ -5509,7 +5509,7 @@ mod fishing_tests {
         assert_eq!(ids.len(), inv.bag.len(), "one bag entry per species");
     }
 
-    // PR3: the struggle. Wrong answers pump tension until the fish escapes;
+    // The struggle: wrong answers pump tension until the fish escapes;
     // silence is reaped by the tick with the same penalty.
     #[tokio::test(start_paused = true)]
     async fn struggle_wrong_answers_escape_the_fish() {

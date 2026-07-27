@@ -92,11 +92,13 @@ impl WaterTiles for TerrainIO {
     }
 }
 
+/// None = tile has no water field (sea-only). Some = decoded surfaceY grid.
+type DecodedWaterTile = Option<Vec<f32>>;
+
 /// Samples the baked water surface with an in-memory per-tile cache. Interior
 /// mutability (like `HeightSampler`) so callers hold only `&self`.
 pub struct WaterSampler {
-    // None = tile has no water field (sea-only). Some = decoded surfaceY grid.
-    cache: tokio::sync::RwLock<HashMap<(i32, i32), Option<Vec<f32>>>>,
+    cache: tokio::sync::RwLock<HashMap<(i32, i32), DecodedWaterTile>>,
     tiles: Box<dyn WaterTiles>,
 }
 

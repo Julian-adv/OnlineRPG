@@ -1,5 +1,7 @@
 import { Vector2, Raycaster } from 'three'
 import * as THREE from 'three'
+import { get } from 'svelte/store'
+import { myFishingPhase } from '../stores/fishingStore'
 import type { Position } from '../utils/movementUtils'
 import type { WallDirection } from '../utils/house-geometry'
 
@@ -557,6 +559,16 @@ class InputHandler {
       return false
     }
     if (event.ctrlKey) return false
+
+    // SPACE and S belong to the fishing minigame during a bite/struggle;
+    // treating S as backward movement would abort the session server-side.
+    const fishingPhase = get(myFishingPhase)
+    if (
+      (fishingPhase === 'bite' || fishingPhase === 'struggle') &&
+      (event.code === 'Space' || event.code === 'KeyS')
+    ) {
+      return true
+    }
 
     if (event.code === 'KeyE' && !event.repeat) {
       this._interactJustPressed = true

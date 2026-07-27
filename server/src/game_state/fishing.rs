@@ -494,6 +494,10 @@ impl GameState {
             .iter()
             .map(|c| effective_weight(c, skill_level))
             .sum();
+        // All-zero weights (data-driven) would panic the gen_range below.
+        if total == 0 {
+            return None;
+        }
         let (index, quality) = {
             let mut rng = rand::thread_rng();
             (
@@ -801,7 +805,7 @@ mod tests {
         let t = table();
         assert_eq!(effective_weight(&t[0], 0), 50);
         assert_eq!(effective_weight(&t[1], 0), 1);
-        // Level 20: minnow 50+20, carp 1+100 — rare fish gain ground but the
+        // Level 20: minnow 50+20, sturgeon 1+100 — rare fish gain ground but the
         // commons never vanish.
         assert_eq!(effective_weight(&t[0], 20), 70);
         assert_eq!(effective_weight(&t[1], 20), 101);

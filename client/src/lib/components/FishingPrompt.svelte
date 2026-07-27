@@ -1,19 +1,13 @@
 <script lang="ts">
-  // The local player's fishing HUD: status line while waiting, the hook
-  // call on a bite, and the round-by-round struggle panel (tension bar,
-  // fish-state prompt, countdown). Keys: SPACE = hook/reel, S = give line,
-  // ESC = reel in and quit. Self-contained window listeners (dialog
-  // pattern) so the player-control FSM stays untouched; the server judges
-  // all timing regardless of what this UI shows.
+  // Local player's fishing HUD. SPACE = hook/reel, S = give line, ESC = quit;
+  // the server judges all timing regardless of what this UI shows.
   import { myFishingPhase, myStruggle } from '../stores/fishingStore'
   import { networkManager } from '../network/socket'
 
   let countdownPct = $state(100)
   let raf: number | null = null
 
-  // Animate the countdown ring from the round's client receipt time. Purely
-  // cosmetic — the authoritative deadline is server-side (plus grace), so
-  // running slightly ahead of the truth only makes players early, never late.
+  // Cosmetic countdown; the authoritative deadline is server-side.
   $effect(() => {
     const struggle = $myStruggle
     if (!struggle) {
@@ -43,6 +37,8 @@
 
   function onKeydown(event: KeyboardEvent) {
     if ($myFishingPhase === 'idle') return
+    const target = event.target as HTMLElement
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
     if (event.code === 'Space') {
       event.preventDefault()
       if ($myFishingPhase === 'bite') respond('hook')
@@ -121,8 +117,8 @@
   }
 
   .waiting {
-    background: rgba(12, 24, 38, 0.75);
-    color: #a6c8ee;
+    background: rgba(6, 10, 14, 0.75);
+    color: #e6edf3;
     border: 1px solid rgba(166, 200, 238, 0.35);
   }
 
@@ -156,7 +152,7 @@
     width: min(340px, 86vw);
     padding: 12px 16px;
     border-radius: 12px;
-    background: rgba(12, 24, 38, 0.88);
+    background: rgba(6, 10, 14, 0.88);
     border: 1px solid rgba(166, 200, 238, 0.35);
     z-index: 30;
   }
@@ -168,7 +164,7 @@
   }
 
   .rounds {
-    color: #a6c8ee;
+    color: #e6edf3;
     font-size: 13px;
     white-space: nowrap;
   }
@@ -185,7 +181,7 @@
   .countdown-fill {
     position: absolute;
     inset: 0 auto 0 0;
-    background: #a6c8ee;
+    background: #e6edf3;
   }
 
   .struggle-action {

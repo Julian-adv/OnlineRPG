@@ -124,12 +124,8 @@
     remotePlayerManager.attackAnimationDuration = playerAttackDuration
   })
 
-  // Fishing stance for the local player: while a fishing session is live and
-  // the player is otherwise idle, present the interact state with the fishing
-  // clips instead. Movement/attack win automatically (the override only
-  // applies to 'idle', and the server aborts the session on those anyway).
-  // The PlayerControl FSM is deliberately untouched — its own state stays
-  // 'idle', so pickup/door interactions are unaffected.
+  // Local-player fishing stance: overrides only the 'idle' state, so
+  // movement/attack win and the PlayerControl FSM stays untouched.
   let fishingCastDone = $state(false)
   $effect(() => {
     if ($myFishingPhase === 'casting') fishingCastDone = false

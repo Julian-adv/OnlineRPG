@@ -1,8 +1,5 @@
-// Combat-log wording for a landed catch, category-aware: fish are caught
-// (with their size), junk is fished up, a coin catch announces itself (the
-// gold arrives via GoldGained right behind it). Pure so it's unit-testable —
-// keep the phrasing in sync with the agent-client's caught_line
-// (agent-client/src/driver/prompt.rs).
+// Combat-log wording for a landed catch. Pure for unit tests; keep in sync
+// with agent-client/src/driver/prompt.rs caught_line.
 
 export interface CatchDefLike {
   name: string

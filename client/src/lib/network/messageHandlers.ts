@@ -28,6 +28,7 @@ import { dungeonManager } from '../managers/dungeonManager'
 import { deathDropDelayQueue } from '../managers/deathDropDelay'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { catchMessage } from './fishingMessages'
+import type { SkillId } from '../stores/skillsStore'
 import {
   setSkills,
   applySkillXp,
@@ -185,6 +186,8 @@ function addRemotePlayerToState(state: GameState, sp: ServerPlayer) {
 function removeRemotePlayerFromState(state: GameState, playerId: number) {
   remotePlayerManager.removePlayer(playerId)
   state.otherPlayers.delete(playerId)
+  // A leaving player's FishingEnded may never arrive; drop their bobber.
+  removeBobber(playerId)
 }
 
 export type MessageEvents = {
@@ -1096,7 +1099,7 @@ export function handleServerMessage(
       break
 
     case 'SkillXpGained': {
-      const skillId = data.skill as import('../stores/skillsStore').SkillId
+      const skillId = data.skill as SkillId
       applySkillXp(skillId, Number(data.total_xp), data.new_level)
       const skillName = SKILL_DISPLAY_NAMES[skillId] ?? skillId
       addCombatMessage({
