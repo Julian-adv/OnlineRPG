@@ -810,14 +810,25 @@ async fn handle_client_message(
                 Ok(name) => name,
                 Err(responses) => return Ok(responses),
             };
-
-            match auth_service.delete_character(&authed_account_name, character_id) {
-                Ok(()) => {
+            match game_state
+                .delete_character_if_inactive(auth_service, &authed_account_name, character_id)
+                .await
+            {
+                Ok(true) => {
                     info!(
                         "Character id={} deleted for account '{}'",
                         character_id, authed_account_name
                     );
                     return Ok(vec![ServerMessage::CharacterDeleted { character_id }]);
+                }
+                Ok(false) => {
+                    warn!(
+                        "Character delete rejected for account '{}': id={} is active",
+                        authed_account_name, character_id
+                    );
+                    return Ok(vec![ServerMessage::CharacterError {
+                        message: "Cannot delete a character while it is in game".to_string(),
+                    }]);
                 }
                 Err(err) => {
                     warn!(
@@ -864,6 +875,7 @@ async fn handle_client_message(
                 Ok(name) => name,
                 Err(responses) => return Ok(responses),
             };
+            let character_sessions = game_state.lock_character_sessions().await;
 
             let selected_character =
                 match auth_service.get_character_for_account(&authed_account_name, character_id) {
@@ -971,6 +983,7 @@ async fn handle_client_message(
                     selected_character.gold,
                 )
                 .await;
+            drop(character_sessions);
 
             match auth_service.load_blocked_names(character_id) {
                 Ok(blocked) => game_state.set_player_blocks(&id, blocked).await,

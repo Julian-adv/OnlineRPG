@@ -210,3 +210,47 @@ async fn respawn_player_ignores_alive_player() {
         Err(err) => panic!("Expected empty channel, got {:?}", err),
     }
 }
+
+#[tokio::test]
+async fn active_character_cannot_be_deleted_from_another_session() {
+    let auth = make_test_auth("active_character_delete_guard");
+    let account = auth.login_npc("npc_active_delete").unwrap();
+    let record = create_test_character(&auth, &account, "StillPlaying");
+    let game_state = Arc::new(make_test_game_state("active_character_delete_guard"));
+    let player_id = pid("active_character");
+
+    // EnterGame takes the admission lock before reading the durable row. A
+    // concurrent delete must wait until that session appears in the live map,
+    // then reject instead of winning the check/delete race.
+    let admission = game_state.lock_character_sessions().await;
+    let deleting_state = Arc::clone(&game_state);
+    let deleting_auth = auth.clone();
+    let deleting_account = account.clone();
+    let character_id = record.id;
+    let delete = tokio::spawn(async move {
+        deleting_state
+            .delete_character_if_inactive(&deleting_auth, &deleting_account, character_id)
+            .await
+            .unwrap()
+    });
+    tokio::task::yield_now().await;
+    assert!(!delete.is_finished());
+
+    game_state
+        .register_player_character(&player_id, record.id, 0, attrs_with_cha(12), 0)
+        .await;
+    drop(admission);
+
+    assert!(!delete.await.unwrap());
+    assert!(auth.get_character_for_account(&account, record.id).is_ok());
+
+    game_state.unregister_player_character(&player_id).await;
+    assert!(game_state
+        .delete_character_if_inactive(&auth, &account, record.id)
+        .await
+        .unwrap());
+    assert!(matches!(
+        auth.get_character_for_account(&account, record.id),
+        Err(crate::auth::AuthError::CharacterNotFound)
+    ));
+}

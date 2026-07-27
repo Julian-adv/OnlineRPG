@@ -187,6 +187,10 @@ pub struct GameState {
     dirty_inventories: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
+    /// Serializes character deletion against game-entry admission. Without
+    /// this, a delete could observe no live owner and remove the row while a
+    /// concurrent EnterGame is still loading it.
+    character_session_lock: Arc<Mutex<()>>,
     /// In-memory set of currently open doors.
     open_doors: Arc<RwLock<HashSet<DoorKey>>>,
     /// Shared-crate passability cache mirroring what clients build (houses,
@@ -299,6 +303,7 @@ impl GameState {
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
+            character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),
             last_position_correction: Arc::new(RwLock::new(HashMap::new())),
             passability: Arc::new(std::sync::RwLock::new(
