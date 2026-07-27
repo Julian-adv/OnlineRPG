@@ -5477,6 +5477,8 @@ mod fishing_tests {
         assert!(drain(&mut rx).is_empty());
     }
 
+    /// Neither fish nor junk stack, so every bagged catch is its own slot even
+    /// when two of them are the same species — the bag reads as a catch log.
     #[tokio::test(start_paused = true)]
     async fn caught_fish_take_one_bag_slot_each() {
         let game_state = make_test_game_state("fishing_stacks");
@@ -5501,8 +5503,8 @@ mod fishing_tests {
         let inv = game_state.get_player_inventory(&id).await.unwrap();
         let total_fish: u32 = inv.bag.iter().map(|item| item.quantity).sum();
         assert_eq!(total_fish, bagged_catches);
-        // Fish are not stackable, so every catch takes its own slot even when
-        // two of them are the same species, and no entry is ever merged.
+        // Fish and junk are both non-stackable, so this holds no matter which
+        // species the rolls produced.
         assert_eq!(
             inv.bag.len() as u32,
             bagged_catches,
