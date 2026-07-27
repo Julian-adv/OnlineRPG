@@ -82,7 +82,7 @@ Species pick: weighted draw over two pools. A fish's weight grows
 skill closes the gap on rare fish but can never invert the table's order.
 Flotsam holds a flat `FLOTSAM_SHARE_PCT` (20%) of the draw at every level,
 so junk never thins out as the fish pool grows. `minFishingLevel` locks a
-species until the angler earns it: salmon at 5, golden sturgeon at 10.
+species until the angler earns it: salmon at 10, golden sturgeon at 20.
 Size: `sizeDice`,
 plus a d20 quality roll; a natural 20 doubles the size and — for fish —
 is always a trophy. Trophies are a fish concept: a nat-20 Old Boot is
