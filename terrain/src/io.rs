@@ -1,8 +1,9 @@
 use std::ffi::OsString;
+use std::fs::{File, OpenOptions, Permissions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::fs::{self, File, OpenOptions};
-use tokio::io::AsyncWriteExt;
+use tokio::fs;
 use tracing::warn;
 
 use crate::coords;
@@ -10,56 +11,53 @@ use crate::defaults;
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Atomically replace a mutable world file after writing and syncing a
-/// same-directory temp file. This does not claim directory fsync durability
-/// across power loss.
+/// Replace a file via same-directory temp + rename. Does not fsync the
+/// directory, so entry durability across power loss is not guaranteed.
 pub async fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    atomic_write_inner(path, data, None).await
+    let path = path.to_path_buf();
+    let data = data.to_vec();
+    tokio::task::spawn_blocking(move || atomic_write_sync(&path, &data))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
-async fn atomic_write_inner(
-    path: &Path,
-    data: &[u8],
-    fail_after_bytes: Option<usize>,
-) -> std::io::Result<()> {
-    let existing_permissions = match fs::metadata(path).await {
+fn atomic_write_sync(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let existing_permissions = match std::fs::metadata(path) {
         Ok(metadata) => Some(metadata.permissions()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
-    let (temp_path, mut file) = create_unique_temp_file(path).await?;
-    let write_result = async {
-        if let Some(fail_after_bytes) = fail_after_bytes {
-            let prefix_len = fail_after_bytes.min(data.len());
-            file.write_all(&data[..prefix_len]).await?;
-            return Err(std::io::Error::other("injected atomic write failure"));
-        }
-
-        file.write_all(data).await?;
-        if let Some(permissions) = existing_permissions {
-            file.set_permissions(permissions).await?;
-        }
-        file.sync_all().await
-    }
-    .await;
-
+    let (temp_path, mut file) = create_unique_temp_file(path)?;
+    let write_result = write_temp(&mut file, data, existing_permissions);
     drop(file);
-
-    if let Err(e) = write_result {
-        let _ = fs::remove_file(&temp_path).await;
-        return Err(e);
-    }
-
-    match fs::rename(&temp_path, path).await {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = fs::remove_file(&temp_path).await;
-            Err(e)
-        }
-    }
+    commit_or_cleanup(&temp_path, path, write_result)
 }
 
-async fn create_unique_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
+fn write_temp(
+    file: &mut File,
+    data: &[u8],
+    permissions: Option<Permissions>,
+) -> std::io::Result<()> {
+    file.write_all(data)?;
+    if let Some(permissions) = permissions {
+        file.set_permissions(permissions)?;
+    }
+    file.sync_data()
+}
+
+fn commit_or_cleanup(
+    temp_path: &Path,
+    path: &Path,
+    write_result: std::io::Result<()>,
+) -> std::io::Result<()> {
+    let result = write_result.and_then(|_| std::fs::rename(temp_path, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp_path);
+    }
+    result
+}
+
+fn create_unique_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path.file_name().ok_or_else(|| {
         std::io::Error::new(
@@ -67,39 +65,41 @@ async fn create_unique_temp_file(path: &Path) -> std::io::Result<(PathBuf, File)
             "target path has no file name",
         )
     })?;
-    let process_id = std::process::id();
 
-    for _ in 0..128 {
+    let attempt = || {
         let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let mut temp_name = OsString::from(".");
         temp_name.push(file_name);
-        temp_name.push(format!(".{process_id}.{counter}.tmp"));
+        temp_name.push(format!(".{}.{counter}.tmp", std::process::id()));
         let candidate = parent.join(temp_name);
-        match OpenOptions::new()
+        OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&candidate)
-            .await
-        {
-            Ok(file) => return Ok((candidate, file)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
+            .map(|file| (candidate, file))
+    };
 
-    Err(std::io::Error::new(
-        std::io::ErrorKind::AlreadyExists,
-        "could not allocate unique temp file",
-    ))
+    match attempt() {
+        // A stale temp left by a crashed prior boot can collide once; the next
+        // counter value resolves it.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => attempt(),
+        result => result,
+    }
 }
 
 #[cfg(test)]
-pub(crate) async fn atomic_write_with_injected_failure(
+pub(crate) fn atomic_write_with_injected_failure(
     path: &Path,
     data: &[u8],
     fail_after_bytes: usize,
 ) -> std::io::Result<()> {
-    atomic_write_inner(path, data, Some(fail_after_bytes)).await
+    let (temp_path, mut file) = create_unique_temp_file(path)?;
+    let prefix_len = fail_after_bytes.min(data.len());
+    let write_result = file
+        .write_all(&data[..prefix_len])
+        .and_then(|_| Err(std::io::Error::other("injected atomic write failure")));
+    drop(file);
+    commit_or_cleanup(&temp_path, path, write_result)
 }
 
 async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {

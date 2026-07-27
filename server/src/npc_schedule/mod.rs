@@ -88,10 +88,7 @@ impl NpcIO {
 #[cfg(test)]
 mod tests {
     use super::{NpcIO, ScheduleEntry, ScheduleFile};
-    use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static TEST_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+    use crate::test_util::unique_temp_dir;
 
     #[tokio::test]
     async fn write_schedule_persists_readable_json() {
@@ -119,14 +116,5 @@ mod tests {
         assert_eq!(stored.schedule[0].at, "08:00");
         assert_eq!(stored.schedule[0].waypoints, vec![[4.0, 5.0, 6.0]]);
         let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    fn unique_temp_dir(name: &str) -> PathBuf {
-        let counter = TEST_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "_onlinerpg_{name}_{}_{}",
-            std::process::id(),
-            counter
-        ))
     }
 }

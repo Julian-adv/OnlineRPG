@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 onlinerpg-shared = { path = "../shared" }
 async-trait = "0.1"
-tokio = { version = "1.0", features = ["fs", "io-util", "sync"] }
+tokio = { version = "1.0", features = ["fs", "rt", "sync"] }
 tracing = "0.1"
 serde_json = "1.0"
 

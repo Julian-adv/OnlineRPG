@@ -16,6 +16,8 @@ mod npc_defs;
 mod npc_schedule;
 mod semicolon_list;
 mod terrain;
+#[cfg(test)]
+mod test_util;
 mod types;
 mod world_config;
 mod world_drop_defs;

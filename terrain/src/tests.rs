@@ -277,7 +277,7 @@ async fn injected_partial_atomic_write_failure_keeps_existing_target_unchanged()
     tokio::fs::create_dir_all(&dir).await.unwrap();
     tokio::fs::write(&target, original).await.unwrap();
 
-    let result = crate::io::atomic_write_with_injected_failure(&target, replacement, 9).await;
+    let result = crate::io::atomic_write_with_injected_failure(&target, replacement, 9);
 
     assert!(result.is_err());
     assert_eq!(tokio::fs::read(&target).await.unwrap(), original);
@@ -291,7 +291,7 @@ async fn injected_partial_atomic_write_failure_does_not_create_final_path() {
     let target = dir.join("world.bin");
 
     tokio::fs::create_dir_all(&dir).await.unwrap();
-    let result = crate::io::atomic_write_with_injected_failure(&target, b"partial", 3).await;
+    let result = crate::io::atomic_write_with_injected_failure(&target, b"partial", 3);
 
     assert!(result.is_err());
     assert!(tokio::fs::metadata(&target).await.is_err());

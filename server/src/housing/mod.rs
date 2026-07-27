@@ -430,10 +430,8 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::test_fixtures::{house_at, room_at};
     use super::{is_valid_house_id, validate_house, HousingIO, MAX_ROOMS, MAX_ROOM_OFFSET};
+    use crate::test_util::unique_temp_dir;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static TEST_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn accepts_valid_house() {
@@ -499,14 +497,5 @@ mod tests {
         assert_eq!(stored.id, house.id);
         assert_eq!(stored.rooms.len(), 1);
         let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    fn unique_temp_dir(name: &str) -> PathBuf {
-        let counter = TEST_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!(
-            "_onlinerpg_{name}_{}_{}",
-            std::process::id(),
-            counter
-        ))
     }
 }
