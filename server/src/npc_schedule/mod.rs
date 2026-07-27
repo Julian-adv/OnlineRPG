@@ -1,5 +1,6 @@
 pub mod routes;
 
+use onlinerpg_terrain::io::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
@@ -80,6 +81,52 @@ impl NpcIO {
         let path = self.base_dir.join(name).join(SCHEDULE_FILENAME);
         let content = serde_json::to_string_pretty(data)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(&path, content).await
+        atomic_write(&path, content.as_bytes()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NpcIO, ScheduleEntry, ScheduleFile};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[tokio::test]
+    async fn write_schedule_persists_readable_json() {
+        let dir = unique_temp_dir("npc_schedule_write");
+        let io = NpcIO::new(dir.clone());
+        let schedule = ScheduleFile {
+            schedule: vec![ScheduleEntry {
+                at: "08:00".into(),
+                pos: [1.0, 2.0, 3.0],
+                rotation: 90.0,
+                floor_level: 1,
+                label: Some("counter".into()),
+                action: None,
+                waypoints: vec![[4.0, 5.0, 6.0]],
+            }],
+        };
+
+        tokio::fs::create_dir_all(dir.join("shopkeeper"))
+            .await
+            .unwrap();
+        io.write_schedule("shopkeeper", &schedule).await.unwrap();
+
+        let stored = io.read_schedule("shopkeeper").await.unwrap();
+        assert_eq!(stored.schedule.len(), 1);
+        assert_eq!(stored.schedule[0].at, "08:00");
+        assert_eq!(stored.schedule[0].waypoints, vec![[4.0, 5.0, 6.0]]);
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let counter = TEST_TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "_onlinerpg_{name}_{}_{}",
+            std::process::id(),
+            counter
+        ))
     }
 }
