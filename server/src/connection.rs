@@ -863,6 +863,25 @@ async fn handle_client_message(
                 );
             }
 
+            // Trained skills load before any registration: a failed read must
+            // refuse the session, or the next save would overwrite real
+            // progress with an empty state.
+            let skill_rows = {
+                let auth = Arc::clone(auth_service);
+                match crate::game_state::auth_db(move || auth.load_skills(character_id)).await {
+                    Ok(rows) => rows,
+                    Err(err) => {
+                        warn!(
+                            "Failed to load skills for character {}: {} — refusing session",
+                            character_id, err
+                        );
+                        return Ok(vec![ServerMessage::CharacterError {
+                            message: err.client_message().to_string(),
+                        }]);
+                    }
+                }
+            };
+
             // Enforced unique character names allow name-based session replacement.
             game_state
                 .kick_player_by_name(&selected_character.name, auth_service)
@@ -953,17 +972,8 @@ async fn handle_client_message(
                 .load_player_inventory(&id, character_id, auth_service)
                 .await;
 
-            // Load trained skills from DB (missing rows = never trained).
-            let skills = match auth_service.load_skills(character_id) {
-                Ok(rows) => crate::game_state::skills_from_rows(&rows),
-                Err(err) => {
-                    warn!(
-                        "Failed to load skills for character {}: {} — starting empty",
-                        character_id, err
-                    );
-                    Default::default()
-                }
-            };
+            // Missing rows = never trained.
+            let skills = crate::game_state::skills_from_rows(&skill_rows);
             game_state.register_player_skills(&id, skills.clone()).await;
 
             // The equipped off-hand is the authoritative carried-torch state.
