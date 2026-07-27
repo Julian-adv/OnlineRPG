@@ -99,19 +99,24 @@ pub(crate) struct MoveCommand {
     pub(crate) append: bool,
 }
 
-/// Run a blocking DB save on the blocking pool and await it, logging a join
-/// panic or a save error under `what` instead of propagating. Awaiting is the
-/// point: callers rely on the write having completed before they continue.
-async fn flush_save<F>(op: F, what: &str)
+/// Run a blocking DB save on the blocking pool and report whether it committed.
+async fn flush_save<F>(op: F, what: &str) -> bool
 where
     F: FnOnce() -> Result<(), AuthError> + Send + 'static,
 {
-    let result = tokio::task::spawn_blocking(op).await.unwrap_or_else(|e| {
-        error!("spawn_blocking panicked: {}", e);
-        Ok(())
-    });
-    if let Err(e) = result {
-        error!("Failed to save {}: {}", what, e);
+    let result = match tokio::task::spawn_blocking(op).await {
+        Ok(result) => result,
+        Err(e) => {
+            error!("spawn_blocking panicked while saving {}: {}", what, e);
+            return false;
+        }
+    };
+    match result {
+        Ok(()) => true,
+        Err(e) => {
+            error!("Failed to save {}: {}", what, e);
+            false
+        }
     }
 }
 
@@ -322,7 +327,7 @@ impl super::GameState {
         let inventories = Vec::from_iter(self.take_player_inventory(player_id).await);
 
         let auth = auth.clone();
-        flush_save(
+        let _ = flush_save(
             move || auth.save_batch(&characters, &inventories, None),
             "player state",
         )
@@ -338,7 +343,7 @@ impl super::GameState {
         let inventory_count = inventories.len();
         let datetime = self.current_game_datetime();
         let auth = auth.clone();
-        flush_save(
+        let _ = flush_save(
             move || {
                 auth.save_batch(&characters, &inventories, Some(&datetime))?;
                 info!(
@@ -392,8 +397,8 @@ impl super::GameState {
     pub async fn flush_dirty_saves(&self, auth: &AuthService) {
         let _persistence = self.persistence_lock.lock().await;
 
-        let dirty_states = self.collect_dirty_character_states().await;
-        let dirty_inventories = self.collect_dirty_inventory_states().await;
+        let (dirty_player_ids, dirty_states) = self.collect_dirty_character_states().await;
+        let (dirty_inventory_ids, dirty_inventories) = self.collect_dirty_inventory_states().await;
         if dirty_states.is_empty() && dirty_inventories.is_empty() {
             return;
         }
@@ -401,7 +406,7 @@ impl super::GameState {
         let character_count = dirty_states.len();
         let inventory_count = dirty_inventories.len();
         let auth = auth.clone();
-        flush_save(
+        let saved = flush_save(
             move || {
                 auth.save_batch(&dirty_states, &dirty_inventories, None)?;
                 info!(
@@ -413,6 +418,13 @@ impl super::GameState {
             "dirty state",
         )
         .await;
+        if !saved {
+            self.dirty_players.write().await.extend(dirty_player_ids);
+            self.dirty_inventories
+                .write()
+                .await
+                .extend(dirty_inventory_ids);
+        }
     }
 
     pub async fn add_player(&self, mut player: Player) -> Option<ServerMessage> {
@@ -1179,31 +1191,33 @@ impl super::GameState {
         dirty.remove(player_id);
     }
 
-    pub async fn collect_dirty_character_states(&self) -> Vec<CharacterSaveData> {
+    pub async fn collect_dirty_character_states(&self) -> (Vec<PlayerId>, Vec<CharacterSaveData>) {
         let dirty_ids: Vec<PlayerId> = {
             let mut dirty = self.dirty_players.write().await;
             dirty.drain().collect()
         };
 
         if dirty_ids.is_empty() {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
 
         let players = self.players.read().await;
         let player_chars = self.player_characters.read().await;
         let gold_map = self.player_gold.read().await;
 
+        let mut collected_ids = Vec::with_capacity(dirty_ids.len());
         let mut result = Vec::with_capacity(dirty_ids.len());
         for pid in &dirty_ids {
             if let (Some(player), Some((char_id, xp, _))) =
                 (players.get(pid), player_chars.get(pid))
             {
                 let gold = gold_map.get(pid).copied().unwrap_or(0);
+                collected_ids.push(*pid);
                 result.push(build_save_data(player, *char_id, *xp, gold));
             }
         }
 
-        result
+        (collected_ids, result)
     }
 
     pub async fn get_player_save_data(&self, player_id: &PlayerId) -> Option<CharacterSaveData> {

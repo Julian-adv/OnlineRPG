@@ -4219,6 +4219,121 @@ async fn furniture_removal_reopens_blocked_cells() {
     assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 6.5));
 }
 
+#[tokio::test]
+async fn dirty_save_is_retried_after_failure() {
+    let db_path = std::env::temp_dir().join(format!(
+        "onlinerpg_dirty_save_retry_auth_{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let auth = crate::auth::AuthService::new(db_path.clone()).unwrap();
+    let account = auth.login_npc("npc_dirty_save_retry").unwrap();
+    let attributes = attrs_with_cha(12);
+    let record = create_test_character(&auth, &account, "Retryknight");
+    let initial_inventory = auth
+        .load_inventory(record.id)
+        .unwrap()
+        .into_iter()
+        .map(|item| {
+            (
+                item.item_def_id,
+                item.quantity,
+                item.equip_slot,
+                item.enchant,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let game_state = make_test_game_state("dirty_save_retry");
+    let player_id = pid("dirty_save_retry");
+    let mut player = make_player("dirty_save_retry", 42.0, 0.0);
+    player.name = record.name.clone();
+    game_state.add_player(player).await;
+    game_state
+        .register_player_character(&player_id, record.id, record.xp, attributes, record.gold)
+        .await;
+    game_state.inventories.write().await.insert(
+        player_id,
+        PlayerInventory {
+            bag: vec![bag_item(1, "torch", 1)],
+            equipped: Default::default(),
+        },
+    );
+    game_state.mark_dirty(&player_id).await;
+    game_state.mark_inventory_dirty(&player_id).await;
+
+    let failure_connection = rusqlite::Connection::open(&db_path).unwrap();
+    failure_connection
+        .execute_batch(
+            "CREATE TRIGGER fail_character_update
+             BEFORE UPDATE ON characters
+             BEGIN
+                 SELECT RAISE(FAIL, 'test save failure');
+             END;",
+        )
+        .unwrap();
+
+    game_state.flush_dirty_saves(&auth).await;
+
+    assert!(game_state.dirty_players.read().await.contains(&player_id));
+    assert!(game_state
+        .dirty_inventories
+        .read()
+        .await
+        .contains(&player_id));
+    assert_ne!(
+        auth.get_character_for_account(&account, record.id)
+            .unwrap()
+            .last_x,
+        42.0
+    );
+    let inventory_after_failure = auth
+        .load_inventory(record.id)
+        .unwrap()
+        .into_iter()
+        .map(|item| {
+            (
+                item.item_def_id,
+                item.quantity,
+                item.equip_slot,
+                item.enchant,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(inventory_after_failure, initial_inventory);
+
+    failure_connection
+        .execute("DROP TRIGGER fail_character_update", [])
+        .unwrap();
+    game_state.flush_dirty_saves(&auth).await;
+
+    assert!(!game_state.dirty_players.read().await.contains(&player_id));
+    assert!(!game_state
+        .dirty_inventories
+        .read()
+        .await
+        .contains(&player_id));
+    assert_eq!(
+        auth.get_character_for_account(&account, record.id)
+            .unwrap()
+            .last_x,
+        42.0
+    );
+    let saved_inventory = auth
+        .load_inventory(record.id)
+        .unwrap()
+        .into_iter()
+        .map(|item| {
+            (
+                item.item_def_id,
+                item.quantity,
+                item.equip_slot,
+                item.enchant,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(saved_inventory, vec![("torch".to_string(), 1, None, 0)]);
+}
+
 // F-015: session replacement (kick) must flush the departing session's
 // inventory to the DB before a replacement login can load it. Otherwise the
 // old async disconnect-save races the new session's load, letting a dropped
