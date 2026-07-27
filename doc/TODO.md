@@ -107,6 +107,25 @@
 - [x] deploy 안전하게
 - item drop을 서버에서 지연해서 보내게(공정성)
 
+## 낚시 후속 (PR #53 리뷰)
+
+- 월드모델 없는 기존 아이템(장신구·천갑옷 등)이 sword.png 아이콘으로 보이는 회귀 → 실제 아이콘 부여
+- 타 플레이어 낚시 자세 표시 (FishingCasted의 player_id → remotePlayerManager 연결)
+- 어보트된 캐스팅의 스플래시 사운드 setTimeout 취소
+- 클라이언트 사전 사거리 검사 (MAX_CAST_DISTANCE_METERS wasm 노출)
+- agent-client: 타인의 FishingEnded가 Routine 분류로 LLM 사이클 유발 → Noise로 내리거나 관전 라인 추가
+- agent-client: 부분 좌표(z 누락 등)를 조용히 버림 → 피드백 이벤트 추가
+- agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
+- items.csv ragged 행 정규화 (18칸 헤더 대비 기존 행 13–14칸)
+- EV 테스트의 상인 환율 0.4 하드코딩 → merchant defs에서 읽기
+- 문서 오류: doc/FISHING.md "SFX 전부 CC0" 오기, doc/AGENT_CLIENT.md 낚시 섹션만 영어
+- doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
+- all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
+- Mixamo GLB 재배포 정책 판단
+- 클라이언트 테스트 공백: waterFieldManager.surfaceAt, processClick의 cast_fishing 분기, fishing 스토어 전이
+- WaterSampler/HeightSampler 타일 캐시 eviction (LRU 또는 주기적 purge, 현재 무제한)
+- claimedKeys 범용 입력 클레임 메커니즘 (다음 모달 UI 때 낚시 카브아웃과 함께 일반화)
+
 # 폐지
 
 - 현실 지구의 지형 데이터를 가져와 terrain을 만든다
