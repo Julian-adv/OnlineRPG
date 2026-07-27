@@ -81,7 +81,15 @@ impl LlmBackend for ClaudeInvoker {
             cmd.arg("--system-prompt").arg(&self.system_prompt);
         }
 
-        cmd.arg(content)
+        // Other players' chat reaches the model verbatim, so assume every
+        // prompt carries an injection attempt (doc/REMOTE_AGENT_CLIENT.md).
+        // Running from a temp dir keeps the runner's repository — npc_token,
+        // the account database, config.toml's OAuth secret, AGENTS.md — out of
+        // the CLI's working directories, and --strict-mcp-config stops it
+        // loading their MCP servers. Same hygiene codex.rs already applies.
+        cmd.arg("--strict-mcp-config")
+            .arg(content)
+            .current_dir(std::env::temp_dir())
             .env_remove("CLAUDECODE")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
