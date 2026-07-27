@@ -91,7 +91,7 @@ pub const FLOTSAM_SHARE_PCT: u64 = 20;
 /// percent. Multiplicative, so the table's order can never invert: an
 /// additive bonus scaled by rarity would lift a weight-1 legend past a
 /// weight-50 common long before the level cap.
-pub const RARITY_SKILL_BONUS_PCT: u64 = 4;
+pub const RARITY_SKILL_BONUS_PCT: u64 = 3;
 
 /// Skill XP for a catch: `CATCH_XP_PER_RARITY_SQ · rarity²` (rarity 1–5).
 pub const CATCH_XP_PER_RARITY_SQ: u64 = 10;

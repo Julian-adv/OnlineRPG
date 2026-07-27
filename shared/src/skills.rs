@@ -5,13 +5,14 @@
 //! agent-client all read the same numbers.
 //!
 //! Skill levels start at 0 (a character map with no entry means "never
-//! trained") and cap at `SKILL_LEVEL_CAP` — the d20 ceiling, matching the
-//! attribute scale rather than character levels' open-ended curve.
+//! trained") and cap at `SKILL_LEVEL_CAP`. The cap is a deliberate design
+//! knob: unlock ladders (`minFishingLevel` and future equivalents) are
+//! spaced against it, so raising it stretches every skill's progression.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const SKILL_LEVEL_CAP: u32 = 20;
+pub const SKILL_LEVEL_CAP: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SkillId {

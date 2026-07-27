@@ -78,7 +78,7 @@ The catch columns:
 | `trophyCm` | fish only — length at or above this is a trophy |
 
 Species pick: weighted draw over two pools. A fish's weight grows
-`RARITY_SKILL_BONUS_PCT` (4%) per level per rarity tier — multiplicative, so
+`RARITY_SKILL_BONUS_PCT` (3%) per level per rarity tier — multiplicative, so
 skill closes the gap on rare fish but can never invert the table's order.
 Flotsam holds a flat `FLOTSAM_SHARE_PCT` (20%) of the draw at every level,
 so junk never thins out as the fish pool grows. `minFishingLevel` locks a
@@ -99,8 +99,8 @@ monster kills drop unsellable worn weapons by design, so the repeatable gold
 faucets are coin piles (1–10c) and gated dungeon chests — and an NPC's
 salary is 50s/day. Fish: minnow 10c, perch 25c, trout 60c, salmon 2s,
 golden sturgeon 15s (the jackpot, a goblin-sword's worth — 1.7% of draws even
-at the level cap). With the flotsam rows in the table, the expected *sell*
-value of one catch runs ~8c at level 0 to ~24c at level 20 — a couple of coin
+at the level-30 cap). With the flotsam rows in the table, the expected *sell*
+value of one catch runs ~8c at level 0 to ~24c at the level-30 cap — a couple of coin
 piles, so an hour of active fishing earns roughly half a guard's daily salary.
 Steady pocket money, not a money printer. Final tuning is explicitly the
 maintainer's call. That band is a **contract test**

@@ -848,10 +848,10 @@ mod tests {
     fn weighting_scales_rarity_with_skill() {
         let t = table();
         assert_eq!(effective_weights(&t, 0), vec![5000, 100]);
-        // Level 20: the legend grows 5x faster than the common (+400% vs +80%)
-        // but starts 50x behind, so it can never overtake it.
-        // minnow 50x180%, sturgeon 1x500%.
-        assert_eq!(effective_weights(&t, 20), vec![9000, 500]);
+        // At the cap the legend grows 5x faster than the common (+450% vs
+        // +90%) but starts 50x behind, so it can never overtake it.
+        // minnow 50x190%, sturgeon 1x550%.
+        assert_eq!(effective_weights(&t, 30), vec![9500, 550]);
     }
 
     #[test]
