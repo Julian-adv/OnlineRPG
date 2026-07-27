@@ -27,7 +27,7 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// meaning changes: clients we cannot redeploy (agent-clients on other
 /// machines) must be refused with an "update me" notice rather than left to
 /// fail at a random later message. See `doc/REMOTE_AGENT_CLIENT.md`.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
