@@ -163,6 +163,9 @@ impl super::GameState {
         }
         let def = trader_def_by_name(&npc.name).ok_or("This NPC does not trade")?;
 
+        if player.floor_level != npc.floor_level {
+            return Err("The trader is on another floor");
+        }
         let dx = onlinerpg_shared::shortest_world_delta_x(npc.position.x, player.position.x);
         let dz = player.position.z - npc.position.z;
         if dx * dx + dz * dz > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE {
@@ -225,6 +228,9 @@ impl super::GameState {
                 (Some(_), None) => Err("that player is not here"),
                 (Some(_), Some(target)) if target.is_official_npc => {
                     Err("trade windows can only be opened for players")
+                }
+                (Some(npc), Some(target)) if npc.floor_level != target.floor_level => {
+                    Err("the player is on another floor")
                 }
                 (Some(npc), Some(target)) => {
                     let dx =
