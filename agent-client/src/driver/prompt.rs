@@ -57,6 +57,14 @@ pub(super) fn build_prompt(
         );
     }
 
+    if state.self_fishing {
+        prompt.push_str(
+            "\nYou are fishing right now. Hooking and fighting the fish is automatic — \
+             stay put and wait for the [Fishing] outcome; moving or attacking cancels \
+             the session.\n",
+        );
+    }
+
     // Resident-trader wishlist, rebuilt every turn from the live bag:
     // owned items drop out, and a fully satisfied wishlist removes the
     // section (and with it the urge to trade) entirely. It is also

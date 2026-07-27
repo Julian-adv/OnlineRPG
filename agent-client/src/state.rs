@@ -334,6 +334,9 @@ pub struct SharedState {
     /// `TradeBusy`). We stay put and keep serving them — the LLM's movement
     /// actions are suppressed — until the trade ends.
     pub trade_busy: bool,
+    /// True between our own FishingCasted and FishingEnded, so the prompt
+    /// can warn that moving or attacking cancels the session.
+    pub self_fishing: bool,
     /// Known nearby players
     pub nearby_players: HashMap<PlayerId, Player>,
     /// Per-merchant list of units we sold this session, repurchasable at the
@@ -416,6 +419,7 @@ impl SharedState {
             self_equipped: HashMap::new(),
             trade_satiated_until: None,
             trade_busy: false,
+            self_fishing: false,
             nearby_players: HashMap::new(),
             merchant_buyback: HashMap::new(),
             nearby_monsters: HashMap::new(),
@@ -1028,6 +1032,7 @@ impl SharedState {
                 self.in_game = true;
                 self.self_player_id = Some(player.id);
                 self.self_player = Some(player.clone());
+                self.self_fishing = false;
                 // A character saved underground rejoins there (the server
                 // rehydrates it), so adopt the floor instead of assuming 0.
                 self.self_floor_level = player.floor_level;
@@ -1367,6 +1372,16 @@ impl SharedState {
             // decides *whether* to fish, not how fast to twitch. Instant
             // answers confer no advantage: correctness is binary and the
             // tension math ignores response speed inside the window.
+            ServerMessage::FishingCasted { player_id, .. }
+                if self.self_player_id.as_ref() == Some(player_id) =>
+            {
+                self.self_fishing = true;
+            }
+            ServerMessage::FishingEnded { player_id, .. }
+                if self.self_player_id.as_ref() == Some(player_id) =>
+            {
+                self.self_fishing = false;
+            }
             ServerMessage::FishingBite { player_id }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
@@ -1422,6 +1437,12 @@ impl SharedState {
             // A pure state flag; it changes movement gating but is not an LLM
             // event in its own right.
             ServerMessage::TradeBusy { .. } => return urgency,
+            // In-flight fishing beats: the reflex layer above already
+            // answered them; the LLM only needs the FishingEnded outcome.
+            ServerMessage::FishingCasted { .. }
+            | ServerMessage::FishingBite { .. }
+            | ServerMessage::FishingStruggleRound { .. }
+            | ServerMessage::FishingRoundResult { .. } => return urgency,
             // Ground items churn in and out of the AOI as everyone moves;
             // the world state lists what is nearby each turn instead.
             ServerMessage::GroundItemSpawned { .. }
