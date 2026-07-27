@@ -228,6 +228,12 @@ impl super::GameState {
         dirty.insert(*player_id);
     }
 
+    pub(super) async fn restore_dirty_inventories(&self, ids: Vec<PlayerId>) {
+        if !ids.is_empty() {
+            self.dirty_inventories.write().await.extend(ids);
+        }
+    }
+
     pub async fn give_item(&self, player_id: &PlayerId, item_def_id: &str) -> bool {
         if self.item_defs.get(item_def_id).is_none() {
             warn!("give_item: unknown item_def_id {:?}", item_def_id);
@@ -952,18 +958,16 @@ impl super::GameState {
         let inventories = self.inventories.read().await;
         let player_chars = self.player_characters.read().await;
 
-        let mut collected_ids = Vec::with_capacity(dirty_ids.len());
         let mut result = Vec::with_capacity(dirty_ids.len());
         for pid in &dirty_ids {
             if let (Some(inv), Some((char_id, _, _))) =
                 (inventories.get(pid), player_chars.get(pid))
             {
-                collected_ids.push(*pid);
                 result.push((*char_id, serialize_inventory(inv)));
             }
         }
 
-        (collected_ids, result)
+        (dirty_ids, result)
     }
 }
 

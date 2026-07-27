@@ -117,11 +117,19 @@ fn make_test_game_state(test_name: &str) -> GameState {
 
 /// Temp-file AuthService for tests whose paths touch the auth DB.
 fn make_test_auth(test_name: &str) -> crate::auth::AuthService {
+    make_test_auth_with_path(test_name).0
+}
+
+/// Variant exposing the DB path for tests that open a second connection.
+fn make_test_auth_with_path(test_name: &str) -> (crate::auth::AuthService, std::path::PathBuf) {
     let db_path = std::env::temp_dir().join(format!(
         "onlinerpg_{test_name}_auth_{}.db",
         uuid::Uuid::new_v4()
     ));
-    crate::auth::AuthService::new(db_path).unwrap()
+    (
+        crate::auth::AuthService::new(db_path.clone()).unwrap(),
+        db_path,
+    )
 }
 
 fn create_test_character(
@@ -4221,27 +4229,11 @@ async fn furniture_removal_reopens_blocked_cells() {
 
 #[tokio::test]
 async fn dirty_save_is_retried_after_failure() {
-    let db_path = std::env::temp_dir().join(format!(
-        "onlinerpg_dirty_save_retry_auth_{}.db",
-        uuid::Uuid::new_v4()
-    ));
-    let auth = crate::auth::AuthService::new(db_path.clone()).unwrap();
+    let (auth, db_path) = make_test_auth_with_path("dirty_save_retry");
     let account = auth.login_npc("npc_dirty_save_retry").unwrap();
     let attributes = attrs_with_cha(12);
     let record = create_test_character(&auth, &account, "Retryknight");
-    let initial_inventory = auth
-        .load_inventory(record.id)
-        .unwrap()
-        .into_iter()
-        .map(|item| {
-            (
-                item.item_def_id,
-                item.quantity,
-                item.equip_slot,
-                item.enchant,
-            )
-        })
-        .collect::<Vec<_>>();
+    let initial_inventory = auth.load_inventory(record.id).unwrap();
 
     let game_state = make_test_game_state("dirty_save_retry");
     let player_id = pid("dirty_save_retry");
@@ -4286,20 +4278,7 @@ async fn dirty_save_is_retried_after_failure() {
             .last_x,
         42.0
     );
-    let inventory_after_failure = auth
-        .load_inventory(record.id)
-        .unwrap()
-        .into_iter()
-        .map(|item| {
-            (
-                item.item_def_id,
-                item.quantity,
-                item.equip_slot,
-                item.enchant,
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(inventory_after_failure, initial_inventory);
+    assert_eq!(auth.load_inventory(record.id).unwrap(), initial_inventory);
 
     failure_connection
         .execute("DROP TRIGGER fail_character_update", [])
@@ -4318,20 +4297,15 @@ async fn dirty_save_is_retried_after_failure() {
             .last_x,
         42.0
     );
-    let saved_inventory = auth
-        .load_inventory(record.id)
-        .unwrap()
-        .into_iter()
-        .map(|item| {
-            (
-                item.item_def_id,
-                item.quantity,
-                item.equip_slot,
-                item.enchant,
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(saved_inventory, vec![("torch".to_string(), 1, None, 0)]);
+    assert_eq!(
+        auth.load_inventory(record.id).unwrap(),
+        vec![crate::auth::ItemRow {
+            item_def_id: "torch".to_string(),
+            quantity: 1,
+            equip_slot: None,
+            enchant: 0,
+        }]
+    );
 }
 
 // F-015: session replacement (kick) must flush the departing session's
@@ -4647,11 +4621,7 @@ async fn dungeon_chest_stays_shut_until_the_guardian_dies() {
 /// in-memory claim so a repaired storage layer can retry.
 #[tokio::test]
 async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry() {
-    let db_path = std::env::temp_dir().join(format!(
-        "onlinerpg_chest_persist_fail_auth_{}.db",
-        uuid::Uuid::new_v4()
-    ));
-    let auth = crate::auth::AuthService::new(db_path.clone()).unwrap();
+    let (auth, db_path) = make_test_auth_with_path("chest_persist_fail");
     let account = auth.login_npc("npc_chest_persist_fail").unwrap();
     let character = create_test_character(&auth, &account, "CarefulDelver");
 

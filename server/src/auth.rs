@@ -38,7 +38,7 @@ fn valid_name(name: &str) -> bool {
 
 /// One persisted inventory row: a bag stack (`equip_slot: None`) or an
 /// equipped item.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ItemRow {
     pub item_def_id: String,
     pub quantity: u32,
