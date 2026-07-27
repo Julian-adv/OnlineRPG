@@ -41,7 +41,7 @@
     return total
   })
 
-  const slots = $derived.by(() => buildInventorySlots($inventoryStore.bag))
+  const slots = $derived(buildInventorySlots($inventoryStore.bag))
 
   let panelEl = $state<HTMLDivElement | null>(null)
 
@@ -226,6 +226,25 @@
     overflow-y: auto;
     overflow-x: hidden;
     overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(113, 128, 150, 0.5) transparent;
+  }
+
+  .bag-grid::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .bag-grid::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .bag-grid::-webkit-scrollbar-thumb {
+    background: rgba(113, 128, 150, 0.5);
+    border-radius: 999px;
+  }
+
+  .bag-grid::-webkit-scrollbar-thumb:hover {
+    background: rgba(160, 174, 192, 0.7);
   }
 
   .grid-cell {
