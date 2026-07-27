@@ -12,11 +12,13 @@ const SWORD_HIT_POOL_SIZE = 4
 const SWORD_MISS_POOL_SIZE = 4
 export const SWORD_MISS_DELAY_MS = 450
 
+const FISHING_CAST_SOUND_URL = '/sounds/fishing-cast.ogg'
 const FISHING_SPLASH_SOUND_URL = '/sounds/fishing-splash.ogg'
 const FISHING_PLOP_SOUND_URL = '/sounds/fishing-plop.ogg'
 const FISHING_REEL_SOUND_URL = '/sounds/fishing-reel.ogg'
 const FISHING_SNAP_SOUND_URL = '/sounds/fishing-snap.ogg'
 const FISHING_CATCH_SOUND_URL = '/sounds/fishing-catch.ogg'
+const FISHING_CAST_VOLUME = 0.45
 const FISHING_SPLASH_VOLUME = 0.5
 const FISHING_PLOP_VOLUME = 0.6
 const FISHING_REEL_VOLUME = 0.4
@@ -113,9 +115,17 @@ function playAudioFromPool(
   pools: Map<string, AudioPool>,
   url: string,
   volume: number,
-  poolSize: number
+  poolSize: number,
+  delayMs = 0
 ) {
   preloadAudioPool(pools, url, volume, poolSize)
+  if (delayMs > 0) {
+    window.setTimeout(
+      () => playAudioFromPool(pools, url, volume, poolSize),
+      delayMs
+    )
+    return
+  }
 
   const pool = pools.get(url)
   if (!pool) return
@@ -177,6 +187,12 @@ export function playSwordMissSound(
 export function preloadFishingSounds() {
   preloadAudioPool(
     fishingPools,
+    FISHING_CAST_SOUND_URL,
+    FISHING_CAST_VOLUME,
+    FISHING_POOL_SIZE
+  )
+  preloadAudioPool(
+    fishingPools,
     FISHING_SPLASH_SOUND_URL,
     FISHING_SPLASH_VOLUME,
     FISHING_POOL_SIZE
@@ -207,13 +223,26 @@ export function preloadFishingSounds() {
   )
 }
 
-export function playFishingSplashSound() {
+export function playFishingCastSound() {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_CAST_SOUND_URL,
+    FISHING_CAST_VOLUME,
+    FISHING_POOL_SIZE
+  )
+}
+
+/** `delayMs` lets the caller line the splash up with the bobber landing
+ *  rather than the swing that threw it. */
+export function playFishingSplashSound(delayMs = 0) {
   if (!canUseAudio()) return
   playAudioFromPool(
     fishingPools,
     FISHING_SPLASH_SOUND_URL,
     FISHING_SPLASH_VOLUME,
-    FISHING_POOL_SIZE
+    FISHING_POOL_SIZE,
+    delayMs
   )
 }
 

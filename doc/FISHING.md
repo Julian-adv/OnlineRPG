@@ -185,6 +185,7 @@ they already receive.
 - Animations are in: a Mixamo cast plays once on `FishingCasted`, then a
   fishing idle loops until the line comes in (`fishing.glb` pack, local
   player only — remote anglers still read through the bobber). SFX are in:
-  splash on cast, plop on bite, reel click per struggle round, line snap on
-  escape, jingle on catch (all CC0 — see `assets/sfx.md`; self-only,
+  the line whirs out on the swing, the splash lands with the bobber a second
+  later, plop on bite, reel click per struggle round, line snap on escape,
+  jingle on catch (all CC0 — see `assets/sfx.md`; self-only,
   matching the combat sound precedent).

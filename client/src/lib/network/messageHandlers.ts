@@ -13,6 +13,7 @@ import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import {
+  playFishingCastSound,
   playFishingCatchSound,
   playFishingPlopSound,
   playFishingReelSound,
@@ -57,6 +58,7 @@ import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { whisperChatEntry } from '../chat-format'
+import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
 import type {
   AccountCharacter,
@@ -1012,7 +1014,10 @@ export function handleServerMessage(
       upsertBobber(data.player_id, data.position)
       if (get(gameStore).currentPlayer?.id === data.player_id) {
         myFishingPhase.set('casting')
-        playFishingSplashSound()
+        // The line whirs out on the swing; the splash waits for the bobber to
+        // actually land (the server's CAST_MS, read from shared wasm).
+        playFishingCastSound()
+        playFishingSplashSound(fishing_cast_ms())
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
       }
       break

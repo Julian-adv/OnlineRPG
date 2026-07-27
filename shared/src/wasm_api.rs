@@ -82,6 +82,13 @@ pub fn skill_level_cap() -> u32 {
     crate::skills::SKILL_LEVEL_CAP
 }
 
+/// How long a cast is airborne (`CAST_MS`), so the client can line the splash
+/// up with the bobber landing instead of the swing that threw it.
+#[wasm_bindgen]
+pub fn fishing_cast_ms() -> u32 {
+    crate::fishing::CAST_MS
+}
+
 // --- Passability cache (WASM global state) ---
 
 thread_local! {
