@@ -4,7 +4,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
-use crate::driver::LlmBackend;
+use crate::driver::{LlmBackend, RunDir};
 
 /// Configuration for the Codex CLI integration.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -91,6 +91,7 @@ fn unwrap_error_message(raw: &str) -> String {
 pub struct CodexInvoker {
     config: CodexConfig,
     system_prompt: String,
+    run_dir: RunDir,
 }
 
 impl CodexInvoker {
@@ -99,6 +100,7 @@ impl CodexInvoker {
         Ok(Self {
             config: config.clone(),
             system_prompt,
+            run_dir: RunDir::create()?,
         })
     }
 }
@@ -169,7 +171,7 @@ impl LlmBackend for CodexInvoker {
             .arg("-m")
             .arg(&self.config.model)
             .arg("-") // read prompt from stdin
-            .current_dir(std::env::temp_dir()) // avoid picking up AGENTS.md
+            .current_dir(self.run_dir.path()) // empty per-run cwd, no AGENTS.md
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

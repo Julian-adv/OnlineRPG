@@ -6,7 +6,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::driver::LlmBackend;
+use crate::driver::{LlmBackend, RunDir};
 
 /// Configuration for the Claude CLI integration.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -48,6 +48,7 @@ pub struct ClaudeInvoker {
     config: ClaudeConfig,
     system_prompt: String,
     session_id: Mutex<Option<String>>,
+    run_dir: RunDir,
 }
 
 impl ClaudeInvoker {
@@ -57,6 +58,7 @@ impl ClaudeInvoker {
             config: config.clone(),
             system_prompt,
             session_id: Mutex::new(None),
+            run_dir: RunDir::create()?,
         })
     }
 }
@@ -81,15 +83,15 @@ impl LlmBackend for ClaudeInvoker {
             cmd.arg("--system-prompt").arg(&self.system_prompt);
         }
 
-        // Other players' chat reaches the model verbatim, so assume every
-        // prompt carries an injection attempt (doc/REMOTE_AGENT_CLIENT.md).
-        // Running from a temp dir keeps the runner's repository — npc_token,
-        // the account database, config.toml's OAuth secret, AGENTS.md — out of
-        // the CLI's working directories, and --strict-mcp-config stops it
-        // loading their MCP servers. Same hygiene codex.rs already applies.
+        // Player chat is untrusted: empty per-run cwd, no MCP servers, no
+        // tools at all; `--` keeps the prompt out of flag parsing
+        // (doc/REMOTE_AGENT_CLIENT.md).
         cmd.arg("--strict-mcp-config")
+            .arg("--disallowedTools")
+            .arg("Task,Bash,Glob,Grep,Read,Edit,Write,NotebookEdit,WebFetch,WebSearch")
+            .arg("--")
             .arg(content)
-            .current_dir(std::env::temp_dir())
+            .current_dir(self.run_dir.path())
             .env_remove("CLAUDECODE")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

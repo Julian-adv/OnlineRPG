@@ -54,6 +54,33 @@ pub fn load_system_prompt(path: &str) -> anyhow::Result<String> {
         .map_err(|e| anyhow::anyhow!("Failed to read system prompt from {path}: {e}"))
 }
 
+/// Empty working directory for CLI backends — prompts are untrusted, so the
+/// spawned CLI must not see the shared temp dir or the repo. Removed on drop.
+pub struct RunDir(std::path::PathBuf);
+
+impl RunDir {
+    pub fn create() -> anyhow::Result<Self> {
+        let dir = std::env::temp_dir().join(format!(
+            "agent-client-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir(&dir)
+            .map_err(|e| anyhow::anyhow!("Failed to create run dir {}: {e}", dir.display()))?;
+        Ok(Self(dir))
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for RunDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Configuration for the LLM driver loop.
 pub struct DriverConfig {
     pub label: String,
