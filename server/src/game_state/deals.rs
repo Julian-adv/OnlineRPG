@@ -13,6 +13,7 @@ use tracing::info;
 
 use crate::types::{PlayerId, ServerMessage};
 
+use super::combat::reachable_dist_sq;
 use super::trading::trader_def_by_name;
 
 /// Band half-width in percentage points at CHA 10.
@@ -179,9 +180,19 @@ impl super::GameState {
                     .await;
             }
 
-            let dx = onlinerpg_shared::shortest_world_delta_x(target.position.x, npc.position.x);
-            let dz = npc.position.z - target.position.z;
-            if dx * dx + dz * dz > NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS {
+            let why = match reachable_dist_sq(
+                target.position,
+                target.floor_level,
+                npc.position,
+                npc.floor_level,
+            ) {
+                None => Some("player is on another floor"),
+                Some(d) if d > NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS => {
+                    Some("player is too far away")
+                }
+                Some(_) => None,
+            };
+            if let Some(why) = why {
                 return self
                     .reject_deal(
                         npc_player_id,
@@ -192,7 +203,7 @@ impl super::GameState {
                         kind,
                         modifier_pct,
                         reason,
-                        "player is too far away",
+                        why,
                     )
                     .await;
             }

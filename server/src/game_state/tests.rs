@@ -2329,6 +2329,16 @@ fn attrs_with_cha(cha: u8) -> CharacterAttributes {
 
 /// Spawn a merchant NPC and a buyer with the given CHA/gold next to each
 /// other, returning the buyer's direct-message receiver and the NPC's.
+async fn set_floor(game_state: &GameState, name: &str, floor: i8) {
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid(name))
+        .unwrap()
+        .floor_level = floor;
+}
+
 async fn setup_haggle(
     game_state: &GameState,
     cha: u8,
@@ -2406,6 +2416,35 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
             assert_eq!(applied_modifier_pct, -10);
         }
         other => panic!("Expected DealResult for NPC, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn cross_floor_offer_deal_is_rejected() {
+    let game_state = make_test_game_state("cross_floor_offer");
+    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    set_floor(&game_state, "buyer", 1).await;
+
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "iron_sword",
+            DealKind::Buy,
+            -50,
+            "loyal customer",
+        )
+        .await;
+
+    assert!(matches!(buyer_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::DealResult {
+            accepted, message, ..
+        }) => {
+            assert!(!accepted);
+            assert!(message.contains("another floor"), "got: {message}");
+        }
+        other => panic!("Expected DealResult rejection for NPC, got {other:?}"),
     }
 }
 
@@ -2546,13 +2585,13 @@ async fn sell_item_applies_deal_bonus() {
 async fn cross_floor_shop_actions_leave_economy_state_unchanged() {
     let game_state = make_test_game_state("cross_floor_shop");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
-    {
-        let mut inventories = game_state.inventories.write().await;
-        let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
-        inv.bag.push(bag_item(7, "iron_sword", 1));
-        inv.bag.push(bag_item(8, "dagger", 1));
-        inventories.insert(pid("buyer"), inv);
-    }
+    game_state.inventories.write().await.insert(
+        pid("buyer"),
+        PlayerInventory {
+            bag: vec![bag_item(7, "iron_sword", 1), bag_item(8, "dagger", 1)],
+            ..Default::default()
+        },
+    );
 
     game_state
         .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
@@ -2561,13 +2600,7 @@ async fn cross_floor_shop_actions_leave_economy_state_unchanged() {
         let buybacks = game_state.buybacks.read().await;
         buybacks[&(1, "Rica".to_string())][0].entry.entry_id
     };
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("buyer"))
-        .unwrap()
-        .floor_level = 1;
+    set_floor(&game_state, "buyer", 1).await;
 
     while buyer_rx.try_recv().is_ok() {}
     let gold_before = game_state.get_player_gold(&pid("buyer")).await;
@@ -2592,13 +2625,7 @@ async fn cross_floor_shop_actions_leave_economy_state_unchanged() {
     let bag_after = game_state.inventories.read().await[&pid("buyer")]
         .bag
         .clone();
-    assert_eq!(bag_after.len(), bag_before.len());
-    for (after, before) in bag_after.iter().zip(&bag_before) {
-        assert_eq!(after.instance_id, before.instance_id);
-        assert_eq!(after.item_def_id, before.item_def_id);
-        assert_eq!(after.quantity, before.quantity);
-        assert_eq!(after.enchant, before.enchant);
-    }
+    assert_eq!(bag_after, bag_before);
     assert!(
         game_state.open_shops.read().await.is_empty(),
         "a rejected shop open must not register a hold"
@@ -3325,13 +3352,7 @@ async fn open_trade_pushes_shop_state_to_the_player() {
 async fn cross_floor_open_trade_is_rejected_before_reaching_the_player() {
     let game_state = make_test_game_state("cross_floor_open_trade");
     setup_resident_trade(&game_state, 1_000, vec![], vec![]).await;
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("seller"))
-        .unwrap()
-        .floor_level = 1;
+    set_floor(&game_state, "seller", 1).await;
     let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
     let mut npc_rx = game_state.register_direct_channel(&pid("npc_karl")).await;
 

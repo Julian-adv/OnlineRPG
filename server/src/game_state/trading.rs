@@ -5,6 +5,7 @@ use onlinerpg_shared::inventory::ItemInstance;
 use onlinerpg_shared::messages::{BuybackEntry, DealKind, StockEntry};
 use tracing::info;
 
+use super::combat::reachable_dist_sq;
 use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout};
 use super::StoredBuyback;
 
@@ -163,12 +164,14 @@ impl super::GameState {
         }
         let def = trader_def_by_name(&npc.name).ok_or("This NPC does not trade")?;
 
-        if player.floor_level != npc.floor_level {
-            return Err("The trader is on another floor");
-        }
-        let dx = onlinerpg_shared::shortest_world_delta_x(npc.position.x, player.position.x);
-        let dz = player.position.z - npc.position.z;
-        if dx * dx + dz * dz > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE {
+        let dist_sq = reachable_dist_sq(
+            player.position,
+            player.floor_level,
+            npc.position,
+            npc.floor_level,
+        )
+        .ok_or("The trader is on another floor")?;
+        if dist_sq > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE {
             return Err("Too far away to trade");
         }
 
@@ -229,17 +232,18 @@ impl super::GameState {
                 (Some(_), Some(target)) if target.is_official_npc => {
                     Err("trade windows can only be opened for players")
                 }
-                (Some(npc), Some(target)) if npc.floor_level != target.floor_level => {
-                    Err("the player is on another floor")
-                }
                 (Some(npc), Some(target)) => {
-                    let dx =
-                        onlinerpg_shared::shortest_world_delta_x(target.position.x, npc.position.x);
-                    let dz = npc.position.z - target.position.z;
-                    if dx * dx + dz * dz > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE {
-                        Err("the player is too far away to trade — ask them to come closer")
-                    } else {
-                        Ok(())
+                    match reachable_dist_sq(
+                        target.position,
+                        target.floor_level,
+                        npc.position,
+                        npc.floor_level,
+                    ) {
+                        None => Err("the player is on another floor"),
+                        Some(d) if d > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE => {
+                            Err("the player is too far away to trade — ask them to come closer")
+                        }
+                        Some(_) => Ok(()),
                     }
                 }
                 (None, _) => return,

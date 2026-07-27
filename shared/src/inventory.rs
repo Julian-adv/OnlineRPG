@@ -78,7 +78,7 @@ impl std::str::FromStr for EquipSlot {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemInstance {
     pub instance_id: u64,
     pub item_def_id: String,

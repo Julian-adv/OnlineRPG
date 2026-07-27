@@ -24,12 +24,12 @@ fn dropped_weapon_position(monster_position: Position) -> Position {
     offset_position_at_angle(monster_position, angle, WEAPON_DROP_OFFSET_METERS)
 }
 
-/// Squared XZ distance between attacker and target, or `None` when they sit on
-/// different floors or a position is non-finite. Both attack directions gate on
+/// Squared XZ distance between two participants, or `None` when they sit on
+/// different floors or a position is non-finite. Attack and trade paths gate on
 /// this before applying their own reach: floors are stacked (a dungeon depth
 /// runs directly under the overworld), so a same-XZ neighbour one floor away
 /// must never read as reachable.
-fn reachable_dist_sq(a: Position, a_floor: i8, b: Position, b_floor: i8) -> Option<f32> {
+pub(super) fn reachable_dist_sq(a: Position, a_floor: i8, b: Position, b_floor: i8) -> Option<f32> {
     if a_floor != b_floor {
         return None;
     }
