@@ -1,4 +1,8 @@
-import type { Position, PositionCorrection } from './networkTypes'
+import type {
+  FishingAction,
+  Position,
+  PositionCorrection,
+} from './networkTypes'
 import { hmrSingleton } from '../utils/hmr'
 import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
@@ -433,6 +437,18 @@ class NetworkManager {
 
   sendOpenDungeonChest(entranceId: string) {
     this.sendMessage({ OpenDungeonChest: { entrance_id: entranceId } })
+  }
+
+  sendFishingCast(position: Position) {
+    this.sendMessage({ FishingCast: { position } })
+  }
+
+  sendFishingRespond(action: FishingAction) {
+    this.sendMessage({ FishingRespond: { action } })
+  }
+
+  sendFishingStop() {
+    this.sendMessage('FishingStop')
   }
 
   sendBreakDungeonProp(entranceId: string, depth: number, propId: number) {

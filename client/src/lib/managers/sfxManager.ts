@@ -12,6 +12,23 @@ const SWORD_HIT_POOL_SIZE = 4
 const SWORD_MISS_POOL_SIZE = 4
 export const SWORD_MISS_DELAY_MS = 450
 
+const FISHING_CAST_SOUND_URL = '/sounds/fishing-cast.ogg'
+const FISHING_SPLASH_SOUND_URL = '/sounds/fishing-splash.ogg'
+const FISHING_PLOP_SOUND_URL = '/sounds/fishing-plop.ogg'
+const FISHING_REEL_SOUND_URL = '/sounds/fishing-reel.ogg'
+const FISHING_SNAP_SOUND_URL = '/sounds/fishing-snap.ogg'
+const FISHING_CATCH_SOUND_URL = '/sounds/fishing-catch.ogg'
+const FISHING_CAST_VOLUME = 0.45
+const FISHING_SPLASH_VOLUME = 0.5
+const FISHING_PLOP_VOLUME = 0.6
+const FISHING_REEL_VOLUME = 0.4
+const FISHING_SNAP_VOLUME = 0.5
+const FISHING_CATCH_VOLUME = 0.45
+// The reel fires every struggle round, so it gets a deeper pool; the rest are
+// one-shot moments.
+const FISHING_REEL_POOL_SIZE = 4
+const FISHING_POOL_SIZE = 2
+
 const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
 const DEFAULT_SFX_VOLUME = 1
@@ -61,6 +78,7 @@ interface AudioPool {
 
 const swordHitPools = new Map<string, AudioPool>()
 const swordMissPools = new Map<string, AudioPool>()
+const fishingPools = new Map<string, AudioPool>()
 
 function canUseAudio(): boolean {
   return typeof Audio !== 'undefined'
@@ -97,9 +115,17 @@ function playAudioFromPool(
   pools: Map<string, AudioPool>,
   url: string,
   volume: number,
-  poolSize: number
+  poolSize: number,
+  delayMs = 0
 ) {
   preloadAudioPool(pools, url, volume, poolSize)
+  if (delayMs > 0) {
+    window.setTimeout(
+      () => playAudioFromPool(pools, url, volume, poolSize),
+      delayMs
+    )
+    return
+  }
 
   const pool = pools.get(url)
   if (!pool) return
@@ -155,5 +181,107 @@ export function playSwordMissSound(
     url,
     SWORD_MISS_VOLUME,
     SWORD_MISS_POOL_SIZE
+  )
+}
+
+export function preloadFishingSounds() {
+  preloadAudioPool(
+    fishingPools,
+    FISHING_CAST_SOUND_URL,
+    FISHING_CAST_VOLUME,
+    FISHING_POOL_SIZE
+  )
+  preloadAudioPool(
+    fishingPools,
+    FISHING_SPLASH_SOUND_URL,
+    FISHING_SPLASH_VOLUME,
+    FISHING_POOL_SIZE
+  )
+  preloadAudioPool(
+    fishingPools,
+    FISHING_PLOP_SOUND_URL,
+    FISHING_PLOP_VOLUME,
+    FISHING_POOL_SIZE
+  )
+  preloadAudioPool(
+    fishingPools,
+    FISHING_REEL_SOUND_URL,
+    FISHING_REEL_VOLUME,
+    FISHING_REEL_POOL_SIZE
+  )
+  preloadAudioPool(
+    fishingPools,
+    FISHING_SNAP_SOUND_URL,
+    FISHING_SNAP_VOLUME,
+    FISHING_POOL_SIZE
+  )
+  preloadAudioPool(
+    fishingPools,
+    FISHING_CATCH_SOUND_URL,
+    FISHING_CATCH_VOLUME,
+    FISHING_POOL_SIZE
+  )
+}
+
+export function playFishingCastSound() {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_CAST_SOUND_URL,
+    FISHING_CAST_VOLUME,
+    FISHING_POOL_SIZE
+  )
+}
+
+/** `delayMs` lets the caller line the splash up with the bobber landing
+ *  rather than the swing that threw it. */
+export function playFishingSplashSound(delayMs = 0) {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_SPLASH_SOUND_URL,
+    FISHING_SPLASH_VOLUME,
+    FISHING_POOL_SIZE,
+    delayMs
+  )
+}
+
+export function playFishingPlopSound() {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_PLOP_SOUND_URL,
+    FISHING_PLOP_VOLUME,
+    FISHING_POOL_SIZE
+  )
+}
+
+export function playFishingReelSound() {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_REEL_SOUND_URL,
+    FISHING_REEL_VOLUME,
+    FISHING_REEL_POOL_SIZE
+  )
+}
+
+export function playFishingSnapSound() {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_SNAP_SOUND_URL,
+    FISHING_SNAP_VOLUME,
+    FISHING_POOL_SIZE
+  )
+}
+
+export function playFishingCatchSound() {
+  if (!canUseAudio()) return
+  playAudioFromPool(
+    fishingPools,
+    FISHING_CATCH_SOUND_URL,
+    FISHING_CATCH_VOLUME,
+    FISHING_POOL_SIZE
   )
 }

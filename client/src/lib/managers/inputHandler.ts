@@ -1,5 +1,7 @@
 import { Vector2, Raycaster } from 'three'
 import * as THREE from 'three'
+import { get } from 'svelte/store'
+import { myFishingPhase } from '../stores/fishingStore'
 import type { Position } from '../utils/movementUtils'
 import type { WallDirection } from '../utils/house-geometry'
 
@@ -98,6 +100,12 @@ export type ClickIntent =
       position: Position
     }
   | { type: 'move_to_ground'; position: Position }
+  | {
+      /** Rod equipped + clicked point is underwater terrain: cast, don't walk. */
+      type: 'cast_fishing'
+      position: Position
+      distance: number
+    }
   | { type: 'none' }
 
 export interface RaycastContext {
@@ -114,6 +122,11 @@ export interface RaycastContext {
   playerPosition: Position
   playerFloorLevel: number
   isMonsterDead: (monsterId: string) => boolean
+  /** Main-hand item is a fishing rod — water clicks become casts. */
+  hasFishingRodEquipped?: boolean
+  /** Baked water surface height at a world XZ (sea level where none). Lets a
+   *  cast fire over rivers, whose beds sit above sea level, not just ocean. */
+  waterSurfaceAt?: (x: number, z: number) => number
 }
 
 /** Result of hovering a placed object that carries display text (e.g. signpost). */
@@ -438,6 +451,33 @@ class InputHandler {
     // behind them (pathfinding then routes around solid walls to the door).
     const groundHit = intersects.find((hit) => !isHouseWall(hit.object))
     if (groundHit) {
+      // Rod in hand + the baked water surface sits above the clicked terrain
+      // (depth > ~10 cm): this click is a cast, not a walk into the water.
+      // Using the water field (not just "y < 0") makes rivers castable too —
+      // their beds are above sea level but the channel surface is above the
+      // bed. The server re-validates, so this only decides cast-vs-walk.
+      const waterSurface = context.waterSurfaceAt?.(
+        groundHit.point.x,
+        groundHit.point.z
+      )
+      if (
+        context.hasFishingRodEquipped &&
+        context.playerFloorLevel === 0 &&
+        waterSurface !== undefined &&
+        waterSurface - groundHit.point.y > 0.1
+      ) {
+        const dx = groundHit.point.x - context.playerPosition.x
+        const dz = groundHit.point.z - context.playerPosition.z
+        return {
+          type: 'cast_fishing',
+          position: {
+            x: groundHit.point.x,
+            y: groundHit.point.y,
+            z: groundHit.point.z,
+          },
+          distance: Math.sqrt(dx * dx + dz * dz),
+        }
+      }
       return {
         type: 'move_to_ground',
         position: {
@@ -519,6 +559,16 @@ class InputHandler {
       return false
     }
     if (event.ctrlKey) return false
+
+    // SPACE and S belong to the fishing minigame during a bite/struggle;
+    // treating S as backward movement would abort the session server-side.
+    const fishingPhase = get(myFishingPhase)
+    if (
+      (fishingPhase === 'bite' || fishingPhase === 'struggle') &&
+      (event.code === 'Space' || event.code === 'KeyS')
+    ) {
+      return true
+    }
 
     if (event.code === 'KeyE' && !event.repeat) {
       this._interactJustPressed = true

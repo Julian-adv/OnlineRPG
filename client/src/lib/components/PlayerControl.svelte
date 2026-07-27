@@ -13,6 +13,7 @@
   import { groundItemManager } from '../managers/groundItemManager'
   import { combatController } from '../managers/combatController'
   import {
+    preloadFishingSounds,
     preloadSwordHitSound,
     preloadSwordMissSound,
   } from '../managers/sfxManager'
@@ -26,7 +27,8 @@
     debugSpeedMode,
     torchLightEnabled,
   } from '../stores/debugStore'
-  import { localTorchEquipped } from '../stores/inventoryStore'
+  import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
+  import { getItemDef } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
     type Position,
@@ -118,6 +120,8 @@
     objectMeshes: THREE.Object3D[]
     propMeshes: THREE.Object3D[]
     attackCooldown?: number
+    /** Baked water surface height at a world XZ (for fishing cast detection). */
+    waterSurfaceAt?: (x: number, z: number) => number
   }
 
   let {
@@ -132,6 +136,7 @@
     objectMeshes,
     propMeshes,
     attackCooldown,
+    waterSurfaceAt,
   }: Props = $props()
 
   /** How far from a clicked barrel/crate the player stops while walking up to
@@ -1131,6 +1136,10 @@
         const m = monsterManager.monsters.get(id)
         return m?.state === 'dead' || false
       },
+      hasFishingRodEquipped:
+        getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
+          ?.category === 'fishing_rod',
+      waterSurfaceAt,
     })
   }
 
@@ -1226,6 +1235,24 @@
       moveToGround: (position) => {
         combatController.cancelCombat()
         handleClickToMove(position)
+      },
+      castFishing: (intent) => {
+        if (!currentPlayer || currentPlayer.health <= 0) return
+        // Stop and face the water before the cast — the server aborts a
+        // session on any movement, so a cast while pathing would cancel
+        // itself on the next waypoint send.
+        combatController.cancelCombat()
+        stopMovement()
+        const dx = intent.position.x - currentPlayer.position.x
+        const dz = intent.position.z - currentPlayer.position.z
+        if (dx !== 0 || dz !== 0) {
+          playerRotation = Math.atan2(dx, dz)
+          // Commit the facing to the rendered state too, or the model keeps
+          // its old rotation and casts over its shoulder.
+          setPlayerState({ ...playerState, rotation: playerRotation })
+        }
+        sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
+        networkManager.sendFishingCast(intent.position)
       },
       requestMove: handleClickToMove,
       onInteractionFinished,
@@ -1323,6 +1350,7 @@
   onMount(() => {
     preloadSwordHitSound()
     preloadSwordMissSound()
+    preloadFishingSounds()
 
     const removeInputListeners = inputHandler.setupEventListeners(
       renderer.domElement,

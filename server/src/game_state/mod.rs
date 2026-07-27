@@ -60,6 +60,7 @@ mod chat;
 pub(crate) use chat::parse_notice_command;
 mod combat;
 mod deals;
+pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
 mod inventory;
@@ -68,6 +69,8 @@ mod passability;
 mod player;
 pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
+mod skills;
+pub(crate) use skills::skills_from_rows;
 mod time;
 mod trading;
 
@@ -128,6 +131,21 @@ pub struct GameState {
     /// player_id → current gold (smallest currency unit). Kept out of the
     /// broadcast `Player` struct: gold is private to its owner.
     player_gold: Arc<RwLock<HashMap<PlayerId, i64>>>,
+    /// player_id → trained skills. Private to its owner like gold; delivered
+    /// via `SkillsUpdate` on join and `SkillXpGained` on change.
+    player_skills: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::skills::Skills>>>,
+    /// Players whose skills changed since the last periodic save.
+    dirty_skills: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Live fishing sessions, one per player, advanced by `tick_fishing`.
+    fishing_sessions: Arc<RwLock<HashMap<PlayerId, fishing::FishingSession>>>,
+    /// Server-side terrain heights (tile-cached). Fishing's water check is
+    /// its first gameplay consumer; sampled only in async handlers, never
+    /// in ticks.
+    height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
+    /// Server-side unified water surface (sea + rivers, tile-cached). Paired
+    /// with `height_sampler` so fishing's water check covers rivers, whose
+    /// beds sit above sea level, not just the ocean.
+    water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     housing_io: Arc<HousingIO>,
     /// Players whose state has changed since the last periodic save.
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
@@ -195,6 +213,7 @@ pub struct GameState {
 }
 
 impl GameState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         monster_defs: MonsterDefs,
         item_defs: ItemDefs,
@@ -203,6 +222,8 @@ impl GameState {
         housing_io: Arc<HousingIO>,
         no_spawn_zones: Vec<NoSpawnZone>,
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
+        height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
+        water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
 
@@ -224,6 +245,11 @@ impl GameState {
             direct_channels: Arc::new(RwLock::new(HashMap::new())),
             player_characters: Arc::new(RwLock::new(HashMap::new())),
             player_gold: Arc::new(RwLock::new(HashMap::new())),
+            player_skills: Arc::new(RwLock::new(HashMap::new())),
+            dirty_skills: Arc::new(RwLock::new(HashSet::new())),
+            fishing_sessions: Arc::new(RwLock::new(HashMap::new())),
+            height_sampler,
+            water_sampler,
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),

@@ -46,6 +46,17 @@ pub struct ItemRow {
     pub enchant: i32,
 }
 
+/// One trained skill as stored in `character_skills`. The skill id is kept as
+/// its wire string (`SkillId::as_str`) so rows written by a newer server
+/// survive a rollback: unknown ids load as rows, get skipped at the
+/// `Skills` conversion, and are preserved on the next save.
+#[derive(Debug, Clone)]
+pub struct SkillRow {
+    pub skill_id: String,
+    pub level: u32,
+    pub xp: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthService {
     pool: r2d2::Pool<SqliteConnectionManager>,
@@ -260,6 +271,34 @@ impl AuthService {
         Ok(())
     }
 
+    /// Upsert, not delete+insert like inventories: skills are only ever added
+    /// or advanced, and an upsert leaves rows a newer server wrote (unknown
+    /// skill ids) untouched across a rollback.
+    fn upsert_skills<'a>(
+        conn: &Connection,
+        skills: impl IntoIterator<Item = (i64, &'a [SkillRow])>,
+    ) -> Result<(), rusqlite::Error> {
+        let mut upsert = conn.prepare(
+            "INSERT INTO character_skills (character_id, skill_id, level, xp) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(character_id, skill_id) DO UPDATE SET
+                level = excluded.level,
+                xp = excluded.xp",
+        )?;
+
+        for (character_id, rows) in skills {
+            for row in rows {
+                upsert.execute(params![
+                    character_id,
+                    row.skill_id,
+                    row.level,
+                    row.xp as i64
+                ])?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn default_db_path() -> PathBuf {
         PathBuf::from("data/game_data.db")
     }
@@ -286,6 +325,7 @@ impl AuthService {
         Self::ensure_accounts_columns(&conn)?;
         Self::ensure_characters_schema(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
+        Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
         Self::ensure_dungeon_chest_schema(&conn)?;
 
@@ -435,6 +475,21 @@ impl AuthService {
                 entrance_id TEXT NOT NULL,
                 opened_game_seconds INTEGER NOT NULL,
                 PRIMARY KEY (character_id, entrance_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    fn ensure_character_skills_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_skills (
+                character_id INTEGER NOT NULL,
+                skill_id TEXT NOT NULL,
+                level INTEGER NOT NULL DEFAULT 0,
+                xp INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (character_id, skill_id),
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
             [],
@@ -904,9 +959,14 @@ impl AuthService {
         &self,
         characters: &[CharacterSaveData],
         inventories: &[(i64, Vec<ItemRow>)],
+        skills: &[(i64, Vec<SkillRow>)],
         world_time: Option<&GameDateTime>,
     ) -> Result<(), AuthError> {
-        if characters.is_empty() && inventories.is_empty() && world_time.is_none() {
+        if characters.is_empty()
+            && inventories.is_empty()
+            && skills.is_empty()
+            && world_time.is_none()
+        {
             return Ok(());
         }
         let conn = self.open_connection()?;
@@ -918,6 +978,7 @@ impl AuthService {
                 .iter()
                 .map(|(id, items)| (*id, items.as_slice())),
         )?;
+        Self::upsert_skills(&tx, skills.iter().map(|(id, rows)| (*id, rows.as_slice())))?;
         if let Some(datetime) = world_time {
             Self::write_world_time(&tx, datetime)?;
         }
@@ -968,6 +1029,23 @@ impl AuthService {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
+
+    /// Load all trained skills for a character. Missing rows mean level 0.
+    pub fn load_skills(&self, character_id: i64) -> Result<Vec<SkillRow>, AuthError> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn
+            .prepare("SELECT skill_id, level, xp FROM character_skills WHERE character_id = ?1")?;
+        let rows = stmt
+            .query_map(params![character_id], |row| {
+                Ok(SkillRow {
+                    skill_id: row.get(0)?,
+                    level: row.get(1)?,
+                    xp: row.get::<_, i64>(2)? as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]
@@ -995,6 +1073,98 @@ mod tests {
         )
         .unwrap();
         assert!(auth.login_npc("npc_bob").is_err());
+    }
+
+    #[test]
+    fn skills_round_trip_and_upsert_preserves_unknown_rows() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_skills_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_skills_test").unwrap();
+        let attributes = CharacterAttributes {
+            r#str: 12,
+            dex: 12,
+            con: 12,
+            int: 12,
+            wis: 12,
+            cha: 12,
+            guard: 10,
+        };
+        let record = auth
+            .create_character(
+                &account,
+                "Fisherman",
+                &attributes,
+                16,
+                CharacterClass::Ranger,
+                Gender::Female,
+            )
+            .unwrap();
+
+        // Fresh character: no rows.
+        assert!(auth.load_skills(record.id).unwrap().is_empty());
+
+        // A row a "newer server" wrote must survive our saves (upsert, no delete).
+        auth.save_batch(
+            &[],
+            &[],
+            &[(
+                record.id,
+                vec![SkillRow {
+                    skill_id: "underwater_basketweaving".to_string(),
+                    level: 7,
+                    xp: 999,
+                }],
+            )],
+            None,
+        )
+        .unwrap();
+
+        auth.save_batch(
+            &[],
+            &[],
+            &[(
+                record.id,
+                vec![SkillRow {
+                    skill_id: "fishing".to_string(),
+                    level: 2,
+                    xp: 500,
+                }],
+            )],
+            None,
+        )
+        .unwrap();
+
+        let mut rows = auth.load_skills(record.id).unwrap();
+        rows.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].skill_id, "fishing");
+        assert_eq!(rows[0].level, 2);
+        assert_eq!(rows[0].xp, 500);
+        assert_eq!(rows[1].skill_id, "underwater_basketweaving");
+        assert_eq!(rows[1].xp, 999);
+
+        // Advancing a skill updates in place rather than duplicating the row.
+        auth.save_batch(
+            &[],
+            &[],
+            &[(
+                record.id,
+                vec![SkillRow {
+                    skill_id: "fishing".to_string(),
+                    level: 3,
+                    xp: 1400,
+                }],
+            )],
+            None,
+        )
+        .unwrap();
+        let rows = auth.load_skills(record.id).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter().find(|r| r.skill_id == "fishing").unwrap().xp,
+            1400
+        );
     }
 
     #[test]

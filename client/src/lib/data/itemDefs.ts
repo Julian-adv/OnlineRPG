@@ -28,11 +28,15 @@ export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
 }
 
-/** Categories that can be drunk/used from the bag. Extend as potions are added. */
+/** Categories that can be drunk/used from the bag. Extend as potions are added.
+ * Keep in sync with the server's `use_effect` dispatch (server/src/item_defs.rs):
+ * eating a fish heals by its dice, opening a coin pouch pays out its copper. */
 const CONSUMABLE_CATEGORIES = new Set([
   'healing_potion',
   'return_scroll',
   'enchant_scroll',
+  'fish',
+  'coin_catch',
 ])
 
 export function isConsumable(def: ItemDefinition): boolean {

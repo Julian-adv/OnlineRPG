@@ -12,6 +12,14 @@ import {
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
+import {
+  playFishingCastSound,
+  playFishingCatchSound,
+  playFishingPlopSound,
+  playFishingReelSound,
+  playFishingSnapSound,
+  playFishingSplashSound,
+} from '../managers/sfxManager'
 import { monsterManager } from '../managers/monsterManager'
 import { housingManager } from '../managers/housingManager'
 import { bridgeManager } from '../managers/bridgeManager'
@@ -20,6 +28,23 @@ import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { deathDropDelayQueue } from '../managers/deathDropDelay'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import { catchMessage } from './fishingMessages'
+import type { SkillId } from '../stores/skillsStore'
+import {
+  setSkills,
+  applySkillXp,
+  SKILL_DISPLAY_NAMES,
+} from '../stores/skillsStore'
+import {
+  myFishingPhase,
+  myStruggle,
+  setStruggleRound,
+  applyStruggleTension,
+  upsertBobber,
+  markBobberBite,
+  removeBobber,
+} from '../stores/fishingStore'
+import { getItemDef } from '../data/itemDefs'
 import {
   shopSession,
   applyDealUpdate,
@@ -34,6 +59,7 @@ import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
 import { whisperChatEntry } from '../chat-format'
+import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
 import type {
   AccountCharacter,
@@ -163,6 +189,8 @@ function addRemotePlayerToState(state: GameState, sp: ServerPlayer) {
 function removeRemotePlayerFromState(state: GameState, playerId: number) {
   remotePlayerManager.removePlayer(playerId)
   state.otherPlayers.delete(playerId)
+  // A leaving player's FishingEnded may never arrive; drop their bobber.
+  removeBobber(playerId)
 }
 
 export type MessageEvents = {
@@ -996,6 +1024,120 @@ export function handleServerMessage(
       } else if (previousLevel !== null && data.new_level < previousLevel) {
         addCombatMessage({
           text: `Level down. You are now level ${data.new_level}.`,
+          sender: 'local',
+        })
+      }
+      break
+    }
+
+    case 'SkillsUpdate':
+      setSkills(data.skills)
+      break
+
+    case 'FishingCasted': {
+      upsertBobber(data.player_id, data.position)
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('casting')
+        // The line whirs out on the swing; the splash waits for the bobber to
+        // actually land (the server's CAST_MS, read from shared wasm).
+        playFishingCastSound()
+        playFishingSplashSound(fishing_cast_ms())
+        addCombatMessage({ text: 'You cast your line.', sender: 'local' })
+      }
+      break
+    }
+
+    case 'FishingBite': {
+      markBobberBite(data.player_id)
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('bite')
+        playFishingPlopSound()
+        addCombatMessage({
+          text: 'Something bites! Hook it!',
+          sender: 'local',
+        })
+      }
+      break
+    }
+
+    case 'FishingStruggleRound': {
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        myFishingPhase.set('struggle')
+        setStruggleRound({
+          round: data.round,
+          totalRounds: data.total_rounds,
+          fishState: data.fish_state,
+          respondWithinMs: data.respond_within_ms,
+          tension: data.tension_pct,
+          startedAt: performance.now(),
+        })
+      }
+      break
+    }
+
+    case 'FishingRoundResult': {
+      if (get(gameStore).currentPlayer?.id === data.player_id) {
+        applyStruggleTension(data.tension_pct)
+        playFishingReelSound()
+      }
+      break
+    }
+
+    case 'FishingEnded': {
+      removeBobber(data.player_id)
+      const isSelf = get(gameStore).currentPlayer?.id === data.player_id
+      // Bystander celebration: everyone in radius hears about a trophy.
+      if (!isSelf && data.outcome?.Caught?.trophy) {
+        const { item_def_id, size_cm } = data.outcome.Caught
+        const who =
+          get(gameStore).otherPlayers.get(data.player_id)?.name ?? 'Someone'
+        const fishName = getItemDef(item_def_id)?.name ?? item_def_id
+        addCombatMessage({
+          text: `${who} landed a trophy ${fishName} — ${size_cm} cm!`,
+          sender: 'local',
+        })
+      }
+      if (isSelf) {
+        myFishingPhase.set('idle')
+        myStruggle.set(null)
+        const outcome = data.outcome
+        if (outcome === 'Escaped') {
+          playFishingSnapSound()
+          addCombatMessage({ text: 'The fish got away.', sender: 'local' })
+        } else if (outcome === 'Aborted') {
+          addCombatMessage({ text: 'You reel in your line.', sender: 'local' })
+        } else if (outcome?.Caught) {
+          playFishingCatchSound()
+          const { item_def_id, size_cm, trophy } = outcome.Caught
+          addCombatMessage({
+            text: catchMessage(
+              getItemDef(item_def_id),
+              item_def_id,
+              size_cm,
+              trophy
+            ),
+            sender: 'local',
+          })
+        }
+      }
+      break
+    }
+
+    case 'FishingError':
+      addCombatMessage({ text: data.message, sender: 'local' })
+      break
+
+    case 'SkillXpGained': {
+      const skillId = data.skill as SkillId
+      applySkillXp(skillId, Number(data.total_xp), data.new_level)
+      const skillName = SKILL_DISPLAY_NAMES[skillId] ?? skillId
+      addCombatMessage({
+        text: `You gained ${data.xp_amount} ${skillName} XP.`,
+        sender: 'local',
+      })
+      if (data.leveled_up) {
+        addCombatMessage({
+          text: `${skillName} is now level ${data.new_level}!`,
           sender: 'local',
         })
       }

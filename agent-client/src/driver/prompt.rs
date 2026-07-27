@@ -414,8 +414,51 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             crate::shop_info::format_price(*npc_gold),
         )),
         ServerMessage::TradeError { message } => Some(format!("[TradeError] {message}")),
+        // Fishing: only the endings reach the LLM (reflexes answered the
+        // rest). Word the outcome so the model knows what it can do next.
+        ServerMessage::FishingEnded { player_id, outcome } => {
+            if state.self_player_id.as_ref() != Some(player_id) {
+                return None;
+            }
+            use onlinerpg_shared::fishing::FishingOutcome;
+            Some(match outcome {
+                FishingOutcome::Caught {
+                    item_def_id,
+                    size_cm,
+                    trophy,
+                } => caught_line(item_def_id, *size_cm, *trophy),
+                FishingOutcome::Escaped => {
+                    "[Fishing] The fish got away. You can cast again with the fish action."
+                        .to_string()
+                }
+                FishingOutcome::Aborted => "[Fishing] You reeled in your line.".to_string(),
+            })
+        }
+        ServerMessage::FishingError { message } => Some(format!("[FishingError] {message}")),
         // Skip unknown/unhandled event types
         _ => None,
+    }
+}
+
+/// The `[Fishing]` line for a landed catch — category-aware next steps so
+/// the model knows what it can actually do: fish are edible/sellable, junk
+/// flotsam is (at best) sellable, a coin catch lands in the bag sealed and
+/// pays gold when opened with the `use` action. Pure (only reads the
+/// embedded item defs) so it's unit-testable; keep the phrasing in sync with
+/// the browser client's `catchMessage`
+/// (client/src/lib/network/fishingMessages.ts).
+fn caught_line(item_def_id: &str, size_cm: u16, trophy: bool) -> String {
+    match crate::item_defs::get(item_def_id).and_then(|d| d.category.as_deref()) {
+        Some("coin_catch") => format!(
+            "[Fishing] You hauled up a {item_def_id}. It is in your bag — use it to open it and collect the coins, or fish again."
+        ),
+        Some("fish") => format!(
+            "[Fishing] You caught a {item_def_id} ({size_cm} cm){}. It is in your bag — you can eat it, sell it, or fish again.",
+            if trophy { " — a TROPHY catch!" } else { "" }
+        ),
+        _ => format!(
+            "[Fishing] You fished up a {item_def_id}. It is in your bag — junk like this can be sold if a merchant pays for it, or dropped."
+        ),
     }
 }
 
@@ -503,4 +546,50 @@ fn format_schedule_context(
         line.push_str(&format!(" — using {action} (DO NOT move, you are resting)"));
     }
     Some(line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::caught_line;
+
+    // The wording contract with the LLM: each catch category tells the model
+    // what it can actually do next (against the real embedded item defs).
+
+    #[test]
+    fn a_fish_is_edible_and_sellable() {
+        let line = caught_line("raw_trout", 34, false);
+        assert!(line.contains("caught a raw_trout (34 cm)"), "{line}");
+        assert!(line.contains("eat it, sell it"), "{line}");
+        assert!(!line.contains("TROPHY"), "{line}");
+    }
+
+    #[test]
+    fn a_trophy_fish_celebrates() {
+        let line = caught_line("golden_sturgeon", 120, true);
+        assert!(line.contains("TROPHY"), "{line}");
+        assert!(line.contains("eat it, sell it"), "{line}");
+    }
+
+    #[test]
+    fn junk_is_not_presented_as_edible() {
+        let line = caught_line("old_boot", 40, false);
+        assert!(line.contains("fished up a old_boot"), "{line}");
+        assert!(
+            !line.contains("eat"),
+            "junk must not be offered as food: {line}"
+        );
+    }
+
+    #[test]
+    fn a_coin_catch_points_at_the_bag_and_the_use_action() {
+        let line = caught_line("sunken_coin_pouch", 12, false);
+        assert!(
+            line.contains("bag"),
+            "the pouch lands in the bag sealed: {line}"
+        );
+        assert!(
+            line.contains("use it to open it"),
+            "the model must learn the `use` action opens it: {line}"
+        );
+    }
 }

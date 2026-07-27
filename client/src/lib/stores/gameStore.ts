@@ -3,6 +3,8 @@ import { SvelteMap } from 'svelte/reactivity'
 import type { Vector3 } from 'three'
 import type { CharacterClass, Gender } from '../network/networkTypes'
 import { resetInventoryStore } from './inventoryStore'
+import { resetSkillsStore } from './skillsStore'
+import { resetFishingStore } from './fishingStore'
 import { groundItemManager } from '../managers/groundItemManager'
 
 export interface PlayerDamageInfo {
@@ -109,6 +111,8 @@ export const resetGameStore = () => {
   })
   isAdminUser.set(false)
   resetInventoryStore()
+  resetSkillsStore()
+  resetFishingStore()
   groundItemManager.reset()
 }
 

@@ -64,3 +64,20 @@ pub fn merchant_defs() -> &'static MerchantDefs {
     static DEFS: OnceLock<MerchantDefs> = OnceLock::new();
     DEFS.get_or_init(MerchantDefs::load)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_merchant_sells_the_fishing_rod() {
+        // Fishing is only reachable if a player can actually buy a rod — the
+        // rod is not a starter item, and it is (correctly) excluded from
+        // dungeon loot. Some merchant must stock it. See doc/FISHING.md.
+        let defs = MerchantDefs::load();
+        assert!(
+            defs.by_npc_name.values().any(|m| m.sells("fishing_rod")),
+            "no merchant sells fishing_rod — the rod would be unobtainable"
+        );
+    }
+}

@@ -483,6 +483,7 @@ pub async fn handle_connection(
     // no-op for that player id.
     if !shutdown_started.has_changed().unwrap_or(true) {
         if let Some(ref id) = state.player_id {
+            game_state.cancel_fishing_if_active(id).await;
             game_state.persist_and_detach_player(id, auth_service).await;
 
             game_state.unregister_direct_channel(id).await;
@@ -952,6 +953,19 @@ async fn handle_client_message(
                 .load_player_inventory(&id, character_id, auth_service)
                 .await;
 
+            // Load trained skills from DB (missing rows = never trained).
+            let skills = match auth_service.load_skills(character_id) {
+                Ok(rows) => crate::game_state::skills_from_rows(&rows),
+                Err(err) => {
+                    warn!(
+                        "Failed to load skills for character {}: {} — starting empty",
+                        character_id, err
+                    );
+                    Default::default()
+                }
+            };
+            game_state.register_player_skills(&id, skills.clone()).await;
+
             // The equipped off-hand is the authoritative carried-torch state.
             // Resolve it before add_player builds the late-join GameState snapshot.
             let inventory = game_state.get_player_inventory(&id).await;
@@ -984,6 +998,8 @@ async fn handle_client_message(
             responses.push(ServerMessage::GoldUpdate {
                 gold: selected_character.gold,
             });
+
+            responses.push(ServerMessage::SkillsUpdate { skills });
 
             if let Some(notice) = game_state.server_notice().await {
                 responses.push(ServerMessage::ServerNotice {
@@ -1021,6 +1037,8 @@ async fn handle_client_message(
             append,
         } => {
             if let Some(id) = &state.player_id {
+                // Walking away breaks fishing concentration (doc/FISHING.md).
+                game_state.cancel_fishing_if_active(id).await;
                 game_state
                     .update_player_position(
                         id,
@@ -1041,6 +1059,11 @@ async fn handle_client_message(
 
         ClientMessage::PlayerFloorChanged { floor_level } => {
             if let Some(id) = &state.player_id {
+                // Leaving the surface breaks concentration like movement does
+                // (casts only validate on floor 0).
+                if floor_level != 0 {
+                    game_state.cancel_fishing_if_active(id).await;
+                }
                 game_state.update_player_floor(id, floor_level).await;
             } else {
                 warn!("Received floor change from client that is not in game");
@@ -1109,9 +1132,34 @@ async fn handle_client_message(
 
         ClientMessage::PlayerAttack { monster_id } => {
             if let Some(id) = &state.player_id {
+                game_state.cancel_fishing_if_active(id).await;
                 game_state.broadcast_player_attack(id, monster_id).await;
             } else {
                 warn!("Received attack from client that is not in game");
+            }
+        }
+
+        ClientMessage::FishingCast { position } => {
+            if let Some(id) = &state.player_id {
+                game_state.start_fishing(id, position).await;
+            } else {
+                warn!("Received fishing cast from client that is not in game");
+            }
+        }
+
+        ClientMessage::FishingRespond { action } => {
+            if let Some(id) = &state.player_id {
+                game_state.respond_fishing(id, action).await;
+            } else {
+                warn!("Received fishing response from client that is not in game");
+            }
+        }
+
+        ClientMessage::FishingStop => {
+            if let Some(id) = &state.player_id {
+                game_state.stop_fishing(id).await;
+            } else {
+                warn!("Received fishing stop from client that is not in game");
             }
         }
 

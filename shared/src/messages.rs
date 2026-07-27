@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::character::{Character, CharacterAttributes, CharacterClass, Gender};
 use crate::entity::{Monster, MonsterState, Player};
 use crate::world::{GameDateTime, NoSpawnZone, Position};
-use crate::{housing, inventory};
+use crate::{fishing, housing, inventory, skills};
 
 /// Which side of a merchant trade a haggled deal applies to.
 /// `Buy` = the player buys from the merchant, `Sell` = the player sells to
@@ -310,6 +310,20 @@ pub enum ClientMessage {
     OpenTrade {
         target_player_id: PlayerId,
     },
+    /// Cast the equipped fishing rod at a water point. The server validates
+    /// rod, range, floor and water (water-field depth at the point) and
+    /// answers with a `FishingCasted` broadcast or a direct `FishingError`.
+    FishingCast {
+        position: Position,
+    },
+    /// Respond to the fish (currently only `Hook`, on a bite). Timing is
+    /// judged server-side against the bite deadline plus latency grace.
+    FishingRespond {
+        action: fishing::FishingAction,
+    },
+    /// Reel in deliberately. Also implied by moving, attacking or
+    /// disconnecting — any of them ends the session as `Aborted`.
+    FishingStop,
 }
 
 impl ClientMessage {
@@ -536,6 +550,65 @@ pub enum ServerMessage {
         leveled_up: bool,
         max_hp: u32,
         current_hp: u32,
+    },
+    /// Direct message: the receiving player's full trained-skill map, sent
+    /// once on EnterGame. Skills stay out of the broadcast `Player` struct —
+    /// like gold, they are private to their owner.
+    SkillsUpdate {
+        skills: skills::Skills,
+    },
+    /// Direct message: the receiving player gained skill XP (the trained-skill
+    /// mirror of `XpGained`). `xp_amount` is what was actually banked after
+    /// the level-cap clamp.
+    SkillXpGained {
+        skill: skills::SkillId,
+        xp_amount: u64,
+        total_xp: u64,
+        new_level: u32,
+        leveled_up: bool,
+    },
+    /// A player's cast landed: render their bobber at `position`. Broadcast
+    /// nearby (the caster included) so fishing is visible to passers-by.
+    FishingCasted {
+        player_id: PlayerId,
+        position: Position,
+    },
+    /// The bobber dipped — the angler has the shared bite window (plus
+    /// latency grace, judged server-side) to send `Hook`.
+    FishingBite {
+        player_id: PlayerId,
+    },
+    /// A struggle round opened: the fish is `fish_state`, answer with its
+    /// correct action within `respond_within_ms` (plus latency grace,
+    /// judged server-side). Broadcast — the state is public information by
+    /// design (agent parity), bystanders render the fight.
+    FishingStruggleRound {
+        player_id: PlayerId,
+        /// 1-based round number.
+        round: u32,
+        total_rounds: u32,
+        fish_state: fishing::FishState,
+        respond_within_ms: u32,
+        tension_pct: u32,
+    },
+    /// How the angler's response (or silence) landed: `correct` and the
+    /// tension meter after it. The next round (or the end) follows.
+    FishingRoundResult {
+        player_id: PlayerId,
+        correct: bool,
+        tension_pct: u32,
+    },
+    /// The session is over: despawn the bobber and, for the angler, show the
+    /// outcome. A caught fish also arrives via the normal `InventoryUpdated`
+    /// (or `GroundItemSpawned` when the bag couldn't take the weight).
+    FishingEnded {
+        player_id: PlayerId,
+        outcome: fishing::FishingOutcome,
+    },
+    /// Direct: a fishing request was refused (no rod, not water, too far…).
+    /// Mirrors `InventoryError`.
+    FishingError {
+        message: String,
     },
     Kicked {
         player_id: PlayerId,

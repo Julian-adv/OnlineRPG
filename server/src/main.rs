@@ -330,6 +330,17 @@ async fn main() {
     // areas come from world.json `ambientSpawns`, not per-region rectangles.
     let no_spawn_zones = world_config::load_no_spawn_zones_from_regions(&terrain_io).await;
 
+    // Extra TerrainIO handles on the same directory: the samplers want
+    // ownership and TerrainIO is only a path handle. Fishing's water check
+    // reads both — the heightmap (terrain bed) and the water field (sea +
+    // river surface).
+    let height_sampler = Arc::new(onlinerpg_terrain::height::HeightSampler::new(
+        TerrainIO::new(std::path::PathBuf::from(&args.terrain_dir)),
+    ));
+    let water_sampler = Arc::new(onlinerpg_terrain::water::WaterSampler::new(TerrainIO::new(
+        std::path::PathBuf::from(&args.terrain_dir),
+    )));
+
     let game_state = Arc::new(GameState::new(
         monster_defs,
         item_defs,
@@ -338,6 +349,8 @@ async fn main() {
         Arc::clone(&housing_io),
         no_spawn_zones,
         dungeon_defs,
+        height_sampler,
+        water_sampler,
     ));
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.
@@ -397,6 +410,19 @@ async fn main() {
         move || {
             let game_state = Arc::clone(&game_state_for_ground);
             async move { game_state.tick_ground_item_despawn().await }
+        },
+    ));
+
+    // Fishing session timers (cast → wait → bite → expiry). 250 ms is far
+    // inside every player-facing window; deadlines carry their own grace.
+    let game_state_for_fishing = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "fishing",
+        Duration::from_millis(250),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_fishing);
+            async move { game_state.tick_fishing().await }
         },
     ));
 

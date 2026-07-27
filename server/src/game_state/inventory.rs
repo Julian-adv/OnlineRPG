@@ -49,6 +49,23 @@ fn consume_one(inv: &mut PlayerInventory, instance_id: u64) {
 
 /// Serialize a PlayerInventory into the flat row format used by AuthService
 /// persistence.
+/// Where a hand-dropped item lands: a step in front of the player plus a
+/// small scatter, so a run of drops doesn't pile onto one pixel.
+fn drop_landing_position(origin: crate::types::Position, rotation: f32) -> crate::types::Position {
+    let (landing_angle, landing_distance) = {
+        let mut rng = rand::thread_rng();
+        (
+            rng.gen::<f32>() * std::f32::consts::TAU,
+            rng.gen::<f32>().sqrt() * 0.7,
+        )
+    };
+    crate::types::Position {
+        x: origin.x + rotation.sin() + landing_angle.cos() * landing_distance,
+        y: origin.y,
+        z: origin.z + rotation.cos() + landing_angle.sin() * landing_distance,
+    }
+}
+
 pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
     let mut rows: Vec<ItemRow> = inv
         .bag
@@ -261,6 +278,85 @@ impl super::GameState {
         true
     }
 
+    /// Award one unit of an item, respecting the carry-weight cap: stacks onto
+    /// an existing bag entry when the def says `stackable` (otherwise each unit
+    /// takes its own slot), and when the unit would not fit, spills it to the
+    /// ground at the player's feet instead — an award is never silently lost.
+    /// Fishing catches land here.
+    pub async fn award_item(&self, player_id: &PlayerId, item_def_id: &str) {
+        let Some((def_weight, stackable)) = self
+            .item_defs
+            .get(item_def_id)
+            .map(|d| (d.weight, d.stackable))
+        else {
+            warn!("award_item: unknown item_def_id {:?}", item_def_id);
+            return;
+        };
+        let max_weight = self.max_carry_weight(player_id).await;
+        // Reserved before the inventory lock; unused when the unit stacks
+        // onto an existing entry. A skipped id is cheaper than lock nesting.
+        let reserved_instance_id = self.next_instance_id().await;
+
+        enum Placement {
+            Bagged(PlayerInventory),
+            Overweight,
+        }
+        let placement =
+            {
+                let mut inventories = self.inventories.write().await;
+                let Some(inv) = inventories.get_mut(player_id) else {
+                    return;
+                };
+                if self.calc_total_weight(inv) + def_weight > max_weight {
+                    Placement::Overweight
+                } else {
+                    match inv.bag.iter_mut().find(|item| {
+                        stackable && item.item_def_id == item_def_id && item.enchant == 0
+                    }) {
+                        Some(stack) => stack.quantity += 1,
+                        None => {
+                            inv.bag.push(ItemInstance {
+                                instance_id: reserved_instance_id,
+                                item_def_id: item_def_id.to_string(),
+                                quantity: 1,
+                                enchant: 0,
+                            });
+                        }
+                    }
+                    Placement::Bagged(inv.clone())
+                }
+            };
+
+        match placement {
+            Placement::Bagged(snapshot) => {
+                self.mark_inventory_dirty(player_id).await;
+                self.send_inventory_snapshot(player_id, snapshot).await;
+            }
+            Placement::Overweight => {
+                let (position, floor_level) = {
+                    let players = self.players.read().await;
+                    match players.get(player_id) {
+                        Some(p) => (p.position, p.floor_level),
+                        None => return,
+                    }
+                };
+                self.send_system_message(player_id, "Too heavy to carry — it slips to the ground.")
+                    .await;
+                self.spawn_ground_item(
+                    GroundItem {
+                        instance_id: reserved_instance_id,
+                        item_def_id: item_def_id.to_string(),
+                        position,
+                        floor_level,
+                        enchant: 0,
+                    },
+                    None,
+                )
+                .await;
+            }
+        }
+    }
+
     pub async fn equip_item(&self, player_id: &PlayerId, instance_id: u64) {
         let (snapshot, torch_on) = {
             let mut inventories = self.inventories.write().await;
@@ -312,6 +408,7 @@ impl super::GameState {
         if let Some(torch_on) = torch_on {
             self.set_player_torch(player_id, torch_on).await;
         }
+        self.abort_fishing_if_rod_lost(player_id).await;
     }
 
     pub async fn unequip_item(&self, player_id: &PlayerId, slot: EquipSlot) {
@@ -341,6 +438,7 @@ impl super::GameState {
         if slot == EquipSlot::OffHand {
             self.set_player_torch(player_id, false).await;
         }
+        self.abort_fishing_if_rod_lost(player_id).await;
     }
 
     /// Use a consumable from the bag: resolve its effect and dispatch to the
@@ -383,7 +481,36 @@ impl super::GameState {
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
             }
+            UseEffect::OpenCoinPouch(dice) => {
+                self.use_coin_pouch(player_id, instance_id, &dice).await
+            }
         }
+    }
+
+    /// Open a fished-up coin pouch: roll its dice for the copper inside,
+    /// spend the pouch, and credit the wallet. The system line puts the
+    /// amount in the combat log; `award_copper` drives the gold popup.
+    async fn use_coin_pouch(&self, player_id: &PlayerId, instance_id: u64, dice: &str) {
+        let name = {
+            let inventories = self.inventories.read().await;
+            let def_id = inventories
+                .get(player_id)
+                .and_then(|inv| inv.bag.iter().find(|i| i.instance_id == instance_id))
+                .map(|item| item.item_def_id.clone());
+            match def_id {
+                Some(def_id) => self.item_name(&def_id),
+                // The pouch raced away since `use_item` resolved the effect.
+                None => return,
+            }
+        };
+        let copper = crate::game::combat::roll_dice(dice);
+        self.consume_one_and_sync(player_id, instance_id).await;
+        self.award_copper(player_id, i64::from(copper)).await;
+        self.send_system_message(
+            player_id,
+            format!("You open the {name} — {copper} copper spills out."),
+        )
+        .await;
     }
 
     /// Drink a healing potion: roll its dice and restore HP up to the cap.
@@ -628,13 +755,18 @@ impl super::GameState {
     }
 
     pub async fn drop_item(&self, player_id: &PlayerId, instance_id: u64) {
-        let (position, floor_level) = {
+        let (player_position, rotation, floor_level) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.position, p.floor_level),
+                Some(p) => (p.position, p.rotation, p.floor_level),
                 None => return,
             }
         };
+        // Scatter, or a run of drops piles onto one pixel under the player.
+        let preferred = drop_landing_position(player_position, rotation);
+        let position = self
+            .loot_drop_position(player_position, floor_level, preferred)
+            .await;
 
         let (snapshot, dropped, dropped_from_off_hand) = {
             let mut inventories = self.inventories.write().await;
@@ -679,6 +811,9 @@ impl super::GameState {
             self.set_player_torch(player_id, false).await;
         }
         self.spawn_ground_item(ground_item, None).await;
+        // Dropping the equipped rod is as much "putting it away" as
+        // unequipping it — same mid-session abort.
+        self.abort_fishing_if_rod_lost(player_id).await;
     }
 
     pub async fn debug_drop_item(&self, player_id: &PlayerId, item_def_id: &str) {
@@ -695,18 +830,7 @@ impl super::GameState {
             }
         };
 
-        let (landing_angle, landing_distance) = {
-            let mut rng = rand::thread_rng();
-            (
-                rng.gen::<f32>() * std::f32::consts::TAU,
-                rng.gen::<f32>().sqrt() * 0.7,
-            )
-        };
-        let position = crate::types::Position {
-            x: player_position.x + rotation.sin() + landing_angle.cos() * landing_distance,
-            y: player_position.y,
-            z: player_position.z + rotation.cos() + landing_angle.sin() * landing_distance,
-        };
+        let position = drop_landing_position(player_position, rotation);
 
         let instance_id = self.next_instance_id().await;
         self.spawn_ground_item(
@@ -852,6 +976,22 @@ impl super::GameState {
         .await;
     }
 
+    /// Credit loose copper to a player's wallet and tell them (`GoldUpdate` +
+    /// `GoldGained`). Shared by coin-pile pickups and fished-up coin catches.
+    pub(super) async fn award_copper(&self, player_id: &PlayerId, copper: i64) {
+        let new_gold = {
+            let mut gold_map = self.player_gold.write().await;
+            let wallet = gold_map.entry(*player_id).or_insert(0);
+            *wallet += copper;
+            *wallet
+        };
+        self.mark_dirty(player_id).await;
+        self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold: new_gold })
+            .await;
+        self.send_direct_message(player_id, ServerMessage::GoldGained { amount: copper })
+            .await;
+    }
+
     /// Pick up a dungeon coin pile: claim it (first picker wins), credit a
     /// random 1–10 copper to the wallet, then broadcast its removal to nearby
     /// players. Skips the bag/weight path entirely — it's currency, not loot.
@@ -874,17 +1014,7 @@ impl super::GameState {
         }
 
         let copper: i64 = rand::thread_rng().gen_range(1..=10);
-        let new_gold = {
-            let mut gold_map = self.player_gold.write().await;
-            let wallet = gold_map.entry(*player_id).or_insert(0);
-            *wallet += copper;
-            *wallet
-        };
-        self.mark_dirty(player_id).await;
-        self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold: new_gold })
-            .await;
-        self.send_direct_message(player_id, ServerMessage::GoldGained { amount: copper })
-            .await;
+        self.award_copper(player_id, copper).await;
         info!(
             "Player {} picked up a coin pile: +{} copper",
             self.player_name_of(player_id).await,

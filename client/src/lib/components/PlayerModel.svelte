@@ -25,6 +25,7 @@
   import {
     AnimationIndex,
     AnimationName,
+    FishingAnimationName,
     OffhandAnimationName,
     TORCH_IDLE_CLIP_NAMES,
   } from '../types/animations'
@@ -245,9 +246,17 @@
     return primarySkinnedMesh.skeleton.bones.find((bone) => bone.name === name)
   }
 
+  /// The rod's mesh is baked to the spear's hand-socket convention, which
+  /// leaves the tip pitched about 38 degrees below horizontal. Lift it in the
+  /// hand so the rod reads as held up — one offset covers standing, the cast
+  /// and the fishing idle. Measured: -38 degrees baseline, +6 degrees with
+  /// this applied.
+  const FISHING_ROD_PITCH = Math.PI / 4
+
   function attachWeaponModel(
     gltfScene: THREE.Object3D,
-    characterRoot: THREE.Object3D
+    characterRoot: THREE.Object3D,
+    itemDefId?: string | null
   ): boolean {
     const rightHandBone = findBoneByName(characterRoot, 'RightHand')
     if (!rightHandBone) {
@@ -258,6 +267,9 @@
     weaponObject = gltfScene.clone()
     // Offset from wrist bone toward palm so weapon looks gripped
     weaponObject.position.set(0, 0.08, 0)
+    if (itemDefId === 'fishing_rod') {
+      weaponObject.rotation.x = FISHING_ROD_PITCH
+    }
     rightHandBone.add(weaponObject)
     weaponAttached = true
     return true
@@ -336,7 +348,7 @@
     loadGLB(weaponModelPath).then((gltf) => {
       if (gen !== weaponAttachGeneration || !clonedScene) return
 
-      attachWeaponModel(gltf.scene, clonedScene)
+      attachWeaponModel(gltf.scene, clonedScene, itemDefId)
       attachedWeaponItemId = itemDefId
     })
   })
@@ -422,9 +434,16 @@
     if (socialLoading || socialClipsByName.size > 0) return
     socialLoading = true
     try {
-      const socialGltf = await loadGLB(CHARACTER_ANIMATION_PACK_PATHS.social)
-      const socialRawClips = getGltfAnimations(socialGltf)
-      for (const clip of socialRawClips) {
+      // Interaction-state clips come from two packs; both land in the same
+      // by-name map since interactionAnim is resolved purely by clip name.
+      const [socialGltf, fishingGltf] = await Promise.all([
+        loadGLB(CHARACTER_ANIMATION_PACK_PATHS.social),
+        loadGLB(CHARACTER_ANIMATION_PACK_PATHS.fishing),
+      ])
+      for (const clip of getGltfAnimations(socialGltf)) {
+        socialClipsByName.set(clip.name, clip)
+      }
+      for (const clip of getGltfAnimations(fishingGltf)) {
         socialClipsByName.set(clip.name, clip)
       }
     } finally {
@@ -450,9 +469,13 @@
     // Check if mixer and animations are available
     if (!mixer || validAnimations.length === 0) return
 
-    // Hide weapons during interact animations
+    // Hide weapons during interact animations — except fishing, where the
+    // held rod IS the point of the stance.
+    const fishingInteraction =
+      interactionAnim === FishingAnimationName.CAST ||
+      interactionAnim === FishingAnimationName.IDLE
     if (weaponObject) {
-      weaponObject.visible = playerState !== 'interact'
+      weaponObject.visible = playerState !== 'interact' || fishingInteraction
     }
     if (offhandObject) {
       offhandObject.visible = playerState !== 'interact'
@@ -521,7 +544,10 @@
 
     const newAction = mixer.clipAction(clip)
 
-    const playOnce = playerState !== 'moving'
+    // The fishing idle is a stance held for the whole wait, not a one-shot
+    // gesture like pickup — it loops until the fishing session ends.
+    const playOnce =
+      playerState !== 'moving' && interactionAnim !== FishingAnimationName.IDLE
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce

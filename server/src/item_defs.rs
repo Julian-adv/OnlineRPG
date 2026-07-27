@@ -36,6 +36,23 @@ pub struct ItemDefinition {
     /// equipped items and added to the wearer's base guard when attacked.
     #[serde(default)]
     pub guard: Option<i32>,
+    /// Fish only — rarity tier 1 (common) … 5 (legendary). Drives catch
+    /// weighting and skill XP (doc/FISHING.md).
+    #[serde(rename = "rarityTier", default)]
+    pub rarity_tier: Option<u32>,
+    /// Fish only — relative weight in the catch table at fishing level 0.
+    #[serde(rename = "catchWeight", default)]
+    pub catch_weight: Option<u32>,
+    /// Fish only — the fishing level a catch is locked behind. Absent or 0
+    /// means available from the first cast.
+    #[serde(rename = "minFishingLevel", default)]
+    pub min_fishing_level: Option<u32>,
+    /// Fish only — dice notation for rolled length in centimeters.
+    #[serde(rename = "sizeDice", default)]
+    pub size_dice: Option<String>,
+    /// Fish only — rolled length at or above this is a trophy catch.
+    #[serde(rename = "trophyCm", default)]
+    pub trophy_cm: Option<u32>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -47,11 +64,46 @@ pub enum UseEffect {
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
     EnchantWeapon,
+    /// Open a fished-up coin pouch: roll the given dice for its copper.
+    OpenCoinPouch(String),
 }
 
 impl ItemDefinition {
     pub fn is_weapon(&self) -> bool {
         self.category.as_deref() == Some("weapon")
+    }
+
+    /// Main-hand tool that enables casting (`ClientMessage::FishingCast`).
+    /// Not a weapon: no damage dice, so attacking with it rod-in-hand uses
+    /// the bare-handed path.
+    pub fn is_fishing_rod(&self) -> bool {
+        self.category.as_deref() == Some("fishing_rod")
+    }
+
+    pub fn is_fish(&self) -> bool {
+        self.category.as_deref() == Some("fish")
+    }
+
+    /// A catch that lands in the bag sealed and pays out coins when opened
+    /// (`use_item`). Its `dice` column is the copper roll (the
+    /// category-decides-meaning pattern: weapon → damage, fish/potion →
+    /// heal, coin_catch → gold). Production code dispatches through
+    /// `use_effect`; the tests keep this named predicate for the economy
+    /// guardrail.
+    #[cfg(test)]
+    pub fn is_coin_catch(&self) -> bool {
+        self.category.as_deref() == Some("coin_catch")
+    }
+
+    /// Whether a catch of this item at `size_cm` is a trophy. Trophies are
+    /// a fish concept — a nat-20 Old Boot is still just a (very large) boot —
+    /// and fire on the natural-20 quality roll or on meeting `trophyCm`.
+    pub fn trophy_at(&self, size_cm: u16, nat_twenty: bool) -> bool {
+        self.is_fish()
+            && (nat_twenty
+                || self
+                    .trophy_cm
+                    .is_some_and(|threshold| u32::from(size_cm) >= threshold))
     }
 
     /// Damage dice if this item is a weapon, else `None`.
@@ -68,8 +120,11 @@ impl ItemDefinition {
     pub fn use_effect(&self) -> Option<UseEffect> {
         match self.category.as_deref()? {
             "healing_potion" => self.dice.clone().map(UseEffect::Heal),
+            // Eating a fish heals by its dice — same plumbing as potions.
+            "fish" => self.dice.clone().map(UseEffect::Heal),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
+            "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
             _ => None,
         }
     }
@@ -129,11 +184,15 @@ impl ItemDefs {
 
     /// Equippable items at or above a price floor — the dungeon treasure
     /// chest loot pool. Sorted for determinism before the caller shuffles.
+    /// Fishing rods are excluded: they are tools you buy from a merchant, not
+    /// endgame combat treasure, and their price would otherwise sneak them
+    /// into the chest pool (`doc/FISHING.md`).
     pub fn equipment_ids_with_min_price(&self, min_price: i64) -> Vec<String> {
         let mut ids: Vec<String> = self
             .defs
             .values()
             .filter(|def| def.equip_slot.is_some())
+            .filter(|def| !def.is_fishing_rod())
             .filter(|def| def.base_price.is_some_and(|p| p >= min_price))
             .map(|def| def.id.clone())
             .collect();
@@ -143,5 +202,189 @@ impl ItemDefs {
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
         self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
+    }
+
+    /// The fishing catch table: every item def with a `catchWeight` — fish,
+    /// junk flotsam (rarityTier 0 → no skill XP), and coin catches alike.
+    /// Sorted by id for a deterministic cumulative walk.
+    pub fn catch_table(&self) -> Vec<crate::game_state::fishing::CatchCandidate> {
+        let mut table: Vec<_> = self
+            .defs
+            .values()
+            .filter_map(|def| {
+                Some(crate::game_state::fishing::CatchCandidate {
+                    item_def_id: def.id.clone(),
+                    rarity: def.rarity_tier.unwrap_or(1),
+                    catch_weight: def.catch_weight?,
+                    min_fishing_level: def.min_fishing_level.unwrap_or(0),
+                })
+            })
+            .collect();
+        table.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
+        table
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
+
+    #[test]
+    fn fishing_rod_is_not_dungeon_chest_treasure() {
+        // Rods are bought, not looted from bosses. The category exclusion
+        // keeps that true even if a future rod tier is priced above the
+        // chest floor (today's 300c rod also sits below it — belt and braces).
+        let defs = ItemDefs::load();
+        let pool = defs.equipment_ids_with_min_price(2000);
+        assert!(
+            !pool.contains(&"fishing_rod".to_string()),
+            "fishing rod must not be in the dungeon chest loot pool"
+        );
+        // Sanity: real combat gear above the floor still is.
+        assert!(
+            pool.contains(&"iron_sword".to_string()),
+            "expected iron_sword in the chest pool"
+        );
+    }
+
+    #[test]
+    fn catch_table_spans_fish_junk_and_coins() {
+        let defs = ItemDefs::load();
+        let table = defs.catch_table();
+        let ids: Vec<&str> = table.iter().map(|c| c.item_def_id.as_str()).collect();
+        for expected in [
+            "raw_minnow",
+            "golden_sturgeon",
+            "old_boot",
+            "message_in_a_bottle",
+            "sunken_coin_pouch",
+        ] {
+            assert!(
+                ids.contains(&expected),
+                "{expected} missing from catch table"
+            );
+        }
+        // Junk and coin catches are rarity 0: the XP formula (10·rarity²)
+        // grants nothing for them, and only fish carry tiers ≥ 1.
+        for c in &table {
+            let def = defs.get(&c.item_def_id).unwrap();
+            if def.is_fish() {
+                assert!(c.rarity >= 1, "{} fish tier", c.item_def_id);
+            } else {
+                assert_eq!(c.rarity, 0, "{} must be tier 0 (no XP)", c.item_def_id);
+            }
+        }
+    }
+
+    /// The economy guardrail as a contract test: the expected *sell* value of
+    /// one catch must stay at coin-pile magnitude (the game's repeatable gold
+    /// faucet is 1–10c piles; a catch should be worth a couple of piles, not
+    /// a wage) — and it must hold at every fishing level, not just at level 0.
+    /// Averaging over raw `catchWeight` would only ever measure a beginner.
+    #[test]
+    fn expected_catch_value_stays_in_the_coin_pile_economy_at_every_level() {
+        fn dice_avg(notation: &str) -> f64 {
+            let (n, m) = notation.split_once('d').expect("NdM");
+            let n: f64 = n.parse().unwrap();
+            let m: f64 = m.parse().unwrap();
+            n * (m + 1.0) / 2.0
+        }
+        let defs = ItemDefs::load();
+        let table = defs.catch_table();
+        let ev_at = |level: u32| -> f64 {
+            let weights = crate::game_state::fishing::effective_weights(&table, level);
+            let total: f64 = weights.iter().map(|w| *w as f64).sum();
+            weights
+                .iter()
+                .zip(&table)
+                .map(|(weight, c)| {
+                    let def = defs.get(&c.item_def_id).unwrap();
+                    let value = if def.is_coin_catch() {
+                        // Coins arrive at face value.
+                        def.dice.as_deref().map_or(0.0, dice_avg)
+                    } else {
+                        // Items sell at the merchant rate (Rica: 40%).
+                        def.base_price.unwrap_or(0) as f64 * 0.4
+                    };
+                    *weight as f64 * value
+                })
+                .sum::<f64>()
+                / total
+        };
+
+        let evs: Vec<f64> = (0..=SKILL_LEVEL_CAP).map(ev_at).collect();
+        for (level, ev) in evs.iter().enumerate() {
+            assert!(
+                (5.0..=25.0).contains(ev),
+                "expected sell value per catch at level {level} is {ev:.1}c — outside \
+                 the 5–25c coin-pile band"
+            );
+        }
+        assert!(
+            evs.windows(2).all(|w| w[1] >= w[0]),
+            "skill should never make an angler poorer"
+        );
+        // Mastery pays a better wage, not a different economy. Without this
+        // the old additive weighting reached 10x and no test noticed.
+        assert!(
+            evs[evs.len() - 1] <= 4.0 * evs[0],
+            "level {SKILL_LEVEL_CAP} earns {:.1}c vs {:.1}c at level 0 — that is a \
+             different economy, not a better wage",
+            evs[evs.len() - 1],
+            evs[0]
+        );
+    }
+
+    /// The flotsam price sheet: gag junk is worthless by design, the bottle
+    /// pays a token, and the pouch pays through its dice — not a resale price.
+    #[test]
+    fn junk_pricing_matches_the_gag() {
+        let defs = ItemDefs::load();
+        assert!(
+            defs.get("old_boot").unwrap().base_price.is_none(),
+            "a boot is worthless by design"
+        );
+        assert!(defs.get("clump_of_kelp").unwrap().base_price.is_none());
+        assert_eq!(
+            defs.get("message_in_a_bottle").unwrap().base_price,
+            Some(15)
+        );
+        let pouch = defs.get("sunken_coin_pouch").unwrap();
+        assert!(pouch.is_coin_catch());
+        assert_eq!(pouch.dice.as_deref(), Some("3d8"));
+        assert!(
+            pouch.base_price.is_none(),
+            "the pouch pays via its dice, not a merchant sale"
+        );
+    }
+
+    /// Trophies are gated to fish: junk never celebrates, a natural 20 always
+    /// does on a fish, and the size threshold is an exact boundary.
+    #[test]
+    fn trophies_are_a_fish_concept() {
+        let defs = ItemDefs::load();
+        let boot = defs.get("old_boot").unwrap();
+        assert!(
+            !boot.trophy_at(200, true),
+            "a nat-20 boot is still just a boot"
+        );
+        let minnow = defs.get("raw_minnow").unwrap();
+        assert!(
+            minnow.trophy_at(1, true),
+            "a natural 20 is always a trophy on a fish"
+        );
+        let trout = defs.get("raw_trout").unwrap();
+        let threshold = trout.trophy_cm.unwrap() as u16;
+        assert!(trout.trophy_at(threshold, false));
+        assert!(!trout.trophy_at(threshold - 1, false));
+    }
+
+    #[test]
+    fn fishing_rod_is_a_rod_not_a_weapon() {
+        let defs = ItemDefs::load();
+        let rod = defs.get("fishing_rod").expect("fishing_rod def");
+        assert!(rod.is_fishing_rod());
+        assert!(!rod.is_weapon(), "the rod must not deal weapon damage");
     }
 }

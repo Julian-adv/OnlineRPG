@@ -269,6 +269,29 @@
     def?.worldModel || worldModelScene ? null : makeNameTexture(label)
   )
 
+  // Icon billboard for items with no world model (fish, jewellery, armor):
+  // the inventory icon floats over the spot instead of a placeholder box.
+  const ICON_SPRITE_SIZE = 0.55
+  let iconTexture = $state<THREE.Texture | null>(null)
+  $effect(() => {
+    const icon = !def?.worldModel && def?.icon ? def.icon : null
+    if (!icon) {
+      iconTexture = null
+      return
+    }
+    let cancelled = false
+    new THREE.TextureLoader().load(`/items/${icon}`, (tex) => {
+      if (cancelled) return
+      tex.colorSpace = THREE.SRGBColorSpace
+      iconTexture = tex
+    })
+    return () => {
+      cancelled = true
+      iconTexture?.dispose()
+      iconTexture = null
+    }
+  })
+
   onDestroy(() => {
     nameTexture?.dispose()
     sparkTexture.dispose()
@@ -494,10 +517,16 @@
       <T.Group bind:ref={groundParentRef} />
 
       {#if !worldModelScene}
-        <T.Mesh>
-          <T.BoxGeometry args={[0.3, 0.3, 0.3]} />
-          <T.MeshStandardMaterial color="#f0c040" />
-        </T.Mesh>
+        {#if iconTexture}
+          <T.Sprite scale={[ICON_SPRITE_SIZE, ICON_SPRITE_SIZE, 1]}>
+            <T.SpriteMaterial map={iconTexture} transparent={true} />
+          </T.Sprite>
+        {:else}
+          <T.Mesh>
+            <T.BoxGeometry args={[0.3, 0.3, 0.3]} />
+            <T.MeshStandardMaterial color="#f0c040" />
+          </T.Mesh>
+        {/if}
 
         {#if nameTexture}
           <T.Sprite position.y={0.5} scale={[label.length * 0.08, 0.2, 1]}>

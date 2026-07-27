@@ -7,12 +7,14 @@
 pub mod character;
 pub mod dungeon;
 pub mod entity;
+pub mod fishing;
 pub mod furniture;
 pub mod housing;
 pub mod inventory;
 pub mod messages;
 pub mod monster_ai;
 pub mod pathfinding;
+pub mod skills;
 pub mod tree_format;
 pub mod world;
 pub mod worldgen;
@@ -27,7 +29,10 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// meaning changes: clients we cannot redeploy (agent-clients on other
 /// machines) must be refused with an "update me" notice rather than left to
 /// fail at a random later message. See `doc/REMOTE_AGENT_CLIENT.md`.
-pub const PROTOCOL_VERSION: u32 = 6;
+/// v6: attack-rejection ack.
+/// v7: trained skills (SkillsUpdate/SkillXpGained) + fishing
+///     (cast/bite/struggle messages) — see `doc/FISHING.md`.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

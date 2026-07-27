@@ -30,6 +30,8 @@
     playerInsideHouseId,
   } from '../../stores/housingStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
+  import { myFishingPhase } from '../../stores/fishingStore'
+  import { FishingAnimationName } from '../../types/animations'
   import { dungeonManager } from '../../managers/dungeonManager'
   import { housingManager } from '../../managers/housingManager'
   import {
@@ -65,6 +67,8 @@
     monsterModels: (Monster | undefined)[]
     playerAttackDuration: number
     heightManager: TerrainHeightManager
+    /** Baked water surface height at a world XZ (for fishing cast detection). */
+    waterSurfaceAt?: (x: number, z: number) => number
     onStateChange: (newState: PlayerState) => void
     onPlayerControlEvent?: (event: PlayerControlEvent) => void
     onAttackDuration: (duration: number) => void
@@ -100,6 +104,7 @@
     monsterModels,
     playerAttackDuration,
     heightManager,
+    waterSurfaceAt,
     onStateChange,
     onPlayerControlEvent,
     onAttackDuration,
@@ -118,6 +123,26 @@
   $effect(() => {
     remotePlayerManager.attackAnimationDuration = playerAttackDuration
   })
+
+  // Local-player fishing stance: overrides only the 'idle' state, so
+  // movement/attack win and the PlayerControl FSM stays untouched.
+  let fishingCastDone = $state(false)
+  $effect(() => {
+    if ($myFishingPhase === 'casting') fishingCastDone = false
+  })
+  const fishingOverrideActive = $derived(
+    $myFishingPhase !== 'idle' && currentPlayerState.state === 'idle'
+  )
+  const effectivePlayerState = $derived(
+    fishingOverrideActive ? 'interact' : currentPlayerState.state
+  )
+  const effectiveInteractionAnim = $derived(
+    fishingOverrideActive
+      ? $myFishingPhase === 'casting' && !fishingCastDone
+        ? FishingAnimationName.CAST
+        : FishingAnimationName.IDLE
+      : currentPlayerState.interactionAnim
+  )
 
   // Visual floor: matches what remotes report, so a player on the stairs isn't
   // hidden from the floor they're still on. See playerVisualFloorLevel.
@@ -371,6 +396,7 @@
 {#if camera && currentPlayer}
   <PlayerControl
     bind:this={playerControl}
+    {waterSurfaceAt}
     {onStateChange}
     {camera}
     {heightManager}
@@ -405,8 +431,8 @@
     position={currentPlayer.position}
     name={currentPlayer.name}
     isCurrentPlayer={true}
-    playerState={currentPlayerState.state}
-    interactionAnim={currentPlayerState.interactionAnim}
+    playerState={effectivePlayerState}
+    interactionAnim={effectiveInteractionAnim}
     interactOffsetY={currentPlayerState.interactOffsetY}
     attackCounter={currentPlayerState.attackCounter}
     speed={currentPlayerState.speed}
@@ -421,6 +447,9 @@
     {onAttackDuration}
     onDyingFinished={onCurrentPlayerDyingFinished}
     onInteractionFinished={() => {
+      // The finished cast hands over to the looping fishing idle; the event
+      // still goes to the FSM, which ignores anims it didn't start.
+      if (fishingOverrideActive) fishingCastDone = true
       onPlayerControlEvent?.({ type: 'anim_interaction_finished' })
     }}
     onPickupGrab={() => {
