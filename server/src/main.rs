@@ -444,24 +444,25 @@ async fn main() {
         ))
         .layer(CompressionLayer::new());
     let terrain_addr = format!("{}:{}", args.api_bind, terrain_port);
-    let api_task = match TcpListener::bind(&terrain_addr).await {
+    let mut api_task = JoinSet::new();
+    match TcpListener::bind(&terrain_addr).await {
         Ok(terrain_listener) => {
             info!("Terrain REST API listening on: {}", terrain_addr);
             let api_shutdown = drain_shutdown.clone();
-            tokio::spawn(async move {
+            api_task.spawn(async move {
                 if let Err(e) = axum::serve(terrain_listener, terrain_app)
                     .with_graceful_shutdown(wait_for_shutdown(api_shutdown))
                     .await
                 {
                     error!("Terrain API server error: {}", e);
                 }
-            })
+            });
         }
         Err(e) => {
             error!("Failed to bind terrain API to {}: {}", terrain_addr, e);
             return;
         }
-    };
+    }
 
     info!("🎮 MMORPG Server started successfully!");
     info!("📡 WebSocket server ready for connections");
@@ -482,6 +483,15 @@ async fn main() {
             biased;
             _ = &mut signal => {
                 info!("Shutdown signal received; draining server");
+                game_state
+                    .set_server_notice(Some(SHUTDOWN_NOTICE.to_string()))
+                    .await;
+                break Instant::now() + SHUTDOWN_NOTICE_DURATION;
+            }
+            result = api_task.join_next(), if !api_task.is_empty() => {
+                // A dead REST API behind a live game listener is a partial
+                // outage systemd cannot see; drain and exit so it restarts us.
+                error!("Terrain REST API stopped unexpectedly ({result:?}); draining for restart");
                 game_state
                     .set_server_notice(Some(SHUTDOWN_NOTICE.to_string()))
                     .await;
@@ -524,9 +534,7 @@ async fn main() {
 
     game_state.persist_shutdown_snapshot(&auth_service).await;
 
-    if let Err(e) = api_task.await {
-        error!("Terrain API task failed during shutdown: {}", e);
-    }
+    drain(&mut api_task, "Terrain API").await;
 
     info!("Graceful shutdown complete");
 }
