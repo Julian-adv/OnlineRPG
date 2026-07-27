@@ -1245,7 +1245,12 @@
         stopMovement()
         const dx = intent.position.x - currentPlayer.position.x
         const dz = intent.position.z - currentPlayer.position.z
-        if (dx !== 0 || dz !== 0) playerRotation = Math.atan2(dx, dz)
+        if (dx !== 0 || dz !== 0) {
+          playerRotation = Math.atan2(dx, dz)
+          // Commit the facing to the rendered state too, or the model keeps
+          // its old rotation and casts over its shoulder.
+          setPlayerState({ ...playerState, rotation: playerRotation })
+        }
         sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
         networkManager.sendFishingCast(intent.position)
       },

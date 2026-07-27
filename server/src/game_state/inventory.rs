@@ -261,16 +261,18 @@ impl super::GameState {
         true
     }
 
-    /// Award one unit of a stackable item, respecting the carry-weight cap:
-    /// stacks onto an existing bag entry (or adds one), and when the unit
-    /// would not fit, spills it to the ground at the player's feet instead —
-    /// an award is never silently lost. Fishing catches land here.
-    pub async fn award_stackable_item(&self, player_id: &PlayerId, item_def_id: &str) {
-        let Some(def_weight) = self.item_defs.get(item_def_id).map(|d| d.weight) else {
-            warn!(
-                "award_stackable_item: unknown item_def_id {:?}",
-                item_def_id
-            );
+    /// Award one unit of an item, respecting the carry-weight cap: stacks onto
+    /// an existing bag entry when the def says `stackable` (otherwise each unit
+    /// takes its own slot), and when the unit would not fit, spills it to the
+    /// ground at the player's feet instead — an award is never silently lost.
+    /// Fishing catches land here.
+    pub async fn award_item(&self, player_id: &PlayerId, item_def_id: &str) {
+        let Some((def_weight, stackable)) = self
+            .item_defs
+            .get(item_def_id)
+            .map(|d| (d.weight, d.stackable))
+        else {
+            warn!("award_item: unknown item_def_id {:?}", item_def_id);
             return;
         };
         let max_weight = self.max_carry_weight(player_id).await;
@@ -282,32 +284,31 @@ impl super::GameState {
             Bagged(PlayerInventory),
             Overweight,
         }
-        let placement = {
-            let mut inventories = self.inventories.write().await;
-            let Some(inv) = inventories.get_mut(player_id) else {
-                return;
-            };
-            if self.calc_total_weight(inv) + def_weight > max_weight {
-                Placement::Overweight
-            } else {
-                match inv
-                    .bag
-                    .iter_mut()
-                    .find(|item| item.item_def_id == item_def_id && item.enchant == 0)
-                {
-                    Some(stack) => stack.quantity += 1,
-                    None => {
-                        inv.bag.push(ItemInstance {
-                            instance_id: reserved_instance_id,
-                            item_def_id: item_def_id.to_string(),
-                            quantity: 1,
-                            enchant: 0,
-                        });
+        let placement =
+            {
+                let mut inventories = self.inventories.write().await;
+                let Some(inv) = inventories.get_mut(player_id) else {
+                    return;
+                };
+                if self.calc_total_weight(inv) + def_weight > max_weight {
+                    Placement::Overweight
+                } else {
+                    match inv.bag.iter_mut().find(|item| {
+                        stackable && item.item_def_id == item_def_id && item.enchant == 0
+                    }) {
+                        Some(stack) => stack.quantity += 1,
+                        None => {
+                            inv.bag.push(ItemInstance {
+                                instance_id: reserved_instance_id,
+                                item_def_id: item_def_id.to_string(),
+                                quantity: 1,
+                                enchant: 0,
+                            });
+                        }
                     }
+                    Placement::Bagged(inv.clone())
                 }
-                Placement::Bagged(inv.clone())
-            }
-        };
+            };
 
         match placement {
             Placement::Bagged(snapshot) => {

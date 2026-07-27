@@ -698,8 +698,7 @@ impl GameState {
                 .unwrap_or(5);
             self.award_copper(player_id, i64::from(copper)).await;
         } else {
-            self.award_stackable_item(player_id, &fish.item_def_id)
-                .await;
+            self.award_item(player_id, &fish.item_def_id).await;
         }
         let xp = CATCH_XP_PER_RARITY_SQ * u64::from(fish.rarity) * u64::from(fish.rarity);
         self.add_skill_xp(player_id, SkillId::Fishing, xp).await;

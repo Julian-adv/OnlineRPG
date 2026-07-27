@@ -5478,7 +5478,7 @@ mod fishing_tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn caught_fish_stack_in_the_bag() {
+    async fn caught_fish_take_one_bag_slot_each() {
         let game_state = make_test_game_state("fishing_stacks");
         let (id, mut rx) = make_angler(&game_state, "angler_stacker").await;
 
@@ -5501,12 +5501,17 @@ mod fishing_tests {
         let inv = game_state.get_player_inventory(&id).await.unwrap();
         let total_fish: u32 = inv.bag.iter().map(|item| item.quantity).sum();
         assert_eq!(total_fish, bagged_catches);
-        // Stacking means fewer entries than catches unless every species
-        // differed; either way no entry may duplicate another's def id.
-        let mut ids: Vec<_> = inv.bag.iter().map(|i| i.item_def_id.clone()).collect();
-        ids.sort();
-        ids.dedup();
-        assert_eq!(ids.len(), inv.bag.len(), "one bag entry per species");
+        // Fish are not stackable, so every catch takes its own slot even when
+        // two of them are the same species, and no entry is ever merged.
+        assert_eq!(
+            inv.bag.len() as u32,
+            bagged_catches,
+            "each fish should occupy its own bag slot"
+        );
+        assert!(
+            inv.bag.iter().all(|item| item.quantity == 1),
+            "no fish entry should carry a quantity above one"
+        );
     }
 
     // The struggle: wrong answers pump tension until the fish escapes;
@@ -5965,7 +5970,7 @@ mod fishing_tests {
             .bag
             .push(bag_item(700, "torch", 150));
 
-        game_state.award_stackable_item(&id, "raw_minnow").await;
+        game_state.award_item(&id, "raw_minnow").await;
 
         assert!(
             drain(&mut rx).iter().any(|m| matches!(
