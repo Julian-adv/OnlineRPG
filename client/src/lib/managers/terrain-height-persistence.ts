@@ -7,7 +7,8 @@ export async function loadHeightmap(
   terrainApiUrl: string,
   tileX: number,
   tileZ: number,
-  loadOriginal: (tileX: number, tileZ: number) => void
+  loadOriginal: (tileX: number, tileZ: number) => void,
+  onFreshLoad?: () => void
 ): Promise<Uint16Array> {
   const key = tileKey(tileX, tileZ)
   const cached = state.heightmaps.get(key)
@@ -29,6 +30,7 @@ export async function loadHeightmap(
       const data = new Uint16Array(buffer)
       state.heightmaps.set(key, data)
       loadOriginal(tileX, tileZ)
+      onFreshLoad?.()
       return data
     } catch (e) {
       console.error(`Failed to load heightmap (${tileX}, ${tileZ}):`, e)

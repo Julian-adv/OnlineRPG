@@ -47,18 +47,16 @@ export class TerrainHeightManager {
   private inflightHeightmaps = new Map<string, Promise<Uint16Array>>()
   private saveTimer: ReturnType<typeof setTimeout> | null = null
   private terrainApiUrl: string
-  private heightChangedListeners: HeightChangedCallback[] = []
+  private heightChangedListeners = new Set<HeightChangedCallback>()
 
   constructor() {
     this.terrainApiUrl = getTerrainApiUrl()
   }
 
   onHeightChanged(cb: HeightChangedCallback): () => void {
-    this.heightChangedListeners.push(cb)
+    this.heightChangedListeners.add(cb)
     return () => {
-      this.heightChangedListeners = this.heightChangedListeners.filter(
-        (l) => l !== cb
-      )
+      this.heightChangedListeners.delete(cb)
     }
   }
 
@@ -86,21 +84,15 @@ export class TerrainHeightManager {
   // --- Data loading ---
 
   async loadHeightmap(tileX: number, tileZ: number): Promise<Uint16Array> {
-    const key = tileKey(tileX, tileZ)
-    const shouldNotify =
-      !this.state.heightmaps.has(key) && !this.inflightHeightmaps.has(key)
-    const data = await doLoad(
+    return doLoad(
       this.state,
       this.inflightHeightmaps,
       this.terrainApiUrl,
       tileX,
       tileZ,
-      (tx, tz) => this.loadOriginalHeightmap(tx, tz)
+      (tx, tz) => this.loadOriginalHeightmap(tx, tz),
+      () => this.notifyHeightChanged([{ tileX, tileZ }])
     )
-    if (shouldNotify) {
-      this.notifyHeightChanged([{ tileX, tileZ }])
-    }
-    return data
   }
 
   async loadOriginalHeightmap(

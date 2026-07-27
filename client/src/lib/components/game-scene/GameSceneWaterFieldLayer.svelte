@@ -294,8 +294,9 @@
     }
   }
 
-  /** Brush edits: refresh the heightmap texture in place (no material
-   *  recompile), and re-evaluate water presence for inactive tiles. */
+  /** Height data changed or first loaded: refresh the heightmap texture in
+   *  place (no material recompile), and re-evaluate water presence for
+   *  inactive tiles (loadTile's inflight/active guards absorb load events). */
   function refreshTile(id: string, tileX: number, tileZ: number) {
     if (!heightManager) return
     const heightTex = heightTexMap.get(id)

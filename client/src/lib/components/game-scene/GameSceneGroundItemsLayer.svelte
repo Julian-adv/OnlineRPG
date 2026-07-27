@@ -16,6 +16,16 @@
   let animationTimeMs = $state(nowMs())
   let group = $state<THREE.Group | undefined>(undefined)
 
+  // One subscription for the whole layer; items re-derive their ground Y
+  // when height data changes or a tile first loads.
+  let heightRevision = $state(0)
+  $effect(() => {
+    if (!heightManager) return
+    return heightManager.onHeightChanged(() => {
+      heightRevision++
+    })
+  })
+
   // Floor filter: dungeon items only show on their depth, surface items
   // only above ground (matches the monster/player visibility rules).
   let viewerFloor = $derived(
@@ -39,6 +49,12 @@
 
 <T.Group bind:ref={group}>
   {#each itemEntries as [id, data] (id)}
-    <GroundItem {data} rotation={spinAngle} {animationTimeMs} {heightManager} />
+    <GroundItem
+      {data}
+      rotation={spinAngle}
+      {animationTimeMs}
+      {heightManager}
+      {heightRevision}
+    />
   {/each}
 </T.Group>

@@ -8,7 +8,7 @@
   import { createRng } from '../utils/simplex-noise'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
-  import { groundItemBaseY } from '../managers/ground-item-ground'
+  import { entityGroundY } from '../managers/entity-ground'
   import {
     evaluateSpawnAnimation,
     type GroundItemData,
@@ -19,6 +19,7 @@
     rotation?: number
     animationTimeMs?: number
     heightManager?: TerrainHeightManager
+    heightRevision?: number
   }
 
   let {
@@ -26,6 +27,7 @@
     rotation = 0,
     animationTimeMs = 0,
     heightManager,
+    heightRevision = 0,
   }: Props = $props()
 
   const def = $derived(getItemDef(data.itemDefId))
@@ -303,25 +305,18 @@
   )
   const displayX = $derived(data.position.x + (spawnTransform?.offsetX ?? 0))
   const displayZ = $derived(data.position.z + (spawnTransform?.offsetZ ?? 0))
-  let heightRevision = $state({})
-  $effect(() => {
-    const manager = heightManager
-    heightRevision = {}
-    if (!manager) return
-    return manager.onHeightChanged(() => {
-      heightRevision = {}
-    })
-  })
   const baseY = $derived.by(() => {
     void heightRevision
-    return groundItemBaseY(
-      heightManager ?? null,
-      data.floorLevel,
-      Boolean(data.inHand),
-      data.position.x,
-      data.position.z,
-      data.position.y
-    )
+    return data.inHand
+      ? data.position.y
+      : entityGroundY(
+          heightManager ?? null,
+          data.floorLevel,
+          data.position.x,
+          data.position.z,
+          data.position.y,
+          data.position.y
+        )
   })
   const displayY = $derived(baseY + restHover + (spawnTransform?.offsetY ?? 0))
   const shouldTiltToTerrain = $derived(!data.inHand && !spawnTransform)
