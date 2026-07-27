@@ -13,9 +13,10 @@ Available action types (use EXACTLY these field names):
 
 - Say in chat:
   {"type": "say", "message": "hello"}
-  Nearby characters hear it. To whisper privately to one player at any
-  distance, prefix "/w " and their name (a [Whisper] event means someone
-  whispered to you; answer the same way):
+  Nearby characters hear it. Players speak many languages; answer each
+  message in the language it was written in. To whisper privately to one
+  player at any distance, prefix "/w " and their name (a [Whisper] event
+  means someone whispered to you; answer the same way):
   {"type": "say", "message": "/w PlayerName hello"}
 
 - Attack a monster (use the monster's ID from the world state, field name MUST be "monster_id"):
