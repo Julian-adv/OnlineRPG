@@ -23,6 +23,19 @@ const MONSTERS_PATH = resolve(ROOT, 'data/monsters.json')
 const MODELS_DIR = resolve(ROOT, 'client/public/models')
 const OUT_PATH = resolve(ROOT, 'data/monster_attack_clips.json')
 
+// monsters.json is untracked authoring data; a checkout without it (CI, fresh
+// clone) builds from the committed output instead.
+if (!existsSync(MONSTERS_PATH)) {
+  if (existsSync(OUT_PATH)) {
+    console.log('data/monsters.json missing — keeping committed attack clips')
+    process.exit(0)
+  }
+  console.error(
+    'data/monsters.json missing and no committed data/monster_attack_clips.json to fall back on'
+  )
+  process.exit(1)
+}
+
 const modelPath = (m) => resolve(MODELS_DIR, m.model)
 const monsters = Object.values(
   JSON.parse(readFileSync(MONSTERS_PATH, 'utf8'))
