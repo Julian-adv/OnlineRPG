@@ -14,7 +14,7 @@
  *   node tools/extract-animation-durations.mjs --force   # regenerate always
  */
 
-import { writeFileSync } from 'fs'
+import { writeFileSync, existsSync } from 'fs'
 import { extractDurations } from './lib/glb-animations.mjs'
 import { upToDate } from './lib/stale.mjs'
 import { resolve, dirname } from 'path'
@@ -49,6 +49,13 @@ for (const relPath of GLB_FILES) {
   } catch (e) {
     console.warn(`⚠ Skipping ${relPath}: ${e.message}`)
   }
+}
+
+// All GLBs unreadable means an LFS-less checkout (CI) — keep the committed
+// durations instead of clobbering them with an empty file.
+if (Object.keys(allDurations).length === 0 && existsSync(OUT_PATH)) {
+  console.warn('no readable GLBs — keeping committed animation durations')
+  process.exit(0)
 }
 
 writeFileSync(OUT_PATH, JSON.stringify(allDurations, null, 2) + '\n')

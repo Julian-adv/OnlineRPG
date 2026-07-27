@@ -13,7 +13,14 @@
  *   node tools/measure-monster-attack-clips.mjs           # regenerate if stale
  *   node tools/measure-monster-attack-clips.mjs --force   # regenerate always
  */
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  openSync,
+  readSync,
+  closeSync,
+} from 'fs'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { extractDurations } from './lib/glb-animations.mjs'
@@ -41,6 +48,32 @@ if (upToDate(OUT_PATH, [MONSTERS_PATH, ...monsters.map(modelPath)])) {
     'monster attack clips up to date — skipping (use --force to regenerate)'
   )
   process.exit(0)
+}
+
+const isGlb = (p) => {
+  const buf = Buffer.alloc(4)
+  const fd = openSync(p, 'r')
+  readSync(fd, buf, 0, 4, 0)
+  closeSync(fd)
+  return buf.readUInt32LE(0) === 0x46546c67
+}
+
+// A checkout without LFS content (CI does a plain checkout to stay off the
+// LFS bandwidth quota) has pointer text files instead of GLBs — keep the
+// committed clips rather than measure garbage, mirroring how
+// measure-furniture-footprints.mjs handles missing tool deps.
+const models = [...new Set(monsters.map(modelPath))].filter(existsSync)
+if (!models.every(isGlb)) {
+  if (existsSync(OUT_PATH)) {
+    console.warn(
+      'models are git-lfs pointers, not GLBs — keeping committed attack clips'
+    )
+    process.exit(0)
+  }
+  console.error(
+    'models are git-lfs pointers and no committed data/monster_attack_clips.json to fall back on'
+  )
+  process.exit(1)
 }
 
 // Bosses reuse their base type's model, so measure each GLB once.
