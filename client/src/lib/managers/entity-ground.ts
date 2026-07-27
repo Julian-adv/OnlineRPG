@@ -16,7 +16,8 @@ export function entityGroundY(
   floorLevel: number,
   x: number,
   z: number,
-  fallbackY: number
+  fallbackY: number,
+  bridgeReferenceY: number | null = null
 ): number {
   const wx = wrapWorldX(x)
 
@@ -34,7 +35,7 @@ export function entityGroundY(
   if (rampY !== null) return rampY
   const houseY = housingManager.floorHeightAt(0, wx, z)
   if (houseY !== null) return houseY
-  const deckY = bridgeManager.findDeckYAt(wx, z, null)
+  const deckY = bridgeManager.findDeckYAt(wx, z, bridgeReferenceY)
   if (deckY !== null) return deckY
 
   // getHeightAtWorldPosition returns 0 for unloaded tiles rather than null,
