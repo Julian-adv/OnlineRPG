@@ -5510,6 +5510,39 @@ mod fishing_tests {
         assert!(drain(&mut rx).is_empty());
     }
 
+    /// A duplicated Hook (client double-send racing the round open) must not
+    /// be judged as a wrong round answer.
+    #[tokio::test(start_paused = true)]
+    async fn duplicate_hook_during_struggle_is_ignored() {
+        let game_state = make_test_game_state("fishing_dup_hook");
+        let (id, mut rx) = make_angler(&game_state, "angler_doublehook").await;
+
+        game_state.start_fishing(&id, water_target()).await;
+        advance_until_bite(&game_state, &mut rx).await;
+        game_state.respond_fishing(&id, FishingAction::Hook).await;
+        let fish_state = drain(&mut rx)
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMessage::FishingStruggleRound { fish_state, .. } => Some(fish_state),
+                _ => None,
+            })
+            .expect("struggle must open after the hook");
+
+        // The duplicate is swallowed: no round result, no tension.
+        game_state.respond_fishing(&id, FishingAction::Hook).await;
+        assert!(!drain(&mut rx)
+            .iter()
+            .any(|m| matches!(m, ServerMessage::FishingRoundResult { .. })));
+
+        // The round is still open and judges the real answer normally.
+        game_state
+            .respond_fishing(&id, fish_state.correct_action())
+            .await;
+        assert!(drain(&mut rx)
+            .iter()
+            .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: true, .. })));
+    }
+
     /// Neither fish nor junk stack, so every bagged catch is its own slot even
     /// when two of them are the same species — the bag reads as a catch log.
     #[tokio::test(start_paused = true)]

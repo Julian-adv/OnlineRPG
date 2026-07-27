@@ -10,6 +10,8 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
+    // OS key-repeat would answer the next round the instant it opens.
+    if (event.repeat) return
     const phase = $myFishing.phase
     if (phase === 'idle') return
     if (isTypingTarget(event.target)) return

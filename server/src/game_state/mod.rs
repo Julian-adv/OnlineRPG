@@ -141,6 +141,8 @@ pub struct GameState {
     /// Session count mirror, so the per-move cancel check costs one atomic
     /// load for the non-fishing majority instead of a lock.
     fishing_active: Arc<std::sync::atomic::AtomicUsize>,
+    /// Mints per-cast `session_id`s (fishing.rs re-verifies them in the tick).
+    next_fishing_session: Arc<std::sync::atomic::AtomicU64>,
     /// Server-side terrain heights (tile-cached). Fishing's water check is
     /// its first gameplay consumer; sampled only in async handlers, never
     /// in ticks.
@@ -252,6 +254,7 @@ impl GameState {
             dirty_skills: Arc::new(RwLock::new(HashSet::new())),
             fishing_sessions: Arc::new(RwLock::new(HashMap::new())),
             fishing_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            next_fishing_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             height_sampler,
             water_sampler,
             housing_io,

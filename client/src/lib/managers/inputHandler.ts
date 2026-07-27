@@ -147,6 +147,16 @@ class InputHandler {
   private readonly _fallbackGroundPoint = new THREE.Vector3()
   private readonly _fallbackGroundNormal = new THREE.Vector3(0, 1, 0)
 
+  constructor() {
+    // A key held since before the bite stays in keysPressed (no new keydown
+    // fires), and held S walks backward — aborting the session server-side.
+    myFishing.subscribe((f) => {
+      if (f.phase === 'bite' || f.phase === 'struggle') {
+        this.clearTransientInput()
+      }
+    })
+  }
+
   get hasKeysPressed(): boolean {
     return this.keysPressed.size > 0
   }

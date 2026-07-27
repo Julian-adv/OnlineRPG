@@ -61,6 +61,10 @@ pub(crate) struct FishingSession {
     pub phase: FishingPhase,
     pub rolled_fish: Option<RolledFish>,
     pub skill_level: u32,
+    /// Unique per cast. Tick-queued work re-verifies it, so a session that
+    /// was cancelled and re-cast between scan and handler is never touched
+    /// by the old session's due entries.
+    pub session_id: u64,
 }
 
 /// Pure catch-table entry, split out so the weighting is unit-testable
@@ -223,6 +227,9 @@ impl GameState {
                     },
                     rolled_fish: None,
                     skill_level,
+                    session_id: self
+                        .next_fishing_session
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 },
             );
         }
@@ -274,8 +281,9 @@ impl GameState {
                     tension,
                     ..
                 } => {
-                    if *responded {
-                        // Round already answered; ignore the duplicate.
+                    // Already answered, or a duplicated Hook racing the round
+                    // open — neither is a round answer.
+                    if *responded || action == FishingAction::Hook {
                         return;
                     }
                     let rarity = rarity_of(&session.rolled_fish);
@@ -374,11 +382,12 @@ impl GameState {
             return;
         }
         let now = Instant::now();
+        // Handlers re-verify the stamped session_id (and round) before acting.
         enum Due {
-            BobberLanded(PlayerId),
-            Bite(PlayerId, u32),
-            Expired(PlayerId),
-            StruggleMissed(PlayerId),
+            BobberLanded(PlayerId, u64, u32),
+            Bite(PlayerId, u64, u32),
+            Expired(PlayerId, u64),
+            StruggleMissed(PlayerId, u64, u32),
             PlayerGone(PlayerId),
         }
         let mut due = Vec::new();
@@ -394,12 +403,13 @@ impl GameState {
                     due.push(Due::PlayerGone(*player_id));
                     continue;
                 }
+                let sid = session.session_id;
                 match &session.phase {
                     FishingPhase::Casting { until } if now >= *until => {
-                        due.push(Due::BobberLanded(*player_id));
+                        due.push(Due::BobberLanded(*player_id, sid, session.skill_level));
                     }
                     FishingPhase::Waiting { bite_at } if now >= *bite_at => {
-                        due.push(Due::Bite(*player_id, session.skill_level));
+                        due.push(Due::Bite(*player_id, sid, session.skill_level));
                     }
                     FishingPhase::Bite { since }
                         if now
@@ -411,9 +421,10 @@ impl GameState {
                         // Doubled grace: a response that raced the deadline is
                         // judged in respond_fishing; the tick only reaps
                         // sessions nobody answered for.
-                        due.push(Due::Expired(*player_id));
+                        due.push(Due::Expired(*player_id, sid));
                     }
                     FishingPhase::Struggle {
+                        round,
                         deadline,
                         responded: false,
                         ..
@@ -421,7 +432,7 @@ impl GameState {
                         >= *deadline + Duration::from_millis(u64::from(2 * LATENCY_GRACE_MS)) =>
                     {
                         // Same doubled-grace contract as the bite reaper.
-                        due.push(Due::StruggleMissed(*player_id));
+                        due.push(Due::StruggleMissed(*player_id, sid, *round));
                     }
                     _ => {}
                 }
@@ -434,29 +445,26 @@ impl GameState {
                     self.end_fishing(&player_id, FishingOutcome::Aborted, 0)
                         .await;
                 }
-                Due::BobberLanded(player_id) => {
-                    let skill_level = {
-                        let sessions = self.fishing_sessions.read().await;
-                        let Some(session) = sessions.get(&player_id) else {
-                            continue;
-                        };
-                        session.skill_level
-                    };
+                Due::BobberLanded(player_id, sid, skill_level) => {
                     // rand's thread_rng is !Send: keep it inside an
                     // await-free block.
                     let wait_ms = roll_wait_ms(skill_level, &mut rand::thread_rng());
                     let mut sessions = self.fishing_sessions.write().await;
-                    if let Some(session) = sessions.get_mut(&player_id) {
+                    if let Some(session) =
+                        sessions.get_mut(&player_id).filter(|s| s.session_id == sid)
+                    {
                         session.phase = FishingPhase::Waiting {
                             bite_at: now + Duration::from_millis(wait_ms),
                         };
                     }
                 }
-                Due::Bite(player_id, skill_level) => {
+                Due::Bite(player_id, sid, skill_level) => {
                     let rolled = self.roll_fish(skill_level);
                     let bobber = {
                         let mut sessions = self.fishing_sessions.write().await;
-                        let Some(session) = sessions.get_mut(&player_id) else {
+                        let Some(session) =
+                            sessions.get_mut(&player_id).filter(|s| s.session_id == sid)
+                        else {
                             continue;
                         };
                         match rolled {
@@ -479,26 +487,32 @@ impl GameState {
                             .await;
                         }
                         None => {
-                            self.end_fishing(&player_id, FishingOutcome::Escaped, 0)
+                            self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, 0)
                                 .await;
                         }
                     }
                 }
-                Due::Expired(player_id) => {
-                    self.end_fishing(&player_id, FishingOutcome::Escaped, ESCAPE_XP)
+                Due::Expired(player_id, sid) => {
+                    self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, ESCAPE_XP)
                         .await;
                 }
-                Due::StruggleMissed(player_id) => {
+                Due::StruggleMissed(player_id, sid, missed_round) => {
                     let tension = {
                         let mut sessions = self.fishing_sessions.write().await;
-                        let Some(session) = sessions.get_mut(&player_id) else {
+                        let Some(session) =
+                            sessions.get_mut(&player_id).filter(|s| s.session_id == sid)
+                        else {
                             continue;
                         };
                         let rarity = rarity_of(&session.rolled_fish);
                         match &mut session.phase {
+                            // Round N's stale entry must not insta-miss N+1.
                             FishingPhase::Struggle {
-                                responded, tension, ..
-                            } if !*responded => {
+                                round,
+                                responded,
+                                tension,
+                                ..
+                            } if !*responded && *round == missed_round => {
                                 *responded = true;
                                 *tension += tension_miss_penalty(rarity);
                                 Some(*tension)
@@ -735,7 +749,31 @@ impl GameState {
     /// covers the hooked-but-lost consolation; catches grant theirs before
     /// calling in.
     async fn end_fishing(&self, player_id: &PlayerId, outcome: FishingOutcome, escape_xp: u64) {
-        let Some(session) = self.fishing_sessions.write().await.remove(player_id) else {
+        self.end_fishing_if(player_id, None, outcome, escape_xp)
+            .await
+    }
+
+    /// `expected_session` guards tick-driven endings: a session cancelled and
+    /// re-cast between the tick's scan and this call is left alone.
+    async fn end_fishing_if(
+        &self,
+        player_id: &PlayerId,
+        expected_session: Option<u64>,
+        outcome: FishingOutcome,
+        escape_xp: u64,
+    ) {
+        let session = {
+            let mut sessions = self.fishing_sessions.write().await;
+            match sessions.entry(*player_id) {
+                std::collections::hash_map::Entry::Occupied(e)
+                    if expected_session.is_none_or(|id| e.get().session_id == id) =>
+                {
+                    Some(e.remove())
+                }
+                _ => None,
+            }
+        };
+        let Some(session) = session else {
             return;
         };
         self.fishing_active
