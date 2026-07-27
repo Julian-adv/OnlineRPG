@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build:wasm": "npm run generate:footprints && npm run generate:monster-clips && npm run generate:animations && rm -rf src/lib/wasm && cd ../shared && wasm-pack build --target web --out-dir ../client/src/lib/wasm",
+    "build:wasm": "npm run generate:csv && npm run generate:footprints && npm run generate:monster-clips && npm run generate:animations && rm -rf src/lib/wasm && cd ../shared && wasm-pack build --target web --out-dir ../client/src/lib/wasm",
     "dev": "npm run build:wasm && vite",
     "build": "npm run build:wasm && vite build",
     "preview": "vite preview",

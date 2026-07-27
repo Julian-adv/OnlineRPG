@@ -5,7 +5,8 @@
  * `monster_ai` crate embeds at compile time, so the browser (wasm) and the
  * headless agent-client hold a swing for exactly as long as the clip they play.
  *
- * Authoring source is data/monsters.json (`model` + `animAttack`), so a clip
+ * Authoring source is data/monsters.json (generated from data-src/monsters.csv
+ * by generate:csv; `model` + `animAttack`), so a clip
  * re-exported at a different length needs a re-run rather than a hand-edited
  * number that can drift from the model.
  *
@@ -23,16 +24,10 @@ const MONSTERS_PATH = resolve(ROOT, 'data/monsters.json')
 const MODELS_DIR = resolve(ROOT, 'client/public/models')
 const OUT_PATH = resolve(ROOT, 'data/monster_attack_clips.json')
 
-// monsters.json is untracked authoring data; a checkout without it (CI, fresh
-// clone) builds from the committed output instead.
+// monsters.json is generated from data-src/monsters.csv; build:wasm runs
+// generate:csv first, so a missing file means that step was skipped.
 if (!existsSync(MONSTERS_PATH)) {
-  if (existsSync(OUT_PATH)) {
-    console.log('data/monsters.json missing — keeping committed attack clips')
-    process.exit(0)
-  }
-  console.error(
-    'data/monsters.json missing and no committed data/monster_attack_clips.json to fall back on'
-  )
+  console.error('data/monsters.json missing — run `npm run generate:csv` first')
   process.exit(1)
 }
 
