@@ -133,6 +133,9 @@ impl ItemDefinition {
 #[derive(Debug, Clone)]
 pub struct ItemDefs {
     defs: Arc<HashMap<String, ItemDefinition>>,
+    /// Precomputed at load — defs are immutable, and bites roll every ~5-12 s
+    /// per angler.
+    catch_table: Arc<Vec<crate::game_state::fishing::CatchCandidate>>,
 }
 
 impl ItemDefs {
@@ -149,8 +152,22 @@ impl ItemDefs {
             );
         }
 
+        let mut catch_table: Vec<_> = defs
+            .values()
+            .filter_map(|def| {
+                Some(crate::game_state::fishing::CatchCandidate {
+                    item_def_id: def.id.clone(),
+                    rarity: def.rarity_tier.unwrap_or(1),
+                    catch_weight: def.catch_weight?,
+                    min_fishing_level: def.min_fishing_level.unwrap_or(0),
+                })
+            })
+            .collect();
+        catch_table.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
+
         Self {
             defs: Arc::new(defs),
+            catch_table: Arc::new(catch_table),
         }
     }
 
@@ -207,21 +224,8 @@ impl ItemDefs {
     /// The fishing catch table: every item def with a `catchWeight` — fish,
     /// junk flotsam (rarityTier 0 → no skill XP), and coin catches alike.
     /// Sorted by id for a deterministic cumulative walk.
-    pub fn catch_table(&self) -> Vec<crate::game_state::fishing::CatchCandidate> {
-        let mut table: Vec<_> = self
-            .defs
-            .values()
-            .filter_map(|def| {
-                Some(crate::game_state::fishing::CatchCandidate {
-                    item_def_id: def.id.clone(),
-                    rarity: def.rarity_tier.unwrap_or(1),
-                    catch_weight: def.catch_weight?,
-                    min_fishing_level: def.min_fishing_level.unwrap_or(0),
-                })
-            })
-            .collect();
-        table.sort_by(|a, b| a.item_def_id.cmp(&b.item_def_id));
-        table
+    pub fn catch_table(&self) -> &[crate::game_state::fishing::CatchCandidate] {
+        &self.catch_table
     }
 }
 
@@ -267,7 +271,7 @@ mod tests {
         }
         // Junk and coin catches are rarity 0: the XP formula (10·rarity²)
         // grants nothing for them, and only fish carry tiers ≥ 1.
-        for c in &table {
+        for c in table {
             let def = defs.get(&c.item_def_id).unwrap();
             if def.is_fish() {
                 assert!(c.rarity >= 1, "{} fish tier", c.item_def_id);
@@ -293,11 +297,11 @@ mod tests {
         let defs = ItemDefs::load();
         let table = defs.catch_table();
         let ev_at = |level: u32| -> f64 {
-            let weights = crate::game_state::fishing::effective_weights(&table, level);
+            let weights = crate::game_state::fishing::effective_weights(table, level);
             let total: f64 = weights.iter().map(|w| *w as f64).sum();
             weights
                 .iter()
-                .zip(&table)
+                .zip(table)
                 .map(|(weight, c)| {
                     let def = defs.get(&c.item_def_id).unwrap();
                     let value = if def.is_coin_catch() {

@@ -1,50 +1,24 @@
 <script lang="ts">
   // Local player's fishing HUD. SPACE = hook/reel, S = give line, ESC = quit;
   // the server judges all timing regardless of what this UI shows.
-  import { myFishingPhase, myStruggle } from '../stores/fishingStore'
+  import { myFishing } from '../stores/fishingStore'
   import { networkManager } from '../network/socket'
-
-  let countdownPct = $state(100)
-  let raf: number | null = null
-
-  // Cosmetic countdown; the authoritative deadline is server-side.
-  $effect(() => {
-    const struggle = $myStruggle
-    if (!struggle) {
-      countdownPct = 100
-      if (raf !== null) cancelAnimationFrame(raf)
-      raf = null
-      return
-    }
-    const tick = () => {
-      const elapsed = performance.now() - struggle.startedAt
-      countdownPct = Math.max(
-        0,
-        100 - (elapsed / struggle.respondWithinMs) * 100
-      )
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => {
-      if (raf !== null) cancelAnimationFrame(raf)
-      raf = null
-    }
-  })
+  import { isTypingTarget } from '../utils/dom'
 
   function respond(action: 'hook' | 'reel' | 'giveline') {
     networkManager.sendFishingRespond(action)
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if ($myFishingPhase === 'idle') return
-    const target = event.target as HTMLElement
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
+    const phase = $myFishing.phase
+    if (phase === 'idle') return
+    if (isTypingTarget(event.target)) return
     if (event.code === 'Space') {
       event.preventDefault()
-      if ($myFishingPhase === 'bite') respond('hook')
-      else if ($myFishingPhase === 'struggle') respond('reel')
+      if (phase === 'bite') respond('hook')
+      else if (phase === 'struggle') respond('reel')
     } else if (event.code === 'KeyS') {
-      if ($myFishingPhase === 'struggle') {
+      if (phase === 'struggle') {
         event.preventDefault()
         respond('giveline')
       }
@@ -57,21 +31,27 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-{#if $myFishingPhase === 'casting'}
+{#if $myFishing.phase === 'casting'}
   <div class="fishing-prompt waiting">Fishing… watch the bobber</div>
-{:else if $myFishingPhase === 'bite'}
+{:else if $myFishing.phase === 'bite'}
   <button class="fishing-prompt bite" onclick={() => respond('hook')}>
     ! HOOK IT — press SPACE
   </button>
-{:else if $myFishingPhase === 'struggle' && $myStruggle}
-  {@const s = $myStruggle}
+{:else if $myFishing.phase === 'struggle'}
+  {@const s = $myFishing.struggle}
   <div class="struggle-panel">
     <div class="struggle-header">
       <span class="rounds">Round {s.round}/{s.totalRounds}</span>
-      <span class="countdown-track"
-        ><span class="countdown-fill" style={`width: ${countdownPct}%`}
-        ></span></span
-      >
+      <!-- Cosmetic countdown, restarted per round by the keyed block; the
+           authoritative deadline is server-side. -->
+      {#key s.round}
+        <span class="countdown-track"
+          ><span
+            class="countdown-fill"
+            style={`animation-duration: ${s.respondWithinMs}ms`}
+          ></span></span
+        >
+      {/key}
     </div>
     {#if s.fishState === 'pulling'}
       <button
@@ -181,7 +161,20 @@
   .countdown-fill {
     position: absolute;
     inset: 0 auto 0 0;
+    width: 100%;
     background: #e6edf3;
+    animation-name: countdown-drain;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+
+  @keyframes countdown-drain {
+    from {
+      width: 100%;
+    }
+    to {
+      width: 0%;
+    }
   }
 
   .struggle-action {

@@ -246,11 +246,8 @@
     return primarySkinnedMesh.skeleton.bones.find((bone) => bone.name === name)
   }
 
-  /// The rod's mesh is baked to the spear's hand-socket convention, which
-  /// leaves the tip pitched about 38 degrees below horizontal. Lift it in the
-  /// hand so the rod reads as held up — one offset covers standing, the cast
-  /// and the fishing idle. Measured: -38 degrees baseline, +6 degrees with
-  /// this applied.
+  // The rod GLB is baked to the spear hand-socket (tip ~38° below
+  // horizontal); lift it so it reads held up in every fishing pose.
   const FISHING_ROD_PITCH = Math.PI / 4
 
   function attachWeaponModel(

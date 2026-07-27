@@ -1,7 +1,9 @@
 import { Vector2, Raycaster } from 'three'
 import * as THREE from 'three'
 import { get } from 'svelte/store'
-import { myFishingPhase } from '../stores/fishingStore'
+import { myFishing } from '../stores/fishingStore'
+import { isTypingTarget } from '../utils/dom'
+import { min_fishable_depth_m } from '../wasm/onlinerpg_shared'
 import type { Position } from '../utils/movementUtils'
 import type { WallDirection } from '../utils/house-geometry'
 
@@ -104,7 +106,6 @@ export type ClickIntent =
       /** Rod equipped + clicked point is underwater terrain: cast, don't walk. */
       type: 'cast_fishing'
       position: Position
-      distance: number
     }
   | { type: 'none' }
 
@@ -451,11 +452,9 @@ class InputHandler {
     // behind them (pathfinding then routes around solid walls to the door).
     const groundHit = intersects.find((hit) => !isHouseWall(hit.object))
     if (groundHit) {
-      // Rod in hand + the baked water surface sits above the clicked terrain
-      // (depth > ~10 cm): this click is a cast, not a walk into the water.
-      // Using the water field (not just "y < 0") makes rivers castable too —
-      // their beds are above sea level but the channel surface is above the
-      // bed. The server re-validates, so this only decides cast-vs-walk.
+      // Rod + water surface above the clicked terrain: cast, don't walk.
+      // The water field (not "y < 0") makes rivers castable; the server
+      // re-validates, so this only decides cast-vs-walk.
       const waterSurface = context.waterSurfaceAt?.(
         groundHit.point.x,
         groundHit.point.z
@@ -464,10 +463,8 @@ class InputHandler {
         context.hasFishingRodEquipped &&
         context.playerFloorLevel === 0 &&
         waterSurface !== undefined &&
-        waterSurface - groundHit.point.y > 0.1
+        waterSurface - groundHit.point.y > min_fishable_depth_m()
       ) {
-        const dx = groundHit.point.x - context.playerPosition.x
-        const dz = groundHit.point.z - context.playerPosition.z
         return {
           type: 'cast_fishing',
           position: {
@@ -475,7 +472,6 @@ class InputHandler {
             y: groundHit.point.y,
             z: groundHit.point.z,
           },
-          distance: Math.sqrt(dx * dx + dz * dz),
         }
       }
       return {
@@ -554,15 +550,14 @@ class InputHandler {
   }
 
   handleKeyDown(event: KeyboardEvent): boolean {
-    const target = event.target as HTMLElement
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+    if (isTypingTarget(event.target)) {
       return false
     }
     if (event.ctrlKey) return false
 
     // SPACE and S belong to the fishing minigame during a bite/struggle;
     // treating S as backward movement would abort the session server-side.
-    const fishingPhase = get(myFishingPhase)
+    const fishingPhase = get(myFishing).phase
     if (
       (fishingPhase === 'bite' || fishingPhase === 'struggle') &&
       (event.code === 'Space' || event.code === 'KeyS')
@@ -584,8 +579,7 @@ class InputHandler {
       this.keysPressed.delete(event.code)
     }
 
-    const target = event.target as HTMLElement
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+    if (isTypingTarget(event.target)) {
       return false
     }
     return true

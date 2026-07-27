@@ -1047,8 +1047,6 @@ async fn handle_client_message(
             append,
         } => {
             if let Some(id) = &state.player_id {
-                // Walking away breaks fishing concentration (doc/FISHING.md).
-                game_state.cancel_fishing_if_active(id).await;
                 game_state
                     .update_player_position(
                         id,
@@ -1069,11 +1067,6 @@ async fn handle_client_message(
 
         ClientMessage::PlayerFloorChanged { floor_level } => {
             if let Some(id) = &state.player_id {
-                // Leaving the surface breaks concentration like movement does
-                // (casts only validate on floor 0).
-                if floor_level != 0 {
-                    game_state.cancel_fishing_if_active(id).await;
-                }
                 game_state.update_player_floor(id, floor_level).await;
             } else {
                 warn!("Received floor change from client that is not in game");
@@ -1142,7 +1135,6 @@ async fn handle_client_message(
 
         ClientMessage::PlayerAttack { monster_id } => {
             if let Some(id) = &state.player_id {
-                game_state.cancel_fishing_if_active(id).await;
                 game_state.broadcast_player_attack(id, monster_id).await;
             } else {
                 warn!("Received attack from client that is not in game");

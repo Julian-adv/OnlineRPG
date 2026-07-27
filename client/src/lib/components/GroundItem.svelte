@@ -5,6 +5,7 @@
   import { getItemDef } from '../data/itemDefs'
   import { getWeaponModelPath } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
+  import { loadIconTexture } from '../utils/iconTextureCache'
   import { createRng } from '../utils/simplex-noise'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
@@ -271,6 +272,7 @@
 
   // Icon billboard for items with no world model (fish, jewellery, armor):
   // the inventory icon floats over the spot instead of a placeholder box.
+  // Textures come from the shared icon cache — do not dispose them.
   const ICON_SPRITE_SIZE = 0.55
   let iconTexture = $state<THREE.Texture | null>(null)
   $effect(() => {
@@ -280,14 +282,11 @@
       return
     }
     let cancelled = false
-    new THREE.TextureLoader().load(`/items/${icon}`, (tex) => {
-      if (cancelled) return
-      tex.colorSpace = THREE.SRGBColorSpace
-      iconTexture = tex
+    loadIconTexture(`/items/${icon}`).then((tex) => {
+      if (!cancelled) iconTexture = tex
     })
     return () => {
       cancelled = true
-      iconTexture?.dispose()
       iconTexture = null
     }
   })

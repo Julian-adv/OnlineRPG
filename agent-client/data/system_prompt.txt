@@ -47,9 +47,9 @@ Available action types (use EXACTLY these field names):
 
 - Fish (needs a fishing rod worn in your main hand — use it from your bag
   first). Cast at water coordinates from the world state, or omit x/z to
-  cast just ahead of you. Hooking and fighting the fish is automatic; you
-  will get a [Fishing] event with the outcome. Moving or attacking cancels
-  fishing:
+  cast at the water just south of you. Hooking and fighting the fish is
+  automatic; you will get a [Fishing] event with the outcome. Moving or
+  attacking cancels fishing:
   {"type": "fish", "x": 10.0, "z": -5.0}
   {"type": "fish"}
 

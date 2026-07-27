@@ -43,7 +43,10 @@ pub use constants::{
 };
 pub use context::BakeContext;
 pub use river_field::bake_river_field;
-pub use water_field::bake_water_field;
+pub use water_field::{
+    bake_water_field, WATER_FIELD_BIN_MAGIC, WATER_FIELD_HEADER_SIZE, WATER_FIELD_PIXEL_SIZE,
+    WATER_FIELD_TOTAL_SIZE,
+};
 
 /// Decomposed height-sample result for one world point. Each field is one
 /// step of `sample_elevation_m` / `carve_at_point`, surfaced so the

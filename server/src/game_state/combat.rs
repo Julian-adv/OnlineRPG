@@ -201,6 +201,8 @@ impl super::GameState {
                 return;
             }
         };
+        // A landed attack (not a rejected one) breaks fishing concentration.
+        self.cancel_fishing_if_active(player_id).await;
         debug!("Player {} attacking monster {}", player_name, monster_id);
 
         // Unarmed falls back to D&D 5e improvised 1d2. An enchanted

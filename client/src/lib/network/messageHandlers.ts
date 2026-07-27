@@ -12,14 +12,7 @@ import {
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
-import {
-  playFishingCastSound,
-  playFishingCatchSound,
-  playFishingPlopSound,
-  playFishingReelSound,
-  playFishingSnapSound,
-  playFishingSplashSound,
-} from '../managers/sfxManager'
+import { playFishingSound } from '../managers/sfxManager'
 import { monsterManager } from '../managers/monsterManager'
 import { housingManager } from '../managers/housingManager'
 import { bridgeManager } from '../managers/bridgeManager'
@@ -31,14 +24,12 @@ import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
-  setSkills,
+  skillsStore,
   applySkillXp,
   SKILL_DISPLAY_NAMES,
 } from '../stores/skillsStore'
 import {
-  myFishingPhase,
-  myStruggle,
-  setStruggleRound,
+  myFishing,
   applyStruggleTension,
   upsertBobber,
   markBobberBite,
@@ -205,6 +196,10 @@ export type MessageEvents = {
   playerRespawned: NetworkEvent<(playerId: number) => void>
   interactionRejected: NetworkEvent<(reason: string) => void>
   positionCorrected: NetworkEvent<(c: PositionCorrection) => void>
+}
+
+function isSelfPlayer(playerId: number): boolean {
+  return get(gameStore).currentPlayer?.id === playerId
 }
 
 export function handleServerMessage(
@@ -1031,17 +1026,17 @@ export function handleServerMessage(
     }
 
     case 'SkillsUpdate':
-      setSkills(data.skills)
+      skillsStore.set(data.skills)
       break
 
     case 'FishingCasted': {
       upsertBobber(data.player_id, data.position)
-      if (get(gameStore).currentPlayer?.id === data.player_id) {
-        myFishingPhase.set('casting')
+      if (isSelfPlayer(data.player_id)) {
+        myFishing.set({ phase: 'casting' })
         // The line whirs out on the swing; the splash waits for the bobber to
         // actually land (the server's CAST_MS, read from shared wasm).
-        playFishingCastSound()
-        playFishingSplashSound(fishing_cast_ms())
+        playFishingSound('cast')
+        playFishingSound('splash', fishing_cast_ms())
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
       }
       break
@@ -1049,9 +1044,9 @@ export function handleServerMessage(
 
     case 'FishingBite': {
       markBobberBite(data.player_id)
-      if (get(gameStore).currentPlayer?.id === data.player_id) {
-        myFishingPhase.set('bite')
-        playFishingPlopSound()
+      if (isSelfPlayer(data.player_id)) {
+        myFishing.set({ phase: 'bite' })
+        playFishingSound('plop')
         addCombatMessage({
           text: 'Something bites! Hook it!',
           sender: 'local',
@@ -1061,31 +1056,32 @@ export function handleServerMessage(
     }
 
     case 'FishingStruggleRound': {
-      if (get(gameStore).currentPlayer?.id === data.player_id) {
-        myFishingPhase.set('struggle')
-        setStruggleRound({
-          round: data.round,
-          totalRounds: data.total_rounds,
-          fishState: data.fish_state,
-          respondWithinMs: data.respond_within_ms,
-          tension: data.tension_pct,
-          startedAt: performance.now(),
+      if (isSelfPlayer(data.player_id)) {
+        myFishing.set({
+          phase: 'struggle',
+          struggle: {
+            round: data.round,
+            totalRounds: data.total_rounds,
+            fishState: data.fish_state,
+            respondWithinMs: data.respond_within_ms,
+            tension: data.tension_pct,
+          },
         })
       }
       break
     }
 
     case 'FishingRoundResult': {
-      if (get(gameStore).currentPlayer?.id === data.player_id) {
+      if (isSelfPlayer(data.player_id)) {
         applyStruggleTension(data.tension_pct)
-        playFishingReelSound()
+        playFishingSound('reel')
       }
       break
     }
 
     case 'FishingEnded': {
       removeBobber(data.player_id)
-      const isSelf = get(gameStore).currentPlayer?.id === data.player_id
+      const isSelf = isSelfPlayer(data.player_id)
       // Bystander celebration: everyone in radius hears about a trophy.
       if (!isSelf && data.outcome?.Caught?.trophy) {
         const { item_def_id, size_cm } = data.outcome.Caught
@@ -1098,16 +1094,15 @@ export function handleServerMessage(
         })
       }
       if (isSelf) {
-        myFishingPhase.set('idle')
-        myStruggle.set(null)
+        myFishing.set({ phase: 'idle' })
         const outcome = data.outcome
         if (outcome === 'Escaped') {
-          playFishingSnapSound()
+          playFishingSound('snap')
           addCombatMessage({ text: 'The fish got away.', sender: 'local' })
         } else if (outcome === 'Aborted') {
           addCombatMessage({ text: 'You reel in your line.', sender: 'local' })
         } else if (outcome?.Caught) {
-          playFishingCatchSound()
+          playFishingSound('catch')
           const { item_def_id, size_cm, trophy } = outcome.Caught
           addCombatMessage({
             text: catchMessage(

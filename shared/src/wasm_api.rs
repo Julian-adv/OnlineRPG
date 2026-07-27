@@ -89,6 +89,13 @@ pub fn fishing_cast_ms() -> u32 {
     crate::fishing::CAST_MS
 }
 
+/// Cast-vs-walk depth threshold (`MIN_FISHABLE_DEPTH_M`), so the client's
+/// click test uses the server's exact water test.
+#[wasm_bindgen]
+pub fn min_fishable_depth_m() -> f32 {
+    crate::fishing::MIN_FISHABLE_DEPTH_M
+}
+
 // --- Passability cache (WASM global state) ---
 
 thread_local! {

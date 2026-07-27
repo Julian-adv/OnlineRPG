@@ -334,8 +334,9 @@ pub struct SharedState {
     /// `TradeBusy`). We stay put and keep serving them — the LLM's movement
     /// actions are suppressed — until the trade ends.
     pub trade_busy: bool,
-    /// True between our own FishingCasted and FishingEnded, so the prompt
-    /// can warn that moving or attacking cancels the session.
+    /// True between our own FishingCasted and FishingEnded. Suppresses LLM
+    /// movement (like `trade_busy`) and adds a stay-put prompt line;
+    /// `stop_fishing` stays the deliberate exit.
     pub self_fishing: bool,
     /// Known nearby players
     pub nearby_players: HashMap<PlayerId, Player>,
@@ -1366,12 +1367,9 @@ impl SharedState {
             } => {
                 self.handle_managed_monster_hit(monster_id, player_id, false, 0);
             }
-            // Fishing reflexes (doc/FISHING.md, agent parity): the bite and
-            // each struggle round carry everything needed to answer, so the
-            // mechanical response lives here — like the A* layer, the LLM
-            // decides *whether* to fish, not how fast to twitch. Instant
-            // answers confer no advantage: correctness is binary and the
-            // tension math ignores response speed inside the window.
+            // Fishing reflexes: answer bites/rounds mechanically; the LLM only
+            // decides whether to fish. Speed inside the window confers no
+            // advantage.
             ServerMessage::FishingCasted { player_id, .. }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {

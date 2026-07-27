@@ -940,7 +940,11 @@ impl super::GameState {
     }
 
     /// Shared bookkeeping after a position write: spatial cell, dirty flag,
-    /// floor-change handling and AOI fanout of `update_msg`.
+    /// floor-change handling and AOI fanout of `update_msg`. Every relocation
+    /// funnels through here — client moves, tick walking, teleports, floor
+    /// changes — so this is also where movement breaks fishing. Turning in
+    /// place is exempt: the cast itself faces the water with a rotation-only
+    /// move.
     async fn finish_position_update(
         &self,
         player_id: &PlayerId,
@@ -949,6 +953,9 @@ impl super::GameState {
         moved_player: Player,
         update_msg: ServerMessage,
     ) {
+        if old_position != moved_player.position || old_floor != moved_player.floor_level {
+            self.cancel_fishing_if_active(player_id).await;
+        }
         let new_position = moved_player.position;
         let floor_level = moved_player.floor_level;
         self.move_player_spatial_cell(player_id, &old_position, &new_position)

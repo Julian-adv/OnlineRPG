@@ -56,11 +56,8 @@ pub(super) enum AgentAction {
     },
     #[serde(rename = "respawn")]
     Respawn,
-    /// Cast the equipped fishing rod. With coordinates, cast there; without,
-    /// cast a short way north of where the agent stands. The server
-    /// validates water/range/rod and answers with FishingError when refused.
-    /// The bite/struggle reflexes are automatic (state.rs) — this action is
-    /// the *decision* to fish.
+    /// Cast the rod at (x, z), or 4 m south when omitted; server validates.
+    /// Reflexes (state.rs) fight the fish — this is only the decision to fish.
     #[serde(rename = "fish")]
     Fish { x: Option<f32>, z: Option<f32> },
     /// Reel in and stop fishing.
@@ -344,7 +341,7 @@ pub(super) fn action_to_command(
         }
         AgentAction::Respawn => Some(ClientMessage::RequestRespawn),
         AgentAction::Fish { x, z } => {
-            // Explicit coordinates, or a short cast north of the agent.
+            // Explicit coordinates, or a fixed short cast south of the agent.
             // The server is the judge of whether that spot is water.
             let (cx, cz) = match (x, z, player_pos) {
                 (Some(x), Some(z), _) => (*x, *z),

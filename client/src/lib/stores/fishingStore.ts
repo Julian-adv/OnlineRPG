@@ -1,34 +1,30 @@
 import { writable } from 'svelte/store'
 import type { FishState, Position } from '../network/networkTypes'
 
-/** The local player's place in the fishing loop. `casting` covers the whole
- *  cast-through-wait stretch (the client doesn't know when the wait ends —
- *  only the server does); `bite` is the act-now window; `struggle` is the
- *  round-by-round fight after the hook. */
-export type FishingPhase = 'idle' | 'casting' | 'bite' | 'struggle'
-
-export const myFishingPhase = writable<FishingPhase>('idle')
-
-/** The local player's current struggle round (null outside a struggle).
- *  `startedAt` is client receipt time — only used to animate the countdown
- *  ring; the authoritative deadline lives on the server. */
+/** The local player's current struggle round. The countdown is animated
+ *  client-side per round; the authoritative deadline lives on the server. */
 export type StruggleRound = {
   round: number
   totalRounds: number
   fishState: FishState
   respondWithinMs: number
   tension: number
-  startedAt: number
 }
 
-export const myStruggle = writable<StruggleRound | null>(null)
+/** The local player's place in the fishing loop — one value, so phase and
+ *  struggle round can never disagree. `casting` covers the whole
+ *  cast-through-wait stretch (only the server knows when the wait ends);
+ *  `bite` is the act-now window. */
+export type MyFishing =
+  | { phase: 'idle' | 'casting' | 'bite' }
+  | { phase: 'struggle'; struggle: StruggleRound }
 
-export function setStruggleRound(round: StruggleRound) {
-  myStruggle.set(round)
-}
+export const myFishing = writable<MyFishing>({ phase: 'idle' })
 
 export function applyStruggleTension(tension: number) {
-  myStruggle.update((s) => (s ? { ...s, tension } : s))
+  myFishing.update((f) =>
+    f.phase === 'struggle' ? { ...f, struggle: { ...f.struggle, tension } } : f
+  )
 }
 
 export type BobberState = {
@@ -69,7 +65,6 @@ export function removeBobber(playerId: number) {
 }
 
 export function resetFishingStore() {
-  myFishingPhase.set('idle')
-  myStruggle.set(null)
+  myFishing.set({ phase: 'idle' })
   fishingBobbers.set(new Map())
 }

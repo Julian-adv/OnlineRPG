@@ -1,16 +1,14 @@
 //! Fishing sessions: cast → wait → bite → hook → caught/escaped
-//! (design: `doc/FISHING.md`). The server owns every timer and roll; clients
-//! only render what the broadcasts describe and answer with `FishingRespond`.
-//! Timers are `tokio::time::Instant`s advanced by the 250 ms fishing tick, so
-//! tests drive the whole machine with `start_paused` + `time::advance` — the
-//! tick period only bounds how late a transition can fire, and every player
-//! deadline already carries `LATENCY_GRACE_MS` of slack beyond it.
+//! (design: `doc/FISHING.md`). Server-authoritative: every timer and roll is
+//! server-side. Timers are `tokio::time::Instant`s advanced by the 250 ms
+//! tick, so paused-time tests drive the whole machine; player deadlines carry
+//! `LATENCY_GRACE_MS` of slack.
 
 use onlinerpg_shared::fishing::{
     struggle_rounds, struggle_window_ms, tension_miss_penalty, FishState, FishingAction,
     FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP, FLOTSAM_SHARE_PCT,
-    LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, RARITY_SKILL_BONUS_PCT, TENSION_CORRECT_RELIEF,
-    TENSION_MAX, WAIT_MAX_MS, WAIT_MIN_MS,
+    LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, MIN_FISHABLE_DEPTH_M, RARITY_SKILL_BONUS_PCT,
+    TENSION_CORRECT_RELIEF, TENSION_MAX, WAIT_MAX_MS, WAIT_MIN_MS,
 };
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::skills::SkillId;
@@ -22,14 +20,6 @@ use tracing::warn;
 
 use super::GameState;
 use crate::types::{PlayerId, ServerMessage};
-
-/// Minimum water depth (surface − terrain bed, meters) a cast target must
-/// have. The unified water field puts the surface just above the bed inside
-/// river channels (`RIVER_DEPTH_OFFSET_M = 0.5`) and well above it at sea, and
-/// *below* the bed on land — so `depth > 0` is "water" for ocean and rivers
-/// alike. A small positive floor keeps casts off the paper-thin shoreline
-/// fringe. Matches the client's cast threshold (doc/RIVER_SYSTEM.md).
-const MIN_FISHABLE_DEPTH_M: f32 = 0.1;
 
 /// Casts are only valid on the overworld floor — no fishing in dungeons or
 /// on house upper floors, whose "water" would be a terrain-height fiction.
@@ -75,6 +65,7 @@ pub(crate) struct FishingSession {
 
 /// Pure catch-table entry, split out so the weighting is unit-testable
 /// without a `GameState`.
+#[derive(Debug)]
 pub(crate) struct CatchCandidate {
     pub item_def_id: String,
     pub rarity: u32,
@@ -144,7 +135,7 @@ pub(crate) fn pick_catch(weights: &[u64], mut roll: u64) -> Option<usize> {
 }
 
 /// Bite wait for a given skill level: uniform in the shared range, shortened
-/// 2% per level, floored at the range minimum.
+/// 2% per level, floored at half the range minimum.
 pub(crate) fn roll_wait_ms(skill_level: u32, rng: &mut impl Rng) -> u64 {
     let base = rng.gen_range(u64::from(WAIT_MIN_MS)..=u64::from(WAIT_MAX_MS));
     let shortened = base * u64::from(100u32.saturating_sub(skill_level * 2)) / 100;
@@ -185,24 +176,19 @@ impl GameState {
             return;
         }
 
-        let dx = onlinerpg_shared::shortest_world_delta_x(target.x, player_pos.x);
-        let dz = target.z - player_pos.z;
-        if dx * dx + dz * dz > MAX_CAST_DISTANCE_METERS * MAX_CAST_DISTANCE_METERS {
+        if player_pos.dist_xz_sq(&target) > MAX_CAST_DISTANCE_METERS * MAX_CAST_DISTANCE_METERS {
             self.send_fishing_error(player_id, "That water is out of casting range.")
                 .await;
             return;
         }
 
-        // Water test: is the baked water surface meaningfully above the
-        // terrain bed here? True over ocean (surface at sea level, bed below)
-        // and over rivers (carved channel surface above its bed, even high in
-        // the mountains), false on land (surface collapses under the bed).
-        // The two async terrain reads live here in the cast handler
-        // (first-touch tile IO), never in the tick.
+        // Water = baked surface meaningfully above the terrain bed; covers
+        // ocean and rivers alike (doc/WATER_SYSTEM.md). First-touch tile IO
+        // lives here in the cast handler, never in the tick.
         let wx = onlinerpg_shared::wrap_world_x(target.x);
-        let water_surface = match (
-            self.height_sampler.sample_height(wx, target.z).await,
-            self.water_sampler.sample_surface(wx, target.z).await,
+        let water_surface = match tokio::join!(
+            self.height_sampler.sample_height(wx, target.z),
+            self.water_sampler.sample_surface(wx, target.z),
         ) {
             (Ok(bed), Ok(surface)) if surface - bed > MIN_FISHABLE_DEPTH_M => surface,
             (Ok(_), Ok(_)) => {
@@ -218,11 +204,7 @@ impl GameState {
             }
         };
 
-        let skill_level = self
-            .get_player_skills(player_id)
-            .await
-            .get(SkillId::Fishing)
-            .level;
+        let skill_level = self.skill_level(player_id, SkillId::Fishing).await;
         // The bobber floats on the actual water surface — sea level over the
         // ocean, but the carved channel height over a river.
         let bobber = Position {
@@ -244,6 +226,8 @@ impl GameState {
                 },
             );
         }
+        self.fishing_active
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.broadcast_fishing(
             &bobber,
             ServerMessage::FishingCasted {
@@ -340,30 +324,41 @@ impl GameState {
     /// lands here. Quiet no-op for the overwhelmingly common case of a
     /// player who isn't fishing.
     pub async fn cancel_fishing_if_active(&self, player_id: &PlayerId) {
+        if self.no_fishing_anywhere() {
+            return;
+        }
         if self.fishing_sessions.read().await.contains_key(player_id) {
             self.end_fishing(player_id, FishingOutcome::Aborted, 0)
                 .await;
         }
     }
 
+    /// Lock-free "nobody is fishing" check for hot paths (every move packet).
+    fn no_fishing_anywhere(&self) -> bool {
+        self.fishing_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 0
+    }
+
     /// Whether the player's main hand currently holds a fishing rod — the
     /// cast precondition, also re-checked when equipment changes mid-session.
     async fn main_hand_is_rod(&self, player_id: &PlayerId) -> bool {
-        self.get_player_inventory(player_id)
+        self.inventories
+            .read()
             .await
-            .and_then(|inv| inv.equipped.get(&EquipSlot::MainHand).cloned())
-            .and_then(|item| {
-                self.item_defs
-                    .get(&item.item_def_id)
-                    .map(|def| def.is_fishing_rod())
-            })
-            .unwrap_or(false)
+            .get(player_id)
+            .and_then(|inv| inv.equipped.get(&EquipSlot::MainHand))
+            .and_then(|item| self.item_defs.get(&item.item_def_id))
+            .is_some_and(|def| def.is_fishing_rod())
     }
 
     /// Called after any equip/unequip: putting the rod away (or swapping a
     /// weapon into the main hand) reels the line in. Gear changes that leave
     /// the rod in hand — armor, an off-hand torch — don't break concentration.
     pub(super) async fn abort_fishing_if_rod_lost(&self, player_id: &PlayerId) {
+        if self.no_fishing_anywhere() {
+            return;
+        }
         if !self.fishing_sessions.read().await.contains_key(player_id) {
             return;
         }
@@ -375,10 +370,13 @@ impl GameState {
     /// The 250 ms fishing tick: advances casts to waits, waits to bites, and
     /// expires bites the angler slept through.
     pub async fn tick_fishing(&self) {
+        if self.no_fishing_anywhere() {
+            return;
+        }
         let now = Instant::now();
         enum Due {
             BobberLanded(PlayerId),
-            Bite(PlayerId),
+            Bite(PlayerId, u32),
             Expired(PlayerId),
             StruggleMissed(PlayerId),
             PlayerGone(PlayerId),
@@ -401,7 +399,7 @@ impl GameState {
                         due.push(Due::BobberLanded(*player_id));
                     }
                     FishingPhase::Waiting { bite_at } if now >= *bite_at => {
-                        due.push(Due::Bite(*player_id));
+                        due.push(Due::Bite(*player_id, session.skill_level));
                     }
                     FishingPhase::Bite { since }
                         if now
@@ -454,8 +452,8 @@ impl GameState {
                         };
                     }
                 }
-                Due::Bite(player_id) => {
-                    let rolled = self.roll_fish(&player_id).await;
+                Due::Bite(player_id, skill_level) => {
+                    let rolled = self.roll_fish(skill_level);
                     let bobber = {
                         let mut sessions = self.fishing_sessions.write().await;
                         let Some(session) = sessions.get_mut(&player_id) else {
@@ -520,16 +518,12 @@ impl GameState {
 
     /// Roll species + size + trophy for a bite, from the item-def catch
     /// table (`category == "fish"`, weighted by `catchWeight`).
-    async fn roll_fish(&self, player_id: &PlayerId) -> Option<RolledFish> {
-        let skill_level = {
-            let sessions = self.fishing_sessions.read().await;
-            sessions.get(player_id)?.skill_level
-        };
+    fn roll_fish(&self, skill_level: u32) -> Option<RolledFish> {
         let candidates = self.item_defs.catch_table();
         if candidates.is_empty() {
             return None;
         }
-        let weights = effective_weights(&candidates, skill_level);
+        let weights = effective_weights(candidates, skill_level);
         let total: u64 = weights.iter().sum();
         // All-zero weights (data-driven) would panic the gen_range below.
         if total == 0 {
@@ -744,6 +738,8 @@ impl GameState {
         let Some(session) = self.fishing_sessions.write().await.remove(player_id) else {
             return;
         };
+        self.fishing_active
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         if escape_xp > 0 {
             self.add_skill_xp(player_id, SkillId::Fishing, escape_xp)
                 .await;

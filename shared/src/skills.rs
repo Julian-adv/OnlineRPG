@@ -1,13 +1,8 @@
-//! Per-character trained skills (fishing, and future gathering professions).
-//! Deliberately separate from `CharacterAttributes`: attributes are rolled
-//! once at creation, skills grow through play. `Skills` is the wire/persist
-//! payload; the XP curve helpers live here so server, client (via wasm) and
-//! agent-client all read the same numbers.
-//!
-//! Skill levels start at 0 (a character map with no entry means "never
-//! trained") and cap at `SKILL_LEVEL_CAP`. The cap is a deliberate design
-//! knob: unlock ladders (`minFishingLevel` and future equivalents) are
-//! spaced against it, so raising it stretches every skill's progression.
+//! Per-character trained skills, separate from `CharacterAttributes`: rolled
+//! once vs. grown through play. The XP curve lives here so server, client
+//! (wasm) and agent-client share the exact numbers. Levels run 0 (no entry =
+//! never trained) to `SKILL_LEVEL_CAP`, the knob unlock ladders stretch
+//! against.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

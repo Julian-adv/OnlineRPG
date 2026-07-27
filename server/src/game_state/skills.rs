@@ -57,9 +57,10 @@ impl GameState {
         map.insert(*player_id, skills);
     }
 
-    pub async fn get_player_skills(&self, player_id: &PlayerId) -> Skills {
+    /// One skill's level, without cloning the whole map entry.
+    pub async fn skill_level(&self, player_id: &PlayerId, skill: SkillId) -> u32 {
         let map = self.player_skills.read().await;
-        map.get(player_id).cloned().unwrap_or_default()
+        map.get(player_id).map_or(0, |s| s.get(skill).level)
     }
 
     /// Grant skill XP: updates the map, marks the player dirty for the next

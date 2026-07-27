@@ -448,12 +448,8 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
     }
 }
 
-/// The `[Fishing]` line for a landed catch — category-aware next steps so
-/// the model knows what it can actually do: fish are edible/sellable, junk
-/// flotsam is (at best) sellable, a coin catch lands in the bag sealed and
-/// pays gold when opened with the `use` action. Pure (only reads the
-/// embedded item defs) so it's unit-testable; keep the phrasing in sync with
-/// the browser client's `catchMessage`
+/// The `[Fishing]` line for a landed catch, with category-aware next steps.
+/// Keep the phrasing in sync with the browser client's `catchMessage`
 /// (client/src/lib/network/fishingMessages.ts).
 fn caught_line(item_def_id: &str, size_cm: u16, trophy: bool) -> String {
     match crate::item_defs::get(item_def_id).and_then(|d| d.category.as_deref()) {

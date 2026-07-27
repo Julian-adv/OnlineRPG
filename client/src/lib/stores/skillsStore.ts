@@ -13,10 +13,6 @@ export const SKILL_DISPLAY_NAMES: Record<SkillId, string> = {
  *  first skill is trained — panels render nothing for an empty map. */
 export const skillsStore = writable<Skills>({ map: {} })
 
-export function setSkills(skills: Skills) {
-  skillsStore.set(skills)
-}
-
 export function applySkillXp(
   skill: SkillId,
   totalXp: number,

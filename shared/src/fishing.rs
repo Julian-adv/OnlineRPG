@@ -50,9 +50,7 @@ pub enum FishingOutcome {
         /// Rolled length in centimeters — announced, not stored on the item,
         /// so fish stay stackable commodities.
         size_cm: u16,
-        /// Exceptional roll (natural 20 on quality, or over the species
-        /// threshold). Celebration lands in a later PR; the flag ships now
-        /// so the outcome shape doesn't change.
+        /// Natural 20 on the quality roll, or at/over the species' trophyCm.
         trophy: bool,
     },
     /// Hooked too early, too late, or not at all.
@@ -64,18 +62,21 @@ pub enum FishingOutcome {
 /// How far from the player a cast may land (XZ meters).
 pub const MAX_CAST_DISTANCE_METERS: f32 = 8.0;
 
+/// Minimum surface−bed depth (meters) for a cast target — skips the paper-thin
+/// shoreline fringe. Shared so the client's cast-vs-walk click test cannot
+/// drift from the server's water test.
+pub const MIN_FISHABLE_DEPTH_M: f32 = 0.1;
+
 /// Casting animation time before the bobber starts waiting.
 pub const CAST_MS: u32 = 1_000;
 
 /// Bite wait is uniform in this range, shortened ~2% per fishing level
-/// (floored at `WAIT_MIN_MS`).
+/// (floored at `WAIT_MIN_MS / 2`).
 pub const WAIT_MIN_MS: u32 = 4_000;
 pub const WAIT_MAX_MS: u32 = 12_000;
 
-/// How long the bite window stays open. Deliberately generous: the same
-/// window must be comfortable for a human's reflexes and an agent-client's
-/// network round trip (agent parity — no mechanic may need reactions only
-/// software can deliver, and none may be too fast for software either).
+/// How long the bite window stays open. Generous by design: it must fit both
+/// human reflexes and an agent-client's network round trip (agent parity).
 pub const BITE_WINDOW_MS: u32 = 2_500;
 
 /// Slack added server-side to every response deadline so a laggy but
@@ -87,16 +88,15 @@ pub const LATENCY_GRACE_MS: u32 = 500;
 /// better angler, not a tidier river, so junk never thins out with level.
 pub const FLOTSAM_SHARE_PCT: u64 = 20;
 
-/// Per fishing level, per rarity tier, a fish's catch weight grows this many
-/// percent. Multiplicative, so the table's order can never invert: an
-/// additive bonus scaled by rarity would lift a weight-1 legend past a
-/// weight-50 common long before the level cap.
+/// Percent catch-weight growth per fishing level per rarity tier.
+/// Multiplicative, so the table's order can never invert.
 pub const RARITY_SKILL_BONUS_PCT: u64 = 3;
 
 /// Skill XP for a catch: `CATCH_XP_PER_RARITY_SQ · rarity²` (rarity 1–5).
 pub const CATCH_XP_PER_RARITY_SQ: u64 = 10;
 
-/// Consolation skill XP when a hooked fish escapes.
+/// Consolation skill XP when a fish escapes — hooked and lost, or a bite
+/// left to expire.
 pub const ESCAPE_XP: u64 = 2;
 
 // --- Struggle (the fight after the hook) ------------------------------------

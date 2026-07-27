@@ -9,26 +9,16 @@ const TILE_SIZE: f32 = defaults::TILE_DIM as f32;
 
 /// Decode a uint16 heightmap value to meters.
 /// Encoding: `round((meters + 500.0) / 0.05)` → range -500m to +3276m.
-fn decode_height(value: u16) -> f32 {
+/// Also the water field's surfaceY codec.
+pub(crate) fn decode_height(value: u16) -> f32 {
     value as f32 * 0.05 - 500.0
 }
 
-/// Cache key for a tile.
-fn tile_key(tx: i32, tz: i32) -> (i32, i32) {
-    (tx, tz)
-}
-
-/// Get height at a specific cell vertex from a cache snapshot. Handles cross-tile lookups.
-fn get_height_at_cell(
-    cache: &HashMap<(i32, i32), Vec<u16>>,
-    tx: i32,
-    tz: i32,
-    cell_x: i32,
-    cell_z: i32,
-) -> f32 {
+/// Resolve a possibly-out-of-range tile-local vertex to its owning tile and
+/// row-major index. Each tile stores the edge vertex it shares with its
+/// neighbour, so ±1 steps cross at most one tile.
+pub(crate) fn resolve_cell(tx: i32, tz: i32, cell_x: i32, cell_z: i32) -> ((i32, i32), usize) {
     let (mut tx, mut tz, mut cx, mut cz) = (tx, tz, cell_x, cell_z);
-
-    // Handle cross-tile boundary
     if cx >= VERTS_PER_SIDE as i32 {
         tx += 1;
         cx -= defaults::TILE_DIM as i32;
@@ -43,21 +33,11 @@ fn get_height_at_cell(
         tz -= 1;
         cz += defaults::TILE_DIM as i32;
     }
-
-    let Some(heights) = cache.get(&tile_key(tx, tz)) else {
-        return 0.0;
-    };
-    let idx = cz as usize * VERTS_PER_SIDE + cx as usize;
-    if idx < heights.len() {
-        decode_height(heights[idx])
-    } else {
-        0.0
-    }
+    ((tx, tz), cz as usize * VERTS_PER_SIDE + cx as usize)
 }
 
-/// Bilinear sample from an already-loaded cache. Callers must have ensured the
-/// covering tile; a miss reads as 0.0 via `get_height_at_cell`.
-fn sample_cached(cache: &HashMap<(i32, i32), Vec<u16>>, world_x: f32, world_z: f32) -> f32 {
+/// Bilinear interpolation of per-vertex values supplied by `get(tx, tz, cx, cz)`.
+pub(crate) fn bilinear(world_x: f32, world_z: f32, get: impl Fn(i32, i32, i32, i32) -> f32) -> f32 {
     let tx = world_to_tile(world_x);
     let tz = world_to_tile(world_z);
     let local_x = world_x - (tx as f32 * TILE_SIZE - TILE_SIZE / 2.0);
@@ -67,14 +47,35 @@ fn sample_cached(cache: &HashMap<(i32, i32), Vec<u16>>, world_x: f32, world_z: f
     let frac_x = local_x - local_x.floor();
     let frac_z = local_z - local_z.floor();
 
-    let h00 = get_height_at_cell(cache, tx, tz, cell_x, cell_z);
-    let h10 = get_height_at_cell(cache, tx, tz, cell_x + 1, cell_z);
-    let h01 = get_height_at_cell(cache, tx, tz, cell_x, cell_z + 1);
-    let h11 = get_height_at_cell(cache, tx, tz, cell_x + 1, cell_z + 1);
+    let v00 = get(tx, tz, cell_x, cell_z);
+    let v10 = get(tx, tz, cell_x + 1, cell_z);
+    let v01 = get(tx, tz, cell_x, cell_z + 1);
+    let v11 = get(tx, tz, cell_x + 1, cell_z + 1);
 
-    let h0 = h00 + (h10 - h00) * frac_x;
-    let h1 = h01 + (h11 - h01) * frac_x;
-    h0 + (h1 - h0) * frac_z
+    let v0 = v00 + (v10 - v00) * frac_x;
+    let v1 = v01 + (v11 - v01) * frac_x;
+    v0 + (v1 - v0) * frac_z
+}
+
+/// Height at a tile-local vertex from a cache snapshot; a miss reads as 0.0.
+fn get_height_at_cell(
+    cache: &HashMap<(i32, i32), Vec<u16>>,
+    tx: i32,
+    tz: i32,
+    cell_x: i32,
+    cell_z: i32,
+) -> f32 {
+    let (key, idx) = resolve_cell(tx, tz, cell_x, cell_z);
+    cache
+        .get(&key)
+        .and_then(|heights| heights.get(idx))
+        .map_or(0.0, |v| decode_height(*v))
+}
+
+fn sample_cached(cache: &HashMap<(i32, i32), Vec<u16>>, world_x: f32, world_z: f32) -> f32 {
+    bilinear(world_x, world_z, |tx, tz, cx, cz| {
+        get_height_at_cell(cache, tx, tz, cx, cz)
+    })
 }
 
 /// Where raw heightmap tiles come from. The local data directory when the
@@ -116,19 +117,19 @@ impl HeightSampler {
     /// Ensure a tile's heightmap is loaded into the cache.
     /// No lock held during I/O; re-checks after write lock to avoid duplicate inserts.
     async fn ensure_tile(&self, tx: i32, tz: i32) -> std::io::Result<()> {
-        if self.cache.read().await.contains_key(&tile_key(tx, tz)) {
+        if self.cache.read().await.contains_key(&(tx, tz)) {
             return Ok(());
         }
         let raw = self.tiles.read_heightmap(tx, tz).await?;
         let mut cache = self.cache.write().await;
-        if cache.contains_key(&tile_key(tx, tz)) {
+        if cache.contains_key(&(tx, tz)) {
             return Ok(());
         }
         let heights: Vec<u16> = raw
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        cache.insert(tile_key(tx, tz), heights);
+        cache.insert((tx, tz), heights);
         Ok(())
     }
 
@@ -145,7 +146,7 @@ impl HeightSampler {
 
     /// Evict a tile from the cache (e.g. when moving far away).
     pub async fn evict_tile(&self, tx: i32, tz: i32) {
-        self.cache.write().await.remove(&tile_key(tx, tz));
+        self.cache.write().await.remove(&(tx, tz));
     }
 
     /// Number of tiles currently cached.

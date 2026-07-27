@@ -73,10 +73,10 @@ use super::heightmap::{lerp, sample_carved_bed};
 
 pub const WATER_FIELD_BIN_MAGIC: &[u8; 4] = b"WFD1";
 pub const WATER_FIELD_BIN_VERSION: u16 = 1;
-const WATER_FIELD_HEADER_SIZE: usize = 16;
-const WATER_FIELD_PIXEL_SIZE: usize = 6;
+pub const WATER_FIELD_HEADER_SIZE: usize = 16;
+pub const WATER_FIELD_PIXEL_SIZE: usize = 6;
 const WATER_FIELD_PAYLOAD_SIZE: usize = VERTS_PER_SIDE * VERTS_PER_SIDE * WATER_FIELD_PIXEL_SIZE;
-const WATER_FIELD_TOTAL_SIZE: usize = WATER_FIELD_HEADER_SIZE + WATER_FIELD_PAYLOAD_SIZE;
+pub const WATER_FIELD_TOTAL_SIZE: usize = WATER_FIELD_HEADER_SIZE + WATER_FIELD_PAYLOAD_SIZE;
 
 /// Sea surface elevation (m). The whole worldgen pipeline treats 0 as sea
 /// level (heightmap bias, carve floors, coast extraction).

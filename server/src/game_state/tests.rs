@@ -111,6 +111,17 @@ fn non_finite_positions(base: Position) -> Vec<(String, Position)> {
     out
 }
 
+/// Raw u16 heightmap buffer whose every vertex sits at `meters`.
+fn uniform_heightmap(meters: f32) -> Vec<u8> {
+    let encoded = ((meters + 500.0) / 0.05) as u16;
+    let verts = onlinerpg_terrain::defaults::VERTS_PER_SIDE;
+    let mut buf = Vec::with_capacity(verts * verts * 2);
+    for _ in 0..(verts * verts) {
+        buf.extend_from_slice(&encoded.to_le_bytes());
+    }
+    buf
+}
+
 /// Terrain for tests: negative-x tiles are 5 m under water, the rest 5 m
 /// above. Lets fishing tests cast into real "water" without tile files.
 struct SplitWorldTiles;
@@ -118,15 +129,7 @@ struct SplitWorldTiles;
 #[async_trait::async_trait]
 impl onlinerpg_terrain::height::HeightTiles for SplitWorldTiles {
     async fn read_heightmap(&self, tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
-        // u16 encoding: round((meters + 500) / 0.05).
-        let meters: f32 = if tx < 0 { -5.0 } else { 5.0 };
-        let encoded = ((meters + 500.0) / 0.05) as u16;
-        let verts = onlinerpg_terrain::defaults::VERTS_PER_SIDE;
-        let mut buf = Vec::with_capacity(verts * verts * 2);
-        for _ in 0..(verts * verts) {
-            buf.extend_from_slice(&encoded.to_le_bytes());
-        }
-        Ok(buf)
+        Ok(uniform_heightmap(if tx < 0 { -5.0 } else { 5.0 }))
     }
 }
 
@@ -152,13 +155,7 @@ struct RiverPlateauTiles;
 #[async_trait::async_trait]
 impl onlinerpg_terrain::height::HeightTiles for RiverPlateauTiles {
     async fn read_heightmap(&self, _tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
-        let encoded = ((5.0 + 500.0) / 0.05) as u16;
-        let verts = onlinerpg_terrain::defaults::VERTS_PER_SIDE;
-        let mut buf = Vec::with_capacity(verts * verts * 2);
-        for _ in 0..(verts * verts) {
-            buf.extend_from_slice(&encoded.to_le_bytes());
-        }
-        Ok(buf)
+        Ok(uniform_heightmap(5.0))
     }
 }
 
@@ -184,7 +181,11 @@ impl onlinerpg_terrain::water::WaterTiles for RiverPlateauWater {
     }
 }
 
-fn make_test_game_state(test_name: &str) -> GameState {
+fn make_game_state_with(
+    test_name: &str,
+    height: impl onlinerpg_terrain::height::HeightTiles + 'static,
+    water: impl onlinerpg_terrain::water::WaterTiles + 'static,
+) -> GameState {
     let housing_dir = std::env::temp_dir().join(format!(
         "onlinerpg_{test_name}_housing_{}",
         uuid::Uuid::new_v4()
@@ -201,40 +202,20 @@ fn make_test_game_state(test_name: &str) -> GameState {
         housing_io,
         vec![],
         dungeon_defs,
-        Arc::new(onlinerpg_terrain::height::HeightSampler::new(
-            SplitWorldTiles,
-        )),
-        Arc::new(onlinerpg_terrain::water::WaterSampler::new(SeaOnlyWater)),
+        Arc::new(onlinerpg_terrain::height::HeightSampler::new(height)),
+        Arc::new(onlinerpg_terrain::water::WaterSampler::new(water)),
     )
+}
+
+fn make_test_game_state(test_name: &str) -> GameState {
+    make_game_state_with(test_name, SplitWorldTiles, SeaOnlyWater)
 }
 
 /// A game state whose terrain is a 5 m plateau with a river surface at 5.4 m
 /// everywhere — for testing that fishing works in rivers whose beds are above
 /// sea level (the ocean-vs-river regression).
 fn make_river_game_state(test_name: &str) -> GameState {
-    let housing_dir = std::env::temp_dir().join(format!(
-        "onlinerpg_{test_name}_housing_{}",
-        uuid::Uuid::new_v4()
-    ));
-    let housing_io = Arc::new(HousingIO::new(housing_dir));
-    let item_defs = ItemDefs::load();
-    let world_drop_defs = crate::world_drop_defs::WorldDropDefs::load(&item_defs);
-    let dungeon_defs = crate::dungeon_defs::DungeonDefs::load(&item_defs);
-    GameState::new(
-        MonsterDefs::load(),
-        item_defs,
-        world_drop_defs,
-        GameState::default_start_datetime(),
-        housing_io,
-        vec![],
-        dungeon_defs,
-        Arc::new(onlinerpg_terrain::height::HeightSampler::new(
-            RiverPlateauTiles,
-        )),
-        Arc::new(onlinerpg_terrain::water::WaterSampler::new(
-            RiverPlateauWater,
-        )),
-    )
+    make_game_state_with(test_name, RiverPlateauTiles, RiverPlateauWater)
 }
 
 /// Temp-file AuthService for tests whose paths touch the auth DB.
@@ -5500,8 +5481,23 @@ mod fishing_tests {
         advance_with_ticks(&game_state, u64::from(CAST_MS) + 500).await;
         drain(&mut rx);
 
-        // The connection layer cancels on any PlayerMove; this is that hook.
-        game_state.cancel_fishing_if_active(&id).await;
+        // Any real relocation funnels through finish_position_update, which
+        // breaks the session.
+        game_state
+            .update_player_position(
+                &id,
+                move_cmd(
+                    Position {
+                        x: -95.0,
+                        y: 0.0,
+                        z: 50.0,
+                    },
+                    false,
+                ),
+                true,
+                false,
+            )
+            .await;
         assert!(drain(&mut rx).iter().any(|m| matches!(
             m,
             ServerMessage::FishingEnded {
@@ -5591,13 +5587,7 @@ mod fishing_tests {
         let mut msgs = Vec::new();
         let mut outcome = None;
         'outer: for _ in 0..400 {
-            for msg in {
-                let mut v = Vec::new();
-                while let Ok(m) = rx.try_recv() {
-                    v.push(m);
-                }
-                v
-            } {
+            for msg in drain(&mut rx) {
                 if let ServerMessage::FishingEnded { outcome: o, .. } = &msg {
                     outcome = Some(o.clone());
                     msgs.push(msg);

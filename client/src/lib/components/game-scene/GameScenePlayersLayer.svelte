@@ -30,7 +30,7 @@
     playerInsideHouseId,
   } from '../../stores/housingStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
-  import { myFishingPhase } from '../../stores/fishingStore'
+  import { myFishing } from '../../stores/fishingStore'
   import { FishingAnimationName } from '../../types/animations'
   import { dungeonManager } from '../../managers/dungeonManager'
   import { housingManager } from '../../managers/housingManager'
@@ -128,17 +128,17 @@
   // movement/attack win and the PlayerControl FSM stays untouched.
   let fishingCastDone = $state(false)
   $effect(() => {
-    if ($myFishingPhase === 'casting') fishingCastDone = false
+    if ($myFishing.phase === 'casting') fishingCastDone = false
   })
   const fishingOverrideActive = $derived(
-    $myFishingPhase !== 'idle' && currentPlayerState.state === 'idle'
+    $myFishing.phase !== 'idle' && currentPlayerState.state === 'idle'
   )
   const effectivePlayerState = $derived(
     fishingOverrideActive ? 'interact' : currentPlayerState.state
   )
   const effectiveInteractionAnim = $derived(
     fishingOverrideActive
-      ? $myFishingPhase === 'casting' && !fishingCastDone
+      ? $myFishing.phase === 'casting' && !fishingCastDone
         ? FishingAnimationName.CAST
         : FishingAnimationName.IDLE
       : currentPlayerState.interactionAnim
