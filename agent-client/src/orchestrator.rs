@@ -861,6 +861,21 @@ fn build_llm_backend(
     }
 }
 
+/// WS URL → REST base URL: an explicit port means game port + 1; otherwise
+/// same origin with the path dropped (the reverse proxy routes `/api/*`).
+fn api_base_url(server_url: &str) -> String {
+    let (scheme, rest) = server_url.split_once("://").unwrap_or(("ws", server_url));
+    let scheme = if scheme == "wss" { "https" } else { "http" };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    match authority
+        .rsplit_once(':')
+        .and_then(|(host, port)| port.parse::<u16>().ok().map(|p| (host, p)))
+    {
+        Some((host, port)) => format!("{scheme}://{host}:{}", port + 1),
+        None => format!("{scheme}://{authority}"),
+    }
+}
+
 /// Spawn the appropriate LLM driver task based on NPC config.
 fn spawn_llm_task(
     npc: &NpcConfig,
@@ -917,23 +932,7 @@ fn spawn_llm_task(
         Vec::new()
     };
 
-    // Derive HTTP API base URL from WebSocket URL.
-    // The terrain/housing REST API runs on game port + 1.
-    let api_base_url = {
-        let http_url = server_url
-            .replace("wss://", "https://")
-            .replace("ws://", "http://");
-        // Bump the port by 1 (e.g. ws://host:10006 → http://host:10007)
-        if let Some(colon_pos) = http_url.rfind(':') {
-            if let Ok(port) = http_url[colon_pos + 1..].parse::<u16>() {
-                format!("{}{}", &http_url[..colon_pos + 1], port + 1)
-            } else {
-                http_url
-            }
-        } else {
-            http_url
-        }
-    };
+    let api_base_url = api_base_url(server_url);
 
     let driver_config = driver::DriverConfig {
         label: label.to_string(),
@@ -1035,5 +1034,29 @@ mod tests {
     #[test]
     fn npc_token_may_delete() {
         assert!(AuthSource::NpcToken("t".to_string()).may_delete_mismatches());
+    }
+
+    #[test]
+    fn direct_ws_url_bumps_the_port() {
+        assert_eq!(
+            api_base_url("ws://127.0.0.1:10006"),
+            "http://127.0.0.1:10007"
+        );
+    }
+
+    #[test]
+    fn proxied_wss_url_keeps_the_origin_and_drops_the_path() {
+        assert_eq!(
+            api_base_url("wss://openmmo.example/ws"),
+            "https://openmmo.example"
+        );
+    }
+
+    #[test]
+    fn wss_url_with_port_and_path_bumps_the_port() {
+        assert_eq!(
+            api_base_url("wss://openmmo.example:10006/ws"),
+            "https://openmmo.example:10007"
+        );
     }
 }
