@@ -1,20 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { get } from 'svelte/store'
-import {
-  characterPanelVisible,
-  inventoryVisible,
-  settingsVisible,
-  worldMapVisible,
-} from './debugStore'
+import { characterPanelVisible, inventoryVisible } from './debugStore'
 import { shopSession, type ShopSession } from './tradeStore'
 import {
   closeTopOverlay,
   mountOverlay,
   openOverlays,
-  setOverlayCloser,
   topOverlay,
-  withOverlay,
-  withoutOverlay,
 } from './overlayStack'
 
 const SESSION: ShopSession = {
@@ -30,41 +22,7 @@ const SESSION: ShopSession = {
 beforeEach(() => {
   characterPanelVisible.set(false)
   inventoryVisible.set(false)
-  worldMapVisible.set(false)
-  settingsVisible.set(false)
   shopSession.set(null)
-  setOverlayCloser('worldMap', null)
-  setOverlayCloser('respawn', null)
-  openOverlays.set([])
-})
-
-describe('withOverlay', () => {
-  it('appends a newly opened overlay', () => {
-    expect(withOverlay([], 'inventory')).toEqual(['inventory'])
-    expect(withOverlay(['inventory'], 'character')).toEqual([
-      'inventory',
-      'character',
-    ])
-  })
-
-  it('moves a reopened overlay back to the top', () => {
-    expect(withOverlay(['inventory', 'character'], 'inventory')).toEqual([
-      'character',
-      'inventory',
-    ])
-  })
-})
-
-describe('withoutOverlay', () => {
-  it('drops the overlay wherever it sits', () => {
-    expect(withoutOverlay(['inventory', 'character'], 'inventory')).toEqual([
-      'character',
-    ])
-  })
-
-  it('leaves the stack alone when the overlay is not open', () => {
-    expect(withoutOverlay(['inventory'], 'worldMap')).toEqual(['inventory'])
-  })
 })
 
 describe('topOverlay', () => {
@@ -115,6 +73,13 @@ describe('openOverlays', () => {
     shopSession.set(null)
     expect(get(openOverlays)).toEqual([])
   })
+
+  it('moves the trade window back to the top when the merchant changes', () => {
+    shopSession.set(SESSION)
+    characterPanelVisible.set(true)
+    shopSession.set({ ...SESSION, merchantPlayerId: 2 })
+    expect(get(openOverlays)).toEqual(['character', 'trade'])
+  })
 })
 
 describe('closeTopOverlay', () => {
@@ -133,41 +98,50 @@ describe('closeTopOverlay', () => {
 
   it('closes the world map ahead of a panel it paints over', () => {
     inventoryVisible.set(true)
-    worldMapVisible.set(true)
+    let mapCloses = 0
+    const unmount = mountOverlay('worldMap', () => mapCloses++)
 
     expect(closeTopOverlay()).toBe(true)
-    expect(get(worldMapVisible)).toBe(false)
+    expect(mapCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
+
+    unmount()
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(inventoryVisible)).toBe(false)
   })
 
   it('still closes the world map first when the panel was opened last', () => {
-    worldMapVisible.set(true)
+    const unmount = mountOverlay('worldMap', () => {})
     inventoryVisible.set(true)
 
     expect(closeTopOverlay()).toBe(true)
-    expect(get(worldMapVisible)).toBe(false)
     expect(get(inventoryVisible)).toBe(true)
+    unmount()
   })
 
   it('closes settings before an inventory opened underneath it', () => {
     inventoryVisible.set(true)
-    settingsVisible.set(true)
+    let settingsCloses = 0
+    const unmount = mountOverlay('settings', () => settingsCloses++)
 
     expect(closeTopOverlay()).toBe(true)
-    expect(get(settingsVisible)).toBe(false)
+    expect(settingsCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
 
+    unmount()
     expect(closeTopOverlay()).toBe(true)
     expect(get(inventoryVisible)).toBe(false)
   })
 
   it('closes settings first even when the panel was opened over it', () => {
-    settingsVisible.set(true)
+    let settingsCloses = 0
+    const unmount = mountOverlay('settings', () => settingsCloses++)
     inventoryVisible.set(true)
 
     expect(closeTopOverlay()).toBe(true)
-    expect(get(settingsVisible)).toBe(false)
+    expect(settingsCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
+    unmount()
   })
 
   it('closes the trade window before a character sheet under it', () => {
@@ -209,30 +183,19 @@ describe('closeTopOverlay', () => {
   })
 
   it('still closes the world map painted above the loading dialog', () => {
-    const unmount = mountOverlay('loading')
-    worldMapVisible.set(true)
+    const unmountLoading = mountOverlay('loading')
+    let mapCloses = 0
+    const unmountMap = mountOverlay('worldMap', () => mapCloses++)
 
     expect(closeTopOverlay()).toBe(true)
-    expect(get(worldMapVisible)).toBe(false)
-    expect(closeTopOverlay()).toBe(false)
+    expect(mapCloses).toBe(1)
 
-    unmount()
+    unmountMap()
+    expect(closeTopOverlay()).toBe(false)
+    unmountLoading()
   })
 
   it('reports nothing to close when no overlay is open', () => {
     expect(closeTopOverlay()).toBe(false)
-  })
-
-  it('runs a registered closer instead of resetting the state itself', () => {
-    let closerCalls = 0
-    setOverlayCloser('worldMap', () => {
-      closerCalls++
-      worldMapVisible.set(false)
-    })
-    worldMapVisible.set(true)
-
-    expect(closeTopOverlay()).toBe(true)
-    expect(closerCalls).toBe(1)
-    expect(get(worldMapVisible)).toBe(false)
   })
 })

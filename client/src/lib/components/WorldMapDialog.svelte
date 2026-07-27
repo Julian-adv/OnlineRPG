@@ -71,7 +71,7 @@
     getEffectivePreset,
   } from '../stores/graphicsSettings'
   import { wrapWorldX } from '../terrain/world-wrap'
-  import { setOverlayCloser } from '../stores/overlayStack'
+  import { mountOverlay } from '../stores/overlayStack'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
   const mobileMapBudget = $derived(graphicsPreset.renderBudget === 'mobile')
@@ -432,12 +432,8 @@
     worldMapVisible.set(false)
   }
 
-  // Escape is served by the shared overlay stack so stacked panels close one
-  // press at a time; registering `close` keeps the mobile cache teardown.
-  $effect(() => {
-    setOverlayCloser('worldMap', close)
-    return () => setOverlayCloser('worldMap', null)
-  })
+  // Registering `close` keeps the mobile cache teardown on Escape.
+  $effect(() => mountOverlay('worldMap', close))
 
   function handleBackdropClick(event: MouseEvent) {
     if (event.target === event.currentTarget) {

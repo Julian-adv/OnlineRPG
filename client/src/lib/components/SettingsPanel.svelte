@@ -8,12 +8,16 @@
     type QualityLevel,
   } from '../stores/graphicsSettings'
   import VolumeControl from './VolumeControl.svelte'
+  import { mountOverlay } from '../stores/overlayStack'
 
   interface Props {
     onClose: () => void
   }
 
   let { onClose }: Props = $props()
+
+  // Escape closes via the overlay stack, same as the close button.
+  $effect(() => mountOverlay('settings', onClose))
 
   const qualityOptions: { value: QualityLevel; label: string }[] = [
     { value: 'high', label: 'High' },
