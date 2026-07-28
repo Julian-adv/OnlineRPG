@@ -324,7 +324,7 @@
         onchange={handleTranslateLangChange}
         title="Translate chat"
       >
-        <option value={TRANSLATE_OFF}>Off</option>
+        <option value={TRANSLATE_OFF}>Default (Off)</option>
         {#each TRANSLATION_LANGUAGES as lang (lang.code)}
           <option value={lang.code}>{lang.label}</option>
         {/each}
