@@ -50,7 +50,7 @@ function contextWith(
     groundItemMeshes: [],
     groundMeshes: [ground],
     playerPosition: { x: 0, y: 0, z: 0 },
-    playerFloorLevel: 0,
+    playerVisualFloorLevel: 0,
     isMonsterDead: () => false,
     ...overrides,
   }
