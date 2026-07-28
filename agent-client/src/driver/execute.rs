@@ -26,6 +26,18 @@ use super::movement::{execute_move, MoveResult};
 /// the web client's grab moment partway into its pickup animation.
 const PICKUP_GRAB_DELAY_MS: u64 = 700;
 
+/// Feedback for an attack whose chase never reached the monster, so the agent
+/// stops re-issuing it. `dist` is the monster's distance, `None` if out of sight.
+fn unreachable_note(monster_id: &str, dist: Option<f32>) -> String {
+    match dist {
+        Some(d) => format!(
+            "[Unreachable] Could not reach monster {monster_id}: it is {d:.0}m away, \
+             too far or blocked. Move closer first, or pick a nearer monster."
+        ),
+        None => format!("[Unreachable] Monster {monster_id} is gone. Pick a different target."),
+    }
+}
+
 /// Parse and execute the agent's response.
 /// Returns the monster_id if the last action was an attack (for combat loop).
 /// If `memory_file` is set and the response contains `memory_update`, appends to file.
@@ -109,6 +121,13 @@ pub(super) async fn handle_response(
                 }
                 ChaseResult::Lost | ChaseResult::Error => {
                     warn!("Could not reach monster {monster_id}, skipping attack");
+                    let mut s = state.lock().await;
+                    let dist = s
+                        .self_player
+                        .as_ref()
+                        .zip(s.nearby_monsters.get(monster_id))
+                        .map(|(p, m)| m.position.dist_xz_sq(&p.position).sqrt());
+                    s.push_agent_event(unreachable_note(monster_id, dist));
                     continue;
                 }
             }
@@ -870,6 +889,20 @@ mod tests {
             resolve_ground_item(&s, &PickupRef::Name("Iron Sword".to_string())),
             Some((1, "iron_sword".to_string()))
         );
+    }
+
+    /// A too-far monster and a vanished one produce different guidance, so the
+    /// agent walks up to the first and drops the second instead of re-attacking.
+    #[test]
+    fn an_unreachable_attack_tells_the_agent_why() {
+        let present = unreachable_note("m19_21", Some(22.8));
+        assert!(present.contains("m19_21"));
+        assert!(present.contains("23m"));
+        assert!(present.to_lowercase().contains("closer"));
+
+        let gone = unreachable_note("m5_2", None);
+        assert!(gone.contains("m5_2"));
+        assert!(gone.to_lowercase().contains("gone"));
     }
 
     /// The item map reaches further than both the world state and the chase,
