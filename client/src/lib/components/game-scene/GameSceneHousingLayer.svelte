@@ -61,7 +61,7 @@
 
   const houses = new SvelteMap<string, HouseGroupResult>()
   let currentInsideHouseId: string | null = null
-  let playerInsideFloor = -1
+  let playerInsideFloor = 0
   let lastFloorOffset = 0
   // Preallocated for per-frame room detection (avoid GC)
   const _allRooms: { house: HouseData; roomIndex: number }[] = []
@@ -288,7 +288,7 @@
     const groundY = playerPosition.y - lastFloorOffset
     let insideId: string | null = null
     let newOffset = 0
-    let effectiveFloor = -1
+    let effectiveFloor = 0
 
     for (const [id, result] of houses) {
       // XZ-only broad-phase: player.y is forced to terrainY each frame
@@ -325,7 +325,6 @@
       // current Y (lastFloorOffset). This correctly handles stacked
       // stairwells at the same XZ — the player smoothly transitions
       // onto the nearest one rather than jumping to a distant floor.
-      const currentFL = Math.max(0, playerInsideFloor)
       let stairResult: (typeof _allRooms)[0] | null = null
       let bestStairDist = Infinity
       let bestStairOffset = 0
@@ -334,11 +333,11 @@
         if (roomResult.house.id !== id) continue
         const room = roomResult.house.rooms[roomResult.roomIndex]
         if (room.roomType === 'stairwell') {
-          // Only consider stairwells whose floor range includes the player's
-          // current floor — prevents adjacent/stacked stairwells on other
-          // floors from catching the player
+          // When already inside, only consider stairwells whose floor range
+          // includes the player's current floor — prevents adjacent/stacked
+          // stairwells on other floors from catching the player
           if (
-            playerInsideFloor >= 0 &&
+            currentInsideHouseId !== null &&
             (playerInsideFloor > room.floorLevel + 1 ||
               playerInsideFloor < room.floorLevel)
           )
@@ -356,7 +355,7 @@
             bestStairOffset = offset
             stairResult = roomResult
           }
-        } else if (!floorResult || room.floorLevel === currentFL) {
+        } else if (!floorResult || room.floorLevel === playerInsideFloor) {
           floorResult = roomResult
         }
       }

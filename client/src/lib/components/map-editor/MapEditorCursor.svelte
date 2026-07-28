@@ -116,7 +116,7 @@
   let currentObjectType = $state<string | null>(null)
   let currentObjectRot = $state(0)
   let currentObjectSubTool = $state<ObjectSubTool>('place')
-  let currentPlayerFloor = $state(-1)
+  let currentPlayerFloor = $state(0)
 
   function snapXZ(x: number, z: number): { x: number; z: number } {
     if (!currentObjectType) return { x, z }
@@ -452,8 +452,7 @@
       const terrainY = heightManager
         ? heightManager.getHeightAtWorldPosition(snapped.x, snapped.z)
         : 0
-      const floor = Math.max(0, currentPlayerFloor)
-      const y = objectSpawnY(currentObjectType, terrainY, floor)
+      const y = objectSpawnY(currentObjectType, terrainY, currentPlayerFloor)
       objectPreviewPos.set({ x: snapped.x, y, z: snapped.z })
     } else if (currentTool !== 'object') {
       objectPreviewPos.set(null)
@@ -622,8 +621,7 @@
       const terrainY = heightManager
         ? heightManager.getHeightAtWorldPosition(snapped.x, snapped.z)
         : 0
-      const floor = Math.max(0, currentPlayerFloor)
-      const y = objectSpawnY(currentObjectType, terrainY, floor)
+      const y = objectSpawnY(currentObjectType, terrainY, currentPlayerFloor)
       const data = get(currentObjectData)
       const maxId = data.placements.reduce((max, p) => Math.max(max, p.id), 0)
       const placement = {
@@ -636,7 +634,7 @@
           currentObjectType,
           currentObjectRot
         ),
-        floorLevel: floor,
+        floorLevel: currentPlayerFloor,
       }
       const updated: ObjectRegionData = {
         placements: [...data.placements, placement],

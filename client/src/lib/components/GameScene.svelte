@@ -367,7 +367,7 @@
       // The housing layer's per-frame detection is skipped underground;
       // clear its state so stale floor offsets can't leak into physics.
       playerInsideHouseId.set(null)
-      playerFloorLevel.set(-1)
+      playerFloorLevel.set(0)
       playerFloorOffset.set(0)
     }
   })

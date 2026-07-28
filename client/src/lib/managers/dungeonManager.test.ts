@@ -33,13 +33,13 @@ const { playerFloorLevel } = await import('../stores/housingStore')
 
 describe('syncFromFloorLevel surfacing', () => {
   beforeEach(() => {
-    playerFloorLevel.set(-1)
+    playerFloorLevel.set(0)
   })
 
   it('clears a stale dungeon floor left by waypoint arrival (death respawn)', () => {
     playerFloorLevel.set(8)
     dungeonManager.syncFromFloorLevel(0, 100, 100)
-    expect(get(playerFloorLevel)).toBe(-1)
+    expect(get(playerFloorLevel)).toBe(0)
   })
 
   it('leaves housing floors alone', () => {

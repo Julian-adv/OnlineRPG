@@ -901,7 +901,7 @@ class DungeonManager {
       // value it didn't write — collision would stay keyed to the dungeon
       // and ignore house walls.
       if (get(playerFloorLevel) >= constants().floorIndexBase) {
-        playerFloorLevel.set(-1)
+        playerFloorLevel.set(0)
       }
       if (this.active) {
         currentDungeonDepth.set(0)

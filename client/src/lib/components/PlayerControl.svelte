@@ -154,7 +154,7 @@
    * `playerVisualFloorLevel`. */
   function wireFloorLevel(): number {
     const depth = get(currentDungeonDepth)
-    return depth >= 1 ? -depth : Math.max(0, get(playerVisualFloorLevel))
+    return depth >= 1 ? -depth : get(playerVisualFloorLevel)
   }
 
   let lastSentFloorLevel: number | null = null
@@ -850,7 +850,7 @@
           )
         : dungeonManager.passabilityFloor(depth)
     }
-    return Math.max(0, get(playerFloorLevel))
+    return get(playerFloorLevel)
   }
 
   /**
@@ -1130,14 +1130,11 @@
         y: currentPlayer!.position.y,
         z: currentPlayer!.position.z,
       },
-      playerFloorLevel: get(playerFloorLevel),
+      playerVisualFloorLevel: get(playerVisualFloorLevel),
       isMonsterDead: (id) => {
         const m = monsterManager.monsters.get(id)
         return m?.state === 'dead' || false
       },
-      // The passability floor, not the raw housing store: the store starts
-      // at -1 and only fills in on waypoint arrival, so a fresh session
-      // would fail a raw `=== 0` check until the player first walks.
       canCastFishing:
         getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
           ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,

@@ -121,7 +121,8 @@ export interface RaycastContext {
   groundItemMeshes: THREE.Object3D[]
   groundMeshes: THREE.Object3D[]
   playerPosition: Position
-  playerFloorLevel: number
+  /** Gates house door clicks to the door's own floor (0 = ground/outdoors). */
+  playerVisualFloorLevel: number
   isMonsterDead: (monsterId: string) => boolean
   /** Rod in the main hand and standing on castable ground (surface, not a
    *  dungeon or upper house floor) — water clicks become casts. */
@@ -322,8 +323,7 @@ class InputHandler {
             if (
               d &&
               d.doorHouseId &&
-              (context.playerFloorLevel === -1 ||
-                d.doorFloorLevel === context.playerFloorLevel)
+              d.doorFloorLevel === context.playerVisualFloorLevel
             ) {
               return {
                 type: 'toggle_door',

@@ -146,7 +146,7 @@
 
   // Visual floor: matches what remotes report, so a player on the stairs isn't
   // hidden from the floor they're still on. See playerVisualFloorLevel.
-  let localFloorLevel = $derived(Math.max(0, $playerVisualFloorLevel))
+  let localFloorLevel = $derived($playerVisualFloorLevel)
   let localHouseId = $derived($playerInsideHouseId)
   let localDungeonDepth = $derived($currentDungeonDepth)
   let isUnderground = $derived(localDungeonDepth >= 1)

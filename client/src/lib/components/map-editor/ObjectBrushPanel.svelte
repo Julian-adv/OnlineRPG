@@ -28,7 +28,10 @@
     worldToTileCoord,
     tileKey,
   } from '../../managers/terrain-height-types'
-  import { playerFloorLevel } from '../../stores/housingStore'
+  import {
+    playerFloorLevel,
+    playerInsideHouseId,
+  } from '../../stores/housingStore'
   import { currentEditorRegion } from '../../stores/editorStore'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { TerrainGrassDataManager } from '../../managers/terrainGrassDataManager'
@@ -42,7 +45,8 @@
    *  so a canvas click (which doesn't blur the textarea) can't drop it. */
   let textDraft = $state('')
   let subTool = $state<ObjectSubTool>('place')
-  let floor = $state(-1)
+  let floor = $state(0)
+  let insideHouseId = $state<string | null>(null)
   /** Anchors slider range so it doesn't drift while dragging. */
   let baseY = $state<number | null>(null)
   let baseX = $state<number | null>(null)
@@ -81,6 +85,7 @@
     }),
     objectSubTool.subscribe((v) => (subTool = v)),
     playerFloorLevel.subscribe((v) => (floor = v)),
+    playerInsideHouseId.subscribe((v) => (insideHouseId = v)),
     editorHeightManager.subscribe((v) => (heightManager = v)),
     editorGrassDataManager.subscribe((v) => (grassManager = v)),
   ]
@@ -397,7 +402,7 @@
       </div>
       <div class="rotation-display" style="margin-top: 2px">
         <span class="rotation-value"
-          >{floor < 0 ? 'Outside' : `${floor + 1}F`}</span
+          >{insideHouseId == null ? 'Outside' : `${floor + 1}F`}</span
         >
         <span class="rotation-hint">Follow player floor</span>
       </div>

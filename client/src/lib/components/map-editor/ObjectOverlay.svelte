@@ -49,7 +49,7 @@
   let selectedType = $state<string | null>(null)
   let debugInfo = $state<PlayerDebugInfo | null>(null)
   let isEditorMode = $state(false)
-  let currentFloor = $state(-1)
+  let currentFloor = $state(0)
   let currentHouseId = $state<string | null>(null)
 
   let catalogById = new Map<string, ObjectDef>()
@@ -298,8 +298,7 @@
   }
 
   function rebuild() {
-    const visibleFloor = Math.max(0, currentFloor)
-    const visible = visiblePlacements(visibleFloor)
+    const visible = visiblePlacements(currentFloor)
     // Split the change signature: `structKey` is everything that changes WHICH
     // clones exist (id/type/text set, selection, floor, house); `transformKey`
     // is just each clone's position/rotation. When only transforms changed we
@@ -308,7 +307,7 @@
     // bind groups and tanks FPS during a slider/wheel drag.
     const structKey =
       visible.map((p) => `${p.id}:${p.type}:${p.text ?? ''}`).join('|') +
-      `|sel:${isEditing() ? selectedId : ''}|fl:${visibleFloor}|h:${currentHouseId ?? ''}`
+      `|sel:${isEditing() ? selectedId : ''}|fl:${currentFloor}|h:${currentHouseId ?? ''}`
     const transformKey = visible
       .map(
         (p) => `${p.id}:${p.x}:${p.y}:${p.z}:${p.rotation}:${p.rotationX ?? 0}`

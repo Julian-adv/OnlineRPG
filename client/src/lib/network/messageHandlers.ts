@@ -367,7 +367,8 @@ export function handleServerMessage(
         y: data.position.y,
         z: data.position.z,
         rotation: data.rotation,
-        floorLevel: data.floor_level ?? 0,
+        // Wire floors are negative underground; the housing store never is
+        floorLevel: Math.max(0, data.floor_level ?? 0),
       })
       break
     }
