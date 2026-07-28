@@ -72,6 +72,21 @@
     }
   }
 
+  /** Completion candidates for a prefix. `/help` goes first so typing just `/`
+   *  finds it. */
+  function commandMatches(prefix: string): string[] {
+    const matches = visibleCommandNames().filter((n) => n.startsWith(prefix))
+    if (!matches.includes('/help')) return matches
+    return ['/help', ...matches.filter((n) => n !== '/help')]
+  }
+
+  // Grey preview of what Tab would complete to.
+  let commandGhost = $derived.by(() => {
+    if (!messageInput.startsWith('/') || messageInput.includes(' ')) return ''
+    const match = commandMatches(messageInput).find((n) => n !== messageInput)
+    return match ? match.slice(messageInput.length) : ''
+  })
+
   let tabCycle: { matches: string[]; index: number } | null = null
 
   function completeCommand() {
@@ -81,9 +96,7 @@
       messageInput = tabCycle.matches[tabCycle.index]
       return
     }
-    const matches = visibleCommandNames().filter((n) =>
-      n.startsWith(messageInput)
-    )
+    const matches = commandMatches(messageInput)
     if (matches.length === 0) return
     tabCycle = { matches, index: 0 }
     messageInput = matches[0]
@@ -195,22 +208,31 @@
   </div>
 
   <div class="chat-input" class:disconnected={!isConnected}>
-    <input
-      type="text"
-      bind:this={chatInput}
-      bind:value={messageInput}
-      onkeydown={handleKeyDown}
-      onfocus={() => {
-        inputFocused = true
-        activeTab = 'say'
-      }}
-      onblur={() => {
-        inputFocused = false
-        restoreViewportAfterKeyboard()
-      }}
-      placeholder="Type a message..."
-      disabled={!isConnected}
-    />
+    <div class="input-wrap">
+      {#if commandGhost}
+        <div class="input-ghost" aria-hidden="true">
+          <span class="ghost-typed">{messageInput}</span><span
+            class="ghost-suffix">{commandGhost}</span
+          >
+        </div>
+      {/if}
+      <input
+        type="text"
+        bind:this={chatInput}
+        bind:value={messageInput}
+        onkeydown={handleKeyDown}
+        onfocus={() => {
+          inputFocused = true
+          activeTab = 'say'
+        }}
+        onblur={() => {
+          inputFocused = false
+          restoreViewportAfterKeyboard()
+        }}
+        placeholder="Type a message... (/help for commands)"
+        disabled={!isConnected}
+      />
+    </div>
     <button
       onclick={sendMessage}
       disabled={!isConnected || !messageInput.trim()}
@@ -372,14 +394,45 @@
     background: #742a2a;
   }
 
+  .input-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    display: flex;
+  }
+
   .chat-input input {
     flex: 1;
+    min-width: 0;
     padding: 8px 10px;
     border: none;
     border-radius: 0 0 0 8px;
     background: transparent;
     color: #ffffff;
     font-size: 12px;
+  }
+
+  /* Grey ghost aligned under the real input: an invisible copy of the typed
+     text reserves the caret's width so the suggestion trails it exactly. */
+  .input-ghost {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    padding: 8px 10px;
+    font-size: 12px;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .input-ghost .ghost-typed {
+    color: transparent;
+    white-space: pre;
+  }
+
+  .input-ghost .ghost-suffix {
+    color: rgba(113, 128, 150, 0.7);
+    white-space: pre;
   }
 
   .chat-input input:focus {
