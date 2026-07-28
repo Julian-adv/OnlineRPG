@@ -35,7 +35,6 @@
   import GameSceneDungeonLayer from './game-scene/GameSceneDungeonLayer.svelte'
   import { isUnderground } from '../stores/dungeonStore'
   import {
-    playerFloorLevel,
     playerFloorOffset,
     playerInsideHouseId,
   } from '../stores/housingStore'
@@ -367,7 +366,6 @@
       // The housing layer's per-frame detection is skipped underground;
       // clear its state so stale floor offsets can't leak into physics.
       playerInsideHouseId.set(null)
-      playerFloorLevel.set(0)
       playerFloorOffset.set(0)
     }
   })

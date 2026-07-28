@@ -29,7 +29,7 @@
     tileKey,
   } from '../../managers/terrain-height-types'
   import {
-    playerFloorLevel,
+    playerVisualFloorLevel,
     playerInsideHouseId,
   } from '../../stores/housingStore'
   import { currentEditorRegion } from '../../stores/editorStore'
@@ -84,7 +84,7 @@
       }
     }),
     objectSubTool.subscribe((v) => (subTool = v)),
-    playerFloorLevel.subscribe((v) => (floor = v)),
+    playerVisualFloorLevel.subscribe((v) => (floor = v)),
     playerInsideHouseId.subscribe((v) => (insideHouseId = v)),
     editorHeightManager.subscribe((v) => (heightManager = v)),
     editorGrassDataManager.subscribe((v) => (grassManager = v)),

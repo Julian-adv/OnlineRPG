@@ -25,7 +25,7 @@
   import { bridgeManager } from '../../managers/bridgeManager'
   import { furnitureManager } from '../../managers/furnitureManager'
   import {
-    playerFloorLevel,
+    playerVisualFloorLevel,
     playerInsideHouseId,
   } from '../../stores/housingStore'
   import { housingManager } from '../../managers/housingManager'
@@ -85,7 +85,7 @@
     selectedObjectType.subscribe((v) => (selectedType = v)),
     playerDebugInfo.subscribe((v) => (debugInfo = v)),
     mapEditorMode.subscribe((v) => (isEditorMode = v)),
-    playerFloorLevel.subscribe((v) => (currentFloor = v)),
+    playerVisualFloorLevel.subscribe((v) => (currentFloor = v)),
     playerInsideHouseId.subscribe((v) => (currentHouseId = v)),
   ]
   onDestroy(() => unsubs.forEach((u) => u()))

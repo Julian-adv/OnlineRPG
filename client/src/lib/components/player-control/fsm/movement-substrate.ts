@@ -110,7 +110,6 @@ interface MovementSubstrateInput {
     dirX: number,
     dirZ: number
   ) => boolean
-  getFloorLevel: () => number
   setFloorLevel: (floor: number) => void
   writePlayerPosition: (position: Position, rotation: number) => void
   sendPlayerMove: SendPlayerMove
@@ -184,7 +183,6 @@ export function stepMovementSubstrate({
   waypointHeight,
   isMovementBlocked,
   isUphillTooSteep,
-  getFloorLevel,
   setFloorLevel,
   writePlayerPosition,
   sendPlayerMove,
@@ -216,11 +214,6 @@ export function stepMovementSubstrate({
       return { kind: 'blocked' }
     }
 
-    const arrivedWp = pathWaypoints[currentWaypointIndex]
-    if (arrivedWp && arrivedWp.floor !== getFloorLevel()) {
-      setFloorLevel(arrivedWp.floor)
-    }
-
     writePlayerPosition(
       {
         x: movementTarget.x,
@@ -233,10 +226,8 @@ export function stepMovementSubstrate({
     const nextWaypointIndex = currentWaypointIndex + 1
     if (nextWaypointIndex < pathWaypoints.length) {
       const nextWp = pathWaypoints[nextWaypointIndex]
-
-      if (nextWp.floor !== getFloorLevel()) {
-        setFloorLevel(nextWp.floor)
-      }
+      // Pre-set before the leg starts — see MovingStateData.floor.
+      setFloorLevel(nextWp.floor)
 
       const wpPos: Position = {
         x: nextWp.x,

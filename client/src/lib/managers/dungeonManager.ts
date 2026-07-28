@@ -30,7 +30,6 @@ import {
   dungeonPropsResetRevision,
   dungeonPropsRevision,
 } from '../stores/dungeonStore'
-import { playerFloorLevel } from '../stores/housingStore'
 import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { DungeonWall } from '../utils/dungeon-geo-constants'
@@ -894,15 +893,6 @@ class DungeonManager {
    */
   syncFromFloorLevel(floorLevel: number, x: number, z: number) {
     if (floorLevel >= 0) {
-      // Waypoint arrival writes dungeon passability floors (4+) into the
-      // housing floor store while underground. A walk-out overwrites them
-      // with surface waypoints, but a server-driven surfacing (respawn/
-      // teleport) skips that path, and the housing layer never clears a
-      // value it didn't write — collision would stay keyed to the dungeon
-      // and ignore house walls.
-      if (get(playerFloorLevel) >= constants().floorIndexBase) {
-        playerFloorLevel.set(0)
-      }
       if (this.active) {
         currentDungeonDepth.set(0)
         // Surfacing via a server sync (respawn/teleport) shuts the entrance

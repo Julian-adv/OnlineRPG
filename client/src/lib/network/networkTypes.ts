@@ -265,6 +265,4 @@ export type PositionCorrection = {
   y: number
   z: number
   rotation: number
-  /** Housing-store units (>= 0), already decoded from the wire floor. */
-  floorLevel: number
 }

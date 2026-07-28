@@ -39,7 +39,6 @@
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import {
     playerFloorOffset,
-    playerFloorLevel,
     playerVisualFloorLevel,
   } from '../stores/housingStore'
   import { currentDungeonDepth } from '../stores/dungeonStore'
@@ -150,8 +149,7 @@
 
   let currentPlayer = $state<LocalPlayer | null>(null)
 
-  /** Floor as broadcast to others — visual, not playerFloorLevel. See
-   * `playerVisualFloorLevel`. */
+  /** Floor as broadcast to others. See `playerVisualFloorLevel`. */
   function wireFloorLevel(): number {
     const depth = get(currentDungeonDepth)
     return depth >= 1 ? -depth : get(playerVisualFloorLevel)
@@ -411,7 +409,6 @@
   function applyPositionCorrection(correction: PositionCorrection) {
     stopMovement()
     playerRotation = correction.rotation
-    playerFloorLevel.set(correction.floorLevel)
     writePlayerPosition(
       { x: correction.x, y: correction.y, z: correction.z },
       correction.rotation
@@ -603,6 +600,7 @@
       } else {
         playerControlMachine.transition({
           name: 'moving',
+          floor: chase.pathWaypoints[0].floor,
           target: chase.movementTarget,
           movementState: chase.movementState,
           waypoints: chase.pathWaypoints,
@@ -751,8 +749,10 @@
       hasHeightData: (x, z) => heightManager.hasHeightData(x, z),
       isMovementBlocked,
       isUphillTooSteep,
-      getFloorLevel: () => get(playerFloorLevel),
-      setFloorLevel: (floor) => playerFloorLevel.set(floor),
+      setFloorLevel: (floor) => {
+        const m = movingState()
+        if (m) m.floor = floor
+      },
       writePlayerPosition,
       sendPlayerMove,
       actions: {
@@ -823,6 +823,7 @@
         // projection derives 'moving' from the machine's owned state.
         playerControlMachine.transition({
           name: 'moving',
+          floor: started.pathWaypoints[0].floor,
           target: started.movementTarget,
           movementState: started.movementState,
           waypoints: started.pathWaypoints,
@@ -835,7 +836,10 @@
     }
   }
 
-  /** Passability floor for path queries: dungeon depths map to 4+. */
+  /** Passability floor for path queries: dungeon depths map to 4+. On the
+   * surface: the moving leg's floor, else the floor the player stands on.
+   * `moving.floor` may carry raw dungeon waypoint floors (4+) — clamped out
+   * here, the single read site, so they can't outlive a surfacing. */
   function currentPassabilityFloor(): number {
     const depth = get(currentDungeonDepth)
     if (depth >= 1) {
@@ -850,7 +854,11 @@
           )
         : dungeonManager.passabilityFloor(depth)
     }
-    return get(playerFloorLevel)
+    const legFloor = movingState()?.floor
+    return legFloor !== undefined &&
+      legFloor < dungeonManager.consts.floorIndexBase
+      ? legFloor
+      : get(playerVisualFloorLevel)
   }
 
   /**

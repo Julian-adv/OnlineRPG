@@ -39,7 +39,6 @@
   } from './terrain-utils'
   import {
     playerFloorOffset,
-    playerFloorLevel,
     playerVisualFloorLevel,
     playerInsideHouseId,
   } from '../../stores/housingStore'
@@ -420,7 +419,6 @@
       }
       currentInsideHouseId = insideId
       playerInsideFloor = effectiveFloor
-      playerFloorLevel.set(effectiveFloor)
       playerVisualFloorLevel.set(effectiveFloor)
       playerInsideHouseId.set(insideId)
     }

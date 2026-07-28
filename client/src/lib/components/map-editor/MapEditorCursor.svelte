@@ -49,7 +49,7 @@
   import { furnitureManager } from '../../managers/furnitureManager'
   import { findAncestorWithUserData } from '../../managers/inputHandler'
   import { housingManager } from '../../managers/housingManager'
-  import { playerFloorLevel } from '../../stores/housingStore'
+  import { playerVisualFloorLevel } from '../../stores/housingStore'
   import { floorYBase, DEFAULT_WALL_HEIGHT } from '../../utils/house-geo-utils'
   import { TERRAIN_TILE_SIZE } from '../game-scene/terrain-utils'
   import { ORTHOGRAPHIC_FRUSTUM_HEIGHT } from '../game-scene/camera-utils'
@@ -154,7 +154,7 @@
   selectedObjectType.subscribe((v) => (currentObjectType = v))
   objectRotation.subscribe((v) => (currentObjectRot = v))
   objectSubTool.subscribe((v) => (currentObjectSubTool = v))
-  playerFloorLevel.subscribe((v) => (currentPlayerFloor = v))
+  playerVisualFloorLevel.subscribe((v) => (currentPlayerFloor = v))
 
   function syncBrushMode() {
     if (ctrlHeld) {

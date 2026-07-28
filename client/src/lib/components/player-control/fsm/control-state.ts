@@ -21,6 +21,13 @@ export type PlayerControlStateName =
 // ───────────────────────────────────────────────────────────────────────────
 
 export interface MovingStateData {
+  /** Passability floor keyed to the current leg: `waypoints[0]`'s floor at
+   *  start, then pre-set to the next waypoint's floor before each leg so a
+   *  climb collides against the floor being entered. May hold raw dungeon
+   *  waypoint floors; surface passability clamps those out at its single
+   *  read site (`currentPassabilityFloor`). Dies with the state — idle falls
+   *  back to `playerVisualFloorLevel`. */
+  floor: number
   /** Current waypoint target (the immediate point being walked toward). */
   target: Position
   /** Acceleration/deceleration integrator toward `target`. */

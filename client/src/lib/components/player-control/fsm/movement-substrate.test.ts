@@ -11,8 +11,6 @@ function makeBaseInput(
   target: Position,
   waypoints: PathWaypoint[] = [{ x: target.x, z: target.z, floor: 0 }]
 ) {
-  let floor = 0
-
   return {
     currentPos,
     movementTarget: target,
@@ -25,10 +23,7 @@ function makeBaseInput(
     waypointHeight: vi.fn((_f: number, x: number, z: number) => x + z),
     isMovementBlocked: vi.fn(() => false),
     isUphillTooSteep: vi.fn(() => false),
-    getFloorLevel: vi.fn(() => floor),
-    setFloorLevel: vi.fn((next: number) => {
-      floor = next
-    }),
+    setFloorLevel: vi.fn(),
     writePlayerPosition: vi.fn(),
     sendPlayerMove: vi.fn(),
   }
@@ -48,7 +43,7 @@ describe('stepMovementSubstrate', () => {
     expect(input.sendPlayerMove).not.toHaveBeenCalled()
   })
 
-  it('applies waypoint floor before final arrival send', () => {
+  it('arrives at the final waypoint without touching the leg floor', () => {
     const target = { x: 1, y: 0, z: 0 }
     const input = makeBaseInput({ x: 0.99, y: 0, z: 0 }, target, [
       { x: 1, z: 0, floor: 2 },
@@ -58,7 +53,7 @@ describe('stepMovementSubstrate', () => {
     const outcome = stepMovementSubstrate(input)
 
     expect(outcome.kind).toBe('arrived')
-    expect(input.setFloorLevel).toHaveBeenCalledWith(2)
+    expect(input.setFloorLevel).not.toHaveBeenCalled()
     expect(input.writePlayerPosition).toHaveBeenCalledWith(
       { x: 1, y: 1, z: 0 },
       expect.any(Number)
@@ -85,8 +80,7 @@ describe('stepMovementSubstrate', () => {
     if (outcome.kind !== 'next_waypoint') return
     expect(outcome.currentWaypointIndex).toBe(1)
     expect(outcome.movementTarget).toEqual({ x: 2, y: 2, z: 0 })
-    expect(input.setFloorLevel).toHaveBeenCalledWith(2)
-    expect(input.setFloorLevel).toHaveBeenCalledWith(3)
+    expect(input.setFloorLevel).toHaveBeenCalledExactlyOnceWith(3)
     expect(input.sendPlayerMove).toHaveBeenCalledWith(
       { x: 2, y: 2, z: 0 },
       expect.any(Number),

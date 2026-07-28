@@ -150,7 +150,6 @@ interface RunMovementFrameInput {
     dirX: number,
     dirZ: number
   ) => boolean
-  getFloorLevel: () => number
   setFloorLevel: (floor: number) => void
   writePlayerPosition: (position: Position, rotation: number) => void
   sendPlayerMove: SendPlayerMove
@@ -206,7 +205,6 @@ interface RunPlayerMovementTickInput {
     dirX: number,
     dirZ: number
   ) => boolean
-  getFloorLevel: () => number
   setFloorLevel: (floor: number) => void
   writePlayerPosition: (position: Position, rotation: number) => void
   sendPlayerMove: SendPlayerMove
@@ -242,7 +240,6 @@ export function runPlayerMovementTick({
   hasHeightData,
   isMovementBlocked,
   isUphillTooSteep,
-  getFloorLevel,
   setFloorLevel,
   writePlayerPosition,
   sendPlayerMove,
@@ -309,7 +306,6 @@ export function runPlayerMovementTick({
     waypointHeight,
     isMovementBlocked,
     isUphillTooSteep,
-    getFloorLevel,
     setFloorLevel,
     writePlayerPosition,
     sendPlayerMove,
