@@ -95,6 +95,23 @@ max_tokens = 1024                              # Max response tokens
 temperature = 0.7
 reasoning_effort = "none"                      # "none"/"low"/"medium"/"high"; "" omits it for models that reject it
 
+# --- SIDLA data link (experimental) ---
+# Replaces the prose decision channel with header-based packets, validated
+# against a per-header field matrix, with a deterministic fallback when a
+# packet is rejected. See agent-client/src/sidla/README.md.
+#
+# Needs the `sidla` cargo feature as well as `enabled`; without the feature
+# this table is ignored, so the same config file works with either build:
+#   cargo run -p agent-client --features sidla
+#
+# May also go under a [[npcs]] entry to opt one agent in.
+# [sidla]
+# enabled = true
+# wire = "compact"                             # "compact" (fewer tokens) or "json" (readable in logs)
+# shuffle = false                              # vary interchangeable objectives across turns
+# shuffle_seed = 1397705793                    # a fixed seed replays a run exactly
+# log_frames = false                           # log every frame and rejected reply at debug level
+
 # --- Multi-NPC Orchestrator Mode ---
 # When [[npcs]] is present, legacy single-NPC fields above are ignored.
 # Each NPC gets its own WebSocket connection and LLM session.

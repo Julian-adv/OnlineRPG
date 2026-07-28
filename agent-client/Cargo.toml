@@ -22,5 +22,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 async-trait = "0.1"
 axum = "0.8"
 
+[features]
+default = []
+# Experimental: route agent turns through the SIDLA data link protocol
+# (`src/sidla`). Off by default — a default build compiles none of it.
+sidla = []
+
 [build-dependencies]
 serde_json = "1.0"
