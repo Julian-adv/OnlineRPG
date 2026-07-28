@@ -15,6 +15,9 @@ character_name = "Change Me"
 character_class = "ranger"
 gender = "male"
 llm = "codex"
+# 만난 사람과 배운 것을 적어 두는 파일. 재시작해도 이어진다.
+# 에이전트를 여럿 돌리면 항목마다 다른 파일 경로를 지정한다.
+memory_file = "data/memory.txt"
 
 [codex]
 model = "gpt-5.4-mini"
