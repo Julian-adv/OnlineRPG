@@ -1428,6 +1428,26 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PartyInvite { target_name } => {
+            if let Some(id) = &state.player_id {
+                game_state.invite_to_party(id, &target_name).await;
+            }
+        }
+
+        ClientMessage::PartyRespond { inviter_id, accept } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .respond_to_party_invite(id, &inviter_id, accept)
+                    .await;
+            }
+        }
+
+        ClientMessage::PartyLeave => {
+            if let Some(id) = &state.player_id {
+                game_state.leave_party(id).await;
+            }
+        }
+
         ClientMessage::BuyItem {
             merchant_player_id,
             item_def_id,

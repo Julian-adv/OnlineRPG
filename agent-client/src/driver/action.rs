@@ -86,6 +86,28 @@ pub(super) enum AgentAction {
         #[serde(alias = "target", alias = "player_name", alias = "target_player")]
         player: String,
     },
+    /// Invite a player to your party by name. Works at any distance, like a
+    /// whisper.
+    #[serde(rename = "party_invite", alias = "invite_party", alias = "invite")]
+    PartyInvite {
+        #[serde(alias = "target", alias = "player_name", alias = "target_player")]
+        player: String,
+    },
+    /// Accept a pending party invite — the oldest, or the named inviter's.
+    #[serde(rename = "party_accept", alias = "accept_party", alias = "join_party")]
+    PartyAccept {
+        #[serde(default, alias = "target", alias = "player_name", alias = "inviter")]
+        player: Option<String>,
+    },
+    /// Decline a pending party invite — the oldest, or the named inviter's.
+    #[serde(rename = "party_decline", alias = "decline_party")]
+    PartyDecline {
+        #[serde(default, alias = "target", alias = "player_name", alias = "inviter")]
+        player: Option<String>,
+    },
+    /// Leave your current party.
+    #[serde(rename = "party_leave", alias = "leave_party")]
+    PartyLeave,
     /// Use an item from the bag: gear is equipped (or taken off if already
     /// worn), consumables are drunk or read. Mirrors the web quickslot.
     #[serde(rename = "use", alias = "use_item", alias = "equip")]
@@ -357,6 +379,13 @@ pub(super) fn action_to_command(
             })
         }
         AgentAction::StopFishing => Some(ClientMessage::FishingStop),
+        AgentAction::PartyInvite { player } => Some(ClientMessage::PartyInvite {
+            target_name: player.clone(),
+        }),
+        AgentAction::PartyLeave => Some(ClientMessage::PartyLeave),
+        // Answering needs the stored invite; handled in
+        // `execute::handle_response`.
+        AgentAction::PartyAccept { .. } | AgentAction::PartyDecline { .. } => None,
         // Need player-name → id resolution from SharedState; handled in
         // `execute::handle_response`, not here.
         AgentAction::OfferDeal { .. } => None,
@@ -434,6 +463,48 @@ mod tests {
         assert_eq!(target, None);
         assert_eq!(x, Some(10.0));
         assert_eq!(z, Some(-5.0));
+    }
+
+    #[test]
+    fn party_actions_parse_with_aliases() {
+        let action = parse_single_action(
+            r#"{"actions": [{"type": "party_invite", "player": "darkcocoa"}]}"#,
+        );
+        let AgentAction::PartyInvite { player } = action else {
+            panic!("expected PartyInvite");
+        };
+        assert_eq!(player, "darkcocoa");
+
+        for (json, expected) in [
+            (
+                r#"{"actions": [{"type": "party_accept"}]}"#,
+                AgentAction::PartyAccept { player: None },
+            ),
+            (
+                r#"{"actions": [{"type": "join_party"}]}"#,
+                AgentAction::PartyAccept { player: None },
+            ),
+            (
+                r#"{"actions": [{"type": "party_decline"}]}"#,
+                AgentAction::PartyDecline { player: None },
+            ),
+            (
+                r#"{"actions": [{"type": "leave_party"}]}"#,
+                AgentAction::PartyLeave,
+            ),
+        ] {
+            assert!(
+                matches!((parse_single_action(json), &expected), (a, e) if std::mem::discriminant(&a) == std::mem::discriminant(e)),
+                "{json}"
+            );
+        }
+
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "party_decline", "player": "Mallory"}]}"#);
+        let AgentAction::PartyDecline { player } = action else {
+            panic!("expected PartyDecline");
+        };
+        assert_eq!(player.as_deref(), Some("Mallory"));
     }
 
     #[test]

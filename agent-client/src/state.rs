@@ -341,6 +341,12 @@ pub struct SharedState {
     /// Last stance the fight reflex sent, so each `FishingFight` beat only
     /// resends on change.
     pub fishing_stance: Option<onlinerpg_shared::fishing::FishingAction>,
+    /// Unanswered party invites, oldest first (capped; a flood can't swap
+    /// the invite out from under an in-flight `party_accept`).
+    pub pending_party_invites: Vec<(PlayerId, String)>,
+    /// Current party roster from `PartyState`; empty = not in a party.
+    pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
+    pub party_leader: Option<PlayerId>,
     /// Known nearby players
     pub nearby_players: HashMap<PlayerId, Player>,
     /// Per-merchant list of units we sold this session, repurchasable at the
@@ -425,6 +431,9 @@ impl SharedState {
             trade_busy: false,
             self_fishing: false,
             fishing_stance: None,
+            pending_party_invites: Vec::new(),
+            party_members: Vec::new(),
+            party_leader: None,
             nearby_players: HashMap::new(),
             merchant_buyback: HashMap::new(),
             nearby_monsters: HashMap::new(),
@@ -893,6 +902,12 @@ impl SharedState {
             // Routine: feedback on our own command (/who output, whisper
             // errors) — worth seeing, not worth an immediate wakeup.
             ServerMessage::SystemMessage { .. } => EventUrgency::Routine,
+            // Urgent: an invite to answer while it is live, or the verdict
+            // on our own invite.
+            ServerMessage::PartyInviteReceived { .. } | ServerMessage::PartyInviteResult { .. } => {
+                EventUrgency::Urgent
+            }
+            ServerMessage::PartyState { .. } => EventUrgency::Routine,
             // Urgent: kicked
             ServerMessage::Kicked { .. } => EventUrgency::Urgent,
 
@@ -1283,6 +1298,26 @@ impl SharedState {
             }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;
+            }
+            ServerMessage::PartyInviteReceived {
+                inviter_id,
+                ref inviter_name,
+            } => {
+                let queue = &mut self.pending_party_invites;
+                if queue.len() < 3 && !queue.iter().any(|(id, _)| id == inviter_id) {
+                    queue.push((*inviter_id, inviter_name.clone()));
+                }
+            }
+            ServerMessage::PartyState {
+                leader_id,
+                ref members,
+            } => {
+                self.party_leader = (!members.is_empty()).then_some(*leader_id);
+                self.party_members = members.clone();
+                // Joining a party settles whichever invite led to it.
+                if !members.is_empty() {
+                    self.pending_party_invites.clear();
+                }
             }
             ServerMessage::InventoryState { ref inventory }
             | ServerMessage::InventoryUpdated { ref inventory } => {
@@ -1901,6 +1936,26 @@ impl SharedState {
                 .collect();
             worn.sort();
             lines.push(format!("You are wearing: {}", worn.join(", ")));
+        }
+
+        if !self.party_members.is_empty() {
+            let names: Vec<String> = self
+                .party_members
+                .iter()
+                .map(|m| {
+                    if Some(m.id) == self.party_leader {
+                        format!("{} (leader)", m.name)
+                    } else {
+                        m.name.clone()
+                    }
+                })
+                .collect();
+            lines.push(format!("Your party: {}", names.join(", ")));
+        }
+        for (_, name) in &self.pending_party_invites {
+            lines.push(format!(
+                "Pending party invite from {name} — answer with party_accept or party_decline"
+            ));
         }
 
         // Nearby players (exclude self and humans beyond the sight radius)
