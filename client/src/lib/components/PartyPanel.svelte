@@ -19,9 +19,11 @@
     </div>
     {#each roster.members as member (member.id)}
       <div class="member">
-        {#if member.id === roster.leaderId}
-          <span class="leader-star" title="Leader">★</span>
-        {/if}
+        <span class="role-slot">
+          {#if member.id === roster.leaderId}
+            <span class="leader-crown" title="Leader">♛</span>
+          {/if}
+        </span>
         {member.name}
       </div>
     {/each}
@@ -34,8 +36,8 @@
     left: 10px;
     top: 30%;
     z-index: 30;
-    min-width: 110px;
-    padding: 6px 10px 8px;
+    min-width: 132px;
+    padding: 8px 12px 10px;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 8px;
     background: rgba(6, 10, 14, 0.7);
@@ -50,7 +52,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
 
   .party-title {
@@ -75,11 +77,21 @@
   }
 
   .member {
-    line-height: 1.5;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    line-height: 1.7;
     white-space: nowrap;
   }
 
-  .leader-star {
+  /* Fixed slot whether or not a crown is shown, so names align. */
+  .role-slot {
+    width: 12px;
+    text-align: center;
+    flex: none;
+  }
+
+  .leader-crown {
     color: #f0c040;
   }
 </style>
