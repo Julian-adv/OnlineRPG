@@ -106,6 +106,8 @@
 - [x] 캐릭터 창에서도 퀵슬롯으로 드래그 할 수 있게
 - [x] deploy 안전하게
 - item drop을 서버에서 지연해서 보내게(공정성)
+- 마을에서 악기 연주하는 npc -> 노래의 제목을 말하고 bgm 중 하나를 연주한다
+- 죽었을 때 마을 여관에서 메이드의 간호를 받으며 깨어난다
 
 ## 낚시 후속 (PR #53 리뷰)
 
@@ -122,7 +124,6 @@
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
 - Mixamo GLB 재배포 정책 판단
-- 클라이언트 테스트 공백: waterFieldManager.surfaceAt, processClick의 cast_fishing 분기, fishing 스토어 전이
 - WaterSampler/HeightSampler 타일 캐시 eviction (LRU 또는 주기적 purge, 현재 무제한)
 - claimedKeys 범용 입력 클레임 메커니즘 (다음 모달 UI 때 낚시 카브아웃과 함께 일반화)
 
