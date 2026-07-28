@@ -246,9 +246,14 @@
     return primarySkinnedMesh.skeleton.bones.find((bone) => bone.name === name)
   }
 
-  // The rod GLB is baked to the spear hand-socket (tip ~38° below
-  // horizontal); lift it so it reads held up in every fishing pose.
-  const FISHING_ROD_PITCH = Math.PI / 4
+  // In the fishing stance the hand bone's y-z plane runs forward-down to
+  // sideways, so a pure x pitch only swings the rod sideways; this euler
+  // points it forward and ~25° up (about 60° bent off the forearm).
+  const FISHING_ROD_ROTATION = new THREE.Euler(0, -Math.PI / 6, -Math.PI / 3)
+
+  // The source cast clip keeps rod-jerking flourishes after the swing; cut
+  // where the pose meets the idle stance.
+  const FISHING_CAST_TRIM_S = 2.5
 
   function attachWeaponModel(
     gltfScene: THREE.Object3D,
@@ -262,49 +267,39 @@
     }
 
     weaponObject = gltfScene.clone()
-    // Tip detection needs the rod's own space — run it while the transform
-    // is still identity, before the grip offset and pitch go on.
-    if (itemDefId === 'fishing_rod') {
-      markRodTip(weaponObject)
-    }
     // Offset from wrist bone toward palm so weapon looks gripped
     weaponObject.position.set(0, 0.08, 0)
     if (itemDefId === 'fishing_rod') {
-      weaponObject.rotation.x = FISHING_ROD_PITCH
+      weaponObject.rotation.copy(FISHING_ROD_ROTATION)
+      rodTipNode = resolveTipNode(
+        weaponObject,
+        'rod_tip',
+        FALLBACK_ROD_TIP_LOCAL_OFFSET
+      )
     }
     rightHandBone.add(weaponObject)
     weaponAttached = true
     return true
   }
 
-  /// The rod GLB has no named tip node, so find it geometrically: the
-  /// bounding-box extreme farthest from the grip (the object origin sits in
-  /// the hand) marks the tip, and a cached marker child (same pattern as
-  /// `torchTipNode`) tracks it through the bone chain so the fishing line
-  /// can start exactly there.
-  function markRodTip(rod: THREE.Object3D) {
-    const box = new THREE.Box3().setFromObject(rod)
-    if (box.isEmpty()) return
-    const center = box.getCenter(new THREE.Vector3())
-    const tip = center.clone()
-    let best = 0
-    for (const axis of ['x', 'y', 'z'] as const) {
-      for (const value of [box.min[axis], box.max[axis]]) {
-        if (Math.abs(value) > best) {
-          best = Math.abs(value)
-          tip.copy(center)
-          tip[axis] = value
-        }
-      }
-    }
-    rodTipNode = new THREE.Object3D()
-    rodTipNode.name = 'rod_tip'
-    rodTipNode.position.copy(tip)
-    rod.add(rodTipNode)
-  }
-
   let rodTipNode: THREE.Object3D | null = null
+  const FALLBACK_ROD_TIP_LOCAL_OFFSET = new THREE.Vector3(-0.051, 2.117, -2.128)
   const rodTipScratch = new THREE.Vector3()
+
+  /** Named tip empty baked into a prop GLB, or a fallback child at the given
+   *  local offset — either way it rides the bone chain. */
+  function resolveTipNode(
+    prop: THREE.Object3D,
+    name: string,
+    fallbackOffset: THREE.Vector3
+  ): THREE.Object3D {
+    const found = prop.getObjectByName(name)
+    if (found) return found
+    const node = new THREE.Object3D()
+    node.position.copy(fallbackOffset)
+    prop.add(node)
+    return node
+  }
 
   /** World position of the equipped fishing rod's tip, or null when no rod
    *  is attached — the fishing line's anchor. */
@@ -344,7 +339,11 @@
     offhandObject.position.set(0, 0.08, 0)
     offhandObject.rotation.y = Math.PI
     leftHandBone.add(offhandObject)
-    torchTipNode = offhandObject.getObjectByName('torch_tip') ?? null
+    torchTipNode = resolveTipNode(
+      offhandObject,
+      'torch_tip',
+      FALLBACK_TORCH_TIP_LOCAL_OFFSET
+    )
     return true
   }
 
@@ -482,6 +481,13 @@
         socialClipsByName.set(clip.name, clip)
       }
       for (const clip of getGltfAnimations(fishingGltf)) {
+        if (
+          clip.name === FishingAnimationName.CAST &&
+          clip.duration > FISHING_CAST_TRIM_S
+        ) {
+          clip.duration = FISHING_CAST_TRIM_S
+          clip.trim()
+        }
         socialClipsByName.set(clip.name, clip)
       }
     } finally {
@@ -938,14 +944,8 @@
     }
 
     // Update torch fire particles
-    if (torchFire && offhandObject) {
-      if (torchTipNode) {
-        torchTipNode.getWorldPosition(_torchTipWorld)
-      } else {
-        offhandObject.updateWorldMatrix(true, false)
-        _torchTipWorld.copy(FALLBACK_TORCH_TIP_LOCAL_OFFSET)
-        offhandObject.localToWorld(_torchTipWorld)
-      }
+    if (torchFire && torchTipNode) {
+      torchTipNode.getWorldPosition(_torchTipWorld)
       torchFire.setTipPosition(_torchTipWorld)
       torchFire.update(deltaTime, camera)
     }

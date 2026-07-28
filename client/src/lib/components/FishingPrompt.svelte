@@ -131,14 +131,12 @@
 
 <svelte:window onkeydown={onKeydown} onkeyup={onKeyup} />
 
-{#if $myFishing.phase === 'casting'}
-  <div class="fishing-prompt waiting">Fishing… watch the bobber</div>
-{:else if $myFishing.phase === 'bite'}
+{#if $myFishing.phase === 'bite'}
   <button
-    class="fishing-prompt bite"
+    class="bite"
     onclick={() => networkManager.sendFishingRespond('hook')}
   >
-    ! HOOK IT — click / SPACE
+    HOOK IT — click / SPACE
   </button>
 {:else if $myFishing.phase === 'fight'}
   {@const f = $myFishing.fight}
@@ -166,8 +164,6 @@
         style={`width: ${Math.min(100, f.tension)}%`}
       ></span>
     </div>
-    <div class="tension-label">Line tension — snaps at 100</div>
-
     <div class="stance-row">
       {#each STANCE_BUTTONS as b (b.stance)}
         <button
@@ -191,7 +187,7 @@
 {/if}
 
 <style>
-  .fishing-prompt {
+  .bite {
     position: fixed;
     left: 50%;
     bottom: 22%;
@@ -199,18 +195,7 @@
     padding: 8px 18px;
     border-radius: 999px;
     font-size: 15px;
-    pointer-events: none;
     z-index: 30;
-  }
-
-  .waiting {
-    background: rgba(6, 10, 14, 0.75);
-    color: #e6edf3;
-    border: 1px solid rgba(166, 200, 238, 0.35);
-  }
-
-  .bite {
-    pointer-events: auto;
     cursor: pointer;
     background: rgba(213, 73, 60, 0.92);
     color: #fff;
@@ -305,12 +290,6 @@
     to {
       filter: brightness(1.35);
     }
-  }
-
-  .tension-label {
-    color: rgba(166, 200, 238, 0.7);
-    font-size: 11px;
-    text-align: center;
   }
 
   .stance-row {
