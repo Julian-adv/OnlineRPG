@@ -4,7 +4,9 @@
 // pay model-load cost.
 
 export function isTranslatorApiSupported(): boolean {
-  return typeof Translator !== 'undefined' && typeof LanguageDetector !== 'undefined'
+  return (
+    typeof Translator !== 'undefined' && typeof LanguageDetector !== 'undefined'
+  )
 }
 
 const translators = new Map<string, Promise<TranslatorInstance>>()

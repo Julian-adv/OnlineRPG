@@ -83,7 +83,9 @@
 
   const TRANSLATE_OFF = 'off'
 
-  function handleTranslateLangChange(event: Event & { currentTarget: HTMLSelectElement }) {
+  function handleTranslateLangChange(
+    event: Event & { currentTarget: HTMLSelectElement }
+  ) {
     const value = event.currentTarget.value
     if (value === TRANSLATE_OFF) {
       translationEnabled.set(false)
