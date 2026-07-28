@@ -73,6 +73,9 @@ pub struct Player {
     // every later field into the wrong slot on the wire.
     #[serde(default)]
     pub object_type: Option<String>,
+    /// Equipped main-hand item def id; `None` renders the class default.
+    #[serde(default)]
+    pub main_hand: Option<String>,
     #[serde(skip)]
     pub object_id: Option<u32>,
     #[serde(skip)]
@@ -256,6 +259,7 @@ mod tests {
             torch_on: false,
             floor_level: 0,
             object_type: None,
+            main_hand: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
@@ -291,6 +295,7 @@ mod tests {
             torch_on: true,
             floor_level: 0,
             object_type: None,
+            main_hand: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),

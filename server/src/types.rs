@@ -44,6 +44,7 @@ pub fn new_player(
         torch_on: false,
         floor_level: 0,
         object_type: None,
+        main_hand: None,
         object_id: None,
         last_combat_at: 0,
         client_kind,

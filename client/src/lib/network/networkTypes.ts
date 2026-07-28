@@ -34,6 +34,7 @@ export type ServerPlayer = {
   torch_on: boolean
   floor_level: number
   object_type?: string
+  main_hand?: string | null
 }
 
 export type ServerMonster = {

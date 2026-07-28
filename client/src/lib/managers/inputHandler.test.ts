@@ -36,9 +36,7 @@ function groundScene() {
   return { camera, ground }
 }
 
-function contextWith(
-  overrides: Partial<RaycastContext> = {}
-): RaycastContext {
+function contextWith(overrides: Partial<RaycastContext> = {}): RaycastContext {
   const { camera, ground } = groundScene()
   return {
     camera,

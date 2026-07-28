@@ -63,6 +63,7 @@ fn make_player(id: &str, x: f32, z: f32) -> Player {
         torch_on: false,
         floor_level: 0,
         object_type: None,
+        main_hand: None,
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
@@ -289,6 +290,50 @@ async fn equipped_torch_syncs_live_and_late_join_player_state() {
 }
 
 #[tokio::test]
+async fn equipped_main_hand_syncs_live_and_late_join_player_state() {
+    let game_state = make_test_game_state("late_join_main_hand_snapshot");
+    let angler_id = pid("angler");
+
+    game_state.add_player(make_player("angler", 0.0, 0.0)).await;
+    game_state.inventories.write().await.insert(
+        angler_id,
+        PlayerInventory {
+            bag: vec![bag_item(1, "fishing_rod", 1)],
+            equipped: Default::default(),
+        },
+    );
+
+    game_state.equip_item(&angler_id, 1).await;
+    assert_eq!(
+        game_state.get_all_players().await[&angler_id].main_hand,
+        Some("fishing_rod".to_string())
+    );
+
+    let snapshot = game_state
+        .add_player(make_player("late_joiner", 1.0, 0.0))
+        .await
+        .expect("nearby existing player should produce a GameState snapshot");
+    match snapshot {
+        ServerMessage::GameState { players, .. } => {
+            assert_eq!(
+                find_player(&players, angler_id).main_hand.as_deref(),
+                Some("fishing_rod")
+            );
+        }
+        other => panic!("expected GameState, got {other:?}"),
+    }
+
+    game_state
+        .unequip_item(&angler_id, EquipSlot::MainHand)
+        .await;
+
+    assert_eq!(
+        game_state.get_all_players().await[&angler_id].main_hand,
+        None
+    );
+}
+
+#[tokio::test]
 async fn respawn_player_revives_dead_player_only() {
     let game_state = make_test_game_state("respawn_dead");
 
@@ -310,6 +355,7 @@ async fn respawn_player_revives_dead_player_only() {
         torch_on: false,
         floor_level: 0,
         object_type: None,
+        main_hand: None,
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
@@ -373,6 +419,7 @@ async fn respawn_player_ignores_alive_player() {
         torch_on: false,
         floor_level: 0,
         object_type: None,
+        main_hand: None,
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),

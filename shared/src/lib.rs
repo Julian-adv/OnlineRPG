@@ -33,7 +33,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v7: trained skills (SkillsUpdate/SkillXpGained) + fishing
 ///     (cast/bite/struggle messages) — see `doc/FISHING.md`.
 /// v8: fishing struggle rounds replaced by continuous FishingFight beats.
-pub const PROTOCOL_VERSION: u32 = 8;
+/// v9: `Player.main_hand` + PlayerMainHandChanged equipment broadcast.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -133,6 +134,7 @@ mod tests {
             torch_on: false,
             floor_level: 0,
             object_type: None,
+            main_hand: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: Default::default(),

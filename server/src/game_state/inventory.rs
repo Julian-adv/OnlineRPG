@@ -127,9 +127,12 @@ impl super::GameState {
 
     /// Send the current inventory state directly to a player, then their
     /// refreshed guard. Every equipped-gear mutation routes through here, so
-    /// pushing the guard from this one spot keeps the character sheet in sync
-    /// without each mutation site having to remember to send it.
+    /// pushing the guard (and the main-hand broadcast, which no-ops when
+    /// unchanged) from this one spot keeps everything in sync without each
+    /// mutation site having to remember to send it.
     async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
+        self.set_player_main_hand(player_id, inventory.main_hand_def_id())
+            .await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
             .await;
         self.send_guard_update(player_id).await;

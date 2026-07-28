@@ -29,6 +29,7 @@ interface PlayerBase {
   characterClass: CharacterClass
   gender: Gender
   torchOn?: boolean
+  mainHand?: string | null
   lastDamageInfo?: PlayerDamageInfo
   lastRegenInfo?: PlayerDamageInfo
   lastGoldInfo?: PlayerGoldInfo

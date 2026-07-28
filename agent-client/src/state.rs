@@ -940,7 +940,8 @@ impl SharedState {
             | ServerMessage::MonsterRemoved { .. }
             | ServerMessage::XpGained { .. }
             | ServerMessage::PlayerHealthUpdate { .. }
-            | ServerMessage::PlayerTorchToggled { .. } => EventUrgency::Routine,
+            | ServerMessage::PlayerTorchToggled { .. }
+            | ServerMessage::PlayerMainHandChanged { .. } => EventUrgency::Routine,
 
             // Being relocated invalidates our walk targets and floor
             // assumptions; someone else being relocated does not.
@@ -2042,6 +2043,7 @@ pub(crate) mod tests {
             torch_on: false,
             floor_level: 0,
             object_type: None,
+            main_hand: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: Default::default(),

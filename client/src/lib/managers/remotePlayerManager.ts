@@ -14,6 +14,7 @@ import {
   type PlayerState,
 } from '../utils/movementUtils'
 import { entityGroundY } from './entity-ground'
+import { FishingAnimationName } from '../types/animations'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { TerrainHeightManager } from './terrainHeightManager'
 
@@ -300,6 +301,18 @@ class PlayerStateManager {
       this.targetRotations.set(playerId, rotation)
     }
     this.players.set(playerId, newState)
+  }
+
+  /** A remote's one-shot interact clip ended. A finished fishing cast hands
+   *  over to the looping fishing idle; anything else drops back to idle. */
+  handleInteractionFinished(playerId: number) {
+    const player = this.players.get(playerId)
+    if (player?.state !== 'interact') return
+    if (player.interactionAnim === FishingAnimationName.CAST) {
+      this.handleInteraction(playerId, FishingAnimationName.IDLE, 0)
+    } else {
+      this.handleStopInteraction(playerId)
+    }
   }
 
   handleStopInteraction(playerId: number) {

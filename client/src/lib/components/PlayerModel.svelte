@@ -85,6 +85,9 @@
     lastRegenInfo?: PlayerDamageInfo
     lastGoldInfo?: PlayerGoldInfo
     torchOn?: boolean
+    /** Remote players' broadcast main-hand item def id; the local player
+     *  renders from inventory instead. */
+    mainHand?: string | null
     torchEffectsDisabled?: boolean
     /** Set for NPC remote players so canvas clicks can resolve this model
      *  back to its player id (read from userData by the input raycast). */
@@ -117,6 +120,7 @@
     lastRegenInfo,
     lastGoldInfo,
     torchOn = false,
+    mainHand = null,
     torchEffectsDisabled = false,
     npcPlayerId,
   }: Props = $props()
@@ -358,10 +362,12 @@
   const equippedMainHandItemId = $derived(
     isCurrentPlayer
       ? ($inventoryStore.equipped.main_hand?.item_def_id ?? null)
-      : null
+      : mainHand
   )
 
-  let attachedWeaponItemId: string | null = null
+  // undefined = nothing applied yet; null = "no equipped item" applied
+  // (bare hands locally, class default weapon for remotes).
+  let attachedWeaponItemId: string | null | undefined = undefined
   let weaponAttachGeneration = 0
 
   $effect(() => {
@@ -373,9 +379,14 @@
     if (itemDefId === attachedWeaponItemId) return
 
     detachWeapon()
-    attachedWeaponItemId = null
+    attachedWeaponItemId = undefined
 
-    if (!itemDefId) return
+    if (!itemDefId) {
+      if (isCurrentPlayer || tryAttachWeapon(clonedScene)) {
+        attachedWeaponItemId = null
+      }
+      return
+    }
 
     const itemDef = getItemDef(itemDefId)
     if (!itemDef?.worldModel) return
@@ -627,10 +638,6 @@
       // the lift differed every session and the character floated above flat
       // dungeon floors after a restart.
       cloned.position.y = computeSoleGroundOffset(newModelRoot)
-
-      // For current player, weapon is reactively managed by $effect watching inventory.
-      // For other players, attach based on character class.
-      if (!isCurrentPlayer) tryAttachWeapon(cloned)
 
       const baseAnimations = getGltfAnimations(activeGltf)
       const locomotionAnimations = getGltfAnimations(locomotionGltfData)
@@ -901,11 +908,13 @@
     } else if (
       currentAction &&
       interactionAnim &&
-      // Pickup is the one interaction remote players end on their own: the
-      // server broadcast is transient (no StopInteraction follows), so the
-      // finish callback must fire for remotes too. Held poses (bench, forge)
-      // keep waiting for their StopInteraction.
-      (isCurrentPlayer || interactionAnim === 'pickup')
+      // Pickup and the fishing cast are interactions remote players end on
+      // their own (no StopInteraction follows the clip), so the finish
+      // callback must fire for remotes too. Held poses (bench, forge) keep
+      // waiting for their StopInteraction.
+      (isCurrentPlayer ||
+        interactionAnim === 'pickup' ||
+        interactionAnim === FishingAnimationName.CAST)
     ) {
       const clip = currentAction.getClip()
       if (clip.name === interactionAnim) {

@@ -1139,6 +1139,35 @@ impl super::GameState {
         }
     }
 
+    pub async fn set_player_main_hand(&self, player_id: &PlayerId, item_def_id: Option<String>) {
+        let position = {
+            let mut players = self.players.write().await;
+            if let Some(player) = players.get_mut(player_id) {
+                if player.main_hand == item_def_id {
+                    return;
+                }
+                player.main_hand = item_def_id.clone();
+                Some((player.position, player.floor_level))
+            } else {
+                None
+            }
+        };
+
+        if let Some((position, floor_level)) = position {
+            self.send_direct_message_to_players_within_position(
+                &position,
+                floor_level,
+                super::EVENT_DELIVERY_RADIUS,
+                ServerMessage::PlayerMainHandChanged {
+                    player_id: *player_id,
+                    item_def_id,
+                },
+                Some(player_id),
+            )
+            .await;
+        }
+    }
+
     pub async fn set_player_interaction(
         &self,
         player_id: &PlayerId,

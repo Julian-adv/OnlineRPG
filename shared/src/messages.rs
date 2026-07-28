@@ -613,6 +613,12 @@ pub enum ServerMessage {
         player_id: PlayerId,
         enabled: bool,
     },
+    /// A player's equipped main-hand item changed; `None` reverts remote
+    /// rendering to the class default weapon.
+    PlayerMainHandChanged {
+        player_id: PlayerId,
+        item_def_id: Option<String>,
+    },
     PlayerInteractionChanged {
         player_id: PlayerId,
         object_type: Option<String>,

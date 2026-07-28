@@ -108,6 +108,13 @@ impl PlayerInventory {
             .get(&EquipSlot::OffHand)
             .is_some_and(|item| TORCH_ITEM_IDS.contains(&item.item_def_id.as_str()))
     }
+
+    /// Equipped main-hand item def id, as broadcast to nearby players.
+    pub fn main_hand_def_id(&self) -> Option<String> {
+        self.equipped
+            .get(&EquipSlot::MainHand)
+            .map(|item| item.item_def_id.clone())
+    }
 }
 
 /// Item defs that act as a carried light source.

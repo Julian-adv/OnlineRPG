@@ -980,6 +980,7 @@ async fn handle_client_message(
             // Resolve it before add_player builds the late-join GameState snapshot.
             let inventory = game_state.get_player_inventory(&id).await;
             player.torch_on = inventory.as_ref().is_some_and(|inv| inv.is_torch_lit());
+            player.main_hand = inventory.as_ref().and_then(|inv| inv.main_hand_def_id());
 
             let mut responses = vec![ServerMessage::JoinSuccess {
                 player: player.clone(),

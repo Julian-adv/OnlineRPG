@@ -12,6 +12,7 @@ import {
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
+import { FishingAnimationName } from '../types/animations'
 import { playFishingSound } from '../managers/sfxManager'
 import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
 import { monsterManager } from '../managers/monsterManager'
@@ -104,6 +105,7 @@ function toRemotePlayer(sp: ServerPlayer): RemotePlayer {
     characterClass: sp.class,
     gender: sp.gender,
     torchOn: sp.torch_on,
+    mainHand: sp.main_hand ?? null,
     floorLevel: sp.floor_level ?? 0,
     isOfficialNpc: sp.is_official_npc ?? false,
   }
@@ -766,6 +768,15 @@ export function handleServerMessage(
       break
     }
 
+    case 'PlayerMainHandChanged': {
+      const state = get(gameStore)
+      if (state.currentPlayer?.id === data.player_id) {
+        break
+      }
+      updatePlayer(data.player_id, { mainHand: data.item_def_id ?? null })
+      break
+    }
+
     case 'PlayerInteractionChanged': {
       const state = get(gameStore)
       if (state.currentPlayer?.id === data.player_id) {
@@ -1047,6 +1058,12 @@ export function handleServerMessage(
           FISHING_CAST_SWING_DELAY_MS + fishing_cast_ms()
         )
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
+      } else {
+        remotePlayerManager.handleInteraction(
+          data.player_id,
+          FishingAnimationName.CAST,
+          0
+        )
       }
       break
     }
@@ -1080,6 +1097,7 @@ export function handleServerMessage(
     case 'FishingEnded': {
       removeBobber(data.player_id)
       const isSelf = isSelfPlayer(data.player_id)
+      if (!isSelf) remotePlayerManager.handleStopInteraction(data.player_id)
       // Bystander celebration: everyone in radius hears about a trophy.
       if (!isSelf && data.outcome?.Caught?.trophy) {
         const { item_def_id, size_cm } = data.outcome.Caught
