@@ -32,7 +32,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v6: attack-rejection ack.
 /// v7: trained skills (SkillsUpdate/SkillXpGained) + fishing
 ///     (cast/bite/struggle messages) — see `doc/FISHING.md`.
-pub const PROTOCOL_VERSION: u32 = 7;
+/// v8: fishing struggle rounds replaced by continuous FishingFight beats.
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
