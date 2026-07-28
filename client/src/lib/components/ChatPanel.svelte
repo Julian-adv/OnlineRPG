@@ -1,9 +1,19 @@
 <script lang="ts">
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { gameStore } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
   import { handleCommand, visibleCommandNames } from '../chat-commands'
   import { chatInputKeyIntent } from '../chat-input-keys'
   import { chatFocusRequest } from '../stores/npcMenuStore'
+  import {
+    translationEnabled,
+    translationTargetLanguage,
+    TRANSLATION_LANGUAGES,
+  } from '../stores/translationSettings'
+  import {
+    translateChatText,
+    isTranslatorApiSupported,
+  } from '../translation/chatTranslator'
 
   type Tab = 'say' | 'combat'
   const TRANSCRIPT_FADE_DELAY_MS = 20_000
@@ -12,6 +22,76 @@
   let chatMessages = $derived($gameStore.chatMessages)
   let combatMessages = $derived($gameStore.combatMessages)
   let isConnected = $derived($gameStore.isConnected)
+
+  // Translated text per message id, for the active target language only —
+  // cleared and retranslated from scratch whenever the target changes. Source
+  // is auto-detected per message inside translateChatText.
+  let translations = new SvelteMap<number, string>()
+  // Ids currently awaiting a translation result — a first-time language pair
+  // can mean a model download, so this can stay true for a while.
+  let pendingTranslation = new SvelteSet<number>()
+  let translatedTarget = ''
+
+  $effect(() => {
+    const enabled = $translationEnabled
+    const target = $translationTargetLanguage
+    // Both arrays share one id counter (see gameStore's nextMessageId), so a
+    // single cache keyed by id safely covers chat and combat together.
+    const entries = [...chatMessages, ...combatMessages]
+
+    if (!enabled || !isTranslatorApiSupported()) {
+      if (translations.size) translations.clear()
+      if (pendingTranslation.size) pendingTranslation.clear()
+      translatedTarget = ''
+      return
+    }
+
+    if (target !== translatedTarget) {
+      translations.clear()
+      pendingTranslation.clear()
+      translatedTarget = target
+    }
+
+    const liveIds = new Set(entries.map((e) => e.id))
+    for (const id of translations.keys()) {
+      if (!liveIds.has(id)) translations.delete(id)
+    }
+    for (const id of pendingTranslation) {
+      if (!liveIds.has(id)) pendingTranslation.delete(id)
+    }
+
+    for (const entry of entries) {
+      if (translations.has(entry.id) || !entry.text) continue
+      if (pendingTranslation.has(entry.id)) continue
+      pendingTranslation.add(entry.id)
+      translateChatText(entry.text, target)
+        .then((translated) => translations.set(entry.id, translated))
+        .catch(() => {
+          // Leave untranslated — the template falls back to the original text.
+        })
+        .finally(() => pendingTranslation.delete(entry.id))
+    }
+  })
+
+  function displayText(entry: { id: number; text: string }): string {
+    return translations.get(entry.id) ?? entry.text
+  }
+
+  function isTranslating(entry: { id: number }): boolean {
+    return pendingTranslation.has(entry.id)
+  }
+
+  const TRANSLATE_OFF = 'off'
+
+  function handleTranslateLangChange(event: Event & { currentTarget: HTMLSelectElement }) {
+    const value = event.currentTarget.value
+    if (value === TRANSLATE_OFF) {
+      translationEnabled.set(false)
+    } else {
+      translationTargetLanguage.set(value)
+      translationEnabled.set(true)
+    }
+  }
   let messageInput = $state('')
   let chatContainer = $state<HTMLDivElement>()
   let transcriptVisible = $state(true)
@@ -178,9 +258,12 @@
               class:local={entry.sender === 'local'}
               class:remote={entry.sender === 'remote'}>{entry.name}:</span
             >
-            {entry.text}
+            {displayText(entry)}
           {:else}
-            <span class="system">{entry.text}</span>
+            <span class="system">{displayText(entry)}</span>
+          {/if}
+          {#if isTranslating(entry)}
+            <span class="translating-hint">translating…</span>
           {/if}
         </div>
       {/each}
@@ -195,10 +278,13 @@
             >
             <span
               class:hit={entry.hit === true}
-              class:miss={entry.hit === false}>{entry.text}</span
+              class:miss={entry.hit === false}>{displayText(entry)}</span
             >
           {:else}
-            {entry.text}
+            {displayText(entry)}
+          {/if}
+          {#if isTranslating(entry)}
+            <span class="translating-hint">translating…</span>
           {/if}
         </div>
       {/each}
@@ -231,6 +317,19 @@
         disabled={!isConnected}
       />
     </div>
+    {#if isTranslatorApiSupported()}
+      <select
+        class="translate-lang-select"
+        value={$translationEnabled ? $translationTargetLanguage : TRANSLATE_OFF}
+        onchange={handleTranslateLangChange}
+        title="Translate chat"
+      >
+        <option value={TRANSLATE_OFF}>Off</option>
+        {#each TRANSLATION_LANGUAGES as lang (lang.code)}
+          <option value={lang.code}>{lang.label}</option>
+        {/each}
+      </select>
+    {/if}
     <button
       onclick={sendMessage}
       disabled={!isConnected || !messageInput.trim()}
@@ -360,6 +459,14 @@
     font-style: italic;
   }
 
+  .translating-hint {
+    margin-left: 6px;
+    color: #718096;
+    font-size: 10px;
+    font-style: italic;
+    opacity: 0.8;
+  }
+
   .message.whisper {
     color: #b794f4;
   }
@@ -451,6 +558,18 @@
     opacity: 0.5;
   }
 
+  .translate-lang-select {
+    margin: 2px 0;
+    padding: 0 6px;
+    border: none;
+    border-radius: 4px;
+    background: #2d3748;
+    color: #e2e8f0;
+    font-size: 11px;
+    max-width: 90px;
+    cursor: pointer;
+  }
+
   .chat-input button {
     margin: 2px;
     padding: 8px 15px;
@@ -535,6 +654,11 @@
       margin: 2px;
       padding: 4px 8px;
       font-size: 11px;
+    }
+
+    .translate-lang-select {
+      max-width: 56px;
+      font-size: 10px;
     }
   }
 </style>
