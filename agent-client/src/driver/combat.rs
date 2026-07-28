@@ -104,7 +104,7 @@ pub(super) async fn tick_combat(
     // Chase until in range (handles monster movement during chase)
     match chase_monster(state, &monster_id).await {
         ChaseResult::InRange => {}
-        ChaseResult::Lost | ChaseResult::Error => {
+        ChaseResult::Lost(_) | ChaseResult::Error => {
             info!("Combat ended: monster {monster_id} lost or error during chase");
             return None;
         }
@@ -138,8 +138,37 @@ pub(super) async fn tick_combat(
 
 pub(super) enum ChaseResult {
     InRange,
-    Lost,
+    Lost(LostReason),
     Error,
+}
+
+/// Why a chase gave up, tagged at the point where the chase loop knew the
+/// ground truth — so callers report the real reason instead of guessing.
+#[derive(Debug)]
+pub(super) enum LostReason {
+    /// The target left the world state: died, despawned, or out of sight.
+    TargetGone,
+    /// We died (or vanished) on the way.
+    PlayerDied,
+    /// The target sits this far away, beyond the chase's leash.
+    TooFar(f32),
+    /// The chase clock ran out before arriving.
+    Timeout,
+    /// No route on this floor — walls or shut doors all the way around.
+    NoPath,
+}
+
+impl LostReason {
+    /// Target-neutral clause completing "You could not reach X — {clause}."
+    pub(super) fn clause(&self) -> String {
+        match self {
+            Self::TargetGone => "your target is no longer there".to_string(),
+            Self::PlayerDied => "you died on the way".to_string(),
+            Self::TooFar(d) => format!("your target is {d:.0}m away, beyond your reach"),
+            Self::Timeout => "you ran out of time before arriving".to_string(),
+            Self::NoPath => "no route leads there from here".to_string(),
+        }
+    }
 }
 
 /// What a chase walks toward: a monster (stop at attack range), another
@@ -308,17 +337,17 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
     loop {
         if chase_start.elapsed().as_secs_f32() > tuning.max_secs {
             warn!("Chase timeout for target {}", target);
-            return ChaseResult::Lost;
+            return ChaseResult::Lost(LostReason::Timeout);
         }
 
         let (in_range, needs_repath, target_pos, target_floor, goal) = {
             let s = state.lock().await;
             let player_alive = s.self_player.as_ref().is_some_and(|p| p.health > 0);
             let Some(target_pos) = target.position(&s) else {
-                return ChaseResult::Lost;
+                return ChaseResult::Lost(LostReason::TargetGone);
             };
             if !player_alive {
-                return ChaseResult::Lost;
+                return ChaseResult::Lost(LostReason::PlayerDied);
             }
 
             let player = s.self_player.as_ref().unwrap();
@@ -329,7 +358,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
                     "Giving up chase: target {} is {:.1}m away (>{:.1}m)",
                     target, to_target.dist, tuning.max_distance
                 );
-                return ChaseResult::Lost;
+                return ChaseResult::Lost(LostReason::TooFar(to_target.dist));
             }
 
             let target_shift =
@@ -376,7 +405,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
                     continue;
                 }
                 info!("Chase gave up: no route to {target} on this floor");
-                return ChaseResult::Lost;
+                return ChaseResult::Lost(LostReason::NoPath);
             }
             if result.waypoints.is_empty() {
                 path_waypoints.clear();
@@ -396,7 +425,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
             let mut s = state.lock().await;
             let player = match s.self_player.as_ref() {
                 Some(p) => p,
-                None => return ChaseResult::Lost,
+                None => return ChaseResult::Lost(LostReason::PlayerDied),
             };
             let to_wp = PlanarDelta::to_xz(&player.position, wp.x, wp.z);
 

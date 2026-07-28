@@ -18,7 +18,7 @@ use super::action::{
 };
 use super::combat::{
     approach_player, chase_monster, chest_arrive_range, walk_to_ground_item, walk_to_point,
-    ChaseResult,
+    ChaseResult, LostReason,
 };
 use super::movement::{execute_move, MoveResult};
 
@@ -27,19 +27,27 @@ use super::movement::{execute_move, MoveResult};
 const PICKUP_GRAB_DELAY_MS: u64 = 700;
 
 /// Feedback for an attack whose chase never reached the monster, so the agent
-/// stops re-issuing it. `sighted` is the monster's distance and whether it is
-/// on our floor; `None` if out of sight.
-fn unreachable_note(monster_id: &str, sighted: Option<(f32, bool)>) -> String {
-    match sighted {
-        Some((d, false)) => format!(
-            "[Unreachable] Could not reach monster {monster_id}: it is {d:.0}m away \
-             on a different floor. Pick a monster on your own floor."
+/// stops re-issuing it. The reason comes from the chase itself, not a guess.
+fn unreachable_note(monster_id: &str, loss: &LostReason) -> String {
+    match loss {
+        LostReason::TargetGone => {
+            format!("[Unreachable] Monster {monster_id} is gone. Pick a different target.")
+        }
+        LostReason::PlayerDied => {
+            format!("[Unreachable] You died before reaching monster {monster_id}.")
+        }
+        LostReason::TooFar(d) => format!(
+            "[Unreachable] Monster {monster_id} is {d:.0}m away, beyond your chase range. \
+             Move closer first, or pick a nearer monster."
         ),
-        Some((d, true)) => format!(
-            "[Unreachable] Could not reach monster {monster_id}: it is {d:.0}m away, \
-             too far or blocked. Move closer first, or pick a nearer monster."
+        LostReason::Timeout => format!(
+            "[Unreachable] The chase for monster {monster_id} ran out of time — the way \
+             may be blocked. Move first, or pick a different target."
         ),
-        None => format!("[Unreachable] Monster {monster_id} is gone. Pick a different target."),
+        LostReason::NoPath => format!(
+            "[Unreachable] No route leads to monster {monster_id} from here — it is \
+             behind walls or on another floor. Pick a reachable monster."
+        ),
     }
 }
 
@@ -124,20 +132,19 @@ pub(super) async fn handle_response(
                         }
                     }
                 }
-                ChaseResult::Lost | ChaseResult::Error => {
-                    warn!("Could not reach monster {monster_id}, skipping attack");
+                ChaseResult::Lost(loss) => {
+                    warn!("Could not reach monster {monster_id} ({loss:?}), skipping attack");
                     let mut s = state.lock().await;
-                    let sighted = s
-                        .self_player
-                        .as_ref()
-                        .zip(s.nearby_monsters.get(monster_id))
-                        .map(|(p, m)| {
-                            (
-                                crate::geom::PlanarDelta::between(&p.position, &m.position).dist,
-                                m.floor_level == s.self_floor_level,
-                            )
-                        });
-                    s.push_agent_event(unreachable_note(monster_id, sighted));
+                    s.push_agent_event(unreachable_note(monster_id, &loss));
+                    continue;
+                }
+                ChaseResult::Error => {
+                    warn!("Error while chasing monster {monster_id}, skipping attack");
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[Unreachable] Could not reach monster {monster_id}: something went \
+                         wrong on the way."
+                    ));
                     continue;
                 }
             }
@@ -448,10 +455,17 @@ pub(super) async fn handle_response(
                         info!("Agent requested break on prop {prop_id}");
                     }
                 }
-                ChaseResult::Lost | ChaseResult::Error => {
+                ChaseResult::Lost(loss) => {
                     let mut s = state.lock().await;
                     s.push_agent_event(format!(
-                        "[PropFailed] You could not get to prop {prop_id} in time."
+                        "[PropFailed] You could not get to prop {prop_id} — {}.",
+                        loss.clause()
+                    ));
+                }
+                ChaseResult::Error => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[PropFailed] You could not get to prop {prop_id}."
                     ));
                 }
             }
@@ -510,11 +524,18 @@ pub(super) async fn handle_response(
                         info!("Agent requested chest open ({:?})", chest.kind);
                     }
                 }
-                ChaseResult::Lost | ChaseResult::Error => {
+                ChaseResult::Lost(loss) => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[ChestFailed] You did not reach the chest — {}.",
+                        loss.clause()
+                    ));
+                }
+                ChaseResult::Error => {
                     let mut s = state.lock().await;
                     s.push_agent_event(
-                        "[ChestFailed] You did not reach the chest — the way is blocked, \
-                         it is too far to walk in one go, or you died on the way."
+                        "[ChestFailed] You did not reach the chest — something went wrong \
+                         on the way."
                             .to_string(),
                     );
                 }
@@ -561,12 +582,17 @@ pub(super) async fn handle_response(
                         info!("Agent picked up {def_id} [id {instance_id}]");
                     }
                 }
-                ChaseResult::Lost => {
-                    warn!("pickup: could not reach {def_id} [id {instance_id}]");
+                ChaseResult::Lost(loss) => {
+                    warn!("pickup: could not reach {def_id} [id {instance_id}] ({loss:?})");
+                    let why = match loss {
+                        LostReason::TargetGone => {
+                            "it was taken or despawned before you got there".to_string()
+                        }
+                        other => other.clause(),
+                    };
                     let mut s = state.lock().await;
                     s.push_agent_event(format!(
-                        "[PickupFailed] You could not reach the {def_id} — it was taken \
-                         or despawned before you got there."
+                        "[PickupFailed] You could not reach the {def_id} — {why}."
                     ));
                 }
                 ChaseResult::Error => {
@@ -622,12 +648,18 @@ pub(super) async fn handle_response(
                              to them. No further movement is needed to interact."
                         ));
                     }
-                    ChaseResult::Lost => {
-                        warn!("move: could not reach '{name}'");
+                    ChaseResult::Lost(loss) => {
+                        warn!("move: could not reach '{name}' ({loss:?})");
+                        let why = match loss {
+                            LostReason::TargetGone => "they moved out of sight".to_string(),
+                            LostReason::TooFar(d) => {
+                                format!("they are {d:.0}m away, too far to follow")
+                            }
+                            other => other.clause(),
+                        };
                         let mut s = state.lock().await;
                         s.push_agent_event(format!(
-                            "[MoveFailed] You could not reach {name} — they moved away \
-                             or out of sight."
+                            "[MoveFailed] You could not reach {name} — {why}."
                         ));
                     }
                     ChaseResult::Error => {
@@ -723,7 +755,15 @@ async fn reach_merchant(
     let (id, name) = resolved?;
     match approach_player(state, &id).await {
         ChaseResult::InRange => Some((id, name)),
-        ChaseResult::Lost | ChaseResult::Error => {
+        ChaseResult::Lost(loss) => {
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[{tag}] You could not reach {merchant} — {}.",
+                loss.clause()
+            ));
+            None
+        }
+        ChaseResult::Error => {
             let mut s = state.lock().await;
             s.push_agent_event(format!("[{tag}] You could not reach {merchant}."));
             None
@@ -901,22 +941,22 @@ mod tests {
         );
     }
 
-    /// A too-far monster, one on another floor, and a vanished one produce
+    /// A too-far monster, a walled-off one, and a vanished one produce
     /// different guidance: walk up to the first, retarget off the other two
     /// instead of re-attacking.
     #[test]
     fn an_unreachable_attack_tells_the_agent_why() {
-        let present = unreachable_note("m19_21", Some((22.8, true)));
-        assert!(present.contains("m19_21"));
-        assert!(present.contains("23m"));
-        assert!(present.to_lowercase().contains("closer"));
+        let far = unreachable_note("m19_21", &LostReason::TooFar(22.8));
+        assert!(far.contains("m19_21"));
+        assert!(far.contains("23m"));
+        assert!(far.to_lowercase().contains("closer"));
 
-        let below = unreachable_note("m7_3", Some((3.2, false)));
-        assert!(below.contains("m7_3"));
-        assert!(below.contains("different floor"));
-        assert!(!below.to_lowercase().contains("closer"));
+        let walled = unreachable_note("m7_3", &LostReason::NoPath);
+        assert!(walled.contains("m7_3"));
+        assert!(walled.to_lowercase().contains("no route"));
+        assert!(!walled.to_lowercase().contains("closer"));
 
-        let gone = unreachable_note("m5_2", None);
+        let gone = unreachable_note("m5_2", &LostReason::TargetGone);
         assert!(gone.contains("m5_2"));
         assert!(gone.to_lowercase().contains("gone"));
     }
