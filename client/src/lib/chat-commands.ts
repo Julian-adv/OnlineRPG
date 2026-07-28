@@ -20,7 +20,7 @@ import { dungeonManager } from './managers/dungeonManager'
  *  and who executes it. */
 type Command = {
   desc: string
-  admin: boolean
+  admin?: boolean
   /** Client-side handler. Omit it to let the text through to the server. */
   run?: (args: string) => void
 }
@@ -28,19 +28,21 @@ type Command = {
 const COMMANDS: Record<string, Command> = {
   '/help': {
     desc: 'List the available commands',
-    admin: false,
     run: () => {
+      const regular: string[] = []
+      const adminOnly: string[] = []
+      for (const name of visibleCommandNames()) {
+        ;(COMMANDS[name].admin ? adminOnly : regular).push(name)
+      }
       const line = (name: string) =>
         addChatMessage({
           text: `${name} — ${COMMANDS[name].desc}`,
           sender: 'system',
         })
-      const listed = visibleCommandNames()
 
       addChatMessage({ text: 'Available commands:', sender: 'system' })
-      for (const name of listed.filter((n) => !COMMANDS[n].admin)) line(name)
+      for (const name of regular) line(name)
 
-      const adminOnly = listed.filter((n) => COMMANDS[n].admin)
       if (adminOnly.length > 0) {
         addChatMessage({ text: 'Admin commands:', sender: 'system' })
         for (const name of adminOnly) line(name)
@@ -48,21 +50,12 @@ const COMMANDS: Record<string, Command> = {
     },
   },
 
-  '/who': { desc: 'Show how many players are online', admin: false },
-  '/escape': {
-    desc: 'Return to the starting point when you get stuck',
-    admin: false,
-  },
-  '/w': { desc: 'Send a private message: /w <player> <message>', admin: false },
-  '/whisper': {
-    desc: 'Send a private message: /whisper <player> <message>',
-    admin: false,
-  },
-  '/block': {
-    desc: 'Block whispers from a player: /block <player>',
-    admin: false,
-  },
-  '/unblock': { desc: 'Unblock a player: /unblock <player>', admin: false },
+  '/who': { desc: 'Show how many players are online' },
+  '/escape': { desc: 'Return to the starting point when you get stuck' },
+  '/w': { desc: 'Send a private message: /w <player> <message>' },
+  '/whisper': { desc: 'Send a private message: /whisper <player> <message>' },
+  '/block': { desc: 'Block whispers from a player: /block <player>' },
+  '/unblock': { desc: 'Unblock a player: /unblock <player>' },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',
@@ -71,7 +64,6 @@ const COMMANDS: Record<string, Command> = {
 
   '/pos': {
     desc: 'Show your current position',
-    admin: false,
     run: () => {
       const player = get(gameStore).currentPlayer
       if (player) {
@@ -202,7 +194,6 @@ const COMMANDS: Record<string, Command> = {
 
   '/wireframe': {
     desc: 'Toggle the river wireframe overlay',
-    admin: true,
     run: () => {
       const next = !get(riverWireframeVisible)
       riverWireframeVisible.set(next)
@@ -215,7 +206,6 @@ const COMMANDS: Record<string, Command> = {
 
   '/shore_wave': {
     desc: 'Toggle the shore-wave debug overlay',
-    admin: true,
     run: () => {
       const next = !get(shoreWaveDebugVisible)
       shoreWaveDebugVisible.set(next)
@@ -228,7 +218,6 @@ const COMMANDS: Record<string, Command> = {
 
   '/passability': {
     desc: 'Toggle the passability overlay',
-    admin: true,
     run: () => {
       const next = !get(passabilityDebugVisible)
       passabilityDebugVisible.set(next)
@@ -311,7 +300,13 @@ const COMMANDS: Record<string, Command> = {
   },
 }
 
-const commandNames = Object.keys(COMMANDS).sort()
+/** `/help` first so a bare `/` completes to it. */
+const commandNames = [
+  '/help',
+  ...Object.keys(COMMANDS)
+    .filter((n) => n !== '/help')
+    .sort(),
+]
 
 /** Command names for autocomplete; hides admin commands from non-admins. */
 export function visibleCommandNames(): string[] {

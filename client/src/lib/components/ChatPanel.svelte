@@ -72,18 +72,12 @@
     }
   }
 
-  /** Completion candidates for a prefix. `/help` goes first so typing just `/`
-   *  finds it. */
-  function commandMatches(prefix: string): string[] {
-    const matches = visibleCommandNames().filter((n) => n.startsWith(prefix))
-    if (!matches.includes('/help')) return matches
-    return ['/help', ...matches.filter((n) => n !== '/help')]
-  }
-
   // Grey preview of what Tab would complete to.
   let commandGhost = $derived.by(() => {
     if (!messageInput.startsWith('/') || messageInput.includes(' ')) return ''
-    const match = commandMatches(messageInput).find((n) => n !== messageInput)
+    const match = visibleCommandNames().find(
+      (n) => n.startsWith(messageInput) && n !== messageInput
+    )
     return match ? match.slice(messageInput.length) : ''
   })
 
@@ -96,10 +90,14 @@
       messageInput = tabCycle.matches[tabCycle.index]
       return
     }
-    const matches = commandMatches(messageInput)
+    const matches = visibleCommandNames().filter((n) =>
+      n.startsWith(messageInput)
+    )
     if (matches.length === 0) return
-    tabCycle = { matches, index: 0 }
-    messageInput = matches[0]
+    // Skip an exact match so the first Tab lands on what the ghost previews.
+    const index = matches[0] === messageInput && matches.length > 1 ? 1 : 0
+    tabCycle = { matches, index }
+    messageInput = matches[index]
   }
 
   function handleKeyDown(event: KeyboardEvent) {
@@ -401,15 +399,20 @@
     display: flex;
   }
 
+  /* One metrics declaration per breakpoint keeps the ghost aligned with the input. */
+  .chat-input input,
+  .input-ghost {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
   .chat-input input {
     flex: 1;
     min-width: 0;
-    padding: 8px 10px;
     border: none;
     border-radius: 0 0 0 8px;
     background: transparent;
     color: #ffffff;
-    font-size: 12px;
   }
 
   /* Grey ghost aligned under the real input: an invisible copy of the typed
@@ -419,8 +422,6 @@
     inset: 0;
     display: flex;
     align-items: center;
-    padding: 8px 10px;
-    font-size: 12px;
     pointer-events: none;
     overflow: hidden;
   }
@@ -514,10 +515,14 @@
       border-radius: 0 0 6px 6px;
     }
 
-    .chat-input input {
+    .chat-input input,
+    .input-ghost {
       padding: 4px 6px;
       font-size: 16px;
       line-height: 1;
+    }
+
+    .chat-input input {
       border-radius: 0 0 0 6px;
       min-width: 0;
     }
