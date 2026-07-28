@@ -176,7 +176,7 @@ async fn equipping_armor_does_not_break_concentration() {
         .get_mut(&id)
         .unwrap()
         .bag
-        .push(bag_item(1001, "leather_cap", 1));
+        .push(bag_item(1001, "leather_helmet", 1));
 
     game_state.start_fishing(&id, water_target()).await;
     advance_with_ticks(&game_state, u64::from(CAST_MS) + 250).await;

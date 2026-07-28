@@ -519,7 +519,7 @@
     transform: translate(-50%, -50%);
     border: 1px solid rgba(255, 255, 255, 0.3);
     border-radius: 6px;
-    background: transparent;
+    background: rgba(148, 156, 164, 0.34);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -528,13 +528,13 @@
 
   .equip-slot:hover {
     border-color: rgba(240, 192, 64, 0.6);
-    background: rgba(240, 192, 64, 0.08);
+    background: rgba(166, 158, 126, 0.42);
     z-index: 10;
   }
 
   .equip-slot.drop-target {
     border-color: rgba(88, 255, 88, 0.8);
-    background: rgba(88, 255, 88, 0.15);
+    background: rgba(88, 160, 88, 0.4);
     box-shadow: 0 0 8px rgba(88, 255, 88, 0.4);
   }
 

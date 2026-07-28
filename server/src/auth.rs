@@ -324,6 +324,7 @@ impl AuthService {
         )?;
         Self::ensure_accounts_columns(&conn)?;
         Self::ensure_characters_schema(&conn)?;
+        Self::migrate_item_definition_ids(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
@@ -460,6 +461,19 @@ impl AuthService {
             )?;
         }
 
+        Ok(())
+    }
+
+    fn migrate_item_definition_ids(conn: &Connection) -> Result<(), rusqlite::Error> {
+        let migrated = conn.execute(
+            "UPDATE character_items
+             SET item_def_id = 'leather_helmet'
+             WHERE item_def_id = 'leather_cap'",
+            [],
+        )?;
+        if migrated > 0 {
+            tracing::info!(migrated, "Migrated legacy item definition ids");
+        }
         Ok(())
     }
 
@@ -1073,6 +1087,32 @@ mod tests {
         )
         .unwrap();
         assert!(auth.login_npc("npc_bob").is_err());
+    }
+
+    #[test]
+    fn startup_migrates_legacy_leather_cap_items() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_leather_helmet_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        drop(AuthService::new(db_path.clone()).unwrap());
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (player_name) VALUES ('legacy');
+             INSERT INTO characters (id, account_name, character_name)
+             VALUES (1, 'legacy', 'CapWearer');
+             INSERT INTO character_items
+             (character_id, item_def_id, quantity, equip_slot, enchant)
+             VALUES (1, 'leather_cap', 1, 'head', 2);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let auth = AuthService::new(db_path).unwrap();
+        let rows = auth.load_inventory(1).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].item_def_id, "leather_helmet");
     }
 
     #[test]
