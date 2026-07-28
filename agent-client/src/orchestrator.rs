@@ -155,6 +155,12 @@ pub struct NpcConfig {
     pub codex: CodexConfig,
     #[serde(default)]
     pub openai: OpenAiConfig,
+    /// Route this NPC's turns through the SIDLA data link (see `crate::sidla`).
+    /// Only present under the `sidla` feature; the `[sidla]` table is ignored
+    /// by a default build.
+    #[cfg(feature = "sidla")]
+    #[serde(default)]
+    pub sidla: crate::sidla::SidlaConfig,
 
     // --- Auto-provisioning ---
     /// Character name to create if no characters exist on this account.
@@ -861,6 +867,29 @@ fn build_llm_backend(
     }
 }
 
+/// Wrap the provider in whatever experimental layers are compiled in. The one
+/// switch point for opt-in features, so the default build has nothing to skip
+/// at runtime.
+#[cfg(feature = "sidla")]
+fn experimental_layers(
+    invoker: Arc<dyn driver::LlmBackend>,
+    npc: &NpcConfig,
+    state: &Arc<Mutex<SharedState>>,
+) -> Arc<dyn driver::LlmBackend> {
+    // Outermost, so the spectator panel records the data link frames rather
+    // than the envelope they were translated into.
+    crate::sidla::SidlaBackend::wrap(invoker, Arc::clone(state), npc.sidla.clone(), npc.label())
+}
+
+#[cfg(not(feature = "sidla"))]
+fn experimental_layers(
+    invoker: Arc<dyn driver::LlmBackend>,
+    _npc: &NpcConfig,
+    _state: &Arc<Mutex<SharedState>>,
+) -> Arc<dyn driver::LlmBackend> {
+    invoker
+}
+
 /// WS URL → REST base URL: an explicit port means game port + 1; otherwise
 /// same origin with the path dropped (the reverse proxy routes `/api/*`).
 fn api_base_url(server_url: &str) -> String {
@@ -892,6 +921,9 @@ fn spawn_llm_task(
     let activity_window = Duration::from_secs(npc.activity_window_secs);
 
     let invoker = build_llm_backend(npc, watch, scheduler.request_timeout())?;
+    // Experimental layers wrap the finished provider, so with none compiled in
+    // the driver receives exactly the backend it always did.
+    let invoker = experimental_layers(invoker, npc, state);
 
     let state = Arc::clone(state);
     let scheduler = scheduler.clone();

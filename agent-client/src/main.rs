@@ -11,6 +11,8 @@ mod openai;
 mod openrouter;
 mod orchestrator;
 mod shop_info;
+#[cfg(feature = "sidla")]
+mod sidla;
 mod state;
 mod terrain_http;
 mod watch;
@@ -92,6 +94,10 @@ struct Config {
     /// Generic OpenAI-compatible endpoint config
     #[serde(default)]
     openai: openai::OpenAiConfig,
+    /// SIDLA data link config (see `sidla`); off unless enabled.
+    #[cfg(feature = "sidla")]
+    #[serde(default)]
+    sidla: sidla::SidlaConfig,
 }
 
 /// How the client proves who it is to the game server.
@@ -215,6 +221,10 @@ async fn main() -> anyhow::Result<()> {
         }
         if npc.openai == openai::OpenAiConfig::default() {
             npc.openai = config.openai.clone();
+        }
+        #[cfg(feature = "sidla")]
+        if npc.sidla == sidla::SidlaConfig::default() {
+            npc.sidla = config.sidla.clone();
         }
     }
 
