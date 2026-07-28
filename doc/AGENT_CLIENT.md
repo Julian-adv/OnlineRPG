@@ -274,7 +274,7 @@ NPC가 *누구인지*는 git 추적되는 게임 데이터가 단일 진실 소�
 ## Fishing
 
 Agents fish through the same protocol as humans (`doc/FISHING.md`). The
-client handles the reflexes (auto-hook on a bite, correct struggle answers)
+client handles the reflexes (auto-hook on a bite, `auto_stance` fight play)
 in `src/state.rs`; the LLM only decides to start or stop:
 
 ```json

@@ -338,6 +338,9 @@ pub struct SharedState {
     /// movement (like `trade_busy`) and adds a stay-put prompt line;
     /// `stop_fishing` stays the deliberate exit.
     pub self_fishing: bool,
+    /// Last stance the fight reflex sent, so each `FishingFight` beat only
+    /// resends on change.
+    pub fishing_stance: Option<onlinerpg_shared::fishing::FishingAction>,
     /// Known nearby players
     pub nearby_players: HashMap<PlayerId, Player>,
     /// Per-merchant list of units we sold this session, repurchasable at the
@@ -421,6 +424,7 @@ impl SharedState {
             trade_satiated_until: None,
             trade_busy: false,
             self_fishing: false,
+            fishing_stance: None,
             nearby_players: HashMap::new(),
             merchant_buyback: HashMap::new(),
             nearby_monsters: HashMap::new(),
@@ -968,8 +972,7 @@ impl SharedState {
             ServerMessage::FishingError { .. } => EventUrgency::Urgent,
             ServerMessage::FishingCasted { .. }
             | ServerMessage::FishingBite { .. }
-            | ServerMessage::FishingStruggleRound { .. }
-            | ServerMessage::FishingRoundResult { .. } => EventUrgency::Noise,
+            | ServerMessage::FishingFight { .. } => EventUrgency::Noise,
 
             // Noise: high-frequency, irrelevant, or housing updates
             ServerMessage::PlayerMoved { .. }
@@ -1374,11 +1377,13 @@ impl SharedState {
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
                 self.self_fishing = true;
+                self.fishing_stance = None;
             }
             ServerMessage::FishingEnded { player_id, .. }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
                 self.self_fishing = false;
+                self.fishing_stance = None;
             }
             ServerMessage::FishingBite { player_id }
                 if self.self_player_id.as_ref() == Some(player_id) =>
@@ -1387,14 +1392,20 @@ impl SharedState {
                     action: onlinerpg_shared::fishing::FishingAction::Hook,
                 });
             }
-            ServerMessage::FishingStruggleRound {
+            ServerMessage::FishingFight {
                 player_id,
                 fish_state,
+                tension_pct,
                 ..
             } if self.self_player_id.as_ref() == Some(player_id) => {
-                self.pending_commands.push(ClientMessage::FishingRespond {
-                    action: fish_state.correct_action(),
-                });
+                // Same policy a practiced human plays from the gauge; sent
+                // only on change — a stance holds until replaced.
+                let stance = onlinerpg_shared::fishing::auto_stance(*fish_state, *tension_pct);
+                if self.fishing_stance != Some(stance) {
+                    self.fishing_stance = Some(stance);
+                    self.pending_commands
+                        .push(ClientMessage::FishingRespond { action: stance });
+                }
             }
             _ => {}
         }
@@ -1439,8 +1450,7 @@ impl SharedState {
             // answered them; the LLM only needs the FishingEnded outcome.
             ServerMessage::FishingCasted { .. }
             | ServerMessage::FishingBite { .. }
-            | ServerMessage::FishingStruggleRound { .. }
-            | ServerMessage::FishingRoundResult { .. } => return urgency,
+            | ServerMessage::FishingFight { .. } => return urgency,
             // Ground items churn in and out of the AOI as everyone moves;
             // the world state lists what is nearby each turn instead.
             ServerMessage::GroundItemSpawned { .. }

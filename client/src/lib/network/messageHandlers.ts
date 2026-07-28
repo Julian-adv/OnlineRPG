@@ -31,9 +31,10 @@ import {
 } from '../stores/skillsStore'
 import {
   myFishing,
-  applyStruggleTension,
+  applyFightUpdate,
   upsertBobber,
   markBobberBite,
+  updateBobberFight,
   removeBobber,
 } from '../stores/fishingStore'
 import { getItemDef } from '../data/itemDefs'
@@ -1030,7 +1031,13 @@ export function handleServerMessage(
       break
 
     case 'FishingCasted': {
-      upsertBobber(data.player_id, data.position)
+      // The float spends the swing + flight in the air; it splashes down
+      // (and first renders) on the same schedule as the splash sound.
+      upsertBobber(
+        data.player_id,
+        data.position,
+        FISHING_CAST_SWING_DELAY_MS + fishing_cast_ms()
+      )
       if (isSelfPlayer(data.player_id)) {
         myFishing.set({ phase: 'casting' })
         // Whoosh on the visible swing; splash one flight time (CAST_MS) later.
@@ -1057,26 +1064,15 @@ export function handleServerMessage(
       break
     }
 
-    case 'FishingStruggleRound': {
+    case 'FishingFight': {
+      updateBobberFight(
+        data.player_id,
+        data.bobber,
+        data.fish_state,
+        data.stamina_pct
+      )
       if (isSelfPlayer(data.player_id)) {
-        myFishing.set({
-          phase: 'struggle',
-          struggle: {
-            round: data.round,
-            totalRounds: data.total_rounds,
-            fishState: data.fish_state,
-            respondWithinMs: data.respond_within_ms,
-            tension: data.tension_pct,
-          },
-        })
-      }
-      break
-    }
-
-    case 'FishingRoundResult': {
-      if (isSelfPlayer(data.player_id)) {
-        applyStruggleTension(data.tension_pct)
-        playFishingSound('reel')
+        applyFightUpdate(data.fish_state, data.tension_pct, data.stamina_pct)
       }
       break
     }

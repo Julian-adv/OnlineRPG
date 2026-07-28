@@ -57,7 +57,7 @@ export const TORCH_IDLE_CLIP_NAMES = [
 
 /** Fishing clip names — interaction-state clips from the fishing pack.
  *  The cast plays once on FishingCasted; the idle loops until the line
- *  comes in (bite/struggle keep it — only the outcome ends the stance). */
+ *  comes in (bite/fight keep it — only the outcome ends the stance). */
 export const FishingAnimationName = {
   CAST: 'fishing_cast',
   IDLE: 'fishing_idle',

@@ -15,11 +15,11 @@ FishingCast ─► Casting (1 s) ─► Waiting (4–12 s, skill-shortened)
                               Bite (2.5 s + 0.5 s latency grace)
                               │ Hook in time      │ too late / never
                               ▼                   ▼
-                           Struggle            Escaped
-                (reel/give-line rounds; tension)
-                              │ win               │ line snaps
-                              ▼                   ▼
-                           Caught              Escaped
+                            Fight              Escaped
+              (continuous reel/give-line tension sim)
+                              │ exhaust + reel in  │ line snaps / hook thrown
+                              ▼                    ▼
+                           Caught               Escaped
 ```
 
 **Getting a rod:** buy a Fishing Rod from a general merchant (Rica stocks it
@@ -120,8 +120,8 @@ catch; opening it via `use_item` (double-click in the bag) rolls its
 `dice` column, `3d8`, pays the copper to the wallet through the same
 path as ground coin piles, and the combat log reports the amount). All are `rarityTier 0`: **no fishing XP** (the
 `10·rarity²` formula grants nothing naturally), no trophy, and in the
-struggle they fight like a common fish (`rarity.max(1)` clamps rounds and
-tension so all-wrong play still snaps the line). An *escaped* junk catch
+fight they pull and tire like a common fish (`rarity.max(1)` clamps pull and
+stamina). An *escaped* junk catch
 still pays the flat 2 XP consolation — the species is never revealed on
 an escape, and a varying consolation would leak the hidden roll. Junk
 keeps the bite/struggle stakes honest without inflating income — the EV
@@ -132,8 +132,8 @@ guardrail above counts flotsam in its average.
 Catches grant fishing XP: `10 × rarity²` (10 for a minnow, 250 for a golden
 sturgeon); a hooked fish that escapes consoles with 2. Fishing grants **no
 character XP** — combat balance is untouched. Level effects today: shorter
-waits, better rare weights. The struggle minigame will add wider response
-windows.
+waits, better rare weights, and drag control in the fight (`1%` less pull
+tension and `1%` faster reeling per level, pull relief capped at 30%).
 
 ## Client
 
@@ -143,9 +143,20 @@ windows.
   dry ground still walks) → stop, face the water, send (`PlayerControl.svelte`).
   The server re-validates, so the client check only decides cast-vs-walk.
 - `components/FishingBobber.svelte`: every nearby angler's bobber (broadcasts
-  are radius-gated), gentle idle bob, hard dip on bite.
-- `components/FishingPrompt.svelte`: status line + SPACE to hook, ESC to reel
-  in. Combat-log lines narrate cast/bite/outcome.
+  are radius-gated), gentle idle bob, hard dip on bite. The float stays
+  hidden through the cast swing + flight and splashes down on the same
+  schedule as the splash sound. A sagging white line connects the angler's
+  rod tip to the float. During the fight it chases the fish's broadcast
+  position (client-side smoothing — the 4 Hz beats are never snapped to) and
+  wears a splash of droplets whose intensity follows the fish's remaining
+  stamina — bystanders read the whole fight from the water.
+- `components/FishingPrompt.svelte`: SPACE, any click, or a wheel flick to
+  hook (clicks are captured before the canvas, so a hasty click can't walk
+  the angler and abort the session), then the fight HUD — fish-state line,
+  tension gauge, and two hold-to-act stance buttons. REEL: hold the button,
+  hold SPACE, or wheel down (winding toward you); GIVE LINE: hold the
+  button, hold S, or wheel up (wheel inputs are short bursts). ESC reels in.
+  Combat-log lines narrate cast/bite/outcome.
 - State in `stores/fishingStore.ts`; server messages handled in
   `network/messageHandlers.ts`.
 
@@ -157,33 +168,62 @@ network round trip as much as for human reflexes — no mechanic requiring
 reactions only software can deliver, none too fast for software either.
 
 The agent-client implements this as a reflex layer (`src/state.rs`): it
-auto-hooks its own bites and answers each struggle round with the correct
-action — mechanically, like its A* movement layer, while the LLM makes the
-decisions via two actions: `{"type": "fish", "x": …, "z": …}` (coordinates
-optional — omitted means "just ahead") and `{"type": "stop_fishing"}`.
-Outcomes come back to the model as `[Fishing]` events; in-flight messages
-are classified as noise so they cost no LLM calls. Instant reflex answers
-confer no advantage: correctness is binary and the tension math ignores
-response speed inside the window.
+auto-hooks its own bites and plays each `FishingFight` beat through the
+shared `auto_stance` policy (resending only on change) — mechanically, like
+its A* movement layer, while the LLM makes the decisions via two actions:
+`{"type": "fish", "x": …, "z": …}` (coordinates optional — omitted means
+"just ahead") and `{"type": "stop_fishing"}`. Outcomes come back to the
+model as `[Fishing]` events; in-flight messages are classified as noise so
+they cost no LLM calls. Reflex speed confers no real advantage: the
+simulation advances 4 times a second regardless, and one beat of stance lag
+is well inside what the tuning absorbs.
 
-## The struggle
+## The fight
 
-Hooking is only the start: the fish fights for `2 + rarity` rounds (a minnow
-3, a golden sturgeon 7). Each round the server announces the fish's state in a
-`FishingStruggleRound` broadcast — **Pulling** (answer: give line) or
-**Tiring** (answer: reel) — with a response window of
-`3000 − 150·(rarity−1) + 60·skill` ms, clamped to [1800, 3000], plus the
-usual latency grace. A **tension meter** starts at 0: correct answers relax
-it by 10, wrong or missed answers add `30 + 5·rarity`, and at 100 the line
-snaps (`Escaped`, consolation XP). Survive every round and the fish lands.
+Hooking is only the start: the fight is a continuous tug-of-war simulated on
+the server's 250 ms tick (constants in `shared/src/fishing.rs`, pure step in
+`server/src/game_state/fishing.rs::step_fight`). The fish alternates
+**Running** bursts (2–3.5 s, longer for rarer fish) and shorter **Resting**
+breathers (0.8–2 s) — most of the fight is spent under pressure;
+the angler holds one of three stances, changed any time via
+`FishingRespond`: **reel**, **give line**, or **hold**.
 
-The announced state is public information by design: the challenge is
-answering correctly in time, not guessing hidden state — which is exactly
-what keeps humans (reading the prompt) and agent-clients (auto-answering
-after a human-like delay) on equal footing. Each answer is confirmed with a
-`FishingRoundResult` carrying the new tension, and trophy catches are
-celebrated to everyone in delivery radius via the `FishingEnded` broadcast
-they already receive.
+- **Tension** (the gauge; snaps at 100, `Escaped`): a Running fish pulls
+  `(20 + 2·rarity)/s`, scaled up to 1.3× by how much line is out and down by
+  skill; reeling adds 14/s (more than the 8/s rest decay — the reel can
+  never simply be held); giving line sheds 44/s (always more than the
+  strongest pull). The hook-set itself opens the fight at 30 — deliberately
+  hot: an unanswered run leaves the safe range in about a second and snaps
+  the line in a few.
+- **Distance** (shown, not numbered: the bobber *is* the fish): runs take
+  ~1.1–1.5 m/s of line, reeling takes it back (1.6 m/s vs a Resting fish,
+  0.6 against a run, 2.5 when Exhausted). The fish wanders but stays within
+  6 m of the cast point, and can never be reeled past the session's **line
+  floor**: the cast handler walks the player→cast ray (0.5 m steps, the same
+  tiles the cast validation touched — the tick stays IO-free) to find where
+  fishable water starts, and the fight clamps to that plus 0.4 m, at least
+  the rod's 2 m reach. The exhausted reel-in also steers the fish back onto
+  the cast ray, so it comes home along the line whose waterline was actually
+  measured — the float stays on the water instead of climbing the shore.
+- **Stamina** (hidden from the gauge; read it from the splash): only drag
+  burns it — Running under ≥20 tension costs `2 + 12·(tension/100)²` per
+  second; the square means timid mid-band play barely tires the fish and
+  real progress comes from riding the gauge near the top, while a slack
+  line lets a Resting fish *recover*. Pools are `38 + 12·rarity`.
+- **Endgame**: at 0 stamina the fish goes **Exhausted** — reel it down to
+  the line floor (within 0.3 m) and it lands (`Caught`). A lively fish
+  dragged within 1 m of the floor panics into a fresh run instead, so only
+  a spent fish can ever be landed. A fight
+  that outlives 60 s throws the hook (`Escaped`): slack-line stalling is not
+  a strategy, and neither is walking away (unmanaged tension snaps within
+  seconds).
+
+Every beat is broadcast as `FishingFight { bobber, fish_state, tension_pct,
+stamina_pct }` — public information by design, which is what keeps humans
+(reading gauge and splash) and agent-clients (running the shared
+`auto_stance` policy) on equal footing. Trophy catches are celebrated to
+everyone in delivery radius via the `FishingEnded` broadcast they already
+receive.
 
 ## Deliberate limits
 
@@ -193,6 +233,6 @@ they already receive.
   fishing idle loops until the line comes in (`fishing.glb` pack, local
   player only — remote anglers still read through the bobber). SFX are in:
   the line whirs out on the swing, the splash lands with the bobber a second
-  later, plop on bite, reel click per struggle round, line snap on escape,
+  later, plop on bite, reel click when the reel stance engages, line snap on escape,
   jingle on catch (all CC0 — see `assets/sfx.md`; self-only,
   matching the combat sound precedent).

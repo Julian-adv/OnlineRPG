@@ -219,11 +219,12 @@ export type PlayerInventory = {
 /** Trained-skill ids (shared `SkillId` wire strings). */
 export type SkillId = 'fishing'
 
-/** Shared `FishingAction` wire strings (`ClientMessage::FishingRespond`). */
-export type FishingAction = 'hook' | 'reel' | 'giveline'
+/** Shared `FishingAction` wire strings (`ClientMessage::FishingRespond`).
+ *  `hook` answers a bite; the rest are held stances during the fight. */
+export type FishingAction = 'hook' | 'reel' | 'giveline' | 'hold'
 
-/** Shared `FishState` wire strings (`ServerMessage::FishingStruggleRound`). */
-export type FishState = 'pulling' | 'tiring'
+/** Shared `FishState` wire strings (`ServerMessage::FishingFight`). */
+export type FishState = 'running' | 'resting' | 'exhausted'
 
 /** Shared `FishingOutcome` (`ServerMessage::FishingEnded`), in its
  *  externally-tagged serde shape. */

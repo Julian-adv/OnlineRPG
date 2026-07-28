@@ -5,10 +5,15 @@
 //! `LATENCY_GRACE_MS` of slack.
 
 use onlinerpg_shared::fishing::{
-    struggle_rounds, struggle_window_ms, tension_miss_penalty, FishState, FishingAction,
-    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP, FLOTSAM_SHARE_PCT,
-    LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, MIN_FISHABLE_DEPTH_M, RARITY_SKILL_BONUS_PCT,
-    TENSION_CORRECT_RELIEF, TENSION_MAX, WAIT_MAX_MS, WAIT_MIN_MS,
+    fish_pull_ps, reel_speed_mps, stamina_drain_ps, stamina_max, FishState, FishingAction,
+    FishingOutcome, BITE_WINDOW_MS, CAST_MS, CATCH_SLACK_M, CATCH_XP_PER_RARITY_SQ, ESCAPE_XP,
+    EXHAUSTED_STEER_PER_TICK, FIGHT_TIMEOUT_MS, FISH_WANDER_RADIUS_M, FLOTSAM_SHARE_PCT,
+    GIVE_LINE_EXTRA_MPS, LATENCY_GRACE_MS, MAX_CAST_DISTANCE_METERS, MIN_FISHABLE_DEPTH_M,
+    MIN_FISH_DISTANCE_M, PANIC_BAND_M, RARITY_SKILL_BONUS_PCT, REST_MAX_MS, REST_MIN_MS,
+    RUN_MAX_MS, RUN_MAX_PER_RARITY_MS, RUN_MIN_MS, RUN_SPEED_BASE_MPS, RUN_SPEED_PER_RARITY_MPS,
+    SHORE_SAMPLE_STEP_M, STAMINA_DRAIN_MIN_TENSION, STAMINA_RECOVER_PS, TENSION_GIVE_RELIEF_PS,
+    TENSION_INITIAL, TENSION_MAX, TENSION_REEL_PS, TENSION_REST_DECAY_PS, WAIT_MAX_MS, WAIT_MIN_MS,
+    WATERLINE_MARGIN_M,
 };
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::skills::SkillId;
@@ -33,17 +38,214 @@ pub(crate) enum FishingPhase {
     /// Bobber dipped at `since`; `Hook` must arrive before
     /// `since + BITE_WINDOW_MS + LATENCY_GRACE_MS`.
     Bite { since: Instant },
-    /// Hooked — the fight is on. One round at a time: answer `fish_state`
-    /// with its correct action before `deadline` (+ grace) or take tension.
-    Struggle {
-        round: u32,
-        total_rounds: u32,
-        fish_state: FishState,
-        deadline: Instant,
-        /// The round was answered — the tick's reaper must not also miss it.
-        responded: bool,
-        tension: u32,
+    /// Hooked — the fight simulation runs on every tick until it lands,
+    /// snaps, or times out. `last_tick` feeds the integration step.
+    Fight {
+        state: FightState,
+        last_tick: Instant,
     },
+}
+
+/// Live fight variables, `Instant`-free so `step_fight` stays a pure
+/// function of elapsed time (unit-tested below without a clock).
+pub(crate) struct FightState {
+    /// The angler's held stance (`Hold` until the first input).
+    pub stance: FishingAction,
+    pub fish_state: FishState,
+    /// Time left in the current Running/Resting burst.
+    pub state_ms_left: f32,
+    pub tension: f32,
+    /// Remaining stamina; the pool size is `stamina_max(rarity)`.
+    pub stamina: f32,
+    /// Angler-to-fish line length (XZ meters).
+    pub distance: f32,
+    /// The closest the fish can be reeled: the session's waterline floor
+    /// (`FishingSession::reel_floor_m`). Landing happens *at* this floor.
+    pub min_distance: f32,
+    /// Unit XZ direction from the angler toward the fish.
+    pub dir_x: f32,
+    pub dir_z: f32,
+    pub elapsed_ms: f32,
+}
+
+/// Randomness for one behavior flip, drawn lazily (most ticks don't flip)
+/// via a caller-supplied closure so `step_fight` stays deterministic under
+/// test.
+#[derive(Clone, Copy)]
+pub(crate) struct FightRolls {
+    pub next_run_ms: f32,
+    pub next_rest_ms: f32,
+    /// Heading jitter (radians) applied on a behavior flip.
+    pub wander_rad: f32,
+}
+
+/// How one fight tick ended, if it did.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FightOutcome {
+    /// Tension hit the max — the line snapped.
+    Snapped,
+    /// The fight outlived `FIGHT_TIMEOUT_MS` — the fish threw the hook.
+    ThrewHook,
+    /// Exhausted fish reeled inside catch range.
+    Landed,
+}
+
+/// Advance the fight by `dt` seconds. Pure: randomness arrives through the
+/// caller's `roll` closure (drawn only when the fish actually flips
+/// behavior), positions are passed in, and the fish's new XZ position is
+/// derived from `player`/`cast` afterward via `fight_fish_pos`.
+pub(crate) fn step_fight(
+    f: &mut FightState,
+    dt: f32,
+    rarity: u32,
+    skill_level: u32,
+    roll: &mut impl FnMut() -> FightRolls,
+) -> Option<FightOutcome> {
+    f.elapsed_ms += dt * 1000.0;
+    if f.elapsed_ms >= FIGHT_TIMEOUT_MS as f32 {
+        return Some(FightOutcome::ThrewHook);
+    }
+
+    // How every burst starts, shared by the flip and the panic below.
+    fn enter(f: &mut FightState, state: FishState, rolls: FightRolls) {
+        f.fish_state = state;
+        f.state_ms_left = match state {
+            FishState::Running => rolls.next_run_ms,
+            _ => rolls.next_rest_ms,
+        };
+        rotate_dir(f, rolls.wander_rad);
+    }
+
+    // Behavior: exhaustion is terminal; otherwise run/rest bursts, with a
+    // panic burst whenever a lively fish is dragged too close to the angler.
+    if f.stamina <= 0.0 {
+        f.fish_state = FishState::Exhausted;
+    } else if f.distance < f.min_distance + PANIC_BAND_M && f.fish_state != FishState::Running {
+        enter(f, FishState::Running, roll());
+    } else {
+        f.state_ms_left -= dt * 1000.0;
+        if f.state_ms_left <= 0.0 {
+            let next = match f.fish_state {
+                FishState::Running => FishState::Resting,
+                _ => FishState::Running,
+            };
+            enter(f, next, roll());
+        }
+    }
+
+    // Tension: the fish's pull vs the angler's stance.
+    let mut tension_ps = match f.fish_state {
+        FishState::Running => fish_pull_ps(rarity, f.distance, skill_level),
+        FishState::Resting | FishState::Exhausted => -TENSION_REST_DECAY_PS,
+    };
+    match f.stance {
+        FishingAction::Reel if f.fish_state != FishState::Exhausted => {
+            tension_ps += TENSION_REEL_PS;
+        }
+        FishingAction::GiveLine => tension_ps -= TENSION_GIVE_RELIEF_PS,
+        _ => {}
+    }
+    f.tension = (f.tension + tension_ps * dt).max(0.0);
+    if f.tension >= TENSION_MAX {
+        return Some(FightOutcome::Snapped);
+    }
+
+    // Stamina: drag burns it only while Running under real tension; a rested
+    // fish on a slack line gets its wind back.
+    if f.fish_state == FishState::Running && f.tension >= STAMINA_DRAIN_MIN_TENSION {
+        f.stamina = (f.stamina - stamina_drain_ps(f.tension) * dt).max(0.0);
+    } else if f.fish_state == FishState::Resting && f.tension < STAMINA_DRAIN_MIN_TENSION {
+        f.stamina = (f.stamina + STAMINA_RECOVER_PS * dt).min(stamina_max(rarity));
+    }
+
+    // Distance: the run takes line, the reel takes it back.
+    let mut speed = 0.0;
+    if f.fish_state == FishState::Running {
+        speed += RUN_SPEED_BASE_MPS + RUN_SPEED_PER_RARITY_MPS * rarity.max(1) as f32;
+        if f.stance == FishingAction::GiveLine {
+            speed += GIVE_LINE_EXTRA_MPS;
+        }
+    }
+    if f.stance == FishingAction::Reel {
+        speed -= reel_speed_mps(f.fish_state, skill_level);
+    }
+    f.distance = (f.distance + speed * dt).max(f.min_distance);
+
+    if f.fish_state == FishState::Exhausted
+        && f.stance == FishingAction::Reel
+        && f.distance <= f.min_distance + CATCH_SLACK_M
+    {
+        return Some(FightOutcome::Landed);
+    }
+    None
+}
+
+fn rotate_dir(f: &mut FightState, rad: f32) {
+    let (sin, cos) = rad.sin_cos();
+    let (x, z) = (f.dir_x, f.dir_z);
+    f.dir_x = x * cos - z * sin;
+    f.dir_z = x * sin + z * cos;
+}
+
+/// Where the fish (and so the bobber) sits after a step: along the angler's
+/// line at `distance`, clamped into the wander disc around the cast point so
+/// the float can't beach itself. The clamp feeds back into `distance`/`dir`.
+/// `steer_to_cast` (0–1 per call) blends the heading back toward the cast
+/// ray — used on the exhausted reel-in, so the fish comes home along the
+/// line whose waterline the session actually measured.
+pub(crate) fn fight_fish_pos(
+    f: &mut FightState,
+    player: &Position,
+    cast: &Position,
+    steer_to_cast: f32,
+) -> Position {
+    // Player-centered frame with seam-aware X deltas, so a fight straddling
+    // the cylindrical world's X seam keeps sane geometry.
+    let cast_dx = onlinerpg_shared::shortest_world_delta_x(player.x, cast.x);
+    let cast_dz = cast.z - player.z;
+    if steer_to_cast > 0.0 {
+        let clen = (cast_dx * cast_dx + cast_dz * cast_dz).sqrt();
+        if clen > f32::EPSILON {
+            let bx = f.dir_x * (1.0 - steer_to_cast) + (cast_dx / clen) * steer_to_cast;
+            let bz = f.dir_z * (1.0 - steer_to_cast) + (cast_dz / clen) * steer_to_cast;
+            let blen = (bx * bx + bz * bz).sqrt();
+            if blen > f32::EPSILON {
+                f.dir_x = bx / blen;
+                f.dir_z = bz / blen;
+            }
+        }
+    }
+    let mut fx = f.dir_x * f.distance;
+    let mut fz = f.dir_z * f.distance;
+    let (off_x, off_z) = (fx - cast_dx, fz - cast_dz);
+    let off_len = (off_x * off_x + off_z * off_z).sqrt();
+    if off_len > FISH_WANDER_RADIUS_M {
+        let scale = FISH_WANDER_RADIUS_M / off_len;
+        fx = cast_dx + off_x * scale;
+        fz = cast_dz + off_z * scale;
+    }
+    let len = (fx * fx + fz * fz).sqrt();
+    if len > f32::EPSILON {
+        f.distance = len.max(f.min_distance);
+        f.dir_x = fx / len;
+        f.dir_z = fz / len;
+    }
+    Position {
+        x: onlinerpg_shared::wrap_world_x(player.x + fx),
+        y: cast.y,
+        z: player.z + fz,
+    }
+}
+
+/// Roll the pre-drawn randomness for one fight tick.
+fn roll_fight(rarity: u32, rng: &mut impl Rng) -> FightRolls {
+    FightRolls {
+        next_run_ms: rng.gen_range(
+            RUN_MIN_MS as f32..=(RUN_MAX_MS + RUN_MAX_PER_RARITY_MS * rarity.max(1)) as f32,
+        ),
+        next_rest_ms: rng.gen_range(REST_MIN_MS as f32..=REST_MAX_MS as f32),
+        wander_rad: rng.gen_range(-0.5..=0.5f32),
+    }
 }
 
 /// What bit the line. Rolled when the bite fires — not at resolution — so a
@@ -57,7 +259,16 @@ pub(crate) struct RolledFish {
 }
 
 pub(crate) struct FishingSession {
+    /// Where the float currently sits — the cast point until the hook sets,
+    /// then the fighting fish's live position.
     pub bobber: Position,
+    /// Where the cast landed; anchors the fight's wander disc and the
+    /// water-surface height the bobber keeps.
+    pub cast_point: Position,
+    /// The closest the fish can be reeled to the angler: the first fishable
+    /// water along the cast ray (plus margin), at least the rod's reach.
+    /// Measured once at cast time — the only spot tile IO is allowed.
+    pub reel_floor_m: f32,
     pub phase: FishingPhase,
     pub rolled_fish: Option<RolledFish>,
     pub skill_level: u32,
@@ -208,6 +419,12 @@ impl GameState {
             }
         };
 
+        // Scan the player→cast ray for where the water actually starts, so
+        // the fight can never reel the float up onto the shore. Same tiles
+        // the cast validation just touched, and still inside the cast
+        // handler — the tick stays IO-free.
+        let reel_floor_m = self.measure_reel_floor(&player_pos, wx, target.z).await;
+
         let skill_level = self.skill_level(player_id, SkillId::Fishing).await;
         // The bobber floats on the actual water surface — sea level over the
         // ocean, but the carved channel height over a river.
@@ -222,6 +439,8 @@ impl GameState {
                 *player_id,
                 FishingSession {
                     bobber,
+                    cast_point: bobber,
+                    reel_floor_m,
                     phase: FishingPhase::Casting {
                         until: Instant::now() + Duration::from_millis(u64::from(CAST_MS)),
                     },
@@ -257,67 +476,46 @@ impl GameState {
                 return;
             };
             match &mut session.phase {
-                // Yanking before the bite scares the fish off (any action).
-                FishingPhase::Casting { .. } | FishingPhase::Waiting { .. } => Verdict::TooEarly,
+                FishingPhase::Fight { state, .. } => {
+                    // A duplicated Hook racing the fight open is swallowed;
+                    // anything else is the angler's new stance, applied by
+                    // the next tick's integration step.
+                    if action != FishingAction::Hook {
+                        state.stance = action;
+                    }
+                    return;
+                }
+                // A stray Hold outside the fight (client racing the end of
+                // one) is harmless; anything else before the hook has
+                // consequences below.
+                _ if action == FishingAction::Hold => return,
+                // Yanking the rod before the bite scares the fish off.
+                FishingPhase::Casting { .. } | FishingPhase::Waiting { .. } => {
+                    Verdict::Escaped { xp: 0 }
+                }
                 FishingPhase::Bite { since } => {
                     let deadline = *since
                         + Duration::from_millis(u64::from(BITE_WINDOW_MS + LATENCY_GRACE_MS));
                     if Instant::now() > deadline {
-                        // The tick will call it escaped; treat the stale
-                        // response the same way rather than racing it.
-                        Verdict::TooLate
+                        // Too late — the tick will call it escaped; treat the
+                        // stale response the same way rather than racing it.
+                        Verdict::Escaped { xp: ESCAPE_XP }
                     } else if action == FishingAction::Hook {
                         Verdict::Hooked
                     } else {
                         // Reeling or giving line before the hook is set:
                         // the fish spits the bait.
-                        Verdict::TooEarly
-                    }
-                }
-                FishingPhase::Struggle {
-                    fish_state,
-                    deadline,
-                    responded,
-                    tension,
-                    ..
-                } => {
-                    // Already answered, or a duplicated Hook racing the round
-                    // open — neither is a round answer.
-                    if *responded || action == FishingAction::Hook {
-                        return;
-                    }
-                    let rarity = rarity_of(&session.rolled_fish);
-                    let in_time = Instant::now()
-                        <= *deadline + Duration::from_millis(u64::from(LATENCY_GRACE_MS));
-                    let correct = in_time && action == fish_state.correct_action();
-                    *responded = true;
-                    if correct {
-                        *tension = tension.saturating_sub(TENSION_CORRECT_RELIEF);
-                    } else {
-                        *tension += tension_miss_penalty(rarity);
-                    }
-                    Verdict::RoundAnswered {
-                        correct,
-                        tension: *tension,
+                        Verdict::Escaped { xp: 0 }
                     }
                 }
             }
         };
 
         match verdict {
-            Verdict::Hooked => self.begin_struggle(player_id).await,
-            Verdict::TooEarly => {
-                self.end_fishing(player_id, FishingOutcome::Escaped, 0)
+            Verdict::Hooked => self.begin_fight(player_id).await,
+            Verdict::Escaped { xp } => {
+                self.end_fishing(player_id, FishingOutcome::Escaped, xp)
                     .await;
-            }
-            Verdict::TooLate => {
-                self.end_fishing(player_id, FishingOutcome::Escaped, ESCAPE_XP)
-                    .await;
-            }
-            Verdict::RoundAnswered { correct, tension } => {
-                self.broadcast_round_result(player_id, correct, tension)
-                    .await;
-                self.advance_struggle(player_id).await;
             }
         }
     }
@@ -346,6 +544,40 @@ impl GameState {
         self.fishing_active
             .load(std::sync::atomic::Ordering::Relaxed)
             == 0
+    }
+
+    /// Walk the player→cast ray in `SHORE_SAMPLE_STEP_M` steps and return
+    /// the closest fishable-water distance plus `WATERLINE_MARGIN_M`, capped
+    /// at the cast distance and floored at the rod's reach. Runs in the cast
+    /// handler on the tiles the cast validation just touched — the tick
+    /// stays IO-free. Sample failures just keep walking: the cast target
+    /// itself already proved fishable, so the fallback is the cast distance.
+    async fn measure_reel_floor(&self, player_pos: &Position, cast_x: f32, cast_z: f32) -> f32 {
+        let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, cast_x);
+        let dz = cast_z - player_pos.z;
+        let cast_dist = (dx * dx + dz * dz).sqrt();
+        if cast_dist <= SHORE_SAMPLE_STEP_M {
+            return MIN_FISH_DISTANCE_M;
+        }
+        let mut waterline = cast_dist;
+        let mut t = SHORE_SAMPLE_STEP_M;
+        while t < cast_dist {
+            let x = onlinerpg_shared::wrap_world_x(player_pos.x + dx / cast_dist * t);
+            let z = player_pos.z + dz / cast_dist * t;
+            if let (Ok(bed), Ok(surface)) = tokio::join!(
+                self.height_sampler.sample_height(x, z),
+                self.water_sampler.sample_surface(x, z),
+            ) {
+                if surface - bed > MIN_FISHABLE_DEPTH_M {
+                    waterline = t;
+                    break;
+                }
+            }
+            t += SHORE_SAMPLE_STEP_M;
+        }
+        (waterline + WATERLINE_MARGIN_M)
+            .min(cast_dist)
+            .max(MIN_FISH_DISTANCE_M)
     }
 
     /// Whether the player's main hand currently holds a fishing rod — the
@@ -382,15 +614,17 @@ impl GameState {
             return;
         }
         let now = Instant::now();
-        // Handlers re-verify the stamped session_id (and round) before acting.
+        // Handlers re-verify the stamped session_id before acting. Fight
+        // beats fire every tick for every fight, so they batch separately
+        // under a single lock acquisition; the rest are rare transitions.
         enum Due {
             BobberLanded(PlayerId, u64, u32),
             Bite(PlayerId, u64, u32),
             Expired(PlayerId, u64),
-            StruggleMissed(PlayerId, u64, u32),
             PlayerGone(PlayerId),
         }
         let mut due = Vec::new();
+        let mut fights: Vec<(PlayerId, u64, Position)> = Vec::new();
         {
             let sessions = self.fishing_sessions.read().await;
             if sessions.is_empty() {
@@ -398,11 +632,10 @@ impl GameState {
             }
             let players = self.players.read().await;
             for (player_id, session) in sessions.iter() {
-                let alive = players.get(player_id).is_some_and(|p| p.health > 0);
-                if !alive {
+                let Some(player) = players.get(player_id).filter(|p| p.health > 0) else {
                     due.push(Due::PlayerGone(*player_id));
                     continue;
-                }
+                };
                 let sid = session.session_id;
                 match &session.phase {
                     FishingPhase::Casting { until } if now >= *until => {
@@ -423,16 +656,8 @@ impl GameState {
                         // sessions nobody answered for.
                         due.push(Due::Expired(*player_id, sid));
                     }
-                    FishingPhase::Struggle {
-                        round,
-                        deadline,
-                        responded: false,
-                        ..
-                    } if now
-                        >= *deadline + Duration::from_millis(u64::from(2 * LATENCY_GRACE_MS)) =>
-                    {
-                        // Same doubled-grace contract as the bite reaper.
-                        due.push(Due::StruggleMissed(*player_id, sid, *round));
+                    FishingPhase::Fight { .. } => {
+                        fights.push((*player_id, sid, player.position));
                     }
                     _ => {}
                 }
@@ -496,35 +721,78 @@ impl GameState {
                     self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, ESCAPE_XP)
                         .await;
                 }
-                Due::StruggleMissed(player_id, sid, missed_round) => {
-                    let tension = {
-                        let mut sessions = self.fishing_sessions.write().await;
-                        let Some(session) =
-                            sessions.get_mut(&player_id).filter(|s| s.session_id == sid)
-                        else {
-                            continue;
-                        };
-                        let rarity = rarity_of(&session.rolled_fish);
-                        match &mut session.phase {
-                            // Round N's stale entry must not insta-miss N+1.
-                            FishingPhase::Struggle {
-                                round,
-                                responded,
-                                tension,
-                                ..
-                            } if !*responded && *round == missed_round => {
-                                *responded = true;
-                                *tension += tension_miss_penalty(rarity);
-                                Some(*tension)
-                            }
-                            _ => None,
-                        }
-                    };
-                    if let Some(tension) = tension {
-                        self.broadcast_round_result(&player_id, false, tension)
-                            .await;
-                        self.advance_struggle(&player_id).await;
-                    }
+            }
+        }
+
+        if fights.is_empty() {
+            return;
+        }
+        // One write-lock pass steps every fight (each step is sub-microsecond
+        // pure math — no awaits inside); broadcasts and endings follow
+        // outside the lock.
+        enum After {
+            Beat(Position, ServerMessage),
+            Landed,
+            Escaped,
+        }
+        let mut results: Vec<(PlayerId, u64, After)> = Vec::with_capacity(fights.len());
+        {
+            let mut sessions = self.fishing_sessions.write().await;
+            let mut rng = rand::thread_rng();
+            for (player_id, sid, player_pos) in fights {
+                let Some(session) = sessions.get_mut(&player_id).filter(|s| s.session_id == sid)
+                else {
+                    continue;
+                };
+                let rarity = rarity_of(&session.rolled_fish);
+                let skill = session.skill_level;
+                let cast = session.cast_point;
+                let FishingPhase::Fight { state, last_tick } = &mut session.phase else {
+                    continue;
+                };
+                // Real elapsed time, capped so a stalled tick can't
+                // teleport the simulation.
+                let dt = now
+                    .saturating_duration_since(*last_tick)
+                    .as_secs_f32()
+                    .min(1.0);
+                *last_tick = now;
+                let outcome = step_fight(state, dt, rarity, skill, &mut || {
+                    roll_fight(rarity, &mut rng)
+                });
+                // The exhausted reel-in steers home along the cast ray,
+                // whose waterline the session measured.
+                let steer = if state.fish_state == FishState::Exhausted {
+                    EXHAUSTED_STEER_PER_TICK
+                } else {
+                    0.0
+                };
+                session.bobber = fight_fish_pos(state, &player_pos, &cast, steer);
+                let after = match outcome {
+                    None => After::Beat(
+                        session.bobber,
+                        ServerMessage::FishingFight {
+                            player_id,
+                            bobber: session.bobber,
+                            fish_state: state.fish_state,
+                            tension_pct: state.tension.round() as u32,
+                            stamina_pct: (state.stamina / stamina_max(rarity) * 100.0).round()
+                                as u32,
+                        },
+                    ),
+                    Some(FightOutcome::Landed) => After::Landed,
+                    Some(FightOutcome::Snapped | FightOutcome::ThrewHook) => After::Escaped,
+                };
+                results.push((player_id, sid, after));
+            }
+        }
+        for (player_id, sid, after) in results {
+            match after {
+                After::Beat(bobber, msg) => self.broadcast_fishing(&bobber, msg).await,
+                After::Landed => self.finish_fishing_caught(&player_id, sid).await,
+                After::Escaped => {
+                    self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, ESCAPE_XP)
+                        .await;
                 }
             }
         }
@@ -571,154 +839,68 @@ impl GameState {
         })
     }
 
-    /// Successful hook: the fight begins. Roll the first round's state and
-    /// announce it; `advance_struggle` runs the rest.
-    async fn begin_struggle(&self, player_id: &PlayerId) {
+    /// Successful hook: the fight begins mid-run — the hooked fish bolts,
+    /// the line already carries the hook-set's tension, and the tick
+    /// integrates from here.
+    async fn begin_fight(&self, player_id: &PlayerId) {
+        let Some(player_pos) = self.players.read().await.get(player_id).map(|p| p.position) else {
+            return;
+        };
         let announce = {
             let mut sessions = self.fishing_sessions.write().await;
             let Some(session) = sessions.get_mut(player_id) else {
                 return;
             };
             let rarity = rarity_of(&session.rolled_fish);
-            let total_rounds = struggle_rounds(rarity);
-            let window_ms = struggle_window_ms(rarity, session.skill_level);
-            let fish_state = roll_fish_state();
-            session.phase = FishingPhase::Struggle {
-                round: 1,
-                total_rounds,
-                fish_state,
-                deadline: Instant::now() + Duration::from_millis(u64::from(window_ms)),
-                responded: false,
-                tension: 0,
+            let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, session.bobber.x);
+            let dz = session.bobber.z - player_pos.z;
+            let len = (dx * dx + dz * dz).sqrt();
+            let (dir_x, dir_z) = if len > f32::EPSILON {
+                (dx / len, dz / len)
+            } else {
+                (1.0, 0.0)
             };
-            (session.bobber, total_rounds, fish_state, window_ms)
+            let rolls = roll_fight(rarity, &mut rand::thread_rng());
+            session.phase = FishingPhase::Fight {
+                state: FightState {
+                    stance: FishingAction::Hold,
+                    fish_state: FishState::Running,
+                    state_ms_left: rolls.next_run_ms,
+                    tension: TENSION_INITIAL,
+                    stamina: stamina_max(rarity),
+                    distance: len.max(session.reel_floor_m),
+                    min_distance: session.reel_floor_m,
+                    dir_x,
+                    dir_z,
+                    elapsed_ms: 0.0,
+                },
+                last_tick: Instant::now(),
+            };
+            session.bobber
         };
-        let (bobber, total_rounds, fish_state, window_ms) = announce;
         self.broadcast_fishing(
-            &bobber,
-            ServerMessage::FishingStruggleRound {
+            &announce,
+            ServerMessage::FishingFight {
                 player_id: *player_id,
-                round: 1,
-                total_rounds,
-                fish_state,
-                respond_within_ms: window_ms,
-                tension_pct: 0,
+                bobber: announce,
+                fish_state: FishState::Running,
+                tension_pct: TENSION_INITIAL.round() as u32,
+                stamina_pct: 100,
             },
         )
         .await;
     }
 
-    /// After a round resolved (answered or reaped): escape at max tension,
-    /// catch when every round is survived, otherwise open the next round.
-    async fn advance_struggle(&self, player_id: &PlayerId) {
-        enum Next {
-            Escaped,
-            Caught,
-            Round {
-                bobber: Position,
-                round: u32,
-                total_rounds: u32,
-                fish_state: FishState,
-                window_ms: u32,
-                tension: u32,
-            },
-        }
-        let next = {
-            let mut sessions = self.fishing_sessions.write().await;
-            let Some(session) = sessions.get_mut(player_id) else {
-                return;
-            };
-            let rarity = rarity_of(&session.rolled_fish);
-            let skill_level = session.skill_level;
-            let bobber = session.bobber;
-            match &mut session.phase {
-                FishingPhase::Struggle {
-                    round,
-                    total_rounds,
-                    fish_state,
-                    deadline,
-                    responded,
-                    tension,
-                } => {
-                    if *tension >= TENSION_MAX {
-                        Next::Escaped
-                    } else if *round >= *total_rounds {
-                        Next::Caught
-                    } else {
-                        *round += 1;
-                        *fish_state = roll_fish_state();
-                        let window_ms = struggle_window_ms(rarity, skill_level);
-                        *deadline = Instant::now() + Duration::from_millis(u64::from(window_ms));
-                        *responded = false;
-                        Next::Round {
-                            bobber,
-                            round: *round,
-                            total_rounds: *total_rounds,
-                            fish_state: *fish_state,
-                            window_ms,
-                            tension: *tension,
-                        }
-                    }
-                }
-                _ => return,
-            }
-        };
-        match next {
-            Next::Escaped => {
-                self.end_fishing(player_id, FishingOutcome::Escaped, ESCAPE_XP)
-                    .await;
-            }
-            Next::Caught => self.finish_fishing_caught(player_id).await,
-            Next::Round {
-                bobber,
-                round,
-                total_rounds,
-                fish_state,
-                window_ms,
-                tension,
-            } => {
-                self.broadcast_fishing(
-                    &bobber,
-                    ServerMessage::FishingStruggleRound {
-                        player_id: *player_id,
-                        round,
-                        total_rounds,
-                        fish_state,
-                        respond_within_ms: window_ms,
-                        tension_pct: tension,
-                    },
-                )
-                .await;
-            }
-        }
-    }
-
-    async fn broadcast_round_result(&self, player_id: &PlayerId, correct: bool, tension: u32) {
-        let bobber = {
-            let sessions = self.fishing_sessions.read().await;
-            match sessions.get(player_id) {
-                Some(session) => session.bobber,
-                None => return,
-            }
-        };
-        self.broadcast_fishing(
-            &bobber,
-            ServerMessage::FishingRoundResult {
-                player_id: *player_id,
-                correct,
-                tension_pct: tension,
-            },
-        )
-        .await;
-    }
-
-    /// Every round survived: award the fish (bag, or ground when overweight),
-    /// grant skill XP, end the session with the full catch details.
-    async fn finish_fishing_caught(&self, player_id: &PlayerId) {
+    /// The fish was reeled in exhausted: award it (bag, or ground when
+    /// overweight), grant skill XP, end the session with the full catch
+    /// details. `sid` guards against a session cancelled and re-cast between
+    /// the tick's scan and this call.
+    async fn finish_fishing_caught(&self, player_id: &PlayerId, sid: u64) {
         let Some(fish) = ({
             let mut sessions = self.fishing_sessions.write().await;
             sessions
                 .get_mut(player_id)
+                .filter(|session| session.session_id == sid)
                 .and_then(|session| session.rolled_fish.take())
         }) else {
             // Bite phase always has a rolled fish; a missing one means the
@@ -818,29 +1000,189 @@ impl GameState {
 
 enum Verdict {
     Hooked,
-    TooEarly,
-    TooLate,
-    RoundAnswered { correct: bool, tension: u32 },
+    Escaped { xp: u64 },
 }
 
 fn rarity_of(rolled: &Option<RolledFish>) -> u32 {
     rolled.as_ref().map_or(1, |f| f.rarity)
 }
 
-/// Coin-flip the fish's next move. No await between creation and use — see
-/// the thread_rng note in `tick_fishing`.
-fn roll_fish_state() -> FishState {
-    if rand::thread_rng().gen_bool(0.5) {
-        FishState::Pulling
-    } else {
-        FishState::Tiring
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onlinerpg_shared::fishing::auto_stance;
     use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
+
+    /// Fixed rolls make the pure fight step fully deterministic.
+    const ROLLS: FightRolls = FightRolls {
+        next_run_ms: 2_000.0,
+        next_rest_ms: 1_500.0,
+        wander_rad: 0.0,
+    };
+
+    fn fresh_fight(rarity: u32) -> FightState {
+        FightState {
+            stance: FishingAction::Hold,
+            fish_state: FishState::Running,
+            state_ms_left: 2_000.0,
+            tension: TENSION_INITIAL,
+            stamina: stamina_max(rarity),
+            distance: 6.0,
+            min_distance: MIN_FISH_DISTANCE_M,
+            dir_x: 1.0,
+            dir_z: 0.0,
+            elapsed_ms: 0.0,
+        }
+    }
+
+    /// Step at the real 250 ms cadence until the fight ends.
+    fn run_fight(
+        f: &mut FightState,
+        rarity: u32,
+        skill: u32,
+        stance_for: impl Fn(&FightState) -> FishingAction,
+    ) -> (FightOutcome, u32) {
+        for tick in 0..1_000 {
+            f.stance = stance_for(f);
+            if let Some(outcome) = step_fight(f, 0.25, rarity, skill, &mut || ROLLS) {
+                return (outcome, tick);
+            }
+        }
+        panic!("fight never ended");
+    }
+
+    #[test]
+    fn reel_only_play_snaps_the_line() {
+        let mut f = fresh_fight(1);
+        let (outcome, ticks) = run_fight(&mut f, 1, 0, |_| FishingAction::Reel);
+        assert_eq!(outcome, FightOutcome::Snapped);
+        assert!(ticks < 60, "cranking against a running fish snaps fast");
+    }
+
+    #[test]
+    fn slack_line_stalling_never_tires_the_fish_and_times_out() {
+        let mut f = fresh_fight(1);
+        let (outcome, _) = run_fight(&mut f, 1, 0, |_| FishingAction::GiveLine);
+        assert_eq!(outcome, FightOutcome::ThrewHook);
+        assert!(
+            f.stamina > stamina_max(1) * 0.8,
+            "a slack line must not tire the fish (stamina {})",
+            f.stamina
+        );
+    }
+
+    #[test]
+    fn ignoring_the_rod_escapes_one_way_or_another() {
+        let mut f = fresh_fight(3);
+        let (outcome, _) = run_fight(&mut f, 3, 0, |_| FishingAction::Hold);
+        assert!(
+            matches!(outcome, FightOutcome::Snapped | FightOutcome::ThrewHook),
+            "hands-off play must never land a fish, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn managed_tension_exhausts_and_lands_even_a_legend() {
+        let mut f = fresh_fight(5);
+        let (outcome, ticks) = run_fight(&mut f, 5, 0, |f| {
+            auto_stance(f.fish_state, f.tension.round() as u32)
+        });
+        assert_eq!(outcome, FightOutcome::Landed);
+        assert!(
+            (ticks as f32) * 250.0 < FIGHT_TIMEOUT_MS as f32,
+            "the sound policy must land inside the timeout"
+        );
+        // And the same policy handles a common fish faster.
+        let mut c = fresh_fight(1);
+        let (outcome, common_ticks) = run_fight(&mut c, 1, 0, |f| {
+            auto_stance(f.fish_state, f.tension.round() as u32)
+        });
+        assert_eq!(outcome, FightOutcome::Landed);
+        assert!(common_ticks < ticks, "commons tire before legends");
+    }
+
+    #[test]
+    fn a_lively_fish_panics_out_of_landing_range() {
+        let mut f = fresh_fight(2);
+        f.fish_state = FishState::Resting;
+        f.distance = 1.0;
+        f.stance = FishingAction::Reel;
+        let outcome = step_fight(&mut f, 0.25, 2, 0, &mut || ROLLS);
+        assert_eq!(outcome, None, "a fish with stamina left is never landed");
+        assert_eq!(f.fish_state, FishState::Running, "it panics into a run");
+    }
+
+    #[test]
+    fn the_wander_disc_clamps_the_bobber_and_line() {
+        let player = Position {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let cast = Position {
+            x: 6.0,
+            y: 1.5,
+            z: 0.0,
+        };
+        let mut f = fresh_fight(1);
+        f.distance = 40.0;
+        let pos = fight_fish_pos(&mut f, &player, &cast, 0.0);
+        let off = ((pos.x - cast.x).powi(2) + (pos.z - cast.z).powi(2)).sqrt();
+        assert!(
+            off <= FISH_WANDER_RADIUS_M + 0.01,
+            "fish stays near the cast"
+        );
+        assert_eq!(pos.y, cast.y, "the bobber keeps the water surface height");
+        assert!(
+            (f.distance - 12.0).abs() < 0.01,
+            "distance re-derived from the clamp"
+        );
+    }
+
+    #[test]
+    fn the_waterline_floor_holds_and_still_lands() {
+        // A shore cast measured its waterline 4 m out: the fish can never be
+        // reeled past it, and landing happens right at that floor.
+        let mut f = fresh_fight(1);
+        f.min_distance = 4.0;
+        let (outcome, _) = run_fight(&mut f, 1, 0, |f| {
+            auto_stance(f.fish_state, f.tension.round() as u32)
+        });
+        assert_eq!(outcome, FightOutcome::Landed);
+        assert!(
+            f.distance >= 4.0 - 0.01,
+            "the float must stop at the waterline, got {}",
+            f.distance
+        );
+    }
+
+    #[test]
+    fn the_exhausted_reel_in_steers_back_to_the_cast_ray() {
+        let player = Position {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let cast = Position {
+            x: 6.0,
+            y: 1.5,
+            z: 0.0,
+        };
+        // Fish wandered 90° off the cast ray; repeated steered steps must
+        // swing its heading back toward the cast direction (+x).
+        let mut f = fresh_fight(1);
+        f.dir_x = 0.0;
+        f.dir_z = 1.0;
+        for _ in 0..30 {
+            fight_fish_pos(&mut f, &player, &cast, EXHAUSTED_STEER_PER_TICK);
+        }
+        assert!(
+            f.dir_x > 0.95,
+            "heading must converge to the cast ray, got ({}, {})",
+            f.dir_x,
+            f.dir_z
+        );
+    }
 
     fn candidate(
         id: &str,

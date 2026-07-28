@@ -11,8 +11,8 @@ const SWORD_MISS_VOLUME = 0.5
 const SWORD_HIT_POOL_SIZE = 4
 const SWORD_MISS_POOL_SIZE = 4
 
-// The reel fires every struggle round, so it gets a deeper pool; the rest are
-// one-shot moments.
+// The reel fires on every reel-stance engage, so it gets a deeper pool; the
+// rest are one-shot moments.
 const FISHING_SOUNDS = {
   cast: { url: '/sounds/fishing-cast.ogg', volume: 0.45, pool: 2 },
   splash: { url: '/sounds/fishing-splash.ogg', volume: 0.5, pool: 2 },

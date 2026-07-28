@@ -153,7 +153,7 @@ class InputHandler {
     // A key held since before the bite stays in keysPressed (no new keydown
     // fires), and held S walks backward — aborting the session server-side.
     myFishing.subscribe((f) => {
-      if (f.phase === 'bite' || f.phase === 'struggle') {
+      if (f.phase === 'bite' || f.phase === 'fight') {
         this.clearTransientInput()
       }
     })
@@ -565,11 +565,11 @@ class InputHandler {
     }
     if (event.ctrlKey) return false
 
-    // SPACE and S belong to the fishing minigame during a bite/struggle;
+    // SPACE and S belong to the fishing minigame during a bite/fight;
     // treating S as backward movement would abort the session server-side.
     const fishingPhase = get(myFishing).phase
     if (
-      (fishingPhase === 'bite' || fishingPhase === 'struggle') &&
+      (fishingPhase === 'bite' || fishingPhase === 'fight') &&
       (event.code === 'Space' || event.code === 'KeyS')
     ) {
       return true

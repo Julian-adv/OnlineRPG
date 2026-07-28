@@ -46,7 +46,7 @@
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
-  import { fishingBobbers } from '../stores/fishingStore'
+  import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
   import ZoneOverlay from './map-editor/ZoneOverlay.svelte'
   import RoadOverlay from './map-editor/RoadOverlay.svelte'
@@ -1024,7 +1024,10 @@
       ? false
       : $cameraRotationEnabled}
     enablePan={false}
-    enableZoom={!$mapEditorMode && !$housingEditorMode}
+    enableZoom={!$mapEditorMode &&
+      !$housingEditorMode &&
+      $myFishing.phase !== 'bite' &&
+      $myFishing.phase !== 'fight'}
     enabled={!$mapEditorMode && !$housingEditorMode}
     target={cameraTarget}
     minZoom={$debugSpeedMode ? 0.15 : 1}
@@ -1213,7 +1216,19 @@
   />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
-    <FishingBobber {bobber} />
+    <!-- Both position objects are mutated in place upstream, so the line
+         tracks the angler live without reactive churn. The models array is
+         index-aligned with the otherPlayers iteration order. -->
+    {@const remoteModelIndex = [...otherPlayers.keys()].indexOf(playerId)}
+    <FishingBobber
+      {bobber}
+      angler={playerId === currentPlayer?.id
+        ? currentPlayer.position
+        : remotePlayerManager.players.get(playerId)?.position}
+      rodTipOf={playerId === currentPlayer?.id
+        ? () => currentPlayerModel?.getRodTipWorld() ?? null
+        : () => otherPlayerModels[remoteModelIndex]?.getRodTipWorld() ?? null}
+    />
   {/each}
 </T>
 

@@ -262,6 +262,11 @@
     }
 
     weaponObject = gltfScene.clone()
+    // Tip detection needs the rod's own space — run it while the transform
+    // is still identity, before the grip offset and pitch go on.
+    if (itemDefId === 'fishing_rod') {
+      markRodTip(weaponObject)
+    }
     // Offset from wrist bone toward palm so weapon looks gripped
     weaponObject.position.set(0, 0.08, 0)
     if (itemDefId === 'fishing_rod') {
@@ -270,6 +275,41 @@
     rightHandBone.add(weaponObject)
     weaponAttached = true
     return true
+  }
+
+  /// The rod GLB has no named tip node, so find it geometrically: the
+  /// bounding-box extreme farthest from the grip (the object origin sits in
+  /// the hand) marks the tip, and a cached marker child (same pattern as
+  /// `torchTipNode`) tracks it through the bone chain so the fishing line
+  /// can start exactly there.
+  function markRodTip(rod: THREE.Object3D) {
+    const box = new THREE.Box3().setFromObject(rod)
+    if (box.isEmpty()) return
+    const center = box.getCenter(new THREE.Vector3())
+    const tip = center.clone()
+    let best = 0
+    for (const axis of ['x', 'y', 'z'] as const) {
+      for (const value of [box.min[axis], box.max[axis]]) {
+        if (Math.abs(value) > best) {
+          best = Math.abs(value)
+          tip.copy(center)
+          tip[axis] = value
+        }
+      }
+    }
+    rodTipNode = new THREE.Object3D()
+    rodTipNode.name = 'rod_tip'
+    rodTipNode.position.copy(tip)
+    rod.add(rodTipNode)
+  }
+
+  let rodTipNode: THREE.Object3D | null = null
+  const rodTipScratch = new THREE.Vector3()
+
+  /** World position of the equipped fishing rod's tip, or null when no rod
+   *  is attached — the fishing line's anchor. */
+  export function getRodTipWorld(): THREE.Vector3 | null {
+    return rodTipNode?.getWorldPosition(rodTipScratch) ?? null
   }
 
   function tryAttachWeapon(characterRoot: THREE.Object3D): boolean {
@@ -282,6 +322,7 @@
       weaponObject.parent.remove(weaponObject)
     }
     weaponObject = null
+    rodTipNode = null
     weaponAttached = false
   }
 

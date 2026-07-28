@@ -5144,8 +5144,8 @@ async fn take_player_skills_snapshots_and_detaches() {
 mod fishing_tests {
     use super::*;
     use onlinerpg_shared::fishing::{
-        FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS, ESCAPE_XP, LATENCY_GRACE_MS,
-        WAIT_MAX_MS, WAIT_MIN_MS,
+        auto_stance, FishState, FishingAction, FishingOutcome, BITE_WINDOW_MS, CAST_MS, ESCAPE_XP,
+        FIGHT_TIMEOUT_MS, LATENCY_GRACE_MS, WAIT_MAX_MS, WAIT_MIN_MS,
     };
     use onlinerpg_shared::inventory::EquipSlot;
     use tokio::time::{advance, Duration};
@@ -5232,26 +5232,28 @@ mod fishing_tests {
         panic!("no bite within the cast + maximum wait");
     }
 
-    /// Play the struggle with a fixed strategy until the session ends,
+    /// Play the fight with a fixed stance policy until the session ends,
     /// returning the outcome (plus every message seen on the way). The
-    /// strategy sees each round's announced `fish_state` — exactly what a
-    /// real client (human UI or agent reflex) gets.
+    /// policy sees each `FishingFight` beat's state and tension — exactly
+    /// what a real client (human gauge or agent reflex) gets.
     async fn fight_to_the_end(
         game_state: &GameState,
         id: &PlayerId,
         rx: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>,
-        strategy: impl Fn(onlinerpg_shared::fishing::FishState) -> FishingAction,
+        policy: impl Fn(FishState, u32) -> FishingAction,
     ) -> (FishingOutcome, Vec<ServerMessage>) {
         let mut seen = Vec::new();
-        for _ in 0..200 {
+        // Budget: the fight timeout plus slack, in 250 ms ticks.
+        for _ in 0..(FIGHT_TIMEOUT_MS / 250 + 40) {
             for msg in drain(rx) {
                 match &msg {
-                    ServerMessage::FishingStruggleRound {
+                    ServerMessage::FishingFight {
                         player_id,
                         fish_state,
+                        tension_pct,
                         ..
                     } if player_id == id => {
-                        let action = strategy(*fish_state);
+                        let action = policy(*fish_state, *tension_pct);
                         seen.push(msg.clone());
                         game_state.respond_fishing(id, action).await;
                     }
@@ -5265,7 +5267,7 @@ mod fishing_tests {
             advance(Duration::from_millis(250)).await;
             game_state.tick_fishing().await;
         }
-        panic!("struggle never ended");
+        panic!("the fight never ended");
     }
 
     #[tokio::test(start_paused = true)]
@@ -5354,8 +5356,7 @@ mod fishing_tests {
         // And the whole loop still resolves to a catch over the river.
         advance_until_bite(&game_state, &mut rx).await;
         game_state.respond_fishing(&id, FishingAction::Hook).await;
-        let (outcome, _) =
-            fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
+        let (outcome, _) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
         assert!(
             matches!(outcome, FishingOutcome::Caught { .. }),
             "perfect play should land a river fish, got {outcome:?}"
@@ -5372,8 +5373,7 @@ mod fishing_tests {
 
         game_state.respond_fishing(&id, FishingAction::Hook).await;
         // Answer every struggle round correctly: the catch must land.
-        let (outcome, msgs) =
-            fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
+        let (outcome, msgs) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
         let FishingOutcome::Caught {
             item_def_id: fish_id,
             size_cm,
@@ -5382,13 +5382,18 @@ mod fishing_tests {
         else {
             panic!("perfect struggle play must catch, got {outcome:?}");
         };
-        // The fight announced at least the first round and its results.
+        // The fight broadcast its beats, and the fish was visibly exhausted
+        // before it could be landed.
         assert!(msgs
             .iter()
-            .any(|m| matches!(m, ServerMessage::FishingStruggleRound { .. })));
-        assert!(msgs
-            .iter()
-            .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: true, .. })));
+            .any(|m| matches!(m, ServerMessage::FishingFight { .. })));
+        assert!(msgs.iter().any(|m| matches!(
+            m,
+            ServerMessage::FishingFight {
+                fish_state: FishState::Exhausted,
+                ..
+            }
+        )));
         assert!(size_cm > 0);
         // Every catch — fish, junk, and sealed coin pouches alike — lands in
         // the bag; only rarity ≥ 1 (fish) grants XP.
@@ -5510,37 +5515,31 @@ mod fishing_tests {
         assert!(drain(&mut rx).is_empty());
     }
 
-    /// A duplicated Hook (client double-send racing the round open) must not
-    /// be judged as a wrong round answer.
+    /// A duplicated Hook (client double-send racing the fight open) must be
+    /// swallowed — not end the session, not change the stance.
     #[tokio::test(start_paused = true)]
-    async fn duplicate_hook_during_struggle_is_ignored() {
+    async fn duplicate_hook_during_the_fight_is_ignored() {
         let game_state = make_test_game_state("fishing_dup_hook");
         let (id, mut rx) = make_angler(&game_state, "angler_doublehook").await;
 
         game_state.start_fishing(&id, water_target()).await;
         advance_until_bite(&game_state, &mut rx).await;
         game_state.respond_fishing(&id, FishingAction::Hook).await;
-        let fish_state = drain(&mut rx)
-            .into_iter()
-            .find_map(|m| match m {
-                ServerMessage::FishingStruggleRound { fish_state, .. } => Some(fish_state),
-                _ => None,
-            })
-            .expect("struggle must open after the hook");
-
-        // The duplicate is swallowed: no round result, no tension.
-        game_state.respond_fishing(&id, FishingAction::Hook).await;
-        assert!(!drain(&mut rx)
-            .iter()
-            .any(|m| matches!(m, ServerMessage::FishingRoundResult { .. })));
-
-        // The round is still open and judges the real answer normally.
-        game_state
-            .respond_fishing(&id, fish_state.correct_action())
-            .await;
         assert!(drain(&mut rx)
             .iter()
-            .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: true, .. })));
+            .any(|m| matches!(m, ServerMessage::FishingFight { .. })));
+
+        game_state.respond_fishing(&id, FishingAction::Hook).await;
+        assert!(
+            !drain(&mut rx)
+                .iter()
+                .any(|m| matches!(m, ServerMessage::FishingEnded { .. })),
+            "a duplicate hook must not end the fight"
+        );
+
+        // The fight is intact and still winnable.
+        let (outcome, _) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
+        assert!(matches!(outcome, FishingOutcome::Caught { .. }));
     }
 
     /// Neither fish nor junk stack, so every bagged catch is its own slot even
@@ -5555,8 +5554,7 @@ mod fishing_tests {
             game_state.start_fishing(&id, water_target()).await;
             advance_until_bite(&game_state, &mut rx).await;
             game_state.respond_fishing(&id, FishingAction::Hook).await;
-            let (outcome, _) =
-                fight_to_the_end(&game_state, &id, &mut rx, |state| state.correct_action()).await;
+            let (outcome, _) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
             let FishingOutcome::Caught { .. } = outcome else {
                 panic!("perfect play must catch");
             };
@@ -5579,47 +5577,46 @@ mod fishing_tests {
         );
     }
 
-    // The struggle: wrong answers pump tension until the fish escapes;
-    // silence is reaped by the tick with the same penalty.
+    // The fight: cranking the reel against a running fish pumps tension
+    // until the line snaps.
     #[tokio::test(start_paused = true)]
-    async fn struggle_wrong_answers_escape_the_fish() {
-        use onlinerpg_shared::fishing::FishState;
-
-        let game_state = make_test_game_state("fishing_struggle_wrong");
+    async fn reeling_against_every_run_snaps_the_line() {
+        let game_state = make_test_game_state("fishing_fight_wrong");
         let (id, mut rx) = make_angler(&game_state, "angler_clumsy").await;
 
         game_state.start_fishing(&id, water_target()).await;
         advance_until_bite(&game_state, &mut rx).await;
         game_state.respond_fishing(&id, FishingAction::Hook).await;
 
-        // Always answer with the wrong action: minimum penalty 35/round means
-        // escape by the third miss at the latest.
-        let (outcome, msgs) = fight_to_the_end(&game_state, &id, &mut rx, |state| match state {
-            FishState::Pulling => FishingAction::Reel,
-            FishState::Tiring => FishingAction::GiveLine,
-        })
-        .await;
+        let (outcome, msgs) =
+            fight_to_the_end(&game_state, &id, &mut rx, |_, _| FishingAction::Reel).await;
         assert_eq!(outcome, FishingOutcome::Escaped);
-        let wrongs = msgs
+        // The snap came from tension, not the timeout: the fight died young.
+        let beats = msgs
             .iter()
-            .filter(|m| matches!(m, ServerMessage::FishingRoundResult { correct: false, .. }))
+            .filter(|m| matches!(m, ServerMessage::FishingFight { .. }))
             .count();
-        assert!(wrongs >= 2, "tension needs at least two misses to top out");
+        assert!(
+            (beats as u32) * 250 < FIGHT_TIMEOUT_MS / 2,
+            "reel-only play must snap early, saw {beats} beats"
+        );
     }
 
+    /// Never touching the rod can't land a fish: the line snaps or the fish
+    /// throws the hook at the timeout — either way it escapes (with the
+    /// consolation XP, since it was hooked).
     #[tokio::test(start_paused = true)]
-    async fn struggle_silence_is_reaped_round_by_round() {
-        let game_state = make_test_game_state("fishing_struggle_afk");
+    async fn ignoring_the_fight_escapes_the_fish() {
+        let game_state = make_test_game_state("fishing_fight_afk");
         let (id, mut rx) = make_angler(&game_state, "angler_frozen").await;
 
         game_state.start_fishing(&id, water_target()).await;
         advance_until_bite(&game_state, &mut rx).await;
         game_state.respond_fishing(&id, FishingAction::Hook).await;
 
-        // Never respond; just let the tick reap every round.
         let mut msgs = Vec::new();
         let mut outcome = None;
-        'outer: for _ in 0..400 {
+        'outer: for _ in 0..(FIGHT_TIMEOUT_MS / 250 + 40) {
             for msg in drain(&mut rx) {
                 if let ServerMessage::FishingEnded { outcome: o, .. } = &msg {
                     outcome = Some(o.clone());
@@ -5632,9 +5629,10 @@ mod fishing_tests {
             game_state.tick_fishing().await;
         }
         assert_eq!(outcome, Some(FishingOutcome::Escaped));
-        assert!(msgs
-            .iter()
-            .any(|m| matches!(m, ServerMessage::FishingRoundResult { correct: false, .. })));
+        assert!(msgs.iter().any(|m| matches!(
+            m,
+            ServerMessage::SkillXpGained { xp_amount, .. } if *xp_amount == ESCAPE_XP
+        )));
     }
 
     // ---- PR9 hardening: concurrency, radius, aborts, overflow, consumption ----
@@ -5664,13 +5662,14 @@ mod fishing_tests {
                         ServerMessage::FishingBite { player_id } if player_id == me => {
                             game_state.respond_fishing(&me, FishingAction::Hook).await;
                         }
-                        ServerMessage::FishingStruggleRound {
+                        ServerMessage::FishingFight {
                             player_id,
                             fish_state,
+                            tension_pct,
                             ..
                         } if player_id == me => {
                             game_state
-                                .respond_fishing(&me, fish_state.correct_action())
+                                .respond_fishing(&me, auto_stance(fish_state, tension_pct))
                                 .await;
                         }
                         ServerMessage::SkillXpGained { xp_amount, .. } => {
@@ -5739,8 +5738,7 @@ mod fishing_tests {
         // The angler's session is unaffected: bite, fight, catch as normal.
         advance_until_bite(&game_state, &mut rx_a).await;
         game_state.respond_fishing(&a, FishingAction::Hook).await;
-        let (outcome, _) =
-            fight_to_the_end(&game_state, &a, &mut rx_a, |state| state.correct_action()).await;
+        let (outcome, _) = fight_to_the_end(&game_state, &a, &mut rx_a, auto_stance).await;
         assert!(matches!(outcome, FishingOutcome::Caught { .. }));
     }
 
@@ -5765,8 +5763,7 @@ mod fishing_tests {
         game_state.start_fishing(&a, water_target()).await;
         advance_until_bite(&game_state, &mut rx_a).await;
         game_state.respond_fishing(&a, FishingAction::Hook).await;
-        let (outcome, _) =
-            fight_to_the_end(&game_state, &a, &mut rx_a, |state| state.correct_action()).await;
+        let (outcome, _) = fight_to_the_end(&game_state, &a, &mut rx_a, auto_stance).await;
         assert!(matches!(outcome, FishingOutcome::Caught { .. }));
 
         fn fishing_msg_count(msgs: &[ServerMessage]) -> usize {
@@ -5776,8 +5773,7 @@ mod fishing_tests {
                         m,
                         ServerMessage::FishingCasted { .. }
                             | ServerMessage::FishingBite { .. }
-                            | ServerMessage::FishingStruggleRound { .. }
-                            | ServerMessage::FishingRoundResult { .. }
+                            | ServerMessage::FishingFight { .. }
                             | ServerMessage::FishingEnded { .. }
                     )
                 })
@@ -5801,10 +5797,10 @@ mod fishing_tests {
                     .any(|m| matches!(m, ServerMessage::FishingBite { .. })),
             ),
             (
-                "FishingStruggleRound",
+                "FishingFight",
                 near_msgs
                     .iter()
-                    .any(|m| matches!(m, ServerMessage::FishingStruggleRound { .. })),
+                    .any(|m| matches!(m, ServerMessage::FishingFight { .. })),
             ),
             (
                 "FishingEnded",
