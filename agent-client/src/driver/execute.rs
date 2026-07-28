@@ -27,10 +27,15 @@ use super::movement::{execute_move, MoveResult};
 const PICKUP_GRAB_DELAY_MS: u64 = 700;
 
 /// Feedback for an attack whose chase never reached the monster, so the agent
-/// stops re-issuing it. `dist` is the monster's distance, `None` if out of sight.
-fn unreachable_note(monster_id: &str, dist: Option<f32>) -> String {
-    match dist {
-        Some(d) => format!(
+/// stops re-issuing it. `sighted` is the monster's distance and whether it is
+/// on our floor; `None` if out of sight.
+fn unreachable_note(monster_id: &str, sighted: Option<(f32, bool)>) -> String {
+    match sighted {
+        Some((d, false)) => format!(
+            "[Unreachable] Could not reach monster {monster_id}: it is {d:.0}m away \
+             on a different floor. Pick a monster on your own floor."
+        ),
+        Some((d, true)) => format!(
             "[Unreachable] Could not reach monster {monster_id}: it is {d:.0}m away, \
              too far or blocked. Move closer first, or pick a nearer monster."
         ),
@@ -122,12 +127,17 @@ pub(super) async fn handle_response(
                 ChaseResult::Lost | ChaseResult::Error => {
                     warn!("Could not reach monster {monster_id}, skipping attack");
                     let mut s = state.lock().await;
-                    let dist = s
+                    let sighted = s
                         .self_player
                         .as_ref()
                         .zip(s.nearby_monsters.get(monster_id))
-                        .map(|(p, m)| m.position.dist_xz_sq(&p.position).sqrt());
-                    s.push_agent_event(unreachable_note(monster_id, dist));
+                        .map(|(p, m)| {
+                            (
+                                crate::geom::PlanarDelta::between(&p.position, &m.position).dist,
+                                m.floor_level == s.self_floor_level,
+                            )
+                        });
+                    s.push_agent_event(unreachable_note(monster_id, sighted));
                     continue;
                 }
             }
@@ -891,14 +901,20 @@ mod tests {
         );
     }
 
-    /// A too-far monster and a vanished one produce different guidance, so the
-    /// agent walks up to the first and drops the second instead of re-attacking.
+    /// A too-far monster, one on another floor, and a vanished one produce
+    /// different guidance: walk up to the first, retarget off the other two
+    /// instead of re-attacking.
     #[test]
     fn an_unreachable_attack_tells_the_agent_why() {
-        let present = unreachable_note("m19_21", Some(22.8));
+        let present = unreachable_note("m19_21", Some((22.8, true)));
         assert!(present.contains("m19_21"));
         assert!(present.contains("23m"));
         assert!(present.to_lowercase().contains("closer"));
+
+        let below = unreachable_note("m7_3", Some((3.2, false)));
+        assert!(below.contains("m7_3"));
+        assert!(below.contains("different floor"));
+        assert!(!below.to_lowercase().contains("closer"));
 
         let gone = unreachable_note("m5_2", None);
         assert!(gone.contains("m5_2"));
