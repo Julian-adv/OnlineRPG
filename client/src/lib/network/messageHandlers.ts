@@ -13,6 +13,7 @@ import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { playFishingSound } from '../managers/sfxManager'
+import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
 import { monsterManager } from '../managers/monsterManager'
 import { housingManager } from '../managers/housingManager'
 import { bridgeManager } from '../managers/bridgeManager'
@@ -1033,10 +1034,12 @@ export function handleServerMessage(
       upsertBobber(data.player_id, data.position)
       if (isSelfPlayer(data.player_id)) {
         myFishing.set({ phase: 'casting' })
-        // The line whirs out on the swing; the splash waits for the bobber to
-        // actually land (the server's CAST_MS, read from shared wasm).
-        playFishingSound('cast')
-        playFishingSound('splash', fishing_cast_ms())
+        // Whoosh on the visible swing; splash one flight time (CAST_MS) later.
+        playFishingSound('cast', FISHING_CAST_SWING_DELAY_MS)
+        playFishingSound(
+          'splash',
+          FISHING_CAST_SWING_DELAY_MS + fishing_cast_ms()
+        )
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
       }
       break

@@ -10,7 +10,6 @@ const SWORD_HIT_VOLUME = 0.55
 const SWORD_MISS_VOLUME = 0.5
 const SWORD_HIT_POOL_SIZE = 4
 const SWORD_MISS_POOL_SIZE = 4
-export const SWORD_MISS_DELAY_MS = 450
 
 // The reel fires every struggle round, so it gets a deeper pool; the rest are
 // one-shot moments.

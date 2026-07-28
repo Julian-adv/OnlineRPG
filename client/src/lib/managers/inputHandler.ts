@@ -123,8 +123,9 @@ export interface RaycastContext {
   playerPosition: Position
   playerFloorLevel: number
   isMonsterDead: (monsterId: string) => boolean
-  /** Main-hand item is a fishing rod — water clicks become casts. */
-  hasFishingRodEquipped?: boolean
+  /** Rod in the main hand and standing on castable ground (surface, not a
+   *  dungeon or upper house floor) — water clicks become casts. */
+  canCastFishing?: boolean
   /** Baked water surface height at a world XZ (sea level where none). Lets a
    *  cast fire over rivers, whose beds sit above sea level, not just ocean. */
   waterSurfaceAt?: (x: number, z: number) => number
@@ -470,8 +471,7 @@ class InputHandler {
         groundHit.point.z
       )
       if (
-        context.hasFishingRodEquipped &&
-        context.playerFloorLevel === 0 &&
+        context.canCastFishing &&
         waterSurface !== undefined &&
         waterSurface - groundHit.point.y > min_fishable_depth_m()
       ) {

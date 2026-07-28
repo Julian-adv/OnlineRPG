@@ -18,11 +18,7 @@ import { dungeonManager } from './dungeonManager'
 import type { Position } from '../utils/movementUtils'
 import type { TerrainHeightManager } from './terrainHeightManager'
 import type { TerrainSplatManager } from './terrainSplatManager'
-import {
-  playSwordHitSound,
-  playSwordMissSound,
-  SWORD_MISS_DELAY_MS,
-} from './sfxManager'
+import { playSwordHitSound, playSwordMissSound } from './sfxManager'
 import type { NoSpawnZone } from './zoneManager'
 import { TILE_DIM, worldToTileCoord } from './terrain-height-types'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
@@ -32,6 +28,7 @@ import {
   DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
   PLAYER_ATTACK_IMPACT_DELAY_MS,
+  SWORD_MISS_DELAY_MS,
 } from '../data/combatTiming'
 import {
   ai_load_behavior_trees,

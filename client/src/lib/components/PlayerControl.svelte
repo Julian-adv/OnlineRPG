@@ -46,6 +46,7 @@
   import { dungeonManager } from '../managers/dungeonManager'
   import { housingManager } from '../managers/housingManager'
   import { findPath } from '../managers/pathfinding'
+  import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
   import { passability_get_floor_at } from '../wasm/onlinerpg_shared'
   import { get } from 'svelte/store'
   import { createPlayerPhysics } from './player-control/player-physics'
@@ -223,9 +224,7 @@
 
   // Prop-break swing: when the player reaches a clicked barrel/crate, swing the
   // sword once and break it at the contact frame, then drop back to idle after
-  // the follow-through. Its own impact delay (a touch later than the monster
-  // flinch's 540ms) so the prop shatters right as the blade lands.
-  const PROP_SWING_IMPACT_MS = 660
+  // the follow-through.
   const PROP_SWING_RETURN_MS = 1000
   let propSwingCounter = 0
   let propBreakTimer: ReturnType<typeof setTimeout> | null = null
@@ -1136,9 +1135,12 @@
         const m = monsterManager.monsters.get(id)
         return m?.state === 'dead' || false
       },
-      hasFishingRodEquipped:
+      // The passability floor, not the raw housing store: the store starts
+      // at -1 and only fills in on waypoint arrival, so a fresh session
+      // would fail a raw `=== 0` check until the player first walks.
+      canCastFishing:
         getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
-          ?.category === 'fishing_rod',
+          ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,
       waterSurfaceAt,
     })
   }

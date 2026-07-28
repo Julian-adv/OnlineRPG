@@ -65,6 +65,7 @@ data/map_labels.json
 data/merchants.json
 data/monsters.json
 data/npcs.json
+data/player_anim_timing.json
 data/world_drop.json
 data/terrain/
 data/housing/
