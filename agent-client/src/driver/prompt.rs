@@ -422,6 +422,23 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             crate::shop_info::format_price(*npc_gold),
         )),
         ServerMessage::TradeError { message } => Some(format!("[TradeError] {message}")),
+        ServerMessage::PartyInviteReceived { inviter_name, .. } => Some(format!(
+            "[PartyInvite] {inviter_name} invited you to their party. Accept with \
+             {{\"action\":\"party_accept\"}} or decline with party_decline."
+        )),
+        ServerMessage::PartyInviteResult { message, .. } => Some(format!("[Party] {message}")),
+        ServerMessage::PartyState { members, .. } => Some(if members.is_empty() {
+            "[Party] You are no longer in a party.".to_string()
+        } else {
+            format!(
+                "[Party] Members: {}",
+                members
+                    .iter()
+                    .map(|m| m.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }),
         // Fishing: only the endings reach the LLM (reflexes answered the
         // rest). Word the outcome so the model knows what it can do next.
         ServerMessage::FishingEnded { player_id, outcome } => {

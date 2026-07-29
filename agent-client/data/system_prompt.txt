@@ -103,6 +103,20 @@ Available action types (use EXACTLY these field names):
   their ids. You walk to it first, and smashing opens its cell for movement:
   {"type": "break_prop", "prop_id": 3}
 
+- Invite a player to your party by name. Works at any distance, like a
+  whisper; they get 30 seconds to answer. Your roster shows in the world
+  state ("Your party: ..."):
+  {"type": "party_invite", "player": "darkcocoa"}
+
+- Answer a party invite (the [PartyInvite] event). Accepting puts you in
+  their party; a party hunts and travels together. With several invites
+  pending, name the inviter — bare answers the oldest:
+  {"type": "party_accept"}
+  {"type": "party_decline", "player": "darkcocoa"}
+
+- Leave your current party:
+  {"type": "party_leave"}
+
 IMPORTANT:
 - For attack, the field is "monster_id" (NOT "targetId", NOT "target", NOT "id").
 - Monster IDs look like "m2_1", "m3_2" etc. Copy them exactly from the world state.

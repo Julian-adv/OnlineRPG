@@ -546,6 +546,11 @@ impl super::GameState {
             players.remove(player_id)
         };
 
+        // After the roster removal on purpose: party mutations hold the
+        // players lock, so an in-flight accept lands before this sweep and
+        // gets cleaned up instead of leaving a ghost member.
+        self.clear_party_for_player(player_id).await;
+
         if let Some(player) = removed_player {
             self.remove_player_spatial_cell(player_id, &player.position)
                 .await;

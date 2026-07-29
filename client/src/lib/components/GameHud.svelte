@@ -12,6 +12,8 @@
   import TradeWindow from './TradeWindow.svelte'
   import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
+  import PartyInviteToast from './PartyInviteToast.svelte'
+  import PartyPanel from './PartyPanel.svelte'
   import NpcContextMenu from './NpcContextMenu.svelte'
   import DragGhost from './DragGhost.svelte'
   import LoadingDialog from './LoadingDialog.svelte'
@@ -96,6 +98,8 @@
     />
     <TradeWindow />
     <TradeOfferToast />
+    <PartyInviteToast />
+    <PartyPanel />
     <NpcContextMenu />
     <FishingPrompt />
   {/if}

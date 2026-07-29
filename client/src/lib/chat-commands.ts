@@ -56,6 +56,7 @@ const COMMANDS: Record<string, Command> = {
   '/whisper': { desc: 'Send a private message: /whisper <player> <message>' },
   '/block': { desc: 'Block whispers from a player: /block <player>' },
   '/unblock': { desc: 'Unblock a player: /unblock <player>' },
+  '/party': { desc: 'Invite a player to your party: /party <player>' },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',

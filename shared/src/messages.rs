@@ -82,6 +82,13 @@ pub struct BuybackEntry {
     pub price: i64,
 }
 
+/// One party member as listed in `PartyState`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartyMember {
+    pub id: PlayerId,
+    pub name: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The
@@ -310,6 +317,19 @@ pub enum ClientMessage {
     OpenTrade {
         target_player_id: PlayerId,
     },
+    /// Invite a named player to the sender's party. Name-based like whisper:
+    /// the target may be outside the sender's AOI.
+    PartyInvite {
+        target_name: String,
+    },
+    /// Accept or decline a pending party invite from `inviter_id`.
+    PartyRespond {
+        inviter_id: PlayerId,
+        accept: bool,
+    },
+    /// Leave the current party. The leader leaving promotes the earliest
+    /// remaining member; a party reduced to one member disbands.
+    PartyLeave,
     /// Cast the equipped fishing rod at a water point. The server validates
     /// rod, range, floor and water (water-field depth at the point) and
     /// answers with a `FishingCasted` broadcast or a direct `FishingError`.
@@ -460,6 +480,25 @@ pub enum ServerMessage {
     /// line, not the player's own speech.
     SystemMessage {
         message: String,
+    },
+    /// Direct to the invitee: a party invite to answer with `PartyRespond`
+    /// before it expires server-side.
+    PartyInviteReceived {
+        inviter_id: PlayerId,
+        inviter_name: String,
+    },
+    /// Direct to the inviter: the invite's outcome. Kept distinct from
+    /// `SystemMessage` like `TradeError` so the agent-client reacts to it.
+    PartyInviteResult {
+        target_name: String,
+        accepted: bool,
+        message: String,
+    },
+    /// Direct to each member after any roster change. Empty `members` means
+    /// the receiver is no longer in a party.
+    PartyState {
+        leader_id: PlayerId,
+        members: Vec<PartyMember>,
     },
     GameState {
         /// A list, not a map keyed by id: `PlayerId` is numeric and

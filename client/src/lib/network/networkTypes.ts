@@ -148,6 +148,8 @@ export type ClientMessage =
   | { FishingCast: { position: Position } }
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
+  | { PartyRespond: { inviter_id: number; accept: boolean } }
+  | 'PartyLeave'
   | { OpenDungeonChest: { entrance_id: string } }
   | {
       BreakDungeonProp: { entrance_id: string; depth: number; prop_id: number }

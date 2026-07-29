@@ -436,6 +436,9 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::DealResult { .. } => "DealResult",
         ServerMessage::TradeNotice { .. } => "TradeNotice",
         ServerMessage::TradeBusy { .. } => "TradeBusy",
+        ServerMessage::PartyInviteReceived { .. } => "PartyInviteReceived",
+        ServerMessage::PartyInviteResult { .. } => "PartyInviteResult",
+        ServerMessage::PartyState { .. } => "PartyState",
     }
 }
 

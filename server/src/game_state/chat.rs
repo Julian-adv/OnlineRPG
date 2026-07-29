@@ -96,17 +96,27 @@ pub(crate) fn parse_notice_command(message: &str) -> Option<Option<&str>> {
     Some(Some(rest).filter(|rest| !rest.is_empty()))
 }
 
+/// `/party <name>` invites; bare `/party` reports the roster.
+pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
+    let rest = strip_command(message, "/party")?;
+    Some((!rest.is_empty()).then_some(rest))
+}
+
 /// How a player-typed name resolved: names are UNIQUE only case-sensitively,
 /// so an exact match wins and the case-insensitive convenience applies only
 /// while unambiguous. Shared by whisper and `/unblock`; `/block` applies the
 /// same rule in SQL (`AuthService::resolve_character_name`).
-enum NameMatch<T> {
+pub(crate) enum NameMatch<T> {
     None,
     Unique(T),
     Ambiguous,
 }
 
-fn match_name<T, I>(candidates: I, name_of: impl Fn(&T) -> &str, query: &str) -> NameMatch<T>
+pub(crate) fn match_name<T, I>(
+    candidates: I,
+    name_of: impl Fn(&T) -> &str,
+    query: &str,
+) -> NameMatch<T>
 where
     I: Iterator<Item = T> + Clone,
 {
@@ -173,6 +183,17 @@ impl super::GameState {
 
         if let Some((target_name, whisper)) = parse_whisper_command(&message) {
             self.send_whisper(player_id, target_name, whisper).await;
+            return;
+        }
+
+        if let Some(target) = parse_party_command(&message) {
+            match target {
+                Some(name) => self.invite_to_party(player_id, name).await,
+                None => {
+                    let status = self.describe_party(player_id).await;
+                    self.send_system_message(player_id, status).await;
+                }
+            }
             return;
         }
 

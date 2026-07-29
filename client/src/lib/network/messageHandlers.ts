@@ -47,6 +47,11 @@ import {
   pendingTradeOffer,
   type BuybackEntry,
 } from '../stores/tradeStore'
+import {
+  partyRoster,
+  pendingPartyInvites,
+  MAX_PENDING_PARTY_INVITES,
+} from '../stores/partyStore'
 import { editorTreeDataManager } from '../stores/editorStore'
 import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
@@ -429,7 +434,46 @@ export function handleServerMessage(
       addChatMessage({ text: data.message, sender: 'system' })
       break
 
+    case 'PartyInviteReceived':
+      pendingPartyInvites.update((queue) =>
+        queue.length >= MAX_PENDING_PARTY_INVITES ||
+        queue.some((invite) => invite.inviterId === data.inviter_id)
+          ? queue
+          : [
+              ...queue,
+              {
+                inviterId: data.inviter_id,
+                inviterName: data.inviter_name,
+                offeredAt: Date.now(),
+              },
+            ]
+      )
+      break
+
+    case 'PartyInviteResult':
+      addChatMessage({ text: data.message, sender: 'system' })
+      break
+
+    case 'PartyState':
+      partyRoster.set(
+        data.members.length > 0
+          ? {
+              leaderId: data.leader_id,
+              members: data.members as { id: number; name: string }[],
+            }
+          : null
+      )
+      if (data.members.length > 0) {
+        pendingPartyInvites.set([])
+      }
+      break
+
     case 'GameState':
+      // A join snapshot starts a fresh session: any party membership died
+      // with the old one (in-memory, disconnect = leave), and the server
+      // cannot re-send what no longer exists.
+      partyRoster.set(null)
+      pendingPartyInvites.set([])
       gameStore.update((state) => {
         state.otherPlayers.clear()
         remotePlayerManager.reset()

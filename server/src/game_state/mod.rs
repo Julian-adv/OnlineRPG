@@ -65,6 +65,7 @@ pub(crate) use deals::band_invariant_holds;
 mod dungeon;
 mod inventory;
 mod monster;
+mod party;
 mod passability;
 mod player;
 pub(crate) use player::{restored_floor_level, MoveCommand};
@@ -195,6 +196,8 @@ pub struct GameState {
     /// counts down on `tick_shop_holds` so a player can't pin an NPC forever
     /// by keeping the window open. See `register_shop_open`/`close_shop`.
     open_shops: Arc<RwLock<HashMap<PlayerId, HashMap<PlayerId, u8>>>>,
+    /// Live parties and pending invites (in-memory; a disconnect is a leave).
+    parties: Arc<RwLock<party::Parties>>,
     /// (character_id, merchant npc name) → units that character sold to
     /// that merchant, repurchasable at the recorded payout. Keyed by
     /// character (not the per-session player id) so the list survives a
@@ -277,6 +280,7 @@ impl GameState {
             dungeons: Arc::new(RwLock::new(HashMap::new())),
             dungeon_monsters: Arc::new(RwLock::new(HashMap::new())),
             open_shops: Arc::new(RwLock::new(HashMap::new())),
+            parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),

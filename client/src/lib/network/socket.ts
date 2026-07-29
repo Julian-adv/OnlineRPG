@@ -605,6 +605,15 @@ class NetworkManager {
     this.sendMessage({ CloseShop: { merchant_player_id: merchantPlayerId } })
   }
 
+  /** Answer a party invite (ServerMessage::PartyInviteReceived). */
+  sendPartyRespond(inviterId: number, accept: boolean) {
+    this.sendMessage({ PartyRespond: { inviter_id: inviterId, accept } })
+  }
+
+  sendPartyLeave() {
+    this.sendMessage('PartyLeave')
+  }
+
   sendBuyItem(merchantPlayerId: number, itemDefId: string) {
     this.sendMessage({
       BuyItem: { merchant_player_id: merchantPlayerId, item_def_id: itemDefId },
