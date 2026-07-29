@@ -33,7 +33,9 @@ mod stairs;
 mod tests;
 
 pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec, ENTRANCE_DOOR_ID};
-pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
+pub use registry::{
+    entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef, DEFAULT_CHEST_TIER,
+};
 pub use stairs::{
     entrance_ramp_height_at, floor_height_at, ground_y_for_floor, shaft_run_pos, LANDING_CELLS,
 };
@@ -356,18 +358,19 @@ pub(crate) fn dungeon_depth(seed: u64) -> u8 {
 /// over arbitrary seeds.
 #[cfg(test)]
 pub(crate) fn generate_dungeon(seed: u64) -> Vec<FloorLayout> {
-    gen::generate_dungeon_with(seed, None, BOSS_MONSTER_TYPE)
+    gen::generate_dungeon_with(seed, None, BOSS_MONSTER_TYPE, None)
 }
 
-/// Generate a dungeon by entrance id: seed derived from the id, floor count
-/// and boss from the registry. This is what both the server and the wasm
-/// client use for real dungeons; `generate_dungeon` stays seed-only for
-/// property tests over arbitrary seeds.
+/// Generate a dungeon by entrance id: seed derived from the id, floor count,
+/// boss and entrance orientation from the registry. This is what both the
+/// server and the wasm client use for real dungeons; `generate_dungeon` stays
+/// seed-only for property tests over arbitrary seeds.
 pub fn generate_dungeon_for(entrance_id: &str) -> Vec<FloorLayout> {
     let def = entrance(entrance_id);
     let floors = def.and_then(|d| d.floors);
     let boss = def.map_or(BOSS_MONSTER_TYPE, |d| d.boss.as_str());
-    gen::generate_dungeon_with(dungeon_seed(entrance_id), floors, boss)
+    let dir = def.and_then(|d| d.entrance_dir);
+    gen::generate_dungeon_with(dungeon_seed(entrance_id), floors, boss, dir)
 }
 
 pub fn passability_floor_for_depth(depth: u8) -> u8 {

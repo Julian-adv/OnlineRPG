@@ -14,10 +14,16 @@
 use std::sync::LazyLock;
 
 use super::{dungeon_origin, GRID};
+use crate::housing::WallDirection;
 use crate::world::Position;
 
+/// Items whose `chestTier` is blank default here, and dungeons whose
+/// `chestTier` is blank admit only this tier.
+pub const DEFAULT_CHEST_TIER: u8 = 1;
+
 /// One dungeon entrance: where it stands, how deep it goes, what its final
-/// chest holds.
+/// chest holds. `floors`, `boss` and `entrance_dir` feed the hashed layout —
+/// changing them desyncs deployed clients like any generation change.
 #[derive(Debug, Clone)]
 pub struct DungeonEntranceDef {
     pub id: String,
@@ -33,15 +39,14 @@ pub struct DungeonEntranceDef {
     pub chest_drops: Vec<String>,
     /// Fixed floor count from the csv; `None` = seed-derived 5..=20.
     pub floors: Option<u8>,
-    /// Monster type guarding the final-floor chest; blank falls back to
-    /// [`super::BOSS_MONSTER_TYPE`]. Validated against the monster table by
-    /// the server on load. Part of the hashed layout — changing it desyncs
-    /// deployed clients like any generation change.
+    /// Final-floor chest guardian; blank = [`super::BOSS_MONSTER_TYPE`].
+    /// Validated against the monster table by the server on load.
     pub boss: String,
     /// Random chest-loot ceiling: the pool only admits items whose
-    /// `chestTier` (items.csv) is at or below this. Blank = 1. Server-side
-    /// only — never touches layout generation.
+    /// `chestTier` (items.csv) is at or below this.
     pub chest_tier: u8,
+    /// Side the entrance door opens toward (n/s/e/w); blank = seed-derived.
+    pub entrance_dir: Option<WallDirection>,
 }
 
 impl DungeonEntranceDef {
@@ -98,6 +103,15 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                     .parse::<f32>()
                     .unwrap_or_else(|_| panic!("dungeon '{id}' has a non-numeric {name}"))
             };
+            // Blank = default; anything else must parse (a typo'd row should
+            // fail the build, not silently fall back).
+            let opt_u8 = |name: &str| {
+                let v = field(name);
+                (!v.is_empty()).then(|| {
+                    v.parse::<u8>()
+                        .unwrap_or_else(|_| panic!("dungeon '{id}' has a non-numeric {name}"))
+                })
+            };
             Some(DungeonEntranceDef {
                 id: id.to_string(),
                 name: field("name").to_string(),
@@ -111,13 +125,20 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                     .filter(|s| !s.is_empty())
                     .map(str::to_string)
                     .collect(),
-                // Blank (or unparseable) means "seed-derived depth".
-                floors: field("floors").parse::<u8>().ok(),
+                floors: opt_u8("floors"),
                 boss: match field("boss") {
                     "" => super::BOSS_MONSTER_TYPE.to_string(),
                     b => b.to_string(),
                 },
-                chest_tier: field("chestTier").parse().unwrap_or(1),
+                chest_tier: opt_u8("chestTier").unwrap_or(DEFAULT_CHEST_TIER),
+                entrance_dir: match field("entranceDir") {
+                    "" => None,
+                    "n" => Some(WallDirection::North),
+                    "s" => Some(WallDirection::South),
+                    "e" => Some(WallDirection::East),
+                    "w" => Some(WallDirection::West),
+                    d => panic!("dungeon '{id}' has an invalid entranceDir '{d}'"),
+                },
             })
         })
         .collect()
@@ -143,9 +164,9 @@ mod tests {
 
     #[test]
     fn parses_drops_lists_and_optional_floor_override() {
-        let csv = "id,name,x,y,z,rotation,chestDrops,floors,boss,chestTier\n\
-                   a,A Place,-1450,0.7,4720,90,shield;armor,5,orc_boss,2\n\
-                   b,B Place,10,0,20,,,,,\n";
+        let csv = "id,name,x,y,z,rotation,chestDrops,floors,boss,chestTier,entranceDir\n\
+                   a,A Place,-1450,0.7,4720,90,shield;armor,5,orc_boss,2,s\n\
+                   b,B Place,10,0,20,,,,,,\n";
         let defs = parse_entrances(csv);
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].chest_drops, ["shield", "armor"]);
@@ -153,10 +174,12 @@ mod tests {
         assert_eq!(defs[0].rotation, 90.0);
         assert_eq!(defs[0].boss, "orc_boss");
         assert_eq!(defs[0].chest_tier, 2);
+        assert_eq!(defs[0].entrance_dir, Some(WallDirection::South));
         assert!(defs[1].chest_drops.is_empty());
         assert_eq!(defs[1].floors, None, "blank floors = seed-derived depth");
         assert_eq!(defs[1].boss, super::super::BOSS_MONSTER_TYPE);
         assert_eq!(defs[1].chest_tier, 1, "blank chestTier = tier 1");
+        assert_eq!(defs[1].entrance_dir, None, "blank = seed-derived");
     }
 
     /// Half-open on both axes, and the embedded csv parses at all. The server

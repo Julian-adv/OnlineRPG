@@ -1,3 +1,3 @@
-id,name,x,y,z,rotation,chestDrops,floors,boss,chestTier
-old_crypt,Old Crypt,-1450,0.7,4720,0,leather_armor,5,goblin_boss,1
-orc_warrens,Orc Warrens,-1616,1.05,4918,0,raven_shield,10,orc_boss,2
+id,name,x,y,z,rotation,chestDrops,floors,boss,chestTier,entranceDir
+old_crypt,Old Crypt,-1450,0.7,4720,0,leather_armor,5,goblin_boss,1,
+orc_warrens,Orc Warrens,-1616,1.05,4918,0,raven_shield,10,orc_boss,2,s

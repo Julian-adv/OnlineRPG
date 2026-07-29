@@ -23,6 +23,8 @@ export interface DungeonEntranceDef {
   boss?: string
   /** Random chest-loot ceiling (items.csv `chestTier`); blank = 1. Server-side only. */
   chestTier?: number
+  /** Entrance door side (n/s/e/w); blank = seed-derived. INERT here, like `floors`. */
+  entranceDir?: string
 }
 
 export const DUNGEON_ENTRANCES: DungeonEntranceDef[] = Object.values(

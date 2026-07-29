@@ -216,7 +216,11 @@ impl ItemDefs {
             .filter(|def| def.equip_slot.is_some())
             .filter(|def| !def.is_fishing_rod())
             .filter(|def| def.base_price.is_some_and(|p| p >= min_price))
-            .filter(|def| def.chest_tier.unwrap_or(1) <= max_tier)
+            .filter(|def| {
+                def.chest_tier
+                    .unwrap_or(onlinerpg_shared::dungeon::DEFAULT_CHEST_TIER)
+                    <= max_tier
+            })
             .map(|def| def.id.clone())
             .collect();
         ids.sort();
@@ -259,43 +263,27 @@ mod tests {
     }
 
     /// Chest-tier progression: old_crypt (tier 1) stays at leather-armor
-    /// level, orc_warrens (tier 2) adds chain mail, and the breastplate and
-    /// precious accessories wait for a tier-3 dungeon that doesn't exist yet.
+    /// level, orc_warrens (tier 2) adds the iron and chain gear, and the
+    /// breastplate and precious accessories wait for a tier-3 dungeon.
     #[test]
     fn chest_tiers_gate_endgame_loot_by_dungeon() {
         let defs = ItemDefs::load();
+        let [t1, t2, t3] = [1, 2, 3].map(|t| defs.chest_equipment_ids(2000, t));
 
-        let tier1 = defs.chest_equipment_ids(2000, 1);
-        for reserved in [
-            "breastplate",
-            "chain_mail",
-            "iron_sword",
-            "iron_boots",
-            "gold_ring",
-            "silver_necklace",
-            "raven_shield",
-        ] {
+        assert!(t1.contains(&"leather_armor".to_string()));
+        for id in ["chain_mail", "iron_sword", "iron_boots", "raven_shield"] {
+            let id = id.to_string();
             assert!(
-                !tier1.contains(&reserved.to_string()),
-                "{reserved} must not drop from a tier-1 chest"
+                !t1.contains(&id) && t2.contains(&id),
+                "{id} is a tier-2 drop"
             );
         }
-        assert!(tier1.contains(&"leather_armor".to_string()));
-
-        let tier2 = defs.chest_equipment_ids(2000, 2);
-        for added in ["chain_mail", "iron_sword", "iron_boots"] {
-            assert!(tier2.contains(&added.to_string()));
-        }
-        for reserved in ["breastplate", "gold_ring", "silver_necklace"] {
+        for id in ["breastplate", "gold_ring", "silver_necklace"] {
+            let id = id.to_string();
             assert!(
-                !tier2.contains(&reserved.to_string()),
-                "{reserved} is reserved for the third dungeon"
+                !t2.contains(&id) && t3.contains(&id),
+                "{id} is reserved for the third dungeon"
             );
-        }
-
-        let tier3 = defs.chest_equipment_ids(2000, 3);
-        for added in ["breastplate", "gold_ring", "silver_necklace"] {
-            assert!(tier3.contains(&added.to_string()));
         }
     }
 

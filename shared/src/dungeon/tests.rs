@@ -68,28 +68,33 @@ fn golden_layout_hash() {
     );
 }
 
-/// The registry's per-dungeon `boss` and `floors` columns drive generation:
-/// orc_warrens is 10 floors deep and its chest is guarded by orc_boss, while
-/// old_crypt keeps goblin_boss.
+/// The registry's per-dungeon `boss`, `floors` and `entranceDir` columns
+/// drive generation: orc_warrens is 10 floors deep, its chest is guarded by
+/// orc_boss and its entrance door opens south (+z), while old_crypt keeps
+/// goblin_boss.
 #[test]
-fn per_dungeon_boss_and_floors() {
+fn per_dungeon_boss_floors_and_entrance_dir() {
+    fn final_boss(floors: &[FloorLayout]) -> &SpawnSpec {
+        let last = floors.last().unwrap();
+        assert!(last.chest.is_some());
+        let mut bosses = last.spawns.iter().filter(|s| s.is_boss);
+        let boss = bosses.next().expect("final floor has a boss");
+        assert!(bosses.next().is_none(), "exactly one boss");
+        boss
+    }
+
     let floors = generate_dungeon_for("orc_warrens");
     assert_eq!(floors.len(), 10);
-    let last = floors.last().unwrap();
-    assert!(last.chest.is_some());
-    let boss: Vec<_> = last.spawns.iter().filter(|s| s.is_boss).collect();
-    assert_eq!(boss.len(), 1);
-    assert_eq!(boss[0].monster_type, "orc_boss");
-
-    let crypt = generate_dungeon_for("old_crypt");
-    let crypt_boss = crypt
-        .last()
-        .unwrap()
-        .spawns
-        .iter()
-        .find(|s| s.is_boss)
-        .unwrap();
-    assert_eq!(crypt_boss.monster_type, BOSS_MONSTER_TYPE);
+    let up = floors[0].up_shaft;
+    assert!(
+        up.along_z && up.reversed,
+        "entranceDir=s: entry landing at the +z end, door facing south"
+    );
+    assert_eq!(final_boss(&floors).monster_type, "orc_boss");
+    assert_eq!(
+        final_boss(&generate_dungeon_for("old_crypt")).monster_type,
+        BOSS_MONSTER_TYPE
+    );
 }
 
 // Captured from the first blessed run; see golden_layout_hash. Re-blessed when
