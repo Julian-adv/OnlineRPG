@@ -357,6 +357,29 @@
     return out
   })
 
+  // --- Self marker pulse (HTML layer over the canvas dot) ---
+  let selfPulse = $derived.by<{ left: number; top: number } | null>(() => {
+    const cw = containerW
+    const ch = containerH
+    if (cw <= 0 || ch <= 0) return null
+
+    const viewSize = zoomSpan * REGION_PX
+    const canvasSize = Math.min(cw, ch)
+    const scale = canvasSize / viewSize
+    const viewLeft = camX - cw / scale / 2
+    const viewTop = camZ - ch / scale / 2
+
+    const lx = (playerX - viewLeft) * scale
+    const ly = (playerZ - viewTop) * scale
+    const ox = lx - cw / 2
+    const oy = ly - ch / 2
+    const left = ox * COS_R - oy * SIN_R + cw / 2
+    const top = ox * SIN_R + oy * COS_R + ch / 2
+
+    if (left < 0 || left > cw || top < 0 || top > ch) return null
+    return { left, top }
+  })
+
   // --- Party member markers (HTML layer, same transform as the labels) ---
   interface PartyMarker {
     id: number
@@ -665,6 +688,14 @@
             <span class="text">{label.name}</span>
           </div>
         {/each}
+        {#if selfPulse}
+          <div
+            class="self-pulse"
+            style="left: {selfPulse.left}px; top: {selfPulse.top}px;"
+          >
+            <span class="ring"></span>
+          </div>
+        {/if}
         {#each partyMarkers as marker (marker.id)}
           <div
             class="party-marker"
@@ -901,6 +932,38 @@
     height: 11px;
     background: #f5d250;
     border: 2px solid #287832;
+  }
+
+  /* Breathing ring over the canvas-drawn player dot: the one marker that
+     never moves shouldn't look dead. */
+  .self-pulse {
+    position: absolute;
+  }
+
+  .self-pulse .ring {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 80, 80, 0.9);
+    animation: self-ping 2s ease-out infinite;
+  }
+
+  @keyframes self-ping {
+    0% {
+      transform: translate(-50%, -50%) scale(0.6);
+      opacity: 0.9;
+    }
+    70% {
+      transform: translate(-50%, -50%) scale(2.4);
+      opacity: 0;
+    }
+    100% {
+      transform: translate(-50%, -50%) scale(2.4);
+      opacity: 0;
+    }
   }
 
   .party-marker {
