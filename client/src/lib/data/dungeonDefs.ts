@@ -12,7 +12,6 @@ export interface DungeonEntranceDef {
   x: number
   y: number
   z: number
-  rotation: number
   /** Semicolon-separated item ids the final-floor chest always yields; server-side only. */
   chestDrops?: string
   /** Fixed floor count override; blank = seed-derived 5..=20. INERT here: the
