@@ -96,6 +96,13 @@ pub fn min_fishable_depth_m() -> f32 {
     crate::fishing::MIN_FISHABLE_DEPTH_M
 }
 
+/// Cast range (`MAX_CAST_DISTANCE_METERS`), so the client can walk toward
+/// out-of-range water instead of sending a cast the server will reject.
+#[wasm_bindgen]
+pub fn max_cast_distance_m() -> f32 {
+    crate::fishing::MAX_CAST_DISTANCE_METERS
+}
+
 // --- Passability cache (WASM global state) ---
 
 thread_local! {
