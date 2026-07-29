@@ -257,44 +257,59 @@
     </button>
   </div>
 
-  <div class="chat-messages" bind:this={chatContainer} role="log">
-    {#if activeTab === 'say'}
-      {#each chatMessages as entry (entry.id)}
-        <div class="message" class:whisper={entry.sender === 'whisper'}>
-          {#if entry.name}
-            <span
-              class="name"
-              class:local={entry.sender === 'local'}
-              class:remote={entry.sender === 'remote'}>{entry.name}:</span
-            >
-            {displayText(entry)}
-          {:else}
-            <span class="system">{displayText(entry)}</span>
-          {/if}
-          {#if isTranslating(entry)}
-            <span class="translating-hint">translating…</span>
-          {/if}
-        </div>
-      {/each}
-    {:else}
-      {#each combatMessages as entry (entry.id)}
-        <div class="message combat">
-          {#if entry.name}
-            <span
-              class="name"
-              class:local={entry.sender === 'local'}
-              class:remote={entry.sender === 'remote'}>{entry.name}:</span
-            >
-            <span
-              class:hit={entry.hit === true}
-              class:miss={entry.hit === false}>{entry.text}</span
-            >
-          {:else}
-            {entry.text}
-          {/if}
-        </div>
-      {/each}
+  <div class="chat-body">
+    {#if isTranslatorApiSupported() && activeTab === 'say'}
+      <select
+        class="translate-lang-select"
+        value={$translationEnabled ? $translationTargetLanguage : TRANSLATE_OFF}
+        onchange={handleTranslateLangChange}
+        title="Translate chat"
+      >
+        <option value={TRANSLATE_OFF}>Default (Off)</option>
+        {#each TRANSLATION_LANGUAGES as lang (lang.code)}
+          <option value={lang.code}>{lang.label}</option>
+        {/each}
+      </select>
     {/if}
+    <div class="chat-messages" bind:this={chatContainer} role="log">
+      {#if activeTab === 'say'}
+        {#each chatMessages as entry (entry.id)}
+          <div class="message" class:whisper={entry.sender === 'whisper'}>
+            {#if entry.name}
+              <span
+                class="name"
+                class:local={entry.sender === 'local'}
+                class:remote={entry.sender === 'remote'}>{entry.name}:</span
+              >
+              {displayText(entry)}
+            {:else}
+              <span class="system">{displayText(entry)}</span>
+            {/if}
+            {#if isTranslating(entry)}
+              <span class="translating-hint">translating…</span>
+            {/if}
+          </div>
+        {/each}
+      {:else}
+        {#each combatMessages as entry (entry.id)}
+          <div class="message combat">
+            {#if entry.name}
+              <span
+                class="name"
+                class:local={entry.sender === 'local'}
+                class:remote={entry.sender === 'remote'}>{entry.name}:</span
+              >
+              <span
+                class:hit={entry.hit === true}
+                class:miss={entry.hit === false}>{entry.text}</span
+              >
+            {:else}
+              {entry.text}
+            {/if}
+          </div>
+        {/each}
+      {/if}
+    </div>
   </div>
 
   <div class="chat-input" class:disconnected={!isConnected}>
@@ -323,19 +338,6 @@
         disabled={!isConnected}
       />
     </div>
-    {#if isTranslatorApiSupported()}
-      <select
-        class="translate-lang-select"
-        value={$translationEnabled ? $translationTargetLanguage : TRANSLATE_OFF}
-        onchange={handleTranslateLangChange}
-        title="Translate chat"
-      >
-        <option value={TRANSLATE_OFF}>Default (Off)</option>
-        {#each TRANSLATION_LANGUAGES as lang (lang.code)}
-          <option value={lang.code}>{lang.label}</option>
-        {/each}
-      </select>
-    {/if}
     <button
       onclick={sendMessage}
       disabled={!isConnected || !messageInput.trim()}
@@ -408,6 +410,15 @@
     border-bottom: 2px solid #4299e1;
   }
 
+  .chat-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 700ms ease;
+  }
+
   .chat-messages {
     flex: 1;
     overflow-y: auto;
@@ -419,11 +430,10 @@
     gap: 5px;
     width: 100%;
     box-sizing: border-box;
-    transition: opacity 700ms ease;
   }
 
   .chat-panel.transcript-faded .tabs,
-  .chat-panel.transcript-faded .chat-messages {
+  .chat-panel.transcript-faded .chat-body {
     opacity: 0;
   }
 
@@ -436,8 +446,8 @@
      interactive via the .chat-input rule above so it can still be tapped. */
   .chat-panel.transcript-faded .tabs,
   .chat-panel.transcript-faded .tabs :global(*),
-  .chat-panel.transcript-faded .chat-messages,
-  .chat-panel.transcript-faded .chat-messages :global(*) {
+  .chat-panel.transcript-faded .chat-body,
+  .chat-panel.transcript-faded .chat-body :global(*) {
     pointer-events: none;
   }
 
@@ -565,14 +575,17 @@
   }
 
   .translate-lang-select {
-    margin: 2px 0;
-    padding: 0 6px;
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    z-index: 1;
+    padding: 2px 6px;
     border: none;
     border-radius: 4px;
-    background: #2d3748;
+    background: rgba(45, 55, 72, 0.9);
     color: #e2e8f0;
     font-size: 11px;
-    max-width: 90px;
+    max-width: 110px;
     cursor: pointer;
   }
 
@@ -663,7 +676,7 @@
     }
 
     .translate-lang-select {
-      max-width: 56px;
+      max-width: 90px;
       font-size: 10px;
     }
   }
