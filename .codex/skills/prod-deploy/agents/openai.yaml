@@ -1,4 +1,0 @@
-interface:
-  display_name: "Production Deploy"
-  short_description: "Deploy OnlineRPG to production safely"
-  default_prompt: "Use $prod-deploy to deploy the current master branch to production and verify the services."
