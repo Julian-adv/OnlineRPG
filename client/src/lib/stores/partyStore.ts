@@ -23,9 +23,10 @@ export interface PartyMemberPositionEntry {
   floor_level: number
 }
 
-/** Latest positions poll answer, stamped on receipt. Rendering joins it
- *  against the roster (a leaver never draws) and age-gates it (an answer
- *  that landed after the map closed never outlives its freshness). */
+/** Latest positions poll answer, stamped on receipt (`at: 0` = never
+ *  received or cleared). Rendering joins it against the roster (a leaver
+ *  never draws) and age-gates it (an answer that landed after the map
+ *  closed never outlives its freshness). */
 export interface PartyPositionsSnapshot {
   at: number
   members: PartyMemberPositionEntry[]
@@ -35,6 +36,10 @@ export const partyPositions = writable<PartyPositionsSnapshot>({
   at: 0,
   members: [],
 })
+
+export function resetPartyPositions() {
+  partyPositions.set({ at: 0, members: [] })
+}
 
 /** A party invite the player hasn't answered yet. */
 export interface PendingPartyInvite {

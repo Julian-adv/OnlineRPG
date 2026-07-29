@@ -6,10 +6,9 @@ use tracing::info;
 
 pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
 
-/// Positions polls inside this window are dropped; the web map polls every
-/// 3s, well above it.
+/// Polls inside this window are dropped; the web map polls every 3s, well
+/// above it.
 const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(1);
-
 
 /// Mirrors auth's character-name cap; anything longer cannot be a real name,
 /// and rejecting it early keeps oversized input out of the echoed failure.
@@ -399,44 +398,6 @@ impl super::GameState {
         self.remove_party_member(player_id).await;
     }
 
-    /// Answer a positions poll: where the sender's other members are. No AOI
-    /// or distance cut — the point is members beyond it.
-    pub async fn send_party_positions(&self, player_id: &PlayerId) {
-        let member_ids = {
-            let mut parties = self.parties.write().await;
-            let now = Instant::now();
-            let clamped = parties
-                .position_polls
-                .get(player_id)
-                .is_some_and(|last| now.duration_since(*last) < PARTY_POSITIONS_MIN_INTERVAL);
-            if clamped {
-                return;
-            }
-            parties.position_polls.insert(*player_id, now);
-            match parties.party_of(player_id) {
-                Some(party) => party.members.clone(),
-                None => Vec::new(),
-            }
-        };
-        let members: Vec<PartyMemberPosition> = {
-            let players = self.players.read().await;
-            member_ids
-                .iter()
-                .filter(|id| *id != player_id)
-                .filter_map(|id| {
-                    players.get(id).map(|p| PartyMemberPosition {
-                        id: *id,
-                        x: p.position.x,
-                        z: p.position.z,
-                        floor_level: p.floor_level,
-                    })
-                })
-                .collect()
-        };
-        self.send_direct_message(player_id, ServerMessage::PartyPositions { members })
-            .await;
-    }
-
     /// Remove a player from its party — promoting the earliest remaining
     /// member if it led, disbanding when one member would remain. Pending
     /// invites are untouched (leaving a party shouldn't void one you
@@ -508,6 +469,43 @@ impl super::GameState {
             })
             .collect();
         format!("Party: {}", names.join(", "))
+    }
+
+    /// Answer a positions poll: where the sender's other members are.
+    pub async fn send_party_positions(&self, player_id: &PlayerId) {
+        let member_ids = {
+            let mut parties = self.parties.write().await;
+            let now = Instant::now();
+            let clamped = parties
+                .position_polls
+                .get(player_id)
+                .is_some_and(|last| now.duration_since(*last) < PARTY_POSITIONS_MIN_INTERVAL);
+            if clamped {
+                return;
+            }
+            parties.position_polls.insert(*player_id, now);
+            match parties.party_of(player_id) {
+                Some(party) => party.members.clone(),
+                None => Vec::new(),
+            }
+        };
+        let members: Vec<PartyMemberPosition> = {
+            let players = self.players.read().await;
+            member_ids
+                .iter()
+                .filter(|id| *id != player_id)
+                .filter_map(|id| {
+                    players.get(id).map(|p| PartyMemberPosition {
+                        id: *id,
+                        x: p.position.x,
+                        z: p.position.z,
+                        floor_level: p.floor_level,
+                    })
+                })
+                .collect()
+        };
+        self.send_direct_message(player_id, ServerMessage::PartyPositions { members })
+            .await;
     }
 
     async fn broadcast_party_state(&self, leader_id: PlayerId, member_ids: &[PlayerId]) {

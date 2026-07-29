@@ -590,6 +590,8 @@ async fn positions_report_dungeon_floor() {
     game_state.send_party_positions(&pid("alice")).await;
     match alice_rx.try_recv() {
         Ok(ServerMessage::PartyPositions { members }) => {
+            let ids: Vec<_> = members.iter().map(|m| m.id).collect();
+            assert_eq!(ids, [pid("bob")]);
             assert_eq!(members[0].floor_level, -2);
         }
         other => panic!("Expected positions, got {:?}", other),

@@ -9,7 +9,7 @@ import type { WallDirection } from '../utils/house-geometry'
 import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
 import {
   partyRoster,
-  partyPositions,
+  resetPartyPositions,
   pendingPartyInvites,
 } from '../stores/partyStore'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
@@ -265,7 +265,7 @@ class NetworkManager {
       // leave), and a rejoin into an empty area sends no GameState snapshot
       // to reset these — a phantom roster would survive.
       partyRoster.set(null)
-      partyPositions.set({ at: 0, members: [] })
+      resetPartyPositions()
       pendingPartyInvites.set([])
       this.connect()
       const googleIdToken = getApiAuthToken()

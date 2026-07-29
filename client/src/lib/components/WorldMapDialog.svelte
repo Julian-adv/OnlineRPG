@@ -8,8 +8,7 @@
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 8
 
-  // Party member markers refresh while the dialog is open; stays well above
-  // the server's 1s poll clamp.
+  // Party member marker poll cadence; well above the server's 1s clamp.
   const PARTY_POLL_MS = 3000
 
   // A poll answer can outlive the dialog that requested it (nothing polls
@@ -70,7 +69,11 @@
 
 <script lang="ts">
   import { gameStore, isAdminUser } from '../stores/gameStore'
-  import { partyRoster, partyPositions } from '../stores/partyStore'
+  import {
+    partyRoster,
+    partyPositions,
+    resetPartyPositions,
+  } from '../stores/partyStore'
   import { worldMapVisible, teleportLoading } from '../stores/debugStore'
   import { minimapVersion } from '../stores/editorStore'
   import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
@@ -172,7 +175,7 @@
     const at = $partyPositions.at
     if (at === 0) return
     const timer = setTimeout(
-      () => partyPositions.set({ at: 0, members: [] }),
+      resetPartyPositions,
       Math.max(0, at + PARTY_POSITIONS_MAX_AGE_MS - Date.now())
     )
     return () => clearTimeout(timer)
@@ -318,41 +321,47 @@
     top: number
   }
 
+  // World → overlay coords: scale around the view center, then the same
+  // -45° rotation the canvas applies (ctx.rotate(ROTATE_ANGLE)).
+  function worldToScreen(x: number, z: number, cw: number, ch: number) {
+    const scale = Math.min(cw, ch) / (zoomSpan * REGION_PX)
+    const lx = (x - (camX - cw / scale / 2)) * scale
+    const ly = (z - (camZ - ch / scale / 2)) * scale
+    const ox = lx - cw / 2
+    const oy = ly - ch / 2
+    return {
+      left: ox * COS_R - oy * SIN_R + cw / 2,
+      top: ox * SIN_R + oy * COS_R + ch / 2,
+    }
+  }
+
+  function onScreen(
+    p: { left: number; top: number },
+    cw: number,
+    ch: number,
+    margin: number
+  ) {
+    return (
+      p.left >= -margin &&
+      p.left <= cw + margin &&
+      p.top >= -margin &&
+      p.top <= ch + margin
+    )
+  }
+
   let visibleLabels = $derived.by<PlacedLabel[]>(() => {
     const cw = containerW
     const ch = containerH
     if (cw <= 0 || ch <= 0) return []
-
-    // Same view transform the canvas render effect uses.
-    const viewSize = zoomSpan * REGION_PX
-    const canvasSize = Math.min(cw, ch)
-    const scale = canvasSize / viewSize
-    const viewLeft = camX - cw / scale / 2
-    const viewTop = camZ - ch / scale / 2
 
     const margin = 80 // keep labels whose anchor is just off-edge
     const out: PlacedLabel[] = []
     for (const label of MAP_LABELS) {
       const tier = LABEL_ZOOM[label.kind]
       if (zoomSpan < tier.min || zoomSpan > tier.max) continue
-
-      // World -> pre-rotation canvas coords (matches the player marker).
-      const lx = (label.x - viewLeft) * scale
-      const ly = (label.z - viewTop) * scale
-      // Rotate around canvas center to match ctx.rotate(ROTATE_ANGLE).
-      const ox = lx - cw / 2
-      const oy = ly - ch / 2
-      const left = ox * COS_R - oy * SIN_R + cw / 2
-      const top = ox * SIN_R + oy * COS_R + ch / 2
-
-      if (
-        left < -margin ||
-        left > cw + margin ||
-        top < -margin ||
-        top > ch + margin
-      )
-        continue
-      out.push({ name: label.name, kind: label.kind, left, top })
+      const p = worldToScreen(label.x, label.z, cw, ch)
+      if (!onScreen(p, cw, ch, margin)) continue
+      out.push({ name: label.name, kind: label.kind, left: p.left, top: p.top })
     }
     return out
   })
@@ -362,22 +371,8 @@
     const cw = containerW
     const ch = containerH
     if (cw <= 0 || ch <= 0) return null
-
-    const viewSize = zoomSpan * REGION_PX
-    const canvasSize = Math.min(cw, ch)
-    const scale = canvasSize / viewSize
-    const viewLeft = camX - cw / scale / 2
-    const viewTop = camZ - ch / scale / 2
-
-    const lx = (playerX - viewLeft) * scale
-    const ly = (playerZ - viewTop) * scale
-    const ox = lx - cw / 2
-    const oy = ly - ch / 2
-    const left = ox * COS_R - oy * SIN_R + cw / 2
-    const top = ox * SIN_R + oy * COS_R + ch / 2
-
-    if (left < 0 || left > cw || top < 0 || top > ch) return null
-    return { left, top }
+    const p = worldToScreen(playerX, playerZ, cw, ch)
+    return onScreen(p, cw, ch, 20) ? p : null
   })
 
   // --- Party member markers (HTML layer, same transform as the labels) ---
@@ -397,36 +392,22 @@
     if (!roster || cw <= 0 || ch <= 0) return []
     if (Date.now() - positions.at > PARTY_POSITIONS_MAX_AGE_MS) return []
 
-    const viewSize = zoomSpan * REGION_PX
-    const canvasSize = Math.min(cw, ch)
-    const scale = canvasSize / viewSize
-    const viewLeft = camX - cw / scale / 2
-    const viewTop = camZ - ch / scale / 2
-
     // Join against the roster: a member who left since the last poll (or an
     // id the roster never knew) must not draw a ghost.
     const names = new Map(roster.members.map((m) => [m.id, m.name]))
-    const margin = 40
     const out: PartyMarker[] = []
     for (const pos of positions.members) {
       const name = names.get(pos.id)
       if (!name) continue
-
-      const lx = (wrapWorldX(pos.x) - viewLeft) * scale
-      const ly = (pos.z - viewTop) * scale
-      const ox = lx - cw / 2
-      const oy = ly - ch / 2
-      const left = ox * COS_R - oy * SIN_R + cw / 2
-      const top = ox * SIN_R + oy * COS_R + ch / 2
-
-      if (
-        left < -margin ||
-        left > cw + margin ||
-        top < -margin ||
-        top > ch + margin
-      )
-        continue
-      out.push({ id: pos.id, name, left, top, floor: pos.floor_level })
+      const p = worldToScreen(wrapWorldX(pos.x), pos.z, cw, ch)
+      if (!onScreen(p, cw, ch, 40)) continue
+      out.push({
+        id: pos.id,
+        name,
+        left: p.left,
+        top: p.top,
+        floor: pos.floor_level,
+      })
     }
     return out
   })
@@ -832,6 +813,10 @@
     inset: 0;
     overflow: hidden;
     pointer-events: none;
+    /* dark halo for readability over varied terrain */
+    --label-halo:
+      0 0 2px #000, 1px 1px 1px #000, -1px 1px 1px #000, 1px -1px 1px #000,
+      -1px -1px 1px #000;
   }
 
   .map-label {
@@ -854,13 +839,7 @@
     top: 0;
     white-space: nowrap;
     font-family: Georgia, 'Times New Roman', serif;
-    /* dark halo for readability over varied terrain */
-    text-shadow:
-      0 0 2px #000,
-      1px 1px 1px #000,
-      -1px 1px 1px #000,
-      1px -1px 1px #000,
-      -1px -1px 1px #000;
+    text-shadow: var(--label-halo);
   }
 
   /* point kinds (capital/city/town): marker centered on anchor, text to the right */
@@ -946,22 +925,24 @@
     top: 0;
     width: 14px;
     height: 14px;
+    margin: -7px 0 0 -7px;
     border-radius: 50%;
     border: 2px solid rgba(255, 80, 80, 0.9);
-    animation: self-ping 2s ease-out infinite;
+    animation: self-pulse 2s ease-out infinite;
   }
 
-  @keyframes self-ping {
+  /* The identical 70%/100% stops hold the ring invisible between pulses. */
+  @keyframes self-pulse {
     0% {
-      transform: translate(-50%, -50%) scale(0.6);
+      transform: scale(0.6);
       opacity: 0.9;
     }
     70% {
-      transform: translate(-50%, -50%) scale(2.4);
+      transform: scale(2.4);
       opacity: 0;
     }
     100% {
-      transform: translate(-50%, -50%) scale(2.4);
+      transform: scale(2.4);
       opacity: 0;
     }
   }
@@ -994,11 +975,6 @@
     font-size: 12px;
     font-weight: 700;
     color: #bfe0ff;
-    text-shadow:
-      0 0 2px #000,
-      1px 1px 1px #000,
-      -1px 1px 1px #000,
-      1px -1px 1px #000,
-      -1px -1px 1px #000;
+    text-shadow: var(--label-halo);
   }
 </style>
