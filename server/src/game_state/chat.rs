@@ -150,6 +150,7 @@ impl super::GameState {
         if let Some(item_id) = message.strip_prefix("/give ") {
             let item_id = item_id.trim();
             if self.give_item(player_id, item_id).await {
+                info!(player = ?player_id, item = item_id, "item granted via /give");
                 self.send_system_message(player_id, format!("Gave item: {}", item_id))
                     .await;
             } else {
