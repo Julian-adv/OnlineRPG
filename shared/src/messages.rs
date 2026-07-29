@@ -89,6 +89,11 @@ pub struct PartyMember {
     pub name: String,
 }
 
+/// How long a party invite stays acceptable. Shared so the server's
+/// enforcement and the agent-client's pruning are guaranteed equal; the web
+/// client mirrors it (`INVITE_TTL_MS` in `PartyInviteToast.svelte`).
+pub const PARTY_INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The

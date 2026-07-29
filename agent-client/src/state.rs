@@ -32,10 +32,22 @@ const DEATH_DROP_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_m
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
 /// a wishlist item (see `trade_satiated_until`).
 const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// Cap on remembered party invites, matching the web client's toast queue.
+const MAX_PENDING_PARTY_INVITES: usize = 3;
+/// From the shared crate so the server's invite TTL and the agent's pruning
+/// are guaranteed equal.
+use onlinerpg_shared::messages::PARTY_INVITE_TTL;
 /// NPC sight distance for deciding which nearby human and monster activity
 /// matters. Re-exported from the shared crate so the server's event-delivery
 /// radius and the agent's perception radius are guaranteed equal.
 pub(crate) use onlinerpg_shared::NPC_SIGHT_RADIUS;
+
+/// A party invite the agent hasn't answered yet.
+pub struct PendingPartyInvite {
+    pub inviter_id: PlayerId,
+    pub inviter_name: String,
+    pub expires_at: std::time::Instant,
+}
 
 /// Where a carried item sits.
 pub enum Carried {
@@ -342,8 +354,10 @@ pub struct SharedState {
     /// resends on change.
     pub fishing_stance: Option<onlinerpg_shared::fishing::FishingAction>,
     /// Unanswered party invites, oldest first (capped; a flood can't swap
-    /// the invite out from under an in-flight `party_accept`).
-    pub pending_party_invites: Vec<(PlayerId, String)>,
+    /// the invite out from under an in-flight `party_accept`). Expired
+    /// invites are pruned on mutation and skipped on read, so a dead invite
+    /// stops prompting the model.
+    pub pending_party_invites: Vec<PendingPartyInvite>,
     /// Current party roster from `PartyState`; empty = not in a party.
     pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
     pub party_leader: Option<PlayerId>,
@@ -1303,9 +1317,16 @@ impl SharedState {
                 inviter_id,
                 ref inviter_name,
             } => {
+                self.prune_expired_party_invites();
                 let queue = &mut self.pending_party_invites;
-                if queue.len() < 3 && !queue.iter().any(|(id, _)| id == inviter_id) {
-                    queue.push((*inviter_id, inviter_name.clone()));
+                if queue.len() < MAX_PENDING_PARTY_INVITES
+                    && !queue.iter().any(|i| i.inviter_id == *inviter_id)
+                {
+                    queue.push(PendingPartyInvite {
+                        inviter_id: *inviter_id,
+                        inviter_name: inviter_name.clone(),
+                        expires_at: std::time::Instant::now() + PARTY_INVITE_TTL,
+                    });
                 }
             }
             ServerMessage::PartyState {
@@ -1889,6 +1910,22 @@ impl SharedState {
     }
 
     /// Build a text summary of current world state for the LLM prompt.
+    /// Drop invites past the server-side TTL; call before mutating or
+    /// answering the queue.
+    pub fn prune_expired_party_invites(&mut self) {
+        let now = std::time::Instant::now();
+        self.pending_party_invites.retain(|i| i.expires_at > now);
+    }
+
+    /// Invites still answerable right now (`format_world_state` is `&self`,
+    /// so expired entries are skipped rather than pruned).
+    pub fn live_party_invites(&self) -> impl Iterator<Item = &PendingPartyInvite> {
+        let now = std::time::Instant::now();
+        self.pending_party_invites
+            .iter()
+            .filter(move |i| i.expires_at > now)
+    }
+
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -1952,9 +1989,10 @@ impl SharedState {
                 .collect();
             lines.push(format!("Your party: {}", names.join(", ")));
         }
-        for (_, name) in &self.pending_party_invites {
+        for invite in self.live_party_invites() {
             lines.push(format!(
-                "Pending party invite from {name} — answer with party_accept or party_decline"
+                "Pending party invite from {} — answer with party_accept or party_decline",
+                invite.inviter_name
             ));
         }
 

@@ -236,23 +236,30 @@ pub(super) async fn handle_response(
         if let AgentAction::PartyAccept { player } | AgentAction::PartyDecline { player } = action {
             let accept = matches!(action, AgentAction::PartyAccept { .. });
             let mut s = state.lock().await;
+            s.prune_expired_party_invites();
             let idx = match player.as_deref() {
                 Some(name) => s
                     .pending_party_invites
                     .iter()
-                    .position(|(_, n)| n.eq_ignore_ascii_case(name)),
+                    .position(|i| i.inviter_name.eq_ignore_ascii_case(name)),
                 None => (!s.pending_party_invites.is_empty()).then_some(0),
             };
             let Some(idx) = idx else {
                 s.push_agent_event("[PartyFailed] No pending party invite to answer.".to_string());
                 continue;
             };
-            let (inviter_id, inviter_name) = s.pending_party_invites.remove(idx);
-            let cmd = onlinerpg_shared::ClientMessage::PartyRespond { inviter_id, accept };
+            let invite = s.pending_party_invites.remove(idx);
+            let cmd = onlinerpg_shared::ClientMessage::PartyRespond {
+                inviter_id: invite.inviter_id,
+                accept,
+            };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send party response: {e}");
             } else if !accept {
-                s.push_agent_event(format!("[Party] You declined {inviter_name}'s invite."));
+                s.push_agent_event(format!(
+                    "[Party] You declined {}'s invite.",
+                    invite.inviter_name
+                ));
             }
             continue;
         }

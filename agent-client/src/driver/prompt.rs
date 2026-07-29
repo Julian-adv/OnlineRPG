@@ -424,7 +424,7 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
         ServerMessage::TradeError { message } => Some(format!("[TradeError] {message}")),
         ServerMessage::PartyInviteReceived { inviter_name, .. } => Some(format!(
             "[PartyInvite] {inviter_name} invited you to their party. Accept with \
-             {{\"action\":\"party_accept\"}} or decline with party_decline."
+             {{\"type\":\"party_accept\"}} or decline with party_decline."
         )),
         ServerMessage::PartyInviteResult { message, .. } => Some(format!("[Party] {message}")),
         ServerMessage::PartyState { members, .. } => Some(if members.is_empty() {
