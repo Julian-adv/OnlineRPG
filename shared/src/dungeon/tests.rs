@@ -838,3 +838,52 @@ fn start_floor_mid_shaft_is_the_shallower_connected_floor() {
     let room = cell_center(&entrance, 1, (rx, rz));
     assert_eq!(start_floor_at(&cache, room.x, room.z, room.y), depth_1);
 }
+
+/// Floors are generated independently, so a deep floor's shaft can sit under a
+/// shallow floor's room in XZ. A mover standing on that room floor is storeys
+/// away from the shaft and must keep the floor it stands on — keying it into
+/// the foreign shaft made its movement collide against the wrong depth's grid
+/// (invisible walls along the shaft's side seals, walks through real walls).
+#[test]
+fn start_floor_ignores_other_depths_shafts_below() {
+    use crate::pathfinding::start_floor_at;
+
+    let entrance = test_entrance();
+    let mut saw_overlap = false;
+    for seed in 0..20u64 {
+        let floors = generate_dungeon(seed);
+        let mut cache = PassabilityCache::new();
+        cache.insert(
+            dungeon_cache_key("t"),
+            dungeon_passability(&entrance, &floors),
+        );
+
+        for f in &floors {
+            let shafts = floors
+                .iter()
+                .filter_map(|o| o.down_shaft.map(|s| (o.depth, s)))
+                // Adjacent depths legitimately stand at the shaft's Y span ends.
+                .filter(|&(d, _)| d.abs_diff(f.depth) > 1);
+            for (shaft_depth, shaft) in shafts {
+                for (x, z) in shaft_footprint(&shaft) {
+                    if !f.is_carved(x, z)
+                        || f.up_shaft.contains(x, z)
+                        || f.down_shaft.is_some_and(|s| s.contains(x, z))
+                    {
+                        continue;
+                    }
+                    saw_overlap = true;
+                    let p = cell_center(&entrance, f.depth, (x, z));
+                    assert_eq!(
+                        start_floor_at(&cache, p.x, p.z, p.y),
+                        passability_floor_for_depth(f.depth),
+                        "seed {seed}: depth {} cell ({x},{z}) captured by depth {}'s shaft",
+                        f.depth,
+                        shaft_depth,
+                    );
+                }
+            }
+        }
+    }
+    assert!(saw_overlap, "no cross-depth shaft overlap in any test seed");
+}

@@ -660,6 +660,13 @@ fn floor_y_base_of(rp: &RuntimePassability, floor_level: u8) -> Option<f32> {
         .map(|f| f.y_base)
 }
 
+/// How far outside a stairwell's [lower_y, upper_y] span a mover's Y may sit
+/// and still be treated as on that flight. Movers on the flight interpolate
+/// between the two y_bases, so this only absorbs step-height jitter at the
+/// ends — it must stay well under `DUNGEON_FLOOR_HEIGHT` (4m) or a shaft
+/// could recapture movers standing on the storey above or below it.
+const STAIR_SPAN_Y_TOLERANCE: f32 = 1.0;
+
 /// Passability floor an A* endpoint at (x, z, y) must be keyed to.
 ///
 /// [`get_floor_at_position`] answers "which floor is this standing on", which
@@ -671,7 +678,13 @@ fn floor_y_base_of(rp: &RuntimePassability, floor_level: u8) -> Option<f32> {
 /// floor cells and fall through to the Y lookup.
 ///
 /// Y still decides between stairwells stacked on one footprint: the candidate
-/// whose interpolated step height sits nearest `y` wins.
+/// whose interpolated step height sits nearest `y` wins. A stairwell counts as
+/// a candidate only while `y` lies within its vertical span (its two floors'
+/// y_bases, plus [`STAIR_SPAN_Y_TOLERANCE`]) — dungeon floors are generated
+/// independently, so a deep floor's shaft can sit under a shallow floor's room
+/// in XZ, and without the span check someone standing on that room floor (tens
+/// of metres above the shaft) would be keyed into the shaft and collide
+/// against the wrong depth's grid.
 pub fn start_floor_at(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> u8 {
     let cx = x.floor() as i32;
     let cz = z.floor() as i32;
@@ -696,6 +709,11 @@ pub fn start_floor_at(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> u8 {
             ) else {
                 continue;
             };
+            if y < lower_y.min(upper_y) - STAIR_SPAN_Y_TOLERANCE
+                || y > lower_y.max(upper_y) + STAIR_SPAN_Y_TOLERANCE
+            {
+                continue;
+            }
             let f = step as f32 / (n - 1) as f32;
             let dist = (y - (lower_y + (upper_y - lower_y) * f)).abs();
             if best.is_none_or(|(best_dist, _)| dist < best_dist) {
