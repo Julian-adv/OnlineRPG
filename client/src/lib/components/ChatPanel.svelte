@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { gameStore } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
@@ -35,42 +36,48 @@
   $effect(() => {
     const enabled = $translationEnabled
     const target = $translationTargetLanguage
-    // Both arrays share one id counter (see gameStore's nextMessageId), so a
-    // single cache keyed by id safely covers chat and combat together.
-    const entries = [...chatMessages, ...combatMessages]
+    // Combat log is server-generated fixed-format text — chat only. Read
+    // outside untrack so new messages rerun the effect.
+    const entries = chatMessages
 
-    if (!enabled || !isTranslatorApiSupported()) {
-      if (translations.size) translations.clear()
-      if (pendingTranslation.size) pendingTranslation.clear()
-      translatedTarget = ''
-      return
-    }
+    // The template already tracks the caches for rendering; untrack them here
+    // so completed translations don't rerun this effect.
+    untrack(() => {
+      if (!enabled || !isTranslatorApiSupported()) {
+        translations.clear()
+        pendingTranslation.clear()
+        translatedTarget = ''
+        return
+      }
 
-    if (target !== translatedTarget) {
-      translations.clear()
-      pendingTranslation.clear()
-      translatedTarget = target
-    }
+      if (target !== translatedTarget) {
+        translations.clear()
+        pendingTranslation.clear()
+        translatedTarget = target
+      }
 
-    const liveIds = new Set(entries.map((e) => e.id))
-    for (const id of translations.keys()) {
-      if (!liveIds.has(id)) translations.delete(id)
-    }
-    for (const id of pendingTranslation) {
-      if (!liveIds.has(id)) pendingTranslation.delete(id)
-    }
+      const liveIds = new Set(entries.map((e) => e.id))
+      for (const id of translations.keys()) {
+        if (!liveIds.has(id)) translations.delete(id)
+      }
+      for (const id of pendingTranslation) {
+        if (!liveIds.has(id)) pendingTranslation.delete(id)
+      }
 
-    for (const entry of entries) {
-      if (translations.has(entry.id) || !entry.text) continue
-      if (pendingTranslation.has(entry.id)) continue
-      pendingTranslation.add(entry.id)
-      translateChatText(entry.text, target)
-        .then((translated) => translations.set(entry.id, translated))
-        .catch(() => {
-          // Leave untranslated — the template falls back to the original text.
+      for (const entry of entries) {
+        if (translations.has(entry.id) || !entry.text) continue
+        if (pendingTranslation.has(entry.id)) continue
+        pendingTranslation.add(entry.id)
+        // translateChatText never rejects — failures resolve with the
+        // original text, which gets cached so the message isn't retried.
+        translateChatText(entry.text, target).then((translated) => {
+          // Drop results from a stale target after a language switch.
+          if (target !== translatedTarget) return
+          translations.set(entry.id, translated)
+          pendingTranslation.delete(entry.id)
         })
-        .finally(() => pendingTranslation.delete(entry.id))
-    }
+      }
+    })
   })
 
   function displayText(entry: { id: number; text: string }): string {
@@ -280,13 +287,10 @@
             >
             <span
               class:hit={entry.hit === true}
-              class:miss={entry.hit === false}>{displayText(entry)}</span
+              class:miss={entry.hit === false}>{entry.text}</span
             >
           {:else}
-            {displayText(entry)}
-          {/if}
-          {#if isTranslating(entry)}
-            <span class="translating-hint">translating…</span>
+            {entry.text}
           {/if}
         </div>
       {/each}
