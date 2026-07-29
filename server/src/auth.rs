@@ -16,6 +16,13 @@ const STARTER_ITEMS: &[(&str, u32, Option<&str>)] = &[
     ("worn_torch", 1, None),
 ];
 
+/// Item defs renamed after release, applied to stored inventories at startup.
+/// (old_id, new_id) — new_id must exist in items.csv.
+const RENAMED_ITEM_IDS: &[(&str, &str)] = &[
+    ("leather_cap", "leather_helmet"),
+    ("iron_chestplate", "breastplate"),
+];
+
 /// Reserved account-name prefix for headless NPC/bot accounts.
 pub const NPC_ACCOUNT_PREFIX: &str = "npc_";
 
@@ -453,12 +460,12 @@ impl AuthService {
     }
 
     fn migrate_item_definition_ids(conn: &Connection) -> Result<(), rusqlite::Error> {
-        let migrated = conn.execute(
-            "UPDATE character_items
-             SET item_def_id = 'leather_helmet'
-             WHERE item_def_id = 'leather_cap'",
-            [],
-        )?;
+        let mut stmt =
+            conn.prepare("UPDATE character_items SET item_def_id = ?1 WHERE item_def_id = ?2")?;
+        let mut migrated = 0;
+        for &(old, new) in RENAMED_ITEM_IDS {
+            migrated += stmt.execute(params![new, old])?;
+        }
         if migrated > 0 {
             tracing::info!(migrated, "Migrated legacy item definition ids");
         }
@@ -1074,29 +1081,50 @@ mod tests {
     }
 
     #[test]
-    fn startup_migrates_legacy_leather_cap_items() {
-        let db_path = std::env::temp_dir().join(format!(
-            "onlinerpg_auth_leather_helmet_{}.db",
-            uuid::Uuid::new_v4()
-        ));
-        drop(AuthService::new(db_path.clone()).unwrap());
+    fn startup_migrates_legacy_item_definition_ids() {
+        for (old, new, slot, enchant) in [
+            ("leather_cap", "leather_helmet", "head", 2),
+            ("iron_chestplate", "breastplate", "chest", 3),
+        ] {
+            let db_path = std::env::temp_dir().join(format!(
+                "onlinerpg_auth_item_ids_{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            drop(AuthService::new(db_path.clone()).unwrap());
 
-        let conn = Connection::open(&db_path).unwrap();
-        conn.execute_batch(
-            "INSERT INTO accounts (player_name) VALUES ('legacy');
-             INSERT INTO characters (id, account_name, character_name)
-             VALUES (1, 'legacy', 'CapWearer');
-             INSERT INTO character_items
-             (character_id, item_def_id, quantity, equip_slot, enchant)
-             VALUES (1, 'leather_cap', 1, 'head', 2);",
-        )
-        .unwrap();
-        drop(conn);
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "INSERT INTO accounts (player_name) VALUES ('legacy');
+                 INSERT INTO characters (id, account_name, character_name)
+                 VALUES (1, 'legacy', 'LegacyWearer');",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO character_items
+                 (character_id, item_def_id, quantity, equip_slot, enchant)
+                 VALUES (1, ?1, 1, ?2, ?3)",
+                params![old, slot, enchant],
+            )
+            .unwrap();
+            drop(conn);
 
-        let auth = AuthService::new(db_path).unwrap();
-        let rows = auth.load_inventory(1).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].item_def_id, "leather_helmet");
+            let auth = AuthService::new(db_path).unwrap();
+            let rows = auth.load_inventory(1).unwrap();
+            assert_eq!(rows.len(), 1, "migrating {old}");
+            assert_eq!(rows[0].item_def_id, new);
+            assert_eq!(rows[0].equip_slot.as_deref(), Some(slot));
+            assert_eq!(rows[0].enchant, enchant);
+        }
+    }
+
+    /// A typo'd rename target would silently hand players a ghost item:
+    /// unknown ids survive inventory load and fall back to the raw id string.
+    #[test]
+    fn renamed_item_ids_resolve_to_real_defs() {
+        let defs = crate::item_defs::ItemDefs::load();
+        for &(old, new) in RENAMED_ITEM_IDS {
+            assert!(defs.get(new).is_some(), "{old} renamed to unknown id {new}");
+        }
     }
 
     #[test]
