@@ -13,7 +13,10 @@ import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
 import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { FishingAnimationName } from '../types/animations'
-import { playFishingSound } from '../managers/sfxManager'
+import {
+  cancelPendingFishingSounds,
+  playFishingSound,
+} from '../managers/sfxManager'
 import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
 import { monsterManager } from '../managers/monsterManager'
 import { housingManager } from '../managers/housingManager'
@@ -1155,6 +1158,7 @@ export function handleServerMessage(
       }
       if (isSelf) {
         myFishing.set({ phase: 'idle' })
+        cancelPendingFishingSounds()
         const outcome = data.outcome
         if (outcome === 'Escaped') {
           playFishingSound('snap')
