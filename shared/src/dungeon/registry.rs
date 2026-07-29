@@ -25,9 +25,6 @@ pub struct DungeonEntranceDef {
     pub x: f32,
     pub y: f32,
     pub z: f32,
-    /// Entrance orientation. Consumed by the client to face the entrance
-    /// building; nothing Rust-side needs it.
-    pub rotation: f32,
     /// Item definition ids the final-floor treasure chest always yields.
     /// Validated against the item table by the server on load.
     pub chest_drops: Vec<String>,
@@ -104,7 +101,6 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                 x: coord("x"),
                 y: coord("y"),
                 z: coord("z"),
-                rotation: field("rotation").parse().unwrap_or(0.0),
                 chest_drops: field("chestDrops")
                     .split(';')
                     .map(str::trim)
@@ -143,14 +139,13 @@ mod tests {
 
     #[test]
     fn parses_drops_lists_and_optional_floor_override() {
-        let csv = "id,name,x,y,z,rotation,chestDrops,floors,boss,chestTier\n\
-                   a,A Place,-1450,0.7,4720,90,shield;armor,5,orc_boss,2\n\
-                   b,B Place,10,0,20,,,,,\n";
+        let csv = "id,name,x,y,z,chestDrops,floors,boss,chestTier\n\
+                   a,A Place,-1450,0.7,4720,shield;armor,5,orc_boss,2\n\
+                   b,B Place,10,0,20,,,,\n";
         let defs = parse_entrances(csv);
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].chest_drops, ["shield", "armor"]);
         assert_eq!(defs[0].floors, Some(5));
-        assert_eq!(defs[0].rotation, 90.0);
         assert_eq!(defs[0].boss, "orc_boss");
         assert_eq!(defs[0].chest_tier, 2);
         assert!(defs[1].chest_drops.is_empty());
