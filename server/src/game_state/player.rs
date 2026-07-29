@@ -261,6 +261,14 @@ impl super::GameState {
         gold_map.get(player_id).copied().unwrap_or(0)
     }
 
+    /// Online player id for a typed name, ignoring ASCII case — names are
+    /// unique ignoring case, so at most one player matches. The caller still
+    /// validates the id against `players` under its own lock.
+    pub(crate) async fn player_id_by_name(&self, name: &str) -> Option<PlayerId> {
+        let names = self.player_ids_by_name.read().await;
+        names.get(&name.to_ascii_lowercase()).copied()
+    }
+
     /// Character name for logs and player-facing text. Falls back to the raw
     /// id when the player is gone, so log sites stay useful on the paths that
     /// fire precisely because the lookup missed.
@@ -273,13 +281,7 @@ impl super::GameState {
     }
 
     pub async fn kick_player_by_name(&self, name: &str, auth: &AuthService) -> Option<PlayerId> {
-        let old_player_id = {
-            let players = self.players.read().await;
-            players
-                .iter()
-                .find(|(_, p)| p.name == name)
-                .map(|(id, _)| *id)
-        };
+        let old_player_id = self.player_id_by_name(name).await;
 
         if let Some(ref player_id) = old_player_id {
             info!("Kicking existing player '{}' ({})", name, player_id);
@@ -440,6 +442,10 @@ impl super::GameState {
             let mut players = self.players.write().await;
             players.insert(player_id, player.clone());
         }
+        {
+            let mut names = self.player_ids_by_name.write().await;
+            names.insert(player_name.to_ascii_lowercase(), player_id);
+        }
         self.insert_player_spatial_cell(&player_id, &player_position)
             .await;
 
@@ -545,6 +551,14 @@ impl super::GameState {
             let mut players = self.players.write().await;
             players.remove(player_id)
         };
+        if let Some(player) = &removed_player {
+            let key = player.name.to_ascii_lowercase();
+            let mut names = self.player_ids_by_name.write().await;
+            // Guarded so a same-name replacement session keeps its entry.
+            if names.get(&key) == Some(player_id) {
+                names.remove(&key);
+            }
+        }
 
         // After the roster removal on purpose: party mutations hold the
         // players lock, so an in-flight accept lands before this sweep and

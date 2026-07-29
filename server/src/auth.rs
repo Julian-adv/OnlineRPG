@@ -419,26 +419,14 @@ impl AuthService {
         )?;
         // Names are unique ignoring ASCII case (the other allowed scripts
         // have no case); the index also serves the COLLATE NOCASE lookups.
-        // Legacy DBs can hold case-colliding names, so fall back to the
-        // old non-unique index rather than failing startup.
-        let unique = conn.execute(
+        // A DB with case-colliding names fails here on purpose: rename the
+        // offending characters before starting.
+        conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_characters_name_unique_nocase \
              ON characters(character_name COLLATE NOCASE)",
             [],
-        );
-        match unique {
-            Ok(_) => {
-                conn.execute("DROP INDEX IF EXISTS idx_characters_name_nocase", [])?;
-            }
-            Err(err) => {
-                tracing::warn!("characters has case-colliding names; unique index skipped: {err}");
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_characters_name_nocase \
-                     ON characters(character_name COLLATE NOCASE)",
-                    [],
-                )?;
-            }
-        }
+        )?;
+        conn.execute("DROP INDEX IF EXISTS idx_characters_name_nocase", [])?;
         Ok(())
     }
 
@@ -692,24 +680,20 @@ impl AuthService {
         Ok(characters)
     }
 
-    /// Canonical spelling of an existing character name: exact match wins,
-    /// otherwise a *unique* ASCII-case-insensitive match (the in-memory
-    /// `match_name` rule in SQL — SQLite NOCASE is ASCII-only, like
-    /// `eq_ignore_ascii_case`). The ORDER BY compares with the column's
-    /// case-sensitive collation, so an exact row sorts first and survives
-    /// the LIMIT even among several case variants.
+    /// Canonical spelling of an existing character name, matched ignoring
+    /// ASCII case (the in-memory `match_name` rule in SQL — SQLite NOCASE is
+    /// ASCII-only, like `eq_ignore_ascii_case`).
     pub fn resolve_character_name(&self, name: &str) -> Result<Option<String>, AuthError> {
         let conn = self.open_connection()?;
-        let mut stmt = conn.prepare(
-            "SELECT character_name FROM characters
-             WHERE character_name = ?1 COLLATE NOCASE
-             ORDER BY character_name = ?1 DESC LIMIT 2",
-        )?;
-        let mut matches = stmt
-            .query_map(params![name], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        let unique = matches.first().is_some_and(|first| first == name) || matches.len() == 1;
-        Ok(unique.then(|| matches.remove(0)))
+        let found = conn
+            .query_row(
+                "SELECT character_name FROM characters
+                 WHERE character_name = ?1 COLLATE NOCASE",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found)
     }
 
     pub fn load_blocked_names(&self, character_id: i64) -> Result<Vec<String>, AuthError> {
@@ -1293,7 +1277,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_tolerates_legacy_case_colliding_names() {
+    fn startup_rejects_legacy_case_colliding_names() {
         let db_path =
             std::env::temp_dir().join(format!("onlinerpg_auth_legacy_{}.db", uuid::Uuid::new_v4()));
         {
@@ -1320,34 +1304,9 @@ mod tests {
             .unwrap();
         }
 
-        let auth = AuthService::new(db_path).unwrap();
-        assert_eq!(
-            auth.resolve_character_name("Bob").unwrap().as_deref(),
-            Some("Bob")
-        );
-        assert!(auth.resolve_character_name("BOB").unwrap().is_none());
-
-        let account = auth.login_npc("npc_legacy_case").unwrap();
-        let attributes = CharacterAttributes {
-            r#str: 12,
-            dex: 12,
-            con: 12,
-            int: 12,
-            wis: 12,
-            cha: 12,
-            guard: 10,
-        };
-        assert!(matches!(
-            auth.create_character(
-                &account,
-                "BOB",
-                &attributes,
-                16,
-                CharacterClass::Knight,
-                Gender::Male,
-            ),
-            Err(AuthError::CharacterNameAlreadyExists)
-        ));
+        // The unique NOCASE index cannot be built over colliding rows;
+        // startup fails until the offending characters are renamed.
+        assert!(AuthService::new(db_path).is_err());
     }
 
     #[test]

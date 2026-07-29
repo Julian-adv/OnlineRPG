@@ -172,52 +172,36 @@ async fn whisper_reaches_only_the_target_regardless_of_distance() {
 }
 
 #[tokio::test]
-async fn whisper_never_falls_back_to_a_case_variant_of_another_player() {
-    let game_state = make_test_game_state("whisper_case_variants");
-    let auth = make_test_auth("whisper_case_variants");
+async fn whisper_matches_names_ignoring_ascii_case() {
+    let game_state = make_test_game_state("whisper_ci");
+    let auth = make_test_auth("whisper_ci");
     let sender_id = pid("sender");
-    // Character names are UNIQUE only case-sensitively, so both can be online.
-    let lower_id = pid("rica");
-    let upper_id = pid("Rica");
+    let rica_id = pid("Rica");
     game_state.add_player(make_player("sender", 0.0, 0.0)).await;
-    game_state.add_player(make_player("rica", 5.0, 0.0)).await;
-    game_state.add_player(make_player("Rica", 10.0, 0.0)).await;
+    game_state.add_player(make_player("Rica", 5.0, 0.0)).await;
 
     let mut sender_rx = game_state.register_direct_channel(&sender_id).await;
-    let mut lower_rx = game_state.register_direct_channel(&lower_id).await;
-    let mut upper_rx = game_state.register_direct_channel(&upper_id).await;
+    let mut rica_rx = game_state.register_direct_channel(&rica_id).await;
 
-    // Exact spelling goes to exactly that player, never the variant.
     game_state
         .send_chat_message(&sender_id, "/w rica psst".to_string(), &auth)
         .await;
-    match lower_rx.try_recv() {
-        Ok(ServerMessage::WhisperMessage { to, .. }) => assert_eq!(to, "rica"),
-        other => panic!("Expected whisper for exact match, got {:?}", other),
+    match rica_rx.try_recv() {
+        Ok(ServerMessage::WhisperMessage { to, .. }) => assert_eq!(to, "Rica"),
+        other => panic!("Expected case-insensitive whisper, got {:?}", other),
     }
-    match upper_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => panic!("Case variant must not receive the whisper, got {:?}", other),
-    }
-    sender_rx.try_recv().expect("sender echo");
 
-    // A spelling that matches neither exactly is ambiguous — refuse rather
-    // than pick one.
+    // The name index follows the roster: once Rica leaves, the lookup misses.
+    game_state.remove_player(&rica_id).await;
+    while sender_rx.try_recv().is_ok() {}
     game_state
         .send_chat_message(&sender_id, "/w RICA psst".to_string(), &auth)
         .await;
     match sender_rx.try_recv() {
-        Ok(ServerMessage::SystemMessage { message }) => assert_eq!(
-            message,
-            "Whisper: several players match RICA; spell the name exactly."
-        ),
-        other => panic!("Expected ambiguity reply, got {:?}", other),
-    }
-    for rx in [&mut lower_rx, &mut upper_rx] {
-        match rx.try_recv() {
-            Err(MpscTryRecvError::Empty) => {}
-            other => panic!("Ambiguous whisper must not be delivered, got {:?}", other),
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Whisper: no one called RICA is here.")
         }
+        other => panic!("Expected offline reply, got {:?}", other),
     }
 }
 
@@ -395,7 +379,7 @@ async fn block_command_persists_resolves_case_and_unblocks() {
         };
     let command = |text: &str| game_state.send_chat_message(&blocker_id, text.to_string(), &auth);
 
-    // Lowercase on purpose: resolution is case-insensitive when unambiguous.
+    // Lowercase on purpose: resolution is case-insensitive.
     command("/block abuser").await;
     expect_reply(
         blocker_rx.try_recv(),
@@ -436,10 +420,7 @@ async fn block_command_persists_resolves_case_and_unblocks() {
     command("/block Blocker").await;
     expect_reply(blocker_rx.try_recv(), "Block: that's you.");
     command("/block Nobody").await;
-    expect_reply(
-        blocker_rx.try_recv(),
-        "Block: no character named Nobody; spell the name exactly.",
-    );
+    expect_reply(blocker_rx.try_recv(), "Block: no character named Nobody.");
 }
 
 #[test]

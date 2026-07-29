@@ -102,33 +102,16 @@ pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
     Some((!rest.is_empty()).then_some(rest))
 }
 
-/// How a player-typed name resolved: names are UNIQUE only case-sensitively,
-/// so an exact match wins and the case-insensitive convenience applies only
-/// while unambiguous. Shared by whisper and `/unblock`; `/block` applies the
-/// same rule in SQL (`AuthService::resolve_character_name`).
-pub(crate) enum NameMatch<T> {
-    None,
-    Unique(T),
-    Ambiguous,
-}
-
-pub(crate) fn match_name<T, I>(
-    candidates: I,
-    name_of: impl Fn(&T) -> &str,
-    query: &str,
-) -> NameMatch<T>
+/// Case-insensitive lookup of a player-typed name. Names are unique ignoring
+/// ASCII case (the characters table enforces it), so the first match is the
+/// match. Used by `/unblock` against the stored block list; online-player
+/// lookups go through the `player_ids_by_name` index instead, and `/block`
+/// applies the same rule in SQL (`AuthService::resolve_character_name`).
+fn match_name<T, I>(mut candidates: I, name_of: impl Fn(&T) -> &str, query: &str) -> Option<T>
 where
-    I: Iterator<Item = T> + Clone,
+    I: Iterator<Item = T>,
 {
-    if let Some(exact) = candidates.clone().find(|c| name_of(c) == query) {
-        return NameMatch::Unique(exact);
-    }
-    let mut matches = candidates.filter(|c| name_of(c).eq_ignore_ascii_case(query));
-    match (matches.next(), matches.next()) {
-        (Some(only), None) => NameMatch::Unique(only),
-        (None, _) => NameMatch::None,
-        (Some(_), Some(_)) => NameMatch::Ambiguous,
-    }
+    candidates.find(|c| name_of(c).eq_ignore_ascii_case(query))
 }
 
 impl super::GameState {
@@ -241,16 +224,14 @@ impl super::GameState {
             return;
         }
 
+        let target_id = self.player_id_by_name(target_name).await;
         let (sender_name, target) = {
             let players = self.players.read().await;
             let sender_name = players.get(player_id).map(|player| player.name.clone());
-            let target = match match_name(players.values(), |p| p.name.as_str(), target_name) {
-                NameMatch::Unique(player) => Ok((player.id, player.name.clone())),
-                NameMatch::None => Err(format!("Whisper: no one called {target_name} is here.")),
-                NameMatch::Ambiguous => Err(format!(
-                    "Whisper: several players match {target_name}; spell the name exactly."
-                )),
-            };
+            let target = target_id
+                .and_then(|id| players.get(&id))
+                .map(|player| (player.id, player.name.clone()))
+                .ok_or_else(|| format!("Whisper: no one called {target_name} is here."));
             (sender_name, target)
         };
 
@@ -344,9 +325,7 @@ impl super::GameState {
             let query = name.to_string();
             match auth_db(move || auth.resolve_character_name(&query)).await {
                 Ok(Some(canonical)) => canonical,
-                Ok(None) => {
-                    return format!("Block: no character named {name}; spell the name exactly.")
-                }
+                Ok(None) => return format!("Block: no character named {name}."),
                 Err(err) => {
                     error!("Block lookup failed: {err}");
                     return "Block: server error, try again.".to_string();
@@ -408,8 +387,8 @@ impl super::GameState {
                 return format!("Unblock: {name} is not blocked.");
             };
             match match_name(names.iter(), |stored| stored.as_str(), name) {
-                NameMatch::Unique(stored) => stored.clone(),
-                _ => return format!("Unblock: {name} is not blocked."),
+                Some(stored) => stored.clone(),
+                None => return format!("Unblock: {name} is not blocked."),
             }
         };
         let Some(character_id) = self.character_id_of(player_id).await else {

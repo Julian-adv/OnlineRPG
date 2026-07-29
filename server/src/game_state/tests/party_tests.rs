@@ -61,6 +61,29 @@ async fn invite_and_accept_forms_party() {
 }
 
 #[tokio::test]
+async fn invites_match_names_ignoring_ascii_case() {
+    let game_state = make_test_game_state("party_ci_invite");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "Bob", 5.0).await;
+    drain(&mut alice_rx);
+
+    game_state.invite_to_party(&pid("alice"), "bob").await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::PartyInviteReceived { inviter_name, .. }) => {
+            assert_eq!(inviter_name, "alice")
+        }
+        other => panic!("Expected case-insensitive invite, got {:?}", other),
+    }
+    // The ack echoes the canonical spelling, not the typed one.
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("invited Bob"), "{message}")
+        }
+        other => panic!("Expected ack, got {:?}", other),
+    }
+}
+
+#[tokio::test]
 async fn decline_reports_to_inviter_and_forms_nothing() {
     let game_state = make_test_game_state("party_decline");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;

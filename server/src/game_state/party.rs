@@ -1,14 +1,10 @@
-use super::chat::{match_name, NameMatch};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::messages::PartyMember;
+use onlinerpg_shared::messages::{PartyMember, PARTY_INVITE_TTL};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::info;
 
 pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
-
-/// How long a party invite stays acceptable.
-pub(crate) const PARTY_INVITE_TTL: Duration = Duration::from_secs(30);
 
 /// Mirrors auth's character-name cap; anything longer cannot be a real name,
 /// and rejecting it early keeps oversized input out of the echoed failure.
@@ -73,18 +69,16 @@ impl super::GameState {
                 .await;
             return;
         }
+        let target_id = self.player_id_by_name(target_name).await;
         let (inviter, target) = {
             let players = self.players.read().await;
             let inviter = players
                 .get(inviter_id)
                 .map(|p| (p.name.clone(), p.is_official_npc));
-            let target = match match_name(players.values(), |p| p.name.as_str(), target_name) {
-                NameMatch::Unique(p) => Ok((p.id, p.name.clone(), p.is_official_npc)),
-                NameMatch::None => Err(format!("no one called {target_name} is online.")),
-                NameMatch::Ambiguous => Err(format!(
-                    "several players match {target_name}; spell the name exactly."
-                )),
-            };
+            let target = target_id
+                .and_then(|id| players.get(&id))
+                .map(|p| (p.id, p.name.clone(), p.is_official_npc))
+                .ok_or_else(|| format!("no one called {target_name} is online."));
             (inviter, target)
         };
         let Some((inviter_name, inviter_is_npc)) = inviter else {

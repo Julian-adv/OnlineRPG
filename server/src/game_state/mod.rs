@@ -114,6 +114,12 @@ pub(crate) struct ServerGroundItem {
 #[derive(Clone)]
 pub struct GameState {
     players: Arc<RwLock<HashMap<PlayerId, Player>>>,
+    /// Lowercased name → online player id, updated by `add_player`/
+    /// `remove_player` right after the roster under its own lock (never held
+    /// together with another, so momentarily behind `players`). O(1)
+    /// case-insensitive name lookups; callers re-validate the id against
+    /// `players`.
+    player_ids_by_name: Arc<RwLock<HashMap<String, PlayerId>>>,
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
@@ -237,6 +243,7 @@ impl GameState {
 
         Self {
             players: Arc::new(RwLock::new(HashMap::new())),
+            player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
