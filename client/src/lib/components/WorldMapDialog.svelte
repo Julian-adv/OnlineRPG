@@ -8,6 +8,14 @@
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 8
 
+  // Party member markers refresh while the dialog is open; stays well above
+  // the server's 1s poll clamp.
+  const PARTY_POLL_MS = 3000
+
+  // A poll answer can outlive the dialog that requested it (nothing polls
+  // while the map is closed); older data than this never renders.
+  const PARTY_POSITIONS_MAX_AGE_MS = 10000
+
   // --- Shared place-name labels (generated from data-src/map_labels.csv) ---
   type LabelKind = 'continent' | 'capital' | 'city' | 'town' | 'sea' | 'island'
   interface MapLabel {
@@ -62,6 +70,7 @@
 
 <script lang="ts">
   import { gameStore, isAdminUser } from '../stores/gameStore'
+  import { partyRoster, partyPositions } from '../stores/partyStore'
   import { worldMapVisible, teleportLoading } from '../stores/debugStore'
   import { minimapVersion } from '../stores/editorStore'
   import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
@@ -139,6 +148,34 @@
         zoomSpan = defaultZoomSpan
       }
     }
+  })
+
+  // Party existence only: roster churn must not reset the poll cadence (the
+  // immediate re-poll would just be eaten by the server's 1s clamp).
+  let inParty = $derived($partyRoster !== null)
+
+  // Poll party positions only while the dialog lives (it mounts with
+  // worldMapVisible) and a party exists — closed map means a silent channel.
+  $effect(() => {
+    if (!inParty) return
+    networkManager.sendRequestPartyPositions()
+    const timer = setInterval(
+      () => networkManager.sendRequestPartyPositions(),
+      PARTY_POLL_MS
+    )
+    return () => clearInterval(timer)
+  })
+
+  // The render-time age gate only runs when something recomputes; this makes
+  // expiry certain on an untouched map (same pattern as PartyInviteToast).
+  $effect(() => {
+    const at = $partyPositions.at
+    if (at === 0) return
+    const timer = setTimeout(
+      () => partyPositions.set({ at: 0, members: [] }),
+      Math.max(0, at + PARTY_POSITIONS_MAX_AGE_MS - Date.now())
+    )
+    return () => clearTimeout(timer)
   })
 
   // --- Drag state ---
@@ -316,6 +353,57 @@
       )
         continue
       out.push({ name: label.name, kind: label.kind, left, top })
+    }
+    return out
+  })
+
+  // --- Party member markers (HTML layer, same transform as the labels) ---
+  interface PartyMarker {
+    id: number
+    name: string
+    left: number
+    top: number
+    floor: number
+  }
+
+  let partyMarkers = $derived.by<PartyMarker[]>(() => {
+    const roster = $partyRoster
+    const positions = $partyPositions
+    const cw = containerW
+    const ch = containerH
+    if (!roster || cw <= 0 || ch <= 0) return []
+    if (Date.now() - positions.at > PARTY_POSITIONS_MAX_AGE_MS) return []
+
+    const viewSize = zoomSpan * REGION_PX
+    const canvasSize = Math.min(cw, ch)
+    const scale = canvasSize / viewSize
+    const viewLeft = camX - cw / scale / 2
+    const viewTop = camZ - ch / scale / 2
+
+    // Join against the roster: a member who left since the last poll (or an
+    // id the roster never knew) must not draw a ghost.
+    const names = new Map(roster.members.map((m) => [m.id, m.name]))
+    const margin = 40
+    const out: PartyMarker[] = []
+    for (const pos of positions.members) {
+      const name = names.get(pos.id)
+      if (!name) continue
+
+      const lx = (wrapWorldX(pos.x) - viewLeft) * scale
+      const ly = (pos.z - viewTop) * scale
+      const ox = lx - cw / 2
+      const oy = ly - ch / 2
+      const left = ox * COS_R - oy * SIN_R + cw / 2
+      const top = ox * SIN_R + oy * COS_R + ch / 2
+
+      if (
+        left < -margin ||
+        left > cw + margin ||
+        top < -margin ||
+        top > ch + margin
+      )
+        continue
+      out.push({ id: pos.id, name, left, top, floor: pos.floor_level })
     }
     return out
   })
@@ -577,6 +665,17 @@
             <span class="text">{label.name}</span>
           </div>
         {/each}
+        {#each partyMarkers as marker (marker.id)}
+          <div
+            class="party-marker"
+            style="left: {marker.left}px; top: {marker.top}px;"
+          >
+            <span class="dot"></span>
+            <span class="text"
+              >{marker.name}{marker.floor < 0 ? ` B${-marker.floor}` : ''}</span
+            >
+          </div>
+        {/each}
       </div>
     </div>
   </div>
@@ -802,5 +901,41 @@
     height: 11px;
     background: #f5d250;
     border: 2px solid #287832;
+  }
+
+  .party-marker {
+    position: absolute;
+    user-select: none;
+  }
+
+  .party-marker .dot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform: translate(-50%, -50%);
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #3fa7ff;
+    border: 2px solid #fff;
+    box-sizing: border-box;
+    box-shadow: 0 0 6px rgba(63, 167, 255, 0.8);
+  }
+
+  .party-marker .text {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform: translate(10px, -50%);
+    white-space: nowrap;
+    font-size: 12px;
+    font-weight: 700;
+    color: #bfe0ff;
+    text-shadow:
+      0 0 2px #000,
+      1px 1px 1px #000,
+      -1px 1px 1px #000,
+      1px -1px 1px #000,
+      -1px -1px 1px #000;
   }
 </style>

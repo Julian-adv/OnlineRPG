@@ -49,8 +49,10 @@ import {
 } from '../stores/tradeStore'
 import {
   partyRoster,
+  partyPositions,
   pendingPartyInvites,
   MAX_PENDING_PARTY_INVITES,
+  type PartyMemberPositionEntry,
 } from '../stores/partyStore'
 import { editorTreeDataManager } from '../stores/editorStore'
 import type { MonsterData } from '../types/Monster'
@@ -465,6 +467,19 @@ export function handleServerMessage(
       )
       if (data.members.length > 0) {
         pendingPartyInvites.set([])
+      } else {
+        partyPositions.set({ at: 0, members: [] })
+      }
+      break
+
+    case 'PartyPositions':
+      // A poll answer can cross a disband on the wire; without a roster it
+      // could only repopulate the store that disband just cleared.
+      if (get(partyRoster)) {
+        partyPositions.set({
+          at: Date.now(),
+          members: data.members as PartyMemberPositionEntry[],
+        })
       }
       break
 
@@ -473,6 +488,7 @@ export function handleServerMessage(
       // with the old one (in-memory, disconnect = leave), and the server
       // cannot re-send what no longer exists.
       partyRoster.set(null)
+      partyPositions.set({ at: 0, members: [] })
       pendingPartyInvites.set([])
       gameStore.update((state) => {
         state.otherPlayers.clear()

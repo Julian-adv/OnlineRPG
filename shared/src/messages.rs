@@ -94,6 +94,16 @@ pub struct PartyMember {
 /// client mirrors it (`INVITE_TTL_MS` in `PartyInviteToast.svelte`).
 pub const PARTY_INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// One member's location as listed in `PartyPositions`. No name: the roster
+/// from `PartyState` already carries it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartyMemberPosition {
+    pub id: PlayerId,
+    pub x: f32,
+    pub z: f32,
+    pub floor_level: i8,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The
@@ -335,6 +345,9 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
+    /// Ask where the sender's party members are (world-map markers). Poll,
+    /// not push: positions flow only while someone is looking at a map.
+    RequestPartyPositions,
     /// Cast the equipped fishing rod at a water point. The server validates
     /// rod, range, floor and water (water-field depth at the point) and
     /// answers with a `FishingCasted` broadcast or a direct `FishingError`.
@@ -504,6 +517,12 @@ pub enum ServerMessage {
     PartyState {
         leader_id: PlayerId,
         members: Vec<PartyMember>,
+    },
+    /// Direct answer to `RequestPartyPositions`: the other members' locations
+    /// with no AOI cut — the point is members beyond it. Empty when the
+    /// sender is not in a party.
+    PartyPositions {
+        members: Vec<PartyMemberPosition>,
     },
     GameState {
         /// A list, not a map keyed by id: `PlayerId` is numeric and

@@ -35,7 +35,9 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v8: fishing struggle rounds replaced by continuous FishingFight beats.
 /// v9: `Player.main_hand` + PlayerMainHandChanged equipment broadcast.
 /// v10: party (PartyInvite/PartyRespond/PartyLeave, PartyState snapshots).
-pub const PROTOCOL_VERSION: u32 = 10;
+/// v11: party positions poll (RequestPartyPositions → PartyPositions) for
+///      world-map member markers.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

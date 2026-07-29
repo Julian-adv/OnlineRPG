@@ -1448,6 +1448,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::RequestPartyPositions => {
+            if let Some(id) = &state.player_id {
+                game_state.send_party_positions(id).await;
+            }
+        }
+
         ClientMessage::BuyItem {
             merchant_player_id,
             item_def_id,

@@ -15,6 +15,27 @@ export interface PartyRoster {
 
 export const partyRoster = writable<PartyRoster | null>(null)
 
+/** One member's location from ServerMessage::PartyPositions. */
+export interface PartyMemberPositionEntry {
+  id: number
+  x: number
+  z: number
+  floor_level: number
+}
+
+/** Latest positions poll answer, stamped on receipt. Rendering joins it
+ *  against the roster (a leaver never draws) and age-gates it (an answer
+ *  that landed after the map closed never outlives its freshness). */
+export interface PartyPositionsSnapshot {
+  at: number
+  members: PartyMemberPositionEntry[]
+}
+
+export const partyPositions = writable<PartyPositionsSnapshot>({
+  at: 0,
+  members: [],
+})
+
 /** A party invite the player hasn't answered yet. */
 export interface PendingPartyInvite {
   inviterId: number

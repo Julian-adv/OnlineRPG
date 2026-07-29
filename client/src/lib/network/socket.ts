@@ -7,6 +7,11 @@ import { hmrSingleton } from '../utils/hmr'
 import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
 import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
+import {
+  partyRoster,
+  partyPositions,
+  pendingPartyInvites,
+} from '../stores/partyStore'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { monsterManager } from '../managers/monsterManager'
 import {
@@ -256,6 +261,12 @@ class NetworkManager {
       this.reconnectTimer = null
       monsterManager.reset()
       remotePlayerManager.reset()
+      // The old connection's party died with it server-side (disconnect =
+      // leave), and a rejoin into an empty area sends no GameState snapshot
+      // to reset these — a phantom roster would survive.
+      partyRoster.set(null)
+      partyPositions.set({ at: 0, members: [] })
+      pendingPartyInvites.set([])
       this.connect()
       const googleIdToken = getApiAuthToken()
       if (googleIdToken && this.lastCharacterId) {
@@ -612,6 +623,11 @@ class NetworkManager {
 
   sendPartyLeave() {
     this.sendMessage('PartyLeave')
+  }
+
+  /** Poll party member positions for the world map. */
+  sendRequestPartyPositions() {
+    this.sendMessage('RequestPartyPositions')
   }
 
   sendBuyItem(merchantPlayerId: number, itemDefId: string) {
