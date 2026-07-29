@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  cancelPendingFishingSounds,
-  playFishingSound,
-} from './sfxManager'
+import { cancelPendingFishingSounds, playFishingSound } from './sfxManager'
 
 // sfxManager caches audio pools at module level, so FakeAudio instances
 // survive across tests — count plays in a per-test map instead.
