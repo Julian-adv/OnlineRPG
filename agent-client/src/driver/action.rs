@@ -734,4 +734,118 @@ mod tests {
             Some(ClientMessage::FishingStop)
         ));
     }
+
+    // ---- Guardrail: every JSON action hint embedded in prompt text must
+    // parse under the real action schema, so drift (like the party_accept
+    // hint once saying "action" instead of "type") breaks here instead of
+    // silently confusing the model.
+
+    /// Undo Rust string-literal escaping so hints in .rs sources read as
+    /// they will render: join `\`-newline continuations, then `{{`→`{`,
+    /// `}}`→`}`, `\"`→`"`.
+    fn unescape_rust_literals(src: &str) -> String {
+        let mut joined = String::with_capacity(src.len());
+        for (i, chunk) in src.split("\\\n").enumerate() {
+            joined.push_str(if i == 0 { chunk } else { chunk.trim_start() });
+        }
+        joined
+            .replace("{{", "{")
+            .replace("}}", "}")
+            .replace("\\\"", "\"")
+    }
+
+    /// Fill the value placeholders hints use (`"item": ...`, `"prop_id": N`).
+    fn fill_placeholders(text: &str) -> String {
+        text.replace(": ...,", r#": "x","#)
+            .replace(": ...}", r#": "x"}"#)
+            .replace(": N,", ": 1,")
+            .replace(": N}", ": 1}")
+    }
+
+    /// Action hints in `text`: balanced JSON objects starting at `{"`.
+    fn extract_hints(text: &str) -> Vec<&str> {
+        let bytes = text.as_bytes();
+        let (mut out, mut i) = (Vec::new(), 0);
+        while i < bytes.len() {
+            if bytes[i] == b'{' && bytes.get(i + 1) == Some(&b'"') {
+                let mut stream =
+                    serde_json::Deserializer::from_str(&text[i..]).into_iter::<serde_json::Value>();
+                if let Some(Ok(_)) = stream.next() {
+                    let len = stream.byte_offset();
+                    out.push(&text[i..i + len]);
+                    i += len;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// Every `.txt` under `dir`, recursively, except LLM-written memory files.
+    fn prompt_files_under(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                prompt_files_under(&path, out);
+            } else if path.extension() == Some("txt".as_ref())
+                && path.file_name() != Some("memory.txt".as_ref())
+            {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn embedded_prompt_hints_match_the_action_schema() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files: Vec<_> = [
+            "src/driver/prompt.rs",
+            "src/state.rs",
+            "data/system_prompt.txt",
+        ]
+        .iter()
+        .map(|f| root.join(f))
+        .collect();
+        for dir in ["data/templates", "data/user_prompts", "data/npcs"] {
+            prompt_files_under(&root.join(dir), &mut files);
+        }
+        // Floors catch extractor rot (a hint drifting into unparseable JSON
+        // silently drops out of extraction); unlisted files default to 0.
+        let floors = [
+            ("src/driver/prompt.rs", 2),
+            ("src/state.rs", 1),
+            ("data/system_prompt.txt", 26),
+            ("guard.txt", 2),
+            ("merchant.txt", 2),
+            ("newcomer.txt", 1),
+            ("veteran.txt", 1),
+        ];
+        for path in files {
+            let name = path.strip_prefix(root).unwrap().display().to_string();
+            let raw = std::fs::read_to_string(&path).unwrap();
+            let text = if name.ends_with(".rs") {
+                unescape_rust_literals(&raw)
+            } else {
+                raw
+            };
+            let text = fill_placeholders(&text);
+            let hints = extract_hints(&text);
+            let floor = floors
+                .iter()
+                .find(|(f, _)| name.ends_with(f))
+                .map_or(0, |&(_, n)| n);
+            assert!(
+                hints.len() >= floor,
+                "{name}: expected at least {floor} action hints, extractor found {}",
+                hints.len()
+            );
+            for hint in hints {
+                let wrapped = format!(r#"{{"actions": [{hint}]}}"#);
+                if let Err(e) = parse_agent_response(&wrapped) {
+                    panic!("{name}: embedded action hint does not parse: {hint}\n{e}");
+                }
+            }
+        }
+    }
 }
