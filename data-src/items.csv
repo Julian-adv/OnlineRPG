@@ -1,20 +1,20 @@
-id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel
-iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,
+id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier
+iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,,,,,,,2
 worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,,
 wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,4000,1,
-raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2,
+raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2,,,,,,2
 leather_helmet,Leather Helmet,A simple leather helmet.,1,head,false,leather_helmet.png,armor/leather_helmet.glb,armor,,leather,1500,1,
-breastplate,Breastplate,A polished steel breastplate that turns aside all but the truest blows.,20,chest,false,plate_armor.png,armor/plate_armor.glb,armor,,metal,40000,7,
+breastplate,Breastplate,A polished steel breastplate that turns aside all but the truest blows.,20,chest,false,plate_armor.png,armor/plate_armor.glb,armor,,metal,40000,7,,,,,,3
 leather_pants,Leather Pants,Durable leather leggings.,4,pants,false,leather_pants.png,armor/leather_pants.glb,armor,,leather,2500,1,
-iron_boots,Iron Boots,Heavy iron boots.,3,boots,false,sword.png,,armor,,metal,6000,2,
-gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,
-silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
+iron_boots,Iron Boots,Heavy iron boots.,3,boots,false,sword.png,,armor,,metal,6000,2,,,,,,2
+gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,,,,,,,3
+silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,,,,,,,3
 copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,
 leather_belt,Leather Belt,A wide leather belt.,1,belt,false,sword.png,,accessory,,leather,800,
 dagger,Dagger,A small but sharp dagger.,1,main_hand,false,sword.png,weapons/sword.glb,weapon,1d4,metal,2500,
 goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,1500,
 small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,2000,
-chain_mail,Chain Mail,Interlocking metal rings forming armor.,55,chest,false,sword.png,,armor,,metal,25000,5,
+chain_mail,Chain Mail,Interlocking metal rings forming armor.,55,chest,false,sword.png,,armor,,metal,25000,5,,,,,,2
 torch,Torch,A flickering wooden torch.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,50,
 worn_torch,Worn Torch,A stubby half-burnt torch. Merchants won't pay for it.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,,
 spear,Spear,A long wooden-shafted spear tipped with iron.,4,main_hand,false,spear_icon.png,weapons/spear.glb,weapon,1d6,metal,3500,

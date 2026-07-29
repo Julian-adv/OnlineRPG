@@ -235,7 +235,7 @@ async fn main() {
     world_config::log_world_config();
     let monster_defs = monster_defs::MonsterDefs::load();
     let item_defs = item_defs::ItemDefs::load();
-    let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs);
+    let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);
     let auth_service = match AuthService::new(AuthService::default_db_path()) {
         Ok(service) => Arc::new(service),

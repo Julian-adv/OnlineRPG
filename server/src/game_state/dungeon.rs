@@ -444,7 +444,7 @@ impl GameState {
             let mut rng = rand::thread_rng();
             let mut pool = self
                 .item_defs
-                .equipment_ids_with_min_price(CHEST_ITEM_MIN_PRICE);
+                .chest_equipment_ids(CHEST_ITEM_MIN_PRICE, entrance.chest_tier);
             // The guaranteed signature drops lead the list; keep the random
             // rolls distinct from them.
             pool.retain(|id| !entrance.chest_drops.contains(id));

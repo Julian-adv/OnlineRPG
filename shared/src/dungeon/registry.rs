@@ -33,6 +33,15 @@ pub struct DungeonEntranceDef {
     pub chest_drops: Vec<String>,
     /// Fixed floor count from the csv; `None` = seed-derived 5..=20.
     pub floors: Option<u8>,
+    /// Monster type guarding the final-floor chest; blank falls back to
+    /// [`super::BOSS_MONSTER_TYPE`]. Validated against the monster table by
+    /// the server on load. Part of the hashed layout — changing it desyncs
+    /// deployed clients like any generation change.
+    pub boss: String,
+    /// Random chest-loot ceiling: the pool only admits items whose
+    /// `chestTier` (items.csv) is at or below this. Blank = 1. Server-side
+    /// only — never touches layout generation.
+    pub chest_tier: u8,
 }
 
 impl DungeonEntranceDef {
@@ -104,6 +113,11 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                     .collect(),
                 // Blank (or unparseable) means "seed-derived depth".
                 floors: field("floors").parse::<u8>().ok(),
+                boss: match field("boss") {
+                    "" => super::BOSS_MONSTER_TYPE.to_string(),
+                    b => b.to_string(),
+                },
+                chest_tier: field("chestTier").parse().unwrap_or(1),
             })
         })
         .collect()
@@ -129,16 +143,20 @@ mod tests {
 
     #[test]
     fn parses_drops_lists_and_optional_floor_override() {
-        let csv = "id,name,x,y,z,rotation,chestDrops,floors\n\
-                   a,A Place,-1450,0.7,4720,90,shield;armor,5\n\
-                   b,B Place,10,0,20,,,\n";
+        let csv = "id,name,x,y,z,rotation,chestDrops,floors,boss,chestTier\n\
+                   a,A Place,-1450,0.7,4720,90,shield;armor,5,orc_boss,2\n\
+                   b,B Place,10,0,20,,,,,\n";
         let defs = parse_entrances(csv);
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].chest_drops, ["shield", "armor"]);
         assert_eq!(defs[0].floors, Some(5));
         assert_eq!(defs[0].rotation, 90.0);
+        assert_eq!(defs[0].boss, "orc_boss");
+        assert_eq!(defs[0].chest_tier, 2);
         assert!(defs[1].chest_drops.is_empty());
         assert_eq!(defs[1].floors, None, "blank floors = seed-derived depth");
+        assert_eq!(defs[1].boss, super::super::BOSS_MONSTER_TYPE);
+        assert_eq!(defs[1].chest_tier, 1, "blank chestTier = tier 1");
     }
 
     /// Half-open on both axes, and the embedded csv parses at all. The server

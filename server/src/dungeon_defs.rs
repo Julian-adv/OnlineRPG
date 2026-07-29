@@ -17,10 +17,14 @@ use onlinerpg_shared::dungeon::{entrance, entrance_at, entrances};
 pub struct DungeonDefs;
 
 impl DungeonDefs {
-    /// Validate against `item_defs`: every `chestDrops` entry must name a real
-    /// item; a typo'd entry panics at startup rather than silently handing out
-    /// a broken item (mirrors the world-drop table).
-    pub fn load(item_defs: &crate::item_defs::ItemDefs) -> Self {
+    /// Validate against the item and monster tables: every `chestDrops` entry
+    /// must name a real item and `boss` a real monster; a typo'd entry panics
+    /// at startup rather than silently handing out a broken item or spawning
+    /// nothing (mirrors the world-drop table).
+    pub fn load(
+        item_defs: &crate::item_defs::ItemDefs,
+        monster_defs: &crate::monster_defs::MonsterDefs,
+    ) -> Self {
         info!("Loaded {} dungeon entrances", entrances().len());
         for def in entrances() {
             info!(
@@ -35,6 +39,12 @@ impl DungeonDefs {
                     chest_drop
                 );
             }
+            assert!(
+                monster_defs.get(&def.boss).is_some(),
+                "dungeon '{}' boss '{}' has no matching monster definition",
+                def.id,
+                def.boss
+            );
         }
         Self
     }

@@ -68,6 +68,30 @@ fn golden_layout_hash() {
     );
 }
 
+/// The registry's per-dungeon `boss` and `floors` columns drive generation:
+/// orc_warrens is 10 floors deep and its chest is guarded by orc_boss, while
+/// old_crypt keeps goblin_boss.
+#[test]
+fn per_dungeon_boss_and_floors() {
+    let floors = generate_dungeon_for("orc_warrens");
+    assert_eq!(floors.len(), 10);
+    let last = floors.last().unwrap();
+    assert!(last.chest.is_some());
+    let boss: Vec<_> = last.spawns.iter().filter(|s| s.is_boss).collect();
+    assert_eq!(boss.len(), 1);
+    assert_eq!(boss[0].monster_type, "orc_boss");
+
+    let crypt = generate_dungeon_for("old_crypt");
+    let crypt_boss = crypt
+        .last()
+        .unwrap()
+        .spawns
+        .iter()
+        .find(|s| s.is_boss)
+        .unwrap();
+    assert_eq!(crypt_boss.monster_type, BOSS_MONSTER_TYPE);
+}
+
 // Captured from the first blessed run; see golden_layout_hash. Re-blessed when
 // the spawn table moved from depth-band arrays (dungeon_spawns.json) to the
 // per-monster `dungeon*` columns of monsters.csv: same monster presence per

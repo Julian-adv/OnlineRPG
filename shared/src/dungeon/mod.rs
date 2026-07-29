@@ -76,9 +76,8 @@ pub const MAX_DEPTH: u8 = 20;
 pub const SHAFT_W: i32 = 2;
 pub const SHAFT_LEN: i32 = 8;
 
-/// Monster type spawned on the final floor next to the treasure chest.
-/// Global single-dungeon shortcut; when a second dungeon lands this belongs
-/// in dungeons.csv next to `floors` (see `registry`).
+/// Default final-floor boss, used when a dungeons.csv row leaves its `boss`
+/// column blank and by seed-only property tests.
 pub const BOSS_MONSTER_TYPE: &str = "goblin_boss";
 
 /// How far a player's Y may sit from a floor's world Y and still be accepted
@@ -357,16 +356,18 @@ pub(crate) fn dungeon_depth(seed: u64) -> u8 {
 /// over arbitrary seeds.
 #[cfg(test)]
 pub(crate) fn generate_dungeon(seed: u64) -> Vec<FloorLayout> {
-    gen::generate_dungeon_with(seed, None)
+    gen::generate_dungeon_with(seed, None, BOSS_MONSTER_TYPE)
 }
 
 /// Generate a dungeon by entrance id: seed derived from the id, floor count
-/// from the registry's `floors` override when present. This is what both the
-/// server and the wasm client use for real dungeons; `generate_dungeon` stays
-/// seed-only for property tests over arbitrary seeds.
+/// and boss from the registry. This is what both the server and the wasm
+/// client use for real dungeons; `generate_dungeon` stays seed-only for
+/// property tests over arbitrary seeds.
 pub fn generate_dungeon_for(entrance_id: &str) -> Vec<FloorLayout> {
-    let floors = entrance(entrance_id).and_then(|d| d.floors);
-    gen::generate_dungeon_with(dungeon_seed(entrance_id), floors)
+    let def = entrance(entrance_id);
+    let floors = def.and_then(|d| d.floors);
+    let boss = def.map_or(BOSS_MONSTER_TYPE, |d| d.boss.as_str());
+    gen::generate_dungeon_with(dungeon_seed(entrance_id), floors, boss)
 }
 
 pub fn passability_floor_for_depth(depth: u8) -> u8 {

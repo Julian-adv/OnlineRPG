@@ -8,8 +8,8 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use super::{
-    FloorLayout, PropKind, PropSpec, Room, SpawnSpec, StairShaft, BOSS_MONSTER_TYPE, GRID,
-    MAX_DEPTH, MIN_DEPTH, SHAFT_LEN, SHAFT_W,
+    FloorLayout, PropKind, PropSpec, Room, SpawnSpec, StairShaft, GRID, MAX_DEPTH, MIN_DEPTH,
+    SHAFT_LEN, SHAFT_W,
 };
 
 const ROOM_MIN: i32 = 9;
@@ -39,7 +39,11 @@ pub fn dungeon_depth(seed: u64) -> u8 {
     rng.gen_range(MIN_DEPTH..=MAX_DEPTH)
 }
 
-pub fn generate_dungeon_with(seed: u64, floors_override: Option<u8>) -> Vec<FloorLayout> {
+pub fn generate_dungeon_with(
+    seed: u64,
+    floors_override: Option<u8>,
+    boss: &str,
+) -> Vec<FloorLayout> {
     let mut meta = ChaCha8Rng::seed_from_u64(seed);
     // Always draw the seed-derived count so the meta stream feeding the
     // shaft orientation below is identical with and without an override.
@@ -70,7 +74,7 @@ pub fn generate_dungeon_with(seed: u64, floors_override: Option<u8>) -> Vec<Floo
     let mut floors = Vec::with_capacity(total as usize);
     let mut up = entrance_shaft;
     for depth in 1..=total {
-        let layout = generate_floor(seed, depth, total, up);
+        let layout = generate_floor(seed, depth, total, up, boss);
         let dead_end = layout.down_shaft.is_none();
         if let Some(down) = layout.down_shaft {
             up = down;
@@ -85,16 +89,22 @@ pub fn generate_dungeon_with(seed: u64, floors_override: Option<u8>) -> Vec<Floo
     floors
 }
 
-fn generate_floor(seed: u64, depth: u8, total: u8, up_shaft: StairShaft) -> FloorLayout {
+fn generate_floor(
+    seed: u64,
+    depth: u8,
+    total: u8,
+    up_shaft: StairShaft,
+    boss: &str,
+) -> FloorLayout {
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ (depth as u64).wrapping_mul(DEPTH_SALT));
     let is_last = depth == total;
 
     for _ in 0..FLOOR_ATTEMPTS {
-        if let Some(layout) = try_generate_floor(&mut rng, depth, is_last, up_shaft) {
+        if let Some(layout) = try_generate_floor(&mut rng, depth, is_last, up_shaft, boss) {
             return layout;
         }
     }
-    fallback_floor(&mut rng, depth, is_last, up_shaft)
+    fallback_floor(&mut rng, depth, is_last, up_shaft, boss)
 }
 
 fn try_generate_floor(
@@ -102,6 +112,7 @@ fn try_generate_floor(
     depth: u8,
     is_last: bool,
     up_shaft: StairShaft,
+    boss: &str,
 ) -> Option<FloorLayout> {
     let room_count = rng.gen_range(3..=5) as usize;
 
@@ -180,7 +191,7 @@ fn try_generate_floor(
         return None;
     }
 
-    layout.spawns = roll_spawns(rng, &layout);
+    layout.spawns = roll_spawns(rng, &layout, boss);
     layout.props = roll_props(rng, &layout);
     layout.props.extend(roll_wall_torches(rng, &layout));
     Some(layout)
@@ -393,7 +404,7 @@ fn floor_is_connected(layout: &FloorLayout) -> bool {
     floor_targets_reachable(layout, &visited)
 }
 
-fn roll_spawns(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<SpawnSpec> {
+fn roll_spawns(rng: &mut ChaCha8Rng, layout: &FloorLayout, boss: &str) -> Vec<SpawnSpec> {
     let exit = layout.up_shaft.exit_cell();
     let in_shaft = |x: i32, z: i32| cell_in_any_shaft(layout, x, z);
 
@@ -425,7 +436,7 @@ fn roll_spawns(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<SpawnSpec> {
         spawns.push(SpawnSpec {
             x: boss_cell.0,
             z: boss_cell.1,
-            monster_type: BOSS_MONSTER_TYPE.to_string(),
+            monster_type: boss.to_string(),
             is_boss: true,
             // The treasure guardian hunts intruders on sight.
             aggressive: true,
@@ -734,6 +745,7 @@ fn fallback_floor(
     depth: u8,
     is_last: bool,
     up_shaft: StairShaft,
+    boss: &str,
 ) -> FloorLayout {
     let r = up_shaft.rect();
     let x0 = (r.x - 8).max(1);
@@ -808,7 +820,7 @@ fn fallback_floor(
         spawns: Vec::new(),
         props: Vec::new(),
     };
-    layout.spawns = roll_spawns(rng, &layout);
+    layout.spawns = roll_spawns(rng, &layout, boss);
     layout.props = roll_props(rng, &layout);
     layout.props.extend(roll_wall_torches(rng, &layout));
     layout

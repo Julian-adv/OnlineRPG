@@ -19,6 +19,10 @@ export interface DungeonEntranceDef {
    *  shared generator reads data-src/dungeons.csv at compile time — editing
    *  this JSON field changes nothing. Listed only to document the schema. */
   floors?: number
+  /** Final-floor boss monster type; blank = goblin_boss. INERT here, like `floors`. */
+  boss?: string
+  /** Random chest-loot ceiling (items.csv `chestTier`); blank = 1. Server-side only. */
+  chestTier?: number
 }
 
 export const DUNGEON_ENTRANCES: DungeonEntranceDef[] = Object.values(

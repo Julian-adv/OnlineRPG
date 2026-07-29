@@ -53,6 +53,11 @@ pub struct ItemDefinition {
     /// Fish only — rolled length at or above this is a trophy catch.
     #[serde(rename = "trophyCm", default)]
     pub trophy_cm: Option<u32>,
+    /// Equipment only — lowest dungeon `chestTier` (dungeons.csv) whose
+    /// random chest pool may yield this. Absent = 1. Lets endgame pieces be
+    /// reserved for deeper dungeons regardless of price.
+    #[serde(rename = "chestTier", default)]
+    pub chest_tier: Option<u8>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -199,18 +204,19 @@ impl ItemDefs {
             .and_then(|def| def.damage_dice().map(str::to_string))
     }
 
-    /// Equippable items at or above a price floor — the dungeon treasure
-    /// chest loot pool. Sorted for determinism before the caller shuffles.
-    /// Fishing rods are excluded: they are tools you buy from a merchant, not
-    /// endgame combat treasure, and their price would otherwise sneak them
-    /// into the chest pool (`doc/FISHING.md`).
-    pub fn equipment_ids_with_min_price(&self, min_price: i64) -> Vec<String> {
+    /// Equippable items at or above a price floor and at or below a chest
+    /// tier — the dungeon treasure chest loot pool. Sorted for determinism
+    /// before the caller shuffles. Fishing rods are excluded: they are tools
+    /// you buy from a merchant, not endgame combat treasure, and their price
+    /// would otherwise sneak them into the chest pool (`doc/FISHING.md`).
+    pub fn chest_equipment_ids(&self, min_price: i64, max_tier: u8) -> Vec<String> {
         let mut ids: Vec<String> = self
             .defs
             .values()
             .filter(|def| def.equip_slot.is_some())
             .filter(|def| !def.is_fishing_rod())
             .filter(|def| def.base_price.is_some_and(|p| p >= min_price))
+            .filter(|def| def.chest_tier.unwrap_or(1) <= max_tier)
             .map(|def| def.id.clone())
             .collect();
         ids.sort();
@@ -240,7 +246,7 @@ mod tests {
         // keeps that true even if a future rod tier is priced above the
         // chest floor (today's 300c rod also sits below it — belt and braces).
         let defs = ItemDefs::load();
-        let pool = defs.equipment_ids_with_min_price(2000);
+        let pool = defs.chest_equipment_ids(2000, u8::MAX);
         assert!(
             !pool.contains(&"fishing_rod".to_string()),
             "fishing rod must not be in the dungeon chest loot pool"
@@ -250,6 +256,47 @@ mod tests {
             pool.contains(&"iron_sword".to_string()),
             "expected iron_sword in the chest pool"
         );
+    }
+
+    /// Chest-tier progression: old_crypt (tier 1) stays at leather-armor
+    /// level, orc_warrens (tier 2) adds chain mail, and the breastplate and
+    /// precious accessories wait for a tier-3 dungeon that doesn't exist yet.
+    #[test]
+    fn chest_tiers_gate_endgame_loot_by_dungeon() {
+        let defs = ItemDefs::load();
+
+        let tier1 = defs.chest_equipment_ids(2000, 1);
+        for reserved in [
+            "breastplate",
+            "chain_mail",
+            "iron_sword",
+            "iron_boots",
+            "gold_ring",
+            "silver_necklace",
+            "raven_shield",
+        ] {
+            assert!(
+                !tier1.contains(&reserved.to_string()),
+                "{reserved} must not drop from a tier-1 chest"
+            );
+        }
+        assert!(tier1.contains(&"leather_armor".to_string()));
+
+        let tier2 = defs.chest_equipment_ids(2000, 2);
+        for added in ["chain_mail", "iron_sword", "iron_boots"] {
+            assert!(tier2.contains(&added.to_string()));
+        }
+        for reserved in ["breastplate", "gold_ring", "silver_necklace"] {
+            assert!(
+                !tier2.contains(&reserved.to_string()),
+                "{reserved} is reserved for the third dungeon"
+            );
+        }
+
+        let tier3 = defs.chest_equipment_ids(2000, 3);
+        for added in ["breastplate", "gold_ring", "silver_necklace"] {
+            assert!(tier3.contains(&added.to_string()));
+        }
     }
 
     #[test]

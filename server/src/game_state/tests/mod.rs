@@ -202,9 +202,10 @@ fn make_game_state_with(
     let housing_io = Arc::new(HousingIO::new(housing_dir));
     let item_defs = ItemDefs::load();
     let world_drop_defs = crate::world_drop_defs::WorldDropDefs::load(&item_defs);
-    let dungeon_defs = crate::dungeon_defs::DungeonDefs::load(&item_defs);
+    let monster_defs = MonsterDefs::load();
+    let dungeon_defs = crate::dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     GameState::new(
-        MonsterDefs::load(),
+        monster_defs,
         item_defs,
         world_drop_defs,
         GameState::default_start_datetime(),
