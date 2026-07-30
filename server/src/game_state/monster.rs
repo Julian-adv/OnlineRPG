@@ -472,21 +472,23 @@ impl super::GameState {
         monster_type: &str,
         position: &Position,
         rotation: f32,
-    ) -> bool {
+    ) -> Option<Position> {
         // The range check below only reads x/z, so without this a non-finite y
         // or rotation would reach MonsterSpawned.
         if !position.is_finite() || !rotation.is_finite() {
-            return false;
+            return None;
         }
+        let mut position = *position;
+        position.x = onlinerpg_shared::wrap_world_x(position.x);
         let rule = match Self::find_ambient_rule(monster_type) {
             Some(r) => r,
-            None => return false,
+            None => return None,
         };
 
         // Reject if inside any no-spawn zone (towns, safe areas) + margin
         for zone in &self.no_spawn_zones {
             if zone.contains_with_margin(position.x, position.z, NO_SPAWN_MARGIN) {
-                return false;
+                return None;
             }
         }
 
@@ -495,13 +497,13 @@ impl super::GameState {
             let players = self.players.read().await;
             match players.get(player_id) {
                 Some(p) => p.position,
-                None => return false,
+                None => return None,
             }
         };
         let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, position.x);
         let dz = position.z - player_pos.z;
         let max = rule.max_distance + 10.0; // tolerance
-        dx * dx + dz * dz <= max * max
+        (dx * dx + dz * dz <= max * max).then_some(position)
     }
 
     /// Consume the player's unexpired allowance for this type, if any. Each
