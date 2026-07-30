@@ -533,6 +533,89 @@ async fn self_and_unknown_invites_are_rejected() {
 }
 
 #[tokio::test]
+async fn positions_cover_members_beyond_aoi_and_skip_self() {
+    let game_state = make_test_game_state("party_positions");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    // Far outside the AOI on purpose: distance must not filter positions.
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    // In a party of their own: never visible to alice.
+    add(&game_state, "carol", 10.0).await;
+    add(&game_state, "dave", 15.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "carol", "dave").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state.send_party_positions(&pid("alice")).await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyPositions { members }) => {
+            let ids: Vec<_> = members.iter().map(|m| m.id).collect();
+            assert_eq!(ids, [pid("bob")]);
+            assert_eq!(members[0].x, 500.0);
+            assert_eq!(members[0].floor_level, 0);
+        }
+        other => panic!("Expected positions, got {:?}", other),
+    }
+    assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn positions_without_party_are_empty() {
+    let game_state = make_test_game_state("party_positions_none");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    drain(&mut alice_rx);
+
+    game_state.send_party_positions(&pid("alice")).await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyPositions { members }) => assert!(members.is_empty()),
+        other => panic!("Expected empty positions, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn positions_report_dungeon_floor() {
+    let game_state = make_test_game_state("party_positions_floor");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("bob"))
+        .unwrap()
+        .floor_level = -2;
+    drain(&mut alice_rx);
+
+    game_state.send_party_positions(&pid("alice")).await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyPositions { members }) => {
+            let ids: Vec<_> = members.iter().map(|m| m.id).collect();
+            assert_eq!(ids, [pid("bob")]);
+            assert_eq!(members[0].floor_level, -2);
+        }
+        other => panic!("Expected positions, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn positions_poll_inside_clamp_window_is_dropped() {
+    let game_state = make_test_game_state("party_positions_clamp");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+
+    game_state.send_party_positions(&pid("alice")).await;
+    assert!(matches!(
+        alice_rx.try_recv(),
+        Ok(ServerMessage::PartyPositions { .. })
+    ));
+    game_state.send_party_positions(&pid("alice")).await;
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
 async fn party_chat_command_invites_and_reports() {
     let game_state = make_test_game_state("party_command");
     let auth = make_test_auth("party_command");

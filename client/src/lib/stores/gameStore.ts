@@ -4,7 +4,11 @@ import type { Vector3 } from 'three'
 import type { CharacterClass, Gender } from '../network/networkTypes'
 import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
-import { partyRoster, pendingPartyInvites } from './partyStore'
+import {
+  partyRoster,
+  resetPartyPositions,
+  pendingPartyInvites,
+} from './partyStore'
 import { resetFishingStore } from './fishingStore'
 import { groundItemManager } from '../managers/groundItemManager'
 
@@ -116,6 +120,7 @@ export const resetGameStore = () => {
   resetSkillsStore()
   resetFishingStore()
   partyRoster.set(null)
+  resetPartyPositions()
   pendingPartyInvites.set([])
   groundItemManager.reset()
 }

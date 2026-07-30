@@ -150,6 +150,7 @@ export type ClientMessage =
   | 'FishingStop'
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | 'PartyLeave'
+  | 'RequestPartyPositions'
   | { OpenDungeonChest: { entrance_id: string } }
   | {
       BreakDungeonProp: { entrance_id: string; depth: number; prop_id: number }
