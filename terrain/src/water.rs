@@ -5,8 +5,6 @@
 //! Sea-only tiles have no baked file (the client synthesizes a flat sea field
 //! for them); a missing tile therefore samples as `SEA_LEVEL`.
 
-use std::collections::HashMap;
-
 use onlinerpg_shared::worldgen::tile_bake::{
     WATER_FIELD_BIN_MAGIC, WATER_FIELD_HEADER_SIZE, WATER_FIELD_PIXEL_SIZE, WATER_FIELD_TOTAL_SIZE,
 };
@@ -15,6 +13,7 @@ use crate::coords::world_to_tile;
 use crate::defaults::VERTS_PER_SIDE;
 use crate::height::{bilinear, decode_height, resolve_cell};
 use crate::io::TerrainIO;
+use crate::tile_cache::{TileCache, TileCacheReadGuard, TILE_CACHE_CAPACITY};
 
 /// Fixed ocean surface used where a tile has no baked water field. Mirrors
 /// the client's sea-field synthesis and the bake's `SEA_LEVEL_M`.
@@ -23,7 +22,7 @@ pub const SEA_LEVEL: f32 = 0.0;
 /// Surface value at a tile-local vertex; tiles without a baked field (`None`)
 /// read as `SEA_LEVEL`, matching the client's flat-sea synthesis.
 fn get_surface_at_cell(
-    cache: &HashMap<(i32, i32), DecodedWaterTile>,
+    cache: &TileCacheReadGuard<'_, DecodedWaterTile>,
     tx: i32,
     tz: i32,
     cell_x: i32,
@@ -57,14 +56,14 @@ type DecodedWaterTile = Option<Vec<f32>>;
 /// Samples the baked water surface with an in-memory per-tile cache. Interior
 /// mutability (like `HeightSampler`) so callers hold only `&self`.
 pub struct WaterSampler {
-    cache: tokio::sync::RwLock<HashMap<(i32, i32), DecodedWaterTile>>,
+    cache: TileCache<DecodedWaterTile>,
     tiles: Box<dyn WaterTiles>,
 }
 
 impl WaterSampler {
     pub fn new(tiles: impl WaterTiles + 'static) -> Self {
         Self {
-            cache: tokio::sync::RwLock::new(HashMap::new()),
+            cache: TileCache::new(TILE_CACHE_CAPACITY),
             tiles: Box::new(tiles),
         }
     }
@@ -87,7 +86,7 @@ impl WaterSampler {
     }
 
     async fn ensure_tile(&self, tx: i32, tz: i32) -> std::io::Result<()> {
-        if self.cache.read().await.contains_key(&(tx, tz)) {
+        if self.cache.contains(&(tx, tz)).await {
             return Ok(());
         }
         let decoded = self
@@ -95,8 +94,7 @@ impl WaterSampler {
             .read_water_field(tx, tz)
             .await?
             .and_then(|raw| Self::decode_surfaces(&raw));
-        let mut cache = self.cache.write().await;
-        cache.entry((tx, tz)).or_insert(decoded);
+        self.cache.insert_if_absent((tx, tz), decoded).await;
         Ok(())
     }
 
@@ -109,6 +107,12 @@ impl WaterSampler {
         Ok(bilinear(world_x, world_z, |tx, tz, cx, cz| {
             get_surface_at_cell(&cache, tx, tz, cx, cz)
         }))
+    }
+
+    /// Evict tiles not sampled since the previous call; run on a period so
+    /// the cache tracks the live working set instead of growing forever.
+    pub async fn sweep_stale_tiles(&self) -> usize {
+        self.cache.sweep_stale().await
     }
 }
 

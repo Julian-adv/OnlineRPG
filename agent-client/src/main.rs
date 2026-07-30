@@ -229,6 +229,18 @@ async fn main() -> anyhow::Result<()> {
         &config.terrain_cache,
     ));
 
+    // NPC patrols keep loading tiles; sweep idle ones so the cache tracks
+    // the routes actually in use (same policy as the server).
+    let height_sampler_for_sweep = Arc::clone(&height_sampler);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            height_sampler_for_sweep.sweep_stale_tiles().await;
+        }
+    });
+
     // No hub when the panel is off, so sessions record nothing for it.
     let watch_hub = (config.watch_port != 0).then(|| {
         let hub = Arc::new(watch::WatchHub::new(

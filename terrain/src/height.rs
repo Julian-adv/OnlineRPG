@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use crate::coords::world_to_tile;
 use crate::defaults::{self, VERTS_PER_SIDE};
 use crate::io::TerrainIO;
+use crate::tile_cache::{TileCache, TileCacheReadGuard, TILE_CACHE_CAPACITY};
 
 /// Tile size in world units (must match client TERRAIN_TILE_SIZE).
 const TILE_SIZE: f32 = defaults::TILE_DIM as f32;
@@ -59,7 +58,7 @@ pub(crate) fn bilinear(world_x: f32, world_z: f32, get: impl Fn(i32, i32, i32, i
 
 /// Height at a tile-local vertex from a cache snapshot; a miss reads as 0.0.
 fn get_height_at_cell(
-    cache: &HashMap<(i32, i32), Vec<u16>>,
+    cache: &TileCacheReadGuard<'_, Vec<u16>>,
     tx: i32,
     tz: i32,
     cell_x: i32,
@@ -72,7 +71,7 @@ fn get_height_at_cell(
         .map_or(0.0, |v| decode_height(*v))
 }
 
-fn sample_cached(cache: &HashMap<(i32, i32), Vec<u16>>, world_x: f32, world_z: f32) -> f32 {
+fn sample_cached(cache: &TileCacheReadGuard<'_, Vec<u16>>, world_x: f32, world_z: f32) -> f32 {
     bilinear(world_x, world_z, |tx, tz, cx, cz| {
         get_height_at_cell(cache, tx, tz, cx, cz)
     })
@@ -102,34 +101,30 @@ impl HeightTiles for TerrainIO {
 /// Uses interior mutability (`tokio::sync::RwLock`) so callers only need `&self`,
 /// avoiding external mutex contention when multiple NPC connections share one sampler.
 pub struct HeightSampler {
-    cache: tokio::sync::RwLock<HashMap<(i32, i32), Vec<u16>>>,
+    cache: TileCache<Vec<u16>>,
     tiles: Box<dyn HeightTiles>,
 }
 
 impl HeightSampler {
     pub fn new(tiles: impl HeightTiles + 'static) -> Self {
         Self {
-            cache: tokio::sync::RwLock::new(HashMap::new()),
+            cache: TileCache::new(TILE_CACHE_CAPACITY),
             tiles: Box::new(tiles),
         }
     }
 
     /// Ensure a tile's heightmap is loaded into the cache.
-    /// No lock held during I/O; re-checks after write lock to avoid duplicate inserts.
+    /// No lock held during I/O; the first concurrent insert wins.
     async fn ensure_tile(&self, tx: i32, tz: i32) -> std::io::Result<()> {
-        if self.cache.read().await.contains_key(&(tx, tz)) {
+        if self.cache.contains(&(tx, tz)).await {
             return Ok(());
         }
         let raw = self.tiles.read_heightmap(tx, tz).await?;
-        let mut cache = self.cache.write().await;
-        if cache.contains_key(&(tx, tz)) {
-            return Ok(());
-        }
         let heights: Vec<u16> = raw
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        cache.insert((tx, tz), heights);
+        self.cache.insert_if_absent((tx, tz), heights).await;
         Ok(())
     }
 
@@ -146,12 +141,18 @@ impl HeightSampler {
 
     /// Evict a tile from the cache (e.g. when moving far away).
     pub async fn evict_tile(&self, tx: i32, tz: i32) {
-        self.cache.write().await.remove(&(tx, tz));
+        self.cache.remove(&(tx, tz)).await;
     }
 
     /// Number of tiles currently cached.
     pub async fn cached_tile_count(&self) -> usize {
-        self.cache.read().await.len()
+        self.cache.len().await
+    }
+
+    /// Evict tiles not sampled since the previous call; run on a period so
+    /// the cache tracks the live working set instead of growing forever.
+    pub async fn sweep_stale_tiles(&self) -> usize {
+        self.cache.sweep_stale().await
     }
 }
 
@@ -200,6 +201,26 @@ mod tests {
                 .map(|w| world_to_tile(*w))
                 .collect();
         assert_eq!(reads.load(Ordering::Relaxed), tiles.len());
+    }
+
+    #[tokio::test]
+    async fn swept_tile_is_reloaded_from_the_source_on_next_sample() {
+        let (s, reads) = counting_sampler();
+        assert!(s.sample_height(0.0, 0.0).await.is_ok());
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+
+        // Idle across two sweeps: evicted; the next sample hits the source.
+        s.sweep_stale_tiles().await;
+        assert_eq!(s.sweep_stale_tiles().await, 1);
+        assert_eq!(s.cached_tile_count().await, 0);
+
+        assert!(s.sample_height(0.0, 0.0).await.is_ok());
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
+
+        // Sampled this period: the next sweep keeps it, and no re-read occurs.
+        s.sweep_stale_tiles().await;
+        assert!(s.sample_height(0.0, 0.0).await.is_ok());
+        assert_eq!(reads.load(Ordering::Relaxed), 2);
     }
 
     #[test]

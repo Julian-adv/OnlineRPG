@@ -350,6 +350,9 @@ async fn main() -> ExitCode {
         std::path::PathBuf::from(&args.terrain_dir),
     )));
 
+    let height_sampler_for_sweep = Arc::clone(&height_sampler);
+    let water_sampler_for_sweep = Arc::clone(&water_sampler);
+
     let game_state = Arc::new(GameState::new(
         monster_defs,
         item_defs,
@@ -425,6 +428,24 @@ async fn main() -> ExitCode {
         move || {
             let game_state = Arc::clone(&game_state_for_ground);
             async move { game_state.tick_ground_item_despawn().await }
+        },
+    ));
+
+    // Terrain tile caches grow with every area players touch; sweep tiles
+    // idle for a full period so memory tracks the live working set.
+    background.spawn(run_ticks(
+        "terrain cache sweep",
+        Duration::from_secs(300),
+        drain_shutdown.clone(),
+        move || {
+            let heights = Arc::clone(&height_sampler_for_sweep);
+            let waters = Arc::clone(&water_sampler_for_sweep);
+            async move {
+                let evicted = heights.sweep_stale_tiles().await + waters.sweep_stale_tiles().await;
+                if evicted > 0 {
+                    tracing::debug!("terrain cache sweep evicted {evicted} idle tiles");
+                }
+            }
         },
     ));
 
