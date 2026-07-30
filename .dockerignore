@@ -1,0 +1,40 @@
+.git/
+.gjc/
+.claude/
+.codex/
+.gemini/
+.cargo/
+
+target/
+node_modules/
+client/node_modules/
+client/dist/
+client/src/lib/wasm/
+tools/glb-editor/
+dist/
+preview_out*/
+
+# Baked terrain is gigabytes and lives in a volume. Excluded per directory,
+# not as `data/terrain/`, because data/terrain/zones/ is tracked in git and
+# ships as image seed data: terrain-gen does not generate zone files.
+data/terrain/grass/
+data/terrain/height/
+data/terrain/height-original/
+data/terrain/splat/
+data/terrain/trees/
+data/terrain/water-field/
+data/terrain/river-field/
+data/terrain/minimap/
+data/terrain/objects/
+data/terrain/worldgen_preview/
+data/terrain/worldgen.json
+
+# Runtime state owned by --state-dir, never baked into an image.
+data/housing/
+data/*.db
+data/npc_token
+
+# Deployment-only agent config and regenerable caches.
+agent-client/data/config.toml
+agent-client/data/cache/
+agent-client/data/prompts/memory/

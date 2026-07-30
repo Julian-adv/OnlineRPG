@@ -1,0 +1,191 @@
+name: Docker publish
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  # Unlike CI, superseding a master run is fine here: only the newest image is
+  # worth publishing, and cancelling early saves the LFS quota the client job
+  # spends on every checkout.
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: ${{ matrix.image }} (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # agent-client ships twice from one Dockerfile: the default HTTP-only
+        # image and a codex variant carrying the CLI. Three published packages.
+        image: [server, client, agent-client-slim, agent-client-codex]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          # Native runners per architecture. QEMU would make the Rust builds
+          # 10-20x slower, so setup-qemu-action is deliberately absent.
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - image: server
+            package: openmmo-server
+            dockerfile: docker/server.Dockerfile
+            target: server
+            tag_prefix: ''
+            moving_tag: latest
+          - image: client
+            package: openmmo-client
+            dockerfile: docker/client.Dockerfile
+            target: ''
+            tag_prefix: ''
+            moving_tag: latest
+          - image: agent-client-slim
+            package: openmmo-agent-client
+            dockerfile: docker/agent-client.Dockerfile
+            target: slim
+            tag_prefix: ''
+            moving_tag: latest
+          - image: agent-client-codex
+            package: openmmo-agent-client
+            dockerfile: docker/agent-client.Dockerfile
+            target: codex
+            tag_prefix: codex-
+            moving_tag: codex
+
+    steps:
+      # Only the client bundle needs the LFS models and audio; the Rust images
+      # would burn the bandwidth quota for files they never read.
+      - uses: actions/checkout@v5
+        with:
+          lfs: ${{ matrix.image == 'client' }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          # The codex variant shares the agent-client package, so it takes a
+          # `codex` tag namespace and never competes for `latest`.
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ matrix.moving_tag }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=sha,prefix=${{ matrix.tag_prefix }}sha-
+            type=semver,pattern=${{ matrix.tag_prefix }}{{version}}
+            type=semver,pattern=${{ matrix.tag_prefix }}{{major}}.{{minor}}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push by digest only; the merge job assembles the multi-arch manifest.
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # `linux/amd64` cannot appear verbatim in an artifact name, and the
+          # arch suffix keeps the merge job's glob unambiguous between the two
+          # agent-client variants.
+          name: digests-${{ matrix.image }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: manifest ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, client, agent-client-slim, agent-client-codex]
+        include:
+          - image: server
+            package: openmmo-server
+            tag_prefix: ''
+            moving_tag: latest
+          - image: client
+            package: openmmo-client
+            tag_prefix: ''
+            moving_tag: latest
+          - image: agent-client-slim
+            package: openmmo-agent-client
+            tag_prefix: ''
+            moving_tag: latest
+          - image: agent-client-codex
+            package: openmmo-agent-client
+            tag_prefix: codex-
+            moving_tag: codex
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ matrix.moving_tag }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=sha,prefix=${{ matrix.tag_prefix }}sha-
+            type=semver,pattern=${{ matrix.tag_prefix }}{{version}}
+            type=semver,pattern=${{ matrix.tag_prefix }}{{major}}.{{minor}}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+
+      - name: Inspect published manifest
+        run: docker buildx imagetools inspect "${IMAGE}:${TAG}"
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          TAG: ${{ steps.meta.outputs.version }}

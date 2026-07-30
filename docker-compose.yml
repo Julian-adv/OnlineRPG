@@ -1,0 +1,101 @@
+name: openmmo
+
+# `image:` and `build:` are both set: compose reuses a published image when one
+# is available and falls back to building locally, so the stack comes up on a
+# clean host before anything has been pushed to GHCR.
+x-server-image: &server-image
+  image: ghcr.io/julian-adv/openmmo-server:${TAG:-latest}
+  build:
+    context: .
+    dockerfile: docker/server.Dockerfile
+    target: server
+
+services:
+  # One-shot: fills an empty terrain volume, then exits. Runs the server image
+  # with a different entrypoint so the published image count stays at three.
+  terrain-init:
+    <<: *server-image
+    entrypoint: ["/usr/local/bin/terrain-bake.sh"]
+    environment:
+      TERRAIN_DIR: /terrain
+      TERRAIN_REGION_MIN: ${TERRAIN_REGION_MIN:--2}
+      TERRAIN_REGION_MAX: ${TERRAIN_REGION_MAX:-1}
+      TERRAIN_FORCE_BAKE: ${TERRAIN_FORCE_BAKE:-}
+    volumes:
+      - terrain:/terrain
+    restart: "no"
+
+  server:
+    <<: *server-image
+    depends_on:
+      terrain-init:
+        condition: service_completed_successfully
+    environment:
+      STATE_DIR: /state
+      NPC_DATA_DIR: /npcs
+      TERRAIN_DIR: /terrain
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLI_CLIENT_ID: ${GOOGLE_CLI_CLIENT_ID:-}
+      NPC_AUTH_TOKEN: ${NPC_AUTH_TOKEN:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    # Loopback defaults would make the server unreachable from sibling
+    # containers. Nothing is published to the host unless you add ports below.
+    command: ["--bind", "0.0.0.0", "--api-bind", "0.0.0.0"]
+    volumes:
+      - state:/state
+      - npcs:/npcs
+      - terrain:/terrain:ro
+    healthcheck:
+      test:
+        ["CMD", "curl", "-fsS", "http://localhost:10007/api/terrain/height/0/0"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  client:
+    image: ghcr.io/julian-adv/openmmo-client:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: docker/client.Dockerfile
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "${CLIENT_PORT:-8080}:80"
+    restart: unless-stopped
+
+  # Opt-in: needs agent-client/data/config.toml, which is gitignored deployment
+  # state. Start with `docker compose --profile agent up`.
+  agent-client:
+    profiles: [agent]
+    image: ghcr.io/julian-adv/openmmo-agent-client:${AGENT_TAG:-latest}
+    build:
+      context: .
+      dockerfile: docker/agent-client.Dockerfile
+      target: ${AGENT_TARGET:-slim}
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENAI_COMPAT_API_KEY: ${OPENAI_COMPAT_API_KEY:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - ./agent-client/data/config.toml:/app/agent-client/data/config.toml:ro
+      # agent-client resolves the shared secret as ../data/npc_token relative
+      # to its working directory, so the server's state volume lands where that
+      # path points. Read-only: the server owns everything in here.
+      - state:/app/data:ro
+      # The server also owns the schedules, which the map editor writes.
+      - npcs:/app/agent-client/data/npcs:ro
+      - agent-cache:/app/agent-client/data/cache
+    restart: unless-stopped
+
+volumes:
+  state:
+  terrain:
+  npcs:
+  agent-cache:

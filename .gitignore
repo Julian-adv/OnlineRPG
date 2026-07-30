@@ -40,9 +40,6 @@ logs/
 *.seed
 *.pid.lock
 
-# Docker
-.dockerignore
-
 # Temporary files
 *.tmp
 *.temp
