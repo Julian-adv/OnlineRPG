@@ -18,6 +18,7 @@ const MONSTER_MOVE_BUDGET_CAP_METERS: f32 = 12.0;
 /// misconfigured types). Kept just above the player's own speed so an unknown
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
 const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
+const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
 
 impl super::GameState {
     fn find_ambient_rule(
@@ -415,34 +416,43 @@ impl super::GameState {
             (counts, alive)
         };
 
-        let mut requested_this_tick = 0usize;
+        let now = Self::now_ms();
+        let requests = {
+            let mut allowances = self.ambient_spawn_allowances.write().await;
+            allowances.retain(|_, expires_at| *expires_at > now);
+            let mut reserved = allowances.len();
+            let mut requests = Vec::new();
 
-        for rule in ambient_spawns {
-            for player_id in &player_ids {
-                if total_alive + requested_this_tick >= max_total {
-                    return;
+            for rule in ambient_spawns {
+                for player_id in &player_ids {
+                    if total_alive + reserved >= max_total {
+                        break;
+                    }
+
+                    let owned = owner_type_counts
+                        .get(&(*player_id, rule.monster_type.clone()))
+                        .copied()
+                        .unwrap_or(0);
+                    let key = (*player_id, rule.monster_type.clone());
+
+                    if owned >= rule.max_per_player || allowances.contains_key(&key) {
+                        continue;
+                    }
+
+                    allowances.insert(key, now.saturating_add(AMBIENT_SPAWN_ALLOWANCE_TTL_MS));
+                    requests.push((*player_id, rule.monster_type.clone()));
+                    reserved += 1;
                 }
-
-                let owned = owner_type_counts
-                    .get(&(*player_id, rule.monster_type.clone()))
-                    .copied()
-                    .unwrap_or(0);
-
-                if owned >= rule.max_per_player {
-                    continue;
-                }
-
-                // Ask the client to find a valid position near itself and spawn
-                self.send_direct_message(
-                    player_id,
-                    ServerMessage::SpawnMonsterRequest {
-                        monster_type: rule.monster_type.clone(),
-                    },
-                )
-                .await;
-
-                requested_this_tick += 1;
             }
+            requests
+        };
+
+        for (player_id, monster_type) in requests {
+            self.send_direct_message(
+                &player_id,
+                ServerMessage::SpawnMonsterRequest { monster_type },
+            )
+            .await;
         }
     }
 
@@ -485,6 +495,15 @@ impl super::GameState {
         let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, position.x);
         let dz = position.z - player_pos.z;
         let max = rule.max_distance + 10.0; // tolerance
-        dx * dx + dz * dz <= max * max
+        if dx * dx + dz * dz > max * max {
+            return false;
+        }
+
+        let now = Self::now_ms();
+        self.ambient_spawn_allowances
+            .write()
+            .await
+            .remove(&(*player_id, monster_type.to_string()))
+            .is_some_and(|expires_at| expires_at > now)
     }
 }
