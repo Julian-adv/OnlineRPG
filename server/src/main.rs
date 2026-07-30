@@ -43,33 +43,24 @@ use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
 use tower_http::compression::CompressionLayer;
 use tracing::{error, info, warn};
+use types::GameDateTime;
 
 const SHUTDOWN_NOTICE: &str = "The server is shutting down. Please reconnect shortly.";
 const SHUTDOWN_NOTICE_DURATION: Duration = Duration::from_secs(2);
 
-fn load_initial_game_time(
-    auth_service: &AuthService,
-) -> Result<onlinerpg_shared::GameDateTime, auth::AuthError> {
-    match auth_service.load_world_time()? {
-        Some(saved) => {
-            info!(
-                "Loaded game time from DB: {:04}-{:02}-{:02} {:02}:{:02}",
-                saved.year, saved.month, saved.day, saved.hour, saved.minute
-            );
-            Ok(saved)
-        }
+fn load_initial_game_time(auth_service: &AuthService) -> Result<GameDateTime, auth::AuthError> {
+    let (source, datetime) = match auth_service.load_world_time()? {
+        Some(saved) => ("Loaded game time from DB", saved),
         None => {
             let initial = GameState::default_start_datetime();
             if let Err(err) = auth_service.save_world_time(&initial) {
                 warn!("Failed to persist initial game time: {}", err);
             }
-            info!(
-                "Initialized game time: {:04}-{:02}-{:02} {:02}:{:02}",
-                initial.year, initial.month, initial.day, initial.hour, initial.minute
-            );
-            Ok(initial)
+            ("Initialized game time", initial)
         }
-    }
+    };
+    info!("{}: {}", source, datetime);
+    Ok(datetime)
 }
 
 /// Catches and logs a panic from one tick round so the loop task survives.
@@ -581,17 +572,20 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
+    fn temp_auth(name: &str) -> (AuthService, std::path::PathBuf) {
+        let db_path = test_util::unique_temp_dir(name).join("auth.db");
+        (AuthService::new(db_path.clone()).unwrap(), db_path)
+    }
+
     #[tokio::test]
     async fn guard_tick_swallows_panic() {
-        super::guard_tick("test", async { panic!("boom") }).await;
+        guard_tick("test", async { panic!("boom") }).await;
     }
 
     #[test]
     fn initial_game_time_preserves_stored_value() {
-        let db_path =
-            std::env::temp_dir().join(format!("onlinerpg_time_stored_{}.db", uuid::Uuid::new_v4()));
-        let auth = AuthService::new(db_path).unwrap();
-        let stored = onlinerpg_shared::GameDateTime {
+        let (auth, _) = temp_auth("time_stored");
+        let stored = GameDateTime {
             year: 42,
             month: 7,
             day: 9,
@@ -600,54 +594,25 @@ mod tests {
         };
         auth.save_world_time(&stored).unwrap();
 
-        let loaded = load_initial_game_time(&auth).unwrap();
-
-        assert_eq!(
-            (
-                loaded.year,
-                loaded.month,
-                loaded.day,
-                loaded.hour,
-                loaded.minute
-            ),
-            (42, 7, 9, 18, 23)
-        );
+        assert_eq!(load_initial_game_time(&auth).unwrap(), stored);
     }
 
     #[test]
-    fn initial_game_time_initializes_only_after_successful_missing_row_read() {
-        let db_path =
-            std::env::temp_dir().join(format!("onlinerpg_time_absent_{}.db", uuid::Uuid::new_v4()));
-        let auth = AuthService::new(db_path).unwrap();
+    fn initial_game_time_persists_default_when_absent() {
+        let (auth, _) = temp_auth("time_absent");
 
         let initial = load_initial_game_time(&auth).unwrap();
-        let persisted = auth.load_world_time().unwrap().unwrap();
 
-        assert_eq!(
-            (
-                persisted.year,
-                persisted.month,
-                persisted.day,
-                persisted.hour,
-                persisted.minute
-            ),
-            (
-                initial.year,
-                initial.month,
-                initial.day,
-                initial.hour,
-                initial.minute
-            )
-        );
+        assert_eq!(auth.load_world_time().unwrap().unwrap(), initial);
     }
 
     #[test]
     fn initial_game_time_propagates_read_failure() {
-        let db_path =
-            std::env::temp_dir().join(format!("onlinerpg_time_failed_{}.db", uuid::Uuid::new_v4()));
-        let auth = AuthService::new(db_path.clone()).unwrap();
-        let conn = Connection::open(db_path).unwrap();
-        conn.execute("DROP TABLE world_time", []).unwrap();
+        let (auth, db_path) = temp_auth("time_failed");
+        Connection::open(db_path)
+            .unwrap()
+            .execute("DROP TABLE world_time", [])
+            .unwrap();
 
         assert!(load_initial_game_time(&auth).is_err());
     }

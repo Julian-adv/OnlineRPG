@@ -143,11 +143,21 @@ impl NoSpawnZone {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GameDateTime {
     pub year: u32,
     pub month: u8,
     pub day: u8,
     pub hour: u8,
     pub minute: u8,
+}
+
+impl std::fmt::Display for GameDateTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute
+        )
+    }
 }
