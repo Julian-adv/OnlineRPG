@@ -44,6 +44,13 @@ function isHouseWall(obj: THREE.Object3D | null): boolean {
   )
 }
 
+function withinCastRange(hit: THREE.Vector3, player: Position): boolean {
+  const dx = hit.x - player.x
+  const dz = hit.z - player.z
+  const max = max_cast_distance_m()
+  return dx * dx + dz * dz <= max * max
+}
+
 /** Entity clicks get a little slack: the click point plus 4 nearby offsets
  *  (10px up/right/down/left) are each raycast until one resolves. */
 const CLICK_RAY_OFFSETS = [
@@ -475,14 +482,11 @@ class InputHandler {
       )
       // Out-of-range water falls through to a walk (mirrors the server's
       // XZ range check) instead of sending a cast it would reject.
-      const castDx = groundHit.point.x - context.playerPosition.x
-      const castDz = groundHit.point.z - context.playerPosition.z
-      const maxCast = max_cast_distance_m()
       if (
         context.canCastFishing &&
         waterSurface !== undefined &&
         waterSurface - groundHit.point.y > min_fishable_depth_m() &&
-        castDx * castDx + castDz * castDz <= maxCast * maxCast
+        withinCastRange(groundHit.point, context.playerPosition)
       ) {
         return {
           type: 'cast_fishing',
