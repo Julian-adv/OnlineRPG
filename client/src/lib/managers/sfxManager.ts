@@ -176,14 +176,26 @@ export function preloadFishingSounds() {
   }
 }
 
+const pendingFishingTimers = new Set<number>()
+
 /** `delayMs` lets e.g. the splash line up with the bobber landing rather
  *  than the swing that threw it (same pattern as `playSwordMissSound`). */
 export function playFishingSound(kind: FishingSound, delayMs = 0) {
   if (!canUseAudio()) return
   if (delayMs > 0) {
-    window.setTimeout(() => playFishingSound(kind), delayMs)
+    const timer = window.setTimeout(() => {
+      pendingFishingTimers.delete(timer)
+      playFishingSound(kind)
+    }, delayMs)
+    pendingFishingTimers.add(timer)
     return
   }
   const { url, volume, pool } = FISHING_SOUNDS[kind]
   playAudioFromPool(fishingPools, url, volume, pool)
+}
+
+/** A cast aborted mid-flight must not splash after the line is back in. */
+export function cancelPendingFishingSounds() {
+  for (const timer of pendingFishingTimers) window.clearTimeout(timer)
+  pendingFishingTimers.clear()
 }
