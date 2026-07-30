@@ -47,6 +47,31 @@ use tracing::{error, info, warn};
 const SHUTDOWN_NOTICE: &str = "The server is shutting down. Please reconnect shortly.";
 const SHUTDOWN_NOTICE_DURATION: Duration = Duration::from_secs(2);
 
+fn load_initial_game_time(
+    auth_service: &AuthService,
+) -> Result<onlinerpg_shared::GameDateTime, auth::AuthError> {
+    match auth_service.load_world_time()? {
+        Some(saved) => {
+            info!(
+                "Loaded game time from DB: {:04}-{:02}-{:02} {:02}:{:02}",
+                saved.year, saved.month, saved.day, saved.hour, saved.minute
+            );
+            Ok(saved)
+        }
+        None => {
+            let initial = GameState::default_start_datetime();
+            if let Err(err) = auth_service.save_world_time(&initial) {
+                warn!("Failed to persist initial game time: {}", err);
+            }
+            info!(
+                "Initialized game time: {:04}-{:02}-{:02} {:02}:{:02}",
+                initial.year, initial.month, initial.day, initial.hour, initial.minute
+            );
+            Ok(initial)
+        }
+    }
+}
+
 /// Catches and logs a panic from one tick round so the loop task survives.
 async fn guard_tick(name: &str, tick: impl std::future::Future<Output = ()>) {
     if std::panic::AssertUnwindSafe(tick)
@@ -291,28 +316,14 @@ async fn main() {
         npc_token,
         admin_emails,
     });
-    let initial_game_time = match auth_service.load_world_time() {
-        Ok(Some(saved)) => {
-            info!(
-                "Loaded game time from DB: {:04}-{:02}-{:02} {:02}:{:02}",
-                saved.year, saved.month, saved.day, saved.hour, saved.minute
-            );
-            saved
-        }
-        Ok(None) => {
-            let initial = GameState::default_start_datetime();
-            if let Err(err) = auth_service.save_world_time(&initial) {
-                warn!("Failed to persist initial game time: {}", err);
-            }
-            info!(
-                "Initialized game time: {:04}-{:02}-{:02} {:02}:{:02}",
-                initial.year, initial.month, initial.day, initial.hour, initial.minute
-            );
-            initial
-        }
+    let initial_game_time = match load_initial_game_time(&auth_service) {
+        Ok(initial) => initial,
         Err(err) => {
-            warn!("Failed to load game time from DB, using default: {}", err);
-            GameState::default_start_datetime()
+            error!(
+                "Failed to load game time from DB; refusing to start: {}",
+                err
+            );
+            return;
         }
     };
 
@@ -567,8 +578,77 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
     #[tokio::test]
     async fn guard_tick_swallows_panic() {
         super::guard_tick("test", async { panic!("boom") }).await;
+    }
+
+    #[test]
+    fn initial_game_time_preserves_stored_value() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_time_stored_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let stored = onlinerpg_shared::GameDateTime {
+            year: 42,
+            month: 7,
+            day: 9,
+            hour: 18,
+            minute: 23,
+        };
+        auth.save_world_time(&stored).unwrap();
+
+        let loaded = load_initial_game_time(&auth).unwrap();
+
+        assert_eq!(
+            (
+                loaded.year,
+                loaded.month,
+                loaded.day,
+                loaded.hour,
+                loaded.minute
+            ),
+            (42, 7, 9, 18, 23)
+        );
+    }
+
+    #[test]
+    fn initial_game_time_initializes_only_after_successful_missing_row_read() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_time_absent_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+
+        let initial = load_initial_game_time(&auth).unwrap();
+        let persisted = auth.load_world_time().unwrap().unwrap();
+
+        assert_eq!(
+            (
+                persisted.year,
+                persisted.month,
+                persisted.day,
+                persisted.hour,
+                persisted.minute
+            ),
+            (
+                initial.year,
+                initial.month,
+                initial.day,
+                initial.hour,
+                initial.minute
+            )
+        );
+    }
+
+    #[test]
+    fn initial_game_time_propagates_read_failure() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_time_failed_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path.clone()).unwrap();
+        let conn = Connection::open(db_path).unwrap();
+        conn.execute("DROP TABLE world_time", []).unwrap();
+
+        assert!(load_initial_game_time(&auth).is_err());
     }
 }
