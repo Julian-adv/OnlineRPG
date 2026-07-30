@@ -878,6 +878,81 @@ async fn player_attack_at_melee_range_is_allowed() {
     );
 }
 
+#[tokio::test]
+async fn player_attack_interval_is_server_enforced() {
+    let game_state = make_test_game_state("player_attack_interval");
+    let player_id = pid("attacker");
+
+    game_state
+        .add_player(make_player("attacker", 0.0, 0.0))
+        .await;
+    let mut attacker_rx = game_state.register_direct_channel(&player_id).await;
+    game_state.monsters.write().await.insert(
+        "nearby_monster".to_string(),
+        make_monster("nearby_monster", pos(1.0), 0),
+    );
+
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+
+    let attack_count = drain(&mut attacker_rx)
+        .into_iter()
+        .filter(|message| matches!(message, ServerMessage::PlayerAttacked { .. }))
+        .count();
+    assert_eq!(
+        attack_count, 1,
+        "back-to-back requests must produce one authoritative attack roll"
+    );
+
+    game_state.last_player_attacks.write().await.insert(
+        player_id,
+        GameState::now_ms()
+            .saturating_sub(super::combat::PLAYER_ATTACK_INTERVAL.as_millis() as u64),
+    );
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+
+    assert!(drain(&mut attacker_rx)
+        .into_iter()
+        .any(|message| matches!(message, ServerMessage::PlayerAttacked { .. })));
+}
+
+#[tokio::test]
+async fn rejected_player_attack_does_not_consume_interval() {
+    let game_state = make_test_game_state("rejected_player_attack_interval");
+    let player_id = pid("attacker");
+
+    game_state
+        .add_player(make_player("attacker", 0.0, 0.0))
+        .await;
+    let mut attacker_rx = game_state.register_direct_channel(&player_id).await;
+    game_state.monsters.write().await.insert(
+        "nearby_monster".to_string(),
+        make_monster("nearby_monster", pos(1.0), 0),
+    );
+
+    game_state
+        .broadcast_player_attack(&player_id, "missing_monster".to_string())
+        .await;
+    expect_attack_rejected(
+        &mut attacker_rx,
+        "missing_monster",
+        AttackRejectReason::InvalidTarget,
+    );
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+
+    assert!(drain(&mut attacker_rx)
+        .into_iter()
+        .any(|message| matches!(message, ServerMessage::PlayerAttacked { .. })));
+}
+
 /// A player at 0 HP (awaiting respawn) must not be able to keep attacking.
 #[tokio::test]
 async fn dead_player_cannot_attack() {
