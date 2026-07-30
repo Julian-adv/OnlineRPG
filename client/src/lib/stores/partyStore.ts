@@ -24,9 +24,8 @@ export interface PartyMemberPositionEntry {
 }
 
 /** Latest positions poll answer, stamped on receipt (`at: 0` = never
- *  received or cleared). Rendering joins it against the roster (a leaver
- *  never draws) and age-gates it (an answer that landed after the map
- *  closed never outlives its freshness). */
+ *  received or cleared); rendering joins it against the roster and age-gates
+ *  it. */
 export interface PartyPositionsSnapshot {
   at: number
   members: PartyMemberPositionEntry[]
@@ -39,6 +38,14 @@ export const partyPositions = writable<PartyPositionsSnapshot>({
 
 export function resetPartyPositions() {
   partyPositions.set({ at: 0, members: [] })
+}
+
+/** Full party reset for session-death paths (logout, reconnect, GameState
+ *  snapshot); missing any one store here is how phantom party UI survives. */
+export function resetPartyStores() {
+  partyRoster.set(null)
+  resetPartyPositions()
+  pendingPartyInvites.set([])
 }
 
 /** A party invite the player hasn't answered yet. */

@@ -8,7 +8,7 @@
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 8
 
-  // Party member marker poll cadence; well above the server's 1s clamp.
+  // Party member marker poll cadence; above the server's 2s clamp.
   const PARTY_POLL_MS = 3000
 
   // A poll answer can outlive the dialog that requested it (nothing polls
@@ -82,7 +82,7 @@
     graphicsQuality,
     getEffectivePreset,
   } from '../stores/graphicsSettings'
-  import { wrapWorldX } from '../terrain/world-wrap'
+  import { wrapWorldX, unwrapWorldXNear } from '../terrain/world-wrap'
   import { mountOverlay } from '../stores/overlayStack'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
@@ -154,7 +154,7 @@
   })
 
   // Party existence only: roster churn must not reset the poll cadence (the
-  // immediate re-poll would just be eaten by the server's 1s clamp).
+  // immediate re-poll would just be eaten by the server's clamp).
   let inParty = $derived($partyRoster !== null)
 
   // Poll party positions only while the dialog lives (it mounts with
@@ -321,9 +321,12 @@
     top: number
   }
 
-  // World → overlay coords: scale around the view center, then the same
-  // -45° rotation the canvas applies (ctx.rotate(ROTATE_ANGLE)).
+  // World → overlay coords: unwrap x toward the camera (a point just across
+  // the world seam renders near the edge instead of a full wrap away), scale
+  // around the view center, then the same -45° rotation the canvas applies
+  // (ctx.rotate(ROTATE_ANGLE)).
   function worldToScreen(x: number, z: number, cw: number, ch: number) {
+    x = unwrapWorldXNear(camX, x)
     const scale = Math.min(cw, ch) / (zoomSpan * REGION_PX)
     const lx = (x - (camX - cw / scale / 2)) * scale
     const ly = (z - (camZ - ch / scale / 2)) * scale
@@ -399,7 +402,7 @@
     for (const pos of positions.members) {
       const name = names.get(pos.id)
       if (!name) continue
-      const p = worldToScreen(wrapWorldX(pos.x), pos.z, cw, ch)
+      const p = worldToScreen(pos.x, pos.z, cw, ch)
       if (!onScreen(p, cw, ch, 40)) continue
       out.push({
         id: pos.id,
@@ -670,12 +673,10 @@
           </div>
         {/each}
         {#if selfPulse}
-          <div
+          <span
             class="self-pulse"
             style="left: {selfPulse.left}px; top: {selfPulse.top}px;"
-          >
-            <span class="ring"></span>
-          </div>
+          ></span>
         {/if}
         {#each partyMarkers as marker (marker.id)}
           <div
@@ -917,12 +918,6 @@
      never moves shouldn't look dead. */
   .self-pulse {
     position: absolute;
-  }
-
-  .self-pulse .ring {
-    position: absolute;
-    left: 0;
-    top: 0;
     width: 14px;
     height: 14px;
     margin: -7px 0 0 -7px;

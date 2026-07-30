@@ -156,7 +156,13 @@ struct ConnectionState {
     admin_eligible: bool,
     /// admin_eligible && the entered character's admin_role > 0.
     is_admin: bool,
+    /// Last answered positions poll (spam clamp); dies with the connection.
+    last_party_positions_poll: Option<Instant>,
 }
+
+/// Positions polls inside this window are dropped; the web map polls every
+/// 3s, leaving a 1s margin so its own cadence never races the clamp.
+const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 
 impl ConnectionState {
     fn new(client_ip: IpAddr) -> Self {
@@ -174,7 +180,22 @@ impl ConnectionState {
             is_official_npc: false,
             admin_eligible: false,
             is_admin: false,
+            last_party_positions_poll: None,
         }
+    }
+
+    /// True at most once per clamp window; a clamped poll does not refresh
+    /// the window, so spam cannot starve refreshes.
+    fn party_positions_poll_due(&mut self) -> bool {
+        let now = Instant::now();
+        if self
+            .last_party_positions_poll
+            .is_some_and(|last| now.duration_since(last) < PARTY_POSITIONS_MIN_INTERVAL)
+        {
+            return false;
+        }
+        self.last_party_positions_poll = Some(now);
+        true
     }
 
     fn require_auth(&self, action: &str) -> Result<String, Vec<ServerMessage>> {
@@ -1449,8 +1470,10 @@ async fn handle_client_message(
         }
 
         ClientMessage::RequestPartyPositions => {
-            if let Some(id) = &state.player_id {
-                game_state.send_party_positions(id).await;
+            if let Some(id) = state.player_id {
+                if state.party_positions_poll_due() {
+                    game_state.send_party_positions(&id).await;
+                }
             }
         }
 
@@ -1634,6 +1657,16 @@ mod tests {
 
         assert!(is_auth_error(&responses));
         assert!(state.must_close);
+    }
+
+    #[test]
+    fn party_positions_poll_clamped_inside_window() {
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        assert!(state.party_positions_poll_due());
+        // Inside the window: dropped, and the drop must not refresh it.
+        assert!(!state.party_positions_poll_due());
+        state.last_party_positions_poll = Some(Instant::now() - PARTY_POSITIONS_MIN_INTERVAL);
+        assert!(state.party_positions_poll_due());
     }
 
     #[test]

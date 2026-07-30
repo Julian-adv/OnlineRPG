@@ -1,14 +1,10 @@
 use crate::types::{PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{PartyMember, PartyMemberPosition, PARTY_INVITE_TTL};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tracing::info;
 
 pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
-
-/// Polls inside this window are dropped; the web map polls every 3s, well
-/// above it.
-const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Mirrors auth's character-name cap; anything longer cannot be a real name,
 /// and rejecting it early keeps oversized input out of the echoed failure.
@@ -34,9 +30,6 @@ pub(crate) struct Parties {
     /// (inviter, invitee) → pending invite. Swept lazily on the invite paths
     /// and purged with the player, so it stays tiny without its own tick.
     invites: HashMap<(PlayerId, PlayerId), PendingInvite>,
-    /// Last answered positions poll per player (spam clamp); purged with the
-    /// player.
-    position_polls: HashMap<PlayerId, Instant>,
 }
 
 pub(crate) struct PendingInvite {
@@ -393,7 +386,6 @@ impl super::GameState {
             parties
                 .invites
                 .retain(|(from, to), _| from != player_id && to != player_id);
-            parties.position_polls.remove(player_id);
         }
         self.remove_party_member(player_id).await;
     }
@@ -472,22 +464,14 @@ impl super::GameState {
     }
 
     /// Answer a positions poll: where the sender's other members are.
+    /// Rate-limited per connection before this is called.
     pub async fn send_party_positions(&self, player_id: &PlayerId) {
         let member_ids = {
-            let mut parties = self.parties.write().await;
-            let now = Instant::now();
-            let clamped = parties
-                .position_polls
-                .get(player_id)
-                .is_some_and(|last| now.duration_since(*last) < PARTY_POSITIONS_MIN_INTERVAL);
-            if clamped {
-                return;
-            }
-            parties.position_polls.insert(*player_id, now);
-            match parties.party_of(player_id) {
-                Some(party) => party.members.clone(),
-                None => Vec::new(),
-            }
+            let parties = self.parties.read().await;
+            parties
+                .party_of(player_id)
+                .map(|party| party.members.clone())
+                .unwrap_or_default()
         };
         let members: Vec<PartyMemberPosition> = {
             let players = self.players.read().await;

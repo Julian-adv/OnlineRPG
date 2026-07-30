@@ -54,6 +54,7 @@ import {
   partyRoster,
   partyPositions,
   resetPartyPositions,
+  resetPartyStores,
   pendingPartyInvites,
   MAX_PENDING_PARTY_INVITES,
   type PartyMemberPositionEntry,
@@ -493,9 +494,7 @@ export function handleServerMessage(
       // A join snapshot starts a fresh session: any party membership died
       // with the old one (in-memory, disconnect = leave), and the server
       // cannot re-send what no longer exists.
-      partyRoster.set(null)
-      resetPartyPositions()
-      pendingPartyInvites.set([])
+      resetPartyStores()
       gameStore.update((state) => {
         state.otherPlayers.clear()
         remotePlayerManager.reset()

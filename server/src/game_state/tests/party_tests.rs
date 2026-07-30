@@ -599,23 +599,6 @@ async fn positions_report_dungeon_floor() {
 }
 
 #[tokio::test]
-async fn positions_poll_inside_clamp_window_is_dropped() {
-    let game_state = make_test_game_state("party_positions_clamp");
-    let mut alice_rx = add(&game_state, "alice", 0.0).await;
-    add(&game_state, "bob", 5.0).await;
-    form_party(&game_state, "alice", "bob").await;
-    drain(&mut alice_rx);
-
-    game_state.send_party_positions(&pid("alice")).await;
-    assert!(matches!(
-        alice_rx.try_recv(),
-        Ok(ServerMessage::PartyPositions { .. })
-    ));
-    game_state.send_party_positions(&pid("alice")).await;
-    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
-}
-
-#[tokio::test]
 async fn party_chat_command_invites_and_reports() {
     let game_state = make_test_game_state("party_command");
     let auth = make_test_auth("party_command");
