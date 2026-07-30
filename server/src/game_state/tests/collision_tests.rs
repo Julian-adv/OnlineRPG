@@ -291,3 +291,66 @@ async fn npc_movement_is_exempt_from_collision() {
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 6.5));
 }
+
+mod init_passability_boot {
+    use super::*;
+    use crate::terrain::io::TerrainIO;
+    use crate::test_util::unique_temp_dir;
+
+    fn write_objects_file(terrain_dir: &std::path::Path, contents: &str) {
+        let path = onlinerpg_terrain::coords::object_path(terrain_dir, 0, 0);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_terrain_dir_boots_with_empty_furniture() {
+        let game_state = make_test_game_state("passability_missing_dir");
+        game_state
+            .init_passability(&TerrainIO::new(unique_temp_dir("passability_missing")))
+            .await
+            .expect("missing terrain dir is a verified empty world");
+    }
+
+    #[tokio::test]
+    async fn loads_solid_furniture_from_region_objects() {
+        let game_state = make_test_game_state("passability_load_objects");
+        let terrain_dir = unique_temp_dir("passability_objects");
+        write_objects_file(
+            &terrain_dir,
+            r#"{"placements":[{"type":"table","x":0.5,"y":0.0,"z":5.5}]}"#,
+        );
+        let result = game_state
+            .init_passability(&TerrainIO::new(terrain_dir.clone()))
+            .await;
+        std::fs::remove_dir_all(&terrain_dir).unwrap();
+        result.expect("valid region objects load");
+        let key = onlinerpg_shared::furniture::region_cache_key(0, 0);
+        assert!(game_state.passability_read().contains_key(&key));
+    }
+
+    #[tokio::test]
+    async fn corrupt_region_objects_file_refuses_boot() {
+        let game_state = make_test_game_state("passability_corrupt_objects");
+        let terrain_dir = unique_temp_dir("passability_corrupt");
+        write_objects_file(&terrain_dir, "{ not json");
+        let result = game_state
+            .init_passability(&TerrainIO::new(terrain_dir.clone()))
+            .await;
+        std::fs::remove_dir_all(&terrain_dir).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn unlistable_objects_dir_refuses_boot() {
+        let game_state = make_test_game_state("passability_unlistable_objects");
+        let terrain_dir = unique_temp_dir("passability_unlistable");
+        std::fs::create_dir_all(&terrain_dir).unwrap();
+        std::fs::write(terrain_dir.join("objects"), "not a directory").unwrap();
+        let result = game_state
+            .init_passability(&TerrainIO::new(terrain_dir.clone()))
+            .await;
+        std::fs::remove_dir_all(&terrain_dir).unwrap();
+        assert!(result.is_err());
+    }
+}

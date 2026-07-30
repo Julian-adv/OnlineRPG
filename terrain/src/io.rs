@@ -385,10 +385,12 @@ impl TerrainIO {
         Ok(())
     }
 
-    /// List all region coordinates that have zone files.
-    pub async fn list_zone_regions(&self) -> std::io::Result<Vec<(i32, i32)>> {
-        let zones_dir = self.base_dir.join("zones");
-        let mut entries = match fs::read_dir(&zones_dir).await {
+    /// List region coordinates with a `r{rx}_{rz}.json` file under `subdir`.
+    /// A `.json` file whose name doesn't parse is an error — skipping it would
+    /// silently hide authored data from fail-closed boot loaders.
+    async fn list_region_files(&self, subdir: &str) -> std::io::Result<Vec<(i32, i32)>> {
+        let dir = self.base_dir.join(subdir);
+        let mut entries = match fs::read_dir(&dir).await {
             Ok(e) => e,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
             Err(e) => return Err(e),
@@ -397,31 +399,53 @@ impl TerrainIO {
         while let Some(entry) = entries.next_entry().await? {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            // Parse "r+00_+00.json" pattern
-            if let Some(stem) = name.strip_suffix(".json") {
-                if let Some(rest) = stem.strip_prefix('r') {
-                    if let Some((rx_str, rz_str)) = rest.split_once('_') {
-                        if let (Ok(rx), Ok(rz)) = (rx_str.parse::<i32>(), rz_str.parse::<i32>()) {
-                            regions.push((rx, rz));
-                        }
-                    }
+            let Some(stem) = name.strip_suffix(".json") else {
+                continue;
+            };
+            let coords = stem
+                .strip_prefix('r')
+                .and_then(|rest| rest.split_once('_'))
+                .and_then(|(rx, rz)| Some((rx.parse::<i32>().ok()?, rz.parse::<i32>().ok()?)));
+            match coords {
+                Some(c) => regions.push(c),
+                None => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("region file with unparseable name: {:?}", entry.path()),
+                    ))
                 }
             }
         }
         Ok(regions)
     }
 
-    /// Read zone data for a region. Returns empty JSON object if file not found.
-    pub async fn read_zone(&self, rx: i32, rz: i32) -> std::io::Result<serde_json::Value> {
-        let path = coords::zone_path(&self.base_dir, rx, rz);
+    /// List all region coordinates that have zone files.
+    pub async fn list_zone_regions(&self) -> std::io::Result<Vec<(i32, i32)>> {
+        self.list_region_files("zones").await
+    }
+
+    /// List all region coordinates that have object files.
+    pub async fn list_object_regions(&self) -> std::io::Result<Vec<(i32, i32)>> {
+        self.list_region_files("objects").await
+    }
+
+    /// Read a region JSON file; a missing file is an empty object. Errors name
+    /// the file so boot loaders can propagate them without adding context.
+    async fn read_region_json(path: PathBuf) -> std::io::Result<serde_json::Value> {
         match fs::read_to_string(&path).await {
-            Ok(json_str) => serde_json::from_str(&json_str)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            Ok(json_str) => serde_json::from_str(&json_str).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{path:?}: {e}"))
+            }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Ok(serde_json::Value::Object(Default::default()))
             }
-            Err(e) => Err(e),
+            Err(e) => Err(std::io::Error::new(e.kind(), format!("{path:?}: {e}"))),
         }
+    }
+
+    /// Read zone data for a region. Returns empty JSON object if file not found.
+    pub async fn read_zone(&self, rx: i32, rz: i32) -> std::io::Result<serde_json::Value> {
+        Self::read_region_json(coords::zone_path(&self.base_dir, rx, rz)).await
     }
 
     /// Write zone data for a region.
@@ -439,15 +463,7 @@ impl TerrainIO {
 
     /// Read object data for a region. Returns empty JSON object if file not found.
     pub async fn read_object(&self, rx: i32, rz: i32) -> std::io::Result<serde_json::Value> {
-        let path = coords::object_path(&self.base_dir, rx, rz);
-        match fs::read_to_string(&path).await {
-            Ok(json_str) => serde_json::from_str(&json_str)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(serde_json::Value::Object(Default::default()))
-            }
-            Err(e) => Err(e),
-        }
+        Self::read_region_json(coords::object_path(&self.base_dir, rx, rz)).await
     }
 
     /// Write object data for a region.

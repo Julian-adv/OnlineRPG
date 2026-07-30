@@ -5,7 +5,7 @@ use onlinerpg_shared::world::{WORLD_MAX_X, WORLD_MIN_X};
 use onlinerpg_terrain::io::atomic_write;
 use std::path::PathBuf;
 use tokio::fs;
-use tracing::{error, info};
+use tracing::info;
 
 const MIN_ROOM_SIZE: u8 = 3;
 const MAX_ROOM_SIZE: u8 = 6;
@@ -271,43 +271,22 @@ impl HousingIO {
     }
 
     /// Every house across all chunk directories (boot-time cache build).
-    pub async fn read_all_houses(&self) -> Vec<HouseData> {
+    /// Failures propagate — a silently dropped house has no collision.
+    pub async fn read_all_houses(&self) -> std::io::Result<Vec<HouseData>> {
         let mut entries = match fs::read_dir(&self.base_dir).await {
             Ok(e) => e,
-            Err(e) => {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    error!("Failed to read housing base dir: {}", e);
-                }
-                return Vec::new();
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
         };
 
         let mut houses = Vec::new();
-        loop {
-            let entry = match entries.next_entry().await {
-                Ok(Some(entry)) => entry,
-                Ok(None) => break,
-                Err(e) => {
-                    error!("Failed to enumerate housing base dir: {}", e);
-                    break;
-                }
-            };
-            let is_dir = match entry.file_type().await {
-                Ok(file_type) => file_type.is_dir(),
-                Err(e) => {
-                    error!("Failed to inspect housing entry {:?}: {}", entry.path(), e);
-                    continue;
-                }
-            };
-            if !is_dir {
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_dir() {
                 continue;
             }
-            match Self::read_house_dir(entry.path()).await {
-                Ok(mut chunk) => houses.append(&mut chunk),
-                Err(e) => error!("Failed to read housing dir {:?}: {}", entry.path(), e),
-            }
+            houses.extend(Self::read_house_dir(entry.path()).await?);
         }
-        houses
+        Ok(houses)
     }
 
     async fn read_house_dir(dir: PathBuf) -> std::io::Result<Vec<HouseData>> {
@@ -321,17 +300,25 @@ impl HousingIO {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "json") {
-                match fs::read_to_string(&path).await {
-                    Ok(content) => match serde_json::from_str::<HouseData>(&content) {
-                        Ok(house) => houses.push(house),
-                        Err(e) => error!("Failed to parse house file {:?}: {}", path, e),
-                    },
-                    Err(e) => error!("Failed to read house file {:?}: {}", path, e),
-                }
+                houses.push(Self::read_house_file(&path).await?);
             }
         }
 
         Ok(houses)
+    }
+
+    /// A corrupt file is an error, never a missing house — laundering it into
+    /// "not found" would silently drop the house's collision and doors.
+    async fn read_house_file(path: &std::path::Path) -> std::io::Result<HouseData> {
+        let content = fs::read_to_string(path)
+            .await
+            .map_err(|e| std::io::Error::new(e.kind(), format!("{path:?}: {e}")))?;
+        serde_json::from_str(&content).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("bad house file {path:?}: {e}"),
+            )
+        })
     }
 
     /// Save a house to disk. Creates chunk directory if needed.
@@ -365,11 +352,8 @@ impl HousingIO {
     pub async fn find_house(&self, house_id: &str) -> std::io::Result<Option<HouseData>> {
         if let Some((cx, cz)) = parse_chunk_from_id(house_id) {
             let path = self.house_path(cx, cz, house_id)?;
-            match fs::read_to_string(&path).await {
-                Ok(content) => match serde_json::from_str::<HouseData>(&content) {
-                    Ok(house) => return Ok(Some(house)),
-                    Err(e) => error!("Failed to parse house {:?}: {}", path, e),
-                },
+            match Self::read_house_file(&path).await {
+                Ok(house) => return Ok(Some(house)),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
             }
@@ -497,5 +481,42 @@ mod tests {
         assert_eq!(stored.id, house.id);
         assert_eq!(stored.rooms.len(), 1);
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn read_all_houses_distinguishes_empty_from_corrupt() {
+        let missing = HousingIO::new(unique_temp_dir("housing_all_missing"));
+        assert!(missing
+            .read_all_houses()
+            .await
+            .expect("missing base dir is empty")
+            .is_empty());
+
+        let dir = unique_temp_dir("housing_all");
+        let io = HousingIO::new(dir.clone());
+        io.write_house(&house_at(10.0, 10.0, vec![room_at(0, 0)]))
+            .await
+            .unwrap();
+        assert_eq!(io.read_all_houses().await.expect("valid house").len(), 1);
+
+        let chunk_dir = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.is_dir())
+            .unwrap();
+        std::fs::write(chunk_dir.join("r+00_+00_9.json"), "{ corrupt").unwrap();
+        let result = io.read_all_houses().await;
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_all_houses_fails_on_unlistable_base_dir() {
+        let dir = unique_temp_dir("housing_all_file");
+        std::fs::write(&dir, "not a directory").unwrap();
+        let io = HousingIO::new(dir.clone());
+        let result = io.read_all_houses().await;
+        std::fs::remove_file(&dir).unwrap();
+        assert!(result.is_err());
     }
 }

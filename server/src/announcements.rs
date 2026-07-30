@@ -58,21 +58,27 @@ impl AnnouncementStore {
         let _ = self.body().await;
     }
 
+    /// Announcements are login-screen notices, not game state, so a read
+    /// failure deliberately serves an empty list instead of refusing startup.
+    /// The failure is not cached: the next request retries the load.
     async fn body(&self) -> Bytes {
         let dir = self.dir.clone();
         self.body
-            .get_or_init(|| async move {
+            .get_or_try_init(|| async move {
                 let list = tokio::task::spawn_blocking(move || load_announcements(&dir))
                     .await
-                    .unwrap_or_else(|e| {
-                        error!("announcement load task panicked: {e}");
-                        Vec::new()
-                    });
+                    .map_err(|e| {
+                        std::io::Error::other(format!("announcement load task panicked: {e}"))
+                    })??;
                 let json = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
-                Bytes::from(json)
+                Ok::<_, std::io::Error>(Bytes::from(json))
             })
             .await
-            .clone()
+            .cloned()
+            .unwrap_or_else(|e| {
+                error!("Failed to load announcements, serving none: {e}");
+                Bytes::from_static(b"[]")
+            })
     }
 }
 
@@ -87,20 +93,18 @@ async fn list_announcements(State(store): State<Arc<AnnouncementStore>>) -> Resp
     ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
-fn load_announcements(dir: &Path) -> Vec<Announcement> {
+/// Individual unreadable files are skipped so one bad file doesn't hide the
+/// rest; an unlistable dir is an error.
+fn load_announcements(dir: &Path) -> std::io::Result<Vec<Announcement>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) => {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                warn!("Failed to read announcements dir {}: {}", dir.display(), e);
-            }
-            return Vec::new();
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
     };
 
     let mut out = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for entry in entries {
+        let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
@@ -125,7 +129,7 @@ fn load_announcements(dir: &Path) -> Vec<Announcement> {
 
     out.sort_by(newest_first);
     out.truncate(MAX_ANNOUNCEMENTS);
-    out
+    Ok(out)
 }
 
 /// Id tiebreak keeps the order stable across scans.
@@ -449,6 +453,34 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("removed temp directory");
         assert_eq!(first, second);
         assert!(String::from_utf8_lossy(&second).contains("first body"));
+    }
+
+    #[tokio::test]
+    async fn unlistable_dir_serves_empty_without_caching_the_failure() {
+        let base = crate::test_util::unique_temp_dir("ann_fail");
+        std::fs::create_dir(&base).expect("created temp directory");
+        let dir = base.join("announcements");
+        std::fs::write(&dir, "not a directory").expect("wrote blocking file");
+        let store = AnnouncementStore::new(dir.clone());
+
+        store.warm().await;
+        let failed = store.body().await;
+        std::fs::remove_file(&dir).expect("removed blocking file");
+        std::fs::create_dir(&dir).expect("created announcements dir");
+        std::fs::write(dir.join("2026-07-30-notice.md"), "hello").expect("wrote announcement");
+        let recovered = store.body().await;
+
+        std::fs::remove_dir_all(base).expect("removed temp directory");
+        assert_eq!(&failed[..], b"[]");
+        assert!(String::from_utf8_lossy(&recovered).contains("hello"));
+    }
+
+    #[test]
+    fn missing_dir_loads_empty() {
+        let dir = crate::test_util::unique_temp_dir("ann_none");
+        assert!(load_announcements(&dir)
+            .expect("missing dir is empty")
+            .is_empty());
     }
 
     #[test]

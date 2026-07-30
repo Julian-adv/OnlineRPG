@@ -6,8 +6,7 @@
 //! shut — `interior_doors` derives the same door list (and ids) the client
 //! renders, and every toggle rebuilds the floor's cells.
 
-use std::path::Path;
-
+use crate::terrain::io::TerrainIO;
 use onlinerpg_shared::dungeon::{
     dungeon_cache_key, dungeon_passability, floor_cells, generate_dungeon_for, set_floor_cells,
 };
@@ -16,7 +15,7 @@ use onlinerpg_shared::housing::HouseData;
 use onlinerpg_shared::pathfinding;
 use onlinerpg_shared::{WORLD_MAX_X, WORLD_MIN_X, WORLD_WIDTH_X};
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Region object file shape (`data/terrain/objects/r{rx}_{rz}.json`).
 #[derive(Deserialize)]
@@ -148,13 +147,14 @@ impl super::GameState {
     }
 
     /// Build the boot-time cache: every house, every region's solid
-    /// furniture and every dungeon layout.
-    pub async fn init_passability(&self, terrain_dir: &str) {
-        let houses = self.housing_io.read_all_houses().await;
+    /// furniture and every dungeon layout. Read failures propagate — an entry
+    /// silently missing from this cache is a wall players can walk through.
+    pub async fn init_passability(&self, terrain_io: &TerrainIO) -> std::io::Result<()> {
+        let houses = self.housing_io.read_all_houses().await?;
         for house in &houses {
             self.passability_add_house(house).await;
         }
-        let regions = self.load_region_furniture(terrain_dir).await;
+        let regions = self.load_region_furniture(terrain_io).await?;
         let mut dungeons = 0usize;
         for def in self.dungeon_defs.all() {
             let layouts = generate_dungeon_for(&def.id);
@@ -172,52 +172,24 @@ impl super::GameState {
             regions,
             dungeons
         );
+        Ok(())
     }
 
-    async fn load_region_furniture(&self, terrain_dir: &str) -> usize {
-        let dir = Path::new(terrain_dir).join("objects");
-        let mut entries = match tokio::fs::read_dir(&dir).await {
-            Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
-            Err(e) => {
-                warn!("Failed to read region objects dir {:?}: {e}", dir);
-                return 0;
-            }
-        };
+    async fn load_region_furniture(&self, terrain_io: &TerrainIO) -> std::io::Result<usize> {
         let mut count = 0;
-        loop {
-            let entry = match entries.next_entry().await {
-                Ok(Some(entry)) => entry,
-                Ok(None) => break,
-                Err(e) => {
-                    warn!("Failed to enumerate region objects: {e}");
-                    break;
-                }
-            };
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "json") {
-                continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            let Some((rx, rz)) = crate::housing::parse_chunk_from_id(stem) else {
-                warn!("Skipping region objects file with odd name: {:?}", path);
-                continue;
-            };
-            match tokio::fs::read_to_string(&path).await {
-                Ok(content) => match serde_json::from_str::<RegionObjects>(&content) {
-                    Ok(objs) => {
-                        if self.sync_region_furniture(rx, rz, &objs.placements) {
-                            count += 1;
-                        }
-                    }
-                    Err(e) => warn!("Bad region objects file {:?}: {}", path, e),
-                },
-                Err(e) => warn!("Failed to read region objects {:?}: {}", path, e),
+        for (rx, rz) in terrain_io.list_object_regions().await? {
+            let json = terrain_io.read_object(rx, rz).await?;
+            let objs = serde_json::from_value::<RegionObjects>(json).map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("bad region objects r{rx:+03}_{rz:+03}: {e}"),
+                )
+            })?;
+            if self.sync_region_furniture(rx, rz, &objs.placements) {
+                count += 1;
             }
         }
-        count
+        Ok(count)
     }
 
     /// Insert or replace a house's cache entry: base grids plus the door

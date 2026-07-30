@@ -331,7 +331,13 @@ async fn main() -> ExitCode {
 
     // Load no-spawn zones (towns) from per-region zone files. Monster spawn
     // areas come from world.json `ambientSpawns`, not per-region rectangles.
-    let no_spawn_zones = world_config::load_no_spawn_zones_from_regions(&terrain_io).await;
+    let no_spawn_zones = match world_config::load_no_spawn_zones_from_regions(&terrain_io).await {
+        Ok(zones) => zones,
+        Err(err) => {
+            error!("Failed to load no-spawn zones; refusing to start: {}", err);
+            return ExitCode::FAILURE;
+        }
+    };
 
     // Extra TerrainIO handles on the same directory: the samplers want
     // ownership and TerrainIO is only a path handle. Fishing's water check
@@ -357,7 +363,13 @@ async fn main() -> ExitCode {
     ));
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.
-    game_state.init_passability(&args.terrain_dir).await;
+    if let Err(err) = game_state.init_passability(&terrain_io).await {
+        error!(
+            "Failed to build passability cache; refusing to start: {}",
+            err
+        );
+        return ExitCode::FAILURE;
+    }
     // Stops the listeners, the REST API and every periodic task; connections
     // outlive it so players still see the shutdown notice.
     let (drain_shutdown_tx, drain_shutdown) = watch::channel(());

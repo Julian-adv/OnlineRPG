@@ -2,7 +2,7 @@ use crate::terrain::io::TerrainIO;
 use onlinerpg_shared::NoSpawnZone;
 use serde::Deserialize;
 use std::sync::LazyLock;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Debug, Deserialize)]
 pub struct WorldConfig {
@@ -82,31 +82,26 @@ pub fn log_world_config() {
 /// Load no-spawn zones (towns, safe areas) from all per-region zone files.
 /// Monster spawn areas are no longer authored per-region — see `ambientSpawns`
 /// in world.json.
-pub async fn load_no_spawn_zones_from_regions(terrain_io: &TerrainIO) -> Vec<NoSpawnZone> {
+///
+/// Read or parse failures propagate rather than defaulting to no zones —
+/// booting without them would let monsters spawn inside towns.
+pub async fn load_no_spawn_zones_from_regions(
+    terrain_io: &TerrainIO,
+) -> std::io::Result<Vec<NoSpawnZone>> {
     let mut no_spawn_zones = Vec::new();
 
-    let regions = match terrain_io.list_zone_regions().await {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("Failed to list zone regions: {e}");
-            return no_spawn_zones;
-        }
-    };
-
-    for (rx, rz) in regions {
-        let json = match terrain_io.read_zone(rx, rz).await {
-            Ok(j) => j,
-            Err(e) => {
-                warn!("Failed to read zone r{rx:+03}_{rz:+03}: {e}");
-                continue;
-            }
-        };
+    for (rx, rz) in terrain_io.list_zone_regions().await? {
+        let json = terrain_io.read_zone(rx, rz).await?;
 
         if let Some(zones) = json.get("noSpawnZones") {
-            match serde_json::from_value::<Vec<NoSpawnZone>>(zones.clone()) {
-                Ok(parsed) => no_spawn_zones.extend(parsed),
-                Err(e) => warn!("Bad noSpawnZones in r{rx:+03}_{rz:+03}: {e}"),
-            }
+            let parsed =
+                serde_json::from_value::<Vec<NoSpawnZone>>(zones.clone()).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("bad noSpawnZones in r{rx:+03}_{rz:+03}: {e}"),
+                    )
+                })?;
+            no_spawn_zones.extend(parsed);
         }
     }
 
@@ -114,5 +109,80 @@ pub async fn load_no_spawn_zones_from_regions(terrain_io: &TerrainIO) -> Vec<NoS
         "Loaded {} no-spawn zones from region files",
         no_spawn_zones.len()
     );
-    no_spawn_zones
+    Ok(no_spawn_zones)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::unique_temp_dir;
+
+    fn write_zone_file(base: &std::path::Path, contents: &str) {
+        let path = onlinerpg_terrain::coords::zone_path(base, 0, 0);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_zones_dir_loads_empty() {
+        let io = TerrainIO::new(unique_temp_dir("nsz_missing"));
+        assert!(load_no_spawn_zones_from_regions(&io)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn loads_zones_from_region_file() {
+        let base = unique_temp_dir("nsz_ok");
+        write_zone_file(
+            &base,
+            r#"{"noSpawnZones":[{"minX":0.0,"minZ":0.0,"maxX":5.0,"maxZ":5.0}]}"#,
+        );
+        let zones = load_no_spawn_zones_from_regions(&TerrainIO::new(base.clone()))
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+        assert_eq!(zones.len(), 1);
+        assert!(zones[0].contains(1.0, 1.0));
+    }
+
+    #[tokio::test]
+    async fn unlistable_zones_dir_is_an_error() {
+        let base = unique_temp_dir("nsz_unlistable");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("zones"), "not a directory").unwrap();
+        let result = load_no_spawn_zones_from_regions(&TerrainIO::new(base.clone())).await;
+        std::fs::remove_dir_all(base).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn misnamed_zone_file_is_an_error() {
+        let base = unique_temp_dir("nsz_misnamed");
+        let zones = base.join("zones");
+        std::fs::create_dir_all(&zones).unwrap();
+        std::fs::write(zones.join("r+00-+00.json"), "{}").unwrap();
+        let result = load_no_spawn_zones_from_regions(&TerrainIO::new(base.clone())).await;
+        std::fs::remove_dir_all(base).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn corrupt_zone_file_is_an_error() {
+        let base = unique_temp_dir("nsz_corrupt");
+        write_zone_file(&base, "{ not json");
+        let result = load_no_spawn_zones_from_regions(&TerrainIO::new(base.clone())).await;
+        std::fs::remove_dir_all(base).unwrap();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn bad_no_spawn_zone_shape_is_an_error() {
+        let base = unique_temp_dir("nsz_bad_shape");
+        write_zone_file(&base, r#"{"noSpawnZones":[{"minX":"oops"}]}"#);
+        let result = load_no_spawn_zones_from_regions(&TerrainIO::new(base.clone())).await;
+        std::fs::remove_dir_all(base).unwrap();
+        assert!(result.is_err());
+    }
 }

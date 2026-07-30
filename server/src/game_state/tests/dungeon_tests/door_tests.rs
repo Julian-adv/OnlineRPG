@@ -56,7 +56,12 @@ async fn add_delver(game_state: &GameState, name: &str, at: Position, depth: u8)
 async fn cross_floor_dungeon_door_toggle_is_rejected() {
     let game_state = make_test_game_state("dungeon_door_cross_floor");
     let (entrance, depth, door) = first_dungeon_door(&game_state);
-    game_state.init_passability("nonexistent_terrain_dir").await;
+    game_state
+        .init_passability(&crate::terrain::io::TerrainIO::new(
+            "nonexistent_terrain_dir".into(),
+        ))
+        .await
+        .expect("init passability");
     let griefer_id = pid("surface_griefer");
     game_state
         .add_player(make_player("surface_griefer", entrance.x, entrance.z))
@@ -413,7 +418,12 @@ async fn dungeon_door_toggle_delivery_gates_radius_and_floor() {
 async fn dungeon_door_blocks_movement_until_opened() {
     let game_state = make_test_game_state("dungeon_door_block");
     let (entrance, depth, door) = first_dungeon_door(&game_state);
-    game_state.init_passability("nonexistent_terrain_dir").await;
+    game_state
+        .init_passability(&crate::terrain::io::TerrainIO::new(
+            "nonexistent_terrain_dir".into(),
+        ))
+        .await
+        .expect("init passability");
 
     let (from, to) = door_side_positions(&entrance, depth, &door, false);
     let player_id = add_delver(&game_state, "delver", from, depth).await;
