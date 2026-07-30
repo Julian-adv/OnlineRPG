@@ -1,22 +1,20 @@
 //! Generation-swept tile cache shared by the height and water samplers.
-//!
-//! Reads stamp each entry with the cache's current generation (a relaxed
-//! atomic store under the read lock, so concurrent sampling stays on the
-//! read path). `sweep_stale` evicts entries not touched since the previous
-//! sweep and advances the generation — callers running it on a period get
-//! an effective idle TTL of one to two periods, with no clock to mock in
-//! tests. A capacity fuse on insert bounds memory even between sweeps.
+//! Reads stamp entries with the current generation under the read lock;
+//! `sweep_stale` evicts entries untouched since the previous sweep, giving
+//! an idle TTL of one to two periods. A capacity fuse bounds inserts.
 
+use std::collections::hash_map::Entry as MapEntry;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use tokio::sync::{RwLock, RwLockReadGuard};
 
-/// Capacity fuse per sampler, in tiles. Sized well above the working set a
-/// full server implies (players cluster; a 5k-CCU worst case touches a few
-/// thousand tiles between sweeps) so it only trips on pathological access —
-/// tripping it is a sizing signal, not normal operation, hence the warn.
+/// Well above any live working set; tripping it is a sizing signal.
 pub(crate) const TILE_CACHE_CAPACITY: usize = 16_384;
+
+/// Sweep cadence the idle TTL and `TILE_CACHE_CAPACITY` are sized against.
+pub const TILE_CACHE_SWEEP_PERIOD: Duration = Duration::from_secs(300);
 
 struct Entry<V> {
     value: V,
@@ -27,20 +25,21 @@ pub(crate) struct TileCache<V> {
     map: RwLock<HashMap<(i32, i32), Entry<V>>>,
     generation: AtomicU64,
     capacity: usize,
+    fuse_warned: AtomicBool,
 }
 
 pub(crate) struct TileCacheReadGuard<'a, V> {
     map: RwLockReadGuard<'a, HashMap<(i32, i32), Entry<V>>>,
-    generation: &'a AtomicU64,
+    generation: u64,
 }
 
 impl<V> TileCacheReadGuard<'_, V> {
     /// Look up a tile, marking it live for the current sweep period.
     pub fn get(&self, key: &(i32, i32)) -> Option<&V> {
         let entry = self.map.get(key)?;
-        entry
-            .generation
-            .store(self.generation.load(Ordering::Relaxed), Ordering::Relaxed);
+        if entry.generation.load(Ordering::Relaxed) != self.generation {
+            entry.generation.store(self.generation, Ordering::Relaxed);
+        }
         Some(&entry.value)
     }
 }
@@ -51,54 +50,52 @@ impl<V> TileCache<V> {
             map: RwLock::new(HashMap::new()),
             generation: AtomicU64::new(0),
             capacity,
+            fuse_warned: AtomicBool::new(false),
         }
     }
 
     /// Snapshot for sampling; lookups through the guard touch entries.
     pub async fn read(&self) -> TileCacheReadGuard<'_, V> {
+        let map = self.map.read().await;
         TileCacheReadGuard {
-            map: self.map.read().await,
-            generation: &self.generation,
+            map,
+            generation: self.generation.load(Ordering::Relaxed),
         }
     }
 
-    /// True when the tile is cached; counts as a touch.
+    /// True when the tile is cached; does not touch the entry.
     pub async fn contains(&self, key: &(i32, i32)) -> bool {
-        self.read().await.get(key).is_some()
+        self.map.read().await.contains_key(key)
     }
 
-    /// Insert unless a concurrent loader won the race (first value sticks,
-    /// mirroring the samplers' double-checked load). Trips the capacity fuse
-    /// afterwards, evicting stalest-generation entries first.
+    /// Insert unless a concurrent loader won the race (first value sticks).
+    /// Over capacity, evicts the stalest-generation entry.
     pub async fn insert_if_absent(&self, key: (i32, i32), value: V) {
         let mut map = self.map.write().await;
-        let generation = self.generation.load(Ordering::Relaxed);
-        map.entry(key).or_insert(Entry {
-            value,
-            generation: AtomicU64::new(generation),
-        });
+        match map.entry(key) {
+            MapEntry::Occupied(_) => return,
+            MapEntry::Vacant(slot) => slot.insert(Entry {
+                value,
+                generation: AtomicU64::new(self.generation.load(Ordering::Relaxed)),
+            }),
+        };
 
         if map.len() <= self.capacity {
             return;
         }
-        let excess = map.len() - self.capacity;
-        let mut evictable: Vec<((i32, i32), u64)> = map
+        let victim = map
             .iter()
-            .map(|(k, e)| (*k, e.generation.load(Ordering::Relaxed)))
-            .collect();
-        evictable.sort_by_key(|&(_, gen)| gen);
-        for (k, _) in evictable.into_iter().take(excess) {
+            .min_by_key(|(_, e)| e.generation.load(Ordering::Relaxed))
+            .map(|(k, _)| *k);
+        if let Some(k) = victim {
             map.remove(&k);
         }
-        tracing::warn!(
-            "tile cache over capacity ({} tiles): evicted {excess} before their sweep — \
-             consider raising TILE_CACHE_CAPACITY or sweeping more often",
-            self.capacity
-        );
-    }
-
-    pub async fn remove(&self, key: &(i32, i32)) {
-        self.map.write().await.remove(key);
+        if !self.fuse_warned.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "tile cache over capacity ({} tiles): evicting stalest tiles",
+                self.capacity
+            );
+        }
     }
 
     /// Evict every tile not touched since the previous sweep and start a new
@@ -109,6 +106,7 @@ impl<V> TileCache<V> {
         let before = map.len();
         map.retain(|_, e| e.generation.load(Ordering::Relaxed) >= current);
         self.generation.store(current + 1, Ordering::Relaxed);
+        self.fuse_warned.store(false, Ordering::Relaxed);
         before - map.len()
     }
 

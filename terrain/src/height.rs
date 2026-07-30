@@ -114,12 +114,15 @@ impl HeightSampler {
     }
 
     /// Ensure a tile's heightmap is loaded into the cache.
-    /// No lock held during I/O; the first concurrent insert wins.
+    /// No lock held during I/O; re-checks before decoding, first insert wins.
     async fn ensure_tile(&self, tx: i32, tz: i32) -> std::io::Result<()> {
         if self.cache.contains(&(tx, tz)).await {
             return Ok(());
         }
         let raw = self.tiles.read_heightmap(tx, tz).await?;
+        if self.cache.contains(&(tx, tz)).await {
+            return Ok(());
+        }
         let heights: Vec<u16> = raw
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
@@ -139,18 +142,12 @@ impl HeightSampler {
         Ok(sample_cached(&cache, world_x, world_z))
     }
 
-    /// Evict a tile from the cache (e.g. when moving far away).
-    pub async fn evict_tile(&self, tx: i32, tz: i32) {
-        self.cache.remove(&(tx, tz)).await;
-    }
-
     /// Number of tiles currently cached.
     pub async fn cached_tile_count(&self) -> usize {
         self.cache.len().await
     }
 
-    /// Evict tiles not sampled since the previous call; run on a period so
-    /// the cache tracks the live working set instead of growing forever.
+    /// Evict tiles not sampled since the previous sweep.
     pub async fn sweep_stale_tiles(&self) -> usize {
         self.cache.sweep_stale().await
     }

@@ -299,6 +299,11 @@ impl GameState {
         &self.no_spawn_zones
     }
 
+    /// Evict terrain tiles idle since the previous sweep from both samplers.
+    pub async fn sweep_terrain_caches(&self) -> usize {
+        self.height_sampler.sweep_stale_tiles().await + self.water_sampler.sweep_stale_tiles().await
+    }
+
     pub fn subscribe(&self) -> GameStateReceiver {
         self.broadcast_tx.subscribe()
     }

@@ -89,11 +89,11 @@ impl WaterSampler {
         if self.cache.contains(&(tx, tz)).await {
             return Ok(());
         }
-        let decoded = self
-            .tiles
-            .read_water_field(tx, tz)
-            .await?
-            .and_then(|raw| Self::decode_surfaces(&raw));
+        let raw = self.tiles.read_water_field(tx, tz).await?;
+        if self.cache.contains(&(tx, tz)).await {
+            return Ok(());
+        }
+        let decoded = raw.and_then(|raw| Self::decode_surfaces(&raw));
         self.cache.insert_if_absent((tx, tz), decoded).await;
         Ok(())
     }
@@ -109,8 +109,7 @@ impl WaterSampler {
         }))
     }
 
-    /// Evict tiles not sampled since the previous call; run on a period so
-    /// the cache tracks the live working set instead of growing forever.
+    /// Evict tiles not sampled since the previous sweep.
     pub async fn sweep_stale_tiles(&self) -> usize {
         self.cache.sweep_stale().await
     }

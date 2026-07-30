@@ -229,14 +229,11 @@ async fn main() -> anyhow::Result<()> {
         &config.terrain_cache,
     ));
 
-    // NPC patrols keep loading tiles; sweep idle ones so the cache tracks
-    // the routes actually in use (same policy as the server).
+    // NPC patrols keep loading tiles; sweep idle ones like the server does.
     let height_sampler_for_sweep = Arc::clone(&height_sampler);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-        interval.tick().await;
         loop {
-            interval.tick().await;
+            tokio::time::sleep(onlinerpg_terrain::TILE_CACHE_SWEEP_PERIOD).await;
             height_sampler_for_sweep.sweep_stale_tiles().await;
         }
     });
