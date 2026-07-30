@@ -27,10 +27,17 @@ const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
 const DEFAULT_SFX_VOLUME = 1
 
+// Node ≥22 exposes a localStorage global whose methods are unusable without
+// --localstorage-file, so feature-test the method, not the object.
+const storage =
+  typeof localStorage !== 'undefined' &&
+  typeof localStorage.getItem === 'function'
+    ? localStorage
+    : null
+
 function loadSfxVolume(): number {
-  if (typeof localStorage === 'undefined') return DEFAULT_SFX_VOLUME
-  const saved = localStorage.getItem(STORAGE_KEY_VOLUME)
-  if (saved !== null) {
+  const saved = storage?.getItem(STORAGE_KEY_VOLUME)
+  if (saved != null) {
     const v = parseFloat(saved)
     if (!isNaN(v)) return Math.max(0, Math.min(1, v))
   }
@@ -39,24 +46,22 @@ function loadSfxVolume(): number {
 
 export const sfxVolume = writable<number>(loadSfxVolume())
 export const sfxMuted = writable<boolean>(
-  typeof localStorage !== 'undefined' &&
-    localStorage.getItem(STORAGE_KEY_MUTED) === 'true'
+  storage?.getItem(STORAGE_KEY_MUTED) === 'true'
 )
 
 let volumeSaveTimer: ReturnType<typeof setTimeout> | undefined
 
 sfxVolume.subscribe((v) => {
-  if (typeof localStorage === 'undefined') return
+  if (!storage) return
   clearTimeout(volumeSaveTimer)
   volumeSaveTimer = setTimeout(
-    () => localStorage.setItem(STORAGE_KEY_VOLUME, String(v)),
+    () => storage.setItem(STORAGE_KEY_VOLUME, String(v)),
     300
   )
 })
 
 sfxMuted.subscribe((m) => {
-  if (typeof localStorage === 'undefined') return
-  localStorage.setItem(STORAGE_KEY_MUTED, String(m))
+  storage?.setItem(STORAGE_KEY_MUTED, String(m))
 })
 
 // Multiplier applied on top of each sound's baseline volume so the Settings
