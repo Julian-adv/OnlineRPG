@@ -2,6 +2,9 @@
 
 Asset source links, generation notes, and production workflows are split by topic.
 
+`.blend` source files were removed from the repo to save LFS bandwidth. They remain
+in LFS history — restore with `git checkout 25b222b1 -- assets/`.
+
 - [Environment](./assets/environment.md)
 - [Characters](./assets/characters.md)
 - [Monsters](./assets/monsters.md)
