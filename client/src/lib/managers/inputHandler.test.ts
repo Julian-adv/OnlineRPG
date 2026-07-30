@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as THREE from 'three'
 
 const MIN_FISHABLE_DEPTH_M = 0.3
+const MAX_CAST_DISTANCE_M = 8
 
 vi.mock('../wasm/onlinerpg_shared', () => ({
   min_fishable_depth_m: () => MIN_FISHABLE_DEPTH_M,
+  max_cast_distance_m: () => MAX_CAST_DISTANCE_M,
 }))
 
 import { inputHandler, type RaycastContext } from './inputHandler'
@@ -110,6 +112,47 @@ describe('processCanvasClick cast-vs-walk', () => {
     )
 
     expect(intent.type).toBe('move_to_ground')
+  })
+
+  it('walks toward water beyond the cast range instead of sending a doomed cast', () => {
+    const intent = inputHandler.processCanvasClick(
+      centerClick(),
+      contextWith({
+        canCastFishing: true,
+        waterSurfaceAt: () => 1.0,
+        playerPosition: { x: MAX_CAST_DISTANCE_M + 1, y: 0, z: 0 },
+      })
+    )
+
+    expect(intent.type).toBe('move_to_ground')
+  })
+
+  it('still casts just inside the maximum range', () => {
+    const intent = inputHandler.processCanvasClick(
+      centerClick(),
+      contextWith({
+        canCastFishing: true,
+        waterSurfaceAt: () => 1.0,
+        // Not exactly MAX: the raycast hit lands within float epsilon of the
+        // origin, which would flip an exact-boundary check either way.
+        playerPosition: { x: MAX_CAST_DISTANCE_M - 0.01, y: 0, z: 0 },
+      })
+    )
+
+    expect(intent.type).toBe('cast_fishing')
+  })
+
+  it('range is measured in XZ, ignoring height difference', () => {
+    const intent = inputHandler.processCanvasClick(
+      centerClick(),
+      contextWith({
+        canCastFishing: true,
+        waterSurfaceAt: () => 1.0,
+        playerPosition: { x: 3, y: 50, z: 4 },
+      })
+    )
+
+    expect(intent.type).toBe('cast_fishing')
   })
 
   it('walks when no water sampler is wired up (dungeon / upper floors)', () => {

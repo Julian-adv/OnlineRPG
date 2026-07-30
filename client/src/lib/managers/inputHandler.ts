@@ -3,7 +3,10 @@ import * as THREE from 'three'
 import { get } from 'svelte/store'
 import { myFishing } from '../stores/fishingStore'
 import { isTypingTarget } from '../utils/dom'
-import { min_fishable_depth_m } from '../wasm/onlinerpg_shared'
+import {
+  max_cast_distance_m,
+  min_fishable_depth_m,
+} from '../wasm/onlinerpg_shared'
 import type { Position } from '../utils/movementUtils'
 import type { WallDirection } from '../utils/house-geometry'
 
@@ -470,10 +473,16 @@ class InputHandler {
         groundHit.point.x,
         groundHit.point.z
       )
+      // Out-of-range water falls through to a walk (mirrors the server's
+      // XZ range check) instead of sending a cast it would reject.
+      const castDx = groundHit.point.x - context.playerPosition.x
+      const castDz = groundHit.point.z - context.playerPosition.z
+      const maxCast = max_cast_distance_m()
       if (
         context.canCastFishing &&
         waterSurface !== undefined &&
-        waterSurface - groundHit.point.y > min_fishable_depth_m()
+        waterSurface - groundHit.point.y > min_fishable_depth_m() &&
+        castDx * castDx + castDz * castDz <= maxCast * maxCast
       ) {
         return {
           type: 'cast_fishing',
