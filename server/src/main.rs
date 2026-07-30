@@ -34,6 +34,7 @@ use housing::routes::housing_router;
 use housing::HousingIO;
 use npc_schedule::routes::npc_router;
 use npc_schedule::NpcIO;
+use std::process::ExitCode;
 use std::sync::Arc;
 use terrain::io::TerrainIO;
 use terrain::routes::terrain_router;
@@ -239,7 +240,7 @@ fn load_or_create_npc_token() -> std::io::Result<String> {
 const MIN_NPC_TOKEN_LEN: usize = 16;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -257,7 +258,7 @@ async fn main() {
         Ok(service) => Arc::new(service),
         Err(e) => {
             error!("Failed to initialize auth service: {}", e);
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -282,7 +283,7 @@ async fn main() {
             Ok(token) => token,
             Err(e) => {
                 error!("failed to load/create NPC token: {e}");
-                return;
+                return ExitCode::FAILURE;
             }
         },
     };
@@ -291,7 +292,7 @@ async fn main() {
             "NPC token is shorter than {MIN_NPC_TOKEN_LEN} chars; refusing to start. \
              Unset --npc-token / NPC_AUTH_TOKEN to auto-generate a secure one."
         );
-        return;
+        return ExitCode::FAILURE;
     }
     let admin_emails: Vec<String> = args
         .admin_emails
@@ -314,7 +315,7 @@ async fn main() {
                 "Failed to load game time from DB; refusing to start: {}",
                 err
             );
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -451,7 +452,7 @@ async fn main() {
         }
         Err(e) => {
             error!("Failed to bind to {}: {}", addr, e);
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -488,7 +489,7 @@ async fn main() {
         }
         Err(e) => {
             error!("Failed to bind terrain API to {}: {}", terrain_addr, e);
-            return;
+            return ExitCode::FAILURE;
         }
     }
 
@@ -506,24 +507,19 @@ async fn main() {
     let signal = shutdown_signal();
     tokio::pin!(signal);
 
-    let shutdown_notice_deadline = loop {
+    let exit_code = loop {
         tokio::select! {
             biased;
             _ = &mut signal => {
                 info!("Shutdown signal received; draining server");
-                game_state
-                    .set_server_notice(Some(SHUTDOWN_NOTICE.to_string()))
-                    .await;
-                break Instant::now() + SHUTDOWN_NOTICE_DURATION;
+                break ExitCode::SUCCESS;
             }
             result = api_task.join_next(), if !api_task.is_empty() => {
                 // A dead REST API behind a live game listener is a partial
-                // outage systemd cannot see; drain and exit so it restarts us.
+                // outage systemd cannot see; drain and exit non-zero so
+                // Restart=on-failure restarts us.
                 error!("Terrain REST API stopped unexpectedly ({result:?}); draining for restart");
-                game_state
-                    .set_server_notice(Some(SHUTDOWN_NOTICE.to_string()))
-                    .await;
-                break Instant::now() + SHUTDOWN_NOTICE_DURATION;
+                break ExitCode::FAILURE;
             }
             result = listener.accept() => match result {
                 Ok((stream, addr)) => {
@@ -550,6 +546,11 @@ async fn main() {
         }
     };
 
+    game_state
+        .set_server_notice(Some(SHUTDOWN_NOTICE.to_string()))
+        .await;
+    let shutdown_notice_deadline = Instant::now() + SHUTDOWN_NOTICE_DURATION;
+
     // Quiesce background writers, hold the notice for its full window, then
     // stop all player mutations before taking the final snapshot.
     drop(listener);
@@ -565,6 +566,7 @@ async fn main() {
     drain(&mut api_task, "Terrain API").await;
 
     info!("Graceful shutdown complete");
+    exit_code
 }
 
 #[cfg(test)]
