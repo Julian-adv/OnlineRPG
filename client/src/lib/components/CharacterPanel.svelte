@@ -113,21 +113,38 @@
     boots: 'Boots',
     ring: 'Ring R',
     ring_left: 'Ring L',
+    hands: 'Hands',
+    back: 'Back',
+    shirt: 'Shirt',
   }
 
-  const SLOT_POSITIONS: { slot: EquipSlot; top: number; left: number }[] = [
-    { slot: 'head', top: 9, left: 50 },
-    { slot: 'ear', top: 20, left: 70 },
-    { slot: 'neck', top: 20, left: 30 },
-    { slot: 'chest', top: 30, left: 50 },
-    { slot: 'main_hand', top: 45, left: 10 },
-    { slot: 'off_hand', top: 45, left: 90 },
-    { slot: 'ring', top: 59, left: 10 },
-    { slot: 'ring_left', top: 59, left: 90 },
-    { slot: 'belt', top: 45, left: 50 },
-    { slot: 'pants', top: 60, left: 50 },
-    { slot: 'boots', top: 88, left: 50 },
-  ]
+  // null = wire slot without a panel cell yet (back/shirt until their items ship)
+  const SLOT_POSITIONS: Record<
+    EquipSlot,
+    { top: number; left: number } | null
+  > = {
+    head: { top: 9, left: 50 },
+    ear: { top: 20, left: 70 },
+    neck: { top: 20, left: 30 },
+    chest: { top: 30, left: 50 },
+    main_hand: { top: 45, left: 10 },
+    off_hand: { top: 45, left: 90 },
+    ring: { top: 59, left: 10 },
+    ring_left: { top: 59, left: 90 },
+    hands: { top: 73, left: 10 },
+    belt: { top: 45, left: 50 },
+    pants: { top: 60, left: 50 },
+    boots: { top: 88, left: 50 },
+    back: null,
+    shirt: null,
+  }
+
+  const VISIBLE_SLOTS = (
+    Object.entries(SLOT_POSITIONS) as [
+      EquipSlot,
+      { top: number; left: number } | null,
+    ][]
+  ).flatMap(([slot, pos]) => (pos ? [{ slot, ...pos }] : []))
 
   const levelStartXp = $derived(xp_for_level(level))
   const nextLevelXp = $derived(xp_for_level(level + 1))
@@ -276,7 +293,7 @@
 
     <div class="panel-section equip-section">
       <img class="equip-bg" src={equipBg} alt="" draggable="false" />
-      {#each SLOT_POSITIONS as { slot, top, left } (slot)}
+      {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
         {@const item = $inventoryStore.equipped[slot]}
         {@const def = item ? getItemDef(item.item_def_id) : null}
         {@const isDropTarget =

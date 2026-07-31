@@ -4,29 +4,22 @@ use std::collections::HashMap;
 use crate::Position;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EquipSlot {
-    #[serde(rename = "head")]
     Head,
-    #[serde(rename = "main_hand")]
     MainHand,
-    #[serde(rename = "off_hand")]
     OffHand,
-    #[serde(rename = "chest")]
     Chest,
-    #[serde(rename = "ear")]
     Ear,
-    #[serde(rename = "neck")]
     Neck,
-    #[serde(rename = "belt")]
     Belt,
-    #[serde(rename = "pants")]
     Pants,
-    #[serde(rename = "boots")]
     Boots,
-    #[serde(rename = "ring")]
     Ring,
-    #[serde(rename = "ring_left")]
     RingLeft,
+    Hands,
+    Back,
+    Shirt,
 }
 
 impl EquipSlot {
@@ -43,6 +36,9 @@ impl EquipSlot {
             EquipSlot::Boots => "boots",
             EquipSlot::Ring => "ring",
             EquipSlot::RingLeft => "ring_left",
+            EquipSlot::Hands => "hands",
+            EquipSlot::Back => "back",
+            EquipSlot::Shirt => "shirt",
         }
     }
 
@@ -73,6 +69,9 @@ impl std::str::FromStr for EquipSlot {
             "boots" => Ok(EquipSlot::Boots),
             "ring" => Ok(EquipSlot::Ring),
             "ring_left" => Ok(EquipSlot::RingLeft),
+            "hands" => Ok(EquipSlot::Hands),
+            "back" => Ok(EquipSlot::Back),
+            "shirt" => Ok(EquipSlot::Shirt),
             _ => Err(()),
         }
     }
@@ -148,6 +147,9 @@ mod tests {
         EquipSlot::Boots,
         EquipSlot::Ring,
         EquipSlot::RingLeft,
+        EquipSlot::Hands,
+        EquipSlot::Back,
+        EquipSlot::Shirt,
     ];
 
     #[test]
@@ -156,6 +158,12 @@ mod tests {
             let s = slot.as_str();
             let back: EquipSlot = s.parse().expect("parse should accept as_str output");
             assert_eq!(&back, slot, "roundtrip failed for {s}");
+            let wire = serde_json::to_string(slot).unwrap();
+            assert_eq!(
+                wire,
+                format!("\"{s}\""),
+                "serde wire name must match as_str"
+            );
         }
     }
 

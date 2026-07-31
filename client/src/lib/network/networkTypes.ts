@@ -208,6 +208,9 @@ export type EquipSlot =
   | 'boots'
   | 'ring'
   | 'ring_left'
+  | 'hands'
+  | 'back'
+  | 'shirt'
 
 export type ItemInstance = {
   instance_id: number

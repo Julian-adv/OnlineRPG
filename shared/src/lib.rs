@@ -37,7 +37,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v10: party (PartyInvite/PartyRespond/PartyLeave, PartyState snapshots).
 /// v11: party positions poll (RequestPartyPositions → PartyPositions) for
 ///      world-map member markers.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// v12: equip slots hands/back/shirt (doc/ITEM_TIERS.md 선행 작업 #1).
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
