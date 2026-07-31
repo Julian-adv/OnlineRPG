@@ -310,6 +310,7 @@ mod tests {
                 "iron_boots",
                 "leather_armor",
                 "leather_belt",
+                "leather_boots",
                 "leather_gloves",
                 "leather_helmet",
                 "leather_pants",
@@ -369,6 +370,7 @@ mod tests {
             defs.chest_roll_table(2).into_iter().collect();
         assert_eq!(t2["iron_boots"], 0.37);
         assert_eq!(t2["leather_gloves"], 0.37);
+        assert_eq!(t2["leather_boots"], 0.37);
         assert_eq!(t2["raven_shield"], 0.2);
         assert_eq!(t2["leather_armor"], 0.0, "signature rolls only as itself");
         for id in ["leather_helmet", "leather_pants", "leather_belt"] {
