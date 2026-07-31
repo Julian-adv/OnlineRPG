@@ -308,6 +308,7 @@ mod tests {
             t2,
             [
                 "iron_boots",
+                "iron_helmet",
                 "leather_armor",
                 "leather_belt",
                 "leather_boots",
@@ -369,6 +370,7 @@ mod tests {
         let t2: std::collections::HashMap<String, f32> =
             defs.chest_roll_table(2).into_iter().collect();
         assert_eq!(t2["iron_boots"], 0.37);
+        assert_eq!(t2["iron_helmet"], 0.37);
         assert_eq!(t2["leather_gloves"], 0.37);
         assert_eq!(t2["leather_boots"], 0.37);
         assert_eq!(t2["raven_shield"], 0.2);

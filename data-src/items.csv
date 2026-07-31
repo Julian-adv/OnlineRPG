@@ -4,6 +4,7 @@ worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay 
 wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,4000,1,
 raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2,,,,,,2,0.2
 leather_helmet,Leather Helmet,A simple leather helmet.,1,head,false,leather_helmet.png,armor/leather_helmet.glb,armor,,leather,1500,1,,,,,,1
+iron_helmet,Iron Helmet,A heavy iron great helm that guards the whole head.,4,head,false,iron_helmet.png,armor/iron_helmet.glb,armor,,metal,6000,2,,,,,,2,0.37
 breastplate,Breastplate,A polished steel breastplate that turns aside all but the truest blows.,20,chest,false,plate_armor.png,armor/plate_armor.glb,armor,,metal,40000,7,,,,,,4
 leather_pants,Leather Pants,Durable leather leggings.,4,pants,false,leather_pants.png,armor/leather_pants.glb,armor,,leather,2500,1,,,,,,1,0.3
 iron_boots,Iron Boots,Heavy iron boots.,6,boots,false,iron_boots.png,armor/iron_boots.glb,armor,,metal,6000,2,,,,,,2,0.37

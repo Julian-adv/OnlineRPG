@@ -1,6 +1,6 @@
 # Item Tiers & Dungeon Drop Design
 
-던전 티어별 방어구 세트 파밍 설계 (2026-07-30 논의). **기존 아이템·기존 던전 범위의 재배치와 독립 롤 드랍, 신규 슬롯 3종(hands·back·shirt, 프로토콜 v12), leather_gloves·leather_boots 구현됨 (2026-07-31)** — 나머지 신규 아이템·신규 던전·월드 드랍 확장은 미구현.
+던전 티어별 방어구 세트 파밍 설계 (2026-07-30 논의). **기존 아이템·기존 던전 범위의 재배치와 독립 롤 드랍, 신규 슬롯 3종(hands·back·shirt, 프로토콜 v12), leather_gloves·leather_boots·iron_helmet 구현됨 (2026-07-31)** — 나머지 신규 아이템·신규 던전·월드 드랍 확장은 미구현.
 
 핵심 컨셉: **세트는 인접한 두 티어에 걸쳐 드랍된다.** 티어 N 던전에서 일부 파츠를, 티어 N+1 던전에서 나머지(몸통 등 핵심 파츠)를 모아 완성한다. 완성한 세트가 그다음 티어에 도전할 체급이 된다.
 
@@ -38,7 +38,7 @@
 | 슬롯 | 아이템 | guard | 티어 | 상태 |
 |------|--------|-------|------|------|
 | boots | iron_boots | 2 | 2 | 있음 |
-| head | iron_helmet | 2 | 2 | **신규 애셋 필요** |
+| head | iron_helmet | 2 | 2 | 있음 |
 | chest | chain_mail | 5 | 3 | 있음 |
 | hands | iron_gauntlets | 2 | 3 | **신규 애셋 필요** |
 
@@ -136,7 +136,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 ## 선행 작업
 
 1. ~~신규 슬롯 3종 추가 확정: hands·back·shirt~~ — **완료 (2026-07-31, 프로토콜 v12)**. 장비 UI에는 hands만 노출; back·shirt 칸은 해당 아이템 등장 시 추가. back은 캐릭터 부착 렌더링(리깅/흔들림) 작업이 여전히 필요.
-2. 신규 애셋: iron_helmet, iron_gauntlets, 판금 파츠 4종, 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 3종(protection·life_saving·regeneration) (Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록). leather_gloves·leather_boots는 완료 (2026-07-31).
+2. 신규 애셋: iron_gauntlets, 판금 파츠 4종, 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 3종(protection·life_saving·regeneration) (Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록). leather_gloves·leather_boots·iron_helmet은 완료 (2026-07-31).
 3. 특수 망토·장신구 효과 시스템 설계 — 투명은 서버 측 가시성 처리, 사망 방지·재생은 서버 전투 로직.
 4. **유저 간 거래 시스템.** 현재 `trading.rs`는 NPC 상인뿐, P2P 거래 미구현 — 월드 드랍 희소템 컨셉의 전제.
 5. 몬스터 월드 드랍 경로 — 사망 시 무기 드랍(`weapon_drop_chance`, `combat.rs`)이 이미 있으므로 이를 희소템 롤로 확장.
@@ -147,7 +147,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 1. ~~풀 규칙 변경 (opt-in chestTier + 아이템별 독립 롤 `chestChance`) + 기존 아이템 티어 재배치 + 테스트 갱신~~ — **완료 (2026-07-31)**.
 2. ~~신규 슬롯 3종 (hands·back·shirt) 추가 — 프로토콜 범프 + 장비 UI 개편 한 번에~~ — **완료 (2026-07-31, v12)**.
-3. ~~leather_boots·leather_gloves 애셋 추가 → 가죽 세트 완성 (1–2)~~ — **완료 (2026-07-31, 각 guard 1·티어 2·37% 롤)**. iron_helmet 추가 → 체인 하위 파츠(2) 배치는 남음.
+3. ~~leather_boots·leather_gloves 애셋 추가 → 가죽 세트 완성 (1–2), iron_helmet 추가 → 체인 하위 파츠(2) 배치~~ — **완료 (2026-07-31, 각 guard 1~2·티어 2·37% 롤)**.
 4. 티어 3 던전 → 체인 세트 완성 (체인 메일·건틀릿) + 판금 하위 파츠 + 기본 망토.
 5. 티어 4 던전 → 판금 세트 완성.
 6. 티어 5 던전 → ring_of_protection.
