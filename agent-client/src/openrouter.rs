@@ -49,9 +49,12 @@ pub fn invoker(config: &OpenRouterConfig, system_prompt: String) -> anyhow::Resu
             url: OPENROUTER_API_URL.to_string(),
             api_key,
             model: config.model.clone(),
-            max_tokens: config.max_tokens,
+            max_tokens: Some(config.max_tokens),
+            max_completion_tokens: None,
             temperature: config.temperature,
             reasoning_effort: None,
+            thinking: None,
+            reasoning_split: None,
         },
         system_prompt,
     ))

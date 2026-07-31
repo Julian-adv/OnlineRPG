@@ -20,6 +20,7 @@ use crate::codex::{self, CodexConfig};
 use crate::driver;
 use crate::google_auth::GoogleAuth;
 use crate::llm_scheduler::{LlmPriority, LlmScheduler, TimeoutBackend};
+use crate::minimax::{self, MiniMaxConfig};
 use crate::openai::{self, OpenAiConfig};
 use crate::openrouter::{self, OpenRouterConfig};
 use crate::state::{SharedState, WorldCache};
@@ -155,6 +156,8 @@ pub struct NpcConfig {
     pub codex: CodexConfig,
     #[serde(default)]
     pub openai: OpenAiConfig,
+    #[serde(default)]
+    pub minimax: MiniMaxConfig,
 
     // --- Auto-provisioning ---
     /// Character name to create if no characters exist on this account.
@@ -657,6 +660,7 @@ impl NpcConfig {
             LlmType::Openrouter => Some(&self.openrouter.system_prompt_file),
             LlmType::Codex => Some(&self.codex.system_prompt_file),
             LlmType::Openai => Some(&self.openai.system_prompt_file),
+            LlmType::Minimax => Some(&self.minimax.system_prompt_file),
             LlmType::None => None,
         }
     }
@@ -842,6 +846,12 @@ fn build_llm_backend(
                 Arc::new(openai::OpenAiInvoker::new(ep, system_prompt))
                     as Arc<dyn driver::LlmBackend>
             }),
+        ),
+        LlmType::Minimax => (
+            "MiniMax API",
+            &npc.minimax.model,
+            minimax::MiniMaxInvoker::new(&npc.minimax, system_prompt)
+                .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
         ),
         LlmType::None => return None,
     };
