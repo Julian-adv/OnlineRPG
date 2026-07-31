@@ -34,6 +34,7 @@ import type {
   Gender,
   RollCharacterStatsResult,
 } from './networkTypes'
+import type { ClientEnvReport } from '../utils/clientEnvReport'
 
 export type {
   AccountCharacter,
@@ -495,6 +496,12 @@ class NetworkManager {
 
   sendTorchToggle(enabled: boolean) {
     this.sendMessage({ TorchToggle: { enabled } })
+  }
+
+  /** Returns whether the report actually went out, so the caller only
+   *  records a send that happened. */
+  sendEnvReport(report: ClientEnvReport): boolean {
+    return this.sendAndSerialize({ EnvReport: report })
   }
 
   sendInteractObject(objectType: string, objectId: number) {

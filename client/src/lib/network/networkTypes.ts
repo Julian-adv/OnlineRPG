@@ -1,5 +1,6 @@
 import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
+import type { ClientEnvReport } from '../utils/clientEnvReport'
 
 export type Position = {
   x: number
@@ -193,6 +194,7 @@ export type ClientMessage =
   | { BuyItem: { merchant_player_id: number; item_def_id: string } }
   | { SellItem: { merchant_player_id: number; instance_id: number } }
   | { BuybackItem: { merchant_player_id: number; entry_id: number } }
+  | { EnvReport: ClientEnvReport }
 
 export type EquipSlot =
   | 'head'

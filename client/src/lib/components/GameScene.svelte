@@ -42,6 +42,7 @@
   import { FRAME_TIME_MS, FRAME_TOLERANCE_MS } from '../utils/frameTiming'
   import { createRenderCadence } from '../utils/renderCadence'
   import { bootstrapSceneAssets } from './game-scene/asset-bootstrap'
+  import { maybeSendEnvReport } from '../utils/clientEnvReport'
   import GameScenePlayersLayer from './game-scene/GameScenePlayersLayer.svelte'
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
@@ -244,10 +245,13 @@
   // Track whether all initial data is loaded (terrain + splat + grass assets).
   // The loading dialog stays until frames render smoothly (pipeline compilation
   // done by Threlte's render loop under the dialog overlay).
-  let initialDataReady = false
+  let initialDataReadyAt = 0 // 0 = not yet ready
   let smoothFrameCount = 0
   const SMOOTH_FRAME_THRESHOLD = 3 // consecutive smooth frames to consider ready
   const SMOOTH_FRAME_TIME_MS = 100 // frame must be under this to count
+  // Failsafe: machines that never render under 100ms (e.g. software WebGL
+  // fallback) would otherwise keep the loading dialog up forever.
+  const SMOOTH_FRAME_TIMEOUT_MS = 10000
 
   // Camera follow system
   let cameraTarget = $state<[number, number, number]>([0, 0, 0])
@@ -730,7 +734,7 @@
 
       // Detect when pipeline compilation is done: once data is ready,
       // wait for a few consecutive smooth frames before hiding the loading dialog.
-      if (isSceneCompiling && initialDataReady) {
+      if (isSceneCompiling && initialDataReadyAt > 0) {
         if (rawDeltaTime < SMOOTH_FRAME_TIME_MS) {
           smoothFrameCount++
           if (smoothFrameCount >= SMOOTH_FRAME_THRESHOLD) {
@@ -738,6 +742,9 @@
           }
         } else {
           smoothFrameCount = 0
+        }
+        if (currentTime - initialDataReadyAt > SMOOTH_FRAME_TIMEOUT_MS) {
+          isSceneCompiling = false
         }
       }
 
@@ -950,7 +957,11 @@
       // Mark data as ready. Threlte's render loop compiles WebGPU pipelines
       // on-demand (synchronously per frame) under the loading dialog overlay.
       // The smooth frame detector waits until compilation is done.
-      initialDataReady = true
+      initialDataReadyAt = performance.now()
+      // Renderer backend is settled by now, so the report names the real one.
+      void maybeSendEnvReport(renderer, (report) =>
+        networkManager.sendEnvReport(report)
+      ).catch(() => {})
     })
 
     // Start game loop

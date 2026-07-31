@@ -8,9 +8,11 @@ import {
   type RenderBudget,
 } from '../stores/graphicsSettings'
 
-/** Rendering environment of one web client, reported once per session so
- *  performance complaints can be matched against actual hardware. Field
- *  names are the wire shape — keep them in sync with the server struct. */
+/** Rendering environment of one web client, reported so performance
+ *  complaints can be matched against actual hardware. Sent only when the
+ *  stable parts of the environment change (see `fingerprint`); the first
+ *  session on a browser counts as a change. Field names are the wire shape —
+ *  keep them in sync with the server struct. */
 export interface ClientEnvReport {
   quality: QualityLevel
   render_budget: RenderBudget
@@ -79,6 +81,46 @@ function detectBackend(renderer: WebGPURenderer | null): string {
   )?.backend
   if (!backend) return 'unknown'
   return backend.isWebGPUBackend ? 'webgpu' : 'webgl'
+}
+
+const STORAGE_KEY = 'envReportLastSent'
+
+/** Stable parts of the report. Viewport/pixel-ratio fields are excluded so a
+ *  window resize or zoom change doesn't count as a new environment. */
+function fingerprint(report: ClientEnvReport): string {
+  return [
+    report.quality,
+    report.render_budget,
+    report.antialias,
+    report.backend,
+    report.gpu_vendor,
+    report.gpu_architecture,
+    report.gpu_device,
+    report.gpu_description,
+    report.user_agent,
+  ].join('|')
+}
+
+/** Collect the report and hand it to `send` when the stable environment
+ *  changed since the last successful send. Only a send that actually went
+ *  out (`send` returned true) is recorded. */
+export async function maybeSendEnvReport(
+  renderer: WebGPURenderer | null,
+  send: (report: ClientEnvReport) => boolean
+): Promise<void> {
+  const report = await collectClientEnvReport(renderer)
+  const fp = fingerprint(report)
+  try {
+    if (localStorage.getItem(STORAGE_KEY) === fp) return
+  } catch {
+    // localStorage unavailable — report every session instead
+  }
+  if (!send(report)) return
+  try {
+    localStorage.setItem(STORAGE_KEY, fp)
+  } catch {
+    // ignore; next session just reports again
+  }
 }
 
 export async function collectClientEnvReport(

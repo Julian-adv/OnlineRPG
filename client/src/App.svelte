@@ -22,7 +22,7 @@
   import { runGpuBenchmark } from './lib/utils/gpuBenchmark'
   import {
     needsAutoQuality,
-    qualityForScore,
+    qualityForOutcome,
     applyAutoQuality,
   } from './lib/stores/graphicsSettings'
 
@@ -84,10 +84,12 @@
     void runGpuBenchmark()
       .then((result) => {
         if (!result) return
-        const level = qualityForScore(result.score)
+        const level = qualityForOutcome(result)
         console.info(
-          `[GpuBenchmark] score=${result.score.toFixed(1)} ` +
-            `probe=${result.elapsedMs.toFixed(0)}ms -> ${level}`
+          result === 'no-webgpu'
+            ? `[GpuBenchmark] no WebGPU adapter (WebGL fallback) -> ${level}`
+            : `[GpuBenchmark] score=${result.score.toFixed(1)} ` +
+                `probe=${result.elapsedMs.toFixed(0)}ms -> ${level}`
         )
         applyAutoQuality(level)
       })

@@ -158,6 +158,8 @@ struct ConnectionState {
     is_admin: bool,
     /// Last answered positions poll (spam clamp); dies with the connection.
     last_party_positions_poll: Option<Instant>,
+    /// An `EnvReport` was already logged; later ones are dropped (spam clamp).
+    env_reported: bool,
 }
 
 /// Positions polls inside this window are dropped; the web map polls every
@@ -181,6 +183,7 @@ impl ConnectionState {
             admin_eligible: false,
             is_admin: false,
             last_party_positions_poll: None,
+            env_reported: false,
         }
     }
 
@@ -1349,6 +1352,39 @@ async fn handle_client_message(
 
         ClientMessage::Heartbeat => {
             state.last_heartbeat = std::time::Instant::now();
+        }
+
+        ClientMessage::EnvReport(r) => {
+            if state.env_reported {
+                return Ok(vec![]);
+            }
+            state.env_reported = true;
+            let account = state.account_name.as_deref().unwrap_or("<unauth>");
+            let character = state.character_name.as_deref().unwrap_or("<none>");
+            // The client clamps these too, but a hostile client could skip that.
+            fn clamp(s: &str, max: usize) -> &str {
+                s.char_indices().nth(max).map_or(s, |(i, _)| &s[..i])
+            }
+            info!(
+                target: "env_report",
+                "account='{account}' character='{character}' backend={} gpu={}/{}/{} desc='{}' quality={}({}) aa={} \
+                 pr={:.2} dpr={:.2} viewport={}x{} screen={}x{} ua='{}'",
+                clamp(&r.backend, 16),
+                clamp(&r.gpu_vendor, 64),
+                clamp(&r.gpu_architecture, 64),
+                clamp(&r.gpu_device, 64),
+                clamp(&r.gpu_description, 128),
+                clamp(&r.quality, 16),
+                clamp(&r.render_budget, 16),
+                r.antialias,
+                r.pixel_ratio,
+                r.device_pixel_ratio,
+                r.viewport_w,
+                r.viewport_h,
+                r.screen_w,
+                r.screen_h,
+                clamp(&r.user_agent, 256),
+            );
         }
 
         ClientMessage::PlaceHouse { .. } => {

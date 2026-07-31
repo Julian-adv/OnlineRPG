@@ -102,13 +102,18 @@ export interface GpuBenchmarkResult {
   elapsedMs: number
 }
 
-async function probe(): Promise<GpuBenchmarkResult | null> {
+/** 'no-webgpu' means the renderer will fall back to WebGL (often software
+ *  rendering) — `qualityForOutcome` maps it to the slowest tier, unlike a
+ *  plain inconclusive null. */
+export type GpuBenchmarkOutcome = GpuBenchmarkResult | 'no-webgpu' | null
+
+async function probe(): Promise<GpuBenchmarkOutcome> {
   const gpu = (navigator as Navigator & { gpu?: GpuLike }).gpu
-  if (!gpu) return null
+  if (!gpu) return 'no-webgpu'
 
   const startedAt = performance.now()
   const adapter = await gpu.requestAdapter()
-  if (!adapter) return null
+  if (!adapter) return 'no-webgpu'
   const device = await adapter.requestDevice()
 
   try {
@@ -200,9 +205,9 @@ async function probe(): Promise<GpuBenchmarkResult | null> {
   }
 }
 
-/** Run the probe, or resolve null if WebGPU is missing, the probe throws, or
- *  it overruns its time budget. Callers fall back to the default preset. */
-export async function runGpuBenchmark(): Promise<GpuBenchmarkResult | null> {
+/** Run the probe. Resolves 'no-webgpu' when no adapter exists, or null if the
+ *  probe throws or overruns its time budget (callers keep the default preset). */
+export async function runGpuBenchmark(): Promise<GpuBenchmarkOutcome> {
   const timeout = new Promise<null>((resolve) =>
     setTimeout(() => resolve(null), TIMEOUT_MS)
   )

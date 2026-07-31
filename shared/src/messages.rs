@@ -104,6 +104,29 @@ pub struct PartyMemberPosition {
     pub floor_level: i8,
 }
 
+/// Web client's rendering environment, so performance complaints can be
+/// matched against actual hardware. The client sends it after entering the
+/// game, but only when the environment changed since the last report. Field
+/// names mirror the client's `ClientEnvReport` interface.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientEnvReport {
+    pub quality: String,
+    pub render_budget: String,
+    pub antialias: bool,
+    pub pixel_ratio: f32,
+    pub device_pixel_ratio: f32,
+    pub viewport_w: u32,
+    pub viewport_h: u32,
+    pub screen_w: u32,
+    pub screen_h: u32,
+    pub backend: String,
+    pub gpu_vendor: String,
+    pub gpu_architecture: String,
+    pub gpu_device: String,
+    pub gpu_description: String,
+    pub user_agent: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The
@@ -362,6 +385,8 @@ pub enum ClientMessage {
     /// Reel in deliberately. Also implied by moving, attacking or
     /// disconnecting — any of them ends the session as `Aborted`.
     FishingStop,
+    /// Logged server-side only; accepted once per connection.
+    EnvReport(ClientEnvReport),
 }
 
 impl ClientMessage {
