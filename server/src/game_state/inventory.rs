@@ -595,12 +595,28 @@ impl super::GameState {
 
     /// Read a scroll of party summon: ask every other online party member to
     /// teleport to the reader's side. Refuses — keeping the scroll — while
-    /// defeated or with no one to call, like the enchant scroll's guard.
+    /// defeated, in combat, or with no one to call, like the enchant
+    /// scroll's guard.
     async fn use_party_summon_scroll(&self, player_id: &PlayerId, instance_id: u64) {
         if self
             .reject_if_defeated(player_id, "You can't read while defeated")
             .await
         {
+            return;
+        }
+
+        // A summons gathers a party in peace; escape under fire is the
+        // return scroll's job. Reading waits out the same clock that gates
+        // accepting, so a fight (or a future PvP blob) can't open with one.
+        let in_combat = {
+            let players = self.players.read().await;
+            players.get(player_id).is_some_and(|p| {
+                Self::now_ms().saturating_sub(p.last_combat_at) < super::OUT_OF_COMBAT_MS
+            })
+        };
+        if in_combat {
+            self.send_system_message(player_id, "You can't read this while in combat")
+                .await;
             return;
         }
 

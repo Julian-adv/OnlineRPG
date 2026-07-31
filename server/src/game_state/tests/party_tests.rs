@@ -724,6 +724,39 @@ async fn summon_accept_teleports_to_casters_side() {
 }
 
 #[tokio::test]
+async fn summon_scroll_kept_while_caster_in_combat() {
+    let game_state = make_test_game_state("summon_caster_combat");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("alice"))
+        .unwrap()
+        .last_combat_at = GameState::now_ms();
+    game_state.use_item(&pid("alice"), 9).await;
+
+    let inv = game_state
+        .get_player_inventory(&pid("alice"))
+        .await
+        .unwrap();
+    assert_eq!(inv.bag.len(), 1, "the scroll should be kept");
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("in combat"), "{message}")
+        }
+        other => panic!("Expected a combat refusal, got {:?}", other),
+    }
+    assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
 async fn summon_accept_waits_out_combat() {
     let game_state = make_test_game_state("summon_combat");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;
