@@ -12,7 +12,6 @@
 
   let { heightManager }: Props = $props()
 
-  let spinAngle = $state(0)
   let animationTimeMs = $state(nowMs())
   let group = $state<THREE.Group | undefined>(undefined)
 
@@ -37,8 +36,7 @@
     )
   )
 
-  export function update(deltaTime: number) {
-    spinAngle += deltaTime * 1.5
+  export function update() {
     animationTimeMs = nowMs()
   }
 
@@ -49,12 +47,6 @@
 
 <T.Group bind:ref={group}>
   {#each itemEntries as [id, data] (id)}
-    <GroundItem
-      {data}
-      rotation={spinAngle}
-      {animationTimeMs}
-      {heightManager}
-      {heightRevision}
-    />
+    <GroundItem {data} {animationTimeMs} {heightManager} {heightRevision} />
   {/each}
 </T.Group>

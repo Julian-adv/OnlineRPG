@@ -633,8 +633,8 @@
       // Update tree occlusion (hide trees that block camera view of player)
       treeLayerRef?.update()
 
-      // Update ground items (spin animation)
-      groundItemsLayerRef?.update(deltaTime)
+      // Advance the ground items' shared animation clock
+      groundItemsLayerRef?.update()
 
       // Update grass wind & trail
       {

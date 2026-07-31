@@ -17,7 +17,6 @@
 
   interface Props {
     data: GroundItemData
-    rotation?: number
     animationTimeMs?: number
     heightManager?: TerrainHeightManager
     heightRevision?: number
@@ -25,7 +24,6 @@
 
   let {
     data,
-    rotation = 0,
     animationTimeMs = 0,
     heightManager,
     heightRevision = 0,
@@ -229,18 +227,15 @@
     const scene = worldModelScene
     const ground = groundParentRef
     if (!scene || !ground) return
-    // A spread-out coin pile held up to the face reads as an awkward flat slab,
-    // so self-animating loot is never parented to the hand. Instead it just
-    // vanishes the instant the pickup "grabs" it (data.inHand) — the same moment
-    // a normal item snaps to the hand — rather than lingering on the ground
-    // until the gesture finishes.
+    // A spread-out coin pile held up to the face reads as an awkward flat
+    // slab, so self-animating loot is never parented to the hand; the root
+    // group's inHand visibility gate hides it at the grab instead.
     if (selfAnimated) {
       if (scene.parent !== ground) {
         scene.position.set(0, 0, 0)
         scene.rotation.set(0, 0, 0)
         ground.add(scene)
       }
-      scene.visible = !data.inHand
       return
     }
     const hand = data.inHand ? $localPlayerRightHand : null
@@ -267,13 +262,15 @@
   }
 
   const nameTexture = $derived(
-    def?.worldModel || worldModelScene ? null : makeNameTexture(label)
+    def?.worldModel || def?.icon ? null : makeNameTexture(label)
   )
 
   // Icon billboard for items with no world model (fish, jewellery, armor):
   // the inventory icon floats over the spot instead of a placeholder box.
   // Textures come from the shared icon cache — do not dispose them.
   const ICON_SPRITE_SIZE = 0.55
+  const ICON_SHADOW_OFFSET = 0.05
+  const ICON_SHADOW_OPACITY = 0.85
   let iconTexture = $state<THREE.Texture | null>(null)
   $effect(() => {
     const icon = !def?.worldModel && def?.icon ? def.icon : null
@@ -290,6 +287,12 @@
       iconTexture = null
     }
   })
+
+  // Representation tier: 3D model when loaded, else the inventory icon
+  // billboard, else the placeholder box (also shown while either loads).
+  const displayMode = $derived(
+    worldModelScene ? 'model' : iconTexture ? 'icon' : 'box'
+  )
 
   onDestroy(() => {
     nameTexture?.dispose()
@@ -309,6 +312,14 @@
     data.spawnAnimation && !data.inHand && !selfAnimated
       ? evaluateSpawnAnimation(data.spawnAnimation, animationTimeMs)
       : null
+  )
+  const spinZ = $derived(spawnTransform?.spinZ ?? 0)
+  // Idle spin for the placeholder box only; models rest and sprites billboard.
+  const BOX_SPIN_SPEED = 1.5
+  const boxSpinY = $derived(
+    displayMode === 'box' && !data.spawnAnimation
+      ? (animationTimeMs / 1000) * BOX_SPIN_SPEED
+      : 0
   )
   // Items rendered as a 3D world model are authored to sit on their base
   // (origin at the model's bottom), so they rest just above the ground with a
@@ -460,10 +471,14 @@
   })
 </script>
 
+<!-- The whole subtree hides the moment the pickup grabs the item (inHand);
+     a hand-held model is reparented out of it. Raycasts ignore `visible`, so
+     the pickup pad additionally unmounts via showPad. -->
 <T.Group
   position.x={displayX}
   position.y={displayY}
   position.z={displayZ}
+  visible={!data.inHand}
   userData={{ groundItemId: data.instanceId }}
 >
   {#if showPad}
@@ -507,25 +522,39 @@
     {/each}
   {/if}
 
-  <T.Group bind:ref={terrainAlignedRef}>
-    <T.Group
-      rotation.y={data.restingRotationY +
-        (worldModelScene || data.spawnAnimation ? 0 : rotation)}
-      rotation.z={spawnTransform?.spinZ ?? 0}
+  {#if displayMode === 'icon'}
+    <!-- Icon + black-tinted shadow copy. Kept at the root so the shadow's
+         offset doesn't orbit with the spin group; sprites ignore parent
+         rotation, so the spawn-arc spin goes through material rotation. -->
+    <T.Sprite
+      position.x={ICON_SHADOW_OFFSET}
+      position.y={-ICON_SHADOW_OFFSET}
+      scale={[ICON_SPRITE_SIZE, ICON_SPRITE_SIZE, 1]}
+      renderOrder={0}
     >
+      <T.SpriteMaterial
+        map={iconTexture}
+        color="#000000"
+        transparent={true}
+        opacity={ICON_SHADOW_OPACITY}
+        depthWrite={false}
+        rotation={spinZ}
+      />
+    </T.Sprite>
+    <T.Sprite scale={[ICON_SPRITE_SIZE, ICON_SPRITE_SIZE, 1]} renderOrder={1}>
+      <T.SpriteMaterial map={iconTexture} transparent={true} rotation={spinZ} />
+    </T.Sprite>
+  {/if}
+
+  <T.Group bind:ref={terrainAlignedRef}>
+    <T.Group rotation.y={data.restingRotationY + boxSpinY} rotation.z={spinZ}>
       <T.Group bind:ref={groundParentRef} />
 
-      {#if !worldModelScene}
-        {#if iconTexture}
-          <T.Sprite scale={[ICON_SPRITE_SIZE, ICON_SPRITE_SIZE, 1]}>
-            <T.SpriteMaterial map={iconTexture} transparent={true} />
-          </T.Sprite>
-        {:else}
-          <T.Mesh>
-            <T.BoxGeometry args={[0.3, 0.3, 0.3]} />
-            <T.MeshStandardMaterial color="#f0c040" />
-          </T.Mesh>
-        {/if}
+      {#if displayMode === 'box'}
+        <T.Mesh>
+          <T.BoxGeometry args={[0.3, 0.3, 0.3]} />
+          <T.MeshStandardMaterial color="#f0c040" />
+        </T.Mesh>
 
         {#if nameTexture}
           <T.Sprite position.y={0.5} scale={[label.length * 0.08, 0.2, 1]}>
