@@ -54,10 +54,20 @@ impl WorldDropDefs {
 
     /// Roll every entry independently and return the item ids that dropped.
     pub fn roll<R: Rng>(&self, rng: &mut R) -> Vec<String> {
-        self.entries
-            .iter()
-            .filter(|entry| rng.gen::<f32>() < entry.chance)
-            .map(|entry| entry.id.clone())
-            .collect()
+        roll_independent(self.entries.iter().map(|e| (e.id.as_str(), e.chance)), rng)
     }
+}
+
+/// Roll each (id, chance) entry independently and return the ids that
+/// dropped — the one mechanic behind world drops and chest loot, so their
+/// semantics cannot diverge. Entry order must already be deterministic.
+pub fn roll_independent<'a, R: Rng>(
+    entries: impl IntoIterator<Item = (&'a str, f32)>,
+    rng: &mut R,
+) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|&(_, chance)| rng.gen::<f32>() < chance)
+        .map(|(id, _)| id.to_string())
+        .collect()
 }

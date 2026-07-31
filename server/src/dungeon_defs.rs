@@ -32,9 +32,16 @@ impl DungeonDefs {
                 def.id, def.name, def.x, def.y, def.z
             );
             for chest_drop in &def.chest_drops {
-                assert!(
-                    item_defs.get(chest_drop).is_some(),
-                    "dungeon '{}' chestDrops entry '{}' has no matching item definition",
+                let item = item_defs.get(chest_drop).unwrap_or_else(|| {
+                    panic!(
+                        "dungeon '{}' chestDrops entry '{}' has no matching item definition",
+                        def.id, chest_drop
+                    )
+                });
+                assert_eq!(
+                    item.chest_tier,
+                    Some(def.chest_tier),
+                    "dungeon '{}' signature '{}' must carry the dungeon's chestTier",
                     def.id,
                     chest_drop
                 );
@@ -44,6 +51,28 @@ impl DungeonDefs {
                 "dungeon '{}' boss '{}' has no matching monster definition",
                 def.id,
                 def.boss
+            );
+        }
+
+        // An opted-in item at or below the deepest built dungeon must drop
+        // somewhere — as a signature or via a positive roll chance. Items
+        // tiered above every built dungeon are legitimately parked for a
+        // future dungeon (doc/ITEM_TIERS.md).
+        let max_tier = entrances().iter().map(|d| d.chest_tier).max().unwrap_or(0);
+        let signatures: std::collections::HashSet<&str> = entrances()
+            .iter()
+            .flat_map(|d| d.chest_drops.iter().map(String::as_str))
+            .collect();
+        for item in item_defs.all() {
+            let Some(tier) = item.chest_tier else {
+                continue;
+            };
+            assert!(
+                tier > max_tier
+                    || signatures.contains(item.id.as_str())
+                    || item.chest_chance.is_some_and(|c| c > 0.0),
+                "item '{}' (chestTier {tier}) is neither a signature drop nor has a chestChance — it can never drop",
+                item.id
             );
         }
         Self

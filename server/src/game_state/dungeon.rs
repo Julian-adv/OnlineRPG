@@ -26,7 +26,6 @@ const BOSS_RESPAWN_MS: u64 = 30 * 60 * 1000;
 /// Retry delay when a spawn attempt failed (e.g. global monster cap).
 const SPAWN_RETRY_MS: u64 = 10 * 1000;
 const CHEST_INTERACT_RANGE: f32 = 2.5;
-const CHEST_ITEM_MIN_PRICE: i64 = 2000;
 /// How close a player must stand to a prop to break (barrel/crate) or open
 /// (chest) it.
 const PROP_INTERACT_RANGE: f32 = 2.5;
@@ -430,7 +429,8 @@ impl GameState {
             return;
         }
 
-        // Roll loot: 2–3 distinct equipment items priced for endgame.
+        // Roll loot: guaranteed signature drops, then an independent chance
+        // roll per pool item (doc/ITEM_TIERS.md — 던전당 기대 ~5회).
         let depth = {
             let dungeons = self.dungeons.read().await;
             dungeons
@@ -439,19 +439,17 @@ impl GameState {
                 .unwrap_or(5)
         };
         let (item_def_ids, gold) = {
-            use rand::seq::SliceRandom;
             use rand::Rng;
             let mut rng = rand::thread_rng();
-            let mut pool = self
-                .item_defs
-                .chest_equipment_ids(CHEST_ITEM_MIN_PRICE, entrance.chest_tier);
-            // The guaranteed signature drops lead the list; keep the random
-            // rolls distinct from them.
-            pool.retain(|id| !entrance.chest_drops.contains(id));
-            pool.shuffle(&mut rng);
-            let count = rng.gen_range(2..=3).min(pool.len());
             let mut items = entrance.chest_drops.clone();
-            items.extend(pool.into_iter().take(count));
+            let table = self.item_defs.chest_roll_table(entrance.chest_tier);
+            items.extend(crate::world_drop_defs::roll_independent(
+                table
+                    .iter()
+                    .filter(|(id, _)| !entrance.chest_drops.contains(id))
+                    .map(|(id, chance)| (id.as_str(), *chance)),
+                &mut rng,
+            ));
             let gold = rng.gen_range(depth * 500..=depth * 1500);
             (items, gold)
         };

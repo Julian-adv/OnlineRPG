@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
+/// Chest roll chance for items whose home tier is below the dungeon's
+/// (doc/ITEM_TIERS.md "하위 티어 이월템").
+const CHEST_CARRYOVER_CHANCE: f32 = 0.10;
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct ItemDefinition {
@@ -53,11 +57,14 @@ pub struct ItemDefinition {
     /// Fish only — rolled length at or above this is a trophy catch.
     #[serde(rename = "trophyCm", default)]
     pub trophy_cm: Option<u32>,
-    /// Equipment only — lowest dungeon `chestTier` (dungeons.csv) whose
-    /// random chest pool may yield this. Absent = 1. Lets endgame pieces be
-    /// reserved for deeper dungeons regardless of price.
+    /// Equipment only — the dungeon `chestTier` (dungeons.csv) this drops at.
+    /// Opt-in: absent means never in any chest pool (doc/ITEM_TIERS.md).
     #[serde(rename = "chestTier", default)]
     pub chest_tier: Option<u8>,
+    /// Per-chest-open roll chance at the item's home tier. Absent = 0
+    /// (signature drops are guaranteed via dungeons.csv `chestDrops` instead).
+    #[serde(rename = "chestChance", default)]
+    pub chest_chance: Option<f32>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -149,6 +156,17 @@ impl ItemDefs {
         let defs: HashMap<String, ItemDefinition> =
             serde_json::from_str(data).expect("Failed to parse items.json");
 
+        // A chestTier opt-in on a non-equippable or a fishing rod (bought
+        // tool, doc/FISHING.md) is a data error — fail the boot, don't
+        // silently filter it out of every chest.
+        for def in defs.values() {
+            assert!(
+                def.chest_tier.is_none() || (def.equip_slot.is_some() && !def.is_fishing_rod()),
+                "item '{}' has a chestTier but is not chest-eligible equipment",
+                def.id
+            );
+        }
+
         info!("Loaded {} item definitions", defs.len());
         for (id, def) in &defs {
             info!(
@@ -180,6 +198,10 @@ impl ItemDefs {
         self.defs.get(item_def_id)
     }
 
+    pub fn all(&self) -> impl Iterator<Item = &ItemDefinition> {
+        self.defs.values()
+    }
+
     pub fn item_def_id_for_weapon_ref(&self, weapon_ref: &str) -> Option<String> {
         if self.defs.contains_key(weapon_ref) {
             return Some(weapon_ref.to_string());
@@ -204,27 +226,32 @@ impl ItemDefs {
             .and_then(|def| def.damage_dice().map(str::to_string))
     }
 
-    /// Equippable items at or above a price floor and at or below a chest
-    /// tier — the dungeon treasure chest loot pool. Sorted for determinism
-    /// before the caller shuffles. Fishing rods are excluded: they are tools
-    /// you buy from a merchant, not endgame combat treasure, and their price
-    /// would otherwise sneak them into the chest pool (`doc/FISHING.md`).
-    pub fn chest_equipment_ids(&self, min_price: i64, max_tier: u8) -> Vec<String> {
-        let mut ids: Vec<String> = self
+    /// The chest roll table for a dungeon tier: every opted-in item
+    /// (`chestTier` set) at or below the tier, paired with its per-open roll
+    /// chance — its own `chestChance` at its home tier, a flat carryover
+    /// chance below it so missed pieces can still be filled in upstairs.
+    /// Independent per-item rolls keep set-completion odds stable as the
+    /// pool grows (doc/ITEM_TIERS.md). Sorted for determinism. `chestTier`
+    /// is the sole membership predicate — `load` rejects opt-ins that are
+    /// not chest-eligible equipment.
+    pub fn chest_roll_table(&self, dungeon_tier: u8) -> Vec<(String, f32)> {
+        let mut rows: Vec<(String, f32)> = self
             .defs
             .values()
-            .filter(|def| def.equip_slot.is_some())
-            .filter(|def| !def.is_fishing_rod())
-            .filter(|def| def.base_price.is_some_and(|p| p >= min_price))
-            .filter(|def| {
-                def.chest_tier
-                    .unwrap_or(onlinerpg_shared::dungeon::DEFAULT_CHEST_TIER)
-                    <= max_tier
+            .filter_map(|def| {
+                let tier = def.chest_tier?;
+                let chance = if tier == dungeon_tier {
+                    def.chest_chance.unwrap_or(0.0)
+                } else if tier < dungeon_tier {
+                    CHEST_CARRYOVER_CHANCE
+                } else {
+                    return None;
+                };
+                Some((def.id.clone(), chance))
             })
-            .map(|def| def.id.clone())
             .collect();
-        ids.sort();
-        ids
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        rows
     }
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
@@ -244,46 +271,106 @@ mod tests {
     use super::*;
     use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
 
+    fn table_ids(defs: &ItemDefs, tier: u8) -> Vec<String> {
+        defs.chest_roll_table(tier)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     #[test]
     fn fishing_rod_is_not_dungeon_chest_treasure() {
-        // Rods are bought, not looted from bosses. The category exclusion
-        // keeps that true even if a future rod tier is priced above the
-        // chest floor (today's 300c rod also sits below it — belt and braces).
+        // Rods are bought, not looted from bosses: none carries a chestTier,
+        // and load() fails the boot if one is ever given it.
         let defs = ItemDefs::load();
-        let pool = defs.chest_equipment_ids(2000, u8::MAX);
+        let pool = table_ids(&defs, u8::MAX);
         assert!(
             !pool.contains(&"fishing_rod".to_string()),
             "fishing rod must not be in the dungeon chest loot pool"
         );
-        // Sanity: real combat gear above the floor still is.
+        // Sanity: opted-in combat gear still is.
         assert!(
-            pool.contains(&"iron_sword".to_string()),
-            "expected iron_sword in the chest pool"
+            pool.contains(&"iron_boots".to_string()),
+            "expected iron_boots in the chest pool"
         );
     }
 
-    /// Chest-tier progression: old_crypt (tier 1) stays at leather-armor
-    /// level, orc_warrens (tier 2) adds the iron and chain gear, and the
-    /// breastplate and precious accessories wait for a tier-3 dungeon.
+    /// Chest pools are exactly the doc/ITEM_TIERS.md placement: leather set
+    /// split over tiers 1–2, chain/plate cores reserved for the unbuilt
+    /// tier-3/4 dungeons, everything else (weapons, valuables) opted out.
     #[test]
     fn chest_tiers_gate_endgame_loot_by_dungeon() {
         let defs = ItemDefs::load();
-        let [t1, t2, t3] = [1, 2, 3].map(|t| defs.chest_equipment_ids(2000, t));
+        let [t1, t2, t3, t4] = [1, 2, 3, 4].map(|t| table_ids(&defs, t));
 
-        assert!(t1.contains(&"leather_armor".to_string()));
-        for id in ["chain_mail", "iron_sword", "iron_boots", "raven_shield"] {
-            let id = id.to_string();
-            assert!(
-                !t1.contains(&id) && t2.contains(&id),
-                "{id} is a tier-2 drop"
-            );
+        assert_eq!(t1, ["leather_belt", "leather_helmet", "leather_pants"]);
+        assert_eq!(
+            t2,
+            [
+                "iron_boots",
+                "leather_armor",
+                "leather_belt",
+                "leather_helmet",
+                "leather_pants",
+                "raven_shield",
+            ]
+        );
+        let t3_new: Vec<_> = t3.iter().filter(|id| !t2.contains(id)).collect();
+        assert_eq!(t3_new, ["chain_mail"]);
+        let t4_new: Vec<_> = t4.iter().filter(|id| !t3.contains(id)).collect();
+        assert_eq!(t4_new, ["breastplate"]);
+    }
+
+    /// The doc's farming target: completing a tier's new set pieces takes
+    /// ~5 chest opens on average. Closed form for independent per-open
+    /// rolls — E[all K collected] by inclusion–exclusion over geometrics.
+    #[test]
+    fn chest_chances_hit_five_run_completion() {
+        let defs = ItemDefs::load();
+
+        fn expected_opens_to_collect(chances: &[f32]) -> f64 {
+            let k = chances.len() as u32;
+            let mut expectation = 0.0;
+            for mask in 1..(1u32 << k) {
+                let mut miss_all = 1.0;
+                for (i, &p) in chances.iter().enumerate() {
+                    if mask & (1 << i) != 0 {
+                        miss_all *= 1.0 - f64::from(p);
+                    }
+                }
+                let sign = if mask.count_ones() % 2 == 1 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                expectation += sign / (1.0 - miss_all);
+            }
+            expectation
         }
-        for id in ["breastplate", "gold_ring", "silver_necklace"] {
-            let id = id.to_string();
-            assert!(
-                !t2.contains(&id) && t3.contains(&id),
-                "{id} is reserved for the third dungeon"
-            );
+
+        // Old Crypt (tier 1): signature leather_helmet is guaranteed; the
+        // remaining set pieces must land in ~5 runs.
+        let t1: Vec<f32> = defs
+            .chest_roll_table(1)
+            .into_iter()
+            .filter(|(id, _)| id != "leather_helmet")
+            .map(|(_, chance)| chance)
+            .collect();
+        let opens = expected_opens_to_collect(&t1);
+        assert!(
+            (4.0..=6.0).contains(&opens),
+            "old_crypt set completion expects ~5 opens, got {opens:.2}"
+        );
+
+        // Tier-2 home pieces roll at the doc's K=4 constant even while the
+        // set is still missing assets; carryovers roll at the flat 10%.
+        let t2: std::collections::HashMap<String, f32> =
+            defs.chest_roll_table(2).into_iter().collect();
+        assert_eq!(t2["iron_boots"], 0.37);
+        assert_eq!(t2["raven_shield"], 0.2);
+        assert_eq!(t2["leather_armor"], 0.0, "signature rolls only as itself");
+        for id in ["leather_helmet", "leather_pants", "leather_belt"] {
+            assert_eq!(t2[id], CHEST_CARRYOVER_CHANCE, "{id} carries over at 10%");
         }
     }
 
