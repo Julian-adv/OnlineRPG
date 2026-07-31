@@ -467,25 +467,25 @@ export function handleServerMessage(
       break
 
     case 'PartySummonReceived': {
-      // No cap, unlike invites: distinct casters bound the queue at the
-      // party size, and a silent drop would waste a consumed scroll. Age
-      // out dead entries before the dedupe (the gauge only ticks the head
-      // toast, and not at all in a background tab) so a stale one can't
-      // shadow a fresh call — the agent client's twin ordering.
+      // Every delivery corresponds to a freshly inserted full-TTL server
+      // entry (the ack-only cast never re-sends for a live one), so a
+      // same-caster entry here is stale by definition: replace it, and age
+      // out the dead (the gauge only ticks the head toast, and not at all
+      // in a background tab). No cap, unlike invites — distinct casters
+      // bound the queue at the party size, and a silent drop would waste a
+      // consumed scroll.
       const now = Date.now()
-      pendingPartySummons.update((queue) => {
-        const live = queue.filter((s) => now - s.offeredAt < SUMMON_TTL_MS)
-        return live.some((summon) => summon.casterId === data.caster_id)
-          ? live
-          : [
-              ...live,
-              {
-                casterId: data.caster_id,
-                casterName: data.caster_name,
-                offeredAt: now,
-              },
-            ]
-      })
+      pendingPartySummons.update((queue) => [
+        ...queue.filter(
+          (s) =>
+            now - s.offeredAt < SUMMON_TTL_MS && s.casterId !== data.caster_id
+        ),
+        {
+          casterId: data.caster_id,
+          casterName: data.caster_name,
+          offeredAt: now,
+        },
+      ])
       break
     }
 

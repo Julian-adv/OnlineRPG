@@ -1350,16 +1350,18 @@ impl SharedState {
                 ref caster_name,
             } => {
                 self.prune_expired_party_summons();
-                // No cap, unlike invites: distinct casters bound the queue
-                // at the party size.
+                // Every delivery corresponds to a freshly inserted full-TTL
+                // server entry (the ack-only cast never re-sends for a live
+                // one), so a same-caster entry here is stale by definition:
+                // replace it. No cap, unlike invites — distinct casters
+                // bound the queue at the party size.
                 let queue = &mut self.pending_party_summons;
-                if !queue.iter().any(|s| s.caster_id == *caster_id) {
-                    queue.push(PendingPartySummon {
-                        caster_id: *caster_id,
-                        caster_name: caster_name.clone(),
-                        expires_at: std::time::Instant::now() + PARTY_SUMMON_TTL,
-                    });
-                }
+                queue.retain(|s| s.caster_id != *caster_id);
+                queue.push(PendingPartySummon {
+                    caster_id: *caster_id,
+                    caster_name: caster_name.clone(),
+                    expires_at: std::time::Instant::now() + PARTY_SUMMON_TTL,
+                });
             }
             ServerMessage::PartyState {
                 leader_id,
