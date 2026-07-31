@@ -46,6 +46,10 @@ COPY client/ client/
 
 WORKDIR /build/client
 RUN npm ci
+# Vite inlines import.meta.env at build time, so the client ID cannot be a
+# runtime env var. Bake a placeholder and let the entrypoint substitute the
+# deployment's value into the emitted bundle.
+ENV VITE_GOOGLE_CLIENT_ID=__GOOGLE_CLIENT_ID__
 RUN npm run build
 
 # Same guard tools/deploy-prod.sh applies before publishing to the webroot.

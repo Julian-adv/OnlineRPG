@@ -59,7 +59,9 @@
 
   onMount(async () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-    if (!clientId) {
+    // Container builds bake a placeholder that the entrypoint substitutes at
+    // startup; unsubstituted it would reach Google as a bogus ID.
+    if (!clientId || clientId === '__GOOGLE_CLIENT_ID__') {
       errorMessage = 'VITE_GOOGLE_CLIENT_ID is not configured'
       return
     }
