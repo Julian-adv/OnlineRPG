@@ -1,6 +1,9 @@
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::messages::{PartyMember, PartyMemberPosition, PARTY_INVITE_TTL};
-use std::collections::HashMap;
+use onlinerpg_shared::messages::{
+    PartyMember, PartyMemberPosition, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
+};
+use onlinerpg_shared::world::Position;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tracing::info;
 
@@ -12,6 +15,10 @@ const MAX_TARGET_NAME_CHARS: usize = 32;
 
 /// Outstanding invites one player may have pending at once (spam brake).
 const PARTY_PENDING_INVITE_CAP: usize = 5;
+
+/// Arrival ring radius (m) around a summon's caster; golden-angle spacing
+/// keeps simultaneous arrivals apart.
+const SUMMON_RING_RADIUS: f32 = 1.6;
 
 pub(crate) struct Party {
     pub leader: PlayerId,
@@ -30,6 +37,9 @@ pub(crate) struct Parties {
     /// (inviter, invitee) → pending invite. Swept lazily on the invite paths
     /// and purged with the player, so it stays tiny without its own tick.
     invites: HashMap<(PlayerId, PlayerId), PendingInvite>,
+    /// (caster, member) → pending summon, same lifecycle as `invites`. No
+    /// pending cap: the consumed scroll is the spam brake.
+    summons: HashMap<(PlayerId, PlayerId), PendingSummon>,
 }
 
 pub(crate) struct PendingInvite {
@@ -37,6 +47,10 @@ pub(crate) struct PendingInvite {
     /// A declined invite stays here (answered) until it expires: removing it
     /// would hand the spam brake back to the inviter on every decline.
     answered: bool,
+}
+
+pub(crate) struct PendingSummon {
+    expires_at: Instant,
 }
 
 impl Parties {
@@ -368,6 +382,155 @@ impl super::GameState {
         }
     }
 
+    /// Other party members who are still online — the summonable set.
+    pub(crate) async fn other_party_members(&self, player_id: &PlayerId) -> Vec<PlayerId> {
+        let ids = {
+            let parties = self.parties.read().await;
+            parties
+                .party_of(player_id)
+                .map(|party| party.members.clone())
+                .unwrap_or_default()
+        };
+        let players = self.players.read().await;
+        ids.into_iter()
+            .filter(|id| id != player_id && players.contains_key(id))
+            .collect()
+    }
+
+    /// Fan a consumed summoning scroll out as consent requests. Like invites,
+    /// a block changes only the delivery: a suppressed member still gets an
+    /// entry, they just never see the toast.
+    pub(crate) async fn cast_party_summon(&self, caster_id: &PlayerId, members: Vec<PlayerId>) {
+        let caster_name = self.player_name_of(caster_id).await;
+        let suppressed: HashSet<PlayerId> = {
+            let blocked = self.blocked_names.read().await;
+            members
+                .iter()
+                .filter(|id| {
+                    blocked
+                        .get(id)
+                        .is_some_and(|names| names.contains(&caster_name))
+                })
+                .copied()
+                .collect()
+        };
+        {
+            let mut parties = self.parties.write().await;
+            let now = Instant::now();
+            parties.summons.retain(|_, summon| summon.expires_at > now);
+            for member in &members {
+                parties.summons.insert(
+                    (*caster_id, *member),
+                    PendingSummon {
+                        expires_at: now + PARTY_SUMMON_TTL,
+                    },
+                );
+            }
+        }
+        for member in members.iter().filter(|m| !suppressed.contains(m)) {
+            self.send_direct_message(
+                member,
+                ServerMessage::PartySummonReceived {
+                    caster_id: *caster_id,
+                    caster_name: caster_name.clone(),
+                },
+            )
+            .await;
+        }
+        self.send_system_message(
+            caster_id,
+            format!("Summon: calling {} party member(s).", members.len()),
+        )
+        .await;
+    }
+
+    pub async fn respond_to_party_summon(
+        &self,
+        member_id: &PlayerId,
+        caster_id: &PlayerId,
+        accept: bool,
+    ) {
+        let key = (*caster_id, *member_id);
+        let usable = {
+            let mut parties = self.parties.write().await;
+            let now = Instant::now();
+            parties.summons.retain(|_, summon| summon.expires_at > now);
+            parties.summons.contains_key(&key)
+        };
+        if !usable {
+            self.send_system_message(member_id, "Summon: that summons has expired.")
+                .await;
+            return;
+        }
+        let member_name = self.player_name_of(member_id).await;
+        if !accept {
+            self.parties.write().await.summons.remove(&key);
+            self.send_system_message(caster_id, format!("Summon: {member_name} declined."))
+                .await;
+            return;
+        }
+        // Same clock as /escape: accepting must not double as a free
+        // disengage. The entry survives the refusal for a retry in the window.
+        let refusal = {
+            let players = self.players.read().await;
+            let Some(member) = players.get(member_id) else {
+                return;
+            };
+            if member.health == 0 {
+                Some("not while defeated.")
+            } else if Self::now_ms().saturating_sub(member.last_combat_at) < super::OUT_OF_COMBAT_MS
+            {
+                Some("not while in combat.")
+            } else {
+                None
+            }
+        };
+        if let Some(reason) = refusal {
+            self.send_system_message(member_id, format!("Summon: {reason}"))
+                .await;
+            return;
+        }
+        // The caster must still be online and share the member's party.
+        let destination = {
+            let players = self.players.read().await;
+            let parties = self.parties.read().await;
+            let same_party = parties.member_of.contains_key(caster_id)
+                && parties.member_of.get(caster_id) == parties.member_of.get(member_id);
+            players.get(caster_id).filter(|_| same_party).map(|caster| {
+                (
+                    caster.position,
+                    caster.rotation,
+                    caster.floor_level,
+                    caster.name.clone(),
+                )
+            })
+        };
+        self.parties.write().await.summons.remove(&key);
+        let Some((center, rotation, floor, caster_name)) = destination else {
+            self.send_system_message(member_id, "Summon: that summons has faded.")
+                .await;
+            return;
+        };
+        // Golden-angle ring: a per-member arrival spot without a placement
+        // scan, so simultaneous accepts don't stack.
+        let angle = (member_id.get() % 360) as f32 * 2.399_963;
+        let arrival = Position {
+            x: center.x + angle.cos() * SUMMON_RING_RADIUS,
+            y: center.y,
+            z: center.z + angle.sin() * SUMMON_RING_RADIUS,
+        };
+        info!(member = %member_name, caster = %caster_name, "party summon accepted");
+        self.teleport_player(member_id, arrival, rotation, floor)
+            .await;
+        self.send_system_message(
+            member_id,
+            format!("Summon: you answer {caster_name}'s call."),
+        )
+        .await;
+        self.send_system_message(caster_id, format!("Summon: {member_name} is at your side."))
+            .await;
+    }
+
     pub async fn leave_party(&self, player_id: &PlayerId) {
         if self.remove_party_member(player_id).await {
             self.send_system_message(player_id, "Party: you left the party.")
@@ -385,6 +548,9 @@ impl super::GameState {
             let mut parties = self.parties.write().await;
             parties
                 .invites
+                .retain(|(from, to), _| from != player_id && to != player_id);
+            parties
+                .summons
                 .retain(|(from, to), _| from != player_id && to != player_id);
         }
         self.remove_party_member(player_id).await;

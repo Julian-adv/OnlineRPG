@@ -484,6 +484,7 @@ impl super::GameState {
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
             }
+            UseEffect::SummonParty => self.use_party_summon_scroll(player_id, instance_id).await,
             UseEffect::OpenCoinPouch(dice) => {
                 self.use_coin_pouch(player_id, instance_id, &dice).await
             }
@@ -590,6 +591,28 @@ impl super::GameState {
         let spawn = &world_config().spawn_position;
         self.teleport_player(player_id, spawn.position(), spawn.rotation, 0)
             .await;
+    }
+
+    /// Read a scroll of party summon: ask every other online party member to
+    /// teleport to the reader's side. Refuses — keeping the scroll — while
+    /// defeated or with no one to call, like the enchant scroll's guard.
+    async fn use_party_summon_scroll(&self, player_id: &PlayerId, instance_id: u64) {
+        if self
+            .reject_if_defeated(player_id, "You can't read while defeated")
+            .await
+        {
+            return;
+        }
+
+        let members = self.other_party_members(player_id).await;
+        if members.is_empty() {
+            self.send_system_message(player_id, "Summon: no party members to call.")
+                .await;
+            return;
+        }
+
+        self.consume_one_and_sync(player_id, instance_id).await;
+        self.cast_party_summon(player_id, members).await;
     }
 
     /// Read a scroll of enchant weapon: +1 to the wielded weapon's

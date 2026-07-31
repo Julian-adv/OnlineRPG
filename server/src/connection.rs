@@ -1496,6 +1496,14 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PartySummonRespond { caster_id, accept } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .respond_to_party_summon(id, &caster_id, accept)
+                    .await;
+            }
+        }
+
         ClientMessage::PartyLeave => {
             if let Some(id) = &state.player_id {
                 game_state.leave_party(id).await;

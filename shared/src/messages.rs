@@ -94,6 +94,10 @@ pub struct PartyMember {
 /// client mirrors it (`INVITE_TTL_MS` in `PartyInviteToast.svelte`).
 pub const PARTY_INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// How long a party summon stays acceptable; `PARTY_INVITE_TTL`'s twin for
+/// the summoning scroll's consent window.
+pub const PARTY_SUMMON_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// One member's location as listed in `PartyPositions`. No name: the roster
 /// from `PartyState` already carries it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -365,6 +369,11 @@ pub enum ClientMessage {
         inviter_id: PlayerId,
         accept: bool,
     },
+    /// Accept or decline a pending party summon from `caster_id`.
+    PartySummonRespond {
+        caster_id: PlayerId,
+        accept: bool,
+    },
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
@@ -536,6 +545,13 @@ pub enum ServerMessage {
         target_name: String,
         accepted: bool,
         message: String,
+    },
+    /// Direct to each other party member when one reads a summoning scroll:
+    /// a consent request to answer with `PartySummonRespond` before it
+    /// expires server-side.
+    PartySummonReceived {
+        caster_id: PlayerId,
+        caster_name: String,
     },
     /// Direct to each member after any roster change. Empty `members` means
     /// the receiver is no longer in a party.

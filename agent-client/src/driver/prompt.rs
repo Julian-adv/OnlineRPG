@@ -427,6 +427,10 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
              {{\"type\":\"party_accept\"}} or decline with party_decline."
         )),
         ServerMessage::PartyInviteResult { message, .. } => Some(format!("[Party] {message}")),
+        ServerMessage::PartySummonReceived { caster_name, .. } => Some(format!(
+            "[PartySummon] {caster_name} calls you to their side (summoning scroll). Accept \
+             with {{\"type\":\"summon_accept\"}} or decline with summon_decline."
+        )),
         ServerMessage::PartyState { members, .. } => Some(if members.is_empty() {
             "[Party] You are no longer in a party.".to_string()
         } else {

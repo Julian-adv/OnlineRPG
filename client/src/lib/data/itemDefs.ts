@@ -35,6 +35,7 @@ const CONSUMABLE_CATEGORIES = new Set([
   'healing_potion',
   'return_scroll',
   'enchant_scroll',
+  'party_summon_scroll',
   'fish',
   'coin_catch',
 ])

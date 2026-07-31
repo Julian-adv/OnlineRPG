@@ -13,6 +13,7 @@
   import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
   import PartyInviteToast from './PartyInviteToast.svelte'
+  import PartySummonToast from './PartySummonToast.svelte'
   import PartyPanel from './PartyPanel.svelte'
   import NpcContextMenu from './NpcContextMenu.svelte'
   import DragGhost from './DragGhost.svelte'
@@ -99,6 +100,7 @@
     <TradeWindow />
     <TradeOfferToast />
     <PartyInviteToast />
+    <PartySummonToast />
     <PartyPanel />
     <NpcContextMenu />
     <FishingPrompt />

@@ -641,3 +641,223 @@ async fn party_chat_command_invites_and_reports() {
         other => panic!("Expected roster status, got {:?}", other),
     }
 }
+
+// --- Party summoning scrolls ---
+
+/// Put one party summon scroll (instance 9) in `name`'s bag.
+async fn give_summon_scroll(game_state: &GameState, name: &str) {
+    let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+    inv.bag.push(bag_item(9, "scroll_of_party_summon", 1));
+    game_state.inventories.write().await.insert(pid(name), inv);
+}
+
+#[tokio::test]
+async fn summon_scroll_kept_without_party() {
+    let game_state = make_test_game_state("summon_no_party");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    give_summon_scroll(&game_state, "alice").await;
+
+    game_state.use_item(&pid("alice"), 9).await;
+
+    let inv = game_state
+        .get_player_inventory(&pid("alice"))
+        .await
+        .unwrap();
+    assert_eq!(inv.bag.len(), 1, "the scroll should be kept");
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("no party members"), "{message}")
+        }
+        other => panic!("Expected a system reply, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn summon_accept_teleports_to_casters_side() {
+    let game_state = make_test_game_state("summon_accept");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    // The caster waits on a dungeon floor: the arrival must match it.
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("alice"))
+        .unwrap()
+        .floor_level = -2;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state.use_item(&pid("alice"), 9).await;
+    let inv = game_state
+        .get_player_inventory(&pid("alice"))
+        .await
+        .unwrap();
+    assert!(inv.bag.is_empty(), "the scroll should be consumed");
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::PartySummonReceived {
+            caster_id,
+            caster_name,
+        }) => {
+            assert_eq!(caster_id, pid("alice"));
+            assert_eq!(caster_name, "alice");
+        }
+        other => panic!("Expected summon for bob, got {:?}", other),
+    }
+
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    let players = game_state.players.read().await;
+    let alice = players.get(&pid("alice")).unwrap();
+    let bob = players.get(&pid("bob")).unwrap();
+    let (dx, dz) = (
+        bob.position.x - alice.position.x,
+        bob.position.z - alice.position.z,
+    );
+    let dist = (dx * dx + dz * dz).sqrt();
+    assert!(dist <= 2.0, "bob should arrive beside alice, {dist}m away");
+    assert!(dist > 0.5, "arrivals should not stack on the caster");
+    assert_eq!(bob.floor_level, -2);
+}
+
+#[tokio::test]
+async fn summon_accept_waits_out_combat() {
+    let game_state = make_test_game_state("summon_combat");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    game_state.use_item(&pid("alice"), 9).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("bob"))
+        .unwrap()
+        .last_combat_at = GameState::now_ms();
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("not while in combat"), "{message}")
+        }
+        other => panic!("Expected combat refusal, got {:?}", other),
+    }
+    assert_eq!(
+        game_state
+            .players
+            .read()
+            .await
+            .get(&pid("bob"))
+            .unwrap()
+            .position
+            .x,
+        500.0
+    );
+
+    // Out of combat again: the pending summon survived the refusal.
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("bob"))
+        .unwrap()
+        .last_combat_at = 0;
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    let x = game_state
+        .players
+        .read()
+        .await
+        .get(&pid("bob"))
+        .unwrap()
+        .position
+        .x;
+    assert!(x.abs() < 3.0, "bob should reach alice after combat, x={x}");
+}
+
+#[tokio::test]
+async fn summon_decline_reports_and_spends_the_ask() {
+    let game_state = make_test_game_state("summon_decline");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    game_state.use_item(&pid("alice"), 9).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), false)
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("bob declined"), "{message}")
+        }
+        other => panic!("Expected decline report, got {:?}", other),
+    }
+
+    // The declined entry is gone: a change of heart finds nothing to accept.
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("expired"), "{message}")
+        }
+        other => panic!("Expected expired notice, got {:?}", other),
+    }
+    assert_eq!(
+        game_state
+            .players
+            .read()
+            .await
+            .get(&pid("bob"))
+            .unwrap()
+            .position
+            .x,
+        500.0
+    );
+}
+
+#[tokio::test]
+async fn summon_fades_when_party_dissolves() {
+    let game_state = make_test_game_state("summon_faded");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    game_state.use_item(&pid("alice"), 9).await;
+    game_state.leave_party(&pid("alice")).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("faded"), "{message}")
+        }
+        other => panic!("Expected faded notice, got {:?}", other),
+    }
+    assert_eq!(
+        game_state
+            .players
+            .read()
+            .await
+            .get(&pid("bob"))
+            .unwrap()
+            .position
+            .x,
+        500.0
+    );
+}

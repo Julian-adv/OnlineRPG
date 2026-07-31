@@ -56,6 +56,7 @@ import {
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
+  pendingPartySummons,
   MAX_PENDING_PARTY_INVITES,
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
@@ -400,6 +401,9 @@ export function handleServerMessage(
           data.position.z
         )
         requestCameraReset()
+        // Any teleport settles the summon toast — an accepted one succeeded,
+        // and one surviving the player's own departure would mislead.
+        pendingPartySummons.set([])
         break
       }
       const tpDeckY = bridgeManager.findDeckYAt(
@@ -461,6 +465,22 @@ export function handleServerMessage(
       addChatMessage({ text: data.message, sender: 'system' })
       break
 
+    case 'PartySummonReceived':
+      pendingPartySummons.update((queue) =>
+        queue.length >= MAX_PENDING_PARTY_INVITES ||
+        queue.some((summon) => summon.casterId === data.caster_id)
+          ? queue
+          : [
+              ...queue,
+              {
+                casterId: data.caster_id,
+                casterName: data.caster_name,
+                offeredAt: Date.now(),
+              },
+            ]
+      )
+      break
+
     case 'PartyState': {
       const joined = data.members.length > 0
       partyRoster.set(
@@ -475,6 +495,8 @@ export function handleServerMessage(
         pendingPartyInvites.set([])
       } else {
         resetPartyPositions()
+        // No party, no valid summons.
+        pendingPartySummons.set([])
       }
       break
     }

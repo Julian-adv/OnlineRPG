@@ -264,6 +264,39 @@ pub(super) async fn handle_response(
             continue;
         }
 
+        // Summon answers likewise need the stored request. An accept keeps
+        // the entry: the server refuses mid-combat accepts and the summon
+        // stays retryable; the teleport (or the TTL) clears it.
+        if let AgentAction::SummonAccept { player } | AgentAction::SummonDecline { player } = action
+        {
+            let accept = matches!(action, AgentAction::SummonAccept { .. });
+            let mut s = state.lock().await;
+            s.prune_expired_party_summons();
+            let idx = match player.as_deref() {
+                Some(name) => s
+                    .pending_party_summons
+                    .iter()
+                    .position(|i| i.caster_name.eq_ignore_ascii_case(name)),
+                None => (!s.pending_party_summons.is_empty()).then_some(0),
+            };
+            let Some(idx) = idx else {
+                s.push_agent_event("[SummonFailed] No pending summons to answer.".to_string());
+                continue;
+            };
+            let caster_id = s.pending_party_summons[idx].caster_id;
+            let caster_name = s.pending_party_summons[idx].caster_name.clone();
+            if !accept {
+                s.pending_party_summons.remove(idx);
+            }
+            let cmd = onlinerpg_shared::ClientMessage::PartySummonRespond { caster_id, accept };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send summon response: {e}");
+            } else if !accept {
+                s.push_agent_event(format!("[Party] You declined {caster_name}'s summons."));
+            }
+            continue;
+        }
+
         // Use an item: worn gear comes off, anything else is equipped or
         // consumed out of the bag. Lighting a torch is equipping one.
         if let AgentAction::Use { item } = action {

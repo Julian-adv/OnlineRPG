@@ -76,6 +76,8 @@ pub enum UseEffect {
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
     EnchantWeapon,
+    /// Ask every party member to teleport to the reader's side.
+    SummonParty,
     /// Open a fished-up coin pouch: roll the given dice for its copper.
     OpenCoinPouch(String),
 }
@@ -136,6 +138,7 @@ impl ItemDefinition {
             "fish" => self.dice.clone().map(UseEffect::Heal),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
+            "party_summon_scroll" => Some(UseEffect::SummonParty),
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
             _ => None,
         }
