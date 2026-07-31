@@ -62,6 +62,9 @@ export const pendingPartyInvites = writable<PendingPartyInvite[]>([])
 
 export const MAX_PENDING_PARTY_INVITES = 3
 
+/** Mirrors the server-side summon TTL (`PARTY_SUMMON_TTL`). */
+export const SUMMON_TTL_MS = 30_000
+
 /** A summoning-scroll consent request the player hasn't answered yet. */
 export interface PendingPartySummon {
   casterId: number

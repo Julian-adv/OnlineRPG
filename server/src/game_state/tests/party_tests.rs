@@ -1008,8 +1008,8 @@ async fn summon_decline_reports_and_spends_the_ask() {
 }
 
 #[tokio::test]
-async fn summon_fades_when_party_dissolves() {
-    let game_state = make_test_game_state("summon_faded");
+async fn summon_leave_voids_the_call() {
+    let game_state = make_test_game_state("summon_leave");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;
     let mut bob_rx = add(&game_state, "bob", 500.0).await;
     form_party(&game_state, "alice", "bob").await;
@@ -1019,14 +1019,15 @@ async fn summon_fades_when_party_dissolves() {
     drain(&mut alice_rx);
     drain(&mut bob_rx);
 
+    // Leaving voided the entry, exactly as the clients' roster prune assumes.
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
     match bob_rx.try_recv() {
         Ok(ServerMessage::SystemMessage { message }) => {
-            assert!(message.contains("faded"), "{message}")
+            assert!(message.contains("expired"), "{message}")
         }
-        other => panic!("Expected faded notice, got {:?}", other),
+        other => panic!("Expected expired notice, got {:?}", other),
     }
     assert_eq!(
         game_state
@@ -1039,4 +1040,64 @@ async fn summon_fades_when_party_dissolves() {
             .x,
         500.0
     );
+}
+
+#[tokio::test]
+async fn summon_teleport_voids_calls_aimed_at_the_mover() {
+    let game_state = make_test_game_state("summon_teleport_voids");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    let mut carol_rx = add(&game_state, "carol", 900.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    give_summon_scroll(&game_state, "alice").await;
+    give_summon_scrolls(&game_state, "carol", 2).await;
+    game_state.use_item(&pid("alice"), 9).await;
+    game_state.use_item(&pid("carol"), 9).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    // Bob answers alice; the teleport voids carol's call at him — the
+    // clients wiped it from their queues, so the server must match.
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    let bob_x = game_state
+        .players
+        .read()
+        .await
+        .get(&pid("bob"))
+        .unwrap()
+        .position
+        .x;
+    assert!(bob_x.abs() < 3.0, "bob should stand by alice, x={bob_x}");
+    drain(&mut bob_rx);
+
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("carol"), true)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("expired"), "{message}")
+        }
+        other => panic!("Expected expired notice for carol's call, got {:?}", other),
+    }
+
+    // And carol can call him again at once: her re-read reaches exactly bob
+    // (alice still holds carol's live entry, so she is excluded).
+    drain(&mut carol_rx);
+    game_state.use_item(&pid("carol"), 9).await;
+    assert_eq!(summon_scrolls_left(&game_state, "carol").await, 0);
+    let call_notice = std::iter::from_fn(|| carol_rx.try_recv().ok())
+        .find_map(|msg| match msg {
+            ServerMessage::SystemMessage { message } => Some(message),
+            _ => None,
+        })
+        .expect("carol should get a call notice");
+    assert!(call_notice.contains("calling 1"), "{call_notice}");
+    assert!(matches!(
+        bob_rx.try_recv(),
+        Ok(ServerMessage::PartySummonReceived { .. })
+    ));
 }

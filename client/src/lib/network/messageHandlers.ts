@@ -57,6 +57,7 @@ import {
   resetPartyStores,
   pendingPartyInvites,
   pendingPartySummons,
+  SUMMON_TTL_MS,
   MAX_PENDING_PARTY_INVITES,
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
@@ -465,22 +466,28 @@ export function handleServerMessage(
       addChatMessage({ text: data.message, sender: 'system' })
       break
 
-    case 'PartySummonReceived':
+    case 'PartySummonReceived': {
       // No cap, unlike invites: distinct casters bound the queue at the
-      // party size, and a silent drop would waste a consumed scroll.
-      pendingPartySummons.update((queue) =>
-        queue.some((summon) => summon.casterId === data.caster_id)
-          ? queue
+      // party size, and a silent drop would waste a consumed scroll. Age
+      // out dead entries before the dedupe (the gauge only ticks the head
+      // toast, and not at all in a background tab) so a stale one can't
+      // shadow a fresh call — the agent client's twin ordering.
+      const now = Date.now()
+      pendingPartySummons.update((queue) => {
+        const live = queue.filter((s) => now - s.offeredAt < SUMMON_TTL_MS)
+        return live.some((summon) => summon.casterId === data.caster_id)
+          ? live
           : [
-              ...queue,
+              ...live,
               {
                 casterId: data.caster_id,
                 casterName: data.caster_name,
-                offeredAt: Date.now(),
+                offeredAt: now,
               },
             ]
-      )
+      })
       break
+    }
 
     case 'PartyState': {
       const joined = data.members.length > 0

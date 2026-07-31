@@ -397,6 +397,17 @@ impl super::GameState {
             .collect()
     }
 
+    /// Teleport hook: the mover can no longer answer the summons aimed at
+    /// them — both clients wipe their queues on the self-teleport, and a
+    /// lingering server entry would block a re-call until it expires.
+    pub(crate) async fn void_summons_aimed_at(&self, player_id: &PlayerId) {
+        self.parties
+            .write()
+            .await
+            .summons
+            .retain(|(_, to), _| to != player_id);
+    }
+
     /// The summonable set: online members without a live pending summons
     /// from this caster. Re-reading while a call is out must neither refresh
     /// nor re-pop it — the invites' ack-only rule — so those members are
@@ -607,9 +618,6 @@ impl super::GameState {
             parties
                 .invites
                 .retain(|(from, to), _| from != player_id && to != player_id);
-            parties
-                .summons
-                .retain(|(from, to), _| from != player_id && to != player_id);
         }
         self.remove_party_member(player_id).await;
     }
@@ -617,10 +625,14 @@ impl super::GameState {
     /// Remove a player from its party — promoting the earliest remaining
     /// member if it led, disbanding when one member would remain. Pending
     /// invites are untouched (leaving a party shouldn't void one you
-    /// received); returns false when the player was in no party.
+    /// received); pending summons are voided, matching the clients' roster
+    /// pruning. Returns false when the player was in no party.
     async fn remove_party_member(&self, player_id: &PlayerId) -> bool {
         let removal = {
             let mut parties = self.parties.write().await;
+            parties
+                .summons
+                .retain(|(from, to), _| from != player_id && to != player_id);
             match parties.member_of.remove(player_id) {
                 None => Removal::NotInParty,
                 Some(party_id) => {

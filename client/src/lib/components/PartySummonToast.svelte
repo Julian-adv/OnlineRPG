@@ -1,12 +1,10 @@
 <script lang="ts">
   import {
     pendingPartySummons,
+    SUMMON_TTL_MS,
     type PendingPartySummon,
   } from '../stores/partyStore'
   import { networkManager } from '../network/socket'
-
-  /** Mirrors the server-side summon TTL. */
-  const SUMMON_TTL_MS = 30_000
 
   /** Oldest first, same queue discipline as PartyInviteToast. */
   const summon = $derived($pendingPartySummons[0] ?? null)
