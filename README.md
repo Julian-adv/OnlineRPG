@@ -177,6 +177,13 @@ tokens from either client. See [doc/REMOTE_AGENT_CLIENT.md](doc/REMOTE_AGENT_CLI
 
 ### 4. Running the Client
 
+Binary assets (3D models, music, sounds) are hosted on Hugging Face, not in git.
+Fetch them once from the repo root (re-run after `assets.lock` changes):
+
+```bash
+bash tools/fetch-assets.sh
+```
+
 ```bash
 cd client
 cp .env.example .env.local   # then set VITE_GOOGLE_CLIENT_ID (required for login)

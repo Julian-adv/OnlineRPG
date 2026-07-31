@@ -48,6 +48,13 @@ logs/
 *.temp
 *.skill
 
+# Binary assets live on Hugging Face — assets.lock pins the revision,
+# tools/fetch-assets.sh downloads them
+*.glb
+*.mp3
+*.m4a
+*.blend
+
 # Blender backup files
 *.blend1
 .playwright-mcp/
