@@ -17,9 +17,8 @@ fi
 sed -i "s/__RESOLVER__/${RESOLVER}/" "$CONF"
 
 # Vite baked __GOOGLE_CLIENT_ID__ into the bundle at build time (see
-# client.Dockerfile). Substituting here lets one image serve any deployment;
-# left unset, the login screen reports the placeholder as unconfigured.
-if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then
-    grep -rl __GOOGLE_CLIENT_ID__ /usr/share/nginx/html \
-        | xargs -r sed -i "s/__GOOGLE_CLIENT_ID__/${GOOGLE_CLIENT_ID}/g"
-fi
+# client.Dockerfile). Substituting here lets one image serve any deployment.
+# Unset substitutes empty, which is what the login screen reports as
+# unconfigured — leaving the placeholder would reach Google as a bogus id.
+grep -rl __GOOGLE_CLIENT_ID__ /usr/share/nginx/html \
+    | xargs -r sed -i "s/__GOOGLE_CLIENT_ID__/${GOOGLE_CLIENT_ID:-}/g"

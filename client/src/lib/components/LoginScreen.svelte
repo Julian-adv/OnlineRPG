@@ -59,9 +59,10 @@
 
   onMount(async () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-    // Container builds bake a placeholder that the entrypoint substitutes at
-    // startup; unsubstituted it would reach Google as a bogus ID.
-    if (!clientId || clientId === '__GOOGLE_CLIENT_ID__') {
+    // Comparing against the container build's placeholder is not possible here:
+    // Vite inlines this, so the check would fold to a constant and let the
+    // minifier drop the placeholder the entrypoint has to substitute.
+    if (!clientId) {
       errorMessage = 'VITE_GOOGLE_CLIENT_ID is not configured'
       return
     }
