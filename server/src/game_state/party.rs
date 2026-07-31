@@ -382,7 +382,7 @@ impl super::GameState {
         }
     }
 
-    /// Other party members who are still online — the summonable set.
+    /// Other party members who are still online.
     pub(crate) async fn other_party_members(&self, player_id: &PlayerId) -> Vec<PlayerId> {
         let ids = {
             let parties = self.parties.read().await;
@@ -394,6 +394,21 @@ impl super::GameState {
         let players = self.players.read().await;
         ids.into_iter()
             .filter(|id| id != player_id && players.contains_key(id))
+            .collect()
+    }
+
+    /// The summonable set: online members without a live pending summons
+    /// from this caster. Re-reading while a call is out must neither refresh
+    /// nor re-pop it — the invites' ack-only rule — so those members are
+    /// excluded rather than overwritten.
+    pub(crate) async fn summonable_party_members(&self, caster_id: &PlayerId) -> Vec<PlayerId> {
+        let members = self.other_party_members(caster_id).await;
+        let mut parties = self.parties.write().await;
+        let now = Instant::now();
+        parties.summons.retain(|_, summon| summon.expires_at > now);
+        members
+            .into_iter()
+            .filter(|member| !parties.summons.contains_key(&(*caster_id, *member)))
             .collect()
     }
 
@@ -502,22 +517,65 @@ impl super::GameState {
                     caster.rotation,
                     caster.floor_level,
                     caster.name.clone(),
+                    caster.health,
+                    caster.last_combat_at,
                 )
             })
         };
-        self.parties.write().await.summons.remove(&key);
-        let Some((center, rotation, floor, caster_name)) = destination else {
+        let Some((center, rotation, floor, caster_name, caster_health, caster_combat_at)) =
+            destination
+        else {
+            self.parties.write().await.summons.remove(&key);
             self.send_system_message(member_id, "Summon: that summons has faded.")
                 .await;
             return;
         };
+        // The read-time caster gate, re-checked at delivery: the 30s window
+        // must not hand out fights the 10s clock just refused. Same retry
+        // semantics as the member-side gate — the entry stays.
+        let caster_refusal = if caster_health == 0 {
+            Some(format!("Summon: {caster_name} has fallen."))
+        } else if Self::now_ms().saturating_sub(caster_combat_at) < super::OUT_OF_COMBAT_MS {
+            Some(format!("Summon: {caster_name} is in combat."))
+        } else {
+            None
+        };
+        if let Some(message) = caster_refusal {
+            self.send_system_message(member_id, message).await;
+            return;
+        }
+        self.parties.write().await.summons.remove(&key);
         // Golden-angle ring: a per-member arrival spot without a placement
-        // scan, so simultaneous accepts don't stack.
+        // scan, so simultaneous accepts don't stack. A blocked spot (dungeon
+        // walls run 1m from a corridor's center) retries at half radius and
+        // finally lands on the caster's own — walkable — cell.
         let angle = (member_id.get() % 360) as f32 * 2.399_963;
-        let arrival = Position {
-            x: center.x + angle.cos() * SUMMON_RING_RADIUS,
-            y: center.y,
-            z: center.z + angle.sin() * SUMMON_RING_RADIUS,
+        let arrival = {
+            let cache = self.passability_read();
+            let cell_floor = super::passability::authoritative_floor(&cache, &center);
+            let mut arrival = center;
+            for radius in [SUMMON_RING_RADIUS, SUMMON_RING_RADIUS * 0.5] {
+                let candidate = Position {
+                    x: center.x + angle.cos() * radius,
+                    y: center.y,
+                    z: center.z + angle.sin() * radius,
+                };
+                if super::passability::wrapped_block_info(
+                    &cache,
+                    center.x,
+                    center.z,
+                    candidate.x,
+                    candidate.z,
+                    cell_floor,
+                    center.y,
+                )
+                .is_none()
+                {
+                    arrival = candidate;
+                    break;
+                }
+            }
+            arrival
         };
         info!(member = %member_name, caster = %caster_name, "party summon accepted");
         self.teleport_player(member_id, arrival, rotation, floor)

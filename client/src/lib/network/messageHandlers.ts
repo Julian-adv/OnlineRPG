@@ -466,8 +466,9 @@ export function handleServerMessage(
       break
 
     case 'PartySummonReceived':
+      // No cap, unlike invites: distinct casters bound the queue at the
+      // party size, and a silent drop would waste a consumed scroll.
       pendingPartySummons.update((queue) =>
-        queue.length >= MAX_PENDING_PARTY_INVITES ||
         queue.some((summon) => summon.casterId === data.caster_id)
           ? queue
           : [
@@ -495,9 +496,15 @@ export function handleServerMessage(
         pendingPartyInvites.set([])
       } else {
         resetPartyPositions()
-        // No party, no valid summons.
-        pendingPartySummons.set([])
       }
+      // A summons only lives while its caster shares the roster — one from
+      // someone who left can only ever be answered with "faded".
+      const rosterIds = new Set(
+        (data.members as { id: number }[]).map((m) => m.id)
+      )
+      pendingPartySummons.update((queue) =>
+        queue.filter((summon) => rosterIds.has(summon.casterId))
+      )
       break
     }
 

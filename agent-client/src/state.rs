@@ -1350,10 +1350,10 @@ impl SharedState {
                 ref caster_name,
             } => {
                 self.prune_expired_party_summons();
+                // No cap, unlike invites: distinct casters bound the queue
+                // at the party size.
                 let queue = &mut self.pending_party_summons;
-                if queue.len() < MAX_PENDING_PARTY_INVITES
-                    && !queue.iter().any(|s| s.caster_id == *caster_id)
-                {
+                if !queue.iter().any(|s| s.caster_id == *caster_id) {
                     queue.push(PendingPartySummon {
                         caster_id: *caster_id,
                         caster_name: caster_name.clone(),
@@ -1370,10 +1370,10 @@ impl SharedState {
                 // Joining a party settles whichever invite led to it.
                 if !members.is_empty() {
                     self.pending_party_invites.clear();
-                } else {
-                    // No party, no valid summons.
-                    self.pending_party_summons.clear();
                 }
+                // A summons only lives while its caster shares the roster.
+                self.pending_party_summons
+                    .retain(|s| members.iter().any(|m| m.id == s.caster_id));
             }
             ServerMessage::InventoryState { ref inventory }
             | ServerMessage::InventoryUpdated { ref inventory } => {

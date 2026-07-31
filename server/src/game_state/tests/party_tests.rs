@@ -644,11 +644,28 @@ async fn party_chat_command_invites_and_reports() {
 
 // --- Party summoning scrolls ---
 
-/// Put one party summon scroll (instance 9) in `name`'s bag.
-async fn give_summon_scroll(game_state: &GameState, name: &str) {
+/// Put a stack of party summon scrolls (instance 9) in `name`'s bag.
+async fn give_summon_scrolls(game_state: &GameState, name: &str, quantity: u32) {
     let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
-    inv.bag.push(bag_item(9, "scroll_of_party_summon", 1));
+    inv.bag
+        .push(bag_item(9, "scroll_of_party_summon", quantity));
     game_state.inventories.write().await.insert(pid(name), inv);
+}
+
+async fn give_summon_scroll(game_state: &GameState, name: &str) {
+    give_summon_scrolls(game_state, name, 1).await;
+}
+
+/// The remaining quantity of `name`'s summon scroll stack (0 = gone).
+async fn summon_scrolls_left(game_state: &GameState, name: &str) -> u32 {
+    game_state
+        .get_player_inventory(&pid(name))
+        .await
+        .unwrap()
+        .bag
+        .iter()
+        .find(|i| i.instance_id == 9)
+        .map_or(0, |i| i.quantity)
 }
 
 #[tokio::test]
@@ -754,6 +771,135 @@ async fn summon_scroll_kept_while_caster_in_combat() {
         other => panic!("Expected a combat refusal, got {:?}", other),
     }
     assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn summon_recast_while_call_is_out_keeps_scroll() {
+    let game_state = make_test_game_state("summon_recast");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scrolls(&game_state, "alice", 2).await;
+    game_state.use_item(&pid("alice"), 9).await;
+    assert_eq!(summon_scrolls_left(&game_state, "alice").await, 1);
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    // The call is still out: re-reading must burn nothing and re-pop nobody.
+    game_state.use_item(&pid("alice"), 9).await;
+    assert_eq!(summon_scrolls_left(&game_state, "alice").await, 1);
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("still out"), "{message}")
+        }
+        other => panic!("Expected still-out notice, got {:?}", other),
+    }
+    assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn summon_accept_waits_out_casters_combat() {
+    let game_state = make_test_game_state("summon_caster_accept_combat");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    game_state.use_item(&pid("alice"), 9).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    // The caster pulled a fight after casting: delivery must wait it out.
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("alice"))
+        .unwrap()
+        .last_combat_at = GameState::now_ms();
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("alice is in combat"), "{message}")
+        }
+        other => panic!("Expected caster-combat refusal, got {:?}", other),
+    }
+    assert_eq!(
+        game_state
+            .players
+            .read()
+            .await
+            .get(&pid("bob"))
+            .unwrap()
+            .position
+            .x,
+        500.0
+    );
+
+    // The fight ends: the surviving entry delivers.
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("alice"))
+        .unwrap()
+        .last_combat_at = 0;
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    let x = game_state
+        .players
+        .read()
+        .await
+        .get(&pid("bob"))
+        .unwrap()
+        .position
+        .x;
+    assert!(
+        x.abs() < 3.0,
+        "bob should arrive once alice is at peace, x={x}"
+    );
+}
+
+#[tokio::test]
+async fn summon_accept_refused_while_caster_fallen() {
+    let game_state = make_test_game_state("summon_caster_fallen");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    give_summon_scroll(&game_state, "alice").await;
+    game_state.use_item(&pid("alice"), 9).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("alice"))
+        .unwrap()
+        .health = 0;
+    game_state
+        .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("has fallen"), "{message}")
+        }
+        other => panic!("Expected fallen-caster refusal, got {:?}", other),
+    }
+    assert_eq!(
+        game_state
+            .players
+            .read()
+            .await
+            .get(&pid("bob"))
+            .unwrap()
+            .position
+            .x,
+        500.0
+    );
 }
 
 #[tokio::test]

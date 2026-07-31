@@ -620,10 +620,16 @@ impl super::GameState {
             return;
         }
 
-        let members = self.other_party_members(player_id).await;
+        let members = self.summonable_party_members(player_id).await;
         if members.is_empty() {
-            self.send_system_message(player_id, "Summon: no party members to call.")
-                .await;
+            // Distinguish an empty party from a call that is still out; both
+            // keep the scroll.
+            let message = if self.other_party_members(player_id).await.is_empty() {
+                "Summon: no party members to call."
+            } else {
+                "Summon: your call is still out."
+            };
+            self.send_system_message(player_id, message).await;
             return;
         }
 
