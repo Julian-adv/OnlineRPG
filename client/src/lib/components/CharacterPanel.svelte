@@ -86,8 +86,9 @@
       : CLASS_LABELS[characterClass]
   )
 
-  // Trained skills, sorted by name for a stable list. The section renders
-  // nothing until the first skill is trained.
+  const TABS = ['stats', 'skills'] as const
+  let activeTab = $state<(typeof TABS)[number]>('stats')
+
   const trainedSkills = $derived(
     (Object.entries($skillsStore.map) as [SkillId, SkillProgress][]).sort(
       ([a], [b]) => a.localeCompare(b)
@@ -127,11 +128,11 @@
     ear: { top: 20, left: 70 },
     neck: { top: 20, left: 30 },
     chest: { top: 30, left: 50 },
+    hands: { top: 31, left: 10 },
     main_hand: { top: 45, left: 10 },
     off_hand: { top: 45, left: 90 },
     ring: { top: 59, left: 10 },
     ring_left: { top: 59, left: 90 },
-    hands: { top: 73, left: 10 },
     belt: { top: 45, left: 50 },
     pants: { top: 60, left: 50 },
     boots: { top: 88, left: 50 },
@@ -200,134 +201,150 @@
     </div>
 
     <div class="panel-section">
-      <div class="section-label">Stats</div>
-      <div class="stats-grid">
-        <div class="stat-row">
-          <span class="stat-label">Lv</span>
-          <span class="stat-value level-value">{level}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">HP</span>
-          <span class="stat-value hp-value">{currentHp}/{maxHp}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Guard</span>
-          <span class="stat-value guard-value"
-            >{effectiveGuard}{equipGuardBonus > 0
-              ? ` (+${equipGuardBonus})`
-              : ''}</span
+      <div class="tab-row">
+        {#each TABS as tab (tab)}
+          <button
+            class="tab"
+            class:active={activeTab === tab}
+            aria-pressed={activeTab === tab}
+            onclick={() => (activeTab = tab)}>{tab}</button
           >
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Str</span>
-          <span class="stat-value">{attributes.str}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Dex</span>
-          <span class="stat-value">{attributes.dex}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Con</span>
-          <span class="stat-value">{attributes.con}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Int</span>
-          <span class="stat-value">{attributes.int}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Wis</span>
-          <span class="stat-value">{attributes.wis}</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Cha</span>
-          <span class="stat-value">{attributes.cha}</span>
-        </div>
+        {/each}
       </div>
-      <div class="exp-block">
-        <div class="exp-header">
-          <span class="stat-label exp-label">Exp</span>
-          <span class="exp-text">{gainedXp}/{neededXp} ({expPercent}%)</span>
-        </div>
-        <div
-          class="exp-track"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={neededXp}
-          aria-valuenow={gainedXp}
-        >
-          <span
-            class="exp-fill"
-            style={`width: ${Math.min(100, expProgress * 100)}%`}
-          ></span>
-        </div>
-      </div>
-    </div>
-
-    {#if trainedSkills.length > 0}
-      <div class="panel-section">
-        <div class="section-label">Skills</div>
-        <div class="skills-list">
-          {#each trainedSkills as [skillId, progress] (skillId)}
-            <div class="skill-row">
-              <span class="stat-label"
-                >{SKILL_DISPLAY_NAMES[skillId] ?? skillId}</span
-              >
-              <span class="stat-value">Lv {progress.level}</span>
-              <div
-                class="skill-track"
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(skillProgressPct(progress))}
-              >
-                <span
-                  class="skill-fill"
-                  style={`width: ${skillProgressPct(progress)}%`}
-                ></span>
-              </div>
+      <!-- Stats pane stays laid out while hidden so the panel keeps its size -->
+      <div class="tab-panes">
+        <div class="pane-stats" class:pane-hidden={activeTab !== 'stats'}>
+          <div class="stats-grid">
+            <div class="stat-row">
+              <span class="stat-label">Lv</span>
+              <span class="stat-value level-value">{level}</span>
             </div>
-          {/each}
+            <div class="stat-row">
+              <span class="stat-label">HP</span>
+              <span class="stat-value hp-value">{currentHp}/{maxHp}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Guard</span>
+              <span class="stat-value guard-value"
+                >{effectiveGuard}{equipGuardBonus > 0
+                  ? ` (+${equipGuardBonus})`
+                  : ''}</span
+              >
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Str</span>
+              <span class="stat-value">{attributes.str}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Dex</span>
+              <span class="stat-value">{attributes.dex}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Con</span>
+              <span class="stat-value">{attributes.con}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Int</span>
+              <span class="stat-value">{attributes.int}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Wis</span>
+              <span class="stat-value">{attributes.wis}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Cha</span>
+              <span class="stat-value">{attributes.cha}</span>
+            </div>
+          </div>
+          <div class="exp-block">
+            <div class="exp-header">
+              <span class="stat-label exp-label">Exp</span>
+              <span class="exp-text">{gainedXp}/{neededXp} ({expPercent}%)</span
+              >
+            </div>
+            <div
+              class="exp-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={neededXp}
+              aria-valuenow={gainedXp}
+            >
+              <span
+                class="exp-fill"
+                style={`width: ${Math.min(100, expProgress * 100)}%`}
+              ></span>
+            </div>
+          </div>
+          <div class="equip-section">
+            <img class="equip-bg" src={equipBg} alt="" draggable="false" />
+            {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
+              {@const item = $inventoryStore.equipped[slot]}
+              {@const def = item ? getItemDef(item.item_def_id) : null}
+              {@const isDropTarget =
+                $dragMeta && isSlotCompatible($dragMeta.equipSlot, slot)}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="equip-slot"
+                class:drop-target={isDropTarget}
+                style="top:{top}%;left:{left}%"
+                title={item ? undefined : EQUIP_SLOT_LABELS[slot]}
+                data-equip-slot={slot}
+                use:itemTooltip={item && def
+                  ? { def, item, side: left > 50 ? 'left' : 'right' }
+                  : null}
+                ondblclick={() => {
+                  if (item) unequip(slot)
+                }}
+                onpointerdown={(e: PointerEvent) => {
+                  if (item) onEquipPointerDown(e, slot, item)
+                }}
+              >
+                {#if def}
+                  <img
+                    class="equip-icon"
+                    src="/items/{def.icon}"
+                    alt={def.name}
+                    draggable="false"
+                  />
+                {/if}
+                {#if item && item.enchant > 0}
+                  <span class="item-enchant">+{item.enchant}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
         </div>
+        {#if activeTab === 'skills'}
+          <div class="pane-skills">
+            {#if trainedSkills.length > 0}
+              <div class="skills-list">
+                {#each trainedSkills as [skillId, progress] (skillId)}
+                  <div class="skill-row">
+                    <span class="stat-label"
+                      >{SKILL_DISPLAY_NAMES[skillId] ?? skillId}</span
+                    >
+                    <span class="stat-value">Lv {progress.level}</span>
+                    <div
+                      class="skill-track"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(skillProgressPct(progress))}
+                    >
+                      <span
+                        class="skill-fill"
+                        style={`width: ${skillProgressPct(progress)}%`}
+                      ></span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="skills-empty">No skills trained yet</div>
+            {/if}
+          </div>
+        {/if}
       </div>
-    {/if}
-
-    <div class="panel-section equip-section">
-      <img class="equip-bg" src={equipBg} alt="" draggable="false" />
-      {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
-        {@const item = $inventoryStore.equipped[slot]}
-        {@const def = item ? getItemDef(item.item_def_id) : null}
-        {@const isDropTarget =
-          $dragMeta && isSlotCompatible($dragMeta.equipSlot, slot)}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="equip-slot"
-          class:drop-target={isDropTarget}
-          style="top:{top}%;left:{left}%"
-          title={item ? undefined : EQUIP_SLOT_LABELS[slot]}
-          data-equip-slot={slot}
-          use:itemTooltip={item && def
-            ? { def, item, side: left > 50 ? 'left' : 'right' }
-            : null}
-          ondblclick={() => {
-            if (item) unequip(slot)
-          }}
-          onpointerdown={(e: PointerEvent) => {
-            if (item) onEquipPointerDown(e, slot, item)
-          }}
-        >
-          {#if def}
-            <img
-              class="equip-icon"
-              src="/items/{def.icon}"
-              alt={def.name}
-              draggable="false"
-            />
-          {/if}
-          {#if item && item.enchant > 0}
-            <span class="item-enchant">+{item.enchant}</span>
-          {/if}
-        </div>
-      {/each}
     </div>
   </div>
 {/if}
@@ -338,6 +355,7 @@
     --equip-section-height: 540px;
     --equip-slot-size: 64px;
     --equip-icon-size: 56px;
+    --section-gap: 8px;
     position: fixed;
     left: 16px;
     top: 45%;
@@ -393,22 +411,62 @@
   }
 
   .panel-section {
-    margin-bottom: 8px;
+    margin-bottom: var(--section-gap);
   }
 
-  .section-label {
-    font-size: 11px;
-    color: #9fc5ff;
+  .tab-panes {
+    position: relative;
+  }
+
+  .pane-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--section-gap);
+  }
+
+  .pane-hidden {
+    visibility: hidden;
+  }
+
+  .pane-skills {
+    position: absolute;
+    inset: 0;
+    overflow-y: auto;
+  }
+
+  .tab-row {
+    display: flex;
+    gap: 6px;
     margin-bottom: 4px;
+  }
+
+  .tab {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-family: inherit;
+    font-size: 11px;
+    color: #64798c;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+
+  .tab:hover {
+    color: #cfe3ff;
+  }
+
+  .tab.active {
+    color: #9fc5ff;
+    border-color: rgba(159, 197, 255, 0.45);
+    background: rgba(159, 197, 255, 0.08);
   }
 
   .stats-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 2px;
-    margin-bottom: 8px;
   }
 
   .stat-row {
@@ -512,6 +570,12 @@
     box-shadow: 0 0 10px rgba(79, 213, 138, 0.4);
   }
 
+  .skills-empty {
+    padding: 4px 0;
+    color: #9fb2c3;
+    font-size: 11px;
+  }
+
   .equip-section {
     position: relative;
     border-radius: 6px;
@@ -590,6 +654,7 @@
       );
       --equip-slot-size: 44px;
       --equip-icon-size: 38px;
+      --section-gap: 6px;
       left: calc(8px + env(safe-area-inset-left));
       top: calc(8px + env(safe-area-inset-top));
       transform: none;
@@ -628,18 +693,13 @@
       font-size: 22px;
     }
 
-    .panel-section {
-      margin-bottom: 6px;
-    }
-
-    .section-label {
+    .tab-row {
       margin-bottom: 3px;
-      font-size: 10px;
     }
 
-    .stats-grid {
-      gap: 2px;
-      margin-bottom: 6px;
+    .tab {
+      font-size: 10px;
+      min-height: 24px;
     }
 
     .stat-row {
