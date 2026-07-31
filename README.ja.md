@@ -252,3 +252,5 @@ sudo systemctl restart openmmo-server
 ## コントリビューション
 
 コントリビューションを歓迎します！初めてプルリクエストを開くと、ボットが PR 上のコメントで [Contributor License Agreement](CLA.md) への署名を求めます。コントリビューションをマージするには CLA への署名が必要です。
+
+バイナリアセット（3D モデル・音楽・効果音）のコントリビューションは [doc/ASSETS.md](doc/ASSETS.md) を参照してください — git ではなく Hugging Face データセットへの PR で行います。

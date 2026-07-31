@@ -267,3 +267,5 @@ The movement warnings (rejected move target, waypoint queue full, blocked move) 
 ## Contributing
 
 Contributions are welcome! When you open your first pull request, a bot will ask you to sign the [Contributor License Agreement](CLA.md) by leaving a comment on the PR. Signing the CLA is required before your contribution can be merged.
+
+To contribute binary assets (3D models, music, sounds), see [doc/ASSETS.md](doc/ASSETS.md) — they go through a Hugging Face dataset PR rather than git.
