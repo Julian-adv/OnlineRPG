@@ -118,7 +118,6 @@
 - 타 플레이어 낚시 자세 표시 (FishingCasted의 player_id → remotePlayerManager 연결)
 - 어보트된 캐스팅의 스플래시 사운드 setTimeout 취소
 - 클라이언트 사전 사거리 검사 (MAX_CAST_DISTANCE_METERS wasm 노출)
-- agent-client: 타인의 FishingEnded가 Routine 분류로 LLM 사이클 유발 → Noise로 내리거나 관전 라인 추가
 - agent-client: 부분 좌표(z 누락 등)를 조용히 버림 → 피드백 이벤트 추가
 - agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
 - items.csv ragged 행 정규화 (18칸 헤더 대비 기존 행 13–14칸)

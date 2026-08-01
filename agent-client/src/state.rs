@@ -999,14 +999,15 @@ impl SharedState {
                 }
             }
 
-            // Fishing: the outcome (and any refusal) is worth an LLM look —
-            // recast, eat the catch, or give up. The in-flight events are
-            // noise: the reflex layer already answered them.
+            // Fishing: only our own outcome is worth an LLM look — recast, eat
+            // the catch, or give up. In-flight events are reflex-handled, and
+            // another player's ending renders no prompt line (driver/prompt.rs),
+            // so both are noise.
             ServerMessage::FishingEnded { player_id, .. } => {
                 if self_id == Some(player_id) {
                     EventUrgency::Urgent
                 } else {
-                    EventUrgency::Routine
+                    EventUrgency::Noise
                 }
             }
             ServerMessage::FishingError { .. } => EventUrgency::Urgent,
@@ -2782,5 +2783,19 @@ pub(crate) mod tests {
             "monster ended at y={y}, floor 2 sits at {}",
             dungeon.floor_y(2)
         );
+    }
+
+    /// Another player's FishingEnded renders no prompt line, so scheduling an
+    /// LLM cycle for it would buy a blank prompt; our own stays urgent.
+    #[test]
+    fn fishing_ended_wakes_llm_only_for_own_outcome() {
+        let (mut s, _rx) = test_state();
+        s.self_player_id = Some(PlayerId::from(1));
+        let ended = |id: u64| ServerMessage::FishingEnded {
+            player_id: PlayerId::from(id),
+            outcome: onlinerpg_shared::fishing::FishingOutcome::Escaped,
+        };
+        assert_eq!(s.classify_event(&ended(1)), EventUrgency::Urgent);
+        assert_eq!(s.classify_event(&ended(2)), EventUrgency::Noise);
     }
 }
