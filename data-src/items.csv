@@ -12,6 +12,7 @@ leather_gloves,Leather Gloves,Supple leather gloves with a sure grip.,0.5,hands,
 iron_gauntlets,Iron Gauntlets,Heavy iron gauntlets that shield the hands and wrists.,2,hands,false,iron_gauntlets.png,armor/iron_gauntlets.glb,armor,,metal,6000,2,,,,,,3,0.37
 leather_boots,Leather Boots,Sturdy leather boots that tread softly.,3,boots,false,leather_boots.png,armor/leather_boots.glb,armor,,leather,2500,1,,,,,,2,0.37
 plate_greaves,Plate Greaves,Articulated steel greaves that guard the legs.,8,pants,false,iron_leggings.png,armor/iron_leggings.glb,armor,,metal,12000,3,,,,,,3,0.37
+plate_boots,Plate Boots,Overlapping steel plates that guard the feet and shins.,7,boots,false,plate_greaves.png,armor/plate_greaves.glb,armor,,metal,9000,2,,,,,,3,0.37
 gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,
 silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
 copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,

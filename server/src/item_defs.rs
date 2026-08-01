@@ -333,7 +333,15 @@ mod tests {
             ]
         );
         let t3_new: Vec<_> = t3.iter().filter(|id| !t2.contains(id)).collect();
-        assert_eq!(t3_new, ["chain_mail", "iron_gauntlets", "plate_greaves"]);
+        assert_eq!(
+            t3_new,
+            [
+                "chain_mail",
+                "iron_gauntlets",
+                "plate_boots",
+                "plate_greaves"
+            ]
+        );
         let t4_new: Vec<_> = t4.iter().filter(|id| !t3.contains(id)).collect();
         assert_eq!(t4_new, ["breastplate"]);
     }
