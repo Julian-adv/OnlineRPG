@@ -119,9 +119,6 @@
 ## 낚시 후속 (PR #53 리뷰)
 
 - 월드모델 없는 기존 아이템(장신구·천갑옷 등)이 sword.png 아이콘으로 보이는 회귀 → 실제 아이콘 부여
-- 타 플레이어 낚시 자세 표시 (FishingCasted의 player_id → remotePlayerManager 연결)
-- 어보트된 캐스팅의 스플래시 사운드 setTimeout 취소
-- 클라이언트 사전 사거리 검사 (MAX_CAST_DISTANCE_METERS wasm 노출)
 - agent-client: 부분 좌표(z 누락 등)를 조용히 버림 → 피드백 이벤트 추가
 - agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
 - items.csv ragged 행 정규화 (18칸 헤더 대비 기존 행 13–14칸)
@@ -130,7 +127,6 @@
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
 - Mixamo GLB 재배포 정책 판단
-- WaterSampler/HeightSampler 타일 캐시 eviction (LRU 또는 주기적 purge, 현재 무제한)
 - claimedKeys 범용 입력 클레임 메커니즘 (다음 모달 UI 때 낚시 카브아웃과 함께 일반화)
 
 # 폐지
