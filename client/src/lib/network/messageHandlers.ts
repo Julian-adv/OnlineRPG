@@ -1149,10 +1149,13 @@ export function handleServerMessage(
         )
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
       } else {
+        // Interact state ignores late moves; apply the server-computed facing.
         remotePlayerManager.handleInteraction(
           data.player_id,
           FishingAnimationName.CAST,
-          0
+          0,
+          undefined,
+          data.rotation
         )
       }
       break

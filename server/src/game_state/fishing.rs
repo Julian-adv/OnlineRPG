@@ -367,12 +367,12 @@ impl GameState {
             return;
         }
 
-        let (player_pos, player_floor, alive) = {
+        let (player_pos, player_rotation, player_floor, alive) = {
             let players = self.players.read().await;
             let Some(p) = players.get(player_id) else {
                 return;
             };
-            (p.position, p.floor_level, p.health > 0)
+            (p.position, p.rotation, p.floor_level, p.health > 0)
         };
         if !alive {
             self.send_fishing_error(player_id, "You cannot fish while defeated.")
@@ -454,11 +454,20 @@ impl GameState {
         }
         self.fishing_active
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Face the cast point here; see FishingCasted's rotation doc.
+        let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, wx);
+        let dz = target.z - player_pos.z;
+        let rotation = if dx == 0.0 && dz == 0.0 {
+            player_rotation
+        } else {
+            dx.atan2(dz)
+        };
         self.broadcast_fishing(
             &bobber,
             ServerMessage::FishingCasted {
                 player_id: *player_id,
                 position: bobber,
+                rotation,
             },
         )
         .await;

@@ -1258,7 +1258,9 @@
           // its old rotation and casts over its shoulder.
           setPlayerState({ ...playerState, rotation: playerRotation })
         }
-        sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
+        // Updates the server-stored rotation (late joiners); live bystanders
+        // get the facing from FishingCasted itself.
+        sendPlayerMove(currentPlayer.position, playerRotation)
         networkManager.sendFishingCast(intent.position)
       },
       requestMove: handleClickToMove,
