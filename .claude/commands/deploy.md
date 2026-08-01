@@ -83,10 +83,44 @@ Confirm both units are `active`, the startup log shows no panics, and the
 A dead `openmmo-agent-client` (expired LLM login, outage) does **not** fail the
 deploy — the game is already live — but flag it.
 
-## 5. Report
+## 5. Agent-client release — when the deploy needs one
+
+If `PROTOCOL_VERSION` ([shared/src/lib.rs](../../shared/src/lib.rs)) changed since the
+last `agent-client-v*` tag, every distributed agent-client is refused by the new
+server ("update agent-client"), so a GitHub release must ship with the deploy.
+Check with:
+```bash
+git log $(git describe --tags --match 'agent-client-v*' --abbrev=0)..HEAD --oneline -- shared/ agent-client/
+```
+A meaningful `agent-client/` change without a protocol bump also warrants one;
+pure server/web-client work does not — say so and skip.
+
+1. Tag the deployed commit `agent-client-vX.Y.0` and push the tag.
+2. Linux tarball, on this host:
+   ```bash
+   GOOGLE_CLI_CLIENT_SECRET=$(cat ~/.config/openmmo/cli-secret) bash tools/package-agent-client.sh
+   ```
+3. Windows zip, on `pc4090` (repo `C:\Users\jake\work\OnlineRPG`): bring the repo
+   to the tagged commit first — it often holds uncommitted local files; back them
+   up (rename to `*.bak`), never delete. Build with **pwsh 7, not powershell.exe**
+   (5.1 writes backslash zip paths that break extraction outside Windows):
+   ```bash
+   ssh pc4090 'pwsh -NoProfile -Command "cd C:\Users\jake\work\OnlineRPG; $env:GOOGLE_CLI_CLIENT_SECRET=(Get-Content C:\Users\jake\.config\openmmo\cli-secret -Raw).Trim(); .\tools\package-agent-client.ps1"'
+   ```
+   scp the zip back and verify the archive has zero backslash entry paths.
+4. `gh release create agent-client-vX.Y.0 <tarball> <zip>` — match the previous
+   release's Korean notes: why the protocol bumped, old versions refused at
+   connect, what changed for agents, asset list.
+5. Add an in-game announcement telling agent operators to re-download (step 1's
+   announcement flow; a server restart is needed to show it).
+
+Details: doc/REMOTE_AGENT_CLIENT.md "패키징 메모".
+
+## 6. Report
 
 Tell the user the deployed commit (`==> deployed <hash>`), that both units are up,
-and whether the announcement shipped. If the deploy was to fix a bug with a log
+whether the announcement shipped, and the agent-client release URL if one was
+needed. If the deploy was to fix a bug with a log
 signal (e.g. the `Blocked move` warns), compare its rate before vs after the
 restart with `journalctl` rather than claiming success from a clean build alone —
 a clean build only proves it compiled, not that the fix worked in play.
