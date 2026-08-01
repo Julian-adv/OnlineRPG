@@ -20,6 +20,9 @@ export interface ItemDefinition {
   basePrice?: number
   /** Guard (AC) bonus granted while equipped. Summed across equipped items. */
   guard?: number
+  /** Usable from the bag — the items.csv flag, which the server validates
+   * against its `use_effect` dispatch at boot. */
+  consumable?: boolean
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>
@@ -28,20 +31,8 @@ export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
 }
 
-/** Categories that can be drunk/used from the bag. Extend as potions are added.
- * Keep in sync with the server's `use_effect` dispatch (server/src/item_defs.rs):
- * eating a fish heals by its dice, opening a coin pouch pays out its copper. */
-const CONSUMABLE_CATEGORIES = new Set([
-  'healing_potion',
-  'return_scroll',
-  'enchant_scroll',
-  'party_summon_scroll',
-  'fish',
-  'coin_catch',
-])
-
 export function isConsumable(def: ItemDefinition): boolean {
-  return def.category !== undefined && CONSUMABLE_CATEGORIES.has(def.category)
+  return def.consumable === true
 }
 
 export default itemDefs

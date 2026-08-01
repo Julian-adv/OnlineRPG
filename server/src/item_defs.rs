@@ -65,6 +65,10 @@ pub struct ItemDefinition {
     /// (signature drops are guaranteed via dungeons.csv `chestDrops` instead).
     #[serde(rename = "chestChance", default)]
     pub chest_chance: Option<f32>,
+    /// Usable from the bag. The clients read this flag; `load()` fails the
+    /// boot if it ever disagrees with the `use_effect` dispatch.
+    #[serde(default)]
+    pub consumable: bool,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -166,6 +170,13 @@ impl ItemDefs {
             assert!(
                 def.chest_tier.is_none() || (def.equip_slot.is_some() && !def.is_fishing_rod()),
                 "item '{}' has a chestTier but is not chest-eligible equipment",
+                def.id
+            );
+            // The clients' bag-use UX keys off the CSV flag; the server acts
+            // on `use_effect`. Fail the boot the moment they disagree.
+            assert!(
+                def.consumable == def.use_effect().is_some(),
+                "item '{}': consumable flag out of step with its use_effect",
                 def.id
             );
         }
