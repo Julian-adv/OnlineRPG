@@ -1540,6 +1540,13 @@ impl SharedState {
             ServerMessage::FishingCasted { .. }
             | ServerMessage::FishingBite { .. }
             | ServerMessage::FishingFight { .. } => return urgency,
+            // Another player's ending renders no prompt line, so buffering it
+            // would turn an otherwise-skipped poll into a blank LLM call.
+            ServerMessage::FishingEnded { player_id, .. }
+                if self.self_player_id.as_ref() != Some(player_id) =>
+            {
+                return urgency;
+            }
             // Ground items churn in and out of the AOI as everyone moves;
             // the world state lists what is nearby each turn instead.
             ServerMessage::GroundItemSpawned { .. }
@@ -2797,5 +2804,21 @@ pub(crate) mod tests {
         };
         assert_eq!(s.classify_event(&ended(1)), EventUrgency::Urgent);
         assert_eq!(s.classify_event(&ended(2)), EventUrgency::Noise);
+    }
+
+    /// The driver submits a prompt whenever the event buffer is non-empty, so
+    /// a spectator ending must skip the buffer entirely, not just rank low.
+    #[test]
+    fn fishing_ended_buffers_only_own_outcome() {
+        let (mut s, _rx) = test_state();
+        s.self_player_id = Some(PlayerId::from(1));
+        let ended = |id: u64| ServerMessage::FishingEnded {
+            player_id: PlayerId::from(id),
+            outcome: onlinerpg_shared::fishing::FishingOutcome::Escaped,
+        };
+        s.push_event(ended(2));
+        assert!(s.events.is_empty(), "spectator ending must not buffer");
+        s.push_event(ended(1));
+        assert_eq!(s.events.len(), 1, "own ending must reach the prompt");
     }
 }
