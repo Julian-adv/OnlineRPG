@@ -20,6 +20,9 @@ const PARTY_PENDING_INVITE_CAP: usize = 5;
 /// keeps simultaneous arrivals apart.
 const SUMMON_RING_RADIUS: f32 = 1.6;
 
+/// Golden angle in radians, spreading arrival spots around the ring.
+const GOLDEN_ANGLE_RAD: f32 = 2.399_963;
+
 pub(crate) struct Party {
     pub leader: PlayerId,
     /// Join order; the leader leaving promotes the earliest remaining member.
@@ -37,9 +40,9 @@ pub(crate) struct Parties {
     /// (inviter, invitee) → pending invite. Swept lazily on the invite paths
     /// and purged with the player, so it stays tiny without its own tick.
     invites: HashMap<(PlayerId, PlayerId), PendingInvite>,
-    /// (caster, member) → pending summon, same lifecycle as `invites`. No
+    /// (caster, member) → summon expiry, same lifecycle as `invites`. No
     /// pending cap: the consumed scroll is the spam brake.
-    summons: HashMap<(PlayerId, PlayerId), PendingSummon>,
+    summons: HashMap<(PlayerId, PlayerId), Instant>,
 }
 
 pub(crate) struct PendingInvite {
@@ -49,16 +52,24 @@ pub(crate) struct PendingInvite {
     answered: bool,
 }
 
-pub(crate) struct PendingSummon {
-    expires_at: Instant,
-}
-
 impl Parties {
     fn party_of(&self, player_id: &PlayerId) -> Option<&Party> {
         self.member_of
             .get(player_id)
             .and_then(|id| self.parties.get(id))
     }
+
+    fn sweep_expired_summons(&mut self) {
+        let now = Instant::now();
+        self.summons.retain(|_, expires_at| *expires_at > now);
+    }
+}
+
+/// What reading a summoning scroll did; only `Called` consumes the scroll.
+pub(crate) enum SummonCast {
+    Called,
+    NoMembers,
+    CallStillOut,
 }
 
 /// What became of a member's removal, computed under the lock and delivered
@@ -398,9 +409,12 @@ impl super::GameState {
     }
 
     /// Teleport hook: the mover can no longer answer the summons aimed at
-    /// them — both clients wipe their queues on the self-teleport, and a
-    /// lingering server entry would block a re-call until it expires.
+    /// them, and a lingering entry would block a re-call until it expires.
     pub(crate) async fn void_summons_aimed_at(&self, player_id: &PlayerId) {
+        // Summons are rare; skip the write lock while the map is empty.
+        if self.parties.read().await.summons.is_empty() {
+            return;
+        }
         self.parties
             .write()
             .await
@@ -408,25 +422,16 @@ impl super::GameState {
             .retain(|(_, to), _| to != player_id);
     }
 
-    /// The summonable set: online members without a live pending summons
-    /// from this caster. Re-reading while a call is out must neither refresh
-    /// nor re-pop it — the invites' ack-only rule — so those members are
-    /// excluded rather than overwritten.
-    pub(crate) async fn summonable_party_members(&self, caster_id: &PlayerId) -> Vec<PlayerId> {
+    /// Fan a summoning scroll out as consent requests to every online member
+    /// without a live call from this caster — re-reading while one is out
+    /// must neither refresh nor re-pop it (the invites' ack-only rule). Like
+    /// invites, a block changes only the delivery: a suppressed member still
+    /// gets an entry, they just never see the toast.
+    pub(crate) async fn try_cast_party_summon(&self, caster_id: &PlayerId) -> SummonCast {
         let members = self.other_party_members(caster_id).await;
-        let mut parties = self.parties.write().await;
-        let now = Instant::now();
-        parties.summons.retain(|_, summon| summon.expires_at > now);
-        members
-            .into_iter()
-            .filter(|member| !parties.summons.contains_key(&(*caster_id, *member)))
-            .collect()
-    }
-
-    /// Fan a consumed summoning scroll out as consent requests. Like invites,
-    /// a block changes only the delivery: a suppressed member still gets an
-    /// entry, they just never see the toast.
-    pub(crate) async fn cast_party_summon(&self, caster_id: &PlayerId, members: Vec<PlayerId>) {
+        if members.is_empty() {
+            return SummonCast::NoMembers;
+        }
         let caster_name = self.player_name_of(caster_id).await;
         let suppressed: HashSet<PlayerId> = {
             let blocked = self.blocked_names.read().await;
@@ -440,34 +445,41 @@ impl super::GameState {
                 .copied()
                 .collect()
         };
-        {
+        let callable: Vec<PlayerId> = {
             let mut parties = self.parties.write().await;
-            let now = Instant::now();
-            parties.summons.retain(|_, summon| summon.expires_at > now);
-            for member in &members {
-                parties.summons.insert(
-                    (*caster_id, *member),
-                    PendingSummon {
-                        expires_at: now + PARTY_SUMMON_TTL,
-                    },
-                );
+            parties.sweep_expired_summons();
+            let expires_at = Instant::now() + PARTY_SUMMON_TTL;
+            let callable: Vec<PlayerId> = members
+                .into_iter()
+                .filter(|member| !parties.summons.contains_key(&(*caster_id, *member)))
+                .collect();
+            for member in &callable {
+                parties.summons.insert((*caster_id, *member), expires_at);
             }
+            callable
+        };
+        if callable.is_empty() {
+            return SummonCast::CallStillOut;
         }
-        for member in members.iter().filter(|m| !suppressed.contains(m)) {
-            self.send_direct_message(
-                member,
-                ServerMessage::PartySummonReceived {
-                    caster_id: *caster_id,
-                    caster_name: caster_name.clone(),
-                },
-            )
-            .await;
-        }
-        self.send_system_message(
-            caster_id,
-            format!("Summon: calling {} party member(s).", members.len()),
+        let recipients: Vec<PlayerId> = callable
+            .iter()
+            .filter(|m| !suppressed.contains(m))
+            .copied()
+            .collect();
+        self.send_direct_message_to_players(
+            &recipients,
+            ServerMessage::PartySummonReceived {
+                caster_id: *caster_id,
+                caster_name,
+            },
         )
         .await;
+        self.send_system_message(
+            caster_id,
+            format!("Summon: calling {} party member(s).", callable.len()),
+        )
+        .await;
+        SummonCast::Called
     }
 
     pub async fn respond_to_party_summon(
@@ -479,8 +491,7 @@ impl super::GameState {
         let key = (*caster_id, *member_id);
         let usable = {
             let mut parties = self.parties.write().await;
-            let now = Instant::now();
-            parties.summons.retain(|_, summon| summon.expires_at > now);
+            parties.sweep_expired_summons();
             parties.summons.contains_key(&key)
         };
         if !usable {
@@ -488,8 +499,8 @@ impl super::GameState {
                 .await;
             return;
         }
-        let member_name = self.player_name_of(member_id).await;
         if !accept {
+            let member_name = self.player_name_of(member_id).await;
             self.parties.write().await.summons.remove(&key);
             self.send_system_message(caster_id, format!("Summon: {member_name} declined."))
                 .await;
@@ -497,70 +508,67 @@ impl super::GameState {
         }
         // Same clock as /escape: accepting must not double as a free
         // disengage. The entry survives the refusal for a retry in the window.
-        let refusal = {
+        let (member_name, refusal) = {
             let players = self.players.read().await;
             let Some(member) = players.get(member_id) else {
                 return;
             };
-            if member.health == 0 {
+            let refusal = if member.health == 0 {
                 Some("not while defeated.")
-            } else if Self::now_ms().saturating_sub(member.last_combat_at) < super::OUT_OF_COMBAT_MS
-            {
+            } else if Self::in_combat(member) {
                 Some("not while in combat.")
             } else {
                 None
-            }
+            };
+            (member.name.clone(), refusal)
         };
         if let Some(reason) = refusal {
             self.send_system_message(member_id, format!("Summon: {reason}"))
                 .await;
             return;
         }
-        // The caster must still be online and share the member's party.
+        // The caster must still be online, share the member's party, and pass
+        // the read-time gate again: the 30s window must not hand out fights
+        // the 10s clock just refused. A refusal keeps the entry for a retry.
         let destination = {
             let players = self.players.read().await;
             let parties = self.parties.read().await;
             let same_party = parties.member_of.contains_key(caster_id)
                 && parties.member_of.get(caster_id) == parties.member_of.get(member_id);
             players.get(caster_id).filter(|_| same_party).map(|caster| {
+                let refusal = if caster.health == 0 {
+                    Some(format!("Summon: {} has fallen.", caster.name))
+                } else if Self::in_combat(caster) {
+                    Some(format!("Summon: {} is in combat.", caster.name))
+                } else {
+                    None
+                };
                 (
                     caster.position,
                     caster.rotation,
                     caster.floor_level,
                     caster.name.clone(),
-                    caster.health,
-                    caster.last_combat_at,
+                    refusal,
                 )
             })
         };
-        let Some((center, rotation, floor, caster_name, caster_health, caster_combat_at)) =
-            destination
-        else {
+        let Some((center, rotation, floor, caster_name, caster_refusal)) = destination else {
             self.parties.write().await.summons.remove(&key);
             self.send_system_message(member_id, "Summon: that summons has faded.")
                 .await;
             return;
         };
-        // The read-time caster gate, re-checked at delivery: the 30s window
-        // must not hand out fights the 10s clock just refused. Same retry
-        // semantics as the member-side gate — the entry stays.
-        let caster_refusal = if caster_health == 0 {
-            Some(format!("Summon: {caster_name} has fallen."))
-        } else if Self::now_ms().saturating_sub(caster_combat_at) < super::OUT_OF_COMBAT_MS {
-            Some(format!("Summon: {caster_name} is in combat."))
-        } else {
-            None
-        };
         if let Some(message) = caster_refusal {
             self.send_system_message(member_id, message).await;
             return;
         }
-        self.parties.write().await.summons.remove(&key);
+        // No explicit remove: the teleport's void_summons_aimed_at hook
+        // clears every summons aimed at the mover, this entry included.
         // Golden-angle ring: a per-member arrival spot without a placement
         // scan, so simultaneous accepts don't stack. A blocked spot (dungeon
         // walls run 1m from a corridor's center) retries at half radius and
         // finally lands on the caster's own — walkable — cell.
-        let angle = (member_id.get() % 360) as f32 * 2.399_963;
+        let angle = (member_id.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
         let arrival = {
             let cache = self.passability_read();
             let cell_floor = super::passability::authoritative_floor(&cache, &center);

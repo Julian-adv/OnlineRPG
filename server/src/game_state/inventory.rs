@@ -6,6 +6,7 @@ use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInv
 use rand::Rng;
 use tracing::{info, warn};
 
+use super::party::SummonCast;
 use super::ServerGroundItem;
 
 /// Ground items despawn after 5 minutes.
@@ -610,9 +611,7 @@ impl super::GameState {
         // accepting, so a fight (or a future PvP blob) can't open with one.
         let in_combat = {
             let players = self.players.read().await;
-            players.get(player_id).is_some_and(|p| {
-                Self::now_ms().saturating_sub(p.last_combat_at) < super::OUT_OF_COMBAT_MS
-            })
+            players.get(player_id).is_some_and(Self::in_combat)
         };
         if in_combat {
             self.send_system_message(player_id, "You can't read this while in combat")
@@ -620,21 +619,17 @@ impl super::GameState {
             return;
         }
 
-        let members = self.summonable_party_members(player_id).await;
-        if members.is_empty() {
-            // Distinguish an empty party from a call that is still out; both
-            // keep the scroll.
-            let message = if self.other_party_members(player_id).await.is_empty() {
-                "Summon: no party members to call."
-            } else {
-                "Summon: your call is still out."
-            };
-            self.send_system_message(player_id, message).await;
-            return;
+        match self.try_cast_party_summon(player_id).await {
+            SummonCast::Called => self.consume_one_and_sync(player_id, instance_id).await,
+            SummonCast::NoMembers => {
+                self.send_system_message(player_id, "Summon: no party members to call.")
+                    .await
+            }
+            SummonCast::CallStillOut => {
+                self.send_system_message(player_id, "Summon: your call is still out.")
+                    .await
+            }
         }
-
-        self.consume_one_and_sync(player_id, instance_id).await;
-        self.cast_party_summon(player_id, members).await;
     }
 
     /// Read a scroll of enchant weapon: +1 to the wielded weapon's

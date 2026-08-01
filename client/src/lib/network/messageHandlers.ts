@@ -59,6 +59,7 @@ import {
   pendingPartySummons,
   SUMMON_TTL_MS,
   MAX_PENDING_PARTY_INVITES,
+  type PartyMemberEntry,
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
 import { editorTreeDataManager } from '../stores/editorStore'
@@ -467,13 +468,9 @@ export function handleServerMessage(
       break
 
     case 'PartySummonReceived': {
-      // Every delivery corresponds to a freshly inserted full-TTL server
-      // entry (the ack-only cast never re-sends for a live one), so a
-      // same-caster entry here is stale by definition: replace it, and age
-      // out the dead (the gauge only ticks the head toast, and not at all
-      // in a background tab). No cap, unlike invites — distinct casters
-      // bound the queue at the party size, and a silent drop would waste a
-      // consumed scroll.
+      // Replace any same-caster entry (always stale: the ack-only cast never
+      // re-sends for a live one) and age out the dead. No cap — distinct
+      // casters bound the queue at the party size.
       const now = Date.now()
       pendingPartySummons.update((queue) => [
         ...queue.filter(
@@ -490,15 +487,9 @@ export function handleServerMessage(
     }
 
     case 'PartyState': {
-      const joined = data.members.length > 0
-      partyRoster.set(
-        joined
-          ? {
-              leaderId: data.leader_id,
-              members: data.members as { id: number; name: string }[],
-            }
-          : null
-      )
+      const members = data.members as PartyMemberEntry[]
+      const joined = members.length > 0
+      partyRoster.set(joined ? { leaderId: data.leader_id, members } : null)
       if (joined) {
         pendingPartyInvites.set([])
       } else {
@@ -506,9 +497,7 @@ export function handleServerMessage(
       }
       // A summons only lives while its caster shares the roster — one from
       // someone who left can only ever be answered with "faded".
-      const rosterIds = new Set(
-        (data.members as { id: number }[]).map((m) => m.id)
-      )
+      const rosterIds = new Set(members.map((m) => m.id))
       pendingPartySummons.update((queue) =>
         queue.filter((summon) => rosterIds.has(summon.casterId))
       )

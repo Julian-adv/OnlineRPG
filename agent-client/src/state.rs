@@ -365,9 +365,7 @@ pub struct SharedState {
     /// invites are pruned on mutation and skipped on read, so a dead invite
     /// stops prompting the model.
     pub pending_party_invites: Vec<PendingPartyInvite>,
-    /// Unanswered summons, same queue discipline as invites. An accept keeps
-    /// its entry — the server refuses mid-combat accepts and the summon stays
-    /// retryable; the teleport (or the TTL) is what clears it.
+    /// Unanswered summons, same queue discipline as invites.
     pub pending_party_summons: Vec<PendingPartySummon>,
     /// Current party roster from `PartyState`; empty = not in a party.
     pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
@@ -1099,9 +1097,7 @@ impl SharedState {
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.relocate_self(*position, *rotation, *floor_level);
-                    // Any teleport settles the pending summons — an accepted
-                    // one succeeded, and one surviving our own departure
-                    // would mislead.
+                    // Any teleport settles the pending summons.
                     self.pending_party_summons.clear();
                 }
                 self.apply_player_pose(player_id, *position, *rotation, *floor_level);
@@ -1350,11 +1346,9 @@ impl SharedState {
                 ref caster_name,
             } => {
                 self.prune_expired_party_summons();
-                // Every delivery corresponds to a freshly inserted full-TTL
-                // server entry (the ack-only cast never re-sends for a live
-                // one), so a same-caster entry here is stale by definition:
-                // replace it. No cap, unlike invites — distinct casters
-                // bound the queue at the party size.
+                // Replace any same-caster entry (always stale: the ack-only
+                // cast never re-sends for a live one). No cap — distinct
+                // casters bound the queue at the party size.
                 let queue = &mut self.pending_party_summons;
                 queue.retain(|s| s.caster_id != *caster_id);
                 queue.push(PendingPartySummon {

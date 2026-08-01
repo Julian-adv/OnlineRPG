@@ -227,6 +227,11 @@ pub struct GameState {
 }
 
 impl GameState {
+    /// The `OUT_OF_COMBAT_MS` clock shared by regen, /escape, and summons.
+    pub(crate) fn in_combat(player: &Player) -> bool {
+        Self::now_ms().saturating_sub(player.last_combat_at) < OUT_OF_COMBAT_MS
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         monster_defs: MonsterDefs,

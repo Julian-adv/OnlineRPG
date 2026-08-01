@@ -668,6 +668,32 @@ async fn summon_scrolls_left(game_state: &GameState, name: &str) -> u32 {
         .map_or(0, |i| i.quantity)
 }
 
+/// Poke `name`'s combat clock (`GameState::now_ms()` = in combat, 0 = at peace).
+async fn set_combat_at(game_state: &GameState, name: &str, at: u64) {
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid(name))
+        .unwrap()
+        .last_combat_at = at;
+}
+
+async fn set_health(game_state: &GameState, name: &str, health: u32) {
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid(name))
+        .unwrap()
+        .health = health;
+}
+
+/// `name`'s current x coordinate.
+async fn player_x(game_state: &GameState, name: &str) -> f32 {
+    player_xz(game_state, &pid(name)).await.0
+}
+
 #[tokio::test]
 async fn summon_scroll_kept_without_party() {
     let game_state = make_test_game_state("summon_no_party");
@@ -750,13 +776,7 @@ async fn summon_scroll_kept_while_caster_in_combat() {
     drain(&mut alice_rx);
     drain(&mut bob_rx);
 
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("alice"))
-        .unwrap()
-        .last_combat_at = GameState::now_ms();
+    set_combat_at(&game_state, "alice", GameState::now_ms()).await;
     game_state.use_item(&pid("alice"), 9).await;
 
     let inv = game_state
@@ -809,13 +829,7 @@ async fn summon_accept_waits_out_casters_combat() {
     drain(&mut bob_rx);
 
     // The caster pulled a fight after casting: delivery must wait it out.
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("alice"))
-        .unwrap()
-        .last_combat_at = GameState::now_ms();
+    set_combat_at(&game_state, "alice", GameState::now_ms()).await;
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
@@ -825,37 +839,14 @@ async fn summon_accept_waits_out_casters_combat() {
         }
         other => panic!("Expected caster-combat refusal, got {:?}", other),
     }
-    assert_eq!(
-        game_state
-            .players
-            .read()
-            .await
-            .get(&pid("bob"))
-            .unwrap()
-            .position
-            .x,
-        500.0
-    );
+    assert_eq!(player_x(&game_state, "bob").await, 500.0);
 
     // The fight ends: the surviving entry delivers.
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("alice"))
-        .unwrap()
-        .last_combat_at = 0;
+    set_combat_at(&game_state, "alice", 0).await;
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
-    let x = game_state
-        .players
-        .read()
-        .await
-        .get(&pid("bob"))
-        .unwrap()
-        .position
-        .x;
+    let x = player_x(&game_state, "bob").await;
     assert!(
         x.abs() < 3.0,
         "bob should arrive once alice is at peace, x={x}"
@@ -873,13 +864,7 @@ async fn summon_accept_refused_while_caster_fallen() {
     drain(&mut alice_rx);
     drain(&mut bob_rx);
 
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("alice"))
-        .unwrap()
-        .health = 0;
+    set_health(&game_state, "alice", 0).await;
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
@@ -889,17 +874,7 @@ async fn summon_accept_refused_while_caster_fallen() {
         }
         other => panic!("Expected fallen-caster refusal, got {:?}", other),
     }
-    assert_eq!(
-        game_state
-            .players
-            .read()
-            .await
-            .get(&pid("bob"))
-            .unwrap()
-            .position
-            .x,
-        500.0
-    );
+    assert_eq!(player_x(&game_state, "bob").await, 500.0);
 }
 
 #[tokio::test]
@@ -913,13 +888,7 @@ async fn summon_accept_waits_out_combat() {
     drain(&mut alice_rx);
     drain(&mut bob_rx);
 
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("bob"))
-        .unwrap()
-        .last_combat_at = GameState::now_ms();
+    set_combat_at(&game_state, "bob", GameState::now_ms()).await;
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
@@ -929,37 +898,14 @@ async fn summon_accept_waits_out_combat() {
         }
         other => panic!("Expected combat refusal, got {:?}", other),
     }
-    assert_eq!(
-        game_state
-            .players
-            .read()
-            .await
-            .get(&pid("bob"))
-            .unwrap()
-            .position
-            .x,
-        500.0
-    );
+    assert_eq!(player_x(&game_state, "bob").await, 500.0);
 
     // Out of combat again: the pending summon survived the refusal.
-    game_state
-        .players
-        .write()
-        .await
-        .get_mut(&pid("bob"))
-        .unwrap()
-        .last_combat_at = 0;
+    set_combat_at(&game_state, "bob", 0).await;
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
-    let x = game_state
-        .players
-        .read()
-        .await
-        .get(&pid("bob"))
-        .unwrap()
-        .position
-        .x;
+    let x = player_x(&game_state, "bob").await;
     assert!(x.abs() < 3.0, "bob should reach alice after combat, x={x}");
 }
 
@@ -994,17 +940,7 @@ async fn summon_decline_reports_and_spends_the_ask() {
         }
         other => panic!("Expected expired notice, got {:?}", other),
     }
-    assert_eq!(
-        game_state
-            .players
-            .read()
-            .await
-            .get(&pid("bob"))
-            .unwrap()
-            .position
-            .x,
-        500.0
-    );
+    assert_eq!(player_x(&game_state, "bob").await, 500.0);
 }
 
 #[tokio::test]
@@ -1029,17 +965,7 @@ async fn summon_leave_voids_the_call() {
         }
         other => panic!("Expected expired notice, got {:?}", other),
     }
-    assert_eq!(
-        game_state
-            .players
-            .read()
-            .await
-            .get(&pid("bob"))
-            .unwrap()
-            .position
-            .x,
-        500.0
-    );
+    assert_eq!(player_x(&game_state, "bob").await, 500.0);
 }
 
 #[tokio::test]
@@ -1063,14 +989,7 @@ async fn summon_teleport_voids_calls_aimed_at_the_mover() {
     game_state
         .respond_to_party_summon(&pid("bob"), &pid("alice"), true)
         .await;
-    let bob_x = game_state
-        .players
-        .read()
-        .await
-        .get(&pid("bob"))
-        .unwrap()
-        .position
-        .x;
+    let bob_x = player_x(&game_state, "bob").await;
     assert!(bob_x.abs() < 3.0, "bob should stand by alice, x={bob_x}");
     drain(&mut bob_rx);
 

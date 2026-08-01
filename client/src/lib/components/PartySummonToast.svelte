@@ -10,9 +10,6 @@
   const summon = $derived($pendingPartySummons[0] ?? null)
   const queued = $derived(Math.max(0, $pendingPartySummons.length - 1))
 
-  /** Remaining-time fraction (1 → 0) driving the gauge. */
-  let remaining = $state(1)
-
   function dismiss(summon: PendingPartySummon) {
     pendingPartySummons.update((queue) => queue.filter((s) => s !== summon))
   }
@@ -27,18 +24,11 @@
 
   $effect(() => {
     if (!summon) return
-    const expiresAt = summon.offeredAt + SUMMON_TTL_MS
-    let raf = 0
-    const tick = () => {
-      remaining = Math.max(0, (expiresAt - Date.now()) / SUMMON_TTL_MS)
-      if (remaining === 0) {
-        dismiss(summon)
-        return
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    tick()
-    return () => cancelAnimationFrame(raf)
+    const t = setTimeout(
+      () => dismiss(summon),
+      Math.max(0, summon.offeredAt + SUMMON_TTL_MS - Date.now())
+    )
+    return () => clearTimeout(t)
   })
 </script>
 
@@ -57,7 +47,15 @@
       </button>
     </div>
     <div class="gauge">
-      <div class="gauge-fill" style="width: {remaining * 100}%"></div>
+      <!-- CSS-driven drain: a negative delay skips the elapsed part, and
+           {#key} restarts the animation when the head summon changes. -->
+      {#key summon}
+        <div
+          class="gauge-fill"
+          style="animation-duration: {SUMMON_TTL_MS}ms; animation-delay: {summon.offeredAt -
+            Date.now()}ms"
+        ></div>
+      {/key}
     </div>
   </div>
 {/if}
@@ -141,6 +139,17 @@
     height: 100%;
     border-radius: 2px;
     background: #c8a2ff;
+    transform-origin: left;
+    animation: drain linear forwards;
+  }
+
+  @keyframes drain {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
   }
 
   @media (pointer: coarse) {

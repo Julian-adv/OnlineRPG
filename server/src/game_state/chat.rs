@@ -428,7 +428,7 @@ impl super::GameState {
                 warn!("/escape from non-existent player: {}", player_id);
                 return;
             };
-            Self::now_ms().saturating_sub(player.last_combat_at) < super::OUT_OF_COMBAT_MS
+            Self::in_combat(player)
         };
         if in_combat {
             self.send_system_message(player_id, "Escape: not while in combat.")

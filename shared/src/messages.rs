@@ -94,8 +94,8 @@ pub struct PartyMember {
 /// client mirrors it (`INVITE_TTL_MS` in `PartyInviteToast.svelte`).
 pub const PARTY_INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How long a party summon stays acceptable; `PARTY_INVITE_TTL`'s twin for
-/// the summoning scroll's consent window.
+/// How long a party summon stays acceptable; `PARTY_INVITE_TTL`'s twin. The
+/// web client mirrors it (`SUMMON_TTL_MS` in `partyStore.ts`).
 pub const PARTY_SUMMON_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// One member's location as listed in `PartyPositions`. No name: the roster
