@@ -24,7 +24,6 @@ import { bridgeManager } from '../managers/bridgeManager'
 import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
-import { deathDropDelayQueue } from '../managers/deathDropDelay'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
@@ -969,25 +968,18 @@ export function handleServerMessage(
       setInventory(data.inventory)
       break
 
-    case 'GroundItemSpawned': {
-      const item = data.item as ServerGroundItem
-      deathDropDelayQueue.handleSpawn(
-        data.source_monster_id as string | undefined,
-        item.instance_id,
-        () =>
-          groundItemManager.spawn(item, {
-            animateSpawn: true,
-          })
-      )
+    case 'GroundItemSpawned':
+      // The server only announces an item once it is real, so no waiting here.
+      groundItemManager.spawn(data.item as ServerGroundItem, {
+        animateSpawn: true,
+      })
       break
-    }
 
     case 'GroundItemAppeared':
       groundItemManager.spawn(data.item as ServerGroundItem)
       break
 
     case 'GroundItemRemoved':
-      deathDropDelayQueue.cancelSpawn(data.instance_id)
       groundItemManager.remove(data.instance_id)
       break
 
