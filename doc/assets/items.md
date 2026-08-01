@@ -25,6 +25,8 @@
     - 원화는 chatgpt ![원화](../images/iron_gauntlets.png)
 - chain_mail.glb — Meshy.ai (유료 생성, 2026-08-01, "Leather Trimmed Chain"). 완전 소유권·상업 OK (characters.md License 참조). FBX를 Blender로 임포트해 0.6배 스케일 적용(높이 0.6m), X축 −90° 회전으로 눕힌 자세(가슴이 위, 바닥면 0.53×0.6m), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-01)
     - 원화는 chatgpt ![원화](../images/chain_mail.png)
+- iron_leggings.glb — Meshy.ai (유료 생성, 2026-08-01, "Knight's Leg Armor"). 완전 소유권·상업 OK (characters.md License 참조). FBX를 Blender로 임포트해 높이 0.7m로 스케일, X축 −90° 회전으로 등을 바닥에 대고 눕힘(0.33×0.70×0.36m), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더(서 있는 자세) 512²→128² (2026-08-01)
+    - 원화는 chatgpt ![원화](../images/iron_leggings.png)
 - fishing_rod.glb — Meshy.ai (유료 생성, 2026-07-26, image-to-3D from the archived concept render). 완전 소유권·상업 OK (characters.md License 참조). Textures downscaled to 512², transform matched to spear.glb's hand-socket convention, `rod_tip` empty baked at the tip (script, 2026-07-28)
     - 원화는 chatgpt ![원화](../images/fishing_rod.png)
 - Fishing icons (10): fishing_rod.png, raw_minnow.png, raw_perch.png, raw_trout.png, river_salmon.png, golden_sturgeon.png, old_boot.png, clump_of_kelp.png, message_in_a_bottle.png, sunken_coin_pouch.png — ChatGPT image generation (2026-07-25, contributor-owned account), concept renders cut to 128×128 transparent icons
