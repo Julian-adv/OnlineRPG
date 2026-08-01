@@ -52,9 +52,9 @@
 | boots | plate_boots | 2 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
 | chest | breastplate | 7 | 4 | 있음 |
 | head | plate_helmet | 3 | 4 | 있음 (티어 4 던전 생기기 전까지 미드랍) |
-| hands | plate_gauntlets | 2 | 4 | **신규 애셋 필요** |
+| hands | plate_gauntlets | 3 | 4 | 있음 (티어 4 던전 생기기 전까지 미드랍) |
 
-세트 guard 합계 ≈ 15~17. 신규 파츠의 guard 값은 구현 시 확정.
+세트 guard 합계 = 18.
 
 ### 장신구
 
@@ -136,7 +136,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 ## 선행 작업
 
 1. ~~신규 슬롯 3종 추가 확정: hands·back·shirt~~ — **완료 (2026-07-31, 프로토콜 v12)**. 장비 UI에는 hands만 노출; back·shirt 칸은 해당 아이템 등장 시 추가. back은 캐릭터 부착 렌더링(리깅/흔들림) 작업이 여전히 필요.
-2. 신규 애셋: leather_belt 아이콘(현재 sword.png placeholder로 드랍 중), 판금 파츠 1종(plate_gauntlets), 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 3종(protection·life_saving·regeneration) (Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록). leather_gloves·leather_boots·iron_helmet·iron_gauntlets는 완료 (2026-07-31), chain_mail·plate_greaves는 완료 (2026-08-01), plate_boots·plate_helmet은 완료 (2026-08-02).
+2. 신규 애셋: leather_belt 아이콘(현재 sword.png placeholder로 드랍 중), 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 3종(protection·life_saving·regeneration) (Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록). leather_gloves·leather_boots·iron_helmet·iron_gauntlets는 완료 (2026-07-31), chain_mail·plate_greaves는 완료 (2026-08-01), plate_boots·plate_helmet·plate_gauntlets는 완료 (2026-08-02).
 3. 특수 망토·장신구 효과 시스템 설계 — 투명은 서버 측 가시성 처리, 사망 방지·재생은 서버 전투 로직.
 4. **유저 간 거래 시스템.** 현재 `trading.rs`는 NPC 상인뿐, P2P 거래 미구현 — 월드 드랍 희소템 컨셉의 전제.
 5. 몬스터 월드 드랍 경로 — 사망 시 무기 드랍(`weapon_drop_chance`, `combat.rs`)이 이미 있으므로 이를 희소템 롤로 확장.

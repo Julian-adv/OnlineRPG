@@ -14,6 +14,7 @@ leather_boots,Leather Boots,Sturdy leather boots that tread softly.,3,boots,fals
 plate_greaves,Plate Greaves,Articulated steel greaves that guard the legs.,8,pants,false,iron_leggings.png,armor/iron_leggings.glb,armor,,metal,12000,3,,,,,,3,0.37
 plate_boots,Plate Boots,Overlapping steel plates that guard the feet and shins.,7,boots,false,plate_greaves.png,armor/plate_greaves.glb,armor,,metal,9000,2,,,,,,3,0.37
 plate_helmet,Plate Helmet,A visored steel close helm that encases the whole head.,5,head,false,plate_helmet.png,armor/plate_helmet.glb,armor,,metal,15000,3,,,,,,4,0.3
+plate_gauntlets,Plate Gauntlets,Articulated steel gauntlets that encase the hands and wrists.,3,hands,false,plate_gauntlets.png,armor/plate_gauntlets.glb,armor,,metal,10000,3,,,,,,4,0.3
 gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,
 silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
 copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,
