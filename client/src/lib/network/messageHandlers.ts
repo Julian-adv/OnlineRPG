@@ -56,6 +56,8 @@ import {
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
+  pendingPartySummons,
+  SUMMON_TTL_MS,
   MAX_PENDING_PARTY_INVITES,
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
@@ -400,6 +402,9 @@ export function handleServerMessage(
           data.position.z
         )
         requestCameraReset()
+        // Any teleport settles the summon toast — an accepted one succeeded,
+        // and one surviving the player's own departure would mislead.
+        pendingPartySummons.set([])
         break
       }
       const tpDeckY = bridgeManager.findDeckYAt(
@@ -461,6 +466,29 @@ export function handleServerMessage(
       addChatMessage({ text: data.message, sender: 'system' })
       break
 
+    case 'PartySummonReceived': {
+      // Every delivery corresponds to a freshly inserted full-TTL server
+      // entry (the ack-only cast never re-sends for a live one), so a
+      // same-caster entry here is stale by definition: replace it, and age
+      // out the dead (the gauge only ticks the head toast, and not at all
+      // in a background tab). No cap, unlike invites — distinct casters
+      // bound the queue at the party size, and a silent drop would waste a
+      // consumed scroll.
+      const now = Date.now()
+      pendingPartySummons.update((queue) => [
+        ...queue.filter(
+          (s) =>
+            now - s.offeredAt < SUMMON_TTL_MS && s.casterId !== data.caster_id
+        ),
+        {
+          casterId: data.caster_id,
+          casterName: data.caster_name,
+          offeredAt: now,
+        },
+      ])
+      break
+    }
+
     case 'PartyState': {
       const joined = data.members.length > 0
       partyRoster.set(
@@ -476,6 +504,14 @@ export function handleServerMessage(
       } else {
         resetPartyPositions()
       }
+      // A summons only lives while its caster shares the roster — one from
+      // someone who left can only ever be answered with "faded".
+      const rosterIds = new Set(
+        (data.members as { id: number }[]).map((m) => m.id)
+      )
+      pendingPartySummons.update((queue) =>
+        queue.filter((summon) => rosterIds.has(summon.casterId))
+      )
       break
     }
 

@@ -26,7 +26,13 @@ impl ItemDef {
     pub fn is_consumable(&self) -> bool {
         matches!(
             self.category.as_deref(),
-            Some("healing_potion" | "return_scroll" | "enchant_scroll" | "fish")
+            Some(
+                "healing_potion"
+                    | "return_scroll"
+                    | "enchant_scroll"
+                    | "party_summon_scroll"
+                    | "fish"
+            )
         )
     }
 }

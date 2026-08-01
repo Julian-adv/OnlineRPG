@@ -105,6 +105,18 @@ pub(super) enum AgentAction {
         #[serde(default, alias = "target", alias = "player_name", alias = "inviter")]
         player: Option<String>,
     },
+    /// Accept a pending party summon — the oldest, or the named caster's.
+    #[serde(rename = "summon_accept", alias = "accept_summon")]
+    SummonAccept {
+        #[serde(default, alias = "target", alias = "player_name", alias = "caster")]
+        player: Option<String>,
+    },
+    /// Decline a pending party summon — the oldest, or the named caster's.
+    #[serde(rename = "summon_decline", alias = "decline_summon")]
+    SummonDecline {
+        #[serde(default, alias = "target", alias = "player_name", alias = "caster")]
+        player: Option<String>,
+    },
     /// Leave your current party.
     #[serde(rename = "party_leave", alias = "leave_party")]
     PartyLeave,
@@ -385,7 +397,10 @@ pub(super) fn action_to_command(
         AgentAction::PartyLeave => Some(ClientMessage::PartyLeave),
         // Answering needs the stored invite; handled in
         // `execute::handle_response`.
-        AgentAction::PartyAccept { .. } | AgentAction::PartyDecline { .. } => None,
+        AgentAction::PartyAccept { .. }
+        | AgentAction::PartyDecline { .. }
+        | AgentAction::SummonAccept { .. }
+        | AgentAction::SummonDecline { .. } => None,
         // Need player-name → id resolution from SharedState; handled in
         // `execute::handle_response`, not here.
         AgentAction::OfferDeal { .. } => None,

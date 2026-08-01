@@ -114,6 +114,13 @@ Available action types (use EXACTLY these field names):
   {"type": "party_accept"}
   {"type": "party_decline", "player": "darkcocoa"}
 
+- Answer a party summon (the [PartySummon] event): a party member read a
+  summoning scroll asking everyone to teleport to their side. Accepting
+  moves you there instantly; you cannot accept mid-combat. With several
+  pending, name the caster — bare answers the oldest:
+  {"type": "summon_accept"}
+  {"type": "summon_decline", "player": "darkcocoa"}
+
 - Leave your current party:
   {"type": "party_leave"}
 

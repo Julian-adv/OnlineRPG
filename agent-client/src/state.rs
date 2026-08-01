@@ -36,7 +36,7 @@ const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_s
 const MAX_PENDING_PARTY_INVITES: usize = 3;
 /// From the shared crate so the server's invite TTL and the agent's pruning
 /// are guaranteed equal.
-use onlinerpg_shared::messages::PARTY_INVITE_TTL;
+use onlinerpg_shared::messages::{PARTY_INVITE_TTL, PARTY_SUMMON_TTL};
 /// NPC sight distance for deciding which nearby human and monster activity
 /// matters. Re-exported from the shared crate so the server's event-delivery
 /// radius and the agent's perception radius are guaranteed equal.
@@ -46,6 +46,13 @@ pub(crate) use onlinerpg_shared::NPC_SIGHT_RADIUS;
 pub struct PendingPartyInvite {
     pub inviter_id: PlayerId,
     pub inviter_name: String,
+    pub expires_at: std::time::Instant,
+}
+
+/// A summoning-scroll consent request the agent hasn't answered yet.
+pub struct PendingPartySummon {
+    pub caster_id: PlayerId,
+    pub caster_name: String,
     pub expires_at: std::time::Instant,
 }
 
@@ -358,6 +365,10 @@ pub struct SharedState {
     /// invites are pruned on mutation and skipped on read, so a dead invite
     /// stops prompting the model.
     pub pending_party_invites: Vec<PendingPartyInvite>,
+    /// Unanswered summons, same queue discipline as invites. An accept keeps
+    /// its entry — the server refuses mid-combat accepts and the summon stays
+    /// retryable; the teleport (or the TTL) is what clears it.
+    pub pending_party_summons: Vec<PendingPartySummon>,
     /// Current party roster from `PartyState`; empty = not in a party.
     pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
     pub party_leader: Option<PlayerId>,
@@ -446,6 +457,7 @@ impl SharedState {
             self_fishing: false,
             fishing_stance: None,
             pending_party_invites: Vec::new(),
+            pending_party_summons: Vec::new(),
             party_members: Vec::new(),
             party_leader: None,
             nearby_players: HashMap::new(),
@@ -918,9 +930,9 @@ impl SharedState {
             ServerMessage::SystemMessage { .. } => EventUrgency::Routine,
             // Urgent: an invite to answer while it is live, or the verdict
             // on our own invite.
-            ServerMessage::PartyInviteReceived { .. } | ServerMessage::PartyInviteResult { .. } => {
-                EventUrgency::Urgent
-            }
+            ServerMessage::PartyInviteReceived { .. }
+            | ServerMessage::PartyInviteResult { .. }
+            | ServerMessage::PartySummonReceived { .. } => EventUrgency::Urgent,
             ServerMessage::PartyState { .. } => EventUrgency::Routine,
             // Urgent: kicked
             ServerMessage::Kicked { .. } => EventUrgency::Urgent,
@@ -1087,6 +1099,10 @@ impl SharedState {
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.relocate_self(*position, *rotation, *floor_level);
+                    // Any teleport settles the pending summons — an accepted
+                    // one succeeded, and one surviving our own departure
+                    // would mislead.
+                    self.pending_party_summons.clear();
                 }
                 self.apply_player_pose(player_id, *position, *rotation, *floor_level);
             }
@@ -1329,6 +1345,24 @@ impl SharedState {
                     });
                 }
             }
+            ServerMessage::PartySummonReceived {
+                caster_id,
+                ref caster_name,
+            } => {
+                self.prune_expired_party_summons();
+                // Every delivery corresponds to a freshly inserted full-TTL
+                // server entry (the ack-only cast never re-sends for a live
+                // one), so a same-caster entry here is stale by definition:
+                // replace it. No cap, unlike invites — distinct casters
+                // bound the queue at the party size.
+                let queue = &mut self.pending_party_summons;
+                queue.retain(|s| s.caster_id != *caster_id);
+                queue.push(PendingPartySummon {
+                    caster_id: *caster_id,
+                    caster_name: caster_name.clone(),
+                    expires_at: std::time::Instant::now() + PARTY_SUMMON_TTL,
+                });
+            }
             ServerMessage::PartyState {
                 leader_id,
                 ref members,
@@ -1339,6 +1373,9 @@ impl SharedState {
                 if !members.is_empty() {
                     self.pending_party_invites.clear();
                 }
+                // A summons only lives while its caster shares the roster.
+                self.pending_party_summons
+                    .retain(|s| members.iter().any(|m| m.id == s.caster_id));
             }
             ServerMessage::InventoryState { ref inventory }
             | ServerMessage::InventoryUpdated { ref inventory } => {
@@ -1926,6 +1963,19 @@ impl SharedState {
             .filter(move |i| i.expires_at > now)
     }
 
+    pub fn prune_expired_party_summons(&mut self) {
+        let now = std::time::Instant::now();
+        self.pending_party_summons.retain(|s| s.expires_at > now);
+    }
+
+    /// Summons still answerable right now, `live_party_invites`'s twin.
+    pub fn live_party_summons(&self) -> impl Iterator<Item = &PendingPartySummon> {
+        let now = std::time::Instant::now();
+        self.pending_party_summons
+            .iter()
+            .filter(move |s| s.expires_at > now)
+    }
+
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -1993,6 +2043,12 @@ impl SharedState {
             lines.push(format!(
                 "Pending party invite from {} — answer with party_accept or party_decline",
                 invite.inviter_name
+            ));
+        }
+        for summon in self.live_party_summons() {
+            lines.push(format!(
+                "{} calls you to their side (summoning scroll) — answer with summon_accept or summon_decline",
+                summon.caster_name
             ));
         }
 

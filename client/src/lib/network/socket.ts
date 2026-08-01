@@ -621,6 +621,11 @@ class NetworkManager {
     this.sendMessage({ PartyRespond: { inviter_id: inviterId, accept } })
   }
 
+  /** Answer a party summon (ServerMessage::PartySummonReceived). */
+  sendPartySummonRespond(casterId: number, accept: boolean) {
+    this.sendMessage({ PartySummonRespond: { caster_id: casterId, accept } })
+  }
+
   sendPartyLeave() {
     this.sendMessage('PartyLeave')
   }

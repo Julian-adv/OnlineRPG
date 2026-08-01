@@ -150,6 +150,7 @@ export type ClientMessage =
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
   | { PartyRespond: { inviter_id: number; accept: boolean } }
+  | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
   | 'RequestPartyPositions'
   | { OpenDungeonChest: { entrance_id: string } }

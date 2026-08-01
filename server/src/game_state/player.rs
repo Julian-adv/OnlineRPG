@@ -1081,6 +1081,7 @@ impl super::GameState {
             },
         )
         .await;
+        self.void_summons_aimed_at(player_id).await;
     }
 
     pub async fn respawn_player(&self, player_id: &PlayerId) {
