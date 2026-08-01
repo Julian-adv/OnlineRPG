@@ -17,10 +17,7 @@ mod session_tests;
 
 /// Player on the shore of the test world's western sea (negative x is
 /// 5 m underwater in `SplitWorldTiles`), rod equipped, ready to cast.
-async fn make_angler(
-    game_state: &GameState,
-    name: &str,
-) -> (PlayerId, UnboundedReceiver<ServerMessage>) {
+async fn make_angler(game_state: &GameState, name: &str) -> (PlayerId, DirectRx) {
     let id = pid(name);
     game_state.add_player(make_player(name, -100.0, 50.0)).await;
     let mut equipped = std::collections::HashMap::new();
@@ -108,7 +105,7 @@ async fn advance_with_ticks(game_state: &GameState, total_ms: u64) {
 /// blindly advancing the full range would blow through the bite window
 /// whenever the roll came up short). Panics if no bite arrives within
 /// the cast plus the maximum wait.
-async fn advance_until_bite(game_state: &GameState, rx: &mut UnboundedReceiver<ServerMessage>) {
+async fn advance_until_bite(game_state: &GameState, rx: &mut DirectRx) {
     let budget_ms = u64::from(CAST_MS) + u64::from(WAIT_MAX_MS) + 500;
     let mut elapsed = 0;
     while elapsed < budget_ms {

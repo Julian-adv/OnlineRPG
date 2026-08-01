@@ -50,7 +50,7 @@ async fn stage_chest_opener(game_state: &GameState, name: &str, character_id: i6
 
 /// Assert the next direct message refuses a chest interaction, with a reason
 /// containing `expected`.
-fn assert_chest_rejected(rx: &mut UnboundedReceiver<ServerMessage>, expected: &str) {
+fn assert_chest_rejected(rx: &mut DirectRx, expected: &str) {
     match rx.try_recv() {
         Ok(ServerMessage::InteractionRejected { reason }) => {
             assert!(

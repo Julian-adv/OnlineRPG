@@ -2,7 +2,9 @@ use crate::auth::AuthService;
 use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
-use crate::game_state::{parse_notice_command, restored_floor_level, GameState};
+use crate::game_state::{
+    encode_server_msg, parse_notice_command, restored_floor_level, DirectMessage, GameState,
+};
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
     new_player, Character, CharacterAttributes, CharacterClass, ClientKind, ClientMessage,
@@ -10,7 +12,7 @@ use crate::types::{
 };
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use onlinerpg_shared::{deserialize_client_msg, serialize_server_msg};
+use onlinerpg_shared::deserialize_client_msg;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -147,7 +149,7 @@ struct ConnectionState {
     /// Entered character's name, kept here so disconnect-path logs can name the
     /// player after `GameState` has already dropped the record.
     character_name: Option<String>,
-    direct_rx: Option<mpsc::UnboundedReceiver<ServerMessage>>,
+    direct_rx: Option<mpsc::UnboundedReceiver<DirectMessage>>,
     pending_character_attributes: Option<CharacterAttributes>,
     connected_at: std::time::Instant,
     last_heartbeat: std::time::Instant,
@@ -410,16 +412,11 @@ pub async fn handle_connection(
                             Ok(responses) => {
                                 // Send all direct responses to this client
                                 for response in responses {
-                                    match serialize_server_msg(&response) {
-                                        Ok(bytes) => {
-                                            if let Err(e) = ws_sender.send(Message::Binary(Bytes::from(bytes))).await {
-                                                error!(
-                                                    "Failed to send direct response to client: {}",
-                                                    e
-                                                );
-                                            }
-                                        }
-                                        Err(e) => error!("Serialization failed: {}", e),
+                                    let Some(bytes) = encode_server_msg(&response) else {
+                                        continue;
+                                    };
+                                    if let Err(e) = ws_sender.send(Message::Binary(bytes)).await {
+                                        error!("Failed to send direct response to client: {}", e);
                                     }
                                 }
                                 if state.must_close {
@@ -484,18 +481,21 @@ pub async fn handle_connection(
                     None => std::future::pending().await,
                 }
             } => {
-                if let Some(msg) = direct_msg {
-                    let is_kicked = matches!(msg, ServerMessage::Kicked { .. });
-                    match serialize_server_msg(&msg) {
-                        Ok(bytes) => {
-                            let _ = ws_sender.send(Message::Binary(Bytes::from(bytes))).await;
+                match direct_msg {
+                    Some(DirectMessage::Shared(bytes)) => {
+                        let _ = ws_sender.send(Message::Binary(bytes)).await;
+                    }
+                    Some(DirectMessage::Typed(msg)) => {
+                        let is_kicked = matches!(msg, ServerMessage::Kicked { .. });
+                        if let Some(bytes) = encode_server_msg(&msg) {
+                            let _ = ws_sender.send(Message::Binary(bytes)).await;
                         }
-                        Err(e) => error!("Serialization failed: {}", e),
+                        if is_kicked {
+                            info!("Player {:?} kicked", state.character_name);
+                            break;
+                        }
                     }
-                    if is_kicked {
-                        info!("Player {:?} kicked", state.character_name);
-                        break;
-                    }
+                    None => {}
                 }
             }
         }
@@ -510,7 +510,7 @@ pub async fn handle_connection(
             game_state.cancel_fishing_if_active(id).await;
             game_state.persist_and_detach_player(id, auth_service).await;
 
-            game_state.unregister_direct_channel(id).await;
+            game_state.unregister_connection_channel(id).await;
             game_state.unregister_player_character(id).await;
             game_state.remove_player(id).await;
         }
@@ -961,7 +961,7 @@ async fn handle_client_message(
             }
             let id = player.id;
 
-            state.direct_rx = Some(game_state.register_direct_channel(&id).await);
+            state.direct_rx = Some(game_state.register_connection_channel(&id).await);
             game_state
                 .register_player_character(
                     &id,

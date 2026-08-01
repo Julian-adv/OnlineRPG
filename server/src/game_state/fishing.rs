@@ -455,13 +455,7 @@ impl GameState {
         self.fishing_active
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Face the cast point here; see FishingCasted's rotation doc.
-        let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, wx);
-        let dz = target.z - player_pos.z;
-        let rotation = if dx == 0.0 && dz == 0.0 {
-            player_rotation
-        } else {
-            dx.atan2(dz)
-        };
+        let rotation = player_pos.bearing_xz_to(&bobber).unwrap_or(player_rotation);
         self.broadcast_fishing(
             &bobber,
             ServerMessage::FishingCasted {

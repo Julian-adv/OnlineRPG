@@ -9,6 +9,7 @@ use super::{
     DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
     FLEE_SAFE_DIST_MARGIN,
 };
+use crate::world::bearing_xz;
 use crate::MonsterState;
 use rand::Rng;
 use std::collections::HashMap;
@@ -299,7 +300,7 @@ impl MonsterBrain {
         }
 
         let target_id = target.id;
-        self.rotation = dx.atan2(dz);
+        self.rotation = bearing_xz(dx, dz).unwrap_or(self.rotation);
         if self.state != AiState::Attack {
             self.state = AiState::Attack;
             self.state_timer_ms = 0.0;

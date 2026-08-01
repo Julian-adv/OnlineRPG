@@ -146,17 +146,17 @@ impl super::GameState {
         }
     }
 
-    pub async fn register_direct_channel(
+    pub async fn register_connection_channel(
         &self,
         player_id: &PlayerId,
-    ) -> mpsc::UnboundedReceiver<ServerMessage> {
+    ) -> mpsc::UnboundedReceiver<super::DirectMessage> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut channels = self.direct_channels.write().await;
         channels.insert(*player_id, tx);
         rx
     }
 
-    pub async fn unregister_direct_channel(&self, player_id: &PlayerId) {
+    pub async fn unregister_connection_channel(&self, player_id: &PlayerId) {
         let mut channels = self.direct_channels.write().await;
         channels.remove(player_id);
     }
@@ -164,7 +164,7 @@ impl super::GameState {
     pub async fn send_direct_message(&self, player_id: &PlayerId, msg: ServerMessage) {
         let channels = self.direct_channels.read().await;
         if let Some(tx) = channels.get(player_id) {
-            let _ = tx.send(msg);
+            let _ = tx.send(super::DirectMessage::Typed(msg));
         }
     }
 
@@ -189,19 +189,28 @@ impl super::GameState {
             .await;
     }
 
+    /// Serializes once and shares the bytes: every connection would otherwise
+    /// re-encode the same message, which adds up on move fanout at scale.
     pub async fn send_direct_message_to_players_except(
         &self,
         player_ids: &[PlayerId],
         msg: ServerMessage,
         skip_player_id: Option<&PlayerId>,
     ) {
+        let is_skipped = |id: &PlayerId| skip_player_id.is_some_and(|skip_id| skip_id == id);
+        if !player_ids.iter().any(|id| !is_skipped(id)) {
+            return;
+        }
+        let Some(bytes) = super::encode_server_msg(&msg) else {
+            return;
+        };
         let channels = self.direct_channels.read().await;
         for player_id in player_ids {
-            if skip_player_id.is_some_and(|skip_id| skip_id == player_id) {
+            if is_skipped(player_id) {
                 continue;
             }
             if let Some(tx) = channels.get(player_id) {
-                let _ = tx.send(msg.clone());
+                let _ = tx.send(super::DirectMessage::Shared(bytes.clone()));
             }
         }
     }
@@ -1494,9 +1503,11 @@ impl super::GameState {
                 .await;
         }
 
-        self.send_direct_message(player_id, update_msg.clone())
-            .await;
-        self.send_direct_message_to_players(&stayed, update_msg)
+        // The mover hears its own update through the same fanout, so the
+        // message is serialized once for everyone.
+        let mut recipients = stayed;
+        recipients.push(*player_id);
+        self.send_direct_message_to_players(&recipients, update_msg)
             .await;
     }
 

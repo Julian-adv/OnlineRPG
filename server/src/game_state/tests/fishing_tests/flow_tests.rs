@@ -7,7 +7,7 @@ use super::*;
 async fn fight_to_the_end(
     game_state: &GameState,
     id: &PlayerId,
-    rx: &mut UnboundedReceiver<ServerMessage>,
+    rx: &mut DirectRx,
     policy: impl Fn(FishState, u32) -> FishingAction,
 ) -> (FishingOutcome, Vec<ServerMessage>) {
     let mut seen = Vec::new();

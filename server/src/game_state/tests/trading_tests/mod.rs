@@ -25,14 +25,7 @@ async fn set_floor(game_state: &GameState, name: &str, floor: i8) {
 
 /// Spawn a merchant NPC and a buyer with the given CHA/gold next to each
 /// other, returning the buyer's direct-message receiver and the NPC's.
-async fn setup_haggle(
-    game_state: &GameState,
-    cha: u8,
-    gold: i64,
-) -> (
-    UnboundedReceiver<ServerMessage>,
-    UnboundedReceiver<ServerMessage>,
-) {
+async fn setup_haggle(game_state: &GameState, cha: u8, gold: i64) -> (DirectRx, DirectRx) {
     game_state
         .add_player(make_npc("npc_rica", "Rica", 0.0, 0.0))
         .await;

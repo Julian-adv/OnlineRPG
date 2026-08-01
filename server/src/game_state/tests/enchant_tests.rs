@@ -8,7 +8,7 @@ async fn setup_enchant_reader(
     game_state: &GameState,
     weapon: Option<(&str, i32)>,
     scrolls: u32,
-) -> UnboundedReceiver<ServerMessage> {
+) -> DirectRx {
     game_state.add_player(make_player("reader", 0.0, 0.0)).await;
     let rx = game_state.register_direct_channel(&pid("reader")).await;
 

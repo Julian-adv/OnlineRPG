@@ -2,7 +2,7 @@ use super::*;
 
 /// The next direct message must be the rejection ack for `expected_id`.
 fn expect_attack_rejected(
-    rx: &mut UnboundedReceiver<ServerMessage>,
+    rx: &mut DirectRx,
     expected_id: &str,
     expected_reason: AttackRejectReason,
 ) {

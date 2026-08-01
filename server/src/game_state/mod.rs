@@ -56,6 +56,27 @@ pub struct BroadcastMessage {
 pub type GameStateSender = broadcast::Sender<BroadcastMessage>;
 pub type GameStateReceiver = broadcast::Receiver<BroadcastMessage>;
 
+/// Payload of a player's direct channel. Fanout helpers serialize once and
+/// share the bytes across recipients; single-recipient sends stay typed so
+/// the connection can still inspect them (e.g. `Kicked`).
+#[derive(Debug, Clone)]
+pub enum DirectMessage {
+    Typed(ServerMessage),
+    Shared(Bytes),
+}
+
+/// The one wire-encode path every outbound message shares; logs and returns
+/// `None` on failure.
+pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
+    match serialize_server_msg(msg) {
+        Ok(bytes) => Some(Bytes::from(bytes)),
+        Err(e) => {
+            error!("Failed to serialize server message: {}", e);
+            None
+        }
+    }
+}
+
 mod chat;
 pub(crate) use chat::parse_notice_command;
 mod combat;
@@ -131,7 +152,7 @@ pub struct GameState {
     /// Global rare bonus-drop table shared by every loot source.
     world_drop_defs: crate::world_drop_defs::WorldDropDefs,
     id_state: Arc<RwLock<IdState>>,
-    direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<ServerMessage>>>>,
+    direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<DirectMessage>>>>,
     // player_id → (character_id, current_xp, attributes)
     #[allow(clippy::type_complexity)]
     player_characters: Arc<RwLock<HashMap<PlayerId, (i64, u64, CharacterAttributes)>>>,
@@ -323,13 +344,8 @@ impl GameState {
     }
 
     pub(crate) fn broadcast(&self, msg: ServerMessage) {
-        match serialize_server_msg(&msg) {
-            Ok(bytes) => {
-                let _ = self.broadcast_tx.send(BroadcastMessage {
-                    bytes: Bytes::from(bytes),
-                });
-            }
-            Err(e) => error!("Failed to serialize broadcast message: {}", e),
+        if let Some(bytes) = encode_server_msg(&msg) {
+            let _ = self.broadcast_tx.send(BroadcastMessage { bytes });
         }
     }
 

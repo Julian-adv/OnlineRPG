@@ -750,9 +750,7 @@ impl super::GameState {
                 .collect()
         };
         let msg = ServerMessage::PartyState { leader_id, members };
-        for id in member_ids {
-            self.send_direct_message(id, msg.clone()).await;
-        }
+        self.send_direct_message_to_players(member_ids, msg).await;
     }
 
     async fn send_party_cleared(&self, player_id: &PlayerId) {

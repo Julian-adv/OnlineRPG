@@ -1,10 +1,10 @@
 use super::*;
 
-fn drain(rx: &mut UnboundedReceiver<ServerMessage>) {
+fn drain(rx: &mut DirectRx) {
     while rx.try_recv().is_ok() {}
 }
 
-async fn add(game_state: &GameState, name: &str, x: f32) -> UnboundedReceiver<ServerMessage> {
+async fn add(game_state: &GameState, name: &str, x: f32) -> DirectRx {
     game_state.add_player(make_player(name, x, 0.0)).await;
     game_state.register_direct_channel(&pid(name)).await
 }
