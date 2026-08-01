@@ -62,7 +62,7 @@
 
 | 아이템 | 효과 | 획득처 | 상태 |
 |--------|------|--------|------|
-| ring_of_protection | guard 부여 | 티어 5 던전 (20% 롤) | **신규 아이콘 필요** |
+| ring_of_protection | guard +1 | 티어 5 던전 (20% 롤) | 있음 (2026-08-02, 티어 5 던전 생기기 전까지 미드랍) |
 | amulet_of_life_saving | 사망 1회 방지 후 소모 | **월드 드랍 전용** | **신규 아이콘 필요** |
 | ring_of_regeneration | HP 지속 재생 | **월드 드랍 전용** | **신규 아이콘 필요** |
 
@@ -136,7 +136,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 ## 선행 작업
 
 1. ~~신규 슬롯 3종 추가 확정: hands·back·shirt~~ — **완료 (2026-07-31, 프로토콜 v12)**. 장비 UI에는 hands만 노출; back·shirt 칸은 해당 아이템 등장 시 추가. back은 캐릭터 부착 렌더링(리깅/흔들림) 작업이 여전히 필요.
-2. 신규 애셋: leather_belt 아이콘(현재 sword.png placeholder로 드랍 중), 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 3종(protection·life_saving·regeneration) (Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록). leather_gloves·leather_boots·iron_helmet·iron_gauntlets는 완료 (2026-07-31), chain_mail·plate_greaves는 완료 (2026-08-01), plate_boots·plate_helmet·plate_gauntlets는 완료 (2026-08-02).
+2. 신규 애셋: leather_belt 아이콘(현재 sword.png placeholder로 드랍 중), 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 2종(life_saving·regeneration) (Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록). leather_gloves·leather_boots·iron_helmet·iron_gauntlets는 완료 (2026-07-31), chain_mail·plate_greaves는 완료 (2026-08-01), plate_boots·plate_helmet·plate_gauntlets·ring_of_protection은 완료 (2026-08-02).
 3. 특수 망토·장신구 효과 시스템 설계 — 투명은 서버 측 가시성 처리, 사망 방지·재생은 서버 전투 로직.
 4. **유저 간 거래 시스템.** 현재 `trading.rs`는 NPC 상인뿐, P2P 거래 미구현 — 월드 드랍 희소템 컨셉의 전제.
 5. 몬스터 월드 드랍 경로 — 사망 시 무기 드랍(`weapon_drop_chance`, `combat.rs`)이 이미 있으므로 이를 희소템 롤로 확장.
@@ -150,5 +150,5 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 3. ~~leather_boots·leather_gloves 애셋 추가 → 가죽 세트 완성 (1–2), iron_helmet 추가 → 체인 하위 파츠(2) 배치~~ — **완료 (2026-07-31, 각 guard 1~2·티어 2·37% 롤)**.
 4. 티어 3 던전 → 체인 세트 완성 (체인 메일·건틀릿) + 판금 하위 파츠 + 기본 망토. iron_gauntlets 애셋·데이터는 완료 (2026-07-31, 티어 3·37% 롤).
 5. 티어 4 던전 → 판금 세트 완성.
-6. 티어 5 던전 → ring_of_protection.
+6. 티어 5 던전 → ring_of_protection. 애셋·데이터는 완료 (2026-08-02, guard 1 — chestTier·chestChance는 던전 추가 시 지정).
 7. 월드 드랍 + 특수 망토·셔츠·상위 장신구(효과 시스템) + 유저 간 거래 — 희소템 경제는 마지막 단계로.

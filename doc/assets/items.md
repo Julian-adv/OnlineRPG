@@ -33,6 +33,7 @@
     - 원화는 chatgpt ![원화](../images/plate_helmet.png)
 - plate_gauntlets.glb — Meshy.ai (유료 생성, 2026-08-01, "Ironclad Gauntlets"). 완전 소유권·상업 OK (characters.md License 참조). FBX를 Blender로 임포트해 한 쌍 폭 0.35m로 스케일 적용, X축 −70° 회전으로 손등 갑주가 위를 향하게 눕힘(커프 20° 들림, 0.35×0.32×0.15m), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더(서 있는 자세) 512²→128² (2026-08-02)
     - 원화는 chatgpt ![원화](../images/plate_gauntlets.png)
+- cross_shield_ring.glb — Meshy.ai (유료 생성, 2026-08-01, "Medieval Cross Shield" — 실제로는 방패 문양 반지). 완전 소유권·상업 OK (characters.md License 참조). FBX를 Blender로 임포트해 0.3배 스케일 적용(외경 0.3m, 높이 0.14m — 실물 반지는 너무 작아 보이지 않아 확대), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-02)
 - fishing_rod.glb — Meshy.ai (유료 생성, 2026-07-26, image-to-3D from the archived concept render). 완전 소유권·상업 OK (characters.md License 참조). Textures downscaled to 512², transform matched to spear.glb's hand-socket convention, `rod_tip` empty baked at the tip (script, 2026-07-28)
     - 원화는 chatgpt ![원화](../images/fishing_rod.png)
 - Fishing icons (10): fishing_rod.png, raw_minnow.png, raw_perch.png, raw_trout.png, river_salmon.png, golden_sturgeon.png, old_boot.png, clump_of_kelp.png, message_in_a_bottle.png, sunken_coin_pouch.png — ChatGPT image generation (2026-07-25, contributor-owned account), concept renders cut to 128×128 transparent icons

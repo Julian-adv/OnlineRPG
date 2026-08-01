@@ -343,7 +343,7 @@ mod tests {
             ]
         );
         let t4_new: Vec<_> = t4.iter().filter(|id| !t3.contains(id)).collect();
-        assert_eq!(t4_new, ["breastplate"]);
+        assert_eq!(t4_new, ["breastplate", "plate_gauntlets", "plate_helmet"]);
     }
 
     /// The doc's farming target: completing a tier's new set pieces takes
