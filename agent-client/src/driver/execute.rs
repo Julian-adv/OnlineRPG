@@ -967,7 +967,7 @@ mod tests {
         let (mut s, _rx) = test_state();
         s.self_player = Some(test_player(0.0, 0.0));
         for item in items {
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
         s
     }

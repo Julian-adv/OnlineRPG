@@ -767,14 +767,12 @@ pub enum ServerMessage {
     InventoryUpdated {
         inventory: inventory::PlayerInventory,
     },
-    /// A new item was created on the ground.
+    /// A new item was created on the ground. Sent when the item becomes real,
+    /// so a client spawns it on arrival: a dying monster's loot is held back
+    /// server-side until the killing blow lands, rather than each client
+    /// deciding for itself when to show it.
     GroundItemSpawned {
         item: inventory::GroundItem,
-        /// Set when this item was dropped by a dying monster, so the client can
-        /// hold the drop until that monster's death-impact animation plays out.
-        /// `None` for player/debug drops, which spawn immediately.
-        #[serde(default)]
-        source_monster_id: Option<String>,
     },
     /// An existing ground item became visible to the client.
     GroundItemAppeared {

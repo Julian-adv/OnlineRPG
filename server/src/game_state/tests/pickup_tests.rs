@@ -73,6 +73,107 @@ async fn pickup_broadcasts_the_pickup_animation() {
     }
 }
 
+/// The killing blow lands partway into the swing, so a monster's loot must not
+/// exist before then — an item that exists is one any client can ask to pick
+/// up, animation or no animation.
+#[tokio::test(start_paused = true)]
+async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
+    let game_state = make_test_game_state("monster_loot_impact_delay");
+    game_state.add_player(make_player("killer", 0.0, 0.0)).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        inventories.insert(pid("killer"), Default::default());
+    }
+    let mut killer_rx = game_state.register_direct_channel(&pid("killer")).await;
+
+    game_state.spawn_monster_loot_after_impact(GroundItem {
+        instance_id: 7,
+        item_def_id: "test_item".to_string(),
+        position: Position {
+            x: 0.5,
+            y: 0.0,
+            z: 0.0,
+        },
+        floor_level: 0,
+        enchant: 0,
+    });
+
+    // Let the spawned task run as far as its timer without reaching the
+    // deadline, so the assertions below observe a drop that is deliberately
+    // withheld rather than one whose task has simply not been polled yet.
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+
+    // Nothing exists yet, so nobody — patched client or not — can reach it.
+    assert!(game_state.ground_items.read().await.is_empty());
+    game_state.pickup_item(&pid("killer"), 7).await;
+    assert!(
+        game_state
+            .inventories
+            .read()
+            .await
+            .get(&pid("killer"))
+            .is_some_and(|inv| inv.bag.is_empty()),
+        "loot must not be pickable before the blade lands"
+    );
+    for msg in drain(&mut killer_rx) {
+        assert!(
+            !matches!(msg, ServerMessage::GroundItemSpawned { .. }),
+            "the drop must not be announced before the blade lands"
+        );
+    }
+
+    // Past the drop's deadline. Virtual time, so this costs nothing.
+    tokio::time::sleep(std::time::Duration::from_millis(
+        super::super::combat::PLAYER_ATTACK_IMPACT_DELAY_MS,
+    ))
+    .await;
+
+    assert!(
+        game_state.ground_items.read().await.contains_key(&7),
+        "the drop must exist once the blade has landed"
+    );
+    assert!(
+        drain(&mut killer_rx).iter().any(
+            |msg| matches!(msg, ServerMessage::GroundItemSpawned { item } if item.instance_id == 7)
+        ),
+        "the drop must be announced once the blade has landed"
+    );
+    game_state.pickup_item(&pid("killer"), 7).await;
+    assert!(
+        game_state
+            .inventories
+            .read()
+            .await
+            .get(&pid("killer"))
+            .is_some_and(|inv| inv.bag.iter().any(|i| i.instance_id == 7)),
+        "the drop must be pickable once the blade has landed"
+    );
+}
+
+/// A hand-dropped item owes nobody an animation, so it lands at once.
+#[tokio::test]
+async fn a_hand_dropped_item_spawns_immediately() {
+    let game_state = make_test_game_state("hand_drop_is_immediate");
+    game_state
+        .add_player(make_player("dropper", 0.0, 0.0))
+        .await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv = PlayerInventory::default();
+        inv.bag.push(ItemInstance {
+            instance_id: 11,
+            item_def_id: "test_item".to_string(),
+            quantity: 1,
+            enchant: 0,
+        });
+        inventories.insert(pid("dropper"), inv);
+    }
+
+    game_state.drop_item(&pid("dropper"), 11).await;
+
+    assert!(game_state.ground_items.read().await.contains_key(&11));
+}
+
 #[tokio::test]
 async fn pickup_animation_is_not_sent_beyond_the_delivery_radius() {
     let game_state = make_test_game_state("pickup_anim_radius");

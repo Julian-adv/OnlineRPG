@@ -346,16 +346,13 @@ impl super::GameState {
                 };
                 self.send_system_message(player_id, "Too heavy to carry — it slips to the ground.")
                     .await;
-                self.spawn_ground_item(
-                    GroundItem {
-                        instance_id: reserved_instance_id,
-                        item_def_id: item_def_id.to_string(),
-                        position,
-                        floor_level,
-                        enchant: 0,
-                    },
-                    None,
-                )
+                self.spawn_ground_item(GroundItem {
+                    instance_id: reserved_instance_id,
+                    item_def_id: item_def_id.to_string(),
+                    position,
+                    floor_level,
+                    enchant: 0,
+                })
                 .await;
             }
         }
@@ -724,13 +721,10 @@ impl super::GameState {
     }
 
     /// Insert a ground item into the world and announce it to nearby players.
-    /// `source_monster_id` is set when the item was dropped by a dying monster
-    /// so the client can hold the drop until that monster's death plays out.
-    pub(super) async fn spawn_ground_item(
-        &self,
-        ground_item: GroundItem,
-        source_monster_id: Option<String>,
-    ) {
+    /// The item becomes real — visible and pickable — at one instant for
+    /// everyone; a caller that owes the drop an animation beat delays this
+    /// call instead of letting each client decide when to show it.
+    pub(super) async fn spawn_ground_item(&self, ground_item: GroundItem) {
         let position = ground_item.position;
         let floor_level = ground_item.floor_level;
         {
@@ -747,10 +741,7 @@ impl super::GameState {
             &position,
             floor_level,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemSpawned {
-                item: ground_item,
-                source_monster_id,
-            },
+            ServerMessage::GroundItemSpawned { item: ground_item },
             None,
         )
         .await;
@@ -783,16 +774,13 @@ impl super::GameState {
                 .await;
 
             let instance_id = self.next_instance_id().await;
-            self.spawn_ground_item(
-                GroundItem {
-                    instance_id,
-                    item_def_id,
-                    position,
-                    floor_level,
-                    enchant: 0,
-                },
-                None,
-            )
+            self.spawn_ground_item(GroundItem {
+                instance_id,
+                item_def_id,
+                position,
+                floor_level,
+                enchant: 0,
+            })
             .await;
         }
     }
@@ -853,7 +841,7 @@ impl super::GameState {
         if dropped_from_off_hand {
             self.set_player_torch(player_id, false).await;
         }
-        self.spawn_ground_item(ground_item, None).await;
+        self.spawn_ground_item(ground_item).await;
         // Dropping the equipped rod is as much "putting it away" as
         // unequipping it — same mid-session abort.
         self.abort_fishing_if_rod_lost(player_id).await;
@@ -876,16 +864,13 @@ impl super::GameState {
         let position = drop_landing_position(player_position, rotation);
 
         let instance_id = self.next_instance_id().await;
-        self.spawn_ground_item(
-            GroundItem {
-                instance_id,
-                item_def_id: item_def_id.to_string(),
-                position,
-                floor_level,
-                enchant: 0,
-            },
-            None,
-        )
+        self.spawn_ground_item(GroundItem {
+            instance_id,
+            item_def_id: item_def_id.to_string(),
+            position,
+            floor_level,
+            enchant: 0,
+        })
         .await;
     }
 

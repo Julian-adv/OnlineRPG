@@ -18,6 +18,33 @@ pub(super) const PLAYER_ATTACK_PROVOKE_RANGE_METERS: f32 = 10.0;
 // the target's can both lag the server's view by a round-trip; this absorbs that
 // drift without leaving the reach unbounded.
 const MONSTER_ATTACK_RANGE_TOLERANCE_METERS: f32 = 4.0;
+// How long into the swing the blade lands. Mirrors the clients'
+// PLAYER_ATTACK_IMPACT_DELAY_MS (client/src/lib/data/combatTiming.ts, from
+// data-src/player_anim_timing.csv); every attack plays the same slash1 clip,
+// so one value covers every weapon.
+pub(super) const PLAYER_ATTACK_IMPACT_DELAY_MS: u64 = 540;
+
+impl super::GameState {
+    /// Put a dying monster's loot on the ground once the killing blow lands.
+    ///
+    /// The blade only connects `PLAYER_ATTACK_IMPACT_DELAY_MS` into the swing,
+    /// so spawning at the server's death tick would drop the item before the
+    /// sword reaches the monster. The wait is served here rather than on each
+    /// client because a ground item is pickable the moment it exists: a client
+    /// that skips the animation — or never rendered the monster to animate —
+    /// would otherwise reach the loot first.
+    pub(super) fn spawn_monster_loot_after_impact(&self, ground_item: GroundItem) {
+        let game_state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                PLAYER_ATTACK_IMPACT_DELAY_MS,
+            ))
+            .await;
+            // The server did the waiting, so the client spawns on arrival.
+            game_state.spawn_ground_item(ground_item).await;
+        });
+    }
+}
 
 fn dropped_weapon_position(monster_position: Position) -> Position {
     let angle = rand::thread_rng().gen_range(0.0..TAU);
@@ -333,17 +360,13 @@ impl super::GameState {
                     // stay on their floor, surface kills on floor 0.
                     // (-1 used to mean "any floor"; that wildcard is
                     // gone now that negative floors are dungeon depths.)
-                    self.spawn_ground_item(
-                        GroundItem {
-                            instance_id,
-                            item_def_id,
-                            position: drop_position,
-                            floor_level: monster_floor_level,
-                            enchant: 0,
-                        },
-                        Some(monster_id.clone()),
-                    )
-                    .await;
+                    self.spawn_monster_loot_after_impact(GroundItem {
+                        instance_id,
+                        item_def_id,
+                        position: drop_position,
+                        floor_level: monster_floor_level,
+                        enchant: 0,
+                    });
                 }
 
                 // Rare bonus world drops, independent of the weapon roll.
