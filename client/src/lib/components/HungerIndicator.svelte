@@ -1,24 +1,14 @@
 <script lang="ts">
-  import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
-
-  const BAND_LABEL: Record<HungerBand, string> = {
-    WellFed: 'Well Fed',
-    Hungry: 'Hungry',
-    Weak: 'Weak',
-    Stuffed: 'Stuffed',
-  }
-  const BAND_ICON: Record<HungerBand, string> = {
-    WellFed: '🍖',
-    Hungry: '🍽️',
-    Weak: '🦴',
-    Stuffed: '🫃',
-  }
-  const BAND_DESCRIPTION: Record<HungerBand, string> = {
-    WellFed: 'You feel energized and ready for adventure.',
-    Hungry: 'A meal would help, but you can keep going.',
-    Weak: 'You need food before your strength returns.',
-    Stuffed: 'The vigor returns once your meal settles.',
-  }
+  import { hungerState, grilling } from '../stores/hungerStore'
+  import {
+    characterPanelTab,
+    characterPanelVisible,
+  } from '../stores/debugStore'
+  import {
+    HUNGER_BAND_INFO,
+    formatHungerModifier,
+    hungerModifiers,
+  } from '../data/hungerPresentation'
 
   let poisonRemainingMin = $state(0)
   $effect(() => {
@@ -38,24 +28,14 @@
   const buffed = $derived($hungerState?.band === 'WellFed')
   const weak = $derived($hungerState?.band === 'Weak')
   const satiationPct = $derived(($hungerState?.satiation ?? 0) / 10)
-  const modifiers = $derived.by(() => {
-    const h = $hungerState
-    if (!h) return []
-    return [
-      { label: 'Movement', mult: h.moveMult },
-      { label: 'Attack', mult: h.attackMult },
-      { label: 'Carry', mult: h.carryMult },
-    ]
-  })
-  const pct = (mult: number) =>
-    `${mult > 1 ? '+' : ''}${Math.round((mult - 1) * 100)}%`
+  const modifiers = $derived($hungerState ? hungerModifiers($hungerState) : [])
   const accessibleSummary = $derived.by(() => {
     const h = $hungerState
     if (!h) return ''
-    const lines = [`Satiation ${h.satiation}/1000`]
+    const lines = [`Open character status. Satiation ${h.satiation}/1000`]
     if (h.band === 'WellFed')
       lines.push(
-        `${pct(h.moveMult)} move & attack speed, ${pct(h.carryMult)} carry weight`
+        `${formatHungerModifier(h.moveMult)} move & attack speed, ${formatHungerModifier(h.carryMult)} carry weight`
       )
     if (h.band === 'Weak')
       lines.push('Slowed, weaker carry, no natural healing — eat!')
@@ -64,6 +44,17 @@
     if (h.poisonedUntil != null) lines.push('Food poisoning: heavy penalties')
     return lines.join('\n')
   })
+
+  function openStatusTab() {
+    characterPanelTab.set('status')
+    characterPanelVisible.set(true)
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    openStatusTab()
+  }
 </script>
 
 {#if $hungerState}
@@ -74,10 +65,14 @@
     class:poisoned={$hungerState.poisonedUntil != null}
     aria-label={accessibleSummary}
     aria-describedby="hunger-tooltip"
+    role="button"
+    tabindex="0"
+    onclick={openStatusTab}
+    onkeydown={handleKeydown}
   >
     <span class="badge primary-badge">
-      {BAND_ICON[$hungerState.band]}
-      {BAND_LABEL[$hungerState.band]}
+      {HUNGER_BAND_INFO[$hungerState.band].icon}
+      {HUNGER_BAND_INFO[$hungerState.band].label}
     </span>
     {#if $hungerState.poisonedUntil != null && poisonRemainingMin > 0}
       <span class="badge poisoned">☠️ {poisonRemainingMin}m</span>
@@ -88,11 +83,15 @@
 
     <div id="hunger-tooltip" class="hunger-tooltip" role="tooltip">
       <div class="tooltip-header">
-        <span class="tooltip-icon">{BAND_ICON[$hungerState.band]}</span>
+        <span class="tooltip-icon"
+          >{HUNGER_BAND_INFO[$hungerState.band].icon}</span
+        >
         <div>
-          <div class="tooltip-title">{BAND_LABEL[$hungerState.band]}</div>
+          <div class="tooltip-title">
+            {HUNGER_BAND_INFO[$hungerState.band].label}
+          </div>
           <div class="tooltip-description">
-            {BAND_DESCRIPTION[$hungerState.band]}
+            {HUNGER_BAND_INFO[$hungerState.band].description}
           </div>
         </div>
       </div>
@@ -111,7 +110,8 @@
             <span>{modifier.label}</span>
             <strong
               class:positive={modifier.mult > 1}
-              class:negative={modifier.mult < 1}>{pct(modifier.mult)}</strong
+              class:negative={modifier.mult < 1}
+              >{formatHungerModifier(modifier.mult)}</strong
             >
           </div>
         {/each}
@@ -147,6 +147,13 @@
     align-items: center;
     gap: 6px;
     justify-content: flex-start;
+    cursor: pointer;
+    outline: none;
+  }
+
+  .hunger:focus-visible {
+    border-radius: 12px;
+    box-shadow: 0 0 0 2px rgba(159, 197, 255, 0.7);
   }
 
   .badge {
