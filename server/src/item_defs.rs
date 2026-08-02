@@ -309,41 +309,45 @@ mod tests {
         );
     }
 
-    /// Chest pools are exactly the doc/ITEM_TIERS.md placement: leather set
-    /// split over tiers 1–2, chain/plate cores reserved for the unbuilt
-    /// tier-3/4 dungeons, everything else (weapons, valuables) opted out.
+    /// Pool membership and chances are laws derived from the defs, so adding
+    /// an item can't stale this test. The doc/ITEM_TIERS.md placement is
+    /// pinned only by the debut anchors, which move when the design does.
     #[test]
     fn chest_tiers_gate_endgame_loot_by_dungeon() {
         let defs = ItemDefs::load();
-        let [t1, t2, t3, t4] = [1, 2, 3, 4].map(|t| table_ids(&defs, t));
+        let max_tier = defs.all().filter_map(|d| d.chest_tier).max().unwrap();
 
-        assert_eq!(t1, ["leather_belt", "leather_helmet", "leather_pants"]);
-        assert_eq!(
-            t2,
-            [
-                "iron_boots",
-                "iron_helmet",
-                "leather_armor",
-                "leather_belt",
-                "leather_boots",
-                "leather_gloves",
-                "leather_helmet",
-                "leather_pants",
-                "raven_shield",
-            ]
-        );
-        let t3_new: Vec<_> = t3.iter().filter(|id| !t2.contains(id)).collect();
-        assert_eq!(
-            t3_new,
-            [
-                "chain_mail",
-                "iron_gauntlets",
-                "plate_boots",
-                "plate_greaves"
-            ]
-        );
-        let t4_new: Vec<_> = t4.iter().filter(|id| !t3.contains(id)).collect();
-        assert_eq!(t4_new, ["breastplate", "plate_gauntlets", "plate_helmet"]);
+        for tier in 1..=max_tier {
+            let mut expected: Vec<String> = defs
+                .all()
+                .filter(|def| def.chest_tier.is_some_and(|home| home <= tier))
+                .map(|def| def.id.clone())
+                .collect();
+            expected.sort();
+            assert_eq!(table_ids(&defs, tier), expected, "tier {tier} pool");
+
+            for (id, chance) in defs.chest_roll_table(tier) {
+                let def = defs.get(&id).unwrap();
+                let want = if def.chest_tier == Some(tier) {
+                    def.chest_chance.unwrap_or(0.0)
+                } else {
+                    CHEST_CARRYOVER_CHANCE
+                };
+                assert_eq!(chance, want, "{id} chance at tier {tier}");
+            }
+        }
+
+        // Each set's core debuts one dungeon above its opener.
+        let debut = |id: &str| defs.get(id).unwrap().chest_tier;
+        assert_eq!(debut("leather_helmet"), Some(1));
+        assert_eq!(debut("leather_armor"), Some(2));
+        assert_eq!(debut("chain_mail"), Some(3));
+        assert_eq!(debut("breastplate"), Some(4));
+        assert_eq!(debut("ring_of_protection"), Some(5));
+        // Weapons and cash valuables stay out of chests entirely.
+        for id in ["iron_sword", "gold_ring", "healing_potion"] {
+            assert_eq!(debut(id), None, "{id} must stay out of chest pools");
+        }
     }
 
     /// The doc's farming target: completing a tier's new set pieces takes

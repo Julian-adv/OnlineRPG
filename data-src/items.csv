@@ -15,7 +15,7 @@ plate_greaves,Plate Greaves,Articulated steel greaves that guard the legs.,8,pan
 plate_boots,Plate Boots,Overlapping steel plates that guard the feet and shins.,7,boots,false,plate_greaves.png,armor/plate_greaves.glb,armor,,metal,9000,2,,,,,,3,0.37
 plate_helmet,Plate Helmet,A visored steel close helm that encases the whole head.,5,head,false,plate_helmet.png,armor/plate_helmet.glb,armor,,metal,15000,3,,,,,,4,0.3
 plate_gauntlets,Plate Gauntlets,Articulated steel gauntlets that encase the hands and wrists.,3,hands,false,plate_gauntlets.png,armor/plate_gauntlets.glb,armor,,metal,10000,3,,,,,,4,0.3
-ring_of_protection,Ring of Protection,A silver ring bearing a cross-emblazoned shield that wards off blows.,0.1,ring,false,cross_shield_ring.png,accessory/cross_shield_ring.glb,accessory,,metal,20000,1
+ring_of_protection,Ring of Protection,A silver ring bearing a cross-emblazoned shield that wards off blows.,0.1,ring,false,cross_shield_ring.png,accessory/cross_shield_ring.glb,accessory,,metal,20000,1,,,,,,5,0.2
 gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,
 silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
 copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,
