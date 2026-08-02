@@ -43,6 +43,8 @@
     onaccept={() => respond(invite, true)}
     ondecline={() => respond(invite, false)}
     {queued}
+    gaugeDurationMs={INVITE_TTL_MS}
+    gaugeStartAt={invite.offeredAt}
   >
     <strong>{invite.inviterName}</strong> invites you to a party
   </ConsentToast>
