@@ -1,5 +1,5 @@
 repo jake-song-openmmo/onlinerpg-assets
-revision 01c8fa2deff2b23dbb7565ccdc69ae0cb44595dd
+revision 74e5a6a28f595d7589183c72834d0339bf01bd75
 file ff60f3d346224b1fa10c2bd203f40962470a1f307e8711f26622691b03f1bfa5 client/public/bgm/Beyond the Horizon.mp3
 file ea9c9c8df8363afc9b8dda4fc387e4d089781a51932fe6a2fb69923af27a78bb client/public/bgm/Blood and Bronze (1).mp3
 file a87bec0ddcefc6970d4e9fcb737096a43a05128f6633e3f057c6b2df26f29fab client/public/bgm/Blood and Bronze.mp3
@@ -50,7 +50,7 @@ file 44d2ed3a563ae4e3e1d7ec9bf9e13702b798e9cb7fc8dfb1d40426b3489a89c1 client/pub
 file 622af87ebfd7e372b9e0b3ca3127ab0480e93c235ecd1c52a6a3c052b61826f5 client/public/bgm/Wanderer of the Old Fields (1).mp3
 file fc506da489dc07b87384ac7a0d49642874deea5890500d700868a51c4fc8ea49 client/public/bgm/Wanderer's Solitude.m4a
 file be8be33714a5c5362a8ccd712808f9b73d37a4f18b406be604c9aa38070b5ae2 client/public/bgm/Winds of the Open Plain.mp3
-file 53659d1853a3850f85451b46807edcd0c14dc48e10eb6c852ddc682cfb551e98 client/public/models/accessory/cross_shield_ring.glb
+file dfc4d6dd6f8cb13d9fd2e137da30e0235179fc5a700f25a227efba9e015b5175 client/public/models/accessory/cross_shield_ring.glb
 file ac3c0cd61212e977d8565e524223ff688fab07aa772a1954928dd5fa27e50994 client/public/models/animations/combat_melee.glb
 file 5860954ce4caed53d863a0f232836a26bb2af85d303d65461ed915d7bbfb4754 client/public/models/animations/fishing.glb
 file ec074d117cff0ff650d1abfc6112b8a2deb1838e1fd04698216fbd7497326d1a client/public/models/animations/locomotion.glb
