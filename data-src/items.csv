@@ -1,7 +1,7 @@
 id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier,chestChance,consumable
 iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,
-worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,,
-wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,4000,1,
+worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d6,metal,,
+wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,2500,1,
 raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2,,,,,,2,0.2
 leather_helmet,Leather Helmet,A simple leather helmet.,1,head,false,leather_helmet.png,armor/leather_helmet.glb,armor,,leather,1500,1,,,,,,1
 iron_helmet,Iron Helmet,A heavy iron great helm that guards the whole head.,4,head,false,iron_helmet.png,armor/iron_helmet.glb,armor,,metal,6000,2,,,,,,2,0.37
@@ -12,23 +12,22 @@ leather_gloves,Leather Gloves,Supple leather gloves with a sure grip.,0.5,hands,
 iron_gauntlets,Iron Gauntlets,Heavy iron gauntlets that shield the hands and wrists.,2,hands,false,iron_gauntlets.png,armor/iron_gauntlets.glb,armor,,metal,6000,2,,,,,,3,0.37
 leather_boots,Leather Boots,Sturdy leather boots that tread softly.,3,boots,false,leather_boots.png,armor/leather_boots.glb,armor,,leather,2500,1,,,,,,2,0.37
 plate_greaves,Plate Greaves,Articulated steel greaves that guard the legs.,8,pants,false,iron_leggings.png,armor/iron_leggings.glb,armor,,metal,12000,3,,,,,,3,0.37
-plate_boots,Plate Boots,Overlapping steel plates that guard the feet and shins.,7,boots,false,plate_greaves.png,armor/plate_greaves.glb,armor,,metal,9000,2,,,,,,3,0.37
+plate_boots,Plate Boots,Overlapping steel plates that guard the feet and shins.,7,boots,false,plate_greaves.png,armor/plate_greaves.glb,armor,,metal,9000,3,,,,,,3,0.37
 plate_helmet,Plate Helmet,A visored steel close helm that encases the whole head.,5,head,false,plate_helmet.png,armor/plate_helmet.glb,armor,,metal,15000,3,,,,,,4,0.3
 plate_gauntlets,Plate Gauntlets,Articulated steel gauntlets that encase the hands and wrists.,3,hands,false,plate_gauntlets.png,armor/plate_gauntlets.glb,armor,,metal,10000,3,,,,,,4,0.3
 ring_of_protection,Ring of Protection,A silver ring bearing a cross-emblazoned shield that wards off blows.,0.1,ring,false,cross_shield_ring.png,accessory/cross_shield_ring.glb,accessory,,metal,20000,1,,,,,,5,0.2
 gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,metal,12000,
 silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
-copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,
 leather_belt,Leather Belt,A wide leather belt.,1,belt,false,ornate_cross_belt.png,accessory/ornate_cross_belt.glb,accessory,,leather,800,,,,,,,1,0.3
 dagger,Dagger,A small but sharp dagger.,1,main_hand,false,dagger.png,weapons/dagger.glb,weapon,1d4,metal,2500,
-goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,1500,
-small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,2000,
-chain_mail,Chain Mail,Interlocking metal rings forming armor.,55,chest,false,chain_mail.png,armor/chain_mail.glb,armor,,metal,25000,5,,,,,,3
+goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,2000,
+small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,1500,
+chain_mail,Chain Mail,Interlocking metal rings forming armor.,30,chest,false,chain_mail.png,armor/chain_mail.glb,armor,,metal,25000,5,,,,,,3
 torch,Torch,A flickering wooden torch.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,50,
 worn_torch,Worn Torch,A stubby half-burnt torch. Merchants won't pay for it.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,,
 spear,Spear,A long wooden-shafted spear tipped with iron.,4,main_hand,false,spear_icon.png,weapons/spear.glb,weapon,1d6,metal,3500,
 coin_pile,Coin Pile,A small heap of loose copper coins.,0,,false,sword.png,objects/coin_pile_spill.glb,currency,,,,
-healing_potion,Healing Potion,A crimson brew that knits wounds and restores vitality.,0.5,,true,healing_potion.png,objects/health_potion.glb,healing_potion,6d4,,500,,,,,,,,,true
+healing_potion,Healing Potion,A crimson brew that knits wounds and restores vitality.,0.5,,true,healing_potion.png,objects/health_potion.glb,healing_potion,6d4,,600,,,,,,,,,true
 scroll_of_return,Scroll of Return,Reading the arcane runes whisks you back to town in a flash of light.,0.2,,true,scroll_of_return.png,objects/scroll.glb,return_scroll,,,800,,,,,,,,,true
 scroll_of_enchant_weapon,Scroll of Enchant Weapon,Arcane runes that hone your wielded weapon's edge — though greedy re-reading may destroy it.,0.2,,true,scroll_of_enchant_weapon.png,objects/scroll_enchant.glb,enchant_scroll,,,1200,,,,,,,,,true
 scroll_of_party_summon,Scroll of Party Summon,Reading the runes calls your whole party to your side — each may answer or ignore the summons.,0.2,,true,scroll_of_party_summon.png,objects/scroll.glb,party_summon_scroll,,,1000,,,,,,,,,true
