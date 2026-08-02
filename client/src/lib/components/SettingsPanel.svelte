@@ -8,6 +8,7 @@
     type QualityLevel,
   } from '../stores/graphicsSettings'
   import VolumeControl from './VolumeControl.svelte'
+  import { minimapEnabled } from '../stores/minimapStore'
   import { mountOverlay } from '../stores/overlayStack'
 
   interface Props {
@@ -33,6 +34,26 @@
     <div class="header">
       <h2>Settings</h2>
       <button class="close-btn" onclick={onClose}>&times;</button>
+    </div>
+
+    <div class="setting-row">
+      <span class="setting-label">Minimap</span>
+      <div class="quality-row">
+        <button
+          class="quality-btn"
+          class:active={$minimapEnabled}
+          onclick={() => minimapEnabled.set(true)}
+        >
+          On
+        </button>
+        <button
+          class="quality-btn"
+          class:active={!$minimapEnabled}
+          onclick={() => minimapEnabled.set(false)}
+        >
+          Off
+        </button>
+      </div>
     </div>
 
     <div class="setting-row">
