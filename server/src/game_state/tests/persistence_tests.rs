@@ -106,6 +106,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
             }],
         )],
         &[],
+        &[],
         None,
     )
     .unwrap();

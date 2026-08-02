@@ -46,6 +46,21 @@ impl SpatialCell {
             z: (position.z / PLAYER_SPATIAL_CELL_SIZE).floor() as i32,
         }
     }
+
+    /// Every cell overlapping the given XZ box, by integer cell range —
+    /// exact, unlike sampling. Callers split a seam-crossing X range into
+    /// canonical segments first; the range itself does not wrap.
+    fn covering(
+        min_x: f32,
+        max_x: f32,
+        min_z: f32,
+        max_z: f32,
+    ) -> impl Iterator<Item = SpatialCell> {
+        let cell = |v: f32| (v / PLAYER_SPATIAL_CELL_SIZE).floor() as i32;
+        let (x0, x1) = (cell(min_x), cell(max_x));
+        let (z0, z1) = (cell(min_z), cell(max_z));
+        (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| SpatialCell { x, z }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +261,21 @@ pub struct GameState {
     /// would race the session replacement that clears it.
     #[allow(clippy::type_complexity)]
     chest_opens: Arc<RwLock<HashMap<(i64, String), i64>>>,
+    /// player_id → dungeon entrance ids this character has discovered
+    /// (world-map markers). Seeded from the DB at login, dropped on logout;
+    /// new discoveries queue in `pending_discovery_saves`.
+    dungeon_discoveries: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// (character_id, entrance_id) discoveries awaiting the next
+    /// `save_batch`; drained by the periodic flush and the shutdown
+    /// snapshot, re-queued if the batch fails.
+    pending_discovery_saves: Arc<RwLock<Vec<(i64, String)>>>,
+    /// Cell → entrances whose discovery region overlaps it, built once at
+    /// startup. `check_dungeon_discovery` looks up the mover's cell before
+    /// taking any lock and then tests only the listed entrances, so the
+    /// per-move cost stays O(1) however many entrances the registry grows to.
+    #[allow(clippy::type_complexity)]
+    dungeon_discovery_cells:
+        Arc<HashMap<SpatialCell, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>>>,
 }
 
 impl GameState {
@@ -267,6 +297,7 @@ impl GameState {
         water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
+        let dungeon_discovery_cells = Arc::new(dungeon::discovery_cells(&dungeon_defs));
 
         Self {
             players: Arc::new(RwLock::new(HashMap::new())),
@@ -319,6 +350,9 @@ impl GameState {
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
+            dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
+            pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
+            dungeon_discovery_cells,
         }
     }
 

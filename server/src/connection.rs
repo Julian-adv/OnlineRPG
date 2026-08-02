@@ -981,15 +981,23 @@ async fn handle_client_message(
             }
 
             let auth = Arc::clone(auth_service);
-            match crate::game_state::auth_db(move || auth.load_dungeon_chest_opens(character_id))
-                .await
-            {
-                Ok(opens) => game_state.set_chest_opens(character_id, opens).await,
-                Err(err) => warn!(
-                    "Failed to load chest history for character {}: {}",
-                    character_id, err
-                ),
-            }
+            let discovered_dungeons =
+                match crate::game_state::auth_db(move || auth.load_dungeon_history(character_id))
+                    .await
+                {
+                    Ok((opens, ids)) => {
+                        game_state.set_chest_opens(character_id, opens).await;
+                        game_state.set_dungeon_discoveries(&id, ids.clone()).await;
+                        ids
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to load dungeon history for character {}: {}",
+                            character_id, err
+                        );
+                        Vec::new()
+                    }
+                };
 
             // Load inventory from DB
             game_state
@@ -1035,6 +1043,10 @@ async fn handle_client_message(
             });
 
             responses.push(ServerMessage::SkillsUpdate { skills });
+
+            responses.push(ServerMessage::DungeonDiscoveries {
+                entrance_ids: discovered_dungeons,
+            });
 
             if let Some(notice) = game_state.server_notice().await {
                 responses.push(ServerMessage::ServerNotice {

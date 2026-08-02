@@ -514,6 +514,13 @@ pub enum ServerMessage {
         entrance_id: String,
         doors: Vec<(u8, u32)>,
     },
+    /// Every dungeon entrance this character has discovered (world-map
+    /// markers): full snapshot at join and after each new discovery. Only
+    /// ids travel — both sides embed the entrance registry, so the client
+    /// resolves names and positions locally.
+    DungeonDiscoveries {
+        entrance_ids: Vec<String>,
+    },
     ChatMessage {
         player_id: PlayerId,
         message: String,

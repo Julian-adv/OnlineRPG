@@ -336,6 +336,7 @@ impl AuthService {
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
         Self::ensure_dungeon_chest_schema(&conn)?;
+        Self::ensure_dungeon_discovery_schema(&conn)?;
 
         Ok(Self { pool })
     }
@@ -483,6 +484,22 @@ impl AuthService {
                 character_id INTEGER NOT NULL,
                 entrance_id TEXT NOT NULL,
                 opened_game_seconds INTEGER NOT NULL,
+                PRIMARY KEY (character_id, entrance_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Dungeon entrances each character has discovered (world-map markers).
+    /// Row presence is the whole fact — losing one only means rediscovering
+    /// by walking near the entrance again.
+    fn ensure_dungeon_discovery_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_dungeon_discoveries (
+                character_id INTEGER NOT NULL,
+                entrance_id TEXT NOT NULL,
                 PRIMARY KEY (character_id, entrance_id),
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
@@ -731,13 +748,10 @@ impl AuthService {
         Ok(())
     }
 
-    /// Every dungeon chest this character has opened, as (entrance id, world
-    /// clock seconds). Read once at login into `GameState`.
-    pub fn load_dungeon_chest_opens(
-        &self,
+    fn dungeon_chest_opens_on(
+        conn: &Connection,
         character_id: i64,
-    ) -> Result<Vec<(String, i64)>, AuthError> {
-        let conn = self.open_connection()?;
+    ) -> Result<Vec<(String, i64)>, rusqlite::Error> {
         let mut stmt = conn.prepare(
             "SELECT entrance_id, opened_game_seconds FROM character_dungeon_chests \
              WHERE character_id = ?1",
@@ -746,6 +760,34 @@ impl AuthService {
             .query_map(params![character_id], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(opens)
+    }
+
+    fn dungeon_discoveries_on(
+        conn: &Connection,
+        character_id: i64,
+    ) -> Result<Vec<String>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT entrance_id FROM character_dungeon_discoveries WHERE character_id = ?1",
+        )?;
+        let ids = stmt
+            .query_map(params![character_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
+    /// Chest opens and discovered entrances together, as ((entrance id,
+    /// world clock seconds) pairs, entrance ids), sharing one connection.
+    /// Read once at login into `GameState`.
+    #[allow(clippy::type_complexity)]
+    pub fn load_dungeon_history(
+        &self,
+        character_id: i64,
+    ) -> Result<(Vec<(String, i64)>, Vec<String>), AuthError> {
+        let conn = self.open_connection()?;
+        Ok((
+            Self::dungeon_chest_opens_on(&conn, character_id)?,
+            Self::dungeon_discoveries_on(&conn, character_id)?,
+        ))
     }
 
     pub fn record_dungeon_chest_open(
@@ -763,6 +805,23 @@ impl AuthService {
              DO UPDATE SET opened_game_seconds = excluded.opened_game_seconds",
             params![character_id, entrance_id, opened_game_seconds],
         )?;
+        Ok(())
+    }
+
+    fn insert_dungeon_discoveries(
+        conn: &Connection,
+        rows: &[(i64, String)],
+    ) -> Result<(), rusqlite::Error> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut insert = conn.prepare(
+            "INSERT OR IGNORE INTO character_dungeon_discoveries \
+                 (character_id, entrance_id) VALUES (?1, ?2)",
+        )?;
+        for (character_id, entrance_id) in rows {
+            insert.execute(params![character_id, entrance_id])?;
+        }
         Ok(())
     }
 
@@ -965,11 +1024,13 @@ impl AuthService {
         characters: &[CharacterSaveData],
         inventories: &[(i64, Vec<ItemRow>)],
         skills: &[(i64, Vec<SkillRow>)],
+        discoveries: &[(i64, String)],
         world_time: Option<&GameDateTime>,
     ) -> Result<(), AuthError> {
         if characters.is_empty()
             && inventories.is_empty()
             && skills.is_empty()
+            && discoveries.is_empty()
             && world_time.is_none()
         {
             return Ok(());
@@ -984,6 +1045,7 @@ impl AuthService {
                 .map(|(id, items)| (*id, items.as_slice())),
         )?;
         Self::upsert_skills(&tx, skills.iter().map(|(id, rows)| (*id, rows.as_slice())))?;
+        Self::insert_dungeon_discoveries(&tx, discoveries)?;
         if let Some(datetime) = world_time {
             Self::write_world_time(&tx, datetime)?;
         }
@@ -1168,6 +1230,7 @@ mod tests {
                     xp: 999,
                 }],
             )],
+            &[],
             None,
         )
         .unwrap();
@@ -1183,6 +1246,7 @@ mod tests {
                     xp: 500,
                 }],
             )],
+            &[],
             None,
         )
         .unwrap();
@@ -1208,6 +1272,7 @@ mod tests {
                     xp: 1400,
                 }],
             )],
+            &[],
             None,
         )
         .unwrap();

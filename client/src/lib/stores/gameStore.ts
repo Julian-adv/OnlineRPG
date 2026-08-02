@@ -6,6 +6,7 @@ import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
 import { resetFishingStore } from './fishingStore'
+import { resetDiscoveredDungeons } from './dungeonStore'
 import { groundItemManager } from '../managers/groundItemManager'
 
 export interface PlayerDamageInfo {
@@ -116,6 +117,7 @@ export const resetGameStore = () => {
   resetSkillsStore()
   resetFishingStore()
   resetPartyStores()
+  resetDiscoveredDungeons()
   groundItemManager.reset()
 }
 

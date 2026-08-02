@@ -41,7 +41,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v13: party summoning scroll (PartySummonReceived → PartySummonRespond).
 /// v14: a monster's loot spawns when the killing blow lands, so
 ///      GroundItemSpawned no longer carries source_monster_id.
-pub const PROTOCOL_VERSION: u32 = 14;
+/// v15: DungeonDiscoveries snapshot for per-character world-map markers.
+pub const PROTOCOL_VERSION: u32 = 15;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

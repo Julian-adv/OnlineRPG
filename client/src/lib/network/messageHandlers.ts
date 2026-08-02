@@ -62,6 +62,7 @@ import {
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
 import { editorTreeDataManager } from '../stores/editorStore'
+import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
@@ -929,6 +930,10 @@ export function handleServerMessage(
 
     case 'DungeonDoorsState':
       dungeonManager.applyDoorsSnapshot(data.entrance_id, data.doors)
+      break
+
+    case 'DungeonDiscoveries':
+      discoveredDungeonIds.set(new Set(data.entrance_ids as string[]))
       break
 
     case 'HouseSpawned':

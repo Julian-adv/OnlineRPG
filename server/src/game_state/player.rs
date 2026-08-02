@@ -263,6 +263,7 @@ impl super::GameState {
         }
         self.remove_player_blocks(player_id).await;
         self.forget_player_skills(player_id).await;
+        self.remove_dungeon_discoveries(player_id).await;
     }
 
     pub async fn get_player_gold(&self, player_id: &PlayerId) -> i64 {
@@ -338,7 +339,7 @@ impl super::GameState {
 
         let auth = auth.clone();
         flush_save(
-            move || auth.save_batch(&characters, &inventories, &skills, None),
+            move || auth.save_batch(&characters, &inventories, &skills, &[], None),
             "player state",
         )
         .await;
@@ -350,13 +351,20 @@ impl super::GameState {
     pub async fn persist_shutdown_snapshot(&self, auth: &AuthService) {
         let (characters, inventories) = self.collect_shutdown_snapshot().await;
         let skills = self.collect_all_skill_states().await;
+        let discoveries = self.take_pending_discovery_saves().await;
         let character_count = characters.len();
         let inventory_count = inventories.len();
         let datetime = self.current_game_datetime();
         let auth = auth.clone();
         flush_save(
             move || {
-                auth.save_batch(&characters, &inventories, &skills, Some(&datetime))?;
+                auth.save_batch(
+                    &characters,
+                    &inventories,
+                    &skills,
+                    &discoveries,
+                    Some(&datetime),
+                )?;
                 info!(
                     "Saved shutdown snapshot: {} character(s), {} inventory/inventories",
                     character_count, inventory_count
@@ -411,16 +419,28 @@ impl super::GameState {
         let (dirty_player_ids, dirty_states) = self.collect_dirty_character_states().await;
         let (dirty_inventory_ids, dirty_inventories) = self.collect_dirty_inventory_states().await;
         let (dirty_skill_ids, dirty_skills) = self.collect_dirty_skill_states().await;
-        if dirty_states.is_empty() && dirty_inventories.is_empty() && dirty_skills.is_empty() {
+        let dirty_discoveries = self.take_pending_discovery_saves().await;
+        if dirty_states.is_empty()
+            && dirty_inventories.is_empty()
+            && dirty_skills.is_empty()
+            && dirty_discoveries.is_empty()
+        {
             return;
         }
 
         let character_count = dirty_states.len();
         let inventory_count = dirty_inventories.len();
         let auth = auth.clone();
+        let discoveries = dirty_discoveries.clone();
         let saved = flush_save(
             move || {
-                auth.save_batch(&dirty_states, &dirty_inventories, &dirty_skills, None)?;
+                auth.save_batch(
+                    &dirty_states,
+                    &dirty_inventories,
+                    &dirty_skills,
+                    &discoveries,
+                    None,
+                )?;
                 info!(
                     "Batch-saved {} character state(s), {} inventory/inventories",
                     character_count, inventory_count
@@ -434,6 +454,8 @@ impl super::GameState {
             self.restore_dirty_players(dirty_player_ids).await;
             self.restore_dirty_inventories(dirty_inventory_ids).await;
             self.restore_dirty_skills(dirty_skill_ids).await;
+            self.restore_pending_discovery_saves(dirty_discoveries)
+                .await;
         }
     }
 
@@ -993,6 +1015,9 @@ impl super::GameState {
         self.move_player_spatial_cell(player_id, &old_position, &new_position)
             .await;
         self.mark_dirty(player_id).await;
+        if old_position != new_position {
+            self.check_dungeon_discovery(player_id, &new_position).await;
+        }
         if old_floor != floor_level {
             self.handle_player_floor_change(
                 player_id,

@@ -135,13 +135,17 @@ async fn respawn_player_revives_dead_player_only() {
     assert_eq!(revived.position.z, spawn.z);
     assert_eq!(revived.rotation, spawn.rotation);
 
-    match direct_rx.try_recv() {
-        Ok(ServerMessage::PlayerRespawned { player }) => {
-            assert_eq!(player.id, player_id);
-            assert_eq!(player.health, player.max_health);
-        }
-        other => panic!("Expected direct PlayerRespawned, got {:?}", other),
-    }
+    // The spawn point sits within discovery range of a dungeon entrance, so
+    // an unseeded respawner may receive DungeonDiscoveries alongside this.
+    let respawned = drain(&mut direct_rx)
+        .into_iter()
+        .find_map(|msg| match msg {
+            ServerMessage::PlayerRespawned { player } => Some(player),
+            _ => None,
+        })
+        .expect("Expected direct PlayerRespawned");
+    assert_eq!(respawned.id, player_id);
+    assert_eq!(respawned.health, respawned.max_health);
 
     match broadcast_rx.try_recv() {
         Err(TryRecvError::Empty) => {}
