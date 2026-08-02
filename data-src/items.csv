@@ -20,7 +20,7 @@ gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,sword.png,,accessory,,meta
 silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,
 copper_earring,Copper Earring,A small copper earring.,0.1,ear,false,sword.png,,accessory,,metal,1200,
 leather_belt,Leather Belt,A wide leather belt.,1,belt,false,sword.png,,accessory,,leather,800,,,,,,,1,0.3
-dagger,Dagger,A small but sharp dagger.,1,main_hand,false,sword.png,weapons/sword.glb,weapon,1d4,metal,2500,
+dagger,Dagger,A small but sharp dagger.,1,main_hand,false,dagger.png,weapons/dagger.glb,weapon,1d4,metal,2500,
 goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,1500,
 small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,2000,
 chain_mail,Chain Mail,Interlocking metal rings forming armor.,55,chest,false,chain_mail.png,armor/chain_mail.glb,armor,,metal,25000,5,,,,,,3
