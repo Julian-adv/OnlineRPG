@@ -522,6 +522,10 @@ impl super::GameState {
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
+        self.ambient_spawn_allowances
+            .write()
+            .await
+            .retain(|(owner_id, _), _| owner_id != player_id);
         // A player disconnecting inside a dungeon leaves its floor first,
         // so its monsters get reassigned (or despawned) instead of being
         // dropped by remove_monsters_by_owner below.

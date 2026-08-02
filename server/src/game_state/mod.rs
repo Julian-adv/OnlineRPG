@@ -144,6 +144,7 @@ pub struct GameState {
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
+    ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -273,6 +274,7 @@ impl GameState {
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
+            ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {
