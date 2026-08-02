@@ -69,7 +69,12 @@
 
 <div class="game-hud">
   <ServerNotice />
-  <FPSCounter />
+  <div class="top-left-hud">
+    {#if selectedCharacter && !$mapEditorMode}
+      <HungerIndicator />
+    {/if}
+    <FPSCounter />
+  </div>
   <WavePhaseDebug />
   <GameTimeWidget />
   <DragGhost />
@@ -114,7 +119,6 @@
     <div class="action-cluster">
       {#if selectedCharacter && !$mapEditorMode}
         <div class="quickslot-stack">
-          <HungerIndicator />
           <QuickslotBar characterId={selectedCharacter.id} />
         </div>
       {/if}
@@ -283,16 +287,20 @@
     pointer-events: none;
   }
 
-  /* Hunger badge sits right above the quickslot bar; layout-only wrapper,
-     click-through like the cluster itself. */
-  .quickslot-stack {
+  .top-left-hud {
+    position: fixed;
+    top: 9px;
+    left: 9px;
+    z-index: 1000;
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
+    align-items: flex-start;
     gap: 6px;
     pointer-events: none;
-    /* Rigid: the chat panel (flex-shrink:1) absorbs all width changes, so the
-       quickslot bar is never squeezed into extra rows when the viewport narrows. */
+  }
+
+  .quickslot-stack {
+    pointer-events: none;
     flex-shrink: 0;
   }
 
@@ -361,6 +369,11 @@
   /* Phone / narrow: keep everything on one row (chat shrinks, it does not wrap
      above the cluster) and respect the safe-area insets. */
   @media (max-width: 600px), (pointer: coarse) and (max-width: 900px) {
+    .top-left-hud {
+      top: max(9px, env(safe-area-inset-top));
+      left: max(9px, env(safe-area-inset-left));
+    }
+
     .bottom-hud {
       left: max(9px, env(safe-area-inset-left));
       right: max(9px, env(safe-area-inset-right));

@@ -13,6 +13,12 @@
     Weak: '🦴',
     Stuffed: '🫃',
   }
+  const BAND_DESCRIPTION: Record<HungerBand, string> = {
+    WellFed: 'You feel energized and ready for adventure.',
+    Hungry: 'A meal would help, but you can keep going.',
+    Weak: 'You need food before your strength returns.',
+    Stuffed: 'The vigor returns once your meal settles.',
+  }
 
   let poisonRemainingMin = $state(0)
   $effect(() => {
@@ -31,9 +37,19 @@
 
   const buffed = $derived($hungerState?.band === 'WellFed')
   const weak = $derived($hungerState?.band === 'Weak')
+  const satiationPct = $derived(($hungerState?.satiation ?? 0) / 10)
+  const modifiers = $derived.by(() => {
+    const h = $hungerState
+    if (!h) return []
+    return [
+      { label: 'Movement', mult: h.moveMult },
+      { label: 'Attack', mult: h.attackMult },
+      { label: 'Carry', mult: h.carryMult },
+    ]
+  })
   const pct = (mult: number) =>
     `${mult > 1 ? '+' : ''}${Math.round((mult - 1) * 100)}%`
-  const tooltip = $derived.by(() => {
+  const accessibleSummary = $derived.by(() => {
     const h = $hungerState
     if (!h) return ''
     const lines = [`Satiation ${h.satiation}/1000`]
@@ -51,13 +67,15 @@
 </script>
 
 {#if $hungerState}
-  <div class="hunger" title={tooltip}>
-    <span
-      class="badge"
-      class:buffed
-      class:weak
-      class:poisoned={$hungerState.poisonedUntil != null}
-    >
+  <div
+    class="hunger"
+    class:buffed
+    class:weak
+    class:poisoned={$hungerState.poisonedUntil != null}
+    aria-label={accessibleSummary}
+    aria-describedby="hunger-tooltip"
+  >
+    <span class="badge primary-badge">
       {BAND_ICON[$hungerState.band]}
       {BAND_LABEL[$hungerState.band]}
     </span>
@@ -67,14 +85,68 @@
     {#if $grilling}
       <span class="badge grilling">🐟 Grilling…</span>
     {/if}
+
+    <div id="hunger-tooltip" class="hunger-tooltip" role="tooltip">
+      <div class="tooltip-header">
+        <span class="tooltip-icon">{BAND_ICON[$hungerState.band]}</span>
+        <div>
+          <div class="tooltip-title">{BAND_LABEL[$hungerState.band]}</div>
+          <div class="tooltip-description">
+            {BAND_DESCRIPTION[$hungerState.band]}
+          </div>
+        </div>
+      </div>
+
+      <div class="satiation-heading">
+        <span>Satiation</span>
+        <strong>{$hungerState.satiation}<small>/1000</small></strong>
+      </div>
+      <div class="satiation-track">
+        <div class="satiation-fill" style:width={`${satiationPct}%`}></div>
+      </div>
+
+      <div class="modifier-grid">
+        {#each modifiers as modifier (modifier.label)}
+          <div class="modifier">
+            <span>{modifier.label}</span>
+            <strong
+              class:positive={modifier.mult > 1}
+              class:negative={modifier.mult < 1}>{pct(modifier.mult)}</strong
+            >
+          </div>
+        {/each}
+      </div>
+
+      {#if weak}
+        <div class="tooltip-note">Natural healing is disabled.</div>
+      {/if}
+      {#if $hungerState.poisonedUntil != null}
+        <div class="poison-warning">
+          <span>☠️</span>
+          <div>
+            <strong>Food Poisoning</strong>
+            <small>
+              Heavy penalties{poisonRemainingMin > 0
+                ? ` · ${poisonRemainingMin}m remaining`
+                : ''}
+            </small>
+          </div>
+        </div>
+      {/if}
+      {#if $grilling}
+        <div class="grilling-note">🐟 Grilling in progress…</div>
+      {/if}
+    </div>
   </div>
 {/if}
 
 <style>
   .hunger {
+    position: relative;
     display: flex;
+    align-items: center;
     gap: 6px;
-    justify-content: flex-end;
+    justify-content: flex-start;
   }
 
   .badge {
@@ -92,22 +164,268 @@
     user-select: none;
   }
 
-  .badge.buffed {
+  .hunger.buffed .primary-badge {
     color: #b8e6a3;
     border-color: rgba(140, 220, 110, 0.35);
   }
 
-  .badge.weak {
+  .hunger.weak .primary-badge {
     color: #f0b8a8;
     border-color: rgba(240, 120, 90, 0.45);
   }
 
-  .badge.poisoned {
+  .badge.poisoned,
+  .hunger.poisoned .primary-badge {
     color: #cfe87a;
     border-color: rgba(160, 200, 60, 0.5);
   }
 
   .badge.grilling {
     color: #f4d08a;
+  }
+
+  .hunger-tooltip {
+    position: absolute;
+    top: 0;
+    left: calc(100% + 10px);
+    z-index: 1200;
+    box-sizing: border-box;
+    width: 270px;
+    padding: 13px;
+    border: 1px solid rgba(216, 210, 196, 0.2);
+    border-radius: 10px;
+    background:
+      radial-gradient(
+        circle at top left,
+        rgba(212, 167, 82, 0.12),
+        transparent 45%
+      ),
+      rgba(12, 13, 14, 0.96);
+    box-shadow:
+      0 10px 28px rgba(0, 0, 0, 0.55),
+      inset 0 1px rgba(255, 255, 255, 0.04);
+    color: #d8d2c4;
+    font-family: system-ui, sans-serif;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-4px);
+    transform-origin: left top;
+    transition:
+      opacity 120ms ease,
+      transform 120ms ease,
+      visibility 120ms;
+  }
+
+  .hunger-tooltip::before {
+    position: absolute;
+    top: 12px;
+    left: -5px;
+    width: 9px;
+    height: 9px;
+    border-left: 1px solid rgba(216, 210, 196, 0.2);
+    border-bottom: 1px solid rgba(216, 210, 196, 0.2);
+    background: #111213;
+    content: '';
+    transform: rotate(45deg);
+  }
+
+  .hunger:hover .hunger-tooltip {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(0);
+  }
+
+  .hunger.buffed .hunger-tooltip {
+    border-color: rgba(140, 220, 110, 0.28);
+  }
+
+  .hunger.weak .hunger-tooltip,
+  .hunger.poisoned .hunger-tooltip {
+    border-color: rgba(240, 120, 90, 0.38);
+  }
+
+  .tooltip-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .tooltip-icon {
+    display: grid;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.04);
+    font-size: 18px;
+  }
+
+  .tooltip-title {
+    color: #f1eadb;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .tooltip-description {
+    margin-top: 2px;
+    color: #99978f;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .satiation-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-top: 13px;
+    color: #aaa79f;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .satiation-heading strong {
+    color: #e8dfcf;
+    font-size: 12px;
+    letter-spacing: 0;
+  }
+
+  .satiation-heading small {
+    color: #77756f;
+    font-size: 9px;
+    font-weight: 500;
+  }
+
+  .satiation-track {
+    height: 5px;
+    margin-top: 5px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .satiation-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #9d7437, #d4ad63);
+    box-shadow: 0 0 8px rgba(212, 173, 99, 0.3);
+  }
+
+  .buffed .satiation-fill {
+    background: linear-gradient(90deg, #628e51, #9bcc7f);
+    box-shadow: 0 0 8px rgba(155, 204, 127, 0.28);
+  }
+
+  .weak .satiation-fill,
+  .poisoned .satiation-fill {
+    background: linear-gradient(90deg, #914f43, #d77b67);
+    box-shadow: 0 0 8px rgba(215, 123, 103, 0.28);
+  }
+
+  .modifier-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  .modifier {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .modifier span {
+    color: #7f817e;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .modifier strong {
+    color: #b7b4ad;
+    font-size: 13px;
+  }
+
+  .modifier strong.positive {
+    color: #a9d990;
+  }
+
+  .modifier strong.negative {
+    color: #e28e7b;
+  }
+
+  .tooltip-note,
+  .grilling-note {
+    margin-top: 9px;
+    padding: 7px 9px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.035);
+    color: #aaa79f;
+    font-size: 11px;
+  }
+
+  .grilling-note {
+    color: #e5bf78;
+  }
+
+  .poison-warning {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 9px;
+    border: 1px solid rgba(196, 220, 102, 0.2);
+    border-radius: 7px;
+    background: rgba(111, 128, 48, 0.1);
+  }
+
+  .poison-warning > span {
+    font-size: 16px;
+  }
+
+  .poison-warning div {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .poison-warning strong {
+    color: #cfe87a;
+    font-size: 11px;
+  }
+
+  .poison-warning small {
+    margin-top: 1px;
+    color: #949d72;
+    font-size: 10px;
+  }
+
+  @media (max-width: 600px) {
+    .hunger-tooltip {
+      top: calc(100% + 8px);
+      left: 0;
+      width: min(270px, calc(100vw - 18px));
+      transform: translateY(-4px);
+    }
+
+    .hunger-tooltip::before {
+      top: -5px;
+      left: 14px;
+      border-top: 1px solid rgba(216, 210, 196, 0.2);
+      border-left: 1px solid rgba(216, 210, 196, 0.2);
+      border-bottom: 0;
+    }
+
+    .hunger:hover .hunger-tooltip {
+      transform: translateY(0);
+    }
   }
 </style>
