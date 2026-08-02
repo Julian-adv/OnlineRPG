@@ -24,11 +24,6 @@ const MAX_EVENTS: usize = 200;
 const NEARBY_PLAYER_RADIUS: f32 = 10.0;
 /// How many ground items the world state lists before summarising the rest.
 const MAX_LISTED_GROUND_ITEMS: usize = 10;
-/// How long a monster's drop stays hidden, so the agent never reaches loot
-/// the players around it cannot see yet. Matches the impact frame a web
-/// client holds the death for (`PLAYER_ATTACK_IMPACT_DELAY_MS` in
-/// client/src/lib/data/combatTiming.ts).
-const DEATH_DROP_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(540);
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
 /// a wishlist item (see `trade_satiated_until`).
 const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -36,7 +31,7 @@ const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_s
 const MAX_PENDING_PARTY_INVITES: usize = 3;
 /// From the shared crate so the server's invite TTL and the agent's pruning
 /// are guaranteed equal.
-use onlinerpg_shared::messages::PARTY_INVITE_TTL;
+use onlinerpg_shared::messages::{PARTY_INVITE_TTL, PARTY_SUMMON_TTL};
 /// NPC sight distance for deciding which nearby human and monster activity
 /// matters. Re-exported from the shared crate so the server's event-delivery
 /// radius and the agent's perception radius are guaranteed equal.
@@ -46,6 +41,13 @@ pub(crate) use onlinerpg_shared::NPC_SIGHT_RADIUS;
 pub struct PendingPartyInvite {
     pub inviter_id: PlayerId,
     pub inviter_name: String,
+    pub expires_at: std::time::Instant,
+}
+
+/// A summoning-scroll consent request the agent hasn't answered yet.
+pub struct PendingPartySummon {
+    pub caster_id: PlayerId,
+    pub caster_name: String,
     pub expires_at: std::time::Instant,
 }
 
@@ -313,14 +315,6 @@ impl WorldCache {
     }
 }
 
-/// A ground item the client knows about, with the moment it may be acted
-/// on. Everything is visible on arrival except a monster's drop, which
-/// waits out `DEATH_DROP_REVEAL_DELAY`.
-struct KnownGroundItem {
-    item: GroundItem,
-    visible_at: std::time::Instant,
-}
-
 /// Shared state between WebSocket reader and Claude driver tasks.
 pub struct SharedState {
     pub characters: Vec<Character>,
@@ -332,6 +326,11 @@ pub struct SharedState {
     /// Our own gold in the smallest unit (from GoldUpdate). NPC traders'
     /// wallets are real server-side gold (economy phase 3).
     pub self_gold: Option<i64>,
+    /// Our own hunger (satiation, band, poisoned) from `HungerUpdate`;
+    /// stays None for exempt NPCs.
+    pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState, bool)>,
+    /// Burning campfires in our AOI, for the grill-your-catch decision.
+    pub campfires: HashMap<u64, onlinerpg_shared::hunger::Campfire>,
     /// Our own bag (from InventoryState/InventoryUpdated), so a trading
     /// NPC knows what it carries.
     pub self_bag: Vec<onlinerpg_shared::inventory::ItemInstance>,
@@ -358,6 +357,8 @@ pub struct SharedState {
     /// invites are pruned on mutation and skipped on read, so a dead invite
     /// stops prompting the model.
     pub pending_party_invites: Vec<PendingPartyInvite>,
+    /// Unanswered summons, same queue discipline as invites.
+    pub pending_party_summons: Vec<PendingPartySummon>,
     /// Current party roster from `PartyState`; empty = not in a party.
     pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
     pub party_leader: Option<PlayerId>,
@@ -368,11 +369,9 @@ pub struct SharedState {
     pub merchant_buyback: HashMap<PlayerId, Vec<onlinerpg_shared::messages::BuybackEntry>>,
     /// Known nearby monsters
     pub nearby_monsters: HashMap<String, Monster>,
-    /// Known items lying on the ground, keyed by instance id (from the join
-    /// snapshot plus GroundItemSpawned/Appeared/Removed). Read through
-    /// `visible_ground_item(s)` — a monster's drop is known before it is
-    /// visible.
-    ground_items: HashMap<u64, KnownGroundItem>,
+    /// Items lying on the ground, keyed by instance id (from the join
+    /// snapshot plus GroundItemSpawned/Appeared/Removed).
+    ground_items: HashMap<u64, GroundItem>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -439,6 +438,8 @@ impl SharedState {
             self_player_id: None,
             self_player: None,
             self_gold: None,
+            self_hunger: None,
+            campfires: HashMap::new(),
             self_bag: Vec::new(),
             self_equipped: HashMap::new(),
             trade_satiated_until: None,
@@ -446,6 +447,7 @@ impl SharedState {
             self_fishing: false,
             fishing_stance: None,
             pending_party_invites: Vec::new(),
+            pending_party_summons: Vec::new(),
             party_members: Vec::new(),
             party_leader: None,
             nearby_players: HashMap::new(),
@@ -826,25 +828,17 @@ impl SharedState {
             .await
     }
 
-    /// Remember an item on the ground, visible from `visible_at` on.
-    pub(crate) fn remember_ground_item(
-        &mut self,
-        item: GroundItem,
-        visible_at: std::time::Instant,
-    ) {
-        self.ground_items
-            .insert(item.instance_id, KnownGroundItem { item, visible_at });
+    /// Remember an item on the ground.
+    pub(crate) fn remember_ground_item(&mut self, item: GroundItem) {
+        self.ground_items.insert(item.instance_id, item);
     }
 
-    /// One ground item by instance id, if it is visible yet.
-    pub fn visible_ground_item(&self, instance_id: u64) -> Option<&GroundItem> {
-        self.ground_items
-            .get(&instance_id)
-            .filter(|k| k.visible_at <= std::time::Instant::now())
-            .map(|k| &k.item)
+    /// One ground item by instance id.
+    pub fn ground_item(&self, instance_id: u64) -> Option<&GroundItem> {
+        self.ground_items.get(&instance_id)
     }
 
-    /// The ground items the agent can act on: visible, on its floor, inside
+    /// The ground items the agent can act on: on its floor, inside
     /// the sight radius, closest first. The known-item map reaches out to
     /// the server's event radius, so this is what "nearby" means everywhere
     /// downstream — the world state listing and pickup alike.
@@ -852,15 +846,14 @@ impl SharedState {
         let Some(sp) = self.self_player.as_ref() else {
             return Vec::new();
         };
-        let now = std::time::Instant::now();
         let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
         let mut in_sight: Vec<_> = self
             .ground_items
             .values()
-            .filter(|k| k.visible_at <= now && k.item.floor_level == self.self_floor_level)
-            .filter_map(|k| {
-                let d_sq = k.item.position.dist_xz_sq(&sp.position);
-                (d_sq <= sight_sq).then_some((d_sq, &k.item))
+            .filter(|item| item.floor_level == self.self_floor_level)
+            .filter_map(|item| {
+                let d_sq = item.position.dist_xz_sq(&sp.position);
+                (d_sq <= sight_sq).then_some((d_sq, item))
             })
             .collect();
         in_sight.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -918,9 +911,9 @@ impl SharedState {
             ServerMessage::SystemMessage { .. } => EventUrgency::Routine,
             // Urgent: an invite to answer while it is live, or the verdict
             // on our own invite.
-            ServerMessage::PartyInviteReceived { .. } | ServerMessage::PartyInviteResult { .. } => {
-                EventUrgency::Urgent
-            }
+            ServerMessage::PartyInviteReceived { .. }
+            | ServerMessage::PartyInviteResult { .. }
+            | ServerMessage::PartySummonReceived { .. } => EventUrgency::Urgent,
             ServerMessage::PartyState { .. } => EventUrgency::Routine,
             // Urgent: kicked
             ServerMessage::Kicked { .. } => EventUrgency::Urgent,
@@ -989,14 +982,15 @@ impl SharedState {
                 }
             }
 
-            // Fishing: the outcome (and any refusal) is worth an LLM look —
-            // recast, eat the catch, or give up. The in-flight events are
-            // noise: the reflex layer already answered them.
+            // Fishing: only our own outcome is worth an LLM look — recast, eat
+            // the catch, or give up. In-flight events are reflex-handled, and
+            // another player's ending renders no prompt line (driver/prompt.rs),
+            // so both are noise.
             ServerMessage::FishingEnded { player_id, .. } => {
                 if self_id == Some(player_id) {
                     EventUrgency::Urgent
                 } else {
-                    EventUrgency::Routine
+                    EventUrgency::Noise
                 }
             }
             ServerMessage::FishingError { .. } => EventUrgency::Urgent,
@@ -1018,6 +1012,13 @@ impl SharedState {
             // sink to the idle queue behind everything else.
             ServerMessage::InteractionRejected { .. }
             | ServerMessage::PlayerAttackRejected { .. } => EventUrgency::Routine,
+
+            // Campfire churn and the grill-cast start are world-state, not
+            // events; the outcome (`GrillEnded`) rides the Routine catch-all.
+            ServerMessage::CampfireSpawned { .. }
+            | ServerMessage::CampfireAppeared { .. }
+            | ServerMessage::CampfireRemoved { .. }
+            | ServerMessage::GrillStarted => EventUrgency::Noise,
 
             // Auth/character events: routine (handled before game entry)
             _ => EventUrgency::Routine,
@@ -1087,6 +1088,8 @@ impl SharedState {
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.relocate_self(*position, *rotation, *floor_level);
+                    // Any teleport settles the pending summons.
+                    self.pending_party_summons.clear();
                 }
                 self.apply_player_pose(player_id, *position, *rotation, *floor_level);
             }
@@ -1204,14 +1207,17 @@ impl SharedState {
                 players,
                 monsters,
                 ground_items,
+                campfires,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
-                // Snapshot items are already lying there for everyone.
                 self.ground_items.clear();
-                let now = std::time::Instant::now();
                 for item in ground_items {
-                    self.remember_ground_item(item.clone(), now);
+                    self.remember_ground_item(item.clone());
+                }
+                self.campfires.clear();
+                for campfire in campfires {
+                    self.campfires.insert(campfire.id, campfire.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -1285,21 +1291,9 @@ impl SharedState {
                 self.nearby_monsters.remove(monster_id);
                 self.monster_ai.remove_monster(monster_id);
             }
-            ServerMessage::GroundItemSpawned {
-                item,
-                source_monster_id,
-            } => {
-                // A kill's drop only lands on a web client's screen when the
-                // killing blow's impact frame plays; hold it the same span.
-                let delay = if source_monster_id.is_some() {
-                    DEATH_DROP_REVEAL_DELAY
-                } else {
-                    std::time::Duration::ZERO
-                };
-                self.remember_ground_item(item.clone(), std::time::Instant::now() + delay);
-            }
-            ServerMessage::GroundItemAppeared { item } => {
-                self.remember_ground_item(item.clone(), std::time::Instant::now());
+            ServerMessage::GroundItemSpawned { item }
+            | ServerMessage::GroundItemAppeared { item } => {
+                self.remember_ground_item(item.clone());
             }
             ServerMessage::GroundItemRemoved { instance_id } => {
                 self.ground_items.remove(instance_id);
@@ -1309,6 +1303,21 @@ impl SharedState {
             }
             ServerMessage::GoldUpdate { gold } => {
                 self.self_gold = Some(*gold);
+            }
+            ServerMessage::HungerUpdate {
+                satiation,
+                state,
+                poisoned_ms,
+                ..
+            } => {
+                self.self_hunger = Some((*satiation, *state, *poisoned_ms > 0));
+            }
+            ServerMessage::CampfireSpawned { ref campfire }
+            | ServerMessage::CampfireAppeared { ref campfire } => {
+                self.campfires.insert(campfire.id, campfire.clone());
+            }
+            ServerMessage::CampfireRemoved { campfire_id } => {
+                self.campfires.remove(campfire_id);
             }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;
@@ -1329,6 +1338,22 @@ impl SharedState {
                     });
                 }
             }
+            ServerMessage::PartySummonReceived {
+                caster_id,
+                ref caster_name,
+            } => {
+                self.prune_expired_party_summons();
+                // Replace any same-caster entry (always stale: the ack-only
+                // cast never re-sends for a live one). No cap — distinct
+                // casters bound the queue at the party size.
+                let queue = &mut self.pending_party_summons;
+                queue.retain(|s| s.caster_id != *caster_id);
+                queue.push(PendingPartySummon {
+                    caster_id: *caster_id,
+                    caster_name: caster_name.clone(),
+                    expires_at: std::time::Instant::now() + PARTY_SUMMON_TTL,
+                });
+            }
             ServerMessage::PartyState {
                 leader_id,
                 ref members,
@@ -1339,6 +1364,9 @@ impl SharedState {
                 if !members.is_empty() {
                     self.pending_party_invites.clear();
                 }
+                // A summons only lives while its caster shares the roster.
+                self.pending_party_summons
+                    .retain(|s| members.iter().any(|m| m.id == s.caster_id));
             }
             ServerMessage::InventoryState { ref inventory }
             | ServerMessage::InventoryUpdated { ref inventory } => {
@@ -1508,11 +1536,24 @@ impl SharedState {
             ServerMessage::FishingCasted { .. }
             | ServerMessage::FishingBite { .. }
             | ServerMessage::FishingFight { .. } => return urgency,
+            // Another player's ending renders no prompt line, so buffering it
+            // would turn an otherwise-skipped poll into a blank LLM call.
+            ServerMessage::FishingEnded { player_id, .. }
+                if self.self_player_id.as_ref() != Some(player_id) =>
+            {
+                return urgency;
+            }
             // Ground items churn in and out of the AOI as everyone moves;
             // the world state lists what is nearby each turn instead.
             ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
             | ServerMessage::GroundItemRemoved { .. } => return urgency,
+            // Campfires likewise live in the world state, and the grill start
+            // is answered by GrillEnded a few seconds later.
+            ServerMessage::CampfireSpawned { .. }
+            | ServerMessage::CampfireAppeared { .. }
+            | ServerMessage::CampfireRemoved { .. }
+            | ServerMessage::GrillStarted => return urgency,
             ServerMessage::GameTimeSync { datetime, is_night } => {
                 let prev_night = self.is_night;
                 let prev_hour = self.game_hour;
@@ -1926,6 +1967,19 @@ impl SharedState {
             .filter(move |i| i.expires_at > now)
     }
 
+    pub fn prune_expired_party_summons(&mut self) {
+        let now = std::time::Instant::now();
+        self.pending_party_summons.retain(|s| s.expires_at > now);
+    }
+
+    /// Summons still answerable right now, `live_party_invites`'s twin.
+    pub fn live_party_summons(&self) -> impl Iterator<Item = &PendingPartySummon> {
+        let now = std::time::Instant::now();
+        self.pending_party_summons
+            .iter()
+            .filter(move |s| s.expires_at > now)
+    }
+
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -1944,6 +1998,27 @@ impl SharedState {
         }
         if let Some(line) = self.format_dungeon_state() {
             lines.push(line);
+        }
+        if let Some((satiation, state, poisoned)) = self.self_hunger {
+            let mut line = format!("Hunger: {state:?} ({satiation}/1000)");
+            if poisoned {
+                line.push_str(", food poisoned");
+            }
+            lines.push(line);
+        }
+        if let Some(p) = &self.self_player {
+            let nearest_fire = self
+                .campfires
+                .values()
+                .filter(|c| c.floor_level == p.floor_level)
+                .map(|c| c.position.dist_xz_sq(&p.position))
+                .min_by(f32::total_cmp);
+            if let Some(d2) = nearest_fire {
+                lines.push(format!(
+                    "Campfire nearby: {:.1}m away (use a raw fish within 3m to grill it)",
+                    d2.sqrt()
+                ));
+            }
         }
         if let Some(gold) = self.self_gold {
             lines.push(format!(
@@ -1993,6 +2068,12 @@ impl SharedState {
             lines.push(format!(
                 "Pending party invite from {} — answer with party_accept or party_decline",
                 invite.inviter_name
+            ));
+        }
+        for summon in self.live_party_summons() {
+            lines.push(format!(
+                "{} calls you to their side (summoning scroll) — answer with summon_accept or summon_decline",
+                summon.caster_name
             ));
         }
 
@@ -2156,7 +2237,7 @@ pub(crate) mod tests {
             ground_item(4, "iron_sword", 0.0, NPC_SIGHT_RADIUS + 5.0, 0),
             ground_item(5, "healing_potion", 3.0, 0.0, 1),
         ] {
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
 
         let lines: Vec<String> = s
@@ -2176,20 +2257,18 @@ pub(crate) mod tests {
         );
     }
 
-    /// A kill's drop is held back for as long as a web client holds the
-    /// death animation, so the agent can't loot what nobody can see yet.
-    /// Items that were already lying there show up at once.
+    /// An announced item is loot the agent may go for right away — the
+    /// server does any withholding.
     #[test]
-    fn a_monster_drop_waits_for_the_death_impact() {
+    fn an_announced_drop_is_actionable_at_once() {
         let (mut s, _rx) = test_state();
         s.self_player = Some(test_player(0.0, 0.0));
 
         s.push_event(ServerMessage::GroundItemSpawned {
             item: ground_item(1, "goblin_sword", 2.0, 0.0, 0),
-            source_monster_id: Some("m208_129".to_string()),
         });
         s.push_event(ServerMessage::GroundItemAppeared {
-            item: ground_item(2, "small_sword", 2.0, 0.0, 0),
+            item: ground_item(2, "small_sword", 3.0, 0.0, 0),
         });
 
         let ids: Vec<u64> = s
@@ -2197,16 +2276,9 @@ pub(crate) mod tests {
             .iter()
             .map(|(_, i)| i.instance_id)
             .collect();
-        assert_eq!(ids, vec![2]);
-        assert!(s.visible_ground_item(1).is_none());
-        assert!(!s.format_world_state().contains("goblin_sword"));
-
-        // Once the impact has passed it is loot like any other.
-        s.remember_ground_item(
-            ground_item(1, "goblin_sword", 2.0, 0.0, 0),
-            std::time::Instant::now(),
-        );
-        assert!(s.visible_ground_item(1).is_some());
+        assert_eq!(ids, vec![1, 2]);
+        assert!(s.ground_item(1).is_some());
+        assert!(s.format_world_state().contains("goblin_sword"));
     }
 
     /// A field strewn with drops is summarised, not listed line by line.
@@ -2216,7 +2288,7 @@ pub(crate) mod tests {
         s.self_player = Some(test_player(0.0, 0.0));
         for id in 1..=(MAX_LISTED_GROUND_ITEMS as u64 + 3) {
             let item = ground_item(id, "small_sword", id as f32 * 0.5, 0.0, 0);
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
 
         let world = s.format_world_state();
@@ -2732,5 +2804,35 @@ pub(crate) mod tests {
             "monster ended at y={y}, floor 2 sits at {}",
             dungeon.floor_y(2)
         );
+    }
+
+    /// Another player's FishingEnded renders no prompt line, so scheduling an
+    /// LLM cycle for it would buy a blank prompt; our own stays urgent.
+    #[test]
+    fn fishing_ended_wakes_llm_only_for_own_outcome() {
+        let (mut s, _rx) = test_state();
+        s.self_player_id = Some(PlayerId::from(1));
+        let ended = |id: u64| ServerMessage::FishingEnded {
+            player_id: PlayerId::from(id),
+            outcome: onlinerpg_shared::fishing::FishingOutcome::Escaped,
+        };
+        assert_eq!(s.classify_event(&ended(1)), EventUrgency::Urgent);
+        assert_eq!(s.classify_event(&ended(2)), EventUrgency::Noise);
+    }
+
+    /// The driver submits a prompt whenever the event buffer is non-empty, so
+    /// a spectator ending must skip the buffer entirely, not just rank low.
+    #[test]
+    fn fishing_ended_buffers_only_own_outcome() {
+        let (mut s, _rx) = test_state();
+        s.self_player_id = Some(PlayerId::from(1));
+        let ended = |id: u64| ServerMessage::FishingEnded {
+            player_id: PlayerId::from(id),
+            outcome: onlinerpg_shared::fishing::FishingOutcome::Escaped,
+        };
+        s.push_event(ended(2));
+        assert!(s.events.is_empty(), "spectator ending must not buffer");
+        s.push_event(ended(1));
+        assert_eq!(s.events.len(), 1, "own ending must reach the prompt");
     }
 }

@@ -28,6 +28,7 @@
     torchLightEnabled,
   } from '../stores/debugStore'
   import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
+  import { hungerState } from '../stores/hungerStore'
   import { getItemDef } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
@@ -186,14 +187,17 @@
   // lastSentPosition is kinematic (send dedup), not state-membership data.
   let lastSentPosition = $state<Position | null>(null)
 
-  // Use the same movement config as remote players, with debug speed multiplier
+  // Use the same movement config as remote players, with debug speed multiplier.
+  // The hunger multiplier mirrors the server's own movement sim (doc/HUNGER.md)
+  // so prediction and authority agree.
+  let speedMult = $derived(
+    ($debugSpeedMode ? 10 : 1) * ($hungerState?.moveMult ?? 1)
+  )
   let MOVEMENT_CONFIG = $derived<MovementConfig>({
     ...DEFAULT_MOVEMENT_CONFIG,
-    maxSpeed: DEFAULT_MOVEMENT_CONFIG.maxSpeed * ($debugSpeedMode ? 10 : 1),
-    acceleration:
-      DEFAULT_MOVEMENT_CONFIG.acceleration * ($debugSpeedMode ? 10 : 1),
-    deceleration:
-      DEFAULT_MOVEMENT_CONFIG.deceleration * ($debugSpeedMode ? 10 : 1),
+    maxSpeed: DEFAULT_MOVEMENT_CONFIG.maxSpeed * speedMult,
+    acceleration: DEFAULT_MOVEMENT_CONFIG.acceleration * speedMult,
+    deceleration: DEFAULT_MOVEMENT_CONFIG.deceleration * speedMult,
   })
 
   // Character rotation and current speed
@@ -731,7 +735,9 @@
       config: MOVEMENT_CONFIG,
       isInCombat: combatController.isInCombat,
       combatController,
-      cooldownMs: attackCooldown ? attackCooldown * 1000 : 1500,
+      cooldownMs:
+        (attackCooldown ? attackCooldown * 1000 : 1500) /
+        ($hungerState?.attackMult ?? 1),
       chasePathing,
       getMonsterInfo: (monsterId) => {
         const monsterData = monsterManager.monsters.get(monsterId)
@@ -1258,7 +1264,9 @@
           // its old rotation and casts over its shoulder.
           setPlayerState({ ...playerState, rotation: playerRotation })
         }
-        sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
+        // Updates the server-stored rotation (late joiners); live bystanders
+        // get the facing from FishingCasted itself.
+        sendPlayerMove(currentPlayer.position, playerRotation)
         networkManager.sendFishingCast(intent.position)
       },
       requestMove: handleClickToMove,

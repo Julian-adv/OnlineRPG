@@ -105,17 +105,25 @@
 - blocked move 버그 해결
 - [x] 캐릭터 창에서도 퀵슬롯으로 드래그 할 수 있게
 - [x] deploy 안전하게
-- item drop을 서버에서 지연해서 보내게(공정성)
+- [x] item drop을 서버에서 지연해서 보내게(공정성)
 - 마을에서 악기 연주하는 npc -> 노래의 제목을 말하고 bgm 중 하나를 연주한다
 - 죽었을 때 마을 여관에서 메이드의 간호를 받으며 깨어난다
+- [x] 낚시에서 얻은 생선 → doc/HUNGER.md (배고픔 시스템)
+  - [x] 그냥 먹으면 식중독
+  - [x] 모닥불 피워서 요리하기
+- 서버가 쓸 수 있는 일반적인 LLM 연결
+  - 일회성 NPC 생성(LLM에게 이름짓기 -> 롤플레잉 -> 삭제)
+  - 예: 낚시 -> 병속에 든 쪽지 -> 읽어보니 구조 요청 -> 찾아가보니 감사하다는 인사와 함께 사라짐
+    - 기존 반복 퀘스트와 비슷하지만 매번 npc 이름은 달라짐
+- [x] dagger, leather belt 리소스
+- 상점 리소스 점검
+- [x] 발견한 던전의 위치 맵에 표시하기
+- 벨트의 유용성 찾기
+- Rica 잠잘 때 거래 막고, 야간 상점 npc 추가
 
 ## 낚시 후속 (PR #53 리뷰)
 
 - 월드모델 없는 기존 아이템(장신구·천갑옷 등)이 sword.png 아이콘으로 보이는 회귀 → 실제 아이콘 부여
-- 타 플레이어 낚시 자세 표시 (FishingCasted의 player_id → remotePlayerManager 연결)
-- 어보트된 캐스팅의 스플래시 사운드 setTimeout 취소
-- 클라이언트 사전 사거리 검사 (MAX_CAST_DISTANCE_METERS wasm 노출)
-- agent-client: 타인의 FishingEnded가 Routine 분류로 LLM 사이클 유발 → Noise로 내리거나 관전 라인 추가
 - agent-client: 부분 좌표(z 누락 등)를 조용히 버림 → 피드백 이벤트 추가
 - agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
 - items.csv ragged 행 정규화 (18칸 헤더 대비 기존 행 13–14칸)
@@ -124,7 +132,6 @@
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
 - Mixamo GLB 재배포 정책 판단
-- WaterSampler/HeightSampler 타일 캐시 eviction (LRU 또는 주기적 purge, 현재 무제한)
 - claimedKeys 범용 입력 클레임 메커니즘 (다음 모달 UI 때 낚시 카브아웃과 함께 일반화)
 
 # 폐지

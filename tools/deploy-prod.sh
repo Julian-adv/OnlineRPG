@@ -20,17 +20,11 @@ AGENT_SERVICE=${AGENT_SERVICE:-openmmo-agent-client}
 
 cd "$REPO"
 
-# Without git-lfs, *.glb/*.mp3/*.m4a check out as pointer text and ship broken.
-if ! command -v git-lfs >/dev/null; then
-    echo "error: git-lfs not installed — LFS assets would deploy as pointer files." >&2
-    echo "       sudo apt-get install -y git-lfs" >&2
-    exit 1
-fi
-git lfs install --local >/dev/null
-
 echo "==> git pull"
 git pull --ff-only
-git lfs pull
+
+echo "==> assets"
+bash tools/fetch-assets.sh
 
 echo "==> server (release)"
 cargo build --release -p onlinerpg-server
@@ -44,11 +38,6 @@ echo "==> client deps"
 # `npm run build` runs build:wasm first, so the bundle always embeds fresh wasm.
 echo "==> client bundle"
 (cd client && npm run build)
-
-if grep -rlq "git-lfs.github.com/spec" client/dist 2>/dev/null; then
-    echo "error: LFS pointer files in client/dist — refusing to publish." >&2
-    exit 1
-fi
 
 # Both artifacts exist now. Swap the static files and restart together, so the
 # wasm the browser downloads and the running server never disagree on the

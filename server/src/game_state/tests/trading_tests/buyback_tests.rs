@@ -205,7 +205,7 @@ async fn buyback_survives_a_reconnect() {
     // Reconnect under a fresh player id but the same character (id 1).
     game_state.add_player(make_player("buyer2", 1.0, 0.0)).await;
     game_state
-        .register_player_character(&pid("buyer2"), 1, 0, attrs_with_cha(10), 4_000)
+        .register_player_character(&pid("buyer2"), 1, 0, attrs_with_cha(10), 4_000, None)
         .await;
     {
         let mut inventories = game_state.inventories.write().await;
@@ -376,7 +376,7 @@ async fn buyback_is_scoped_to_the_selling_character() {
     // with the exact entry id and enough gold.
     game_state.add_player(make_player("other", 1.0, 0.5)).await;
     game_state
-        .register_player_character(&pid("other"), 2, 0, attrs_with_cha(10), 100_000)
+        .register_player_character(&pid("other"), 2, 0, attrs_with_cha(10), 100_000, None)
         .await;
     {
         let mut inventories = game_state.inventories.write().await;

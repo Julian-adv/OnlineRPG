@@ -34,6 +34,7 @@ import type {
   Gender,
   RollCharacterStatsResult,
 } from './networkTypes'
+import type { ClientEnvReport } from '../utils/clientEnvReport'
 
 export type {
   AccountCharacter,
@@ -497,6 +498,12 @@ class NetworkManager {
     this.sendMessage({ TorchToggle: { enabled } })
   }
 
+  /** Returns whether the report actually went out, so the caller only
+   *  records a send that happened. */
+  sendEnvReport(report: ClientEnvReport): boolean {
+    return this.sendAndSerialize({ EnvReport: report })
+  }
+
   sendInteractObject(objectType: string, objectId: number) {
     this.sendMessage({
       InteractObject: {
@@ -612,6 +619,11 @@ class NetworkManager {
   /** Answer a party invite (ServerMessage::PartyInviteReceived). */
   sendPartyRespond(inviterId: number, accept: boolean) {
     this.sendMessage({ PartyRespond: { inviter_id: inviterId, accept } })
+  }
+
+  /** Answer a party summon (ServerMessage::PartySummonReceived). */
+  sendPartySummonRespond(casterId: number, accept: boolean) {
+    this.sendMessage({ PartySummonRespond: { caster_id: casterId, accept } })
   }
 
   sendPartyLeave() {

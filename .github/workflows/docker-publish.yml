@@ -10,9 +10,7 @@ permissions:
   packages: write
 
 concurrency:
-  # Unlike CI, superseding a master run is fine here: only the newest image is
-  # worth publishing, and cancelling early saves the LFS quota the client job
-  # spends on every checkout.
+  # Only the newest image for a ref is worth publishing.
   group: docker-${{ github.ref }}
   cancel-in-progress: true
 
@@ -64,12 +62,11 @@ jobs:
             moving_tag: codex
 
     steps:
-      # Only the client bundle needs the LFS models and audio; the Rust images
-      # would burn the bandwidth quota for files they never read.
       - uses: actions/checkout@v5
-        with:
-          lfs: ${{ matrix.image == 'client' }}
 
+      - name: Fetch client assets
+        if: matrix.image == 'client'
+        run: bash tools/fetch-assets.sh
       - id: meta
         uses: docker/metadata-action@v5
         with:

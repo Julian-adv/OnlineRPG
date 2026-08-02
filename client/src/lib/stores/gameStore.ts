@@ -6,7 +6,10 @@ import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
 import { resetFishingStore } from './fishingStore'
+import { resetDiscoveredDungeons } from './dungeonStore'
+import { resetHungerStore } from './hungerStore'
 import { groundItemManager } from '../managers/groundItemManager'
+import { campfireManager } from '../managers/campfireManager'
 
 export interface PlayerDamageInfo {
   damage: number
@@ -116,7 +119,10 @@ export const resetGameStore = () => {
   resetSkillsStore()
   resetFishingStore()
   resetPartyStores()
+  resetDiscoveredDungeons()
+  resetHungerStore()
   groundItemManager.reset()
+  campfireManager.reset()
 }
 
 const MAX_MESSAGES = 100

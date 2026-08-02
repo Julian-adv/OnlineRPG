@@ -3,6 +3,7 @@
 //! the next waypoint.
 
 use super::{AiCommand, AiState, MonsterBrain, PathProvider};
+use crate::world::bearing_xz;
 use crate::Position;
 use rand::Rng;
 
@@ -143,9 +144,8 @@ impl MonsterBrain {
 
     pub(super) fn face_first_waypoint(&mut self) {
         if let Some(wp) = self.waypoints.first() {
-            let wdx = wp.x - self.position.x;
-            let wdz = wp.z - self.position.z;
-            self.rotation = wdx.atan2(wdz);
+            self.rotation =
+                bearing_xz(wp.x - self.position.x, wp.z - self.position.z).unwrap_or(self.rotation);
         }
     }
 
@@ -198,15 +198,14 @@ impl MonsterBrain {
             }
 
             let next = &self.waypoints[self.current_waypoint_idx];
-            let ndx = next.x - self.position.x;
-            let ndz = next.z - self.position.z;
-            self.rotation = ndx.atan2(ndz);
+            self.rotation = bearing_xz(next.x - self.position.x, next.z - self.position.z)
+                .unwrap_or(self.rotation);
         } else {
             let nx = dx / dist;
             let nz = dz / dist;
             self.position.x += nx * step;
             self.position.z += nz * step;
-            self.rotation = dx.atan2(dz);
+            self.rotation = bearing_xz(dx, dz).unwrap_or(self.rotation);
         }
 
         false

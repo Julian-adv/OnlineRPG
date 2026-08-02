@@ -54,7 +54,7 @@
     type MovementMode,
     type PlayerStateName,
   } from '../utils/movementUtils'
-  import { TorchFireParticles } from '../effects/torch-fire-particles'
+  import { TorchFireParticles } from '../effects/fire-particles'
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
@@ -955,7 +955,7 @@
     // Update torch fire particles
     if (torchFire && torchTipNode) {
       torchTipNode.getWorldPosition(_torchTipWorld)
-      torchFire.setTipPosition(_torchTipWorld)
+      torchFire.setOrigin(_torchTipWorld)
       torchFire.update(deltaTime, camera)
     }
   }

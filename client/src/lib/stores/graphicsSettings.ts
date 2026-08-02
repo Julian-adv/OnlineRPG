@@ -1,6 +1,7 @@
 import { writable, derived, get } from 'svelte/store'
 import { refractionEnabled, reflectionEnabled } from './debugStore'
 import { TARGET_FPS } from '../utils/frameTiming'
+import type { GpuBenchmarkResult } from '../utils/gpuBenchmark'
 
 export type QualityLevel = 'high' | 'medium' | 'low'
 export type RenderBudget = 'full' | 'mobile'
@@ -272,6 +273,15 @@ export function qualityForScore(score: number): QualityLevel {
     if (score >= min) return level
   }
   return 'low'
+}
+
+/** Map a conclusive probe outcome onto a preset. No WebGPU adapter means the
+ *  renderer falls back to WebGL — often software rendering — so it lands on
+ *  the slowest tier regardless of the actual hardware. */
+export function qualityForOutcome(
+  outcome: GpuBenchmarkResult | 'no-webgpu'
+): QualityLevel {
+  return outcome === 'no-webgpu' ? 'low' : qualityForScore(outcome.score)
 }
 
 /** Persist a probe-derived level. No-op once anything is stored. */

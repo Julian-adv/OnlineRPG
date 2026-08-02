@@ -33,6 +33,18 @@ pub fn shortest_world_delta_x(from_x: f32, to_x: f32) -> f32 {
     }
 }
 
+/// Yaw facing the ground-plane offset `(dx, dz)` — the game's rotation
+/// convention (0 faces +Z). `None` for a zero offset, so callers keep
+/// their current facing instead of snapping to +Z.
+#[inline]
+pub fn bearing_xz(dx: f32, dz: f32) -> Option<f32> {
+    if dx == 0.0 && dz == 0.0 {
+        None
+    } else {
+        Some(dx.atan2(dz))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub x: f32,
@@ -59,6 +71,12 @@ impl Position {
         let dx = shortest_world_delta_x(self.x, other.x);
         let dz = self.z - other.z;
         dx * dx + dz * dz
+    }
+
+    /// Yaw from `self` toward `other`, wrap-aware like `dist_xz_sq`.
+    /// `None` when the two share a ground position.
+    pub fn bearing_xz_to(&self, other: &Position) -> Option<f32> {
+        bearing_xz(shortest_world_delta_x(self.x, other.x), other.z - self.z)
     }
 }
 
@@ -96,6 +114,10 @@ mod tests {
             z: 7.0,
         };
         assert_eq!(east.dist_xz_sq(&west), 13.0);
+
+        // Bearing takes the short way across the seam too: 2 m east, 3 m north.
+        assert_eq!(east.bearing_xz_to(&west), Some(2.0f32.atan2(3.0)));
+        assert_eq!(east.bearing_xz_to(&east), None);
     }
 }
 

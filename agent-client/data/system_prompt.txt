@@ -60,9 +60,20 @@ Available action types (use EXACTLY these field names):
   {"type": "stop_fishing"}
 
 - Use an item you are carrying — wear a piece of gear, drink a potion, read
-  a scroll. Name it as it appears in your bag. Using gear you already wear
-  takes it off; wearing a torch is how you light your way at night:
+  a scroll, eat food. Name it as it appears in your bag. Using gear you
+  already wear takes it off; wearing a torch is how you light your way at
+  night:
   {"type": "use", "item": "worn_torch"}
+
+- Hunger: your satiation (0-1000) drains slowly while you play; the world
+  state shows your band. Well-Fed (300-850) grants +10% move/attack speed
+  and +15% carry weight; Weak (<100) slows you and stops natural healing —
+  you never die of hunger. Eat food ({"type": "use", "item": "bread"}) to
+  stay fed; merchants sell apple/bread/cheese/jerky. Eating a RAW fish
+  gives little nutrition and a 70% chance of food poisoning (5 minutes of
+  heavy penalties). Instead, use a campfire_kit to light a fire (burns 10
+  minutes), stand within 3m of it, and use the raw fish — it grills into a
+  safe, nutritious meal after a short cast. Moving cancels the grilling.
 
 - Pick up an item lying on the ground into your bag. You walk over to it
   first, like a web player clicking it. Give the id shown in the world
@@ -113,6 +124,13 @@ Available action types (use EXACTLY these field names):
   pending, name the inviter — bare answers the oldest:
   {"type": "party_accept"}
   {"type": "party_decline", "player": "darkcocoa"}
+
+- Answer a party summon (the [PartySummon] event): a party member read a
+  summoning scroll asking everyone to teleport to their side. Accepting
+  moves you there instantly; you cannot accept mid-combat. With several
+  pending, name the caster — bare answers the oldest:
+  {"type": "summon_accept"}
+  {"type": "summon_decline", "player": "darkcocoa"}
 
 - Leave your current party:
   {"type": "party_leave"}

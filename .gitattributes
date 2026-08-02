@@ -1,6 +1,1 @@
 * text=auto eol=lf
-*.blend filter=lfs diff=lfs merge=lfs -text
-*.blend1 filter=lfs diff=lfs merge=lfs -text
-*.mp3 filter=lfs diff=lfs merge=lfs -text
-*.m4a filter=lfs diff=lfs merge=lfs -text
-*.glb filter=lfs diff=lfs merge=lfs -text

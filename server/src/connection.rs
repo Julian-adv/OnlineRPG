@@ -2,7 +2,9 @@ use crate::auth::AuthService;
 use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
-use crate::game_state::{parse_notice_command, restored_floor_level, GameState};
+use crate::game_state::{
+    encode_server_msg, parse_notice_command, restored_floor_level, DirectMessage, GameState,
+};
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
     new_player, Character, CharacterAttributes, CharacterClass, ClientKind, ClientMessage,
@@ -10,7 +12,7 @@ use crate::types::{
 };
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
-use onlinerpg_shared::{deserialize_client_msg, serialize_server_msg};
+use onlinerpg_shared::deserialize_client_msg;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -147,7 +149,7 @@ struct ConnectionState {
     /// Entered character's name, kept here so disconnect-path logs can name the
     /// player after `GameState` has already dropped the record.
     character_name: Option<String>,
-    direct_rx: Option<mpsc::UnboundedReceiver<ServerMessage>>,
+    direct_rx: Option<mpsc::UnboundedReceiver<DirectMessage>>,
     pending_character_attributes: Option<CharacterAttributes>,
     connected_at: std::time::Instant,
     last_heartbeat: std::time::Instant,
@@ -158,6 +160,8 @@ struct ConnectionState {
     is_admin: bool,
     /// Last answered positions poll (spam clamp); dies with the connection.
     last_party_positions_poll: Option<Instant>,
+    /// An `EnvReport` was already logged; later ones are dropped (spam clamp).
+    env_reported: bool,
 }
 
 /// Positions polls inside this window are dropped; the web map polls every
@@ -181,6 +185,7 @@ impl ConnectionState {
             admin_eligible: false,
             is_admin: false,
             last_party_positions_poll: None,
+            env_reported: false,
         }
     }
 
@@ -407,16 +412,11 @@ pub async fn handle_connection(
                             Ok(responses) => {
                                 // Send all direct responses to this client
                                 for response in responses {
-                                    match serialize_server_msg(&response) {
-                                        Ok(bytes) => {
-                                            if let Err(e) = ws_sender.send(Message::Binary(Bytes::from(bytes))).await {
-                                                error!(
-                                                    "Failed to send direct response to client: {}",
-                                                    e
-                                                );
-                                            }
-                                        }
-                                        Err(e) => error!("Serialization failed: {}", e),
+                                    let Some(bytes) = encode_server_msg(&response) else {
+                                        continue;
+                                    };
+                                    if let Err(e) = ws_sender.send(Message::Binary(bytes)).await {
+                                        error!("Failed to send direct response to client: {}", e);
                                     }
                                 }
                                 if state.must_close {
@@ -481,18 +481,21 @@ pub async fn handle_connection(
                     None => std::future::pending().await,
                 }
             } => {
-                if let Some(msg) = direct_msg {
-                    let is_kicked = matches!(msg, ServerMessage::Kicked { .. });
-                    match serialize_server_msg(&msg) {
-                        Ok(bytes) => {
-                            let _ = ws_sender.send(Message::Binary(Bytes::from(bytes))).await;
+                match direct_msg {
+                    Some(DirectMessage::Shared(bytes)) => {
+                        let _ = ws_sender.send(Message::Binary(bytes)).await;
+                    }
+                    Some(DirectMessage::Typed(msg)) => {
+                        let is_kicked = matches!(msg, ServerMessage::Kicked { .. });
+                        if let Some(bytes) = encode_server_msg(&msg) {
+                            let _ = ws_sender.send(Message::Binary(bytes)).await;
                         }
-                        Err(e) => error!("Serialization failed: {}", e),
+                        if is_kicked {
+                            info!("Player {:?} kicked", state.character_name);
+                            break;
+                        }
                     }
-                    if is_kicked {
-                        info!("Player {:?} kicked", state.character_name);
-                        break;
-                    }
+                    None => {}
                 }
             }
         }
@@ -504,10 +507,10 @@ pub async fn handle_connection(
     // no-op for that player id.
     if !shutdown_started.has_changed().unwrap_or(true) {
         if let Some(ref id) = state.player_id {
-            game_state.cancel_fishing_if_active(id).await;
+            game_state.cancel_concentration_if_active(id).await;
             game_state.persist_and_detach_player(id, auth_service).await;
 
-            game_state.unregister_direct_channel(id).await;
+            game_state.unregister_connection_channel(id).await;
             game_state.unregister_player_character(id).await;
             game_state.remove_player(id).await;
         }
@@ -958,7 +961,7 @@ async fn handle_client_message(
             }
             let id = player.id;
 
-            state.direct_rx = Some(game_state.register_direct_channel(&id).await);
+            state.direct_rx = Some(game_state.register_connection_channel(&id).await);
             game_state
                 .register_player_character(
                     &id,
@@ -966,6 +969,7 @@ async fn handle_client_message(
                     character_xp,
                     selected_character.attributes.clone(),
                     selected_character.gold,
+                    (!state.is_official_npc).then_some(selected_character.satiation),
                 )
                 .await;
 
@@ -978,15 +982,23 @@ async fn handle_client_message(
             }
 
             let auth = Arc::clone(auth_service);
-            match crate::game_state::auth_db(move || auth.load_dungeon_chest_opens(character_id))
-                .await
-            {
-                Ok(opens) => game_state.set_chest_opens(character_id, opens).await,
-                Err(err) => warn!(
-                    "Failed to load chest history for character {}: {}",
-                    character_id, err
-                ),
-            }
+            let discovered_dungeons =
+                match crate::game_state::auth_db(move || auth.load_dungeon_history(character_id))
+                    .await
+                {
+                    Ok((opens, ids)) => {
+                        game_state.set_chest_opens(character_id, opens).await;
+                        game_state.set_dungeon_discoveries(&id, ids.clone()).await;
+                        ids
+                    }
+                    Err(err) => {
+                        warn!(
+                            "Failed to load dungeon history for character {}: {}",
+                            character_id, err
+                        );
+                        Vec::new()
+                    }
+                };
 
             // Load inventory from DB
             game_state
@@ -1032,6 +1044,17 @@ async fn handle_client_message(
             });
 
             responses.push(ServerMessage::SkillsUpdate { skills });
+
+            responses.push(ServerMessage::DungeonDiscoveries {
+                entrance_ids: discovered_dungeons,
+            });
+
+            if !state.is_official_npc {
+                responses.push(crate::game_state::hunger::hunger_update_msg(
+                    selected_character.satiation,
+                    0,
+                ));
+            }
 
             if let Some(notice) = game_state.server_notice().await {
                 responses.push(ServerMessage::ServerNotice {
@@ -1118,6 +1141,11 @@ async fn handle_client_message(
                     warn!(
                         "Spawn request rejected: position ({:.1}, {:.1}) rotation {:.1} invalid for {}",
                         position.x, position.z, rotation, monster_type
+                    );
+                } else if !game_state.take_spawn_allowance(id, &monster_type).await {
+                    warn!(
+                        "Spawn request rejected: no unconsumed allowance for {}",
+                        monster_type
                     );
                 } else if let Some(monster) = game_state
                     .spawn_monster(monster_type, position, rotation, Some(*id), 0, None, false)
@@ -1351,6 +1379,39 @@ async fn handle_client_message(
             state.last_heartbeat = std::time::Instant::now();
         }
 
+        ClientMessage::EnvReport(r) => {
+            if state.env_reported {
+                return Ok(vec![]);
+            }
+            state.env_reported = true;
+            let account = state.account_name.as_deref().unwrap_or("<unauth>");
+            let character = state.character_name.as_deref().unwrap_or("<none>");
+            // The client clamps these too, but a hostile client could skip that.
+            fn clamp(s: &str, max: usize) -> &str {
+                s.char_indices().nth(max).map_or(s, |(i, _)| &s[..i])
+            }
+            info!(
+                target: "env_report",
+                "account='{account}' character='{character}' backend={} gpu={}/{}/{} desc='{}' quality={}({}) aa={} \
+                 pr={:.2} dpr={:.2} viewport={}x{} screen={}x{} ua='{}'",
+                clamp(&r.backend, 16),
+                clamp(&r.gpu_vendor, 64),
+                clamp(&r.gpu_architecture, 64),
+                clamp(&r.gpu_device, 64),
+                clamp(&r.gpu_description, 128),
+                clamp(&r.quality, 16),
+                clamp(&r.render_budget, 16),
+                r.antialias,
+                r.pixel_ratio,
+                r.device_pixel_ratio,
+                r.viewport_w,
+                r.viewport_h,
+                r.screen_w,
+                r.screen_h,
+                clamp(&r.user_agent, 256),
+            );
+        }
+
         ClientMessage::PlaceHouse { .. } => {
             warn!("Ignoring client-side PlaceHouse broadcast request; use the housing REST API");
         }
@@ -1456,6 +1517,14 @@ async fn handle_client_message(
             if let Some(id) = &state.player_id {
                 game_state
                     .respond_to_party_invite(id, &inviter_id, accept)
+                    .await;
+            }
+        }
+
+        ClientMessage::PartySummonRespond { caster_id, accept } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .respond_to_party_summon(id, &caster_id, accept)
                     .await;
             }
         }

@@ -15,23 +15,33 @@
   // while the map is closed); older data than this never renders.
   const PARTY_POSITIONS_MAX_AGE_MS = 10000
 
-  // --- Shared place-name labels (generated from data-src/map_labels.csv) ---
-  type LabelKind = 'continent' | 'capital' | 'city' | 'town' | 'sea' | 'island'
+  // --- Shared place-name labels (generated from data-src/map_labels.csv,
+  // plus the player's discovered dungeon entrances) ---
+  type LabelKind =
+    | 'continent'
+    | 'capital'
+    | 'city'
+    | 'town'
+    | 'sea'
+    | 'island'
+    | 'dungeon'
   interface MapLabel {
+    /** Stable each-key, unique across kinds (names may repeat between them). */
+    key: string
     name: string
     kind: LabelKind
     x: number // world meters
     z: number
   }
   const MAP_LABELS: MapLabel[] = Object.values(
-    mapLabelsJson as unknown as Record<string, MapLabel>
-  )
+    mapLabelsJson as unknown as Record<string, Omit<MapLabel, 'key'>>
+  ).map((label) => ({ ...label, key: `${label.kind}:${label.name}` }))
 
   // Per-kind zoom visibility: shown when min <= zoomSpan <= max (zoomSpan = regions
   // across; larger = zoomed out). Continents/seas appear when zoomed out, settlements
   // when zoomed in.
-  // Settlements (capital/city/town) share the same max so they all appear together
-  // at the zoom where the capital is visible.
+  // Settlements (capital/city/town) and dungeons share the same max so they
+  // all appear together at the zoom where the capital is visible.
   const LABEL_ZOOM: Record<LabelKind, { min: number; max: number }> = {
     continent: { min: 8, max: Infinity },
     sea: { min: 4, max: Infinity },
@@ -39,6 +49,7 @@
     city: { min: 1, max: 24 },
     town: { min: 1, max: 24 },
     island: { min: 1, max: 16 },
+    dungeon: { min: 1, max: 24 },
   }
 
   // Matches the canvas's -45deg map rotation, applied to label screen positions.
@@ -75,6 +86,8 @@
     resetPartyPositions,
   } from '../stores/partyStore'
   import { worldMapVisible, teleportLoading } from '../stores/debugStore'
+  import { discoveredDungeonIds } from '../stores/dungeonStore'
+  import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
   import { minimapVersion } from '../stores/editorStore'
   import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
   import { networkManager } from '../network/socket'
@@ -315,6 +328,7 @@
 
   // --- Place-name label overlay (HTML layer, not burned into the canvas) ---
   interface PlacedLabel {
+    key: string
     name: string
     kind: LabelKind
     left: number
@@ -352,6 +366,23 @@
     )
   }
 
+  // Static place names plus the player's discovered dungeon entrances, so
+  // dungeons ride the same zoom/cull/label pipeline as every other kind.
+  let mapLabels = $derived.by<MapLabel[]>(() => {
+    const known = $discoveredDungeonIds
+    if (known.size === 0) return MAP_LABELS
+    const dungeons = DUNGEON_ENTRANCES.filter((e) => known.has(e.id)).map(
+      (e) => ({
+        key: `dungeon:${e.id}`,
+        name: e.name,
+        kind: 'dungeon' as const,
+        x: e.x,
+        z: e.z,
+      })
+    )
+    return [...MAP_LABELS, ...dungeons]
+  })
+
   let visibleLabels = $derived.by<PlacedLabel[]>(() => {
     const cw = containerW
     const ch = containerH
@@ -359,12 +390,18 @@
 
     const margin = 80 // keep labels whose anchor is just off-edge
     const out: PlacedLabel[] = []
-    for (const label of MAP_LABELS) {
+    for (const label of mapLabels) {
       const tier = LABEL_ZOOM[label.kind]
       if (zoomSpan < tier.min || zoomSpan > tier.max) continue
       const p = worldToScreen(label.x, label.z, cw, ch)
       if (!onScreen(p, cw, ch, margin)) continue
-      out.push({ name: label.name, kind: label.kind, left: p.left, top: p.top })
+      out.push({
+        key: label.key,
+        name: label.name,
+        kind: label.kind,
+        left: p.left,
+        top: p.top,
+      })
     }
     return out
   })
@@ -658,7 +695,7 @@
         class="map-canvas"
       ></canvas>
       <div class="label-layer">
-        {#each visibleLabels as label (label.name)}
+        {#each visibleLabels as label (label.key)}
           <div
             class="map-label {label.kind}"
             class:area={label.kind === 'continent' ||
@@ -912,6 +949,24 @@
     height: 11px;
     background: #f5d250;
     border: 2px solid #287832;
+  }
+
+  .map-label.dungeon .text {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e8b8a8;
+  }
+
+  /* Discovered dungeon entrance: a dark diamond, styled like the settlement
+     dots but unmistakably not a place to live. */
+  .map-label.dungeon .marker {
+    width: 9px;
+    height: 9px;
+    border-radius: 0;
+    transform: translate(-50%, -50%) rotate(45deg);
+    background: #35333d;
+    border: 2px solid #b0503c;
+    box-shadow: 0 0 4px rgba(176, 80, 60, 0.7);
   }
 
   /* Breathing ring over the canvas-drawn player dot: the one marker that

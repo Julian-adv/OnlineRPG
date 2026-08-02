@@ -46,6 +46,21 @@ impl SpatialCell {
             z: (position.z / PLAYER_SPATIAL_CELL_SIZE).floor() as i32,
         }
     }
+
+    /// Every cell overlapping the given XZ box, by integer cell range —
+    /// exact, unlike sampling. Callers split a seam-crossing X range into
+    /// canonical segments first; the range itself does not wrap.
+    fn covering(
+        min_x: f32,
+        max_x: f32,
+        min_z: f32,
+        max_z: f32,
+    ) -> impl Iterator<Item = SpatialCell> {
+        let cell = |v: f32| (v / PLAYER_SPATIAL_CELL_SIZE).floor() as i32;
+        let (x0, x1) = (cell(min_x), cell(max_x));
+        let (z0, z1) = (cell(min_z), cell(max_z));
+        (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| SpatialCell { x, z }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +71,27 @@ pub struct BroadcastMessage {
 pub type GameStateSender = broadcast::Sender<BroadcastMessage>;
 pub type GameStateReceiver = broadcast::Receiver<BroadcastMessage>;
 
+/// Payload of a player's direct channel. Fanout helpers serialize once and
+/// share the bytes across recipients; single-recipient sends stay typed so
+/// the connection can still inspect them (e.g. `Kicked`).
+#[derive(Debug, Clone)]
+pub enum DirectMessage {
+    Typed(ServerMessage),
+    Shared(Bytes),
+}
+
+/// The one wire-encode path every outbound message shares; logs and returns
+/// `None` on failure.
+pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
+    match serialize_server_msg(msg) {
+        Ok(bytes) => Some(Bytes::from(bytes)),
+        Err(e) => {
+            error!("Failed to serialize server message: {}", e);
+            None
+        }
+    }
+}
+
 mod chat;
 pub(crate) use chat::parse_notice_command;
 mod combat;
@@ -63,6 +99,7 @@ mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
+pub(crate) mod hunger;
 mod inventory;
 mod monster;
 mod party;
@@ -123,6 +160,7 @@ pub struct GameState {
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
+    ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -131,7 +169,7 @@ pub struct GameState {
     /// Global rare bonus-drop table shared by every loot source.
     world_drop_defs: crate::world_drop_defs::WorldDropDefs,
     id_state: Arc<RwLock<IdState>>,
-    direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<ServerMessage>>>>,
+    direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<DirectMessage>>>>,
     // player_id → (character_id, current_xp, attributes)
     #[allow(clippy::type_complexity)]
     player_characters: Arc<RwLock<HashMap<PlayerId, (i64, u64, CharacterAttributes)>>>,
@@ -224,9 +262,43 @@ pub struct GameState {
     /// would race the session replacement that clears it.
     #[allow(clippy::type_complexity)]
     chest_opens: Arc<RwLock<HashMap<(i64, String), i64>>>,
+    /// player_id → dungeon entrance ids this character has discovered
+    /// (world-map markers). Seeded from the DB at login, dropped on logout;
+    /// new discoveries queue in `pending_discovery_saves`.
+    dungeon_discoveries: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// (character_id, entrance_id) discoveries awaiting the next
+    /// `save_batch`; drained by the periodic flush and the shutdown
+    /// snapshot, re-queued if the batch fails.
+    pending_discovery_saves: Arc<RwLock<Vec<(i64, String)>>>,
+    /// Cell → entrances whose discovery region overlaps it, built once at
+    /// startup. `check_dungeon_discovery` looks up the mover's cell before
+    /// taking any lock and then tests only the listed entrances, so the
+    /// per-move cost stays O(1) however many entrances the registry grows to.
+    #[allow(clippy::type_complexity)]
+    dungeon_discovery_cells:
+        Arc<HashMap<SpatialCell, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>>>,
+    /// player_id → satiation + food poisoning (doc/HUNGER.md). Owner-private
+    /// like gold; official NPCs have no entry (the exemption).
+    hunger: Arc<RwLock<HashMap<PlayerId, hunger::HungerData>>>,
+    /// Lit campfires keyed by id, expired by `tick_campfires`.
+    campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
+    /// One grill cast per player, resolved by `tick_grills`.
+    grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
 }
 
 impl GameState {
+    /// The `OUT_OF_COMBAT_MS` clock shared by regen, /escape, and summons.
+    pub(crate) fn in_combat(player: &Player) -> bool {
+        Self::now_ms().saturating_sub(player.last_combat_at) < OUT_OF_COMBAT_MS
+    }
+
+    /// Movement, a landed attack, death and disconnect all break cast-type
+    /// concentration (fishing, grilling) at the same chokepoints.
+    pub(crate) async fn cancel_concentration_if_active(&self, player_id: &PlayerId) {
+        self.cancel_fishing_if_active(player_id).await;
+        self.cancel_grill_if_active(player_id).await;
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         monster_defs: MonsterDefs,
@@ -240,6 +312,7 @@ impl GameState {
         water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
+        let dungeon_discovery_cells = Arc::new(dungeon::discovery_cells(&dungeon_defs));
 
         Self {
             players: Arc::new(RwLock::new(HashMap::new())),
@@ -247,6 +320,7 @@ impl GameState {
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
+            ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {
@@ -291,6 +365,12 @@ impl GameState {
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
+            dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
+            pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
+            dungeon_discovery_cells,
+            hunger: Arc::new(RwLock::new(HashMap::new())),
+            campfires: Arc::new(RwLock::new(HashMap::new())),
+            grill_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -318,13 +398,8 @@ impl GameState {
     }
 
     pub(crate) fn broadcast(&self, msg: ServerMessage) {
-        match serialize_server_msg(&msg) {
-            Ok(bytes) => {
-                let _ = self.broadcast_tx.send(BroadcastMessage {
-                    bytes: Bytes::from(bytes),
-                });
-            }
-            Err(e) => error!("Failed to serialize broadcast message: {}", e),
+        if let Some(bytes) = encode_server_msg(&msg) {
+            let _ = self.broadcast_tx.send(BroadcastMessage { bytes });
         }
     }
 

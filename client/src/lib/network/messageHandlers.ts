@@ -24,8 +24,9 @@ import { bridgeManager } from '../managers/bridgeManager'
 import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
-import { deathDropDelayQueue } from '../managers/deathDropDelay'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
+import { campfireManager } from '../managers/campfireManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -56,10 +57,14 @@ import {
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
+  pendingPartySummons,
+  SUMMON_TTL_MS,
   MAX_PENDING_PARTY_INVITES,
+  type PartyMemberEntry,
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
 import { editorTreeDataManager } from '../stores/editorStore'
+import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
@@ -400,6 +405,9 @@ export function handleServerMessage(
           data.position.z
         )
         requestCameraReset()
+        // Any teleport settles the summon toast — an accepted one succeeded,
+        // and one surviving the player's own departure would mislead.
+        pendingPartySummons.set([])
         break
       }
       const tpDeckY = bridgeManager.findDeckYAt(
@@ -461,21 +469,40 @@ export function handleServerMessage(
       addChatMessage({ text: data.message, sender: 'system' })
       break
 
+    case 'PartySummonReceived': {
+      // Replace any same-caster entry (always stale: the ack-only cast never
+      // re-sends for a live one) and age out the dead. No cap — distinct
+      // casters bound the queue at the party size.
+      const now = Date.now()
+      pendingPartySummons.update((queue) => [
+        ...queue.filter(
+          (s) =>
+            now - s.offeredAt < SUMMON_TTL_MS && s.casterId !== data.caster_id
+        ),
+        {
+          casterId: data.caster_id,
+          casterName: data.caster_name,
+          offeredAt: now,
+        },
+      ])
+      break
+    }
+
     case 'PartyState': {
-      const joined = data.members.length > 0
-      partyRoster.set(
-        joined
-          ? {
-              leaderId: data.leader_id,
-              members: data.members as { id: number; name: string }[],
-            }
-          : null
-      )
+      const members = data.members as PartyMemberEntry[]
+      const joined = members.length > 0
+      partyRoster.set(joined ? { leaderId: data.leader_id, members } : null)
       if (joined) {
         pendingPartyInvites.set([])
       } else {
         resetPartyPositions()
       }
+      // A summons only lives while its caster shares the roster — one from
+      // someone who left can only ever be answered with "faded".
+      const rosterIds = new Set(members.map((m) => m.id))
+      pendingPartySummons.update((queue) =>
+        queue.filter((summon) => rosterIds.has(summon.casterId))
+      )
       break
     }
 
@@ -546,6 +573,11 @@ export function handleServerMessage(
         ;(data.ground_items as ServerGroundItem[]).forEach((item) => {
           groundItemManager.spawn(item)
         })
+      }
+
+      campfireManager.reset()
+      if (data.campfires) {
+        for (const campfire of data.campfires) campfireManager.spawn(campfire)
       }
       break
 
@@ -907,6 +939,10 @@ export function handleServerMessage(
       dungeonManager.applyDoorsSnapshot(data.entrance_id, data.doors)
       break
 
+    case 'DungeonDiscoveries':
+      discoveredDungeonIds.set(new Set(data.entrance_ids as string[]))
+      break
+
     case 'HouseSpawned':
       housingManager.handleRemoteHouseSpawned(data.house)
       break
@@ -944,25 +980,17 @@ export function handleServerMessage(
       setInventory(data.inventory)
       break
 
-    case 'GroundItemSpawned': {
-      const item = data.item as ServerGroundItem
-      deathDropDelayQueue.handleSpawn(
-        data.source_monster_id as string | undefined,
-        item.instance_id,
-        () =>
-          groundItemManager.spawn(item, {
-            animateSpawn: true,
-          })
-      )
+    case 'GroundItemSpawned':
+      groundItemManager.spawn(data.item as ServerGroundItem, {
+        animateSpawn: true,
+      })
       break
-    }
 
     case 'GroundItemAppeared':
       groundItemManager.spawn(data.item as ServerGroundItem)
       break
 
     case 'GroundItemRemoved':
-      deathDropDelayQueue.cancelSpawn(data.instance_id)
       groundItemManager.remove(data.instance_id)
       break
 
@@ -1124,10 +1152,13 @@ export function handleServerMessage(
         )
         addCombatMessage({ text: 'You cast your line.', sender: 'local' })
       } else {
+        // Interact state ignores late moves; apply the server-computed facing.
         remotePlayerManager.handleInteraction(
           data.player_id,
           FishingAnimationName.CAST,
-          0
+          0,
+          undefined,
+          data.rotation
         )
       }
       break
@@ -1220,5 +1251,67 @@ export function handleServerMessage(
       }
       break
     }
+
+    // Direct to the owner only; the multipliers are server-computed.
+    case 'HungerUpdate': {
+      const prev = get(hungerState)
+      const band = data.state as HungerBand
+      const poisonedUntil =
+        data.poisoned_ms > 0 ? Date.now() + Number(data.poisoned_ms) : null
+      hungerState.set({
+        satiation: data.satiation,
+        band,
+        moveMult: data.move_mult,
+        attackMult: data.attack_mult,
+        carryMult: data.carry_mult,
+        poisonedUntil,
+      })
+      if (prev && prev.band !== band) {
+        addCombatMessage({ text: HUNGER_BAND_MESSAGES[band], sender: 'local' })
+      }
+      const wasPoisoned = prev?.poisonedUntil != null
+      if (!wasPoisoned && poisonedUntil != null) {
+        addCombatMessage({
+          text: 'Your stomach churns — food poisoning! Cooked food next time.',
+          sender: 'local',
+        })
+      } else if (wasPoisoned && poisonedUntil == null) {
+        addCombatMessage({
+          text: 'The sickness passes. You feel yourself again.',
+          sender: 'local',
+        })
+      }
+      break
+    }
+
+    case 'CampfireSpawned':
+    case 'CampfireAppeared':
+      campfireManager.spawn(data.campfire)
+      break
+
+    case 'CampfireRemoved':
+      campfireManager.remove(data.campfire_id)
+      break
+
+    case 'GrillStarted':
+      grilling.set(true)
+      break
+
+    case 'GrillEnded':
+      grilling.set(false)
+      if (data.grilled_item_def_id == null) {
+        addCombatMessage({
+          text: 'Your grilling was interrupted.',
+          sender: 'local',
+        })
+      }
+      break
   }
+}
+
+const HUNGER_BAND_MESSAGES: Record<HungerBand, string> = {
+  WellFed: 'You feel well fed. Your step lightens.',
+  Hungry: 'Your stomach growls. The well-fed vigor fades.',
+  Weak: 'You are weak with hunger. You need to eat.',
+  Stuffed: 'You are stuffed. The comfortable vigor is gone until it settles.',
 }

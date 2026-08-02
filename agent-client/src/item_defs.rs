@@ -18,16 +18,15 @@ pub struct ItemDef {
     pub equip_slot: Option<EquipSlot>,
     #[serde(default)]
     pub category: Option<String>,
+    /// Usable straight from the bag — the items.csv flag, which the server
+    /// validates against its `use_effect` dispatch at boot.
+    #[serde(default)]
+    pub consumable: bool,
 }
 
 impl ItemDef {
-    /// Usable straight from the bag. Mirrors the server's `use_effect`
-    /// categories — extend both when a new consumable lands.
     pub fn is_consumable(&self) -> bool {
-        matches!(
-            self.category.as_deref(),
-            Some("healing_potion" | "return_scroll" | "enchant_scroll" | "fish")
-        )
+        self.consumable
     }
 }
 
@@ -85,6 +84,14 @@ mod tests {
         let def = get("healing_potion").expect("healing potion is defined");
         assert!(def.is_consumable());
         assert!(def.equip_slot.is_none());
+    }
+
+    /// The hand-kept category list this flag replaced had drifted — it
+    /// missed coin_catch. The data flag covers it.
+    #[test]
+    fn coin_catches_are_consumable() {
+        let def = get("sunken_coin_pouch").expect("coin pouch is defined");
+        assert!(def.is_consumable());
     }
 
     #[test]

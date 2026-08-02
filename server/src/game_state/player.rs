@@ -117,7 +117,13 @@ where
     }
 }
 
-fn build_save_data(player: &Player, character_id: i64, xp: u64, gold: i64) -> CharacterSaveData {
+fn build_save_data(
+    player: &Player,
+    character_id: i64,
+    xp: u64,
+    gold: i64,
+    satiation: u32,
+) -> CharacterSaveData {
     CharacterSaveData {
         character_id,
         x: player.position.x,
@@ -130,7 +136,32 @@ fn build_save_data(player: &Player, character_id: i64, xp: u64, gold: i64) -> Ch
         health: player.health,
         floor_level: player.floor_level,
         gold,
+        satiation,
     }
+}
+
+/// One pass over `items`: which left the mover's AOI and which entered it,
+/// judged against `EVENT_DELIVERY_RADIUS` on the item's own floor.
+fn aoi_diff<T>(
+    items: impl Iterator<Item = T>,
+    place: impl Fn(&T) -> (Position, i8),
+    old: (&Position, i8),
+    new: (&Position, i8),
+) -> (Vec<T>, Vec<T>) {
+    let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
+    let mut left = Vec::new();
+    let mut entered = Vec::new();
+    for item in items {
+        let (position, floor) = place(&item);
+        let was = floor == old.1 && old.0.dist_xz_sq(&position) <= radius_sq;
+        let now = floor == new.1 && new.0.dist_xz_sq(&position) <= radius_sq;
+        match (was, now) {
+            (true, false) => left.push(item),
+            (false, true) => entered.push(item),
+            _ => {}
+        }
+    }
+    (left, entered)
 }
 
 impl super::GameState {
@@ -146,17 +177,17 @@ impl super::GameState {
         }
     }
 
-    pub async fn register_direct_channel(
+    pub async fn register_connection_channel(
         &self,
         player_id: &PlayerId,
-    ) -> mpsc::UnboundedReceiver<ServerMessage> {
+    ) -> mpsc::UnboundedReceiver<super::DirectMessage> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut channels = self.direct_channels.write().await;
         channels.insert(*player_id, tx);
         rx
     }
 
-    pub async fn unregister_direct_channel(&self, player_id: &PlayerId) {
+    pub async fn unregister_connection_channel(&self, player_id: &PlayerId) {
         let mut channels = self.direct_channels.write().await;
         channels.remove(player_id);
     }
@@ -164,7 +195,7 @@ impl super::GameState {
     pub async fn send_direct_message(&self, player_id: &PlayerId, msg: ServerMessage) {
         let channels = self.direct_channels.read().await;
         if let Some(tx) = channels.get(player_id) {
-            let _ = tx.send(msg);
+            let _ = tx.send(super::DirectMessage::Typed(msg));
         }
     }
 
@@ -189,19 +220,28 @@ impl super::GameState {
             .await;
     }
 
+    /// Serializes once and shares the bytes: every connection would otherwise
+    /// re-encode the same message, which adds up on move fanout at scale.
     pub async fn send_direct_message_to_players_except(
         &self,
         player_ids: &[PlayerId],
         msg: ServerMessage,
         skip_player_id: Option<&PlayerId>,
     ) {
+        let is_skipped = |id: &PlayerId| skip_player_id.is_some_and(|skip_id| skip_id == id);
+        if !player_ids.iter().any(|id| !is_skipped(id)) {
+            return;
+        }
+        let Some(bytes) = super::encode_server_msg(&msg) else {
+            return;
+        };
         let channels = self.direct_channels.read().await;
         for player_id in player_ids {
-            if skip_player_id.is_some_and(|skip_id| skip_id == player_id) {
+            if is_skipped(player_id) {
                 continue;
             }
             if let Some(tx) = channels.get(player_id) {
-                let _ = tx.send(msg.clone());
+                let _ = tx.send(super::DirectMessage::Shared(bytes.clone()));
             }
         }
     }
@@ -234,13 +274,20 @@ impl super::GameState {
         xp: u64,
         attributes: CharacterAttributes,
         gold: i64,
+        satiation: Option<u32>,
     ) {
         {
             let mut map = self.player_characters.write().await;
             map.insert(*player_id, (character_id, xp, attributes));
         }
-        let mut gold_map = self.player_gold.write().await;
-        gold_map.insert(*player_id, gold);
+        {
+            let mut gold_map = self.player_gold.write().await;
+            gold_map.insert(*player_id, gold);
+        }
+        // None = official NPC (exempt).
+        if let Some(satiation) = satiation {
+            self.register_hunger(player_id, satiation).await;
+        }
     }
 
     pub async fn unregister_player_character(&self, player_id: &PlayerId) {
@@ -254,6 +301,8 @@ impl super::GameState {
         }
         self.remove_player_blocks(player_id).await;
         self.forget_player_skills(player_id).await;
+        self.remove_dungeon_discoveries(player_id).await;
+        self.forget_hunger(player_id).await;
     }
 
     pub async fn get_player_gold(&self, player_id: &PlayerId) -> i64 {
@@ -329,7 +378,7 @@ impl super::GameState {
 
         let auth = auth.clone();
         flush_save(
-            move || auth.save_batch(&characters, &inventories, &skills, None),
+            move || auth.save_batch(&characters, &inventories, &skills, &[], None),
             "player state",
         )
         .await;
@@ -341,13 +390,20 @@ impl super::GameState {
     pub async fn persist_shutdown_snapshot(&self, auth: &AuthService) {
         let (characters, inventories) = self.collect_shutdown_snapshot().await;
         let skills = self.collect_all_skill_states().await;
+        let discoveries = self.take_pending_discovery_saves().await;
         let character_count = characters.len();
         let inventory_count = inventories.len();
         let datetime = self.current_game_datetime();
         let auth = auth.clone();
         flush_save(
             move || {
-                auth.save_batch(&characters, &inventories, &skills, Some(&datetime))?;
+                auth.save_batch(
+                    &characters,
+                    &inventories,
+                    &skills,
+                    &discoveries,
+                    Some(&datetime),
+                )?;
                 info!(
                     "Saved shutdown snapshot: {} character(s), {} inventory/inventories",
                     character_count, inventory_count
@@ -366,6 +422,7 @@ impl super::GameState {
         let players = self.players.read().await;
         let player_characters = self.player_characters.read().await;
         let player_gold = self.player_gold.read().await;
+        let hunger = self.hunger.read().await;
         let inventories = self.inventories.read().await;
 
         let mut characters = Vec::with_capacity(player_characters.len());
@@ -378,6 +435,7 @@ impl super::GameState {
                     *character_id,
                     *xp,
                     player_gold.get(player_id).copied().unwrap_or(0),
+                    super::hunger::satiation_for_save(&hunger, player_id),
                 ));
             }
             if let Some(inventory) = inventories.get(player_id) {
@@ -402,16 +460,28 @@ impl super::GameState {
         let (dirty_player_ids, dirty_states) = self.collect_dirty_character_states().await;
         let (dirty_inventory_ids, dirty_inventories) = self.collect_dirty_inventory_states().await;
         let (dirty_skill_ids, dirty_skills) = self.collect_dirty_skill_states().await;
-        if dirty_states.is_empty() && dirty_inventories.is_empty() && dirty_skills.is_empty() {
+        let dirty_discoveries = self.take_pending_discovery_saves().await;
+        if dirty_states.is_empty()
+            && dirty_inventories.is_empty()
+            && dirty_skills.is_empty()
+            && dirty_discoveries.is_empty()
+        {
             return;
         }
 
         let character_count = dirty_states.len();
         let inventory_count = dirty_inventories.len();
         let auth = auth.clone();
+        let discoveries = dirty_discoveries.clone();
         let saved = flush_save(
             move || {
-                auth.save_batch(&dirty_states, &dirty_inventories, &dirty_skills, None)?;
+                auth.save_batch(
+                    &dirty_states,
+                    &dirty_inventories,
+                    &dirty_skills,
+                    &discoveries,
+                    None,
+                )?;
                 info!(
                     "Batch-saved {} character state(s), {} inventory/inventories",
                     character_count, inventory_count
@@ -425,6 +495,8 @@ impl super::GameState {
             self.restore_dirty_players(dirty_player_ids).await;
             self.restore_dirty_inventories(dirty_inventory_ids).await;
             self.restore_dirty_skills(dirty_skill_ids).await;
+            self.restore_pending_discovery_saves(dirty_discoveries)
+                .await;
         }
     }
 
@@ -499,12 +571,29 @@ impl super::GameState {
             })
             .map(|sgi| sgi.item.clone())
             .collect();
+        let campfires: Vec<_> = self
+            .campfires
+            .read()
+            .await
+            .values()
+            .filter(|e| {
+                e.campfire.floor_level == player_floor
+                    && e.campfire.position.dist_xz_sq(&player_position)
+                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
+            })
+            .map(|e| e.campfire.clone())
+            .collect();
 
-        if !other_players.is_empty() || !monsters.is_empty() || !ground_items.is_empty() {
+        if !other_players.is_empty()
+            || !monsters.is_empty()
+            || !ground_items.is_empty()
+            || !campfires.is_empty()
+        {
             return Some(ServerMessage::GameState {
                 players: other_players,
                 monsters,
                 ground_items,
+                campfires,
             });
         }
 
@@ -513,6 +602,10 @@ impl super::GameState {
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
+        self.ambient_spawn_allowances
+            .write()
+            .await
+            .retain(|(owner_id, _), _| owner_id != player_id);
         // A player disconnecting inside a dungeon leaves its floor first,
         // so its monsters get reassigned (or despawned) instead of being
         // dropped by remove_monsters_by_owner below.
@@ -704,7 +797,7 @@ impl super::GameState {
     /// broadcast the results. A tick's budget can span several short legs;
     /// consumed waypoints are popped in place, finished queues dropped.
     pub async fn tick_player_movement(&self, dt: f32) {
-        let max_step = PLAYER_MOVE_SPEED * MOVE_SPEED_SLACK * dt.max(0.0);
+        let base_step = PLAYER_MOVE_SPEED * MOVE_SPEED_SLACK * dt.max(0.0);
         let mut moved: Vec<(PlayerId, Position, i8, Player)> = Vec::new();
         let mut refused: Vec<RefusedMove> = Vec::new();
         {
@@ -712,6 +805,10 @@ impl super::GameState {
             if queues.is_empty() {
                 return;
             }
+            // Hunger scales the speed itself, slack wraps the scaled value — a
+            // Weak player's sim must not outrun their slowed client.
+            let mover_ids: Vec<PlayerId> = queues.keys().copied().collect();
+            let hunger_mults = self.hunger_move_mults_for(&mover_ids).await;
             let mut players = self.players.write().await;
             let cache = self.passability_read();
             queues.retain(|player_id, waypoints| {
@@ -723,6 +820,7 @@ impl super::GameState {
                     return false;
                 }
 
+                let max_step = base_step * hunger_mults.get(player_id).copied().unwrap_or(1.0);
                 let old_position = player.position;
                 let old_floor = player.floor_level;
                 let old_rotation = player.rotation;
@@ -973,13 +1071,16 @@ impl super::GameState {
         update_msg: ServerMessage,
     ) {
         if old_position != moved_player.position || old_floor != moved_player.floor_level {
-            self.cancel_fishing_if_active(player_id).await;
+            self.cancel_concentration_if_active(player_id).await;
         }
         let new_position = moved_player.position;
         let floor_level = moved_player.floor_level;
         self.move_player_spatial_cell(player_id, &old_position, &new_position)
             .await;
         self.mark_dirty(player_id).await;
+        if old_position != new_position {
+            self.check_dungeon_discovery(player_id, &new_position).await;
+        }
         if old_floor != floor_level {
             self.handle_player_floor_change(
                 player_id,
@@ -1081,6 +1182,7 @@ impl super::GameState {
             },
         )
         .await;
+        self.void_summons_aimed_at(player_id).await;
     }
 
     pub async fn respawn_player(&self, player_id: &PlayerId) {
@@ -1117,6 +1219,7 @@ impl super::GameState {
             };
             self.finish_position_update(player_id, old_position, old_floor, player, update_msg)
                 .await;
+            self.reset_hunger_on_respawn(player_id).await;
         } else {
             warn!("Attempted to respawn non-existent player: {}", player_id);
         }
@@ -1264,6 +1367,7 @@ impl super::GameState {
         let players = self.players.read().await;
         let player_chars = self.player_characters.read().await;
         let gold_map = self.player_gold.read().await;
+        let hunger = self.hunger.read().await;
 
         let mut result = Vec::with_capacity(dirty_ids.len());
         for pid in &dirty_ids {
@@ -1271,7 +1375,8 @@ impl super::GameState {
                 (players.get(pid), player_chars.get(pid))
             {
                 let gold = gold_map.get(pid).copied().unwrap_or(0);
-                result.push(build_save_data(player, *char_id, *xp, gold));
+                let satiation = super::hunger::satiation_for_save(&hunger, pid);
+                result.push(build_save_data(player, *char_id, *xp, gold, satiation));
             }
         }
 
@@ -1282,12 +1387,14 @@ impl super::GameState {
         let players = self.players.read().await;
         let player_chars = self.player_characters.read().await;
         let gold_map = self.player_gold.read().await;
+        let hunger = self.hunger.read().await;
 
         let player = players.get(player_id)?;
         let (char_id, xp, _) = player_chars.get(player_id)?;
         let gold = gold_map.get(player_id).copied().unwrap_or(0);
+        let satiation = super::hunger::satiation_for_save(&hunger, player_id);
 
-        Some(build_save_data(player, *char_id, *xp, gold))
+        Some(build_save_data(player, *char_id, *xp, gold, satiation))
     }
 
     async fn insert_player_spatial_cell(&self, player_id: &PlayerId, position: &Position) {
@@ -1415,33 +1522,16 @@ impl super::GameState {
 
         let (monsters_left, monsters_entered) = {
             let monsters = self.monsters.read().await;
-            let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-            let old_monsters: HashSet<_> = monsters
-                .iter()
-                .filter(|(_, monster)| {
-                    monster.floor_level == old_floor
-                        && old_position.dist_xz_sq(&monster.position) <= radius_sq
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-            let new_monsters: HashSet<_> = monsters
-                .iter()
-                .filter(|(_, monster)| {
-                    monster.floor_level == new_floor
-                        && player.position.dist_xz_sq(&monster.position) <= radius_sq
-                })
-                .map(|(id, _)| id.clone())
-                .collect();
-
-            let left = old_monsters
-                .difference(&new_monsters)
-                .cloned()
-                .collect::<Vec<_>>();
-            let entered = new_monsters
-                .difference(&old_monsters)
-                .filter_map(|id| monsters.get(id).cloned())
-                .collect::<Vec<_>>();
-            (left, entered)
+            let (left, entered) = aoi_diff(
+                monsters.values(),
+                |m| (m.position, m.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+                entered.into_iter().cloned().collect::<Vec<_>>(),
+            )
         };
 
         for monster_id in monsters_left {
@@ -1455,33 +1545,21 @@ impl super::GameState {
 
         let (items_left, items_entered) = {
             let ground_items = self.ground_items.read().await;
-            let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-            let old_items: HashSet<_> = ground_items
-                .iter()
-                .filter(|(_, sgi)| {
-                    sgi.item.floor_level == old_floor
-                        && old_position.dist_xz_sq(&sgi.item.position) <= radius_sq
-                })
-                .map(|(id, _)| *id)
-                .collect();
-            let new_items: HashSet<_> = ground_items
-                .iter()
-                .filter(|(_, sgi)| {
-                    sgi.item.floor_level == new_floor
-                        && player.position.dist_xz_sq(&sgi.item.position) <= radius_sq
-                })
-                .map(|(id, _)| *id)
-                .collect();
-
-            let left = old_items
-                .difference(&new_items)
-                .copied()
-                .collect::<Vec<_>>();
-            let entered = new_items
-                .difference(&old_items)
-                .filter_map(|id| ground_items.get(id).map(|sgi| sgi.item.clone()))
-                .collect::<Vec<_>>();
-            (left, entered)
+            let (left, entered) = aoi_diff(
+                ground_items.values(),
+                |sgi| (sgi.item.position, sgi.item.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter()
+                    .map(|sgi| sgi.item.instance_id)
+                    .collect::<Vec<_>>(),
+                entered
+                    .into_iter()
+                    .map(|sgi| sgi.item.clone())
+                    .collect::<Vec<_>>(),
+            )
         };
 
         for instance_id in items_left {
@@ -1493,9 +1571,36 @@ impl super::GameState {
                 .await;
         }
 
-        self.send_direct_message(player_id, update_msg.clone())
-            .await;
-        self.send_direct_message_to_players(&stayed, update_msg)
+        let (fires_left, fires_entered) = {
+            let campfires = self.campfires.read().await;
+            let (left, entered) = aoi_diff(
+                campfires.values(),
+                |e| (e.campfire.position, e.campfire.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter().map(|e| e.campfire.id).collect::<Vec<_>>(),
+                entered
+                    .into_iter()
+                    .map(|e| e.campfire.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for campfire_id in fires_left {
+            self.send_direct_message(player_id, ServerMessage::CampfireRemoved { campfire_id })
+                .await;
+        }
+        for campfire in fires_entered {
+            self.send_direct_message(player_id, ServerMessage::CampfireAppeared { campfire })
+                .await;
+        }
+
+        // The mover hears its own update through the same fanout, so the
+        // message is serialized once for everyone.
+        let mut recipients = stayed;
+        recipients.push(*player_id);
+        self.send_direct_message_to_players(&recipients, update_msg)
             .await;
     }
 

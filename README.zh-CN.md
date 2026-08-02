@@ -252,3 +252,5 @@ sudo systemctl restart openmmo-server
 ## 贡献
 
 欢迎贡献！当你首次提交 Pull Request 时，机器人会要求你在 PR 中留言签署[贡献者许可协议](CLA.md)。签署 CLA 后你的贡献才能被合并。
+
+如需贡献二进制资产（3D 模型、音乐、音效），请参阅 [doc/ASSETS.md](doc/ASSETS.md) — 它们通过 Hugging Face 数据集 PR 提交，而不是 git。

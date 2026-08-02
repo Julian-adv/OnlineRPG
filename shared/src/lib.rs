@@ -10,6 +10,7 @@ pub mod entity;
 pub mod fishing;
 pub mod furniture;
 pub mod housing;
+pub mod hunger;
 pub mod inventory;
 pub mod messages;
 pub mod monster_ai;
@@ -42,7 +43,13 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v10: party (PartyInvite/PartyRespond/PartyLeave, PartyState snapshots).
 /// v11: party positions poll (RequestPartyPositions → PartyPositions) for
 ///      world-map member markers.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// v12: equip slots hands/back/shirt (doc/ITEM_TIERS.md 선행 작업 #1).
+/// v13: party summoning scroll (PartySummonReceived → PartySummonRespond).
+/// v14: a monster's loot spawns when the killing blow lands, so
+///      GroundItemSpawned no longer carries source_monster_id.
+/// v15: DungeonDiscoveries snapshot for per-character world-map markers.
+/// v16: hunger (HungerUpdate) + campfires (Campfire* / Grill*) — doc/HUNGER.md.
+pub const PROTOCOL_VERSION: u32 = 16;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -179,6 +186,7 @@ mod tests {
             players,
             monsters,
             ground_items: Vec::new(),
+            campfires: Vec::new(),
         };
         let bytes = serialize_server_msg(&msg).unwrap();
         let decoded = deserialize_server_msg(&bytes).unwrap();

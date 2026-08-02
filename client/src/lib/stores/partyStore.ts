@@ -46,6 +46,7 @@ export function resetPartyStores() {
   partyRoster.set(null)
   resetPartyPositions()
   pendingPartyInvites.set([])
+  pendingPartySummons.set([])
 }
 
 /** A party invite the player hasn't answered yet. */
@@ -60,3 +61,19 @@ export interface PendingPartyInvite {
 export const pendingPartyInvites = writable<PendingPartyInvite[]>([])
 
 export const MAX_PENDING_PARTY_INVITES = 3
+
+/** Mirrors the server-side invite TTL (`PARTY_INVITE_TTL`). */
+export const INVITE_TTL_MS = 30_000
+
+/** Mirrors the server-side summon TTL (`PARTY_SUMMON_TTL`). */
+export const SUMMON_TTL_MS = 30_000
+
+/** A summoning-scroll consent request the player hasn't answered yet. */
+export interface PendingPartySummon {
+  casterId: number
+  casterName: string
+  offeredAt: number
+}
+
+/** Unanswered summons, oldest first, same queue discipline as invites. */
+export const pendingPartySummons = writable<PendingPartySummon[]>([])

@@ -2,7 +2,7 @@ use super::*;
 
 /// The next direct message must be the rejection ack for `expected_id`.
 fn expect_attack_rejected(
-    rx: &mut UnboundedReceiver<ServerMessage>,
+    rx: &mut DirectRx,
     expected_id: &str,
     expected_reason: AttackRejectReason,
 ) {
@@ -286,6 +286,63 @@ async fn non_finite_spawn_request_is_rejected() {
             "rotation {value_name}"
         );
     }
+}
+
+#[tokio::test]
+async fn ambient_spawn_requires_unconsumed_server_allowance() {
+    let game_state = make_test_game_state("ambient_spawn_allowance");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 10.0, 20.0))
+        .await;
+    let mut player_rx = game_state.register_direct_channel(&player_id).await;
+
+    assert!(
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "an unsolicited ambient spawn must be rejected"
+    );
+
+    game_state.tick_monster_spawns().await;
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    assert!(game_state.take_spawn_allowance(&player_id, "goblin").await);
+    assert!(
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "one allowance must authorize at most one spawn"
+    );
+}
+
+#[tokio::test]
+async fn ambient_spawn_allowance_is_bounded_and_expires() {
+    let game_state = make_test_game_state("ambient_spawn_allowance_expiry");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 10.0, 20.0))
+        .await;
+    let mut player_rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state.tick_monster_spawns().await;
+    game_state.tick_monster_spawns().await;
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+
+    game_state
+        .ambient_spawn_allowances
+        .write()
+        .await
+        .insert((player_id, "goblin".to_string()), GameState::now_ms());
+    assert!(
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "an expired allowance must not authorize a spawn"
+    );
+
+    game_state.tick_monster_spawns().await;
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    game_state.remove_player(&player_id).await;
+    assert!(game_state
+        .ambient_spawn_allowances
+        .read()
+        .await
+        .keys()
+        .all(|(owner_id, _)| owner_id != &player_id));
 }
 
 /// A client-owned monster is still untrusted movement. Staying within the

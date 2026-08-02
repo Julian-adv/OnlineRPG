@@ -11,7 +11,6 @@ use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInv
 use onlinerpg_shared::messages::DealKind;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio::sync::mpsc::error::TryRecvError as MpscTryRecvError;
-use tokio::sync::mpsc::UnboundedReceiver;
 
 mod chat_tests;
 mod collision_tests;
@@ -19,6 +18,7 @@ mod combat_tests;
 mod dungeon_tests;
 mod enchant_tests;
 mod fishing_tests;
+mod hunger_tests;
 mod movement_tests;
 mod party_tests;
 mod persistence_tests;
@@ -111,7 +111,32 @@ async fn player_xz(game_state: &GameState, player_id: &PlayerId) -> (f32, f32) {
     (player.position.x, player.position.z)
 }
 
-fn drain(rx: &mut UnboundedReceiver<ServerMessage>) -> Vec<ServerMessage> {
+/// Decodes `Shared` payloads back into `ServerMessage`, mirroring the
+/// receiver API so tests assert on exactly what a client would decode.
+struct DirectRx(tokio::sync::mpsc::UnboundedReceiver<DirectMessage>);
+
+impl DirectRx {
+    fn try_recv(&mut self) -> Result<ServerMessage, MpscTryRecvError> {
+        self.0.try_recv().map(|payload| match payload {
+            DirectMessage::Typed(msg) => msg,
+            DirectMessage::Shared(bytes) => onlinerpg_shared::deserialize_server_msg(&bytes)
+                .expect("shared direct payload decodes"),
+        })
+    }
+}
+
+/// Test-side name for the connection channel, wrapped in the decoder.
+trait RegisterDirectChannel {
+    async fn register_direct_channel(&self, player_id: &PlayerId) -> DirectRx;
+}
+
+impl RegisterDirectChannel for GameState {
+    async fn register_direct_channel(&self, player_id: &PlayerId) -> DirectRx {
+        DirectRx(self.register_connection_channel(player_id).await)
+    }
+}
+
+fn drain(rx: &mut DirectRx) -> Vec<ServerMessage> {
     let mut msgs = Vec::new();
     while let Ok(msg) = rx.try_recv() {
         msgs.push(msg);
@@ -119,7 +144,19 @@ fn drain(rx: &mut UnboundedReceiver<ServerMessage>) -> Vec<ServerMessage> {
     msgs
 }
 
-fn first_correction(rx: &mut UnboundedReceiver<ServerMessage>) -> Option<(Position, f32, i8)> {
+fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
+    drain(rx)
+        .into_iter()
+        .filter(|message| {
+            matches!(
+                message,
+                ServerMessage::SpawnMonsterRequest { monster_type: ty } if ty == monster_type
+            )
+        })
+        .count()
+}
+
+fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {
     std::iter::from_fn(|| rx.try_recv().ok()).find_map(|msg| match msg {
         ServerMessage::PositionCorrected {
             position,

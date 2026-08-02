@@ -14,7 +14,14 @@ async fn dirty_save_is_retried_after_failure() {
     player.name = record.name.clone();
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&player_id, record.id, record.xp, attributes, record.gold)
+        .register_player_character(
+            &player_id,
+            record.id,
+            record.xp,
+            attributes,
+            record.gold,
+            None,
+        )
         .await;
     game_state.inventories.write().await.insert(
         player_id,
@@ -106,6 +113,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
             }],
         )],
         &[],
+        &[],
         None,
     )
     .unwrap();
@@ -118,7 +126,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
     player.name = record.name.clone();
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&a, char_id, record.xp, attributes, record.gold)
+        .register_player_character(&a, char_id, record.xp, attributes, record.gold, None)
         .await;
     game_state.load_player_inventory(&a, char_id, &auth).await;
 

@@ -1,5 +1,6 @@
 import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
+import type { ClientEnvReport } from '../utils/clientEnvReport'
 
 export type Position = {
   x: number
@@ -149,6 +150,7 @@ export type ClientMessage =
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
   | { PartyRespond: { inviter_id: number; accept: boolean } }
+  | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
   | 'RequestPartyPositions'
   | { OpenDungeonChest: { entrance_id: string } }
@@ -193,6 +195,7 @@ export type ClientMessage =
   | { BuyItem: { merchant_player_id: number; item_def_id: string } }
   | { SellItem: { merchant_player_id: number; instance_id: number } }
   | { BuybackItem: { merchant_player_id: number; entry_id: number } }
+  | { EnvReport: ClientEnvReport }
 
 export type EquipSlot =
   | 'head'
@@ -206,6 +209,9 @@ export type EquipSlot =
   | 'boots'
   | 'ring'
   | 'ring_left'
+  | 'hands'
+  | 'back'
+  | 'shirt'
 
 export type ItemInstance = {
   instance_id: number
@@ -257,6 +263,12 @@ export type ServerGroundItem = {
   floor_level: number
   /** Carries a dropped weapon's enchantment across the drop/pickup cycle. */
   enchant: number
+}
+
+export type ServerCampfire = {
+  id: number
+  position: Position
+  floor_level: number
 }
 
 export type AuthSuccessPayload = {

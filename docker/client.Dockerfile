@@ -1,11 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Builds the web bundle (Svelte + wasm) and serves it from nginx.
-#
-# The build needs the Rust toolchain because `npm run build` runs wasm-pack over
-# the shared crate first, and it needs the LFS assets because the generate:*
-# scripts measure real .glb models. A checkout without LFS produces pointer
-# files, so the builder fails the bundle rather than shipping broken assets.
+# Binary assets must be fetched from the pinned Hugging Face dataset first.
 
 FROM node:22-bookworm AS builder
 
@@ -20,6 +16,7 @@ RUN cargo install wasm-pack --version "${WASM_PACK_VERSION}" --locked
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
+COPY assets.lock ./
 # shared/ embeds three tracked JSON files from data/ with include_str!.
 COPY data/ data/
 COPY shared/ shared/
@@ -44,15 +41,24 @@ RUN mkdir -p agent-client/src server/src tools/terrain-gen/src \
     && echo 'fn main() {}' > tools/terrain-gen/src/main.rs
 COPY client/ client/
 
+WORKDIR /build
+RUN set -eu; \
+    while IFS= read -r line; do \
+        case "$line" in \
+            "file "*) \
+                entry=${line#file }; \
+                hash=${entry%% *}; \
+                path=${entry#* }; \
+                test -f "$path" || { echo "error: missing asset: $path" >&2; exit 1; }; \
+                actual=$(sha256sum "$path" | cut -d ' ' -f 1); \
+                test "$actual" = "$hash" || { echo "error: checksum mismatch: $path" >&2; exit 1; }; \
+                ;; \
+        esac; \
+    done < assets.lock
+
 WORKDIR /build/client
 RUN npm ci
 RUN npm run build
-
-# Same guard tools/deploy-prod.sh applies before publishing to the webroot.
-RUN if grep -rl "git-lfs.github.com/spec" dist 2>/dev/null; then \
-        echo "error: LFS pointer files in dist — build the image from an LFS checkout." >&2; \
-        exit 1; \
-    fi
 
 FROM nginx:alpine
 COPY --from=builder /build/client/dist /usr/share/nginx/html

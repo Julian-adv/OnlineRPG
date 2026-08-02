@@ -7,7 +7,7 @@ use super::*;
 async fn fight_to_the_end(
     game_state: &GameState,
     id: &PlayerId,
-    rx: &mut UnboundedReceiver<ServerMessage>,
+    rx: &mut DirectRx,
     policy: impl Fn(FishState, u32) -> FishingAction,
 ) -> (FishingOutcome, Vec<ServerMessage>) {
     let mut seen = Vec::new();
@@ -124,6 +124,28 @@ async fn cast_requires_rod_water_and_range() {
     assert!(drain(&mut rx)
         .iter()
         .any(|m| matches!(m, ServerMessage::FishingCasted { .. })));
+}
+
+// Bystanders take the facing from the broadcast (FishingCasted's rotation doc).
+#[tokio::test(start_paused = true)]
+async fn cast_broadcast_faces_the_water() {
+    let game_state = make_test_game_state("fishing_cast_facing");
+    let (id, mut rx) = make_angler(&game_state, "angler_facing").await;
+
+    game_state.start_fishing(&id, water_target()).await;
+    let rotation = drain(&mut rx)
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::FishingCasted { rotation, .. } => Some(*rotation),
+            _ => None,
+        })
+        .expect("cast should be accepted");
+    // Angler at (-100, 50), water at (-103, 50): facing is atan2(-3, 0).
+    let expected = (-3.0f32).atan2(0.0);
+    assert!(
+        (rotation - expected).abs() < 1e-6,
+        "expected rotation {expected}, got {rotation}"
+    );
 }
 
 // The regression this PR fixes: a river's bed sits ABOVE sea level (its

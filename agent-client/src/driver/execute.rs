@@ -54,6 +54,16 @@ fn unreachable_note(monster_id: &str, loss: &LostReason) -> String {
 /// Parse and execute the agent's response.
 /// Returns the monster_id if the last action was an attack (for combat loop).
 /// If `memory_file` is set and the response contains `memory_update`, appends to file.
+/// Pick a pending entry by (case-insensitive) name, or the oldest when bare.
+fn pick_pending<T>(items: &[T], name: Option<&str>, name_of: impl Fn(&T) -> &str) -> Option<usize> {
+    match name {
+        Some(name) => items
+            .iter()
+            .position(|item| name_of(item).eq_ignore_ascii_case(name)),
+        None => (!items.is_empty()).then_some(0),
+    }
+}
+
 pub(super) async fn handle_response(
     state: &Arc<Mutex<SharedState>>,
     response: &str,
@@ -237,13 +247,9 @@ pub(super) async fn handle_response(
             let accept = matches!(action, AgentAction::PartyAccept { .. });
             let mut s = state.lock().await;
             s.prune_expired_party_invites();
-            let idx = match player.as_deref() {
-                Some(name) => s
-                    .pending_party_invites
-                    .iter()
-                    .position(|i| i.inviter_name.eq_ignore_ascii_case(name)),
-                None => (!s.pending_party_invites.is_empty()).then_some(0),
-            };
+            let idx = pick_pending(&s.pending_party_invites, player.as_deref(), |i| {
+                &i.inviter_name
+            });
             let Some(idx) = idx else {
                 s.push_agent_event("[PartyFailed] No pending party invite to answer.".to_string());
                 continue;
@@ -260,6 +266,35 @@ pub(super) async fn handle_response(
                     "[Party] You declined {}'s invite.",
                     invite.inviter_name
                 ));
+            }
+            continue;
+        }
+
+        // Summon answers likewise need the stored request. An accept keeps
+        // the entry — retryable after a mid-combat refusal; the teleport (or
+        // the TTL) clears it.
+        if let AgentAction::SummonAccept { player } | AgentAction::SummonDecline { player } = action
+        {
+            let accept = matches!(action, AgentAction::SummonAccept { .. });
+            let mut s = state.lock().await;
+            s.prune_expired_party_summons();
+            let idx = pick_pending(&s.pending_party_summons, player.as_deref(), |i| {
+                &i.caster_name
+            });
+            let Some(idx) = idx else {
+                s.push_agent_event("[SummonFailed] No pending summons to answer.".to_string());
+                continue;
+            };
+            let caster_id = s.pending_party_summons[idx].caster_id;
+            let caster_name = s.pending_party_summons[idx].caster_name.clone();
+            if !accept {
+                s.pending_party_summons.remove(idx);
+            }
+            let cmd = onlinerpg_shared::ClientMessage::PartySummonRespond { caster_id, accept };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send summon response: {e}");
+            } else if !accept {
+                s.push_agent_event(format!("[Party] You declined {caster_name}'s summons."));
             }
             continue;
         }
@@ -932,7 +967,7 @@ mod tests {
         let (mut s, _rx) = test_state();
         s.self_player = Some(test_player(0.0, 0.0));
         for item in items {
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
         s
     }

@@ -17,9 +17,9 @@ use super::{dungeon_origin, GRID};
 use crate::housing::WallDirection;
 use crate::world::Position;
 
-/// Items whose `chestTier` is blank default here, and dungeons whose
-/// `chestTier` is blank admit only this tier.
-pub const DEFAULT_CHEST_TIER: u8 = 1;
+/// Dungeons whose `chestTier` is blank admit only this tier. Items opt in
+/// per-item: a blank item `chestTier` means no chest drops at all.
+const DEFAULT_DUNGEON_CHEST_TIER: u8 = 1;
 
 /// One dungeon entrance: where it stands, how deep it goes, what its final
 /// chest holds. `floors`, `boss` and `entrance_dir` feed the hashed layout —
@@ -126,7 +126,7 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                     "" => super::BOSS_MONSTER_TYPE.to_string(),
                     b => b.to_string(),
                 },
-                chest_tier: opt_u8("chestTier").unwrap_or(DEFAULT_CHEST_TIER),
+                chest_tier: opt_u8("chestTier").unwrap_or(DEFAULT_DUNGEON_CHEST_TIER),
                 entrance_dir: match field("entranceDir") {
                     "" => None,
                     "n" => Some(WallDirection::North),
