@@ -91,7 +91,7 @@ pub struct PartyMember {
 
 /// How long a party invite stays acceptable. Shared so the server's
 /// enforcement and the agent-client's pruning are guaranteed equal; the web
-/// client mirrors it (`INVITE_TTL_MS` in `PartyInviteToast.svelte`).
+/// client mirrors it (`INVITE_TTL_MS` in `partyStore.ts`).
 pub const PARTY_INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// How long a party summon stays acceptable; `PARTY_INVITE_TTL`'s twin. The

@@ -1,13 +1,11 @@
 <script lang="ts">
   import {
     pendingPartyInvites,
+    INVITE_TTL_MS,
     type PendingPartyInvite,
   } from '../stores/partyStore'
   import { networkManager } from '../network/socket'
   import ConsentToast from './ConsentToast.svelte'
-
-  /** Mirrors the server-side invite TTL. */
-  const INVITE_TTL_MS = 30_000
 
   /** Oldest first — the queue keeps a flood from swapping the name under
    *  the user's click or burying an earlier legitimate invite. */

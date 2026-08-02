@@ -62,6 +62,9 @@ export const pendingPartyInvites = writable<PendingPartyInvite[]>([])
 
 export const MAX_PENDING_PARTY_INVITES = 3
 
+/** Mirrors the server-side invite TTL (`PARTY_INVITE_TTL`). */
+export const INVITE_TTL_MS = 30_000
+
 /** Mirrors the server-side summon TTL (`PARTY_SUMMON_TTL`). */
 export const SUMMON_TTL_MS = 30_000
 
