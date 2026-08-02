@@ -24,11 +24,6 @@ const MAX_EVENTS: usize = 200;
 const NEARBY_PLAYER_RADIUS: f32 = 10.0;
 /// How many ground items the world state lists before summarising the rest.
 const MAX_LISTED_GROUND_ITEMS: usize = 10;
-/// How long a monster's drop stays hidden, so the agent never reaches loot
-/// the players around it cannot see yet. Matches the impact frame a web
-/// client holds the death for (`PLAYER_ATTACK_IMPACT_DELAY_MS` in
-/// client/src/lib/data/combatTiming.ts).
-const DEATH_DROP_REVEAL_DELAY: std::time::Duration = std::time::Duration::from_millis(540);
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
 /// a wishlist item (see `trade_satiated_until`).
 const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
@@ -320,14 +315,6 @@ impl WorldCache {
     }
 }
 
-/// A ground item the client knows about, with the moment it may be acted
-/// on. Everything is visible on arrival except a monster's drop, which
-/// waits out `DEATH_DROP_REVEAL_DELAY`.
-struct KnownGroundItem {
-    item: GroundItem,
-    visible_at: std::time::Instant,
-}
-
 /// Shared state between WebSocket reader and Claude driver tasks.
 pub struct SharedState {
     pub characters: Vec<Character>,
@@ -379,9 +366,9 @@ pub struct SharedState {
     pub nearby_monsters: HashMap<String, Monster>,
     /// Known items lying on the ground, keyed by instance id (from the join
     /// snapshot plus GroundItemSpawned/Appeared/Removed). Read through
-    /// `visible_ground_item(s)` — a monster's drop is known before it is
-    /// visible.
-    ground_items: HashMap<u64, KnownGroundItem>,
+    /// `visible_ground_item(s)`. The server only announces an item once it
+    /// is real, so everything here is loot the agent may go for.
+    ground_items: HashMap<u64, GroundItem>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -836,22 +823,14 @@ impl SharedState {
             .await
     }
 
-    /// Remember an item on the ground, visible from `visible_at` on.
-    pub(crate) fn remember_ground_item(
-        &mut self,
-        item: GroundItem,
-        visible_at: std::time::Instant,
-    ) {
-        self.ground_items
-            .insert(item.instance_id, KnownGroundItem { item, visible_at });
+    /// Remember an item on the ground.
+    pub(crate) fn remember_ground_item(&mut self, item: GroundItem) {
+        self.ground_items.insert(item.instance_id, item);
     }
 
-    /// One ground item by instance id, if it is visible yet.
+    /// One ground item by instance id.
     pub fn visible_ground_item(&self, instance_id: u64) -> Option<&GroundItem> {
-        self.ground_items
-            .get(&instance_id)
-            .filter(|k| k.visible_at <= std::time::Instant::now())
-            .map(|k| &k.item)
+        self.ground_items.get(&instance_id)
     }
 
     /// The ground items the agent can act on: visible, on its floor, inside
@@ -862,15 +841,14 @@ impl SharedState {
         let Some(sp) = self.self_player.as_ref() else {
             return Vec::new();
         };
-        let now = std::time::Instant::now();
         let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
         let mut in_sight: Vec<_> = self
             .ground_items
             .values()
-            .filter(|k| k.visible_at <= now && k.item.floor_level == self.self_floor_level)
-            .filter_map(|k| {
-                let d_sq = k.item.position.dist_xz_sq(&sp.position);
-                (d_sq <= sight_sq).then_some((d_sq, &k.item))
+            .filter(|item| item.floor_level == self.self_floor_level)
+            .filter_map(|item| {
+                let d_sq = item.position.dist_xz_sq(&sp.position);
+                (d_sq <= sight_sq).then_some((d_sq, item))
             })
             .collect();
         in_sight.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1220,11 +1198,9 @@ impl SharedState {
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
-                // Snapshot items are already lying there for everyone.
                 self.ground_items.clear();
-                let now = std::time::Instant::now();
                 for item in ground_items {
-                    self.remember_ground_item(item.clone(), now);
+                    self.remember_ground_item(item.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -1298,21 +1274,9 @@ impl SharedState {
                 self.nearby_monsters.remove(monster_id);
                 self.monster_ai.remove_monster(monster_id);
             }
-            ServerMessage::GroundItemSpawned {
-                item,
-                source_monster_id,
-            } => {
-                // A kill's drop only lands on a web client's screen when the
-                // killing blow's impact frame plays; hold it the same span.
-                let delay = if source_monster_id.is_some() {
-                    DEATH_DROP_REVEAL_DELAY
-                } else {
-                    std::time::Duration::ZERO
-                };
-                self.remember_ground_item(item.clone(), std::time::Instant::now() + delay);
-            }
-            ServerMessage::GroundItemAppeared { item } => {
-                self.remember_ground_item(item.clone(), std::time::Instant::now());
+            ServerMessage::GroundItemSpawned { item }
+            | ServerMessage::GroundItemAppeared { item } => {
+                self.remember_ground_item(item.clone());
             }
             ServerMessage::GroundItemRemoved { instance_id } => {
                 self.ground_items.remove(instance_id);
@@ -2214,7 +2178,7 @@ pub(crate) mod tests {
             ground_item(4, "iron_sword", 0.0, NPC_SIGHT_RADIUS + 5.0, 0),
             ground_item(5, "healing_potion", 3.0, 0.0, 1),
         ] {
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
 
         let lines: Vec<String> = s
@@ -2234,20 +2198,19 @@ pub(crate) mod tests {
         );
     }
 
-    /// A kill's drop is held back for as long as a web client holds the
-    /// death animation, so the agent can't loot what nobody can see yet.
-    /// Items that were already lying there show up at once.
+    /// The server withholds a kill's drop until the killing blow lands, so
+    /// an announced item is loot the agent may go for right away — no local
+    /// wait that a patched client could skip.
     #[test]
-    fn a_monster_drop_waits_for_the_death_impact() {
+    fn an_announced_drop_is_actionable_at_once() {
         let (mut s, _rx) = test_state();
         s.self_player = Some(test_player(0.0, 0.0));
 
         s.push_event(ServerMessage::GroundItemSpawned {
             item: ground_item(1, "goblin_sword", 2.0, 0.0, 0),
-            source_monster_id: Some("m208_129".to_string()),
         });
         s.push_event(ServerMessage::GroundItemAppeared {
-            item: ground_item(2, "small_sword", 2.0, 0.0, 0),
+            item: ground_item(2, "small_sword", 3.0, 0.0, 0),
         });
 
         let ids: Vec<u64> = s
@@ -2255,16 +2218,9 @@ pub(crate) mod tests {
             .iter()
             .map(|(_, i)| i.instance_id)
             .collect();
-        assert_eq!(ids, vec![2]);
-        assert!(s.visible_ground_item(1).is_none());
-        assert!(!s.format_world_state().contains("goblin_sword"));
-
-        // Once the impact has passed it is loot like any other.
-        s.remember_ground_item(
-            ground_item(1, "goblin_sword", 2.0, 0.0, 0),
-            std::time::Instant::now(),
-        );
+        assert_eq!(ids, vec![1, 2]);
         assert!(s.visible_ground_item(1).is_some());
+        assert!(s.format_world_state().contains("goblin_sword"));
     }
 
     /// A field strewn with drops is summarised, not listed line by line.
@@ -2274,7 +2230,7 @@ pub(crate) mod tests {
         s.self_player = Some(test_player(0.0, 0.0));
         for id in 1..=(MAX_LISTED_GROUND_ITEMS as u64 + 3) {
             let item = ground_item(id, "small_sword", id as f32 * 0.5, 0.0, 0);
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
 
         let world = s.format_world_state();

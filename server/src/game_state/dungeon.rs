@@ -581,16 +581,13 @@ impl GameState {
 
     async fn spawn_dungeon_coin_pile(&self, position: Position, floor_level: i8) {
         let instance_id = self.next_instance_id().await;
-        self.spawn_ground_item(
-            GroundItem {
-                instance_id,
-                item_def_id: super::COIN_PILE_ITEM_ID.to_string(),
-                position,
-                floor_level,
-                enchant: 0,
-            },
-            None,
-        )
+        self.spawn_ground_item(GroundItem {
+            instance_id,
+            item_def_id: super::COIN_PILE_ITEM_ID.to_string(),
+            position,
+            floor_level,
+            enchant: 0,
+        })
         .await;
     }
 
