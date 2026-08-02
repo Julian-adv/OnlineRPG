@@ -45,4 +45,4 @@
     - 원화: [rod](../images/fishing_rod.png) · [minnow](../images/raw_minnow.png) · [perch](../images/raw_perch.png) · [trout](../images/raw_trout.png) · [salmon](../images/river_salmon.png) · [sturgeon](../images/golden_sturgeon.png) · [boot](../images/old_boot.png) · [kelp](../images/clump_of_kelp.png) · [bottle](../images/message_in_a_bottle.png) · [pouch](../images/sunken_coin_pouch.png)
 - scroll_of_party_summon.png — scroll_of_return.png의 hue-rotation 파생 (스크립트, 2026-07-31): 붉은 봉인·장식 → 보라. 3D는 기존 scroll.glb 재사용
 - Hunger icons (10): apple.png, bread.png, cheese.png, jerky.png, grilled_minnow.png, grilled_perch.png, grilled_trout.png, grilled_salmon.png, grilled_sturgeon.png, campfire_kit.png — 자체 제작 프로시저럴 플레이스홀더 (PIL 스크립트, 2026-08-02, 512² 드로잉→128² 다운스케일, 라이선스 문제 없음). 기존 ChatGPT 아이콘 스타일과 다르므로 추후 AI 아이콘으로 교체 예정
-- 모닥불 3D — 별도 에셋 없음: 클라이언트 절차적 지오메트리(통나무 실린더 + 돌 + 불씨 구) + `campfire-fire-particles.ts`(torch-fire-particles 파생, 자체 제작)
+- **[미사용]** 모닥불 절차적 지오메트리(통나무 실린더 + 돌 + 불씨 구) — `campfire.glb`로 교체. 불꽃은 `fire-particles.ts`의 `CampfireFireParticles`(횃불 파티클 파생, 자체 제작) 유지

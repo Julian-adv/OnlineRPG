@@ -255,24 +255,24 @@ export class TorchFireParticles extends FireParticles {
 /** Wider, taller, denser flame rising from a campfire's bed of logs. */
 export class CampfireFireParticles extends FireParticles {
   constructor() {
-    const spread = 0.35
+    const spread = 0.18
     super({
-      maxParticles: 48,
-      spawnRate: 36,
-      particleSize: 0.3,
-      buoyancy: 1.1,
-      turbulence: { amp: 0.35, fx: 9, fz: 8 },
+      maxParticles: 32,
+      spawnRate: 22,
+      particleSize: 0.16,
+      buoyancy: 0.2,
+      turbulence: { amp: 0.08, fx: 6, fz: 5 },
       spawn: (p, cx, cy, cz) => {
         // A disc-shaped bed: particles rise faster near the center.
         const r = Math.sqrt(Math.random()) * spread
         const a = Math.random() * Math.PI * 2
         p.x = cx + Math.cos(a) * r
-        p.y = cy + Math.random() * 0.05
+        p.y = cy + Math.random() * 0.025
         p.z = cz + Math.sin(a) * r
-        p.vx = (Math.random() - 0.5) * 0.12
-        p.vy = 0.35 + (1 - r / spread) * 0.3 + Math.random() * 0.2
-        p.vz = (Math.random() - 0.5) * 0.12
-        p.maxAge = 0.45 + Math.random() * 0.55
+        p.vx = (Math.random() - 0.5) * 0.035
+        p.vy = 0.08 + (1 - r / spread) * 0.08 + Math.random() * 0.05
+        p.vz = (Math.random() - 0.5) * 0.035
+        p.maxAge = 0.7 + Math.random() * 0.65
         p.baseScale = 0.9 + Math.random() * 0.7
       },
     })
