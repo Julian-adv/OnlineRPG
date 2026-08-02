@@ -1,4 +1,5 @@
 use crate::types::{MonsterState, PlayerId, Position, ServerMessage};
+use std::collections::hash_map::Entry;
 use std::collections::HashSet;
 use tracing::{debug, warn};
 
@@ -361,6 +362,8 @@ impl super::GameState {
     /// Server-driven monster spawn tick. For each ambient spawn type and each
     /// player below their cap, sends a SpawnMonsterRequest so the client can
     /// pick a valid position near itself (grassland, not water, away from towns).
+    /// Each request records an expiring allowance the client's response must
+    /// consume via take_spawn_allowance.
     pub async fn tick_monster_spawns(&self) {
         let ambient_spawns = &crate::world_config::world_config().ambient_spawns;
         if ambient_spawns.is_empty() {
@@ -416,40 +419,43 @@ impl super::GameState {
             (counts, alive)
         };
 
+        // Unconsumed allowances reserve slots against the global cap.
         let now = Self::now_ms();
         let requests = {
             let mut allowances = self.ambient_spawn_allowances.write().await;
             allowances.retain(|_, expires_at| *expires_at > now);
-            let mut reserved = allowances.len();
-            let mut requests = Vec::new();
+            let mut requests: Vec<(String, Vec<PlayerId>)> = Vec::new();
 
             for rule in ambient_spawns {
+                if total_alive + allowances.len() >= max_total {
+                    break;
+                }
+
+                let mut recipients = Vec::new();
                 for player_id in &player_ids {
-                    if total_alive + reserved >= max_total {
+                    if total_alive + allowances.len() >= max_total {
                         break;
                     }
 
-                    let owned = owner_type_counts
-                        .get(&(*player_id, rule.monster_type.clone()))
-                        .copied()
-                        .unwrap_or(0);
                     let key = (*player_id, rule.monster_type.clone());
-
-                    if owned >= rule.max_per_player || allowances.contains_key(&key) {
+                    if owner_type_counts.get(&key).copied().unwrap_or(0) >= rule.max_per_player {
                         continue;
                     }
-
-                    allowances.insert(key, now.saturating_add(AMBIENT_SPAWN_ALLOWANCE_TTL_MS));
-                    requests.push((*player_id, rule.monster_type.clone()));
-                    reserved += 1;
+                    if let Entry::Vacant(entry) = allowances.entry(key) {
+                        entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
+                        recipients.push(*player_id);
+                    }
+                }
+                if !recipients.is_empty() {
+                    requests.push((rule.monster_type.clone(), recipients));
                 }
             }
             requests
         };
 
-        for (player_id, monster_type) in requests {
-            self.send_direct_message(
-                &player_id,
+        for (monster_type, recipients) in requests {
+            self.send_direct_message_to_players(
+                &recipients,
                 ServerMessage::SpawnMonsterRequest { monster_type },
             )
             .await;
@@ -495,10 +501,12 @@ impl super::GameState {
         let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, position.x);
         let dz = position.z - player_pos.z;
         let max = rule.max_distance + 10.0; // tolerance
-        if dx * dx + dz * dz > max * max {
-            return false;
-        }
+        dx * dx + dz * dz <= max * max
+    }
 
+    /// Consume the player's unexpired allowance for this type, if any. Each
+    /// tick-issued request authorizes exactly one accepted spawn response.
+    pub async fn take_spawn_allowance(&self, player_id: &PlayerId, monster_type: &str) -> bool {
         let now = Self::now_ms();
         self.ambient_spawn_allowances
             .write()

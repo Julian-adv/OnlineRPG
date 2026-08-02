@@ -264,12 +264,11 @@ async fn non_finite_spawn_request_is_rejected() {
         y: 0.5,
         z: 22.0,
     };
-    let mut player_rx = game_state.register_direct_channel(&player_id).await;
-    game_state.tick_monster_spawns().await;
-    assert!(drain(&mut player_rx).into_iter().any(|message| matches!(
-        message,
-        ServerMessage::SpawnMonsterRequest { monster_type } if monster_type == "goblin"
-    )));
+    assert!(
+        game_state
+            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
+            .await
+    );
 
     for (label, position) in non_finite_positions(valid) {
         assert!(
@@ -287,49 +286,27 @@ async fn non_finite_spawn_request_is_rejected() {
             "rotation {value_name}"
         );
     }
-    assert!(
-        game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await
-    );
 }
 
 #[tokio::test]
 async fn ambient_spawn_requires_unconsumed_server_allowance() {
     let game_state = make_test_game_state("ambient_spawn_allowance");
     let player_id = pid("spawner");
-    let valid = Position {
-        x: 12.0,
-        y: 0.5,
-        z: 22.0,
-    };
-
     game_state
         .add_player(make_player("spawner", 10.0, 20.0))
         .await;
     let mut player_rx = game_state.register_direct_channel(&player_id).await;
 
     assert!(
-        !game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await,
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
         "an unsolicited ambient spawn must be rejected"
     );
 
     game_state.tick_monster_spawns().await;
-    assert!(drain(&mut player_rx).into_iter().any(|message| matches!(
-        message,
-        ServerMessage::SpawnMonsterRequest { monster_type } if monster_type == "goblin"
-    )));
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    assert!(game_state.take_spawn_allowance(&player_id, "goblin").await);
     assert!(
-        game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await
-    );
-    assert!(
-        !game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await,
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
         "one allowance must authorize at most one spawn"
     );
 }
@@ -338,12 +315,6 @@ async fn ambient_spawn_requires_unconsumed_server_allowance() {
 async fn ambient_spawn_allowance_is_bounded_and_expires() {
     let game_state = make_test_game_state("ambient_spawn_allowance_expiry");
     let player_id = pid("spawner");
-    let valid = Position {
-        x: 12.0,
-        y: 0.5,
-        z: 22.0,
-    };
-
     game_state
         .add_player(make_player("spawner", 10.0, 20.0))
         .await;
@@ -351,16 +322,7 @@ async fn ambient_spawn_allowance_is_bounded_and_expires() {
 
     game_state.tick_monster_spawns().await;
     game_state.tick_monster_spawns().await;
-    let goblin_requests = drain(&mut player_rx)
-        .into_iter()
-        .filter(|message| {
-            matches!(
-                message,
-                ServerMessage::SpawnMonsterRequest { monster_type } if monster_type == "goblin"
-            )
-        })
-        .count();
-    assert_eq!(goblin_requests, 1);
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
 
     game_state
         .ambient_spawn_allowances
@@ -368,16 +330,12 @@ async fn ambient_spawn_allowance_is_bounded_and_expires() {
         .await
         .insert((player_id, "goblin".to_string()), GameState::now_ms());
     assert!(
-        !game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "an expired allowance must not authorize a spawn"
     );
 
     game_state.tick_monster_spawns().await;
-    assert!(drain(&mut player_rx).into_iter().any(|message| matches!(
-        message,
-        ServerMessage::SpawnMonsterRequest { monster_type } if monster_type == "goblin"
-    )));
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
     game_state.remove_player(&player_id).await;
     assert!(game_state
         .ambient_spawn_allowances

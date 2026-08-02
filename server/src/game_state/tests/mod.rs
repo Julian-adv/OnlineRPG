@@ -143,6 +143,18 @@ fn drain(rx: &mut DirectRx) -> Vec<ServerMessage> {
     msgs
 }
 
+fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
+    drain(rx)
+        .into_iter()
+        .filter(|message| {
+            matches!(
+                message,
+                ServerMessage::SpawnMonsterRequest { monster_type: ty } if ty == monster_type
+            )
+        })
+        .count()
+}
+
 fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {
     std::iter::from_fn(|| rx.try_recv().ok()).find_map(|msg| match msg {
         ServerMessage::PositionCorrected {

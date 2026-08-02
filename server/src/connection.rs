@@ -1122,6 +1122,11 @@ async fn handle_client_message(
                         "Spawn request rejected: position ({:.1}, {:.1}) rotation {:.1} invalid for {}",
                         position.x, position.z, rotation, monster_type
                     );
+                } else if !game_state.take_spawn_allowance(id, &monster_type).await {
+                    warn!(
+                        "Spawn request rejected: no unconsumed allowance for {}",
+                        monster_type
+                    );
                 } else if let Some(monster) = game_state
                     .spawn_monster(monster_type, position, rotation, Some(*id), 0, None, false)
                     .await
