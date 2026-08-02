@@ -969,7 +969,6 @@ export function handleServerMessage(
       break
 
     case 'GroundItemSpawned':
-      // The server only announces an item once it is real, so no waiting here.
       groundItemManager.spawn(data.item as ServerGroundItem, {
         animateSpawn: true,
       })

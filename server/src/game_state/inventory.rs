@@ -721,9 +721,8 @@ impl super::GameState {
     }
 
     /// Insert a ground item into the world and announce it to nearby players.
-    /// The item becomes real — visible and pickable — at one instant for
-    /// everyone; a caller that owes the drop an animation beat delays this
-    /// call instead of letting each client decide when to show it.
+    /// Visible and pickable the moment this runs; a caller that owes the drop
+    /// an animation beat delays this call (`spawn_kill_loot_after_impact`).
     pub(super) async fn spawn_ground_item(&self, ground_item: GroundItem) {
         let position = ground_item.position;
         let floor_level = ground_item.floor_level;

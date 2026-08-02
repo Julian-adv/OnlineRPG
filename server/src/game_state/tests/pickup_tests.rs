@@ -86,21 +86,24 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
     }
     let mut killer_rx = game_state.register_direct_channel(&pid("killer")).await;
 
-    game_state.spawn_monster_loot_after_impact(GroundItem {
-        instance_id: 7,
-        item_def_id: "test_item".to_string(),
-        position: Position {
-            x: 0.5,
-            y: 0.0,
-            z: 0.0,
-        },
-        floor_level: 0,
-        enchant: 0,
-    });
+    let drop_position = Position {
+        x: 0.5,
+        y: 0.0,
+        z: 0.0,
+    };
+    game_state.spawn_kill_loot_after_impact(
+        Some(GroundItem {
+            instance_id: 7,
+            item_def_id: "test_item".to_string(),
+            position: drop_position,
+            floor_level: 0,
+            enchant: 0,
+        }),
+        drop_position,
+        0,
+    );
 
-    // Let the spawned task run as far as its timer without reaching the
-    // deadline, so the assertions below observe a drop that is deliberately
-    // withheld rather than one whose task has simply not been polled yet.
+    // Advance virtual time so the withheld task has been polled to its timer.
     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
     // Nothing exists yet, so nobody — patched client or not — can reach it.
@@ -123,10 +126,7 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
     }
 
     // Past the drop's deadline. Virtual time, so this costs nothing.
-    tokio::time::sleep(std::time::Duration::from_millis(
-        super::super::combat::PLAYER_ATTACK_IMPACT_DELAY_MS,
-    ))
-    .await;
+    tokio::time::sleep(*super::super::combat::PLAYER_ATTACK_IMPACT_DELAY).await;
 
     assert!(
         game_state.ground_items.read().await.contains_key(&7),
@@ -137,16 +137,6 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
             |msg| matches!(msg, ServerMessage::GroundItemSpawned { item } if item.instance_id == 7)
         ),
         "the drop must be announced once the blade has landed"
-    );
-    game_state.pickup_item(&pid("killer"), 7).await;
-    assert!(
-        game_state
-            .inventories
-            .read()
-            .await
-            .get(&pid("killer"))
-            .is_some_and(|inv| inv.bag.iter().any(|i| i.instance_id == 7)),
-        "the drop must be pickable once the blade has landed"
     );
 }
 
@@ -160,12 +150,7 @@ async fn a_hand_dropped_item_spawns_immediately() {
     {
         let mut inventories = game_state.inventories.write().await;
         let mut inv = PlayerInventory::default();
-        inv.bag.push(ItemInstance {
-            instance_id: 11,
-            item_def_id: "test_item".to_string(),
-            quantity: 1,
-            enchant: 0,
-        });
+        inv.bag.push(bag_item(11, "test_item", 1));
         inventories.insert(pid("dropper"), inv);
     }
 

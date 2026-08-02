@@ -769,8 +769,7 @@ pub enum ServerMessage {
     },
     /// A new item was created on the ground. Sent when the item becomes real,
     /// so a client spawns it on arrival: a dying monster's loot is held back
-    /// server-side until the killing blow lands, rather than each client
-    /// deciding for itself when to show it.
+    /// server-side until the killing blow lands.
     GroundItemSpawned {
         item: inventory::GroundItem,
     },

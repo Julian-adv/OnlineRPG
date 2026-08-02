@@ -364,10 +364,8 @@ pub struct SharedState {
     pub merchant_buyback: HashMap<PlayerId, Vec<onlinerpg_shared::messages::BuybackEntry>>,
     /// Known nearby monsters
     pub nearby_monsters: HashMap<String, Monster>,
-    /// Known items lying on the ground, keyed by instance id (from the join
-    /// snapshot plus GroundItemSpawned/Appeared/Removed). Read through
-    /// `visible_ground_item(s)`. The server only announces an item once it
-    /// is real, so everything here is loot the agent may go for.
+    /// Items lying on the ground, keyed by instance id (from the join
+    /// snapshot plus GroundItemSpawned/Appeared/Removed).
     ground_items: HashMap<u64, GroundItem>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
@@ -829,11 +827,11 @@ impl SharedState {
     }
 
     /// One ground item by instance id.
-    pub fn visible_ground_item(&self, instance_id: u64) -> Option<&GroundItem> {
+    pub fn ground_item(&self, instance_id: u64) -> Option<&GroundItem> {
         self.ground_items.get(&instance_id)
     }
 
-    /// The ground items the agent can act on: visible, on its floor, inside
+    /// The ground items the agent can act on: on its floor, inside
     /// the sight radius, closest first. The known-item map reaches out to
     /// the server's event radius, so this is what "nearby" means everywhere
     /// downstream — the world state listing and pickup alike.
@@ -2198,9 +2196,8 @@ pub(crate) mod tests {
         );
     }
 
-    /// The server withholds a kill's drop until the killing blow lands, so
-    /// an announced item is loot the agent may go for right away — no local
-    /// wait that a patched client could skip.
+    /// An announced item is loot the agent may go for right away — the
+    /// server does any withholding.
     #[test]
     fn an_announced_drop_is_actionable_at_once() {
         let (mut s, _rx) = test_state();
@@ -2219,7 +2216,7 @@ pub(crate) mod tests {
             .map(|(_, i)| i.instance_id)
             .collect();
         assert_eq!(ids, vec![1, 2]);
-        assert!(s.visible_ground_item(1).is_some());
+        assert!(s.ground_item(1).is_some());
         assert!(s.format_world_state().contains("goblin_sword"));
     }
 

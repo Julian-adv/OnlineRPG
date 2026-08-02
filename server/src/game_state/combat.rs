@@ -4,6 +4,8 @@ use onlinerpg_shared::inventory::{EquipSlot, GroundItem, PlayerInventory};
 use onlinerpg_shared::xp;
 use rand::Rng;
 use std::f32::consts::TAU;
+use std::sync::LazyLock;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 const WEAPON_DROP_OFFSET_METERS: f32 = 2.0;
@@ -18,33 +20,19 @@ pub(super) const PLAYER_ATTACK_PROVOKE_RANGE_METERS: f32 = 10.0;
 // the target's can both lag the server's view by a round-trip; this absorbs that
 // drift without leaving the reach unbounded.
 const MONSTER_ATTACK_RANGE_TOLERANCE_METERS: f32 = 4.0;
-// How long into the swing the blade lands. Mirrors the clients'
-// PLAYER_ATTACK_IMPACT_DELAY_MS (client/src/lib/data/combatTiming.ts, from
-// data-src/player_anim_timing.csv); every attack plays the same slash1 clip,
-// so one value covers every weapon.
-pub(super) const PLAYER_ATTACK_IMPACT_DELAY_MS: u64 = 540;
-
-impl super::GameState {
-    /// Put a dying monster's loot on the ground once the killing blow lands.
-    ///
-    /// The blade only connects `PLAYER_ATTACK_IMPACT_DELAY_MS` into the swing,
-    /// so spawning at the server's death tick would drop the item before the
-    /// sword reaches the monster. The wait is served here rather than on each
-    /// client because a ground item is pickable the moment it exists: a client
-    /// that skips the animation — or never rendered the monster to animate —
-    /// would otherwise reach the loot first.
-    pub(super) fn spawn_monster_loot_after_impact(&self, ground_item: GroundItem) {
-        let game_state = self.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(
-                PLAYER_ATTACK_IMPACT_DELAY_MS,
-            ))
-            .await;
-            // The server did the waiting, so the client spawns on arrival.
-            game_state.spawn_ground_item(ground_item).await;
-        });
-    }
-}
+// How long into the swing the blade lands, read from the same authored timing
+// data the clients import (data-src/player_anim_timing.csv) so the loot hold
+// can never drift from the animation.
+pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> = LazyLock::new(|| {
+    let timing: serde_json::Value =
+        serde_json::from_str(include_str!("../../../data/player_anim_timing.json"))
+            .expect("player_anim_timing.json parses");
+    Duration::from_millis(
+        timing["player_attack_impact"]["delayMs"]
+            .as_u64()
+            .expect("player_attack_impact.delayMs is a number"),
+    )
+});
 
 fn dropped_weapon_position(monster_position: Position) -> Position {
     let angle = rand::thread_rng().gen_range(0.0..TAU);
@@ -84,6 +72,26 @@ struct PlayerAttackContext {
 }
 
 impl super::GameState {
+    /// Put a kill's loot — the weapon drop and any rare world drops — on the
+    /// ground once the killing blow lands. The wait lives server-side: a
+    /// ground item is pickable the moment it exists, so a client that skips
+    /// the animation must not reach it early.
+    pub(super) fn spawn_kill_loot_after_impact(
+        &self,
+        weapon_drop: Option<GroundItem>,
+        origin: Position,
+        floor_level: i8,
+    ) {
+        let game_state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(*PLAYER_ATTACK_IMPACT_DELAY).await;
+            if let Some(item) = weapon_drop {
+                game_state.spawn_ground_item(item).await;
+            }
+            game_state.spawn_world_drops(origin, floor_level).await;
+        });
+    }
+
     /// Sum of the guard bonuses from every equipped item — the single place
     /// that maps equipped gear to a guard number. Pure over the loaded item
     /// definitions; `effective_guard` adds it to the base attribute.
@@ -343,12 +351,11 @@ impl super::GameState {
                 )
                 .await;
 
-                if let Some(item_def_id) = dropped_weapon_item_def_id {
+                let weapon_drop = if let Some(item_def_id) = dropped_weapon_item_def_id {
                     let instance_id = self.next_instance_id().await;
-                    // Scatter the drop a couple meters off the corpse,
-                    // then clamp it onto walkable floor inside a dungeon
-                    // so it can't land behind a wall (pickup is a pure
-                    // proximity check, so a walled-off item is lost).
+                    // Scatter off the corpse, then clamp onto walkable dungeon
+                    // floor: pickup is a pure proximity check, so an item
+                    // behind a wall would be lost.
                     let drop_position = self
                         .loot_drop_position(
                             monster_position,
@@ -356,22 +363,23 @@ impl super::GameState {
                             dropped_weapon_position(monster_position),
                         )
                         .await;
-                    // Drops inherit the monster's floor: dungeon kills
-                    // stay on their floor, surface kills on floor 0.
-                    // (-1 used to mean "any floor"; that wildcard is
-                    // gone now that negative floors are dungeon depths.)
-                    self.spawn_monster_loot_after_impact(GroundItem {
+                    Some(GroundItem {
                         instance_id,
                         item_def_id,
                         position: drop_position,
                         floor_level: monster_floor_level,
                         enchant: 0,
-                    });
-                }
-
-                // Rare bonus world drops, independent of the weapon roll.
-                self.spawn_world_drops(monster_position, monster_floor_level)
-                    .await;
+                    })
+                } else {
+                    None
+                };
+                // Weapon drop and rare bonus world drops alike wait for the
+                // blow to land.
+                self.spawn_kill_loot_after_impact(
+                    weapon_drop,
+                    monster_position,
+                    monster_floor_level,
+                );
 
                 // Dungeon monsters: free their spawn slot for respawn.
                 self.on_dungeon_monster_dead(&monster_id).await;
