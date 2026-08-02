@@ -25,6 +25,8 @@ import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
+import { campfireManager } from '../managers/campfireManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -571,6 +573,11 @@ export function handleServerMessage(
         ;(data.ground_items as ServerGroundItem[]).forEach((item) => {
           groundItemManager.spawn(item)
         })
+      }
+
+      campfireManager.reset()
+      if (data.campfires) {
+        for (const campfire of data.campfires) campfireManager.spawn(campfire)
       }
       break
 
@@ -1244,5 +1251,67 @@ export function handleServerMessage(
       }
       break
     }
+
+    // Direct to the owner only; the multipliers are server-computed.
+    case 'HungerUpdate': {
+      const prev = get(hungerState)
+      const band = data.state as HungerBand
+      const poisonedUntil =
+        data.poisoned_ms > 0 ? Date.now() + Number(data.poisoned_ms) : null
+      hungerState.set({
+        satiation: data.satiation,
+        band,
+        moveMult: data.move_mult,
+        attackMult: data.attack_mult,
+        carryMult: data.carry_mult,
+        poisonedUntil,
+      })
+      if (prev && prev.band !== band) {
+        addCombatMessage({ text: HUNGER_BAND_MESSAGES[band], sender: 'local' })
+      }
+      const wasPoisoned = prev?.poisonedUntil != null
+      if (!wasPoisoned && poisonedUntil != null) {
+        addCombatMessage({
+          text: 'Your stomach churns — food poisoning! Cooked food next time.',
+          sender: 'local',
+        })
+      } else if (wasPoisoned && poisonedUntil == null) {
+        addCombatMessage({
+          text: 'The sickness passes. You feel yourself again.',
+          sender: 'local',
+        })
+      }
+      break
+    }
+
+    case 'CampfireSpawned':
+    case 'CampfireAppeared':
+      campfireManager.spawn(data.campfire)
+      break
+
+    case 'CampfireRemoved':
+      campfireManager.remove(data.campfire_id)
+      break
+
+    case 'GrillStarted':
+      grilling.set(true)
+      break
+
+    case 'GrillEnded':
+      grilling.set(false)
+      if (data.grilled_item_def_id == null) {
+        addCombatMessage({
+          text: 'Your grilling was interrupted.',
+          sender: 'local',
+        })
+      }
+      break
   }
+}
+
+const HUNGER_BAND_MESSAGES: Record<HungerBand, string> = {
+  WellFed: 'You feel well fed. Your step lightens.',
+  Hungry: 'Your stomach growls. The well-fed vigor fades.',
+  Weak: 'You are weak with hunger. You need to eat.',
+  Stuffed: 'You are stuffed. The comfortable vigor is gone until it settles.',
 }

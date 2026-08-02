@@ -507,7 +507,7 @@ pub async fn handle_connection(
     // no-op for that player id.
     if !shutdown_started.has_changed().unwrap_or(true) {
         if let Some(ref id) = state.player_id {
-            game_state.cancel_fishing_if_active(id).await;
+            game_state.cancel_concentration_if_active(id).await;
             game_state.persist_and_detach_player(id, auth_service).await;
 
             game_state.unregister_connection_channel(id).await;
@@ -969,6 +969,7 @@ async fn handle_client_message(
                     character_xp,
                     selected_character.attributes.clone(),
                     selected_character.gold,
+                    (!state.is_official_npc).then_some(selected_character.satiation),
                 )
                 .await;
 
@@ -1047,6 +1048,13 @@ async fn handle_client_message(
             responses.push(ServerMessage::DungeonDiscoveries {
                 entrance_ids: discovered_dungeons,
             });
+
+            if !state.is_official_npc {
+                responses.push(crate::game_state::hunger::hunger_update_msg(
+                    selected_character.satiation,
+                    0,
+                ));
+            }
 
             if let Some(notice) = game_state.server_notice().await {
                 responses.push(ServerMessage::ServerNotice {

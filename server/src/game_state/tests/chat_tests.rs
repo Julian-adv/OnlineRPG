@@ -364,10 +364,10 @@ async fn block_command_persists_resolves_case_and_unblocks() {
         .await;
     game_state.add_player(make_player("Abuser", 5.0, 0.0)).await;
     game_state
-        .register_player_character(&blocker_id, blocker_char.id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&blocker_id, blocker_char.id, 0, attrs_with_cha(12), 0, None)
         .await;
     game_state
-        .register_player_character(&abuser_id, abuser_char.id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&abuser_id, abuser_char.id, 0, attrs_with_cha(12), 0, None)
         .await;
 
     let mut blocker_rx = game_state.register_direct_channel(&blocker_id).await;

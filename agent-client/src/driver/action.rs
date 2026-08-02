@@ -121,8 +121,8 @@ pub(super) enum AgentAction {
     #[serde(rename = "party_leave", alias = "leave_party")]
     PartyLeave,
     /// Use an item from the bag: gear is equipped (or taken off if already
-    /// worn), consumables are drunk or read. Mirrors the web quickslot.
-    #[serde(rename = "use", alias = "use_item", alias = "equip")]
+    /// worn), consumables are drunk, eaten or read. Mirrors the web quickslot.
+    #[serde(rename = "use", alias = "use_item", alias = "equip", alias = "eat")]
     Use {
         #[serde(
             alias = "item_def_id",

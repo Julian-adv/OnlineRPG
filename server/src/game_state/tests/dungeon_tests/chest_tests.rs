@@ -29,7 +29,7 @@ async fn stage_chest_opener(game_state: &GameState, name: &str, character_id: i6
     player.floor_level = -(deepest as i8);
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0, None)
         .await;
     {
         let mut dungeons = game_state.dungeons.write().await;

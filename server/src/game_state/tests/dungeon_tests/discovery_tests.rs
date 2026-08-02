@@ -20,7 +20,7 @@ async fn stage_wanderer(
     let player_id = pid(name);
     game_state.add_player(make_player(name, x, z)).await;
     game_state
-        .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0, None)
         .await;
     game_state.set_dungeon_discoveries(&player_id, known).await;
     let rx = game_state.register_direct_channel(&player_id).await;
@@ -152,7 +152,7 @@ async fn unseeded_player_still_discovers() {
         .add_player(make_player("Unseeded", entrance.x - 60.0, entrance.z))
         .await;
     game_state
-        .register_player_character(&player_id, character.id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&player_id, character.id, 0, attrs_with_cha(12), 0, None)
         .await;
     let mut rx = game_state.register_direct_channel(&player_id).await;
 

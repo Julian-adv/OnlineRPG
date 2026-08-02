@@ -326,6 +326,11 @@ pub struct SharedState {
     /// Our own gold in the smallest unit (from GoldUpdate). NPC traders'
     /// wallets are real server-side gold (economy phase 3).
     pub self_gold: Option<i64>,
+    /// Our own hunger (satiation, band, poisoned) from `HungerUpdate`;
+    /// stays None for exempt NPCs.
+    pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState, bool)>,
+    /// Burning campfires in our AOI, for the grill-your-catch decision.
+    pub campfires: HashMap<u64, onlinerpg_shared::hunger::Campfire>,
     /// Our own bag (from InventoryState/InventoryUpdated), so a trading
     /// NPC knows what it carries.
     pub self_bag: Vec<onlinerpg_shared::inventory::ItemInstance>,
@@ -433,6 +438,8 @@ impl SharedState {
             self_player_id: None,
             self_player: None,
             self_gold: None,
+            self_hunger: None,
+            campfires: HashMap::new(),
             self_bag: Vec::new(),
             self_equipped: HashMap::new(),
             trade_satiated_until: None,
@@ -1006,6 +1013,13 @@ impl SharedState {
             ServerMessage::InteractionRejected { .. }
             | ServerMessage::PlayerAttackRejected { .. } => EventUrgency::Routine,
 
+            // Campfire churn and the grill-cast start are world-state, not
+            // events; the outcome (`GrillEnded`) rides the Routine catch-all.
+            ServerMessage::CampfireSpawned { .. }
+            | ServerMessage::CampfireAppeared { .. }
+            | ServerMessage::CampfireRemoved { .. }
+            | ServerMessage::GrillStarted => EventUrgency::Noise,
+
             // Auth/character events: routine (handled before game entry)
             _ => EventUrgency::Routine,
         }
@@ -1193,12 +1207,17 @@ impl SharedState {
                 players,
                 monsters,
                 ground_items,
+                campfires,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
                 self.ground_items.clear();
                 for item in ground_items {
                     self.remember_ground_item(item.clone());
+                }
+                self.campfires.clear();
+                for campfire in campfires {
+                    self.campfires.insert(campfire.id, campfire.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -1284,6 +1303,21 @@ impl SharedState {
             }
             ServerMessage::GoldUpdate { gold } => {
                 self.self_gold = Some(*gold);
+            }
+            ServerMessage::HungerUpdate {
+                satiation,
+                state,
+                poisoned_ms,
+                ..
+            } => {
+                self.self_hunger = Some((*satiation, *state, *poisoned_ms > 0));
+            }
+            ServerMessage::CampfireSpawned { ref campfire }
+            | ServerMessage::CampfireAppeared { ref campfire } => {
+                self.campfires.insert(campfire.id, campfire.clone());
+            }
+            ServerMessage::CampfireRemoved { campfire_id } => {
+                self.campfires.remove(campfire_id);
             }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;
@@ -1514,6 +1548,12 @@ impl SharedState {
             ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
             | ServerMessage::GroundItemRemoved { .. } => return urgency,
+            // Campfires likewise live in the world state, and the grill start
+            // is answered by GrillEnded a few seconds later.
+            ServerMessage::CampfireSpawned { .. }
+            | ServerMessage::CampfireAppeared { .. }
+            | ServerMessage::CampfireRemoved { .. }
+            | ServerMessage::GrillStarted => return urgency,
             ServerMessage::GameTimeSync { datetime, is_night } => {
                 let prev_night = self.is_night;
                 let prev_hour = self.game_hour;
@@ -1958,6 +1998,27 @@ impl SharedState {
         }
         if let Some(line) = self.format_dungeon_state() {
             lines.push(line);
+        }
+        if let Some((satiation, state, poisoned)) = self.self_hunger {
+            let mut line = format!("Hunger: {state:?} ({satiation}/1000)");
+            if poisoned {
+                line.push_str(", food poisoned");
+            }
+            lines.push(line);
+        }
+        if let Some(p) = &self.self_player {
+            let nearest_fire = self
+                .campfires
+                .values()
+                .filter(|c| c.floor_level == p.floor_level)
+                .map(|c| c.position.dist_xz_sq(&p.position))
+                .min_by(f32::total_cmp);
+            if let Some(d2) = nearest_fire {
+                lines.push(format!(
+                    "Campfire nearby: {:.1}m away (use a raw fish within 3m to grill it)",
+                    d2.sqrt()
+                ));
+            }
         }
         if let Some(gold) = self.self_gold {
             lines.push(format!(

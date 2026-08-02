@@ -154,7 +154,7 @@ regeneration_amount = max(1, 1 + floor(Level / 5) + con_mod)
 - 캐릭터가 **살아있는 상태**(`health > 0`)여야 한다.
 - 현재 체력이 **최대 체력보다 낮아야**(`health < max_health`) 한다.
 - **비전투 상태:** 마지막 공격 또는 피격으로부터 **10초 이상** 경과해야 한다.
-- '허기'나 '휴식' 등의 추가 조건은 향후 시스템 확장에 따라 추가될 수 있다.
+- **허기:** 쇠약(Weak) 또는 식중독 상태면 회복이 멈춘다 ([HUNGER.md](HUNGER.md)).
 
 - 구현: [server/src/game_state/mod.rs](../server/src/game_state/mod.rs) (메서드: `tick_regeneration`)
 

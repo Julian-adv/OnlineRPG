@@ -1,4 +1,4 @@
-id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier,chestChance,consumable
+id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier,chestChance,consumable,nutrition,grillsInto
 iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,
 worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d6,metal,,
 wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,2500,1,
@@ -34,12 +34,22 @@ scroll_of_party_summon,Scroll of Party Summon,Reading the runes calls your whole
 table,Table,A sturdy wooden table.,20,,false,table_icon.png,objects/table.glb,furniture,,wood,3000,
 leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2,,,,,,2
 fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,fishing_rod.png,weapons/fishing_rod.glb,fishing_rod,,wood,300,,,,,
-raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,false,raw_minnow.png,,fish,1d3,,10,,1,50,3d4,12,,,,true
-raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,false,raw_perch.png,,fish,1d6,,25,,2,30,4d6,22,,,,true
-raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,false,raw_trout.png,,fish,2d4,,60,,3,14,6d8,42,,,,true
-river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,false,river_salmon.png,,fish,2d6,,200,,4,5,8d10,70,10,,,true
-golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,false,golden_sturgeon.png,,fish,4d6,,1500,,5,1,20d10,150,20,,,true
+raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,false,raw_minnow.png,,fish,1d3,,10,,1,50,3d4,12,,,,true,40,grilled_minnow
+raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,false,raw_perch.png,,fish,1d6,,25,,2,30,4d6,22,,,,true,40,grilled_perch
+raw_trout,Raw Trout,A speckled trout. Anglers respect it.,1,,false,raw_trout.png,,fish,2d4,,60,,3,14,6d8,42,,,,true,40,grilled_trout
+river_salmon,River Salmon,A powerful silver salmon. A proud catch.,2,,false,river_salmon.png,,fish,2d6,,200,,4,5,8d10,70,10,,,true,40,grilled_salmon
+golden_sturgeon,Golden Sturgeon,An armoured river giant older than the kingdom. Its bony scutes shine like beaten gold.,4,,false,golden_sturgeon.png,,fish,4d6,,1500,,5,1,20d10,150,20,,,true,40,grilled_sturgeon
 old_boot,Old Boot,A waterlogged leather boot. Someone had a worse day than you.,1,,false,old_boot.png,,junk,,leather,,,0,6,9d3,,
 clump_of_kelp,Clump of Kelp,A slimy tangle of seaweed dredged from the bottom.,0.5,,false,clump_of_kelp.png,,junk,,,,,0,5,6d6,,
 message_in_a_bottle,Message in a Bottle,A sealed bottle with a scrap of paper inside. A collector might pay a little.,0.3,,false,message_in_a_bottle.png,,junk,,,15,,0,2,7d3,,
 sunken_coin_pouch,Sunken Coin Pouch,A drowned purse still holding a few coins.,0.2,,false,sunken_coin_pouch.png,,coin_catch,3d8,,,,0,4,6d3,,,,,true
+apple,Apple,A crisp red apple.,0.3,,true,apple.png,,food,,,3,,,,,,,,,true,60,
+bread,Bread,A fresh-baked loaf.,0.5,,true,bread.png,,food,,,8,,,,,,,,,true,180,
+cheese,Cheese,A wedge of hard cheese. Keeps well on the road.,0.5,,true,cheese.png,,food,,,20,,,,,,,,,true,300,
+jerky,Jerky,Salted dried meat. A full day's meal in one pouch.,0.5,,true,jerky.png,,food,,,40,,,,,,,,,true,540,
+grilled_minnow,Grilled Minnow,A tiny fish crisped whole over a campfire.,0.2,,true,grilled_minnow.png,,food,,,10,,,,,,,,,true,90,
+grilled_perch,Grilled Perch,A striped perch grilled to flaking.,0.5,,true,grilled_perch.png,,food,,,25,,,,,,,,,true,180,
+grilled_trout,Grilled Trout,A speckled trout smoky from the fire.,1,,true,grilled_trout.png,,food,,,60,,,,,,,,,true,300,
+grilled_salmon,Grilled Salmon,A salmon fillet seared over open flame.,2,,true,grilled_salmon.png,,food,,,200,,,,,,,,,true,480,
+grilled_sturgeon,Grilled Sturgeon,A royal cut of sturgeon roasted on embers.,4,,true,grilled_sturgeon.png,,food,,,1500,,,,,,,,,true,900,
+campfire_kit,Campfire Kit,Firewood and tinder bundled for the road. Burns for ten minutes.,2,,true,campfire_kit.png,,campfire_kit,,,30,,,,,,,,,true,,

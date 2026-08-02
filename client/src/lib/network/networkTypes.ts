@@ -265,6 +265,12 @@ export type ServerGroundItem = {
   enchant: number
 }
 
+export type ServerCampfire = {
+  id: number
+  position: Position
+  floor_level: number
+}
+
 export type AuthSuccessPayload = {
   accountName: string
   characters: AccountCharacter[]

@@ -464,6 +464,42 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             })
         }
         ServerMessage::FishingError { message } => Some(format!("[FishingError] {message}")),
+        // Hunger transitions arrive direct (owner-only), a few per game day.
+        ServerMessage::HungerUpdate {
+            satiation,
+            state,
+            poisoned_ms,
+            ..
+        } => {
+            use onlinerpg_shared::hunger::HungerState;
+            let mut line = match state {
+                HungerState::WellFed => format!(
+                    "[Hunger] You feel well fed ({satiation}/1000): +10% move and attack speed."
+                ),
+                HungerState::Hungry => format!(
+                    "[Hunger] You are getting hungry ({satiation}/1000). Eating food (the use action) restores the well-fed bonus."
+                ),
+                HungerState::Weak => format!(
+                    "[Hunger] You are weak from hunger ({satiation}/1000): slower movement and attacks, less carry weight, and no natural healing. Eat something."
+                ),
+                HungerState::Stuffed => format!(
+                    "[Hunger] You are stuffed ({satiation}/1000); the well-fed bonus is gone until it settles."
+                ),
+            };
+            if *poisoned_ms > 0 {
+                line.push_str(&format!(
+                    " Food poisoning for {} more minutes: heavy penalties — cooked food next time.",
+                    poisoned_ms.div_ceil(60_000)
+                ));
+            }
+            Some(line)
+        }
+        ServerMessage::GrillEnded {
+            grilled_item_def_id,
+        } => Some(match grilled_item_def_id {
+            Some(id) => format!("[Grill] Your fish is done: {id} is in your bag."),
+            None => "[Grill] Your grilling was interrupted.".to_string(),
+        }),
         // Skip unknown/unhandled event types
         _ => None,
     }

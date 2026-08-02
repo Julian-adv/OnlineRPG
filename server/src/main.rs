@@ -459,6 +459,30 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Hunger (doc/HUNGER.md): grills every 250ms, campfires every 1s,
+    // decay every 20s; each sub-tick early-outs on an empty map.
+    let game_state_for_hunger = Arc::clone(&game_state);
+    let mut hunger_tick_count = 0u64;
+    background.spawn(run_ticks(
+        "hunger",
+        Duration::from_millis(250),
+        drain_shutdown.clone(),
+        move || {
+            hunger_tick_count = hunger_tick_count.wrapping_add(1);
+            let game_state = Arc::clone(&game_state_for_hunger);
+            let count = hunger_tick_count;
+            async move {
+                game_state.tick_grills().await;
+                if count.is_multiple_of(4) {
+                    game_state.tick_campfires().await;
+                }
+                if count.is_multiple_of(80) {
+                    game_state.tick_hunger_decay().await;
+                }
+            }
+        },
+    ));
+
     let game_state_for_time_sync = Arc::clone(&game_state);
     let auth_service_for_time_sync = Arc::clone(&auth_service);
     let mut tick_count = 0u64;

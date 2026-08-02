@@ -23,6 +23,8 @@ export interface ItemDefinition {
   /** Usable from the bag — the items.csv flag, which the server validates
    * against its `use_effect` dispatch at boot. */
   consumable?: boolean
+  /** Satiation restored when eaten (doc/HUNGER.md). */
+  nutrition?: number
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>

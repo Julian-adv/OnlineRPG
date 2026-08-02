@@ -9,6 +9,7 @@
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
+  import HungerIndicator from './HungerIndicator.svelte'
   import TradeWindow from './TradeWindow.svelte'
   import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
@@ -112,7 +113,10 @@
     {/if}
     <div class="action-cluster">
       {#if selectedCharacter && !$mapEditorMode}
-        <QuickslotBar characterId={selectedCharacter.id} />
+        <div class="quickslot-stack">
+          <HungerIndicator />
+          <QuickslotBar characterId={selectedCharacter.id} />
+        </div>
       {/if}
       <div class="corner-actions">
         {#if canReopenRespawnDialog}
@@ -276,6 +280,16 @@
     display: flex;
     align-items: flex-end;
     gap: 16px;
+    pointer-events: none;
+  }
+
+  /* Hunger badge sits right above the quickslot bar; layout-only wrapper,
+     click-through like the cluster itself. */
+  .quickslot-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
     pointer-events: none;
     /* Rigid: the chat panel (flex-shrink:1) absorbs all width changes, so the
        quickslot bar is never squeezed into extra rows when the viewport narrows. */

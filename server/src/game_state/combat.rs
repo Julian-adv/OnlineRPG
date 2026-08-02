@@ -236,8 +236,8 @@ impl super::GameState {
                 return;
             }
         };
-        // A landed attack (not a rejected one) breaks fishing concentration.
-        self.cancel_fishing_if_active(player_id).await;
+        // A landed attack (not a rejected one) breaks concentration.
+        self.cancel_concentration_if_active(player_id).await;
         debug!("Player {} attacking monster {}", player_name, monster_id);
 
         // Unarmed falls back to D&D 5e improvised 1d2. An enchanted
@@ -717,6 +717,9 @@ impl super::GameState {
     pub async fn tick_regeneration(&self) {
         let mut updates = Vec::new();
 
+        // Weak-from-hunger or food-poisoned players don't regenerate
+        // (doc/HUNGER.md); potions remain the escape hatch.
+        let regen_blocked = self.hunger_regen_blocked().await;
         {
             let players = self.players.read().await;
             let player_chars = self.player_characters.read().await;
@@ -726,6 +729,9 @@ impl super::GameState {
                 // Only regenerate if alive and wounded
                 if player.health > 0 && player.health < player.max_health {
                     if now.saturating_sub(player.last_combat_at) < super::OUT_OF_COMBAT_MS {
+                        continue;
+                    }
+                    if regen_blocked.contains(player_id) {
                         continue;
                     }
 
@@ -795,7 +801,7 @@ impl super::GameState {
     /// forget a side effect.
     pub(super) async fn on_player_died(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
-        self.cancel_fishing_if_active(player_id).await;
+        self.cancel_concentration_if_active(player_id).await;
         self.apply_player_death_penalty(player_id).await;
     }
 

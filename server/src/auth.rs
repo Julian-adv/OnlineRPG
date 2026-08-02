@@ -89,6 +89,7 @@ pub struct CharacterRecord {
     pub gold: i64,
     /// Nonzero unlocks admin for ADMIN_EMAILS-allowlisted accounts (tiers reserved).
     pub admin_role: i64,
+    pub satiation: u32,
 }
 
 pub struct CharacterSaveData {
@@ -103,10 +104,11 @@ pub struct CharacterSaveData {
     pub health: u32,
     pub floor_level: i8,
     pub gold: i64,
+    pub satiation: u32,
 }
 
 /// Column list shared between queries that return full CharacterRecord rows.
-const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role";
+const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation";
 
 fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterRecord> {
     Ok(CharacterRecord {
@@ -155,6 +157,10 @@ fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterR
         },
         gold: row.get::<_, i64>(21).unwrap_or(0),
         admin_role: row.get::<_, i64>(22).unwrap_or(0),
+        satiation: row
+            .get::<_, i64>(23)
+            .unwrap_or(i64::from(onlinerpg_shared::hunger::SATIATION_START))
+            .clamp(0, i64::from(onlinerpg_shared::hunger::SATIATION_MAX)) as u32,
     })
 }
 
@@ -211,7 +217,8 @@ impl AuthService {
     ) -> Result<(), rusqlite::Error> {
         let mut stmt = conn.prepare(
             "UPDATE characters SET last_x = ?1, last_y = ?2, last_z = ?3, last_rotation = ?4, \
-             xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10 WHERE id = ?11",
+             xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10, \
+             satiation = ?11 WHERE id = ?12",
         )?;
         for d in data {
             stmt.execute(params![
@@ -225,6 +232,7 @@ impl AuthService {
                 i64::from(d.health),
                 i64::from(d.floor_level),
                 d.gold,
+                i64::from(d.satiation),
                 d.character_id,
             ])?;
         }
@@ -567,6 +575,13 @@ impl AuthService {
             ("gender", "TEXT NOT NULL DEFAULT 'male'".into()),
             ("gold", "INTEGER NOT NULL DEFAULT 0".into()),
             ("admin_role", "INTEGER NOT NULL DEFAULT 0".into()),
+            (
+                "satiation",
+                format!(
+                    "INTEGER NOT NULL DEFAULT {}",
+                    onlinerpg_shared::hunger::SATIATION_START
+                ),
+            ),
         ];
 
         for (column_name, column_def) in &expected_columns {
@@ -961,6 +976,7 @@ impl AuthService {
             floor_level: 0,
             gold: 0,
             admin_role: 0,
+            satiation: onlinerpg_shared::hunger::SATIATION_START,
         })
     }
 

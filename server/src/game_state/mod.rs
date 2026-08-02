@@ -99,6 +99,7 @@ mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
+pub(crate) mod hunger;
 mod inventory;
 mod monster;
 mod party;
@@ -276,12 +277,26 @@ pub struct GameState {
     #[allow(clippy::type_complexity)]
     dungeon_discovery_cells:
         Arc<HashMap<SpatialCell, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>>>,
+    /// player_id → satiation + food poisoning (doc/HUNGER.md). Owner-private
+    /// like gold; official NPCs have no entry (the exemption).
+    hunger: Arc<RwLock<HashMap<PlayerId, hunger::HungerData>>>,
+    /// Lit campfires keyed by id, expired by `tick_campfires`.
+    campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
+    /// One grill cast per player, resolved by `tick_grills`.
+    grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
 }
 
 impl GameState {
     /// The `OUT_OF_COMBAT_MS` clock shared by regen, /escape, and summons.
     pub(crate) fn in_combat(player: &Player) -> bool {
         Self::now_ms().saturating_sub(player.last_combat_at) < OUT_OF_COMBAT_MS
+    }
+
+    /// Movement, a landed attack, death and disconnect all break cast-type
+    /// concentration (fishing, grilling) at the same chokepoints.
+    pub(crate) async fn cancel_concentration_if_active(&self, player_id: &PlayerId) {
+        self.cancel_fishing_if_active(player_id).await;
+        self.cancel_grill_if_active(player_id).await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -353,6 +368,9 @@ impl GameState {
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
             dungeon_discovery_cells,
+            hunger: Arc::new(RwLock::new(HashMap::new())),
+            campfires: Arc::new(RwLock::new(HashMap::new())),
+            grill_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

@@ -69,6 +69,12 @@ pub struct ItemDefinition {
     /// boot if it ever disagrees with the `use_effect` dispatch.
     #[serde(default)]
     pub consumable: bool,
+    /// Satiation restored when eaten (doc/HUNGER.md). Present on food and fish.
+    #[serde(default)]
+    pub nutrition: Option<u32>,
+    /// Fish only — the item def this grills into at a campfire.
+    #[serde(rename = "grillsInto", default)]
+    pub grills_into: Option<String>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -76,6 +82,15 @@ pub struct ItemDefinition {
 pub enum UseEffect {
     /// Restore HP by rolling the given dice notation.
     Heal(String),
+    /// Restore satiation (doc/HUNGER.md). Fish also heal by their dice, and
+    /// raw fish risk food poisoning — unless grilled first at a campfire.
+    Eat {
+        nutrition: u32,
+        heal_dice: Option<String>,
+        raw_fish: bool,
+    },
+    /// Light a campfire where the user stands.
+    PlaceCampfire,
     /// Teleport the user back to the town spawn point.
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
@@ -138,8 +153,20 @@ impl ItemDefinition {
     pub fn use_effect(&self) -> Option<UseEffect> {
         match self.category.as_deref()? {
             "healing_potion" => self.dice.clone().map(UseEffect::Heal),
-            // Eating a fish heals by its dice — same plumbing as potions.
-            "fish" => self.dice.clone().map(UseEffect::Heal),
+            // Eating a fish heals by its dice and feeds a little — raw.
+            "fish" => Some(UseEffect::Eat {
+                nutrition: self
+                    .nutrition
+                    .unwrap_or(onlinerpg_shared::hunger::RAW_FISH_NUTRITION),
+                heal_dice: self.dice.clone(),
+                raw_fish: true,
+            }),
+            "food" => self.nutrition.map(|nutrition| UseEffect::Eat {
+                nutrition,
+                heal_dice: None,
+                raw_fish: false,
+            }),
+            "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "party_summon_scroll" => Some(UseEffect::SummonParty),

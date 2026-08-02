@@ -581,6 +581,8 @@ pub enum ServerMessage {
         monsters: HashMap<String, Monster>,
         #[serde(default)]
         ground_items: Vec<inventory::GroundItem>,
+        #[serde(default)]
+        campfires: Vec<crate::hunger::Campfire>,
     },
     GameTimeSync {
         datetime: GameDateTime,
@@ -895,6 +897,39 @@ pub enum ServerMessage {
         rotation: f32,
         #[serde(default)]
         floor_level: i8,
+    },
+    /// Direct to the owner only (exact satiation is private, doc/HUNGER.md).
+    /// Sent on band transitions, eating, poisoning and poison expiry — not on
+    /// every decay tick. Carries the effective multipliers so the client
+    /// never re-derives the bands.
+    HungerUpdate {
+        satiation: u32,
+        state: crate::hunger::HungerState,
+        move_mult: f32,
+        attack_mult: f32,
+        carry_mult: f32,
+        /// Remaining food-poisoning duration; 0 when not poisoned.
+        poisoned_ms: u64,
+    },
+    /// A campfire was just lit nearby (play the ignition, not just appear).
+    CampfireSpawned {
+        campfire: crate::hunger::Campfire,
+    },
+    /// An already-burning campfire entered the receiver's AOI.
+    CampfireAppeared {
+        campfire: crate::hunger::Campfire,
+    },
+    /// Burned out or left the receiver's AOI.
+    CampfireRemoved {
+        campfire_id: u64,
+    },
+    /// Direct to the griller: the 3s grill cast began.
+    GrillStarted,
+    /// Direct to the griller. `grilled_item_def_id` is None when the cast was
+    /// cancelled (movement, combat, the fire burning out). The grilled item
+    /// itself arrives through the normal `InventoryUpdated`.
+    GrillEnded {
+        grilled_item_def_id: Option<String>,
     },
 }
 

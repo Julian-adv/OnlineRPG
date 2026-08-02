@@ -31,7 +31,7 @@ async fn setup_haggle(game_state: &GameState, cha: u8, gold: i64) -> (DirectRx, 
         .await;
     game_state.add_player(make_player("buyer", 1.0, 0.0)).await;
     game_state
-        .register_player_character(&pid("buyer"), 1, 0, attrs_with_cha(cha), gold)
+        .register_player_character(&pid("buyer"), 1, 0, attrs_with_cha(cha), gold, None)
         .await;
     let buyer_rx = game_state.register_direct_channel(&pid("buyer")).await;
     let npc_rx = game_state.register_direct_channel(&pid("npc_rica")).await;
