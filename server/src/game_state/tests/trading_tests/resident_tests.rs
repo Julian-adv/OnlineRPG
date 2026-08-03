@@ -16,10 +16,10 @@ async fn setup_resident_trade(
         .await;
     game_state.add_player(make_player("seller", 1.0, 0.0)).await;
     game_state
-        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 0)
+        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 0, None)
         .await;
     game_state
-        .register_player_character(&pid("npc_karl"), 2, 0, attrs_with_cha(10), npc_gold)
+        .register_player_character(&pid("npc_karl"), 2, 0, attrs_with_cha(10), npc_gold, None)
         .await;
     let mut inventories = game_state.inventories.write().await;
     inventories.insert(

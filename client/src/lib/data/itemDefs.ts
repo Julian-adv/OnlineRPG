@@ -69,6 +69,8 @@ export interface ItemDefinition {
   defenseSkill?: SkillId
   /** Skill trained by the server-resolved action performed with this item. */
   useSkill?: SkillId
+  /** Satiation restored when eaten (doc/HUNGER.md). */
+  nutrition?: number
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>

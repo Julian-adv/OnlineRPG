@@ -89,6 +89,7 @@ pub struct CharacterRecord {
     pub gold: i64,
     /// Nonzero unlocks admin for ADMIN_EMAILS-allowlisted accounts (tiers reserved).
     pub admin_role: i64,
+    pub satiation: u32,
 }
 
 pub struct CharacterSaveData {
@@ -103,10 +104,11 @@ pub struct CharacterSaveData {
     pub health: u32,
     pub floor_level: i8,
     pub gold: i64,
+    pub satiation: u32,
 }
 
 /// Column list shared between queries that return full CharacterRecord rows.
-const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role";
+const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation";
 
 fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterRecord> {
     Ok(CharacterRecord {
@@ -155,6 +157,10 @@ fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterR
         },
         gold: row.get::<_, i64>(21).unwrap_or(0),
         admin_role: row.get::<_, i64>(22).unwrap_or(0),
+        satiation: row
+            .get::<_, i64>(23)
+            .unwrap_or(i64::from(onlinerpg_shared::hunger::SATIATION_START))
+            .clamp(0, i64::from(onlinerpg_shared::hunger::SATIATION_MAX)) as u32,
     })
 }
 
@@ -211,7 +217,8 @@ impl AuthService {
     ) -> Result<(), rusqlite::Error> {
         let mut stmt = conn.prepare(
             "UPDATE characters SET last_x = ?1, last_y = ?2, last_z = ?3, last_rotation = ?4, \
-             xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10 WHERE id = ?11",
+             xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10, \
+             satiation = ?11 WHERE id = ?12",
         )?;
         for d in data {
             stmt.execute(params![
@@ -225,6 +232,7 @@ impl AuthService {
                 i64::from(d.health),
                 i64::from(d.floor_level),
                 d.gold,
+                i64::from(d.satiation),
                 d.character_id,
             ])?;
         }
@@ -336,6 +344,7 @@ impl AuthService {
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
         Self::ensure_dungeon_chest_schema(&conn)?;
+        Self::ensure_dungeon_discovery_schema(&conn)?;
 
         Ok(Self { pool })
     }
@@ -491,6 +500,22 @@ impl AuthService {
         Ok(())
     }
 
+    /// Dungeon entrances each character has discovered (world-map markers).
+    /// Row presence is the whole fact — losing one only means rediscovering
+    /// by walking near the entrance again.
+    fn ensure_dungeon_discovery_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_dungeon_discoveries (
+                character_id INTEGER NOT NULL,
+                entrance_id TEXT NOT NULL,
+                PRIMARY KEY (character_id, entrance_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
     fn ensure_character_skills_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS character_skills (
@@ -550,6 +575,13 @@ impl AuthService {
             ("gender", "TEXT NOT NULL DEFAULT 'male'".into()),
             ("gold", "INTEGER NOT NULL DEFAULT 0".into()),
             ("admin_role", "INTEGER NOT NULL DEFAULT 0".into()),
+            (
+                "satiation",
+                format!(
+                    "INTEGER NOT NULL DEFAULT {}",
+                    onlinerpg_shared::hunger::SATIATION_START
+                ),
+            ),
         ];
 
         for (column_name, column_def) in &expected_columns {
@@ -731,13 +763,10 @@ impl AuthService {
         Ok(())
     }
 
-    /// Every dungeon chest this character has opened, as (entrance id, world
-    /// clock seconds). Read once at login into `GameState`.
-    pub fn load_dungeon_chest_opens(
-        &self,
+    fn dungeon_chest_opens_on(
+        conn: &Connection,
         character_id: i64,
-    ) -> Result<Vec<(String, i64)>, AuthError> {
-        let conn = self.open_connection()?;
+    ) -> Result<Vec<(String, i64)>, rusqlite::Error> {
         let mut stmt = conn.prepare(
             "SELECT entrance_id, opened_game_seconds FROM character_dungeon_chests \
              WHERE character_id = ?1",
@@ -746,6 +775,34 @@ impl AuthService {
             .query_map(params![character_id], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(opens)
+    }
+
+    fn dungeon_discoveries_on(
+        conn: &Connection,
+        character_id: i64,
+    ) -> Result<Vec<String>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT entrance_id FROM character_dungeon_discoveries WHERE character_id = ?1",
+        )?;
+        let ids = stmt
+            .query_map(params![character_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
+    }
+
+    /// Chest opens and discovered entrances together, as ((entrance id,
+    /// world clock seconds) pairs, entrance ids), sharing one connection.
+    /// Read once at login into `GameState`.
+    #[allow(clippy::type_complexity)]
+    pub fn load_dungeon_history(
+        &self,
+        character_id: i64,
+    ) -> Result<(Vec<(String, i64)>, Vec<String>), AuthError> {
+        let conn = self.open_connection()?;
+        Ok((
+            Self::dungeon_chest_opens_on(&conn, character_id)?,
+            Self::dungeon_discoveries_on(&conn, character_id)?,
+        ))
     }
 
     pub fn record_dungeon_chest_open(
@@ -763,6 +820,23 @@ impl AuthService {
              DO UPDATE SET opened_game_seconds = excluded.opened_game_seconds",
             params![character_id, entrance_id, opened_game_seconds],
         )?;
+        Ok(())
+    }
+
+    fn insert_dungeon_discoveries(
+        conn: &Connection,
+        rows: &[(i64, String)],
+    ) -> Result<(), rusqlite::Error> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut insert = conn.prepare(
+            "INSERT OR IGNORE INTO character_dungeon_discoveries \
+                 (character_id, entrance_id) VALUES (?1, ?2)",
+        )?;
+        for (character_id, entrance_id) in rows {
+            insert.execute(params![character_id, entrance_id])?;
+        }
         Ok(())
     }
 
@@ -902,6 +976,7 @@ impl AuthService {
             floor_level: 0,
             gold: 0,
             admin_role: 0,
+            satiation: onlinerpg_shared::hunger::SATIATION_START,
         })
     }
 
@@ -965,11 +1040,13 @@ impl AuthService {
         characters: &[CharacterSaveData],
         inventories: &[(i64, Vec<ItemRow>)],
         skills: &[(i64, Vec<SkillRow>)],
+        discoveries: &[(i64, String)],
         world_time: Option<&GameDateTime>,
     ) -> Result<(), AuthError> {
         if characters.is_empty()
             && inventories.is_empty()
             && skills.is_empty()
+            && discoveries.is_empty()
             && world_time.is_none()
         {
             return Ok(());
@@ -984,6 +1061,7 @@ impl AuthService {
                 .map(|(id, items)| (*id, items.as_slice())),
         )?;
         Self::upsert_skills(&tx, skills.iter().map(|(id, rows)| (*id, rows.as_slice())))?;
+        Self::insert_dungeon_discoveries(&tx, discoveries)?;
         if let Some(datetime) = world_time {
             Self::write_world_time(&tx, datetime)?;
         }
@@ -1168,6 +1246,7 @@ mod tests {
                     xp: 999,
                 }],
             )],
+            &[],
             None,
         )
         .unwrap();
@@ -1190,6 +1269,7 @@ mod tests {
                     },
                 ],
             )],
+            &[],
             None,
         )
         .unwrap();
@@ -1218,6 +1298,7 @@ mod tests {
                     xp: 1400,
                 }],
             )],
+            &[],
             None,
         )
         .unwrap();
@@ -1234,6 +1315,32 @@ mod tests {
                 .xp,
             150
         );
+    }
+
+    /// EnterGame refuses the session when this load errs, so a missing table
+    /// must surface as an error — never as a valid empty history.
+    #[test]
+    fn dungeon_history_load_fails_when_storage_is_unavailable() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_dungeon_history_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let (opens, discoveries) = auth.load_dungeon_history(1).unwrap();
+        assert!(opens.is_empty());
+        assert!(discoveries.is_empty());
+
+        for table in ["character_dungeon_chests", "character_dungeon_discoveries"] {
+            let db_path = std::env::temp_dir().join(format!(
+                "onlinerpg_auth_dungeon_history_{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            let auth = AuthService::new(db_path.clone()).unwrap();
+            let conn = Connection::open(db_path).unwrap();
+            conn.execute(&format!("DROP TABLE {table}"), []).unwrap();
+
+            assert!(auth.load_dungeon_history(1).is_err());
+        }
     }
 
     #[test]

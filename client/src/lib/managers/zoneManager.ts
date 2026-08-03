@@ -1,4 +1,5 @@
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
+import { regionKey } from '../terrain/terrain-constants'
 
 export interface NoSpawnZone {
   minX: number
@@ -22,10 +23,6 @@ export interface MonsterSpawnZone {
 export interface ZoneData {
   monsterSpawns?: MonsterSpawnZone[]
   noSpawnZones?: NoSpawnZone[]
-}
-
-function regionKey(rx: number, rz: number): string {
-  return `${rx},${rz}`
 }
 
 export class ZoneManager {

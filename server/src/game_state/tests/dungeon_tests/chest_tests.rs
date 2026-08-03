@@ -29,7 +29,7 @@ async fn stage_chest_opener(game_state: &GameState, name: &str, character_id: i6
     player.floor_level = -(deepest as i8);
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0, None)
         .await;
     {
         let mut dungeons = game_state.dungeons.write().await;
@@ -89,7 +89,10 @@ async fn dungeon_chest_stays_empty_across_a_relog() {
     game_state.unregister_player_character(&player_id).await;
     game_state.remove_player(&player_id).await;
 
-    let opens = auth.load_dungeon_chest_opens(character.id).unwrap();
+    let opens = auth
+        .load_dungeon_history(character.id)
+        .map(|h| h.0)
+        .unwrap();
     assert_eq!(opens.len(), 1, "the open should have been persisted");
     let rejoined_id = stage_chest_opener(&game_state, "Delver Rejoined", character.id).await;
     game_state.set_chest_opens(character.id, opens).await;
@@ -186,7 +189,8 @@ async fn dungeon_chest_stays_shut_until_the_guardian_dies() {
     assert_chest_rejected(&mut direct_rx, "The guardian still lives");
     assert_eq!(game_state.get_player_gold(&player_id).await, 0);
     assert!(
-        auth.load_dungeon_chest_opens(character.id)
+        auth.load_dungeon_history(character.id)
+            .map(|h| h.0)
             .unwrap()
             .is_empty(),
         "a refused open must not consume the night's chest"
@@ -258,7 +262,8 @@ async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry(
     );
     assert_eq!(
         repaired_auth
-            .load_dungeon_chest_opens(character.id)
+            .load_dungeon_history(character.id)
+            .map(|h| h.0)
             .unwrap()
             .len(),
         1,
@@ -328,7 +333,10 @@ async fn session_replacement_keeps_the_live_session_chest_claim() {
 
     // Replacement session logs in and loads the claim from the DB...
     let second_id = stage_chest_opener(&game_state, "Doubler Again", character.id).await;
-    let opens = auth.load_dungeon_chest_opens(character.id).unwrap();
+    let opens = auth
+        .load_dungeon_history(character.id)
+        .map(|h| h.0)
+        .unwrap();
     game_state.set_chest_opens(character.id, opens).await;
     // ...then the kicked connection finally tears itself down.
     game_state.unregister_player_character(&first_id).await;

@@ -188,7 +188,7 @@ impl ChaseTarget<'_> {
         match self {
             Self::Monster { id, .. } => s.nearby_monsters.get(*id).map(|m| m.position),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.position),
-            Self::GroundItem(id) => s.visible_ground_item(*id).map(|i| i.position),
+            Self::GroundItem(id) => s.ground_item(*id).map(|i| i.position),
             Self::Point { pos, .. } => Some(*pos),
         }
     }
@@ -199,7 +199,7 @@ impl ChaseTarget<'_> {
         let level = match self {
             Self::Monster { id, .. } => s.nearby_monsters.get(*id).map(|m| m.floor_level),
             Self::Player(id) => s.nearby_players.get(*id).map(|p| p.floor_level),
-            Self::GroundItem(id) => s.visible_ground_item(*id).map(|i| i.floor_level),
+            Self::GroundItem(id) => s.ground_item(*id).map(|i| i.floor_level),
             Self::Point { floor_level, .. } => Some(*floor_level),
         };
         onlinerpg_shared::dungeon::passability_floor_for_level(level.unwrap_or(0))

@@ -10,10 +10,10 @@ use std::collections::{HashMap, HashSet};
 
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, floor_world_y, generate_dungeon_for, interior_doors,
-    monster_level_for_depth, FloorLayout, PropKind, ENTRANCE_DOOR_ID, FLOOR_Y_TOLERANCE,
+    monster_level_for_depth, FloorLayout, PropKind, ENTRANCE_DOOR_ID, FLOOR_Y_TOLERANCE, GRID,
 };
 use onlinerpg_shared::inventory::GroundItem;
-use onlinerpg_shared::{Position, ServerMessage};
+use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
 use rand::Rng;
 use tracing::{info, warn};
 
@@ -35,6 +35,45 @@ const PROP_INTERACT_RANGE: f32 = 2.5;
 const DOOR_INTERACT_RANGE: f32 = 2.5;
 /// Chance that a freshly-broken barrel/crate spills a loose coin pile.
 const BROKEN_PROP_COIN_DROP_CHANCE: f64 = 0.20;
+
+/// A world-X range split at the wrap seam into canonical segments, so cell
+/// enumeration over it matches the cells wrapped player positions produce.
+fn split_wrapped_x(min_x: f32, max_x: f32) -> Vec<(f32, f32)> {
+    use onlinerpg_shared::{WORLD_MAX_X, WORLD_MIN_X};
+    if min_x < WORLD_MIN_X {
+        vec![(WORLD_MIN_X, max_x), (wrap_world_x(min_x), WORLD_MAX_X)]
+    } else if max_x >= WORLD_MAX_X {
+        vec![(min_x, WORLD_MAX_X), (WORLD_MIN_X, wrap_world_x(max_x))]
+    } else {
+        vec![(min_x, max_x)]
+    }
+}
+
+/// Player-spatial-hash cell → entrances whose discovery region — the sight
+/// circle around the entrance plus its grid footprint — overlaps it.
+/// Coverage is exact by construction (integer cell enumeration over each
+/// region's bounding box); a stray extra cell only costs a redundant precise
+/// check, and `discovery_cell_prefilter_covers_the_discovery_region` guards
+/// the whole property against regressions.
+#[allow(clippy::type_complexity)]
+pub(super) fn discovery_cells(
+    dungeon_defs: &crate::dungeon_defs::DungeonDefs,
+) -> HashMap<super::SpatialCell, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>> {
+    let r = super::EVENT_DELIVERY_RADIUS;
+    let mut cells: HashMap<_, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>> =
+        HashMap::new();
+    for e in dungeon_defs.all() {
+        let (ox, oz) = dungeon_origin(e.x, e.z);
+        let min_z = (e.z - r).min(oz);
+        let max_z = (e.z + r).max(oz + GRID as f32);
+        for (min_x, max_x) in split_wrapped_x((e.x - r).min(ox), (e.x + r).max(ox + GRID as f32)) {
+            for cell in super::SpatialCell::covering(min_x, max_x, min_z, max_z) {
+                cells.entry(cell).or_default().push(e);
+            }
+        }
+    }
+    cells
+}
 
 pub(super) struct DungeonRuntime {
     pub layouts: Vec<FloorLayout>,
@@ -285,6 +324,77 @@ impl GameState {
         for (entrance_id, opened_game_seconds) in opens {
             chest_opens.insert((character_id, entrance_id), opened_game_seconds);
         }
+    }
+
+    /// Seed a player's discovered-entrance set at login so known entrances
+    /// are not re-announced. A load failure refuses game entry, so this
+    /// always receives the character's full persisted history.
+    pub async fn set_dungeon_discoveries(&self, player_id: &PlayerId, ids: Vec<String>) {
+        let mut discoveries = self.dungeon_discoveries.write().await;
+        discoveries.insert(*player_id, ids.into_iter().collect());
+    }
+
+    pub async fn remove_dungeon_discoveries(&self, player_id: &PlayerId) {
+        let mut discoveries = self.dungeon_discoveries.write().await;
+        discoveries.remove(player_id);
+    }
+
+    /// Record the first time a player comes within event-delivery range of a
+    /// dungeon entrance (or stands on its footprint, which rehydrated logins
+    /// deep inside a dungeon may reach first) and push the updated snapshot
+    /// to them. Runs on every position change: the static cell index rejects
+    /// moves nowhere near an entrance without touching a lock, and the
+    /// near-entrance case tests only that cell's entrances under a read
+    /// lock, geometry before id hashing.
+    pub(super) async fn check_dungeon_discovery(&self, player_id: &PlayerId, position: &Position) {
+        let Some(candidates) = self
+            .dungeon_discovery_cells
+            .get(&super::SpatialCell::from_position(position))
+        else {
+            return;
+        };
+        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
+        let entrance = {
+            let discoveries = self.dungeon_discoveries.read().await;
+            let known = discoveries.get(player_id);
+            let Some(entrance) = candidates.iter().find(|e| {
+                (position.dist_xz_sq(&e.position()) <= radius_sq
+                    || e.footprint_contains(position.x, position.z))
+                    && !known.is_some_and(|k| k.contains(&e.id))
+            }) else {
+                return;
+            };
+            *entrance
+        };
+        let ids = {
+            let mut discoveries = self.dungeon_discoveries.write().await;
+            let known = discoveries.entry(*player_id).or_default();
+            // Re-checked under the write lock: a concurrent update may have
+            // recorded the same entrance between the two locks.
+            if !known.insert(entrance.id.clone()) {
+                return;
+            }
+            known.iter().cloned().collect::<Vec<String>>()
+        };
+        if let Some(character_id) = self.character_id_of(player_id).await {
+            let mut pending = self.pending_discovery_saves.write().await;
+            pending.push((character_id, entrance.id.clone()));
+        }
+        self.send_direct_message(
+            player_id,
+            ServerMessage::DungeonDiscoveries { entrance_ids: ids },
+        )
+        .await;
+    }
+
+    /// Drain the queued discovery rows for the next `save_batch`.
+    pub(super) async fn take_pending_discovery_saves(&self) -> Vec<(i64, String)> {
+        std::mem::take(&mut *self.pending_discovery_saves.write().await)
+    }
+
+    /// Re-queue rows whose batch failed, like the other dirty-set restores.
+    pub(super) async fn restore_pending_discovery_saves(&self, rows: Vec<(i64, String)>) {
+        self.pending_discovery_saves.write().await.extend(rows);
     }
 
     /// Claim this character's chest open for the current night, returning
@@ -581,16 +691,13 @@ impl GameState {
 
     async fn spawn_dungeon_coin_pile(&self, position: Position, floor_level: i8) {
         let instance_id = self.next_instance_id().await;
-        self.spawn_ground_item(
-            GroundItem {
-                instance_id,
-                item_def_id: super::COIN_PILE_ITEM_ID.to_string(),
-                position,
-                floor_level,
-                enchant: 0,
-            },
-            None,
-        )
+        self.spawn_ground_item(GroundItem {
+            instance_id,
+            item_def_id: super::COIN_PILE_ITEM_ID.to_string(),
+            position,
+            floor_level,
+            enchant: 0,
+        })
         .await;
     }
 

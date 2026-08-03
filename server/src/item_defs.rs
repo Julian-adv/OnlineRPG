@@ -97,6 +97,12 @@ pub struct ItemDefinition {
     /// bandaging trains Healing; drinking a potion does not.
     #[serde(rename = "useSkill", default)]
     pub use_skill: Option<SkillId>,
+    /// Satiation restored when eaten (doc/HUNGER.md). Present on food and fish.
+    #[serde(default)]
+    pub nutrition: Option<u32>,
+    /// Fish only — the item def this grills into at a campfire.
+    #[serde(rename = "grillsInto", default)]
+    pub grills_into: Option<String>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -107,6 +113,15 @@ pub enum UseEffect {
         dice: String,
         skill: Option<SkillId>,
     },
+    /// Restore satiation (doc/HUNGER.md). Fish also heal by their dice, and
+    /// raw fish risk food poisoning — unless grilled first at a campfire.
+    Eat {
+        nutrition: u32,
+        heal_dice: Option<String>,
+        raw_fish: bool,
+    },
+    /// Light a campfire near the user.
+    PlaceCampfire,
     /// Teleport the user back to the town spawn point.
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
@@ -182,11 +197,20 @@ impl ItemDefinition {
                 dice,
                 skill: self.use_skill,
             }),
-            // Eating a fish heals by its dice — same plumbing as potions.
-            "fish" => self
-                .dice
-                .clone()
-                .map(|dice| UseEffect::Heal { dice, skill: None }),
+            // Eating a fish heals by its dice and feeds a little — raw.
+            "fish" => Some(UseEffect::Eat {
+                nutrition: self
+                    .nutrition
+                    .unwrap_or(onlinerpg_shared::hunger::RAW_FISH_NUTRITION),
+                heal_dice: self.dice.clone(),
+                raw_fish: true,
+            }),
+            "food" => self.nutrition.map(|nutrition| UseEffect::Eat {
+                nutrition,
+                heal_dice: None,
+                raw_fish: false,
+            }),
+            "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "party_summon_scroll" => Some(UseEffect::SummonParty),
@@ -1220,6 +1244,11 @@ mod tests {
         }
         let defs = ItemDefs::load();
         let table = defs.catch_table();
+        let sell_rate = crate::merchant_defs::merchant_defs()
+            .get_by_npc_name("Rica")
+            .expect("Rica has a merchant definition")
+            .sell_rate_percent as f64
+            / 100.0;
         let ev_at = |level: u32| -> f64 {
             let weights = crate::game_state::fishing::effective_weights(table, level);
             let total: f64 = weights.iter().map(|w| *w as f64).sum();
@@ -1232,8 +1261,8 @@ mod tests {
                         // Coins arrive at face value.
                         def.dice.as_deref().map_or(0.0, dice_avg)
                     } else {
-                        // Items sell at the merchant rate (Rica: 40%).
-                        def.base_price.unwrap_or(0) as f64 * 0.4
+                        // Items sell at Rica's merchant rate.
+                        def.base_price.unwrap_or(0) as f64 * sell_rate
                     };
                     *weight as f64 * value
                 })

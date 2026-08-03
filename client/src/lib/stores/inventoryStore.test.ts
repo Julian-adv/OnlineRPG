@@ -2,6 +2,7 @@ import { get } from 'svelte/store'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   equipmentBurden,
+  isTorchItemDefId,
   resetInventoryStore,
   setEquipmentBurden,
 } from './inventoryStore'
@@ -34,5 +35,18 @@ describe('equipment burden state', () => {
     })
     resetInventoryStore()
     expect(get(equipmentBurden)).toBeNull()
+  })
+})
+
+describe('isTorchItemDefId', () => {
+  it('recognizes every carried torch variant', () => {
+    expect(isTorchItemDefId('torch')).toBe(true)
+    expect(isTorchItemDefId('worn_torch')).toBe(true)
+  })
+
+  it('rejects missing and unrelated item definitions', () => {
+    expect(isTorchItemDefId(undefined)).toBe(false)
+    expect(isTorchItemDefId(null)).toBe(false)
+    expect(isTorchItemDefId('dagger')).toBe(false)
   })
 })

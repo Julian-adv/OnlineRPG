@@ -397,6 +397,19 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Push party positions to members whose party relocated since the last
+    // tick; 3s matches the freshness of the world map's former poll.
+    let game_state_for_party_positions = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "party positions",
+        Duration::from_secs(3),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_party_positions);
+            async move { game_state.tick_party_positions().await }
+        },
+    ));
+
     // Every 10s, top up each player's ambient monsters toward their caps.
     let game_state_for_spawns = Arc::clone(&game_state);
     background.spawn(run_ticks(
@@ -460,6 +473,30 @@ async fn main() -> ExitCode {
         move || {
             let game_state = Arc::clone(&game_state_for_fishing);
             async move { game_state.tick_fishing().await }
+        },
+    ));
+
+    // Hunger (doc/HUNGER.md): grills every 250ms, campfires every 1s,
+    // decay every 20s; each sub-tick early-outs on an empty map.
+    let game_state_for_hunger = Arc::clone(&game_state);
+    let mut hunger_tick_count = 0u64;
+    background.spawn(run_ticks(
+        "hunger",
+        Duration::from_millis(250),
+        drain_shutdown.clone(),
+        move || {
+            hunger_tick_count = hunger_tick_count.wrapping_add(1);
+            let game_state = Arc::clone(&game_state_for_hunger);
+            let count = hunger_tick_count;
+            async move {
+                game_state.tick_grills().await;
+                if count.is_multiple_of(4) {
+                    game_state.tick_campfires().await;
+                }
+                if count.is_multiple_of(80) {
+                    game_state.tick_hunger_decay().await;
+                }
+            }
         },
     ));
 

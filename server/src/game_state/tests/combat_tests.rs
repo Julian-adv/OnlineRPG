@@ -374,6 +374,63 @@ async fn non_finite_spawn_request_is_rejected() {
     }
 }
 
+#[tokio::test]
+async fn ambient_spawn_requires_unconsumed_server_allowance() {
+    let game_state = make_test_game_state("ambient_spawn_allowance");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 10.0, 20.0))
+        .await;
+    let mut player_rx = game_state.register_direct_channel(&player_id).await;
+
+    assert!(
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "an unsolicited ambient spawn must be rejected"
+    );
+
+    game_state.tick_monster_spawns().await;
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    assert!(game_state.take_spawn_allowance(&player_id, "goblin").await);
+    assert!(
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "one allowance must authorize at most one spawn"
+    );
+}
+
+#[tokio::test]
+async fn ambient_spawn_allowance_is_bounded_and_expires() {
+    let game_state = make_test_game_state("ambient_spawn_allowance_expiry");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 10.0, 20.0))
+        .await;
+    let mut player_rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state.tick_monster_spawns().await;
+    game_state.tick_monster_spawns().await;
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+
+    game_state
+        .ambient_spawn_allowances
+        .write()
+        .await
+        .insert((player_id, "goblin".to_string()), GameState::now_ms());
+    assert!(
+        !game_state.take_spawn_allowance(&player_id, "goblin").await,
+        "an expired allowance must not authorize a spawn"
+    );
+
+    game_state.tick_monster_spawns().await;
+    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    game_state.remove_player(&player_id).await;
+    assert!(game_state
+        .ambient_spawn_allowances
+        .read()
+        .await
+        .keys()
+        .all(|(owner_id, _)| owner_id != &player_id));
+}
+
 /// A client-owned monster is still untrusted movement. Staying within the
 /// speed bucket must not let its owner walk it through the same solid cell that
 /// blocks server-simulated player movement — while an equally long move that
@@ -1932,6 +1989,80 @@ async fn player_attack_at_melee_range_is_allowed() {
         0,
         "an allowed attack must enter combat"
     );
+}
+
+#[tokio::test]
+async fn player_attack_interval_is_server_enforced() {
+    let game_state = make_test_game_state("player_attack_interval");
+    let player_id = pid("attacker");
+
+    game_state
+        .add_player(make_player("attacker", 0.0, 0.0))
+        .await;
+    let mut attacker_rx = game_state.register_direct_channel(&player_id).await;
+    game_state.monsters.write().await.insert(
+        "nearby_monster".to_string(),
+        make_monster("nearby_monster", pos(1.0), 0),
+    );
+
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+
+    let attack_count = drain(&mut attacker_rx)
+        .into_iter()
+        .filter(|message| matches!(message, ServerMessage::PlayerAttacked { .. }))
+        .count();
+    assert_eq!(
+        attack_count, 1,
+        "back-to-back requests must produce one authoritative attack roll"
+    );
+
+    game_state.last_player_attacks.write().await.insert(
+        player_id,
+        GameState::now_ms().saturating_sub(*super::combat::PLAYER_ATTACK_INTERVAL_MS),
+    );
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+
+    assert!(drain(&mut attacker_rx)
+        .into_iter()
+        .any(|message| matches!(message, ServerMessage::PlayerAttacked { .. })));
+}
+
+#[tokio::test]
+async fn rejected_player_attack_does_not_consume_interval() {
+    let game_state = make_test_game_state("rejected_player_attack_interval");
+    let player_id = pid("attacker");
+
+    game_state
+        .add_player(make_player("attacker", 0.0, 0.0))
+        .await;
+    let mut attacker_rx = game_state.register_direct_channel(&player_id).await;
+    game_state.monsters.write().await.insert(
+        "nearby_monster".to_string(),
+        make_monster("nearby_monster", pos(1.0), 0),
+    );
+
+    game_state
+        .broadcast_player_attack(&player_id, "missing_monster".to_string())
+        .await;
+    expect_attack_rejected(
+        &mut attacker_rx,
+        "missing_monster",
+        AttackRejectReason::InvalidTarget,
+    );
+    game_state
+        .broadcast_player_attack(&player_id, "nearby_monster".to_string())
+        .await;
+
+    assert!(drain(&mut attacker_rx)
+        .into_iter()
+        .any(|message| matches!(message, ServerMessage::PlayerAttacked { .. })));
 }
 
 /// A player at 0 HP (awaiting respawn) must not be able to keep attacking.

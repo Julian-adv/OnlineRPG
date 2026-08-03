@@ -1,8 +1,7 @@
-use crate::types::{PlayerId, ServerMessage};
+use crate::types::{Player, PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
     PartyMember, PartyMemberPosition, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
 };
-use onlinerpg_shared::world::Position;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tracing::info;
@@ -15,13 +14,6 @@ const MAX_TARGET_NAME_CHARS: usize = 32;
 
 /// Outstanding invites one player may have pending at once (spam brake).
 const PARTY_PENDING_INVITE_CAP: usize = 5;
-
-/// Arrival ring radius (m) around a summon's caster; golden-angle spacing
-/// keeps simultaneous arrivals apart.
-const SUMMON_RING_RADIUS: f32 = 1.6;
-
-/// Golden angle in radians, spreading arrival spots around the ring.
-const GOLDEN_ANGLE_RAD: f32 = 2.399_963;
 
 pub(crate) struct Party {
     pub leader: PlayerId,
@@ -83,6 +75,25 @@ enum Removal {
     Disbanded {
         last: PlayerId,
     },
+}
+
+/// Every member's location, the recipient included — the client filters
+/// itself out, so one payload serves the whole party.
+fn member_positions(
+    players: &HashMap<PlayerId, Player>,
+    member_ids: &[PlayerId],
+) -> Vec<PartyMemberPosition> {
+    member_ids
+        .iter()
+        .filter_map(|id| {
+            players.get(id).map(|p| PartyMemberPosition {
+                id: *id,
+                x: p.position.x,
+                z: p.position.z,
+                floor_level: p.floor_level,
+            })
+        })
+        .collect()
 }
 
 impl super::GameState {
@@ -564,38 +575,7 @@ impl super::GameState {
         }
         // No explicit remove: the teleport's void_summons_aimed_at hook
         // clears every summons aimed at the mover, this entry included.
-        // Golden-angle ring: a per-member arrival spot without a placement
-        // scan, so simultaneous accepts don't stack. A blocked spot (dungeon
-        // walls run 1m from a corridor's center) retries at half radius and
-        // finally lands on the caster's own — walkable — cell.
-        let angle = (member_id.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
-        let arrival = {
-            let cache = self.passability_read();
-            let cell_floor = super::passability::authoritative_floor(&cache, &center);
-            let mut arrival = center;
-            for radius in [SUMMON_RING_RADIUS, SUMMON_RING_RADIUS * 0.5] {
-                let candidate = Position {
-                    x: center.x + angle.cos() * radius,
-                    y: center.y,
-                    z: center.z + angle.sin() * radius,
-                };
-                if super::passability::wrapped_block_info(
-                    &cache,
-                    center.x,
-                    center.z,
-                    candidate.x,
-                    candidate.z,
-                    cell_floor,
-                    center.y,
-                )
-                .is_none()
-                {
-                    arrival = candidate;
-                    break;
-                }
-            }
-            arrival
-        };
+        let arrival = self.arrival_beside(member_id, &center);
         info!(member = %member_name, caster = %caster_name, "party summon accepted");
         self.teleport_player(member_id, arrival, rotation, floor)
             .await;
@@ -707,8 +687,9 @@ impl super::GameState {
         format!("Party: {}", names.join(", "))
     }
 
-    /// Answer a positions poll: where the sender's other members are.
-    /// Rate-limited per connection before this is called.
+    /// Answer a map-open snapshot request: where the sender's party is now.
+    /// Steady-state updates ride `tick_party_positions`; rate-limited per
+    /// connection before this is called.
     pub async fn send_party_positions(&self, player_id: &PlayerId) {
         let member_ids = {
             let parties = self.parties.read().await;
@@ -717,23 +698,63 @@ impl super::GameState {
                 .map(|party| party.members.clone())
                 .unwrap_or_default()
         };
-        let members: Vec<PartyMemberPosition> = {
+        let members = {
             let players = self.players.read().await;
-            member_ids
-                .iter()
-                .filter(|id| *id != player_id)
-                .filter_map(|id| {
-                    players.get(id).map(|p| PartyMemberPosition {
-                        id: *id,
-                        x: p.position.x,
-                        z: p.position.z,
-                        floor_level: p.floor_level,
-                    })
-                })
-                .collect()
+            member_positions(&players, &member_ids)
         };
         self.send_direct_message(player_id, ServerMessage::PartyPositions { members })
             .await;
+    }
+
+    /// Queue `player_id` for the next party-position push. Called on every
+    /// relocation; partyless entries are dropped by the tick.
+    pub(crate) async fn mark_party_position_dirty(&self, player_id: &PlayerId) {
+        self.party_position_dirty.write().await.insert(*player_id);
+    }
+
+    /// Push fresh positions to every party a queued player belongs to: one
+    /// message per party, serialized once for all members. Parties with no
+    /// queued relocation send nothing, and lock traffic is per tick, not per
+    /// client (one dirty drain, one `parties` read, one `players` read).
+    pub async fn tick_party_positions(&self) {
+        let moved: Vec<PlayerId> = {
+            let mut dirty = self.party_position_dirty.write().await;
+            if dirty.is_empty() {
+                return;
+            }
+            dirty.drain().collect()
+        };
+        let rosters: Vec<Vec<PlayerId>> = {
+            let parties = self.parties.read().await;
+            let party_ids: HashSet<u64> = moved
+                .iter()
+                .filter_map(|id| parties.member_of.get(id).copied())
+                .collect();
+            party_ids
+                .iter()
+                .filter_map(|id| parties.parties.get(id).map(|p| p.members.clone()))
+                .collect()
+        };
+        if rosters.is_empty() {
+            return;
+        }
+        let payloads: Vec<(Vec<PlayerId>, Vec<PartyMemberPosition>)> = {
+            let players = self.players.read().await;
+            rosters
+                .into_iter()
+                .map(|ids| {
+                    let members = member_positions(&players, &ids);
+                    (ids, members)
+                })
+                .collect()
+        };
+        for (member_ids, members) in payloads {
+            self.send_direct_message_to_players(
+                &member_ids,
+                ServerMessage::PartyPositions { members },
+            )
+            .await;
+        }
     }
 
     async fn broadcast_party_state(&self, leader_id: PlayerId, member_ids: &[PlayerId]) {
@@ -751,6 +772,11 @@ impl super::GameState {
         };
         let msg = ServerMessage::PartyState { leader_id, members };
         self.send_direct_message_to_players(member_ids, msg).await;
+        // A reshaped party should not wait a relocation for fresh markers.
+        self.party_position_dirty
+            .write()
+            .await
+            .extend(member_ids.iter().copied());
     }
 
     async fn send_party_cleared(&self, player_id: &PlayerId) {

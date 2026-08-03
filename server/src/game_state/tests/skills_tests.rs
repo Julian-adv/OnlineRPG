@@ -10,7 +10,7 @@ async fn skill_xp_grant_notifies_owner_and_marks_dirty() {
     let player = pid("angler");
     game_state.add_player(make_player("angler", 0.0, 0.0)).await;
     game_state
-        .register_player_character(&player, 42, 0, attrs_with_cha(10), 0)
+        .register_player_character(&player, 42, 0, attrs_with_cha(10), 0, None)
         .await;
     game_state
         .register_player_skills(&player, Default::default())
@@ -87,7 +87,7 @@ async fn take_player_skills_snapshots_and_detaches() {
         .add_player(make_player("angler2", 0.0, 0.0))
         .await;
     game_state
-        .register_player_character(&player, 7, 0, attrs_with_cha(10), 0)
+        .register_player_character(&player, 7, 0, attrs_with_cha(10), 0, None)
         .await;
     game_state
         .register_player_skills(&player, Default::default())

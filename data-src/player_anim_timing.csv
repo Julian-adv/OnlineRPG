@@ -1,5 +1,6 @@
 id,delayMs,comment
 player_attack_impact,540,slash1 blade lands - hit/miss sfx and monster flinch
+player_attack_interval,1380,slash1 cadence with server-arrival jitter allowance
 player_attack_damage_text,750,damage number pops after a slash1 hit
 sword_miss,450,whiff sfx on a missed slash1 swing
 spear_attack_impact,1060,slash3 spear tip reaches its forward strike

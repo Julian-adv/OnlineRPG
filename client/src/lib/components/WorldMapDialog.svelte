@@ -1,5 +1,6 @@
 <script module lang="ts">
   import mapLabelsJson from '../../../../data/map_labels.json'
+  import { RegionImageCache } from '../terrain/regionImageCache'
 
   const REGION_SIZE = 16
   const TILE_DIM = 64
@@ -8,30 +9,33 @@
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 8
 
-  // Party member marker poll cadence; above the server's 2s clamp.
-  const PARTY_POLL_MS = 3000
-
-  // A poll answer can outlive the dialog that requested it (nothing polls
-  // while the map is closed); older data than this never renders.
-  const PARTY_POSITIONS_MAX_AGE_MS = 10000
-
-  // --- Shared place-name labels (generated from data-src/map_labels.csv) ---
-  type LabelKind = 'continent' | 'capital' | 'city' | 'town' | 'sea' | 'island'
+  // --- Shared place-name labels (generated from data-src/map_labels.csv,
+  // plus the player's discovered dungeon entrances) ---
+  type LabelKind =
+    | 'continent'
+    | 'capital'
+    | 'city'
+    | 'town'
+    | 'sea'
+    | 'island'
+    | 'dungeon'
   interface MapLabel {
+    /** Stable each-key, unique across kinds (names may repeat between them). */
+    key: string
     name: string
     kind: LabelKind
     x: number // world meters
     z: number
   }
   const MAP_LABELS: MapLabel[] = Object.values(
-    mapLabelsJson as unknown as Record<string, MapLabel>
-  )
+    mapLabelsJson as unknown as Record<string, Omit<MapLabel, 'key'>>
+  ).map((label) => ({ ...label, key: `${label.kind}:${label.name}` }))
 
   // Per-kind zoom visibility: shown when min <= zoomSpan <= max (zoomSpan = regions
   // across; larger = zoomed out). Continents/seas appear when zoomed out, settlements
   // when zoomed in.
-  // Settlements (capital/city/town) share the same max so they all appear together
-  // at the zoom where the capital is visible.
+  // Settlements (capital/city/town) and dungeons share the same max so they
+  // all appear together at the zoom where the capital is visible.
   const LABEL_ZOOM: Record<LabelKind, { min: number; max: number }> = {
     continent: { min: 8, max: Infinity },
     sea: { min: 4, max: Infinity },
@@ -39,6 +43,7 @@
     city: { min: 1, max: 24 },
     town: { min: 1, max: 24 },
     island: { min: 1, max: 16 },
+    dungeon: { min: 1, max: 24 },
   }
 
   // Matches the canvas's -45deg map rotation, applied to label screen positions.
@@ -46,20 +51,8 @@
   const COS_R = Math.cos(ROTATE_ANGLE)
   const SIN_R = Math.sin(ROTATE_ANGLE)
 
-  // --- Image cache (module-level, persists across component lifecycle) ---
-  // Intentionally non-reactive: image loads should not re-run the render effect.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const imageCache = new Map<string, HTMLImageElement | null>()
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const pendingLoads = new Map<string, Promise<HTMLImageElement | null>>()
-
-  function trimImageCache(limit: number) {
-    if (!Number.isFinite(limit) || imageCache.size <= limit) return
-    for (const key of imageCache.keys()) {
-      imageCache.delete(key)
-      if (imageCache.size <= limit) break
-    }
-  }
+  // Module-level: images persist across dialog open/close.
+  const regionImages = new RegionImageCache()
 
   // --- Persisted view state (survives dialog close/reopen) ---
   let savedCamX: number | null = null
@@ -69,14 +62,12 @@
 
 <script lang="ts">
   import { gameStore, isAdminUser } from '../stores/gameStore'
-  import {
-    partyRoster,
-    partyPositions,
-    resetPartyPositions,
-  } from '../stores/partyStore'
+  import { partyRoster, partyPositions } from '../stores/partyStore'
   import { worldMapVisible, teleportLoading } from '../stores/debugStore'
+  import { discoveredDungeonIds } from '../stores/dungeonStore'
+  import { houseMapFootprints } from '../stores/housingMapStore'
+  import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
   import { minimapVersion } from '../stores/editorStore'
-  import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
   import { networkManager } from '../network/socket'
   import {
     graphicsQuality,
@@ -84,6 +75,7 @@
   } from '../stores/graphicsSettings'
   import { wrapWorldX, unwrapWorldXNear } from '../terrain/world-wrap'
   import { mountOverlay } from '../stores/overlayStack'
+  import { drawHouseMapFootprints } from '../utils/map-structures'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
   const mobileMapBudget = $derived(graphicsPreset.renderBudget === 'mobile')
@@ -91,32 +83,9 @@
   const maxZoomSpan = $derived(graphicsPreset.worldMapMaxZoomSpan)
   const imageCacheLimit = $derived(graphicsPreset.worldMapImageCacheLimit)
 
-  function loadRegionImage(
-    rx: number,
-    rz: number
-  ): Promise<HTMLImageElement | null> {
-    const key = `${rx},${rz}`
-    if (imageCache.has(key)) return Promise.resolve(imageCache.get(key)!)
-    if (pendingLoads.has(key)) return pendingLoads.get(key)!
-
-    const promise = new Promise<HTMLImageElement | null>((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        imageCache.set(key, img)
-        trimImageCache(imageCacheLimit)
-        pendingLoads.delete(key)
-        resolve(img)
-      }
-      img.onerror = () => {
-        imageCache.set(key, null)
-        pendingLoads.delete(key)
-        resolve(null)
-      }
-      img.src = regionMinimapServerUrl(rx, rz)
-    })
-    pendingLoads.set(key, promise)
-    return promise
-  }
+  $effect(() => {
+    regionImages.limit = imageCacheLimit
+  })
 
   // --- Component state ---
   let containerEl = $state<HTMLDivElement>()
@@ -126,6 +95,7 @@
 
   let playerX = $derived(wrapWorldX($gameStore.currentPlayer?.position.x ?? 0))
   let playerZ = $derived($gameStore.currentPlayer?.position.z ?? 0)
+  let playerHeading = $derived($gameStore.currentPlayer?.rotation ?? 0)
 
   // --- Camera state (world coordinates of view center) ---
   let camX = $state(0)
@@ -153,32 +123,15 @@
     }
   })
 
-  // Party existence only: roster churn must not reset the poll cadence (the
-  // immediate re-poll would just be eaten by the server's clamp).
+  // Party existence only: roster churn must not re-request (a membership
+  // change already triggers a server push).
   let inParty = $derived($partyRoster !== null)
 
-  // Poll party positions only while the dialog lives (it mounts with
-  // worldMapVisible) and a party exists — closed map means a silent channel.
+  // One snapshot when the dialog opens with a party, or a party forms while
+  // it is open; steady-state updates are pushed by the server.
   $effect(() => {
     if (!inParty) return
     networkManager.sendRequestPartyPositions()
-    const timer = setInterval(
-      () => networkManager.sendRequestPartyPositions(),
-      PARTY_POLL_MS
-    )
-    return () => clearInterval(timer)
-  })
-
-  // The render-time age gate only runs when something recomputes; this makes
-  // expiry certain on an untouched map (same pattern as PartyInviteToast).
-  $effect(() => {
-    const at = $partyPositions.at
-    if (at === 0) return
-    const timer = setTimeout(
-      resetPartyPositions,
-      Math.max(0, at + PARTY_POSITIONS_MAX_AGE_MS - Date.now())
-    )
-    return () => clearTimeout(timer)
   })
 
   // --- Drag state ---
@@ -192,25 +145,17 @@
   let dragStartCamX = 0
   let dragStartCamZ = 0
 
-  // --- Minimap version tracking: flush cache when minimaps are regenerated ---
-  $effect(() => {
-    const _ver = $minimapVersion // track dependency
-    imageCache.clear()
-    pendingLoads.clear()
-  })
-
   // --- Canvas rendering ---
   let renderGeneration = 0
 
   $effect(() => {
     if (!canvasEl || containerW <= 0 || containerH <= 0) return
 
-    const _mmVer = $minimapVersion // re-render when minimaps change
+    const mmVer = $minimapVersion // re-render when minimaps change
     const span = zoomSpan
     const cx = camX
     const cz = camZ
-    const px = playerX
-    const pz = playerZ
+    const houses = $houseMapFootprints
     const cw = containerW
     const ch = containerH
     const gen = ++renderGeneration
@@ -270,7 +215,7 @@
         const drawSize = Math.ceil(REGION_PX * scale)
 
         promises.push(
-          loadRegionImage(rx, rz).then((img) => {
+          regionImages.load(rx, rz, mmVer).then((img) => {
             if (gen !== renderGeneration) return
             if (img) {
               ctx.save()
@@ -288,33 +233,23 @@
     Promise.all(promises).then(() => {
       if (gen !== renderGeneration) return
 
-      // Player marker (also rotated with the map)
-      const playerCanvasX = (px - viewLeft) * scale
-      const playerCanvasZ = (pz - viewTop) * scale
-
       ctx.save()
       ctx.translate(cw / 2, ch / 2)
       ctx.rotate(ROTATE_ANGLE)
       ctx.translate(-cw / 2, -ch / 2)
-      ctx.beginPath()
-      ctx.arc(playerCanvasX, playerCanvasZ, 6, 0, Math.PI * 2)
-      ctx.fillStyle = '#ff3333'
-      ctx.fill()
-      ctx.lineWidth = 2
-      ctx.strokeStyle = '#ffffff'
-      ctx.stroke()
-      ctx.shadowColor = 'rgba(255, 50, 50, 0.8)'
-      ctx.shadowBlur = 6
-      ctx.beginPath()
-      ctx.arc(playerCanvasX, playerCanvasZ, 6, 0, Math.PI * 2)
-      ctx.fillStyle = '#ff3333'
-      ctx.fill()
+      drawHouseMapFootprints(ctx, houses, {
+        centerX: cx,
+        viewLeft,
+        viewTop,
+        scale,
+      })
       ctx.restore()
     })
   })
 
   // --- Place-name label overlay (HTML layer, not burned into the canvas) ---
   interface PlacedLabel {
+    key: string
     name: string
     kind: LabelKind
     left: number
@@ -352,6 +287,23 @@
     )
   }
 
+  // Static place names plus the player's discovered dungeon entrances, so
+  // dungeons ride the same zoom/cull/label pipeline as every other kind.
+  let mapLabels = $derived.by<MapLabel[]>(() => {
+    const known = $discoveredDungeonIds
+    if (known.size === 0) return MAP_LABELS
+    const dungeons = DUNGEON_ENTRANCES.filter((e) => known.has(e.id)).map(
+      (e) => ({
+        key: `dungeon:${e.id}`,
+        name: e.name,
+        kind: 'dungeon' as const,
+        x: e.x,
+        z: e.z,
+      })
+    )
+    return [...MAP_LABELS, ...dungeons]
+  })
+
   let visibleLabels = $derived.by<PlacedLabel[]>(() => {
     const cw = containerW
     const ch = containerH
@@ -359,23 +311,38 @@
 
     const margin = 80 // keep labels whose anchor is just off-edge
     const out: PlacedLabel[] = []
-    for (const label of MAP_LABELS) {
+    for (const label of mapLabels) {
       const tier = LABEL_ZOOM[label.kind]
       if (zoomSpan < tier.min || zoomSpan > tier.max) continue
       const p = worldToScreen(label.x, label.z, cw, ch)
       if (!onScreen(p, cw, ch, margin)) continue
-      out.push({ name: label.name, kind: label.kind, left: p.left, top: p.top })
+      out.push({
+        key: label.key,
+        name: label.name,
+        kind: label.kind,
+        left: p.left,
+        top: p.top,
+      })
     }
     return out
   })
 
-  // --- Self marker pulse (HTML layer over the canvas dot) ---
-  let selfPulse = $derived.by<{ left: number; top: number } | null>(() => {
+  let selfMarker = $derived.by<{
+    left: number
+    top: number
+    angle: number
+  } | null>(() => {
     const cw = containerW
     const ch = containerH
     if (cw <= 0 || ch <= 0) return null
     const p = worldToScreen(playerX, playerZ, cw, ch)
-    return onScreen(p, cw, ch, 20) ? p : null
+    if (!onScreen(p, cw, ch, 20)) return null
+    return {
+      ...p,
+      angle:
+        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
+        ROTATE_ANGLE,
+    }
   })
 
   // --- Party member markers (HTML layer, same transform as the labels) ---
@@ -393,13 +360,12 @@
     const cw = containerW
     const ch = containerH
     if (!roster || cw <= 0 || ch <= 0) return []
-    if (Date.now() - positions.at > PARTY_POSITIONS_MAX_AGE_MS) return []
 
-    // Join against the roster: a member who left since the last poll (or an
+    // Join against the roster: a member who left since the last push (or an
     // id the roster never knew) must not draw a ghost.
     const names = new Map(roster.members.map((m) => [m.id, m.name]))
     const out: PartyMarker[] = []
-    for (const pos of positions.members) {
+    for (const pos of positions) {
       const name = names.get(pos.id)
       if (!name) continue
       const p = worldToScreen(pos.x, pos.z, cw, ch)
@@ -520,8 +486,7 @@
   function close() {
     if (mobileMapBudget) {
       renderGeneration++
-      imageCache.clear()
-      pendingLoads.clear()
+      regionImages.flush()
     }
     teleportMode = false
     worldMapVisible.set(false)
@@ -658,7 +623,7 @@
         class="map-canvas"
       ></canvas>
       <div class="label-layer">
-        {#each visibleLabels as label (label.name)}
+        {#each visibleLabels as label (label.key)}
           <div
             class="map-label {label.kind}"
             class:area={label.kind === 'continent' ||
@@ -672,12 +637,6 @@
             <span class="text">{label.name}</span>
           </div>
         {/each}
-        {#if selfPulse}
-          <span
-            class="self-pulse"
-            style="left: {selfPulse.left}px; top: {selfPulse.top}px;"
-          ></span>
-        {/if}
         {#each partyMarkers as marker (marker.id)}
           <div
             class="party-marker"
@@ -689,6 +648,16 @@
             >
           </div>
         {/each}
+        {#if selfMarker}
+          <svg
+            class="self-marker"
+            style="left: {selfMarker.left}px; top: {selfMarker.top}px; transform: translate(-50%, -50%) rotate({selfMarker.angle}rad);"
+            viewBox="-7 -7 16 14"
+            aria-hidden="true"
+          >
+            <path d="M 8 0 L -6 6 L -3 0 L -6 -6 Z"></path>
+          </svg>
+        {/if}
       </div>
     </div>
   </div>
@@ -914,32 +883,38 @@
     border: 2px solid #287832;
   }
 
-  /* Breathing ring over the canvas-drawn player dot: the one marker that
-     never moves shouldn't look dead. */
-  .self-pulse {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    margin: -7px 0 0 -7px;
-    border-radius: 50%;
-    border: 2px solid rgba(255, 80, 80, 0.9);
-    animation: self-pulse 2s ease-out infinite;
+  .map-label.dungeon .text {
+    font-size: 13px;
+    font-weight: 700;
+    color: #e8b8a8;
   }
 
-  /* The identical 70%/100% stops hold the ring invisible between pulses. */
-  @keyframes self-pulse {
-    0% {
-      transform: scale(0.6);
-      opacity: 0.9;
-    }
-    70% {
-      transform: scale(2.4);
-      opacity: 0;
-    }
-    100% {
-      transform: scale(2.4);
-      opacity: 0;
-    }
+  /* Discovered dungeon entrance: a dark diamond, styled like the settlement
+     dots but unmistakably not a place to live. */
+  .map-label.dungeon .marker {
+    width: 9px;
+    height: 9px;
+    border-radius: 0;
+    transform: translate(-50%, -50%) rotate(45deg);
+    background: #35333d;
+    border: 2px solid #b0503c;
+    box-shadow: 0 0 4px rgba(176, 80, 60, 0.7);
+  }
+
+  .self-marker {
+    position: absolute;
+    z-index: 3;
+    width: 16px;
+    height: 14px;
+    overflow: visible;
+    filter: drop-shadow(0 0 3px rgba(255, 50, 50, 0.8));
+  }
+
+  .self-marker path {
+    fill: #ff3333;
+    stroke: #fff;
+    stroke-width: 1.5;
+    stroke-linejoin: round;
   }
 
   .party-marker {

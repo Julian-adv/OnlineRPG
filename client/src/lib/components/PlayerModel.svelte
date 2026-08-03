@@ -44,7 +44,7 @@
   } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
   import { pickRandom } from '../utils/randomUtils'
-  import { inventoryStore } from '../stores/inventoryStore'
+  import { inventoryStore, isTorchItemDefId } from '../stores/inventoryStore'
   import { getItemDef } from '../data/itemDefs'
   import { torchLightEnabled } from '../stores/debugStore'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
@@ -55,7 +55,7 @@
     type MovementMode,
     type PlayerStateName,
   } from '../utils/movementUtils'
-  import { TorchFireParticles } from '../effects/torch-fire-particles'
+  import { TorchFireParticles } from '../effects/fire-particles'
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
@@ -450,7 +450,7 @@
 
       attachOffhandModel(gltf.scene, clonedScene)
       attachedOffhandItemId = itemDefId
-      if (itemDefId === 'torch') {
+      if (isTorchItemDefId(itemDefId)) {
         attachTorchFire()
         await loadOffhandAnimations()
         if (gen !== offhandAttachGeneration) return
@@ -548,7 +548,7 @@
       torchFireGroup.visible = playerState !== 'interact'
     }
 
-    const hasTorch = attachedOffhandItemId === 'torch'
+    const hasTorch = isTorchItemDefId(attachedOffhandItemId)
     const torchIdle = hasTorch
       ? pickRandom(
           TORCH_IDLE_CLIP_NAMES.map((name) => offhandClips.get(name)).filter(
@@ -961,7 +961,7 @@
     // Update torch fire particles
     if (torchFire && torchTipNode) {
       torchTipNode.getWorldPosition(_torchTipWorld)
-      torchFire.setTipPosition(_torchTipWorld)
+      torchFire.setOrigin(_torchTipWorld)
       torchFire.update(deltaTime, camera)
     }
   }

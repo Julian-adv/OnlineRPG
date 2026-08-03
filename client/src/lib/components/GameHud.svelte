@@ -3,12 +3,14 @@
   import FPSCounter from './FPSCounter.svelte'
   import WavePhaseDebug from './WavePhaseDebug.svelte'
   import GameTimeWidget from './GameTimeWidget.svelte'
+  import Minimap from './Minimap.svelte'
   import CelestialDebugDialog from './CelestialDebugDialog.svelte'
   import MapEditorPanel from './map-editor/MapEditorPanel.svelte'
   import HousingEditorPanel from './map-editor/HousingEditorPanel.svelte'
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
+  import HungerIndicator from './HungerIndicator.svelte'
   import TradeWindow from './TradeWindow.svelte'
   import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
@@ -29,6 +31,7 @@
     teleportLoading,
     housingEditorMode,
   } from '../stores/debugStore'
+  import { minimapEnabled } from '../stores/minimapStore'
   import type { AccountCharacter } from '../network/socket'
 
   interface Props {
@@ -68,9 +71,17 @@
 
 <div class="game-hud">
   <ServerNotice />
-  <FPSCounter />
+  <div class="top-left-hud">
+    {#if selectedCharacter && !$mapEditorMode}
+      <HungerIndicator />
+    {/if}
+    <FPSCounter />
+  </div>
   <WavePhaseDebug />
   <GameTimeWidget />
+  {#if $minimapEnabled && !$mapEditorMode}
+    <Minimap />
+  {/if}
   <DragGhost />
   <CelestialDebugDialog />
   {#if $mapEditorMode}
@@ -112,7 +123,9 @@
     {/if}
     <div class="action-cluster">
       {#if selectedCharacter && !$mapEditorMode}
-        <QuickslotBar characterId={selectedCharacter.id} />
+        <div class="quickslot-stack">
+          <QuickslotBar characterId={selectedCharacter.id} />
+        </div>
       {/if}
       <div class="corner-actions">
         {#if canReopenRespawnDialog}
@@ -277,8 +290,22 @@
     align-items: flex-end;
     gap: 16px;
     pointer-events: none;
-    /* Rigid: the chat panel (flex-shrink:1) absorbs all width changes, so the
-       quickslot bar is never squeezed into extra rows when the viewport narrows. */
+  }
+
+  .top-left-hud {
+    position: fixed;
+    top: 9px;
+    left: 9px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    pointer-events: none;
+  }
+
+  .quickslot-stack {
+    pointer-events: none;
     flex-shrink: 0;
   }
 
@@ -347,6 +374,11 @@
   /* Phone / narrow: keep everything on one row (chat shrinks, it does not wrap
      above the cluster) and respect the safe-area insets. */
   @media (max-width: 600px), (pointer: coarse) and (max-width: 900px) {
+    .top-left-hud {
+      top: max(9px, env(safe-area-inset-top));
+      left: max(9px, env(safe-area-inset-left));
+    }
+
     .bottom-hud {
       left: max(9px, env(safe-area-inset-left));
       right: max(9px, env(safe-area-inset-right));

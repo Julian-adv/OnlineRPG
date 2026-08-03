@@ -23,21 +23,26 @@ export interface PartyMemberPositionEntry {
   floor_level: number
 }
 
-/** Latest positions poll answer, stamped on receipt (`at: 0` = never
- *  received or cleared); rendering joins it against the roster and age-gates
- *  it. */
-export interface PartyPositionsSnapshot {
-  at: number
-  members: PartyMemberPositionEntry[]
+/** Latest pushed locations of the *other* party members (self is filtered
+ *  on receipt). Validity is event-driven — server pushes on relocation and
+ *  membership change, and the roster join drops leavers — so there is no
+ *  freshness gate. */
+export const partyPositions = writable<PartyMemberPositionEntry[]>([])
+
+/** Apply a pushed party-wide payload. A push can cross a disband on the
+ *  wire, so without a roster it is dropped; the server serializes one
+ *  payload for the whole party, so self is filtered here. */
+export function applyPartyPositions(
+  members: PartyMemberPositionEntry[],
+  selfId: number | undefined,
+  inParty: boolean
+) {
+  if (!inParty) return
+  partyPositions.set(members.filter((m) => m.id !== selfId))
 }
 
-export const partyPositions = writable<PartyPositionsSnapshot>({
-  at: 0,
-  members: [],
-})
-
 export function resetPartyPositions() {
-  partyPositions.set({ at: 0, members: [] })
+  partyPositions.set([])
 }
 
 /** Full party reset for session-death paths (logout, reconnect, GameState
@@ -61,6 +66,9 @@ export interface PendingPartyInvite {
 export const pendingPartyInvites = writable<PendingPartyInvite[]>([])
 
 export const MAX_PENDING_PARTY_INVITES = 3
+
+/** Mirrors the server-side invite TTL (`PARTY_INVITE_TTL`). */
+export const INVITE_TTL_MS = 30_000
 
 /** Mirrors the server-side summon TTL (`PARTY_SUMMON_TTL`). */
 export const SUMMON_TTL_MS = 30_000

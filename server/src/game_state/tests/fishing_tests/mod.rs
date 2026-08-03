@@ -30,7 +30,7 @@ async fn make_angler(game_state: &GameState, name: &str) -> (PlayerId, DirectRx)
         },
     );
     game_state
-        .register_player_character(&id, 1, 0, attrs_with_cha(10), 0)
+        .register_player_character(&id, 1, 0, attrs_with_cha(10), 0, None)
         .await;
     game_state
         .register_player_skills(&id, Default::default())

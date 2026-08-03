@@ -391,6 +391,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::DungeonPropsState { .. } => "DungeonPropsState",
         ServerMessage::DungeonDoorToggled { .. } => "DungeonDoorToggled",
         ServerMessage::DungeonDoorsState { .. } => "DungeonDoorsState",
+        ServerMessage::DungeonDiscoveries { .. } => "DungeonDiscoveries",
         ServerMessage::ChatMessage { .. } => "ChatMessage",
         ServerMessage::WhisperMessage { .. } => "WhisperMessage",
         ServerMessage::SystemMessage { .. } => "SystemMessage",
@@ -451,6 +452,12 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PartySummonReceived { .. } => "PartySummonReceived",
         ServerMessage::PartyState { .. } => "PartyState",
         ServerMessage::PartyPositions { .. } => "PartyPositions",
+        ServerMessage::HungerUpdate { .. } => "HungerUpdate",
+        ServerMessage::CampfireSpawned { .. } => "CampfireSpawned",
+        ServerMessage::CampfireAppeared { .. } => "CampfireAppeared",
+        ServerMessage::CampfireRemoved { .. } => "CampfireRemoved",
+        ServerMessage::GrillStarted => "GrillStarted",
+        ServerMessage::GrillEnded { .. } => "GrillEnded",
     }
 }
 

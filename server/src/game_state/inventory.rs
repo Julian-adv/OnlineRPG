@@ -17,6 +17,8 @@ const GROUND_ITEM_LIFETIME_MS: u64 = 5 * 60 * 1000;
 
 const MAX_PICKUP_DISTANCE: f32 = 2.5;
 
+const CAMPFIRE_PLACEMENT_DISTANCE_M: f32 = 1.0;
+
 /// Enchant odds are expressed in basis points (1/100 of a percent) out of
 /// this scale; the handler's roll must use the same bound.
 const ENCHANT_BP_SCALE: u32 = 10_000;
@@ -105,14 +107,19 @@ impl super::GameState {
         self.reserve_instance_ids(1).await
     }
 
-    /// D&D 5e carry weight: STR * 15.
+    /// D&D 5e carry weight: STR * 15, scaled by the hunger band
+    /// (doc/HUNGER.md). Dropping below a cap only refuses new pickups and
+    /// purchases — it never blocks movement.
     pub(super) async fn max_carry_weight(&self, player_id: &PlayerId) -> f32 {
-        let chars = self.player_characters.read().await;
-        if let Some((_, _, attrs)) = chars.get(player_id) {
-            attrs.r#str as f32 * 15.0
-        } else {
-            150.0
-        }
+        let base = {
+            let chars = self.player_characters.read().await;
+            if let Some((_, _, attrs)) = chars.get(player_id) {
+                attrs.r#str as f32 * 15.0
+            } else {
+                150.0
+            }
+        };
+        base * self.hunger_carry_mult(player_id).await
     }
 
     pub(super) fn calc_total_weight(&self, inventory: &PlayerInventory) -> f32 {
@@ -371,16 +378,13 @@ impl super::GameState {
                 };
                 self.send_system_message(player_id, "Too heavy to carry — it slips to the ground.")
                     .await;
-                self.spawn_ground_item(
-                    GroundItem {
-                        instance_id: reserved_instance_id,
-                        item_def_id: item_def_id.to_string(),
-                        position,
-                        floor_level,
-                        enchant: 0,
-                    },
-                    None,
-                )
+                self.spawn_ground_item(GroundItem {
+                    instance_id: reserved_instance_id,
+                    item_def_id: item_def_id.to_string(),
+                    position,
+                    floor_level,
+                    enchant: 0,
+                })
                 .await;
             }
         }
@@ -509,6 +513,15 @@ impl super::GameState {
                 self.use_healing_item(player_id, instance_id, &dice, skill)
                     .await
             }
+            UseEffect::Eat {
+                nutrition,
+                heal_dice,
+                raw_fish,
+            } => {
+                self.use_eat_item(player_id, instance_id, nutrition, heal_dice, raw_fish, None)
+                    .await
+            }
+            UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
             UseEffect::TeleportTown => self.use_return_scroll(player_id, instance_id).await,
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
@@ -655,6 +668,162 @@ impl super::GameState {
             .record_healing(skill, skill_level, restored_hp, skill_xp);
     }
 
+    /// Eat food or fish (doc/HUNGER.md): raw fish near a campfire grills
+    /// instead. Unlike potions, full HP just skips the heal component;
+    /// untracked (NPC) eaters get heal + decrement only. `force_poison`
+    /// pins the raw-fish roll for tests.
+    pub(super) async fn use_eat_item(
+        &self,
+        player_id: &PlayerId,
+        instance_id: u64,
+        nutrition: u32,
+        heal_dice: Option<String>,
+        raw_fish: bool,
+        force_poison: Option<bool>,
+    ) {
+        if self
+            .reject_if_defeated(player_id, "You can't eat while defeated")
+            .await
+        {
+            return;
+        }
+
+        let (def_id, position, floor_level) = {
+            let inventories = self.inventories.read().await;
+            let def_id = match inventories
+                .get(player_id)
+                .and_then(|inv| inv.bag.iter().find(|i| i.instance_id == instance_id))
+            {
+                Some(item) => item.item_def_id.clone(),
+                None => return,
+            };
+            drop(inventories);
+            let players = self.players.read().await;
+            let Some(p) = players.get(player_id) else {
+                return;
+            };
+            (def_id, p.position, p.floor_level)
+        };
+
+        if raw_fish
+            && self
+                .try_start_grill(player_id, instance_id, &def_id, &position, floor_level)
+                .await
+        {
+            return;
+        }
+
+        let outcome = self
+            .apply_eat(player_id, nutrition, raw_fish, force_poison)
+            .await;
+        if matches!(outcome, super::hunger::EatOutcome::TooStuffed) {
+            self.send_system_message(player_id, "You are too stuffed to eat another bite")
+                .await;
+            return;
+        }
+
+        if let Some(dice) = heal_dice {
+            self.roll_heal_and_broadcast(player_id, &dice).await;
+        }
+
+        self.consume_one_and_sync(player_id, instance_id).await;
+        let name = self.item_name(&def_id);
+        self.send_system_message(player_id, format!("You eat the {name}."))
+            .await;
+        if let super::hunger::EatOutcome::Fed(msg) = outcome {
+            self.mark_dirty(player_id).await;
+            self.send_direct_message(player_id, msg).await;
+        }
+    }
+
+    /// Use a campfire kit outdoors and out of standing water.
+    async fn use_campfire_kit(&self, player_id: &PlayerId, instance_id: u64) {
+        if self
+            .reject_if_defeated(player_id, "You can't build a fire while defeated")
+            .await
+        {
+            return;
+        }
+        let (position, rotation, floor_level) = {
+            let players = self.players.read().await;
+            let Some(p) = players.get(player_id) else {
+                return;
+            };
+            (p.position, p.rotation, p.floor_level)
+        };
+        if floor_level != super::fishing::OVERWORLD_FLOOR {
+            self.send_system_message(player_id, "You can only build a campfire outdoors")
+                .await;
+            return;
+        }
+        let forward = crate::types::Position {
+            x: position.x + rotation.sin() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+            y: position.y,
+            z: position.z + rotation.cos() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+        };
+        let placement = {
+            let cache = self.passability_read();
+            let floor = super::passability::authoritative_floor(&cache, &position);
+            if super::passability::wrapped_block_info(
+                &cache, position.x, position.z, forward.x, forward.z, floor, position.y,
+            )
+            .is_some()
+            {
+                position
+            } else {
+                forward.wrapped_x()
+            }
+        };
+        let wx = onlinerpg_shared::wrap_world_x(placement.x);
+        let in_water = self
+            .water_depth_at(wx, placement.z)
+            .await
+            .is_some_and(|depth| depth > onlinerpg_shared::fishing::MIN_FISHABLE_DEPTH_M);
+        if in_water {
+            self.send_system_message(player_id, "You can't light a fire in water")
+                .await;
+            return;
+        }
+
+        self.consume_one_and_sync(player_id, instance_id).await;
+        self.spawn_campfire(placement, floor_level).await;
+        self.send_system_message(player_id, "You light a campfire.")
+            .await;
+    }
+
+    /// Roll `dice` and heal an alive, wounded player, broadcasting the new HP.
+    async fn roll_heal_and_broadcast(&self, player_id: &PlayerId, dice: &str) {
+        let healed = {
+            let mut players = self.players.write().await;
+            players.get_mut(player_id).and_then(|player| {
+                (player.health > 0 && player.health < player.max_health).then(|| {
+                    let amount = crate::game::combat::roll_dice(dice);
+                    player.health = (player.health + amount).min(player.max_health);
+                    (
+                        player.health,
+                        player.max_health,
+                        player.position,
+                        player.floor_level,
+                    )
+                })
+            })
+        };
+        if let Some((health, max_health, position, floor_level)) = healed {
+            self.send_direct_message_to_players_within_position(
+                &position,
+                floor_level,
+                super::EVENT_DELIVERY_RADIUS,
+                ServerMessage::PlayerHealthUpdate {
+                    player_id: *player_id,
+                    health,
+                    max_health,
+                },
+                None,
+            )
+            .await;
+        }
+    }
+
     /// If the player is defeated (or gone), message them and return true so
     /// the caller can bail. Shared guard for read-a-scroll style consumables.
     async fn reject_if_defeated(&self, player_id: &PlayerId, message: &str) -> bool {
@@ -788,7 +957,7 @@ impl super::GameState {
     }
 
     /// Display name for an item def, falling back to the raw id.
-    fn item_name(&self, item_def_id: &str) -> String {
+    pub(super) fn item_name(&self, item_def_id: &str) -> String {
         self.item_defs
             .get(item_def_id)
             .map(|def| def.name.clone())
@@ -798,7 +967,7 @@ impl super::GameState {
     /// Remove one unit of `instance_id` from the player's bag (dropping the
     /// instance when the stack empties), persist, and push the fresh snapshot
     /// to the client.
-    async fn consume_one_and_sync(&self, player_id: &PlayerId, instance_id: u64) {
+    pub(super) async fn consume_one_and_sync(&self, player_id: &PlayerId, instance_id: u64) {
         let snapshot = {
             let mut inventories = self.inventories.write().await;
             let inv = match inventories.get_mut(player_id) {
@@ -815,13 +984,9 @@ impl super::GameState {
     }
 
     /// Insert a ground item into the world and announce it to nearby players.
-    /// `source_monster_id` is set when the item was dropped by a dying monster
-    /// so the client can hold the drop until that monster's death plays out.
-    pub(super) async fn spawn_ground_item(
-        &self,
-        ground_item: GroundItem,
-        source_monster_id: Option<String>,
-    ) {
+    /// Visible and pickable the moment this runs; a caller that owes the drop
+    /// an animation beat delays this call (`spawn_kill_loot_after_impact`).
+    pub(super) async fn spawn_ground_item(&self, ground_item: GroundItem) {
         let position = ground_item.position;
         let floor_level = ground_item.floor_level;
         {
@@ -838,10 +1003,7 @@ impl super::GameState {
             &position,
             floor_level,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemSpawned {
-                item: ground_item,
-                source_monster_id,
-            },
+            ServerMessage::GroundItemSpawned { item: ground_item },
             None,
         )
         .await;
@@ -874,16 +1036,13 @@ impl super::GameState {
                 .await;
 
             let instance_id = self.next_instance_id().await;
-            self.spawn_ground_item(
-                GroundItem {
-                    instance_id,
-                    item_def_id,
-                    position,
-                    floor_level,
-                    enchant: 0,
-                },
-                None,
-            )
+            self.spawn_ground_item(GroundItem {
+                instance_id,
+                item_def_id,
+                position,
+                floor_level,
+                enchant: 0,
+            })
             .await;
         }
     }
@@ -944,7 +1103,7 @@ impl super::GameState {
         if dropped_from_off_hand {
             self.set_player_torch(player_id, false).await;
         }
-        self.spawn_ground_item(ground_item, None).await;
+        self.spawn_ground_item(ground_item).await;
         // Dropping the equipped rod is as much "putting it away" as
         // unequipping it — same mid-session abort.
         self.abort_fishing_if_rod_lost(player_id).await;
@@ -967,16 +1126,13 @@ impl super::GameState {
         let position = drop_landing_position(player_position, rotation);
 
         let instance_id = self.next_instance_id().await;
-        self.spawn_ground_item(
-            GroundItem {
-                instance_id,
-                item_def_id: item_def_id.to_string(),
-                position,
-                floor_level,
-                enchant: 0,
-            },
-            None,
-        )
+        self.spawn_ground_item(GroundItem {
+            instance_id,
+            item_def_id: item_def_id.to_string(),
+            position,
+            floor_level,
+            enchant: 0,
+        })
         .await;
     }
 

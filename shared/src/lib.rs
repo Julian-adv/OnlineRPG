@@ -11,6 +11,7 @@ pub mod entity;
 pub mod fishing;
 pub mod furniture;
 pub mod housing;
+pub mod hunger;
 pub mod inventory;
 pub mod messages;
 pub mod monster_ai;
@@ -49,7 +50,15 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v19: Leather Armor skill identity carried by the generic skill messages.
 /// v20: typed physical damage and authoritative mitigation breakdowns.
 /// v21: authoritative equipped-load burden tier and movement speed.
-pub const PROTOCOL_VERSION: u32 = 21;
+/// v22: merged upstream loot timing, dungeon discoveries, hunger/campfires,
+///      and pushed party-position messages:
+///      - a monster's loot spawns when the killing blow lands, so
+///      GroundItemSpawned no longer carries source_monster_id.
+///      - DungeonDiscoveries snapshots add per-character world-map markers.
+///      - HungerUpdate and Campfire*/Grill* implement doc/HUNGER.md.
+///      - PartyPositions is pushed server-side on relocation (was a poll answer)
+///      and now includes the recipient; clients filter themselves.
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -188,6 +197,7 @@ mod tests {
             players,
             monsters,
             ground_items: Vec::new(),
+            campfires: Vec::new(),
         };
         let bytes = serialize_server_msg(&msg).unwrap();
         let decoded = deserialize_server_msg(&bytes).unwrap();

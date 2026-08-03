@@ -94,7 +94,7 @@ pub struct PartyMember {
 
 /// How long a party invite stays acceptable. Shared so the server's
 /// enforcement and the agent-client's pruning are guaranteed equal; the web
-/// client mirrors it (`INVITE_TTL_MS` in `PartyInviteToast.svelte`).
+/// client mirrors it (`INVITE_TTL_MS` in `partyStore.ts`).
 pub const PARTY_INVITE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// How long a party summon stays acceptable; `PARTY_INVITE_TTL`'s twin. The
@@ -380,8 +380,9 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
-    /// Ask where the sender's party members are (world-map markers). Poll,
-    /// not push: positions flow only while someone is looking at a map.
+    /// Ask where the sender's party members are right now (map open). A
+    /// one-shot snapshot: steady-state updates are pushed by the server's
+    /// party-position tick whenever a member relocates.
     RequestPartyPositions,
     /// Cast the equipped fishing rod at a water point. The server validates
     /// rod, range, floor and water (water-field depth at the point) and
@@ -517,6 +518,13 @@ pub enum ServerMessage {
         entrance_id: String,
         doors: Vec<(u8, u32)>,
     },
+    /// Every dungeon entrance this character has discovered (world-map
+    /// markers): full snapshot at join and after each new discovery. Only
+    /// ids travel — both sides embed the entrance registry, so the client
+    /// resolves names and positions locally.
+    DungeonDiscoveries {
+        entrance_ids: Vec<String>,
+    },
     ChatMessage {
         player_id: PlayerId,
         message: String,
@@ -562,9 +570,11 @@ pub enum ServerMessage {
         leader_id: PlayerId,
         members: Vec<PartyMember>,
     },
-    /// Direct answer to `RequestPartyPositions`: the other members' locations
-    /// with no AOI cut — the point is members beyond it. Empty when the
-    /// sender is not in a party.
+    /// Party member locations with no AOI cut — the point is members beyond
+    /// it. Pushed to the whole party when a member relocates, and sent
+    /// directly as the answer to `RequestPartyPositions`. Includes the
+    /// recipient (one payload serves every member; clients filter
+    /// themselves); empty when the requester is not in a party.
     PartyPositions {
         members: Vec<PartyMemberPosition>,
     },
@@ -577,6 +587,8 @@ pub enum ServerMessage {
         monsters: HashMap<String, Monster>,
         #[serde(default)]
         ground_items: Vec<inventory::GroundItem>,
+        #[serde(default)]
+        campfires: Vec<crate::hunger::Campfire>,
     },
     GameTimeSync {
         datetime: GameDateTime,
@@ -774,14 +786,11 @@ pub enum ServerMessage {
     InventoryUpdated {
         inventory: inventory::PlayerInventory,
     },
-    /// A new item was created on the ground.
+    /// A new item was created on the ground. Sent when the item becomes real,
+    /// so a client spawns it on arrival: a dying monster's loot is held back
+    /// server-side until the killing blow lands.
     GroundItemSpawned {
         item: inventory::GroundItem,
-        /// Set when this item was dropped by a dying monster, so the client can
-        /// hold the drop until that monster's death-impact animation plays out.
-        /// `None` for player/debug drops, which spawn immediately.
-        #[serde(default)]
-        source_monster_id: Option<String>,
     },
     /// An existing ground item became visible to the client.
     GroundItemAppeared {
@@ -905,6 +914,39 @@ pub enum ServerMessage {
         rotation: f32,
         #[serde(default)]
         floor_level: i8,
+    },
+    /// Direct to the owner only (exact satiation is private, doc/HUNGER.md).
+    /// Sent on band transitions, eating, poisoning and poison expiry — not on
+    /// every decay tick. Carries the effective multipliers so the client
+    /// never re-derives the bands.
+    HungerUpdate {
+        satiation: u32,
+        state: crate::hunger::HungerState,
+        move_mult: f32,
+        attack_mult: f32,
+        carry_mult: f32,
+        /// Remaining food-poisoning duration; 0 when not poisoned.
+        poisoned_ms: u64,
+    },
+    /// A campfire was just lit nearby (play the ignition, not just appear).
+    CampfireSpawned {
+        campfire: crate::hunger::Campfire,
+    },
+    /// An already-burning campfire entered the receiver's AOI.
+    CampfireAppeared {
+        campfire: crate::hunger::Campfire,
+    },
+    /// Burned out or left the receiver's AOI.
+    CampfireRemoved {
+        campfire_id: u64,
+    },
+    /// Direct to the griller: the 3s grill cast began.
+    GrillStarted,
+    /// Direct to the griller. `grilled_item_def_id` is None when the cast was
+    /// cancelled (movement, combat, the fire burning out). The grilled item
+    /// itself arrives through the normal `InventoryUpdated`.
+    GrillEnded {
+        grilled_item_def_id: Option<String>,
     },
 }
 

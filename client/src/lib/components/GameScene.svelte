@@ -46,6 +46,7 @@
   import GameScenePlayersLayer from './game-scene/GameScenePlayersLayer.svelte'
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
+  import GameSceneCampfiresLayer from './game-scene/GameSceneCampfiresLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
@@ -201,6 +202,7 @@
   let groundItemsLayerRef = $state<GameSceneGroundItemsLayer | undefined>(
     undefined
   )
+  let campfiresLayerRef = $state<GameSceneCampfiresLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
   let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
   let signpostBubblePos = $derived(
@@ -655,6 +657,9 @@
 
       // Update river-rock spray particles + wake scroll
       riverRocksRef?.update(deltaTime, camera)
+
+      // Update campfire flames
+      campfiresLayerRef?.update(deltaTime, camera)
 
       // Update camera with preserved offset
       const cameraUpdateStart = performance.now()
@@ -1225,6 +1230,8 @@
     bind:this={groundItemsLayerRef}
     heightManager={terrainHeightManager}
   />
+
+  <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
     <!-- Both position objects are mutated in place upstream, so the line

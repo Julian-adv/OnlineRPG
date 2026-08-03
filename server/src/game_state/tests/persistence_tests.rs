@@ -14,7 +14,14 @@ async fn dirty_save_is_retried_after_failure() {
     player.name = record.name.clone();
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&player_id, record.id, record.xp, attributes, record.gold)
+        .register_player_character(
+            &player_id,
+            record.id,
+            record.xp,
+            attributes,
+            record.gold,
+            None,
+        )
         .await;
     game_state.inventories.write().await.insert(
         player_id,
@@ -106,20 +113,30 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
             }],
         )],
         &[],
+        &[],
         None,
     )
     .unwrap();
 
     let game_state = make_test_game_state("f015_kick_flush");
 
-    // Session A enters: player registered and inventory loaded from the DB.
+    // Session A enters with its account, player, and inventory registered.
     let a = pid("session_a");
+    let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session_a = game_state
+        .register_account_session(&account, kick_tx, &auth)
+        .await;
     let mut player = make_player("session_a", 0.0, 0.0);
     player.name = record.name.clone();
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&a, char_id, record.xp, attributes, record.gold)
+        .register_player_character(&a, char_id, record.xp, attributes, record.gold, None)
         .await;
+    assert!(
+        game_state
+            .attach_player_to_account_session(&account, session_a, a)
+            .await
+    );
     game_state.load_player_inventory(&a, char_id, &auth).await;
 
     // A drops the sword (in-memory only; not yet persisted).
@@ -134,8 +151,15 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
     // The window F-015 raced: the DB still holds the pre-drop snapshot.
     assert_eq!(auth.load_inventory(char_id).unwrap().len(), 1);
 
-    // A replacement login kicks A by (unique) character name.
-    game_state.kick_player_by_name(&record.name, &auth).await;
+    // A replacement login kicks A at the account level.
+    let (replacement_tx, _replacement_rx) = tokio::sync::mpsc::unbounded_channel();
+    game_state
+        .register_account_session(&account, replacement_tx, &auth)
+        .await;
+    assert!(matches!(
+        kick_rx.try_recv(),
+        Ok(ServerMessage::Kicked { player_id, .. }) if player_id == a
+    ));
 
     // The kick flushed A's post-drop inventory and detached it, so a
     // replacement load reads zero swords (no dupe) instead of a stale one.

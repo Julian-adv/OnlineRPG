@@ -28,7 +28,7 @@ use crate::types::{PlayerId, ServerMessage};
 
 /// Casts are only valid on the overworld floor — no fishing in dungeons or
 /// on house upper floors, whose "water" would be a terrain-height fiction.
-const OVERWORLD_FLOOR: i8 = 0;
+pub(crate) const OVERWORLD_FLOOR: i8 = 0;
 
 pub(crate) enum FishingPhase {
     /// Rod is swinging; the bobber lands when this elapses.
@@ -399,7 +399,8 @@ impl GameState {
 
         // Water = baked surface meaningfully above the terrain bed; covers
         // ocean and rivers alike (doc/WATER_SYSTEM.md). First-touch tile IO
-        // lives here in the cast handler, never in the tick.
+        // lives here in the cast handler, never in the tick. Kept inline
+        // (not `water_depth_at`) for the surface value and the error split.
         let wx = onlinerpg_shared::wrap_world_x(target.x);
         let water_surface = match tokio::join!(
             self.height_sampler.sample_height(wx, target.z),
@@ -555,6 +556,18 @@ impl GameState {
     /// handler on the tiles the cast validation just touched — the tick
     /// stays IO-free. Sample failures just keep walking: the cast target
     /// itself already proved fishable, so the fallback is the cast distance.
+    /// Water depth (surface − bed) at a wrapped-x point; `None` when a
+    /// sampler fails.
+    pub(super) async fn water_depth_at(&self, wx: f32, z: f32) -> Option<f32> {
+        match tokio::join!(
+            self.height_sampler.sample_height(wx, z),
+            self.water_sampler.sample_surface(wx, z),
+        ) {
+            (Ok(bed), Ok(surface)) => Some(surface - bed),
+            _ => None,
+        }
+    }
+
     async fn measure_reel_floor(&self, player_pos: &Position, cast_x: f32, cast_z: f32) -> f32 {
         let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, cast_x);
         let dz = cast_z - player_pos.z;

@@ -46,6 +46,21 @@ impl SpatialCell {
             z: (position.z / PLAYER_SPATIAL_CELL_SIZE).floor() as i32,
         }
     }
+
+    /// Every cell overlapping the given XZ box, by integer cell range —
+    /// exact, unlike sampling. Callers split a seam-crossing X range into
+    /// canonical segments first; the range itself does not wrap.
+    fn covering(
+        min_x: f32,
+        max_x: f32,
+        min_z: f32,
+        max_z: f32,
+    ) -> impl Iterator<Item = SpatialCell> {
+        let cell = |v: f32| (v / PLAYER_SPATIAL_CELL_SIZE).floor() as i32;
+        let (x0, x1) = (cell(min_x), cell(max_x));
+        let (z0, z1) = (cell(min_z), cell(max_z));
+        (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| SpatialCell { x, z }))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -78,12 +93,13 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 }
 
 mod chat;
-pub(crate) use chat::parse_notice_command;
+pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
 mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
+pub(crate) mod hunger;
 mod inventory;
 mod monster;
 mod party;
@@ -118,6 +134,12 @@ struct IdState {
     owner_spawn_counts: HashMap<u32, u32>,
 }
 
+struct AccountSession {
+    id: u64,
+    player_id: Option<PlayerId>,
+    kick_tx: mpsc::UnboundedSender<ServerMessage>,
+}
+
 /// Anchor for the game clock: game time = `start_game_seconds` plus scaled
 /// real time elapsed since `start_real`. Behind a std RwLock (not tokio)
 /// because it is read from sync contexts; writes only happen on debug
@@ -145,8 +167,10 @@ pub struct GameState {
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
     /// Monotonic timestamp of each player's last accepted attack request.
     player_attack_times: Arc<RwLock<HashMap<PlayerId, Instant>>>,
+    last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
+    ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -155,6 +179,8 @@ pub struct GameState {
     /// Global rare bonus-drop table shared by every loot source.
     world_drop_defs: crate::world_drop_defs::WorldDropDefs,
     id_state: Arc<RwLock<IdState>>,
+    account_sessions: Arc<RwLock<HashMap<String, AccountSession>>>,
+    next_account_session: Arc<std::sync::atomic::AtomicU64>,
     direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<DirectMessage>>>>,
     // player_id → (character_id, current_xp, attributes)
     #[allow(clippy::type_complexity)]
@@ -188,8 +214,14 @@ pub struct GameState {
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
     /// Players whose inventory has changed since the last periodic save.
     dirty_inventories: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Players who relocated (or whose party reshaped) since the last
+    /// party-position push; the tick maps them to parties, so entries from
+    /// partyless players just drop out there.
+    party_position_dirty: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
+    /// Serializes account replacement and character deletion with game entry.
+    character_session_lock: Arc<Mutex<()>>,
     /// In-memory set of currently open doors.
     open_doors: Arc<RwLock<HashSet<DoorKey>>>,
     /// Shared-crate passability cache mirroring what clients build (houses,
@@ -241,6 +273,10 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// Lowercased character name → (canonical name, mute expiry). Keyed by
+    /// name, not session, so a relog does not clear it; in-memory only, so a
+    /// restart does. Expired entries are pruned on mute/unmute and on lookup.
+    muted_until: Arc<RwLock<HashMap<String, (String, Instant)>>>,
     /// (character_id, dungeon entrance id) → world clock seconds at that
     /// character's last chest open. Keyed by character (not the per-session
     /// player id) and DB-backed, so the refill gate survives a reconnect and
@@ -249,12 +285,41 @@ pub struct GameState {
     /// would race the session replacement that clears it.
     #[allow(clippy::type_complexity)]
     chest_opens: Arc<RwLock<HashMap<(i64, String), i64>>>,
+    /// player_id → dungeon entrance ids this character has discovered
+    /// (world-map markers). Seeded from the DB at login, dropped on logout;
+    /// new discoveries queue in `pending_discovery_saves`.
+    dungeon_discoveries: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// (character_id, entrance_id) discoveries awaiting the next
+    /// `save_batch`; drained by the periodic flush and the shutdown
+    /// snapshot, re-queued if the batch fails.
+    pending_discovery_saves: Arc<RwLock<Vec<(i64, String)>>>,
+    /// Cell → entrances whose discovery region overlaps it, built once at
+    /// startup. `check_dungeon_discovery` looks up the mover's cell before
+    /// taking any lock and then tests only the listed entrances, so the
+    /// per-move cost stays O(1) however many entrances the registry grows to.
+    #[allow(clippy::type_complexity)]
+    dungeon_discovery_cells:
+        Arc<HashMap<SpatialCell, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>>>,
+    /// player_id → satiation + food poisoning (doc/HUNGER.md). Owner-private
+    /// like gold; official NPCs have no entry (the exemption).
+    hunger: Arc<RwLock<HashMap<PlayerId, hunger::HungerData>>>,
+    /// Lit campfires keyed by id, expired by `tick_campfires`.
+    campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
+    /// One grill cast per player, resolved by `tick_grills`.
+    grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
 }
 
 impl GameState {
     /// The `OUT_OF_COMBAT_MS` clock shared by regen, /escape, and summons.
     pub(crate) fn in_combat(player: &Player) -> bool {
         Self::now_ms().saturating_sub(player.last_combat_at) < OUT_OF_COMBAT_MS
+    }
+
+    /// Movement, a landed attack, death and disconnect all break cast-type
+    /// concentration (fishing, grilling) at the same chokepoints.
+    pub(crate) async fn cancel_concentration_if_active(&self, player_id: &PlayerId) {
+        self.cancel_fishing_if_active(player_id).await;
+        self.cancel_grill_if_active(player_id).await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -270,14 +335,17 @@ impl GameState {
         water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
+        let dungeon_discovery_cells = Arc::new(dungeon::discovery_cells(&dungeon_defs));
 
         Self {
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
             player_attack_times: Arc::new(RwLock::new(HashMap::new())),
+            last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
+            ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {
@@ -288,6 +356,8 @@ impl GameState {
             item_defs,
             world_drop_defs,
             id_state: Arc::new(RwLock::new(IdState::default())),
+            account_sessions: Arc::new(RwLock::new(HashMap::new())),
+            next_account_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             direct_channels: Arc::new(RwLock::new(HashMap::new())),
             player_characters: Arc::new(RwLock::new(HashMap::new())),
             player_gold: Arc::new(RwLock::new(HashMap::new())),
@@ -302,7 +372,9 @@ impl GameState {
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
+            party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
+            character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),
             last_position_correction: Arc::new(RwLock::new(HashMap::new())),
             passability: Arc::new(std::sync::RwLock::new(
@@ -322,7 +394,14 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
+            dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
+            pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
+            dungeon_discovery_cells,
+            hunger: Arc::new(RwLock::new(HashMap::new())),
+            campfires: Arc::new(RwLock::new(HashMap::new())),
+            grill_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

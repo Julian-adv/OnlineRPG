@@ -32,6 +32,7 @@
     inventoryStore,
     equipmentBurden,
   } from '../stores/inventoryStore'
+  import { hungerState } from '../stores/hungerStore'
   import { getItemDef } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
@@ -199,11 +200,11 @@
   // lastSentPosition is kinematic (send dedup), not state-membership data.
   let lastSentPosition = $state<Position | null>(null)
 
-  // Use the same movement config as remote players, with debug speed multiplier
+  // Use the same burden and hunger movement modifiers as the server.
   let MOVEMENT_CONFIG = $derived<MovementConfig>(
     movementConfigForSpeed(
       $equipmentBurden?.movement_speed ?? DEFAULT_MOVEMENT_CONFIG.maxSpeed,
-      $debugSpeedMode ? 10 : 1
+      ($debugSpeedMode ? 10 : 1) * ($hungerState?.moveMult ?? 1)
     )
   )
 
@@ -440,14 +441,28 @@
   }
 
   gameStore.subscribe((state) => {
+    const previousPlayerId = currentPlayer?.id ?? null
     currentPlayer = state.currentPlayer
-    if (currentPlayer) {
-      playerState.position = {
-        x: currentPlayer.position.x,
-        y: currentPlayer.position.y,
-        z: currentPlayer.position.z,
-      }
+    if (!currentPlayer) return
+
+    const position = {
+      x: currentPlayer.position.x,
+      y: currentPlayer.position.y,
+      z: currentPlayer.position.z,
     }
+    if (currentPlayer.id === previousPlayerId) {
+      playerState.position = position
+      return
+    }
+
+    playerRotation = currentPlayer.rotation
+    currentSpeed = 0
+    setPlayerState({
+      state: currentPlayer.health > 0 ? 'idle' : 'dead',
+      speed: 0,
+      rotation: currentPlayer.rotation,
+      position,
+    })
   })
 
   // Update player state and notify parent
@@ -742,11 +757,13 @@
       config: MOVEMENT_CONFIG,
       isInCombat: combatController.isInCombat,
       combatController,
-      cooldownMs: playerWeaponCombatProfile.weaponSkill
-        ? playerWeaponCombatProfile.cooldownMs
-        : attackCooldown
-          ? attackCooldown * 1000
-          : playerWeaponCombatProfile.cooldownMs,
+      cooldownMs:
+        (playerWeaponCombatProfile.weaponSkill
+          ? playerWeaponCombatProfile.cooldownMs
+          : attackCooldown
+            ? attackCooldown * 1000
+            : playerWeaponCombatProfile.cooldownMs) /
+        ($hungerState?.attackMult ?? 1),
       attackRangeMeters: playerWeaponCombatProfile.rangeMeters,
       chasePathing,
       getMonsterInfo: (monsterId) => {

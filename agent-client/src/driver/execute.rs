@@ -775,6 +775,16 @@ pub(super) async fn handle_response(
                         error!("Move error to ({gx:.1}, {gz:.1})");
                     }
                 }
+            } else {
+                // Partial coordinates (x without z, direction without
+                // distance) used to vanish silently — tell the LLM instead.
+                warn!("move: no usable goal (x={x:?} z={z:?} dir={direction:?} dist={distance:?})");
+                let mut s = state.lock().await;
+                s.push_agent_event(
+                    "[MoveFailed] That move had no usable goal — give both x and z, \
+                     or a direction with a distance."
+                        .to_string(),
+                );
             }
             continue;
         }
@@ -967,7 +977,7 @@ mod tests {
         let (mut s, _rx) = test_state();
         s.self_player = Some(test_player(0.0, 0.0));
         for item in items {
-            s.remember_ground_item(item, std::time::Instant::now());
+            s.remember_ground_item(item);
         }
         s
     }

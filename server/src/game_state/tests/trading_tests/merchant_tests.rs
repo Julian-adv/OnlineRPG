@@ -27,7 +27,7 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -50,
             "loyal customer",
@@ -41,7 +41,7 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
             modifier_pct,
             ..
         }) => {
-            assert_eq!(item_def_id, "iron_sword");
+            assert_eq!(item_def_id, "wooden_shield");
             assert_eq!(kind, DealKind::Buy);
             assert_eq!(modifier_pct, -10, "CHA 10 band is ±10");
         }
@@ -61,16 +61,17 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
 }
 
 #[tokio::test]
-async fn cross_floor_offer_deal_is_rejected() {
+async fn cross_floor_offer_deal_is_rejected_without_consuming_ledger() {
     let game_state = make_test_game_state("cross_floor_offer");
-    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 18, 0).await;
     set_floor(&game_state, "buyer", 1).await;
+    let ledger_before = game_state.deal_ledger_state_for_test("Rica", "buyer").await;
 
     game_state
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -50,
             "loyal customer",
@@ -87,6 +88,51 @@ async fn cross_floor_offer_deal_is_rejected() {
         }
         other => panic!("Expected DealResult rejection for NPC, got {other:?}"),
     }
+    assert_eq!(
+        game_state.deal_ledger_state_for_test("Rica", "buyer").await,
+        ledger_before,
+        "rejection must preserve NPC budget, player cap, and cooldown"
+    );
+    assert!(game_state
+        .active_deals_for(&pid("buyer"), "Rica")
+        .await
+        .is_empty());
+
+    // CHA 18 clamps this to -25%, a 625 discount. The immediate retry proves
+    // the rejection did not consume the cooldown; the ledger snapshot above
+    // directly proves that it did not consume the player's daily budget.
+    set_floor(&game_state, "buyer", 0).await;
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "wooden_shield",
+            DealKind::Buy,
+            -50,
+            "loyal customer",
+        )
+        .await;
+
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::DealUpdated { modifier_pct, .. }) => {
+            assert_eq!(modifier_pct, -25);
+        }
+        other => panic!("Expected DealUpdated after same-floor retry, got {other:?}"),
+    }
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::DealResult {
+            accepted,
+            applied_modifier_pct,
+            ..
+        }) => {
+            assert!(accepted);
+            assert_eq!(applied_modifier_pct, -25);
+        }
+        other => panic!("Expected accepted DealResult after retry, got {other:?}"),
+    }
+    let active = game_state.active_deals_for(&pid("buyer"), "Rica").await;
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].modifier_pct, -25);
 }
 
 #[tokio::test]
@@ -94,12 +140,12 @@ async fn offer_deal_enforces_cooldown_and_player_budget() {
     let game_state = make_test_game_state("offer_limits");
     let (_buyer_rx, mut npc_rx) = setup_haggle(&game_state, 18, 0).await;
 
-    // First offer: accepted (CHA 18 → band ±25, cost 2500 on iron_sword).
+    // First offer: accepted (CHA 18 → band ±25, cost 625 on wooden_shield).
     game_state
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -25,
             "first",
@@ -131,17 +177,34 @@ async fn offer_deal_enforces_cooldown_and_player_budget() {
         other => panic!("Expected cooldown rejection, got {:?}", other),
     }
 
-    // Cooldown lifted: the player's daily discount cap (4000) now rejects a
-    // second 2500-cost discount.
+    // Cooldown lifted: five more 625-cost discounts fill the player's
+    // daily cap (4000: 6 × 625 = 3750), then the next offer is rejected.
+    for _ in 0..5 {
+        game_state.clear_deal_cooldowns_for_test().await;
+        game_state
+            .offer_deal(
+                &pid("npc_rica"),
+                &pid("buyer"),
+                "wooden_shield",
+                DealKind::Buy,
+                -25,
+                "refill",
+            )
+            .await;
+        match npc_rx.try_recv() {
+            Ok(ServerMessage::DealResult { accepted, .. }) => assert!(accepted),
+            other => panic!("Expected accepted DealResult, got {:?}", other),
+        }
+    }
     game_state.clear_deal_cooldowns_for_test().await;
     game_state
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -25,
-            "third",
+            "over cap",
         )
         .await;
     match npc_rx.try_recv() {
@@ -168,24 +231,24 @@ async fn buy_item_applies_deal_once() {
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -10,
             "deal",
         )
         .await;
 
-    // First buy uses the -10% deal: 10000 → 9000.
+    // First buy uses the -10% deal: 2500 → 2250.
     game_state
-        .buy_item(&pid("buyer"), &pid("npc_rica"), "iron_sword")
+        .buy_item(&pid("buyer"), &pid("npc_rica"), "wooden_shield")
         .await;
-    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 21_000);
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 27_750);
 
     // The deal is single-use: the second buy pays full price.
     game_state
-        .buy_item(&pid("buyer"), &pid("npc_rica"), "iron_sword")
+        .buy_item(&pid("buyer"), &pid("npc_rica"), "wooden_shield")
         .await;
-    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 11_000);
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 25_250);
 }
 
 #[tokio::test]

@@ -238,8 +238,8 @@ mod tests {
     #[test]
     fn rica_has_a_shop_section() {
         let section = merchant_prompt_for("Rica").expect("Rica is a merchant");
-        assert!(section.contains("iron_sword"));
-        assert!(section.contains("1g"));
+        assert!(section.contains("dagger"));
+        assert!(section.contains("25s"));
         assert!(section.contains("40%"));
         assert!(section.contains("open_trade"));
         assert!(merchant_prompt_for("Karl").is_none());
@@ -250,17 +250,17 @@ mod tests {
     #[test]
     fn a_customer_sees_ricas_shelf_and_her_rate() {
         let line = shop_line_for("rica").expect("case does not matter");
-        assert!(line.contains("iron_sword 1g"), "{line}");
+        assert!(line.contains("dagger 25s"), "{line}");
         assert!(line.contains("healing_potion"), "{line}");
         assert!(line.contains("40%"), "{line}");
         assert!(shop_line_for("Karl").is_none(), "a resident keeps no shelf");
 
         let (catalog, rate) = merchant_shop("Rica").expect("Rica is a merchant");
         assert_eq!(rate, 40);
-        assert!(catalog.contains(&"iron_sword"));
+        assert!(catalog.contains(&"dagger"));
         assert!(
-            !catalog.contains(&"goblin_sword"),
-            "loot she does not stock stays off the shelf, so a buy cannot resolve to it"
+            !catalog.contains(&"iron_sword"),
+            "tier-2+ weapons are dungeon loot, not shelf stock, so a buy cannot resolve to them"
         );
     }
 

@@ -15,6 +15,17 @@ export const currentDungeonId = writable<string | null>(null)
 export const isUnderground = derived(currentDungeonDepth, (d) => d >= 1)
 
 /**
+ * Entrance ids recorded on the world map, from
+ * ServerMessage::DungeonDiscoveries (full snapshot at join and after each
+ * discovery — always replaced wholesale, never mutated in place).
+ */
+export const discoveredDungeonIds = writable<ReadonlySet<string>>(new Set())
+
+export function resetDiscoveredDungeons() {
+  discoveredDungeonIds.set(new Set())
+}
+
+/**
  * Bumped whenever the set of broken props on any floor changes (server snapshot
  * on entry, or a live break broadcast). The dungeon render layer watches this to
  * reconcile prop meshes with their broken variants; the authoritative set lives

@@ -100,6 +100,46 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
 }
 
 #[tokio::test]
+async fn replacement_login_kicks_the_previous_account_session() {
+    let auth = make_test_auth("account_session_replacement");
+    let account = auth.login_npc("npc_account_session").unwrap();
+    let game_state = make_test_game_state("account_session_replacement");
+    let (first_tx, mut first_rx) = tokio::sync::mpsc::unbounded_channel();
+    let first_id = game_state
+        .register_account_session(&account, first_tx, &auth)
+        .await;
+
+    let (second_tx, _second_rx) = tokio::sync::mpsc::unbounded_channel();
+    let second_id = game_state
+        .register_account_session(&account, second_tx, &auth)
+        .await;
+
+    assert!(matches!(
+        first_rx.try_recv(),
+        Ok(ServerMessage::Kicked { player_id, .. }) if player_id == PlayerId::from(0)
+    ));
+    assert!(
+        !game_state
+            .is_current_account_session(&account, first_id)
+            .await
+    );
+    assert!(
+        game_state
+            .is_current_account_session(&account, second_id)
+            .await
+    );
+
+    game_state
+        .end_account_session(&account, first_id, &auth)
+        .await;
+    assert!(
+        game_state
+            .is_current_account_session(&account, second_id)
+            .await
+    );
+}
+
+#[tokio::test]
 async fn equipped_torch_syncs_live_and_late_join_player_state() {
     let game_state = make_test_game_state("late_join_torch_snapshot");
     let torch_holder_id = pid("torch_holder");
@@ -225,13 +265,17 @@ async fn respawn_player_revives_dead_player_only() {
     assert_eq!(revived.position.z, spawn.z);
     assert_eq!(revived.rotation, spawn.rotation);
 
-    match direct_rx.try_recv() {
-        Ok(ServerMessage::PlayerRespawned { player }) => {
-            assert_eq!(player.id, player_id);
-            assert_eq!(player.health, player.max_health);
-        }
-        other => panic!("Expected direct PlayerRespawned, got {:?}", other),
-    }
+    // The spawn point sits within discovery range of a dungeon entrance, so
+    // an unseeded respawner may receive DungeonDiscoveries alongside this.
+    let respawned = drain(&mut direct_rx)
+        .into_iter()
+        .find_map(|msg| match msg {
+            ServerMessage::PlayerRespawned { player } => Some(player),
+            _ => None,
+        })
+        .expect("Expected direct PlayerRespawned");
+    assert_eq!(respawned.id, player_id);
+    assert_eq!(respawned.health, respawned.max_health);
 
     match broadcast_rx.try_recv() {
         Err(TryRecvError::Empty) => {}
@@ -299,4 +343,46 @@ async fn respawn_player_ignores_alive_player() {
         }
         Err(err) => panic!("Expected empty channel, got {:?}", err),
     }
+}
+
+#[tokio::test]
+async fn active_character_cannot_be_deleted_from_another_session() {
+    let auth = make_test_auth("active_character_delete_guard");
+    let account = auth.login_npc("npc_active_delete").unwrap();
+    let record = create_test_character(&auth, &account, "StillPlaying");
+    let game_state = Arc::new(make_test_game_state("active_character_delete_guard"));
+    let player_id = pid("active_character");
+
+    // Deletion must wait for admission, then reject the registered character.
+    let admission = game_state.lock_character_sessions().await;
+    let deleting_state = Arc::clone(&game_state);
+    let deleting_auth = auth.clone();
+    let deleting_account = account.clone();
+    let character_id = record.id;
+    let delete = tokio::spawn(async move {
+        deleting_state
+            .delete_character_if_inactive(&deleting_auth, &deleting_account, character_id)
+            .await
+            .unwrap()
+    });
+    tokio::task::yield_now().await;
+    assert!(!delete.is_finished());
+
+    game_state
+        .register_player_character(&player_id, record.id, 0, attrs_with_cha(12), 0, None)
+        .await;
+    drop(admission);
+
+    assert!(!delete.await.unwrap());
+    assert!(auth.get_character_for_account(&account, record.id).is_ok());
+
+    game_state.unregister_player_character(&player_id).await;
+    assert!(game_state
+        .delete_character_if_inactive(&auth, &account, record.id)
+        .await
+        .unwrap());
+    assert!(matches!(
+        auth.get_character_for_account(&account, record.id),
+        Err(crate::auth::AuthError::CharacterNotFound)
+    ));
 }

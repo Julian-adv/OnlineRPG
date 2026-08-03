@@ -1,7 +1,9 @@
 import { REGION_CELLS } from './terrain-constants'
 
-/** Full baked circumference: regions -16 through +15. */
-export const WORLD_WIDTH_X = 32 * REGION_CELLS
+/** Regions per wrap of the cylindrical world: -16 through +15. */
+export const WORLD_REGIONS_X = 32
+/** Full baked circumference in meters. */
+export const WORLD_WIDTH_X = WORLD_REGIONS_X * REGION_CELLS
 /** Tile -256 extends half a 64 m tile west of its center at -16,384. */
 export const WORLD_MIN_X = -16 * REGION_CELLS - 32
 /** Exclusive east edge; periodically identical to WORLD_MIN_X. */
@@ -30,4 +32,13 @@ export function shortestWrappedDeltaX(fromX: number, toX: number): number {
 /** Periodic representation of `x` nearest to the given reference position. */
 export function unwrapWorldXNear(referenceX: number, x: number): number {
   return referenceX + shortestWrappedDeltaX(referenceX, x)
+}
+
+/** Wrap a region x index into the baked -16..15 range (z never wraps). */
+export function wrapRegionX(rx: number): number {
+  const half = WORLD_REGIONS_X / 2
+  return (
+    ((((rx + half) % WORLD_REGIONS_X) + WORLD_REGIONS_X) % WORLD_REGIONS_X) -
+    half
+  )
 }

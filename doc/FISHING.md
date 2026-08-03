@@ -234,5 +234,5 @@ receive.
   player only — remote anglers still read through the bobber). SFX are in:
   the line whirs out on the swing, the splash lands with the bobber a second
   later, plop on bite, reel click when the reel stance engages, line snap on escape,
-  jingle on catch (all CC0 — see `assets/sfx.md`; self-only,
-  matching the combat sound precedent).
+  jingle on catch (CC0 packs except the contributor-original cast whir —
+  see `assets/sfx.md`; self-only, matching the combat sound precedent).

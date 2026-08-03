@@ -19,6 +19,7 @@ mod dungeon_tests;
 mod enchant_tests;
 mod fishing_tests;
 mod healing_tests;
+mod hunger_tests;
 mod movement_tests;
 mod party_tests;
 mod persistence_tests;
@@ -142,6 +143,18 @@ fn drain(rx: &mut DirectRx) -> Vec<ServerMessage> {
         msgs.push(msg);
     }
     msgs
+}
+
+fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
+    drain(rx)
+        .into_iter()
+        .filter(|message| {
+            matches!(
+                message,
+                ServerMessage::SpawnMonsterRequest { monster_type: ty } if ty == monster_type
+            )
+        })
+        .count()
 }
 
 fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {

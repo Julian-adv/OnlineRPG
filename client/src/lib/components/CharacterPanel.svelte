@@ -25,6 +25,11 @@
     FALLBACK_ICON,
   } from '../stores/dragStore'
   import { itemTooltip } from '../actions/itemTooltip'
+  import CharacterStatusPane from './CharacterStatusPane.svelte'
+  import {
+    characterPanelTab,
+    type CharacterPanelTab,
+  } from '../stores/debugStore'
 
   interface Props {
     visible: boolean
@@ -87,8 +92,7 @@
       : CLASS_LABELS[characterClass]
   )
 
-  const TABS = ['stats', 'skills'] as const
-  let activeTab = $state<(typeof TABS)[number]>('stats')
+  const TABS: CharacterPanelTab[] = ['stats', 'skills', 'status']
 
   const trainedSkills = $derived(
     (Object.entries($skillsStore.map) as [SkillId, SkillProgress][]).sort(
@@ -199,15 +203,18 @@
         {#each TABS as tab (tab)}
           <button
             class="tab"
-            class:active={activeTab === tab}
-            aria-pressed={activeTab === tab}
-            onclick={() => (activeTab = tab)}>{tab}</button
+            class:active={$characterPanelTab === tab}
+            aria-pressed={$characterPanelTab === tab}
+            onclick={() => characterPanelTab.set(tab)}>{tab}</button
           >
         {/each}
       </div>
       <!-- Stats pane stays laid out while hidden so the panel keeps its size -->
       <div class="tab-panes">
-        <div class="pane-stats" class:pane-hidden={activeTab !== 'stats'}>
+        <div
+          class="pane-stats"
+          class:pane-hidden={$characterPanelTab !== 'stats'}
+        >
           <div class="stats-grid">
             <div class="stat-row">
               <span class="stat-label">Lv</span>
@@ -308,7 +315,7 @@
             {/each}
           </div>
         </div>
-        {#if activeTab === 'skills'}
+        {#if $characterPanelTab === 'skills'}
           <div class="pane-skills">
             {#if trainedSkills.length > 0}
               <div class="skills-list">
@@ -342,6 +349,11 @@
             {:else}
               <div class="skills-empty">No skills trained yet</div>
             {/if}
+          </div>
+        {/if}
+        {#if $characterPanelTab === 'status'}
+          <div class="pane-status">
+            <CharacterStatusPane />
           </div>
         {/if}
       </div>
@@ -428,7 +440,8 @@
     visibility: hidden;
   }
 
-  .pane-skills {
+  .pane-skills,
+  .pane-status {
     position: absolute;
     inset: 0;
     overflow-y: auto;
