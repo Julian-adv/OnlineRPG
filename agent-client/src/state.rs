@@ -339,12 +339,16 @@ pub struct SharedState {
     /// Our own gold in the smallest unit (from GoldUpdate). NPC traders'
     /// wallets are real server-side gold (economy phase 3).
     pub self_gold: Option<i64>,
+    /// Our private trained-skill map, kept generic across skill families.
+    pub self_skills: onlinerpg_shared::skills::Skills,
     /// Our own bag (from InventoryState/InventoryUpdated), so a trading
     /// NPC knows what it carries.
     pub self_bag: Vec<onlinerpg_shared::inventory::ItemInstance>,
     /// What we are wearing, so `use` knows whether to equip or take off.
     pub self_equipped:
         HashMap<onlinerpg_shared::inventory::EquipSlot, onlinerpg_shared::inventory::ItemInstance>,
+    /// Server-authored equipped-load tier and movement pace.
+    pub equipment_burden: Option<onlinerpg_shared::EquipmentBurden>,
     /// Until when the wishlist prompt section stays suppressed after a
     /// successful purchase — a satisfied shopper stops shopping for a
     /// while even if other wishes remain.
@@ -448,8 +452,10 @@ impl SharedState {
             self_player_id: None,
             self_player: None,
             self_gold: None,
+            self_skills: Default::default(),
             self_bag: Vec::new(),
             self_equipped: HashMap::new(),
+            equipment_burden: None,
             trade_satiated_until: None,
             trade_busy: false,
             self_fishing: false,
@@ -484,6 +490,13 @@ impl SharedState {
             no_spawn_zones: Vec::new(),
             watch,
         }
+    }
+
+    pub fn effective_movement_speed(&self) -> f32 {
+        self.equipment_burden
+            .map(|burden| burden.movement_speed)
+            .filter(|speed| speed.is_finite() && *speed > 0.0)
+            .unwrap_or(onlinerpg_shared::PLAYER_MOVE_SPEED)
     }
 
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
@@ -948,8 +961,11 @@ impl SharedState {
             // State-only: tracked on SharedState, shown in the world state.
             ServerMessage::GoldUpdate { .. }
             | ServerMessage::GoldGained { .. }
+            | ServerMessage::SkillsUpdate { .. }
+            | ServerMessage::SkillXpGained { .. }
             | ServerMessage::InventoryState { .. }
             | ServerMessage::InventoryUpdated { .. }
+            | ServerMessage::EquipmentBurdenUpdated { .. }
             | ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
             | ServerMessage::GroundItemRemoved { .. }
@@ -1077,6 +1093,7 @@ impl SharedState {
                 self.in_game = true;
                 self.self_player_id = Some(player.id);
                 self.self_player = Some(player.clone());
+                self.self_skills = Default::default();
                 self.self_fishing = false;
                 // A character saved underground rejoins there (the server
                 // rehydrates it), so adopt the floor instead of assuming 0.
@@ -1323,6 +1340,23 @@ impl SharedState {
             ServerMessage::GoldUpdate { gold } => {
                 self.self_gold = Some(*gold);
             }
+            ServerMessage::SkillsUpdate { skills } => {
+                self.self_skills = skills.clone();
+            }
+            ServerMessage::SkillXpGained {
+                skill,
+                total_xp,
+                new_level,
+                ..
+            } => {
+                self.self_skills.map.insert(
+                    *skill,
+                    onlinerpg_shared::skills::SkillProgress {
+                        level: *new_level,
+                        xp: *total_xp,
+                    },
+                );
+            }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;
             }
@@ -1376,6 +1410,9 @@ impl SharedState {
             | ServerMessage::InventoryUpdated { ref inventory } => {
                 self.self_bag = inventory.bag.clone();
                 self.self_equipped = inventory.equipped.clone();
+            }
+            ServerMessage::EquipmentBurdenUpdated { burden } => {
+                self.equipment_burden = Some(*burden);
             }
             // A player sold to us = we bought a wishlist item (the server
             // only lets residents buy their wishlist): shopping mood
@@ -1535,6 +1572,11 @@ impl SharedState {
             // A pure state flag; it changes movement gating but is not an LLM
             // event in its own right.
             ServerMessage::TradeBusy { .. } => return urgency,
+            ServerMessage::SkillsUpdate { .. }
+            | ServerMessage::SkillXpGained { .. }
+            | ServerMessage::EquipmentBurdenUpdated { .. } => {
+                return urgency;
+            }
             // In-flight fishing beats: the reflex layer above already
             // answered them; the LLM only needs the FishingEnded outcome.
             ServerMessage::FishingCasted { .. }
@@ -2021,10 +2063,23 @@ impl SharedState {
             let mut worn: Vec<String> = self
                 .self_equipped
                 .iter()
-                .map(|(slot, i)| format!("{}: {}", slot.as_str(), i.item_def_id))
+                .map(|(slot, i)| {
+                    let item = format!("{}: {}", slot.as_str(), i.item_def_id);
+                    crate::item_defs::equipment_summary(&i.item_def_id)
+                        .map_or(item.clone(), |summary| format!("{item} [{summary}]"))
+                })
                 .collect();
             worn.sort();
             lines.push(format!("You are wearing: {}", worn.join(", ")));
+        }
+        if let Some(burden) = self.equipment_burden {
+            lines.push(format!(
+                "Equipment burden: {} ({:.1} kg equipped / {:.1} kg capacity; move {:.1} m/s)",
+                burden.tier.display_name(),
+                burden.equipped_weight / 10.0,
+                burden.max_carry_weight / 10.0,
+                burden.movement_speed
+            ));
         }
 
         if !self.party_members.is_empty() {
@@ -2199,6 +2254,91 @@ pub(crate) mod tests {
             last_combat_at: 0,
             client_kind: Default::default(),
         }
+    }
+
+    #[test]
+    fn generic_skill_messages_update_state_without_reaching_the_llm_queue() {
+        use onlinerpg_shared::skills::{SkillId, Skills};
+
+        let (mut state, _rx) = test_state();
+        let mut skills = Skills::default();
+        skills.add_xp(SkillId::Fishing, 100).unwrap();
+        skills.add_xp(SkillId::OneHandedSword, 500).unwrap();
+        skills.add_xp(SkillId::Dagger, 10).unwrap();
+        skills.add_xp(SkillId::Spear, 20).unwrap();
+        skills.add_xp(SkillId::Shield, 30).unwrap();
+        skills.add_xp(SkillId::Healing, 40).unwrap();
+        skills.add_xp(SkillId::LeatherArmor, 50).unwrap();
+
+        assert_eq!(
+            state.push_event(ServerMessage::SkillsUpdate {
+                skills: skills.clone(),
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills, skills);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::Spear,
+                xp_amount: 10,
+                total_xp: 30,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::Spear).xp, 30);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::Shield,
+                xp_amount: 5,
+                total_xp: 35,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::Shield).xp, 35);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::Healing,
+                xp_amount: 6,
+                total_xp: 46,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::Healing).xp, 46);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::LeatherArmor,
+                xp_amount: 5,
+                total_xp: 55,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::LeatherArmor).xp, 55);
+        assert!(state.drain_events().is_empty());
+    }
+
+    #[test]
+    fn equipment_burden_updates_agent_pacing_and_world_state_without_an_llm_event() {
+        let (mut state, _rx) = test_state();
+        let burden = onlinerpg_shared::inventory::resolve_equipment_burden(80.0, 150.0);
+
+        assert_eq!(
+            state.push_event(ServerMessage::EquipmentBurdenUpdated { burden }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.effective_movement_speed(), 2.1);
+        assert!(state.events.is_empty());
+        let world = state.format_world_state();
+        assert!(world.contains(
+            "Equipment burden: Heavy (8.0 kg equipped / 15.0 kg capacity; move 2.1 m/s)"
+        ));
     }
 
     /// The world state lists reachable ground items closest first, and

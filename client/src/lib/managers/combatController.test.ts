@@ -69,4 +69,26 @@ describe('CombatController', () => {
       rotation: Math.PI / 2,
     })
   })
+
+  it('uses the supplied Spear reach and cadence for attack cycles', () => {
+    const controller = new CombatController()
+    controller.beginCombat('m1', true)
+
+    const result = controller.update(
+      2467,
+      { x: 0, y: 0, z: 0 },
+      { state: 'idle' },
+      { x: 2.9, y: 0, z: 0 },
+      false,
+      2467,
+      'attack',
+      3
+    )
+
+    expect(result).toEqual({
+      action: 'attack_cycle',
+      monsterId: 'm1',
+      rotation: Math.PI / 2,
+    })
+  })
 })

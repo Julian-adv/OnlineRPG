@@ -76,7 +76,8 @@ export class CombatController {
     monsterObjPos: Position | undefined,
     isMoving: boolean,
     cooldownMs: number,
-    currentPlayerState: string
+    currentPlayerState: string,
+    attackRangeMeters = PLAYER_ATTACK_RANGE_METERS
   ): CombatUpdateResult {
     if (!this._targetMonsterId) return { action: 'none' }
 
@@ -101,7 +102,7 @@ export class CombatController {
 
     if (isMoving) {
       // CHASING phase
-      if (dist <= PLAYER_ATTACK_RANGE_METERS) {
+      if (dist <= attackRangeMeters) {
         return { action: 'reached_attack_range' }
       }
 
@@ -114,7 +115,7 @@ export class CombatController {
     }
 
     // COMBAT phase (in range)
-    if (dist > PLAYER_ATTACK_RANGE_METERS && !isFinishingAttack) {
+    if (dist > attackRangeMeters && !isFinishingAttack) {
       return this.startChase(monsterObjPos)
     }
 
@@ -129,7 +130,7 @@ export class CombatController {
       // A new attack cycle is about to fire: unlike the break check above this
       // applies even mid-finish, so a target that fled during the swing ends
       // the current swing and re-approaches instead of attacking out of range.
-      if (dist > PLAYER_ATTACK_RANGE_METERS) {
+      if (dist > attackRangeMeters) {
         return this.startChase(monsterObjPos)
       }
 

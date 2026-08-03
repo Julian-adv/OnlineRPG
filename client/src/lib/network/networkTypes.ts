@@ -77,6 +77,19 @@ export type CharacterAttributes = {
   guard: number
 }
 
+export type EquipmentBurdenTier =
+  | 'unburdened'
+  | 'light'
+  | 'medium'
+  | 'heavy'
+
+export type EquipmentBurden = {
+  equipped_weight: number
+  max_carry_weight: number
+  tier: EquipmentBurdenTier
+  movement_speed: number
+}
+
 export type CharacterRollResult = {
   attributes: CharacterAttributes
   maxHp: number
@@ -227,7 +240,14 @@ export type PlayerInventory = {
 }
 
 /** Trained-skill ids (shared `SkillId` wire strings). */
-export type SkillId = 'fishing'
+export type SkillId =
+  | 'fishing'
+  | 'one_handed_sword'
+  | 'dagger'
+  | 'spear'
+  | 'shield'
+  | 'healing'
+  | 'leather_armor'
 
 /** Shared `FishingAction` wire strings (`ClientMessage::FishingRespond`).
  *  `hook` answers a bite; the rest are held stances during the fight. */

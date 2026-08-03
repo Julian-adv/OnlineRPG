@@ -38,6 +38,59 @@ pub fn level_attack_bonus(level: u32) -> i32 {
     (level / 2) as i32
 }
 
+pub fn player_attack_bonus(
+    player_level: u32,
+    strength: u8,
+    weapon_enchant: i32,
+    weapon_skill_bonus: i32,
+) -> i32 {
+    level_attack_bonus(player_level)
+        + ability_modifier(strength)
+        + weapon_enchant
+        + weapon_skill_bonus
+}
+
+pub fn player_damage_bonus(strength: u8, weapon_enchant: i32) -> i32 {
+    ability_modifier(strength) + weapon_enchant
+}
+
+pub const WEAPON_SKILL_MISS_XP: u64 = 5;
+pub const WEAPON_SKILL_HIT_XP: u64 = 10;
+pub const WEAPON_SKILL_KILL_XP: u64 = 20;
+pub const SHIELD_SKILL_HIT_XP: u64 = 5;
+pub const SHIELD_SKILL_AVOID_XP: u64 = 10;
+pub const ARMOR_SKILL_HIT_XP: u64 = 5;
+
+pub fn weapon_skill_attack_xp(hit: bool, killing_blow: bool) -> u64 {
+    if killing_blow {
+        WEAPON_SKILL_KILL_XP
+    } else if hit {
+        WEAPON_SKILL_HIT_XP
+    } else {
+        WEAPON_SKILL_MISS_XP
+    }
+}
+
+/// Shield practice comes from every accepted monster swing: turning the blow
+/// aside is worth more, while absorbing a hit still teaches the defender.
+pub fn shield_skill_defense_xp(monster_hit: bool) -> u64 {
+    if monster_hit {
+        SHIELD_SKILL_HIT_XP
+    } else {
+        SHIELD_SKILL_AVOID_XP
+    }
+}
+
+/// Body-armor practice requires a landed, server-resolved blow. A miss may
+/// train Shield's deflection, but it never reached the worn armor.
+pub fn armor_skill_defense_xp(monster_hit: bool) -> u64 {
+    if monster_hit {
+        ARMOR_SKILL_HIT_XP
+    } else {
+        0
+    }
+}
+
 pub fn monster_max_health_for_level(level: u8) -> u32 {
     // Average of level d8, rounded up: Lv3 -> 14, Lv4 -> 18.
     (u32::from(level).max(1) * 9).div_ceil(2)
@@ -120,5 +173,26 @@ mod tests {
         assert_eq!(monster_max_health_for_level(4), 18);
         assert_eq!(monster_damage_roll_for_level(3), "1d6");
         assert_eq!(monster_damage_roll_for_level(7), "2d6");
+    }
+
+    #[test]
+    fn player_attack_components_stack_without_changing_damage() {
+        assert_eq!(player_attack_bonus(10, 14, 3, 2), 12);
+        assert_eq!(player_damage_bonus(14, 3), 5);
+        assert_eq!(player_attack_bonus(10, 14, 3, 0), 10);
+        assert_eq!(player_damage_bonus(14, 3), 5);
+    }
+
+    #[test]
+    fn weapon_skill_xp_matches_accepted_attack_outcomes() {
+        assert_eq!(weapon_skill_attack_xp(false, false), 5);
+        assert_eq!(weapon_skill_attack_xp(true, false), 10);
+        assert_eq!(weapon_skill_attack_xp(true, true), 20);
+    }
+
+    #[test]
+    fn shield_skill_xp_rewards_avoids_but_still_trains_on_hits() {
+        assert_eq!(shield_skill_defense_xp(false), 10);
+        assert_eq!(shield_skill_defense_xp(true), 5);
     }
 }

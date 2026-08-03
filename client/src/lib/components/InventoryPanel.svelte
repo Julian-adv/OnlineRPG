@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { inventoryStore, playerGold } from '../stores/inventoryStore'
+  import {
+    inventoryStore,
+    playerGold,
+    equipmentBurden,
+  } from '../stores/inventoryStore'
   import type { ItemInstance } from '../stores/inventoryStore'
   import { getItemDef, isConsumable } from '../data/itemDefs'
   import GoldAmount from './GoldAmount.svelte'
@@ -111,6 +115,15 @@
       <button class="close-btn" onclick={onClose}>&times;</button>
     </div>
 
+    {#if $equipmentBurden}
+      <div class="burden-summary">
+        Equipped {($equipmentBurden.equipped_weight / 10).toFixed(1)} kg ·
+        {$equipmentBurden.tier[0].toUpperCase() +
+          $equipmentBurden.tier.slice(1)} burden · Move
+        {$equipmentBurden.movement_speed.toFixed(1)} m/s
+      </div>
+    {/if}
+
     <div class="bag-grid">
       {#each slots as slot, i (slot?.instance_id ?? `empty-${i}`)}
         {@const def = slot ? getItemDef(slot.item_def_id) : null}
@@ -212,6 +225,12 @@
     font-size: 11px;
     font-weight: 700;
     color: #ffd700;
+  }
+
+  .burden-summary {
+    margin: -2px 0 8px;
+    font-size: 10px;
+    color: #aebdca;
   }
 
   .bag-grid {

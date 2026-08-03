@@ -301,6 +301,7 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             player_id,
             monster_id,
             hit,
+            damage_type,
             damage,
             ..
         } => {
@@ -309,8 +310,9 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                 return None;
             }
             Some(format!(
-                "[Attack] {} -> {monster_id}: hit={hit} dmg={damage}",
-                player_name(state, player_id)
+                "[Attack] {} -> {monster_id}: hit={hit} type={} dmg={damage}",
+                player_name(state, player_id),
+                damage_type.as_str()
             ))
         }
         ServerMessage::PlayerAttackRejected { monster_id, reason } => {
@@ -320,6 +322,9 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             monster_id,
             player_id,
             hit,
+            damage_type,
+            raw_damage,
+            mitigated_damage,
             damage,
             current_health,
             ..
@@ -329,8 +334,9 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                 return None;
             }
             Some(format!(
-                "[MonsterAttack] {monster_id} -> {}: hit={hit} dmg={damage} hp={current_health}",
-                player_name(state, player_id)
+                "[MonsterAttack] {monster_id} -> {}: hit={hit} type={} raw={raw_damage} mitigated={mitigated_damage} dmg={damage} hp={current_health}",
+                player_name(state, player_id),
+                damage_type.as_str()
             ))
         }
         ServerMessage::PlayerDead { player_id } => {
@@ -575,7 +581,9 @@ fn format_schedule_context(
 
 #[cfg(test)]
 mod tests {
-    use super::caught_line;
+    use super::{caught_line, format_event};
+    use crate::state::tests::test_state;
+    use onlinerpg_shared::{PhysicalDamageType, ServerMessage};
 
     // The wording contract with the LLM: each catch category tells the model
     // what it can actually do next (against the real embedded item defs).
@@ -616,5 +624,30 @@ mod tests {
             line.contains("use it to open it"),
             "the model must learn the `use` action opens it: {line}"
         );
+    }
+
+    #[test]
+    fn monster_attack_events_expose_the_authoritative_damage_breakdown() {
+        let (state, _rx) = test_state();
+        let line = format_event(
+            &state,
+            &ServerMessage::MonsterAttackedPlayer {
+                monster_id: "training_dummy".to_string(),
+                player_id: 1_u64.into(),
+                hit: true,
+                roll: 18,
+                damage_type: PhysicalDamageType::Blunt,
+                raw_damage: 6,
+                mitigated_damage: 2,
+                damage: 4,
+                current_health: 8,
+            },
+        )
+        .expect("nearby monster attack should be included");
+
+        assert!(line.contains("type=blunt"), "{line}");
+        assert!(line.contains("raw=6"), "{line}");
+        assert!(line.contains("mitigated=2"), "{line}");
+        assert!(line.contains("dmg=4"), "{line}");
     }
 }

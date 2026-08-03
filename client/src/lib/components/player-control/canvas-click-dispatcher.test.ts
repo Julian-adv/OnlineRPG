@@ -88,3 +88,20 @@ describe('dispatchCanvasClickIntent pickup handling', () => {
     expect(actions.enterPickup).not.toHaveBeenCalled()
   })
 })
+
+describe('dispatchCanvasClickIntent weapon reach', () => {
+  it('starts a Spear attack inside the supplied three-meter reach', () => {
+    const actions = makeActions()
+    const intent: ClickIntent = {
+      type: 'attack_monster',
+      monsterId: 'm1',
+      hitPoint: { x: 2.9, y: 0, z: 0 },
+      distance: 2.9,
+    }
+
+    dispatchCanvasClickIntent(intent, false, actions, 3)
+
+    expect(actions.attackInRange).toHaveBeenCalledWith('m1')
+    expect(actions.chaseAndAttack).not.toHaveBeenCalled()
+  })
+})

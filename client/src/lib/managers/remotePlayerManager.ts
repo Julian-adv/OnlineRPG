@@ -17,6 +17,7 @@ import { entityGroundY } from './entity-ground'
 import { FishingAnimationName } from '../types/animations'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { TerrainHeightManager } from './terrainHeightManager'
+import { getPlayerWeaponCombatProfile } from '../data/combatTiming'
 
 // Use the same movement config as local player
 const MOVEMENT_CONFIG: MovementConfig = {
@@ -37,9 +38,6 @@ class PlayerStateManager {
   players = new SvelteMap<number, PlayerState>()
 
   heightManager: TerrainHeightManager | null = null
-
-  // Attack animation duration in seconds (updated from actual animation data)
-  attackAnimationDuration = 1.0
 
   // Remote player movement data (for acceleration/deceleration)
   private movementData = new SvelteMap<number, MovementState>()
@@ -67,11 +65,15 @@ class PlayerStateManager {
   update(deltaTime: number) {
     const dt = deltaTime / 1000 // Convert to seconds
     const now = performance.now()
+    const otherPlayers = get(gameStore).otherPlayers
 
     // Check for attack animations that have finished
     this.attackStartTimes.forEach((startTime, playerId) => {
       const elapsed = (now - startTime) / 1000
-      if (elapsed < this.attackAnimationDuration) return
+      const attackDuration =
+        getPlayerWeaponCombatProfile(otherPlayers.get(playerId)?.mainHand)
+          .cooldownMs / 1000
+      if (elapsed < attackDuration) return
 
       this.attackStartTimes.delete(playerId)
 
@@ -97,9 +99,6 @@ class PlayerStateManager {
         })
       }
     })
-
-    // Snapshot other-player store state once for the frame (torch lookup below).
-    const otherPlayers = get(gameStore).otherPlayers
 
     // Update players
     this.targetPositions.forEach((targetPos, playerId) => {

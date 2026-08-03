@@ -20,10 +20,8 @@ use crate::state::SharedState;
 
 use super::prompt::resolve_active_schedule;
 
-pub(super) const MOVE_SPEED: f32 = onlinerpg_shared::PLAYER_MOVE_SPEED;
-
 /// Maximum distance per move step (units). Longer segments are subdivided
-/// so the NPC walks at MOVE_SPEED instead of teleporting.
+/// so the NPC walks at its effective movement speed instead of teleporting.
 pub(super) const MAX_STEP_DIST: f32 = 3.0;
 const SCHEDULE_ARRIVAL_RADIUS: f32 = 2.0;
 
@@ -209,7 +207,7 @@ pub(super) async fn execute_move(
 }
 
 /// One A* path, walked to the end. Subdivides long legs so the NPC walks at
-/// `MOVE_SPEED` instead of teleporting.
+/// its server-authored effective speed instead of teleporting.
 ///
 /// A search that cannot reach the goal still returns the leg that gets closest
 /// (`found: false` with waypoints). That leg is worth walking — it carries us to
@@ -260,7 +258,7 @@ async fn walk_path(
 }
 
 /// Walk an already-found route, subdividing long legs so the NPC moves at
-/// `MOVE_SPEED` instead of teleporting. Split out so a caller that has just
+/// the server-authored effective speed instead of teleporting. Split out so a caller that has just
 /// proved a route (the door probe) can walk it without searching again.
 async fn walk_waypoints(state: &Arc<Mutex<SharedState>>, waypoints: &[PathWaypoint]) -> MoveResult {
     let corrections = state.lock().await.position_corrections;
@@ -303,7 +301,7 @@ async fn walk_waypoints(state: &Arc<Mutex<SharedState>>, waypoints: &[PathWaypoi
                     error!("Failed to send move waypoint: {e}");
                     return MoveResult::Error;
                 }
-                ((step_dist / MOVE_SPEED) * 1000.0) as u64
+                ((step_dist / s.effective_movement_speed()) * 1000.0) as u64
             };
 
             tokio::time::sleep(Duration::from_millis(travel_ms.max(50))).await;

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Rolled linen bandage">
+  <defs>
+    <linearGradient id="cloth" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fffdf2"/>
+      <stop offset="1" stop-color="#c9c2a8"/>
+    </linearGradient>
+  </defs>
+  <path d="M8 25 39 10c7-3 15 1 17 8s-1 14-8 18L18 52c-5 2-11-1-13-7S3 28 8 25Z" fill="#8f8874" opacity=".45"/>
+  <path d="m10 21 31-12c8-3 16 1 18 9s-2 16-10 19L18 49c-6 2-12-1-14-7s0-18 6-21Z" fill="url(#cloth)" stroke="#807862" stroke-width="2"/>
+  <ellipse cx="47" cy="23" rx="10" ry="12" fill="#ece7d5" stroke="#807862" stroke-width="2"/>
+  <ellipse cx="47" cy="23" rx="4" ry="5" fill="#9b927a"/>
+  <path d="m8 28 34-13M7 36l34-13M10 43l32-12" fill="none" stroke="#b4ab91" stroke-width="2" opacity=".8"/>
+  <path d="M25 20v18M16 24v18" stroke="#d8d1bc" stroke-width="1"/>
+</svg>

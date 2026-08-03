@@ -43,13 +43,14 @@ export interface CanvasClickActions {
 export function dispatchCanvasClickIntent(
   intent: ClickIntent,
   isMapEditorMode: boolean,
-  actions: CanvasClickActions
+  actions: CanvasClickActions,
+  attackRangeMeters = PLAYER_ATTACK_RANGE_METERS
 ): void {
   if (isMapEditorMode && intent.type !== 'move_to_ground') return
 
   switch (intent.type) {
     case 'attack_monster':
-      if (intent.distance < PLAYER_ATTACK_RANGE_METERS) {
+      if (intent.distance <= attackRangeMeters) {
         actions.attackInRange(intent.monsterId)
       } else {
         actions.chaseAndAttack(intent.monsterId, intent.hitPoint)

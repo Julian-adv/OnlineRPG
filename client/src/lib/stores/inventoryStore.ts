@@ -1,5 +1,6 @@
 import { derived, writable } from 'svelte/store'
 import type {
+  EquipmentBurden,
   EquipSlot,
   ItemInstance,
   PlayerInventory,
@@ -22,6 +23,9 @@ export const playerGold = writable(0)
  *  `null` until the first GuardUpdated arrives. */
 export const playerGuard = writable<number | null>(null)
 
+/** Server-authored equipped-load tier and effective movement speed. */
+export const equipmentBurden = writable<EquipmentBurden | null>(null)
+
 /** Item defs that act as a carried light source (mirrors shared TORCH_ITEM_IDS). */
 const TORCH_ITEM_IDS = ['torch', 'worn_torch']
 
@@ -35,8 +39,13 @@ export function setInventory(inventory: PlayerInventory) {
   inventoryStore.set(inventory)
 }
 
+export function setEquipmentBurden(burden: EquipmentBurden) {
+  equipmentBurden.set(burden)
+}
+
 export function resetInventoryStore() {
   inventoryStore.set({ bag: [], equipped: {} })
   playerGold.set(0)
   playerGuard.set(null)
+  equipmentBurden.set(null)
 }

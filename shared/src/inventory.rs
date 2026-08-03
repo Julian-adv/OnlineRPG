@@ -3,6 +3,229 @@ use std::collections::HashMap;
 
 use crate::Position;
 
+/// Server-authored movement burden from equipped items. Bag contents still
+/// count toward carry capacity but do not slow movement in this first slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentBurdenTier {
+    Unburdened,
+    Light,
+    Medium,
+    Heavy,
+}
+
+impl EquipmentBurdenTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unburdened => "unburdened",
+            Self::Light => "light",
+            Self::Medium => "medium",
+            Self::Heavy => "heavy",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Unburdened => "Unburdened",
+            Self::Light => "Light",
+            Self::Medium => "Medium",
+            Self::Heavy => "Heavy",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EquipmentBurden {
+    pub equipped_weight: f32,
+    pub max_carry_weight: f32,
+    pub tier: EquipmentBurdenTier,
+    pub movement_speed: f32,
+}
+
+/// Resolve gradual movement bands from equipped load as a fraction of the
+/// character's carry capacity. Invalid inputs are clamped so legacy data can
+/// never produce a negative or non-finite movement speed.
+pub fn resolve_equipment_burden(equipped_weight: f32, max_carry_weight: f32) -> EquipmentBurden {
+    let equipped_weight = if equipped_weight.is_finite() {
+        equipped_weight.max(0.0)
+    } else {
+        0.0
+    };
+    let max_carry_weight = if max_carry_weight.is_finite() && max_carry_weight > 0.0 {
+        max_carry_weight
+    } else {
+        1.0
+    };
+    let ratio = equipped_weight / max_carry_weight;
+    let (tier, speed_multiplier) = if ratio <= 0.20 {
+        (EquipmentBurdenTier::Unburdened, 1.0)
+    } else if ratio <= 0.35 {
+        (EquipmentBurdenTier::Light, 0.9)
+    } else if ratio <= 0.50 {
+        (EquipmentBurdenTier::Medium, 0.8)
+    } else {
+        (EquipmentBurdenTier::Heavy, 0.7)
+    };
+    EquipmentBurden {
+        equipped_weight,
+        max_carry_weight,
+        tier,
+        movement_speed: crate::world::PLAYER_MOVE_SPEED * speed_multiplier,
+    }
+}
+
+/// Physical construction of worn body armor. Absent on clothing, shields,
+/// accessories, weapons, and other items. Add a variant only with real content
+/// that consumes it; broader future taxonomy lives in doc/ARMOR_SYSTEM.md.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArmorConstruction {
+    Padded,
+    Leather,
+    Mail,
+    Plate,
+    Hybrid,
+}
+
+impl ArmorConstruction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Padded => "padded",
+            Self::Leather => "leather",
+            Self::Mail => "mail",
+            Self::Plate => "plate",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Padded => "Padded",
+            Self::Leather => "Leather",
+            Self::Mail => "Mail",
+            Self::Plate => "Plate",
+            Self::Hybrid => "Hybrid",
+        }
+    }
+}
+
+impl std::str::FromStr for ArmorConstruction {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "padded" => Ok(Self::Padded),
+            "leather" => Ok(Self::Leather),
+            "mail" => Ok(Self::Mail),
+            "plate" => Ok(Self::Plate),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentKind {
+    Weapon,
+    Tool,
+    Clothing,
+    BodyArmor,
+    Shield,
+    Accessory,
+}
+
+impl EquipmentKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Weapon => "weapon",
+            Self::Tool => "tool",
+            Self::Clothing => "clothing",
+            Self::BodyArmor => "body_armor",
+            Self::Shield => "shield",
+            Self::Accessory => "accessory",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Weapon => "Weapon",
+            Self::Tool => "Tool",
+            Self::Clothing => "Clothing",
+            Self::BodyArmor => "Body Armor",
+            Self::Shield => "Shield",
+            Self::Accessory => "Accessory",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentLayer {
+    Held,
+    Primary,
+    Accessory,
+}
+
+impl EquipmentLayer {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Held => "held",
+            Self::Primary => "primary",
+            Self::Accessory => "accessory",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Held => "Held",
+            Self::Primary => "Primary",
+            Self::Accessory => "Accessory",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GarmentForm {
+    Helmet,
+    Cuirass,
+    Leggings,
+    Gloves,
+    Boots,
+    Hauberk,
+    Robe,
+    Coat,
+}
+
+impl GarmentForm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Helmet => "helmet",
+            Self::Cuirass => "cuirass",
+            Self::Leggings => "leggings",
+            Self::Gloves => "gloves",
+            Self::Boots => "boots",
+            Self::Hauberk => "hauberk",
+            Self::Robe => "robe",
+            Self::Coat => "coat",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Helmet => "Helmet",
+            Self::Cuirass => "Cuirass",
+            Self::Leggings => "Leggings",
+            Self::Gloves => "Gloves",
+            Self::Boots => "Boots",
+            Self::Hauberk => "Hauberk",
+            Self::Robe => "Robe",
+            Self::Coat => "Coat",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EquipSlot {
@@ -134,6 +357,104 @@ pub struct GroundItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn armor_constructions_have_stable_data_names() {
+        for (construction, wire, display) in [
+            (ArmorConstruction::Padded, "padded", "Padded"),
+            (ArmorConstruction::Leather, "leather", "Leather"),
+            (ArmorConstruction::Mail, "mail", "Mail"),
+            (ArmorConstruction::Plate, "plate", "Plate"),
+            (ArmorConstruction::Hybrid, "hybrid", "Hybrid"),
+        ] {
+            assert_eq!(construction.as_str(), wire);
+            assert_eq!(construction.display_name(), display);
+            assert_eq!(
+                serde_json::to_string(&construction).unwrap(),
+                format!("\"{wire}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<ArmorConstruction>(&format!("\"{wire}\"")).unwrap(),
+                construction
+            );
+            assert_eq!(wire.parse::<ArmorConstruction>(), Ok(construction));
+        }
+        assert!(serde_json::from_str::<ArmorConstruction>("\"chain\"").is_err());
+        assert!("chain".parse::<ArmorConstruction>().is_err());
+    }
+
+    #[test]
+    fn equipment_burden_bands_are_gradual_stable_and_bounded() {
+        for (weight, expected_tier, expected_speed) in [
+            (0.0, EquipmentBurdenTier::Unburdened, 3.0),
+            (30.0, EquipmentBurdenTier::Unburdened, 3.0),
+            (30.1, EquipmentBurdenTier::Light, 2.7),
+            (52.5, EquipmentBurdenTier::Light, 2.7),
+            (52.6, EquipmentBurdenTier::Medium, 2.4),
+            (75.0, EquipmentBurdenTier::Medium, 2.4),
+            (75.1, EquipmentBurdenTier::Heavy, 2.1),
+            (150.0, EquipmentBurdenTier::Heavy, 2.1),
+        ] {
+            let burden = resolve_equipment_burden(weight, 150.0);
+            assert_eq!(burden.tier, expected_tier, "weight {weight}");
+            assert!((burden.movement_speed - expected_speed).abs() < 0.000_001);
+            assert!(burden.movement_speed > 0.0);
+            assert!(burden.movement_speed <= crate::world::PLAYER_MOVE_SPEED);
+        }
+    }
+
+    #[test]
+    fn equipment_burden_sanitizes_invalid_inputs() {
+        let burden = resolve_equipment_burden(f32::NAN, f32::INFINITY);
+        assert_eq!(burden.equipped_weight, 0.0);
+        assert_eq!(burden.max_carry_weight, 1.0);
+        assert_eq!(burden.tier, EquipmentBurdenTier::Unburdened);
+        assert_eq!(burden.movement_speed, crate::world::PLAYER_MOVE_SPEED);
+    }
+
+    #[test]
+    fn equipment_taxonomy_has_stable_data_names() {
+        for (kind, wire, display) in [
+            (EquipmentKind::Weapon, "weapon", "Weapon"),
+            (EquipmentKind::Tool, "tool", "Tool"),
+            (EquipmentKind::Clothing, "clothing", "Clothing"),
+            (EquipmentKind::BodyArmor, "body_armor", "Body Armor"),
+            (EquipmentKind::Shield, "shield", "Shield"),
+            (EquipmentKind::Accessory, "accessory", "Accessory"),
+        ] {
+            assert_eq!(kind.as_str(), wire);
+            assert_eq!(kind.display_name(), display);
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{wire}\""));
+        }
+
+        for (layer, wire, display) in [
+            (EquipmentLayer::Held, "held", "Held"),
+            (EquipmentLayer::Primary, "primary", "Primary"),
+            (EquipmentLayer::Accessory, "accessory", "Accessory"),
+        ] {
+            assert_eq!(layer.as_str(), wire);
+            assert_eq!(layer.display_name(), display);
+            assert_eq!(
+                serde_json::to_string(&layer).unwrap(),
+                format!("\"{wire}\"")
+            );
+        }
+
+        for (form, wire, display) in [
+            (GarmentForm::Helmet, "helmet", "Helmet"),
+            (GarmentForm::Cuirass, "cuirass", "Cuirass"),
+            (GarmentForm::Leggings, "leggings", "Leggings"),
+            (GarmentForm::Gloves, "gloves", "Gloves"),
+            (GarmentForm::Boots, "boots", "Boots"),
+            (GarmentForm::Hauberk, "hauberk", "Hauberk"),
+            (GarmentForm::Robe, "robe", "Robe"),
+            (GarmentForm::Coat, "coat", "Coat"),
+        ] {
+            assert_eq!(form.as_str(), wire);
+            assert_eq!(form.display_name(), display);
+            assert_eq!(serde_json::to_string(&form).unwrap(), format!("\"{wire}\""));
+        }
+    }
 
     const ALL_SLOTS: &[EquipSlot] = &[
         EquipSlot::Head,

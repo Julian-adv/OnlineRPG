@@ -2,6 +2,8 @@
 
 던전 티어별 방어구 세트 파밍 설계 (2026-07-30 논의). **기존 아이템·기존 던전 범위의 재배치와 독립 롤 드랍, 신규 슬롯 3종(hands·back·shirt, 프로토콜 v12), leather_gloves·leather_boots·iron_helmet·iron_gauntlets 구현됨 (2026-07-31)** — 나머지 신규 아이템·신규 던전·월드 드랍 확장은 미구현.
 
+이 문서의 “가죽/체인/판금 세트”는 **파밍 세트·진행 로드아웃** 이름이다. 현재 body armor에는 `armorConstruction: padded|leather|mail|plate|hybrid`가 명시됐고, 모든 장착 아이템의 kind/layer와 garment form도 명시됐다. Padded, Leather, Mail, Plate, Hybrid는 물리 경감 profile을 사용하며, 향후 coverage·중량·내구도 기반은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)를 따른다. 특히 현재 체인 세트는 mail 몸통과 plate 철제 파츠를 섞은 로드아웃이므로 세트 이름을 construction으로 추론하지 않는다.
+
 핵심 컨셉: **세트는 인접한 두 티어에 걸쳐 드랍된다.** 티어 N 던전에서 일부 파츠를, 티어 N+1 던전에서 나머지(몸통 등 핵심 파츠)를 모아 완성한다. 완성한 세트가 그다음 티어에 도전할 체급이 된다.
 
 ## 티어 로드맵
@@ -27,11 +29,12 @@
 | head | leather_helmet | 1 | 1 | 있음 |
 | pants | leather_pants | 1 | 1 | 있음 |
 | belt | leather_belt | 0 | 1 | 있음 (아이콘은 sword.png placeholder) |
-| chest | leather_armor | 2 | 2 | 있음 |
+| chest | leather_armor | 1 | 2 | 있음 |
 | hands | leather_gloves | 1 | 2 | 있음 |
 | boots | leather_boots | 1 | 2 | 있음 |
 
-세트 guard 합계 ≈ 6.
+세트 guard 합계 ≈ 5. Leather Armor chest는 추가로 slash·pierce·blunt
+피해를 각각 1 경감하며, 양수 hit은 최소 1 피해를 준다.
 
 ### 티어 2–3: 체인 세트
 
@@ -39,10 +42,11 @@
 |------|--------|-------|------|------|
 | boots | iron_boots | 2 | 2 | 있음 |
 | head | iron_helmet | 2 | 2 | 있음 |
-| chest | chain_mail | 5 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
+| chest | chain_mail | 3 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
 | hands | iron_gauntlets | 2 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
 
-세트 guard 합계 ≈ 9~11.
+세트 guard 합계 = 9. Chain Mail chest는 추가로 slash 2 / pierce 1을
+경감하지만 blunt와 untyped은 경감하지 않으며 별도 armor skill도 없다.
 
 ### 티어 3–4: 판금 세트
 
@@ -50,11 +54,38 @@
 |------|--------|-------|------|------|
 | pants | plate_greaves | 3 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
 | boots | plate_boots | 2 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
-| chest | breastplate | 7 | 4 | 있음 |
+| chest | breastplate | 4 | 4 | 있음 |
 | head | plate_helmet | 3 | 4 | 있음 (티어 4 던전 생기기 전까지 미드랍) |
 | hands | plate_gauntlets | 3 | 4 | 있음 (티어 4 던전 생기기 전까지 미드랍) |
 
-세트 guard 합계 = 18.
+세트 guard 합계 = 15. Breastplate chest는 추가로 slash 3 / pierce 3 /
+blunt 1을 경감하며 별도 Plate skill은 없다. 다른 Plate 파츠는 각 파츠의
+Guard만 제공하고 chest profile을 중복 적용하지 않는다.
+
+프로토콜 v21의 이동 부담 기준에서 STR 10 캐릭터는 Leather body pieces가
+Unburdened(3.0 m/s), Mail loadout이 Medium(2.4 m/s), Plate set이
+Light(2.7 m/s)다. 가방 무게는 이 속도에 영향을 주지 않지만 무기·방패를 포함한
+모든 장착 아이템은 비율에 포함되므로 완성 전투 로드아웃은 다음 단계로 넘어갈
+수 있다. `chain_mail` 무게 55와 Plate 전체 무게 43의 관계는 이제 실제 gameplay
+tradeoff이므로 playtest 없이 조용히 보정하지 않는다.
+
+### 상점 chest 대안
+
+아래 아이템은 던전 세트가 아니라 Rica가 판매하는 chest 대안이다. 모두
+`primary/chest`를 점유하므로 서로 및 기존 chest armor와 동시에 입을 수 없다.
+
+| 아이템 | kind / form | construction | guard | 스킬 |
+|--------|-------------|--------------|------:|------|
+| traveler_robe | clothing / robe | 없음 | 0 | 없음 |
+| padded_battle_robe | body armor / robe | padded | 0 | 없음 |
+| brigandine_coat | body armor / coat | hybrid | 2 | 없음 |
+
+형태가 같은 robe라도 clothing과 padded armor는 다른 규칙을 가진다. 세 아이템
+모두 `defenseSkill`이 없으며 Leather Armor를 활성화하거나 훈련하지 않는다.
+Padded Battle Robe는 Guard 대신 slash 1 / blunt 2 경감을 제공하고 pierce와
+untyped은 경감하지 않는다. Brigandine Coat는 Guard 2와 slash / pierce /
+blunt 각각 2 경감을 제공하며 untyped은 경감하지 않는다. 양수 공격의 최종
+피해는 항상 최소 1이다.
 
 ### 장신구
 

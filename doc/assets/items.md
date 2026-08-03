@@ -1,5 +1,10 @@
 # Item Assets
 
+- traveler_robe.svg, padded_battle_robe.svg, brigandine_coat.svg — original
+  SVG icons authored for OpenMMO by OpenAI Codex (2026-08-02); project-owned,
+  no third-party source or license dependency. These items intentionally use
+  icon billboards on the ground until dedicated 3D and wearable meshes ship.
+
 - sword.glb https://www.fab.com/listings/5fe82d66-eaac-48e0-899d-1fedacdf409a
 - spear.glb https://sketchfab.com/3d-models/spear-f13ddd24e2fe47aa8aca23487afd893e
 - torch.glb https://sketchfab.com/3d-models/torch-stick-d8eadee1a5c14483aade99b1fe5bc150

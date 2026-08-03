@@ -438,6 +438,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::ShopState { .. } => "ShopState",
         ServerMessage::GoldUpdate { .. } => "GoldUpdate",
         ServerMessage::GuardUpdated { .. } => "GuardUpdated",
+        ServerMessage::EquipmentBurdenUpdated { .. } => "EquipmentBurdenUpdated",
         ServerMessage::GoldGained { .. } => "GoldGained",
         ServerMessage::TradeError { .. } => "TradeError",
         ServerMessage::DealUpdated { .. } => "DealUpdated",

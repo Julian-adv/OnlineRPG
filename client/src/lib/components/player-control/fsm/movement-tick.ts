@@ -185,6 +185,7 @@ interface RunPlayerMovementTickInput {
   isInCombat: boolean
   combatController: CombatControllerLike
   cooldownMs: number
+  attackRangeMeters?: number
   chasePathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
@@ -232,6 +233,7 @@ export function runPlayerMovementTick({
   isInCombat,
   combatController,
   cooldownMs,
+  attackRangeMeters,
   chasePathing,
   getMonsterInfo,
   findMonsterPosition,
@@ -272,6 +274,7 @@ export function runPlayerMovementTick({
     chaseGoal,
     movementState,
     cooldownMs,
+    attackRangeMeters,
     pathing: chasePathing,
     getMonsterInfo,
     findMonsterPosition,

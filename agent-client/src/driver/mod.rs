@@ -35,7 +35,7 @@ use crate::orchestrator::ScheduleEntry;
 use crate::state::SharedState;
 
 pub(crate) use action::wants_reroll;
-use combat::{load_attack_cooldown, tick_combat};
+use combat::{equipped_weapon_attack_cooldown, tick_combat};
 use execute::handle_response;
 use movement::{
     check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
@@ -141,8 +141,6 @@ pub async fn llm_driver(
 
     info!("[{label}] LLM driver: in game, ready.");
 
-    let attack_cooldown = load_attack_cooldown();
-
     // Stagger idle polls: random offset so NPCs don't all poll at the same time
     let idle_stagger = {
         use rand::Rng;
@@ -151,7 +149,11 @@ pub async fn llm_driver(
     };
     let mut last_prompt_at = Instant::now() - idle_stagger;
     let mut attack_target: Option<String> = None;
-    let mut last_attack_at = Instant::now() - attack_cooldown;
+    let initial_attack_cooldown = {
+        let state = state.lock().await;
+        equipped_weapon_attack_cooldown(&state)
+    };
+    let mut last_attack_at = Instant::now() - initial_attack_cooldown;
     let mut llm_in_flight: Option<tokio::task::JoinHandle<anyhow::Result<String>>> = None;
     let mut prompt_pending_since: Option<Instant> = None;
     // Track last chat/combat activity to decide polling interval
@@ -244,6 +246,10 @@ pub async fn llm_driver(
     }
 
     loop {
+        let attack_cooldown = {
+            let state = state.lock().await;
+            equipped_weapon_attack_cooldown(&state)
+        };
         // Tick interval: ATTACK_COOLDOWN when in combat, otherwise 1s (responsive to events)
         let tick_duration = if attack_target.is_some() {
             attack_cooldown.saturating_sub(last_attack_at.elapsed())

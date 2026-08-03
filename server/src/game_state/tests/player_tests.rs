@@ -1,4 +1,5 @@
 use super::*;
+use onlinerpg_shared::skills::{skill_xp_for_level, SkillId, SkillProgress, Skills};
 
 /// `GameState.players` is a list (numeric ids can't key a wasm-serialized
 /// map), so snapshot assertions look their player up by id.
@@ -7,6 +8,95 @@ fn find_player(players: &[Player], id: PlayerId) -> &Player {
         .iter()
         .find(|p| p.id == id)
         .expect("player missing from snapshot")
+}
+
+#[tokio::test]
+async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills() {
+    let game_state = make_test_game_state("primary_chest_layers");
+    let player_id = pid("layer_tester");
+    game_state
+        .add_player(make_player("layer_tester", 0.0, 0.0))
+        .await;
+    let mut attrs = attrs_with_cha(10);
+    attrs.guard = 10;
+    game_state
+        .register_player_character(&player_id, 1, 0, attrs, 0)
+        .await;
+    let mut skills = Skills::default();
+    skills.map.insert(
+        SkillId::LeatherArmor,
+        SkillProgress {
+            level: 25,
+            xp: skill_xp_for_level(25),
+        },
+    );
+    game_state.register_player_skills(&player_id, skills).await;
+    game_state.inventories.write().await.insert(
+        player_id,
+        PlayerInventory {
+            bag: vec![
+                bag_item(2, "traveler_robe", 1),
+                bag_item(3, "padded_battle_robe", 1),
+                bag_item(4, "brigandine_coat", 1),
+            ],
+            equipped: [(EquipSlot::Chest, bag_item(1, "leather_armor", 1))]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state.equip_item(&player_id, 2).await;
+    drain(&mut rx);
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.armor_skill, None);
+    assert_eq!(profile.primary_armor_construction, None);
+    assert_eq!(profile.effective_guard, 10);
+
+    game_state.equip_item(&player_id, 3).await;
+    drain(&mut rx);
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.armor_skill, None);
+    assert_eq!(
+        profile.primary_armor_construction,
+        Some(onlinerpg_shared::inventory::ArmorConstruction::Padded)
+    );
+    assert_eq!(profile.effective_guard, 10);
+
+    game_state.equip_item(&player_id, 4).await;
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.armor_skill, None);
+    assert_eq!(
+        profile.primary_armor_construction,
+        Some(onlinerpg_shared::inventory::ArmorConstruction::Hybrid)
+    );
+    assert_eq!(profile.effective_guard, 12);
+    let burden = drain(&mut rx)
+        .into_iter()
+        .find_map(|message| match message {
+            ServerMessage::EquipmentBurdenUpdated { burden } => Some(burden),
+            _ => None,
+        })
+        .expect("equipment mutation publishes burden");
+    assert_eq!(burden.equipped_weight, 14.0);
+    assert_eq!(burden.max_carry_weight, 150.0);
+    assert_eq!(
+        burden.tier,
+        onlinerpg_shared::EquipmentBurdenTier::Unburdened
+    );
+    assert_eq!(burden.movement_speed, 3.0);
+
+    game_state.equip_item(&player_id, 1).await;
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.armor_skill, Some(SkillId::LeatherArmor));
+    assert_eq!(
+        profile.primary_armor_construction,
+        Some(onlinerpg_shared::inventory::ArmorConstruction::Leather)
+    );
+    assert_eq!(profile.effective_guard, 14);
+
+    game_state.unequip_item(&player_id, EquipSlot::Chest).await;
+    assert_eq!(game_state.effective_guard(&player_id).await, 10);
 }
 
 #[tokio::test]

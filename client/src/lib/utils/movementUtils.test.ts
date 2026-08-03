@@ -7,10 +7,30 @@ import {
   initMovementState,
   hasTargetChanged,
   DEFAULT_MOVEMENT_CONFIG,
+  movementConfigForSpeed,
   type MovementConfig,
   type Position,
 } from './movementUtils'
 import { WORLD_MAX_X, WORLD_MIN_X } from '../terrain/world-wrap'
+
+describe('movementConfigForSpeed', () => {
+  it('applies the authoritative burden speed to movement and acceleration', () => {
+    expect(movementConfigForSpeed(2.4)).toEqual({
+      maxSpeed: 2.4,
+      acceleration: 4.8,
+      deceleration: 4.8,
+      arrivalThreshold: 0.05,
+    })
+  })
+
+  it('keeps debug scaling separate and sanitizes invalid speeds', () => {
+    expect(movementConfigForSpeed(2.7, 10).maxSpeed).toBe(27)
+    expect(movementConfigForSpeed(Number.NaN)).toEqual(
+      DEFAULT_MOVEMENT_CONFIG
+    )
+    expect(movementConfigForSpeed(99).maxSpeed).toBe(3)
+  })
+})
 
 describe('getMovementMode', () => {
   it('returns walk for short distance without torch', () => {

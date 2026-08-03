@@ -191,8 +191,22 @@ d20 굴림 + attack_bonus ≤ target_guard  →  빗나감
 - d20 범위: 1~20
 - `guard`가 곧 명중 목표값이다.
 - 기본 `attack_bonus = level / 2` (내림)
-- 플레이어 근접 공격은 STR modifier를 공격 보너스와 피해에 더한다.
+- 플레이어 근접 공격의 명중 보너스는 `level / 2 + STR modifier + weapon enchant + weapon skill bonus`다.
+- 현재 `weapon skill bonus`는 명시적으로 매핑된 One-Handed Sword, Dagger, Spear에 적용된다: 레벨 0–4/+0, 5–14/+1, 15–24/+2, 25–30/+3.
+- Sword/Dagger는 `slash1`, 사거리 2m, 재공격 1.533초를 사용한다. Spear는 `slash3`, 사거리 3m, 재공격 2.467초를 사용하며 서버가 장착 무기 기준으로 검증한다.
+- 유효 Guard는 `기본 Guard + 모든 장착 아이템 Guard + 장착 중인 Shield 스킬 보너스 + 활성 primary armor 스킬 보너스`다. Wooden/Raven Shield와 Leather Armor의 아이템 Guard는 각각 한 번만 더하고, 각 스킬의 레벨 0–4/+0, 5–14/+1, 15–24/+2, 25–30/+3 보너스를 별도 항으로 한 번만 적용한다.
+- Shield XP는 서버가 승인·해결한 몬스터 공격에만 발생한다. 방패 장착 상태에서 회피(몬스터 miss)는 10 XP, 피격은 5 XP이며, 사거리·층·소유권·생존·쿨다운 검사를 통과하지 못한 요청은 0 XP다.
+- Leather Armor XP는 `armorConstruction: leather`, `equipmentLayer: primary`, `defenseSkill: leather_armor`가 명시된 chest 아이템을 장착하고 서버가 승인한 몬스터 공격에 실제로 맞았을 때만 5 XP다. 빗나간 공격, 다른 가죽 파츠만 장착한 상태, Padded/Mail/Plate/Hybrid chest, 일반 robe, 거절·중복 요청은 훈련되지 않는다.
+- 피해 보너스는 기존대로 `STR modifier + weapon enchant`다. 스킬 레벨은 피해를 변경하지 않는다.
 - 몬스터는 `attackBonus`가 정의되어 있으면 그 값을 쓰고, 없으면 레벨 기반 기본값을 쓴다.
+
+Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. primary Padded construction은 slash 1 / blunt 2, primary Leather construction은 slash 1 / pierce 1 / blunt 1, primary Mail construction은 slash 2 / pierce 1, primary Plate construction은 slash 3 / pierce 3 / blunt 1, primary Hybrid construction은 slash 2 / pierce 2 / blunt 2를 경감한다. 다섯 construction 모두 untyped은 경감하지 않고 Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 중복 방어를 피하기 위해 `padded_battle_robe`는 기존 Guard 2를 0으로, `leather_armor`는 Guard 2를 1로, `chain_mail`은 Guard 5를 3으로, `breastplate`는 Guard 7을 4로, `brigandine_coat`는 Guard 4를 2로 이전했다. Leather Armor 스킬의 Guard band와 landed-hit XP 규칙은 그대로 유지되며 Mail, Plate, Hybrid는 별도 스킬을 만들거나 훈련하지 않는다. 장비의 kind/layer/form과 `armorConstruction`은 데이터·검증·툴팁에 적용되고, mitigation은 장착한 chest의 primary construction에만 적용된다. 다른 부위 파츠는 해당 파츠의 Guard만 제공한다. multi-layer occupancy/coverage, construction별 추가 부담, 마법 간섭, 내구도, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
+
+프로토콜 v21의 장비 부담은 별도의 이동 규칙이다. 가방 무게는 소지 한도에만
+영향을 주고, 장착 무게는 `STR × 15` 대비 비율로 Unburdened / Light /
+Medium / Heavy 단계와 3.0 / 2.7 / 2.4 / 2.1 m/s 속도를 결정한다. 서버 이동
+budget, 브라우저 예측, 에이전트 이동 pacing이 모두 서버가 보낸 같은 값을
+사용한다. 이 규칙은 Guard, 물리 경감, 방어구 스킬 XP를 변경하지 않는다.
 
 ### 대미지 롤 (Damage Roll)
 
@@ -204,6 +218,26 @@ d20 굴림 + attack_bonus ≤ target_guard  →  빗나감
 ```
 
 주사위 표기법: `{count}d{sides}` (예: `1d6`, `2d8`, `3d4`)
+
+물리 피해 처리 순서:
+
+```text
+raw damage
+→ equipped weapon damageType 우선
+→ 없으면 monster natural damageType
+→ 둘 다 없으면 untyped
+→ primary armor construction 경감
+→ final damage (양수 raw hit은 최소 1)
+```
+
+- 검·단검은 slash, 창은 pierce, 횃불은 blunt다.
+- Padded는 slash 1 / blunt 2, Leather는 slash·pierce·blunt 각각 1,
+  Mail은 slash 2 / pierce 1, Plate는 slash 3 / pierce 3 / blunt 1,
+  Hybrid는 slash·pierce·blunt 각각 2를 경감한다.
+- 프로토콜 v20의 `PlayerAttacked`는 `damage_type`을 보낸다.
+- `MonsterAttackedPlayer`는 `damage_type`, `raw_damage`,
+  `mitigated_damage`, 최종 `damage`를 함께 보내 브라우저와 에이전트가
+  서버 판정을 그대로 표시한다.
 
 - 구현: [server/src/game/combat.rs](../server/src/game/combat.rs)
 
@@ -266,10 +300,14 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 ### 플레이어 → 몬스터 공격
 
 1. 클라이언트가 `PlayerAttack { monster_id }` 전송
-2. 서버에서 히트 롤: `roll_attack(player_attack_bonus, monster_guard, weapon_damage)`
-3. 결과를 전체 클라이언트에 브로드캐스트 (`PlayerAttacked`)
-4. 명중 시 몬스터 HP 차감
-5. HP가 0이 되면 `MonsterDead` 브로드캐스트, 30초 후 제거
+2. 서버가 플레이어/생존/타겟/층/2m 범위를 검증한 뒤 공격자별 1.533초 monotonic cooldown을 원자적으로 claim한다.
+3. 서버 인벤토리의 main-hand 아이템 정의를 한 번 해석해 피해 주사위, enchant, `weaponSkill`, 스킬 레벨/명중 보너스를 캡처한다.
+4. 서버에서 히트 롤: `roll_attack(player_attack_bonus, monster_guard, weapon_damage)`
+5. 명중 시 몬스터 HP 차감 후 결과를 브로드캐스트 (`PlayerAttacked`)
+6. HP가 0이 되면 `MonsterDead` 브로드캐스트, 30초 후 제거
+7. 매핑된 One-Handed Sword의 정상 처리 결과에 miss 5 / hit 10 / killing blow 20 total 스킬 XP를 지급한다.
+
+잘못된 타겟, 이미 죽은 타겟, 다른 층, 범위 밖, 죽은 공격자, 게임에 없는 플레이어, cooldown 중인 요청은 공격 주사위/피해/스킬 XP를 만들지 않는다. cooldown은 타겟이 아니라 공격자 기준이므로 타겟 교체로 우회할 수 없다.
 
 ### 몬스터 → 플레이어 공격
 
@@ -427,6 +465,11 @@ Server → Client (broadcast):
   MonsterDead      { monster_id }
   PlayerDead       { player_id }
   PlayerRespawned  { player }
+
+Server → Client (direct):
+  PlayerAttackRejected { monster_id, reason }
+  SkillsUpdate         { skills }
+  SkillXpGained        { skill, xp_amount, total_xp, new_level, leveled_up }
 ```
 
 - 구현: [shared/src/lib.rs](../shared/src/lib.rs)

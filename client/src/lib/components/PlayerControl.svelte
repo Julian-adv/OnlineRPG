@@ -27,10 +27,15 @@
     debugSpeedMode,
     torchLightEnabled,
   } from '../stores/debugStore'
-  import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
+  import {
+    localTorchEquipped,
+    inventoryStore,
+    equipmentBurden,
+  } from '../stores/inventoryStore'
   import { getItemDef } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
+    movementConfigForSpeed,
     type Position,
     type MovementState,
     type MovementConfig,
@@ -45,7 +50,10 @@
   import { dungeonManager } from '../managers/dungeonManager'
   import { housingManager } from '../managers/housingManager'
   import { findPath } from '../managers/pathfinding'
-  import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
+  import {
+    getPlayerWeaponCombatProfile,
+    PROP_SWING_IMPACT_MS,
+  } from '../data/combatTiming'
   import { passability_get_floor_at } from '../wasm/onlinerpg_shared'
   import { get } from 'svelte/store'
   import { createPlayerPhysics } from './player-control/player-physics'
@@ -148,6 +156,11 @@
   playerFloorOffset.subscribe((v) => (floorOffset = v))
 
   let currentPlayer = $state<LocalPlayer | null>(null)
+  const playerWeaponCombatProfile = $derived(
+    getPlayerWeaponCombatProfile(
+      $inventoryStore.equipped.main_hand?.item_def_id
+    )
+  )
 
   /** Floor as broadcast to others. See `playerVisualFloorLevel`. */
   function wireFloorLevel(): number {
@@ -187,14 +200,12 @@
   let lastSentPosition = $state<Position | null>(null)
 
   // Use the same movement config as remote players, with debug speed multiplier
-  let MOVEMENT_CONFIG = $derived<MovementConfig>({
-    ...DEFAULT_MOVEMENT_CONFIG,
-    maxSpeed: DEFAULT_MOVEMENT_CONFIG.maxSpeed * ($debugSpeedMode ? 10 : 1),
-    acceleration:
-      DEFAULT_MOVEMENT_CONFIG.acceleration * ($debugSpeedMode ? 10 : 1),
-    deceleration:
-      DEFAULT_MOVEMENT_CONFIG.deceleration * ($debugSpeedMode ? 10 : 1),
-  })
+  let MOVEMENT_CONFIG = $derived<MovementConfig>(
+    movementConfigForSpeed(
+      $equipmentBurden?.movement_speed ?? DEFAULT_MOVEMENT_CONFIG.maxSpeed,
+      $debugSpeedMode ? 10 : 1
+    )
+  )
 
   // Character rotation and current speed
   let playerRotation = $state(0)
@@ -731,7 +742,12 @@
       config: MOVEMENT_CONFIG,
       isInCombat: combatController.isInCombat,
       combatController,
-      cooldownMs: attackCooldown ? attackCooldown * 1000 : 1500,
+      cooldownMs: playerWeaponCombatProfile.weaponSkill
+        ? playerWeaponCombatProfile.cooldownMs
+        : attackCooldown
+          ? attackCooldown * 1000
+          : playerWeaponCombatProfile.cooldownMs,
+      attackRangeMeters: playerWeaponCombatProfile.rangeMeters,
       chasePathing,
       getMonsterInfo: (monsterId) => {
         const monsterData = monsterManager.monsters.get(monsterId)
@@ -1273,7 +1289,11 @@
   }
 
   function dispatchPlayerControlEvent(event: PlayerControlEvent) {
-    dispatchQueuedPlayerControlEvent(event, createPlayerControlEventActions())
+    dispatchQueuedPlayerControlEvent(
+      event,
+      createPlayerControlEventActions(),
+      playerWeaponCombatProfile.rangeMeters
+    )
   }
 
   const playerControlMachine = createLocalPlayerControlMachine({

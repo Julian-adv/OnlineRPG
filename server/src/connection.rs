@@ -1023,7 +1023,9 @@ async fn handle_client_message(
 
             // Send inventory state
             if let Some(inv) = inventory {
+                let burden = game_state.equipment_burden(&id, &inv).await;
                 responses.push(ServerMessage::InventoryState { inventory: inv });
+                responses.push(ServerMessage::EquipmentBurdenUpdated { burden });
             }
 
             responses.push(ServerMessage::GuardUpdated {

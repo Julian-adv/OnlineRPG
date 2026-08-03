@@ -207,6 +207,10 @@ struct Args {
     /// generated on first run)
     #[arg(long, env = "NPC_AUTH_TOKEN")]
     npc_token: Option<String>,
+
+    /// Emit aggregate weapon-skill balance reports at this interval; 0 disables it
+    #[arg(long, env = "SKILL_BALANCE_REPORT_SECS", default_value_t = 0)]
+    skill_balance_report_secs: u64,
 }
 
 /// Read the NPC token file, generating a random one on first run so local
@@ -474,6 +478,31 @@ async fn main() -> ExitCode {
         },
     ));
 
+    if args.skill_balance_report_secs > 0 {
+        let game_state_for_skill_report = Arc::clone(&game_state);
+        let mut skill_report_shutdown = drain_shutdown.clone();
+        let skill_report_period = Duration::from_secs(args.skill_balance_report_secs);
+        info!(
+            "Weapon-skill balance reporting enabled every {}s",
+            args.skill_balance_report_secs
+        );
+        background.spawn(async move {
+            let mut interval = tokio::time::interval(skill_report_period);
+            interval.tick().await;
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = skill_report_shutdown.changed() => break,
+                    _ = interval.tick() => info!(
+                        target: "skill_balance",
+                        "{}",
+                        game_state_for_skill_report.skill_balance_report()
+                    ),
+                }
+            }
+        });
+    }
+
     let addr = format!("{}:{}", args.bind, args.port);
     let listener = match TcpListener::bind(addr.as_str()).await {
         Ok(listener) => {
@@ -592,6 +621,14 @@ async fn main() -> ExitCode {
     drain(&mut connections, "Connection").await;
 
     game_state.persist_shutdown_snapshot(&auth_service).await;
+
+    if args.skill_balance_report_secs > 0 {
+        info!(
+            target: "skill_balance",
+            "{}",
+            game_state.skill_balance_report()
+        );
+    }
 
     drain(&mut api_task, "Terrain API").await;
 

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Traveler's robe">
+  <defs>
+    <linearGradient id="cloth" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f7190"/>
+      <stop offset="1" stop-color="#253e59"/>
+    </linearGradient>
+  </defs>
+  <path d="M46 18 28 32l9 24 9-7-6 58h48l-6-58 9 7 9-24-18-14-10 10H56Z" fill="url(#cloth)" stroke="#172638" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M56 28c1 10 15 10 16 0M48 49h32M64 50v55" fill="none" stroke="#9fb4c6" stroke-width="4" stroke-linecap="round" opacity=".8"/>
+  <path d="M48 78h32" stroke="#b38b55" stroke-width="6" stroke-linecap="round"/>
+</svg>

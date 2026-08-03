@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Brigandine coat">
+  <defs>
+    <linearGradient id="coat" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7d2f35"/>
+      <stop offset="1" stop-color="#3e161c"/>
+    </linearGradient>
+  </defs>
+  <path d="M45 18 27 31l9 25 9-7-5 58h48l-5-58 9 7 9-25-18-13-11 9H56Z" fill="url(#coat)" stroke="#291216" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M54 28c2 10 18 10 20 0M64 34v71M43 54h42M41 78h46" fill="none" stroke="#bc8a57" stroke-width="4"/>
+  <g fill="#d1b071" stroke="#5c482d" stroke-width="1.5">
+    <circle cx="51" cy="45" r="3"/><circle cx="77" cy="45" r="3"/>
+    <circle cx="51" cy="67" r="3"/><circle cx="77" cy="67" r="3"/>
+    <circle cx="51" cy="90" r="3"/><circle cx="77" cy="90" r="3"/>
+  </g>
+</svg>

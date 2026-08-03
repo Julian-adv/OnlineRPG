@@ -56,11 +56,17 @@ export interface PlayerControlEventActions extends CanvasClickActions {
 
 export function dispatchPlayerControlEvent(
   event: PlayerControlEvent,
-  actions: PlayerControlEventActions
+  actions: PlayerControlEventActions,
+  attackRangeMeters?: number
 ) {
   switch (event.type) {
     case 'canvas_intent':
-      dispatchCanvasClickIntent(event.intent, event.editorMode, actions)
+      dispatchCanvasClickIntent(
+        event.intent,
+        event.editorMode,
+        actions,
+        attackRangeMeters
+      )
       return
     case 'request_move':
     case 'delayed_request_move':

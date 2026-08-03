@@ -25,7 +25,12 @@ import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { deathDropDelayQueue } from '../managers/deathDropDelay'
-import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import {
+  setInventory,
+  playerGold,
+  playerGuard,
+  setEquipmentBurden,
+} from '../stores/inventoryStore'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -661,7 +666,7 @@ export function handleServerMessage(
 
       addCombatMessage({
         text: data.hit
-          ? `rolled ${data.roll}: HIT for ${data.damage} damage!`
+          ? `rolled ${data.roll}: HIT for ${data.damage} ${data.damage_type} damage!`
           : `rolled ${data.roll}: MISSED!`,
         sender: isLocalAttacker ? 'local' : 'remote',
         name: attackerName,
@@ -690,6 +695,8 @@ export function handleServerMessage(
         invalid_target: 'target is gone',
         out_of_range: 'too far away',
         attacker_dead: 'you are dead',
+        not_in_game: 'you are not in game',
+        cooldown: 'attack is still recovering',
       }
       addCombatMessage({
         text: `attack rejected: ${reasonText[data.reason] ?? data.reason}`,
@@ -731,7 +738,11 @@ export function handleServerMessage(
         : (gameState.otherPlayers.get(data.player_id)?.name ?? 'Unknown')
       addCombatMessage({
         text: data.hit
-          ? `rolled ${data.roll}: HIT ${monsterTargetName} for ${data.damage} damage!`
+          ? `rolled ${data.roll}: HIT ${monsterTargetName} for ${data.damage} ${data.damage_type} damage${
+              data.mitigated_damage > 0
+                ? ` (${data.mitigated_damage} mitigated from ${data.raw_damage})`
+                : ''
+            }!`
           : `rolled ${data.roll}: MISSED!`,
         sender: 'system',
         name: 'Monster',
@@ -1029,6 +1040,15 @@ export function handleServerMessage(
 
     case 'GuardUpdated':
       playerGuard.set(Number(data.guard))
+      break
+
+    case 'EquipmentBurdenUpdated':
+      setEquipmentBurden({
+        equipped_weight: Number(data.burden.equipped_weight),
+        max_carry_weight: Number(data.burden.max_carry_weight),
+        tier: data.burden.tier,
+        movement_speed: Number(data.burden.movement_speed),
+      })
       break
 
     case 'GoldGained': {

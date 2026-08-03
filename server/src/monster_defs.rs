@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::game::combat;
+use onlinerpg_shared::PhysicalDamageType;
 
 fn default_weapon_drop_chance() -> f32 {
     1.0
@@ -38,6 +39,8 @@ pub struct MonsterDefinition {
     #[serde(rename = "damageRoll")]
     #[serde(default)]
     pub damage_roll: Option<String>,
+    #[serde(rename = "damageType", default)]
+    pub damage_type: Option<PhysicalDamageType>,
     #[serde(default)]
     pub weapon: Option<String>,
     #[serde(rename = "weaponDropChance", default = "default_weapon_drop_chance")]
@@ -79,6 +82,28 @@ impl MonsterDefinition {
         self.damage_roll
             .clone()
             .unwrap_or_else(|| combat::monster_damage_roll_for_level(self.level).to_string())
+    }
+
+    pub fn damage_type(&self) -> PhysicalDamageType {
+        self.damage_type.unwrap_or(PhysicalDamageType::Untyped)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unarmed_monsters_use_explicit_or_neutral_damage_types() {
+        let defs = MonsterDefs::load();
+        assert_eq!(
+            defs.get("scp939").unwrap().damage_type(),
+            PhysicalDamageType::Pierce
+        );
+        assert_eq!(
+            defs.get("kobold").unwrap().damage_type(),
+            PhysicalDamageType::Untyped
+        );
     }
 }
 

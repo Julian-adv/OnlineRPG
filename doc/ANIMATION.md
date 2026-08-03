@@ -58,7 +58,7 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 - 플레이 상태(`idle`, `moving`, `attack`, `dead`) 기반으로 클립 선택
 - `moving` 상태에서는 시작 시점에 `walk/jog/run` 중 하나를 lock
 - `idle`은 idle 계열 클립 중 랜덤 반복
-- `attack`은 `slash1`, `dead`는 `dying` 사용
+- `attack`은 Sword/Dagger의 경우 `slash1`, Spear의 경우 `slash3`를 사용하고 `dead`는 `dying` 사용
 
 ### CharacterPreview
 

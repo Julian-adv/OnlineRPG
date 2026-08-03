@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { ItemDefinition } from '../data/itemDefs'
+  import { skillDisplayName } from '../stores/skillsStore'
+  import { armor_construction_protection } from '../wasm/onlinerpg_shared'
 
   interface Props {
     def: ItemDefinition
@@ -23,6 +25,16 @@
       ? `right: ${window.innerWidth - anchor.left + 8}px;`
       : `left: ${anchor.right + 8}px;`
   )
+  const physicalProtection = $derived(
+    (['slash', 'pierce', 'blunt'] as const)
+      .map((damageType) => ({
+        damageType,
+        amount: def.equipSlot === 'chest' && def.armorConstruction
+          ? armor_construction_protection(def.armorConstruction, damageType)
+          : 0,
+      }))
+      .filter(({ amount }) => amount > 0)
+  )
 </script>
 
 <div
@@ -39,11 +51,64 @@
     {/if}
     {#if def.category === 'weapon' && def.dice}
       <span>Damage: {def.dice}{enchant > 0 ? `+${enchant}` : ''}</span>
+      {#if def.damageType}
+        <span
+          >Damage Type: {def.damageType[0].toUpperCase() +
+            def.damageType.slice(1)}</span
+        >
+      {/if}
     {:else if def.category === 'healing_potion' && def.dice}
       <span>Heals: {def.dice}</span>
+    {:else if def.category === 'bandage' && def.dice}
+      <span>Treats: {def.dice}</span>
+    {/if}
+    {#if def.weaponSkill}
+      <span>Weapon Skill: {skillDisplayName(def.weaponSkill)}</span>
+    {/if}
+    {#if def.defenseSkill}
+      <span>Defense Skill: {skillDisplayName(def.defenseSkill)}</span>
+    {/if}
+    {#if def.useSkill}
+      <span>Treatment Skill: {skillDisplayName(def.useSkill)}</span>
     {/if}
     {#if def.guard}
       <span>Guard: +{def.guard}</span>
+    {/if}
+    {#if def.armorConstruction}
+      <span
+        >Construction: {def.armorConstruction[0].toUpperCase() +
+          def.armorConstruction.slice(1)}</span
+      >
+    {/if}
+    {#if physicalProtection.length > 0}
+      <span
+        >Protection: {physicalProtection
+          .map(
+            ({ damageType, amount }) =>
+              `${damageType[0].toUpperCase() + damageType.slice(1)} ${amount}`
+          )
+          .join(', ')}</span
+      >
+    {/if}
+    {#if def.equipmentKind}
+      <span
+        >Kind: {def.equipmentKind
+          .split('_')
+          .map((word) => word[0].toUpperCase() + word.slice(1))
+          .join(' ')}</span
+      >
+    {/if}
+    {#if def.equipmentLayer}
+      <span
+        >Layer: {def.equipmentLayer[0].toUpperCase() +
+          def.equipmentLayer.slice(1)}</span
+      >
+    {/if}
+    {#if def.garmentForm}
+      <span
+        >Form: {def.garmentForm[0].toUpperCase() +
+          def.garmentForm.slice(1)}</span
+      >
     {/if}
   </div>
 </div>

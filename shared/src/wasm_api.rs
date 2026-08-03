@@ -82,6 +82,62 @@ pub fn skill_level_cap() -> u32 {
     crate::skills::SKILL_LEVEL_CAP
 }
 
+#[wasm_bindgen]
+pub fn one_handed_sword_attack_bonus(skill_level: u32) -> i32 {
+    crate::skills::one_handed_sword_attack_bonus(skill_level)
+}
+
+#[wasm_bindgen]
+pub fn shield_skill_guard_bonus(skill_level: u32) -> i32 {
+    crate::skills::shield_skill_guard_bonus(skill_level)
+}
+
+#[wasm_bindgen]
+pub fn armor_skill_guard_bonus(skill: &str, skill_level: u32) -> i32 {
+    skill.parse().map_or(0, |skill| {
+        crate::skills::armor_skill_guard_bonus(skill, skill_level)
+    })
+}
+
+#[wasm_bindgen]
+pub fn armor_construction_protection(construction: &str, damage_type: &str) -> u32 {
+    let Ok(construction) = construction.parse() else {
+        return 0;
+    };
+    let Ok(damage_type) = damage_type.parse() else {
+        return 0;
+    };
+    crate::combat::construction_protection(Some(construction), damage_type)
+}
+
+#[wasm_bindgen]
+pub fn healing_skill_hp_bonus(skill_level: u32) -> u32 {
+    crate::skills::healing_skill_hp_bonus(skill_level)
+}
+
+#[wasm_bindgen]
+pub fn weapon_skill_attack_bonus(skill: &str, skill_level: u32) -> i32 {
+    skill.parse().map_or(0, |skill| {
+        crate::skills::weapon_skill_attack_bonus(skill, skill_level)
+    })
+}
+
+#[wasm_bindgen]
+pub fn weapon_skill_melee_range(skill: &str) -> f32 {
+    skill.parse().map_or(
+        crate::skills::DEFAULT_WEAPON_MELEE_RANGE_METERS,
+        crate::skills::weapon_skill_melee_range,
+    )
+}
+
+#[wasm_bindgen]
+pub fn weapon_skill_attack_cooldown_ms(skill: &str) -> u32 {
+    skill.parse().map_or(
+        crate::skills::DEFAULT_WEAPON_ATTACK_COOLDOWN_MS,
+        crate::skills::weapon_skill_attack_cooldown_ms,
+    )
+}
+
 /// How long a cast is airborne (`CAST_MS`), so the client can line the splash
 /// up with the bobber landing instead of the swing that threw it.
 #[wasm_bindgen]

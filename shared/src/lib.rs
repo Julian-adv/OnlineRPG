@@ -5,6 +5,7 @@
 //! type now lives.
 
 pub mod character;
+pub mod combat;
 pub mod dungeon;
 pub mod entity;
 pub mod fishing;
@@ -39,7 +40,16 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 ///      world-map member markers.
 /// v12: equip slots hands/back/shirt (doc/ITEM_TIERS.md 선행 작업 #1).
 /// v13: party summoning scroll (PartySummonReceived → PartySummonRespond).
-pub const PROTOCOL_VERSION: u32 = 13;
+/// v14: one-handed sword skill metadata/progression + player attack cooldown.
+/// v15: dagger skill metadata/progression using the shared weapon-skill model.
+/// v16: spear skill identity plus its authoritative range/cadence profile.
+/// v17: Shield skill identity plus effective-Guard updates.
+/// v18: Healing skill identity plus server-authoritative treatment training
+/// and potency.
+/// v19: Leather Armor skill identity carried by the generic skill messages.
+/// v20: typed physical damage and authoritative mitigation breakdowns.
+/// v21: authoritative equipped-load burden tier and movement speed.
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -64,7 +74,9 @@ pub const CLOSE_CODE_IDLE_TIMEOUT: u16 = 4003;
 mod wasm_api;
 
 pub use character::{Character, CharacterAttributes, CharacterClass, Gender};
+pub use combat::{PhysicalDamageResult, PhysicalDamageType};
 pub use entity::{Monster, MonsterState, Player, PlayerId};
+pub use inventory::{EquipmentBurden, EquipmentBurdenTier};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
     ActiveDeal, AttackRejectReason, ClientMessage, DealKind, ServerMessage,
@@ -331,6 +343,14 @@ mod tests {
 
     #[test]
     fn roundtrip_all_server_messages() {
+        let mut skills = skills::Skills::default();
+        skills.add_xp(skills::SkillId::Fishing, 100).unwrap();
+        skills.add_xp(skills::SkillId::OneHandedSword, 500).unwrap();
+        skills.add_xp(skills::SkillId::Dagger, 10).unwrap();
+        skills.add_xp(skills::SkillId::Spear, 20).unwrap();
+        skills.add_xp(skills::SkillId::Shield, 30).unwrap();
+        skills.add_xp(skills::SkillId::Healing, 40).unwrap();
+        skills.add_xp(skills::SkillId::LeatherArmor, 50).unwrap();
         let messages = vec![
             ServerMessage::AuthError {
                 message: "bad".to_string(),
@@ -350,11 +370,59 @@ mod tests {
                 monster_id: "m1".to_string(),
                 hit: true,
                 roll: 18,
+                damage_type: PhysicalDamageType::Slash,
                 damage: 5,
+            },
+            ServerMessage::MonsterAttackedPlayer {
+                monster_id: "m1".to_string(),
+                player_id: 1.into(),
+                hit: true,
+                roll: 17,
+                damage_type: PhysicalDamageType::Blunt,
+                raw_damage: 6,
+                mitigated_damage: 2,
+                damage: 4,
+                current_health: 6,
             },
             ServerMessage::MonsterProvoked {
                 player_id: 1.into(),
                 monster_id: "m1".to_string(),
+            },
+            ServerMessage::PlayerAttackRejected {
+                monster_id: "m1".to_string(),
+                reason: AttackRejectReason::Cooldown,
+            },
+            ServerMessage::SkillsUpdate { skills },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::Spear,
+                xp_amount: 10,
+                total_xp: 20,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::Shield,
+                xp_amount: 10,
+                total_xp: 40,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::Healing,
+                xp_amount: 6,
+                total_xp: 40,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::LeatherArmor,
+                xp_amount: 5,
+                total_xp: 50,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::EquipmentBurdenUpdated {
+                burden: inventory::resolve_equipment_burden(43.0, 150.0),
             },
             ServerMessage::Kicked {
                 player_id: 1.into(),

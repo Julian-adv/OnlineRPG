@@ -106,7 +106,8 @@ export interface CombatControllerLike {
     monsterObjPos: Position | undefined,
     isMoving: boolean,
     cooldownMs: number,
-    currentPlayerState: string
+    currentPlayerState: string,
+    attackRangeMeters?: number
   ): CombatUpdateResult
 }
 
@@ -120,6 +121,7 @@ export interface TickCombatInput {
   chaseGoal: Position | null
   movementState: MovementState | null
   cooldownMs: number
+  attackRangeMeters?: number
   pathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
@@ -149,6 +151,7 @@ export function tickCombat({
   chaseGoal,
   movementState,
   cooldownMs,
+  attackRangeMeters,
   pathing,
   getMonsterInfo,
   findMonsterPosition,
@@ -164,7 +167,8 @@ export function tickCombat({
     findMonsterPosition(targetId),
     isMoving,
     cooldownMs,
-    playerStateName
+    playerStateName,
+    attackRangeMeters
   )
 
   switch (result.action) {
@@ -280,6 +284,7 @@ interface RunCombatFrameInput {
   chaseGoal: Position | null
   movementState: MovementState | null
   cooldownMs: number
+  attackRangeMeters?: number
   pathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
@@ -298,6 +303,7 @@ export function runCombatFrame({
   chaseGoal,
   movementState,
   cooldownMs,
+  attackRangeMeters,
   pathing,
   getMonsterInfo,
   findMonsterPosition,
@@ -320,6 +326,7 @@ export function runCombatFrame({
     chaseGoal,
     movementState,
     cooldownMs,
+    attackRangeMeters,
     pathing,
     getMonsterInfo,
     findMonsterPosition,

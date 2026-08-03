@@ -113,6 +113,31 @@ export const DEFAULT_MOVEMENT_CONFIG: MovementConfig = {
   arrivalThreshold: 0.05,
 }
 
+/** Apply the server-authored burden speed while preserving the baseline time
+ * to accelerate and decelerate. Debug scaling remains a separate multiplier. */
+export function movementConfigForSpeed(
+  effectiveSpeed: number,
+  debugMultiplier = 1
+): MovementConfig {
+  const speed =
+    Number.isFinite(effectiveSpeed) && effectiveSpeed > 0
+      ? Math.min(effectiveSpeed, DEFAULT_MOVEMENT_CONFIG.maxSpeed)
+      : DEFAULT_MOVEMENT_CONFIG.maxSpeed
+  const debugScale =
+    Number.isFinite(debugMultiplier) && debugMultiplier > 0
+      ? debugMultiplier
+      : 1
+  const burdenScale = speed / DEFAULT_MOVEMENT_CONFIG.maxSpeed
+  return {
+    ...DEFAULT_MOVEMENT_CONFIG,
+    maxSpeed: speed * debugScale,
+    acceleration:
+      DEFAULT_MOVEMENT_CONFIG.acceleration * burdenScale * debugScale,
+    deceleration:
+      DEFAULT_MOVEMENT_CONFIG.deceleration * burdenScale * debugScale,
+  }
+}
+
 // Calculate acceleration and deceleration distances based on config
 export function getAccelDistance(config: MovementConfig): number {
   return (config.maxSpeed * config.maxSpeed) / (2 * config.acceleration)

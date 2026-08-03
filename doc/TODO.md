@@ -66,7 +66,7 @@
 - [x] don't equip sword if she is a merchant
 - [x] equip spear if he is a guard
 - [x] place furnitures in house
-- animation for spear
+- [x] animation for spear (`slash3`, 3m reach, 2.467s cadence)
 - [x] sign of shops
 - [x] 상인 앞에 물건 놓여 있는 탁자
 - 꽃들만 모여 있는 구역

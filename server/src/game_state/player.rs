@@ -2,10 +2,13 @@ use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
+use onlinerpg_shared::inventory::resolve_equipment_burden;
 use onlinerpg_shared::{shortest_world_delta_x, wrap_world_x, PLAYER_MOVE_SPEED};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
+
+use super::skill_metrics::SkillSaveKind;
 
 /// Headroom over walk speed so the sim absorbs network jitter and catches up.
 const MOVE_SPEED_SLACK: f32 = 1.15;
@@ -335,13 +338,18 @@ impl super::GameState {
         }
         let inventories = Vec::from_iter(self.take_player_inventory(player_id).await);
         let skills = Vec::from_iter(self.take_player_skills(player_id).await);
+        let skill_row_count = skills.iter().map(|(_, rows)| rows.len()).sum();
 
         let auth = auth.clone();
-        flush_save(
+        let saved = flush_save(
             move || auth.save_batch(&characters, &inventories, &skills, None),
             "player state",
         )
         .await;
+        if saved {
+            self.skill_balance_metrics
+                .record_save(SkillSaveKind::Logout, skill_row_count);
+        }
     }
 
     /// Persist every connected player plus the world clock in one transaction.
@@ -352,9 +360,10 @@ impl super::GameState {
         let skills = self.collect_all_skill_states().await;
         let character_count = characters.len();
         let inventory_count = inventories.len();
+        let skill_row_count = skills.iter().map(|(_, rows)| rows.len()).sum();
         let datetime = self.current_game_datetime();
         let auth = auth.clone();
-        flush_save(
+        let saved = flush_save(
             move || {
                 auth.save_batch(&characters, &inventories, &skills, Some(&datetime))?;
                 info!(
@@ -366,6 +375,10 @@ impl super::GameState {
             "shutdown snapshot",
         )
         .await;
+        if saved {
+            self.skill_balance_metrics
+                .record_save(SkillSaveKind::Shutdown, skill_row_count);
+        }
     }
 
     async fn collect_shutdown_snapshot(
@@ -417,6 +430,7 @@ impl super::GameState {
 
         let character_count = dirty_states.len();
         let inventory_count = dirty_inventories.len();
+        let skill_row_count = dirty_skills.iter().map(|(_, rows)| rows.len()).sum();
         let auth = auth.clone();
         let saved = flush_save(
             move || {
@@ -434,6 +448,9 @@ impl super::GameState {
             self.restore_dirty_players(dirty_player_ids).await;
             self.restore_dirty_inventories(dirty_inventory_ids).await;
             self.restore_dirty_skills(dirty_skill_ids).await;
+        } else {
+            self.skill_balance_metrics
+                .record_save(SkillSaveKind::Periodic, skill_row_count);
         }
     }
 
@@ -522,6 +539,7 @@ impl super::GameState {
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
+        self.player_attack_times.write().await.remove(player_id);
         // A player disconnecting inside a dungeon leaves its floor first,
         // so its monsters get reassigned (or despawned) instead of being
         // dropped by remove_monsters_by_owner below.
@@ -713,7 +731,25 @@ impl super::GameState {
     /// broadcast the results. A tick's budget can span several short legs;
     /// consumed waypoints are popped in place, finished queues dropped.
     pub async fn tick_player_movement(&self, dt: f32) {
-        let max_step = PLAYER_MOVE_SPEED * MOVE_SPEED_SLACK * dt.max(0.0);
+        let movement_speeds = {
+            let inventories = self.inventories.read().await;
+            let characters = self.player_characters.read().await;
+            inventories
+                .iter()
+                .map(|(player_id, inventory)| {
+                    let max_carry_weight = characters
+                        .get(player_id)
+                        .map(|(_, _, attrs)| attrs.r#str as f32 * 15.0)
+                        .unwrap_or(150.0);
+                    let burden = resolve_equipment_burden(
+                        self.calc_equipped_weight(inventory),
+                        max_carry_weight,
+                    );
+                    (*player_id, burden.movement_speed)
+                })
+                .collect::<HashMap<_, _>>()
+        };
+        let elapsed = dt.max(0.0);
         let mut moved: Vec<(PlayerId, Position, i8, Player)> = Vec::new();
         let mut refused: Vec<RefusedMove> = Vec::new();
         {
@@ -731,6 +767,13 @@ impl super::GameState {
                 if player.health == 0 {
                     return false;
                 }
+
+                let max_step = movement_speeds
+                    .get(player_id)
+                    .copied()
+                    .unwrap_or(PLAYER_MOVE_SPEED)
+                    * MOVE_SPEED_SLACK
+                    * elapsed;
 
                 let old_position = player.position;
                 let old_floor = player.floor_level;

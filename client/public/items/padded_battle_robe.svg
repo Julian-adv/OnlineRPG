@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Padded battle robe">
+  <defs>
+    <linearGradient id="padded" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9d6f3e"/>
+      <stop offset="1" stop-color="#563a24"/>
+    </linearGradient>
+    <pattern id="quilt" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <path d="M0 0v14" stroke="#d4ad72" stroke-width="2" opacity=".55"/>
+    </pattern>
+  </defs>
+  <path d="M45 17 27 31l9 26 9-8-7 59h52l-7-59 9 8 9-26-18-14-11 10H56Z" fill="url(#padded)" stroke="#302116" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M44 30h40l5 75H39Z" fill="url(#quilt)"/>
+  <path d="M55 27c2 11 16 11 18 0M45 65h38M64 34v71" fill="none" stroke="#e5c48e" stroke-width="4" stroke-linecap="round"/>
+</svg>

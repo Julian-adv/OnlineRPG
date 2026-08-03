@@ -8,12 +8,13 @@
     CharacterClass,
     Gender,
   } from '../network/networkTypes'
+  import { xp_for_level, skill_level_cap } from '../wasm/onlinerpg_shared'
   import {
-    xp_for_level,
-    skill_xp_for_level,
-    skill_level_cap,
-  } from '../wasm/onlinerpg_shared'
-  import { skillsStore, SKILL_DISPLAY_NAMES } from '../stores/skillsStore'
+    skillsStore,
+    skillDisplayName,
+    skillEffectText,
+    skillProgressPct,
+  } from '../stores/skillsStore'
   import type { SkillId, SkillProgress } from '../network/networkTypes'
   import {
     dragMeta,
@@ -94,13 +95,6 @@
       ([a], [b]) => a.localeCompare(b)
     )
   )
-
-  function skillProgressPct(progress: SkillProgress): number {
-    if (progress.level >= skill_level_cap()) return 100
-    const start = skill_xp_for_level(progress.level)
-    const next = skill_xp_for_level(progress.level + 1)
-    return Math.min(100, ((progress.xp - start) / (next - start)) * 100)
-  }
 
   const EQUIP_SLOT_LABELS: Record<EquipSlot, string> = {
     head: 'Head',
@@ -319,11 +313,17 @@
             {#if trainedSkills.length > 0}
               <div class="skills-list">
                 {#each trainedSkills as [skillId, progress] (skillId)}
+                  {@const effect = skillEffectText(skillId, progress.level)}
                   <div class="skill-row">
-                    <span class="stat-label"
-                      >{SKILL_DISPLAY_NAMES[skillId] ?? skillId}</span
+                    <span class="stat-label">{skillDisplayName(skillId)}</span>
+                    <span class="stat-value"
+                      >Lv {progress.level}{progress.level >= skill_level_cap()
+                        ? ' (Max)'
+                        : ''}</span
                     >
-                    <span class="stat-value">Lv {progress.level}</span>
+                    {#if effect}
+                      <span class="skill-effect">{effect}</span>
+                    {/if}
                     <div
                       class="skill-track"
                       role="progressbar"
@@ -548,13 +548,20 @@
 
   .skill-row {
     display: grid;
-    grid-template-columns: auto auto 1fr;
+    grid-template-columns: 1fr auto;
     align-items: center;
-    gap: 8px;
+    gap: 3px 8px;
+  }
+
+  .skill-effect {
+    grid-column: 1 / -1;
+    color: #9fb2c3;
+    font-size: 11px;
   }
 
   /* Same track treatment as the character exp bar, green for skill growth. */
   .skill-track {
+    grid-column: 1 / -1;
     position: relative;
     height: 7px;
     border-radius: 999px;

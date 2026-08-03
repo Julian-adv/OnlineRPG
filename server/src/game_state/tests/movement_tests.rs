@@ -211,6 +211,82 @@ async fn server_caps_player_movement_speed() {
 }
 
 #[tokio::test]
+async fn equipped_load_slows_server_movement_while_bag_weight_does_not() {
+    let game_state = make_test_game_state("equipment_burden_movement");
+    let bag_id = pid("bag_carrier");
+    let equipped_id = pid("equipped_carrier");
+    for (name, player_id) in [("bag_carrier", bag_id), ("equipped_carrier", equipped_id)] {
+        game_state.add_player(make_player(name, 0.0, 0.0)).await;
+        game_state
+            .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0)
+            .await;
+    }
+
+    let heavy_items = [
+        (EquipSlot::Chest, bag_item(1, "chain_mail", 1)),
+        (EquipSlot::Head, bag_item(2, "iron_helmet", 1)),
+        (EquipSlot::Hands, bag_item(3, "iron_gauntlets", 1)),
+        (EquipSlot::Boots, bag_item(4, "iron_boots", 1)),
+        (EquipSlot::Pants, bag_item(5, "leather_pants", 1)),
+        (EquipSlot::MainHand, bag_item(6, "iron_sword", 1)),
+        (EquipSlot::OffHand, bag_item(7, "wooden_shield", 1)),
+    ];
+    game_state.inventories.write().await.insert(
+        bag_id,
+        PlayerInventory {
+            bag: heavy_items.iter().map(|(_, item)| item.clone()).collect(),
+            equipped: Default::default(),
+        },
+    );
+    game_state.inventories.write().await.insert(
+        equipped_id,
+        PlayerInventory {
+            bag: vec![],
+            equipped: heavy_items.into_iter().collect(),
+        },
+    );
+
+    let bag_burden = game_state
+        .equipment_burden(&bag_id, &game_state.inventories.read().await[&bag_id])
+        .await;
+    let equipped_burden = game_state
+        .equipment_burden(
+            &equipped_id,
+            &game_state.inventories.read().await[&equipped_id],
+        )
+        .await;
+    assert_eq!(
+        bag_burden.tier,
+        onlinerpg_shared::EquipmentBurdenTier::Unburdened
+    );
+    assert_eq!(bag_burden.movement_speed, 3.0);
+    assert_eq!(equipped_burden.equipped_weight, 80.0);
+    assert_eq!(
+        equipped_burden.tier,
+        onlinerpg_shared::EquipmentBurdenTier::Heavy
+    );
+    assert_eq!(equipped_burden.movement_speed, 2.1);
+
+    for player_id in [bag_id, equipped_id] {
+        game_state
+            .update_player_position(&player_id, move_cmd(pos(50.0), false), false, false)
+            .await;
+    }
+    game_state.tick_player_movement(1.0).await;
+
+    let bag_distance = player_x(&game_state, &bag_id).await;
+    let equipped_distance = player_x(&game_state, &equipped_id).await;
+    assert!(
+        (bag_distance - 3.45).abs() < 0.001,
+        "bag distance {bag_distance}"
+    );
+    assert!(
+        (equipped_distance - 2.415).abs() < 0.001,
+        "equipped distance {equipped_distance}"
+    );
+}
+
+#[tokio::test]
 async fn one_tick_budget_spans_queued_legs() {
     let game_state = make_test_game_state("movement_queue_budget");
     let player_id = pid("pathwalker");

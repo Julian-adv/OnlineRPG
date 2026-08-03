@@ -2,8 +2,8 @@
 //! XP grants. Mirrors the gold/inventory pattern — skills live outside the
 //! broadcast `Player` struct (private to their owner), are registered on
 //! EnterGame, flushed through the same dirty-set saves, and detached on
-//! logout. Nothing grants skill XP yet; the first caller is the fishing
-//! system (doc/FISHING.md).
+//! logout. Action systems grant through the one generic `add_skill_xp` path;
+//! each caller owns its server-side validation and award timing.
 
 use onlinerpg_shared::skills::{SkillId, SkillXpResult, Skills};
 use tracing::warn;
@@ -72,9 +72,11 @@ impl GameState {
         skill: SkillId,
         amount: u64,
     ) -> Option<SkillXpResult> {
-        let result = {
+        let (result, created_row) = {
             let mut map = self.player_skills.write().await;
-            map.get_mut(player_id)?.add_xp(skill, amount)?
+            let skills = map.get_mut(player_id)?;
+            let created_row = !skills.map.contains_key(&skill);
+            (skills.add_xp(skill, amount)?, created_row)
         };
         {
             let mut dirty = self.dirty_skills.write().await;
@@ -91,6 +93,8 @@ impl GameState {
             },
         )
         .await;
+        self.skill_balance_metrics
+            .record_xp_message(skill, created_row);
         Some(result)
     }
 

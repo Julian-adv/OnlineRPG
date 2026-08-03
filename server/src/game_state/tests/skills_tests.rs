@@ -96,16 +96,58 @@ async fn take_player_skills_snapshots_and_detaches() {
         .add_skill_xp(&player, SkillId::Fishing, 600)
         .await
         .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::OneHandedSword, 500)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::Dagger, 100)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::Spear, 20)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::Shield, 30)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::Healing, 40)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::LeatherArmor, 50)
+        .await
+        .unwrap();
 
     let (character_id, rows) = game_state
         .take_player_skills(&player)
         .await
         .expect("skills should detach");
     assert_eq!(character_id, 7);
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].skill_id, "fishing");
-    assert_eq!(rows[0].xp, 600);
-    assert_eq!(rows[0].level, 2);
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows[0].skill_id, "dagger");
+    assert_eq!(rows[0].xp, 100);
+    assert_eq!(rows[0].level, 1);
+    assert_eq!(rows[1].skill_id, "fishing");
+    assert_eq!(rows[1].xp, 600);
+    assert_eq!(rows[1].level, 2);
+    assert_eq!(rows[2].skill_id, "healing");
+    assert_eq!(rows[2].xp, 40);
+    assert_eq!(rows[2].level, 0);
+    assert_eq!(rows[3].skill_id, "leather_armor");
+    assert_eq!(rows[3].xp, 50);
+    assert_eq!(rows[3].level, 0);
+    assert_eq!(rows[4].skill_id, "one_handed_sword");
+    assert_eq!(rows[4].xp, 500);
+    assert_eq!(rows[4].level, 2);
+    assert_eq!(rows[5].skill_id, "shield");
+    assert_eq!(rows[5].xp, 30);
+    assert_eq!(rows[5].level, 0);
+    assert_eq!(rows[6].skill_id, "spear");
+    assert_eq!(rows[6].xp, 20);
+    assert_eq!(rows[6].level, 0);
 
     // Detached: nothing left to take or flush.
     assert!(game_state.take_player_skills(&player).await.is_none());

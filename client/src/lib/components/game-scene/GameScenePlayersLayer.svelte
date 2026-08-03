@@ -119,11 +119,6 @@
     wallTorchPositions,
   }: Props = $props()
 
-  // Sync attack animation duration to remote player manager
-  $effect(() => {
-    remotePlayerManager.attackAnimationDuration = playerAttackDuration
-  })
-
   // Local-player fishing stance: overrides only the 'idle' state, so
   // movement/attack win and the PlayerControl FSM stays untouched.
   let fishingCastDone = $state(false)

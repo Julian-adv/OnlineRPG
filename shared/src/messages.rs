@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::character::{Character, CharacterAttributes, CharacterClass, Gender};
+use crate::combat::PhysicalDamageType;
 use crate::entity::{Monster, MonsterState, Player};
 use crate::world::{GameDateTime, NoSpawnZone, Position};
 use crate::{fishing, housing, inventory, skills};
@@ -34,6 +35,7 @@ pub enum AttackRejectReason {
     OutOfRange,
     AttackerDead,
     NotInGame,
+    Cooldown,
 }
 
 impl std::fmt::Display for AttackRejectReason {
@@ -43,6 +45,7 @@ impl std::fmt::Display for AttackRejectReason {
             Self::OutOfRange => "out_of_range",
             Self::AttackerDead => "attacker_dead",
             Self::NotInGame => "not_in_game",
+            Self::Cooldown => "cooldown",
         })
     }
 }
@@ -612,6 +615,7 @@ pub enum ServerMessage {
         monster_id: String,
         hit: bool,
         roll: u8,
+        damage_type: PhysicalDamageType,
         damage: u32,
     },
     /// A valid attack attempt made outside melee range. No attack roll or
@@ -631,6 +635,9 @@ pub enum ServerMessage {
         player_id: PlayerId,
         hit: bool,
         roll: u8,
+        damage_type: PhysicalDamageType,
+        raw_damage: u32,
+        mitigated_damage: u32,
         damage: u32,
         current_health: u32,
     },
@@ -817,12 +824,19 @@ pub enum ServerMessage {
     GoldUpdate {
         gold: i64,
     },
-    /// Direct message: the receiving player's effective guard — base attribute
-    /// plus every equipped item's guard bonus, i.e. the exact number combat
-    /// uses to resolve hits. Sent on join and after any equipment change so the
-    /// client can display it without duplicating the server formula.
+    /// Direct message: the receiving player's effective guard — base attribute,
+    /// every equipped item's guard bonus, and an active defensive-skill bonus.
+    /// This is the exact number combat uses to resolve hits. Sent on join,
+    /// equipment changes, and defensive-skill bonus thresholds so the client
+    /// never duplicates the server formula.
     GuardUpdated {
         guard: i32,
+    },
+    /// Direct message: movement burden resolved from equipped weight against
+    /// Strength-derived carry capacity. Bag contents do not affect this value.
+    /// Sent on join and after every equipment mutation.
+    EquipmentBurdenUpdated {
+        burden: inventory::EquipmentBurden,
     },
     /// Direct message: the receiving player gained loose currency from a
     /// pickup. `amount` is in the smallest unit (copper).

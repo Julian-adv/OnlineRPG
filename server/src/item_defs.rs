@@ -1,4 +1,8 @@
-use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::inventory::{
+    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm,
+};
+use onlinerpg_shared::skills::SkillId;
+use onlinerpg_shared::PhysicalDamageType;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,16 +26,28 @@ pub struct ItemDefinition {
     #[serde(rename = "worldModel")]
     pub world_model: Option<String>,
     /// Item kind that decides how `dice` is interpreted ("weapon" → damage,
-    /// "consumable" → healing) plus broad classification (armor, accessory,
-    /// currency).
+    /// restorative categories → healing) plus broad classification (armor,
+    /// accessory, currency).
     #[serde(default)]
     pub category: Option<String>,
     /// Dice notation (e.g. "1d8", "6d4") whose meaning depends on `category`.
     /// Read it through `damage_dice()` / `heal_dice()` rather than directly.
     #[serde(default)]
     pub dice: Option<String>,
+    #[serde(rename = "damageType", default)]
+    pub damage_type: Option<PhysicalDamageType>,
     #[serde(default)]
     pub material: Option<String>,
+    /// Physical build of worn body armor. Absent for shields, clothing,
+    /// accessories, and non-armor items.
+    #[serde(rename = "armorConstruction", default)]
+    pub armor_construction: Option<ArmorConstruction>,
+    #[serde(rename = "equipmentKind", default)]
+    pub equipment_kind: Option<EquipmentKind>,
+    #[serde(rename = "equipmentLayer", default)]
+    pub equipment_layer: Option<EquipmentLayer>,
+    #[serde(rename = "garmentForm", default)]
+    pub garment_form: Option<GarmentForm>,
     /// Base price in the smallest currency unit. Items without a price
     /// cannot be bought or sold.
     #[serde(rename = "basePrice")]
@@ -69,13 +85,28 @@ pub struct ItemDefinition {
     /// boot if it ever disagrees with the `use_effect` dispatch.
     #[serde(default)]
     pub consumable: bool,
+    /// Skill trained when this weapon resolves an accepted attack.
+    #[serde(rename = "weaponSkill", default)]
+    pub weapon_skill: Option<SkillId>,
+    /// Defensive skill trained while this item is equipped and a server-owned
+    /// attack resolves against its wearer.
+    #[serde(rename = "defenseSkill", default)]
+    pub defense_skill: Option<SkillId>,
+    /// Skill trained by a valid server-resolved use of this consumable. This
+    /// identifies the performed action, not manufacture of a finished product:
+    /// bandaging trains Healing; drinking a potion does not.
+    #[serde(rename = "useSkill", default)]
+    pub use_skill: Option<SkillId>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
 /// the item's `category`. One place to extend when a new consumable lands.
 pub enum UseEffect {
     /// Restore HP by rolling the given dice notation.
-    Heal(String),
+    Heal {
+        dice: String,
+        skill: Option<SkillId>,
+    },
     /// Teleport the user back to the town spawn point.
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
@@ -89,6 +120,12 @@ pub enum UseEffect {
 impl ItemDefinition {
     pub fn is_weapon(&self) -> bool {
         self.category.as_deref() == Some("weapon")
+    }
+
+    pub fn is_body_armor(&self) -> bool {
+        self.category.as_deref() == Some("armor")
+            && self.equip_slot.is_some()
+            && self.equip_slot != Some(EquipSlot::OffHand)
     }
 
     /// Main-hand tool that enables casting (`ClientMessage::FishingCast`).
@@ -137,9 +174,19 @@ impl ItemDefinition {
     /// consumable.
     pub fn use_effect(&self) -> Option<UseEffect> {
         match self.category.as_deref()? {
-            "healing_potion" => self.dice.clone().map(UseEffect::Heal),
+            "healing_potion" => self
+                .dice
+                .clone()
+                .map(|dice| UseEffect::Heal { dice, skill: None }),
+            "bandage" => self.dice.clone().map(|dice| UseEffect::Heal {
+                dice,
+                skill: self.use_skill,
+            }),
             // Eating a fish heals by its dice — same plumbing as potions.
-            "fish" => self.dice.clone().map(UseEffect::Heal),
+            "fish" => self
+                .dice
+                .clone()
+                .map(|dice| UseEffect::Heal { dice, skill: None }),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "party_summon_scroll" => Some(UseEffect::SummonParty),
@@ -147,6 +194,193 @@ impl ItemDefinition {
             _ => None,
         }
     }
+}
+
+fn valid_dice_notation(notation: &str) -> bool {
+    let Some((count, sides)) = notation.split_once('d') else {
+        return false;
+    };
+    !count.is_empty()
+        && !sides.is_empty()
+        && count.parse::<u32>().is_ok_and(|value| value > 0)
+        && sides.parse::<u32>().is_ok_and(|value| value > 0)
+}
+
+fn validate_weapon_skill(def: &ItemDefinition) -> Result<(), String> {
+    if def.weapon_skill.is_none() {
+        return Ok(());
+    }
+    if !matches!(
+        def.weapon_skill,
+        Some(SkillId::OneHandedSword | SkillId::Dagger | SkillId::Spear)
+    ) {
+        return Err("weaponSkill is not supported for weapon combat".to_string());
+    }
+    if !def.is_weapon() {
+        return Err("weaponSkill requires category 'weapon'".to_string());
+    }
+    if def.equip_slot != Some(EquipSlot::MainHand) {
+        return Err("weaponSkill requires equipSlot 'main_hand'".to_string());
+    }
+    if !def.dice.as_deref().is_some_and(valid_dice_notation) {
+        return Err("weaponSkill requires valid positive NdM damage dice".to_string());
+    }
+    Ok(())
+}
+
+fn validate_damage_type(def: &ItemDefinition) -> Result<(), String> {
+    match (def.is_weapon(), def.damage_type) {
+        (true, None) => Err("weapon requires damageType".to_string()),
+        (false, Some(_)) => Err("damageType is only valid on weapons".to_string()),
+        (true, Some(_)) if !def.dice.as_deref().is_some_and(valid_dice_notation) => {
+            Err("typed weapon requires valid positive NdM damage dice".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_armor_construction(def: &ItemDefinition) -> Result<(), String> {
+    match (def.is_body_armor(), def.armor_construction) {
+        (true, None) => Err("worn body armor requires armorConstruction".to_string()),
+        (false, Some(_)) => Err("armorConstruction is only valid on worn body armor".to_string()),
+        _ => Ok(()),
+    }
+}
+
+fn expected_equipment_kind(def: &ItemDefinition) -> Result<Option<EquipmentKind>, String> {
+    let Some(slot) = def.equip_slot else {
+        return Ok(None);
+    };
+
+    match def.category.as_deref() {
+        Some("weapon") => Ok(Some(EquipmentKind::Weapon)),
+        Some("fishing_rod") => Ok(Some(EquipmentKind::Tool)),
+        Some("clothing") => Ok(Some(EquipmentKind::Clothing)),
+        Some("armor") if slot == EquipSlot::OffHand => Ok(Some(EquipmentKind::Shield)),
+        Some("armor") => Ok(Some(EquipmentKind::BodyArmor)),
+        Some("accessory") => Ok(Some(EquipmentKind::Accessory)),
+        _ => Err("equippable item has an unsupported category".to_string()),
+    }
+}
+
+fn validate_equipment_taxonomy(def: &ItemDefinition) -> Result<(), String> {
+    let expected_kind = expected_equipment_kind(def)?;
+    if def.equipment_kind != expected_kind {
+        return Err(match expected_kind {
+            Some(kind) => format!("equippable item requires equipmentKind '{}'", kind.as_str()),
+            None => "non-equippable item may not define equipmentKind".to_string(),
+        });
+    }
+
+    let expected_layer = expected_kind.map(|kind| match kind {
+        EquipmentKind::Weapon | EquipmentKind::Tool | EquipmentKind::Shield => EquipmentLayer::Held,
+        EquipmentKind::Clothing | EquipmentKind::BodyArmor => EquipmentLayer::Primary,
+        EquipmentKind::Accessory => EquipmentLayer::Accessory,
+    });
+    if def.equipment_layer != expected_layer {
+        return Err(match expected_layer {
+            Some(layer) => format!(
+                "equipmentKind '{}' requires equipmentLayer '{}'",
+                expected_kind.unwrap().as_str(),
+                layer.as_str()
+            ),
+            None => "non-equippable item may not define equipmentLayer".to_string(),
+        });
+    }
+
+    let garment_kind = matches!(
+        expected_kind,
+        Some(EquipmentKind::Clothing | EquipmentKind::BodyArmor)
+    );
+    if garment_kind != def.garment_form.is_some() {
+        return Err(if garment_kind {
+            "worn garment requires garmentForm".to_string()
+        } else {
+            "garmentForm is only valid on clothing or body armor".to_string()
+        });
+    }
+
+    if let Some(form) = def.garment_form {
+        let valid_slot = match form {
+            GarmentForm::Helmet => def.equip_slot == Some(EquipSlot::Head),
+            GarmentForm::Cuirass | GarmentForm::Hauberk | GarmentForm::Robe | GarmentForm::Coat => {
+                def.equip_slot == Some(EquipSlot::Chest)
+            }
+            GarmentForm::Leggings => def.equip_slot == Some(EquipSlot::Pants),
+            GarmentForm::Gloves => def.equip_slot == Some(EquipSlot::Hands),
+            GarmentForm::Boots => def.equip_slot == Some(EquipSlot::Boots),
+        };
+        if !valid_slot {
+            return Err(format!(
+                "garmentForm '{}' is invalid for this equipSlot",
+                form.as_str()
+            ));
+        }
+    }
+
+    if expected_kind == Some(EquipmentKind::Clothing) && def.guard.is_some_and(|guard| guard != 0) {
+        return Err("ordinary clothing may not grant Guard".to_string());
+    }
+
+    Ok(())
+}
+
+fn validate_defense_skill(def: &ItemDefinition) -> Result<(), String> {
+    match def.defense_skill {
+        None => return Ok(()),
+        Some(SkillId::Shield) => {
+            if def.category.as_deref() != Some("armor") {
+                return Err("Shield defenseSkill requires category 'armor'".to_string());
+            }
+            if def.equip_slot != Some(EquipSlot::OffHand) {
+                return Err("Shield defenseSkill requires equipSlot 'off_hand'".to_string());
+            }
+        }
+        Some(SkillId::LeatherArmor) => {
+            if !def.is_body_armor() {
+                return Err("Leather Armor defenseSkill requires worn body armor".to_string());
+            }
+            if def.equip_slot != Some(EquipSlot::Chest) {
+                return Err("Leather Armor defenseSkill requires equipSlot 'chest'".to_string());
+            }
+            if def.armor_construction != Some(ArmorConstruction::Leather) {
+                return Err(
+                    "Leather Armor defenseSkill requires armorConstruction 'leather'".to_string(),
+                );
+            }
+            if def.equipment_layer != Some(EquipmentLayer::Primary) {
+                return Err(
+                    "Leather Armor defenseSkill requires equipmentLayer 'primary'".to_string(),
+                );
+            }
+        }
+        Some(_) => {
+            return Err("defenseSkill is not supported for defense combat".to_string());
+        }
+    }
+    if !def.guard.is_some_and(|guard| guard > 0) {
+        return Err("defenseSkill requires a positive guard value".to_string());
+    }
+    Ok(())
+}
+
+fn validate_use_skill(def: &ItemDefinition) -> Result<(), String> {
+    if def.use_skill.is_none() {
+        return Ok(());
+    }
+    if def.use_skill != Some(SkillId::Healing) {
+        return Err("useSkill is not supported for consumable use".to_string());
+    }
+    if def.category.as_deref() != Some("bandage") {
+        return Err("Healing useSkill requires category 'bandage'".to_string());
+    }
+    if !def.consumable {
+        return Err("Healing useSkill requires consumable true".to_string());
+    }
+    if !def.dice.as_deref().is_some_and(valid_dice_notation) {
+        return Err("Healing useSkill requires valid positive NdM dice".to_string());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +401,24 @@ impl ItemDefs {
         // tool, doc/FISHING.md) is a data error — fail the boot, don't
         // silently filter it out of every chest.
         for def in defs.values() {
+            if let Err(reason) = validate_equipment_taxonomy(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_armor_construction(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_weapon_skill(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_damage_type(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_defense_skill(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_use_skill(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
             assert!(
                 def.chest_tier.is_none() || (def.equip_slot.is_some() && !def.is_fishing_rod()),
                 "item '{}' has a chestTier but is not chest-eligible equipment",
@@ -240,6 +492,12 @@ impl ItemDefs {
             .and_then(|def| def.damage_dice().map(str::to_string))
     }
 
+    pub fn damage_type_for_weapon_ref(&self, weapon_ref: &str) -> Option<PhysicalDamageType> {
+        self.item_def_id_for_weapon_ref(weapon_ref)
+            .and_then(|item_id| self.defs.get(&item_id))
+            .and_then(|def| def.damage_type)
+    }
+
     /// The chest roll table for a dungeon tier: every opted-in item
     /// (`chestTier` set) at or below the tier, paired with its per-open roll
     /// chance — its own `chestChance` at its home tier, a flat carryover
@@ -284,12 +542,524 @@ impl ItemDefs {
 mod tests {
     use super::*;
     use onlinerpg_shared::skills::SKILL_LEVEL_CAP;
+    use serde_json::json;
 
     fn table_ids(defs: &ItemDefs, tier: u8) -> Vec<String> {
         defs.chest_roll_table(tier)
             .into_iter()
             .map(|(id, _)| id)
             .collect()
+    }
+
+    fn weapon_skill_def(
+        category: &str,
+        equip_slot: &str,
+        dice: &str,
+        weapon_skill: &str,
+    ) -> Result<ItemDefinition, serde_json::Error> {
+        serde_json::from_value(json!({
+            "id": "test_weapon",
+            "name": "Test Weapon",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": equip_slot,
+            "stackable": false,
+            "category": category,
+            "dice": dice,
+            "weaponSkill": weapon_skill
+        }))
+    }
+
+    #[test]
+    fn swords_dagger_and_spear_are_the_only_mapped_weapons() {
+        let defs = ItemDefs::load();
+        for id in [
+            "iron_sword",
+            "worn_iron_sword",
+            "goblin_sword",
+            "small_sword",
+        ] {
+            assert_eq!(
+                defs.get(id).unwrap().weapon_skill,
+                Some(SkillId::OneHandedSword),
+                "{id} weapon skill"
+            );
+        }
+        assert_eq!(
+            defs.get("dagger").unwrap().weapon_skill,
+            Some(SkillId::Dagger)
+        );
+        assert_eq!(
+            defs.get("spear").unwrap().weapon_skill,
+            Some(SkillId::Spear)
+        );
+        for id in ["torch", "worn_torch", "fishing_rod"] {
+            assert_eq!(
+                defs.get(id).unwrap().weapon_skill,
+                None,
+                "{id} stays unmapped"
+            );
+        }
+    }
+
+    #[test]
+    fn weapon_skill_assignments_require_main_hand_weapons_with_valid_dice() {
+        let valid = weapon_skill_def("weapon", "main_hand", "1d8", "one_handed_sword").unwrap();
+        assert_eq!(validate_weapon_skill(&valid), Ok(()));
+        let dagger = weapon_skill_def("weapon", "main_hand", "1d4", "dagger").unwrap();
+        assert_eq!(validate_weapon_skill(&dagger), Ok(()));
+        let spear = weapon_skill_def("weapon", "main_hand", "1d6", "spear").unwrap();
+        assert_eq!(validate_weapon_skill(&spear), Ok(()));
+
+        for (category, slot, dice, expected) in [
+            ("armor", "main_hand", "1d8", "category 'weapon'"),
+            ("weapon", "off_hand", "1d8", "equipSlot 'main_hand'"),
+            ("weapon", "main_hand", "1d0", "positive NdM"),
+            ("weapon", "main_hand", "bad", "positive NdM"),
+        ] {
+            let def = weapon_skill_def(category, slot, dice, "one_handed_sword").unwrap();
+            let error = validate_weapon_skill(&def).unwrap_err();
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
+
+        let fishing = weapon_skill_def("weapon", "main_hand", "1d8", "fishing").unwrap();
+        assert!(validate_weapon_skill(&fishing)
+            .unwrap_err()
+            .contains("not supported"));
+    }
+
+    #[test]
+    fn unknown_weapon_skill_ids_fail_deserialization() {
+        let error = weapon_skill_def("weapon", "main_hand", "1d8", "long_blade").unwrap_err();
+        assert!(error.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn weapon_damage_types_are_explicit_and_validated() {
+        let defs = ItemDefs::load();
+        for id in [
+            "iron_sword",
+            "worn_iron_sword",
+            "dagger",
+            "goblin_sword",
+            "small_sword",
+        ] {
+            assert_eq!(
+                defs.get(id).unwrap().damage_type,
+                Some(PhysicalDamageType::Slash),
+                "{id} damage type"
+            );
+        }
+        assert_eq!(
+            defs.get("spear").unwrap().damage_type,
+            Some(PhysicalDamageType::Pierce)
+        );
+        for id in ["torch", "worn_torch"] {
+            assert_eq!(
+                defs.get(id).unwrap().damage_type,
+                Some(PhysicalDamageType::Blunt),
+                "{id} damage type"
+            );
+        }
+        assert_eq!(
+            defs.damage_type_for_weapon_ref("goblin_sword"),
+            Some(PhysicalDamageType::Slash)
+        );
+        assert_eq!(defs.get("fishing_rod").unwrap().damage_type, None);
+
+        let make = |category: &str, dice: Option<&str>, damage_type: Option<&str>| {
+            serde_json::from_value::<ItemDefinition>(json!({
+                "id": "typed_item",
+                "name": "Typed Item",
+                "description": "Test definition",
+                "weight": 1,
+                "stackable": false,
+                "category": category,
+                "dice": dice,
+                "damageType": damage_type
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            validate_damage_type(&make("weapon", Some("1d4"), Some("slash"))),
+            Ok(())
+        );
+        assert!(validate_damage_type(&make("weapon", Some("1d4"), None))
+            .unwrap_err()
+            .contains("requires damageType"));
+        assert!(validate_damage_type(&make("armor", None, Some("blunt")))
+            .unwrap_err()
+            .contains("only valid on weapons"));
+        assert!(
+            validate_damage_type(&make("weapon", Some("1d0"), Some("pierce")))
+                .unwrap_err()
+                .contains("positive NdM")
+        );
+    }
+
+    #[test]
+    fn shields_and_leather_chest_are_the_only_mapped_defensive_items() {
+        let defs = ItemDefs::load();
+        for id in ["wooden_shield", "raven_shield"] {
+            assert_eq!(
+                defs.get(id).unwrap().defense_skill,
+                Some(SkillId::Shield),
+                "{id} defense skill"
+            );
+        }
+        assert_eq!(
+            defs.get("leather_armor").unwrap().defense_skill,
+            Some(SkillId::LeatherArmor)
+        );
+        assert_eq!(
+            defs.get("leather_armor").unwrap().guard,
+            Some(1),
+            "the second mitigation slice migrates one former Guard point"
+        );
+        for id in [
+            "torch",
+            "leather_helmet",
+            "chain_mail",
+            "breastplate",
+            "ring_of_protection",
+            "traveler_robe",
+            "padded_battle_robe",
+            "brigandine_coat",
+        ] {
+            assert_eq!(defs.get(id).unwrap().defense_skill, None, "{id} unmapped");
+        }
+    }
+
+    #[test]
+    fn shield_skill_assignments_require_guarded_off_hand_armor() {
+        let make = |category: &str, slot: &str, guard: i32, skill: &str| {
+            serde_json::from_value::<ItemDefinition>(json!({
+                "id": "test_shield",
+                "name": "Test Shield",
+                "description": "Test definition",
+                "weight": 1,
+                "equipSlot": slot,
+                "stackable": false,
+                "category": category,
+                "guard": guard,
+                "defenseSkill": skill
+            }))
+        };
+        let valid = make("armor", "off_hand", 1, "shield").unwrap();
+        assert_eq!(validate_defense_skill(&valid), Ok(()));
+
+        for (category, slot, guard, expected) in [
+            ("accessory", "off_hand", 1, "category 'armor'"),
+            ("armor", "head", 1, "equipSlot 'off_hand'"),
+            ("armor", "off_hand", 0, "positive guard"),
+        ] {
+            let def = make(category, slot, guard, "shield").unwrap();
+            assert!(validate_defense_skill(&def).unwrap_err().contains(expected));
+        }
+        let unsupported = make("armor", "off_hand", 1, "fishing").unwrap();
+        assert!(validate_defense_skill(&unsupported)
+            .unwrap_err()
+            .contains("not supported"));
+    }
+
+    #[test]
+    fn body_armor_construction_and_leather_skill_are_explicit() {
+        let defs = ItemDefs::load();
+        for id in [
+            "leather_helmet",
+            "leather_armor",
+            "leather_gloves",
+            "leather_pants",
+            "leather_boots",
+        ] {
+            assert_eq!(
+                defs.get(id).unwrap().armor_construction,
+                Some(ArmorConstruction::Leather),
+                "{id} construction"
+            );
+        }
+        assert_eq!(
+            defs.get("chain_mail").unwrap().armor_construction,
+            Some(ArmorConstruction::Mail)
+        );
+        assert_eq!(
+            defs.get("chain_mail").unwrap().guard,
+            Some(3),
+            "the Mail mitigation slice migrates two former Guard points"
+        );
+        assert_eq!(
+            defs.get("padded_battle_robe").unwrap().armor_construction,
+            Some(ArmorConstruction::Padded)
+        );
+        assert_eq!(
+            defs.get("brigandine_coat").unwrap().armor_construction,
+            Some(ArmorConstruction::Hybrid)
+        );
+        assert_eq!(
+            defs.get("brigandine_coat").unwrap().guard,
+            Some(2),
+            "the Hybrid mitigation slice migrates two former Guard points"
+        );
+        for id in [
+            "iron_helmet",
+            "iron_gauntlets",
+            "iron_boots",
+            "breastplate",
+            "plate_helmet",
+            "plate_gauntlets",
+            "plate_greaves",
+            "plate_boots",
+        ] {
+            assert_eq!(
+                defs.get(id).unwrap().armor_construction,
+                Some(ArmorConstruction::Plate),
+                "{id} construction"
+            );
+        }
+        for id in ["wooden_shield", "raven_shield", "leather_belt"] {
+            assert_eq!(defs.get(id).unwrap().armor_construction, None, "{id}");
+        }
+        assert_eq!(
+            defs.get("breastplate").unwrap().guard,
+            Some(4),
+            "the Plate mitigation slice migrates three former Guard points"
+        );
+
+        let leather = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "test_leather",
+            "name": "Test Leather",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "leather",
+            "equipmentLayer": "primary",
+            "guard": 1,
+            "defenseSkill": "leather_armor"
+        }))
+        .unwrap();
+        assert_eq!(validate_armor_construction(&leather), Ok(()));
+        assert_eq!(validate_defense_skill(&leather), Ok(()));
+
+        for (slot, construction, expected) in [
+            ("head", "leather", "equipSlot 'chest'"),
+            ("chest", "plate", "armorConstruction 'leather'"),
+        ] {
+            let def = serde_json::from_value::<ItemDefinition>(json!({
+                "id": "bad_leather",
+                "name": "Bad Leather",
+                "description": "Test definition",
+                "weight": 1,
+                "equipSlot": slot,
+                "stackable": false,
+                "category": "armor",
+                "armorConstruction": construction,
+                "equipmentLayer": "primary",
+                "guard": 1,
+                "defenseSkill": "leather_armor"
+            }))
+            .unwrap();
+            assert!(validate_defense_skill(&def).unwrap_err().contains(expected));
+        }
+    }
+
+    #[test]
+    fn armor_loadouts_land_in_explicit_strength_ten_burden_bands() {
+        use onlinerpg_shared::inventory::{resolve_equipment_burden, EquipmentBurdenTier};
+
+        let defs = ItemDefs::load();
+        let burden = |ids: &[&str]| {
+            let equipped_weight = ids.iter().map(|id| defs.get(id).unwrap().weight).sum();
+            resolve_equipment_burden(equipped_weight, 150.0)
+        };
+
+        let padded = burden(&["padded_battle_robe"]);
+        assert_eq!(padded.equipped_weight, 6.0);
+        assert_eq!(padded.tier, EquipmentBurdenTier::Unburdened);
+
+        let leather = burden(&[
+            "leather_helmet",
+            "leather_armor",
+            "leather_gloves",
+            "leather_pants",
+            "leather_boots",
+        ]);
+        assert_eq!(leather.equipped_weight, 16.5);
+        assert_eq!(leather.tier, EquipmentBurdenTier::Unburdened);
+
+        let mail = burden(&["chain_mail", "iron_helmet", "iron_gauntlets", "iron_boots"]);
+        assert_eq!(mail.equipped_weight, 67.0);
+        assert_eq!(mail.tier, EquipmentBurdenTier::Medium);
+
+        let plate = burden(&[
+            "breastplate",
+            "plate_helmet",
+            "plate_gauntlets",
+            "plate_greaves",
+            "plate_boots",
+        ]);
+        assert_eq!(plate.equipped_weight, 43.0);
+        assert_eq!(plate.tier, EquipmentBurdenTier::Light);
+
+        let hybrid = burden(&["brigandine_coat"]);
+        assert_eq!(hybrid.equipped_weight, 14.0);
+        assert_eq!(hybrid.tier, EquipmentBurdenTier::Unburdened);
+    }
+
+    #[test]
+    fn equipment_kind_layer_and_form_are_explicit_and_consistent() {
+        let defs = ItemDefs::load();
+        for (id, kind, layer, form) in [
+            (
+                "traveler_robe",
+                EquipmentKind::Clothing,
+                EquipmentLayer::Primary,
+                GarmentForm::Robe,
+            ),
+            (
+                "padded_battle_robe",
+                EquipmentKind::BodyArmor,
+                EquipmentLayer::Primary,
+                GarmentForm::Robe,
+            ),
+            (
+                "brigandine_coat",
+                EquipmentKind::BodyArmor,
+                EquipmentLayer::Primary,
+                GarmentForm::Coat,
+            ),
+            (
+                "chain_mail",
+                EquipmentKind::BodyArmor,
+                EquipmentLayer::Primary,
+                GarmentForm::Hauberk,
+            ),
+        ] {
+            let def = defs.get(id).unwrap();
+            assert_eq!(def.equipment_kind, Some(kind), "{id} kind");
+            assert_eq!(def.equipment_layer, Some(layer), "{id} layer");
+            assert_eq!(def.garment_form, Some(form), "{id} form");
+        }
+
+        for (id, kind, layer) in [
+            ("iron_sword", EquipmentKind::Weapon, EquipmentLayer::Held),
+            ("fishing_rod", EquipmentKind::Tool, EquipmentLayer::Held),
+            ("wooden_shield", EquipmentKind::Shield, EquipmentLayer::Held),
+            (
+                "ring_of_protection",
+                EquipmentKind::Accessory,
+                EquipmentLayer::Accessory,
+            ),
+        ] {
+            let def = defs.get(id).unwrap();
+            assert_eq!(def.equipment_kind, Some(kind), "{id} kind");
+            assert_eq!(def.equipment_layer, Some(layer), "{id} layer");
+            assert_eq!(def.garment_form, None, "{id} form");
+        }
+    }
+
+    #[test]
+    fn equipment_taxonomy_rejects_missing_or_contradictory_metadata() {
+        let make = |extra: serde_json::Value| {
+            let mut value = json!({
+                "id": "test_robe",
+                "name": "Test Robe",
+                "description": "Test definition",
+                "weight": 1,
+                "equipSlot": "chest",
+                "stackable": false,
+                "category": "clothing"
+            });
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            serde_json::from_value::<ItemDefinition>(value).unwrap()
+        };
+
+        assert!(validate_equipment_taxonomy(&make(json!({})))
+            .unwrap_err()
+            .contains("equipmentKind 'clothing'"));
+        assert!(validate_equipment_taxonomy(&make(json!({
+            "equipmentKind": "clothing",
+            "equipmentLayer": "held",
+            "garmentForm": "robe"
+        })))
+        .unwrap_err()
+        .contains("equipmentLayer 'primary'"));
+        assert!(validate_equipment_taxonomy(&make(json!({
+            "equipmentKind": "clothing",
+            "equipmentLayer": "primary",
+            "garmentForm": "helmet"
+        })))
+        .unwrap_err()
+        .contains("invalid for this equipSlot"));
+        assert!(validate_equipment_taxonomy(&make(json!({
+            "equipmentKind": "clothing",
+            "equipmentLayer": "primary",
+            "garmentForm": "robe",
+            "guard": 1
+        })))
+        .unwrap_err()
+        .contains("may not grant Guard"));
+        assert_eq!(
+            validate_equipment_taxonomy(&make(json!({
+                "equipmentKind": "clothing",
+                "equipmentLayer": "primary",
+                "garmentForm": "robe"
+            }))),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn bandage_is_the_only_mapped_healing_item() {
+        let defs = ItemDefs::load();
+        assert_eq!(
+            defs.get("bandage").unwrap().use_skill,
+            Some(SkillId::Healing)
+        );
+        for id in [
+            "healing_potion",
+            "raw_minnow",
+            "raw_trout",
+            "scroll_of_return",
+        ] {
+            assert_eq!(defs.get(id).unwrap().use_skill, None, "{id} unmapped");
+        }
+    }
+
+    #[test]
+    fn healing_use_skill_requires_a_real_bandage() {
+        let make = |category: &str, dice: &str, consumable: bool, skill: &str| {
+            serde_json::from_value::<ItemDefinition>(json!({
+                "id": "test_healing_item",
+                "name": "Test Healing Item",
+                "description": "Test definition",
+                "weight": 1,
+                "stackable": true,
+                "category": category,
+                "dice": dice,
+                "consumable": consumable,
+                "useSkill": skill
+            }))
+        };
+        let valid = make("bandage", "1d6", true, "healing").unwrap();
+        assert_eq!(validate_use_skill(&valid), Ok(()));
+
+        for (category, dice, consumable, expected) in [
+            ("fish", "1d6", true, "category 'bandage'"),
+            ("bandage", "1d6", false, "consumable true"),
+            ("bandage", "bad", true, "positive NdM"),
+        ] {
+            let def = make(category, dice, consumable, "healing").unwrap();
+            assert!(validate_use_skill(&def).unwrap_err().contains(expected));
+        }
+        let unsupported = make("bandage", "1d6", true, "fishing").unwrap();
+        assert!(validate_use_skill(&unsupported)
+            .unwrap_err()
+            .contains("not supported"));
     }
 
     #[test]

@@ -91,6 +91,7 @@ mod passability;
 mod player;
 pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
+mod skill_metrics;
 mod skills;
 pub(crate) use skills::skills_from_rows;
 mod time;
@@ -142,6 +143,8 @@ pub struct GameState {
     /// `players`.
     player_ids_by_name: Arc<RwLock<HashMap<String, PlayerId>>>,
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
+    /// Monotonic timestamp of each player's last accepted attack request.
+    player_attack_times: Arc<RwLock<HashMap<PlayerId, Instant>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
     broadcast_tx: GameStateSender,
@@ -164,6 +167,7 @@ pub struct GameState {
     player_skills: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::skills::Skills>>>,
     /// Players whose skills changed since the last periodic save.
     dirty_skills: Arc<RwLock<HashSet<PlayerId>>>,
+    skill_balance_metrics: Arc<skill_metrics::SkillBalanceMetrics>,
     /// Live fishing sessions, one per player, advanced by `tick_fishing`.
     fishing_sessions: Arc<RwLock<HashMap<PlayerId, fishing::FishingSession>>>,
     /// Session count mirror, so the per-move cancel check costs one atomic
@@ -271,6 +275,7 @@ impl GameState {
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
+            player_attack_times: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
@@ -288,6 +293,7 @@ impl GameState {
             player_gold: Arc::new(RwLock::new(HashMap::new())),
             player_skills: Arc::new(RwLock::new(HashMap::new())),
             dirty_skills: Arc::new(RwLock::new(HashSet::new())),
+            skill_balance_metrics: Arc::new(skill_metrics::SkillBalanceMetrics::default()),
             fishing_sessions: Arc::new(RwLock::new(HashMap::new())),
             fishing_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             next_fishing_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),

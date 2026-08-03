@@ -24,11 +24,9 @@ import { TILE_DIM, worldToTileCoord } from './terrain-height-types'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
 import { readCell, VEGETATION_BASE_SLOT } from '../terrain/splat-encoding'
 import {
-  PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
-  PLAYER_ATTACK_IMPACT_DELAY_MS,
-  SWORD_MISS_DELAY_MS,
+  getPlayerWeaponCombatProfile,
 } from '../data/combatTiming'
 import {
   ai_load_behavior_trees,
@@ -376,14 +374,15 @@ class MonsterManager {
     const monster = this.monsters.get(monsterId)
     if (!monster || monster.state === 'dead') return
 
-    // Set impact delay for the shared player slash animation to land.
-    monster.impactDelay = PLAYER_ATTACK_IMPACT_DELAY_MS
     monster.targetPlayerId = playerId
     monster.isLastHitSuccess = hit
-    const isLocalPlayerAttack = playerId === get(gameStore).currentPlayer?.id
+    const state = get(gameStore)
+    const isLocalPlayerAttack = playerId === state.currentPlayer?.id
     const weaponItemDefId = isLocalPlayerAttack
       ? get(inventoryStore).equipped.main_hand?.item_def_id
-      : undefined
+      : state.otherPlayers.get(playerId)?.mainHand
+    const combatProfile = getPlayerWeaponCombatProfile(weaponItemDefId)
+    monster.impactDelay = combatProfile.impactDelayMs
     const weaponMaterial = weaponItemDefId
       ? getItemDef(weaponItemDefId)?.material
       : undefined
@@ -399,14 +398,14 @@ class MonsterManager {
     if (!hit && isLocalPlayerAttack) {
       playSwordMissSound(
         getMaterialMissSoundUrl(weaponMaterial),
-        SWORD_MISS_DELAY_MS
+        combatProfile.missDelayMs
       )
     }
     // Temporarily store damage to show at impact
     monster.pendingDamage = damage
     if (isLocalPlayerAttack) {
       monster.pendingDamageText = {
-        delay: PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
+        delay: combatProfile.damageTextDelayMs,
         damage,
         hit,
       }

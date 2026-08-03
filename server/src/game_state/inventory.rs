@@ -1,8 +1,11 @@
 use crate::auth::{AuthService, ItemRow};
-use crate::item_defs::UseEffect;
+use crate::item_defs::{ItemDefinition, UseEffect};
 use crate::types::{PlayerId, ServerMessage};
 use crate::world_config::world_config;
-use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
+use onlinerpg_shared::inventory::{
+    resolve_equipment_burden, EquipSlot, EquipmentBurden, GroundItem, ItemInstance, PlayerInventory,
+};
+use onlinerpg_shared::skills::{healing_skill_hp_bonus, SkillId};
 use rand::Rng;
 use tracing::{info, warn};
 
@@ -126,17 +129,39 @@ impl super::GameState {
         bag_weight + equip_weight
     }
 
+    /// Weight that affects action performance. Bag contents remain part of
+    /// carry capacity but intentionally do not contribute to movement burden.
+    pub(super) fn calc_equipped_weight(&self, inventory: &PlayerInventory) -> f32 {
+        inventory
+            .equipped
+            .values()
+            .map(|item| self.item_defs.weight(&item.item_def_id))
+            .sum()
+    }
+
+    pub(crate) async fn equipment_burden(
+        &self,
+        player_id: &PlayerId,
+        inventory: &PlayerInventory,
+    ) -> EquipmentBurden {
+        resolve_equipment_burden(
+            self.calc_equipped_weight(inventory),
+            self.max_carry_weight(player_id).await,
+        )
+    }
+
     /// Send the current inventory state directly to a player, then their
-    /// refreshed guard. Every equipped-gear mutation routes through here, so
-    /// pushing the guard (and the main-hand broadcast, which no-ops when
-    /// unchanged) from this one spot keeps everything in sync without each
-    /// mutation site having to remember to send it.
+    /// refreshed guard and burden. Every equipped-gear mutation routes through
+    /// here, so this one spot keeps every equipment-derived value synchronized.
     async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
         self.set_player_main_hand(player_id, inventory.main_hand_def_id())
             .await;
+        let burden = self.equipment_burden(player_id, &inventory).await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
             .await;
         self.send_guard_update(player_id).await;
+        self.send_direct_message(player_id, ServerMessage::EquipmentBurdenUpdated { burden })
+            .await;
     }
 
     /// Recompute and push the player's effective guard to their client, so the
@@ -446,7 +471,7 @@ impl super::GameState {
     }
 
     /// Use a consumable from the bag: resolve its effect and dispatch to the
-    /// matching handler (healing potion, return scroll, ...).
+    /// matching handler (restorative item, return scroll, ...).
     pub async fn use_item(&self, player_id: &PlayerId, instance_id: u64) {
         // Resolve which usable effect this item carries before mutating anything.
         let effect = {
@@ -480,7 +505,10 @@ impl super::GameState {
         };
 
         match effect {
-            UseEffect::Heal(dice) => self.use_healing_item(player_id, instance_id, &dice).await,
+            UseEffect::Heal { dice, skill } => {
+                self.use_healing_item(player_id, instance_id, &dice, skill)
+                    .await
+            }
             UseEffect::TeleportTown => self.use_return_scroll(player_id, instance_id).await,
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
@@ -518,10 +546,28 @@ impl super::GameState {
         .await;
     }
 
-    /// Drink a healing potion: roll its dice and restore HP up to the cap.
-    /// Refuses (keeping the potion) if the player is defeated or already full.
-    async fn use_healing_item(&self, player_id: &PlayerId, instance_id: u64, heal_dice: &str) {
-        let (health, max_health, position, floor_level) = {
+    /// Resolve one restorative consumable atomically with its HP change.
+    /// Holding player then inventory locks follows the established snapshot
+    /// order and prevents duplicate `UseItem` packets from healing/training
+    /// twice from one item. Only an explicitly mapped Bandage trains Healing;
+    /// potions and food remain ordinary products.
+    async fn use_healing_item(
+        &self,
+        player_id: &PlayerId,
+        instance_id: u64,
+        heal_dice: &str,
+        skill: Option<SkillId>,
+    ) {
+        let skill_level = match skill {
+            Some(SkillId::Healing) => self.skill_level(player_id, SkillId::Healing).await,
+            _ => 0,
+        };
+        let rolled_healing = crate::game::combat::roll_dice(heal_dice);
+        let skill_bonus = match skill {
+            Some(SkillId::Healing) => healing_skill_hp_bonus(skill_level),
+            _ => 0,
+        };
+        let (health, max_health, restored_hp, position, floor_level, snapshot) = {
             let mut players = self.players.write().await;
             let player = match players.get_mut(player_id) {
                 Some(player) => player,
@@ -529,8 +575,12 @@ impl super::GameState {
             };
             if player.health == 0 {
                 drop(players);
-                self.send_system_message(player_id, "You can't drink while defeated")
-                    .await;
+                let message = if skill == Some(SkillId::Healing) {
+                    "You can't bandage while defeated"
+                } else {
+                    "You can't consume that while defeated"
+                };
+                self.send_system_message(player_id, message).await;
                 return;
             }
             if player.health >= player.max_health {
@@ -539,17 +589,48 @@ impl super::GameState {
                     .await;
                 return;
             }
-            let amount = crate::game::combat::roll_dice(heal_dice);
-            player.health = (player.health + amount).min(player.max_health);
+            let mut inventories = self.inventories.write().await;
+            let inv = match inventories.get_mut(player_id) {
+                Some(inv) => inv,
+                None => return,
+            };
+            let still_matches = inv
+                .bag
+                .iter()
+                .find(|item| item.instance_id == instance_id)
+                .and_then(|item| self.item_defs.get(&item.item_def_id))
+                .and_then(ItemDefinition::use_effect)
+                .is_some_and(|effect| {
+                    matches!(
+                        effect,
+                        UseEffect::Heal {
+                            skill: current_skill,
+                            ..
+                        } if current_skill == skill
+                    )
+                });
+            if !still_matches {
+                return;
+            }
+            let old_health = player.health;
+            player.health = player
+                .health
+                .saturating_add(rolled_healing.saturating_add(skill_bonus))
+                .min(player.max_health);
+            consume_one(inv, instance_id);
             (
                 player.health,
                 player.max_health,
+                player.health - old_health,
                 player.position,
                 player.floor_level,
+                inv.clone(),
             )
         };
 
-        self.consume_one_and_sync(player_id, instance_id).await;
+        self.mark_dirty(player_id).await;
+        self.mark_inventory_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, snapshot).await;
         self.send_direct_message_to_players_within_position(
             &position,
             floor_level,
@@ -562,6 +643,16 @@ impl super::GameState {
             None,
         )
         .await;
+
+        let skill_xp = if skill == Some(SkillId::Healing) {
+            self.add_skill_xp(player_id, SkillId::Healing, u64::from(restored_hp))
+                .await
+                .map_or(0, |result| result.xp_amount)
+        } else {
+            0
+        };
+        self.skill_balance_metrics
+            .record_healing(skill, skill_level, restored_hp, skill_xp);
     }
 
     /// If the player is defeated (or gone), message them and return true so

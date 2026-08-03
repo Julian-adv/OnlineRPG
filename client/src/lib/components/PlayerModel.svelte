@@ -48,6 +48,7 @@
   import { getItemDef } from '../data/itemDefs'
   import { torchLightEnabled } from '../stores/debugStore'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
+  import { getPlayerWeaponCombatProfile } from '../data/combatTiming'
 
   import type { CharacterClass, Gender } from '../network/networkTypes'
   import {
@@ -365,6 +366,14 @@
       : mainHand
   )
 
+  $effect(() => {
+    const clip =
+      validAnimations[
+        getPlayerWeaponCombatProfile(equippedMainHandItemId).animationIndex
+      ]
+    if (clip && onAttackDuration) onAttackDuration(clip.duration)
+  })
+
   // undefined = nothing applied yet; null = "no equipped item" applied
   // (bare hands locally, class default weapon for remotes).
   let attachedWeaponItemId: string | null | undefined = undefined
@@ -566,11 +575,11 @@
       const torchMoveClip = movementMode === 'walk' ? torchWalk : torchRun
       clip = torchMoveClip ?? validAnimations[currentMovementAnimationIndex]
     } else if (playerState === 'attack') {
-      // Use slash1 animation
       currentMovementAnimationIndex = undefined
-      // Find index for slash1 or fallback
-      // Assuming AnimationIndex.SLASH1 exists and maps correctly
-      clip = validAnimations[AnimationIndex.SLASH1]
+      clip =
+        validAnimations[
+          getPlayerWeaponCombatProfile(equippedMainHandItemId).animationIndex
+        ]
     } else if (playerState === 'jump') {
       // One-shot feedback when slope is too steep to climb. After the clip
       // finishes, PlayerControl flips the state back to idle/moving and we
@@ -690,9 +699,6 @@
           console.log(`✅ Found animation: ${selection.name} (${source})`)
         }
 
-        if (selection.name === AnimationName.SLASH1 && onAttackDuration) {
-          onAttackDuration(selection.clip.duration)
-        }
       }
 
       console.log(`Found ${validAnimations.length} valid animations`)

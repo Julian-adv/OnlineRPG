@@ -1177,11 +1177,18 @@ mod tests {
             &[],
             &[(
                 record.id,
-                vec![SkillRow {
-                    skill_id: "fishing".to_string(),
-                    level: 2,
-                    xp: 500,
-                }],
+                vec![
+                    SkillRow {
+                        skill_id: "fishing".to_string(),
+                        level: 2,
+                        xp: 500,
+                    },
+                    SkillRow {
+                        skill_id: "one_handed_sword".to_string(),
+                        level: 1,
+                        xp: 150,
+                    },
+                ],
             )],
             None,
         )
@@ -1189,12 +1196,15 @@ mod tests {
 
         let mut rows = auth.load_skills(record.id).unwrap();
         rows.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].skill_id, "fishing");
         assert_eq!(rows[0].level, 2);
         assert_eq!(rows[0].xp, 500);
-        assert_eq!(rows[1].skill_id, "underwater_basketweaving");
-        assert_eq!(rows[1].xp, 999);
+        assert_eq!(rows[1].skill_id, "one_handed_sword");
+        assert_eq!(rows[1].level, 1);
+        assert_eq!(rows[1].xp, 150);
+        assert_eq!(rows[2].skill_id, "underwater_basketweaving");
+        assert_eq!(rows[2].xp, 999);
 
         // Advancing a skill updates in place rather than duplicating the row.
         auth.save_batch(
@@ -1212,10 +1222,17 @@ mod tests {
         )
         .unwrap();
         let rows = auth.load_skills(record.id).unwrap();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(
             rows.iter().find(|r| r.skill_id == "fishing").unwrap().xp,
             1400
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.skill_id == "one_handed_sword")
+                .unwrap()
+                .xp,
+            150
         );
     }
 

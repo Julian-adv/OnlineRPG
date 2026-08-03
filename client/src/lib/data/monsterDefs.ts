@@ -1,4 +1,5 @@
 import monstersJson from '../../../../data/monsters.json'
+import type { PhysicalDamageType } from './itemDefs'
 
 export interface MonsterDefinition {
   id: string
@@ -17,6 +18,8 @@ export interface MonsterDefinition {
   attackDamageTextDelay: number
   behavior: string
   damageRoll?: string
+  /** Used for natural attacks; equipped weapon metadata takes precedence. */
+  damageType?: PhysicalDamageType
   animIdle: string
   animWalk: string
   animRun: string

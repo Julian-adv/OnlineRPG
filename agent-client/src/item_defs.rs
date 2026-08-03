@@ -6,7 +6,11 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::inventory::{
+    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm,
+};
+use onlinerpg_shared::skills::SkillId;
+use onlinerpg_shared::{combat::construction_protection, PhysicalDamageType};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -14,10 +18,36 @@ pub struct ItemDef {
     pub name: String,
     #[serde(rename = "basePrice")]
     pub base_price: Option<i64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub guard: Option<i32>,
     #[serde(rename = "equipSlot")]
     pub equip_slot: Option<EquipSlot>,
     #[serde(default)]
     pub category: Option<String>,
+    #[serde(rename = "damageType", default)]
+    #[allow(dead_code)]
+    pub damage_type: Option<PhysicalDamageType>,
+    #[serde(rename = "armorConstruction", default)]
+    #[allow(dead_code)] // Retained for content parity and agent inspection tests.
+    pub armor_construction: Option<ArmorConstruction>,
+    #[serde(rename = "equipmentKind", default)]
+    #[allow(dead_code)]
+    pub equipment_kind: Option<EquipmentKind>,
+    #[serde(rename = "equipmentLayer", default)]
+    #[allow(dead_code)]
+    pub equipment_layer: Option<EquipmentLayer>,
+    #[serde(rename = "garmentForm", default)]
+    #[allow(dead_code)]
+    pub garment_form: Option<GarmentForm>,
+    #[serde(rename = "weaponSkill", default)]
+    pub weapon_skill: Option<SkillId>,
+    #[serde(rename = "defenseSkill", default)]
+    #[allow(dead_code)] // Retained for protocol/content parity and agent inspection tests.
+    pub defense_skill: Option<SkillId>,
+    #[serde(rename = "useSkill", default)]
+    #[allow(dead_code)] // Retained for protocol/content parity and agent inspection tests.
+    pub use_skill: Option<SkillId>,
     /// Usable straight from the bag — the items.csv flag, which the server
     /// validates against its `use_effect` dispatch at boot.
     #[serde(default)]
@@ -43,6 +73,37 @@ pub fn all_ids() -> Vec<&'static str> {
 
 pub fn get(item_def_id: &str) -> Option<&'static ItemDef> {
     defs().get(item_def_id)
+}
+
+pub fn equipment_summary(item_def_id: &str) -> Option<String> {
+    let def = get(item_def_id)?;
+    let mut details = Vec::new();
+    if let Some(guard) = def.guard.filter(|guard| *guard != 0) {
+        details.push(format!("Guard {guard:+}"));
+    }
+    if let Some(construction) = def.armor_construction {
+        details.push(format!("{} construction", construction.display_name()));
+        if def.equip_slot == Some(EquipSlot::Chest) {
+            let protection = [
+                PhysicalDamageType::Slash,
+                PhysicalDamageType::Pierce,
+                PhysicalDamageType::Blunt,
+            ]
+            .into_iter()
+            .filter_map(|damage_type| {
+                let amount = construction_protection(Some(construction), damage_type);
+                (amount > 0).then(|| format!("{} {amount}", damage_type.display_name()))
+            })
+            .collect::<Vec<_>>();
+            if !protection.is_empty() {
+                details.push(format!("Protection {}", protection.join(", ")));
+            }
+        }
+    }
+    if let Some(skill) = def.defense_skill {
+        details.push(format!("Skill {}", skill.display_name()));
+    }
+    (!details.is_empty()).then(|| details.join("; "))
 }
 
 /// Pick the item the agent meant out of a candidate list — what it carries,
@@ -92,6 +153,146 @@ mod tests {
     fn coin_catches_are_consumable() {
         let def = get("sunken_coin_pouch").expect("coin pouch is defined");
         assert!(def.is_consumable());
+    }
+
+    #[test]
+    fn weapon_skills_follow_shared_item_metadata() {
+        assert_eq!(
+            get("iron_sword").and_then(|def| def.weapon_skill),
+            Some(SkillId::OneHandedSword)
+        );
+        assert_eq!(
+            get("dagger").and_then(|def| def.weapon_skill),
+            Some(SkillId::Dagger)
+        );
+        assert_eq!(
+            get("spear").and_then(|def| def.weapon_skill),
+            Some(SkillId::Spear)
+        );
+        assert_eq!(get("torch").and_then(|def| def.weapon_skill), None);
+        for id in ["iron_sword", "dagger", "goblin_sword", "small_sword"] {
+            assert_eq!(
+                get(id).and_then(|def| def.damage_type),
+                Some(PhysicalDamageType::Slash),
+                "{id} damage type"
+            );
+        }
+        assert_eq!(
+            get("spear").and_then(|def| def.damage_type),
+            Some(PhysicalDamageType::Pierce)
+        );
+        assert_eq!(
+            get("torch").and_then(|def| def.damage_type),
+            Some(PhysicalDamageType::Blunt)
+        );
+        assert_eq!(get("fishing_rod").and_then(|def| def.damage_type), None);
+    }
+
+    #[test]
+    fn shield_skill_follows_shared_item_metadata() {
+        for id in ["wooden_shield", "raven_shield"] {
+            assert_eq!(
+                get(id).and_then(|def| def.defense_skill),
+                Some(SkillId::Shield)
+            );
+        }
+        assert_eq!(get("torch").and_then(|def| def.defense_skill), None);
+    }
+
+    #[test]
+    fn armor_construction_and_skill_follow_shared_item_metadata() {
+        assert_eq!(
+            get("leather_armor").and_then(|def| def.armor_construction),
+            Some(ArmorConstruction::Leather)
+        );
+        assert_eq!(
+            get("leather_armor").and_then(|def| def.defense_skill),
+            Some(SkillId::LeatherArmor)
+        );
+        assert_eq!(get("leather_armor").and_then(|def| def.guard), Some(1));
+        assert_eq!(
+            get("chain_mail").and_then(|def| def.armor_construction),
+            Some(ArmorConstruction::Mail)
+        );
+        assert_eq!(get("chain_mail").and_then(|def| def.guard), Some(3));
+        assert_eq!(get("chain_mail").and_then(|def| def.defense_skill), None);
+        assert_eq!(
+            get("breastplate").and_then(|def| def.armor_construction),
+            Some(ArmorConstruction::Plate)
+        );
+        assert_eq!(get("breastplate").and_then(|def| def.guard), Some(4));
+        assert_eq!(get("breastplate").and_then(|def| def.defense_skill), None);
+        assert_eq!(
+            get("wooden_shield").and_then(|def| def.armor_construction),
+            None
+        );
+        assert_eq!(
+            get("traveler_robe").and_then(|def| def.equipment_kind),
+            Some(EquipmentKind::Clothing)
+        );
+        assert_eq!(
+            get("traveler_robe").and_then(|def| def.garment_form),
+            Some(GarmentForm::Robe)
+        );
+        assert_eq!(
+            get("padded_battle_robe").and_then(|def| def.armor_construction),
+            Some(ArmorConstruction::Padded)
+        );
+        assert_eq!(
+            get("brigandine_coat").and_then(|def| def.armor_construction),
+            Some(ArmorConstruction::Hybrid)
+        );
+        assert_eq!(get("brigandine_coat").and_then(|def| def.guard), Some(2));
+        for id in ["traveler_robe", "padded_battle_robe", "brigandine_coat"] {
+            assert_eq!(
+                get(id).and_then(|def| def.equipment_layer),
+                Some(EquipmentLayer::Primary)
+            );
+            assert_eq!(get(id).and_then(|def| def.defense_skill), None);
+        }
+        assert_eq!(
+            equipment_summary("leather_armor").as_deref(),
+            Some(
+                "Guard +1; Leather construction; Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor"
+            )
+        );
+        assert_eq!(
+            equipment_summary("padded_battle_robe").as_deref(),
+            Some("Padded construction; Protection Slash 1, Blunt 2")
+        );
+        assert_eq!(
+            equipment_summary("chain_mail").as_deref(),
+            Some("Guard +3; Mail construction; Protection Slash 2, Pierce 1")
+        );
+        assert_eq!(
+            equipment_summary("breastplate").as_deref(),
+            Some("Guard +4; Plate construction; Protection Slash 3, Pierce 3, Blunt 1")
+        );
+        assert_eq!(
+            equipment_summary("brigandine_coat").as_deref(),
+            Some("Guard +2; Hybrid construction; Protection Slash 2, Pierce 2, Blunt 2")
+        );
+        assert_eq!(
+            equipment_summary("leather_helmet").as_deref(),
+            Some("Guard +1; Leather construction")
+        );
+    }
+
+    #[test]
+    fn healing_use_skill_follows_shared_item_metadata() {
+        assert_eq!(
+            get("bandage").and_then(|def| def.use_skill),
+            Some(SkillId::Healing)
+        );
+        assert!(get("bandage").is_some_and(ItemDef::is_consumable));
+        for id in [
+            "healing_potion",
+            "raw_minnow",
+            "raw_trout",
+            "scroll_of_return",
+        ] {
+            assert_eq!(get(id).and_then(|def| def.use_skill), None);
+        }
     }
 
     #[test]
