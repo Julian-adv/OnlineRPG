@@ -94,6 +94,7 @@ function mapBuyback(
         entry_id: number
         item_def_id: string
         enchant: number
+        durability?: number | null
         price: number
       }[]
     | undefined
@@ -102,6 +103,7 @@ function mapBuyback(
     entryId: e.entry_id,
     itemDefId: e.item_def_id,
     enchant: e.enchant,
+    durability: e.durability,
     price: Number(e.price),
   }))
 }
@@ -1015,9 +1017,16 @@ export function handleServerMessage(
         sellRatePercent: data.sell_rate_percent,
         wishlist: data.wishlist ?? [],
         stock: (data.stock ?? []).map(
-          (entry: { item_def_id: string; quantity: number }) => ({
+          (entry: {
+            item_def_id: string
+            quantity: number
+            enchant: number
+            durability?: number | null
+          }) => ({
             itemDefId: entry.item_def_id,
             quantity: entry.quantity,
+            enchant: entry.enchant,
+            durability: entry.durability,
           })
         ),
         buyback: mapBuyback(data.buyback),

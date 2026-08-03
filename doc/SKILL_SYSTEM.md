@@ -304,15 +304,15 @@ The skill slice reuses sparse persistence, generic messages, the Skills tab,
 item tooltips, agent state, and aggregate defense metrics. The later protocol
 v20 physical-damage slice adds damage types, followed by Padded, Leather, Mail,
 Plate, and Hybrid construction profiles, without changing Leather Armor
-eligibility, XP, or trained Guard bands. The Leather chest retains Guard 1 and
-mitigates slash, pierce, and blunt by 1 each. Mail retains Guard 3 and mitigates
-slash 2 / pierce 1. Plate retains Guard 4 and mitigates slash 3 / pierce 3 /
+eligibility, XP, or trained Guard bands. The Leather chest retains Guard 2 and
+mitigates slash, pierce, and blunt by 1 each. Mail retains Guard 5 and mitigates
+slash 2 / pierce 1. Plate retains Guard 7 and mitigates slash 3 / pierce 3 /
 blunt 1. Hybrid retains Guard 2 and mitigates slash, pierce, and blunt by 2
 each. Mail, Plate, and Hybrid have no `defenseSkill` and never create a skill
 row. A landed hit
 trains Leather Armor after all request gates regardless of its exact
 final-damage amount; the authoritative hit result owns training, not potion use.
-Hit location, durability, casting penalties, Mail/Plate/Hybrid skills, class
+Hit location, casting penalties, Mail/Plate/Hybrid skills, class
 restrictions, and wearable body rendering remain separate stages in
 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md).
 
@@ -320,3 +320,10 @@ Protocol v21 adds equipped-weight movement burden without adding or training a
 skill. Strength changes the burden thresholds through carry capacity, but no
 Armor, Athletics, or movement proficiency modifies the tier or speed. Bag
 contents remain outside this calculation.
+
+Protocol v23 adds per-instance condition to primary chest body armor. A broken
+Leather chest no longer activates or trains Leather Armor until repaired;
+construction-aware Cloth, Leather, Metal, and Hybrid kits repair only their
+matching family. Using a finished kit is equipment maintenance and does not
+create or train Smithing, Tailoring, or a generic repair skill. The generic
+skill persistence and XP formulas are unchanged.

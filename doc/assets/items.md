@@ -5,6 +5,13 @@
   no third-party source or license dependency. These items intentionally use
   icon billboards on the ground until dedicated 3D and wearable meshes ship.
 
+- repair_kit.svg — original SVG icon authored for OpenMMO by OpenAI Codex
+  (Codex workspace entitlement; exact account tier unavailable to the tool;
+  2026-08-02); project-owned, no third-party source or license dependency. The
+  Cloth, Leather, Metal, and Hybrid Repair Kit definitions intentionally share
+  this generic maintenance icon; their authored names, materials, and repair
+  families distinguish them.
+
 - sword.glb https://www.fab.com/listings/5fe82d66-eaac-48e0-899d-1fedacdf409a
 - spear.glb https://sketchfab.com/3d-models/spear-f13ddd24e2fe47aa8aca23487afd893e
 - torch.glb https://sketchfab.com/3d-models/torch-stick-d8eadee1a5c14483aade99b1fe5bc150

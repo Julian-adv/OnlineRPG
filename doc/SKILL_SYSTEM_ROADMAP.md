@@ -111,17 +111,24 @@ Persistence, browser/agent state, generated-data parity, metrics, tests, and
 protocol v19 reuse the generic architecture. Protocol v20 later adds typed
 physical damage plus Padded, Leather, Mail, Plate, and Hybrid mitigation as
 combat rules, without registering Padded, Mail, Plate, or Hybrid skills or
-changing Leather Armor training. The Leather chest migrates from Guard 2 to Guard 1 while
-gaining balanced typed protection; Chain Mail migrates from Guard 5 to Guard 3
-with cut-focused protection; Breastplate migrates from Guard 7 to Guard 4 with
-broad protection and a relative Blunt weakness; Brigandine Coat migrates from
-Guard 4 to Guard 2 with balanced protection against all three typed physical
+changing Leather Armor training. The upstream tier baselines keep Leather Armor
+at Guard 2, Chain Mail at Guard 5, and Breastplate at Guard 7 while construction
+adds typed protection. Brigandine Coat uses Guard 2 with balanced protection
+against all three typed physical
 channels. Mail, Plate, Hybrid, Parry, and Dodge remain unapproved skills.
 
 Protocol v21 later makes movement the first equipment-burden consumer. It uses
 equipped weight against Strength-derived carry capacity and does not register
 or train a skill. Bag weight, armor mitigation, and Leather Armor XP remain
 independent channels.
+
+Protocol v23 adds the first durability/repair economy slice without adding a
+skill. Only functional primary chest body armor contributes Guard, mitigation,
+or Leather Armor activation. Accepted landed monster hits wear the resolved
+instance. Cloth, Leather, Metal, and Hybrid kits restore only matching armor
+families, and finished-kit use grants no skill XP. Condition persists through
+legacy migration, equipment, ground items, trades, buyback, and reconnect.
+Smithing, Tailoring, repair quality, and durability skills remain unapproved.
 
 ## Phase 6 — Noncombat Skills
 

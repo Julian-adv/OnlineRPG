@@ -20,7 +20,7 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 10;
     game_state
-        .register_player_character(&player_id, 1, 0, attrs, 0)
+        .register_player_character(&player_id, 1, 0, attrs, 0, None)
         .await;
     let mut skills = Skills::default();
     skills.map.insert(
@@ -93,7 +93,7 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
         profile.primary_armor_construction,
         Some(onlinerpg_shared::inventory::ArmorConstruction::Leather)
     );
-    assert_eq!(profile.effective_guard, 14);
+    assert_eq!(profile.effective_guard, 15);
 
     game_state.unequip_item(&player_id, EquipSlot::Chest).await;
     assert_eq!(game_state.effective_guard(&player_id).await, 10);

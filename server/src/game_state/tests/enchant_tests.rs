@@ -21,6 +21,7 @@ async fn setup_enchant_reader(
                 item_def_id: weapon_def_id.to_string(),
                 quantity: 1,
                 enchant,
+                durability: None,
             },
         );
     }

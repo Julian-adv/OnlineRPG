@@ -200,7 +200,19 @@ d20 굴림 + attack_bonus ≤ target_guard  →  빗나감
 - 피해 보너스는 기존대로 `STR modifier + weapon enchant`다. 스킬 레벨은 피해를 변경하지 않는다.
 - 몬스터는 `attackBonus`가 정의되어 있으면 그 값을 쓰고, 없으면 레벨 기반 기본값을 쓴다.
 
-Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. primary Padded construction은 slash 1 / blunt 2, primary Leather construction은 slash 1 / pierce 1 / blunt 1, primary Mail construction은 slash 2 / pierce 1, primary Plate construction은 slash 3 / pierce 3 / blunt 1, primary Hybrid construction은 slash 2 / pierce 2 / blunt 2를 경감한다. 다섯 construction 모두 untyped은 경감하지 않고 Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 중복 방어를 피하기 위해 `padded_battle_robe`는 기존 Guard 2를 0으로, `leather_armor`는 Guard 2를 1로, `chain_mail`은 Guard 5를 3으로, `breastplate`는 Guard 7을 4로, `brigandine_coat`는 Guard 4를 2로 이전했다. Leather Armor 스킬의 Guard band와 landed-hit XP 규칙은 그대로 유지되며 Mail, Plate, Hybrid는 별도 스킬을 만들거나 훈련하지 않는다. 장비의 kind/layer/form과 `armorConstruction`은 데이터·검증·툴팁에 적용되고, mitigation은 장착한 chest의 primary construction에만 적용된다. 다른 부위 파츠는 해당 파츠의 Guard만 제공한다. multi-layer occupancy/coverage, construction별 추가 부담, 마법 간섭, 내구도, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
+Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. primary Padded construction은 slash 1 / blunt 2, primary Leather construction은 slash 1 / pierce 1 / blunt 1, primary Mail construction은 slash 2 / pierce 1, primary Plate construction은 slash 3 / pierce 3 / blunt 1, primary Hybrid construction은 slash 2 / pierce 2 / blunt 2를 경감한다. 다섯 construction 모두 untyped은 경감하지 않고 Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 통합된 upstream 장비 기준은 `leather_armor` Guard 2, `chain_mail` Guard 5, `breastplate` Guard 7을 유지하면서 typed mitigation을 추가 channel로 적용한다. `padded_battle_robe`는 Guard 0, `brigandine_coat`는 Guard 2의 별도 상점 대안이다. 이 조합의 총 방어력은 playtest 대상이다. Leather Armor 스킬의 Guard band와 landed-hit XP 규칙은 그대로 유지되며 Mail, Plate, Hybrid는 별도 스킬을 만들거나 훈련하지 않는다. 장비의 kind/layer/form과 `armorConstruction`은 데이터·검증·툴팁에 적용되고, mitigation은 장착한 chest의 primary construction에만 적용된다. 다른 부위 파츠는 해당 파츠의 Guard만 제공한다. multi-layer occupancy/coverage, construction별 추가 부담, 마법 간섭, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
+
+프로토콜 v23에서 primary chest body armor는 인스턴스별 내구도를 가진다.
+서버가 승인한 몬스터의 실제 명중만 방어 판정에 사용된 동일한 chest 인스턴스의
+내구도를 1 낮춘다. 0이 된 방어구는 장착과 무게는 유지하지만 Guard, 물리 경감,
+Leather Armor 활성화를 모두 잃는다. 장착 중 교체된 다른 인스턴스, miss, 사거리·층·
+소유권·쿨다운에서 거절된 요청은 닳지 않는다. Cloth kit는 Padded, Leather kit는
+Leather, Metal kit는 Mail/Plate, Hybrid kit는 Hybrid chest를 수리한다. 일치하는
+Repair Kit는 손상된 장착 chest를 최대치로 복구할 때만 소비되며, 잘못된 family의
+kit는 소비되지 않고 기존 내구도도 바꾸지 않는다. 완제품 kit 사용은 스킬 XP를
+지급하지 않는다.
+전투 중이거나 쓰러진 상태에서는 수리할 수 없으므로 전투 도중 즉시 방어력을
+되돌리는 소비품으로 사용되지는 않는다.
 
 프로토콜 v21의 장비 부담은 별도의 이동 규칙이다. 가방 무게는 소지 한도에만
 영향을 주고, 장착 무게는 `STR × 15` 대비 비율로 Unburdened / Light /

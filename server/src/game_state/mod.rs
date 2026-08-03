@@ -165,8 +165,6 @@ pub struct GameState {
     /// `players`.
     player_ids_by_name: Arc<RwLock<HashMap<String, PlayerId>>>,
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
-    /// Monotonic timestamp of each player's last accepted attack request.
-    player_attack_times: Arc<RwLock<HashMap<PlayerId, Instant>>>,
     last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
@@ -341,7 +339,6 @@ impl GameState {
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
-            player_attack_times: Arc::new(RwLock::new(HashMap::new())),
             last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),

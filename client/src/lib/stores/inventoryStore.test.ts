@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   equipmentBurden,
   isTorchItemDefId,
+  inventoryStore,
   resetInventoryStore,
   setEquipmentBurden,
+  setInventory,
 } from './inventoryStore'
 
 describe('equipment burden state', () => {
@@ -48,5 +50,35 @@ describe('isTorchItemDefId', () => {
     expect(isTorchItemDefId(undefined)).toBe(false)
     expect(isTorchItemDefId(null)).toBe(false)
     expect(isTorchItemDefId('dagger')).toBe(false)
+  })
+})
+
+describe('item condition state', () => {
+  beforeEach(() => resetInventoryStore())
+
+  it('keeps server-authored durability on bag and equipped instances', () => {
+    setInventory({
+      bag: [
+        {
+          instance_id: 1,
+          item_def_id: 'leather_repair_kit',
+          quantity: 2,
+          enchant: 0,
+          durability: null,
+        },
+      ],
+      equipped: {
+        chest: {
+          instance_id: 2,
+          item_def_id: 'leather_armor',
+          quantity: 1,
+          enchant: 0,
+          durability: 17,
+        },
+      },
+    })
+
+    expect(get(inventoryStore).equipped.chest?.durability).toBe(17)
+    expect(get(inventoryStore).bag[0].durability).toBeNull()
   })
 })

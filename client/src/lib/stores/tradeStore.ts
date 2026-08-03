@@ -4,6 +4,8 @@ import { writable } from 'svelte/store'
 export interface StockEntry {
   itemDefId: string
   quantity: number
+  enchant: number
+  durability?: number | null
 }
 
 /** One unit the player recently sold to a merchant, repurchasable at the
@@ -13,6 +15,7 @@ export interface BuybackEntry {
   entryId: number
   itemDefId: string
   enchant: number
+  durability?: number | null
   price: number
 }
 

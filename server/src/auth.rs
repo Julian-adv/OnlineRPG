@@ -51,6 +51,9 @@ pub struct ItemRow {
     pub quantity: u32,
     pub equip_slot: Option<String>,
     pub enchant: i32,
+    /// Remaining condition for durable definitions. `None` is the legacy
+    /// representation and is hydrated to the definition maximum on load.
+    pub durability: Option<u32>,
 }
 
 /// One trained skill as stored in `character_skills`. The skill id is kept as
@@ -267,8 +270,9 @@ impl AuthService {
     ) -> Result<(), rusqlite::Error> {
         let mut delete = conn.prepare("DELETE FROM character_items WHERE character_id = ?1")?;
         let mut insert = conn.prepare(
-            "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot, enchant) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO character_items \
+             (character_id, item_def_id, quantity, equip_slot, enchant, durability) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
 
         for (character_id, items) in inventories {
@@ -279,7 +283,8 @@ impl AuthService {
                     item.item_def_id,
                     item.quantity,
                     item.equip_slot,
-                    item.enchant
+                    item.enchant,
+                    item.durability
                 ])?;
             }
         }
@@ -402,6 +407,7 @@ impl AuthService {
                 quantity INTEGER NOT NULL DEFAULT 1,
                 equip_slot TEXT,
                 enchant INTEGER NOT NULL DEFAULT 0,
+                durability INTEGER,
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
             [],
@@ -461,6 +467,12 @@ impl AuthService {
         if !Self::table_columns(conn, "character_items")?.contains("enchant") {
             conn.execute(
                 "ALTER TABLE character_items ADD COLUMN enchant INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !Self::table_columns(conn, "character_items")?.contains("durability") {
+            conn.execute(
+                "ALTER TABLE character_items ADD COLUMN durability INTEGER",
                 [],
             )?;
         }
@@ -1098,7 +1110,8 @@ impl AuthService {
     pub fn load_inventory(&self, character_id: i64) -> Result<Vec<ItemRow>, AuthError> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT item_def_id, quantity, equip_slot, enchant FROM character_items WHERE character_id = ?1",
+            "SELECT item_def_id, quantity, equip_slot, enchant, durability \
+             FROM character_items WHERE character_id = ?1",
         )?;
         let rows = stmt
             .query_map(params![character_id], |row| {
@@ -1107,6 +1120,9 @@ impl AuthService {
                     quantity: row.get(1)?,
                     equip_slot: row.get(2)?,
                     enchant: row.get(3)?,
+                    durability: row
+                        .get::<_, Option<i64>>(4)?
+                        .map(|value| u32::try_from(value.max(0)).unwrap_or(u32::MAX)),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1193,6 +1209,35 @@ mod tests {
             assert_eq!(rows[0].equip_slot.as_deref(), Some(slot));
             assert_eq!(rows[0].enchant, enchant);
         }
+    }
+
+    #[test]
+    fn startup_adds_nullable_durability_to_legacy_item_rows() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_durability_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        drop(AuthService::new(db_path.clone()).unwrap());
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute("ALTER TABLE character_items DROP COLUMN durability", [])
+            .unwrap();
+        conn.execute_batch(
+            "INSERT INTO accounts (player_name) VALUES ('legacy_condition');
+             INSERT INTO characters (id, account_name, character_name)
+             VALUES (1, 'legacy_condition', 'LegacyCondition');
+             INSERT INTO character_items
+             (character_id, item_def_id, quantity, equip_slot, enchant)
+             VALUES (1, 'leather_armor', 1, 'chest', 0);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let auth = AuthService::new(db_path).unwrap();
+        let rows = auth.load_inventory(1).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].item_def_id, "leather_armor");
+        assert_eq!(rows[0].durability, None);
     }
 
     /// A typo'd rename target would silently hand players a ghost item:

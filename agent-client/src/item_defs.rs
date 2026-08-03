@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use onlinerpg_shared::inventory::{
-    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm,
+    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily,
 };
 use onlinerpg_shared::skills::SkillId;
 use onlinerpg_shared::{combat::construction_protection, PhysicalDamageType};
@@ -48,6 +48,10 @@ pub struct ItemDef {
     #[serde(rename = "useSkill", default)]
     #[allow(dead_code)] // Retained for protocol/content parity and agent inspection tests.
     pub use_skill: Option<SkillId>,
+    #[serde(rename = "maxDurability", default)]
+    pub max_durability: Option<u32>,
+    #[serde(rename = "repairFamily", default)]
+    pub repair_family: Option<RepairFamily>,
     /// Usable straight from the bag — the items.csv flag, which the server
     /// validates against its `use_effect` dispatch at boot.
     #[serde(default)]
@@ -102,6 +106,32 @@ pub fn equipment_summary(item_def_id: &str) -> Option<String> {
     }
     if let Some(skill) = def.defense_skill {
         details.push(format!("Skill {}", skill.display_name()));
+    }
+    if let Some(family) = def.repair_family {
+        if def.category.as_deref() == Some("armor_repair_kit") {
+            details.push(format!("Repairs {} armor", family.display_name()));
+        } else {
+            details.push(format!("Repair family {}", family.display_name()));
+        }
+    }
+    (!details.is_empty()).then(|| details.join("; "))
+}
+
+pub fn equipment_instance_summary(
+    item: &onlinerpg_shared::inventory::ItemInstance,
+) -> Option<String> {
+    let mut details = equipment_summary(&item.item_def_id)
+        .map(|summary| vec![summary])
+        .unwrap_or_default();
+    if let (Some(current), Some(max)) = (
+        item.durability,
+        get(&item.item_def_id).and_then(|def| def.max_durability),
+    ) {
+        if current == 0 {
+            details.push(format!("BROKEN, condition 0/{max}"));
+        } else {
+            details.push(format!("Condition {current}/{max}"));
+        }
     }
     (!details.is_empty()).then(|| details.join("; "))
 }
@@ -209,18 +239,18 @@ mod tests {
             get("leather_armor").and_then(|def| def.defense_skill),
             Some(SkillId::LeatherArmor)
         );
-        assert_eq!(get("leather_armor").and_then(|def| def.guard), Some(1));
+        assert_eq!(get("leather_armor").and_then(|def| def.guard), Some(2));
         assert_eq!(
             get("chain_mail").and_then(|def| def.armor_construction),
             Some(ArmorConstruction::Mail)
         );
-        assert_eq!(get("chain_mail").and_then(|def| def.guard), Some(3));
+        assert_eq!(get("chain_mail").and_then(|def| def.guard), Some(5));
         assert_eq!(get("chain_mail").and_then(|def| def.defense_skill), None);
         assert_eq!(
             get("breastplate").and_then(|def| def.armor_construction),
             Some(ArmorConstruction::Plate)
         );
-        assert_eq!(get("breastplate").and_then(|def| def.guard), Some(4));
+        assert_eq!(get("breastplate").and_then(|def| def.guard), Some(7));
         assert_eq!(get("breastplate").and_then(|def| def.defense_skill), None);
         assert_eq!(
             get("wooden_shield").and_then(|def| def.armor_construction),
@@ -243,6 +273,26 @@ mod tests {
             Some(ArmorConstruction::Hybrid)
         );
         assert_eq!(get("brigandine_coat").and_then(|def| def.guard), Some(2));
+        assert_eq!(
+            get("padded_battle_robe").and_then(|def| def.max_durability),
+            Some(40)
+        );
+        assert_eq!(
+            get("leather_armor").and_then(|def| def.max_durability),
+            Some(60)
+        );
+        assert_eq!(
+            get("chain_mail").and_then(|def| def.max_durability),
+            Some(90)
+        );
+        assert_eq!(
+            get("breastplate").and_then(|def| def.max_durability),
+            Some(120)
+        );
+        assert_eq!(
+            get("brigandine_coat").and_then(|def| def.max_durability),
+            Some(100)
+        );
         for id in ["traveler_robe", "padded_battle_robe", "brigandine_coat"] {
             assert_eq!(
                 get(id).and_then(|def| def.equipment_layer),
@@ -253,29 +303,59 @@ mod tests {
         assert_eq!(
             equipment_summary("leather_armor").as_deref(),
             Some(
-                "Guard +1; Leather construction; Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor"
+                "Guard +2; Leather construction; Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor; Repair family Leather"
             )
         );
         assert_eq!(
             equipment_summary("padded_battle_robe").as_deref(),
-            Some("Padded construction; Protection Slash 1, Blunt 2")
+            Some("Padded construction; Protection Slash 1, Blunt 2; Repair family Cloth")
         );
         assert_eq!(
             equipment_summary("chain_mail").as_deref(),
-            Some("Guard +3; Mail construction; Protection Slash 2, Pierce 1")
+            Some("Guard +5; Mail construction; Protection Slash 2, Pierce 1; Repair family Metal")
         );
         assert_eq!(
             equipment_summary("breastplate").as_deref(),
-            Some("Guard +4; Plate construction; Protection Slash 3, Pierce 3, Blunt 1")
+            Some("Guard +7; Plate construction; Protection Slash 3, Pierce 3, Blunt 1; Repair family Metal")
         );
         assert_eq!(
             equipment_summary("brigandine_coat").as_deref(),
-            Some("Guard +2; Hybrid construction; Protection Slash 2, Pierce 2, Blunt 2")
+            Some("Guard +2; Hybrid construction; Protection Slash 2, Pierce 2, Blunt 2; Repair family Hybrid")
         );
         assert_eq!(
             equipment_summary("leather_helmet").as_deref(),
             Some("Guard +1; Leather construction")
         );
+        for (id, family) in [
+            ("cloth_repair_kit", RepairFamily::Cloth),
+            ("leather_repair_kit", RepairFamily::Leather),
+            ("metal_repair_kit", RepairFamily::Metal),
+            ("hybrid_repair_kit", RepairFamily::Hybrid),
+        ] {
+            assert_eq!(get(id).and_then(|def| def.repair_family), Some(family));
+            assert_eq!(
+                equipment_summary(id),
+                Some(format!("Repairs {} armor", family.display_name()))
+            );
+        }
+    }
+
+    #[test]
+    fn equipped_instance_summary_exposes_condition_and_breakage() {
+        let mut armor = onlinerpg_shared::inventory::ItemInstance {
+            instance_id: 1,
+            item_def_id: "leather_armor".to_string(),
+            quantity: 1,
+            enchant: 0,
+            durability: Some(17),
+        };
+        assert!(equipment_instance_summary(&armor)
+            .unwrap()
+            .contains("Condition 17/60"));
+        armor.durability = Some(0);
+        assert!(equipment_instance_summary(&armor)
+            .unwrap()
+            .contains("BROKEN, condition 0/60"));
     }
 
     #[test]

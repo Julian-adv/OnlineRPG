@@ -148,23 +148,23 @@ item's physical build.
 | Item(s) | Slot | Current Guard | Weight | Construction | Current set/loadout |
 |---------|------|--------------:|-------:|--------------|----------------------|
 | `leather_helmet` | head | 1 | 1 | leather | Leather |
-| `leather_armor` | chest | 1 | 8 | leather | Leather |
+| `leather_armor` | chest | 2 | 8 | leather | Leather |
 | `leather_gloves` | hands | 1 | 0.5 | leather | Leather |
 | `leather_pants` | pants | 1 | 4 | leather | Leather |
 | `leather_boots` | boots | 1 | 3 | leather | Leather |
 | `leather_belt` | belt | 0 | 1 | none/accessory | Leather set accessory |
-| `chain_mail` | chest | 3 | 55 | mail | Mail loadout |
+| `chain_mail` | chest | 5 | 30 | mail | Mail loadout |
 | `traveler_robe` | chest | 0 | 3 | none/clothing | merchant clothing |
 | `padded_battle_robe` | chest | 0 | 6 | padded | merchant alternative |
 | `brigandine_coat` | chest | 2 | 14 | hybrid | merchant alternative |
 | `iron_helmet` | head | 2 | 4 | plate | Mail loadout |
 | `iron_gauntlets` | hands | 2 | 2 | plate | Mail loadout |
 | `iron_boots` | boots | 2 | 6 | plate | Mail loadout |
-| `breastplate` | chest | 4 | 20 | plate | Plate |
+| `breastplate` | chest | 7 | 20 | plate | Plate |
 | `plate_helmet` | head | 3 | 5 | plate | Plate |
 | `plate_gauntlets` | hands | 3 | 3 | plate | Plate |
 | `plate_greaves` | pants | 3 | 8 | plate | Plate |
-| `plate_boots` | boots | 2 | 7 | plate | Plate |
+| `plate_boots` | boots | 3 | 7 | plate | Plate |
 | `wooden_shield`, `raven_shield` | off-hand | 1, 2 | 6 each | shield, not body construction | independent shield track |
 | `ring_of_protection` | ring | 1 | 0.1 | accessory, not body construction | independent accessory track |
 
@@ -175,12 +175,12 @@ must remain explicit when armor behavior is introduced.
 
 Current full-loadout totals are:
 
-- Leather body pieces: Guard 5, weight 16.5; the belt adds weight 1 and Guard 0.
-- Mail loadout: Guard 9, weight 67.
-- Plate set: Guard 15, weight 43.
+- Leather body pieces: Guard 6, weight 16.5; the belt adds weight 1 and Guard 0.
+- Mail loadout: Guard 11, weight 42.
+- Plate set: Guard 19, weight 43.
 
-The Mail loadout being much heavier than Plate is a future balance review, not
-something to silently normalize during taxonomy work.
+Mail and Plate now have nearly equal armor-only weight but different Guard and
+typed mitigation profiles. Their resulting progression remains a playtest gate.
 
 The first armor-skill slice maps only `leather_armor`, the primary chest piece,
 to `Leather Armor`. Other leather pieces are classified but cannot activate or
@@ -220,22 +220,19 @@ The active profile is intentionally small:
 | Hybrid | 2 | 2 | 2 | 0 |
 | none | 0 | 0 | 0 | 0 |
 
-`padded_battle_robe` migrated from Guard 2 to Guard 0 when this profile became
-active. `leather_armor` later migrated from Guard 2 to Guard 1, retaining one
-point of deflection while moving one point into balanced typed mitigation. The
-old defense is therefore not counted twice. The server publishes raw,
-mitigated, and final damage in the combat outcome. There are still no random hit
-locations, elemental resistances, durability losses, armor-driven movement or
-casting penalties, stealth penalties, player mana, or player stamina.
+`padded_battle_robe` moved from Guard 2 to Guard 0 when this profile became
+active. The upstream economy rebalance keeps Leather Armor at Guard 2, Chain
+Mail at Guard 5, and Breastplate at Guard 7; typed mitigation is an additional
+construction channel on top of those tier baselines. This combined protection
+is intentionally called out for playtesting rather than silently lowering the
+upstream values during integration. The server publishes raw, mitigated, and
+final damage in the combat outcome. There are still no random hit locations,
+elemental resistances, casting penalties, stealth penalties, player mana, or
+player stamina.
 
-`chain_mail` then migrated from Guard 5 to Guard 3. Its two moved Guard points
-became slash 2 mitigation, while pierce 1 defines its secondary protection and
-blunt remains the construction's deliberate weakness. Mail has no registered
-armor skill, so this profile does not create or train a skill row.
-
-`breastplate` migrated from Guard 7 to Guard 4. Its three moved Guard points
-became broad slash and pierce protection, with blunt 1 kept as the relative
-weakness of rigid plate. Plate has no registered armor skill, and only the
+Mail's slash 2 / pierce 1 profile retains blunt as its deliberate weakness and
+does not register an armor skill. Plate provides broad slash and pierce
+protection with blunt 1 as the relative weakness of rigid plate. Only the
 equipped chest item's primary construction activates mitigation; plate helmets,
 gauntlets, greaves, and boots retain their item Guard without duplicating the
 full chest profile.
@@ -354,7 +351,7 @@ instance. At Strength 10, the current armor-only examples are:
 |---|---:|---|---:|
 | Padded Battle Robe | 6 | Unburdened | 3.0 m/s |
 | Leather body pieces | 16.5 | Unburdened | 3.0 m/s |
-| Mail loadout | 67 | Medium | 2.4 m/s |
+| Mail loadout | 42 | Light | 2.7 m/s |
 | Plate set | 43 | Light | 2.7 m/s |
 | Brigandine Coat | 14 | Unburdened | 3.0 m/s |
 
@@ -388,10 +385,10 @@ explicit requirement when justified.
 
 ## Durability, repair, and crafting foundation
 
-Durability is an item-instance concern, not an item-definition-only stat. A
-future slice needs at least:
+Durability is an item-instance concern, not an item-definition-only stat. The
+first vertical slice implements it for primary chest body armor:
 
-- maximum durability and repair family on the item definition;
+- maximum durability and an explicit repair family on the item definition;
 - current durability on each non-stackable item instance;
 - authoritative wear triggers and a bounded loss formula;
 - broken-item behavior that never destroys valuable gear without an explicit
@@ -401,11 +398,31 @@ future slice needs at least:
   legacy items;
 - tooltip, inventory, agent-state, and combat-outcome visibility.
 
-Durability should follow resolved protection events, not raw client requests.
-A duplicate or rejected attack must not damage armor. Shield wear, armor wear,
-death wear, and environmental wear are separate events and need separate
-approval. Crafting professions should consume construction/repair metadata
-rather than identify items by string prefixes.
+`maxDurability` is definition data while `durability` travels with each item
+through the bag, equipment, ground, resident trade, merchant buyback, and
+database. Legacy rows use SQL `NULL`; login hydrates those rows to the current
+definition maximum and the next save makes the value explicit. Values above a
+later reduced maximum clamp safely on load.
+
+An accepted landed monster hit wears the same functional chest instance from
+the defense snapshot by one point. Misses, rejected requests, duplicate
+cooldown requests, and gear swapped during resolution do not wear an item. At
+zero condition, armor stays equipped and keeps its weight but contributes no
+Guard, construction mitigation, or armor-skill activation. Four finished
+products cover explicit repair families: Cloth repairs Padded, Leather repairs
+Leather, Metal repairs Mail and Plate, and Hybrid repairs Hybrid. A matching kit
+is consumed only when it restores damaged equipped chest armor to full
+condition. A mismatched kit, rejected request, or already-full use keeps the
+product and condition unchanged. Protocol v23 exposes condition and repair
+family to browser tooltips and agent summaries. Repairs are refused while
+defeated or in combat, so a kit is maintenance rather than an instant defensive
+consumable. Using a finished kit grants no skill XP; future crafting professions
+may produce supplies without turning product use into a skill action.
+
+Shield wear, weapon wear, death wear, partial repairs, repair quality, and
+environmental wear remain separate events and need separate approval. Crafting
+professions should consume construction/repair metadata rather than identify
+items by string prefixes.
 
 ## Appearance and equipment synchronization
 
@@ -481,9 +498,11 @@ combat consumer:
 burden consumer:
   equippedBurden and/or construction traits
 
-durability/crafting consumer:
+durability/repair consumer:
   maxDurability
   repairFamily
+
+crafting consumer:
   material requirements
 
 appearance consumer:
@@ -560,12 +579,18 @@ rather than implied behavior.
 - Accessibility and class/build impact remain explicit playtest gates before
   adding another consumer or construction-specific modifiers.
 
-### F. Durability, repair, and economy
+### F. Durability, repair, and economy — first chest-armor slice completed
 
-- Add item-instance persistence only with repair gameplay and safe legacy
-  migration.
-- Cover loot, drop, trade, death, equipment, and reconnect paths.
-- Add crafting links only when a real profession vertical slice is approved.
+- Primary chest body armor has definition-authored maximum condition and
+  per-instance remaining condition.
+- Accepted landed monster attacks wear the resolved instance; broken armor is
+  retained but loses Guard, mitigation, and proficiency activation.
+- A consumed repair product provides the first authoritative repair and
+  material sink.
+- Nullable legacy migration plus bag, equip, loot, ground, resident trade,
+  merchant buyback, and reconnect paths preserve condition.
+- Browser and agent clients expose condition through protocol v23.
+- Crafting links remain deferred until a real profession slice is approved.
 
 ### G. First armor proficiency slice — Leather Armor implemented
 
@@ -577,6 +602,21 @@ rather than implied behavior.
   after threshold changes.
 - Review observed progression and Shield interaction before approving Mail,
   Plate, padded/hybrid, or a different proficiency shape.
+
+### H. Construction-aware repair economy — completed
+
+- Every durable primary chest and every repair kit declares one validated
+  `repairFamily`.
+- Cloth repairs Padded, Leather repairs Leather, Metal repairs Mail and Plate,
+  and Hybrid repairs Hybrid.
+- Rica sells four separate products; they intentionally share the generic repair
+  icon while names, materials, prices, tooltips, and agent summaries distinguish
+  their purpose.
+- The server checks the equipped armor family atomically before consumption, so
+  mismatches preserve both the kit and existing damage.
+- Finished-kit use grants no XP and does not register Smithing, Tailoring, or a
+  generic repair skill. Partial repairs, quality, crafted inputs, and profession
+  ownership remain future vertical slices.
 
 Each phase needs an explicit owner approval and a completion gate. A later
 phase may move earlier only as a complete vertical slice with its prerequisites;
@@ -602,8 +642,8 @@ the broad architecture is not permission to implement all subsystems at once.
    robe continue using the current exclusive `primary/chest` rule?
 2. Should the Mail progression loadout gain a dedicated leg item, or stay a
    mixed transitional set?
-3. Is `chain_mail` weight 55 intentional relative to the 43-weight full Plate
-   set?
+3. Do the 42-weight Mail loadout and 43-weight Plate set remain distinct enough
+   once their Guard and typed mitigation are playtested together?
 4. Does Hybrid's balanced mitigation and retained Guard create a clear enough
    tradeoff against lighter Leather and more deflective Plate in playtesting?
 5. Does aggregate coverage remain sufficient, or does later gameplay justify

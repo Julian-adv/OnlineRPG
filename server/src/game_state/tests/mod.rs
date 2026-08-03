@@ -16,6 +16,7 @@ mod chat_tests;
 mod collision_tests;
 mod combat_tests;
 mod dungeon_tests;
+mod durability_tests;
 mod enchant_tests;
 mod fishing_tests;
 mod healing_tests;
@@ -80,6 +81,7 @@ fn bag_item(instance_id: u64, item_def_id: &str, quantity: u32) -> ItemInstance 
         item_def_id: item_def_id.to_string(),
         quantity,
         enchant: 0,
+        durability: None,
     }
 }
 

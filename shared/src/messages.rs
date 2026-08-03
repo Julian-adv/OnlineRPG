@@ -68,6 +68,12 @@ pub struct ActiveDeal {
 pub struct StockEntry {
     pub item_def_id: String,
     pub quantity: u32,
+    /// Modifiers on the next matching resident-owned unit the server will
+    /// transfer. Stock refreshes after each purchase when later units differ.
+    #[serde(default)]
+    pub enchant: i32,
+    #[serde(default)]
+    pub durability: Option<u32>,
 }
 
 /// One unit the player recently sold to a merchant, repurchasable at the
@@ -80,6 +86,9 @@ pub struct BuybackEntry {
     pub entry_id: u64,
     pub item_def_id: String,
     pub enchant: i32,
+    /// Per-instance condition preserved through merchant buyback.
+    #[serde(default)]
+    pub durability: Option<u32>,
     /// Gold the player was paid for the unit (smallest unit) — buying it
     /// back costs exactly this, so the round trip is gold-neutral.
     pub price: i64,

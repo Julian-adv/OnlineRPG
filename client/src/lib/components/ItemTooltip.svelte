@@ -7,13 +7,21 @@
     def: ItemDefinition
     /** Weapon enchantment level; prefixes the name (e.g. "+2 Iron Sword"). */
     enchant?: number
+    /** Remaining per-instance condition for durable equipment. */
+    durability?: number | null
     side?: 'left' | 'right'
     anchor: DOMRect
   }
 
   // Mounted at document.body by the itemTooltip action; positions itself
   // next to the anchor rect, clamped to the viewport vertically.
-  let { def, enchant = 0, side = 'right', anchor }: Props = $props()
+  let {
+    def,
+    enchant = 0,
+    durability = null,
+    side = 'right',
+    anchor,
+  }: Props = $props()
 
   let height = $state(0)
 
@@ -73,6 +81,19 @@
     {/if}
     {#if def.guard}
       <span>Guard: +{def.guard}</span>
+    {/if}
+    {#if def.maxDurability && durability !== null}
+      <span class:broken={durability === 0}
+        >Condition: {durability}/{def.maxDurability}{durability === 0
+          ? ' (Broken)'
+          : ''}</span
+      >
+    {/if}
+    {#if def.repairFamily}
+      <span
+        >Repair Family: {def.repairFamily[0].toUpperCase() +
+          def.repairFamily.slice(1)}</span
+      >
     {/if}
     {#if def.armorConstruction}
       <span
@@ -146,5 +167,10 @@
     gap: 2px;
     font-size: 13px;
     color: #c8d6e0;
+  }
+
+  .broken {
+    color: #ff7373;
+    font-weight: 700;
   }
 </style>

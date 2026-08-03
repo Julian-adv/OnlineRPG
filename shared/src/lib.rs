@@ -58,7 +58,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 ///      - HungerUpdate and Campfire*/Grill* implement doc/HUNGER.md.
 ///      - PartyPositions is pushed server-side on relocation (was a poll answer)
 ///      and now includes the recipient; clients filter themselves.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// v23: per-instance durability on inventory, ground, and buyback items.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

@@ -220,6 +220,7 @@ mod tests {
                 item_def_id: (*id).to_string(),
                 quantity: 1,
                 enchant: 0,
+                durability: None,
             })
             .collect()
     }

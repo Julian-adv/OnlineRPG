@@ -3,7 +3,8 @@ use crate::item_defs::{ItemDefinition, UseEffect};
 use crate::types::{PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::{
-    resolve_equipment_burden, EquipSlot, EquipmentBurden, GroundItem, ItemInstance, PlayerInventory,
+    resolve_equipment_burden, EquipSlot, EquipmentBurden, GroundItem, ItemInstance,
+    PlayerInventory, RepairFamily,
 };
 use onlinerpg_shared::skills::{healing_skill_hp_bonus, SkillId};
 use rand::Rng;
@@ -81,6 +82,7 @@ pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
             quantity: item.quantity,
             equip_slot: None,
             enchant: item.enchant,
+            durability: item.durability,
         })
         .collect();
     for (slot, item) in &inv.equipped {
@@ -89,12 +91,24 @@ pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
             quantity: 1,
             equip_slot: Some(slot.as_str().to_string()),
             enchant: item.enchant,
+            durability: item.durability,
         });
     }
     rows
 }
 
 impl super::GameState {
+    pub(super) fn initial_item_durability(&self, item_def_id: &str) -> Option<u32> {
+        self.item_defs
+            .get(item_def_id)
+            .and_then(|def| def.max_durability)
+    }
+
+    fn loaded_item_durability(&self, item_def_id: &str, stored: Option<u32>) -> Option<u32> {
+        self.initial_item_durability(item_def_id)
+            .map(|max| stored.unwrap_or(max).min(max))
+    }
+
     /// Reserve a range of instance IDs (single lock acquisition).
     async fn reserve_instance_ids(&self, count: u64) -> u64 {
         let mut id = self.next_item_instance_id.write().await;
@@ -220,6 +234,8 @@ impl super::GameState {
                                 slot,
                                 ItemInstance {
                                     instance_id,
+                                    durability: self
+                                        .loaded_item_durability(&row.item_def_id, row.durability),
                                     item_def_id: row.item_def_id,
                                     quantity: 1,
                                     enchant: row.enchant,
@@ -235,6 +251,8 @@ impl super::GameState {
                     None => {
                         inventory.bag.push(ItemInstance {
                             instance_id,
+                            durability: self
+                                .loaded_item_durability(&row.item_def_id, row.durability),
                             item_def_id: row.item_def_id,
                             quantity: row.quantity,
                             enchant: row.enchant,
@@ -305,6 +323,7 @@ impl super::GameState {
                 item_def_id: item_def_id.to_string(),
                 quantity: 1,
                 enchant: 0,
+                durability: self.initial_item_durability(item_def_id),
             });
             inv.clone()
         };
@@ -356,6 +375,7 @@ impl super::GameState {
                                 item_def_id: item_def_id.to_string(),
                                 quantity: 1,
                                 enchant: 0,
+                                durability: self.initial_item_durability(item_def_id),
                             });
                         }
                     }
@@ -384,6 +404,7 @@ impl super::GameState {
                     position,
                     floor_level,
                     enchant: 0,
+                    durability: self.initial_item_durability(item_def_id),
                 })
                 .await;
             }
@@ -530,6 +551,159 @@ impl super::GameState {
             UseEffect::OpenCoinPouch(dice) => {
                 self.use_coin_pouch(player_id, instance_id, &dice).await
             }
+            UseEffect::RepairArmor(family) => {
+                self.use_armor_repair_kit(player_id, instance_id, family)
+                    .await
+            }
+        }
+    }
+
+    async fn use_armor_repair_kit(
+        &self,
+        player_id: &PlayerId,
+        instance_id: u64,
+        kit_family: RepairFamily,
+    ) {
+        if self
+            .reject_if_defeated(player_id, "You can't repair armor while defeated")
+            .await
+        {
+            return;
+        }
+        let in_combat = {
+            let players = self.players.read().await;
+            players.get(player_id).is_some_and(Self::in_combat)
+        };
+        if in_combat {
+            self.send_system_message(player_id, "You can't repair armor during combat")
+                .await;
+            return;
+        }
+
+        let outcome = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            let kit = inv.bag.iter().find(|item| item.instance_id == instance_id);
+            let Some(kit) = kit else {
+                return;
+            };
+            let kit_still_matches = self
+                .item_defs
+                .get(&kit.item_def_id)
+                .and_then(ItemDefinition::use_effect)
+                .is_some_and(|effect| {
+                    matches!(effect, UseEffect::RepairArmor(family) if family == kit_family)
+                });
+            if !kit_still_matches {
+                return;
+            }
+            let kit_name = self.item_name(&kit.item_def_id);
+
+            let Some(chest) = inv.equipped.get(&EquipSlot::Chest) else {
+                drop(inventories);
+                self.send_system_message(player_id, "Equip chest armor before repairing it")
+                    .await;
+                return;
+            };
+            let Some((max, armor_family)) = self
+                .item_defs
+                .get(&chest.item_def_id)
+                .and_then(|def| def.max_durability.zip(def.repair_family))
+            else {
+                drop(inventories);
+                self.send_system_message(player_id, "That chest item does not need repairs")
+                    .await;
+                return;
+            };
+            if armor_family != kit_family {
+                drop(inventories);
+                self.send_system_message(
+                    player_id,
+                    format!(
+                        "This kit repairs {} armor; your equipped armor requires a {} kit",
+                        kit_family.display_name(),
+                        armor_family.display_name()
+                    ),
+                )
+                .await;
+                return;
+            }
+            let current = chest.durability.unwrap_or(max).min(max);
+            if current >= max {
+                drop(inventories);
+                self.send_system_message(
+                    player_id,
+                    "Your equipped chest armor is already fully repaired",
+                )
+                .await;
+                return;
+            }
+            let armor_name = self.item_name(&chest.item_def_id);
+            consume_one(inv, instance_id);
+            inv.equipped
+                .get_mut(&EquipSlot::Chest)
+                .expect("checked above")
+                .durability = Some(max);
+            (inv.clone(), kit_name, armor_name, current, max)
+        };
+
+        self.mark_inventory_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, outcome.0).await;
+        self.send_system_message(
+            player_id,
+            format!(
+                "You use a {} to repair your {} from {}/{} to full condition.",
+                outcome.1, outcome.2, outcome.3, outcome.4
+            ),
+        )
+        .await;
+    }
+
+    /// Apply one point of wear to the same functional primary armor captured
+    /// by the defense snapshot. Swapping gear during resolution cannot damage
+    /// the replacement item.
+    pub(super) async fn wear_primary_armor(&self, player_id: &PlayerId, instance_id: u64) {
+        let worn = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            let Some(chest) = inv.equipped.get_mut(&EquipSlot::Chest) else {
+                return;
+            };
+            if chest.instance_id != instance_id {
+                return;
+            }
+            let Some(current) = chest.durability else {
+                return;
+            };
+            if current == 0 {
+                return;
+            }
+            chest.durability = Some(current - 1);
+            let broke = current == 1;
+            let name = chest.item_def_id.clone();
+            (inv.clone(), broke, name)
+        };
+
+        self.mark_inventory_dirty(player_id).await;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::InventoryUpdated { inventory: worn.0 },
+        )
+        .await;
+        if worn.1 {
+            self.send_guard_update(player_id).await;
+            self.send_system_message(
+                player_id,
+                format!(
+                    "Your {} is broken and no longer protects you.",
+                    self.item_name(&worn.2)
+                ),
+            )
+            .await;
         }
     }
 
@@ -1036,12 +1210,14 @@ impl super::GameState {
                 .await;
 
             let instance_id = self.next_instance_id().await;
+            let durability = self.initial_item_durability(&item_def_id);
             self.spawn_ground_item(GroundItem {
                 instance_id,
                 item_def_id,
                 position,
                 floor_level,
                 enchant: 0,
+                durability,
             })
             .await;
         }
@@ -1096,6 +1272,7 @@ impl super::GameState {
             position,
             floor_level,
             enchant: dropped.enchant,
+            durability: dropped.durability,
         };
 
         self.mark_inventory_dirty(player_id).await;
@@ -1132,6 +1309,7 @@ impl super::GameState {
             position,
             floor_level,
             enchant: 0,
+            durability: self.initial_item_durability(item_def_id),
         })
         .await;
     }
@@ -1217,6 +1395,7 @@ impl super::GameState {
                     item_def_id: ground_item.item_def_id,
                     quantity: 1,
                     enchant: ground_item.enchant,
+                    durability: ground_item.durability,
                 });
                 inv.clone()
             } else {

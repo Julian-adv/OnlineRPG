@@ -17,7 +17,7 @@ async fn setup_trained_weapon_attacker(
     let player_id = pid(name);
     game_state.add_player(make_player(name, 0.0, 0.0)).await;
     game_state
-        .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0)
+        .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0, None)
         .await;
     let mut skills = Skills::default();
     if skill_level > 0 {
@@ -39,6 +39,7 @@ async fn setup_trained_weapon_attacker(
                 item_def_id: item_def_id.to_string(),
                 quantity: 1,
                 enchant,
+                durability: None,
             },
         );
     }
@@ -746,7 +747,7 @@ async fn shield_guard_bonus_requires_an_explicitly_mapped_equipped_shield() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 10;
     game_state
-        .register_player_character(&defender_id, 1, 0, attrs, 0)
+        .register_player_character(&defender_id, 1, 0, attrs, 0, None)
         .await;
     let mut skills = Skills::default();
     skills.map.insert(
@@ -812,7 +813,7 @@ async fn accepted_monster_attacks_train_shield_without_packet_shortcuts() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 20; // A level-1 monster cannot beat 20 with its d20 roll.
     game_state
-        .register_player_character(&defender_id, 2, 0, attrs, 0)
+        .register_player_character(&defender_id, 2, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -943,7 +944,7 @@ async fn shield_bonus_threshold_pushes_an_immediate_guard_update() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 20;
     game_state
-        .register_player_character(&defender_id, 3, 0, attrs, 0)
+        .register_player_character(&defender_id, 3, 0, attrs, 0, None)
         .await;
     let mut skills = Skills::default();
     skills.map.insert(
@@ -1005,7 +1006,7 @@ async fn leather_armor_bonus_is_anchored_to_the_mapped_primary_chest() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 10;
     game_state
-        .register_player_character(&defender_id, 4, 0, attrs, 0)
+        .register_player_character(&defender_id, 4, 0, attrs, 0, None)
         .await;
     let mut skills = Skills::default();
     for (skill, level) in [(SkillId::Shield, 15), (SkillId::LeatherArmor, 25)] {
@@ -1040,7 +1041,7 @@ async fn leather_armor_bonus_is_anchored_to_the_mapped_primary_chest() {
     assert_eq!(profile.armor_skill, Some(SkillId::LeatherArmor));
     assert_eq!(profile.armor_skill_level, 25);
     assert_eq!(profile.armor_skill_guard_bonus, 3);
-    assert_eq!(profile.effective_guard, 17); // base 10 + gear 2 + skills 2 + 3
+    assert_eq!(profile.effective_guard, 18); // base 10 + gear 3 + skills 2 + 3
 
     game_state
         .inventories
@@ -1053,7 +1054,7 @@ async fn leather_armor_bonus_is_anchored_to_the_mapped_primary_chest() {
     let plate_profile = game_state.player_defense_profile(&defender_id).await;
     assert_eq!(plate_profile.armor_skill, None);
     assert_eq!(plate_profile.armor_skill_guard_bonus, 0);
-    assert_eq!(plate_profile.effective_guard, 17); // base 10 + gear 5 + Shield 2
+    assert_eq!(plate_profile.effective_guard, 20); // base 10 + gear 8 + Shield 2
     assert_eq!(armor_skill_guard_bonus(SkillId::LeatherArmor, 25), 3);
 }
 
@@ -1072,7 +1073,7 @@ async fn padded_primary_armor_mitigates_typed_hits_without_training_leather_armo
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 0;
     game_state
-        .register_player_character(&defender_id, 6, 0, attrs, 0)
+        .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -1173,7 +1174,7 @@ async fn leather_primary_armor_balances_typed_mitigation_and_skill_training() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 0;
     game_state
-        .register_player_character(&defender_id, 6, 0, attrs, 0)
+        .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -1187,7 +1188,7 @@ async fn leather_primary_armor_balances_typed_mitigation_and_skill_training() {
                 .collect(),
         },
     );
-    assert_eq!(game_state.effective_guard(&defender_id).await, 1);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 2);
     let mut rx = game_state.register_direct_channel(&defender_id).await;
     let mut expected_health = 1_000;
 
@@ -1277,7 +1278,7 @@ async fn mail_primary_armor_favors_slash_without_creating_an_armor_skill() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 0;
     game_state
-        .register_player_character(&defender_id, 6, 0, attrs, 0)
+        .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -1291,7 +1292,7 @@ async fn mail_primary_armor_favors_slash_without_creating_an_armor_skill() {
                 .collect(),
         },
     );
-    assert_eq!(game_state.effective_guard(&defender_id).await, 3);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 5);
     let mut rx = game_state.register_direct_channel(&defender_id).await;
     let mut expected_health = 1_000;
 
@@ -1380,7 +1381,7 @@ async fn plate_primary_armor_provides_broad_mitigation_without_a_skill() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 0;
     game_state
-        .register_player_character(&defender_id, 6, 0, attrs, 0)
+        .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -1394,7 +1395,7 @@ async fn plate_primary_armor_provides_broad_mitigation_without_a_skill() {
                 .collect(),
         },
     );
-    assert_eq!(game_state.effective_guard(&defender_id).await, 4);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 7);
     let mut rx = game_state.register_direct_channel(&defender_id).await;
     let mut expected_health = 1_000;
     let mut observed_total_mitigation = 0;
@@ -1508,7 +1509,7 @@ async fn hybrid_primary_armor_provides_balanced_mitigation_without_a_skill() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 0;
     game_state
-        .register_player_character(&defender_id, 6, 0, attrs, 0)
+        .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -1636,7 +1637,7 @@ async fn landed_monster_hits_train_leather_armor_without_miss_or_gear_shortcuts(
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 20;
     game_state
-        .register_player_character(&defender_id, 5, 0, attrs, 0)
+        .register_player_character(&defender_id, 5, 0, attrs, 0, None)
         .await;
     game_state
         .register_player_skills(&defender_id, Skills::default())
@@ -1679,7 +1680,7 @@ async fn landed_monster_hits_train_leather_armor_without_miss_or_gear_shortcuts(
     let progress = game_state.player_skills.read().await[&defender_id].get(SkillId::LeatherArmor);
     assert_eq!(progress.xp, 5);
     assert_eq!(progress.level, 0);
-    assert_eq!(game_state.effective_guard(&defender_id).await, 21);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 22);
 
     game_state
         .inventories
@@ -1738,7 +1739,7 @@ async fn leather_armor_bonus_threshold_pushes_one_combined_guard_update() {
     let mut attrs = attrs_with_cha(10);
     attrs.guard = 20;
     game_state
-        .register_player_character(&defender_id, 6, 0, attrs, 0)
+        .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
     let mut skills = Skills::default();
     skills.map.insert(
@@ -1780,7 +1781,7 @@ async fn leather_armor_bonus_threshold_pushes_one_combined_guard_update() {
         .await
         .insert(monster.id.clone(), monster);
 
-    assert_eq!(game_state.effective_guard(&defender_id).await, 24);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 25);
     game_state
         .broadcast_monster_attack(&owner_id, "armor_threshold_hit", &defender_id)
         .await;
@@ -1798,11 +1799,11 @@ async fn leather_armor_bonus_threshold_pushes_one_combined_guard_update() {
     assert_eq!(
         messages
             .iter()
-            .filter(|message| matches!(message, ServerMessage::GuardUpdated { guard: 25 }))
+            .filter(|message| matches!(message, ServerMessage::GuardUpdated { guard: 26 }))
             .count(),
         1
     );
-    assert_eq!(game_state.effective_guard(&defender_id).await, 25);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 26);
 }
 
 #[tokio::test]
@@ -2206,6 +2207,7 @@ async fn mapped_weapon_profiles_apply_shared_accuracy_range_and_cadence() {
                 item_def_id: "dagger".to_string(),
                 quantity: 1,
                 enchant: 0,
+                durability: None,
             },
         );
     let profile = game_state.player_weapon_attack_profile(&player_id).await;
@@ -2243,6 +2245,7 @@ async fn mapped_weapon_profiles_apply_shared_accuracy_range_and_cadence() {
                 item_def_id: "spear".to_string(),
                 quantity: 1,
                 enchant: 0,
+                durability: None,
             },
         );
     let profile = game_state.player_weapon_attack_profile(&player_id).await;
@@ -2341,12 +2344,11 @@ async fn spear_attack_uses_its_range_cadence_and_skill_xp() {
         }
     )));
 
-    *game_state
-        .player_attack_times
+    game_state
+        .last_player_attacks
         .write()
         .await
-        .get_mut(&player_id)
-        .unwrap() = std::time::Instant::now() - std::time::Duration::from_millis(1_600);
+        .insert(player_id, GameState::now_ms().saturating_sub(1_600));
     game_state
         .broadcast_player_attack(&player_id, "spear_target".to_string())
         .await;
@@ -2358,12 +2360,11 @@ async fn spear_attack_uses_its_range_cadence_and_skill_xp() {
         10
     );
 
-    *game_state
-        .player_attack_times
+    game_state
+        .last_player_attacks
         .write()
         .await
-        .get_mut(&player_id)
-        .unwrap() = std::time::Instant::now() - std::time::Duration::from_millis(2_500);
+        .insert(player_id, GameState::now_ms().saturating_sub(2_500));
     game_state
         .broadcast_player_attack(&player_id, "spear_target".to_string())
         .await;
@@ -2521,13 +2522,13 @@ async fn player_cooldown_is_atomic_across_targets_and_cleared_on_remove() {
         } if monster_id == "second"
     )));
     assert!(game_state
-        .player_attack_times
+        .last_player_attacks
         .read()
         .await
         .contains_key(&player_id));
     game_state.remove_player(&player_id).await;
     assert!(!game_state
-        .player_attack_times
+        .last_player_attacks
         .read()
         .await
         .contains_key(&player_id));
@@ -2560,12 +2561,11 @@ async fn phase_two_metrics_aggregate_combat_without_player_identity() {
     game_state
         .broadcast_player_attack(&player_id, "measured_second".to_string())
         .await;
-    *game_state
-        .player_attack_times
+    game_state
+        .last_player_attacks
         .write()
         .await
-        .get_mut(&player_id)
-        .unwrap() = std::time::Instant::now() - std::time::Duration::from_millis(1_600);
+        .insert(player_id, GameState::now_ms().saturating_sub(1_600));
     game_state
         .broadcast_player_attack(&player_id, "measured_second".to_string())
         .await;

@@ -753,7 +753,6 @@ impl super::GameState {
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
-        self.player_attack_times.write().await.remove(player_id);
         self.ambient_spawn_allowances
             .write()
             .await

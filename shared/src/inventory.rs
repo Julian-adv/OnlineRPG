@@ -126,6 +126,44 @@ impl std::str::FromStr for ArmorConstruction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RepairFamily {
+    Cloth,
+    Leather,
+    Metal,
+    Hybrid,
+}
+
+impl RepairFamily {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cloth => "cloth",
+            Self::Leather => "leather",
+            Self::Metal => "metal",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Cloth => "Cloth",
+            Self::Leather => "Leather",
+            Self::Metal => "Metal",
+            Self::Hybrid => "Hybrid",
+        }
+    }
+
+    pub fn for_construction(construction: ArmorConstruction) -> Self {
+        match construction {
+            ArmorConstruction::Padded => Self::Cloth,
+            ArmorConstruction::Leather => Self::Leather,
+            ArmorConstruction::Mail | ArmorConstruction::Plate => Self::Metal,
+            ArmorConstruction::Hybrid => Self::Hybrid,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EquipmentKind {
     Weapon,
     Tool,
@@ -309,6 +347,17 @@ pub struct ItemInstance {
     /// everything but enchanted weapons; `default` keeps old payloads valid.
     #[serde(default)]
     pub enchant: i32,
+    /// Remaining condition for durable item definitions. `None` means the
+    /// definition is not durable; legacy durable rows are hydrated by the
+    /// server from their definition before entering live inventory state.
+    #[serde(default)]
+    pub durability: Option<u32>,
+}
+
+impl ItemInstance {
+    pub fn is_broken(&self) -> bool {
+        self.durability == Some(0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -352,6 +401,9 @@ pub struct GroundItem {
     /// doesn't wipe it.
     #[serde(default)]
     pub enchant: i32,
+    /// Per-instance condition preserved while an item is on the ground.
+    #[serde(default)]
+    pub durability: Option<u32>,
 }
 
 #[cfg(test)]
@@ -381,6 +433,38 @@ mod tests {
         }
         assert!(serde_json::from_str::<ArmorConstruction>("\"chain\"").is_err());
         assert!("chain".parse::<ArmorConstruction>().is_err());
+    }
+
+    #[test]
+    fn repair_families_have_stable_names_and_construction_mapping() {
+        for (family, wire, display) in [
+            (RepairFamily::Cloth, "cloth", "Cloth"),
+            (RepairFamily::Leather, "leather", "Leather"),
+            (RepairFamily::Metal, "metal", "Metal"),
+            (RepairFamily::Hybrid, "hybrid", "Hybrid"),
+        ] {
+            assert_eq!(family.as_str(), wire);
+            assert_eq!(family.display_name(), display);
+            assert_eq!(
+                serde_json::to_string(&family).unwrap(),
+                format!("\"{wire}\"")
+            );
+            assert_eq!(
+                serde_json::from_str::<RepairFamily>(&format!("\"{wire}\"")).unwrap(),
+                family
+            );
+        }
+
+        for (construction, family) in [
+            (ArmorConstruction::Padded, RepairFamily::Cloth),
+            (ArmorConstruction::Leather, RepairFamily::Leather),
+            (ArmorConstruction::Mail, RepairFamily::Metal),
+            (ArmorConstruction::Plate, RepairFamily::Metal),
+            (ArmorConstruction::Hybrid, RepairFamily::Hybrid),
+        ] {
+            assert_eq!(RepairFamily::for_construction(construction), family);
+        }
+        assert!(serde_json::from_str::<RepairFamily>("\"wood\"").is_err());
     }
 
     #[test]

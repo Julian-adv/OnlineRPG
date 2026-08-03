@@ -2090,7 +2090,7 @@ impl SharedState {
                 .iter()
                 .map(|(slot, i)| {
                     let item = format!("{}: {}", slot.as_str(), i.item_def_id);
-                    crate::item_defs::equipment_summary(&i.item_def_id)
+                    crate::item_defs::equipment_instance_summary(i)
                         .map_or(item.clone(), |summary| format!("{item} [{summary}]"))
                 })
                 .collect();
@@ -2256,6 +2256,7 @@ pub(crate) mod tests {
             position: p(x, 0.0, z),
             floor_level: floor,
             enchant: 0,
+            durability: None,
         }
     }
 
@@ -2606,6 +2607,7 @@ pub(crate) mod tests {
             item_def_id: "healing_potion".to_string(),
             quantity: 3,
             enchant: 0,
+            durability: None,
         }];
 
         let mut spent: HashMap<u64, u32> = HashMap::new();

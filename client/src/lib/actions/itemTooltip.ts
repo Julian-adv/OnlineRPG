@@ -9,7 +9,7 @@ export interface ItemTooltipParams {
   def: ItemDefinition
   /** The hovered instance, when one exists — supplies per-instance display
    * data such as the +N enchant. Omit for def-only surfaces (shop catalog). */
-  item?: ItemInstance
+  item?: Pick<ItemInstance, 'enchant' | 'durability'>
   side?: 'left' | 'right'
 }
 
@@ -36,6 +36,7 @@ export function itemTooltip(
       props: {
         def: params.def,
         enchant: params.item?.enchant,
+        durability: params.item?.durability,
         side: params.side,
         anchor: node.getBoundingClientRect(),
       },

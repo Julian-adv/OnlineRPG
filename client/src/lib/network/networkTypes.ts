@@ -232,6 +232,8 @@ export type ItemInstance = {
   quantity: number
   /** Weapon enchantment level (+N to attack and damage rolls). */
   enchant: number
+  /** Remaining condition; absent/null for items that do not wear out. */
+  durability?: number | null
 }
 
 export type PlayerInventory = {
@@ -283,6 +285,8 @@ export type ServerGroundItem = {
   floor_level: number
   /** Carries a dropped weapon's enchantment across the drop/pickup cycle. */
   enchant: number
+  /** Carries durable equipment condition across the drop/pickup cycle. */
+  durability?: number | null
 }
 
 export type ServerCampfire = {

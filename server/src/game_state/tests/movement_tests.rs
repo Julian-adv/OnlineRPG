@@ -60,6 +60,7 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
                     position: entity_position,
                     floor_level: 0,
                     enchant: 0,
+                    durability: None,
                 },
                 dropped_at_ms: 0,
             },
@@ -218,7 +219,7 @@ async fn equipped_load_slows_server_movement_while_bag_weight_does_not() {
     for (name, player_id) in [("bag_carrier", bag_id), ("equipped_carrier", equipped_id)] {
         game_state.add_player(make_player(name, 0.0, 0.0)).await;
         game_state
-            .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0)
+            .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0, None)
             .await;
     }
 
@@ -260,12 +261,12 @@ async fn equipped_load_slows_server_movement_while_bag_weight_does_not() {
         onlinerpg_shared::EquipmentBurdenTier::Unburdened
     );
     assert_eq!(bag_burden.movement_speed, 3.0);
-    assert_eq!(equipped_burden.equipped_weight, 80.0);
+    assert_eq!(equipped_burden.equipped_weight, 55.0);
     assert_eq!(
         equipped_burden.tier,
-        onlinerpg_shared::EquipmentBurdenTier::Heavy
+        onlinerpg_shared::EquipmentBurdenTier::Medium
     );
-    assert_eq!(equipped_burden.movement_speed, 2.1);
+    assert_eq!(equipped_burden.movement_speed, 2.4);
 
     for player_id in [bag_id, equipped_id] {
         game_state
@@ -281,7 +282,7 @@ async fn equipped_load_slows_server_movement_while_bag_weight_does_not() {
         "bag distance {bag_distance}"
     );
     assert!(
-        (equipped_distance - 2.415).abs() < 0.001,
+        (equipped_distance - 2.76).abs() < 0.001,
         "equipped distance {equipped_distance}"
     );
 }

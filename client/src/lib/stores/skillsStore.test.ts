@@ -137,7 +137,7 @@ describe('defense skill item metadata', () => {
       expect(getItemDef(id)?.defenseSkill).toBeUndefined()
     }
     expect(getItemDef('leather_armor')?.defenseSkill).toBe('leather_armor')
-    expect(getItemDef('leather_armor')?.guard).toBe(1)
+    expect(getItemDef('leather_armor')?.guard).toBe(2)
     for (const id of [
       'leather_helmet',
       'leather_armor',
@@ -148,14 +148,27 @@ describe('defense skill item metadata', () => {
       expect(getItemDef(id)?.armorConstruction).toBe('leather')
     }
     expect(getItemDef('chain_mail')?.armorConstruction).toBe('mail')
-    expect(getItemDef('chain_mail')?.guard).toBe(3)
+    expect(getItemDef('chain_mail')?.guard).toBe(5)
     expect(getItemDef('chain_mail')?.defenseSkill).toBeUndefined()
     expect(getItemDef('breastplate')?.armorConstruction).toBe('plate')
-    expect(getItemDef('breastplate')?.guard).toBe(4)
+    expect(getItemDef('breastplate')?.guard).toBe(7)
     expect(getItemDef('breastplate')?.defenseSkill).toBeUndefined()
     expect(getItemDef('padded_battle_robe')?.armorConstruction).toBe('padded')
+    expect(getItemDef('padded_battle_robe')?.repairFamily).toBe('cloth')
+    expect(getItemDef('leather_armor')?.repairFamily).toBe('leather')
     expect(getItemDef('brigandine_coat')?.armorConstruction).toBe('hybrid')
+    expect(getItemDef('brigandine_coat')?.repairFamily).toBe('hybrid')
     expect(getItemDef('brigandine_coat')?.guard).toBe(2)
+    expect(getItemDef('chain_mail')?.repairFamily).toBe('metal')
+    expect(getItemDef('breastplate')?.repairFamily).toBe('metal')
+    for (const [id, repairFamily] of [
+      ['cloth_repair_kit', 'cloth'],
+      ['leather_repair_kit', 'leather'],
+      ['metal_repair_kit', 'metal'],
+      ['hybrid_repair_kit', 'hybrid'],
+    ] as const) {
+      expect(getItemDef(id)?.repairFamily).toBe(repairFamily)
+    }
     for (const id of [
       'traveler_robe',
       'padded_battle_robe',

@@ -67,6 +67,14 @@ Unburdened(3.0 m/s), Mail과 Plate set이 모두 Light(2.7 m/s)다. 가방 무�
 수 있다. `chain_mail` 무게 30과 Plate 전체 무게 43의 관계는 이제 실제 gameplay
 tradeoff이므로 playtest 없이 조용히 보정하지 않는다.
 
+프로토콜 v23의 첫 내구도 단계에서 primary chest body armor의 최대 condition은
+Padded Battle Robe 40, Leather Armor 60, Chain Mail 90, Breastplate 120,
+Brigandine Coat 100이다. 실제 명중당 1씩 닳는다. Rica가 판매하는 Cloth / Leather /
+Metal / Hybrid Repair Kit가 각각 Padded / Leather / Mail·Plate / Hybrid armor를 전부
+복구하며, family가 맞지 않으면 소비되지 않는다. 완제품 사용은 스킬 XP를 주지 않는다.
+이 값은 repair economy와 playtest를 위한 첫 기준이며 다른 부위, 방패, 무기에는 아직
+내구도를 적용하지 않는다.
+
 ### 상점 chest 대안
 
 아래 아이템은 던전 세트가 아니라 Rica가 판매하는 chest 대안이다. 모두

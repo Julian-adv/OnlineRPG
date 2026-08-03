@@ -10,6 +10,8 @@ export type ArmorConstruction =
   | 'plate'
   | 'hybrid'
 
+export type RepairFamily = 'cloth' | 'leather' | 'metal' | 'hybrid'
+
 export type EquipmentKind =
   | 'weapon'
   | 'tool'
@@ -71,6 +73,10 @@ export interface ItemDefinition {
   useSkill?: SkillId
   /** Satiation restored when eaten (doc/HUNGER.md). */
   nutrition?: number
+  /** Maximum condition for per-instance durable equipment. */
+  maxDurability?: number
+  /** Material family required to repair this armor or supplied by this kit. */
+  repairFamily?: RepairFamily
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>

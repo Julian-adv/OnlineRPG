@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Armor repair kit</title>
+  <desc id="desc">A compact leather tool roll with a hammer, rivets, and metal patches.</desc>
+  <defs>
+    <linearGradient id="leather" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9a6237"/>
+      <stop offset="1" stop-color="#4c2919"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e3edf1"/>
+      <stop offset="1" stop-color="#61727a"/>
+    </linearGradient>
+  </defs>
+  <path d="M18 43h92v60a10 10 0 0 1-10 10H28a10 10 0 0 1-10-10Z" fill="url(#leather)" stroke="#2d180f" stroke-width="5"/>
+  <path d="M31 43V30a11 11 0 0 1 11-11h44a11 11 0 0 1 11 11v13" fill="none" stroke="#603820" stroke-width="8"/>
+  <path d="M14 45h100v18H14Z" fill="#b27a45" stroke="#2d180f" stroke-width="5"/>
+  <path d="m48 88 31-31" stroke="#8a542d" stroke-width="10" stroke-linecap="round"/>
+  <path d="m69 47 11-11 20 20-11 11Z" fill="url(#steel)" stroke="#35434a" stroke-width="4"/>
+  <path d="M37 74h21v25H37Z" fill="#87979d" stroke="#35434a" stroke-width="4"/>
+  <circle cx="42" cy="55" r="4" fill="#d8b967"/>
+  <circle cx="54" cy="55" r="4" fill="#d8b967"/>
+  <circle cx="66" cy="55" r="4" fill="#d8b967"/>
+</svg>

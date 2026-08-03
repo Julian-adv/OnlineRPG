@@ -1,5 +1,5 @@
 use onlinerpg_shared::inventory::{
-    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm,
+    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily,
 };
 use onlinerpg_shared::skills::SkillId;
 use onlinerpg_shared::PhysicalDamageType;
@@ -103,6 +103,12 @@ pub struct ItemDefinition {
     /// Fish only — the item def this grills into at a campfire.
     #[serde(rename = "grillsInto", default)]
     pub grills_into: Option<String>,
+    /// Maximum per-instance condition. The first slice permits this only on
+    /// primary chest body armor; absence means the item does not wear out.
+    #[serde(rename = "maxDurability", default)]
+    pub max_durability: Option<u32>,
+    #[serde(rename = "repairFamily", default)]
+    pub repair_family: Option<RepairFamily>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -130,6 +136,7 @@ pub enum UseEffect {
     SummonParty,
     /// Open a fished-up coin pouch: roll the given dice for its copper.
     OpenCoinPouch(String),
+    RepairArmor(RepairFamily),
 }
 
 impl ItemDefinition {
@@ -215,6 +222,7 @@ impl ItemDefinition {
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "party_summon_scroll" => Some(UseEffect::SummonParty),
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
+            "armor_repair_kit" => self.repair_family.map(UseEffect::RepairArmor),
             _ => None,
         }
     }
@@ -407,6 +415,44 @@ fn validate_use_skill(def: &ItemDefinition) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_durability(def: &ItemDefinition) -> Result<(), String> {
+    let is_primary_chest_armor = def.is_body_armor()
+        && def.equip_slot == Some(EquipSlot::Chest)
+        && def.equipment_layer == Some(EquipmentLayer::Primary);
+    let is_repair_kit = def.category.as_deref() == Some("armor_repair_kit");
+    if is_repair_kit {
+        if def.repair_family.is_none() {
+            return Err("armor repair kits require repairFamily".to_string());
+        }
+        if !def.consumable || !def.stackable || def.equip_slot.is_some() {
+            return Err("armor repair kits must be stackable unequipped consumables".to_string());
+        }
+        if def.max_durability.is_some() {
+            return Err("armor repair kits cannot have maxDurability".to_string());
+        }
+        return Ok(());
+    }
+    if is_primary_chest_armor {
+        if !def.max_durability.is_some_and(|max| max > 0) {
+            return Err("primary chest body armor requires positive maxDurability".to_string());
+        }
+        let expected = def.armor_construction.map(RepairFamily::for_construction);
+        if def.repair_family != expected {
+            return Err(
+                "primary chest body armor repairFamily must match construction".to_string(),
+            );
+        }
+        return Ok(());
+    }
+    if def.max_durability.is_some() {
+        return Err("maxDurability is currently limited to primary chest body armor".to_string());
+    }
+    if def.repair_family.is_some() {
+        return Err("repairFamily is limited to durable chest armor and repair kits".to_string());
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct ItemDefs {
     defs: Arc<HashMap<String, ItemDefinition>>,
@@ -441,6 +487,9 @@ impl ItemDefs {
                 panic!("item '{}': {reason}", def.id);
             }
             if let Err(reason) = validate_use_skill(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_durability(def) {
                 panic!("item '{}': {reason}", def.id);
             }
             assert!(
@@ -737,8 +786,8 @@ mod tests {
         );
         assert_eq!(
             defs.get("leather_armor").unwrap().guard,
-            Some(1),
-            "the second mitigation slice migrates one former Guard point"
+            Some(2),
+            "upstream tier-two armor baseline"
         );
         for id in [
             "torch",
@@ -808,8 +857,8 @@ mod tests {
         );
         assert_eq!(
             defs.get("chain_mail").unwrap().guard,
-            Some(3),
-            "the Mail mitigation slice migrates two former Guard points"
+            Some(5),
+            "upstream tier-three armor baseline"
         );
         assert_eq!(
             defs.get("padded_battle_robe").unwrap().armor_construction,
@@ -845,8 +894,8 @@ mod tests {
         }
         assert_eq!(
             defs.get("breastplate").unwrap().guard,
-            Some(4),
-            "the Plate mitigation slice migrates three former Guard points"
+            Some(7),
+            "upstream tier-four armor baseline"
         );
 
         let leather = serde_json::from_value::<ItemDefinition>(json!({
@@ -913,8 +962,8 @@ mod tests {
         assert_eq!(leather.tier, EquipmentBurdenTier::Unburdened);
 
         let mail = burden(&["chain_mail", "iron_helmet", "iron_gauntlets", "iron_boots"]);
-        assert_eq!(mail.equipped_weight, 67.0);
-        assert_eq!(mail.tier, EquipmentBurdenTier::Medium);
+        assert_eq!(mail.equipped_weight, 42.0);
+        assert_eq!(mail.tier, EquipmentBurdenTier::Light);
 
         let plate = burden(&[
             "breastplate",
@@ -929,6 +978,75 @@ mod tests {
         let hybrid = burden(&["brigandine_coat"]);
         assert_eq!(hybrid.equipped_weight, 14.0);
         assert_eq!(hybrid.tier, EquipmentBurdenTier::Unburdened);
+    }
+
+    #[test]
+    fn primary_chest_armor_and_repair_kits_define_the_durability_slice() {
+        let defs = ItemDefs::load();
+        for (id, max, family) in [
+            ("padded_battle_robe", 40, RepairFamily::Cloth),
+            ("leather_armor", 60, RepairFamily::Leather),
+            ("chain_mail", 90, RepairFamily::Metal),
+            ("breastplate", 120, RepairFamily::Metal),
+            ("brigandine_coat", 100, RepairFamily::Hybrid),
+        ] {
+            let def = defs.get(id).unwrap();
+            assert_eq!(def.max_durability, Some(max), "{id}");
+            assert_eq!(def.repair_family, Some(family), "{id}");
+        }
+        assert_eq!(defs.get("traveler_robe").unwrap().max_durability, None);
+        for (id, family) in [
+            ("cloth_repair_kit", RepairFamily::Cloth),
+            ("leather_repair_kit", RepairFamily::Leather),
+            ("metal_repair_kit", RepairFamily::Metal),
+            ("hybrid_repair_kit", RepairFamily::Hybrid),
+        ] {
+            let repair_kit = defs.get(id).unwrap();
+            assert!(repair_kit.consumable);
+            assert!(matches!(
+                repair_kit.use_effect(),
+                Some(UseEffect::RepairArmor(actual)) if actual == family
+            ));
+        }
+
+        let bad = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "durable_helmet",
+            "name": "Durable Helmet",
+            "description": "Invalid first-slice durability",
+            "weight": 1,
+            "equipSlot": "head",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "plate",
+            "equipmentKind": "body_armor",
+            "equipmentLayer": "primary",
+            "garmentForm": "helmet",
+            "maxDurability": 20
+        }))
+        .unwrap();
+        assert!(validate_durability(&bad)
+            .unwrap_err()
+            .contains("limited to primary chest"));
+
+        let mismatched = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "mismatched_repair_family",
+            "name": "Mismatched Repair Family",
+            "description": "Invalid repair metadata",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "plate",
+            "equipmentKind": "body_armor",
+            "equipmentLayer": "primary",
+            "garmentForm": "cuirass",
+            "maxDurability": 20,
+            "repairFamily": "cloth"
+        }))
+        .unwrap();
+        assert!(validate_durability(&mismatched)
+            .unwrap_err()
+            .contains("must match construction"));
     }
 
     #[test]

@@ -12,6 +12,7 @@ async fn sell_to_merchant_records_buyback_and_restores_item() {
             item_def_id: "iron_sword".to_string(),
             quantity: 1,
             enchant: 2,
+            durability: None,
         });
         inventories.insert(pid("buyer"), inv);
     }
@@ -46,6 +47,37 @@ async fn sell_to_merchant_records_buyback_and_restores_item() {
     assert!(buybacks
         .get(&(1, "Rica".to_string()))
         .is_none_or(|list| list.is_empty()));
+}
+
+#[tokio::test]
+async fn merchant_buyback_preserves_damaged_armor_condition() {
+    let game_state = make_test_game_state("buyback_durability_roundtrip");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    let mut armor = bag_item(7, "leather_armor", 1);
+    armor.durability = Some(17);
+    game_state.inventories.write().await.insert(
+        pid("buyer"),
+        PlayerInventory {
+            bag: vec![armor],
+            ..Default::default()
+        },
+    );
+
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
+        .await;
+    let entry = game_state.buybacks.read().await[&(1, "Rica".to_string())][0]
+        .entry
+        .clone();
+    assert_eq!(entry.durability, Some(17));
+
+    game_state
+        .buyback_item(&pid("buyer"), &pid("npc_rica"), entry.entry_id)
+        .await;
+    assert_eq!(
+        game_state.inventories.read().await[&pid("buyer")].bag[0].durability,
+        Some(17)
+    );
 }
 
 #[tokio::test]

@@ -341,7 +341,7 @@
                 class="item-row"
                 disabled={reservedBuyQty(entry.itemDefId) >= entry.quantity}
                 onclick={() => addBuy(entry.itemDefId, def)}
-                use:itemTooltip={{ def, side: 'left' }}
+                use:itemTooltip={{ def, item: entry, side: 'left' }}
               >
                 <img
                   class="item-icon"
@@ -350,7 +350,9 @@
                   draggable="false"
                 />
                 <span class="item-name">
-                  {def.name}{entry.quantity > 1 ? ` ×${entry.quantity}` : ''}
+                  {entry.enchant > 0 ? `+${entry.enchant} ` : ''}{def.name}{entry.quantity > 1
+                    ? ` ×${entry.quantity}`
+                    : ''}
                 </span>
                 {#if pct !== 0}
                   <span class="deal-badge" class:markup={isMarkup('buy', pct)}
@@ -376,7 +378,7 @@
                   class="item-row"
                   disabled={inCartBuyback(entry.entryId)}
                   onclick={() => addBuyback(entry)}
-                  use:itemTooltip={{ def, side: 'left' }}
+                  use:itemTooltip={{ def, item: entry, side: 'left' }}
                 >
                   <img
                     class="item-icon"

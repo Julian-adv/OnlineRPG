@@ -84,6 +84,7 @@ async fn dirty_save_is_retried_after_failure() {
             quantity: 1,
             equip_slot: None,
             enchant: 0,
+            durability: None,
         }]
     );
 }
@@ -110,6 +111,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
                 quantity: 1,
                 equip_slot: None,
                 enchant: 0,
+                durability: None,
             }],
         )],
         &[],

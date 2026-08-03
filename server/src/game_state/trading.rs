@@ -388,6 +388,8 @@ impl super::GameState {
                 None => stock.push(StockEntry {
                     item_def_id: item.item_def_id.clone(),
                     quantity: item.quantity,
+                    enchant: item.enchant,
+                    durability: item.durability,
                 }),
             }
         }
@@ -497,7 +499,7 @@ impl super::GameState {
             }
 
             // Residents have finite stock: take the unit out of their bag.
-            let npc_snapshot = if is_resident {
+            let (npc_snapshot, transferred_item) = if is_resident {
                 let Some(npc_inv) = inventories.get_mut(npc_player_id) else {
                     drop(inventories);
                     drop(gold_map);
@@ -530,23 +532,28 @@ impl super::GameState {
                         )
                         .await;
                 };
+                let mut transferred = npc_inv.bag[idx].clone();
                 if npc_inv.bag[idx].quantity > 1 {
                     npc_inv.bag[idx].quantity -= 1;
                 } else {
                     npc_inv.bag.remove(idx);
                 }
-                Some(npc_inv.clone())
+                transferred.instance_id = instance_id;
+                transferred.quantity = 1;
+                (Some(npc_inv.clone()), Some(transferred))
             } else {
-                None
+                (None, None)
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
-            inv.bag.push(ItemInstance {
-                instance_id,
-                item_def_id: item_def_id.to_string(),
-                quantity: 1,
-                enchant: 0,
-            });
+            inv.bag
+                .push(transferred_item.unwrap_or_else(|| ItemInstance {
+                    instance_id,
+                    item_def_id: item_def_id.to_string(),
+                    quantity: 1,
+                    enchant: 0,
+                    durability: self.initial_item_durability(item_def_id),
+                }));
             let snapshot = inv.clone();
 
             *gold_map.get_mut(player_id).expect("checked above") -= price;
@@ -670,7 +677,7 @@ impl super::GameState {
         // entry id, reused as the instance id on repurchase.
         let npc_instance_id = self.next_instance_id().await;
 
-        let (snapshot, npc_snapshot, sold_enchant) = {
+        let (snapshot, npc_snapshot, sold_enchant, sold_durability) = {
             let mut gold_map = self.player_gold.write().await;
             if !gold_map.contains_key(player_id) {
                 drop(gold_map);
@@ -704,12 +711,14 @@ impl super::GameState {
             }
 
             let mut inventories = self.inventories.write().await;
-            let Some((idx, sold_enchant)) = inventories.get_mut(player_id).and_then(|inv| {
-                inv.bag
-                    .iter()
-                    .position(|i| i.instance_id == instance_id)
-                    .map(|idx| (idx, inv.bag[idx].enchant))
-            }) else {
+            let Some((idx, sold_enchant, sold_durability)) =
+                inventories.get_mut(player_id).and_then(|inv| {
+                    inv.bag
+                        .iter()
+                        .position(|i| i.instance_id == instance_id)
+                        .map(|idx| (idx, inv.bag[idx].enchant, inv.bag[idx].durability))
+                })
+            else {
                 drop(inventories);
                 drop(gold_map);
                 return self
@@ -755,13 +764,13 @@ impl super::GameState {
                         )
                         .await;
                 }
-                // Keep the sold unit's enchantment: a +3 sword stays +3 in
-                // the resident's bag.
+                // Keep every per-instance modifier through a resident trade.
                 npc_inv.bag.push(ItemInstance {
                     instance_id: npc_instance_id,
                     item_def_id: item_def_id.clone(),
                     quantity: 1,
                     enchant: sold_enchant,
+                    durability: sold_durability,
                 });
                 Some(npc_inv.clone())
             } else {
@@ -780,7 +789,7 @@ impl super::GameState {
             if is_resident {
                 *gold_map.get_mut(npc_player_id).expect("checked above") -= payout;
             }
-            (snapshot, npc_snapshot, sold_enchant)
+            (snapshot, npc_snapshot, sold_enchant, sold_durability)
         };
 
         // The unit a merchant buys vanishes (no stock), so record it for
@@ -794,6 +803,7 @@ impl super::GameState {
                         entry_id: npc_instance_id,
                         item_def_id: item_def_id.clone(),
                         enchant: sold_enchant,
+                        durability: sold_durability,
                         price: payout,
                     },
                 )
@@ -1003,6 +1013,7 @@ impl super::GameState {
                 item_def_id: entry.item_def_id.clone(),
                 quantity: 1,
                 enchant: entry.enchant,
+                durability: entry.durability,
             });
             let snapshot = inv.clone();
             *gold_map.get_mut(player_id).expect("checked above") -= entry.price;

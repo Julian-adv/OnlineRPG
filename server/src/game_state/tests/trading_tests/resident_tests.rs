@@ -158,6 +158,27 @@ async fn resident_sells_stock_but_keeps_wishlist_items() {
 }
 
 #[tokio::test]
+async fn resident_sale_preserves_damaged_armor_condition() {
+    let game_state = make_test_game_state("resident_durability_transfer");
+    let mut armor = bag_item(11, "leather_armor", 1);
+    armor.durability = Some(23);
+    setup_resident_trade(&game_state, 0, vec![armor], vec![]).await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_item(&pid("seller"), &pid("npc_karl"), "leather_armor")
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    assert!(inventories[&pid("npc_karl")].bag.is_empty());
+    assert_eq!(inventories[&pid("seller")].bag[0].durability, Some(23));
+}
+
+#[tokio::test]
 async fn resident_shop_state_reports_wishlist_and_stock() {
     let game_state = make_test_game_state("resident_shop_state");
     setup_resident_trade(

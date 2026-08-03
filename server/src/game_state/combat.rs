@@ -14,7 +14,7 @@ use onlinerpg_shared::PhysicalDamageType;
 use rand::Rng;
 use std::f32::consts::TAU;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 const WEAPON_DROP_OFFSET_METERS: f32 = 2.0;
@@ -107,6 +107,7 @@ pub(super) struct PlayerWeaponAttackProfile {
 pub(super) struct PlayerDefenseProfile {
     pub(super) effective_guard: i32,
     pub(super) primary_armor_construction: Option<ArmorConstruction>,
+    pub(super) primary_armor_instance_id: Option<u64>,
     pub(super) shield_skill: Option<SkillId>,
     pub(super) shield_skill_level: u32,
     pub(super) shield_skill_guard_bonus: i32,
@@ -211,23 +212,13 @@ impl super::GameState {
         });
     }
 
-    async fn claim_player_attack_window(&self, player_id: &PlayerId) -> bool {
-        let now = Self::now_ms();
-        let mut last_attacks = self.last_player_attacks.write().await;
-        let last = last_attacks.entry(*player_id).or_insert(0);
-        if now.saturating_sub(*last) < *PLAYER_ATTACK_INTERVAL_MS {
-            return false;
-        }
-        *last = now;
-        true
-    }
-
     /// Sum of the guard bonuses from every equipped item — the single place
     /// that maps equipped gear to a guard number. Pure over the loaded item
     /// definitions; `effective_guard` adds it to the base attribute.
     fn equipped_guard_bonus(&self, inv: &PlayerInventory) -> i32 {
         inv.equipped
             .values()
+            .filter(|item| !item.is_broken())
             .filter_map(|item| self.item_defs.get(&item.item_def_id))
             .filter_map(|def| def.guard)
             .sum()
@@ -244,24 +235,31 @@ impl super::GameState {
                 .map(|(_, _, attrs)| i32::from(attrs.guard))
                 .unwrap_or(10)
         };
-        let (equipment_guard, shield_skill, armor_skill, primary_armor_construction) = {
+        let (
+            equipment_guard,
+            shield_skill,
+            armor_skill,
+            primary_armor_construction,
+            primary_armor_instance_id,
+        ) = {
             let inventories = self.inventories.read().await;
             inventories
                 .get(player_id)
-                .map_or((0, None, None, None), |inventory| {
+                .map_or((0, None, None, None, None), |inventory| {
                     let shield_skill = inventory
                         .equipped
                         .get(&EquipSlot::OffHand)
+                        .filter(|item| !item.is_broken())
                         .and_then(|item| self.item_defs.get(&item.item_def_id))
                         .and_then(|def| def.defense_skill);
-                    let armor_skill = inventory
+                    let primary_armor = inventory
                         .equipped
                         .get(&EquipSlot::Chest)
+                        .filter(|item| !item.is_broken());
+                    let armor_skill = primary_armor
                         .and_then(|item| self.item_defs.get(&item.item_def_id))
                         .and_then(|def| def.defense_skill);
-                    let primary_armor_construction = inventory
-                        .equipped
-                        .get(&EquipSlot::Chest)
+                    let primary_armor_construction = primary_armor
                         .and_then(|item| self.item_defs.get(&item.item_def_id))
                         .and_then(|def| def.armor_construction);
                     (
@@ -269,6 +267,7 @@ impl super::GameState {
                         shield_skill,
                         armor_skill,
                         primary_armor_construction,
+                        primary_armor.map(|item| item.instance_id),
                     )
                 })
         };
@@ -295,6 +294,7 @@ impl super::GameState {
                 + shield_skill_guard_bonus
                 + armor_skill_guard_bonus,
             primary_armor_construction,
+            primary_armor_instance_id,
             shield_skill,
             shield_skill_level,
             shield_skill_guard_bonus,
@@ -409,17 +409,23 @@ impl super::GameState {
             return Err(AttackRejectReason::OutOfRange);
         }
 
-        let now = Instant::now();
-        let mut attack_times = self.player_attack_times.write().await;
-        if attack_times
-            .get(player_id)
-            .is_some_and(|last| now.saturating_duration_since(*last) < weapon.attack_cooldown)
-        {
-            return Err(AttackRejectReason::Cooldown);
-        }
-        let accepted_cadence = attack_times
-            .insert(*player_id, now)
-            .map(|previous| now.saturating_duration_since(previous));
+        let default_jitter_ms =
+            u64::from(DEFAULT_WEAPON_ATTACK_COOLDOWN_MS).saturating_sub(*PLAYER_ATTACK_INTERVAL_MS);
+        let required_interval_ms = u64::try_from(weapon.attack_cooldown.as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_sub(default_jitter_ms);
+        let now = Self::now_ms();
+        let mut last_attacks = self.last_player_attacks.write().await;
+        let accepted_cadence = if let Some(previous) = last_attacks.get(player_id).copied() {
+            let elapsed_ms = now.saturating_sub(previous);
+            if elapsed_ms < required_interval_ms {
+                return Err(AttackRejectReason::Cooldown);
+            }
+            Some(Duration::from_millis(elapsed_ms))
+        } else {
+            None
+        };
+        last_attacks.insert(*player_id, now);
 
         Ok(PlayerAttackContext {
             monster_type,
@@ -468,9 +474,6 @@ impl super::GameState {
                 return;
             }
         };
-        if !self.claim_player_attack_window(player_id).await {
-            return;
-        }
         // A landed attack (not a rejected one) breaks concentration.
         self.cancel_concentration_if_active(player_id).await;
         debug!("Player {} attacking monster {}", player_name, monster_id);
@@ -604,6 +607,7 @@ impl super::GameState {
                     .await;
                 Some(GroundItem {
                     instance_id,
+                    durability: self.initial_item_durability(&item_def_id),
                     item_def_id,
                     position: drop_position,
                     floor_level: monster_floor_level,
@@ -955,6 +959,9 @@ impl super::GameState {
 
         if result.hit {
             self.mark_dirty(target_player_id).await;
+            if let Some(instance_id) = defense.primary_armor_instance_id {
+                self.wear_primary_armor(target_player_id, instance_id).await;
+            }
         }
 
         let mut guard_bonus_changed = false;

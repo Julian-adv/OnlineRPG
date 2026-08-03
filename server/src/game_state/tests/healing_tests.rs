@@ -16,7 +16,7 @@ async fn setup_healer(
     player.max_health = max_health;
     game_state.add_player(player).await;
     game_state
-        .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0)
+        .register_player_character(&player_id, 1, 0, attrs_with_cha(10), 0, None)
         .await;
     let mut skills = Skills::default();
     if skill_level > 0 {
