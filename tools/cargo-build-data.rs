@@ -56,14 +56,21 @@ fn convert_csv_file(csv_path: &Path, data_dir: &Path) -> Result<(), Box<dyn Erro
         }
 
         let values = line.split(',').collect::<Vec<_>>();
+        if values.len() != headers.len() {
+            return Err(format!(
+                "{} line {} has {} fields but the header has {}",
+                csv_path.display(),
+                line_index + 2,
+                values.len(),
+                headers.len()
+            )
+            .into());
+        }
         let mut fields = Vec::new();
         let mut id = None;
 
         for (column_index, key) in headers.iter().enumerate() {
-            let raw = values
-                .get(column_index)
-                .map(|value| value.trim())
-                .unwrap_or_default();
+            let raw = values[column_index].trim();
             if raw.is_empty() {
                 continue;
             }
