@@ -128,7 +128,6 @@
 ## 낚시 후속 (PR #53 리뷰)
 
 - 월드모델 없는 기존 아이템(장신구·천갑옷 등)이 sword.png 아이콘으로 보이는 회귀 → 실제 아이콘 부여
-- agent-client: 부분 좌표(z 누락 등)를 조용히 버림 → 피드백 이벤트 추가
 - agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
