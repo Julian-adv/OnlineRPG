@@ -122,6 +122,59 @@ async fn resident_sells_stock_but_keeps_wishlist_items() {
 }
 
 #[tokio::test]
+async fn resident_sale_preserves_enchantment() {
+    let game_state = make_test_game_state("resident_enchanted_stock");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![enchanted_bag_item(11, "spear", 1, 3)],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_item(&pid("seller"), &pid("npc_karl"), "spear")
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(inventories[&pid("seller")].bag[0].enchant, 3);
+    assert!(inventories[&pid("npc_karl")].bag.is_empty());
+}
+
+#[tokio::test]
+async fn resident_sells_lowest_enchantment_first() {
+    let game_state = make_test_game_state("resident_mixed_enchanted_stock");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![
+            enchanted_bag_item(11, "spear", 1, 3),
+            bag_item(12, "spear", 1),
+        ],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_item(&pid("seller"), &pid("npc_karl"), "spear")
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(inventories[&pid("seller")].bag[0].enchant, 0);
+    assert_eq!(inventories[&pid("npc_karl")].bag[0].enchant, 3);
+}
+
+#[tokio::test]
 async fn resident_shop_state_reports_wishlist_and_stock() {
     let game_state = make_test_game_state("resident_shop_state");
     setup_resident_trade(

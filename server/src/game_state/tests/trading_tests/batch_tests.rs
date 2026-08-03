@@ -197,6 +197,48 @@ async fn buy_items_batch_merges_stackables_and_splits_non_stackables() {
     assert!(torches.iter().all(|t| t.quantity == 1));
 }
 
+#[tokio::test]
+async fn buy_items_batch_preserves_resident_enchantments_lowest_first() {
+    let game_state = make_test_game_state("batch_buy_resident_enchantments");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![
+            enchanted_bag_item(11, "spear", 1, 3),
+            bag_item(12, "spear", 1),
+            enchanted_bag_item(13, "spear", 1, 1),
+        ],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![TradeLineItem {
+                item_def_id: "spear".to_string(),
+                qty: 2,
+            }],
+        )
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let buyer_bag = &inventories[&pid("seller")].bag;
+    assert_eq!(buyer_bag.len(), 2);
+    let mut buyer_enchants: Vec<_> = buyer_bag.iter().map(|item| item.enchant).collect();
+    buyer_enchants.sort_unstable();
+    assert_eq!(buyer_enchants, vec![0, 1]);
+    let npc_bag = &inventories[&pid("npc_karl")].bag;
+    assert_eq!(npc_bag.len(), 1);
+    assert_eq!(npc_bag[0].enchant, 3);
+}
+
 /// The resident's receipt draws from a range reserved before the locks, so
 /// every unit must still land on its own id. (No wishlist item is stackable,
 /// so the merge branch is unreachable from data alone.)
