@@ -91,7 +91,7 @@ pub struct TradeLineItem {
 
 /// One line of a batched `SellItems` or `DropItems` request: act on `qty`
 /// units of one bag stack.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BagLineItem {
     pub instance_id: u64,
     pub qty: u32,
