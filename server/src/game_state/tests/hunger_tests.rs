@@ -344,11 +344,51 @@ async fn using_a_campfire_kit_lights_a_fire_on_land() {
 
     game_state.use_item(&id, 1).await;
 
-    assert_eq!(game_state.campfires.read().await.len(), 1);
+    let position = {
+        let campfires = game_state.campfires.read().await;
+        assert_eq!(campfires.len(), 1);
+        campfires.values().next().unwrap().campfire.position
+    };
+    assert_eq!(
+        position,
+        Position {
+            x: 100.0,
+            y: 0.0,
+            z: 51.0,
+        }
+    );
     assert!(bag_ids(&game_state, &id).await.is_empty(), "kit consumed");
     assert!(drain(&mut rx)
         .iter()
         .any(|m| matches!(m, ServerMessage::CampfireSpawned { .. })));
+}
+
+#[tokio::test]
+async fn campfire_placement_falls_back_to_the_player_when_blocked() {
+    let game_state = make_test_game_state("kit_blocked");
+    let (id, _rx) = make_eater(&game_state, "blocked_scout", 500).await;
+    put_in_bag(&game_state, &id, 1, "campfire_kit").await;
+    game_state.sync_region_furniture(0, 0, &[table_placement(100.5, 51.5)]);
+
+    game_state.use_item(&id, 1).await;
+
+    let position = game_state
+        .campfires
+        .read()
+        .await
+        .values()
+        .next()
+        .unwrap()
+        .campfire
+        .position;
+    assert_eq!(
+        position,
+        Position {
+            x: 100.0,
+            y: 0.0,
+            z: 50.0,
+        }
+    );
 }
 
 #[tokio::test]

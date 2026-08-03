@@ -14,6 +14,8 @@ const GROUND_ITEM_LIFETIME_MS: u64 = 5 * 60 * 1000;
 
 const MAX_PICKUP_DISTANCE: f32 = 2.5;
 
+const CAMPFIRE_PLACEMENT_DISTANCE_M: f32 = 1.0;
+
 /// Enchant odds are expressed in basis points (1/100 of a percent) out of
 /// this scale; the handler's roll must use the same bound.
 const ENCHANT_BP_SCALE: u32 = 10_000;
@@ -623,8 +625,7 @@ impl super::GameState {
         }
     }
 
-    /// Use a campfire kit: light a fire at the player's feet. Overworld only,
-    /// and never in standing water (fishable depth = water).
+    /// Use a campfire kit outdoors and out of standing water.
     async fn use_campfire_kit(&self, player_id: &PlayerId, instance_id: u64) {
         if self
             .reject_if_defeated(player_id, "You can't build a fire while defeated")
@@ -632,21 +633,39 @@ impl super::GameState {
         {
             return;
         }
-        let (position, floor_level) = {
+        let (position, rotation, floor_level) = {
             let players = self.players.read().await;
             let Some(p) = players.get(player_id) else {
                 return;
             };
-            (p.position, p.floor_level)
+            (p.position, p.rotation, p.floor_level)
         };
         if floor_level != super::fishing::OVERWORLD_FLOOR {
             self.send_system_message(player_id, "You can only build a campfire outdoors")
                 .await;
             return;
         }
-        let wx = onlinerpg_shared::wrap_world_x(position.x);
+        let forward = crate::types::Position {
+            x: position.x + rotation.sin() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+            y: position.y,
+            z: position.z + rotation.cos() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+        };
+        let placement = {
+            let cache = self.passability_read();
+            let floor = super::passability::authoritative_floor(&cache, &position);
+            if super::passability::wrapped_block_info(
+                &cache, position.x, position.z, forward.x, forward.z, floor, position.y,
+            )
+            .is_some()
+            {
+                position
+            } else {
+                forward.wrapped_x()
+            }
+        };
+        let wx = onlinerpg_shared::wrap_world_x(placement.x);
         let in_water = self
-            .water_depth_at(wx, position.z)
+            .water_depth_at(wx, placement.z)
             .await
             .is_some_and(|depth| depth > onlinerpg_shared::fishing::MIN_FISHABLE_DEPTH_M);
         if in_water {
@@ -656,7 +675,7 @@ impl super::GameState {
         }
 
         self.consume_one_and_sync(player_id, instance_id).await;
-        self.spawn_campfire(position, floor_level).await;
+        self.spawn_campfire(placement, floor_level).await;
         self.send_system_message(player_id, "You light a campfire.")
             .await;
     }

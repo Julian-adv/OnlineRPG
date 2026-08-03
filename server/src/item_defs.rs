@@ -89,7 +89,7 @@ pub enum UseEffect {
         heal_dice: Option<String>,
         raw_fish: bool,
     },
-    /// Light a campfire where the user stands.
+    /// Light a campfire near the user.
     PlaceCampfire,
     /// Teleport the user back to the town spawn point.
     TeleportTown,
