@@ -283,6 +283,6 @@ Agent는 인간과 동일한 프로토콜로 낚시한다(`doc/FISHING.md`). 반
 {"type": "stop_fishing"}
 ```
 
-낚싯대를 메인 핸드에 장착해야 한다(`{"type": "use", "item":
+낚싯대를 주 손에 장착해야 한다(`{"type": "use", "item":
 "fishing_rod"}`). 결과는 `[Fishing]` 이벤트로 도착하고, 거부(낚싯대 없음,
 물이 아님, 너무 멂)는 `[FishingError]`로 도착한다.
