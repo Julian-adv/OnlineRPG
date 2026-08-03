@@ -514,6 +514,279 @@ async fn escape_command_returns_a_stuck_player_to_spawn() {
     }
 }
 
+#[test]
+fn admin_command_parses_actions() {
+    use super::chat::{parse_admin_command, AdminCommand};
+
+    assert_eq!(
+        parse_admin_command("/kick Abuser"),
+        Some(AdminCommand::Kick("Abuser"))
+    );
+    assert_eq!(
+        parse_admin_command("/mute Abuser"),
+        Some(AdminCommand::Mute {
+            name: "Abuser",
+            minutes: None
+        })
+    );
+    assert_eq!(
+        parse_admin_command("/mute Abuser 30"),
+        Some(AdminCommand::Mute {
+            name: "Abuser",
+            minutes: Some("30")
+        })
+    );
+    assert_eq!(
+        parse_admin_command("/unmute Abuser"),
+        Some(AdminCommand::Unmute("Abuser"))
+    );
+    assert_eq!(
+        parse_admin_command("/summon Abuser"),
+        Some(AdminCommand::Summon("Abuser"))
+    );
+    assert_eq!(
+        parse_admin_command("/goto Abuser"),
+        Some(AdminCommand::Goto("Abuser"))
+    );
+    // Whole-word rule: /kickstart is not /kick.
+    assert_eq!(parse_admin_command("/kickstart party"), None);
+    assert_eq!(parse_admin_command("hello /kick Abuser"), None);
+    // Unvalidated on purpose: a bare command parses (and is admin-gated),
+    // then draws a usage reply instead of leaking into local chat.
+    assert_eq!(parse_admin_command("/kick"), Some(AdminCommand::Kick("")));
+}
+
+#[tokio::test]
+async fn kick_command_disconnects_the_named_player() {
+    let game_state = make_test_game_state("admin_kick");
+    let auth = make_test_auth("admin_kick");
+    let admin_id = pid("admin");
+    let target_id = pid("target");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    game_state.add_player(make_player("target", 5.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+    // The kick rides the account session channel (it closes the socket), so
+    // the target needs one, like a real login.
+    let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session_id = game_state
+        .register_account_session("target-account", kick_tx, &auth)
+        .await;
+    assert!(
+        game_state
+            .attach_player_to_account_session("target-account", session_id, target_id)
+            .await
+    );
+
+    // Mixed case on purpose: resolution is case-insensitive.
+    game_state
+        .send_chat_message(&admin_id, "/kick TARGET".to_string(), &auth)
+        .await;
+
+    match kick_rx.try_recv() {
+        Ok(ServerMessage::Kicked { player_id, reason }) => {
+            assert_eq!(player_id, target_id);
+            assert_eq!(reason, "Removed by an operator");
+        }
+        other => panic!("Expected a kick over the account session, got {:?}", other),
+    }
+    assert!(
+        !game_state
+            .is_current_account_session("target-account", session_id)
+            .await,
+        "the kicked account session must be gone"
+    );
+    assert!(
+        drain(&mut admin_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::SystemMessage { message } if message == "Kick: target was disconnected."
+        )),
+        "the admin must get a confirmation"
+    );
+    assert!(
+        game_state.get_player_position(&target_id).await.is_none(),
+        "the kicked player must leave the roster"
+    );
+
+    game_state
+        .send_chat_message(&admin_id, "/kick Nobody".to_string(), &auth)
+        .await;
+    match admin_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Kick: no one called Nobody is here.")
+        }
+        other => panic!("Expected a kick error, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn mute_command_silences_chat_and_whispers_until_unmute() {
+    let game_state = make_test_game_state("admin_mute");
+    let auth = make_test_auth("admin_mute");
+    let admin_id = pid("admin");
+    let spammer_id = pid("spammer");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("spammer", 5.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+    let mut spammer_rx = game_state.register_direct_channel(&spammer_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&admin_id, "/mute SPAMMER 5".to_string(), &auth)
+        .await;
+    match admin_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => assert_eq!(
+            message,
+            "Mute: spammer cannot chat for 5m. /unmute spammer undoes this."
+        ),
+        other => panic!("Expected a mute reply, got {:?}", other),
+    }
+    match spammer_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "You are muted for 5m.")
+        }
+        other => panic!("Expected a mute notice, got {:?}", other),
+    }
+
+    game_state
+        .send_chat_message(&spammer_id, "buy gold".to_string(), &auth)
+        .await;
+    match spammer_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Muted: you cannot chat for another 5m.")
+        }
+        other => panic!("Expected a muted reply, got {:?}", other),
+    }
+    match listener_rx.try_recv() {
+        Err(MpscTryRecvError::Empty) => {}
+        other => panic!("Muted chat must not be delivered, got {:?}", other),
+    }
+
+    game_state
+        .send_chat_message(&spammer_id, "/w listener psst".to_string(), &auth)
+        .await;
+    match spammer_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Muted: you cannot whisper for another 5m.")
+        }
+        other => panic!("Expected a muted whisper reply, got {:?}", other),
+    }
+    match listener_rx.try_recv() {
+        Err(MpscTryRecvError::Empty) => {}
+        other => panic!("Muted whisper must not be delivered, got {:?}", other),
+    }
+
+    // Keyed by name, not session: a relog must not clear it.
+    game_state.remove_player(&spammer_id).await;
+    game_state
+        .add_player(make_player("spammer", 5.0, 0.0))
+        .await;
+    let mut spammer_rx = game_state.register_direct_channel(&spammer_id).await;
+    while listener_rx.try_recv().is_ok() {}
+    while admin_rx.try_recv().is_ok() {}
+    game_state
+        .send_chat_message(&spammer_id, "still here".to_string(), &auth)
+        .await;
+    match spammer_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Muted: you cannot chat for another 5m.")
+        }
+        other => panic!("Expected the mute to survive a relog, got {:?}", other),
+    }
+
+    game_state
+        .send_chat_message(&admin_id, "/unmute spammer".to_string(), &auth)
+        .await;
+    match admin_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Unmute: spammer can chat again.")
+        }
+        other => panic!("Expected an unmute reply, got {:?}", other),
+    }
+    game_state
+        .send_chat_message(&spammer_id, "hello".to_string(), &auth)
+        .await;
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::ChatMessage { player_id, .. }) => assert_eq!(player_id, spammer_id),
+        other => panic!("Chat must flow again after unmute, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn summon_and_goto_teleport_beside_the_target() {
+    let game_state = make_test_game_state("admin_summon_goto");
+    let auth = make_test_auth("admin_summon_goto");
+    let admin_id = pid("admin");
+    let wanderer_id = pid("wanderer");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("wanderer", 500.0, 0.0))
+        .await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+    let mut wanderer_rx = game_state.register_direct_channel(&wanderer_id).await;
+
+    game_state
+        .send_chat_message(&admin_id, "/summon WANDERER".to_string(), &auth)
+        .await;
+    let (position, _, floor) = game_state
+        .get_player_position(&wanderer_id)
+        .await
+        .expect("wanderer should still be online");
+    let distance = (position.x.powi(2) + position.z.powi(2)).sqrt();
+    assert!(
+        distance <= 2.0,
+        "summon must land beside the admin, got {position:?}"
+    );
+    assert_eq!(floor, 0);
+    assert!(
+        drain(&mut wanderer_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::SystemMessage { message }
+                if message == "An operator summoned you to admin's side."
+        )),
+        "the summoned player must be told what happened"
+    );
+    assert!(drain(&mut admin_rx).iter().any(|m| matches!(
+        m,
+        ServerMessage::SystemMessage { message } if message == "Summon: wanderer is at your side."
+    )));
+
+    // Send the wanderer far away again, then walk the admin over instead.
+    game_state
+        .teleport_player(
+            &wanderer_id,
+            Position {
+                x: -300.0,
+                y: 0.0,
+                z: 40.0,
+            },
+            0.0,
+            0,
+        )
+        .await;
+    game_state
+        .send_chat_message(&admin_id, "/goto wanderer".to_string(), &auth)
+        .await;
+    let (position, _, _) = game_state
+        .get_player_position(&admin_id)
+        .await
+        .expect("admin should still be online");
+    let distance = ((position.x + 300.0).powi(2) + (position.z - 40.0).powi(2)).sqrt();
+    assert!(
+        distance <= 2.0,
+        "goto must land beside the wanderer, got {position:?}"
+    );
+    assert!(drain(&mut admin_rx).iter().any(|m| matches!(
+        m,
+        ServerMessage::SystemMessage { message } if message == "Goto: you are at wanderer's side."
+    )));
+}
+
 #[tokio::test]
 async fn escape_command_refused_while_in_combat() {
     let game_state = make_test_game_state("escape_in_combat");

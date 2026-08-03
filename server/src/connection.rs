@@ -3,7 +3,8 @@ use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
 use crate::game_state::{
-    encode_server_msg, parse_notice_command, restored_floor_level, DirectMessage, GameState,
+    encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level,
+    DirectMessage, GameState,
 };
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
@@ -600,7 +601,9 @@ fn requires_admin(msg: &ClientMessage) -> bool {
         | ClientMessage::DebugSetTime { .. }
         | ClientMessage::DebugResetDungeonProps { .. } => true,
         ClientMessage::ChatMessage { message } => {
-            message.starts_with("/give ") || parse_notice_command(message).is_some()
+            message.starts_with("/give ")
+                || parse_notice_command(message).is_some()
+                || parse_admin_command(message).is_some()
         }
         _ => false,
     }
@@ -1831,8 +1834,25 @@ mod tests {
         assert!(requires_admin(&ClientMessage::ChatMessage {
             message: "/notice".into()
         }));
+        for admin_command in [
+            "/kick Abuser",
+            "/mute Abuser 5",
+            "/unmute Abuser",
+            "/summon Abuser",
+            "/goto Abuser",
+        ] {
+            assert!(
+                requires_admin(&ClientMessage::ChatMessage {
+                    message: admin_command.into()
+                }),
+                "{admin_command} must be admin-gated"
+            );
+        }
         assert!(!requires_admin(&ClientMessage::ChatMessage {
             message: "hello".into()
+        }));
+        assert!(!requires_admin(&ClientMessage::ChatMessage {
+            message: "/who".into()
         }));
         assert!(!requires_admin(&ClientMessage::Heartbeat));
     }
