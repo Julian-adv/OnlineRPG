@@ -267,7 +267,7 @@ pub struct GameState {
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
     /// Lowercased character name → (canonical name, mute expiry). Keyed by
     /// name, not session, so a relog does not clear it; in-memory only, so a
-    /// restart does. Expired entries are pruned on each admin command.
+    /// restart does. Expired entries are pruned on mute/unmute and on lookup.
     muted_until: Arc<RwLock<HashMap<String, (String, Instant)>>>,
     /// (character_id, dungeon entrance id) → world clock seconds at that
     /// character's last chest open. Keyed by character (not the per-session

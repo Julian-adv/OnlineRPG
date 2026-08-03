@@ -449,6 +449,17 @@ impl super::GameState {
             .unwrap_or_else(|| player_id.to_string())
     }
 
+    /// Pose snapshot (position, rotation, floor, name) in one lock read.
+    pub(crate) async fn player_pose(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<(Position, f32, i8, String)> {
+        let players = self.players.read().await;
+        players
+            .get(player_id)
+            .map(|p| (p.position, p.rotation, p.floor_level, p.name.clone()))
+    }
+
     async fn cleanup_player_session(&self, player_id: &PlayerId, auth: &AuthService) {
         self.cancel_concentration_if_active(player_id).await;
         self.persist_and_detach_player(player_id, auth).await;
@@ -461,30 +472,22 @@ impl super::GameState {
     /// session the way a replacement login would: the `kick_tx` message makes
     /// the connection loop close the socket, and removing the session first
     /// keeps the disconnect path from cleaning up a second time.
-    pub(crate) async fn kick_player_by_name(
-        &self,
-        name: &str,
-        reason: &str,
-        auth: &AuthService,
-    ) -> Option<PlayerId> {
+    pub(crate) async fn kick_player(&self, player_id: &PlayerId, reason: &str, auth: &AuthService) {
         let _sessions = self.character_session_lock.lock().await;
-        let player_id = self.player_id_by_name(name).await?;
-        info!("Kicking player '{}' ({})", name, player_id);
         let session = {
             let mut sessions = self.account_sessions.write().await;
             let key = sessions.iter().find_map(|(key, session)| {
-                (session.player_id == Some(player_id)).then(|| key.clone())
+                (session.player_id == Some(*player_id)).then(|| key.clone())
             });
             key.and_then(|key| sessions.remove(&key))
         };
         if let Some(session) = session {
             let _ = session.kick_tx.send(ServerMessage::Kicked {
-                player_id,
+                player_id: *player_id,
                 reason: reason.to_string(),
             });
         }
-        self.cleanup_player_session(&player_id, auth).await;
-        Some(player_id)
+        self.cleanup_player_session(player_id, auth).await;
     }
 
     /// Synchronously write a player's character row and inventory to the DB,
