@@ -158,6 +158,8 @@ World terrain (heightmaps, splatmaps, minimaps, water fields) is baked locally â
 cargo run -p terrain-gen --release -- bake --seed 42
 ```
 
+> **Disk space:** A full-world bake writes 262,144 tiles and currently produces about 73 GB under `data/terrain`. Check available space before running it.
+
 Without this step the server's terrain API returns 404s and the world renders black.
 
 ### 4. Running the Server
