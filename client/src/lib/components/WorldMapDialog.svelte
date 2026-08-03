@@ -1,5 +1,6 @@
 <script module lang="ts">
   import mapLabelsJson from '../../../../data/map_labels.json'
+  import { RegionImageCache } from '../terrain/regionImageCache'
 
   const REGION_SIZE = 16
   const TILE_DIM = 64
@@ -57,20 +58,8 @@
   const COS_R = Math.cos(ROTATE_ANGLE)
   const SIN_R = Math.sin(ROTATE_ANGLE)
 
-  // --- Image cache (module-level, persists across component lifecycle) ---
-  // Intentionally non-reactive: image loads should not re-run the render effect.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const imageCache = new Map<string, HTMLImageElement | null>()
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const pendingLoads = new Map<string, Promise<HTMLImageElement | null>>()
-
-  function trimImageCache(limit: number) {
-    if (!Number.isFinite(limit) || imageCache.size <= limit) return
-    for (const key of imageCache.keys()) {
-      imageCache.delete(key)
-      if (imageCache.size <= limit) break
-    }
-  }
+  // Module-level: images persist across dialog open/close.
+  const regionImages = new RegionImageCache()
 
   // --- Persisted view state (survives dialog close/reopen) ---
   let savedCamX: number | null = null
@@ -89,7 +78,6 @@
   import { discoveredDungeonIds } from '../stores/dungeonStore'
   import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
   import { minimapVersion } from '../stores/editorStore'
-  import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
   import { networkManager } from '../network/socket'
   import {
     graphicsQuality,
@@ -104,32 +92,9 @@
   const maxZoomSpan = $derived(graphicsPreset.worldMapMaxZoomSpan)
   const imageCacheLimit = $derived(graphicsPreset.worldMapImageCacheLimit)
 
-  function loadRegionImage(
-    rx: number,
-    rz: number
-  ): Promise<HTMLImageElement | null> {
-    const key = `${rx},${rz}`
-    if (imageCache.has(key)) return Promise.resolve(imageCache.get(key)!)
-    if (pendingLoads.has(key)) return pendingLoads.get(key)!
-
-    const promise = new Promise<HTMLImageElement | null>((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        imageCache.set(key, img)
-        trimImageCache(imageCacheLimit)
-        pendingLoads.delete(key)
-        resolve(img)
-      }
-      img.onerror = () => {
-        imageCache.set(key, null)
-        pendingLoads.delete(key)
-        resolve(null)
-      }
-      img.src = regionMinimapServerUrl(rx, rz)
-    })
-    pendingLoads.set(key, promise)
-    return promise
-  }
+  $effect(() => {
+    regionImages.limit = imageCacheLimit
+  })
 
   // --- Component state ---
   let containerEl = $state<HTMLDivElement>()
@@ -205,20 +170,13 @@
   let dragStartCamX = 0
   let dragStartCamZ = 0
 
-  // --- Minimap version tracking: flush cache when minimaps are regenerated ---
-  $effect(() => {
-    const _ver = $minimapVersion // track dependency
-    imageCache.clear()
-    pendingLoads.clear()
-  })
-
   // --- Canvas rendering ---
   let renderGeneration = 0
 
   $effect(() => {
     if (!canvasEl || containerW <= 0 || containerH <= 0) return
 
-    const _mmVer = $minimapVersion // re-render when minimaps change
+    const mmVer = $minimapVersion // re-render when minimaps change
     const span = zoomSpan
     const cx = camX
     const cz = camZ
@@ -283,7 +241,7 @@
         const drawSize = Math.ceil(REGION_PX * scale)
 
         promises.push(
-          loadRegionImage(rx, rz).then((img) => {
+          regionImages.load(rx, rz, mmVer).then((img) => {
             if (gen !== renderGeneration) return
             if (img) {
               ctx.save()
@@ -557,8 +515,7 @@
   function close() {
     if (mobileMapBudget) {
       renderGeneration++
-      imageCache.clear()
-      pendingLoads.clear()
+      regionImages.flush()
     }
     teleportMode = false
     worldMapVisible.set(false)

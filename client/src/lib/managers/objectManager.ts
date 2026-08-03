@@ -5,14 +5,10 @@ import type {
   ObjectRegionData,
 } from '../stores/editorStore'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
-import { tileToRegion } from '../terrain/terrain-constants'
+import { regionKey, tileToRegion } from '../terrain/terrain-constants'
 import { loadGLB } from '../utils/gltfCache'
 import { getObjectModelPath } from '../utils/modelPaths'
 import { detectFootprint, type FootprintData } from '../utils/objectFootprint'
-
-function regionKey(rx: number, rz: number): string {
-  return `${rx},${rz}`
-}
 
 export class ObjectManager {
   private cache = new Map<string, ObjectRegionData>()

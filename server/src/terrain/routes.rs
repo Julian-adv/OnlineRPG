@@ -283,9 +283,16 @@ async fn get_minimap(
         error!("Failed to read minimap ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    // max-age bounds staleness for players, whose ?v= never bumps outside an
+    // editor session — don't raise it to immutable. 404s cache too, so clients
+    // near unbaked regions don't re-request them every retry.
+    const MINIMAP_CACHE: (header::HeaderName, &str) =
+        (header::CACHE_CONTROL, "public, max-age=300");
     match data {
-        Some(bytes) => Ok(([(header::CONTENT_TYPE, "image/png")], bytes).into_response()),
-        None => Err(StatusCode::NOT_FOUND),
+        Some(bytes) => {
+            Ok(([(header::CONTENT_TYPE, "image/png"), MINIMAP_CACHE], bytes).into_response())
+        }
+        None => Ok((StatusCode::NOT_FOUND, [MINIMAP_CACHE]).into_response()),
     }
 }
 

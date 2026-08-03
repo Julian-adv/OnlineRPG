@@ -4,8 +4,9 @@
   import { minimapVersion } from '../stores/editorStore'
   import { currentDungeonDepth } from '../stores/dungeonStore'
   import { playerVisualFloorLevel } from '../stores/housingStore'
-  import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
+  import { RegionImageCache } from '../terrain/regionImageCache'
   import { REGION_CELLS, TILE_DIM } from '../terrain/terrain-constants'
+  import { wrapWorldX } from '../terrain/world-wrap'
 
   /** Canvas size in CSS pixels. */
   const SIZE = 180
@@ -29,54 +30,12 @@
     $currentDungeonDepth === 0 && $playerVisualFloorLevel === 0
   )
 
-  // Intentionally non-reactive: image loads must not re-run the render effect.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const imageCache = new Map<string, HTMLImageElement | null>()
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const pendingLoads = new Map<string, Promise<HTMLImageElement | null>>()
-
-  function trimImageCache() {
-    for (const key of imageCache.keys()) {
-      if (imageCache.size <= IMAGE_CACHE_LIMIT) break
-      imageCache.delete(key)
-    }
-  }
-
-  function loadRegionImage(
-    rx: number,
-    rz: number
-  ): Promise<HTMLImageElement | null> {
-    const key = `${rx},${rz}`
-    if (imageCache.has(key)) return Promise.resolve(imageCache.get(key)!)
-    if (pendingLoads.has(key)) return pendingLoads.get(key)!
-
-    const promise = new Promise<HTMLImageElement | null>((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        imageCache.set(key, img)
-        trimImageCache()
-        pendingLoads.delete(key)
-        resolve(img)
-      }
-      img.onerror = () => {
-        imageCache.set(key, null)
-        pendingLoads.delete(key)
-        resolve(null)
-      }
-      img.src = regionMinimapServerUrl(rx, rz)
-    })
-    pendingLoads.set(key, promise)
-    return promise
-  }
-
-  $effect(() => {
-    const _ver = $minimapVersion // flush when the editor regenerates bakes
-    imageCache.clear()
-    pendingLoads.clear()
-  })
+  const regionImages = new RegionImageCache()
+  regionImages.limit = IMAGE_CACHE_LIMIT
 
   // Quantized player state: redraw on ~2 m moves or ~10° turns, not per frame.
-  let playerX = $derived($gameStore.currentPlayer?.position.x ?? 0)
+  // Wrapped like the world map keeps its view center on the baked range.
+  let playerX = $derived(wrapWorldX($gameStore.currentPlayer?.position.x ?? 0))
   let playerZ = $derived($gameStore.currentPlayer?.position.z ?? 0)
   let qx = $derived(Math.round(playerX / REDRAW_STEP_M))
   let qz = $derived(Math.round(playerZ / REDRAW_STEP_M))
@@ -89,11 +48,11 @@
   $effect(() => {
     if (!canvasEl) return
 
-    // Reactive triggers: quantized pose, party snapshot, regenerated bakes.
+    // Reactive triggers: quantized pose, regenerated bakes.
     const px = qx * REDRAW_STEP_M
     const pz = qz * REDRAW_STEP_M
     const heading = qr * REDRAW_STEP_RAD
-    const _ver = $minimapVersion
+    const ver = $minimapVersion
     const gen = ++renderGeneration
 
     const dpr = window.devicePixelRatio || 1
@@ -136,7 +95,7 @@
         const drawY = Math.floor((regionWorldZ - viewTop) * scale)
         const drawSize = Math.ceil(REGION_CELLS * scale)
         promises.push(
-          loadRegionImage(rx, rz).then((img) => {
+          regionImages.load(rx, rz, ver).then((img) => {
             if (gen !== renderGeneration || !img) return
             rotated(() => ctx.drawImage(img, drawX, drawY, drawSize, drawSize))
           })
