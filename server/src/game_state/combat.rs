@@ -34,6 +34,22 @@ pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> = LazyLock::new
     )
 });
 
+// A completed slash1 clip lasts 1,533ms in the clients. Keep a small
+// server-arrival allowance so ordinary network jitter does not turn a normal
+// animation-complete follow-up into a silent rejected swing. The value is
+// authored beside the other player animation timings, rather than copied from
+// a client fallback.
+pub(super) static PLAYER_ATTACK_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
+    let timing: serde_json::Value =
+        serde_json::from_str(include_str!("../../../data/player_anim_timing.json"))
+            .expect("player_anim_timing.json parses");
+    Duration::from_millis(
+        timing["player_attack_interval"]["delayMs"]
+            .as_u64()
+            .expect("player_attack_interval.delayMs is a number"),
+    )
+});
+
 fn dropped_weapon_position(monster_position: Position) -> Position {
     let angle = rand::thread_rng().gen_range(0.0..TAU);
     offset_position_at_angle(monster_position, angle, WEAPON_DROP_OFFSET_METERS)
@@ -90,6 +106,19 @@ impl super::GameState {
             }
             game_state.spawn_world_drops(origin, floor_level).await;
         });
+    }
+
+    async fn claim_player_attack_window(&self, player_id: &PlayerId, now: u64) -> bool {
+        let mut last_attacks = self.last_player_attacks.write().await;
+        match last_attacks.get(player_id) {
+            Some(last) if now.saturating_sub(*last) < PLAYER_ATTACK_INTERVAL.as_millis() as u64 => {
+                false
+            }
+            _ => {
+                last_attacks.insert(*player_id, now);
+                true
+            }
+        }
     }
 
     /// Sum of the guard bonuses from every equipped item — the single place
@@ -236,6 +265,12 @@ impl super::GameState {
                 return;
             }
         };
+        if !self
+            .claim_player_attack_window(player_id, Self::now_ms())
+            .await
+        {
+            return;
+        }
         // A landed attack (not a rejected one) breaks concentration.
         self.cancel_concentration_if_active(player_id).await;
         debug!("Player {} attacking monster {}", player_name, monster_id);

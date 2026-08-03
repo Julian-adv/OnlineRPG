@@ -700,6 +700,7 @@ impl super::GameState {
             .write()
             .await
             .retain(|(owner_id, _), _| owner_id != player_id);
+        self.last_player_attacks.write().await.remove(player_id);
         // A player disconnecting inside a dungeon leaves its floor first,
         // so its monsters get reassigned (or despawned) instead of being
         // dropped by remove_monsters_by_owner below.
