@@ -868,8 +868,7 @@ async fn player_attack_interval_is_server_enforced() {
 
     game_state.last_player_attacks.write().await.insert(
         player_id,
-        GameState::now_ms()
-            .saturating_sub(super::combat::PLAYER_ATTACK_INTERVAL.as_millis() as u64),
+        GameState::now_ms().saturating_sub(*super::combat::PLAYER_ATTACK_INTERVAL_MS),
     );
     game_state
         .broadcast_player_attack(&player_id, "nearby_monster".to_string())

@@ -359,18 +359,15 @@ pub async fn handle_connection(
                     None => std::future::pending().await,
                 }
             } => {
-                match account_msg {
-                    Some(msg) => {
-                        if let Some(bytes) = encode_server_msg(&msg) {
-                            let _ = ws_sender.send(Message::Binary(bytes)).await;
-                        }
-                        info!(
-                            "Account {:?} kicked by a replacement login",
-                            state.account_name
-                        );
-                        break;
+                if let Some(msg) = account_msg {
+                    if let Some(bytes) = encode_server_msg(&msg) {
+                        let _ = ws_sender.send(Message::Binary(bytes)).await;
                     }
-                    None => {}
+                    info!(
+                        "Account {:?} kicked by a replacement login",
+                        state.account_name
+                    );
+                    break;
                 }
             }
 
