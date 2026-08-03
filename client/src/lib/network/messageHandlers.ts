@@ -394,11 +394,16 @@ export function handleServerMessage(
     case 'PlayerTeleported': {
       const state = get(gameStore)
       if (state.currentPlayer && state.currentPlayer.id === data.player_id) {
-        state.currentPlayer.position.set(
-          data.position.x,
-          data.position.y,
-          data.position.z
-        )
+        // Through the store, not a bare mutation: subscribers that live
+        // across a teleport (HUD widgets) otherwise keep the old position.
+        gameStore.update((s) => {
+          s.currentPlayer?.position.set(
+            data.position.x,
+            data.position.y,
+            data.position.z
+          )
+          return s
+        })
         dungeonManager.syncFromFloorLevel(
           data.floor_level ?? 0,
           data.position.x,

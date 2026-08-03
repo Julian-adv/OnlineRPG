@@ -3,6 +3,7 @@
   import FPSCounter from './FPSCounter.svelte'
   import WavePhaseDebug from './WavePhaseDebug.svelte'
   import GameTimeWidget from './GameTimeWidget.svelte'
+  import Minimap from './Minimap.svelte'
   import CelestialDebugDialog from './CelestialDebugDialog.svelte'
   import MapEditorPanel from './map-editor/MapEditorPanel.svelte'
   import HousingEditorPanel from './map-editor/HousingEditorPanel.svelte'
@@ -30,6 +31,7 @@
     teleportLoading,
     housingEditorMode,
   } from '../stores/debugStore'
+  import { minimapEnabled } from '../stores/minimapStore'
   import type { AccountCharacter } from '../network/socket'
 
   interface Props {
@@ -77,6 +79,9 @@
   </div>
   <WavePhaseDebug />
   <GameTimeWidget />
+  {#if $minimapEnabled && !$mapEditorMode}
+    <Minimap />
+  {/if}
   <DragGhost />
   <CelestialDebugDialog />
   {#if $mapEditorMode}
