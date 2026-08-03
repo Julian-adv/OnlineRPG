@@ -305,28 +305,12 @@ impl super::GameState {
         self.forget_hunger(player_id).await;
     }
 
-    /// Whether any live session currently owns the durable character row.
-    ///
-    /// Character deletion is requested before game entry, so checking only the
-    /// requesting connection cannot protect the same character on another
-    /// connection. Keep the lookup on the authoritative session registry.
-    pub async fn is_character_active(&self, character_id: i64) -> bool {
-        self.player_characters
-            .read()
-            .await
-            .values()
-            .any(|(active_character_id, _, _)| *active_character_id == character_id)
-    }
-
-    /// Hold while admitting a character into the game. Character deletion
-    /// takes the same lock around its live-owner check and database mutation,
-    /// closing the otherwise unavoidable check/delete race.
+    /// Holds deletion until game-entry registration completes.
     pub(crate) async fn lock_character_sessions(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.character_session_lock.lock().await
     }
 
-    /// Delete an offline character, returning `false` when another connection
-    /// still owns its authoritative live state.
+    /// Deletes an inactive character, or returns `false` if it is registered.
     pub(crate) async fn delete_character_if_inactive(
         &self,
         auth: &AuthService,
@@ -334,7 +318,13 @@ impl super::GameState {
         character_id: i64,
     ) -> Result<bool, AuthError> {
         let _sessions = self.character_session_lock.lock().await;
-        if self.is_character_active(character_id).await {
+        if self
+            .player_characters
+            .read()
+            .await
+            .values()
+            .any(|(active_id, _, _)| *active_id == character_id)
+        {
             return Ok(false);
         }
         auth.delete_character(account_name, character_id)?;

@@ -223,9 +223,7 @@ async fn active_character_cannot_be_deleted_from_another_session() {
     let game_state = Arc::new(make_test_game_state("active_character_delete_guard"));
     let player_id = pid("active_character");
 
-    // EnterGame takes the admission lock before reading the durable row. A
-    // concurrent delete must wait until that session appears in the live map,
-    // then reject instead of winning the check/delete race.
+    // Deletion must wait for admission, then reject the registered character.
     let admission = game_state.lock_character_sessions().await;
     let deleting_state = Arc::clone(&game_state);
     let deleting_auth = auth.clone();
@@ -241,7 +239,7 @@ async fn active_character_cannot_be_deleted_from_another_session() {
     assert!(!delete.is_finished());
 
     game_state
-        .register_player_character(&player_id, record.id, 0, attrs_with_cha(12), 0)
+        .register_player_character(&player_id, record.id, 0, attrs_with_cha(12), 0, None)
         .await;
     drop(admission);
 
