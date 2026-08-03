@@ -305,9 +305,96 @@ impl super::GameState {
         self.forget_hunger(player_id).await;
     }
 
-    /// Holds deletion until game-entry registration completes.
+    /// Serializes account replacement and character deletion with game entry.
     pub(crate) async fn lock_character_sessions(&self) -> tokio::sync::MutexGuard<'_, ()> {
         self.character_session_lock.lock().await
+    }
+
+    pub(crate) async fn register_account_session(
+        &self,
+        account_name: &str,
+        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        auth: &AuthService,
+    ) -> u64 {
+        use std::sync::atomic::Ordering;
+
+        let _sessions = self.character_session_lock.lock().await;
+        let session_id = self.next_account_session.fetch_add(1, Ordering::Relaxed);
+        let key = account_name.to_ascii_lowercase();
+        let replaced = self.account_sessions.write().await.insert(
+            key,
+            super::AccountSession {
+                id: session_id,
+                player_id: None,
+                kick_tx,
+            },
+        );
+
+        if let Some(replaced) = replaced {
+            info!("Replacing active session for account '{}'", account_name);
+            let _ = replaced.kick_tx.send(ServerMessage::Kicked {
+                player_id: replaced.player_id.unwrap_or(PlayerId::from(0)),
+                reason: "Another session logged in with the same account".to_string(),
+            });
+            if let Some(player_id) = replaced.player_id {
+                self.cleanup_player_session(&player_id, auth).await;
+            }
+        }
+
+        session_id
+    }
+
+    pub(crate) async fn is_current_account_session(
+        &self,
+        account_name: &str,
+        session_id: u64,
+    ) -> bool {
+        self.account_sessions
+            .read()
+            .await
+            .get(&account_name.to_ascii_lowercase())
+            .is_some_and(|session| session.id == session_id)
+    }
+
+    pub(crate) async fn attach_player_to_account_session(
+        &self,
+        account_name: &str,
+        session_id: u64,
+        player_id: PlayerId,
+    ) -> bool {
+        let mut sessions = self.account_sessions.write().await;
+        let Some(session) = sessions.get_mut(&account_name.to_ascii_lowercase()) else {
+            return false;
+        };
+        if session.id != session_id {
+            return false;
+        }
+        session.player_id = Some(player_id);
+        true
+    }
+
+    pub(crate) async fn end_account_session(
+        &self,
+        account_name: &str,
+        session_id: u64,
+        auth: &AuthService,
+    ) {
+        let _sessions = self.character_session_lock.lock().await;
+        let key = account_name.to_ascii_lowercase();
+        let ended = {
+            let mut sessions = self.account_sessions.write().await;
+            if sessions
+                .get(&key)
+                .is_some_and(|session| session.id == session_id)
+            {
+                sessions.remove(&key)
+            } else {
+                None
+            }
+        };
+        if let Some(player_id) = ended.and_then(|session| session.player_id) {
+            self.cleanup_player_session(&player_id, auth).await;
+        }
     }
 
     /// Deletes an inactive character, or returns `false` if it is registered.
@@ -355,31 +442,12 @@ impl super::GameState {
             .unwrap_or_else(|| player_id.to_string())
     }
 
-    pub async fn kick_player_by_name(&self, name: &str, auth: &AuthService) -> Option<PlayerId> {
-        let old_player_id = self.player_id_by_name(name).await;
-
-        if let Some(ref player_id) = old_player_id {
-            info!("Kicking existing player '{}' ({})", name, player_id);
-
-            // Persist and detach the departing session's state *before* the
-            // replacement login reads the DB. Otherwise the async disconnect
-            // save could land after the new session's inventory load, letting
-            // a drop/pickup be duplicated across the swap (F-015).
-            self.persist_and_detach_player(player_id, auth).await;
-
-            self.send_direct_message(
-                player_id,
-                ServerMessage::Kicked {
-                    player_id: *player_id,
-                    reason: "Another session logged in with the same account".to_string(),
-                },
-            )
-            .await;
-
-            self.remove_player(player_id).await;
-        }
-
-        old_player_id
+    async fn cleanup_player_session(&self, player_id: &PlayerId, auth: &AuthService) {
+        self.cancel_concentration_if_active(player_id).await;
+        self.persist_and_detach_player(player_id, auth).await;
+        self.unregister_connection_channel(player_id).await;
+        self.unregister_player_character(player_id).await;
+        self.remove_player(player_id).await;
     }
 
     /// Synchronously write a player's character row and inventory to the DB,

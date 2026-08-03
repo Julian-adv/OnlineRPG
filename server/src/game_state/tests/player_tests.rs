@@ -10,6 +10,46 @@ fn find_player(players: &[Player], id: PlayerId) -> &Player {
 }
 
 #[tokio::test]
+async fn replacement_login_kicks_the_previous_account_session() {
+    let auth = make_test_auth("account_session_replacement");
+    let account = auth.login_npc("npc_account_session").unwrap();
+    let game_state = make_test_game_state("account_session_replacement");
+    let (first_tx, mut first_rx) = tokio::sync::mpsc::unbounded_channel();
+    let first_id = game_state
+        .register_account_session(&account, first_tx, &auth)
+        .await;
+
+    let (second_tx, _second_rx) = tokio::sync::mpsc::unbounded_channel();
+    let second_id = game_state
+        .register_account_session(&account, second_tx, &auth)
+        .await;
+
+    assert!(matches!(
+        first_rx.try_recv(),
+        Ok(ServerMessage::Kicked { player_id, .. }) if player_id == PlayerId::from(0)
+    ));
+    assert!(
+        !game_state
+            .is_current_account_session(&account, first_id)
+            .await
+    );
+    assert!(
+        game_state
+            .is_current_account_session(&account, second_id)
+            .await
+    );
+
+    game_state
+        .end_account_session(&account, first_id, &auth)
+        .await;
+    assert!(
+        game_state
+            .is_current_account_session(&account, second_id)
+            .await
+    );
+}
+
+#[tokio::test]
 async fn equipped_torch_syncs_live_and_late_join_player_state() {
     let game_state = make_test_game_state("late_join_torch_snapshot");
     let torch_holder_id = pid("torch_holder");

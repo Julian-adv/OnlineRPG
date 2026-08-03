@@ -133,6 +133,12 @@ struct IdState {
     owner_spawn_counts: HashMap<u32, u32>,
 }
 
+struct AccountSession {
+    id: u64,
+    player_id: Option<PlayerId>,
+    kick_tx: mpsc::UnboundedSender<ServerMessage>,
+}
+
 /// Anchor for the game clock: game time = `start_game_seconds` plus scaled
 /// real time elapsed since `start_real`. Behind a std RwLock (not tokio)
 /// because it is read from sync contexts; writes only happen on debug
@@ -169,6 +175,8 @@ pub struct GameState {
     /// Global rare bonus-drop table shared by every loot source.
     world_drop_defs: crate::world_drop_defs::WorldDropDefs,
     id_state: Arc<RwLock<IdState>>,
+    account_sessions: Arc<RwLock<HashMap<String, AccountSession>>>,
+    next_account_session: Arc<std::sync::atomic::AtomicU64>,
     direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<DirectMessage>>>>,
     // player_id → (character_id, current_xp, attributes)
     #[allow(clippy::type_complexity)]
@@ -203,7 +211,7 @@ pub struct GameState {
     dirty_inventories: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
-    /// Serializes character deletion with game-entry admission.
+    /// Serializes account replacement and character deletion with game entry.
     character_session_lock: Arc<Mutex<()>>,
     /// In-memory set of currently open doors.
     open_doors: Arc<RwLock<HashSet<DoorKey>>>,
@@ -333,6 +341,8 @@ impl GameState {
             item_defs,
             world_drop_defs,
             id_state: Arc::new(RwLock::new(IdState::default())),
+            account_sessions: Arc::new(RwLock::new(HashMap::new())),
+            next_account_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             direct_channels: Arc::new(RwLock::new(HashMap::new())),
             player_characters: Arc::new(RwLock::new(HashMap::new())),
             player_gold: Arc::new(RwLock::new(HashMap::new())),

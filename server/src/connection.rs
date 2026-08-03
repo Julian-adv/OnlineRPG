@@ -145,6 +145,8 @@ struct ConnectionState {
     /// responses are flushed (protocol mismatch).
     must_close: bool,
     account_name: Option<String>,
+    account_session_id: Option<u64>,
+    account_rx: Option<mpsc::UnboundedReceiver<ServerMessage>>,
     player_id: Option<PlayerId>,
     /// Entered character's name, kept here so disconnect-path logs can name the
     /// player after `GameState` has already dropped the record.
@@ -175,6 +177,8 @@ impl ConnectionState {
             client_kind: None,
             must_close: false,
             account_name: None,
+            account_session_id: None,
+            account_rx: None,
             player_id: None,
             character_name: None,
             direct_rx: None,
@@ -348,6 +352,28 @@ pub async fn handle_connection(
                 break;
             }
 
+            // A replacement login wins over buffered traffic from the stale socket.
+            account_msg = async {
+                match state.account_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match account_msg {
+                    Some(msg) => {
+                        if let Some(bytes) = encode_server_msg(&msg) {
+                            let _ = ws_sender.send(Message::Binary(bytes)).await;
+                        }
+                        info!(
+                            "Account {:?} kicked by a replacement login",
+                            state.account_name
+                        );
+                        break;
+                    }
+                    None => {}
+                }
+            }
+
             // Periodic timeout checks: unauth grace period, in-game heartbeat
             _ = heartbeat_check.tick() => {
                 if state.account_name.is_none()
@@ -502,17 +528,14 @@ pub async fn handle_connection(
     }
 
     // Once the drain starts, `persist_shutdown_snapshot` owns persistence for
-    // every connected player — and needs these maps left populated to see them.
-    // A kick already flushed and detached the replaced session, so this is a
-    // no-op for that player id.
+    // every connected player and needs these maps left populated to see them.
     if !shutdown_started.has_changed().unwrap_or(true) {
-        if let Some(ref id) = state.player_id {
-            game_state.cancel_concentration_if_active(id).await;
-            game_state.persist_and_detach_player(id, auth_service).await;
-
-            game_state.unregister_connection_channel(id).await;
-            game_state.unregister_player_character(id).await;
-            game_state.remove_player(id).await;
+        if let (Some(account_name), Some(session_id)) =
+            (state.account_name.as_deref(), state.account_session_id)
+        {
+            game_state
+                .end_account_session(account_name, session_id, auth_service)
+                .await;
         }
     }
 
@@ -522,9 +545,10 @@ pub async fn handle_connection(
     }
 }
 
-/// Shared tail of both auth paths: load characters, mark the connection
-/// authenticated, and build the AuthSuccess reply.
-fn finish_auth(
+/// Shared tail of both auth paths: load characters, replace any account
+/// session, and build the AuthSuccess reply.
+async fn finish_auth(
+    game_state: &GameState,
     auth_service: &AuthService,
     state: &mut ConnectionState,
     account_name: String,
@@ -548,7 +572,14 @@ fn finish_auth(
         .map(character_record_to_shared)
         .collect::<Vec<Character>>();
 
+    let (kick_tx, kick_rx) = mpsc::unbounded_channel();
+    let account_session_id = game_state
+        .register_account_session(&account_name, kick_tx, auth_service)
+        .await;
+
     state.account_name = Some(account_name.clone());
+    state.account_session_id = Some(account_session_id);
+    state.account_rx = Some(kick_rx);
     state.is_official_npc = is_official_npc;
     state.pending_character_attributes = None;
 
@@ -718,7 +749,7 @@ async fn handle_client_message(
             info!("Google sub '{}' -> account '{}'", claims.sub, account_name);
 
             state.admin_eligible = auth_ctx.is_admin(&claims);
-            return Ok(finish_auth(auth_service, state, account_name, false));
+            return Ok(finish_auth(game_state, auth_service, state, account_name, false).await);
         }
 
         ClientMessage::AuthenticateNpc {
@@ -742,7 +773,7 @@ async fn handle_client_message(
                 }
             };
 
-            return Ok(finish_auth(auth_service, state, account_name, true));
+            return Ok(finish_auth(game_state, auth_service, state, account_name, true).await);
         }
 
         ClientMessage::CreateCharacter {
@@ -876,6 +907,15 @@ async fn handle_client_message(
                 Err(responses) => return Ok(responses),
             };
             let character_sessions = game_state.lock_character_sessions().await;
+            let Some(account_session_id) = state.account_session_id else {
+                return Ok(vec![]);
+            };
+            if !game_state
+                .is_current_account_session(&authed_account_name, account_session_id)
+                .await
+            {
+                return Ok(vec![]);
+            }
 
             let selected_character =
                 match auth_service.get_character_for_account(&authed_account_name, character_id) {
@@ -917,11 +957,6 @@ async fn handle_client_message(
                     }
                 }
             };
-
-            // Enforced unique character names allow name-based session replacement.
-            game_state
-                .kick_player_by_name(&selected_character.name, auth_service)
-                .await;
 
             let max_hp = selected_character.max_hp;
             let character_xp = selected_character.xp;
@@ -984,8 +1019,16 @@ async fn handle_client_message(
                     (!state.is_official_npc).then_some(selected_character.satiation),
                 )
                 .await;
-            drop(character_sessions);
-
+            if !game_state
+                .attach_player_to_account_session(&authed_account_name, account_session_id, id)
+                .await
+            {
+                warn!(
+                    "Account session changed during game admission for '{}'",
+                    authed_account_name
+                );
+                return Ok(vec![]);
+            }
             match auth_service.load_blocked_names(character_id) {
                 Ok(blocked) => game_state.set_player_blocks(&id, blocked).await,
                 Err(err) => warn!(
@@ -1090,6 +1133,7 @@ async fn handle_client_message(
 
             state.player_id = Some(id);
             state.character_name = Some(selected_character.name.clone());
+            drop(character_sessions);
 
             info!(
                 "Account '{}' entered game as character '{}' with player ID {:?}",
