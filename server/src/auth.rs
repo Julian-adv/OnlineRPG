@@ -1300,6 +1300,32 @@ mod tests {
         );
     }
 
+    /// EnterGame refuses the session when this load errs, so a missing table
+    /// must surface as an error — never as a valid empty history.
+    #[test]
+    fn dungeon_history_load_fails_when_storage_is_unavailable() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_dungeon_history_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let (opens, discoveries) = auth.load_dungeon_history(1).unwrap();
+        assert!(opens.is_empty());
+        assert!(discoveries.is_empty());
+
+        for table in ["character_dungeon_chests", "character_dungeon_discoveries"] {
+            let db_path = std::env::temp_dir().join(format!(
+                "onlinerpg_auth_dungeon_history_{}.db",
+                uuid::Uuid::new_v4()
+            ));
+            let auth = AuthService::new(db_path.clone()).unwrap();
+            let conn = Connection::open(db_path).unwrap();
+            conn.execute(&format!("DROP TABLE {table}"), []).unwrap();
+
+            assert!(auth.load_dungeon_history(1).is_err());
+        }
+    }
+
     #[test]
     fn name_validation_rejects_control_chars_and_long_names() {
         let db_path =

@@ -327,9 +327,8 @@ impl GameState {
     }
 
     /// Seed a player's discovered-entrance set at login so known entrances
-    /// are not re-announced. A missing entry just reads as "nothing known
-    /// yet": after a failed DB load the player re-discovers by walking near,
-    /// which the INSERT OR IGNORE persistence absorbs.
+    /// are not re-announced. A load failure refuses game entry, so this
+    /// always receives the character's full persisted history.
     pub async fn set_dungeon_discoveries(&self, player_id: &PlayerId, ids: Vec<String>) {
         let mut discoveries = self.dungeon_discoveries.write().await;
         discoveries.insert(*player_id, ids.into_iter().collect());
