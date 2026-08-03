@@ -2,15 +2,10 @@
   import { gameStore } from '../stores/gameStore'
   import { worldMapVisible } from '../stores/debugStore'
   import { minimapVersion } from '../stores/editorStore'
-  import {
-    partyRoster,
-    partyPositions,
-    resetPartyPositions,
-  } from '../stores/partyStore'
+  import { currentDungeonDepth } from '../stores/dungeonStore'
+  import { playerVisualFloorLevel } from '../stores/housingStore'
   import { regionMinimapServerUrl } from '../terrain/regionMinimapGenerator'
   import { REGION_CELLS, TILE_DIM } from '../terrain/terrain-constants'
-  import { unwrapWorldXNear } from '../terrain/world-wrap'
-  import { networkManager } from '../network/socket'
 
   /** Canvas size in CSS pixels. */
   const SIZE = 180
@@ -23,13 +18,16 @@
   const REDRAW_STEP_M = 2
   /** Heading changes below this step (~10°) don't trigger a redraw. */
   const REDRAW_STEP_RAD = Math.PI / 18
-  // Same cadence/expiry as WorldMapDialog; the server clamps re-polls.
-  const PARTY_POLL_MS = 3000
-  const PARTY_POSITIONS_MAX_AGE_MS = 10000
   /** ~4 regions cover the rotated view; keep a little slack for movement. */
   const IMAGE_CACHE_LIMIT = 12
 
   let canvasEl = $state<HTMLCanvasElement>()
+
+  /** The bakes are surface terrain: underground or upstairs there is nothing
+   *  truthful to draw, so the widget hides rather than showing the surface. */
+  let onSurface = $derived(
+    $currentDungeonDepth === 0 && $playerVisualFloorLevel === 0
+  )
 
   // Intentionally non-reactive: image loads must not re-run the render effect.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
@@ -86,28 +84,6 @@
     Math.round(($gameStore.currentPlayer?.rotation ?? 0) / REDRAW_STEP_RAD)
   )
 
-  // Party positions piggyback on the world map's poll channel; only poll
-  // while the widget is mounted and a party exists.
-  let inParty = $derived($partyRoster !== null)
-  $effect(() => {
-    if (!inParty) return
-    networkManager.sendRequestPartyPositions()
-    const timer = setInterval(
-      () => networkManager.sendRequestPartyPositions(),
-      PARTY_POLL_MS
-    )
-    return () => clearInterval(timer)
-  })
-  $effect(() => {
-    const at = $partyPositions.at
-    if (at === 0) return
-    const timer = setTimeout(
-      resetPartyPositions,
-      Math.max(0, at + PARTY_POSITIONS_MAX_AGE_MS - Date.now())
-    )
-    return () => clearTimeout(timer)
-  })
-
   let renderGeneration = 0
 
   $effect(() => {
@@ -117,8 +93,6 @@
     const px = qx * REDRAW_STEP_M
     const pz = qz * REDRAW_STEP_M
     const heading = qr * REDRAW_STEP_RAD
-    const positions = $partyPositions
-    const roster = $partyRoster
     const _ver = $minimapVersion
     const gen = ++renderGeneration
 
@@ -173,37 +147,6 @@
     Promise.all(promises).then(() => {
       if (gen !== renderGeneration) return
 
-      // Party members: green dots, edge-clamped so an off-map member still
-      // shows which way to walk.
-      if (roster && Date.now() - positions.at <= PARTY_POSITIONS_MAX_AGE_MS) {
-        const ids = new Set(roster.members.map((m) => m.id))
-        const selfId = $gameStore.currentPlayer?.id
-        rotated(() => {
-          for (const pos of positions.members) {
-            if (!ids.has(pos.id) || pos.id === selfId) continue
-            const wx = unwrapWorldXNear(px, pos.x)
-            let mx = (wx - viewLeft) * scale
-            let my = (pos.z - viewTop) * scale
-            // Clamp into the rotated-visible disc around the center.
-            const dx = mx - SIZE / 2
-            const dy = my - SIZE / 2
-            const dist = Math.hypot(dx, dy)
-            const maxDist = SIZE / 2 - 8
-            if (dist > maxDist) {
-              mx = SIZE / 2 + (dx / dist) * maxDist
-              my = SIZE / 2 + (dy / dist) * maxDist
-            }
-            ctx.beginPath()
-            ctx.arc(mx, my, 4, 0, Math.PI * 2)
-            ctx.fillStyle = '#4caf50'
-            ctx.fill()
-            ctx.lineWidth = 1.5
-            ctx.strokeStyle = '#ffffff'
-            ctx.stroke()
-          }
-        })
-      }
-
       // Self: centered heading arrow. rotation = atan2(dx, dz), so the facing
       // vector in (x, z) is (sin r, cos r); the rotated transform handles the
       // map's -45° for us.
@@ -227,15 +170,17 @@
   })
 </script>
 
-<button
-  class="minimap"
-  title="Open world map (M)"
-  aria-label="Open world map"
-  onclick={() => worldMapVisible.set(true)}
->
-  <canvas bind:this={canvasEl} style="width: {SIZE}px; height: {SIZE}px;"
-  ></canvas>
-</button>
+{#if onSurface}
+  <button
+    class="minimap"
+    title="Open world map (M)"
+    aria-label="Open world map"
+    onclick={() => worldMapVisible.set(true)}
+  >
+    <canvas bind:this={canvasEl} style="width: {SIZE}px; height: {SIZE}px;"
+    ></canvas>
+  </button>
+{/if}
 
 <style>
   .minimap {
