@@ -1,6 +1,6 @@
 ---
 name: blender-item-asset
-description: Meshy 등에서 받은 GLB/FBX를 Blender로 가져와 게임용 아이템 애셋으로 만든다 — 기존 애셋과 비교해 스케일 결정·적용, 원점 바닥 중심, Meshy emissive 제거, 텍스처 512² 축소, client/public/models/ 로 GLB export, 128×128 아이콘 렌더, doc/assets/items.md 기록까지. "이 glb 임포트해서 스케일 맞춰줘", "아이템 애셋 추가", "아이콘 렌더링해줘" 같은 요청에 사용한다.
+description: Meshy 등에서 받은 GLB/FBX를 Blender로 가져와 게임용 아이템 애셋으로 만든다 — 기존 애셋과 비교해 스케일 결정·적용, 원점 바닥 중심, Meshy emissive 제거, 텍스처 512² 축소, client/public/models/ 로 GLB export, 128×128 아이콘 렌더, 원화 배치, pc5090으로 산출물 복사, pc5090의 doc/assets/items.md 또는 props.md에 유래 기록까지. "이 glb 임포트해서 스케일 맞춰줘", "아이템 애셋 추가", "아이콘 렌더링해줘" 같은 요청에 사용한다.
 argument-hint: [입력 glb/fbx 경로] [애셋 이름]
 ---
 
@@ -8,10 +8,13 @@ argument-hint: [입력 glb/fbx 경로] [애셋 이름]
 
 Blender MCP(`mcp__blender__execute_blender_code`)로 실행한다. Blender가 켜져 있고 애드온이 연결돼 있어야 한다.
 
-산출물 3개:
+산출물:
 - `client/public/models/<카테고리>/<name>.glb` — 원점 바닥 중심, 스케일 적용됨
 - `client/public/items/<name>.png` — 128×128 투명 배경 아이콘
-- `doc/assets/items.md` 항목 — 소스·라이선스·치수·날짜
+- `doc/images/<name>.png` — Meshy에 넣은 원화 원본 (있는 경우)
+- `doc/assets/items.md` 또는 `props.md` 항목 — 소스·라이선스·치수·날짜
+
+앞의 파일 3개는 STEP 8에서 pc5090으로 복사하고, 문서 항목은 STEP 9에서 **pc5090 쪽에** 쓴다 (커밋이 그쪽에서 나가므로).
 
 카테고리: 착용구=`armor/`, 장신구=`accessory/`, 무기=`weapons/`, 그 외 사물=`objects/`.
 
@@ -62,7 +65,7 @@ NAME = "<asset_name>"
 
 before = set(bpy.data.objects.keys())
 bpy.ops.import_scene.gltf(filepath=SRC)
-new = [n for n in bpy.data.objects if n not in before]
+new = [o.name for o in bpy.data.objects if o.name not in before]   # 순회는 Object를 내놓는다, 이름이 아니라
 bpy.context.view_layer.update()
 result = {"new": [{"name": n, "type": bpy.data.objects[n].type,
                    "dims": [round(v, 4) for v in bpy.data.objects[n].dimensions]} for n in new]}
@@ -85,6 +88,8 @@ mat.name = NAME
 nt = mat.node_tree
 bsdf = nt.nodes["Principled BSDF"]
 
+emissive_imgs = {n.image.name for n in nt.nodes
+                 if n.type == 'TEX_IMAGE' and n.image and n.image.name.startswith("emissive")}
 for l in list(bsdf.inputs["Emission Color"].links):
     nt.links.remove(l)
 for n in list(nt.nodes):
@@ -93,11 +98,13 @@ for n in list(nt.nodes):
 bsdf.inputs["Emission Color"].default_value = (0, 0, 0, 1)
 bsdf.inputs["Emission Strength"].default_value = 0.0
 
-for im in list(bpy.data.images):
-    if im.name.startswith("emissive"):
-        bpy.data.images.remove(im)
-    elif im.size[0] > 512 and im.users:
-        im.scale(512, 512)   # 2048² 원본은 아이템에 과함
+for name in emissive_imgs:
+    if bpy.data.images.get(name):
+        bpy.data.images.remove(bpy.data.images[name])
+# 이 머티리얼의 텍스처만 축소한다 — 씬에 비교용 오브젝트가 있으면 그쪽까지 건드린다
+for n in nt.nodes:
+    if n.type == 'TEX_IMAGE' and n.image and n.image.size[0] > 512:
+        n.image.scale(512, 512)   # 2048² 원본은 아이템에 과함
 
 result = {"images": [(i.name, list(i.size)) for i in bpy.data.images]}
 ```
@@ -199,10 +206,12 @@ for ob in bpy.data.objects:
     if ob.type == 'MESH' and ob is not o:
         ob.hide_render = True
 
+bpy.context.view_layer.update()   # STEP 4와 합쳐 실행하면 matrix_world가 옛 위치다
 inv = cam.matrix_world.inverted()
 pts = [inv @ (o.matrix_world @ mathutils.Vector(c)) for c in o.bound_box]
 ext = max(max(abs(p.x) for p in pts), max(abs(p.y) for p in pts)) * 2
 cam.data.ortho_scale = ext * 1.10        # 여백 10%
+# 0.16m 오브젝트에 ortho_scale이 0.7 같은 값이면 카메라 행렬이 갱신 안 된 것이다
 
 out = rf"{REPO}\client\public\items\{NAME}.png"
 sc.render.filepath = out
@@ -243,15 +252,78 @@ python .claude/skills/blender-item-asset/measure_glb.py client/public/models/<�
 
 ---
 
-## STEP 7 — 기록
+## STEP 7 — 원화 배치
 
-`doc/assets/items.md`에 한 줄 추가한다. 기존 항목 형식을 그대로 따른다:
+Meshy에 넣은 원화(ChatGPT 생성 이미지)가 있으면 원본 해상도 그대로 `doc/images/<name>.png`에 둔다. 축소하지 않는다 — 기존 원화들은 2MB대다.
 
-> `<name>.glb` — Meshy.ai (유료 생성, `<생성일>`, "`<프롬프트 제목>`"). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 `<축>` `<TARGET>`m로 스케일 적용(W×H×D, `<비교 기준>`), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (`<오늘 날짜>`)
+---
 
-`items.csv`에 아직 안 붙였으면 끝에 `아직 items.csv 미연결 **[미사용]**`을 덧붙인다.
+## STEP 8 — pc5090으로 복사
 
-게임에 실제로 등장시키려면 별도 작업이 필요하다 — `data/items.csv` 항목, 아이콘 경로, 필요하면 `client/public/models/objects/catalog.json` 등록.
+산출물 3개는 전부 gitignore 대상이거나(모델·아이콘) 용량이 커서, 커밋만으로는 다른 작업 머신에 안 넘어간다. 직접 복사한다.
+
+pc5090은 `~/.ssh/config`에 별칭이 있어 pc4090에서 바로 붙는다. 리포는 `/home/jake/work/OnlineRPG`.
+
+```bash
+NAME=<asset_name>; CAT=<카테고리>   # objects | armor | accessory | weapons
+DEST=pc5090:/home/jake/work/OnlineRPG
+
+scp "client/public/models/$CAT/$NAME.glb" "$DEST/client/public/models/$CAT/"
+scp "client/public/items/$NAME.png"       "$DEST/client/public/items/"
+scp "doc/images/$NAME.png"                "$DEST/doc/images/"
+```
+
+원화가 없는 애셋이면 세 번째 줄은 건너뛴다.
+
+sha256으로 검증한다 — 크기만 보면 전송 잘림을 놓친다:
+
+```bash
+for f in "client/public/models/$CAT/$NAME.glb" "client/public/items/$NAME.png" "doc/images/$NAME.png"; do
+  [ -f "$f" ] || continue
+  l=$(sha256sum "$f" | cut -d' ' -f1)
+  r=$(ssh pc5090 "sha256sum /home/jake/work/OnlineRPG/$f 2>/dev/null | cut -d' ' -f1")
+  [ "$l" = "$r" ] && echo "ok   $f" || echo "FAIL $f  ($l vs ${r:-없음})"
+done
+```
+
+---
+
+## STEP 9 — pc5090에서 유래 기록
+
+**문서는 pc5090에서 고친다.** 커밋은 그쪽에서 나가므로, 로컬에도 쓰면 같은 줄이 양쪽에 생겨 충돌한다. 로컬 리포의 `doc/assets/`는 건드리지 않는다.
+
+어느 파일에 쓸지 먼저 정한다. **디렉터리가 아니라 용도로 갈린다** — `models/objects/`에 있어도 양쪽으로 나뉜다:
+
+| 대상 | 파일 | 실제 사례 |
+|---|---|---|
+| 인벤토리에 들어가는 소지·착용 아이템 | `doc/assets/items.md` | plate_helmet, dagger, campfire_kit, apple, bread, cheese_wedge |
+| 월드에만 배치되는 프롭 | `doc/assets/props.md` → `## Objects` | campfire, coin_pile_spill, torch_wall |
+
+음식은 월드에 놓이더라도 소지품이므로 items.md다. 애매하면 가장 비슷한 기존 애셋이 어느 파일에 적혀 있는지 보고 따르거나 사용자에게 묻는다.
+
+**추가 전에 중복부터 확인한다.** pc5090 쪽 문서가 이미 커밋 안 된 상태로 편집돼 있을 수 있다:
+
+```bash
+ssh pc5090 "cd ~/work/OnlineRPG && git status --short doc/assets/ && grep -n '<name>' doc/assets/items.md doc/assets/props.md"
+```
+
+편집은 **가져와서 → 로컬에서 고치고 → 되돌려 놓는** 순서로 한다. ssh 너머로 한글 항목을 heredoc에 밀어넣으면 따옴표가 깨진다:
+
+```bash
+scp pc5090:/home/jake/work/OnlineRPG/doc/assets/props.md /tmp/props.md   # 1) 가져오기
+# 2) Read/Edit 툴로 /tmp/props.md 수정 — 주변 항목 형식을 눈으로 보고 맞춘다
+scp /tmp/props.md pc5090:/home/jake/work/OnlineRPG/doc/assets/props.md   # 3) 되돌리기
+ssh pc5090 "cd ~/work/OnlineRPG && git diff --stat doc/assets/"          # 4) 확인
+```
+
+항목 형식 (기존 줄을 그대로 따를 것):
+
+> - `<name>.glb` — Meshy.ai (유료 생성, `<생성일>`, "`<프롬프트 제목>`"). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 `<축>` `<TARGET>`m로 스케일 적용(W×H×D, `<비교 기준>`), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (`<오늘 날짜>`)
+>     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, `<생성일>`) `![원화](../images/<name>.png)`
+
+`items.csv`에 아직 안 붙였으면 끝에 `아직 items.csv 미연결 **[미사용]**`을 덧붙인다. 쓰이지 않게 된 애셋은 **[미사용]** 표기.
+
+게임에 실제로 등장시키려면 별도 작업이 필요하다 — `data-src/items.csv` 항목, 아이콘 경로, 필요하면 `client/public/models/objects/catalog.json` 등록.
 
 ---
 
@@ -264,3 +336,5 @@ python .claude/skills/blender-item-asset/measure_glb.py client/public/models/<�
 - **원점 지정 전에 scale apply**: 순서가 바뀌면 바운딩박스가 스케일 반영 전 값이라 원점이 어긋난다.
 - **`export_yup=True`**: 안 넣으면 인게임에서 90° 누워서 나온다.
 - **비교 렌더가 제일 빠른 검증**: 새 애셋 옆에 기준 애셋을 놓고 저해상도(400², 24 samples)로 한 장 뽑아 비율을 눈으로 본다. 끝나면 기준 오브젝트 위치·표시를 원복한다.
+- **복사는 커밋으로 대체되지 않는다**: 모델·아이콘은 gitignore 대상이라 푸시해도 pc5090에 안 간다. STEP 8을 건너뛰면 그쪽에서 애셋 없는 상태로 빌드가 돈다 — `measure-monster-attack-clips` 같은 생성 스크립트가 빈 결과를 뱉을 수 있다.
+- **문서는 한쪽에만 쓴다**: 로컬과 pc5090 양쪽 `doc/assets/`에 같은 항목을 쓰면 나중에 중복 줄로 충돌한다. STEP 9대로 pc5090에서만 쓸 것 (2026-08-04에 실제로 양쪽에 쓸 뻔했음).
