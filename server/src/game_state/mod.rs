@@ -98,6 +98,10 @@ mod combat;
 mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
+/// Re-exported for the catch-table economy guardrail in `item_defs`, which
+/// prices a sale exactly as `sell_item` does.
+#[cfg(test)]
+pub(crate) use deals::sell_payout;
 mod dungeon;
 pub(crate) mod hunger;
 mod inventory;

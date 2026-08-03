@@ -58,6 +58,18 @@ impl MerchantDefs {
     pub fn get_by_npc_name(&self, npc_name: &str) -> Option<&MerchantDefinition> {
         self.by_npc_name.get(npc_name)
     }
+
+    /// The most generous sell rate on offer. Economy guardrails price a sale
+    /// at the best rate a player could actually walk to, so a rate change in
+    /// `data-src/merchants.csv` moves them instead of silently loosening them.
+    #[cfg(test)]
+    pub fn best_sell_rate_percent(&self) -> u32 {
+        self.by_npc_name
+            .values()
+            .map(|def| def.sell_rate_percent)
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 pub fn merchant_defs() -> &'static MerchantDefs {
