@@ -52,3 +52,8 @@ export interface HouseData {
   rooms: RoomData[]
   passability?: PassabilityGrid[]
 }
+
+export interface HouseMapFootprint {
+  /** Absolute world X/Z followed by width/depth. */
+  rects: [number, number, number, number][]
+}

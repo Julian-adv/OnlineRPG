@@ -76,6 +76,7 @@
   } from '../stores/partyStore'
   import { worldMapVisible, teleportLoading } from '../stores/debugStore'
   import { discoveredDungeonIds } from '../stores/dungeonStore'
+  import { houseMapFootprints } from '../stores/housingMapStore'
   import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
   import { minimapVersion } from '../stores/editorStore'
   import { networkManager } from '../network/socket'
@@ -85,6 +86,7 @@
   } from '../stores/graphicsSettings'
   import { wrapWorldX, unwrapWorldXNear } from '../terrain/world-wrap'
   import { mountOverlay } from '../stores/overlayStack'
+  import { drawHouseMapFootprints } from '../utils/map-structures'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
   const mobileMapBudget = $derived(graphicsPreset.renderBudget === 'mobile')
@@ -104,6 +106,7 @@
 
   let playerX = $derived(wrapWorldX($gameStore.currentPlayer?.position.x ?? 0))
   let playerZ = $derived($gameStore.currentPlayer?.position.z ?? 0)
+  let playerHeading = $derived($gameStore.currentPlayer?.rotation ?? 0)
 
   // --- Camera state (world coordinates of view center) ---
   let camX = $state(0)
@@ -180,8 +183,7 @@
     const span = zoomSpan
     const cx = camX
     const cz = camZ
-    const px = playerX
-    const pz = playerZ
+    const houses = $houseMapFootprints
     const cw = containerW
     const ch = containerH
     const gen = ++renderGeneration
@@ -259,27 +261,16 @@
     Promise.all(promises).then(() => {
       if (gen !== renderGeneration) return
 
-      // Player marker (also rotated with the map)
-      const playerCanvasX = (px - viewLeft) * scale
-      const playerCanvasZ = (pz - viewTop) * scale
-
       ctx.save()
       ctx.translate(cw / 2, ch / 2)
       ctx.rotate(ROTATE_ANGLE)
       ctx.translate(-cw / 2, -ch / 2)
-      ctx.beginPath()
-      ctx.arc(playerCanvasX, playerCanvasZ, 6, 0, Math.PI * 2)
-      ctx.fillStyle = '#ff3333'
-      ctx.fill()
-      ctx.lineWidth = 2
-      ctx.strokeStyle = '#ffffff'
-      ctx.stroke()
-      ctx.shadowColor = 'rgba(255, 50, 50, 0.8)'
-      ctx.shadowBlur = 6
-      ctx.beginPath()
-      ctx.arc(playerCanvasX, playerCanvasZ, 6, 0, Math.PI * 2)
-      ctx.fillStyle = '#ff3333'
-      ctx.fill()
+      drawHouseMapFootprints(ctx, houses, {
+        centerX: cx,
+        viewLeft,
+        viewTop,
+        scale,
+      })
       ctx.restore()
     })
   })
@@ -364,13 +355,22 @@
     return out
   })
 
-  // --- Self marker pulse (HTML layer over the canvas dot) ---
-  let selfPulse = $derived.by<{ left: number; top: number } | null>(() => {
+  let selfMarker = $derived.by<{
+    left: number
+    top: number
+    angle: number
+  } | null>(() => {
     const cw = containerW
     const ch = containerH
     if (cw <= 0 || ch <= 0) return null
     const p = worldToScreen(playerX, playerZ, cw, ch)
-    return onScreen(p, cw, ch, 20) ? p : null
+    if (!onScreen(p, cw, ch, 20)) return null
+    return {
+      ...p,
+      angle:
+        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
+        ROTATE_ANGLE,
+    }
   })
 
   // --- Party member markers (HTML layer, same transform as the labels) ---
@@ -666,12 +666,6 @@
             <span class="text">{label.name}</span>
           </div>
         {/each}
-        {#if selfPulse}
-          <span
-            class="self-pulse"
-            style="left: {selfPulse.left}px; top: {selfPulse.top}px;"
-          ></span>
-        {/if}
         {#each partyMarkers as marker (marker.id)}
           <div
             class="party-marker"
@@ -683,6 +677,16 @@
             >
           </div>
         {/each}
+        {#if selfMarker}
+          <svg
+            class="self-marker"
+            style="left: {selfMarker.left}px; top: {selfMarker.top}px; transform: translate(-50%, -50%) rotate({selfMarker.angle}rad);"
+            viewBox="-7 -7 16 14"
+            aria-hidden="true"
+          >
+            <path d="M 8 0 L -6 6 L -3 0 L -6 -6 Z"></path>
+          </svg>
+        {/if}
       </div>
     </div>
   </div>
@@ -926,32 +930,20 @@
     box-shadow: 0 0 4px rgba(176, 80, 60, 0.7);
   }
 
-  /* Breathing ring over the canvas-drawn player dot: the one marker that
-     never moves shouldn't look dead. */
-  .self-pulse {
+  .self-marker {
     position: absolute;
-    width: 14px;
+    z-index: 3;
+    width: 16px;
     height: 14px;
-    margin: -7px 0 0 -7px;
-    border-radius: 50%;
-    border: 2px solid rgba(255, 80, 80, 0.9);
-    animation: self-pulse 2s ease-out infinite;
+    overflow: visible;
+    filter: drop-shadow(0 0 3px rgba(255, 50, 50, 0.8));
   }
 
-  /* The identical 70%/100% stops hold the ring invisible between pulses. */
-  @keyframes self-pulse {
-    0% {
-      transform: scale(0.6);
-      opacity: 0.9;
-    }
-    70% {
-      transform: scale(2.4);
-      opacity: 0;
-    }
-    100% {
-      transform: scale(2.4);
-      opacity: 0;
-    }
+  .self-marker path {
+    fill: #ff3333;
+    stroke: #fff;
+    stroke-width: 1.5;
+    stroke-linejoin: round;
   }
 
   .party-marker {

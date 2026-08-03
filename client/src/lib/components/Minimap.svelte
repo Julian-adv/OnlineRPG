@@ -2,11 +2,20 @@
   import { gameStore } from '../stores/gameStore'
   import { worldMapVisible } from '../stores/debugStore'
   import { minimapVersion } from '../stores/editorStore'
-  import { currentDungeonDepth } from '../stores/dungeonStore'
+  import {
+    currentDungeonDepth,
+    discoveredDungeonIds,
+  } from '../stores/dungeonStore'
   import { playerVisualFloorLevel } from '../stores/housingStore'
+  import { houseMapFootprints } from '../stores/housingMapStore'
+  import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
   import { RegionImageCache } from '../terrain/regionImageCache'
   import { REGION_CELLS, TILE_DIM } from '../terrain/terrain-constants'
   import { wrapWorldX } from '../terrain/world-wrap'
+  import {
+    drawDungeonEntranceMarkers,
+    drawHouseMapFootprints,
+  } from '../utils/map-structures'
 
   /** Canvas size in CSS pixels. */
   const SIZE = 180
@@ -53,6 +62,8 @@
     const pz = qz * REDRAW_STEP_M
     const heading = qr * REDRAW_STEP_RAD
     const ver = $minimapVersion
+    const houses = $houseMapFootprints
+    const knownDungeons = $discoveredDungeonIds
     const gen = ++renderGeneration
 
     const dpr = window.devicePixelRatio || 1
@@ -105,6 +116,23 @@
 
     Promise.all(promises).then(() => {
       if (gen !== renderGeneration) return
+
+      const transform = {
+        centerX: px,
+        viewLeft,
+        viewTop,
+        scale,
+      }
+      rotated(() => {
+        drawHouseMapFootprints(ctx, houses, transform)
+        drawDungeonEntranceMarkers(
+          ctx,
+          DUNGEON_ENTRANCES.filter((entrance) =>
+            knownDungeons.has(entrance.id)
+          ),
+          transform
+        )
+      })
 
       // Self: centered heading arrow. rotation = atan2(dx, dz), so the facing
       // vector in (x, z) is (sin r, cos r); the rotated transform handles the

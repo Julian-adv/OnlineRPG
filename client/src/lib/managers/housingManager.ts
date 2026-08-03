@@ -6,6 +6,7 @@ import {
 import type { HouseData } from '../types/housing'
 import type { WallDirection } from '../utils/house-geometry'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
+import { setHouseMapFootprints } from '../stores/housingMapStore'
 import {
   ALL_WALL_DIRS,
   buildPassability,
@@ -256,7 +257,7 @@ export class HousingManager {
     if (wall[segmentIndex].variant === 'door') {
       passability_update_door(houseId, room, wallDir, segmentIndex, isOpen)
     }
-    this.notifyChanged()
+    this.notifyChanged(false)
   }
 
   /** Find the nearest door segment within maxDist of (x, z). */
@@ -471,8 +472,9 @@ export class HousingManager {
     }
   }
 
-  private notifyChanged() {
+  private notifyChanged(updateMap = true) {
     const all = this.getAllHouses()
+    if (updateMap) setHouseMapFootprints(all)
     for (const cb of this.housesChangedListeners) cb(all)
   }
 }
