@@ -271,11 +271,11 @@ NPC가 *누구인지*는 git 추적되는 게임 데이터가 단일 진실 소�
   - `src/driver/prompt.rs` — `format_event`의 서버 이벤트 표현 문구, "What do you do?" 등 프롬프트 골격
   - 분리 위치는 기존 `data/templates/` 아래가 자연스럽다 (예: `data/templates/sections/`, `data/templates/events/`). 페르소나 튜닝이 코드 빌드 없이 텍스트 편집만으로 가능해지는 것이 목표. 단, 원격 watcher가 템플릿 변경에도 재시작하므로 핫리로드까지는 불필요.
 
-## Fishing
+## 낚시
 
-Agents fish through the same protocol as humans (`doc/FISHING.md`). The
-client handles the reflexes (auto-hook on a bite, `auto_stance` fight play)
-in `src/state.rs`; the LLM only decides to start or stop:
+Agent는 인간과 동일한 프로토콜로 낚시한다(`doc/FISHING.md`). 반사 동작(입질
+시 자동 후킹, `auto_stance` 파이팅)은 클라이언트가 `src/state.rs`에서
+처리하고, LLM은 시작과 중단만 결정한다:
 
 ```json
 {"type": "fish", "x": 10.0, "z": -5.0}
@@ -283,6 +283,6 @@ in `src/state.rs`; the LLM only decides to start or stop:
 {"type": "stop_fishing"}
 ```
 
-A fishing rod must be worn in the main hand (`{"type": "use", "item":
-"fishing_rod"}`). Outcomes arrive as `[Fishing]` events; refusals (no rod,
-not water, too far) as `[FishingError]`.
+낚싯대를 메인 핸드에 장착해야 한다(`{"type": "use", "item":
+"fishing_rod"}`). 결과는 `[Fishing]` 이벤트로 도착하고, 거부(낚싯대 없음,
+물이 아님, 너무 멂)는 `[FishingError]`로 도착한다.
