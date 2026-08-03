@@ -93,7 +93,7 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 }
 
 mod chat;
-pub(crate) use chat::parse_notice_command;
+pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
 mod deals;
 pub(crate) mod fishing;
@@ -254,6 +254,10 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// Lowercased character name → (canonical name, mute expiry). Keyed by
+    /// name, not session, so a relog does not clear it; in-memory only, so a
+    /// restart does. Expired entries are pruned on each admin command.
+    muted_until: Arc<RwLock<HashMap<String, (String, Instant)>>>,
     /// (character_id, dungeon entrance id) → world clock seconds at that
     /// character's last chest open. Keyed by character (not the per-session
     /// player id) and DB-backed, so the refill gate survives a reconnect and
@@ -364,6 +368,7 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),

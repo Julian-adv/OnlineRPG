@@ -2,7 +2,6 @@ use crate::types::{PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
     PartyMember, PartyMemberPosition, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
 };
-use onlinerpg_shared::world::Position;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tracing::info;
@@ -15,13 +14,6 @@ const MAX_TARGET_NAME_CHARS: usize = 32;
 
 /// Outstanding invites one player may have pending at once (spam brake).
 const PARTY_PENDING_INVITE_CAP: usize = 5;
-
-/// Arrival ring radius (m) around a summon's caster; golden-angle spacing
-/// keeps simultaneous arrivals apart.
-const SUMMON_RING_RADIUS: f32 = 1.6;
-
-/// Golden angle in radians, spreading arrival spots around the ring.
-const GOLDEN_ANGLE_RAD: f32 = 2.399_963;
 
 pub(crate) struct Party {
     pub leader: PlayerId,
@@ -564,38 +556,7 @@ impl super::GameState {
         }
         // No explicit remove: the teleport's void_summons_aimed_at hook
         // clears every summons aimed at the mover, this entry included.
-        // Golden-angle ring: a per-member arrival spot without a placement
-        // scan, so simultaneous accepts don't stack. A blocked spot (dungeon
-        // walls run 1m from a corridor's center) retries at half radius and
-        // finally lands on the caster's own — walkable — cell.
-        let angle = (member_id.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
-        let arrival = {
-            let cache = self.passability_read();
-            let cell_floor = super::passability::authoritative_floor(&cache, &center);
-            let mut arrival = center;
-            for radius in [SUMMON_RING_RADIUS, SUMMON_RING_RADIUS * 0.5] {
-                let candidate = Position {
-                    x: center.x + angle.cos() * radius,
-                    y: center.y,
-                    z: center.z + angle.sin() * radius,
-                };
-                if super::passability::wrapped_block_info(
-                    &cache,
-                    center.x,
-                    center.z,
-                    candidate.x,
-                    candidate.z,
-                    cell_floor,
-                    center.y,
-                )
-                .is_none()
-                {
-                    arrival = candidate;
-                    break;
-                }
-            }
-            arrival
-        };
+        let arrival = self.arrival_beside(member_id, &center);
         info!(member = %member_name, caster = %caster_name, "party summon accepted");
         self.teleport_player(member_id, arrival, rotation, floor)
             .await;

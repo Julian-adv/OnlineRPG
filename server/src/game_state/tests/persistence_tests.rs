@@ -143,7 +143,9 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
     assert_eq!(auth.load_inventory(char_id).unwrap().len(), 1);
 
     // A replacement login kicks A by (unique) character name.
-    game_state.kick_player_by_name(&record.name, &auth).await;
+    game_state
+        .kick_player_by_name(&record.name, "test", &auth)
+        .await;
 
     // The kick flushed A's post-drop inventory and detached it, so a
     // replacement load reads zero swords (no dupe) instead of a stale one.

@@ -15,6 +15,13 @@ const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
 
+/// Arrival ring radius (m) around a teleport's center (`arrival_beside`);
+/// golden-angle spacing keeps simultaneous arrivals apart.
+const ARRIVAL_RING_RADIUS: f32 = 1.6;
+
+/// Golden angle in radians, spreading arrival spots around the ring.
+const GOLDEN_ANGLE_RAD: f32 = 2.399_963;
+
 /// Keep the shared housing limit representable on the signed wire.
 const _: () = assert!(MAX_FLOOR_LEVEL <= i8::MAX as u8);
 
@@ -329,7 +336,12 @@ impl super::GameState {
             .unwrap_or_else(|| player_id.to_string())
     }
 
-    pub async fn kick_player_by_name(&self, name: &str, auth: &AuthService) -> Option<PlayerId> {
+    pub async fn kick_player_by_name(
+        &self,
+        name: &str,
+        reason: &str,
+        auth: &AuthService,
+    ) -> Option<PlayerId> {
         let old_player_id = self.player_id_by_name(name).await;
 
         if let Some(ref player_id) = old_player_id {
@@ -345,7 +357,7 @@ impl super::GameState {
                 player_id,
                 ServerMessage::Kicked {
                     player_id: *player_id,
-                    reason: "Another session logged in with the same account".to_string(),
+                    reason: reason.to_string(),
                 },
             )
             .await;
@@ -1159,6 +1171,38 @@ impl super::GameState {
         };
         self.finish_position_update(player_id, position, current_floor, moved_player, update_msg)
             .await;
+    }
+
+    /// A walkable spot on a small ring beside `center` for a teleport
+    /// arrival, golden-angle-seeded by the mover's id so simultaneous
+    /// arrivals don't stack. A blocked spot (dungeon walls run 1m from a
+    /// corridor's center) retries at half radius and finally lands on
+    /// `center` itself — a walkable cell by construction.
+    pub(crate) fn arrival_beside(&self, mover: &PlayerId, center: &Position) -> Position {
+        let angle = (mover.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
+        let cache = self.passability_read();
+        let cell_floor = super::passability::authoritative_floor(&cache, center);
+        for radius in [ARRIVAL_RING_RADIUS, ARRIVAL_RING_RADIUS * 0.5] {
+            let candidate = Position {
+                x: center.x + angle.cos() * radius,
+                y: center.y,
+                z: center.z + angle.sin() * radius,
+            };
+            if super::passability::wrapped_block_info(
+                &cache,
+                center.x,
+                center.z,
+                candidate.x,
+                candidate.z,
+                cell_floor,
+                center.y,
+            )
+            .is_none()
+            {
+                return candidate;
+            }
+        }
+        *center
     }
 
     pub async fn teleport_player(

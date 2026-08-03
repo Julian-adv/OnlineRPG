@@ -231,6 +231,8 @@ The server handles systemd's `SIGTERM` gracefully: it shows connected players a 
 
 Admin characters can use `/notice <message>` to raise the same banner by hand (this is the live in-game banner, not the login-screen announcements served from `data/announcements/`). `/notice` with no message clears it; players who enter while one is active receive it on join.
 
+Admins also have moderation and movement commands: `/kick <name>` disconnects a player, `/mute <name> [minutes]` silences their chat and whispers (default 10 minutes, survives a relog, cleared by `/unmute <name>` or a server restart), `/summon <name>` teleports them to your side, and `/goto <name>` teleports you to theirs.
+
 Over SSH, detach it from the session so a dropped connection cannot kill the build midway:
 
 ```bash

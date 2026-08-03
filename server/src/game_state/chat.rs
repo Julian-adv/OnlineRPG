@@ -2,11 +2,16 @@ use super::auth_db;
 use crate::auth::AuthService;
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
+use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
 /// Upper bound on one character's `/block` list, so the per-recipient chat
 /// filter and the DB rows stay bounded at 5,000 concurrent users.
 const MAX_BLOCKS: usize = 100;
+
+/// `/mute` duration (minutes): default when unstated, and the cap (one day).
+const MUTE_DEFAULT_MINUTES: u64 = 10;
+const MUTE_MAX_MINUTES: u64 = 1440;
 
 /// `/who` breakdown. Splits by client program rather than by "human vs bot":
 /// the server cannot tell whether a person or an LLM is driving a web client,
@@ -102,6 +107,42 @@ pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
     Some((!rest.is_empty()).then_some(rest))
 }
 
+/// Operator commands (doc/TODO.md 운영자 커맨드). `requires_admin` gates them
+/// through this same parser, so the syntax is defined once. Parts return
+/// unvalidated, like the whisper parser: a malformed command draws a usage
+/// reply instead of leaking into local chat.
+#[derive(Debug, PartialEq)]
+pub(crate) enum AdminCommand<'a> {
+    Kick(&'a str),
+    Mute {
+        name: &'a str,
+        minutes: Option<&'a str>,
+    },
+    Unmute(&'a str),
+    Summon(&'a str),
+    Goto(&'a str),
+}
+
+pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
+    if let Some(rest) = strip_command(message, "/kick") {
+        return Some(AdminCommand::Kick(rest));
+    }
+    if let Some(rest) = strip_command(message, "/unmute") {
+        return Some(AdminCommand::Unmute(rest));
+    }
+    if let Some(rest) = strip_command(message, "/mute") {
+        let (name, minutes) = match rest.split_once(' ') {
+            Some((name, minutes)) => (name, Some(minutes.trim())),
+            None => (rest, None),
+        };
+        return Some(AdminCommand::Mute { name, minutes });
+    }
+    if let Some(rest) = strip_command(message, "/summon") {
+        return Some(AdminCommand::Summon(rest));
+    }
+    strip_command(message, "/goto").map(AdminCommand::Goto)
+}
+
 /// Case-insensitive lookup of a player-typed name. Names are unique ignoring
 /// ASCII case (the characters table enforces it), so the first match is the
 /// match. Used by `/unblock` against the stored block list; online-player
@@ -129,6 +170,11 @@ impl super::GameState {
                 "server notice updated"
             );
             self.set_server_notice(notice.map(str::to_string)).await;
+            return;
+        }
+
+        if let Some(command) = parse_admin_command(&message) {
+            self.handle_admin_command(player_id, command, auth).await;
             return;
         }
 
@@ -187,6 +233,14 @@ impl super::GameState {
         };
 
         if let Some(player_name) = player_name {
+            if let Some(minutes) = self.muted_minutes_left(&player_name).await {
+                self.send_system_message(
+                    player_id,
+                    format!("Muted: you cannot chat for another {minutes}m."),
+                )
+                .await;
+                return;
+            }
             // Chat content stays out of logs on purpose (privacy, F-012).
             info!(from = %player_name, len = message.len(), "chat message");
             let mut recipients = self
@@ -240,6 +294,14 @@ impl super::GameState {
             warn!("Whisper from non-existent player: {}", player_id);
             return;
         };
+        if let Some(minutes) = self.muted_minutes_left(&from).await {
+            self.send_system_message(
+                player_id,
+                format!("Muted: you cannot whisper for another {minutes}m."),
+            )
+            .await;
+            return;
+        }
         let (target_id, to) = match target {
             Ok(target) => target,
             Err(message) => {
@@ -413,6 +475,170 @@ impl super::GameState {
             }
         }
         format!("Unblock: {stored} is no longer blocked.")
+    }
+
+    /// Remaining mute minutes for a character name (rounded up, so a mute
+    /// never reads "0m" while still active), pruning the entry on expiry.
+    async fn muted_minutes_left(&self, name: &str) -> Option<u64> {
+        let key = name.to_ascii_lowercase();
+        {
+            let muted = self.muted_until.read().await;
+            let (_, until) = muted.get(&key)?;
+            if let Some(left) = until.checked_duration_since(Instant::now()) {
+                return Some(left.as_secs().div_ceil(60).max(1));
+            }
+        }
+        self.muted_until.write().await.remove(&key);
+        None
+    }
+
+    async fn handle_admin_command(
+        &self,
+        admin_id: &PlayerId,
+        command: AdminCommand<'_>,
+        auth: &AuthService,
+    ) {
+        let reply = match command {
+            AdminCommand::Kick(name) => self.kick_command(admin_id, name, auth).await,
+            AdminCommand::Mute { name, minutes } => {
+                self.mute_command(admin_id, name, minutes).await
+            }
+            AdminCommand::Unmute(name) => self.unmute_command(name).await,
+            AdminCommand::Summon(name) => self.summon_command(admin_id, name).await,
+            AdminCommand::Goto(name) => self.goto_command(admin_id, name).await,
+        };
+        self.send_system_message(admin_id, reply).await;
+    }
+
+    async fn kick_command(&self, admin_id: &PlayerId, name: &str, auth: &AuthService) -> String {
+        if name.is_empty() {
+            return "Kick: /kick <name>".to_string();
+        }
+        let Some(target_id) = self.player_id_by_name(name).await else {
+            return format!("Kick: no one called {name} is here.");
+        };
+        if target_id == *admin_id {
+            return "Kick: that's you.".to_string();
+        }
+        let canonical = self.player_name_of(&target_id).await;
+        info!(admin = ?admin_id, target = %canonical, "admin kick");
+        self.kick_player_by_name(&canonical, "Removed by an operator", auth)
+            .await;
+        format!("Kick: {canonical} was disconnected.")
+    }
+
+    async fn mute_command(
+        &self,
+        admin_id: &PlayerId,
+        name: &str,
+        raw_minutes: Option<&str>,
+    ) -> String {
+        if name.is_empty() {
+            return "Mute: /mute <name> [minutes]".to_string();
+        }
+        let minutes = match raw_minutes {
+            None => MUTE_DEFAULT_MINUTES,
+            Some(raw) => match raw.parse() {
+                Ok(m) if (1..=MUTE_MAX_MINUTES).contains(&m) => m,
+                _ => return format!("Mute: minutes must be 1–{MUTE_MAX_MINUTES}."),
+            },
+        };
+        // Online-only: the roster carries the canonical spelling, and a mute
+        // on someone absent has nothing to bite on anyway.
+        let Some(target_id) = self.player_id_by_name(name).await else {
+            return format!("Mute: no one called {name} is here.");
+        };
+        if target_id == *admin_id {
+            return "Mute: that's you.".to_string();
+        }
+        let canonical = self.player_name_of(&target_id).await;
+        let until = Instant::now() + Duration::from_secs(minutes * 60);
+        {
+            let mut muted = self.muted_until.write().await;
+            let now = Instant::now();
+            muted.retain(|_, (_, expiry)| *expiry > now);
+            muted.insert(canonical.to_ascii_lowercase(), (canonical.clone(), until));
+        }
+        info!(admin = ?admin_id, target = %canonical, minutes, "admin mute");
+        self.send_system_message(&target_id, format!("You are muted for {minutes}m."))
+            .await;
+        format!("Mute: {canonical} cannot chat for {minutes}m. /unmute {canonical} undoes this.")
+    }
+
+    async fn unmute_command(&self, name: &str) -> String {
+        if name.is_empty() {
+            return "Unmute: /unmute <name>".to_string();
+        }
+        let mut muted = self.muted_until.write().await;
+        let now = Instant::now();
+        muted.retain(|_, (_, expiry)| *expiry > now);
+        match muted.remove(&name.to_ascii_lowercase()) {
+            Some((canonical, _)) => format!("Unmute: {canonical} can chat again."),
+            None => format!("Unmute: {name} is not muted."),
+        }
+    }
+
+    async fn summon_command(&self, admin_id: &PlayerId, name: &str) -> String {
+        if name.is_empty() {
+            return "Summon: /summon <name>".to_string();
+        }
+        let Some(target_id) = self.player_id_by_name(name).await else {
+            return format!("Summon: no one called {name} is here.");
+        };
+        if target_id == *admin_id {
+            return "Summon: that's you.".to_string();
+        }
+        let admin = {
+            let players = self.players.read().await;
+            players
+                .get(admin_id)
+                .map(|p| (p.position, p.rotation, p.floor_level, p.name.clone()))
+        };
+        let Some((center, rotation, floor, admin_name)) = admin else {
+            warn!("/summon from non-existent player: {admin_id}");
+            return "Summon: server error, try again.".to_string();
+        };
+        let canonical = self.player_name_of(&target_id).await;
+        // Queued waypoints target the place the player was summoned from;
+        // snapping to one after the teleport would drag them straight back.
+        self.movement_intents.write().await.remove(&target_id);
+        let arrival = self.arrival_beside(&target_id, &center);
+        self.teleport_player(&target_id, arrival, rotation, floor)
+            .await;
+        info!(admin = ?admin_id, target = %canonical, "admin summon");
+        self.send_system_message(
+            &target_id,
+            format!("An operator summoned you to {admin_name}'s side."),
+        )
+        .await;
+        format!("Summon: {canonical} is at your side.")
+    }
+
+    async fn goto_command(&self, admin_id: &PlayerId, name: &str) -> String {
+        if name.is_empty() {
+            return "Goto: /goto <name>".to_string();
+        }
+        let Some(target_id) = self.player_id_by_name(name).await else {
+            return format!("Goto: no one called {name} is here.");
+        };
+        if target_id == *admin_id {
+            return "Goto: that's you.".to_string();
+        }
+        let target = {
+            let players = self.players.read().await;
+            players
+                .get(&target_id)
+                .map(|p| (p.position, p.rotation, p.floor_level, p.name.clone()))
+        };
+        let Some((center, rotation, floor, canonical)) = target else {
+            return format!("Goto: no one called {name} is here.");
+        };
+        self.movement_intents.write().await.remove(admin_id);
+        let arrival = self.arrival_beside(admin_id, &center);
+        self.teleport_player(admin_id, arrival, rotation, floor)
+            .await;
+        info!(admin = ?admin_id, target = %canonical, "admin goto");
+        format!("Goto: you are at {canonical}'s side.")
     }
 
     /// Last resort for a player wedged somewhere movement can't undo: return

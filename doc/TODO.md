@@ -94,10 +94,10 @@
 - [x] 차단 (`/block <이름>`, `/unblock <이름>`, `/block`으로 목록)
 - 운영자 커맨드
   - ban
-  - kick
-  - summon
-  - goto
-  - mute
+  - [x] kick
+  - [x] summon
+  - [x] goto
+  - [x] mute
 - party, guild 기능
 - [x] 키보드로 움직이면 다른 플레이어에게는 움찔거리며 움직이는 것으로 보인다
 - [x] 디버그창 일반인에게는 안 보이게
