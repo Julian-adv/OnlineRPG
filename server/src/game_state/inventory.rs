@@ -1,8 +1,11 @@
+use std::collections::HashMap;
+
 use crate::auth::{AuthService, ItemRow};
 use crate::item_defs::UseEffect;
 use crate::types::{PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
+use onlinerpg_shared::messages::BagLineItem;
 use rand::Rng;
 use tracing::{info, warn};
 
@@ -996,6 +999,109 @@ impl super::GameState {
         // Dropping the equipped rod is as much "putting it away" as
         // unequipping it — same mid-session abort.
         self.abort_fishing_if_rod_lost(player_id).await;
+    }
+
+    /// Drop multiple bag stacks (partial quantities allowed) in one
+    /// all-or-nothing transaction: every line is validated against the bag
+    /// before anything is removed. Bag-only — unlike `drop_item`, there is no
+    /// equipped-slot fallback, since batch selection only ever offers bag
+    /// items. `GroundItem` has no quantity field, so each unit lands as its
+    /// own scattered ground item rather than one N-quantity entity.
+    pub async fn drop_items(&self, player_id: &PlayerId, items: Vec<BagLineItem>) {
+        if items.is_empty() {
+            return;
+        }
+        let (player_position, rotation, floor_level) = {
+            let players = self.players.read().await;
+            match players.get(player_id) {
+                Some(p) => (p.position, p.rotation, p.floor_level),
+                None => return,
+            }
+        };
+
+        struct Plan {
+            instance_id: u64,
+            qty: u32,
+            item_def_id: String,
+            enchant: i32,
+        }
+
+        let mut reserved: HashMap<u64, u32> = HashMap::new();
+        let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
+
+        let snapshot = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+
+            for req in &items {
+                if req.qty == 0 {
+                    continue;
+                }
+                let Some(item) = inv.bag.iter().find(|i| i.instance_id == req.instance_id) else {
+                    drop(inventories);
+                    self.send_system_message(player_id, "Item not found").await;
+                    return;
+                };
+                let already = *reserved.get(&req.instance_id).unwrap_or(&0);
+                if already + req.qty > item.quantity {
+                    drop(inventories);
+                    self.send_system_message(player_id, "Not enough of that item")
+                        .await;
+                    return;
+                }
+                reserved.insert(req.instance_id, already + req.qty);
+                plans.push(Plan {
+                    instance_id: req.instance_id,
+                    qty: req.qty,
+                    item_def_id: item.item_def_id.clone(),
+                    enchant: item.enchant,
+                });
+            }
+            if plans.is_empty() {
+                drop(inventories);
+                return;
+            }
+
+            // Every line is now guaranteed to apply cleanly — mutate.
+            for plan in &plans {
+                let idx = inv
+                    .bag
+                    .iter()
+                    .position(|i| i.instance_id == plan.instance_id)
+                    .expect("checked above");
+                if inv.bag[idx].quantity > plan.qty {
+                    inv.bag[idx].quantity -= plan.qty;
+                } else {
+                    inv.bag.remove(idx);
+                }
+            }
+            inv.clone()
+        };
+
+        self.mark_inventory_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, snapshot).await;
+
+        let total_units: u32 = plans.iter().map(|p| p.qty).sum();
+        let mut next_ground_id = self.reserve_instance_ids(total_units as u64).await;
+        for plan in &plans {
+            for _ in 0..plan.qty {
+                let preferred = drop_landing_position(player_position, rotation);
+                let position = self
+                    .loot_drop_position(player_position, floor_level, preferred)
+                    .await;
+                self.spawn_ground_item(GroundItem {
+                    instance_id: next_ground_id,
+                    item_def_id: plan.item_def_id.clone(),
+                    position,
+                    floor_level,
+                    enchant: plan.enchant,
+                })
+                .await;
+                next_ground_id += 1;
+            }
+        }
     }
 
     pub async fn debug_drop_item(&self, player_id: &PlayerId, item_def_id: &str) {
