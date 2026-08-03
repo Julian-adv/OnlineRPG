@@ -60,7 +60,7 @@ fn last_hunger_update(msgs: &[ServerMessage]) -> Option<(u32, HungerState, u64)>
 
 /// The tuning anchor: one full meal per game day. The Well-Fed band must
 /// cover a day's decay, and a day's decay must be at least 90% of the band —
-/// eat once a day (jerky-sized) and you stay fed, skip it and you go hungry.
+/// eat one loaf a day and you stay fed, skip it and you go hungry.
 #[test]
 fn one_meal_per_game_day_keeps_you_fed_and_no_more() {
     let day_secs = super::super::time::REAL_DAY_DURATION_SECONDS as u64;
@@ -74,26 +74,26 @@ fn one_meal_per_game_day_keeps_you_fed_and_no_more() {
         decay_per_day * 10 >= band_width * 9,
         "a day's decay ({decay_per_day}) must nearly drain the band ({band_width}) or one meal a day stops mattering"
     );
-    // The day's meal exists in the catalog: jerky covers a full day.
+    // The day's meal exists in the catalog: bread covers a full day.
     let defs = ItemDefs::load();
-    let jerky = defs.get("jerky").expect("jerky is in items.csv");
-    assert!(u64::from(jerky.nutrition.unwrap()) >= decay_per_day);
+    let bread = defs.get("bread").expect("bread is in items.csv");
+    assert!(u64::from(bread.nutrition.unwrap()) >= decay_per_day);
 }
 
 #[tokio::test]
 async fn eating_feeds_and_consumes_the_food() {
     let game_state = make_test_game_state("eat_feeds");
-    let (id, mut rx) = make_eater(&game_state, "eater", 500).await;
+    let (id, mut rx) = make_eater(&game_state, "eater", 200).await;
     put_in_bag(&game_state, &id, 1, "bread").await;
     drain(&mut rx);
 
     game_state.use_item(&id, 1).await;
 
-    assert_eq!(game_state.hunger_satiation(&id).await, Some(680));
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(740));
     assert!(bag_ids(&game_state, &id).await.is_empty(), "bread is eaten");
     let msgs = drain(&mut rx);
     let (satiation, state, poisoned) = last_hunger_update(&msgs).expect("HungerUpdate sent");
-    assert_eq!((satiation, state, poisoned), (680, HungerState::WellFed, 0));
+    assert_eq!((satiation, state, poisoned), (740, HungerState::WellFed, 0));
 }
 
 #[tokio::test]
@@ -104,7 +104,7 @@ async fn a_normal_range_meal_never_overshoots_into_stuffed() {
 
     game_state.use_item(&id, 1).await;
 
-    // 700 + 540 clamps to the soft cap, not into the Stuffed band.
+    // 700 + 300 clamps to the soft cap, not into the Stuffed band.
     assert_eq!(game_state.hunger_satiation(&id).await, Some(850));
 }
 
@@ -114,7 +114,7 @@ async fn deliberate_overeating_reaches_stuffed_and_the_cap_refuses() {
     let (id, mut rx) = make_eater(&game_state, "glutton", 820).await;
     put_in_bag(&game_state, &id, 1, "jerky").await;
     game_state.use_item(&id, 1).await;
-    // 820 is above the 800 threshold: the full 540 lands, capped at 1000.
+    // 820 is above the 800 threshold: the full 300 lands, capped at 1000.
     assert_eq!(game_state.hunger_satiation(&id).await, Some(SATIATION_MAX));
     let msgs = drain(&mut rx);
     assert_eq!(last_hunger_update(&msgs).unwrap().1, HungerState::Stuffed);
