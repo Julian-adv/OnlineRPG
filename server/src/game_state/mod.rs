@@ -210,6 +210,10 @@ pub struct GameState {
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
     /// Players whose inventory has changed since the last periodic save.
     dirty_inventories: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Players who relocated (or whose party reshaped) since the last
+    /// party-position push; the tick maps them to parties, so entries from
+    /// partyless players just drop out there.
+    party_position_dirty: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
     /// Serializes account replacement and character deletion with game entry.
@@ -362,6 +366,7 @@ impl GameState {
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
+            party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
             character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),

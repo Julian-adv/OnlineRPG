@@ -53,7 +53,7 @@ import {
 } from '../stores/tradeStore'
 import {
   partyRoster,
-  partyPositions,
+  applyPartyPositions,
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
@@ -512,14 +512,11 @@ export function handleServerMessage(
     }
 
     case 'PartyPositions':
-      // A poll answer can cross a disband on the wire; without a roster it
-      // could only repopulate the store that disband just cleared.
-      if (get(partyRoster)) {
-        partyPositions.set({
-          at: Date.now(),
-          members: data.members as PartyMemberPositionEntry[],
-        })
-      }
+      applyPartyPositions(
+        data.members as PartyMemberPositionEntry[],
+        get(gameStore).currentPlayer?.id,
+        get(partyRoster) !== null
+      )
       break
 
     case 'GameState':

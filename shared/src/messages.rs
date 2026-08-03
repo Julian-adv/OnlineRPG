@@ -377,8 +377,9 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
-    /// Ask where the sender's party members are (world-map markers). Poll,
-    /// not push: positions flow only while someone is looking at a map.
+    /// Ask where the sender's party members are right now (map open). A
+    /// one-shot snapshot: steady-state updates are pushed by the server's
+    /// party-position tick whenever a member relocates.
     RequestPartyPositions,
     /// Cast the equipped fishing rod at a water point. The server validates
     /// rod, range, floor and water (water-field depth at the point) and
@@ -566,9 +567,11 @@ pub enum ServerMessage {
         leader_id: PlayerId,
         members: Vec<PartyMember>,
     },
-    /// Direct answer to `RequestPartyPositions`: the other members' locations
-    /// with no AOI cut — the point is members beyond it. Empty when the
-    /// sender is not in a party.
+    /// Party member locations with no AOI cut — the point is members beyond
+    /// it. Pushed to the whole party when a member relocates, and sent
+    /// directly as the answer to `RequestPartyPositions`. Includes the
+    /// recipient (one payload serves every member; clients filter
+    /// themselves); empty when the requester is not in a party.
     PartyPositions {
         members: Vec<PartyMemberPosition>,
     },

@@ -167,8 +167,9 @@ struct ConnectionState {
     env_reported: bool,
 }
 
-/// Positions polls inside this window are dropped; the web map polls every
-/// 3s, leaving a 1s margin so its own cadence never races the clamp.
+/// Positions snapshot requests inside this window are dropped. Steady-state
+/// data rides the push tick; a client only asks on map open, so this is
+/// purely a spam brake.
 const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 
 impl ConnectionState {
