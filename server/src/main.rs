@@ -393,6 +393,19 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Push party positions to members whose party relocated since the last
+    // tick; 3s matches the freshness of the world map's former poll.
+    let game_state_for_party_positions = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "party positions",
+        Duration::from_secs(3),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_party_positions);
+            async move { game_state.tick_party_positions().await }
+        },
+    ));
+
     // Every 10s, top up each player's ambient monsters toward their caps.
     let game_state_for_spawns = Arc::clone(&game_state);
     background.spawn(run_ticks(

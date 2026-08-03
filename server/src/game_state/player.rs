@@ -1213,6 +1213,13 @@ impl super::GameState {
         self.move_player_spatial_cell(player_id, &old_position, &new_position)
             .await;
         self.mark_dirty(player_id).await;
+        // Rotation-only moves are exempt: markers draw x/z and floor.
+        if old_position.x != new_position.x
+            || old_position.z != new_position.z
+            || old_floor != floor_level
+        {
+            self.mark_party_position_dirty(player_id).await;
+        }
         if old_position != new_position {
             self.check_dungeon_discovery(player_id, &new_position).await;
         }

@@ -630,7 +630,7 @@ class NetworkManager {
     this.sendMessage('PartyLeave')
   }
 
-  /** Poll party member positions for the world map. */
+  /** One-shot party-position snapshot for a just-opened map. */
   sendRequestPartyPositions() {
     this.sendMessage('RequestPartyPositions')
   }
