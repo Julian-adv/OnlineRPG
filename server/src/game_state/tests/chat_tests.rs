@@ -118,6 +118,60 @@ fn whisper_command_parses_name_and_message() {
     assert_eq!(parse_whisper_command("hello /w Rica"), None);
 }
 
+#[test]
+fn reply_command_parses_message() {
+    use super::chat::parse_reply_command;
+
+    assert_eq!(parse_reply_command("/r hello there"), Some("hello there"));
+    assert_eq!(parse_reply_command("/reply  hi "), Some("hi"));
+    assert_eq!(parse_reply_command("/r"), Some(""));
+    assert_eq!(parse_reply_command("/regrow"), None);
+    assert_eq!(parse_reply_command("hello /r there"), None);
+}
+
+#[tokio::test]
+async fn reply_targets_the_last_whisper_partner() {
+    let game_state = make_test_game_state("whisper_reply");
+    let auth = make_test_auth("whisper_reply");
+    let sender_id = pid("sender");
+    let target_id = pid("Rica");
+    game_state.add_player(make_player("sender", 0.0, 0.0)).await;
+    game_state.add_player(make_player("Rica", 500.0, 0.0)).await;
+
+    let mut sender_rx = game_state.register_direct_channel(&sender_id).await;
+    let mut target_rx = game_state.register_direct_channel(&target_id).await;
+
+    // Nothing to reply to before the first whisper.
+    game_state
+        .send_chat_message(&sender_id, "/r hi".to_string(), &auth)
+        .await;
+    match sender_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert_eq!(message, "Reply: no one to reply to yet.")
+        }
+        other => panic!("Expected a no-partner reply, got {:?}", other),
+    }
+
+    game_state
+        .send_chat_message(&sender_id, "/w rica psst".to_string(), &auth)
+        .await;
+    while sender_rx.try_recv().is_ok() {}
+    while target_rx.try_recv().is_ok() {}
+
+    // Receiving a whisper arms the recipient's /r too.
+    game_state
+        .send_chat_message(&target_id, "/r back at you".to_string(), &auth)
+        .await;
+    match sender_rx.try_recv() {
+        Ok(ServerMessage::WhisperMessage { from, to, message }) => {
+            assert_eq!(from, "Rica");
+            assert_eq!(to, "sender");
+            assert_eq!(message, "back at you");
+        }
+        other => panic!("Expected a reply whisper, got {:?}", other),
+    }
+}
+
 #[tokio::test]
 async fn whisper_reaches_only_the_target_regardless_of_distance() {
     let game_state = make_test_game_state("whisper_delivery");

@@ -54,6 +54,8 @@ const COMMANDS: Record<string, Command> = {
   '/escape': { desc: 'Return to the starting point when you get stuck' },
   '/w': { desc: 'Send a private message: /w <player> <message>' },
   '/whisper': { desc: 'Send a private message: /whisper <player> <message>' },
+  '/r': { desc: 'Reply to the last whisper: /r <message>' },
+  '/reply': { desc: 'Reply to the last whisper: /reply <message>' },
   '/block': { desc: 'Block whispers from a player: /block <player>' },
   '/unblock': { desc: 'Unblock a player: /unblock <player>' },
   '/party': { desc: 'Invite a player to your party: /party <player>' },

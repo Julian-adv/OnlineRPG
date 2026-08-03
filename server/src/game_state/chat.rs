@@ -73,6 +73,13 @@ pub(crate) fn parse_whisper_command(message: &str) -> Option<(&str, &str)> {
     })
 }
 
+/// `/r <message>` (or `/reply`) whispers back to the last whisper partner.
+pub(crate) fn parse_reply_command(message: &str) -> Option<&str> {
+    ["/reply", "/r"]
+        .iter()
+        .find_map(|prefix| strip_command(message, prefix))
+}
+
 /// `/block <name>` mutes a character, `/unblock <name>` undoes it, bare
 /// `/block` lists.
 #[derive(Debug, PartialEq)]
@@ -223,6 +230,11 @@ impl super::GameState {
             return;
         }
 
+        if let Some(reply) = parse_reply_command(&message) {
+            self.send_reply(player_id, reply).await;
+            return;
+        }
+
         if let Some(target) = parse_party_command(&message) {
             match target {
                 Some(name) => self.invite_to_party(player_id, name).await,
@@ -320,6 +332,14 @@ impl super::GameState {
                 .get(&target_id)
                 .is_some_and(|names| names.contains(&from))
         };
+        {
+            let mut partners = self.whisper_partners.write().await;
+            partners.insert(*player_id, to.clone());
+            // A blocked sender must not become the recipient's `/r` target.
+            if !suppressed {
+                partners.insert(target_id, from.clone());
+            }
+        }
         let whisper = ServerMessage::WhisperMessage {
             from,
             to,
@@ -331,6 +351,29 @@ impl super::GameState {
             self.send_direct_message(&target_id, whisper.clone()).await;
         }
         self.send_direct_message(player_id, whisper).await;
+    }
+
+    /// `/r <message>` — whisper the last partner. The target is remembered by
+    /// name, so it survives their relog and fails the same way a stale `/w`
+    /// would if they left.
+    async fn send_reply(&self, player_id: &PlayerId, message: &str) {
+        if message.is_empty() {
+            self.send_system_message(player_id, "Reply: /r <message>")
+                .await;
+            return;
+        }
+        let partner = self.whisper_partners.read().await.get(player_id).cloned();
+        match partner {
+            Some(target_name) => self.send_whisper(player_id, &target_name, message).await,
+            None => {
+                self.send_system_message(player_id, "Reply: no one to reply to yet.")
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn forget_whisper_partner(&self, player_id: &PlayerId) {
+        self.whisper_partners.write().await.remove(player_id);
     }
 
     /// Install a character's persisted `/block` list for this session. Empty
