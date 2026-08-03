@@ -1001,6 +1001,7 @@ impl SharedState {
             // Noise: high-frequency, irrelevant, or housing updates
             ServerMessage::PlayerMoved { .. }
             | ServerMessage::MonsterMoved { .. }
+            | ServerMessage::PartyPositions { .. }
             | ServerMessage::GameTimeSync { .. }
             | ServerMessage::HouseSpawned { .. }
             | ServerMessage::HousesInArea { .. }
@@ -1531,6 +1532,7 @@ impl SharedState {
             // A pure state flag; it changes movement gating but is not an LLM
             // event in its own right.
             ServerMessage::TradeBusy { .. } => return urgency,
+            ServerMessage::PartyPositions { .. } => return urgency,
             // In-flight fishing beats: the reflex layer above already
             // answered them; the LLM only needs the FishingEnded outcome.
             ServerMessage::FishingCasted { .. }
@@ -2834,5 +2836,16 @@ pub(crate) mod tests {
         assert!(s.events.is_empty(), "spectator ending must not buffer");
         s.push_event(ended(1));
         assert_eq!(s.events.len(), 1, "own ending must reach the prompt");
+    }
+
+    #[test]
+    fn party_positions_do_not_wake_the_llm() {
+        let (mut s, _rx) = test_state();
+        let positions = ServerMessage::PartyPositions {
+            members: Vec::new(),
+        };
+        assert_eq!(s.classify_event(&positions), EventUrgency::Noise);
+        s.push_event(positions);
+        assert!(s.events.is_empty());
     }
 }
