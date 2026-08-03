@@ -150,7 +150,17 @@ Agents and humans connect to the same world, act under the same rules, and inter
 
 > **Proxy Rule:** Vite dev server proxies `/ws` → `ws://localhost:10006` and `/api` (all REST endpoints) → `http://localhost:10007` automatically (see `client/vite.config.ts`).
 
-### 3. Running the Server
+### 3. Generating Terrain Data
+
+World terrain (heightmaps, splatmaps, minimaps, water fields) is baked locally — it is not in git or the asset dataset. Generate the canonical world once before the first run (~5 minutes, see [doc/TERRAIN_GENERATION.md](doc/TERRAIN_GENERATION.md)):
+
+```bash
+cargo run -p terrain-gen --release -- bake --seed 42
+```
+
+Without this step the server's terrain API returns 404s and the world renders black.
+
+### 4. Running the Server
 
 This project is organized as a **Cargo Workspace**. The shared Rust crate (`shared/`) is used by the server, the client via WASM, and the agent client. Source game data lives in `data-src/` and is converted to generated JSON in `data/` during the Cargo build. To rebuild the server only when the server crate (`server/`), the shared crate, or source data changes, run the watch command from the **root directory**.
 
@@ -164,7 +174,7 @@ WebSocket and terrain API proxying is handled by Vite's dev server proxy (see `c
 
 **Google sign-in**: browser login uses Google OAuth. Pass the same Web client ID
 to the server (`GOOGLE_CLIENT_ID` env / `--google-client-id`) and the client
-(`VITE_GOOGLE_CLIENT_ID`, see step 4). Without it the server runs but rejects
+(`VITE_GOOGLE_CLIENT_ID`, see step 5). Without it the server runs but rejects
 browser logins. The NPC/bot token is auto-generated at `data/npc_token` on first
 run; override with `NPC_AUTH_TOKEN` / `--npc-token` (min 16 chars).
 
@@ -175,7 +185,7 @@ ID as `GOOGLE_CLI_CLIENT_ID` / `--google-cli-client-id`; the server accepts
 tokens from either client. See [doc/REMOTE_AGENT_CLIENT.md](doc/REMOTE_AGENT_CLIENT.md).
 
 
-### 4. Running the Client
+### 5. Running the Client
 
 Binary assets (3D models, music, sounds) are hosted on Hugging Face, not in git.
 Fetch them once from the repo root (re-run after `assets.lock` changes):
@@ -191,7 +201,7 @@ npm install
 npm run dev -- --port 10004
 ```
 
-### 5. Running the Agent Client
+### 6. Running the Agent Client
 
 Edit `agent-client/data/config.toml` to set the correct port numbers, then run:
 
@@ -200,7 +210,7 @@ cd agent-client
 cargo watch -i "data/prompts/memory/" -x run
 ```
 
-### 6. Automatic WASM Rebuild on Shared Code Changes (Recommended)
+### 7. Automatic WASM Rebuild on Shared Code Changes (Recommended)
 To have Rust code changes in the `shared` library reflected in the browser immediately during client development, run the following command in a separate terminal:
 
 ```bash
@@ -208,7 +218,7 @@ To have Rust code changes in the `shared` library reflected in the browser immed
 cargo watch -w shared -s "npm run build:wasm --prefix client"
 ```
 
-### 7. Running the GLB Editor
+### 8. Running the GLB Editor
 
 ```bash
 cd tools/glb-editor
