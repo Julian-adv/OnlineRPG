@@ -15,6 +15,13 @@ const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
 
+/// Arrival ring radius (m) around a teleport's center (`arrival_beside`);
+/// golden-angle spacing keeps simultaneous arrivals apart.
+const ARRIVAL_RING_RADIUS: f32 = 1.6;
+
+/// Golden angle in radians, spreading arrival spots around the ring.
+const GOLDEN_ANGLE_RAD: f32 = 2.399_963;
+
 /// Keep the shared housing limit representable on the signed wire.
 const _: () = assert!(MAX_FLOOR_LEVEL <= i8::MAX as u8);
 
@@ -442,12 +449,45 @@ impl super::GameState {
             .unwrap_or_else(|| player_id.to_string())
     }
 
+    /// Pose snapshot (position, rotation, floor, name) in one lock read.
+    pub(crate) async fn player_pose(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<(Position, f32, i8, String)> {
+        let players = self.players.read().await;
+        players
+            .get(player_id)
+            .map(|p| (p.position, p.rotation, p.floor_level, p.name.clone()))
+    }
+
     async fn cleanup_player_session(&self, player_id: &PlayerId, auth: &AuthService) {
         self.cancel_concentration_if_active(player_id).await;
         self.persist_and_detach_player(player_id, auth).await;
         self.unregister_connection_channel(player_id).await;
         self.unregister_player_character(player_id).await;
         self.remove_player(player_id).await;
+    }
+
+    /// Force-disconnect an online player (admin `/kick`). Ends the account
+    /// session the way a replacement login would: the `kick_tx` message makes
+    /// the connection loop close the socket, and removing the session first
+    /// keeps the disconnect path from cleaning up a second time.
+    pub(crate) async fn kick_player(&self, player_id: &PlayerId, reason: &str, auth: &AuthService) {
+        let _sessions = self.character_session_lock.lock().await;
+        let session = {
+            let mut sessions = self.account_sessions.write().await;
+            let key = sessions.iter().find_map(|(key, session)| {
+                (session.player_id == Some(*player_id)).then(|| key.clone())
+            });
+            key.and_then(|key| sessions.remove(&key))
+        };
+        if let Some(session) = session {
+            let _ = session.kick_tx.send(ServerMessage::Kicked {
+                player_id: *player_id,
+                reason: reason.to_string(),
+            });
+        }
+        self.cleanup_player_session(player_id, auth).await;
     }
 
     /// Synchronously write a player's character row and inventory to the DB,
@@ -1173,6 +1213,13 @@ impl super::GameState {
         self.move_player_spatial_cell(player_id, &old_position, &new_position)
             .await;
         self.mark_dirty(player_id).await;
+        // Rotation-only moves are exempt: markers draw x/z and floor.
+        if old_position.x != new_position.x
+            || old_position.z != new_position.z
+            || old_floor != floor_level
+        {
+            self.mark_party_position_dirty(player_id).await;
+        }
         if old_position != new_position {
             self.check_dungeon_discovery(player_id, &new_position).await;
         }
@@ -1254,6 +1301,38 @@ impl super::GameState {
         };
         self.finish_position_update(player_id, position, current_floor, moved_player, update_msg)
             .await;
+    }
+
+    /// A walkable spot on a small ring beside `center` for a teleport
+    /// arrival, golden-angle-seeded by the mover's id so simultaneous
+    /// arrivals don't stack. A blocked spot (dungeon walls run 1m from a
+    /// corridor's center) retries at half radius and finally lands on
+    /// `center` itself — a walkable cell by construction.
+    pub(crate) fn arrival_beside(&self, mover: &PlayerId, center: &Position) -> Position {
+        let angle = (mover.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
+        let cache = self.passability_read();
+        let cell_floor = super::passability::authoritative_floor(&cache, center);
+        for radius in [ARRIVAL_RING_RADIUS, ARRIVAL_RING_RADIUS * 0.5] {
+            let candidate = Position {
+                x: center.x + angle.cos() * radius,
+                y: center.y,
+                z: center.z + angle.sin() * radius,
+            };
+            if super::passability::wrapped_block_info(
+                &cache,
+                center.x,
+                center.z,
+                candidate.x,
+                candidate.z,
+                cell_floor,
+                center.y,
+            )
+            .is_none()
+            {
+                return candidate;
+            }
+        }
+        *center
     }
 
     pub async fn teleport_player(

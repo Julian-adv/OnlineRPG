@@ -93,7 +93,7 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 }
 
 mod chat;
-pub(crate) use chat::parse_notice_command;
+pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
 mod deals;
 pub(crate) mod fishing;
@@ -210,6 +210,10 @@ pub struct GameState {
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
     /// Players whose inventory has changed since the last periodic save.
     dirty_inventories: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Players who relocated (or whose party reshaped) since the last
+    /// party-position push; the tick maps them to parties, so entries from
+    /// partyless players just drop out there.
+    party_position_dirty: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
     /// Serializes account replacement and character deletion with game entry.
@@ -265,6 +269,10 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// Lowercased character name → (canonical name, mute expiry). Keyed by
+    /// name, not session, so a relog does not clear it; in-memory only, so a
+    /// restart does. Expired entries are pruned on mute/unmute and on lookup.
+    muted_until: Arc<RwLock<HashMap<String, (String, Instant)>>>,
     /// (character_id, dungeon entrance id) → world clock seconds at that
     /// character's last chest open. Keyed by character (not the per-session
     /// player id) and DB-backed, so the refill gate survives a reconnect and
@@ -358,6 +366,7 @@ impl GameState {
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
+            party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
             character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),
@@ -379,6 +388,7 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),

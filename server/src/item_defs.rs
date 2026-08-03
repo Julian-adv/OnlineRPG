@@ -477,6 +477,11 @@ mod tests {
         }
         let defs = ItemDefs::load();
         let table = defs.catch_table();
+        let sell_rate = crate::merchant_defs::merchant_defs()
+            .get_by_npc_name("Rica")
+            .expect("Rica has a merchant definition")
+            .sell_rate_percent as f64
+            / 100.0;
         let ev_at = |level: u32| -> f64 {
             let weights = crate::game_state::fishing::effective_weights(table, level);
             let total: f64 = weights.iter().map(|w| *w as f64).sum();
@@ -489,8 +494,8 @@ mod tests {
                         // Coins arrive at face value.
                         def.dice.as_deref().map_or(0.0, dice_avg)
                     } else {
-                        // Items sell at the merchant rate (Rica: 40%).
-                        def.base_price.unwrap_or(0) as f64 * 0.4
+                        // Items sell at Rica's merchant rate.
+                        def.base_price.unwrap_or(0) as f64 * sell_rate
                     };
                     *weight as f64 * value
                 })

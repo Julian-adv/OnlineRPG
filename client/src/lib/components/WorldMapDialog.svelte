@@ -9,13 +9,6 @@
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 8
 
-  // Party member marker poll cadence; above the server's 2s clamp.
-  const PARTY_POLL_MS = 3000
-
-  // A poll answer can outlive the dialog that requested it (nothing polls
-  // while the map is closed); older data than this never renders.
-  const PARTY_POSITIONS_MAX_AGE_MS = 10000
-
   // --- Shared place-name labels (generated from data-src/map_labels.csv,
   // plus the player's discovered dungeon entrances) ---
   type LabelKind =
@@ -69,11 +62,7 @@
 
 <script lang="ts">
   import { gameStore, isAdminUser } from '../stores/gameStore'
-  import {
-    partyRoster,
-    partyPositions,
-    resetPartyPositions,
-  } from '../stores/partyStore'
+  import { partyRoster, partyPositions } from '../stores/partyStore'
   import { worldMapVisible, teleportLoading } from '../stores/debugStore'
   import { discoveredDungeonIds } from '../stores/dungeonStore'
   import { houseMapFootprints } from '../stores/housingMapStore'
@@ -134,32 +123,15 @@
     }
   })
 
-  // Party existence only: roster churn must not reset the poll cadence (the
-  // immediate re-poll would just be eaten by the server's clamp).
+  // Party existence only: roster churn must not re-request (a membership
+  // change already triggers a server push).
   let inParty = $derived($partyRoster !== null)
 
-  // Poll party positions only while the dialog lives (it mounts with
-  // worldMapVisible) and a party exists — closed map means a silent channel.
+  // One snapshot when the dialog opens with a party, or a party forms while
+  // it is open; steady-state updates are pushed by the server.
   $effect(() => {
     if (!inParty) return
     networkManager.sendRequestPartyPositions()
-    const timer = setInterval(
-      () => networkManager.sendRequestPartyPositions(),
-      PARTY_POLL_MS
-    )
-    return () => clearInterval(timer)
-  })
-
-  // The render-time age gate only runs when something recomputes; this makes
-  // expiry certain on an untouched map (same pattern as PartyInviteToast).
-  $effect(() => {
-    const at = $partyPositions.at
-    if (at === 0) return
-    const timer = setTimeout(
-      resetPartyPositions,
-      Math.max(0, at + PARTY_POSITIONS_MAX_AGE_MS - Date.now())
-    )
-    return () => clearTimeout(timer)
   })
 
   // --- Drag state ---
@@ -388,13 +360,12 @@
     const cw = containerW
     const ch = containerH
     if (!roster || cw <= 0 || ch <= 0) return []
-    if (Date.now() - positions.at > PARTY_POSITIONS_MAX_AGE_MS) return []
 
-    // Join against the roster: a member who left since the last poll (or an
+    // Join against the roster: a member who left since the last push (or an
     // id the roster never knew) must not draw a ghost.
     const names = new Map(roster.members.map((m) => [m.id, m.name]))
     const out: PartyMarker[] = []
-    for (const pos of positions.members) {
+    for (const pos of positions) {
       const name = names.get(pos.id)
       if (!name) continue
       const p = worldToScreen(pos.x, pos.z, cw, ch)

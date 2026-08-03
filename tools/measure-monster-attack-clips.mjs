@@ -58,20 +58,21 @@ const isGlb = (p) => {
   return buf.readUInt32LE(0) === 0x46546c67
 }
 
-// A checkout without LFS content (CI does a plain checkout to stay off the
-// LFS bandwidth quota) has pointer text files instead of GLBs — keep the
-// committed clips rather than measure garbage, mirroring how
-// measure-furniture-footprints.mjs handles missing tool deps.
-const models = [...new Set(monsters.map(modelPath))].filter(existsSync)
-if (!models.every(isGlb)) {
+// Any model we can't measure means an incomplete result, so bail rather than
+// clobber the committed clips: a checkout without LFS content (CI does a plain
+// checkout to stay off the LFS bandwidth quota) has pointer text files instead
+// of GLBs, and one that never ran fetch-assets.sh has no monster models at all.
+// Mirrors how measure-furniture-footprints.mjs handles missing tool deps.
+const models = [...new Set(monsters.map(modelPath))]
+if (!models.every((p) => existsSync(p) && isGlb(p))) {
   if (existsSync(OUT_PATH)) {
     console.warn(
-      'models are git-lfs pointers, not GLBs — keeping committed attack clips'
+      'monster models missing or git-lfs pointers — keeping committed attack clips'
     )
     process.exit(0)
   }
   console.error(
-    'models are git-lfs pointers and no committed data/monster_attack_clips.json to fall back on'
+    'monster models missing or git-lfs pointers, and no committed data/monster_attack_clips.json to fall back on'
   )
   process.exit(1)
 }

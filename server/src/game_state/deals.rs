@@ -445,6 +445,27 @@ impl super::GameState {
         self.deal_ledgers.write().await.last_accepted_offer.clear();
     }
 
+    #[cfg(test)]
+    pub(crate) async fn deal_ledger_state_for_test(
+        &self,
+        merchant_name: &str,
+        player_name: &str,
+    ) -> (i64, i64, Option<u64>) {
+        let ledgers = self.deal_ledgers.read().await;
+        (
+            ledgers.npc_granted.get(merchant_name).copied().unwrap_or(0),
+            ledgers
+                .player_received
+                .get(player_name)
+                .copied()
+                .unwrap_or(0),
+            ledgers
+                .last_accepted_offer
+                .get(&(merchant_name.to_string(), player_name.to_string()))
+                .copied(),
+        )
+    }
+
     /// The player's live deals with one merchant, for `ShopState`.
     pub(crate) async fn active_deals_for(
         &self,
