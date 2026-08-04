@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatInputKeyIntent } from './chat-input-keys'
+import { chatInputKeyIntent, shouldFocusChatOnEnter } from './chat-input-keys'
 
 function key(
   key: string,
@@ -43,5 +43,36 @@ describe('chatInputKeyIntent', () => {
   it('ignores other keys', () => {
     expect(chatInputKeyIntent(key('a', { keyCode: 65 }))).toBe('none')
     expect(chatInputKeyIntent(key('Escape', { keyCode: 27 }))).toBe('none')
+  })
+})
+
+describe('shouldFocusChatOnEnter', () => {
+  it('focuses chat on a plain Enter', () => {
+    expect(shouldFocusChatOnEnter(key('Enter', { keyCode: 13 }), false)).toBe(
+      true
+    )
+  })
+
+  it('keeps Enter for the channel menu while it is open', () => {
+    // Cancelling the keydown would suppress the focused menu item's
+    // activation and strand the open menu on screen.
+    expect(shouldFocusChatOnEnter(key('Enter', { keyCode: 13 }), true)).toBe(
+      false
+    )
+  })
+
+  it('ignores Enter during IME composition', () => {
+    expect(
+      shouldFocusChatOnEnter(key('Enter', { isComposing: true }), false)
+    ).toBe(false)
+    expect(shouldFocusChatOnEnter(key('Enter', { keyCode: 229 }), false)).toBe(
+      false
+    )
+  })
+
+  it('ignores other keys', () => {
+    expect(shouldFocusChatOnEnter(key('Escape', { keyCode: 27 }), false)).toBe(
+      false
+    )
   })
 })

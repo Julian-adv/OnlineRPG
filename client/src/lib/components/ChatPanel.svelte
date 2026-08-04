@@ -3,10 +3,18 @@
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { gameStore } from '../stores/gameStore'
   import { partyRoster } from '../stores/partyStore'
-  import { chatChannel, shouldRevertToSay } from '../stores/chatChannelStore'
+  import {
+    chatChannel,
+    shouldRevertToSay,
+    type ChatChannel,
+  } from '../stores/chatChannelStore'
   import { networkManager } from '../network/socket'
   import { handleCommand, visibleCommandNames } from '../chat-commands'
-  import { chatInputKeyIntent } from '../chat-input-keys'
+  import {
+    chatInputKeyIntent,
+    shouldFocusChatOnEnter,
+  } from '../chat-input-keys'
+  import { mountOverlay } from '../stores/overlayStack'
   import { chatFocusRequest } from '../stores/npcMenuStore'
   import {
     translationEnabled,
@@ -18,12 +26,12 @@
     isTranslatorApiSupported,
   } from '../translation/chatTranslator'
 
-  type Tab = 'say' | 'party' | 'combat'
+  type Tab = 'all' | 'party' | 'combat'
   const TRANSCRIPT_FADE_DELAY_MS = 20_000
 
-  let activeTab = $state<Tab>('say')
+  let activeTab = $state<Tab>('all')
   let chatMessages = $derived($gameStore.chatMessages)
-  // The Chat tab shows everything; this tab isolates the party channel plus
+  // The All tab shows everything; this tab isolates the party channel plus
   // the party/summon system lines (join, leave, disband, calls).
   let partyMessages = $derived(
     $gameStore.chatMessages.filter(
@@ -46,8 +54,19 @@
     }
   })
 
-  function toggleChannel() {
-    chatChannel.set($chatChannel === 'party' ? 'say' : 'party')
+  let channelMenuOpen = $state(false)
+
+  // Escape is arbitrated through the overlay stack (FPSCounter's handler):
+  // with the menu registered, one press closes it and leaves the inventory,
+  // fishing session, etc. untouched.
+  $effect(() => {
+    if (!channelMenuOpen) return
+    return mountOverlay('chatChannelMenu', () => (channelMenuOpen = false))
+  })
+
+  function selectChannel(channel: ChatChannel) {
+    chatChannel.set(channel)
+    channelMenuOpen = false
   }
 
   // Translated text per message id, for the active target language only —
@@ -140,7 +159,7 @@
   // and coalesce bursts: a run of combat messages costs one flush, not one each.
   $effect(() => {
     const len =
-      activeTab === 'say'
+      activeTab === 'all'
         ? chatMessages.length
         : activeTab === 'party'
           ? partyMessages.length
@@ -236,14 +255,25 @@
   }
 
   // Typed lines are invisible on the Combat tab, so focusing the input hops
-  // off it; Chat and Party both show them and keep their place.
+  // off it; All and Party both show them and keep their place.
   function leaveCombatTab() {
-    if (activeTab === 'combat') activeTab = 'say'
+    if (activeTab === 'combat') activeTab = 'all'
   }
 
   function handleGlobalKeydown(event: KeyboardEvent) {
     if (event.isComposing || event.keyCode === 229) return
-    if (event.key === 'Enter' && document.activeElement !== chatInput) {
+    // While typing, Escape is invisible to the overlay-stack handler
+    // (it skips input targets), so close the menu here; no double-close.
+    if (event.key === 'Escape') {
+      if (channelMenuOpen && document.activeElement === chatInput) {
+        channelMenuOpen = false
+      }
+      return
+    }
+    if (
+      shouldFocusChatOnEnter(event, channelMenuOpen) &&
+      document.activeElement !== chatInput
+    ) {
       event.preventDefault()
       leaveCombatTab()
       chatInput?.focus()
@@ -277,7 +307,10 @@
   })
 </script>
 
-<svelte:window onkeydown={handleGlobalKeydown} />
+<svelte:window
+  onkeydown={handleGlobalKeydown}
+  onclick={() => (channelMenuOpen = false)}
+/>
 
 <!-- Hover only pauses the fade; keyboard users get the same pause via input focus. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -290,13 +323,13 @@
   <div class="tabs">
     <button
       class="tab"
-      class:active={activeTab === 'say'}
-      onclick={() => (activeTab = 'say')}
+      class:active={activeTab === 'all'}
+      onclick={() => (activeTab = 'all')}
     >
-      Chat
+      All
     </button>
     <button
-      class="tab tab-party"
+      class="tab"
       class:active={activeTab === 'party'}
       onclick={() => (activeTab = 'party')}
     >
@@ -351,7 +384,7 @@
     {/snippet}
 
     <div class="chat-messages" bind:this={chatContainer} role="log">
-      {#if activeTab === 'say'}
+      {#if activeTab === 'all'}
         {#each chatMessages as entry (entry.id)}
           {@render chatRow(entry)}
         {/each}
@@ -382,17 +415,45 @@
   </div>
 
   <div class="chat-input" class:disconnected={!isConnected}>
-    <button
-      class="channel-btn"
-      class:party={$chatChannel === 'party'}
-      disabled={!inParty}
-      onclick={toggleChannel}
-      title={inParty
-        ? 'Switch between party and normal chat (/p and /s)'
-        : 'Join a party to use party chat'}
-    >
-      {$chatChannel === 'party' ? 'Party' : 'Say'}
-    </button>
+    <div class="channel-wrap">
+      {#if channelMenuOpen}
+        <div class="channel-menu" role="menu">
+          <button
+            class="channel-item"
+            role="menuitemradio"
+            aria-checked={$chatChannel === 'say'}
+            onclick={() => selectChannel('say')}
+          >
+            Say
+            {#if $chatChannel === 'say'}<span class="check">✓</span>{/if}
+          </button>
+          <button
+            class="channel-item"
+            role="menuitemradio"
+            aria-checked={$chatChannel === 'party'}
+            disabled={!inParty}
+            title={inParty ? undefined : 'Join a party to use party chat'}
+            onclick={() => selectChannel('party')}
+          >
+            Party
+            {#if $chatChannel === 'party'}<span class="check">✓</span>{/if}
+          </button>
+        </div>
+      {/if}
+      <button
+        class="channel-btn"
+        aria-haspopup="menu"
+        aria-expanded={channelMenuOpen}
+        title="Choose where your messages go (/p and /s)"
+        onclick={(e) => {
+          e.stopPropagation()
+          channelMenuOpen = !channelMenuOpen
+        }}
+      >
+        {$chatChannel === 'party' ? 'Party' : 'Say'}
+        <span class="caret" aria-hidden="true">▴</span>
+      </button>
+    </div>
     <div class="input-wrap">
       {#if commandGhost}
         <div class="input-ghost" aria-hidden="true">
@@ -614,8 +675,13 @@
     background: #742a2a;
   }
 
-  /* The channel toggle doubles as the mode light: grey says local, party
-     blue says the next line goes to the party. */
+  .channel-wrap {
+    position: relative;
+    display: flex;
+    flex: none;
+  }
+
+  /* Same neutral look on both channels; the label alone names the target. */
   .channel-btn {
     margin: 2px 0 2px 2px;
     padding: 8px 10px;
@@ -627,23 +693,63 @@
     font-weight: 600;
     cursor: pointer;
     flex: none;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
+    transition: color 0.15s;
   }
 
-  .channel-btn.party {
-    background: #2b6cb0;
-    color: #e6f2ff;
-  }
-
-  .channel-btn:hover:not(:disabled) {
+  .channel-btn:hover {
     color: #ffffff;
   }
 
-  .channel-btn:disabled {
+  .caret {
+    margin-left: 3px;
+    font-size: 8px;
+    opacity: 0.7;
+  }
+
+  .channel-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 2px;
+    z-index: 5;
+    min-width: 96px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #1a202c;
+    border: 1px solid #4a5568;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+
+  .channel-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #cbd5e0;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .channel-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+  }
+
+  .channel-item:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .check {
+    color: #4299e1;
+    font-weight: 700;
   }
 
   .input-wrap {
@@ -810,6 +916,11 @@
       margin: 2px 0 2px 2px;
       padding: 4px 6px;
       font-size: 10px;
+    }
+
+    .channel-item {
+      padding: 4px 8px;
+      font-size: 11px;
     }
 
     .translate-lang-select {
