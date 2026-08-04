@@ -553,6 +553,26 @@ async fn finish_auth(
     account_name: String,
     is_official_npc: bool,
 ) -> Vec<ServerMessage> {
+    // The single gate both login paths pass through. A ban has to stop the
+    // session here rather than at character select: the account, not the
+    // character, is what carries it.
+    match auth_service.active_ban(&account_name) {
+        Ok(Some(ban)) => {
+            info!("Rejected banned account '{}'", account_name);
+            return vec![ServerMessage::AuthError {
+                message: ban.message(),
+            }];
+        }
+        Ok(None) => {}
+        Err(err) => {
+            // Fail closed: an unreadable ban table must not become a way in.
+            error!("Ban check failed for '{}': {}", account_name, err);
+            return vec![ServerMessage::AuthError {
+                message: "Could not verify the account. Try again shortly.".to_string(),
+            }];
+        }
+    }
+
     let character_records = match auth_service.list_characters(&account_name) {
         Ok(characters) => characters,
         Err(err) => {
@@ -1705,6 +1725,47 @@ mod tests {
         assert!(!token_matches("secret-token", "secret-tokeN"));
         assert!(!token_matches("secret", "secret-token"));
         assert!(!token_matches("", "secret-token"));
+    }
+
+    /// The gate both login paths share: a banned account must not reach the
+    /// character list, and lifting the ban must let it back in.
+    #[tokio::test]
+    async fn finish_auth_refuses_a_banned_account() {
+        let game_state = crate::game_state::tests::make_test_game_state("auth_ban_gate");
+        let auth = crate::game_state::tests::make_test_auth("auth_ban_gate");
+        let account = auth.login_npc("npc_ban_gate").unwrap();
+
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account.clone(), true).await;
+        assert!(
+            matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
+            "unbanned account authenticates: {ok:?}"
+        );
+
+        auth.ban_account(&account, Some("testing"), None).unwrap();
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let refused = finish_auth(&game_state, &auth, &mut state, account.clone(), true).await;
+        match refused.as_slice() {
+            [ServerMessage::AuthError { message }] => {
+                assert!(
+                    message.contains("testing"),
+                    "reason reaches the client: {message}"
+                )
+            }
+            other => panic!("expected an auth error, got {other:?}"),
+        }
+        assert!(
+            state.account_name.is_none(),
+            "a refused session must not be left holding the account"
+        );
+
+        auth.unban_account(&account).unwrap();
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account, true).await;
+        assert!(
+            matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
+            "lifting the ban restores access: {ok:?}"
+        );
     }
 
     #[test]

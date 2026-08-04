@@ -112,8 +112,10 @@ pub(crate) use skills::skills_from_rows;
 mod time;
 mod trading;
 
+// Visible crate-wide so tests outside this module (e.g. the login gate in
+// `connection`) can reuse the temp-DB and game-state factories.
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) const EVENT_DELIVERY_RADIUS: f32 = onlinerpg_shared::EVENT_DELIVERY_RADIUS;
 

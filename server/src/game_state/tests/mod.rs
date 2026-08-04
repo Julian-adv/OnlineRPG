@@ -254,12 +254,12 @@ fn make_game_state_with(
     )
 }
 
-fn make_test_game_state(test_name: &str) -> GameState {
+pub(crate) fn make_test_game_state(test_name: &str) -> GameState {
     make_game_state_with(test_name, SplitWorldTiles, SeaOnlyWater)
 }
 
 /// Temp-file AuthService for tests whose paths touch the auth DB.
-fn make_test_auth(test_name: &str) -> crate::auth::AuthService {
+pub(crate) fn make_test_auth(test_name: &str) -> crate::auth::AuthService {
     make_test_auth_with_path(test_name).0
 }
 

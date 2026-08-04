@@ -548,8 +548,28 @@ fn admin_command_parses_actions() {
         parse_admin_command("/goto Abuser"),
         Some(AdminCommand::Goto("Abuser"))
     );
+    assert_eq!(
+        parse_admin_command("/ban Abuser"),
+        Some(AdminCommand::Ban {
+            name: "Abuser",
+            minutes: None
+        })
+    );
+    assert_eq!(
+        parse_admin_command("/ban Abuser 60"),
+        Some(AdminCommand::Ban {
+            name: "Abuser",
+            minutes: Some("60")
+        })
+    );
+    // /unban must not be read as /ban: the shorter prefix is checked second.
+    assert_eq!(
+        parse_admin_command("/unban Abuser"),
+        Some(AdminCommand::Unban("Abuser"))
+    );
     // Whole-word rule: /kickstart is not /kick.
     assert_eq!(parse_admin_command("/kickstart party"), None);
+    assert_eq!(parse_admin_command("/banish Abuser"), None);
     assert_eq!(parse_admin_command("hello /kick Abuser"), None);
     // Unvalidated on purpose: a bare command parses (and is admin-gated),
     // then draws a usage reply instead of leaking into local chat.
