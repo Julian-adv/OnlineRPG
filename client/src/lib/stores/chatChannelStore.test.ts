@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { shouldRevertToSay } from './chatChannelStore'
+import {
+  shouldBlockNpcTalkForPartyDraft,
+  shouldRevertToSay,
+} from './chatChannelStore'
 
 describe('shouldRevertToSay', () => {
   it('reverts an empty draft when the party is gone', () => {
@@ -18,5 +21,18 @@ describe('shouldRevertToSay', () => {
   it('never reverts while the party is alive or already on say', () => {
     expect(shouldRevertToSay(true, 'party', '')).toBe(false)
     expect(shouldRevertToSay(false, 'say', '')).toBe(false)
+  })
+})
+
+describe('shouldBlockNpcTalkForPartyDraft', () => {
+  it('blocks retargeting a party draft to NPC talk', () => {
+    expect(
+      shouldBlockNpcTalkForPartyDraft('party', 'keep this in the party')
+    ).toBe(true)
+  })
+
+  it('allows NPC talk when no party draft would be exposed', () => {
+    expect(shouldBlockNpcTalkForPartyDraft('party', '   ')).toBe(false)
+    expect(shouldBlockNpcTalkForPartyDraft('say', 'hello')).toBe(false)
   })
 })

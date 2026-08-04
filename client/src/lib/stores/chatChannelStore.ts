@@ -17,3 +17,10 @@ export function shouldRevertToSay(
 ): boolean {
   return !inParty && channel === 'party' && draft.trim().length === 0
 }
+
+export function shouldBlockNpcTalkForPartyDraft(
+  channel: ChatChannel,
+  draft: string
+): boolean {
+  return channel === 'party' && draft.trim().length > 0
+}

@@ -1,5 +1,14 @@
 export type ChatKeyIntent = 'complete-command' | 'send' | 'none'
 
+/** What Tab cycles through for a half-typed command, ghost preview first. A
+ *  name that is already a command completes to nothing: `/p` and `/s` are
+ *  commands in their own right, not half-typed `/party` or `/shore_wave`. */
+export function commandCompletions(input: string, names: string[]): string[] {
+  if (!input.startsWith('/') || input.includes(' ')) return []
+  if (names.includes(input)) return []
+  return names.filter((name) => name.startsWith(input))
+}
+
 /** Enter anywhere outside the input focuses chat — but not while the channel
  *  menu is open: cancelling that keydown would swallow the focused menu
  *  item's activation and strand the menu on screen. */

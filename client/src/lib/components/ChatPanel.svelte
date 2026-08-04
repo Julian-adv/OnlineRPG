@@ -1,17 +1,20 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
-  import { gameStore } from '../stores/gameStore'
+  import { addChatMessage, gameStore } from '../stores/gameStore'
   import { partyRoster } from '../stores/partyStore'
   import {
     chatChannel,
+    shouldBlockNpcTalkForPartyDraft,
     shouldRevertToSay,
     type ChatChannel,
   } from '../stores/chatChannelStore'
   import { networkManager } from '../network/socket'
+  import { isPartyTabLine, unreadPartyCount } from '../chat-format'
   import { handleCommand, visibleCommandNames } from '../chat-commands'
   import {
     chatInputKeyIntent,
+    commandCompletions,
     shouldFocusChatOnEnter,
   } from '../chat-input-keys'
   import { mountOverlay } from '../stores/overlayStack'
@@ -31,19 +34,22 @@
 
   let activeTab = $state<Tab>('all')
   let chatMessages = $derived($gameStore.chatMessages)
-  // The All tab shows everything; this tab isolates the party channel plus
-  // the party/summon system lines (join, leave, disband, calls).
-  let partyMessages = $derived(
-    $gameStore.chatMessages.filter(
-      (e) =>
-        e.sender === 'party' ||
-        (e.sender === 'system' &&
-          (e.text.startsWith('Party:') || e.text.startsWith('Summon:')))
-    )
-  )
+  // The All tab shows everything; this tab isolates the party channel.
+  let partyMessages = $derived($gameStore.chatMessages.filter(isPartyTabLine))
   let combatMessages = $derived($gameStore.combatMessages)
   let isConnected = $derived($gameStore.isConnected)
   let inParty = $derived($partyRoster !== null)
+
+  // Only the Party tab counts as reading the channel. Seeded from the
+  // transcript in hand so a remount does not badge what was already read.
+  let seenChatId = $state($gameStore.chatMessages.at(-1)?.id ?? 0)
+  let partyUnread = $derived(
+    unreadPartyCount(chatMessages, seenChatId, $gameStore.currentPlayer?.name)
+  )
+
+  $effect(() => {
+    if (activeTab === 'party') seenChatId = chatMessages.at(-1)?.id ?? 0
+  })
 
   // Party chat is sticky (a /p holds until /s). Losing the party reverts
   // the input to say only once the draft is empty: silently retargeting a
@@ -215,32 +221,29 @@
     }
   }
 
+  let commandMatches = $derived(
+    commandCompletions(messageInput, visibleCommandNames())
+  )
   // Grey preview of what Tab would complete to.
-  let commandGhost = $derived.by(() => {
-    if (!messageInput.startsWith('/') || messageInput.includes(' ')) return ''
-    const match = visibleCommandNames().find(
-      (n) => n.startsWith(messageInput) && n !== messageInput
-    )
-    return match ? match.slice(messageInput.length) : ''
-  })
+  let commandGhost = $derived(
+    commandMatches[0]?.slice(messageInput.length) ?? ''
+  )
 
   let tabCycle: { matches: string[]; index: number } | null = null
 
   function completeCommand() {
-    if (!messageInput.startsWith('/') || messageInput.includes(' ')) return
+    // An active cycle wins: once Tab lands on a command, the next Tab moves on
+    // instead of reading that command as complete and stopping.
     if (tabCycle && tabCycle.matches[tabCycle.index] === messageInput) {
       tabCycle.index = (tabCycle.index + 1) % tabCycle.matches.length
       messageInput = tabCycle.matches[tabCycle.index]
       return
     }
-    const matches = visibleCommandNames().filter((n) =>
-      n.startsWith(messageInput)
-    )
+    // Snapshot: setting messageInput below recomputes commandMatches to [].
+    const matches = commandMatches
     if (matches.length === 0) return
-    // Skip an exact match so the first Tab lands on what the ghost previews.
-    const index = matches[0] === messageInput && matches.length > 1 ? 1 : 0
-    tabCycle = { matches, index }
-    messageInput = matches[index]
+    tabCycle = { matches, index: 0 }
+    messageInput = matches[0]
   }
 
   function handleKeyDown(event: KeyboardEvent) {
@@ -292,17 +295,26 @@
 
   let chatInput = $state<HTMLInputElement>()
 
-  // NPC "Talk" action (click or context menu) asks for input focus. The
-  // counter is consumed, not tested: a stale value must not steal focus on
-  // remount (world re-entry, map-editor toggle). The untrack matters too —
-  // leaveCombatTab reads activeTab, and tracking it here would rerun this
-  // effect on every tab click, bouncing the tab back.
+  function focusForLocalInput() {
+    activeTab = 'all'
+    channelMenuOpen = false
+    if (shouldBlockNpcTalkForPartyDraft($chatChannel, messageInput)) {
+      addChatMessage({
+        text: 'Talk: clear or send your party draft before talking.',
+        sender: 'system',
+      })
+    } else {
+      chatChannel.set('say')
+    }
+    chatInput?.focus()
+  }
+
+  // NPC "Talk" action (click or context menu) asks for local chat input.
   let seenFocusRequest = $chatFocusRequest
   $effect(() => {
     if ($chatFocusRequest > seenFocusRequest) {
       seenFocusRequest = $chatFocusRequest
-      untrack(() => leaveCombatTab())
-      chatInput?.focus()
+      untrack(focusForLocalInput)
     }
   })
 </script>
@@ -331,9 +343,13 @@
     <button
       class="tab"
       class:active={activeTab === 'party'}
+      aria-label={partyUnread > 0 ? `Party, ${partyUnread} unread` : undefined}
       onclick={() => (activeTab = 'party')}
     >
       Party
+      {#if partyUnread > 0}
+        <span class="tab-badge" aria-hidden="true">{partyUnread}</span>
+      {/if}
     </button>
     <button
       class="tab"
@@ -552,6 +568,20 @@
     color: #e2e8f0;
     background: rgba(255, 255, 255, 0.05);
     border-bottom: 2px solid #4299e1;
+  }
+
+  /* Party blue, matching the channel it counts. */
+  .tab-badge {
+    display: inline-block;
+    min-width: 14px;
+    margin-left: 4px;
+    padding: 0 4px;
+    border-radius: 7px;
+    background: #2b6cb0;
+    color: #e6f2ff;
+    font-size: 9px;
+    line-height: 14px;
+    font-weight: 700;
   }
 
   .chat-body {
@@ -873,6 +903,13 @@
     .tab {
       padding: 4px 0;
       font-size: 10px;
+    }
+
+    .tab-badge {
+      min-width: 12px;
+      padding: 0 3px;
+      font-size: 8px;
+      line-height: 12px;
     }
 
     .chat-messages {

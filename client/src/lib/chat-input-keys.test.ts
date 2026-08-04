@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { chatInputKeyIntent, shouldFocusChatOnEnter } from './chat-input-keys'
+import {
+  chatInputKeyIntent,
+  commandCompletions,
+  shouldFocusChatOnEnter,
+} from './chat-input-keys'
 
 function key(
   key: string,
@@ -74,5 +78,28 @@ describe('shouldFocusChatOnEnter', () => {
     expect(shouldFocusChatOnEnter(key('Escape', { keyCode: 27 }), false)).toBe(
       false
     )
+  })
+})
+
+describe('commandCompletions', () => {
+  // Sorted, like the real `commandNames`: an exact match sorts ahead of the
+  // longer names sharing its prefix, which is what made `/p` preview `/party`.
+  const NAMES = ['/p', '/party', '/pos', '/s', '/w', '/whisper', '/who']
+
+  it('lists the commands a half-typed one could become', () => {
+    expect(commandCompletions('/wh', NAMES)).toEqual(['/whisper', '/who'])
+    expect(commandCompletions('/pa', NAMES)).toEqual(['/party'])
+  })
+
+  it('completes nothing once the input is itself a command', () => {
+    expect(commandCompletions('/p', NAMES)).toEqual([])
+    expect(commandCompletions('/s', NAMES)).toEqual([])
+    expect(commandCompletions('/w', NAMES)).toEqual([])
+  })
+
+  it('leaves plain text and anything past the command word alone', () => {
+    expect(commandCompletions('hello', NAMES)).toEqual([])
+    expect(commandCompletions('/p meet me', NAMES)).toEqual([])
+    expect(commandCompletions('/zz', NAMES)).toEqual([])
   })
 })
