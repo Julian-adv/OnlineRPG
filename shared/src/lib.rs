@@ -46,7 +46,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v16: hunger (HungerUpdate) + campfires (Campfire* / Grill*) — doc/HUNGER.md.
 /// v17: PartyPositions pushed server-side on relocation (was a poll answer)
 ///      and now includes the recipient; clients filter themselves.
-pub const PROTOCOL_VERSION: u32 = 17;
+/// v18: party chat (PartyChat → PartyChatMessage).
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

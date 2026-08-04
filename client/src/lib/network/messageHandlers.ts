@@ -69,7 +69,7 @@ import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
-import { whisperChatEntry } from '../chat-format'
+import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
 import type {
@@ -449,6 +449,11 @@ export function handleServerMessage(
       addChatMessage(whisperChatEntry(data.from, data.to, data.message, own))
       break
     }
+
+    case 'PartyChatMessage':
+      // No chat bubble — the party channel is private to the party.
+      addChatMessage(partyChatEntry(data.from, data.message))
+      break
 
     case 'SystemMessage':
       addChatMessage({ text: data.message, sender: 'system' })

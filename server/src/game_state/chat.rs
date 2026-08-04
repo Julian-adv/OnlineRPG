@@ -557,9 +557,14 @@ impl super::GameState {
         None
     }
 
-    /// Muted-sender gate shared by chat and whisper; true when the message
-    /// was refused (the sender got a countdown reply).
-    async fn refuse_if_muted(&self, player_id: &PlayerId, name: &str, verb: &str) -> bool {
+    /// Muted-sender gate shared by chat, whisper and party chat; true when
+    /// the message was refused (the sender got a countdown reply).
+    pub(super) async fn refuse_if_muted(
+        &self,
+        player_id: &PlayerId,
+        name: &str,
+        verb: &str,
+    ) -> bool {
         let Some(minutes) = self.muted_minutes_left(name).await else {
             return false;
         };

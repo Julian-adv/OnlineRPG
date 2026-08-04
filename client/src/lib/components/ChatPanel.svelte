@@ -2,9 +2,19 @@
   import { untrack } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { gameStore } from '../stores/gameStore'
+  import { partyRoster } from '../stores/partyStore'
+  import {
+    chatChannel,
+    shouldRevertToSay,
+    type ChatChannel,
+  } from '../stores/chatChannelStore'
   import { networkManager } from '../network/socket'
   import { handleCommand, visibleCommandNames } from '../chat-commands'
-  import { chatInputKeyIntent } from '../chat-input-keys'
+  import {
+    chatInputKeyIntent,
+    shouldFocusChatOnEnter,
+  } from '../chat-input-keys'
+  import { mountOverlay } from '../stores/overlayStack'
   import { chatFocusRequest } from '../stores/npcMenuStore'
   import {
     translationEnabled,
@@ -16,13 +26,48 @@
     isTranslatorApiSupported,
   } from '../translation/chatTranslator'
 
-  type Tab = 'say' | 'combat'
+  type Tab = 'all' | 'party' | 'combat'
   const TRANSCRIPT_FADE_DELAY_MS = 20_000
 
-  let activeTab = $state<Tab>('say')
+  let activeTab = $state<Tab>('all')
   let chatMessages = $derived($gameStore.chatMessages)
+  // The All tab shows everything; this tab isolates the party channel plus
+  // the party/summon system lines (join, leave, disband, calls).
+  let partyMessages = $derived(
+    $gameStore.chatMessages.filter(
+      (e) =>
+        e.sender === 'party' ||
+        (e.sender === 'system' &&
+          (e.text.startsWith('Party:') || e.text.startsWith('Summon:')))
+    )
+  )
   let combatMessages = $derived($gameStore.combatMessages)
   let isConnected = $derived($gameStore.isConnected)
+  let inParty = $derived($partyRoster !== null)
+
+  // Party chat is sticky (a /p holds until /s). Losing the party reverts
+  // the input to say only once the draft is empty: silently retargeting a
+  // half-typed party line at public chat would leak it to everyone nearby.
+  $effect(() => {
+    if (shouldRevertToSay(inParty, $chatChannel, messageInput)) {
+      chatChannel.set('say')
+    }
+  })
+
+  let channelMenuOpen = $state(false)
+
+  // Escape is arbitrated through the overlay stack (FPSCounter's handler):
+  // with the menu registered, one press closes it and leaves the inventory,
+  // fishing session, etc. untouched.
+  $effect(() => {
+    if (!channelMenuOpen) return
+    return mountOverlay('chatChannelMenu', () => (channelMenuOpen = false))
+  })
+
+  function selectChannel(channel: ChatChannel) {
+    chatChannel.set(channel)
+    channelMenuOpen = false
+  }
 
   // Translated text per message id, for the active target language only —
   // cleared and retranslated from scratch whenever the target changes. Source
@@ -114,7 +159,11 @@
   // and coalesce bursts: a run of combat messages costs one flush, not one each.
   $effect(() => {
     const len =
-      activeTab === 'say' ? chatMessages.length : combatMessages.length
+      activeTab === 'all'
+        ? chatMessages.length
+        : activeTab === 'party'
+          ? partyMessages.length
+          : combatMessages.length
     if (!chatContainer || !len || scrollFrame !== undefined) return
     scrollFrame = requestAnimationFrame(() => {
       scrollFrame = undefined
@@ -131,6 +180,7 @@
 
   $effect(() => {
     void chatMessages.length
+    void partyMessages.length
     void combatMessages.length
     void activeTab
     void interacting
@@ -156,7 +206,11 @@
       return
     }
     if (isConnected) {
-      networkManager.sendChatMessage(trimmed)
+      if ($chatChannel === 'party' && !trimmed.startsWith('/')) {
+        networkManager.sendPartyChat(trimmed)
+      } else {
+        networkManager.sendChatMessage(trimmed)
+      }
       messageInput = ''
     }
   }
@@ -200,11 +254,28 @@
     }
   }
 
+  // Typed lines are invisible on the Combat tab, so focusing the input hops
+  // off it; All and Party both show them and keep their place.
+  function leaveCombatTab() {
+    if (activeTab === 'combat') activeTab = 'all'
+  }
+
   function handleGlobalKeydown(event: KeyboardEvent) {
     if (event.isComposing || event.keyCode === 229) return
-    if (event.key === 'Enter' && document.activeElement !== chatInput) {
+    // While typing, Escape is invisible to the overlay-stack handler
+    // (it skips input targets), so close the menu here; no double-close.
+    if (event.key === 'Escape') {
+      if (channelMenuOpen && document.activeElement === chatInput) {
+        channelMenuOpen = false
+      }
+      return
+    }
+    if (
+      shouldFocusChatOnEnter(event, channelMenuOpen) &&
+      document.activeElement !== chatInput
+    ) {
       event.preventDefault()
-      activeTab = 'say'
+      leaveCombatTab()
       chatInput?.focus()
     }
   }
@@ -221,16 +292,25 @@
 
   let chatInput = $state<HTMLInputElement>()
 
-  // NPC "Talk" action (click or context menu) asks for input focus.
+  // NPC "Talk" action (click or context menu) asks for input focus. The
+  // counter is consumed, not tested: a stale value must not steal focus on
+  // remount (world re-entry, map-editor toggle). The untrack matters too —
+  // leaveCombatTab reads activeTab, and tracking it here would rerun this
+  // effect on every tab click, bouncing the tab back.
+  let seenFocusRequest = $chatFocusRequest
   $effect(() => {
-    if ($chatFocusRequest > 0) {
-      activeTab = 'say'
+    if ($chatFocusRequest > seenFocusRequest) {
+      seenFocusRequest = $chatFocusRequest
+      untrack(() => leaveCombatTab())
       chatInput?.focus()
     }
   })
 </script>
 
-<svelte:window onkeydown={handleGlobalKeydown} />
+<svelte:window
+  onkeydown={handleGlobalKeydown}
+  onclick={() => (channelMenuOpen = false)}
+/>
 
 <!-- Hover only pauses the fade; keyboard users get the same pause via input focus. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -243,10 +323,17 @@
   <div class="tabs">
     <button
       class="tab"
-      class:active={activeTab === 'say'}
-      onclick={() => (activeTab = 'say')}
+      class:active={activeTab === 'all'}
+      onclick={() => (activeTab = 'all')}
     >
-      Chat
+      All
+    </button>
+    <button
+      class="tab"
+      class:active={activeTab === 'party'}
+      onclick={() => (activeTab = 'party')}
+    >
+      Party
     </button>
     <button
       class="tab"
@@ -258,7 +345,7 @@
   </div>
 
   <div class="chat-body">
-    {#if isTranslatorApiSupported() && activeTab === 'say'}
+    {#if isTranslatorApiSupported() && activeTab !== 'combat'}
       <select
         class="translate-lang-select"
         value={$translationEnabled ? $translationTargetLanguage : TRANSLATE_OFF}
@@ -271,24 +358,39 @@
         {/each}
       </select>
     {/if}
+    {#snippet chatRow(entry: (typeof chatMessages)[number])}
+      <div
+        class="message"
+        class:whisper={entry.sender === 'whisper'}
+        class:party={entry.sender === 'party'}
+      >
+        {#if entry.name}
+          {#if entry.sender === 'party'}
+            <span class="party-tag">[Party]</span>
+          {/if}
+          <span
+            class="name"
+            class:local={entry.sender === 'local'}
+            class:remote={entry.sender === 'remote'}>{entry.name}:</span
+          >
+          {displayText(entry)}
+        {:else}
+          <span class="system">{displayText(entry)}</span>
+        {/if}
+        {#if isTranslating(entry)}
+          <span class="translating-hint">translating…</span>
+        {/if}
+      </div>
+    {/snippet}
+
     <div class="chat-messages" bind:this={chatContainer} role="log">
-      {#if activeTab === 'say'}
+      {#if activeTab === 'all'}
         {#each chatMessages as entry (entry.id)}
-          <div class="message" class:whisper={entry.sender === 'whisper'}>
-            {#if entry.name}
-              <span
-                class="name"
-                class:local={entry.sender === 'local'}
-                class:remote={entry.sender === 'remote'}>{entry.name}:</span
-              >
-              {displayText(entry)}
-            {:else}
-              <span class="system">{displayText(entry)}</span>
-            {/if}
-            {#if isTranslating(entry)}
-              <span class="translating-hint">translating…</span>
-            {/if}
-          </div>
+          {@render chatRow(entry)}
+        {/each}
+      {:else if activeTab === 'party'}
+        {#each partyMessages as entry (entry.id)}
+          {@render chatRow(entry)}
         {/each}
       {:else}
         {#each combatMessages as entry (entry.id)}
@@ -313,6 +415,45 @@
   </div>
 
   <div class="chat-input" class:disconnected={!isConnected}>
+    <div class="channel-wrap">
+      {#if channelMenuOpen}
+        <div class="channel-menu" role="menu">
+          <button
+            class="channel-item"
+            role="menuitemradio"
+            aria-checked={$chatChannel === 'say'}
+            onclick={() => selectChannel('say')}
+          >
+            Say
+            {#if $chatChannel === 'say'}<span class="check">✓</span>{/if}
+          </button>
+          <button
+            class="channel-item"
+            role="menuitemradio"
+            aria-checked={$chatChannel === 'party'}
+            disabled={!inParty}
+            title={inParty ? undefined : 'Join a party to use party chat'}
+            onclick={() => selectChannel('party')}
+          >
+            Party
+            {#if $chatChannel === 'party'}<span class="check">✓</span>{/if}
+          </button>
+        </div>
+      {/if}
+      <button
+        class="channel-btn"
+        aria-haspopup="menu"
+        aria-expanded={channelMenuOpen}
+        title="Choose where your messages go (/p and /s)"
+        onclick={(e) => {
+          e.stopPropagation()
+          channelMenuOpen = !channelMenuOpen
+        }}
+      >
+        {$chatChannel === 'party' ? 'Party' : 'Say'}
+        <span class="caret" aria-hidden="true">▴</span>
+      </button>
+    </div>
     <div class="input-wrap">
       {#if commandGhost}
         <div class="input-ghost" aria-hidden="true">
@@ -328,17 +469,20 @@
         onkeydown={handleKeyDown}
         onfocus={() => {
           inputFocused = true
-          activeTab = 'say'
+          leaveCombatTab()
         }}
         onblur={() => {
           inputFocused = false
           restoreViewportAfterKeyboard()
         }}
-        placeholder="Type a message... (/help for commands)"
+        placeholder={$chatChannel === 'party'
+          ? 'Message your party...'
+          : 'Type a message... (/help for commands)'}
         disabled={!isConnected}
       />
     </div>
     <button
+      class="send-btn"
       onclick={sendMessage}
       disabled={!isConnected || !messageInput.trim()}
     >
@@ -491,6 +635,22 @@
     font-weight: 600;
   }
 
+  /* Party channel: the PartyPanel's blue, distinct from local green, remote
+     yellow, whisper purple, combat orange and system grey. */
+  .message.party {
+    color: #a8d1ff;
+  }
+
+  .message.party .name {
+    color: #7ec8ff;
+    font-weight: 600;
+  }
+
+  .party-tag {
+    color: #7ec8ff;
+    font-weight: 700;
+  }
+
   .message.combat {
     color: #f6ad55;
   }
@@ -513,6 +673,83 @@
 
   .chat-input.disconnected {
     background: #742a2a;
+  }
+
+  .channel-wrap {
+    position: relative;
+    display: flex;
+    flex: none;
+  }
+
+  /* Same neutral look on both channels; the label alone names the target. */
+  .channel-btn {
+    margin: 2px 0 2px 2px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 4px;
+    background: #2d3748;
+    color: #9fb2c3;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    flex: none;
+    transition: color 0.15s;
+  }
+
+  .channel-btn:hover {
+    color: #ffffff;
+  }
+
+  .caret {
+    margin-left: 3px;
+    font-size: 8px;
+    opacity: 0.7;
+  }
+
+  .channel-menu {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 2px;
+    z-index: 5;
+    min-width: 96px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #1a202c;
+    border: 1px solid #4a5568;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+
+  .channel-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: #cbd5e0;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .channel-item:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+  }
+
+  .channel-item:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .check {
+    color: #4299e1;
+    font-weight: 700;
   }
 
   .input-wrap {
@@ -589,7 +826,7 @@
     cursor: pointer;
   }
 
-  .chat-input button {
+  .send-btn {
     margin: 2px;
     padding: 8px 15px;
     border: none;
@@ -601,11 +838,11 @@
     transition: background-color 0.2s;
   }
 
-  .chat-input button:hover:not(:disabled) {
+  .send-btn:hover:not(:disabled) {
     background: #3182ce;
   }
 
-  .chat-input button:disabled {
+  .send-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -669,8 +906,19 @@
       font-size: 12px;
     }
 
-    .chat-input button {
+    .send-btn {
       margin: 2px;
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+
+    .channel-btn {
+      margin: 2px 0 2px 2px;
+      padding: 4px 6px;
+      font-size: 10px;
+    }
+
+    .channel-item {
       padding: 4px 8px;
       font-size: 11px;
     }

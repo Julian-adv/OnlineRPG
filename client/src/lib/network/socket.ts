@@ -640,6 +640,11 @@ class NetworkManager {
     this.sendMessage('PartyLeave')
   }
 
+  /** Say something to the whole party, wherever its members are. */
+  sendPartyChat(message: string) {
+    this.sendMessage({ PartyChat: { message } })
+  }
+
   /** One-shot party-position snapshot for a just-opened map. */
   sendRequestPartyPositions() {
     this.sendMessage('RequestPartyPositions')

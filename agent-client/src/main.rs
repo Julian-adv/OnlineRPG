@@ -394,6 +394,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::DungeonDiscoveries { .. } => "DungeonDiscoveries",
         ServerMessage::ChatMessage { .. } => "ChatMessage",
         ServerMessage::WhisperMessage { .. } => "WhisperMessage",
+        ServerMessage::PartyChatMessage { .. } => "PartyChatMessage",
         ServerMessage::SystemMessage { .. } => "SystemMessage",
         ServerMessage::GameState { .. } => "GameState",
         ServerMessage::GameTimeSync { .. } => "GameTimeSync",
