@@ -27,6 +27,10 @@ export function tileToRegion(tile: number): number {
   return Math.floor(tile / REGION_SIZE)
 }
 
+export function regionKey(rx: number, rz: number): string {
+  return `${rx},${rz}`
+}
+
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }

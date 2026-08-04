@@ -120,14 +120,23 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
 
     let game_state = make_test_game_state("f015_kick_flush");
 
-    // Session A enters: player registered and inventory loaded from the DB.
+    // Session A enters with its account, player, and inventory registered.
     let a = pid("session_a");
+    let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session_a = game_state
+        .register_account_session(&account, kick_tx, &auth)
+        .await;
     let mut player = make_player("session_a", 0.0, 0.0);
     player.name = record.name.clone();
     game_state.add_player(player).await;
     game_state
         .register_player_character(&a, char_id, record.xp, attributes, record.gold, None)
         .await;
+    assert!(
+        game_state
+            .attach_player_to_account_session(&account, session_a, a)
+            .await
+    );
     game_state.load_player_inventory(&a, char_id, &auth).await;
 
     // A drops the sword (in-memory only; not yet persisted).
@@ -142,8 +151,15 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
     // The window F-015 raced: the DB still holds the pre-drop snapshot.
     assert_eq!(auth.load_inventory(char_id).unwrap().len(), 1);
 
-    // A replacement login kicks A by (unique) character name.
-    game_state.kick_player_by_name(&record.name, &auth).await;
+    // A replacement login kicks A at the account level.
+    let (replacement_tx, _replacement_rx) = tokio::sync::mpsc::unbounded_channel();
+    game_state
+        .register_account_session(&account, replacement_tx, &auth)
+        .await;
+    assert!(matches!(
+        kick_rx.try_recv(),
+        Ok(ServerMessage::Kicked { player_id, .. }) if player_id == a
+    ));
 
     // The kick flushed A's post-drop inventory and detached it, so a
     // replacement load reads zero swords (no dupe) instead of a stale one.
@@ -197,4 +213,134 @@ async fn open_door_state_is_stamped_onto_served_house_data() {
     let mut served = vec![house.clone()];
     game_state.apply_open_door_state(&mut served).await;
     assert!(!served[0].rooms[0].wall_north[0].is_open);
+}
+
+fn item_row(
+    item_def_id: &str,
+    quantity: u32,
+    equip_slot: Option<&str>,
+    enchant: i32,
+) -> crate::auth::ItemRow {
+    crate::auth::ItemRow {
+        item_def_id: item_def_id.to_string(),
+        quantity,
+        equip_slot: equip_slot.map(|s| s.to_string()),
+        enchant,
+    }
+}
+
+/// Persist `rows` as a character's saved inventory, then log a player in
+/// against them — the DB shape a returning session actually loads.
+async fn load_saved_inventory(
+    name: &str,
+    rows: Vec<crate::auth::ItemRow>,
+) -> (GameState, PlayerId) {
+    let auth = make_test_auth(name);
+    let account = auth.login_npc(&format!("npc_{name}")).unwrap();
+    let record = create_test_character(&auth, &account, "Loader");
+    auth.save_batch(&[], &[(record.id, rows)], &[], &[], None)
+        .unwrap();
+
+    let game_state = make_test_game_state(name);
+    let p = pid(name);
+    game_state.add_player(make_player(name, 0.0, 0.0)).await;
+    game_state
+        .register_player_character(&p, record.id, 0, attrs_with_cha(12), 0, None)
+        .await;
+    game_state.load_player_inventory(&p, record.id, &auth).await;
+    (game_state, p)
+}
+
+/// Bags saved before trading/pickup learned to stack hold one row per unit;
+/// the login load must merge them (same def, same enchant) so old characters
+/// heal on their next session.
+#[tokio::test]
+async fn login_load_merges_legacy_split_stacks() {
+    let (game_state, p) = load_saved_inventory(
+        "load_merges_stacks",
+        vec![
+            item_row("apple", 1, None, 0),
+            item_row("apple", 1, None, 0),
+            item_row("apple", 1, None, 1),
+            item_row("torch", 1, None, 0),
+            item_row("torch", 1, None, 0),
+        ],
+    )
+    .await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&p].bag;
+    let apples: Vec<_> = bag
+        .iter()
+        .filter(|i| i.item_def_id == "apple" && i.enchant == 0)
+        .collect();
+    assert_eq!(apples.len(), 1, "split enchant-0 apples must merge on load");
+    assert_eq!(apples[0].quantity, 2);
+    assert_eq!(
+        bag.iter()
+            .filter(|i| i.item_def_id == "apple" && i.enchant == 1)
+            .count(),
+        1,
+        "a different enchant must keep its own slot"
+    );
+    assert_eq!(
+        bag.iter().filter(|i| i.item_def_id == "torch").count(),
+        2,
+        "non-stackables must not merge on load"
+    );
+}
+
+/// Rows unfold (a non-stackable saved with quantity N), merge, or add nothing,
+/// and every id comes from one reserved range — overrunning it would hand a
+/// later item an id a live one already holds, and bag lookups are by id.
+#[tokio::test]
+async fn login_load_keeps_instance_ids_distinct_across_row_shapes() {
+    let (game_state, p) = load_saved_inventory(
+        "load_id_range",
+        vec![
+            item_row("iron_sword", 1, Some("main_hand"), 0),
+            item_row("torch", 3, None, 0),
+            item_row("apple", 1, None, 0),
+            item_row("apple", 1, None, 0),
+            item_row("bread", 0, None, 0),
+        ],
+    )
+    .await;
+
+    let ids: Vec<u64> = {
+        let inventories = game_state.inventories.read().await;
+        let inv = &inventories[&p];
+        let torches: Vec<_> = inv
+            .bag
+            .iter()
+            .filter(|i| i.item_def_id == "torch")
+            .collect();
+        assert_eq!(torches.len(), 3, "a quantity-3 non-stackable row unfolds");
+        assert!(torches.iter().all(|t| t.quantity == 1));
+        let apples: Vec<_> = inv
+            .bag
+            .iter()
+            .filter(|i| i.item_def_id == "apple")
+            .collect();
+        assert_eq!(apples.len(), 1);
+        assert_eq!(apples[0].quantity, 2);
+        assert!(
+            inv.bag.iter().all(|i| i.item_def_id != "bread"),
+            "an empty row adds nothing"
+        );
+        assert!(inv.equipped.contains_key(&EquipSlot::MainHand));
+        inv.bag
+            .iter()
+            .chain(inv.equipped.values())
+            .map(|i| i.instance_id)
+            .collect()
+    };
+
+    let unique: std::collections::HashSet<u64> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), ids.len(), "no two live items share an id");
+    let next = game_state.reserve_instance_ids(1).await;
+    assert!(
+        ids.iter().all(|id| *id < next),
+        "the cursor stayed inside the reserved range"
+    );
 }

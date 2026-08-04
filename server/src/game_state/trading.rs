@@ -1,12 +1,14 @@
+use std::collections::HashMap;
+
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::inventory::ItemInstance;
-use onlinerpg_shared::messages::{BuybackEntry, DealKind, StockEntry};
+use onlinerpg_shared::messages::{BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem};
 use tracing::info;
 
 use super::combat::reachable_dist_sq;
-use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout};
+use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout, DealEntry};
+use super::inventory::{stack_into_bag, BagInsert};
 use super::StoredBuyback;
 
 /// Maximum distance between player and trader for any shop interaction.
@@ -20,6 +22,10 @@ const BUYBACK_CAP: usize = 10;
 /// about a mis-sell later; a restart clears the map anyway, so this only binds
 /// on a long uptime, where it is what keeps the map from growing forever.
 const BUYBACK_TTL_MS: u64 = 24 * 60 * 60 * 1000;
+
+/// How often expired entries are reclaimed. Reads filter expiry inline, so
+/// this only bounds memory against a 24h TTL — hourly is plenty.
+pub const BUYBACK_SWEEP_PERIOD: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// How many `tick_shop_holds` ticks a single open trade window holds an NPC in
 /// place before its movement is released anyway. The tick runs on the server's
@@ -79,6 +85,15 @@ impl TraderDef {
     }
 }
 
+/// The still-valid entries of one buyback list. Expiry is filtered here on
+/// every read rather than swept globally mid-trade (see `tick_buyback_expiry`).
+fn live_entries(list: &[StoredBuyback], now_ms: u64) -> Vec<BuybackEntry> {
+    list.iter()
+        .filter(|stored| stored.is_live(now_ms))
+        .map(|stored| stored.entry.clone())
+        .collect()
+}
+
 /// Look up how an NPC (by character name) trades, if at all.
 pub(crate) fn trader_def_by_name(npc_name: &str) -> Option<TraderDef> {
     if let Some(def) = merchant_defs().get_by_npc_name(npc_name) {
@@ -126,6 +141,8 @@ impl super::GameState {
     }
 
     /// Tell the trading NPC's LLM that a player completed a trade with it.
+    /// `npc_gold` is passed in rather than read here: a batch sends one notice
+    /// per unit, and the wallet is already final by then.
     async fn send_trade_notice(
         &self,
         npc_player_id: &PlayerId,
@@ -133,8 +150,8 @@ impl super::GameState {
         item_def_id: &str,
         kind: DealKind,
         price: i64,
+        npc_gold: i64,
     ) {
-        let npc_gold = self.get_player_gold(npc_player_id).await;
         self.send_direct_message(
             npc_player_id,
             ServerMessage::TradeNotice {
@@ -446,6 +463,7 @@ impl super::GameState {
         let price = buy_price(base_price, deal.as_ref().map_or(0, |d| d.modifier_pct));
 
         let item_weight = self.item_defs.weight(item_def_id);
+        let stackable = self.item_defs.stackable(item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
         let instance_id = self.next_instance_id().await;
 
@@ -541,12 +559,10 @@ impl super::GameState {
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
-            inv.bag.push(ItemInstance {
-                instance_id,
-                item_def_id: item_def_id.to_string(),
-                quantity: 1,
-                enchant: 0,
-            });
+            stack_into_bag(
+                &mut inv.bag,
+                BagInsert::one(stackable, item_def_id, 0, instance_id),
+            );
             let snapshot = inv.clone();
 
             *gold_map.get_mut(player_id).expect("checked above") -= price;
@@ -591,14 +607,289 @@ impl super::GameState {
             .await;
             self.send_gold_update(npc_player_id).await;
         }
+        let npc_gold = self.get_player_gold(npc_player_id).await;
         self.send_trade_notice(
             npc_player_id,
             player_name,
             item_def_id,
             DealKind::Buy,
             price,
+            npc_gold,
         )
         .await;
+    }
+
+    /// Buy multiple units, possibly of different items, in one all-or-nothing
+    /// transaction: every line is validated (catalog/wishlist membership,
+    /// resident stock, carry weight, player gold) before anything is
+    /// mutated. Mirrors `buy_item`'s per-unit rules, generalized to N lines,
+    /// and merges each purchase into an existing matching bag stack instead
+    /// of always creating a new one-unit entry.
+    pub async fn buy_items(
+        &self,
+        player_id: &PlayerId,
+        npc_player_id: &PlayerId,
+        items: Vec<TradeLineItem>,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        let def = match self.validate_trader(player_id, npc_player_id).await {
+            Ok(def) => def,
+            Err(reason) => return self.send_trade_error(player_id, reason).await,
+        };
+        let npc_name = def.npc_name().to_string();
+        let is_resident = matches!(def, TraderDef::Resident(_));
+
+        struct Plan {
+            item_def_id: String,
+            qty: u32,
+            base_price: i64,
+            deal_taken: Option<DealEntry>,
+            price: i64,
+        }
+
+        let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
+        let mut requested: HashMap<String, u32> = HashMap::new();
+        for req in &items {
+            if req.qty == 0 {
+                continue;
+            }
+            match &def {
+                TraderDef::Merchant(m) => {
+                    if !m.sells(&req.item_def_id) {
+                        return self
+                            .send_trade_error(player_id, "The merchant does not sell that item")
+                            .await;
+                    }
+                }
+                TraderDef::Resident(r) => {
+                    if r.wants(&req.item_def_id) {
+                        return self
+                            .send_trade_error(player_id, "They won't part with that")
+                            .await;
+                    }
+                }
+            }
+            let Some(base_price) = self
+                .item_defs
+                .get(&req.item_def_id)
+                .and_then(|item| item.base_price)
+            else {
+                return self
+                    .send_trade_error(player_id, "That item has no price")
+                    .await;
+            };
+            *requested.entry(req.item_def_id.clone()).or_insert(0) += req.qty;
+            plans.push(Plan {
+                item_def_id: req.item_def_id.clone(),
+                qty: req.qty,
+                base_price,
+                deal_taken: None,
+                price: 0,
+            });
+        }
+        if plans.is_empty() {
+            return;
+        }
+
+        // One id per unit, reserved before the locks rather than one counter
+        // acquisition per unit under them. An aborted batch skips the range.
+        let mut next_id = self
+            .reserve_instance_ids(plans.iter().map(|p| p.qty as u64).sum())
+            .await;
+        let max_weight = self.max_carry_weight(player_id).await;
+
+        let mut gold_map = self.player_gold.write().await;
+        let mut inventories = self.inventories.write().await;
+
+        if inventories.get(player_id).is_none() {
+            drop(inventories);
+            drop(gold_map);
+            return self.send_trade_error(player_id, "Player not found").await;
+        }
+
+        if is_resident {
+            let Some(npc_inv) = inventories.get(npc_player_id) else {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "They have nothing to sell")
+                    .await;
+            };
+            for (item_def_id, qty) in &requested {
+                let available: u32 = npc_inv
+                    .bag
+                    .iter()
+                    .filter(|i| &i.item_def_id == item_def_id)
+                    .map(|i| i.quantity)
+                    .sum();
+                if available < *qty {
+                    drop(inventories);
+                    drop(gold_map);
+                    return self
+                        .send_trade_error(player_id, "They are out of that item")
+                        .await;
+                }
+            }
+        }
+
+        let added_weight: f32 = plans
+            .iter()
+            .map(|p| self.item_defs.weight(&p.item_def_id) * p.qty as f32)
+            .sum();
+        if self.calc_total_weight(&inventories[player_id]) + added_weight > max_weight {
+            drop(inventories);
+            drop(gold_map);
+            return self.send_trade_error(player_id, "Too heavy to carry").await;
+        }
+
+        let mut total_price: i64 = 0;
+        let taken = {
+            let line_defs: Vec<&str> = plans.iter().map(|p| p.item_def_id.as_str()).collect();
+            self.take_deals(player_id, &npc_name, DealKind::Buy, &line_defs)
+                .await
+        };
+        for (plan, deal) in plans.iter_mut().zip(taken) {
+            let deal_units: u32 = if deal.is_some() { 1 } else { 0 };
+            let normal_units = plan.qty - deal_units;
+            let price = buy_price(plan.base_price, deal.as_ref().map_or(0, |d| d.modifier_pct))
+                * deal_units as i64
+                + buy_price(plan.base_price, 0) * normal_units as i64;
+            plan.deal_taken = deal;
+            plan.price = price;
+            total_price += price;
+        }
+
+        let gold = gold_map.get(player_id).copied().unwrap_or(0);
+        if gold < total_price {
+            let restore: Vec<(&str, DealEntry)> = plans
+                .iter()
+                .filter_map(|p| Some((p.item_def_id.as_str(), p.deal_taken.clone()?)))
+                .collect();
+            self.restore_deals(player_id, &npc_name, DealKind::Buy, &restore)
+                .await;
+            drop(inventories);
+            drop(gold_map);
+            return self.send_trade_error(player_id, "Not enough gold").await;
+        }
+
+        // Every line is now guaranteed to apply cleanly — mutate.
+        if is_resident {
+            let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
+            for (item_def_id, mut remaining) in requested {
+                while remaining > 0 {
+                    let idx = npc_inv
+                        .bag
+                        .iter()
+                        .position(|i| i.item_def_id == item_def_id)
+                        .expect("availability checked above");
+                    let take = remaining.min(npc_inv.bag[idx].quantity);
+                    if npc_inv.bag[idx].quantity > take {
+                        npc_inv.bag[idx].quantity -= take;
+                    } else {
+                        npc_inv.bag.remove(idx);
+                    }
+                    remaining -= take;
+                }
+            }
+        }
+
+        {
+            let inv = inventories.get_mut(player_id).expect("checked above");
+            for plan in &plans {
+                let stackable = self.item_defs.stackable(&plan.item_def_id);
+                next_id += stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert {
+                        stackable,
+                        item_def_id: &plan.item_def_id,
+                        enchant: 0,
+                        first_instance_id: next_id,
+                        quantity: plan.qty,
+                    },
+                );
+            }
+        }
+
+        let snapshot = inventories.get(player_id).expect("checked above").clone();
+        let npc_snapshot = is_resident.then(|| {
+            inventories
+                .get(npc_player_id)
+                .expect("checked above")
+                .clone()
+        });
+
+        *gold_map.get_mut(player_id).expect("checked above") -= total_price;
+        if is_resident {
+            *gold_map.entry(*npc_player_id).or_insert(0) += total_price;
+        }
+        drop(inventories);
+        drop(gold_map);
+
+        let player_name = self.player_name_of(player_id).await;
+        for plan in &plans {
+            if let Some(entry) = &plan.deal_taken {
+                info!(
+                    target: "deal",
+                    "deal redeemed: npc={npc_name} player={player_name} item={} kind=Buy \
+                     modifier={} base={} paid={}",
+                    plan.item_def_id, entry.modifier_pct, plan.base_price, plan.price
+                );
+                self.send_deal_cleared(player_id, npc_player_id, &plan.item_def_id, DealKind::Buy)
+                    .await;
+            }
+            info!(
+                "{player_name} bought {}x{} from {npc_name} for {}",
+                plan.qty, plan.item_def_id, plan.price
+            );
+        }
+
+        self.mark_dirty(player_id).await;
+        self.mark_inventory_dirty(player_id).await;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::InventoryUpdated {
+                inventory: snapshot,
+            },
+        )
+        .await;
+        self.send_gold_update(player_id).await;
+
+        if let Some(npc_snapshot) = npc_snapshot {
+            self.mark_dirty(npc_player_id).await;
+            self.mark_inventory_dirty(npc_player_id).await;
+            self.send_direct_message(
+                npc_player_id,
+                ServerMessage::InventoryUpdated {
+                    inventory: npc_snapshot,
+                },
+            )
+            .await;
+            self.send_gold_update(npc_player_id).await;
+        }
+        let npc_gold = self.get_player_gold(npc_player_id).await;
+        for plan in &plans {
+            let normal_price = buy_price(plan.base_price, 0);
+            for unit in 0..plan.qty {
+                let unit_price = if unit == 0 {
+                    plan.deal_taken.as_ref().map_or(normal_price, |deal| {
+                        buy_price(plan.base_price, deal.modifier_pct)
+                    })
+                } else {
+                    normal_price
+                };
+                self.send_trade_notice(
+                    npc_player_id,
+                    player_name.clone(),
+                    &plan.item_def_id,
+                    DealKind::Buy,
+                    unit_price,
+                    npc_gold,
+                )
+                .await;
+            }
+        }
     }
 
     /// Sell one unit of a bag item to a trading NPC. Merchants pay
@@ -757,12 +1048,11 @@ impl super::GameState {
                 }
                 // Keep the sold unit's enchantment: a +3 sword stays +3 in
                 // the resident's bag.
-                npc_inv.bag.push(ItemInstance {
-                    instance_id: npc_instance_id,
-                    item_def_id: item_def_id.clone(),
-                    quantity: 1,
-                    enchant: sold_enchant,
-                });
+                let stackable = self.item_defs.stackable(&item_def_id);
+                stack_into_bag(
+                    &mut npc_inv.bag,
+                    BagInsert::one(stackable, &item_def_id, sold_enchant, npc_instance_id),
+                );
                 Some(npc_inv.clone())
             } else {
                 None
@@ -787,15 +1077,15 @@ impl super::GameState {
         // buyback at the exact payout — the only way to undo a mis-sell.
         if !is_resident {
             let buyback = self
-                .record_buyback(
+                .record_buybacks(
                     player_id,
                     &npc_name,
-                    BuybackEntry {
+                    vec![BuybackEntry {
                         entry_id: npc_instance_id,
                         item_def_id: item_def_id.clone(),
                         enchant: sold_enchant,
                         price: payout,
-                    },
+                    }],
                 )
                 .await;
             self.send_direct_message(
@@ -843,14 +1133,333 @@ impl super::GameState {
             .await;
             self.send_gold_update(npc_player_id).await;
         }
+        let npc_gold = self.get_player_gold(npc_player_id).await;
         self.send_trade_notice(
             npc_player_id,
             player_name,
             &item_def_id,
             DealKind::Sell,
             payout,
+            npc_gold,
         )
         .await;
+    }
+
+    /// Sell multiple bag stacks in one all-or-nothing transaction: every line
+    /// is validated (ownership, quantity, wishlist, resident carry weight,
+    /// resident wallet) before anything is mutated, so a big cart either
+    /// completes in full or leaves the player's bag/gold untouched. Mirrors
+    /// `sell_item`'s per-unit rules, generalized to N stacks; deals are
+    /// single-use per item def, so within one batch only the first line
+    /// touching a given item def can redeem one.
+    pub async fn sell_items(
+        &self,
+        player_id: &PlayerId,
+        npc_player_id: &PlayerId,
+        items: Vec<BagLineItem>,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        let def = match self.validate_trader(player_id, npc_player_id).await {
+            Ok(def) => def,
+            Err(reason) => return self.send_trade_error(player_id, reason).await,
+        };
+        let npc_name = def.npc_name().to_string();
+        let is_resident = matches!(def, TraderDef::Resident(_));
+        let rate = match &def {
+            TraderDef::Merchant(m) => m.sell_rate_percent,
+            TraderDef::Resident(r) => r.wishlist_rate_percent,
+        };
+
+        struct Plan {
+            instance_id: u64,
+            qty: u32,
+            item_def_id: String,
+            enchant: i32,
+            base_price: i64,
+            deal_taken: Option<DealEntry>,
+            payout: i64,
+        }
+
+        // Drop no-op lines before the locks: the plan loop below runs under
+        // both write locks, so a client's padding must not reach it.
+        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+        if items.is_empty() {
+            return;
+        }
+
+        // One id per unit, reserved before the locks: a resident's received
+        // units draw from it, a merchant's buyback entries do.
+        let mut next_unit_id = self
+            .reserve_instance_ids(items.iter().map(|i| i.qty as u64).sum())
+            .await;
+        // Only a resident carries what it buys.
+        let npc_max_weight = if is_resident {
+            Some(self.max_carry_weight(npc_player_id).await)
+        } else {
+            None
+        };
+
+        let mut gold_map = self.player_gold.write().await;
+        let mut inventories = self.inventories.write().await;
+
+        if !gold_map.contains_key(player_id) {
+            drop(inventories);
+            drop(gold_map);
+            return self.send_trade_error(player_id, "Player not found").await;
+        }
+
+        let mut reserved: HashMap<u64, u32> = HashMap::new();
+        let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
+        for req in &items {
+            let Some(item) = inventories
+                .get(player_id)
+                .and_then(|inv| inv.bag.iter().find(|i| i.instance_id == req.instance_id))
+            else {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "Item not found in bag")
+                    .await;
+            };
+            let already_reserved = *reserved.get(&req.instance_id).unwrap_or(&0);
+            if already_reserved + req.qty > item.quantity {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "Not enough of that item")
+                    .await;
+            }
+            reserved.insert(req.instance_id, already_reserved + req.qty);
+
+            let item_def_id = item.item_def_id.clone();
+            let enchant = item.enchant;
+            let Some(base_price) = self.item_defs.get(&item_def_id).and_then(|d| d.base_price)
+            else {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "They will not buy that")
+                    .await;
+            };
+            if let TraderDef::Resident(r) = &def {
+                if !r.wants(&item_def_id) {
+                    drop(inventories);
+                    drop(gold_map);
+                    return self
+                        .send_trade_error(player_id, "They have no use for that")
+                        .await;
+                }
+            }
+            plans.push(Plan {
+                instance_id: req.instance_id,
+                qty: req.qty,
+                item_def_id,
+                enchant,
+                base_price,
+                deal_taken: None,
+                payout: 0,
+            });
+        }
+        if let Some(npc_max_weight) = npc_max_weight {
+            let Some(npc_inv) = inventories.get(npc_player_id) else {
+                drop(inventories);
+                drop(gold_map);
+                return self.send_trade_error(player_id, "Trader not found").await;
+            };
+            let added_weight: f32 = plans
+                .iter()
+                .map(|p| self.item_defs.weight(&p.item_def_id) * p.qty as f32)
+                .sum();
+            if self.calc_total_weight(npc_inv) + added_weight > npc_max_weight {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "They cannot carry any more")
+                    .await;
+            }
+        }
+
+        // Redeem any single-use deals now (each is consumed at most once
+        // across the whole batch) and price every line; restore them all if
+        // the resident wallet check below then fails.
+        let mut total_payout: i64 = 0;
+        let taken = {
+            let line_defs: Vec<&str> = plans.iter().map(|p| p.item_def_id.as_str()).collect();
+            self.take_deals(player_id, &npc_name, DealKind::Sell, &line_defs)
+                .await
+        };
+        for (plan, deal) in plans.iter_mut().zip(taken) {
+            let deal_units: u32 = if deal.is_some() { 1 } else { 0 };
+            let normal_units = plan.qty - deal_units;
+            let payout = sell_payout(
+                plan.base_price,
+                rate,
+                deal.as_ref().map_or(0, |d| d.modifier_pct),
+            ) * deal_units as i64
+                + sell_payout(plan.base_price, rate, 0) * normal_units as i64;
+            plan.deal_taken = deal;
+            plan.payout = payout;
+            total_payout += payout;
+        }
+
+        if is_resident {
+            let npc_gold = gold_map.get(npc_player_id).copied().unwrap_or(0);
+            if npc_gold < total_payout {
+                let restore: Vec<(&str, DealEntry)> = plans
+                    .iter()
+                    .filter_map(|p| Some((p.item_def_id.as_str(), p.deal_taken.clone()?)))
+                    .collect();
+                self.restore_deals(player_id, &npc_name, DealKind::Sell, &restore)
+                    .await;
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "They cannot afford that right now")
+                    .await;
+            }
+        }
+
+        // Every line is now guaranteed to apply cleanly — mutate.
+        for plan in &plans {
+            let inv = inventories.get_mut(player_id).expect("checked above");
+            let idx = inv
+                .bag
+                .iter()
+                .position(|i| i.instance_id == plan.instance_id)
+                .expect("checked above");
+            if inv.bag[idx].quantity > plan.qty {
+                inv.bag[idx].quantity -= plan.qty;
+            } else {
+                inv.bag.remove(idx);
+            }
+
+            if is_resident {
+                let stackable = self.item_defs.stackable(&plan.item_def_id);
+                let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
+                next_unit_id += stack_into_bag(
+                    &mut npc_inv.bag,
+                    BagInsert {
+                        stackable,
+                        item_def_id: &plan.item_def_id,
+                        enchant: plan.enchant,
+                        first_instance_id: next_unit_id,
+                        quantity: plan.qty,
+                    },
+                );
+            }
+        }
+
+        let snapshot = inventories.get(player_id).expect("checked above").clone();
+        let npc_snapshot = is_resident.then(|| {
+            inventories
+                .get(npc_player_id)
+                .expect("checked above")
+                .clone()
+        });
+
+        *gold_map.get_mut(player_id).expect("checked above") += total_payout;
+        if is_resident {
+            *gold_map.get_mut(npc_player_id).expect("checked above") -= total_payout;
+        }
+        drop(inventories);
+        drop(gold_map);
+
+        // Merchants keep no stock, so every sold unit becomes its own buyback
+        // entry at the normal per-unit price, recorded in one pass. The unit a
+        // deal applied to is intentionally not buyback-able at its haggled
+        // price; the normal rate is what repurchasing costs.
+        let mut recorded = Vec::new();
+        if !is_resident {
+            for plan in &plans {
+                let unit_price = sell_payout(plan.base_price, rate, 0);
+                for _ in 0..plan.qty {
+                    recorded.push(BuybackEntry {
+                        entry_id: next_unit_id,
+                        item_def_id: plan.item_def_id.clone(),
+                        enchant: plan.enchant,
+                        price: unit_price,
+                    });
+                    next_unit_id += 1;
+                }
+            }
+        }
+        if !recorded.is_empty() {
+            let buyback = self.record_buybacks(player_id, &npc_name, recorded).await;
+            self.send_direct_message(
+                player_id,
+                ServerMessage::BuybackUpdated {
+                    merchant_player_id: *npc_player_id,
+                    buyback,
+                },
+            )
+            .await;
+        }
+
+        let player_name = self.player_name_of(player_id).await;
+        for plan in &plans {
+            if let Some(entry) = &plan.deal_taken {
+                info!(
+                    target: "deal",
+                    "deal redeemed: npc={npc_name} player={player_name} item={} kind=Sell \
+                     modifier={} base={} paid={}",
+                    plan.item_def_id, entry.modifier_pct, plan.base_price, plan.payout
+                );
+                self.send_deal_cleared(player_id, npc_player_id, &plan.item_def_id, DealKind::Sell)
+                    .await;
+            }
+            info!(
+                "{player_name} sold {}x{} to {npc_name} for {}",
+                plan.qty, plan.item_def_id, plan.payout
+            );
+        }
+
+        self.mark_dirty(player_id).await;
+        self.mark_inventory_dirty(player_id).await;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::InventoryUpdated {
+                inventory: snapshot,
+            },
+        )
+        .await;
+        self.send_gold_update(player_id).await;
+
+        if let Some(npc_snapshot) = npc_snapshot {
+            self.mark_dirty(npc_player_id).await;
+            self.mark_inventory_dirty(npc_player_id).await;
+            self.send_direct_message(
+                npc_player_id,
+                ServerMessage::InventoryUpdated {
+                    inventory: npc_snapshot,
+                },
+            )
+            .await;
+            self.send_gold_update(npc_player_id).await;
+        }
+        let npc_gold = self.get_player_gold(npc_player_id).await;
+        for plan in &plans {
+            let normal_payout = sell_payout(plan.base_price, rate, 0);
+            for unit in 0..plan.qty {
+                let unit_payout = if unit == 0 {
+                    plan.deal_taken.as_ref().map_or(normal_payout, |deal| {
+                        sell_payout(plan.base_price, rate, deal.modifier_pct)
+                    })
+                } else {
+                    normal_payout
+                };
+                self.send_trade_notice(
+                    npc_player_id,
+                    player_name.clone(),
+                    &plan.item_def_id,
+                    DealKind::Sell,
+                    unit_payout,
+                    npc_gold,
+                )
+                .await;
+            }
+        }
     }
 
     /// The character behind a live player session, if any.
@@ -859,13 +1468,13 @@ impl super::GameState {
         characters.get(player_id).map(|(char_id, _, _)| *char_id)
     }
 
-    /// Drop expired entries across every character, then any pair left
-    /// empty. Swept globally (not just the caller's pair) because an offline
-    /// character's entries would otherwise never be reached again.
-    async fn sweep_buybacks(&self, now_ms: u64) {
+    /// Reclaim expired entries globally — an offline character's pair is
+    /// never reached by a read path, so nothing else would free it.
+    pub async fn tick_buyback_expiry(&self) {
+        let now_ms = Self::now_ms();
         let mut buybacks = self.buybacks.write().await;
         buybacks.retain(|_, list| {
-            list.retain(|stored| stored.expires_at_ms > now_ms);
+            list.retain(|stored| stored.is_live(now_ms));
             !list.is_empty()
         });
     }
@@ -874,38 +1483,44 @@ impl super::GameState {
         let Some(char_id) = self.character_id_of(player_id).await else {
             return Vec::new();
         };
-        self.sweep_buybacks(Self::now_ms()).await;
+        let now_ms = Self::now_ms();
         let buybacks = self.buybacks.read().await;
         buybacks
             .get(&(char_id, npc_name.to_string()))
-            .map(|list| list.iter().map(|stored| stored.entry.clone()).collect())
+            .map(|list| live_entries(list, now_ms))
             .unwrap_or_default()
     }
 
-    /// Append a sold unit to the character's buyback list with this
-    /// merchant, dropping the oldest entry past `BUYBACK_CAP`. Returns the
-    /// new list.
-    async fn record_buyback(
+    /// Append sold units to the character's buyback list with this merchant,
+    /// dropping the oldest entries past `BUYBACK_CAP`. Returns the new list.
+    /// One lock acquisition per sale, not per unit.
+    async fn record_buybacks(
         &self,
         player_id: &PlayerId,
         npc_name: &str,
-        entry: BuybackEntry,
+        entries: Vec<BuybackEntry>,
     ) -> Vec<BuybackEntry> {
+        if entries.is_empty() {
+            return Vec::new();
+        }
         let Some(char_id) = self.character_id_of(player_id).await else {
             return Vec::new();
         };
         let now_ms = Self::now_ms();
-        self.sweep_buybacks(now_ms).await;
         let mut buybacks = self.buybacks.write().await;
         let list = buybacks.entry((char_id, npc_name.to_string())).or_default();
-        list.push(StoredBuyback {
+        // Not the tick's job duplicated: expired entries left in place would
+        // eat cap slots and evict live ones below.
+        list.retain(|stored| stored.is_live(now_ms));
+        list.extend(entries.into_iter().map(|entry| StoredBuyback {
             entry,
             expires_at_ms: now_ms + BUYBACK_TTL_MS,
-        });
+        }));
         if list.len() > BUYBACK_CAP {
-            list.remove(0);
+            let excess = list.len() - BUYBACK_CAP;
+            list.drain(..excess);
         }
-        list.iter().map(|stored| stored.entry.clone()).collect()
+        live_entries(list, now_ms)
     }
 
     /// Repurchase a unit previously sold to a merchant, at the exact payout
@@ -936,12 +1551,14 @@ impl super::GameState {
         };
 
         let now_ms = Self::now_ms();
-        self.sweep_buybacks(now_ms).await;
         let entry = {
             let buybacks = self.buybacks.read().await;
             buybacks
                 .get(&(char_id, npc_name.clone()))
-                .and_then(|list| list.iter().find(|s| s.entry.entry_id == entry_id))
+                .and_then(|list| {
+                    list.iter()
+                        .find(|s| s.entry.entry_id == entry_id && s.is_live(now_ms))
+                })
                 .map(|stored| stored.entry.clone())
         };
         let Some(entry) = entry else {
@@ -984,9 +1601,9 @@ impl super::GameState {
                 .and_then(|list| {
                     let idx = list
                         .iter()
-                        .position(|s| s.entry.entry_id == entry_id && s.expires_at_ms > now_ms)?;
+                        .position(|s| s.entry.entry_id == entry_id && s.is_live(now_ms))?;
                     list.remove(idx);
-                    Some(list.iter().map(|s| s.entry.clone()).collect::<Vec<_>>())
+                    Some(live_entries(list, now_ms))
                 });
             let Some(buyback) = taken else {
                 drop(buybacks);
@@ -998,12 +1615,11 @@ impl super::GameState {
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
-            inv.bag.push(ItemInstance {
-                instance_id: entry.entry_id,
-                item_def_id: entry.item_def_id.clone(),
-                quantity: 1,
-                enchant: entry.enchant,
-            });
+            let stackable = self.item_defs.stackable(&entry.item_def_id);
+            stack_into_bag(
+                &mut inv.bag,
+                BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id),
+            );
             let snapshot = inv.clone();
             *gold_map.get_mut(player_id).expect("checked above") -= entry.price;
             (snapshot, buyback)
@@ -1032,13 +1648,187 @@ impl super::GameState {
             },
         )
         .await;
+        let npc_gold = self.get_player_gold(npc_player_id).await;
         self.send_trade_notice(
             npc_player_id,
             player_name,
             &entry.item_def_id,
             DealKind::Buy,
             entry.price,
+            npc_gold,
         )
         .await;
+    }
+
+    /// Repurchase multiple buyback entries in one all-or-nothing transaction:
+    /// every entry must still be present and unexpired, and the combined
+    /// price/weight must fit, before any of them are taken.
+    pub async fn buyback_items(
+        &self,
+        player_id: &PlayerId,
+        npc_player_id: &PlayerId,
+        entry_ids: Vec<u64>,
+    ) {
+        if entry_ids.is_empty() {
+            return;
+        }
+        let unique: std::collections::HashSet<u64> = entry_ids.iter().copied().collect();
+        if unique.len() != entry_ids.len() {
+            return self
+                .send_trade_error(player_id, "Duplicate item in request")
+                .await;
+        }
+
+        let def = match self.validate_trader(player_id, npc_player_id).await {
+            Ok(def) => def,
+            Err(reason) => return self.send_trade_error(player_id, reason).await,
+        };
+        let TraderDef::Merchant(def) = def else {
+            return self
+                .send_trade_error(player_id, "They have nothing to buy back")
+                .await;
+        };
+        let npc_name = def.npc_name.clone();
+        let Some(char_id) = self.character_id_of(player_id).await else {
+            return;
+        };
+
+        let now_ms = Self::now_ms();
+
+        let entries: Vec<BuybackEntry> = {
+            let buybacks = self.buybacks.read().await;
+            let Some(list) = buybacks.get(&(char_id, npc_name.clone())) else {
+                return self
+                    .send_trade_error(player_id, "That item is no longer available")
+                    .await;
+            };
+            let mut resolved = Vec::with_capacity(entry_ids.len());
+            for id in &entry_ids {
+                let Some(stored) = list
+                    .iter()
+                    .find(|s| s.entry.entry_id == *id && s.is_live(now_ms))
+                else {
+                    return self
+                        .send_trade_error(player_id, "That item is no longer available")
+                        .await;
+                };
+                resolved.push(stored.entry.clone());
+            }
+            resolved
+        };
+
+        let total_price: i64 = entries.iter().map(|e| e.price).sum();
+        let added_weight: f32 = entries
+            .iter()
+            .map(|e| self.item_defs.weight(&e.item_def_id))
+            .sum();
+        let max_weight = self.max_carry_weight(player_id).await;
+
+        let (snapshot, buyback) = {
+            let mut gold_map = self.player_gold.write().await;
+            let Some(gold) = gold_map.get(player_id).copied() else {
+                drop(gold_map);
+                return;
+            };
+            if gold < total_price {
+                drop(gold_map);
+                return self.send_trade_error(player_id, "Not enough gold").await;
+            }
+
+            let mut inventories = self.inventories.write().await;
+            if inventories.get(player_id).is_none() {
+                drop(inventories);
+                drop(gold_map);
+                return;
+            }
+            if self.calc_total_weight(&inventories[player_id]) + added_weight > max_weight {
+                drop(inventories);
+                drop(gold_map);
+                return self.send_trade_error(player_id, "Too heavy to carry").await;
+            }
+
+            // Re-validate every entry is still present before removing any of
+            // them, so a concurrent repurchase racing this one can't leave the
+            // batch half-applied.
+            let mut buybacks = self.buybacks.write().await;
+            let Some(list) = buybacks.get_mut(&(char_id, npc_name.clone())) else {
+                drop(buybacks);
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "That item is no longer available")
+                    .await;
+            };
+            let mut indices = Vec::with_capacity(entry_ids.len());
+            for id in &entry_ids {
+                let Some(idx) = list
+                    .iter()
+                    .position(|s| s.entry.entry_id == *id && s.is_live(now_ms))
+                else {
+                    drop(buybacks);
+                    drop(inventories);
+                    drop(gold_map);
+                    return self
+                        .send_trade_error(player_id, "That item is no longer available")
+                        .await;
+                };
+                indices.push(idx);
+            }
+            indices.sort_unstable_by(|a, b| b.cmp(a));
+            for idx in indices {
+                list.remove(idx);
+            }
+            let buyback = live_entries(list, now_ms);
+
+            let inv = inventories.get_mut(player_id).expect("checked above");
+            for entry in &entries {
+                let stackable = self.item_defs.stackable(&entry.item_def_id);
+                stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id),
+                );
+            }
+            let snapshot = inv.clone();
+            *gold_map.get_mut(player_id).expect("checked above") -= total_price;
+            (snapshot, buyback)
+        };
+
+        let player_name = self.player_name_of(player_id).await;
+        for entry in &entries {
+            info!(
+                "{player_name} bought back {} from {npc_name} for {}",
+                entry.item_def_id, entry.price
+            );
+        }
+        self.mark_dirty(player_id).await;
+        self.mark_inventory_dirty(player_id).await;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::InventoryUpdated {
+                inventory: snapshot,
+            },
+        )
+        .await;
+        self.send_gold_update(player_id).await;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::BuybackUpdated {
+                merchant_player_id: *npc_player_id,
+                buyback,
+            },
+        )
+        .await;
+        let npc_gold = self.get_player_gold(npc_player_id).await;
+        for entry in &entries {
+            self.send_trade_notice(
+                npc_player_id,
+                player_name.clone(),
+                &entry.item_def_id,
+                DealKind::Buy,
+                entry.price,
+                npc_gold,
+            )
+            .await;
+        }
     }
 }

@@ -120,6 +120,12 @@ pub(super) enum AgentAction {
     /// Leave your current party.
     #[serde(rename = "party_leave", alias = "leave_party")]
     PartyLeave,
+    /// Say something to your party, wherever its members are.
+    #[serde(rename = "party_say", alias = "party_chat")]
+    PartySay {
+        #[serde(alias = "text")]
+        message: String,
+    },
     /// Use an item from the bag: gear is equipped (or taken off if already
     /// worn), consumables are drunk, eaten or read. Mirrors the web quickslot.
     #[serde(rename = "use", alias = "use_item", alias = "equip", alias = "eat")]
@@ -147,14 +153,18 @@ pub(super) enum AgentAction {
         )]
         item: PickupRef,
     },
-    /// Sell one bag item to a nearby merchant, walking up to them first.
-    /// The server owns pricing, proximity and wallet checks.
+    /// Sell one or more units of a bag item to a nearby merchant, walking up
+    /// to them first. The server owns pricing, proximity and wallet checks.
     #[serde(rename = "sell", alias = "sell_item")]
     Sell {
         #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
         item: String,
         #[serde(alias = "npc", alias = "to", alias = "merchant_name", alias = "target")]
         merchant: String,
+        /// How many units to sell: a positive count, or "all". Defaults to 1
+        /// when omitted.
+        #[serde(default, alias = "amount", alias = "count")]
+        qty: Option<Qty>,
     },
     /// Buy one catalog item from a nearby merchant, walking up to them
     /// first. The server owns catalog, pricing and gold checks.
@@ -170,12 +180,16 @@ pub(super) enum AgentAction {
         )]
         merchant: String,
     },
-    /// Drop one bag item on the ground where you stand. Stricter than the
-    /// web client: worn gear must be taken off first.
+    /// Drop one or more units of a bag item on the ground where you stand.
+    /// Stricter than the web client: worn gear must be taken off first.
     #[serde(rename = "drop", alias = "drop_item", alias = "discard")]
     Drop {
         #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
         item: String,
+        /// How many units to drop: a positive count, or "all". Defaults to 1
+        /// when omitted.
+        #[serde(default, alias = "amount", alias = "count")]
+        qty: Option<Qty>,
     },
     /// Repurchase an item sold to this merchant this session, at the exact
     /// payout price. The server owns the entry list and gold checks.
@@ -224,6 +238,29 @@ pub(super) fn asks_for_great_chest(chest: Option<&str>) -> bool {
             .iter()
             .any(|k| c.contains(k))
     })
+}
+
+/// How a sell/drop action names an amount: an explicit count, or the
+/// literal "all" of whatever is currently owned — resolved against the live
+/// bag at dispatch time (`Self::resolve`), not fixed when the LLM composed
+/// the action.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(super) enum Qty {
+    Count(u32),
+    Named(String),
+}
+
+impl Qty {
+    /// The concrete count this resolves to given `available` units actually
+    /// owned, or `None` if it isn't a positive count or the word "all".
+    pub(super) fn resolve(&self, available: u32) -> Option<u32> {
+        match self {
+            Self::Count(n) if *n > 0 => Some(*n),
+            Self::Named(s) if s.trim().eq_ignore_ascii_case("all") => Some(available),
+            _ => None,
+        }
+    }
 }
 
 /// How a pickup names its target: the instance id from the world state
@@ -395,6 +432,9 @@ pub(super) fn action_to_command(
             target_name: player.clone(),
         }),
         AgentAction::PartyLeave => Some(ClientMessage::PartyLeave),
+        AgentAction::PartySay { message } => Some(ClientMessage::PartyChat {
+            message: message.clone(),
+        }),
         // Answering needs the stored invite; handled in
         // `execute::handle_response`.
         AgentAction::PartyAccept { .. }
@@ -537,6 +577,58 @@ mod tests {
     }
 
     #[test]
+    fn sell_and_drop_qty_defaults_to_none() {
+        let AgentAction::Sell { qty, .. } = parse_single_action(
+            r#"{"actions": [{"type": "sell", "item": "torch", "merchant": "Rica"}]}"#,
+        ) else {
+            panic!("expected Sell");
+        };
+        assert!(qty.is_none());
+
+        let AgentAction::Drop { qty, .. } =
+            parse_single_action(r#"{"actions": [{"type": "drop", "item": "torch"}]}"#)
+        else {
+            panic!("expected Drop");
+        };
+        assert!(qty.is_none());
+    }
+
+    #[test]
+    fn sell_and_drop_parse_a_numeric_qty() {
+        let AgentAction::Sell { qty, .. } = parse_single_action(
+            r#"{"actions": [{"type": "sell", "item": "torch", "merchant": "Rica", "qty": 5}]}"#,
+        ) else {
+            panic!("expected Sell");
+        };
+        assert_eq!(qty.unwrap().resolve(100), Some(5));
+
+        let AgentAction::Drop { qty, .. } =
+            parse_single_action(r#"{"actions": [{"type": "drop", "item": "torch", "amount": 3}]}"#)
+        else {
+            panic!("expected Drop");
+        };
+        assert_eq!(qty.unwrap().resolve(100), Some(3));
+    }
+
+    #[test]
+    fn sell_qty_accepts_the_word_all() {
+        let AgentAction::Sell { qty, .. } = parse_single_action(
+            r#"{"actions": [{"type": "sell", "item": "torch", "merchant": "Rica", "qty": "all"}]}"#,
+        ) else {
+            panic!("expected Sell");
+        };
+        assert_eq!(qty.unwrap().resolve(7), Some(7));
+    }
+
+    #[test]
+    fn qty_resolve_rejects_zero_and_unknown_words() {
+        assert_eq!(Qty::Count(0).resolve(10), None);
+        assert_eq!(Qty::Named("some".to_string()).resolve(10), None);
+        // Case-insensitive, tolerates surrounding whitespace.
+        assert_eq!(Qty::Named(" ALL ".to_string()).resolve(4), Some(4));
+    }
+
+    #[test]
     fn pickup_parses_instance_id_as_number() {
         for json in [
             r#"{"actions": [{"type": "pickup", "item": 6043}]}"#,
@@ -578,7 +670,7 @@ mod tests {
             r#"{"actions": [{"type": "sell_item", "item_id": "goblin_sword", "npc": "Rica"}]}"#,
             r#"{"actions": [{"type": "sell", "name": "goblin_sword", "to": "Rica"}]}"#,
         ] {
-            let AgentAction::Sell { item, merchant } = parse_single_action(json) else {
+            let AgentAction::Sell { item, merchant, .. } = parse_single_action(json) else {
                 panic!("expected Sell for {json}");
             };
             assert_eq!((item.as_str(), merchant.as_str()), ("goblin_sword", "Rica"));
@@ -623,7 +715,7 @@ mod tests {
             r#"{"actions": [{"type": "drop_item", "item_def_id": "torch"}]}"#,
             r#"{"actions": [{"type": "discard", "name": "torch"}]}"#,
         ] {
-            let AgentAction::Drop { item } = parse_single_action(json) else {
+            let AgentAction::Drop { item, .. } = parse_single_action(json) else {
                 panic!("expected Drop for {json}");
             };
             assert_eq!(item, "torch");

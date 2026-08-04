@@ -24,6 +24,21 @@ check() {
     fi
 }
 
+check_zone_write() {
+    local zone token code
+    zone=$(mktemp)
+    token=$(docker compose exec -T server cat /state/npc_token)
+    curl -fsS "$BASE/api/terrain/zones/-2/0" -o "$zone"
+    code=$(curl -sS -o /dev/null -w '%{http_code}' \
+        -X PUT \
+        -H "Authorization: Bearer $token" \
+        -H 'Content-Type: application/json' \
+        --data-binary "@$zone" \
+        "$BASE/api/terrain/zones/-2/0")
+    rm -f "$zone"
+    [[ $code == 204 ]]
+}
+
 echo "==> smoke testing $BASE"
 
 check "client serves index.html" \
@@ -41,6 +56,8 @@ check "/api proxies to the terrain REST API" \
 # length check rather than a bare status check.
 check "seeded no-spawn zones survived the bake" \
     bash -c "curl -fsS '$BASE/api/terrain/zones/-2/0' | jq -e '.noSpawnZones | length >= 1'"
+
+check "authenticated terrain writes reach the volume" check_zone_write
 
 # 101 means nginx forwarded the Upgrade to the game port.
 check "/ws completes the WebSocket upgrade" \

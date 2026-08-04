@@ -25,10 +25,14 @@ export const playerGuard = writable<number | null>(null)
 /** Item defs that act as a carried light source (mirrors shared TORCH_ITEM_IDS). */
 const TORCH_ITEM_IDS = ['torch', 'worn_torch']
 
+export function isTorchItemDefId(id: string | null | undefined): boolean {
+  return id != null && TORCH_ITEM_IDS.includes(id)
+}
+
 /** True when the local player has a torch equipped in the off-hand slot. */
 export const localTorchEquipped = derived(inventoryStore, (inv) => {
   const id = inv.equipped.off_hand?.item_def_id
-  return id !== undefined && TORCH_ITEM_IDS.includes(id)
+  return isTorchItemDefId(id)
 })
 
 export function setInventory(inventory: PlayerInventory) {

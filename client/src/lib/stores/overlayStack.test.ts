@@ -198,4 +198,31 @@ describe('closeTopOverlay', () => {
   it('reports nothing to close when no overlay is open', () => {
     expect(closeTopOverlay()).toBe(false)
   })
+
+  it('closes the chat channel menu before any panel behind it', () => {
+    inventoryVisible.set(true)
+    let menuCloses = 0
+    const unmount = mountOverlay('chatChannelMenu', () => menuCloses++)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(menuCloses).toBe(1)
+    expect(get(inventoryVisible)).toBe(true)
+
+    unmount()
+    expect(closeTopOverlay()).toBe(true)
+    expect(get(inventoryVisible)).toBe(false)
+  })
+
+  it('closes the chat channel menu ahead of the settings dialog', () => {
+    let settingsCloses = 0
+    const unmountSettings = mountOverlay('settings', () => settingsCloses++)
+    let menuCloses = 0
+    const unmountMenu = mountOverlay('chatChannelMenu', () => menuCloses++)
+
+    expect(closeTopOverlay()).toBe(true)
+    expect(menuCloses).toBe(1)
+    expect(settingsCloses).toBe(0)
+    unmountMenu()
+    unmountSettings()
+  })
 })

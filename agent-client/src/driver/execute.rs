@@ -10,11 +10,12 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::dungeon::ChestKind;
-use crate::state::{Carried, SharedState};
+use crate::state::{Carried, CarriedBagCopies, SharedState};
+use onlinerpg_shared::messages::BagLineItem;
 
 use super::action::{
     action_to_command, asks_for_great_chest, parse_agent_response, resolve_move_goal, AgentAction,
-    PickupRef,
+    PickupRef, Qty,
 };
 use super::combat::{
     approach_player, chase_monster, chest_arrive_range, walk_to_ground_item, walk_to_point,
@@ -49,6 +50,42 @@ fn unreachable_note(monster_id: &str, loss: &LostReason) -> String {
              behind walls or on another floor. Pick a reachable monster."
         ),
     }
+}
+
+/// Resolves a sell/drop qty request against the item's available bag
+/// copies (`None` means the default of 1) into concrete
+/// `(instance_id, qty)` lines, greedily filled across however many separate
+/// copies that takes. `Err` carries a user-facing reason (bad qty value, or
+/// not enough units) with no unit word — callers already know whether this
+/// is a sell or a drop.
+pub(super) fn resolve_qty_lines(
+    copies: &[(u64, u32)],
+    qty: Option<&Qty>,
+) -> Result<Vec<BagLineItem>, String> {
+    let available: u32 = copies.iter().map(|(_, q)| q).sum();
+    let requested = match qty {
+        None => 1,
+        Some(q) => q
+            .resolve(available)
+            .ok_or_else(|| "qty must be a positive number or \"all\"".to_string())?,
+    };
+    if requested > available {
+        return Err(format!("only {available} left, not {requested}"));
+    }
+    let mut need = requested;
+    let mut lines = Vec::new();
+    for (instance_id, remaining) in copies {
+        if need == 0 {
+            break;
+        }
+        let take = need.min(*remaining);
+        lines.push(BagLineItem {
+            instance_id: *instance_id,
+            qty: take,
+        });
+        need -= take;
+    }
+    Ok(lines)
 }
 
 /// Parse and execute the agent's response.
@@ -330,63 +367,102 @@ pub(super) async fn handle_response(
             continue;
         }
 
-        // Sell a bag item: resolve the merchant, walk up to them, and send
-        // the sale. The server owns pricing, proximity and wallet checks and
-        // answers with GoldUpdate/InventoryUpdated.
-        if let AgentAction::Sell { item, merchant } = action {
+        // Sell one or more units of a bag item: resolve the merchant, walk up
+        // to them, and send the sale as one all-or-nothing batch. The server
+        // owns pricing, proximity and wallet checks and answers with
+        // GoldUpdate/InventoryUpdated.
+        if let AgentAction::Sell {
+            item,
+            merchant,
+            qty,
+        } = action
+        {
             let Some((merchant_id, _)) = reach_merchant(state, "SellFailed", merchant).await else {
                 continue;
             };
             let mut s = state.lock().await;
-            let Some((def_id, placed)) = s.find_carried_bag_first(item, &spent_units) else {
+            let Some(copies) = s.find_carried_bag_copies(item, &spent_units) else {
                 s.push_agent_event(format!(
                     "[SellFailed] Nothing called '{item}' is left in your bag."
                 ));
                 continue;
             };
-            let Carried::InBag(instance_id) = placed else {
+            let CarriedBagCopies::InBag { def_id, copies } = copies else {
+                let CarriedBagCopies::WornOnly { def_id } = copies else {
+                    unreachable!("InBag already matched above")
+                };
                 s.push_agent_event(format!(
                     "[SellFailed] {def_id} is equipped — worn gear is not for sale."
                 ));
                 continue;
             };
-            let cmd = onlinerpg_shared::ClientMessage::SellItem {
+            let lines = match resolve_qty_lines(&copies, qty.as_ref()) {
+                Ok(lines) => lines,
+                Err(reason) => {
+                    s.push_agent_event(format!("[SellFailed] {def_id}: {reason}."));
+                    continue;
+                }
+            };
+            let total: u32 = lines.iter().map(|l| l.qty).sum();
+            let cmd = onlinerpg_shared::ClientMessage::SellItems {
                 merchant_player_id: merchant_id,
-                instance_id,
+                items: lines.clone(),
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send sell: {e}");
             } else {
-                // One unit off the stack, not the whole instance.
-                *spent_units.entry(instance_id).or_default() += 1;
-                info!("Agent selling {def_id} [id {instance_id}] to {merchant}");
+                for line in &lines {
+                    *spent_units.entry(line.instance_id).or_default() += line.qty;
+                }
+                info!(
+                    "Agent selling {total}x {def_id} [{} instance(s)] to {merchant}",
+                    lines.len()
+                );
             }
             continue;
         }
 
-        // Drop a bag item where we stand. Stricter than the web client:
-        // worn gear must be taken off first.
-        if let AgentAction::Drop { item } = action {
+        // Drop one or more units of a bag item where we stand, as one
+        // all-or-nothing batch. Stricter than the web client: worn gear must
+        // be taken off first.
+        if let AgentAction::Drop { item, qty } = action {
             let mut s = state.lock().await;
-            let Some((def_id, placed)) = s.find_carried_bag_first(item, &spent_units) else {
+            let Some(copies) = s.find_carried_bag_copies(item, &spent_units) else {
                 s.push_agent_event(format!(
                     "[DropFailed] Nothing called '{item}' is left in your bag."
                 ));
                 continue;
             };
-            let Carried::InBag(instance_id) = placed else {
+            let CarriedBagCopies::InBag { def_id, copies } = copies else {
+                let CarriedBagCopies::WornOnly { def_id } = copies else {
+                    unreachable!("InBag already matched above")
+                };
                 s.push_agent_event(format!(
                     "[DropFailed] {def_id} is equipped — worn gear cannot be dropped."
                 ));
                 continue;
             };
-            let cmd = onlinerpg_shared::ClientMessage::DropItem { instance_id };
+            let lines = match resolve_qty_lines(&copies, qty.as_ref()) {
+                Ok(lines) => lines,
+                Err(reason) => {
+                    s.push_agent_event(format!("[DropFailed] {def_id}: {reason}."));
+                    continue;
+                }
+            };
+            let total: u32 = lines.iter().map(|l| l.qty).sum();
+            let cmd = onlinerpg_shared::ClientMessage::DropItems {
+                items: lines.clone(),
+            };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send drop: {e}");
             } else {
-                // A drop puts the whole stack on the ground.
-                spent_units.insert(instance_id, u32::MAX);
-                info!("Agent dropped {def_id} [id {instance_id}]");
+                for line in &lines {
+                    *spent_units.entry(line.instance_id).or_default() += line.qty;
+                }
+                info!(
+                    "Agent dropped {total}x {def_id} [{} instance(s)]",
+                    lines.len()
+                );
             }
             continue;
         }
@@ -775,6 +851,16 @@ pub(super) async fn handle_response(
                         error!("Move error to ({gx:.1}, {gz:.1})");
                     }
                 }
+            } else {
+                // Partial coordinates (x without z, direction without
+                // distance) used to vanish silently — tell the LLM instead.
+                warn!("move: no usable goal (x={x:?} z={z:?} dir={direction:?} dist={distance:?})");
+                let mut s = state.lock().await;
+                s.push_agent_event(
+                    "[MoveFailed] That move had no usable goal — give both x and z, \
+                     or a direction with a distance."
+                        .to_string(),
+                );
             }
             continue;
         }
@@ -970,6 +1056,77 @@ mod tests {
             s.remember_ground_item(item);
         }
         s
+    }
+
+    #[test]
+    fn resolve_qty_lines_defaults_to_one_unit_from_the_first_copy() {
+        let lines = resolve_qty_lines(&[(1, 3), (2, 2)], None).unwrap();
+        assert_eq!(
+            lines,
+            vec![BagLineItem {
+                instance_id: 1,
+                qty: 1
+            }]
+        );
+    }
+
+    #[test]
+    fn resolve_qty_lines_spans_several_copies_when_one_is_not_enough() {
+        // Two separately-picked-up non-stackable copies (qty 1 each) plus a
+        // fragmented stack — asking for 3 should drain the first two copies
+        // fully before touching the third.
+        let lines = resolve_qty_lines(&[(1, 1), (2, 1), (3, 5)], Some(&Qty::Count(3))).unwrap();
+        assert_eq!(
+            lines,
+            vec![
+                BagLineItem {
+                    instance_id: 1,
+                    qty: 1
+                },
+                BagLineItem {
+                    instance_id: 2,
+                    qty: 1
+                },
+                BagLineItem {
+                    instance_id: 3,
+                    qty: 1
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_qty_lines_all_takes_every_copy_in_full() {
+        let lines =
+            resolve_qty_lines(&[(1, 3), (2, 2)], Some(&Qty::Named("all".to_string()))).unwrap();
+        assert_eq!(
+            lines,
+            vec![
+                BagLineItem {
+                    instance_id: 1,
+                    qty: 3
+                },
+                BagLineItem {
+                    instance_id: 2,
+                    qty: 2
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn resolve_qty_lines_rejects_more_than_is_available() {
+        let err = resolve_qty_lines(&[(1, 3), (2, 2)], Some(&Qty::Count(10))).unwrap_err();
+        assert_eq!(err, "only 5 left, not 10");
+    }
+
+    #[test]
+    fn resolve_qty_lines_rejects_a_bad_qty_value() {
+        let err = resolve_qty_lines(&[(1, 3)], Some(&Qty::Count(0))).unwrap_err();
+        assert!(err.contains("positive number"), "{err}");
+
+        let err = resolve_qty_lines(&[(1, 3)], Some(&Qty::Named("half".to_string()))).unwrap_err();
+        assert!(err.contains("positive number"), "{err}");
     }
 
     #[test]

@@ -92,12 +92,12 @@
 - [x] AI로 쉽게 접속할 수 있는 방법 개발
 - [x] 귓속말(DM) 기능
 - [x] 차단 (`/block <이름>`, `/unblock <이름>`, `/block`으로 목록)
-- 운영자 커맨드
-  - ban
-  - kick
-  - summon
-  - goto
-  - mute
+- [x] 운영자 커맨드
+  - [x] ban (`/ban <이름> [분]`, `/unban <이름>`; 계정 단위, 영구/기간제)
+  - [x] kick
+  - [x] summon
+  - [x] goto
+  - [x] mute
 - party, guild 기능
 - [x] 키보드로 움직이면 다른 플레이어에게는 움찔거리며 움직이는 것으로 보인다
 - [x] 디버그창 일반인에게는 안 보이게
@@ -120,15 +120,20 @@
 - [x] 발견한 던전의 위치 맵에 표시하기
 - 벨트의 유용성 찾기
 - Rica 잠잘 때 거래 막고, 야간 상점 npc 추가
+- 각종 채팅 커맨드
+  - [x] /r /w에 대한 답장
+  - ! 외치기
+  - [x] 파티 채팅 (/p 고정 채널 + Party 탭 + 입력줄 채널 드롭다운)
+- 무게는 가볍고 배부름은 많은 램바스 와퍼
+- 모닥불에 광원 붙이기
+- 한번에 버릴 수 있는 아이템 수 제한 (예: 한번에 최대 10개)
+  - 모여 있는 아이템 구현 (예: 포션 12개)
+  - 주변 플레이어/새로 진입하는 플레이어에게 쓰로틀링
 
 ## 낚시 후속 (PR #53 리뷰)
 
 - 월드모델 없는 기존 아이템(장신구·천갑옷 등)이 sword.png 아이콘으로 보이는 회귀 → 실제 아이콘 부여
-- agent-client: 부분 좌표(z 누락 등)를 조용히 버림 → 피드백 이벤트 추가
 - agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
-- items.csv ragged 행 정규화 (18칸 헤더 대비 기존 행 13–14칸)
-- EV 테스트의 상인 환율 0.4 하드코딩 → merchant defs에서 읽기
-- 문서 오류: doc/FISHING.md "SFX 전부 CC0" 오기, doc/AGENT_CLIENT.md 낚시 섹션만 영어
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
 - Mixamo GLB 재배포 정책 판단

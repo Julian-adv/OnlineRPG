@@ -49,6 +49,35 @@ async fn sell_to_merchant_records_buyback_and_restores_item() {
 }
 
 #[tokio::test]
+async fn buyback_returns_the_unit_into_its_stack() {
+    let game_state = make_test_game_state("buyback_stacks");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+        inv.bag.push(bag_item(7, "apple", 2));
+        inventories.insert(pid("buyer"), inv);
+    }
+
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
+        .await;
+    let entry_id = {
+        let buybacks = game_state.buybacks.read().await;
+        buybacks[&(1, "Rica".to_string())][0].entry.entry_id
+    };
+
+    game_state
+        .buyback_item(&pid("buyer"), &pid("npc_rica"), entry_id)
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("buyer")].bag;
+    assert_eq!(bag.len(), 1, "the bought-back apple must rejoin its stack");
+    assert_eq!(bag[0].quantity, 2);
+}
+
+#[tokio::test]
 async fn buyback_rejects_without_enough_gold() {
     let game_state = make_test_game_state("buyback_no_gold");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
@@ -125,7 +154,7 @@ async fn expire_all_buybacks(game_state: &GameState) {
 #[tokio::test]
 async fn expired_buyback_entries_are_swept_with_their_pair() {
     let game_state = make_test_game_state("buyback_expiry_sweep");
-    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
     {
         let mut inventories = game_state.inventories.write().await;
         let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
@@ -138,11 +167,23 @@ async fn expired_buyback_entries_are_swept_with_their_pair() {
     assert_eq!(game_state.buybacks.read().await.len(), 1);
 
     expire_all_buybacks(&game_state).await;
-    // Opening the shop sweeps globally, so the whole pair goes — otherwise an
-    // offline character's entries would never be reached again.
+    // A shop opened before the sweep must already hide the expired entry —
+    // trades filter expiry inline rather than scanning every character.
     game_state
         .open_shop(&pid("buyer"), &pid("npc_rica"), true)
         .await;
+    let buyback = drain(&mut buyer_rx)
+        .into_iter()
+        .find_map(|m| match m {
+            ServerMessage::ShopState { buyback, .. } => Some(buyback),
+            _ => None,
+        })
+        .expect("ShopState");
+    assert!(buyback.is_empty(), "expired entries stay out of the shop");
+
+    // The pair itself is retired by the tick, globally — otherwise an offline
+    // character's entries would never be reached again.
+    game_state.tick_buyback_expiry().await;
     assert!(game_state.buybacks.read().await.is_empty());
 }
 

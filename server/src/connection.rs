@@ -3,7 +3,8 @@ use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
 use crate::game_state::{
-    encode_server_msg, parse_notice_command, restored_floor_level, DirectMessage, GameState,
+    encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level,
+    DirectMessage, GameState,
 };
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
@@ -145,6 +146,8 @@ struct ConnectionState {
     /// responses are flushed (protocol mismatch).
     must_close: bool,
     account_name: Option<String>,
+    account_session_id: Option<u64>,
+    account_rx: Option<mpsc::UnboundedReceiver<ServerMessage>>,
     player_id: Option<PlayerId>,
     /// Entered character's name, kept here so disconnect-path logs can name the
     /// player after `GameState` has already dropped the record.
@@ -164,8 +167,9 @@ struct ConnectionState {
     env_reported: bool,
 }
 
-/// Positions polls inside this window are dropped; the web map polls every
-/// 3s, leaving a 1s margin so its own cadence never races the clamp.
+/// Positions snapshot requests inside this window are dropped. Steady-state
+/// data rides the push tick; a client only asks on map open, so this is
+/// purely a spam brake.
 const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 
 impl ConnectionState {
@@ -175,6 +179,8 @@ impl ConnectionState {
             client_kind: None,
             must_close: false,
             account_name: None,
+            account_session_id: None,
+            account_rx: None,
             player_id: None,
             character_name: None,
             direct_rx: None,
@@ -348,6 +354,25 @@ pub async fn handle_connection(
                 break;
             }
 
+            // A replacement login wins over buffered traffic from the stale socket.
+            account_msg = async {
+                match state.account_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(msg) = account_msg {
+                    if let Some(bytes) = encode_server_msg(&msg) {
+                        let _ = ws_sender.send(Message::Binary(bytes)).await;
+                    }
+                    info!(
+                        "Account {:?} kicked by a replacement login",
+                        state.account_name
+                    );
+                    break;
+                }
+            }
+
             // Periodic timeout checks: unauth grace period, in-game heartbeat
             _ = heartbeat_check.tick() => {
                 if state.account_name.is_none()
@@ -502,17 +527,14 @@ pub async fn handle_connection(
     }
 
     // Once the drain starts, `persist_shutdown_snapshot` owns persistence for
-    // every connected player — and needs these maps left populated to see them.
-    // A kick already flushed and detached the replaced session, so this is a
-    // no-op for that player id.
+    // every connected player and needs these maps left populated to see them.
     if !shutdown_started.has_changed().unwrap_or(true) {
-        if let Some(ref id) = state.player_id {
-            game_state.cancel_concentration_if_active(id).await;
-            game_state.persist_and_detach_player(id, auth_service).await;
-
-            game_state.unregister_connection_channel(id).await;
-            game_state.unregister_player_character(id).await;
-            game_state.remove_player(id).await;
+        if let (Some(account_name), Some(session_id)) =
+            (state.account_name.as_deref(), state.account_session_id)
+        {
+            game_state
+                .end_account_session(account_name, session_id, auth_service)
+                .await;
         }
     }
 
@@ -522,9 +544,10 @@ pub async fn handle_connection(
     }
 }
 
-/// Shared tail of both auth paths: load characters, mark the connection
-/// authenticated, and build the AuthSuccess reply.
-fn finish_auth(
+/// Shared tail of both auth paths: load characters, replace any account
+/// session, and build the AuthSuccess reply.
+async fn finish_auth(
+    game_state: &GameState,
     auth_service: &AuthService,
     state: &mut ConnectionState,
     account_name: String,
@@ -548,7 +571,43 @@ fn finish_auth(
         .map(character_record_to_shared)
         .collect::<Vec<Character>>();
 
+    let (kick_tx, kick_rx) = mpsc::unbounded_channel();
+
+    // The single gate both login paths pass through: a ban stops the session
+    // here, not at character select, because the account carries it. Checked
+    // and registered under the one lock `/ban` also takes, so a ban landing
+    // in between cannot admit a session it can no longer see to evict.
+    let account_session_id = {
+        let _sessions = game_state.lock_character_sessions().await;
+        let ban = {
+            let auth = auth_service.clone();
+            let account = account_name.clone();
+            crate::game_state::auth_db(move || auth.active_ban(&account)).await
+        };
+        match ban {
+            Ok(Some(ban)) => {
+                info!("Rejected banned account '{}'", account_name);
+                return vec![ServerMessage::AuthError {
+                    message: ban.message(),
+                }];
+            }
+            Ok(None) => {}
+            Err(err) => {
+                // Fail closed: an unreadable ban table must not become a way in.
+                error!("Ban check failed for '{}': {}", account_name, err);
+                return vec![ServerMessage::AuthError {
+                    message: "Could not verify the account. Try again shortly.".to_string(),
+                }];
+            }
+        }
+        game_state
+            .register_account_session_locked(&account_name, kick_tx, auth_service)
+            .await
+    };
+
     state.account_name = Some(account_name.clone());
+    state.account_session_id = Some(account_session_id);
+    state.account_rx = Some(kick_rx);
     state.is_official_npc = is_official_npc;
     state.pending_character_attributes = None;
 
@@ -572,7 +631,9 @@ fn requires_admin(msg: &ClientMessage) -> bool {
         | ClientMessage::DebugSetTime { .. }
         | ClientMessage::DebugResetDungeonProps { .. } => true,
         ClientMessage::ChatMessage { message } => {
-            message.starts_with("/give ") || parse_notice_command(message).is_some()
+            message.starts_with("/give ")
+                || parse_notice_command(message).is_some()
+                || parse_admin_command(message).is_some()
         }
         _ => false,
     }
@@ -718,7 +779,7 @@ async fn handle_client_message(
             info!("Google sub '{}' -> account '{}'", claims.sub, account_name);
 
             state.admin_eligible = auth_ctx.is_admin(&claims);
-            return Ok(finish_auth(auth_service, state, account_name, false));
+            return Ok(finish_auth(game_state, auth_service, state, account_name, false).await);
         }
 
         ClientMessage::AuthenticateNpc {
@@ -742,7 +803,7 @@ async fn handle_client_message(
                 }
             };
 
-            return Ok(finish_auth(auth_service, state, account_name, true));
+            return Ok(finish_auth(game_state, auth_service, state, account_name, true).await);
         }
 
         ClientMessage::CreateCharacter {
@@ -810,14 +871,25 @@ async fn handle_client_message(
                 Ok(name) => name,
                 Err(responses) => return Ok(responses),
             };
-
-            match auth_service.delete_character(&authed_account_name, character_id) {
-                Ok(()) => {
+            match game_state
+                .delete_character_if_inactive(auth_service, &authed_account_name, character_id)
+                .await
+            {
+                Ok(true) => {
                     info!(
                         "Character id={} deleted for account '{}'",
                         character_id, authed_account_name
                     );
                     return Ok(vec![ServerMessage::CharacterDeleted { character_id }]);
+                }
+                Ok(false) => {
+                    warn!(
+                        "Character delete rejected for account '{}': id={} is active",
+                        authed_account_name, character_id
+                    );
+                    return Ok(vec![ServerMessage::CharacterError {
+                        message: "Cannot delete a character while it is in game".to_string(),
+                    }]);
                 }
                 Err(err) => {
                     warn!(
@@ -864,6 +936,16 @@ async fn handle_client_message(
                 Ok(name) => name,
                 Err(responses) => return Ok(responses),
             };
+            let character_sessions = game_state.lock_character_sessions().await;
+            let Some(account_session_id) = state.account_session_id else {
+                return Ok(vec![]);
+            };
+            if !game_state
+                .is_current_account_session(&authed_account_name, account_session_id)
+                .await
+            {
+                return Ok(vec![]);
+            }
 
             let selected_character =
                 match auth_service.get_character_for_account(&authed_account_name, character_id) {
@@ -887,16 +969,23 @@ async fn handle_client_message(
                 );
             }
 
-            // Trained skills load before any registration: a failed read must
-            // refuse the session, or the next save would overwrite real
-            // progress with an empty state.
-            let skill_rows = {
+            // Skills and dungeon history load before any registration: a failed
+            // read must refuse the session, or an empty fallback would overwrite
+            // trained skills on save and re-grant already-opened chest rewards.
+            let (skill_rows, chest_opens, discovered_dungeons) = {
                 let auth = Arc::clone(auth_service);
-                match crate::game_state::auth_db(move || auth.load_skills(character_id)).await {
-                    Ok(rows) => rows,
+                let loaded = crate::game_state::auth_db(move || {
+                    Ok((
+                        auth.load_skills(character_id)?,
+                        auth.load_dungeon_history(character_id)?,
+                    ))
+                })
+                .await;
+                match loaded {
+                    Ok((rows, (opens, ids))) => (rows, opens, ids),
                     Err(err) => {
                         warn!(
-                            "Failed to load skills for character {}: {} — refusing session",
+                            "Failed to load required state for character {}: {} — refusing session",
                             character_id, err
                         );
                         return Ok(vec![ServerMessage::CharacterError {
@@ -905,11 +994,6 @@ async fn handle_client_message(
                     }
                 }
             };
-
-            // Enforced unique character names allow name-based session replacement.
-            game_state
-                .kick_player_by_name(&selected_character.name, auth_service)
-                .await;
 
             let max_hp = selected_character.max_hp;
             let character_xp = selected_character.xp;
@@ -972,7 +1056,16 @@ async fn handle_client_message(
                     (!state.is_official_npc).then_some(selected_character.satiation),
                 )
                 .await;
-
+            if !game_state
+                .attach_player_to_account_session(&authed_account_name, account_session_id, id)
+                .await
+            {
+                warn!(
+                    "Account session changed during game admission for '{}'",
+                    authed_account_name
+                );
+                return Ok(vec![]);
+            }
             match auth_service.load_blocked_names(character_id) {
                 Ok(blocked) => game_state.set_player_blocks(&id, blocked).await,
                 Err(err) => warn!(
@@ -981,24 +1074,10 @@ async fn handle_client_message(
                 ),
             }
 
-            let auth = Arc::clone(auth_service);
-            let discovered_dungeons =
-                match crate::game_state::auth_db(move || auth.load_dungeon_history(character_id))
-                    .await
-                {
-                    Ok((opens, ids)) => {
-                        game_state.set_chest_opens(character_id, opens).await;
-                        game_state.set_dungeon_discoveries(&id, ids.clone()).await;
-                        ids
-                    }
-                    Err(err) => {
-                        warn!(
-                            "Failed to load dungeon history for character {}: {}",
-                            character_id, err
-                        );
-                        Vec::new()
-                    }
-                };
+            game_state.set_chest_opens(character_id, chest_opens).await;
+            game_state
+                .set_dungeon_discoveries(&id, discovered_dungeons.clone())
+                .await;
 
             // Load inventory from DB
             game_state
@@ -1077,6 +1156,7 @@ async fn handle_client_message(
 
             state.player_id = Some(id);
             state.character_name = Some(selected_character.name.clone());
+            drop(character_sessions);
 
             info!(
                 "Account '{}' entered game as character '{}' with player ID {:?}",
@@ -1134,15 +1214,17 @@ async fn handle_client_message(
             rotation,
         } => {
             if let Some(id) = &state.player_id {
-                if !game_state
+                let Some(position) = game_state
                     .validate_spawn_request(id, &monster_type, &position, rotation)
                     .await
-                {
+                else {
                     warn!(
                         "Spawn request rejected: position ({:.1}, {:.1}) rotation {:.1} invalid for {}",
                         position.x, position.z, rotation, monster_type
                     );
-                } else if !game_state.take_spawn_allowance(id, &monster_type).await {
+                    return Ok(vec![]);
+                };
+                if !game_state.take_spawn_allowance(id, &monster_type).await {
                     warn!(
                         "Spawn request rejected: no unconsumed allowance for {}",
                         monster_type
@@ -1477,6 +1559,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::DropItems { items } => {
+            if let Some(id) = &state.player_id {
+                game_state.drop_items(id, items).await;
+            }
+        }
+
         ClientMessage::PickupStarted => {
             if let Some(id) = &state.player_id {
                 game_state.broadcast_pickup_animation(id).await;
@@ -1535,6 +1623,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PartyChat { message } => {
+            if let Some(id) = &state.player_id {
+                game_state.send_party_chat(id, message).await;
+            }
+        }
+
         ClientMessage::RequestPartyPositions => {
             if let Some(id) = state.player_id {
                 if state.party_positions_poll_due() {
@@ -1572,6 +1666,35 @@ async fn handle_client_message(
             if let Some(id) = &state.player_id {
                 game_state
                     .buyback_item(id, &merchant_player_id, entry_id)
+                    .await;
+            }
+        }
+
+        ClientMessage::BuyItems {
+            merchant_player_id,
+            items,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state.buy_items(id, &merchant_player_id, items).await;
+            }
+        }
+
+        ClientMessage::SellItems {
+            merchant_player_id,
+            items,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state.sell_items(id, &merchant_player_id, items).await;
+            }
+        }
+
+        ClientMessage::BuybackItems {
+            merchant_player_id,
+            entry_ids,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .buyback_items(id, &merchant_player_id, entry_ids)
                     .await;
             }
         }
@@ -1654,6 +1777,47 @@ mod tests {
         assert!(!token_matches("secret-token", "secret-tokeN"));
         assert!(!token_matches("secret", "secret-token"));
         assert!(!token_matches("", "secret-token"));
+    }
+
+    /// The gate both login paths share: a banned account must not reach the
+    /// character list, and lifting the ban must let it back in.
+    #[tokio::test]
+    async fn finish_auth_refuses_a_banned_account() {
+        let game_state = crate::game_state::tests::make_test_game_state("auth_ban_gate");
+        let auth = crate::game_state::tests::make_test_auth("auth_ban_gate");
+        let account = auth.login_npc("npc_ban_gate").unwrap();
+
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account.clone(), true).await;
+        assert!(
+            matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
+            "unbanned account authenticates: {ok:?}"
+        );
+
+        auth.ban_account(&account, Some("testing"), None).unwrap();
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let refused = finish_auth(&game_state, &auth, &mut state, account.clone(), true).await;
+        match refused.as_slice() {
+            [ServerMessage::AuthError { message }] => {
+                assert!(
+                    message.contains("testing"),
+                    "reason reaches the client: {message}"
+                )
+            }
+            other => panic!("expected an auth error, got {other:?}"),
+        }
+        assert!(
+            state.account_name.is_none(),
+            "a refused session must not be left holding the account"
+        );
+
+        auth.unban_account(&account).unwrap();
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account, true).await;
+        assert!(
+            matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
+            "lifting the ban restores access: {ok:?}"
+        );
     }
 
     #[test]
@@ -1784,8 +1948,25 @@ mod tests {
         assert!(requires_admin(&ClientMessage::ChatMessage {
             message: "/notice".into()
         }));
+        for admin_command in [
+            "/kick Abuser",
+            "/mute Abuser 5",
+            "/unmute Abuser",
+            "/summon Abuser",
+            "/goto Abuser",
+        ] {
+            assert!(
+                requires_admin(&ClientMessage::ChatMessage {
+                    message: admin_command.into()
+                }),
+                "{admin_command} must be admin-gated"
+            );
+        }
         assert!(!requires_admin(&ClientMessage::ChatMessage {
             message: "hello".into()
+        }));
+        assert!(!requires_admin(&ClientMessage::ChatMessage {
+            message: "/who".into()
         }));
         assert!(!requires_admin(&ClientMessage::Heartbeat));
     }

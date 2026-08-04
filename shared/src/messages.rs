@@ -82,6 +82,21 @@ pub struct BuybackEntry {
     pub price: i64,
 }
 
+/// One line of a batched `BuyItems` request: buy `qty` units of one item def.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeLineItem {
+    pub item_def_id: String,
+    pub qty: u32,
+}
+
+/// One line of a batched `SellItems` or `DropItems` request: act on `qty`
+/// units of one bag stack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BagLineItem {
+    pub instance_id: u64,
+    pub qty: u32,
+}
+
 /// One party member as listed in `PartyState`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartyMember {
@@ -303,6 +318,12 @@ pub enum ClientMessage {
     DropItem {
         instance_id: u64,
     },
+    /// Drop multiple bag stacks (partial quantities allowed) in one
+    /// all-or-nothing transaction, so a multi-item bag cleanup round-trips
+    /// once instead of once per stack.
+    DropItems {
+        items: Vec<BagLineItem>,
+    },
     /// The pickup crouch started. Sent at the clip's first frame, whereas
     /// `PickupItem` waits for the grab moment ~35% in, so nearby players see
     /// the whole animation instead of joining it late.
@@ -339,6 +360,23 @@ pub enum ClientMessage {
     BuybackItem {
         merchant_player_id: PlayerId,
         entry_id: u64,
+    },
+    /// Buy multiple units, possibly of different items, in one all-or-nothing
+    /// transaction (see `SellItems` for the mirror).
+    BuyItems {
+        merchant_player_id: PlayerId,
+        items: Vec<TradeLineItem>,
+    },
+    /// Sell multiple bag stacks (partial quantities allowed) in one
+    /// all-or-nothing transaction.
+    SellItems {
+        merchant_player_id: PlayerId,
+        items: Vec<BagLineItem>,
+    },
+    /// Repurchase multiple buyback entries at once, all-or-nothing.
+    BuybackItems {
+        merchant_player_id: PlayerId,
+        entry_ids: Vec<u64>,
     },
     /// NPC-only (LLM haggling): offer a price modifier on one item to a
     /// nearby player. The server clamps the modifier to the player's price
@@ -377,8 +415,14 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
-    /// Ask where the sender's party members are (world-map markers). Poll,
-    /// not push: positions flow only while someone is looking at a map.
+    /// Say something to the sender's party. Delivered to every online member
+    /// wherever they are (no AOI cut), echoed to the sender included.
+    PartyChat {
+        message: String,
+    },
+    /// Ask where the sender's party members are right now (map open). A
+    /// one-shot snapshot: steady-state updates are pushed by the server's
+    /// party-position tick whenever a member relocates.
     RequestPartyPositions,
     /// Cast the equipped fishing rod at a water point. The server validates
     /// rod, range, floor and water (water-field depth at the point) and
@@ -540,6 +584,13 @@ pub enum ServerMessage {
     SystemMessage {
         message: String,
     },
+    /// A party-channel line, sent to every online member (the sender's echo
+    /// included). Carries the name like `WhisperMessage`: party chat ignores
+    /// distance, so the sender may be outside a member's AOI.
+    PartyChatMessage {
+        from: String,
+        message: String,
+    },
     /// Direct to the invitee: a party invite to answer with `PartyRespond`
     /// before it expires server-side.
     PartyInviteReceived {
@@ -566,9 +617,11 @@ pub enum ServerMessage {
         leader_id: PlayerId,
         members: Vec<PartyMember>,
     },
-    /// Direct answer to `RequestPartyPositions`: the other members' locations
-    /// with no AOI cut — the point is members beyond it. Empty when the
-    /// sender is not in a party.
+    /// Party member locations with no AOI cut — the point is members beyond
+    /// it. Pushed to the whole party when a member relocates, and sent
+    /// directly as the answer to `RequestPartyPositions`. Includes the
+    /// recipient (one payload serves every member; clients filter
+    /// themselves); empty when the requester is not in a party.
     PartyPositions {
         members: Vec<PartyMemberPosition>,
     },

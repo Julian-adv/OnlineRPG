@@ -432,6 +432,19 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Push party positions to members whose party relocated since the last
+    // tick; 3s matches the freshness of the world map's former poll.
+    let game_state_for_party_positions = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "party positions",
+        Duration::from_secs(3),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_party_positions);
+            async move { game_state.tick_party_positions().await }
+        },
+    ));
+
     // Every 10s, top up each player's ambient monsters toward their caps.
     let game_state_for_spawns = Arc::clone(&game_state);
     background.spawn(run_ticks(
@@ -464,6 +477,19 @@ async fn main() -> ExitCode {
         move || {
             let game_state = Arc::clone(&game_state_for_ground);
             async move { game_state.tick_ground_item_despawn().await }
+        },
+    ));
+
+    // Reclaim buyback entries for characters who never trade again; trades
+    // filter expiry inline, so this only has to beat memory growth.
+    let game_state_for_buybacks = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "buyback expiry",
+        game_state::BUYBACK_SWEEP_PERIOD,
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_buybacks);
+            async move { game_state.tick_buyback_expiry().await }
         },
     ));
 

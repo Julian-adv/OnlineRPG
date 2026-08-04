@@ -45,7 +45,7 @@ services:
     volumes:
       - state:/state
       - npcs:/npcs
-      - terrain:/terrain:ro
+      - terrain:/terrain
     healthcheck:
       test:
         ["CMD", "curl", "-fsS", "http://localhost:10007/api/terrain/height/0/0"]

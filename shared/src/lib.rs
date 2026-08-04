@@ -49,7 +49,10 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 ///      GroundItemSpawned no longer carries source_monster_id.
 /// v15: DungeonDiscoveries snapshot for per-character world-map markers.
 /// v16: hunger (HungerUpdate) + campfires (Campfire* / Grill*) — doc/HUNGER.md.
-pub const PROTOCOL_VERSION: u32 = 16;
+/// v17: PartyPositions pushed server-side on relocation (was a poll answer)
+///      and now includes the recipient; clients filter themselves.
+/// v18: party chat (PartyChat → PartyChatMessage).
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

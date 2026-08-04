@@ -168,10 +168,10 @@ impl super::GameState {
         &self,
         mover_id: &PlayerId,
         monster_id: String,
-        new_position: Position,
+        mut new_position: Position,
         rotation: f32,
         state: MonsterState,
-        target_position: Position,
+        mut target_position: Position,
     ) {
         let now = Self::now_ms();
         let (old_position, owner_id, monster) = {
@@ -189,6 +189,11 @@ impl super::GameState {
                 self.send_direct_message(mover_id, correction).await;
                 return;
             }
+            // Store canonical X like player moves do; the budget and sweep
+            // below are already periodic. See the regression test for what a
+            // non-canonical stored X costs.
+            new_position = new_position.wrapped_x();
+            target_position = target_position.wrapped_x();
             // Rate-limit client-reported movement with a token bucket that
             // refills at the monster's run speed. Movement is simulated by the
             // owning client, so without this an owner could teleport the monster
@@ -466,27 +471,33 @@ impl super::GameState {
     /// configured ambient type, sit outside every no-spawn zone, and be within
     /// range of the requesting player. Terrain checks (grassland, water) are
     /// the client's responsibility — the server has no terrain data.
+    ///
+    /// Returns the position to store: the request with X wrapped into the
+    /// canonical range, so validation and authoritative state share one
+    /// representation.
     pub async fn validate_spawn_request(
         &self,
         player_id: &PlayerId,
         monster_type: &str,
         position: &Position,
         rotation: f32,
-    ) -> bool {
+    ) -> Option<Position> {
         // The range check below only reads x/z, so without this a non-finite y
         // or rotation would reach MonsterSpawned.
         if !position.is_finite() || !rotation.is_finite() {
-            return false;
+            return None;
         }
+        let mut position = *position;
+        position.x = onlinerpg_shared::wrap_world_x(position.x);
         let rule = match Self::find_ambient_rule(monster_type) {
             Some(r) => r,
-            None => return false,
+            None => return None,
         };
 
         // Reject if inside any no-spawn zone (towns, safe areas) + margin
         for zone in &self.no_spawn_zones {
             if zone.contains_with_margin(position.x, position.z, NO_SPAWN_MARGIN) {
-                return false;
+                return None;
             }
         }
 
@@ -495,13 +506,13 @@ impl super::GameState {
             let players = self.players.read().await;
             match players.get(player_id) {
                 Some(p) => p.position,
-                None => return false,
+                None => return None,
             }
         };
         let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, position.x);
         let dz = position.z - player_pos.z;
         let max = rule.max_distance + 10.0; // tolerance
-        dx * dx + dz * dz <= max * max
+        (dx * dx + dz * dz <= max * max).then_some(position)
     }
 
     /// Consume the player's unexpired allowance for this type, if any. Each

@@ -14,6 +14,12 @@ pub struct StoredBuyback {
     pub entry: BuybackEntry,
     pub expires_at_ms: u64,
 }
+
+impl StoredBuyback {
+    pub fn is_live(&self, now_ms: u64) -> bool {
+        self.expires_at_ms > now_ms
+    }
+}
 use onlinerpg_shared::serialize_server_msg;
 use onlinerpg_shared::NoSpawnZone;
 use onlinerpg_shared::Position;
@@ -93,7 +99,7 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 }
 
 mod chat;
-pub(crate) use chat::parse_notice_command;
+pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
 mod deals;
 pub(crate) mod fishing;
@@ -111,9 +117,12 @@ mod skills;
 pub(crate) use skills::skills_from_rows;
 mod time;
 mod trading;
+pub use trading::BUYBACK_SWEEP_PERIOD;
 
+// Visible crate-wide so tests outside this module (e.g. the login gate in
+// `connection`) can reuse the temp-DB and game-state factories.
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) const EVENT_DELIVERY_RADIUS: f32 = onlinerpg_shared::EVENT_DELIVERY_RADIUS;
 
@@ -131,6 +140,12 @@ struct IdState {
     next_player_number: u32,
     player_numbers: HashMap<PlayerId, u32>,
     owner_spawn_counts: HashMap<u32, u32>,
+}
+
+struct AccountSession {
+    id: u64,
+    player_id: Option<PlayerId>,
+    kick_tx: mpsc::UnboundedSender<ServerMessage>,
 }
 
 /// Anchor for the game clock: game time = `start_game_seconds` plus scaled
@@ -158,6 +173,7 @@ pub struct GameState {
     /// `players`.
     player_ids_by_name: Arc<RwLock<HashMap<String, PlayerId>>>,
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
+    last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
     ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
@@ -169,6 +185,8 @@ pub struct GameState {
     /// Global rare bonus-drop table shared by every loot source.
     world_drop_defs: crate::world_drop_defs::WorldDropDefs,
     id_state: Arc<RwLock<IdState>>,
+    account_sessions: Arc<RwLock<HashMap<String, AccountSession>>>,
+    next_account_session: Arc<std::sync::atomic::AtomicU64>,
     direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<DirectMessage>>>>,
     // player_id → (character_id, current_xp, attributes)
     #[allow(clippy::type_complexity)]
@@ -201,8 +219,14 @@ pub struct GameState {
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
     /// Players whose inventory has changed since the last periodic save.
     dirty_inventories: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Players who relocated (or whose party reshaped) since the last
+    /// party-position push; the tick maps them to parties, so entries from
+    /// partyless players just drop out there.
+    party_position_dirty: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
+    /// Serializes account replacement and character deletion with game entry.
+    character_session_lock: Arc<Mutex<()>>,
     /// In-memory set of currently open doors.
     open_doors: Arc<RwLock<HashSet<DoorKey>>>,
     /// Shared-crate passability cache mirroring what clients build (houses,
@@ -246,14 +270,21 @@ pub struct GameState {
     /// that merchant, repurchasable at the recorded payout. Keyed by
     /// character (not the per-session player id) so the list survives a
     /// reconnect. Capped per pair (oldest dropped) and in-memory only.
-    /// Entries expire after `BUYBACK_TTL_MS`; `sweep_buybacks` drops them
-    /// along with pairs left empty, so the map stays bounded on a long
-    /// uptime — nothing else ever removes a key.
+    /// Entries expire after `BUYBACK_TTL_MS`; reads filter expiry inline and
+    /// `tick_buyback_expiry` drops them along with pairs left empty, so the
+    /// map stays bounded on a long uptime — nothing else ever removes a key.
     #[allow(clippy::type_complexity)]
     buybacks: Arc<RwLock<HashMap<(i64, String), Vec<StoredBuyback>>>>,
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// player_id → the character name `/r` replies to (last whisper sent or
+    /// received). In-memory only, dropped on logout.
+    whisper_partners: Arc<RwLock<HashMap<PlayerId, String>>>,
+    /// Lowercased character name → (canonical name, mute expiry). Keyed by
+    /// name, not session, so a relog does not clear it; in-memory only, so a
+    /// restart does. Expired entries are pruned on mute/unmute and on lookup.
+    muted_until: Arc<RwLock<HashMap<String, (String, Instant)>>>,
     /// (character_id, dungeon entrance id) → world clock seconds at that
     /// character's last chest open. Keyed by character (not the per-session
     /// player id) and DB-backed, so the refill gate survives a reconnect and
@@ -318,6 +349,7 @@ impl GameState {
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
+            last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
             ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
@@ -331,6 +363,8 @@ impl GameState {
             item_defs,
             world_drop_defs,
             id_state: Arc::new(RwLock::new(IdState::default())),
+            account_sessions: Arc::new(RwLock::new(HashMap::new())),
+            next_account_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             direct_channels: Arc::new(RwLock::new(HashMap::new())),
             player_characters: Arc::new(RwLock::new(HashMap::new())),
             player_gold: Arc::new(RwLock::new(HashMap::new())),
@@ -344,7 +378,9 @@ impl GameState {
             housing_io,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
+            party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
+            character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),
             last_position_correction: Arc::new(RwLock::new(HashMap::new())),
             passability: Arc::new(std::sync::RwLock::new(
@@ -364,6 +400,8 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            whisper_partners: Arc::new(RwLock::new(HashMap::new())),
+            muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),

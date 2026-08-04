@@ -433,14 +433,28 @@
   }
 
   gameStore.subscribe((state) => {
+    const previousPlayerId = currentPlayer?.id ?? null
     currentPlayer = state.currentPlayer
-    if (currentPlayer) {
-      playerState.position = {
-        x: currentPlayer.position.x,
-        y: currentPlayer.position.y,
-        z: currentPlayer.position.z,
-      }
+    if (!currentPlayer) return
+
+    const position = {
+      x: currentPlayer.position.x,
+      y: currentPlayer.position.y,
+      z: currentPlayer.position.z,
     }
+    if (currentPlayer.id === previousPlayerId) {
+      playerState.position = position
+      return
+    }
+
+    playerRotation = currentPlayer.rotation
+    currentSpeed = 0
+    setPlayerState({
+      state: currentPlayer.health > 0 ? 'idle' : 'dead',
+      speed: 0,
+      rotation: currentPlayer.rotation,
+      position,
+    })
   })
 
   // Update player state and notify parent

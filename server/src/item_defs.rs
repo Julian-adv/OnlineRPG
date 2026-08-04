@@ -89,7 +89,7 @@ pub enum UseEffect {
         heal_dice: Option<String>,
         raw_fish: bool,
     },
-    /// Light a campfire where the user stands.
+    /// Light a campfire near the user.
     PlaceCampfire,
     /// Teleport the user back to the town spawn point.
     TeleportTown,
@@ -206,6 +206,13 @@ impl ItemDefs {
                 "item '{}': consumable flag out of step with its use_effect",
                 def.id
             );
+            // `equip_item` moves a whole bag entry into the slot and equipped
+            // rows save as quantity 1, so the rest of a stack would vanish.
+            assert!(
+                !(def.stackable && def.equip_slot.is_some()),
+                "item '{}' is both stackable and equippable",
+                def.id
+            );
         }
 
         info!("Loaded {} item definitions", defs.len());
@@ -297,6 +304,10 @@ impl ItemDefs {
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
         self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
+    }
+
+    pub fn stackable(&self, item_def_id: &str) -> bool {
+        self.defs.get(item_def_id).is_some_and(|d| d.stackable)
     }
 
     /// The fishing catch table: every item def with a `catchWeight` — fish,
@@ -477,6 +488,11 @@ mod tests {
         }
         let defs = ItemDefs::load();
         let table = defs.catch_table();
+        let sell_rate = crate::merchant_defs::merchant_defs()
+            .get_by_npc_name("Rica")
+            .expect("Rica has a merchant definition")
+            .sell_rate_percent as f64
+            / 100.0;
         let ev_at = |level: u32| -> f64 {
             let weights = crate::game_state::fishing::effective_weights(table, level);
             let total: f64 = weights.iter().map(|w| *w as f64).sum();
@@ -489,8 +505,8 @@ mod tests {
                         // Coins arrive at face value.
                         def.dice.as_deref().map_or(0.0, dice_avg)
                     } else {
-                        // Items sell at the merchant rate (Rica: 40%).
-                        def.base_price.unwrap_or(0) as f64 * 0.4
+                        // Items sell at Rica's merchant rate.
+                        def.base_price.unwrap_or(0) as f64 * sell_rate
                     };
                     *weight as f64 * value
                 })

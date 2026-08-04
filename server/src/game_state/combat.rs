@@ -20,19 +20,26 @@ pub(super) const PLAYER_ATTACK_PROVOKE_RANGE_METERS: f32 = 10.0;
 // the target's can both lag the server's view by a round-trip; this absorbs that
 // drift without leaving the reach unbounded.
 const MONSTER_ATTACK_RANGE_TOLERANCE_METERS: f32 = 4.0;
-// How long into the swing the blade lands, read from the same authored timing
-// data the clients import (data-src/player_anim_timing.csv) so the loot hold
-// can never drift from the animation.
-pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> = LazyLock::new(|| {
-    let timing: serde_json::Value =
-        serde_json::from_str(include_str!("../../../data/player_anim_timing.json"))
-            .expect("player_anim_timing.json parses");
-    Duration::from_millis(
-        timing["player_attack_impact"]["delayMs"]
-            .as_u64()
-            .expect("player_attack_impact.delayMs is a number"),
-    )
+// Authored timing data the clients also import (data-src/player_anim_timing.csv),
+// so server delays can never drift from the animations.
+static PLAYER_ANIM_TIMING: LazyLock<serde_json::Value> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../../data/player_anim_timing.json"))
+        .expect("player_anim_timing.json parses")
 });
+
+fn anim_delay_ms(id: &str) -> u64 {
+    PLAYER_ANIM_TIMING[id]["delayMs"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("{id}.delayMs is a number"))
+}
+
+// How long into the swing the blade lands.
+pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> =
+    LazyLock::new(|| Duration::from_millis(anim_delay_ms("player_attack_impact")));
+
+// Slash1 cadence (clip lasts 1,533ms) minus a server-arrival jitter allowance.
+pub(super) static PLAYER_ATTACK_INTERVAL_MS: LazyLock<u64> =
+    LazyLock::new(|| anim_delay_ms("player_attack_interval"));
 
 fn dropped_weapon_position(monster_position: Position) -> Position {
     let angle = rand::thread_rng().gen_range(0.0..TAU);
@@ -90,6 +97,17 @@ impl super::GameState {
             }
             game_state.spawn_world_drops(origin, floor_level).await;
         });
+    }
+
+    async fn claim_player_attack_window(&self, player_id: &PlayerId) -> bool {
+        let now = Self::now_ms();
+        let mut last_attacks = self.last_player_attacks.write().await;
+        let last = last_attacks.entry(*player_id).or_insert(0);
+        if now.saturating_sub(*last) < *PLAYER_ATTACK_INTERVAL_MS {
+            return false;
+        }
+        *last = now;
+        true
     }
 
     /// Sum of the guard bonuses from every equipped item — the single place
@@ -236,6 +254,9 @@ impl super::GameState {
                 return;
             }
         };
+        if !self.claim_player_attack_window(player_id).await {
+            return;
+        }
         // A landed attack (not a rejected one) breaks concentration.
         self.cancel_concentration_if_active(player_id).await;
         debug!("Player {} attacking monster {}", player_name, monster_id);

@@ -255,7 +255,7 @@ impl super::GameState {
             .map(|(id, _)| id)
     }
 
-    /// Light a campfire at the player's feet and announce it to the area.
+    /// Light a campfire and announce it to the area.
     pub(super) async fn spawn_campfire(&self, position: Position, floor_level: i8) -> Campfire {
         let id = self.next_instance_id().await;
         let campfire = Campfire {

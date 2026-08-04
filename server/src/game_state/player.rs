@@ -15,6 +15,13 @@ const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
 
+/// Arrival ring radius (m) around a teleport's center (`arrival_beside`);
+/// golden-angle spacing keeps simultaneous arrivals apart.
+const ARRIVAL_RING_RADIUS: f32 = 1.6;
+
+/// Golden angle in radians, spreading arrival spots around the ring.
+const GOLDEN_ANGLE_RAD: f32 = 2.399_963;
+
 /// Keep the shared housing limit representable on the signed wire.
 const _: () = assert!(MAX_FLOOR_LEVEL <= i8::MAX as u8);
 
@@ -300,9 +307,137 @@ impl super::GameState {
             gold_map.remove(player_id);
         }
         self.remove_player_blocks(player_id).await;
+        self.forget_whisper_partner(player_id).await;
         self.forget_player_skills(player_id).await;
         self.remove_dungeon_discoveries(player_id).await;
         self.forget_hunger(player_id).await;
+    }
+
+    /// Serializes account replacement and character deletion with game entry.
+    pub(crate) async fn lock_character_sessions(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.character_session_lock.lock().await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn register_account_session(
+        &self,
+        account_name: &str,
+        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        auth: &AuthService,
+    ) -> u64 {
+        let _sessions = self.character_session_lock.lock().await;
+        self.register_account_session_locked(account_name, kick_tx, auth)
+            .await
+    }
+
+    /// Body of `register_account_session` for callers already holding
+    /// `lock_character_sessions` — the mutex is not reentrant, so a login that
+    /// checks a ban under the lock has to register through this.
+    pub(crate) async fn register_account_session_locked(
+        &self,
+        account_name: &str,
+        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        auth: &AuthService,
+    ) -> u64 {
+        use std::sync::atomic::Ordering;
+
+        let session_id = self.next_account_session.fetch_add(1, Ordering::Relaxed);
+        let key = account_name.to_ascii_lowercase();
+        let replaced = self.account_sessions.write().await.insert(
+            key,
+            super::AccountSession {
+                id: session_id,
+                player_id: None,
+                kick_tx,
+            },
+        );
+
+        if let Some(replaced) = replaced {
+            info!("Replacing active session for account '{}'", account_name);
+            let _ = replaced.kick_tx.send(ServerMessage::Kicked {
+                player_id: replaced.player_id.unwrap_or(PlayerId::from(0)),
+                reason: "Another session logged in with the same account".to_string(),
+            });
+            if let Some(player_id) = replaced.player_id {
+                self.cleanup_player_session(&player_id, auth).await;
+            }
+        }
+
+        session_id
+    }
+
+    pub(crate) async fn is_current_account_session(
+        &self,
+        account_name: &str,
+        session_id: u64,
+    ) -> bool {
+        self.account_sessions
+            .read()
+            .await
+            .get(&account_name.to_ascii_lowercase())
+            .is_some_and(|session| session.id == session_id)
+    }
+
+    pub(crate) async fn attach_player_to_account_session(
+        &self,
+        account_name: &str,
+        session_id: u64,
+        player_id: PlayerId,
+    ) -> bool {
+        let mut sessions = self.account_sessions.write().await;
+        let Some(session) = sessions.get_mut(&account_name.to_ascii_lowercase()) else {
+            return false;
+        };
+        if session.id != session_id {
+            return false;
+        }
+        session.player_id = Some(player_id);
+        true
+    }
+
+    pub(crate) async fn end_account_session(
+        &self,
+        account_name: &str,
+        session_id: u64,
+        auth: &AuthService,
+    ) {
+        let _sessions = self.character_session_lock.lock().await;
+        let key = account_name.to_ascii_lowercase();
+        let ended = {
+            let mut sessions = self.account_sessions.write().await;
+            if sessions
+                .get(&key)
+                .is_some_and(|session| session.id == session_id)
+            {
+                sessions.remove(&key)
+            } else {
+                None
+            }
+        };
+        if let Some(player_id) = ended.and_then(|session| session.player_id) {
+            self.cleanup_player_session(&player_id, auth).await;
+        }
+    }
+
+    /// Deletes an inactive character, or returns `false` if it is registered.
+    pub(crate) async fn delete_character_if_inactive(
+        &self,
+        auth: &AuthService,
+        account_name: &str,
+        character_id: i64,
+    ) -> Result<bool, AuthError> {
+        let _sessions = self.character_session_lock.lock().await;
+        if self
+            .player_characters
+            .read()
+            .await
+            .values()
+            .any(|(active_id, _, _)| *active_id == character_id)
+        {
+            return Ok(false);
+        }
+        auth.delete_character(account_name, character_id)?;
+        Ok(true)
     }
 
     pub async fn get_player_gold(&self, player_id: &PlayerId) -> i64 {
@@ -329,31 +464,80 @@ impl super::GameState {
             .unwrap_or_else(|| player_id.to_string())
     }
 
-    pub async fn kick_player_by_name(&self, name: &str, auth: &AuthService) -> Option<PlayerId> {
-        let old_player_id = self.player_id_by_name(name).await;
+    /// Pose snapshot (position, rotation, floor, name) in one lock read.
+    pub(crate) async fn player_pose(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<(Position, f32, i8, String)> {
+        let players = self.players.read().await;
+        players
+            .get(player_id)
+            .map(|p| (p.position, p.rotation, p.floor_level, p.name.clone()))
+    }
 
-        if let Some(ref player_id) = old_player_id {
-            info!("Kicking existing player '{}' ({})", name, player_id);
+    async fn cleanup_player_session(&self, player_id: &PlayerId, auth: &AuthService) {
+        self.cancel_concentration_if_active(player_id).await;
+        self.persist_and_detach_player(player_id, auth).await;
+        self.unregister_connection_channel(player_id).await;
+        self.unregister_player_character(player_id).await;
+        self.remove_player(player_id).await;
+    }
 
-            // Persist and detach the departing session's state *before* the
-            // replacement login reads the DB. Otherwise the async disconnect
-            // save could land after the new session's inventory load, letting
-            // a drop/pickup be duplicated across the swap (F-015).
-            self.persist_and_detach_player(player_id, auth).await;
-
-            self.send_direct_message(
-                player_id,
-                ServerMessage::Kicked {
-                    player_id: *player_id,
-                    reason: "Another session logged in with the same account".to_string(),
-                },
-            )
-            .await;
-
-            self.remove_player(player_id).await;
+    /// Force-disconnect an online player (admin `/kick`). Ends the account
+    /// session the way a replacement login would: the `kick_tx` message makes
+    /// the connection loop close the socket, and removing the session first
+    /// keeps the disconnect path from cleaning up a second time.
+    pub(crate) async fn kick_player(&self, player_id: &PlayerId, reason: &str, auth: &AuthService) {
+        let _sessions = self.character_session_lock.lock().await;
+        match self.account_of_player(player_id).await {
+            Some(account) => {
+                self.evict_account_session_locked(&account, reason, auth)
+                    .await
+            }
+            // No session row to close, but per-player state still has to go.
+            None => self.cleanup_player_session(player_id, auth).await,
         }
+    }
 
-        old_player_id
+    /// Account behind an online player id, read from the session map. `None`
+    /// once the session is gone.
+    pub(crate) async fn account_of_player(&self, player_id: &PlayerId) -> Option<String> {
+        self.account_sessions
+            .read()
+            .await
+            .iter()
+            .find_map(|(key, session)| (session.player_id == Some(*player_id)).then(|| key.clone()))
+    }
+
+    /// Force-disconnect a whole account, whichever character it is playing — or
+    /// none at all, as at character select. The `kick_tx` message makes the
+    /// connection loop close the socket, and removing the session first keeps
+    /// the disconnect path from cleaning up a second time.
+    ///
+    /// Assumes `lock_character_sessions` is held, so `/ban` can serialize its
+    /// write with the login path.
+    pub(crate) async fn evict_account_session_locked(
+        &self,
+        account_name: &str,
+        reason: &str,
+        auth: &AuthService,
+    ) {
+        let session = self
+            .account_sessions
+            .write()
+            .await
+            .remove(&account_name.to_ascii_lowercase());
+        let Some(session) = session else {
+            return;
+        };
+        let _ = session.kick_tx.send(ServerMessage::Kicked {
+            player_id: session.player_id.unwrap_or(PlayerId::from(0)),
+            reason: reason.to_string(),
+        });
+        // Only a session that reached the game has per-player state to clear.
+        if let Some(player_id) = session.player_id {
+            self.cleanup_player_session(&player_id, auth).await;
+        }
     }
 
     /// Synchronously write a player's character row and inventory to the DB,
@@ -606,6 +790,7 @@ impl super::GameState {
             .write()
             .await
             .retain(|(owner_id, _), _| owner_id != player_id);
+        self.last_player_attacks.write().await.remove(player_id);
         // A player disconnecting inside a dungeon leaves its floor first,
         // so its monsters get reassigned (or despawned) instead of being
         // dropped by remove_monsters_by_owner below.
@@ -1078,6 +1263,13 @@ impl super::GameState {
         self.move_player_spatial_cell(player_id, &old_position, &new_position)
             .await;
         self.mark_dirty(player_id).await;
+        // Rotation-only moves are exempt: markers draw x/z and floor.
+        if old_position.x != new_position.x
+            || old_position.z != new_position.z
+            || old_floor != floor_level
+        {
+            self.mark_party_position_dirty(player_id).await;
+        }
         if old_position != new_position {
             self.check_dungeon_discovery(player_id, &new_position).await;
         }
@@ -1159,6 +1351,38 @@ impl super::GameState {
         };
         self.finish_position_update(player_id, position, current_floor, moved_player, update_msg)
             .await;
+    }
+
+    /// A walkable spot on a small ring beside `center` for a teleport
+    /// arrival, golden-angle-seeded by the mover's id so simultaneous
+    /// arrivals don't stack. A blocked spot (dungeon walls run 1m from a
+    /// corridor's center) retries at half radius and finally lands on
+    /// `center` itself — a walkable cell by construction.
+    pub(crate) fn arrival_beside(&self, mover: &PlayerId, center: &Position) -> Position {
+        let angle = (mover.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
+        let cache = self.passability_read();
+        let cell_floor = super::passability::authoritative_floor(&cache, center);
+        for radius in [ARRIVAL_RING_RADIUS, ARRIVAL_RING_RADIUS * 0.5] {
+            let candidate = Position {
+                x: center.x + angle.cos() * radius,
+                y: center.y,
+                z: center.z + angle.sin() * radius,
+            };
+            if super::passability::wrapped_block_info(
+                &cache,
+                center.x,
+                center.z,
+                candidate.x,
+                candidate.z,
+                cell_floor,
+                center.y,
+            )
+            .is_none()
+            {
+                return candidate;
+            }
+        }
+        *center
     }
 
     pub async fn teleport_player(

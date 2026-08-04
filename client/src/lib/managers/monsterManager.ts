@@ -22,6 +22,7 @@ import type { NoSpawnZone } from './zoneManager'
 import { TILE_DIM, worldToTileCoord } from './terrain-height-types'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
 import { readCell, VEGETATION_BASE_SLOT } from '../terrain/splat-encoding'
+import { shortestWrappedDeltaX, wrapWorldX } from '../terrain/world-wrap'
 import {
   PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS,
@@ -815,7 +816,9 @@ class MonsterManager {
     target: { x: number; y: number; z: number },
     deltaTime: number // in ms
   ): boolean {
-    const dx = target.x - monster.position.x
+    // Positions are canonical, so a step toward a target across the seam has
+    // to take the periodic short path and stay canonical afterwards.
+    const dx = shortestWrappedDeltaX(monster.position.x, target.x)
     const dz = target.z - monster.position.z
     const distance = Math.sqrt(dx * dx + dz * dz)
 
@@ -826,16 +829,17 @@ class MonsterManager {
     const inDungeon = (monster.floorLevel ?? 0) < 0
 
     if (distance <= moveStep) {
+      const targetX = wrapWorldX(target.x)
       const y = onUpperFloor
         ? target.y
-        : this.monsterGroundY(monster, target.x, target.z)
+        : this.monsterGroundY(monster, targetX, target.z)
       if (!onUpperFloor && !inDungeon && y < 0) return true
       this.applyMonsterPose(monster, {
-        position: { x: target.x, y, z: target.z },
+        position: { x: targetX, y, z: target.z },
       })
       return true
     } else {
-      const newX = monster.position.x + (dx / distance) * moveStep
+      const newX = wrapWorldX(monster.position.x + (dx / distance) * moveStep)
       const newZ = monster.position.z + (dz / distance) * moveStep
       const y = onUpperFloor
         ? target.y

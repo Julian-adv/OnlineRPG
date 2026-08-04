@@ -63,6 +63,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+      - id: registry
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - name: Fetch client assets
         if: matrix.image == 'client'
@@ -70,7 +72,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          images: ${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }}
           # The codex variant shares the agent-client package, so it takes a
           # `codex` tag namespace and never competes for `latest`.
           flavor: latest=false
@@ -97,7 +99,7 @@ jobs:
           target: ${{ matrix.target }}
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
 
@@ -151,11 +153,13 @@ jobs:
           path: /tmp/digests
           pattern: digests-${{ matrix.image }}-*
           merge-multiple: true
+      - id: registry
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          images: ${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }}
           flavor: latest=false
           tags: |
             type=raw,value=${{ matrix.moving_tag }},enable=${{ github.ref == 'refs/heads/master' }}
@@ -179,10 +183,10 @@ jobs:
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf "${IMAGE}@sha256:%s " *)
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }}
 
       - name: Inspect published manifest
         run: docker buildx imagetools inspect "${IMAGE}:${TAG}"
         env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.package }}
+          IMAGE: ${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }}
           TAG: ${{ steps.meta.outputs.version }}

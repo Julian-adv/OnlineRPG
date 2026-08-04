@@ -56,7 +56,7 @@ export interface ChatBubble {
   duration: number
 }
 
-export type ChatSender = 'local' | 'remote' | 'system' | 'whisper'
+export type ChatSender = 'local' | 'remote' | 'system' | 'whisper' | 'party'
 
 export interface ChatEntry {
   text: string

@@ -152,6 +152,7 @@ export type ClientMessage =
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
+  | { PartyChat: { message: string } }
   | 'RequestPartyPositions'
   | { OpenDungeonChest: { entrance_id: string } }
   | {
@@ -187,6 +188,7 @@ export type ClientMessage =
   | { EquipItem: { instance_id: number } }
   | { UnequipItem: { slot: EquipSlot } }
   | { DropItem: { instance_id: number } }
+  | { DropItems: { items: BagLineItem[] } }
   | 'PickupStarted'
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
@@ -195,7 +197,23 @@ export type ClientMessage =
   | { BuyItem: { merchant_player_id: number; item_def_id: string } }
   | { SellItem: { merchant_player_id: number; instance_id: number } }
   | { BuybackItem: { merchant_player_id: number; entry_id: number } }
+  | { BuyItems: { merchant_player_id: number; items: TradeLineItem[] } }
+  | { SellItems: { merchant_player_id: number; items: BagLineItem[] } }
+  | { BuybackItems: { merchant_player_id: number; entry_ids: number[] } }
   | { EnvReport: ClientEnvReport }
+
+/** One line of a batched `BuyItems` request: buy `qty` units of one item def. */
+export type TradeLineItem = {
+  item_def_id: string
+  qty: number
+}
+
+/** One line of a batched `SellItems`/`DropItems` request: act on `qty` units
+ *  of one bag stack. */
+export type BagLineItem = {
+  instance_id: number
+  qty: number
+}
 
 export type EquipSlot =
   | 'head'

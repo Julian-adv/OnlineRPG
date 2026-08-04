@@ -533,7 +533,7 @@ async fn self_and_unknown_invites_are_rejected() {
 }
 
 #[tokio::test]
-async fn positions_cover_members_beyond_aoi_and_skip_self() {
+async fn positions_cover_members_beyond_aoi_including_self() {
     let game_state = make_test_game_state("party_positions");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;
     // Far outside the AOI on purpose: distance must not filter positions.
@@ -549,14 +549,223 @@ async fn positions_cover_members_beyond_aoi_and_skip_self() {
     game_state.send_party_positions(&pid("alice")).await;
     match alice_rx.try_recv() {
         Ok(ServerMessage::PartyPositions { members }) => {
+            // The payload is party-wide, requester included (clients filter
+            // themselves), and never leaks other parties.
             let ids: Vec<_> = members.iter().map(|m| m.id).collect();
-            assert_eq!(ids, [pid("bob")]);
-            assert_eq!(members[0].x, 500.0);
-            assert_eq!(members[0].floor_level, 0);
+            assert_eq!(ids, [pid("alice"), pid("bob")]);
+            assert_eq!(members[1].x, 500.0);
+            assert_eq!(members[1].floor_level, 0);
         }
         other => panic!("Expected positions, got {:?}", other),
     }
     assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn position_tick_pushes_a_relocated_party_to_every_member() {
+    let game_state = make_test_game_state("party_positions_tick");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    // Flush the formation-queued push; an unchanged party then stays silent.
+    game_state.tick_party_positions().await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    game_state.tick_party_positions().await;
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+
+    game_state
+        .teleport_player(&pid("bob"), pos(40.0), 0.0, 0)
+        .await;
+    // Clear the teleport's own AOI fanout; the push comes from the tick.
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    game_state.tick_party_positions().await;
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyPositions { members }) => {
+                assert_eq!(members.len(), 2);
+                let bob = members.iter().find(|m| m.id == pid("bob")).unwrap();
+                assert_eq!(bob.x, 40.0);
+            }
+            other => panic!("Expected pushed positions, got {:?}", other),
+        }
+    }
+}
+
+#[tokio::test]
+async fn position_tick_pushes_only_the_relocated_party() {
+    let game_state = make_test_game_state("party_positions_tick_isolation");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    let mut carol_rx = add(&game_state, "carol", 10.0).await;
+    let mut dave_rx = add(&game_state, "dave", 15.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "carol", "dave").await;
+    // Flush both formation pushes.
+    game_state.tick_party_positions().await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut carol_rx, &mut dave_rx] {
+        drain(rx);
+    }
+
+    game_state
+        .teleport_player(&pid("bob"), pos(40.0), 0.0, 0)
+        .await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut carol_rx, &mut dave_rx] {
+        drain(rx);
+    }
+    game_state.tick_party_positions().await;
+    // The relocated party gets exactly its own roster…
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyPositions { members }) => {
+                let ids: Vec<_> = members.iter().map(|m| m.id).collect();
+                assert_eq!(ids, [pid("alice"), pid("bob")]);
+            }
+            other => panic!("Expected isolated push, got {:?}", other),
+        }
+    }
+    // …and the unmoved party hears nothing.
+    assert!(matches!(carol_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn leave_queues_a_position_push_without_the_leaver() {
+    let game_state = make_test_game_state("party_positions_leave_push");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    add(&game_state, "carol", 10.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state.invite_to_party(&pid("alice"), "carol").await;
+    game_state
+        .respond_to_party_invite(&pid("carol"), &pid("alice"), true)
+        .await;
+    game_state.tick_party_positions().await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state.leave_party(&pid("carol")).await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    game_state.tick_party_positions().await;
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyPositions { members }) => {
+                let ids: Vec<_> = members.iter().map(|m| m.id).collect();
+                assert_eq!(ids, [pid("alice"), pid("bob")]);
+            }
+            other => panic!("Expected post-leave push, got {:?}", other),
+        }
+    }
+}
+
+#[tokio::test]
+async fn floor_only_relocation_queues_a_push() {
+    let game_state = make_test_game_state("party_positions_floor_push");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state.tick_party_positions().await;
+    drain(&mut alice_rx);
+
+    // Same x/z, new floor: descending stairs must re-push (markers draw
+    // x/z and floor).
+    game_state
+        .teleport_player(&pid("bob"), pos(5.0), 0.0, -1)
+        .await;
+    drain(&mut alice_rx);
+    game_state.tick_party_positions().await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyPositions { members }) => {
+            let bob = members.iter().find(|m| m.id == pid("bob")).unwrap();
+            assert_eq!(bob.floor_level, -1);
+        }
+        other => panic!("Expected floor-change push, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn z_only_relocation_queues_a_push() {
+    let game_state = make_test_game_state("party_positions_z_push");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state.tick_party_positions().await;
+    drain(&mut alice_rx);
+
+    // Due-north movement: x and floor unchanged, only z moves.
+    game_state
+        .teleport_player(
+            &pid("bob"),
+            Position {
+                x: 5.0,
+                y: 0.0,
+                z: 30.0,
+            },
+            0.0,
+            0,
+        )
+        .await;
+    drain(&mut alice_rx);
+    game_state.tick_party_positions().await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyPositions { members }) => {
+            let bob = members.iter().find(|m| m.id == pid("bob")).unwrap();
+            assert_eq!(bob.z, 30.0);
+        }
+        other => panic!("Expected z-change push, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn rotation_only_updates_do_not_queue_a_push() {
+    let game_state = make_test_game_state("party_positions_rotation");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state.tick_party_positions().await;
+    drain(&mut alice_rx);
+
+    // Turning in place (a fishing cast facing, e.g.) must not re-push.
+    game_state
+        .teleport_player(&pid("bob"), pos(5.0), 1.0, 0)
+        .await;
+    // Clear the teleport's own AOI fanout; only the tick sends positions.
+    drain(&mut alice_rx);
+    game_state.tick_party_positions().await;
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn position_tick_ignores_partyless_movers() {
+    let game_state = make_test_game_state("party_positions_solo");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    game_state
+        .teleport_player(&pid("alice"), pos(10.0), 0.0, 0)
+        .await;
+    drain(&mut alice_rx);
+    game_state.tick_party_positions().await;
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn party_formation_queues_a_position_push() {
+    let game_state = make_test_game_state("party_positions_form_push");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    add(&game_state, "bob", 500.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+
+    game_state.tick_party_positions().await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyPositions { members }) => {
+            let ids: Vec<_> = members.iter().map(|m| m.id).collect();
+            assert_eq!(ids, [pid("alice"), pid("bob")]);
+        }
+        other => panic!("Expected formation push, got {:?}", other),
+    }
 }
 
 #[tokio::test]
@@ -590,9 +799,8 @@ async fn positions_report_dungeon_floor() {
     game_state.send_party_positions(&pid("alice")).await;
     match alice_rx.try_recv() {
         Ok(ServerMessage::PartyPositions { members }) => {
-            let ids: Vec<_> = members.iter().map(|m| m.id).collect();
-            assert_eq!(ids, [pid("bob")]);
-            assert_eq!(members[0].floor_level, -2);
+            let bob = members.iter().find(|m| m.id == pid("bob")).unwrap();
+            assert_eq!(bob.floor_level, -2);
         }
         other => panic!("Expected positions, got {:?}", other),
     }
@@ -1019,4 +1227,171 @@ async fn summon_teleport_voids_calls_aimed_at_the_mover() {
         bob_rx.try_recv(),
         Ok(ServerMessage::PartySummonReceived { .. })
     ));
+}
+
+#[tokio::test]
+async fn party_chat_reaches_every_member_with_sender_echo() {
+    let game_state = make_test_game_state("party_chat_all");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    // Far outside the AOI on purpose: party chat ignores distance.
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    let mut carol_rx = add(&game_state, "carol", 1000.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut carol_rx] {
+        drain(rx);
+    }
+
+    game_state
+        .send_party_chat(&pid("bob"), "to the dungeon!".to_string())
+        .await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut carol_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyChatMessage { from, message }) => {
+                assert_eq!(from, "bob");
+                assert_eq!(message, "to the dungeon!");
+            }
+            other => panic!("Expected party chat, got {:?}", other),
+        }
+    }
+}
+
+#[tokio::test]
+async fn party_chat_outside_a_party_is_refused() {
+    let game_state = make_test_game_state("party_chat_solo");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+
+    game_state
+        .send_party_chat(&pid("alice"), "anyone?".to_string())
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("not in a party"), "{message}")
+        }
+        other => panic!("Expected refusal, got {:?}", other),
+    }
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn party_chat_skips_members_who_blocked_the_sender() {
+    let game_state = make_test_game_state("party_chat_block");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut carol_rx = add(&game_state, "carol", 10.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    game_state
+        .set_player_blocks(&pid("carol"), vec!["bob".to_string()])
+        .await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut carol_rx] {
+        drain(rx);
+    }
+
+    game_state
+        .send_party_chat(&pid("bob"), "hello?".to_string())
+        .await;
+    // The block must stay invisible: bob still gets his own echo.
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ServerMessage::PartyChatMessage { .. })
+        ));
+    }
+    assert!(matches!(carol_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn party_chat_from_muted_player_is_refused() {
+    use std::time::{Duration, Instant};
+
+    let game_state = make_test_game_state("party_chat_muted");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state.muted_until.write().await.insert(
+        "bob".to_string(),
+        ("bob".to_string(), Instant::now() + Duration::from_secs(600)),
+    );
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .send_party_chat(&pid("bob"), "psst".to_string())
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("Muted"), "{message}")
+        }
+        other => panic!("Expected mute refusal, got {:?}", other),
+    }
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn blank_party_chat_sends_nothing() {
+    let game_state = make_test_game_state("party_chat_blank");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .send_party_chat(&pid("bob"), "   ".to_string())
+        .await;
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+/// A client without the web UI's channel state types the command instead, so
+/// the server has to route it — otherwise the line lands in local chat.
+#[tokio::test]
+async fn typed_party_chat_routes_to_the_party_and_not_to_a_bystander() {
+    let game_state = make_test_game_state("party_chat_typed");
+    let auth = make_test_auth("party_chat_typed");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    // Standing next to the sender, deliberately out of the party.
+    let mut dave_rx = add(&game_state, "dave", 1.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut dave_rx] {
+        drain(rx);
+    }
+
+    game_state
+        .send_chat_message(&pid("bob"), "/p meet at the west gate".to_string(), &auth)
+        .await;
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyChatMessage { from, message }) => {
+                assert_eq!(from, "bob");
+                assert_eq!(message, "meet at the west gate");
+            }
+            other => panic!("Expected party chat, got {:?}", other),
+        }
+    }
+    assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn bare_typed_party_chat_draws_a_usage_reply() {
+    let game_state = make_test_game_state("party_chat_usage");
+    let auth = make_test_auth("party_chat_usage");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .send_chat_message(&pid("bob"), "/p".to_string(), &auth)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("/p <message>"), "{message}")
+        }
+        other => panic!("Expected usage reply, got {:?}", other),
+    }
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
 }

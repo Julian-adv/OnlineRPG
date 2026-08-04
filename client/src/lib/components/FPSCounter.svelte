@@ -396,10 +396,6 @@
 
 <style>
   .debug-toggle-btn {
-    position: fixed;
-    top: 9px;
-    left: 9px;
-    z-index: 1000;
     background: rgba(0, 0, 0, 0.6);
     color: rgba(255, 255, 255, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.15);
@@ -419,10 +415,6 @@
   }
 
   .hud-container {
-    position: fixed;
-    top: 9px;
-    left: 9px;
-    z-index: 1000;
     pointer-events: none;
   }
 

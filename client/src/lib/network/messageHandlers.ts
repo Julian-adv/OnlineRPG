@@ -53,7 +53,7 @@ import {
 } from '../stores/tradeStore'
 import {
   partyRoster,
-  partyPositions,
+  applyPartyPositions,
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
@@ -69,7 +69,7 @@ import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
-import { whisperChatEntry } from '../chat-format'
+import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
 import type {
@@ -394,11 +394,16 @@ export function handleServerMessage(
     case 'PlayerTeleported': {
       const state = get(gameStore)
       if (state.currentPlayer && state.currentPlayer.id === data.player_id) {
-        state.currentPlayer.position.set(
-          data.position.x,
-          data.position.y,
-          data.position.z
-        )
+        // Through the store, not a bare mutation: subscribers that live
+        // across a teleport (HUD widgets) otherwise keep the old position.
+        gameStore.update((s) => {
+          s.currentPlayer?.position.set(
+            data.position.x,
+            data.position.y,
+            data.position.z
+          )
+          return s
+        })
         dungeonManager.syncFromFloorLevel(
           data.floor_level ?? 0,
           data.position.x,
@@ -444,6 +449,11 @@ export function handleServerMessage(
       addChatMessage(whisperChatEntry(data.from, data.to, data.message, own))
       break
     }
+
+    case 'PartyChatMessage':
+      // No chat bubble — the party channel is private to the party.
+      addChatMessage(partyChatEntry(data.from, data.message))
+      break
 
     case 'SystemMessage':
       addChatMessage({ text: data.message, sender: 'system' })
@@ -507,14 +517,11 @@ export function handleServerMessage(
     }
 
     case 'PartyPositions':
-      // A poll answer can cross a disband on the wire; without a roster it
-      // could only repopulate the store that disband just cleared.
-      if (get(partyRoster)) {
-        partyPositions.set({
-          at: Date.now(),
-          members: data.members as PartyMemberPositionEntry[],
-        })
-      }
+      applyPartyPositions(
+        data.members as PartyMemberPositionEntry[],
+        get(gameStore).currentPlayer?.id,
+        get(partyRoster) !== null
+      )
       break
 
     case 'GameState':

@@ -10,6 +10,10 @@ export type DragMeta = {
   equipSlot: EquipSlot | null
   source: { type: 'bag' } | { type: 'equipped'; slot: EquipSlot }
   icon: string
+  /** Set when dragging a multi-item Select-mode selection instead of a
+   *  single slot, so the ghost can show one icon + quantity per item
+   *  instead of the single main icon. */
+  groupItems?: { icon: string; quantity: number }[]
 }
 
 export const dragMeta = writable<DragMeta | null>(null)
@@ -78,7 +82,15 @@ const DRAG_THRESHOLD_SQ = 64
 export function startDrag(
   e: PointerEvent,
   meta: DragMeta,
-  onDrop: (x: number, y: number) => void
+  onDrop: (x: number, y: number) => void,
+  /** Fired instead of `onDrop` when the pointer never moved past the drag
+   *  threshold (a plain tap/click). Callers must not *also* bind a native
+   *  `click` handler for this: pointer capture keeps the browser's own click
+   *  event targeted at this element even after a real drag ends elsewhere,
+   *  so a separate click listener fires a spurious extra toggle right after
+   *  a completed drag — this callback is gated on this gesture's own
+   *  `started` flag instead, which never has that false positive. */
+  onClick?: () => void
 ) {
   const target = e.currentTarget as HTMLElement
   target.setPointerCapture(e.pointerId)
@@ -113,13 +125,21 @@ export function startDrag(
     if (target.hasPointerCapture(ue.pointerId)) {
       target.releasePointerCapture(ue.pointerId)
     }
-    if (started && ue.type !== 'pointercancel') {
-      // Quickslot drops work from every drag source and win over the source's
-      // own targets, so resolve them here — the bar's highlight uses the same
-      // test, and no call site can implement (or forget) it differently.
-      const qsIndex = quickslotAt(ue.clientX, ue.clientY)
-      if (qsIndex >= 0) assignQuickslot(qsIndex, meta.defId)
-      else onDrop(ue.clientX, ue.clientY)
+    if (ue.type !== 'pointercancel') {
+      if (started) {
+        // Quickslot drops work from every drag source and win over the
+        // source's own targets, so resolve them here — the bar's highlight
+        // uses the same test, and no call site can implement (or forget) it
+        // differently.
+        const qsIndex = quickslotAt(ue.clientX, ue.clientY)
+        if (qsIndex < 0) {
+          onDrop(ue.clientX, ue.clientY)
+        } else if (meta.groupItems === undefined) {
+          assignQuickslot(qsIndex, meta.defId)
+        }
+      } else {
+        onClick?.()
+      }
     }
     dragMeta.set(null)
   }

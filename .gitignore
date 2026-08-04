@@ -94,6 +94,7 @@ agent-client/data/cache/
 .claude/*
 !.claude/agents/
 !.claude/commands/
+!.claude/skills/
 
 # Codex
 .codex/*

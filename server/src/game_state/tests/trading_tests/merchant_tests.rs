@@ -61,16 +61,17 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
 }
 
 #[tokio::test]
-async fn cross_floor_offer_deal_is_rejected() {
+async fn cross_floor_offer_deal_is_rejected_without_consuming_ledger() {
     let game_state = make_test_game_state("cross_floor_offer");
-    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 18, 0).await;
     set_floor(&game_state, "buyer", 1).await;
+    let ledger_before = game_state.deal_ledger_state_for_test("Rica", "buyer").await;
 
     game_state
         .offer_deal(
             &pid("npc_rica"),
             &pid("buyer"),
-            "iron_sword",
+            "wooden_shield",
             DealKind::Buy,
             -50,
             "loyal customer",
@@ -87,6 +88,51 @@ async fn cross_floor_offer_deal_is_rejected() {
         }
         other => panic!("Expected DealResult rejection for NPC, got {other:?}"),
     }
+    assert_eq!(
+        game_state.deal_ledger_state_for_test("Rica", "buyer").await,
+        ledger_before,
+        "rejection must preserve NPC budget, player cap, and cooldown"
+    );
+    assert!(game_state
+        .active_deals_for(&pid("buyer"), "Rica")
+        .await
+        .is_empty());
+
+    // CHA 18 clamps this to -25%, a 625 discount. The immediate retry proves
+    // the rejection did not consume the cooldown; the ledger snapshot above
+    // directly proves that it did not consume the player's daily budget.
+    set_floor(&game_state, "buyer", 0).await;
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "wooden_shield",
+            DealKind::Buy,
+            -50,
+            "loyal customer",
+        )
+        .await;
+
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::DealUpdated { modifier_pct, .. }) => {
+            assert_eq!(modifier_pct, -25);
+        }
+        other => panic!("Expected DealUpdated after same-floor retry, got {other:?}"),
+    }
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::DealResult {
+            accepted,
+            applied_modifier_pct,
+            ..
+        }) => {
+            assert!(accepted);
+            assert_eq!(applied_modifier_pct, -25);
+        }
+        other => panic!("Expected accepted DealResult after retry, got {other:?}"),
+    }
+    let active = game_state.active_deals_for(&pid("buyer"), "Rica").await;
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].modifier_pct, -25);
 }
 
 #[tokio::test]
@@ -203,6 +249,33 @@ async fn buy_item_applies_deal_once() {
         .buy_item(&pid("buyer"), &pid("npc_rica"), "wooden_shield")
         .await;
     assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 25_250);
+}
+
+#[tokio::test]
+async fn bought_stackables_merge_into_one_bag_entry() {
+    let game_state = make_test_game_state("buy_stacks");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 1_000).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        inventories.insert(pid("buyer"), Default::default());
+    }
+
+    for _ in 0..2 {
+        game_state
+            .buy_item(&pid("buyer"), &pid("npc_rica"), "apple")
+            .await;
+        game_state
+            .buy_item(&pid("buyer"), &pid("npc_rica"), "torch")
+            .await;
+    }
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("buyer")].bag;
+    let apples: Vec<_> = bag.iter().filter(|i| i.item_def_id == "apple").collect();
+    assert_eq!(apples.len(), 1, "stackable purchases must share one entry");
+    assert_eq!(apples[0].quantity, 2);
+    let torches: Vec<_> = bag.iter().filter(|i| i.item_def_id == "torch").collect();
+    assert_eq!(torches.len(), 2, "non-stackables keep their own slots");
 }
 
 #[tokio::test]
