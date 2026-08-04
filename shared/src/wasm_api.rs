@@ -111,6 +111,17 @@ pub fn armor_construction_protection(construction: &str, damage_type: &str) -> u
 }
 
 #[wasm_bindgen]
+pub fn durability_condition(current: u32, max: u32) -> Option<String> {
+    crate::inventory::durability_condition(current, max)
+        .map(|condition| condition.as_str().to_string())
+}
+
+#[wasm_bindgen]
+pub fn durability_value_percent(current: u32, max: u32) -> Option<u32> {
+    crate::inventory::durability_value_percent(current, max)
+}
+
+#[wasm_bindgen]
 pub fn healing_skill_hp_bonus(skill_level: u32) -> u32 {
     crate::skills::healing_skill_hp_bonus(skill_level)
 }

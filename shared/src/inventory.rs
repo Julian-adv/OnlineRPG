@@ -164,6 +164,73 @@ impl RepairFamily {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum DurabilityCondition {
+    Pristine,
+    Worn,
+    Damaged,
+    Critical,
+    Broken,
+}
+
+impl DurabilityCondition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pristine => "pristine",
+            Self::Worn => "worn",
+            Self::Damaged => "damaged",
+            Self::Critical => "critical",
+            Self::Broken => "broken",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Pristine => "Pristine",
+            Self::Worn => "Worn",
+            Self::Damaged => "Damaged",
+            Self::Critical => "Critical",
+            Self::Broken => "Broken",
+        }
+    }
+}
+
+pub fn durability_condition(current: u32, max: u32) -> Option<DurabilityCondition> {
+    if max == 0 {
+        return None;
+    }
+    let current = u64::from(current.min(max));
+    let max = u64::from(max);
+    Some(if current == 0 {
+        DurabilityCondition::Broken
+    } else if current * 4 <= max {
+        DurabilityCondition::Critical
+    } else if current * 2 <= max {
+        DurabilityCondition::Damaged
+    } else if current * 4 <= max * 3 {
+        DurabilityCondition::Worn
+    } else {
+        DurabilityCondition::Pristine
+    })
+}
+
+/// Minimum share of normal NPC resale value retained by broken durable gear.
+pub const DURABILITY_VALUE_FLOOR_PERCENT: u32 = 25;
+
+/// Smooth NPC resale-value multiplier for a durable item. Full condition is
+/// worth 100%; broken gear retains a 25% salvage floor. Values above the
+/// definition maximum clamp to full value, while a zero maximum is invalid.
+pub fn durability_value_percent(current: u32, max: u32) -> Option<u32> {
+    if max == 0 {
+        return None;
+    }
+    let current = u64::from(current.min(max));
+    let max = u64::from(max);
+    let variable_percent = 100 - DURABILITY_VALUE_FLOOR_PERCENT;
+    Some(DURABILITY_VALUE_FLOOR_PERCENT + (u64::from(variable_percent) * current / max) as u32)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EquipmentKind {
     Weapon,
     Tool,
@@ -465,6 +532,64 @@ mod tests {
             assert_eq!(RepairFamily::for_construction(construction), family);
         }
         assert!(serde_json::from_str::<RepairFamily>("\"wood\"").is_err());
+    }
+
+    #[test]
+    fn durability_condition_bands_have_stable_boundaries() {
+        for (condition, wire, display) in [
+            (DurabilityCondition::Pristine, "pristine", "Pristine"),
+            (DurabilityCondition::Worn, "worn", "Worn"),
+            (DurabilityCondition::Damaged, "damaged", "Damaged"),
+            (DurabilityCondition::Critical, "critical", "Critical"),
+            (DurabilityCondition::Broken, "broken", "Broken"),
+        ] {
+            assert_eq!(condition.as_str(), wire);
+            assert_eq!(condition.display_name(), display);
+            assert_eq!(
+                serde_json::to_string(&condition).unwrap(),
+                format!("\"{wire}\"")
+            );
+        }
+
+        for (current, expected) in [
+            (61, DurabilityCondition::Pristine),
+            (60, DurabilityCondition::Pristine),
+            (46, DurabilityCondition::Pristine),
+            (45, DurabilityCondition::Worn),
+            (31, DurabilityCondition::Worn),
+            (30, DurabilityCondition::Damaged),
+            (16, DurabilityCondition::Damaged),
+            (15, DurabilityCondition::Critical),
+            (1, DurabilityCondition::Critical),
+            (0, DurabilityCondition::Broken),
+        ] {
+            assert_eq!(durability_condition(current, 60), Some(expected));
+        }
+        assert_eq!(durability_condition(1, 0), None);
+    }
+
+    #[test]
+    fn durability_value_is_smooth_bounded_and_keeps_a_salvage_floor() {
+        for (current, expected) in [
+            (61, 100),
+            (60, 100),
+            (45, 81),
+            (30, 62),
+            (15, 43),
+            (1, 26),
+            (0, DURABILITY_VALUE_FLOOR_PERCENT),
+        ] {
+            assert_eq!(durability_value_percent(current, 60), Some(expected));
+        }
+        assert_eq!(durability_value_percent(1, 0), None);
+
+        let values: Vec<u32> = (0..=60)
+            .map(|current| durability_value_percent(current, 60).unwrap())
+            .collect();
+        assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert!(values
+            .iter()
+            .all(|value| (DURABILITY_VALUE_FLOOR_PERCENT..=100).contains(value)));
     }
 
     #[test]

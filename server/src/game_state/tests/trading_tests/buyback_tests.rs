@@ -66,10 +66,13 @@ async fn merchant_buyback_preserves_damaged_armor_condition() {
     game_state
         .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
         .await;
+    // 17/60 condition is 46% resale value: 6000 * 40% * 46% = 1104.
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 1_104);
     let entry = game_state.buybacks.read().await[&(1, "Rica".to_string())][0]
         .entry
         .clone();
     assert_eq!(entry.durability, Some(17));
+    assert_eq!(entry.price, 1_104);
 
     game_state
         .buyback_item(&pid("buyer"), &pid("npc_rica"), entry.entry_id)
@@ -78,6 +81,69 @@ async fn merchant_buyback_preserves_damaged_armor_condition() {
         game_state.inventories.read().await[&pid("buyer")].bag[0].durability,
         Some(17)
     );
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 0);
+}
+
+#[tokio::test]
+async fn broken_armor_keeps_a_quarter_value_salvage_floor() {
+    let game_state = make_test_game_state("broken_armor_salvage_value");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    let mut armor = bag_item(7, "leather_armor", 1);
+    armor.durability = Some(0);
+    game_state.inventories.write().await.insert(
+        pid("buyer"),
+        PlayerInventory {
+            bag: vec![armor],
+            ..Default::default()
+        },
+    );
+
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
+        .await;
+
+    // Normal payout 2400 * the 25% salvage floor.
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 600);
+    let buybacks = game_state.buybacks.read().await;
+    let entry = &buybacks[&(1, "Rica".to_string())][0].entry;
+    assert_eq!(entry.price, 600);
+    assert_eq!(entry.durability, Some(0));
+}
+
+#[tokio::test]
+async fn haggled_damaged_armor_applies_condition_after_the_bonus() {
+    let game_state = make_test_game_state("haggled_damaged_armor_value");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 18, 0).await;
+    let mut armor = bag_item(7, "leather_armor", 1);
+    armor.durability = Some(17);
+    game_state.inventories.write().await.insert(
+        pid("buyer"),
+        PlayerInventory {
+            bag: vec![armor],
+            ..Default::default()
+        },
+    );
+
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "leather_armor",
+            DealKind::Sell,
+            25,
+            "damaged armor wanted for parts",
+        )
+        .await;
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
+        .await;
+
+    // Haggled payout 3000 * the 46% condition value.
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 1_380);
+    let buybacks = game_state.buybacks.read().await;
+    let entry = &buybacks[&(1, "Rica".to_string())][0].entry;
+    assert_eq!(entry.price, 1_380);
+    assert_eq!(entry.durability, Some(17));
 }
 
 #[tokio::test]

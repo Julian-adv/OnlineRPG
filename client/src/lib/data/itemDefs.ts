@@ -77,6 +77,8 @@ export interface ItemDefinition {
   maxDurability?: number
   /** Material family required to repair this armor or supplied by this kit. */
   repairFamily?: RepairFamily
+  /** Maximum condition restored when this repair product is consumed. */
+  repairAmount?: number
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>

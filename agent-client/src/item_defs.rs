@@ -7,7 +7,8 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use onlinerpg_shared::inventory::{
-    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily,
+    durability_condition, ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm,
+    RepairFamily,
 };
 use onlinerpg_shared::skills::SkillId;
 use onlinerpg_shared::{combat::construction_protection, PhysicalDamageType};
@@ -52,6 +53,8 @@ pub struct ItemDef {
     pub max_durability: Option<u32>,
     #[serde(rename = "repairFamily", default)]
     pub repair_family: Option<RepairFamily>,
+    #[serde(rename = "repairAmount", default)]
+    pub repair_amount: Option<u32>,
     /// Usable straight from the bag — the items.csv flag, which the server
     /// validates against its `use_effect` dispatch at boot.
     #[serde(default)]
@@ -109,7 +112,12 @@ pub fn equipment_summary(item_def_id: &str) -> Option<String> {
     }
     if let Some(family) = def.repair_family {
         if def.category.as_deref() == Some("armor_repair_kit") {
-            details.push(format!("Repairs {} armor", family.display_name()));
+            if let Some(amount) = def.repair_amount {
+                details.push(format!(
+                    "Repairs {} armor by up to {amount} condition",
+                    family.display_name()
+                ));
+            }
         } else {
             details.push(format!("Repair family {}", family.display_name()));
         }
@@ -127,10 +135,14 @@ pub fn equipment_instance_summary(
         item.durability,
         get(&item.item_def_id).and_then(|def| def.max_durability),
     ) {
-        if current == 0 {
+        let condition = durability_condition(current, max);
+        if condition == Some(onlinerpg_shared::inventory::DurabilityCondition::Broken) {
             details.push(format!("BROKEN, condition 0/{max}"));
-        } else {
-            details.push(format!("Condition {current}/{max}"));
+        } else if let Some(condition) = condition {
+            details.push(format!(
+                "Condition {current}/{max} ({})",
+                condition.display_name()
+            ));
         }
     }
     (!details.is_empty()).then(|| details.join("; "))
@@ -326,16 +338,20 @@ mod tests {
             equipment_summary("leather_helmet").as_deref(),
             Some("Guard +1; Leather construction")
         );
-        for (id, family) in [
-            ("cloth_repair_kit", RepairFamily::Cloth),
-            ("leather_repair_kit", RepairFamily::Leather),
-            ("metal_repair_kit", RepairFamily::Metal),
-            ("hybrid_repair_kit", RepairFamily::Hybrid),
+        for (id, family, amount) in [
+            ("cloth_repair_kit", RepairFamily::Cloth, 20),
+            ("leather_repair_kit", RepairFamily::Leather, 30),
+            ("metal_repair_kit", RepairFamily::Metal, 45),
+            ("hybrid_repair_kit", RepairFamily::Hybrid, 50),
         ] {
             assert_eq!(get(id).and_then(|def| def.repair_family), Some(family));
+            assert_eq!(get(id).and_then(|def| def.repair_amount), Some(amount));
             assert_eq!(
                 equipment_summary(id),
-                Some(format!("Repairs {} armor", family.display_name()))
+                Some(format!(
+                    "Repairs {} armor by up to {amount} condition",
+                    family.display_name()
+                ))
             );
         }
     }
@@ -351,7 +367,7 @@ mod tests {
         };
         assert!(equipment_instance_summary(&armor)
             .unwrap()
-            .contains("Condition 17/60"));
+            .contains("Condition 17/60 (Damaged)"));
         armor.durability = Some(0);
         assert!(equipment_instance_summary(&armor)
             .unwrap()

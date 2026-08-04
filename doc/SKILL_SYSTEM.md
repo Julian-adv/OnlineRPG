@@ -324,6 +324,11 @@ contents remain outside this calculation.
 Protocol v23 adds per-instance condition to primary chest body armor. A broken
 Leather chest no longer activates or trains Leather Armor until repaired;
 construction-aware Cloth, Leather, Metal, and Hybrid kits repair only their
-matching family. Using a finished kit is equipment maintenance and does not
-create or train Smithing, Tailoring, or a generic repair skill. The generic
-skill persistence and XP formulas are unchanged.
+matching family by an authored 20, 30, 45, or 50 condition, capped at maximum.
+Pristine, Worn, Damaged, Critical, and Broken are condition labels rather than
+skills or gradual protection modifiers. Using a finished kit is equipment
+maintenance and does not create or train Smithing, Tailoring, or a generic
+repair skill. The generic skill persistence and XP formulas are unchanged.
+NPC resale value now consumes the same raw condition on a smooth 25–100% scale,
+but selling and buyback also grant no XP and do not introduce Trading or
+Appraisal as trained skills.

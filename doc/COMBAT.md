@@ -208,9 +208,11 @@ Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 �
 Leather Armor 활성화를 모두 잃는다. 장착 중 교체된 다른 인스턴스, miss, 사거리·층·
 소유권·쿨다운에서 거절된 요청은 닳지 않는다. Cloth kit는 Padded, Leather kit는
 Leather, Metal kit는 Mail/Plate, Hybrid kit는 Hybrid chest를 수리한다. 일치하는
-Repair Kit는 손상된 장착 chest를 최대치로 복구할 때만 소비되며, 잘못된 family의
-kit는 소비되지 않고 기존 내구도도 바꾸지 않는다. 완제품 kit 사용은 스킬 XP를
-지급하지 않는다.
+Repair Kit는 각각 20 / 30 / 45 / 50 condition을 복구하고 최대치를 넘지 않는다.
+잘못된 family의 kit는 소비되지 않고 기존 내구도도 바꾸지 않는다. condition 표시는
+75% 초과 Pristine, 50% 초과 Worn, 25% 초과 Damaged, 0% 초과 Critical, 0 Broken이다.
+이 단계는 표시용이며 양수 condition의 방어 성능은 동일하고 Broken에서만 꺼진다.
+완제품 kit 사용은 스킬 XP를 지급하지 않는다.
 전투 중이거나 쓰러진 상태에서는 수리할 수 없으므로 전투 도중 즉시 방어력을
 되돌리는 소비품으로 사용되지는 않는다.
 

@@ -70,10 +70,18 @@ tradeoff이므로 playtest 없이 조용히 보정하지 않는다.
 프로토콜 v23의 첫 내구도 단계에서 primary chest body armor의 최대 condition은
 Padded Battle Robe 40, Leather Armor 60, Chain Mail 90, Breastplate 120,
 Brigandine Coat 100이다. 실제 명중당 1씩 닳는다. Rica가 판매하는 Cloth / Leather /
-Metal / Hybrid Repair Kit가 각각 Padded / Leather / Mail·Plate / Hybrid armor를 전부
-복구하며, family가 맞지 않으면 소비되지 않는다. 완제품 사용은 스킬 XP를 주지 않는다.
-이 값은 repair economy와 playtest를 위한 첫 기준이며 다른 부위, 방패, 무기에는 아직
-내구도를 적용하지 않는다.
+Metal / Hybrid Repair Kit가 각각 Padded / Leather / Mail·Plate / Hybrid armor를
+20 / 30 / 45 / 50만큼 복구하고 최대치에서 clamp한다. family가 맞지 않으면 소비되지
+않는다. Pristine / Worn / Damaged / Critical / Broken band는 상태를 읽기 위한 표시이며
+Broken 전까지 방어 성능을 단계적으로 낮추지 않는다. 완제품 사용은 스킬 XP를 주지
+않는다. 이 값은 repair economy와 playtest를 위한 첫 기준이며 다른 부위, 방패,
+무기에는 아직 내구도를 적용하지 않는다.
+
+NPC에게 판매할 때에는 일반 매입가와 흥정 보정을 계산한 뒤 condition 비율에 따라
+`25 + floor(75 × current / max)`%를 적용한다. Full은 100%, Broken은 salvage
+value 25%이며 중간 값은 연속적으로 변하므로 표시 band 경계가 가격 절벽이 되지 않는다.
+상인 buyback은 이 최종 지급액과 같은 item condition을 그대로 기록해 왕복 차익을
+막는다. 이 거래는 armor, appraisal, repair, profession 스킬을 훈련하지 않는다.
 
 ### 상점 chest 대안
 

@@ -13,6 +13,7 @@
   import type { ItemInstance } from '../stores/inventoryStore'
   import { getItemDef, type ItemDefinition } from '../data/itemDefs'
   import { getNpcCapabilities } from '../data/traderDefs'
+  import { npcSellPrice } from '../data/tradePricing'
   import { MAX_TRADE_DISTANCE_METERS } from '../data/tradeConstants'
   import GoldAmount from './GoldAmount.svelte'
   import { itemTooltip } from '../actions/itemTooltip'
@@ -120,14 +121,13 @@
     return Math.max(1, Math.floor(((def.basePrice ?? 0) * (100 + pct)) / 100))
   }
 
-  function sellPrice(def: ItemDefinition, pct: number): number {
+  function sellPrice(
+    def: ItemDefinition,
+    item: ItemInstance,
+    pct: number
+  ): number {
     if (!session) return 0
-    return Math.max(
-      1,
-      Math.floor(
-        ((def.basePrice ?? 0) * session.sellRatePercent * (100 + pct)) / 10000
-      )
-    )
+    return npcSellPrice(def, item, session.sellRatePercent, pct)
   }
 
   const buyTotal = $derived(
@@ -190,7 +190,7 @@
         itemDefId: item.item_def_id,
         instanceId: item.instance_id,
         qty: 1,
-        unitPrice: sellPrice(def, pct),
+        unitPrice: sellPrice(def, item, pct),
         dealPct: pct,
       })
       return
@@ -207,7 +207,7 @@
         itemDefId: item.item_def_id,
         instanceId: item.instance_id,
         qty: 1,
-        unitPrice: sellPrice(def, 0),
+        unitPrice: sellPrice(def, item, 0),
       })
     }
   }
@@ -498,7 +498,7 @@
                 >
               {/if}
               <span class="item-price"
-                ><GoldAmount copper={sellPrice(def, pct)} /></span
+                ><GoldAmount copper={sellPrice(def, item, pct)} /></span
               >
             </button>
           {:else}

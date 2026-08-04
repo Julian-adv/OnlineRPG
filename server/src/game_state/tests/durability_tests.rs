@@ -38,7 +38,7 @@ async fn setup_wearer(
 }
 
 #[tokio::test]
-async fn repair_kit_restores_broken_primary_armor_and_consumes_one_kit() {
+async fn repair_kit_restores_bounded_condition_and_consumes_one_kit() {
     let game_state = make_test_game_state("repair_broken_armor");
     let player_id = pid("repairer");
     let mut rx = setup_wearer(&game_state, "repairer", 0, 1).await;
@@ -52,7 +52,7 @@ async fn repair_kit_restores_broken_primary_armor_and_consumes_one_kit() {
 
     let inventory = game_state.get_player_inventory(&player_id).await.unwrap();
     assert!(inventory.bag.is_empty());
-    assert_eq!(inventory.equipped[&EquipSlot::Chest].durability, Some(60));
+    assert_eq!(inventory.equipped[&EquipSlot::Chest].durability, Some(30));
     let repaired = game_state.player_defense_profile(&player_id).await;
     assert_eq!(repaired.effective_guard, 2);
     assert_eq!(
@@ -71,18 +71,36 @@ async fn repair_kit_restores_broken_primary_armor_and_consumes_one_kit() {
     assert!(drain(&mut rx).iter().any(|message| matches!(
         message,
         ServerMessage::SystemMessage { message }
-            if message.contains("from 0/60 to full condition")
+            if message.contains("from 0/60 to 30/60 (Damaged)")
     )));
 }
 
 #[tokio::test]
-async fn each_repair_family_restores_only_its_matching_armor() {
-    for (case, armor_id, kit_id, max) in [
-        ("cloth", "padded_battle_robe", "cloth_repair_kit", 40),
-        ("leather", "leather_armor", "leather_repair_kit", 60),
-        ("mail", "chain_mail", "metal_repair_kit", 90),
-        ("plate", "breastplate", "metal_repair_kit", 120),
-        ("hybrid", "brigandine_coat", "hybrid_repair_kit", 100),
+async fn repair_capacity_caps_at_max_condition() {
+    let game_state = make_test_game_state("repair_capacity_cap");
+    let player_id = pid("repair_capacity_cap");
+    let mut rx = setup_wearer(&game_state, "repair_capacity_cap", 50, 1).await;
+
+    game_state.use_item(&player_id, 20).await;
+
+    let inventory = game_state.get_player_inventory(&player_id).await.unwrap();
+    assert!(inventory.bag.is_empty());
+    assert_eq!(inventory.equipped[&EquipSlot::Chest].durability, Some(60));
+    assert!(drain(&mut rx).iter().any(|message| matches!(
+        message,
+        ServerMessage::SystemMessage { message }
+            if message.contains("from 50/60 to 60/60 (Pristine)")
+    )));
+}
+
+#[tokio::test]
+async fn each_repair_family_applies_its_authored_capacity() {
+    for (case, armor_id, kit_id, expected) in [
+        ("cloth", "padded_battle_robe", "cloth_repair_kit", 20),
+        ("leather", "leather_armor", "leather_repair_kit", 30),
+        ("mail", "chain_mail", "metal_repair_kit", 45),
+        ("plate", "breastplate", "metal_repair_kit", 45),
+        ("hybrid", "brigandine_coat", "hybrid_repair_kit", 50),
     ] {
         let game_state = make_test_game_state(&format!("repair_family_{case}"));
         let name = format!("repair_family_{case}");
@@ -105,7 +123,7 @@ async fn each_repair_family_restores_only_its_matching_armor() {
         assert!(inventory.bag.is_empty(), "{case} kit consumed");
         assert_eq!(
             inventory.equipped[&EquipSlot::Chest].durability,
-            Some(max),
+            Some(expected),
             "{case} condition"
         );
     }

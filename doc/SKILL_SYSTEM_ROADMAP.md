@@ -126,9 +126,17 @@ Protocol v23 adds the first durability/repair economy slice without adding a
 skill. Only functional primary chest body armor contributes Guard, mitigation,
 or Leather Armor activation. Accepted landed monster hits wear the resolved
 instance. Cloth, Leather, Metal, and Hybrid kits restore only matching armor
-families, and finished-kit use grants no skill XP. Condition persists through
-legacy migration, equipment, ground items, trades, buyback, and reconnect.
-Smithing, Tailoring, repair quality, and durability skills remain unapproved.
+families. Their authored capacities restore 20, 30, 45, or 50 condition up to
+the target maximum; derived condition bands are informational and finished-kit
+use grants no skill XP. Condition persists through legacy migration, equipment,
+ground items, trades, buyback, and reconnect. Smithing, Tailoring, repair
+quality, and durability skills remain unapproved.
+
+The next completed economy consumer scales NPC resale value smoothly from 25%
+at Broken to 100% at full condition, after ordinary rates and haggling. Exact
+merchant buyback remains gold-neutral. Selling and buying back award no skill
+XP, and Trading/Appraisal remain possible Phase 6 designs rather than implicit
+skills created by this armor phase.
 
 ## Phase 6 — Noncombat Skills
 

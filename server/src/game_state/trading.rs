@@ -1,7 +1,7 @@
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::inventory::ItemInstance;
+use onlinerpg_shared::inventory::{durability_value_percent, ItemInstance};
 use onlinerpg_shared::messages::{BuybackEntry, DealKind, StockEntry};
 use tracing::info;
 
@@ -609,7 +609,8 @@ impl super::GameState {
     }
 
     /// Sell one unit of a bag item to a trading NPC. Merchants pay
-    /// `base_price * sell_rate_percent / 100` and the item vanishes;
+    /// `base_price * sell_rate_percent / 100`, adjusted for durable-item
+    /// condition, and the item vanishes;
     /// residents only buy wishlist items, pay their premium rate out of a
     /// finite wallet, and keep the item in their real inventory.
     pub async fn sell_item(
@@ -625,7 +626,7 @@ impl super::GameState {
 
         // Resolve the item def up front so any haggled sell bonus can be
         // looked up before taking the gold/inventory locks.
-        let item_def_id = {
+        let (item_def_id, item_durability) = {
             let inventories = self.inventories.read().await;
             let Some(item) = inventories
                 .get(player_id)
@@ -635,12 +636,12 @@ impl super::GameState {
                     .send_trade_error(player_id, "Item not found in bag")
                     .await;
             };
-            item.item_def_id.clone()
+            (item.item_def_id.clone(), item.durability)
         };
-        let Some(base_price) = self
+        let Some((base_price, max_durability)) = self
             .item_defs
             .get(&item_def_id)
-            .and_then(|item| item.base_price)
+            .and_then(|item| item.base_price.map(|price| (price, item.max_durability)))
         else {
             return self
                 .send_trade_error(player_id, "They will not buy that")
@@ -665,11 +666,16 @@ impl super::GameState {
         let deal = self
             .take_deal(player_id, &npc_name, &item_def_id, DealKind::Sell)
             .await;
-        let payout = sell_payout(
+        let standard_payout = sell_payout(
             base_price,
             rate,
             deal.as_ref().map_or(0, |d| d.modifier_pct),
         );
+        let condition_percent = item_durability
+            .zip(max_durability)
+            .and_then(|(current, max)| durability_value_percent(current, max))
+            .unwrap_or(100);
+        let payout = (standard_payout * i64::from(condition_percent) / 100).max(1);
 
         let item_weight = self.item_defs.weight(&item_def_id);
         let npc_max_weight = self.max_carry_weight(npc_player_id).await;
@@ -823,13 +829,16 @@ impl super::GameState {
             info!(
                 target: "deal",
                 "deal redeemed: npc={npc_name} player={player_name} item={item_def_id} kind=Sell \
-                 modifier={} base={base_price} paid={payout}",
+                 modifier={} base={base_price} condition_pct={condition_percent} paid={payout}",
                 entry.modifier_pct
             );
             self.send_deal_cleared(player_id, npc_player_id, &item_def_id, DealKind::Sell)
                 .await;
         }
-        info!("{player_name} sold {item_def_id} to {npc_name} for {payout}");
+        info!(
+            "{player_name} sold {item_def_id} to {npc_name} for {payout} \
+             (condition value {condition_percent}%)"
+        );
         self.mark_dirty(player_id).await;
         self.mark_inventory_dirty(player_id).await;
         self.send_direct_message(

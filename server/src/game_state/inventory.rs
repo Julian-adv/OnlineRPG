@@ -3,8 +3,8 @@ use crate::item_defs::{ItemDefinition, UseEffect};
 use crate::types::{PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::{
-    resolve_equipment_burden, EquipSlot, EquipmentBurden, GroundItem, ItemInstance,
-    PlayerInventory, RepairFamily,
+    durability_condition, resolve_equipment_burden, EquipSlot, EquipmentBurden, GroundItem,
+    ItemInstance, PlayerInventory, RepairFamily,
 };
 use onlinerpg_shared::skills::{healing_skill_hp_bonus, SkillId};
 use rand::Rng;
@@ -551,8 +551,8 @@ impl super::GameState {
             UseEffect::OpenCoinPouch(dice) => {
                 self.use_coin_pouch(player_id, instance_id, &dice).await
             }
-            UseEffect::RepairArmor(family) => {
-                self.use_armor_repair_kit(player_id, instance_id, family)
+            UseEffect::RepairArmor { family, amount } => {
+                self.use_armor_repair_kit(player_id, instance_id, family, amount)
                     .await
             }
         }
@@ -563,6 +563,7 @@ impl super::GameState {
         player_id: &PlayerId,
         instance_id: u64,
         kit_family: RepairFamily,
+        repair_amount: u32,
     ) {
         if self
             .reject_if_defeated(player_id, "You can't repair armor while defeated")
@@ -594,7 +595,11 @@ impl super::GameState {
                 .get(&kit.item_def_id)
                 .and_then(ItemDefinition::use_effect)
                 .is_some_and(|effect| {
-                    matches!(effect, UseEffect::RepairArmor(family) if family == kit_family)
+                    matches!(
+                        effect,
+                        UseEffect::RepairArmor { family, amount }
+                            if family == kit_family && amount == repair_amount
+                    )
                 });
             if !kit_still_matches {
                 return;
@@ -641,21 +646,25 @@ impl super::GameState {
                 return;
             }
             let armor_name = self.item_name(&chest.item_def_id);
+            let repaired = current.saturating_add(repair_amount).min(max);
             consume_one(inv, instance_id);
             inv.equipped
                 .get_mut(&EquipSlot::Chest)
                 .expect("checked above")
-                .durability = Some(max);
-            (inv.clone(), kit_name, armor_name, current, max)
+                .durability = Some(repaired);
+            (inv.clone(), kit_name, armor_name, current, repaired, max)
         };
 
+        let (inventory, kit_name, armor_name, current, repaired, max) = outcome;
+        let condition = durability_condition(repaired, max).expect("validated maximum durability");
+
         self.mark_inventory_dirty(player_id).await;
-        self.send_inventory_snapshot(player_id, outcome.0).await;
+        self.send_inventory_snapshot(player_id, inventory).await;
         self.send_system_message(
             player_id,
             format!(
-                "You use a {} to repair your {} from {}/{} to full condition.",
-                outcome.1, outcome.2, outcome.3, outcome.4
+                "You use a {kit_name} to repair your {armor_name} from {current}/{max} to {repaired}/{max} ({}).",
+                condition.display_name()
             ),
         )
         .await;

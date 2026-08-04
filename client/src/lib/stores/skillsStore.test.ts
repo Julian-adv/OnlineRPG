@@ -161,13 +161,14 @@ describe('defense skill item metadata', () => {
     expect(getItemDef('brigandine_coat')?.guard).toBe(2)
     expect(getItemDef('chain_mail')?.repairFamily).toBe('metal')
     expect(getItemDef('breastplate')?.repairFamily).toBe('metal')
-    for (const [id, repairFamily] of [
-      ['cloth_repair_kit', 'cloth'],
-      ['leather_repair_kit', 'leather'],
-      ['metal_repair_kit', 'metal'],
-      ['hybrid_repair_kit', 'hybrid'],
+    for (const [id, repairFamily, repairAmount] of [
+      ['cloth_repair_kit', 'cloth', 20],
+      ['leather_repair_kit', 'leather', 30],
+      ['metal_repair_kit', 'metal', 45],
+      ['hybrid_repair_kit', 'hybrid', 50],
     ] as const) {
       expect(getItemDef(id)?.repairFamily).toBe(repairFamily)
+      expect(getItemDef(id)?.repairAmount).toBe(repairAmount)
     }
     for (const id of [
       'traveler_robe',

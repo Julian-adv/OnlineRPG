@@ -115,7 +115,8 @@ pub fn shop_line_for(npc_name: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "{npc_name} sells: {} — and pays {sell_rate_percent}% of base for what you sell them.",
+        "{npc_name} sells: {} — and pays {sell_rate_percent}% of base for what you sell them. \
+         Durable items then receive a 25–100% value multiplier from their current condition.",
         stock.join(", ")
     ))
 }
@@ -137,7 +138,8 @@ pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
     }
     section.push_str(&format!(
         "You also buy any item that has a base price from players, paying {sell_rate_percent}% \
-         of its base price.\n\
+         of its base price. Durable items then receive a smooth 25–100% value multiplier from \
+         current condition; Broken still has 25% salvage value and full condition has 100%.\n\
          Use the \"open_trade\" action to put your shop window on a nearby player's screen \
          when the conversation turns to trading.\n"
     ));
@@ -184,7 +186,9 @@ pub fn resident_trade_prompt_for(
         ));
     }
     section.push_str(&format!(
-        "Your wallet is your own money — salary {} per game day, and it stops \
+        "For durable items, the listed offer then receives a smooth 25–100% value multiplier \
+         from current condition; Broken still has 25% salvage value and full condition has 100%.\n\
+         Your wallet is your own money — salary {} per game day, and it stops \
          accumulating at {}. Check \"Your gold\" in the world state before promising \
          to buy anything; if you can't afford it, say so in character.\n\
          You keep what you buy (you need it; you never resell wishlist items), but \
@@ -242,6 +246,7 @@ mod tests {
         assert!(section.contains("dagger"));
         assert!(section.contains("25s"));
         assert!(section.contains("40%"));
+        assert!(section.contains("25–100%"));
         assert!(section.contains("open_trade"));
         assert!(merchant_prompt_for("Karl").is_none());
     }
@@ -254,6 +259,7 @@ mod tests {
         assert!(line.contains("dagger 25s"), "{line}");
         assert!(line.contains("healing_potion"), "{line}");
         assert!(line.contains("40%"), "{line}");
+        assert!(line.contains("25–100%"), "{line}");
         assert!(shop_line_for("Karl").is_none(), "a resident keeps no shelf");
 
         let (catalog, rate) = merchant_shop("Rica").expect("Rica is a merchant");
@@ -272,6 +278,7 @@ mod tests {
         assert!(section.contains("torch"));
         assert!(section.contains("dagger"));
         assert!(section.contains("120%"));
+        assert!(section.contains("25–100%"));
         assert!(section.contains("50s"), "salary 5000 formats as 50s");
         assert!(section.contains("open_trade"));
 

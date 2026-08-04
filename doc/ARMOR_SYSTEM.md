@@ -388,7 +388,8 @@ explicit requirement when justified.
 Durability is an item-instance concern, not an item-definition-only stat. The
 first vertical slice implements it for primary chest body armor:
 
-- maximum durability and an explicit repair family on the item definition;
+- maximum durability and an explicit repair family on the armor definition;
+- a positive `repairAmount` capacity on each finished repair-kit definition;
 - current durability on each non-stackable item instance;
 - authoritative wear triggers and a bounded loss formula;
 - broken-item behavior that never destroys valuable gear without an explicit
@@ -410,19 +411,36 @@ cooldown requests, and gear swapped during resolution do not wear an item. At
 zero condition, armor stays equipped and keeps its weight but contributes no
 Guard, construction mitigation, or armor-skill activation. Four finished
 products cover explicit repair families: Cloth repairs Padded, Leather repairs
-Leather, Metal repairs Mail and Plate, and Hybrid repairs Hybrid. A matching kit
-is consumed only when it restores damaged equipped chest armor to full
-condition. A mismatched kit, rejected request, or already-full use keeps the
-product and condition unchanged. Protocol v23 exposes condition and repair
-family to browser tooltips and agent summaries. Repairs are refused while
-defeated or in combat, so a kit is maintenance rather than an instant defensive
-consumable. Using a finished kit grants no skill XP; future crafting professions
-may produce supplies without turning product use into a skill action.
+Leather, Metal repairs Mail and Plate, and Hybrid repairs Hybrid. Their authored
+capacities are +20, +30, +45, and +50 condition respectively. A matching kit is
+consumed only when it raises damaged equipped chest armor by its capacity,
+capped at the definition maximum. A mismatched kit, rejected request, or
+already-full use keeps the product and condition unchanged.
 
-Shield wear, weapon wear, death wear, partial repairs, repair quality, and
-environmental wear remain separate events and need separate approval. Crafting
-professions should consume construction/repair metadata rather than identify
-items by string prefixes.
+Condition is labeled Pristine above 75%, Worn above 50% through 75%, Damaged
+above 25% through 50%, Critical above zero through 25%, and Broken at zero.
+These bands are shared by browser and agent presentation and do not add gradual
+combat penalties: armor remains fully functional until Broken. Protocol v23
+already carries the raw values, so the derived labels and definition-authored
+capacity do not change the wire shape. Repairs are refused while defeated or in
+combat, so a kit is maintenance rather than an instant defensive consumable.
+Using a finished kit grants no skill XP; future crafting professions may produce
+supplies without turning product use into a skill action.
+
+NPC resale value is a separate smooth condition consumer. After the normal
+sell-rate and haggling calculation, durable gear receives
+`25 + floor(75 × current / max)` percent of that offer. Full gear therefore
+keeps full value, Broken gear keeps a 25% salvage floor, and the presentation
+bands do not create price cliffs. Merchant buyback records that final payout
+exactly and returns the same instance condition, preserving a gold-neutral undo.
+Resident transfers likewise preserve condition. Selling, buying back, and
+repairing finished products do not train an armor, repair, appraisal, or
+profession skill.
+
+Shield wear, weapon wear, death wear, repair quality, and environmental wear
+remain separate events and need separate approval. Crafting professions should
+consume construction/repair metadata rather than identify items by string
+prefixes.
 
 ## Appearance and equipment synchronization
 
@@ -501,6 +519,7 @@ burden consumer:
 durability/repair consumer:
   maxDurability
   repairFamily
+  repairAmount
 
 crafting consumer:
   material requirements
@@ -615,8 +634,37 @@ rather than implied behavior.
 - The server checks the equipped armor family atomically before consumption, so
   mismatches preserve both the kit and existing damage.
 - Finished-kit use grants no XP and does not register Smithing, Tailoring, or a
-  generic repair skill. Partial repairs, quality, crafted inputs, and profession
-  ownership remain future vertical slices.
+  generic repair skill. This slice owns family matching; capacity is the next
+  completed slice below, while quality, crafted inputs, and profession ownership
+  remain separate.
+
+### I. Bounded repair capacity and condition UX — completed
+
+- `repairAmount` gives each finished kit an explicit positive capacity: Cloth
+  20, Leather 30, Metal 45, and Hybrid 50.
+- A valid use applies `min(current + repairAmount, maxDurability)` atomically;
+  one basic Metal kit therefore repairs the same amount of Mail or Plate rather
+  than silently scaling to the target's larger maximum.
+- Pristine, Worn, Damaged, Critical, and Broken bands use shared integer
+  boundaries and appear beside raw condition in browser and agent summaries.
+- Bands are informational. Guard, mitigation, and Leather Armor activation stay
+  unchanged at every positive condition and turn off only at Broken.
+- Capped restoration, family mismatch, full-condition, combat, defeated, and
+  no-XP behavior have server integration coverage. Kit quality tiers, crafting,
+  and profession ownership remain unapproved.
+
+### J. Condition-aware NPC valuation — completed
+
+- A shared integer function maps durable items smoothly from a 25% Broken
+  salvage floor to 100% value at full condition and clamps over-max input.
+- The server applies condition after the ordinary NPC sell rate and haggled
+  modifier; non-durable and legacy missing-condition items keep full value.
+- The browser previews the authoritative formula per item, and agent prompts
+  explain the same rule to merchants, residents, and customers.
+- Merchant buyback stores the adjusted payout and exact durability, so undo is
+  gold-neutral. Resident inventory transfers preserve the same instance state.
+- The multiplier can only reduce a sale payout, so the existing merchant
+  buy/sell anti-arbitrage invariant remains conservative. It awards no skill XP.
 
 Each phase needs an explicit owner approval and a completion gate. A later
 phase may move earlier only as a complete vertical slice with its prerequisites;

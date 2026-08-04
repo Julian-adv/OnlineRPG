@@ -1,7 +1,10 @@
 <script lang="ts">
   import type { ItemDefinition } from '../data/itemDefs'
   import { skillDisplayName } from '../stores/skillsStore'
-  import { armor_construction_protection } from '../wasm/onlinerpg_shared'
+  import {
+    armor_construction_protection,
+    durability_condition,
+  } from '../wasm/onlinerpg_shared'
 
   interface Props {
     def: ItemDefinition
@@ -43,6 +46,16 @@
       }))
       .filter(({ amount }) => amount > 0)
   )
+  const condition = $derived(
+    def.maxDurability && durability !== null
+      ? durability_condition(durability, def.maxDurability)
+      : undefined
+  )
+  const conditionName = $derived(
+    condition
+      ? condition[0].toUpperCase() + condition.slice(1)
+      : undefined
+  )
 </script>
 
 <div
@@ -83,9 +96,9 @@
       <span>Guard: +{def.guard}</span>
     {/if}
     {#if def.maxDurability && durability !== null}
-      <span class:broken={durability === 0}
-        >Condition: {durability}/{def.maxDurability}{durability === 0
-          ? ' (Broken)'
+      <span class:broken={condition === 'broken'}
+        >Condition: {durability}/{def.maxDurability}{conditionName
+          ? ` (${conditionName})`
           : ''}</span
       >
     {/if}
@@ -94,6 +107,9 @@
         >Repair Family: {def.repairFamily[0].toUpperCase() +
           def.repairFamily.slice(1)}</span
       >
+    {/if}
+    {#if def.repairAmount}
+      <span>Repair Capacity: +{def.repairAmount} condition</span>
     {/if}
     {#if def.armorConstruction}
       <span

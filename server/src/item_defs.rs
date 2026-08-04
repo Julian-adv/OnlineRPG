@@ -109,6 +109,8 @@ pub struct ItemDefinition {
     pub max_durability: Option<u32>,
     #[serde(rename = "repairFamily", default)]
     pub repair_family: Option<RepairFamily>,
+    #[serde(rename = "repairAmount", default)]
+    pub repair_amount: Option<u32>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -136,7 +138,10 @@ pub enum UseEffect {
     SummonParty,
     /// Open a fished-up coin pouch: roll the given dice for its copper.
     OpenCoinPouch(String),
-    RepairArmor(RepairFamily),
+    RepairArmor {
+        family: RepairFamily,
+        amount: u32,
+    },
 }
 
 impl ItemDefinition {
@@ -222,7 +227,10 @@ impl ItemDefinition {
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "party_summon_scroll" => Some(UseEffect::SummonParty),
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
-            "armor_repair_kit" => self.repair_family.map(UseEffect::RepairArmor),
+            "armor_repair_kit" => self
+                .repair_family
+                .zip(self.repair_amount)
+                .map(|(family, amount)| UseEffect::RepairArmor { family, amount }),
             _ => None,
         }
     }
@@ -424,6 +432,9 @@ fn validate_durability(def: &ItemDefinition) -> Result<(), String> {
         if def.repair_family.is_none() {
             return Err("armor repair kits require repairFamily".to_string());
         }
+        if !def.repair_amount.is_some_and(|amount| amount > 0) {
+            return Err("armor repair kits require positive repairAmount".to_string());
+        }
         if !def.consumable || !def.stackable || def.equip_slot.is_some() {
             return Err("armor repair kits must be stackable unequipped consumables".to_string());
         }
@@ -431,6 +442,9 @@ fn validate_durability(def: &ItemDefinition) -> Result<(), String> {
             return Err("armor repair kits cannot have maxDurability".to_string());
         }
         return Ok(());
+    }
+    if def.repair_amount.is_some() {
+        return Err("repairAmount is limited to armor repair kits".to_string());
     }
     if is_primary_chest_armor {
         if !def.max_durability.is_some_and(|max| max > 0) {
@@ -995,17 +1009,19 @@ mod tests {
             assert_eq!(def.repair_family, Some(family), "{id}");
         }
         assert_eq!(defs.get("traveler_robe").unwrap().max_durability, None);
-        for (id, family) in [
-            ("cloth_repair_kit", RepairFamily::Cloth),
-            ("leather_repair_kit", RepairFamily::Leather),
-            ("metal_repair_kit", RepairFamily::Metal),
-            ("hybrid_repair_kit", RepairFamily::Hybrid),
+        for (id, family, amount) in [
+            ("cloth_repair_kit", RepairFamily::Cloth, 20),
+            ("leather_repair_kit", RepairFamily::Leather, 30),
+            ("metal_repair_kit", RepairFamily::Metal, 45),
+            ("hybrid_repair_kit", RepairFamily::Hybrid, 50),
         ] {
             let repair_kit = defs.get(id).unwrap();
             assert!(repair_kit.consumable);
+            assert_eq!(repair_kit.repair_amount, Some(amount));
             assert!(matches!(
                 repair_kit.use_effect(),
-                Some(UseEffect::RepairArmor(actual)) if actual == family
+                Some(UseEffect::RepairArmor { family: actual_family, amount: actual_amount })
+                    if actual_family == family && actual_amount == amount
             ));
         }
 
@@ -1047,6 +1063,21 @@ mod tests {
         assert!(validate_durability(&mismatched)
             .unwrap_err()
             .contains("must match construction"));
+
+        let missing_amount = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "missing_repair_amount",
+            "name": "Missing Repair Amount",
+            "description": "Invalid repair kit",
+            "weight": 1,
+            "stackable": true,
+            "category": "armor_repair_kit",
+            "consumable": true,
+            "repairFamily": "metal"
+        }))
+        .unwrap();
+        assert!(validate_durability(&missing_amount)
+            .unwrap_err()
+            .contains("positive repairAmount"));
     }
 
     #[test]
