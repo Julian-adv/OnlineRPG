@@ -1,5 +1,5 @@
 use super::auth_db;
-use crate::auth::{unix_now, AuthService};
+use crate::auth::{unix_now, AccountBan, AuthService};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use std::collections::HashMap;
@@ -625,23 +625,33 @@ impl super::GameState {
             }
         };
 
-        // An operator banning their own account would lock themselves out
-        // with no way back in through the game.
+        // Compare accounts, not character names: an operator's own alt is a
+        // different name on the same account, and banning it would lock them
+        // out with no way back in through the game.
         if self
-            .player_name_of(admin_id)
+            .account_of_player(admin_id)
             .await
-            .eq_ignore_ascii_case(&canonical)
+            .is_some_and(|admin| admin.eq_ignore_ascii_case(&account))
         {
-            return Err("Ban: that's you.".to_string());
+            return Err("Ban: that's your own account.".to_string());
         }
 
         let until_unix = minutes.map(|m| unix_now() + m * 60);
-        let reason = "Banned by an operator";
+        let ban = AccountBan {
+            reason: Some("Banned by an operator".to_string()),
+            until_unix,
+        };
+
+        // Held across the write and the eviction, and taken by the login path
+        // around its own ban check: without that, a login landing in between
+        // is admitted and its session is not yet visible here to evict.
+        let _sessions = self.lock_character_sessions().await;
         {
             let auth = auth.clone();
             let account = account.clone();
+            let reason = ban.reason.clone();
             if let Err(err) =
-                auth_db(move || auth.ban_account(&account, Some(reason), until_unix)).await
+                auth_db(move || auth.ban_account(&account, reason.as_deref(), until_unix)).await
             {
                 error!("Ban write failed: {err}");
                 return Err("Ban: could not record the ban.".to_string());
@@ -649,11 +659,10 @@ impl super::GameState {
         }
         info!(admin = ?admin_id, target = %canonical, ?minutes, "admin ban");
 
-        // Online right now: the stored ban only bites on the next login, so
-        // close the current session too.
-        if let Some(target_id) = self.player_id_by_name(&canonical).await {
-            self.kick_player(&target_id, reason, auth).await;
-        }
+        // Keyed by account, so this also lands on an alt and on a session that
+        // has not entered the game yet. The message carries the remaining time.
+        self.evict_account_session_locked(&account, &ban.message(), auth)
+            .await;
 
         Ok(match minutes {
             None => format!("Ban: {canonical} is banned. /unban {canonical} undoes this."),
@@ -665,11 +674,15 @@ impl super::GameState {
         if name.is_empty() {
             return Err("Unban: /unban <name>".to_string());
         }
+        // A character name is what an operator has to hand, but a ban outlives
+        // its characters — so an unmatched name is tried as the account itself,
+        // or a banned account whose last character was deleted could only be
+        // recovered by editing the database.
         let auth_for_lookup = auth.clone();
         let query = name.to_string();
         let account = match auth_db(move || auth_for_lookup.account_of_character(&query)).await {
             Ok(Some(account)) => account,
-            Ok(None) => return Err(format!("Unban: no character named {name}.")),
+            Ok(None) => name.to_string(),
             Err(err) => {
                 error!("Unban lookup failed: {err}");
                 return Err("Unban: could not read the character.".to_string());
@@ -678,7 +691,9 @@ impl super::GameState {
         let auth = auth.clone();
         match auth_db(move || auth.unban_account(&account)).await {
             Ok(true) => Ok(format!("Unban: {name} can log in again.")),
-            Ok(false) => Err(format!("Unban: {name} is not banned.")),
+            Ok(false) => Err(format!(
+                "Unban: {name} is not banned. Name a character on the account, or the account."
+            )),
             Err(err) => {
                 error!("Unban write failed: {err}");
                 Err("Unban: could not clear the ban.".to_string())

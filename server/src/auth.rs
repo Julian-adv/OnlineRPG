@@ -871,9 +871,13 @@ impl AuthService {
         };
         if let Some(until) = until_unix {
             if until <= unix_now() {
+                // Scoped to the deadline just read: a re-ban landing between
+                // the select and this delete carries a different `until_unix`
+                // (or NULL) and must survive.
                 conn.execute(
-                    "DELETE FROM account_bans WHERE account_name = ?1",
-                    params![account_name],
+                    "DELETE FROM account_bans
+                     WHERE account_name = ?1 AND until_unix = ?2",
+                    params![account_name, until],
                 )?;
                 return Ok(None);
             }
@@ -1345,6 +1349,75 @@ mod tests {
         auth.ban_account(&account, None, None).unwrap();
         assert!(auth.unban_account(&account).unwrap());
         assert!(!auth.unban_account(&account).unwrap());
+        assert!(auth.active_ban(&account).unwrap().is_none());
+    }
+
+    /// The expiry path cleans up after itself, and a fresh ban placed after an
+    /// expiry is honoured rather than swallowed by the cleanup.
+    #[test]
+    fn an_expired_ban_is_swept_and_a_later_ban_still_applies() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_ban_sweep_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_ban_sweep").unwrap();
+
+        auth.ban_account(&account, None, Some(unix_now() - 1))
+            .unwrap();
+        assert!(
+            auth.active_ban(&account).unwrap().is_none(),
+            "an expired ban stops applying"
+        );
+        assert!(
+            !auth.unban_account(&account).unwrap(),
+            "and the row is gone, so there is nothing left to lift"
+        );
+
+        auth.ban_account(&account, Some("re-banned"), None).unwrap();
+        let ban = auth
+            .active_ban(&account)
+            .unwrap()
+            .expect("the new ban applies");
+        assert_eq!(ban.reason.as_deref(), Some("re-banned"));
+    }
+
+    /// A ban outlives its characters, so `/unban` has to be able to name the
+    /// account directly — otherwise deleting the last character strands it.
+    #[test]
+    fn an_account_can_be_unbanned_after_its_last_character_is_gone() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_ban_orphan_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_ban_orphan").unwrap();
+        let record = auth
+            .create_character(
+                &account,
+                "Lonely",
+                &CharacterAttributes {
+                    r#str: 12,
+                    dex: 12,
+                    con: 12,
+                    int: 12,
+                    wis: 12,
+                    cha: 12,
+                    guard: 10,
+                },
+                16,
+                CharacterClass::Knight,
+                Gender::Male,
+            )
+            .unwrap();
+        auth.ban_account(&account, None, None).unwrap();
+        auth.delete_character(&account, record.id).unwrap();
+
+        // The character route is gone...
+        assert!(auth.account_of_character("Lonely").unwrap().is_none());
+        // ...but the ban is still there, and the account name still lifts it.
+        assert!(auth.active_ban(&account).unwrap().is_some());
+        assert!(auth.unban_account(&account).unwrap());
         assert!(auth.active_ban(&account).unwrap().is_none());
     }
 
