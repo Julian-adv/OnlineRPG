@@ -101,30 +101,64 @@ pushed on join, equipment changes, and bonus thresholds. Persistence,
 browser/agent state, metrics, tests, and protocol v17 reuse the generic skill
 architecture.
 
-Current armor slice: Leather Armor is construction-specific rather than a
-Light/Heavy bucket. Runtime construction now covers padded, leather, mail,
-plate, and hybrid content, but only the mapped leather chest activates the
-skill. Kind, primary-layer occupancy, and garment form are also explicit.
-Accepted landed monster hits award 5 XP; misses award none. Its +0/+1/+2/+3
-trained Guard term is added once beside item Guard and any Shield term.
-Persistence, browser/agent state, generated-data parity, metrics, tests, and
-protocol v19 reuse the generic architecture. Protocol v20 later adds typed
-physical damage plus Padded, Leather, Mail, Plate, and Hybrid mitigation as
-combat rules, without registering Padded, Mail, Plate, or Hybrid skills or
-changing Leather Armor training. The upstream tier baselines keep Leather Armor
-at Guard 2, Chain Mail at Guard 5, and Breastplate at Guard 7 while construction
-adds typed protection. Brigandine Coat uses Guard 2 with balanced protection
-against all three typed physical
-channels. Mail, Plate, Hybrid, Parry, and Dodge remain unapproved skills.
+First armor slice: Leather Armor is construction-specific rather than a
+Light/Heavy bucket. Kind, primary-layer occupancy, garment form, and Padded,
+Leather, Mail, Plate, and Hybrid construction remain explicit. Only the mapped
+leather chest activates Leather Armor. Accepted landed monster hits award 5 XP;
+misses award none. Its +0/+1/+2/+3 trained Guard term is added once beside item
+Guard and any Shield term. Persistence, browser/agent state, generated-data
+parity, metrics, tests, and protocol v19 reuse the generic architecture.
+
+Second armor slice: protocol v24 maps only `chain_mail` to **Mail Armor**. It
+uses the same landed-hit XP and trained Guard ladder through a shared
+skill-to-construction mapping, proving the path is generic without registering
+every construction at once. Chain Mail keeps Guard 5, slash 2 / pierce 1
+mitigation, 90 maximum condition, Metal repair ownership, and its existing
+burden. Plate extremity pieces in the current progression loadout do not
+activate Mail Armor. Broken Mail disables the proficiency until repaired.
+
+Third armor slice: protocol v25 maps only `breastplate` to **Plate Armor**. It
+uses the same authoritative landed-hit XP, Guard ladder, persistence, metrics,
+and client paths. The primary chest anchor means Plate helmets, gauntlets,
+greaves, and boots do not activate or train the skill. Breastplate keeps Guard
+7, slash 3 / pierce 3 / blunt 1 mitigation, 120 maximum condition, Metal repair
+ownership, and its existing burden. Broken Plate disables the proficiency until
+repaired.
+
+Fourth armor slice: protocol v26 maps only `padded_battle_robe` to **Padded
+Armor**. Robe remains a garment form: `traveler_robe` is ordinary clothing and
+does not activate the skill. The Padded Battle Robe intentionally keeps Guard 0
+and earns eligibility through its slash 1 / blunt 2 physical protection. It
+otherwise reuses landed-hit XP, the trained Guard ladder, persistence, metrics,
+and client paths. Broken Padded armor disables the proficiency until a Cloth kit
+repairs it. Parry and Dodge remain unapproved skills.
+
+Fifth armor slice: protocol v27 maps only `brigandine_coat` to **Hybrid Armor**.
+Coat remains a garment form and does not imply skill eligibility; the mapped
+item qualifies because it is functional primary body armor with explicit Hybrid
+construction. It keeps Guard 2, slash 2 / pierce 2 / blunt 2 mitigation, weight
+14, maximum condition 100, and Hybrid repair ownership. Accepted landed monster
+hits grant 5 XP, misses grant none, and the shared +0/+1/+2/+3 Guard ladder,
+persistence, metrics, browser, and agent paths remain unchanged. Broken Hybrid
+armor disables the proficiency until a Hybrid kit repairs it. Parry and Dodge
+remain unapproved skills.
+
+Armor foundation follow-up: the five active chest profiles now author
+`slashProtection`, `pierceProtection`, and `bluntProtection` directly in item
+data. Construction continues to own proficiency, repair, and metrics identity
+but no longer hardcodes combat values. Strict startup validation, server combat,
+browser tooltips, and agent summaries consume the same generated fields. This
+preserves existing balance and protocol v27 while allowing a future item of the
+same construction to have a deliberately different profile.
 
 Protocol v21 later makes movement the first equipment-burden consumer. It uses
 equipped weight against Strength-derived carry capacity and does not register
-or train a skill. Bag weight, armor mitigation, and Leather Armor XP remain
+or train a skill. Bag weight, armor mitigation, and armor-skill XP remain
 independent channels.
 
 Protocol v23 adds the first durability/repair economy slice without adding a
 skill. Only functional primary chest body armor contributes Guard, mitigation,
-or Leather Armor activation. Accepted landed monster hits wear the resolved
+or mapped proficiency activation. Accepted landed monster hits wear the resolved
 instance. Cloth, Leather, Metal, and Hybrid kits restore only matching armor
 families. Their authored capacities restore 20, 30, 45, or 50 condition up to
 the target maximum; derived condition bands are informational and finished-kit

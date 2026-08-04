@@ -1,6 +1,7 @@
 use super::*;
 use onlinerpg_shared::inventory::ArmorConstruction;
 use onlinerpg_shared::skills::{SkillId, Skills};
+use onlinerpg_shared::PhysicalProtection;
 
 async fn setup_wearer(
     game_state: &GameState,
@@ -46,6 +47,10 @@ async fn repair_kit_restores_bounded_condition_and_consumes_one_kit() {
     let broken = game_state.player_defense_profile(&player_id).await;
     assert_eq!(broken.effective_guard, 0);
     assert_eq!(broken.primary_armor_construction, None);
+    assert_eq!(
+        broken.primary_armor_protection,
+        PhysicalProtection::default()
+    );
     assert_eq!(broken.armor_skill, None);
 
     game_state.use_item(&player_id, 20).await;
@@ -58,6 +63,14 @@ async fn repair_kit_restores_bounded_condition_and_consumes_one_kit() {
     assert_eq!(
         repaired.primary_armor_construction,
         Some(ArmorConstruction::Leather)
+    );
+    assert_eq!(
+        repaired.primary_armor_protection,
+        PhysicalProtection {
+            slash: 1,
+            pierce: 1,
+            blunt: 1,
+        }
     );
     assert_eq!(repaired.armor_skill, Some(SkillId::LeatherArmor));
     assert!(game_state.player_skills.read().await[&player_id]
@@ -95,12 +108,42 @@ async fn repair_capacity_caps_at_max_condition() {
 
 #[tokio::test]
 async fn each_repair_family_applies_its_authored_capacity() {
-    for (case, armor_id, kit_id, expected) in [
-        ("cloth", "padded_battle_robe", "cloth_repair_kit", 20),
-        ("leather", "leather_armor", "leather_repair_kit", 30),
-        ("mail", "chain_mail", "metal_repair_kit", 45),
-        ("plate", "breastplate", "metal_repair_kit", 45),
-        ("hybrid", "brigandine_coat", "hybrid_repair_kit", 50),
+    for (case, armor_id, kit_id, expected, expected_skill) in [
+        (
+            "cloth",
+            "padded_battle_robe",
+            "cloth_repair_kit",
+            20,
+            Some(SkillId::PaddedArmor),
+        ),
+        (
+            "leather",
+            "leather_armor",
+            "leather_repair_kit",
+            30,
+            Some(SkillId::LeatherArmor),
+        ),
+        (
+            "mail",
+            "chain_mail",
+            "metal_repair_kit",
+            45,
+            Some(SkillId::MailArmor),
+        ),
+        (
+            "plate",
+            "breastplate",
+            "metal_repair_kit",
+            45,
+            Some(SkillId::PlateArmor),
+        ),
+        (
+            "hybrid",
+            "brigandine_coat",
+            "hybrid_repair_kit",
+            50,
+            Some(SkillId::HybridArmor),
+        ),
     ] {
         let game_state = make_test_game_state(&format!("repair_family_{case}"));
         let name = format!("repair_family_{case}");
@@ -117,6 +160,15 @@ async fn each_repair_family_applies_its_authored_capacity() {
             inventory.bag[0].item_def_id = kit_id.to_string();
         }
 
+        assert_eq!(
+            game_state
+                .player_defense_profile(&player_id)
+                .await
+                .armor_skill,
+            None,
+            "{case} broken armor skill"
+        );
+
         game_state.use_item(&player_id, 20).await;
 
         let inventory = game_state.get_player_inventory(&player_id).await.unwrap();
@@ -125,6 +177,14 @@ async fn each_repair_family_applies_its_authored_capacity() {
             inventory.equipped[&EquipSlot::Chest].durability,
             Some(expected),
             "{case} condition"
+        );
+        assert_eq!(
+            game_state
+                .player_defense_profile(&player_id)
+                .await
+                .armor_skill,
+            expected_skill,
+            "{case} active armor skill"
         );
     }
 }

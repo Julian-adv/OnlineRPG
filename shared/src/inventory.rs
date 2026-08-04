@@ -333,6 +333,94 @@ impl GarmentForm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum BodyRegion {
+    Head,
+    Torso,
+    Arms,
+    Hands,
+    Legs,
+    Feet,
+}
+
+impl BodyRegion {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Head => "head",
+            Self::Torso => "torso",
+            Self::Arms => "arms",
+            Self::Hands => "hands",
+            Self::Legs => "legs",
+            Self::Feet => "feet",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Head => "Head",
+            Self::Torso => "Torso",
+            Self::Arms => "Arms",
+            Self::Hands => "Hands",
+            Self::Legs => "Legs",
+            Self::Feet => "Feet",
+        }
+    }
+
+    fn order(self) -> u8 {
+        match self {
+            Self::Head => 0,
+            Self::Torso => 1,
+            Self::Arms => 2,
+            Self::Hands => 3,
+            Self::Legs => 4,
+            Self::Feet => 5,
+        }
+    }
+}
+
+impl std::str::FromStr for BodyRegion {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "head" => Ok(Self::Head),
+            "torso" => Ok(Self::Torso),
+            "arms" => Ok(Self::Arms),
+            "hands" => Ok(Self::Hands),
+            "legs" => Ok(Self::Legs),
+            "feet" => Ok(Self::Feet),
+            _ => Err(()),
+        }
+    }
+}
+
+pub fn parse_body_coverage(value: &str) -> Result<Vec<BodyRegion>, String> {
+    if value.is_empty() {
+        return Err("bodyCoverage must not be empty".to_string());
+    }
+
+    let mut regions = Vec::new();
+    for token in value.split(';') {
+        let region = token
+            .parse::<BodyRegion>()
+            .map_err(|()| format!("bodyCoverage has unknown region '{token}'"))?;
+        if regions.contains(&region) {
+            return Err(format!("bodyCoverage repeats region '{token}'"));
+        }
+        if regions
+            .last()
+            .is_some_and(|previous: &BodyRegion| previous.order() >= region.order())
+        {
+            return Err(
+                "bodyCoverage must follow head;torso;arms;hands;legs;feet order".to_string(),
+            );
+        }
+        regions.push(region);
+    }
+    Ok(regions)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EquipSlot {
     Head,
     MainHand,
@@ -662,6 +750,40 @@ mod tests {
             assert_eq!(form.as_str(), wire);
             assert_eq!(form.display_name(), display);
             assert_eq!(serde_json::to_string(&form).unwrap(), format!("\"{wire}\""));
+        }
+    }
+
+    #[test]
+    fn body_regions_and_authored_coverage_have_stable_data_names() {
+        for (region, wire, display) in [
+            (BodyRegion::Head, "head", "Head"),
+            (BodyRegion::Torso, "torso", "Torso"),
+            (BodyRegion::Arms, "arms", "Arms"),
+            (BodyRegion::Hands, "hands", "Hands"),
+            (BodyRegion::Legs, "legs", "Legs"),
+            (BodyRegion::Feet, "feet", "Feet"),
+        ] {
+            assert_eq!(region.as_str(), wire);
+            assert_eq!(region.display_name(), display);
+            assert_eq!(wire.parse::<BodyRegion>(), Ok(region));
+            assert_eq!(
+                serde_json::to_string(&region).unwrap(),
+                format!("\"{wire}\"")
+            );
+        }
+
+        assert_eq!(
+            parse_body_coverage("torso;arms;legs"),
+            Ok(vec![BodyRegion::Torso, BodyRegion::Arms, BodyRegion::Legs])
+        );
+        for invalid in [
+            "",
+            "torso;wings",
+            "torso;arms;arms",
+            "legs;torso",
+            "torso;;legs",
+        ] {
+            assert!(parse_body_coverage(invalid).is_err(), "{invalid}");
         }
     }
 

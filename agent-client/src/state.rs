@@ -326,6 +326,8 @@ pub struct SharedState {
     /// Our own gold in the smallest unit (from GoldUpdate). NPC traders'
     /// wallets are real server-side gold (economy phase 3).
     pub self_gold: Option<i64>,
+    /// Exact server-authored Guard used as combat's hit target.
+    pub effective_guard: Option<i32>,
     /// Our private trained-skill map, kept generic across skill families.
     pub self_skills: onlinerpg_shared::skills::Skills,
     /// Our own hunger (satiation, band, poisoned) from `HungerUpdate`;
@@ -442,6 +444,7 @@ impl SharedState {
             self_player_id: None,
             self_player: None,
             self_gold: None,
+            effective_guard: None,
             self_skills: Default::default(),
             self_hunger: None,
             campfires: HashMap::new(),
@@ -944,6 +947,7 @@ impl SharedState {
             // State-only: tracked on SharedState, shown in the world state.
             ServerMessage::GoldUpdate { .. }
             | ServerMessage::GoldGained { .. }
+            | ServerMessage::GuardUpdated { .. }
             | ServerMessage::SkillsUpdate { .. }
             | ServerMessage::SkillXpGained { .. }
             | ServerMessage::InventoryState { .. }
@@ -1322,6 +1326,9 @@ impl SharedState {
             ServerMessage::GoldUpdate { gold } => {
                 self.self_gold = Some(*gold);
             }
+            ServerMessage::GuardUpdated { guard } => {
+                self.effective_guard = Some(*guard);
+            }
             ServerMessage::SkillsUpdate { skills } => {
                 self.self_skills = skills.clone();
             }
@@ -1571,6 +1578,7 @@ impl SharedState {
             ServerMessage::TradeBusy { .. } => return urgency,
             ServerMessage::SkillsUpdate { .. }
             | ServerMessage::SkillXpGained { .. }
+            | ServerMessage::GuardUpdated { .. }
             | ServerMessage::EquipmentBurdenUpdated { .. } => {
                 return urgency;
             }
@@ -2070,6 +2078,11 @@ impl SharedState {
                 crate::shop_info::format_price(gold)
             ));
         }
+        if let Some(guard) = self.effective_guard {
+            lines.push(format!(
+                "Effective Guard: {guard} (server-authoritative hit target)"
+            ));
+        }
         if !self.self_bag.is_empty() {
             let items: Vec<String> = self
                 .self_bag
@@ -2295,6 +2308,10 @@ pub(crate) mod tests {
         skills.add_xp(SkillId::Shield, 30).unwrap();
         skills.add_xp(SkillId::Healing, 40).unwrap();
         skills.add_xp(SkillId::LeatherArmor, 50).unwrap();
+        skills.add_xp(SkillId::MailArmor, 60).unwrap();
+        skills.add_xp(SkillId::PlateArmor, 70).unwrap();
+        skills.add_xp(SkillId::PaddedArmor, 80).unwrap();
+        skills.add_xp(SkillId::HybridArmor, 90).unwrap();
 
         assert_eq!(
             state.push_event(ServerMessage::SkillsUpdate {
@@ -2347,6 +2364,50 @@ pub(crate) mod tests {
             EventUrgency::Noise
         );
         assert_eq!(state.self_skills.get(SkillId::LeatherArmor).xp, 55);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::MailArmor,
+                xp_amount: 5,
+                total_xp: 65,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::MailArmor).xp, 65);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::PlateArmor,
+                xp_amount: 5,
+                total_xp: 75,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::PlateArmor).xp, 75);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::PaddedArmor,
+                xp_amount: 5,
+                total_xp: 85,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::PaddedArmor).xp, 85);
+        assert_eq!(
+            state.push_event(ServerMessage::SkillXpGained {
+                skill: SkillId::HybridArmor,
+                xp_amount: 5,
+                total_xp: 95,
+                new_level: 0,
+                leveled_up: false,
+            }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.self_skills.get(SkillId::HybridArmor).xp, 95);
         assert!(state.drain_events().is_empty());
     }
 
@@ -2365,6 +2426,25 @@ pub(crate) mod tests {
         assert!(world.contains(
             "Equipment burden: Heavy (8.0 kg equipped / 15.0 kg capacity; move 2.1 m/s)"
         ));
+    }
+
+    #[test]
+    fn guard_updates_agent_defense_state_without_an_llm_event() {
+        let (mut state, _rx) = test_state();
+
+        assert_eq!(
+            state.push_event(ServerMessage::GuardUpdated { guard: 26 }),
+            EventUrgency::Noise
+        );
+        assert_eq!(state.effective_guard, Some(26));
+        assert!(state.events.is_empty());
+        assert!(state
+            .format_world_state()
+            .contains("Effective Guard: 26 (server-authoritative hit target)"));
+
+        state.push_event(ServerMessage::GuardUpdated { guard: 29 });
+        assert_eq!(state.effective_guard, Some(29));
+        assert!(state.events.is_empty());
     }
 
     /// The world state lists reachable ground items closest first, and

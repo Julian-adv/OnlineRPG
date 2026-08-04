@@ -6,14 +6,14 @@ NetHack/D&D 스타일의 스탯 기반 전투 시스템. 모든 전투 계산은
 
 6개의 기본 능력치. 범위는 3~18.
 
-| 스탯 | 약자 | 설명 |
-|------|------|------|
-| Strength     | STR | 근접 공격력, 장비 제한 |
-| Dexterity    | DEX | 명중, 회피, 원거리 공격 |
-| Constitution | CON | HP 보너스, 체력 |
-| Intelligence | INT | 마법 효과, 스킬 |
-| Wisdom       | WIS | 회복력, 저항력 |
-| Charisma     | CHA | NPC 반응, 거래 |
+| 스탯         | 약자 | 설명                    |
+| ------------ | ---- | ----------------------- |
+| Strength     | STR  | 근접 공격력, 장비 제한  |
+| Dexterity    | DEX  | 명중, 회피, 원거리 공격 |
+| Constitution | CON  | HP 보너스, 체력         |
+| Intelligence | INT  | 마법 효과, 스킬         |
+| Wisdom       | WIS  | 회복력, 저항력          |
+| Charisma     | CHA  | NPC 반응, 거래          |
 
 ### 스탯 생성: 클래스 선택 → 4d6 roll → 클래스 보정 → 72 리밸런싱
 
@@ -34,31 +34,31 @@ NetHack/D&D 스타일의 스탯 기반 전투 시스템. 모든 전투 계산은
 
 NetHack/D&D 스타일로, 클래스마다 고유한 능력치 보정을 적용한다. 보정을 먼저 적용한 뒤 72로 리밸런싱하므로, 총합 72가 항상 보장된다.
 
-| 클래스 | STR | DEX | CON | INT | WIS | CHA |
-|--------|-----|-----|-----|-----|-----|-----|
-| Barbarian (M) | +3 | 0 | +2 | -2 | -2 | -1 |
-| Barbarian (F) | +2 | +1 | +1 | -2 | -1 | -1 |
-| Caveman (M) | +2 | 0 | +2 | -2 | 0 | -2 |
-| Caveman (F) | +1 | +1 | +1 | -2 | +1 | -2 |
-| Knight (M) | +1 | -1 | +1 | -1 | 0 | 0 |
-| Knight (F) | 0 | 0 | 0 | -1 | +1 | 0 |
-| Valkyrie | +2 | +1 | +1 | -1 | -2 | -1 |
-| Ranger | +1 | +2 | 0 | -1 | 0 | -2 |
-| Samurai | +1 | 0 | +2 | -1 | 0 | -2 |
-| Monk | -1 | +2 | 0 | -1 | +2 | -2 |
-| Priest | -1 | -1 | +1 | -1 | +3 | -1 |
-| Archaeologist | -1 | +1 | 0 | +2 | +1 | -3 |
-| Healer | -2 | -1 | +1 | +1 | +2 | -1 |
-| Rogue | -1 | +3 | 0 | +1 | -1 | -2 |
-| Wizard | -2 | 0 | -1 | +3 | +2 | -2 |
-| Tourist | -1 | 0 | -1 | +1 | -1 | +2 |
+| 클래스        | STR | DEX | CON | INT | WIS | CHA |
+| ------------- | --- | --- | --- | --- | --- | --- |
+| Barbarian (M) | +3  | 0   | +2  | -2  | -2  | -1  |
+| Barbarian (F) | +2  | +1  | +1  | -2  | -1  | -1  |
+| Caveman (M)   | +2  | 0   | +2  | -2  | 0   | -2  |
+| Caveman (F)   | +1  | +1  | +1  | -2  | +1  | -2  |
+| Knight (M)    | +1  | -1  | +1  | -1  | 0   | 0   |
+| Knight (F)    | 0   | 0   | 0   | -1  | +1  | 0   |
+| Valkyrie      | +2  | +1  | +1  | -1  | -2  | -1  |
+| Ranger        | +1  | +2  | 0   | -1  | 0   | -2  |
+| Samurai       | +1  | 0   | +2  | -1  | 0   | -2  |
+| Monk          | -1  | +2  | 0   | -1  | +2  | -2  |
+| Priest        | -1  | -1  | +1  | -1  | +3  | -1  |
+| Archaeologist | -1  | +1  | 0   | +2  | +1  | -3  |
+| Healer        | -2  | -1  | +1  | +1  | +2  | -1  |
+| Rogue         | -1  | +3  | 0   | +1  | -1  | -2  |
+| Wizard        | -2  | 0   | -1  | +3  | +2  | -2  |
+| Tourist       | -1  | 0   | -1  | +1  | -1  | +2  |
 
 **히든 클래스 (NPC 전용, 플레이어 선택 불가)**
 
-| 클래스 | STR | DEX | CON | INT | WIS | CHA |
-|--------|-----|-----|-----|-----|-----|-----|
-| Merchant | -2 | 0 | -1 | +1 | -1 | +3 |
-| Guard | +2 | 0 | +2 | -2 | -1 | -1 |
+| 클래스   | STR | DEX | CON | INT | WIS | CHA |
+| -------- | --- | --- | --- | --- | --- | --- |
+| Merchant | -2  | 0   | -1  | +1  | -1  | +3  |
+| Guard    | +2  | 0   | +2  | -2  | -1  | -1  |
 
 ```
 예) Barbarian, 롤 후 STR=12 → 12 + 3 = 15
@@ -66,6 +66,7 @@ NetHack/D&D 스타일로, 클래스마다 고유한 능력치 보정을 적용�
 ```
 
 적용 순서:
+
 1. 4d6 drop lowest로 6개 스탯 생성
 2. 클래스 보정 적용
 3. 합계 72로 리밸런싱 (3~18 범위 유지)
@@ -86,7 +87,7 @@ GUARD = clamp(10 + dex_mod, 1, 20)
 예시:
 
 | DEX | dex_mod | GUARD |
-|-----|---------|-------|
+| --- | ------- | ----- |
 | 8   | -1      | 9     |
 | 10  | 0       | 10    |
 | 14  | +2      | 12    |
@@ -106,20 +107,20 @@ con_mod = (CON - 10) / 2
 
 ### 클래스 Hit Die (HD)
 
-| 클래스 | HD |
-|--------|----|
+| 클래스                               | HD  |
+| ------------------------------------ | --- |
 | Knight, Barbarian, Caveman, Valkyrie | d10 |
-| Ranger, Samurai, Monk, Priest | d8 |
-| Archaeologist, Healer, Rogue, Wizard | d6 |
-| Tourist | d4 |
+| Ranger, Samurai, Monk, Priest        | d8  |
+| Archaeologist, Healer, Rogue, Wizard | d6  |
+| Tourist                              | d4  |
 
 ### 종족 보너스
 
-| 종족 | 보너스 |
-|------|--------|
-| Dwarf | +4 |
-| Human | +2 |
-| Elf, Gnome, Orc | +1 |
+| 종족            | 보너스 |
+| --------------- | ------ |
+| Dwarf           | +4     |
+| Human           | +2     |
+| Elf, Gnome, Orc | +1     |
 
 **레벨 1 예시:** Human Knight, CON 14  
 `HD_max(10) + con_mod(+2) + 종족 보너스(+2) = 14 HP`
@@ -147,7 +148,7 @@ regeneration_amount = max(1, 1 + floor(Level / 5) + con_mod)
 - `con_mod`는 정수 나눗셈을 사용해 0 쪽으로 버림된다.
 - 최소 회복량은 **1 HP**로 보장된다.
 - **예시 (레벨 6, CON 12 기준):**
-    - `1(기본) + 1(레벨 6/5) + 1(CON 12 보정) = 3 HP`
+  - `1(기본) + 1(레벨 6/5) + 1(CON 12 보정) = 3 HP`
 
 ### 회복 조건
 
@@ -194,18 +195,18 @@ d20 굴림 + attack_bonus ≤ target_guard  →  빗나감
 - 플레이어 근접 공격의 명중 보너스는 `level / 2 + STR modifier + weapon enchant + weapon skill bonus`다.
 - 현재 `weapon skill bonus`는 명시적으로 매핑된 One-Handed Sword, Dagger, Spear에 적용된다: 레벨 0–4/+0, 5–14/+1, 15–24/+2, 25–30/+3.
 - Sword/Dagger는 `slash1`, 사거리 2m, 재공격 1.533초를 사용한다. Spear는 `slash3`, 사거리 3m, 재공격 2.467초를 사용하며 서버가 장착 무기 기준으로 검증한다.
-- 유효 Guard는 `기본 Guard + 모든 장착 아이템 Guard + 장착 중인 Shield 스킬 보너스 + 활성 primary armor 스킬 보너스`다. Wooden/Raven Shield와 Leather Armor의 아이템 Guard는 각각 한 번만 더하고, 각 스킬의 레벨 0–4/+0, 5–14/+1, 15–24/+2, 25–30/+3 보너스를 별도 항으로 한 번만 적용한다.
+- 유효 Guard는 `기본 Guard + 모든 장착 아이템 Guard + 장착 중인 Shield 스킬 보너스 + 활성 primary armor 스킬 보너스`다. Wooden/Raven Shield, Leather Armor, Chain Mail, Breastplate, Brigandine Coat의 아이템 Guard는 각각 한 번만 더하고, Padded Battle Robe는 의도적으로 item Guard 0을 유지한다. Shield와 활성 Padded/Leather/Mail/Plate/Hybrid Armor 스킬의 레벨 0–4/+0, 5–14/+1, 15–24/+2, 25–30/+3 보너스를 별도 항으로 한 번만 적용한다.
 - Shield XP는 서버가 승인·해결한 몬스터 공격에만 발생한다. 방패 장착 상태에서 회피(몬스터 miss)는 10 XP, 피격은 5 XP이며, 사거리·층·소유권·생존·쿨다운 검사를 통과하지 못한 요청은 0 XP다.
-- Leather Armor XP는 `armorConstruction: leather`, `equipmentLayer: primary`, `defenseSkill: leather_armor`가 명시된 chest 아이템을 장착하고 서버가 승인한 몬스터 공격에 실제로 맞았을 때만 5 XP다. 빗나간 공격, 다른 가죽 파츠만 장착한 상태, Padded/Mail/Plate/Hybrid chest, 일반 robe, 거절·중복 요청은 훈련되지 않는다.
+- Leather Armor XP는 `armorConstruction: leather`, `equipmentLayer: primary`, `defenseSkill: leather_armor`가 명시된 chest 아이템을 장착하고 서버가 승인한 몬스터 공격에 실제로 맞았을 때만 5 XP다. Mail Armor, Plate Armor, Padded Armor, Hybrid Armor는 같은 규칙으로 각각 `chain_mail`/`mail_armor`, `breastplate`/`plate_armor`, `padded_battle_robe`/`padded_armor`, `brigandine_coat`/`hybrid_armor`가 construction과 일치할 때만 훈련된다. Padded는 item Guard 대신 slash/blunt mitigation으로 방어 장비 자격을 충족한다. 빗나간 공격, 다른 부위 파츠만 장착한 상태, 일반 robe·coat, Broken armor, 거절·중복 요청은 어느 armor skill도 훈련하지 않는다.
 - 피해 보너스는 기존대로 `STR modifier + weapon enchant`다. 스킬 레벨은 피해를 변경하지 않는다.
 - 몬스터는 `attackBonus`가 정의되어 있으면 그 값을 쓰고, 없으면 레벨 기반 기본값을 쓴다.
 
-Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. primary Padded construction은 slash 1 / blunt 2, primary Leather construction은 slash 1 / pierce 1 / blunt 1, primary Mail construction은 slash 2 / pierce 1, primary Plate construction은 slash 3 / pierce 3 / blunt 1, primary Hybrid construction은 slash 2 / pierce 2 / blunt 2를 경감한다. 다섯 construction 모두 untyped은 경감하지 않고 Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 통합된 upstream 장비 기준은 `leather_armor` Guard 2, `chain_mail` Guard 5, `breastplate` Guard 7을 유지하면서 typed mitigation을 추가 channel로 적용한다. `padded_battle_robe`는 Guard 0, `brigandine_coat`는 Guard 2의 별도 상점 대안이다. 이 조합의 총 방어력은 playtest 대상이다. Leather Armor 스킬의 Guard band와 landed-hit XP 규칙은 그대로 유지되며 Mail, Plate, Hybrid는 별도 스킬을 만들거나 훈련하지 않는다. 장비의 kind/layer/form과 `armorConstruction`은 데이터·검증·툴팁에 적용되고, mitigation은 장착한 chest의 primary construction에만 적용된다. 다른 부위 파츠는 해당 파츠의 Guard만 제공한다. multi-layer occupancy/coverage, construction별 추가 부담, 마법 간섭, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
+Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. 장착한 primary chest의 `slashProtection`, `pierceProtection`, `bluntProtection` 값이 해당 channel을 경감한다. 현재 Padded Battle Robe는 slash 1 / blunt 2, Leather Armor는 slash 1 / pierce 1 / blunt 1, Chain Mail은 slash 2 / pierce 1, Breastplate는 slash 3 / pierce 3 / blunt 1, Brigandine Coat는 slash 2 / pierce 2 / blunt 2를 명시한다. 다섯 profile 모두 untyped은 경감하지 않고 Chain Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 통합된 upstream 장비 기준은 `leather_armor` Guard 2, `chain_mail` Guard 5, `breastplate` Guard 7을 유지하면서 typed mitigation을 추가 channel로 적용한다. `padded_battle_robe`는 Guard 0, `brigandine_coat`는 Guard 2의 별도 상점 대안이다. 이 조합의 총 방어력은 playtest 대상이다. Padded Armor, Leather Armor, Mail Armor, Plate Armor, Hybrid Armor는 같은 Guard band와 landed-hit XP 규칙을 공유하지만 각각 명시적으로 매핑된 primary chest만 활성화한다. `armorConstruction`은 build·skill·repair·metrics identity를 유지하지만 경감 수치를 암묵적으로 결정하지 않는다. 다른 부위 파츠는 해당 파츠의 Guard만 제공한다. `bodyCoverage`는 현재 garment의 head/torso/arms/hands/legs/feet 범위만 설명하며 hit-location roll, 경감 weight, 또는 추가 skill trigger를 만들지 않는다. multi-layer occupancy, weighted coverage, construction별 추가 부담, 마법 간섭, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
 
 프로토콜 v23에서 primary chest body armor는 인스턴스별 내구도를 가진다.
 서버가 승인한 몬스터의 실제 명중만 방어 판정에 사용된 동일한 chest 인스턴스의
 내구도를 1 낮춘다. 0이 된 방어구는 장착과 무게는 유지하지만 Guard, 물리 경감,
-Leather Armor 활성화를 모두 잃는다. 장착 중 교체된 다른 인스턴스, miss, 사거리·층·
+매핑된 armor skill 활성화를 모두 잃는다. 장착 중 교체된 다른 인스턴스, miss, 사거리·층·
 소유권·쿨다운에서 거절된 요청은 닳지 않는다. Cloth kit는 Padded, Leather kit는
 Leather, Metal kit는 Mail/Plate, Hybrid kit는 Hybrid chest를 수리한다. 일치하는
 Repair Kit는 각각 20 / 30 / 45 / 50 condition을 복구하고 최대치를 넘지 않는다.
@@ -213,6 +214,24 @@ Repair Kit는 각각 20 / 30 / 45 / 50 condition을 복구하고 최대치를 �
 75% 초과 Pristine, 50% 초과 Worn, 25% 초과 Damaged, 0% 초과 Critical, 0 Broken이다.
 이 단계는 표시용이며 양수 condition의 방어 성능은 동일하고 Broken에서만 꺼진다.
 완제품 kit 사용은 스킬 XP를 지급하지 않는다.
+
+프로토콜 v24는 `mail_armor` skill id를 추가한다. Chain Mail만 이 스킬을
+활성화하며 landed hit당 5 XP, miss 0 XP, +0/+1/+2/+3 Guard band를 Leather
+Armor와 같은 generic 경로로 사용한다. 새 wire id를 모르는 v23 client는 strict
+handshake에서 거절된다.
+프로토콜 v25는 `plate_armor` skill id를 추가한다. Breastplate만 이 스킬을
+활성화하며 같은 XP와 Guard 경로를 사용한다. 다른 Plate 부위는 Guard만 제공하며
+새 wire id를 모르는 v24 client는 strict handshake에서 거절된다.
+프로토콜 v26은 `padded_armor` skill id를 추가한다. Padded Battle Robe만 이
+스킬을 활성화한다. `robe`는 garment form이므로 일반 Traveler Robe는 스킬을
+활성화하지 않으며, 새 wire id를 모르는 v25 client는 strict handshake에서 거절된다.
+프로토콜 v27은 `hybrid_armor` skill id를 추가한다. Brigandine Coat만 이
+스킬을 활성화한다. `coat`는 garment form이므로 이름이나 형태만 같은 일반
+의복은 스킬을 활성화하지 않으며, 새 wire id를 모르는 v26 client는 strict
+handshake에서 거절된다.
+후속 item-authoring 단계는 기존 수치를 `slashProtection`,
+`pierceProtection`, `bluntProtection` 데이터로 이동할 뿐 message shape을
+바꾸지 않으므로 protocol v27을 유지한다.
 전투 중이거나 쓰러진 상태에서는 수리할 수 없으므로 전투 도중 즉시 방어력을
 되돌리는 소비품으로 사용되지는 않는다.
 
@@ -264,14 +283,20 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 - 캐릭터: 생성 시 DEX 기반 공식으로 계산 (위 섹션 참고)
 - 몬스터: `data-src/monsters.csv`에 정의하고 `data/monsters.json`으로 생성
 - 10이 기준점이다.
+- 서버는 접속, 장비 변경, 방어 스킬 보너스 구간 변경 시 정확한 유효 Guard를
+  `GuardUpdated`로 전송한다. 브라우저 Character Stats와 에이전트 world state는
+  이 값을 그대로 표시하며 Guard 공식을 로컬에서 다시 계산하지 않는다.
+- 브라우저는 장착한 primary body armor의 이름, 매핑된 방어 스킬,
+  slash/pierce/blunt profile도 함께 요약한다. Broken armor는 장착 상태와 authored
+  profile은 보이지만 비활성으로 표시되고 실제 Guard·경감·스킬 훈련에는 참여하지 않는다.
 
-| GUARD | 의미 |
-|-------|------|
-| 0~7 | 무방비 / 매우 취약 |
-| 8~9 | 약한 방어 |
-| 10 | 보통 방어 |
-| 11~13 | 단단한 방어 |
-| 14+ | 중장갑 이상 |
+| GUARD | 의미               |
+| ----- | ------------------ |
+| 0~7   | 무방비 / 매우 취약 |
+| 8~9   | 약한 방어          |
+| 10    | 보통 방어          |
+| 11~13 | 단단한 방어        |
+| 14+   | 중장갑 이상        |
 
 > NetHack AC와의 대응: `GUARD = 10 − AC`
 > (NetHack AC 0 → GUARD 10, AC -5 → GUARD 15)
@@ -282,17 +307,17 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 
 몬스터는 [data-src/monsters.csv](../data-src/monsters.csv)에 정의하고, 빌드/개발 도구가 [data/monsters.json](../data/monsters.json)을 생성한다.
 
-| 필드 | 타입 | 설명 |
-|------|------|------|
-| `health` | u32? | 최대 HP override. 비우면 레벨 기반 기본값 (`level d8` 평균 반올림) |
-| `level` | u8 | 몬스터 레벨 (기본 HP/명중/피해/XP 계산에 사용) |
-| `guard` | u8 | 명중 목표값. 높을수록 맞히기 어렵고, 10 초과분은 XP 보너스에 영향 |
-| `attackBonus` | i32? | 몬스터 명중 보너스 override. 비우면 `level / 2` |
-| `damageRoll` | string? | 대미지 주사위 override. 비우면 레벨 기반 기본값 |
-| `behavior` | string | 몬스터 행동 트리 이름 (`data-src/behavior_trees.json`, 없으면 `brave` 사용) |
-| `attackRange` | f32 | 근접 공격 가능 거리 |
-| `chaseRange` | f32 | 플레이어 추적 시작 거리 |
-| `attackCooldown` | u32 | 공격 간격 (밀리초) |
+| 필드             | 타입    | 설명                                                                        |
+| ---------------- | ------- | --------------------------------------------------------------------------- |
+| `health`         | u32?    | 최대 HP override. 비우면 레벨 기반 기본값 (`level d8` 평균 반올림)          |
+| `level`          | u8      | 몬스터 레벨 (기본 HP/명중/피해/XP 계산에 사용)                              |
+| `guard`          | u8      | 명중 목표값. 높을수록 맞히기 어렵고, 10 초과분은 XP 보너스에 영향           |
+| `attackBonus`    | i32?    | 몬스터 명중 보너스 override. 비우면 `level / 2`                             |
+| `damageRoll`     | string? | 대미지 주사위 override. 비우면 레벨 기반 기본값                             |
+| `behavior`       | string  | 몬스터 행동 트리 이름 (`data-src/behavior_trees.json`, 없으면 `brave` 사용) |
+| `attackRange`    | f32     | 근접 공격 가능 거리                                                         |
+| `chaseRange`     | f32     | 플레이어 추적 시작 거리                                                     |
+| `attackCooldown` | u32     | 공격 간격 (밀리초)                                                          |
 
 **현재 몬스터 예시 (SCP-939):**
 
@@ -349,61 +374,61 @@ xp = 1 + level²  +  guard_bonus
 
 **guard_bonus:**
 
-| GUARD | 보너스 |
-|-------|--------|
-| 0 ~ 10 | 없음 |
-| 11 | +2 |
-| 12 | +4 |
-| 13 | +6 |
-| 10 + i | 2i |
+| GUARD  | 보너스 |
+| ------ | ------ |
+| 0 ~ 10 | 없음   |
+| 11     | +2     |
+| 12     | +4     |
+| 13     | +6     |
+| 10 + i | 2i     |
 
 일반 공식: `guard_bonus = max(guard - 10, 0) × 2`
 
 **예시:**
 
-| 몬스터 | level | GUARD | xp |
-|--------|-------|-------|----|
-| 약한 적 | 1 | 8 | 1 + 1 = **2** |
-| 보통 적 | 3 | 10 | 1 + 9 = **10** |
-| 강한 적 | 5 | 12 | 1 + 25 + 4 = **30** |
-| 보스 | 8 | 13 | 1 + 64 + 6 = **71** |
+| 몬스터  | level | GUARD | xp                  |
+| ------- | ----- | ----- | ------------------- |
+| 약한 적 | 1     | 8     | 1 + 1 = **2**       |
+| 보통 적 | 3     | 10    | 1 + 9 = **10**      |
+| 강한 적 | 5     | 12    | 1 + 25 + 4 = **30** |
+| 보스    | 8     | 13    | 1 + 64 + 6 = **71** |
 
 ### 레벨업 필요 XP
 
 모든 레벨에 동일한 공식 적용: `XP(n) = 20 × 2^(n−2)` (n ≥ 2)
 
-| 레벨 | 필요 누적 XP |
-|------|-------------|
-| 1 | 0 |
-| 2 | 20 |
-| 3 | 40 |
-| 4 | 80 |
-| 5 | 160 |
-| 6 | 320 |
-| 7 | 640 |
-| 8 | 1,280 |
-| 9 | 2,560 |
-| 10 | 5,120 |
-| 11 | 10,240 |
-| 12 | 20,480 |
-| 13 | 40,960 |
-| 14 | 81,920 |
-| 15 | 163,840 |
-| 16 | 327,680 |
-| 17 | 655,360 |
-| 18 | 1,310,720 |
-| 19 | 2,621,440 |
-| 20 | 5,242,880 |
-| 21 | 10,485,760 |
-| 22 | 20,971,520 |
-| 23 | 41,943,040 |
-| 24 | 83,886,080 |
-| 25 | 167,772,160 |
-| 26 | 335,544,320 |
-| 27 | 671,088,640 |
-| 28 | 1,342,177,280 |
-| 29 | 2,684,354,560 |
-| 30 | 5,368,709,120 |
+| 레벨 | 필요 누적 XP  |
+| ---- | ------------- |
+| 1    | 0             |
+| 2    | 20            |
+| 3    | 40            |
+| 4    | 80            |
+| 5    | 160           |
+| 6    | 320           |
+| 7    | 640           |
+| 8    | 1,280         |
+| 9    | 2,560         |
+| 10   | 5,120         |
+| 11   | 10,240        |
+| 12   | 20,480        |
+| 13   | 40,960        |
+| 14   | 81,920        |
+| 15   | 163,840       |
+| 16   | 327,680       |
+| 17   | 655,360       |
+| 18   | 1,310,720     |
+| 19   | 2,621,440     |
+| 20   | 5,242,880     |
+| 21   | 10,485,760    |
+| 22   | 20,971,520    |
+| 23   | 41,943,040    |
+| 24   | 83,886,080    |
+| 25   | 167,772,160   |
+| 26   | 335,544,320   |
+| 27   | 671,088,640   |
+| 28   | 1,342,177,280 |
+| 29   | 2,684,354,560 |
+| 30   | 5,368,709,120 |
 
 ### 죽음 페널티 (Death Penalty)
 
@@ -494,13 +519,13 @@ Server → Client (direct):
 
 클라이언트가 몬스터 AI를 처리하고, 공격 판정은 서버에 요청한다.
 
-| 상태 | 설명 |
-|------|------|
-| `idle` | 대기 (30% 확률로 랜덤 이동) |
-| `walk` | 이동 중 |
-| `run` | 플레이어 추적 중 (chaseRange 이내) |
-| `attack` | 공격 중 (attackRange 이내) |
-| `hit` | 피격 경직 (~800ms) |
-| `dead` | 사망 |
+| 상태     | 설명                               |
+| -------- | ---------------------------------- |
+| `idle`   | 대기 (30% 확률로 랜덤 이동)        |
+| `walk`   | 이동 중                            |
+| `run`    | 플레이어 추적 중 (chaseRange 이내) |
+| `attack` | 공격 중 (attackRange 이내)         |
+| `hit`    | 피격 경직 (~800ms)                 |
+| `dead`   | 사망                               |
 
 - 구현: [client/src/lib/managers/monsterManager.ts](../client/src/lib/managers/monsterManager.ts)

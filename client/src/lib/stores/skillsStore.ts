@@ -20,6 +20,10 @@ export const SKILL_DISPLAY_NAMES: Record<SkillId, string> = {
   shield: 'Shield',
   healing: 'Healing',
   leather_armor: 'Leather Armor',
+  mail_armor: 'Mail Armor',
+  plate_armor: 'Plate Armor',
+  padded_armor: 'Padded Armor',
+  hybrid_armor: 'Hybrid Armor',
 }
 
 export function skillDisplayName(skill: SkillId): string {
@@ -31,7 +35,13 @@ export function skillEffectText(skill: SkillId, level: number): string | null {
   if (skill === 'shield') return `Guard +${shield_skill_guard_bonus(level)}`
   if (skill === 'healing')
     return `Bandage healing +${healing_skill_hp_bonus(level)} HP`
-  if (skill === 'leather_armor')
+  if (
+    skill === 'leather_armor' ||
+    skill === 'mail_armor' ||
+    skill === 'plate_armor' ||
+    skill === 'padded_armor' ||
+    skill === 'hybrid_armor'
+  )
     return `Guard +${armor_skill_guard_bonus(skill, level)}`
   return `Accuracy +${weapon_skill_attack_bonus(skill, level)}`
 }

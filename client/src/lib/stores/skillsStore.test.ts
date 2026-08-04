@@ -43,6 +43,10 @@ describe('trained skills', () => {
     applySkillXp('shield', 30, 0)
     applySkillXp('healing', 40, 0)
     applySkillXp('leather_armor', 50, 0)
+    applySkillXp('mail_armor', 60, 0)
+    applySkillXp('plate_armor', 70, 0)
+    applySkillXp('padded_armor', 80, 0)
+    applySkillXp('hybrid_armor', 90, 0)
 
     expect(get(skillsStore).map).toEqual({
       fishing: { level: 1, xp: 100 },
@@ -52,6 +56,10 @@ describe('trained skills', () => {
       shield: { level: 0, xp: 30 },
       healing: { level: 0, xp: 40 },
       leather_armor: { level: 0, xp: 50 },
+      mail_armor: { level: 0, xp: 60 },
+      plate_armor: { level: 0, xp: 70 },
+      padded_armor: { level: 0, xp: 80 },
+      hybrid_armor: { level: 0, xp: 90 },
     })
     expect(skillDisplayName('one_handed_sword')).toBe('One-Handed Sword')
     expect(skillDisplayName('dagger')).toBe('Dagger')
@@ -59,6 +67,10 @@ describe('trained skills', () => {
     expect(skillDisplayName('shield')).toBe('Shield')
     expect(skillDisplayName('healing')).toBe('Healing')
     expect(skillDisplayName('leather_armor')).toBe('Leather Armor')
+    expect(skillDisplayName('mail_armor')).toBe('Mail Armor')
+    expect(skillDisplayName('plate_armor')).toBe('Plate Armor')
+    expect(skillDisplayName('padded_armor')).toBe('Padded Armor')
+    expect(skillDisplayName('hybrid_armor')).toBe('Hybrid Armor')
   })
 
   it('uses the shared WASM formula for weapon accuracy text', () => {
@@ -79,6 +91,26 @@ describe('trained skills', () => {
     expect(wasm.armor_skill_guard_bonus).toHaveBeenLastCalledWith(
       'leather_armor',
       15
+    )
+    expect(skillEffectText('mail_armor', 25)).toBe('Guard +3')
+    expect(wasm.armor_skill_guard_bonus).toHaveBeenLastCalledWith(
+      'mail_armor',
+      25
+    )
+    expect(skillEffectText('plate_armor', 15)).toBe('Guard +2')
+    expect(wasm.armor_skill_guard_bonus).toHaveBeenLastCalledWith(
+      'plate_armor',
+      15
+    )
+    expect(skillEffectText('padded_armor', 5)).toBe('Guard +1')
+    expect(wasm.armor_skill_guard_bonus).toHaveBeenLastCalledWith(
+      'padded_armor',
+      5
+    )
+    expect(skillEffectText('hybrid_armor', 25)).toBe('Guard +3')
+    expect(wasm.armor_skill_guard_bonus).toHaveBeenLastCalledWith(
+      'hybrid_armor',
+      25
     )
   })
 
@@ -149,16 +181,45 @@ describe('defense skill item metadata', () => {
     }
     expect(getItemDef('chain_mail')?.armorConstruction).toBe('mail')
     expect(getItemDef('chain_mail')?.guard).toBe(5)
-    expect(getItemDef('chain_mail')?.defenseSkill).toBeUndefined()
+    expect(getItemDef('chain_mail')?.defenseSkill).toBe('mail_armor')
+    expect(skillDisplayName(getItemDef('chain_mail')!.defenseSkill!)).toBe(
+      'Mail Armor'
+    )
     expect(getItemDef('breastplate')?.armorConstruction).toBe('plate')
     expect(getItemDef('breastplate')?.guard).toBe(7)
-    expect(getItemDef('breastplate')?.defenseSkill).toBeUndefined()
+    expect(getItemDef('breastplate')?.defenseSkill).toBe('plate_armor')
+    expect(skillDisplayName(getItemDef('breastplate')!.defenseSkill!)).toBe(
+      'Plate Armor'
+    )
     expect(getItemDef('padded_battle_robe')?.armorConstruction).toBe('padded')
+    expect(getItemDef('padded_battle_robe')?.defenseSkill).toBe('padded_armor')
+    expect(
+      skillDisplayName(getItemDef('padded_battle_robe')!.defenseSkill!)
+    ).toBe('Padded Armor')
     expect(getItemDef('padded_battle_robe')?.repairFamily).toBe('cloth')
     expect(getItemDef('leather_armor')?.repairFamily).toBe('leather')
     expect(getItemDef('brigandine_coat')?.armorConstruction).toBe('hybrid')
     expect(getItemDef('brigandine_coat')?.repairFamily).toBe('hybrid')
     expect(getItemDef('brigandine_coat')?.guard).toBe(2)
+    expect(getItemDef('brigandine_coat')?.defenseSkill).toBe('hybrid_armor')
+    expect(skillDisplayName(getItemDef('brigandine_coat')!.defenseSkill!)).toBe(
+      'Hybrid Armor'
+    )
+    for (const [id, slashProtection, pierceProtection, bluntProtection] of [
+      ['padded_battle_robe', 1, 0, 2],
+      ['leather_armor', 1, 1, 1],
+      ['chain_mail', 2, 1, 0],
+      ['breastplate', 3, 3, 1],
+      ['brigandine_coat', 2, 2, 2],
+    ] as const) {
+      expect(getItemDef(id)).toMatchObject({
+        slashProtection,
+        pierceProtection,
+        bluntProtection,
+      })
+    }
+    expect(getItemDef('traveler_robe')?.slashProtection).toBeUndefined()
+    expect(getItemDef('leather_helmet')?.slashProtection).toBeUndefined()
     expect(getItemDef('chain_mail')?.repairFamily).toBe('metal')
     expect(getItemDef('breastplate')?.repairFamily).toBe('metal')
     for (const [id, repairFamily, repairAmount] of [
@@ -177,8 +238,8 @@ describe('defense skill item metadata', () => {
     ]) {
       const def = getItemDef(id)
       expect(def?.equipmentLayer).toBe('primary')
-      expect(def?.defenseSkill).toBeUndefined()
     }
+    expect(getItemDef('traveler_robe')?.defenseSkill).toBeUndefined()
     expect(getItemDef('traveler_robe')).toMatchObject({
       equipmentKind: 'clothing',
       garmentForm: 'robe',

@@ -4,6 +4,7 @@ import {
   equipmentBurden,
   isTorchItemDefId,
   inventoryStore,
+  primaryArmorDefense,
   resetInventoryStore,
   setEquipmentBurden,
   setInventory,
@@ -80,5 +81,73 @@ describe('item condition state', () => {
 
     expect(get(inventoryStore).equipped.chest?.durability).toBe(17)
     expect(get(inventoryStore).bag[0].durability).toBeNull()
+  })
+})
+
+describe('primary armor defense profile', () => {
+  beforeEach(() => resetInventoryStore())
+
+  it('excludes empty chest slots and ordinary clothing', () => {
+    expect(get(primaryArmorDefense)).toBeNull()
+
+    setInventory({
+      bag: [],
+      equipped: {
+        chest: {
+          instance_id: 1,
+          item_def_id: 'traveler_robe',
+          quantity: 1,
+          enchant: 0,
+          durability: null,
+        },
+      },
+    })
+
+    expect(get(primaryArmorDefense)).toBeNull()
+  })
+
+  it('projects the equipped chest definition into one active profile', () => {
+    setInventory({
+      bag: [],
+      equipped: {
+        chest: {
+          instance_id: 2,
+          item_def_id: 'brigandine_coat',
+          quantity: 1,
+          enchant: 0,
+          durability: 75,
+        },
+      },
+    })
+
+    expect(get(primaryArmorDefense)).toEqual({
+      itemDefId: 'brigandine_coat',
+      name: 'Brigandine Coat',
+      construction: 'hybrid',
+      defenseSkill: 'hybrid_armor',
+      functional: true,
+      protection: { slash: 2, pierce: 2, blunt: 2 },
+    })
+  })
+
+  it('keeps the authored profile visible but marks Broken armor inactive', () => {
+    setInventory({
+      bag: [],
+      equipped: {
+        chest: {
+          instance_id: 3,
+          item_def_id: 'padded_battle_robe',
+          quantity: 1,
+          enchant: 0,
+          durability: 0,
+        },
+      },
+    })
+
+    expect(get(primaryArmorDefense)).toMatchObject({
+      itemDefId: 'padded_battle_robe',
+      functional: false,
+      protection: { slash: 1, pierce: 0, blunt: 2 },
+    })
   })
 })

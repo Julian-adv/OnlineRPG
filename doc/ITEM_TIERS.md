@@ -44,7 +44,10 @@
 | hands | iron_gauntlets | 2 | 3 | 있음 (티어 3 던전 생기기 전까지 미드랍) |
 
 세트 guard 합계 = 11. Chain Mail chest는 추가로 slash 2 / pierce 1을
-경감하지만 blunt와 untyped은 경감하지 않으며 별도 armor skill도 없다.
+경감하지만 blunt와 untyped은 경감하지 않는다. 프로토콜 v24에서 primary
+`chain_mail`은 Mail Armor 스킬을 활성화한다. 서버가 승인한 landed monster hit은
+5 XP, miss는 0 XP이며 레벨 band는 +0/+1/+2/+3 Guard를 한 번만 더한다. 함께 쓰는
+Plate 부위는 이 스킬을 활성화하거나 훈련하지 않는다.
 
 ### 티어 3–4: 판금 세트
 
@@ -57,8 +60,10 @@
 | hands | plate_gauntlets | 3 | 4 | 있음 (티어 4 던전 생기기 전까지 미드랍) |
 
 세트 guard 합계 = 19. Breastplate chest는 추가로 slash 3 / pierce 3 /
-blunt 1을 경감하며 별도 Plate skill은 없다. 다른 Plate 파츠는 각 파츠의
-Guard만 제공하고 chest profile을 중복 적용하지 않는다.
+blunt 1을 경감한다. 프로토콜 v25에서 primary `breastplate`는 Plate Armor
+스킬을 활성화한다. 서버가 승인한 landed monster hit은 5 XP, miss는 0 XP이며
+레벨 band는 +0/+1/+2/+3 Guard를 한 번만 더한다. 다른 Plate 파츠는 각 파츠의
+Guard만 제공하고 Plate Armor를 활성화하거나 chest profile을 중복 적용하지 않는다.
 
 프로토콜 v21의 이동 부담 기준에서 STR 10 캐릭터는 Leather body pieces가
 Unburdened(3.0 m/s), Mail과 Plate set이 모두 Light(2.7 m/s)다. 가방 무게는
@@ -91,15 +96,22 @@ value 25%이며 중간 값은 연속적으로 변하므로 표시 band 경계가
 | 아이템 | kind / form | construction | guard | 스킬 |
 |--------|-------------|--------------|------:|------|
 | traveler_robe | clothing / robe | 없음 | 0 | 없음 |
-| padded_battle_robe | body armor / robe | padded | 0 | 없음 |
-| brigandine_coat | body armor / coat | hybrid | 2 | 없음 |
+| padded_battle_robe | body armor / robe | padded | 0 | Padded Armor |
+| brigandine_coat | body armor / coat | hybrid | 2 | Hybrid Armor |
 
-형태가 같은 robe라도 clothing과 padded armor는 다른 규칙을 가진다. 세 아이템
-모두 `defenseSkill`이 없으며 Leather Armor를 활성화하거나 훈련하지 않는다.
-Padded Battle Robe는 Guard 대신 slash 1 / blunt 2 경감을 제공하고 pierce와
-untyped은 경감하지 않는다. Brigandine Coat는 Guard 2와 slash / pierce /
-blunt 각각 2 경감을 제공하며 untyped은 경감하지 않는다. 양수 공격의 최종
-피해는 항상 최소 1이다.
+형태가 같은 robe라도 clothing과 padded armor는 다른 규칙을 가진다. 프로토콜
+v26에서 Padded Battle Robe는 `padded_armor`를 활성화하며 landed monster hit은
+5 XP, miss는 0 XP를 준다. Guard 0은 유지하고 slash 1 / blunt 2 경감을 제공한다.
+v27에서 Brigandine Coat는 `hybrid_armor`를 활성화하며 같은 landed-hit XP와
+Guard band를 사용한다. Coat는 garment form일 뿐이며, Hybrid construction과
+명시적 mapping이 스킬 자격을 결정한다. Traveler Robe는 `defenseSkill`이 없고
+어떤 armor skill도 활성화하거나 훈련하지 않는다. Brigandine Coat는 Guard 2와
+slash / pierce / blunt 각각 2 경감을 제공하며 untyped은 경감하지 않는다. 양수
+공격의 최종 피해는 항상 최소 1이다.
+
+물리 경감 수치는 construction 이름에서 자동 계산하지 않는다. 각 primary chest가
+`slashProtection`, `pierceProtection`, `bluntProtection`을 완전하게 명시하며,
+construction은 skill·repair·metrics 분류로 독립적으로 유지된다.
 
 ### 장신구
 

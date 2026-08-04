@@ -4,7 +4,9 @@ import type {
   EquipSlot,
   ItemInstance,
   PlayerInventory,
+  SkillId,
 } from '../network/networkTypes'
+import { getItemDef, type ArmorConstruction } from '../data/itemDefs'
 
 export type { EquipSlot, ItemInstance, PlayerInventory }
 
@@ -26,6 +28,19 @@ export const playerGuard = writable<number | null>(null)
 /** Server-authored equipped-load tier and effective movement speed. */
 export const equipmentBurden = writable<EquipmentBurden | null>(null)
 
+export type PrimaryArmorDefense = {
+  itemDefId: string
+  name: string
+  construction: ArmorConstruction
+  defenseSkill: SkillId | null
+  functional: boolean
+  protection: {
+    slash: number
+    pierce: number
+    blunt: number
+  }
+}
+
 /** Item defs that act as a carried light source (mirrors shared TORCH_ITEM_IDS). */
 const TORCH_ITEM_IDS = ['torch', 'worn_torch']
 
@@ -37,6 +52,36 @@ export function isTorchItemDefId(id: string | null | undefined): boolean {
 export const localTorchEquipped = derived(inventoryStore, (inv) => {
   const id = inv.equipped.off_hand?.item_def_id
   return isTorchItemDefId(id)
+})
+
+/** Equipped primary chest profile for display; Guard remains server-authored. */
+export const primaryArmorDefense = derived(inventoryStore, (inv) => {
+  const item = inv.equipped.chest
+  if (!item) return null
+
+  const def = getItemDef(item.item_def_id)
+  if (
+    !def ||
+    def.equipmentKind !== 'body_armor' ||
+    def.equipmentLayer !== 'primary' ||
+    def.equipSlot !== 'chest' ||
+    !def.armorConstruction
+  ) {
+    return null
+  }
+
+  return {
+    itemDefId: def.id,
+    name: def.name,
+    construction: def.armorConstruction,
+    defenseSkill: def.defenseSkill ?? null,
+    functional: item.durability == null || item.durability > 0,
+    protection: {
+      slash: def.slashProtection ?? 0,
+      pierce: def.pierceProtection ?? 0,
+      blunt: def.bluntProtection ?? 0,
+    },
+  } satisfies PrimaryArmorDefense
 })
 
 export function setInventory(inventory: PlayerInventory) {

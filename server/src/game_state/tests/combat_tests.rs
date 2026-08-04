@@ -997,7 +997,7 @@ async fn shield_bonus_threshold_pushes_an_immediate_guard_update() {
 }
 
 #[tokio::test]
-async fn leather_armor_bonus_is_anchored_to_the_mapped_primary_chest() {
+async fn armor_skill_bonus_is_anchored_to_the_mapped_primary_chest() {
     let game_state = make_test_game_state("leather_armor_profile");
     let defender_id = pid("leather_guardian");
     game_state
@@ -1009,7 +1009,14 @@ async fn leather_armor_bonus_is_anchored_to_the_mapped_primary_chest() {
         .register_player_character(&defender_id, 4, 0, attrs, 0, None)
         .await;
     let mut skills = Skills::default();
-    for (skill, level) in [(SkillId::Shield, 15), (SkillId::LeatherArmor, 25)] {
+    for (skill, level) in [
+        (SkillId::Shield, 15),
+        (SkillId::LeatherArmor, 25),
+        (SkillId::MailArmor, 15),
+        (SkillId::PlateArmor, 5),
+        (SkillId::PaddedArmor, 15),
+        (SkillId::HybridArmor, 25),
+    ] {
         skills.map.insert(
             skill,
             SkillProgress {
@@ -1050,16 +1057,63 @@ async fn leather_armor_bonus_is_anchored_to_the_mapped_primary_chest() {
         .get_mut(&defender_id)
         .unwrap()
         .equipped
-        .insert(EquipSlot::Chest, bag_item(32, "breastplate", 1));
+        .insert(EquipSlot::Chest, bag_item(32, "chain_mail", 1));
+    let mail_profile = game_state.player_defense_profile(&defender_id).await;
+    assert_eq!(mail_profile.armor_skill, Some(SkillId::MailArmor));
+    assert_eq!(mail_profile.armor_skill_level, 15);
+    assert_eq!(mail_profile.armor_skill_guard_bonus, 2);
+    assert_eq!(mail_profile.effective_guard, 20); // base 10 + gear 6 + skills 2 + 2
+
+    game_state
+        .inventories
+        .write()
+        .await
+        .get_mut(&defender_id)
+        .unwrap()
+        .equipped
+        .insert(EquipSlot::Chest, bag_item(33, "breastplate", 1));
     let plate_profile = game_state.player_defense_profile(&defender_id).await;
-    assert_eq!(plate_profile.armor_skill, None);
-    assert_eq!(plate_profile.armor_skill_guard_bonus, 0);
-    assert_eq!(plate_profile.effective_guard, 20); // base 10 + gear 8 + Shield 2
+    assert_eq!(plate_profile.armor_skill, Some(SkillId::PlateArmor));
+    assert_eq!(plate_profile.armor_skill_level, 5);
+    assert_eq!(plate_profile.armor_skill_guard_bonus, 1);
+    assert_eq!(plate_profile.effective_guard, 21); // base 10 + gear 8 + skills 2 + 1
+
+    game_state
+        .inventories
+        .write()
+        .await
+        .get_mut(&defender_id)
+        .unwrap()
+        .equipped
+        .insert(EquipSlot::Chest, bag_item(34, "padded_battle_robe", 1));
+    let padded_profile = game_state.player_defense_profile(&defender_id).await;
+    assert_eq!(padded_profile.armor_skill, Some(SkillId::PaddedArmor));
+    assert_eq!(padded_profile.armor_skill_level, 15);
+    assert_eq!(padded_profile.armor_skill_guard_bonus, 2);
+    assert_eq!(padded_profile.effective_guard, 15); // base 10 + shield 1 + skills 2 + 2
+
+    game_state
+        .inventories
+        .write()
+        .await
+        .get_mut(&defender_id)
+        .unwrap()
+        .equipped
+        .insert(EquipSlot::Chest, bag_item(35, "brigandine_coat", 1));
+    let hybrid_profile = game_state.player_defense_profile(&defender_id).await;
+    assert_eq!(hybrid_profile.armor_skill, Some(SkillId::HybridArmor));
+    assert_eq!(hybrid_profile.armor_skill_level, 25);
+    assert_eq!(hybrid_profile.armor_skill_guard_bonus, 3);
+    assert_eq!(hybrid_profile.effective_guard, 18); // base 10 + gear 3 + skills 2 + 3
     assert_eq!(armor_skill_guard_bonus(SkillId::LeatherArmor, 25), 3);
+    assert_eq!(armor_skill_guard_bonus(SkillId::MailArmor, 15), 2);
+    assert_eq!(armor_skill_guard_bonus(SkillId::PlateArmor, 5), 1);
+    assert_eq!(armor_skill_guard_bonus(SkillId::PaddedArmor, 15), 2);
+    assert_eq!(armor_skill_guard_bonus(SkillId::HybridArmor, 25), 3);
 }
 
 #[tokio::test]
-async fn padded_primary_armor_mitigates_typed_hits_without_training_leather_armor() {
+async fn padded_primary_armor_combines_typed_mitigation_and_skill_training() {
     let game_state = make_test_game_state("padded_typed_mitigation");
     let owner_id = pid("typed_monster_owner");
     let defender_id = pid("padded_defender");
@@ -1071,7 +1125,7 @@ async fn padded_primary_armor_mitigates_typed_hits_without_training_leather_armo
     defender.max_health = 1_000;
     game_state.add_player(defender).await;
     let mut attrs = attrs_with_cha(10);
-    attrs.guard = 0;
+    attrs.guard = 100;
     game_state
         .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
@@ -1087,9 +1141,28 @@ async fn padded_primary_armor_mitigates_typed_hits_without_training_leather_armo
                 .collect(),
         },
     );
-    assert_eq!(game_state.effective_guard(&defender_id).await, 0);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 100);
     let mut rx = game_state.register_direct_channel(&defender_id).await;
     let mut expected_health = 1_000;
+
+    let mut miss = make_monster("padded_miss", pos(0.0), 0);
+    miss.owner_id = Some(owner_id);
+    miss.level_override = Some(0);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(miss.id.clone(), miss);
+    game_state
+        .broadcast_monster_attack(&owner_id, "padded_miss", &defender_id)
+        .await;
+    assert!(drain(&mut rx).iter().any(|message| matches!(
+        message,
+        ServerMessage::MonsterAttackedPlayer { hit: false, .. }
+    )));
+    assert!(!game_state.player_skills.read().await[&defender_id]
+        .map
+        .contains_key(&SkillId::PaddedArmor));
 
     for (id, monster_type, expected_type, expected_mitigation) in [
         ("typed_slash", "goblin", PhysicalDamageType::Slash, 1),
@@ -1146,10 +1219,15 @@ async fn padded_primary_armor_mitigates_typed_hits_without_training_leather_armo
         }
     }
 
-    assert!(!game_state.player_skills.read().await[&defender_id]
-        .map
-        .contains_key(&SkillId::LeatherArmor));
+    let progress = game_state.player_skills.read().await[&defender_id].get(SkillId::PaddedArmor);
+    assert_eq!(progress.xp, 15);
     let metrics = game_state.skill_balance_snapshot();
+    assert_eq!(metrics.defense.defenses, 4);
+    assert_eq!(metrics.defense.hits_taken, 3);
+    assert_eq!(metrics.defense.avoids, 1);
+    assert_eq!(metrics.defense.xp, 15);
+    assert_eq!(metrics.defense_by_skill["padded_armor"].defenses, 4);
+    assert_eq!(metrics.defense_by_skill["padded_armor"].xp, 15);
     assert_eq!(metrics.mitigation.hits, 3);
     assert_eq!(metrics.mitigation.mitigated_damage, 1);
     assert_eq!(metrics.mitigation_by_type["slash"].mitigated_damage, 1);
@@ -1264,7 +1342,7 @@ async fn leather_primary_armor_balances_typed_mitigation_and_skill_training() {
 }
 
 #[tokio::test]
-async fn mail_primary_armor_favors_slash_without_creating_an_armor_skill() {
+async fn mail_primary_armor_combines_typed_mitigation_and_skill_training() {
     let game_state = make_test_game_state("mail_typed_mitigation");
     let owner_id = pid("mail_monster_owner");
     let defender_id = pid("mail_defender");
@@ -1351,11 +1429,14 @@ async fn mail_primary_armor_favors_slash_without_creating_an_armor_skill() {
         }
     }
 
-    assert!(game_state.player_skills.read().await[&defender_id]
-        .map
-        .is_empty());
+    let progress = game_state.player_skills.read().await[&defender_id].get(SkillId::MailArmor);
+    assert_eq!(progress.xp, 15);
     let metrics = game_state.skill_balance_snapshot();
-    assert_eq!(metrics.defense.defenses, 0);
+    assert_eq!(metrics.defense.defenses, 3);
+    assert_eq!(metrics.defense.hits_taken, 3);
+    assert_eq!(metrics.defense.xp, 15);
+    assert_eq!(metrics.defense_by_skill["mail_armor"].defenses, 3);
+    assert_eq!(metrics.defense_by_skill["mail_armor"].xp, 15);
     assert_eq!(metrics.mitigation.hits, 3);
     assert_eq!(metrics.mitigation.mitigated_damage, 3);
     assert_eq!(metrics.mitigation_by_type["slash"].mitigated_damage, 2);
@@ -1367,7 +1448,7 @@ async fn mail_primary_armor_favors_slash_without_creating_an_armor_skill() {
 }
 
 #[tokio::test]
-async fn plate_primary_armor_provides_broad_mitigation_without_a_skill() {
+async fn plate_primary_armor_combines_broad_mitigation_and_skill_training() {
     let game_state = make_test_game_state("plate_typed_mitigation");
     let owner_id = pid("plate_monster_owner");
     let defender_id = pid("plate_defender");
@@ -1470,11 +1551,14 @@ async fn plate_primary_armor_provides_broad_mitigation_without_a_skill() {
         }
     }
 
-    assert!(game_state.player_skills.read().await[&defender_id]
-        .map
-        .is_empty());
+    let progress = game_state.player_skills.read().await[&defender_id].get(SkillId::PlateArmor);
+    assert_eq!(progress.xp, 15);
     let metrics = game_state.skill_balance_snapshot();
-    assert_eq!(metrics.defense.defenses, 0);
+    assert_eq!(metrics.defense.defenses, 3);
+    assert_eq!(metrics.defense.hits_taken, 3);
+    assert_eq!(metrics.defense.xp, 15);
+    assert_eq!(metrics.defense_by_skill["plate_armor"].defenses, 3);
+    assert_eq!(metrics.defense_by_skill["plate_armor"].xp, 15);
     assert_eq!(metrics.mitigation.hits, 3);
     assert_eq!(
         metrics.mitigation.mitigated_damage,
@@ -1495,7 +1579,7 @@ async fn plate_primary_armor_provides_broad_mitigation_without_a_skill() {
 }
 
 #[tokio::test]
-async fn hybrid_primary_armor_provides_balanced_mitigation_without_a_skill() {
+async fn hybrid_primary_armor_combines_balanced_mitigation_and_skill_training() {
     let game_state = make_test_game_state("hybrid_typed_mitigation");
     let owner_id = pid("hybrid_monster_owner");
     let defender_id = pid("hybrid_defender");
@@ -1507,7 +1591,7 @@ async fn hybrid_primary_armor_provides_balanced_mitigation_without_a_skill() {
     defender.max_health = 1_000;
     game_state.add_player(defender).await;
     let mut attrs = attrs_with_cha(10);
-    attrs.guard = 0;
+    attrs.guard = 100;
     game_state
         .register_player_character(&defender_id, 6, 0, attrs, 0, None)
         .await;
@@ -1523,12 +1607,31 @@ async fn hybrid_primary_armor_provides_balanced_mitigation_without_a_skill() {
                 .collect(),
         },
     );
-    assert_eq!(game_state.effective_guard(&defender_id).await, 2);
+    assert_eq!(game_state.effective_guard(&defender_id).await, 102);
     let mut rx = game_state.register_direct_channel(&defender_id).await;
     let mut expected_health = 1_000;
     let mut observed_total_mitigation = 0;
     let mut observed_slash_mitigation = 0;
     let mut observed_pierce_mitigation = 0;
+
+    let mut miss = make_monster("hybrid_miss", pos(0.0), 0);
+    miss.owner_id = Some(owner_id);
+    miss.level_override = Some(0);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(miss.id.clone(), miss);
+    game_state
+        .broadcast_monster_attack(&owner_id, "hybrid_miss", &defender_id)
+        .await;
+    assert!(drain(&mut rx).iter().any(|message| matches!(
+        message,
+        ServerMessage::MonsterAttackedPlayer { hit: false, .. }
+    )));
+    assert!(!game_state.player_skills.read().await[&defender_id]
+        .map
+        .contains_key(&SkillId::HybridArmor));
 
     for (id, monster_type, expected_type, profile_protection) in [
         ("hybrid_slash", "goblin", PhysicalDamageType::Slash, 2),
@@ -1598,11 +1701,15 @@ async fn hybrid_primary_armor_provides_balanced_mitigation_without_a_skill() {
         }
     }
 
-    assert!(game_state.player_skills.read().await[&defender_id]
-        .map
-        .is_empty());
+    let progress = game_state.player_skills.read().await[&defender_id].get(SkillId::HybridArmor);
+    assert_eq!(progress.xp, 15);
     let metrics = game_state.skill_balance_snapshot();
-    assert_eq!(metrics.defense.defenses, 0);
+    assert_eq!(metrics.defense.defenses, 4);
+    assert_eq!(metrics.defense.hits_taken, 3);
+    assert_eq!(metrics.defense.avoids, 1);
+    assert_eq!(metrics.defense.xp, 15);
+    assert_eq!(metrics.defense_by_skill["hybrid_armor"].defenses, 4);
+    assert_eq!(metrics.defense_by_skill["hybrid_armor"].xp, 15);
     assert_eq!(metrics.mitigation.hits, 3);
     assert_eq!(
         metrics.mitigation.mitigated_damage,
@@ -1623,7 +1730,7 @@ async fn hybrid_primary_armor_provides_balanced_mitigation_without_a_skill() {
 }
 
 #[tokio::test]
-async fn landed_monster_hits_train_leather_armor_without_miss_or_gear_shortcuts() {
+async fn landed_monster_hits_train_only_the_mapped_active_armor_skill() {
     let game_state = make_test_game_state("leather_armor_training");
     let owner_id = pid("armor_monster_owner");
     let defender_id = pid("armor_defender");
@@ -1658,7 +1765,9 @@ async fn landed_monster_hits_train_leather_armor_without_miss_or_gear_shortcuts(
         for (id, level_override) in [
             ("armor_miss", None),
             ("armor_hit", Some(u8::MAX)),
-            ("unmapped_armor_hit", Some(u8::MAX)),
+            ("mail_armor_hit", Some(u8::MAX)),
+            ("plate_armor_miss", None),
+            ("plate_armor_hit", Some(u8::MAX)),
         ] {
             let mut monster = make_monster(id, pos(0.0), 0);
             monster.owner_id = Some(owner_id);
@@ -1691,11 +1800,47 @@ async fn landed_monster_hits_train_leather_armor_without_miss_or_gear_shortcuts(
         .equipped
         .insert(EquipSlot::Chest, bag_item(41, "chain_mail", 1));
     game_state
-        .broadcast_monster_attack(&owner_id, "unmapped_armor_hit", &defender_id)
+        .broadcast_monster_attack(&owner_id, "mail_armor_hit", &defender_id)
         .await;
     assert_eq!(
         game_state.player_skills.read().await[&defender_id]
             .get(SkillId::LeatherArmor)
+            .xp,
+        5
+    );
+    assert_eq!(
+        game_state.player_skills.read().await[&defender_id]
+            .get(SkillId::MailArmor)
+            .xp,
+        5
+    );
+
+    game_state
+        .inventories
+        .write()
+        .await
+        .get_mut(&defender_id)
+        .unwrap()
+        .equipped
+        .insert(EquipSlot::Chest, bag_item(42, "breastplate", 1));
+    game_state
+        .broadcast_monster_attack(&owner_id, "plate_armor_miss", &defender_id)
+        .await;
+    assert!(!game_state.player_skills.read().await[&defender_id]
+        .map
+        .contains_key(&SkillId::PlateArmor));
+    game_state
+        .broadcast_monster_attack(&owner_id, "plate_armor_hit", &defender_id)
+        .await;
+    assert_eq!(
+        game_state.player_skills.read().await[&defender_id]
+            .get(SkillId::MailArmor)
+            .xp,
+        5
+    );
+    assert_eq!(
+        game_state.player_skills.read().await[&defender_id]
+            .get(SkillId::PlateArmor)
             .xp,
         5
     );
@@ -1710,18 +1855,38 @@ async fn landed_monster_hits_train_leather_armor_without_miss_or_gear_shortcuts(
             ..
         }
     )));
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::SkillXpGained {
+            skill: SkillId::MailArmor,
+            xp_amount: 5,
+            new_level: 0,
+            ..
+        }
+    )));
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::SkillXpGained {
+            skill: SkillId::PlateArmor,
+            xp_amount: 5,
+            new_level: 0,
+            ..
+        }
+    )));
     assert!(!messages
         .iter()
         .any(|message| matches!(message, ServerMessage::GuardUpdated { .. })));
 
     let metrics = game_state.skill_balance_snapshot();
-    assert_eq!(metrics.defense.defenses, 2);
-    assert_eq!(metrics.defense.hits_taken, 1);
-    assert_eq!(metrics.defense.avoids, 1);
-    assert_eq!(metrics.defense.xp, 5);
+    assert_eq!(metrics.defense.defenses, 5);
+    assert_eq!(metrics.defense.hits_taken, 3);
+    assert_eq!(metrics.defense.avoids, 2);
+    assert_eq!(metrics.defense.xp, 15);
     assert_eq!(metrics.defense_by_skill["leather_armor"].defenses, 2);
-    assert_eq!(metrics.defense_xp_messages, 1);
-    assert_eq!(metrics.defense_rows_created, 1);
+    assert_eq!(metrics.defense_by_skill["mail_armor"].defenses, 1);
+    assert_eq!(metrics.defense_by_skill["plate_armor"].defenses, 2);
+    assert_eq!(metrics.defense_xp_messages, 3);
+    assert_eq!(metrics.defense_rows_created, 3);
 }
 
 #[tokio::test]
@@ -1804,6 +1969,294 @@ async fn leather_armor_bonus_threshold_pushes_one_combined_guard_update() {
         1
     );
     assert_eq!(game_state.effective_guard(&defender_id).await, 26);
+}
+
+#[tokio::test]
+async fn mail_armor_bonus_threshold_pushes_the_authoritative_guard_update() {
+    let game_state = make_test_game_state("mail_armor_guard_level_up");
+    let owner_id = pid("mail_threshold_owner");
+    let defender_id = pid("mail_threshold_defender");
+    game_state
+        .add_player(make_player("mail_threshold_owner", 0.0, 0.0))
+        .await;
+    let mut defender = make_player("mail_threshold_defender", 0.0, 0.0);
+    defender.health = 100;
+    defender.max_health = 100;
+    game_state.add_player(defender).await;
+    let mut attrs = attrs_with_cha(10);
+    attrs.guard = 20;
+    game_state
+        .register_player_character(&defender_id, 7, 0, attrs, 0, None)
+        .await;
+    let mut skills = Skills::default();
+    skills.map.insert(
+        SkillId::MailArmor,
+        SkillProgress {
+            level: 4,
+            xp: skill_xp_for_level(5) - 5,
+        },
+    );
+    game_state
+        .register_player_skills(&defender_id, skills)
+        .await;
+    game_state.inventories.write().await.insert(
+        defender_id,
+        PlayerInventory {
+            bag: vec![],
+            equipped: [(EquipSlot::Chest, bag_item(52, "chain_mail", 1))]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let mut rx = game_state.register_direct_channel(&defender_id).await;
+    let mut monster = make_monster("mail_threshold_hit", pos(0.0), 0);
+    monster.owner_id = Some(owner_id);
+    monster.level_override = Some(u8::MAX);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(monster.id.clone(), monster);
+
+    assert_eq!(game_state.effective_guard(&defender_id).await, 25);
+    game_state
+        .broadcast_monster_attack(&owner_id, "mail_threshold_hit", &defender_id)
+        .await;
+
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::SkillXpGained {
+            skill: SkillId::MailArmor,
+            new_level: 5,
+            leveled_up: true,
+            ..
+        }
+    )));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, ServerMessage::GuardUpdated { guard: 26 }))
+            .count(),
+        1
+    );
+    assert_eq!(game_state.effective_guard(&defender_id).await, 26);
+}
+
+#[tokio::test]
+async fn plate_armor_bonus_threshold_pushes_the_authoritative_guard_update() {
+    let game_state = make_test_game_state("plate_armor_guard_level_up");
+    let owner_id = pid("plate_threshold_owner");
+    let defender_id = pid("plate_threshold_defender");
+    game_state
+        .add_player(make_player("plate_threshold_owner", 0.0, 0.0))
+        .await;
+    let mut defender = make_player("plate_threshold_defender", 0.0, 0.0);
+    defender.health = 100;
+    defender.max_health = 100;
+    game_state.add_player(defender).await;
+    let mut attrs = attrs_with_cha(10);
+    attrs.guard = 20;
+    game_state
+        .register_player_character(&defender_id, 8, 0, attrs, 0, None)
+        .await;
+    let mut skills = Skills::default();
+    skills.map.insert(
+        SkillId::PlateArmor,
+        SkillProgress {
+            level: 4,
+            xp: skill_xp_for_level(5) - 5,
+        },
+    );
+    game_state
+        .register_player_skills(&defender_id, skills)
+        .await;
+    game_state.inventories.write().await.insert(
+        defender_id,
+        PlayerInventory {
+            bag: vec![],
+            equipped: [(EquipSlot::Chest, bag_item(53, "breastplate", 1))]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let mut rx = game_state.register_direct_channel(&defender_id).await;
+    let mut monster = make_monster("plate_threshold_hit", pos(0.0), 0);
+    monster.owner_id = Some(owner_id);
+    monster.level_override = Some(u8::MAX);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(monster.id.clone(), monster);
+
+    assert_eq!(game_state.effective_guard(&defender_id).await, 27);
+    game_state
+        .broadcast_monster_attack(&owner_id, "plate_threshold_hit", &defender_id)
+        .await;
+
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::SkillXpGained {
+            skill: SkillId::PlateArmor,
+            new_level: 5,
+            leveled_up: true,
+            ..
+        }
+    )));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, ServerMessage::GuardUpdated { guard: 28 }))
+            .count(),
+        1
+    );
+    assert_eq!(game_state.effective_guard(&defender_id).await, 28);
+}
+
+#[tokio::test]
+async fn padded_armor_bonus_threshold_adds_guard_to_mitigation_only_armor() {
+    let game_state = make_test_game_state("padded_armor_guard_level_up");
+    let owner_id = pid("padded_threshold_owner");
+    let defender_id = pid("padded_threshold_defender");
+    game_state
+        .add_player(make_player("padded_threshold_owner", 0.0, 0.0))
+        .await;
+    let mut defender = make_player("padded_threshold_defender", 0.0, 0.0);
+    defender.health = 100;
+    defender.max_health = 100;
+    game_state.add_player(defender).await;
+    let mut attrs = attrs_with_cha(10);
+    attrs.guard = 20;
+    game_state
+        .register_player_character(&defender_id, 9, 0, attrs, 0, None)
+        .await;
+    let mut skills = Skills::default();
+    skills.map.insert(
+        SkillId::PaddedArmor,
+        SkillProgress {
+            level: 4,
+            xp: skill_xp_for_level(5) - 5,
+        },
+    );
+    game_state
+        .register_player_skills(&defender_id, skills)
+        .await;
+    game_state.inventories.write().await.insert(
+        defender_id,
+        PlayerInventory {
+            bag: vec![],
+            equipped: [(EquipSlot::Chest, bag_item(54, "padded_battle_robe", 1))]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let mut rx = game_state.register_direct_channel(&defender_id).await;
+    let mut monster = make_monster("padded_threshold_hit", pos(0.0), 0);
+    monster.owner_id = Some(owner_id);
+    monster.level_override = Some(u8::MAX);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(monster.id.clone(), monster);
+
+    assert_eq!(game_state.effective_guard(&defender_id).await, 20);
+    game_state
+        .broadcast_monster_attack(&owner_id, "padded_threshold_hit", &defender_id)
+        .await;
+
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::SkillXpGained {
+            skill: SkillId::PaddedArmor,
+            new_level: 5,
+            leveled_up: true,
+            ..
+        }
+    )));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, ServerMessage::GuardUpdated { guard: 21 }))
+            .count(),
+        1
+    );
+    assert_eq!(game_state.effective_guard(&defender_id).await, 21);
+}
+
+#[tokio::test]
+async fn hybrid_armor_bonus_threshold_pushes_authoritative_guard_update() {
+    let game_state = make_test_game_state("hybrid_armor_guard_level_up");
+    let owner_id = pid("hybrid_threshold_owner");
+    let defender_id = pid("hybrid_threshold_defender");
+    game_state
+        .add_player(make_player("hybrid_threshold_owner", 0.0, 0.0))
+        .await;
+    let mut defender = make_player("hybrid_threshold_defender", 0.0, 0.0);
+    defender.health = 100;
+    defender.max_health = 100;
+    game_state.add_player(defender).await;
+    let mut attrs = attrs_with_cha(10);
+    attrs.guard = 20;
+    game_state
+        .register_player_character(&defender_id, 10, 0, attrs, 0, None)
+        .await;
+    let mut skills = Skills::default();
+    skills.map.insert(
+        SkillId::HybridArmor,
+        SkillProgress {
+            level: 4,
+            xp: skill_xp_for_level(5) - 5,
+        },
+    );
+    game_state
+        .register_player_skills(&defender_id, skills)
+        .await;
+    game_state.inventories.write().await.insert(
+        defender_id,
+        PlayerInventory {
+            bag: vec![],
+            equipped: [(EquipSlot::Chest, bag_item(55, "brigandine_coat", 1))]
+                .into_iter()
+                .collect(),
+        },
+    );
+    let mut rx = game_state.register_direct_channel(&defender_id).await;
+    let mut monster = make_monster("hybrid_threshold_hit", pos(0.0), 0);
+    monster.owner_id = Some(owner_id);
+    monster.level_override = Some(u8::MAX);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(monster.id.clone(), monster);
+
+    assert_eq!(game_state.effective_guard(&defender_id).await, 22);
+    game_state
+        .broadcast_monster_attack(&owner_id, "hybrid_threshold_hit", &defender_id)
+        .await;
+
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::SkillXpGained {
+            skill: SkillId::HybridArmor,
+            new_level: 5,
+            leveled_up: true,
+            ..
+        }
+    )));
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| matches!(message, ServerMessage::GuardUpdated { guard: 23 }))
+            .count(),
+        1
+    );
+    assert_eq!(game_state.effective_guard(&defender_id).await, 23);
 }
 
 #[tokio::test]

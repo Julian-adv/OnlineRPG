@@ -4,10 +4,11 @@ Phase 2 established measurement for the One-Handed Sword vertical slice before
 changing its provisional rules. Phases 3 and 4 reuse the same no-identity
 metrics for Dagger and Spear. Phase 5 extends the same process-lifetime report
 with aggregate Shield defense outcomes. Phase 6 adds Bandage treatment and
-actual-HP-restored measurements. The first armor slice adds Leather Armor to
-the same per-defense-skill breakdown. The Padded, Leather, Mail, Plate, and
-Hybrid physical-mitigation profiles also record aggregate raw, mitigated, and
-final damage by physical type and primary construction, without player identity.
+actual-HP-restored measurements. The first five armor slices add Padded Armor,
+Leather Armor, Mail Armor, Plate Armor, and Hybrid Armor to the same
+per-defense-skill breakdown. Their item-authored physical-mitigation profiles
+also record aggregate raw, mitigated, and final damage by physical type and
+primary construction, without player identity.
 
 ## Baseline
 
@@ -36,13 +37,14 @@ or 189,100. Wall-clock projections depend on each monster's attack cooldown and
 real engagement time, so the report records defense counts and XP instead of
 pretending there is one defensive cadence.
 
-Leather Armor awards 5 XP only on landed hits while the mapped leather chest
-is equipped. Its uninterrupted hit-count bounds therefore match Shield's
-all-hit column: 1,100 hits for level 5, 24,800 for level 15, 110,500 for level
-25, and 189,100 for level 30. Misses award nothing, and the trained Guard bonus
-itself lowers later hit frequency, so these are lower bounds. When Shield and
-Leather Armor are both active, the aggregate `defense` count represents two
-qualified skill events for one swing; use `defense_skills` for per-skill review.
+Padded Armor, Leather Armor, Mail Armor, Plate Armor, and Hybrid Armor each award
+5 XP only on landed hits while their mapped primary chest is equipped. Their uninterrupted
+hit-count bounds therefore match Shield's all-hit column: 1,100 hits for level
+5, 24,800 for level 15, 110,500 for level 25, and 189,100 for level 30. Misses
+award nothing, and the trained Guard bonus itself lowers later hit frequency,
+so these are lower bounds. Only one primary armor skill can be active, but
+Shield can train beside it; the aggregate `defense` count then represents two
+qualified skill events for one swing. Use `defense_skills` for per-skill review.
 
 Healing earns one XP per HP actually restored by applying a Bandage. A Bandage
 rolls `2d4` (2–8, average 5) before the modest +0/+1/+2/+3 trained modifier,
@@ -84,9 +86,9 @@ The `skill_balance` log line contains:
 - aggregate results by configured monster type;
 - accepted attack cadence samples;
 - `SkillXpGained` message count and newly created weapon-skill rows;
-- Shield and Leather Armor qualified defenses, hits taken, avoids, awarded XP,
-  per-skill/skill-band results, `SkillXpGained` messages, and newly created
-  defensive-skill rows;
+- Shield and mapped Padded, Leather, Mail, Plate, and Hybrid Armor qualified
+  defenses, hits taken, avoids, awarded XP, per-skill/skill-band results,
+  `SkillXpGained` messages, and newly created defensive-skill rows;
 - mapped Bandage uses, actual HP restored, awarded XP, skill-band
   results, `SkillXpGained` messages, and newly created Healing rows;
 - physical hits plus raw, mitigated, and final damage totals, broken down by
@@ -111,19 +113,20 @@ with the balance review. Before tuning, review at least:
 6. XP-message rate and successful skill-save rows per hour;
 7. Shield avoid/hit mix, XP per accepted defense, and whether one controllable
    monster can produce trivial low-risk progression;
-8. Leather Armor hit frequency, progression with its rising Guard bonus,
-   Shield overlap, and whether primary-chest anchoring remains understandable;
+8. Padded, Leather, Mail, Plate, and Hybrid Armor hit frequency, progression
+   with their rising Guard bonuses, Shield overlap, and whether primary-chest
+   anchoring remains understandable;
 9. Healing XP per Bandage, capped-heal frequency, Bandage expenditure, and
    whether repeated tiny wounds dominate legitimate recovery.
 10. Padded raw-to-final damage by slash, pierce, blunt, and untyped; compare its
-    migrated Guard budget with unarmored and future construction candidates.
+    Guard-0 baseline and skill progression with unarmored and Hybrid controls.
 11. Leather's balanced typed mitigation, reduced chest Guard, hit frequency,
     skill progression, and Shield overlap compared with Padded and no armor.
 12. Mail's slash-heavy mitigation, retained Guard, extreme carried weight, and
-    lack of skill progression compared with Leather and Plate.
-13. Plate's broad mitigation, reduced chest Guard, Blunt weakness, and lack of
-    skill progression compared with Mail and Hybrid.
-14. Hybrid's balanced mitigation, migrated Brigandine Guard, and lack of skill
+    skill progression compared with Leather and Plate.
+13. Plate's broad mitigation, reduced chest Guard, Blunt weakness, and skill
+    progression compared with Mail and Hybrid.
+14. Hybrid's balanced mitigation, migrated Brigandine Guard, and skill
     progression compared with lighter Leather and more deflective Plate.
 15. Equipment-burden time-to-target by Strength, complete loadout, and movement
     tier; especially Mail's weight 67 versus Plate's weight 43 and the effect of

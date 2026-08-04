@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { inventoryStore, playerGuard } from '../stores/inventoryStore'
+  import {
+    inventoryStore,
+    playerGuard,
+    primaryArmorDefense,
+  } from '../stores/inventoryStore'
   import type { EquipSlot } from '../stores/inventoryStore'
   import { getItemDef } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
@@ -73,6 +77,7 @@
   // first update arrives. The bonus is derived only for the "(+N)" hint.
   const effectiveGuard = $derived($playerGuard ?? attributes.guard)
   const equipGuardBonus = $derived(effectiveGuard - attributes.guard)
+  const armorDefense = $derived($primaryArmorDefense)
 
   const CLASS_LABELS: Record<CharacterClass, string> = {
     knight: 'Knight',
@@ -255,6 +260,34 @@
             <div class="stat-row">
               <span class="stat-label">Cha</span>
               <span class="stat-value">{attributes.cha}</span>
+            </div>
+            <div
+              class="stat-row armor-profile-row"
+              class:broken={armorDefense !== null && !armorDefense.functional}
+              title={armorDefense
+                ? armorDefense.functional
+                  ? 'Authored physical protection from the equipped primary chest'
+                  : 'Broken armor remains equipped but supplies no Guard, mitigation, or skill training'
+                : 'No primary body armor is supplying physical protection'}
+            >
+              <span class="stat-label">Armor</span>
+              {#if armorDefense}
+                <span class="armor-name"
+                  >{armorDefense.name}{armorDefense.functional
+                    ? ''
+                    : ' (Broken)'}</span
+                >
+                <span class="armor-detail">
+                  {armorDefense.defenseSkill
+                    ? `${skillDisplayName(armorDefense.defenseSkill)} · `
+                    : ''}S{armorDefense.protection.slash}/P{armorDefense
+                    .protection.pierce}/B{armorDefense.protection
+                    .blunt}{armorDefense.functional ? '' : ' · inactive'}
+                </span>
+              {:else}
+                <span class="armor-name">None</span>
+                <span class="armor-detail">No physical mitigation</span>
+              {/if}
             </div>
           </div>
           <div class="exp-block">
@@ -489,6 +522,33 @@
     padding: 3px 4px;
     border-radius: 4px;
     background: rgba(255, 255, 255, 0.04);
+  }
+
+  .armor-profile-row {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
+  .armor-name {
+    min-width: 0;
+    overflow: hidden;
+    color: #f5f9fc;
+    font-size: 11px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .armor-detail {
+    color: #9fc5ff;
+    font-size: 10px;
+    text-align: right;
+  }
+
+  .armor-profile-row.broken .armor-name,
+  .armor-profile-row.broken .armor-detail {
+    color: #f4a261;
   }
 
   .stat-label {

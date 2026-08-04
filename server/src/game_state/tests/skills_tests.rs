@@ -120,13 +120,29 @@ async fn take_player_skills_snapshots_and_detaches() {
         .add_skill_xp(&player, SkillId::LeatherArmor, 50)
         .await
         .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::MailArmor, 60)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::PlateArmor, 70)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::PaddedArmor, 80)
+        .await
+        .unwrap();
+    game_state
+        .add_skill_xp(&player, SkillId::HybridArmor, 90)
+        .await
+        .unwrap();
 
     let (character_id, rows) = game_state
         .take_player_skills(&player)
         .await
         .expect("skills should detach");
     assert_eq!(character_id, 7);
-    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.len(), 11);
     assert_eq!(rows[0].skill_id, "dagger");
     assert_eq!(rows[0].xp, 100);
     assert_eq!(rows[0].level, 1);
@@ -136,18 +152,30 @@ async fn take_player_skills_snapshots_and_detaches() {
     assert_eq!(rows[2].skill_id, "healing");
     assert_eq!(rows[2].xp, 40);
     assert_eq!(rows[2].level, 0);
-    assert_eq!(rows[3].skill_id, "leather_armor");
-    assert_eq!(rows[3].xp, 50);
+    assert_eq!(rows[3].skill_id, "hybrid_armor");
+    assert_eq!(rows[3].xp, 90);
     assert_eq!(rows[3].level, 0);
-    assert_eq!(rows[4].skill_id, "one_handed_sword");
-    assert_eq!(rows[4].xp, 500);
-    assert_eq!(rows[4].level, 2);
-    assert_eq!(rows[5].skill_id, "shield");
-    assert_eq!(rows[5].xp, 30);
+    assert_eq!(rows[4].skill_id, "leather_armor");
+    assert_eq!(rows[4].xp, 50);
+    assert_eq!(rows[4].level, 0);
+    assert_eq!(rows[5].skill_id, "mail_armor");
+    assert_eq!(rows[5].xp, 60);
     assert_eq!(rows[5].level, 0);
-    assert_eq!(rows[6].skill_id, "spear");
-    assert_eq!(rows[6].xp, 20);
-    assert_eq!(rows[6].level, 0);
+    assert_eq!(rows[6].skill_id, "one_handed_sword");
+    assert_eq!(rows[6].xp, 500);
+    assert_eq!(rows[6].level, 2);
+    assert_eq!(rows[7].skill_id, "padded_armor");
+    assert_eq!(rows[7].xp, 80);
+    assert_eq!(rows[7].level, 0);
+    assert_eq!(rows[8].skill_id, "plate_armor");
+    assert_eq!(rows[8].xp, 70);
+    assert_eq!(rows[8].level, 0);
+    assert_eq!(rows[9].skill_id, "shield");
+    assert_eq!(rows[9].xp, 30);
+    assert_eq!(rows[9].level, 0);
+    assert_eq!(rows[10].skill_id, "spear");
+    assert_eq!(rows[10].xp, 20);
+    assert_eq!(rows[10].level, 0);
 
     // Detached: nothing left to take or flush.
     assert!(game_state.take_player_skills(&player).await.is_none());

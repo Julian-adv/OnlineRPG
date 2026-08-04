@@ -59,7 +59,11 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 ///      - PartyPositions is pushed server-side on relocation (was a poll answer)
 ///      and now includes the recipient; clients filter themselves.
 /// v23: per-instance durability on inventory, ground, and buyback items.
-pub const PROTOCOL_VERSION: u32 = 23;
+/// v24: Mail Armor skill identity carried by generic skill messages.
+/// v25: Plate Armor skill identity carried by generic skill messages.
+/// v26: Padded Armor skill identity carried by generic skill messages.
+/// v27: Hybrid Armor skill identity carried by generic skill messages.
+pub const PROTOCOL_VERSION: u32 = 27;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -84,7 +88,7 @@ pub const CLOSE_CODE_IDLE_TIMEOUT: u16 = 4003;
 mod wasm_api;
 
 pub use character::{Character, CharacterAttributes, CharacterClass, Gender};
-pub use combat::{PhysicalDamageResult, PhysicalDamageType};
+pub use combat::{PhysicalDamageResult, PhysicalDamageType, PhysicalProtection};
 pub use entity::{Monster, MonsterState, Player, PlayerId};
 pub use inventory::{EquipmentBurden, EquipmentBurdenTier};
 pub use messages::{
@@ -362,6 +366,10 @@ mod tests {
         skills.add_xp(skills::SkillId::Shield, 30).unwrap();
         skills.add_xp(skills::SkillId::Healing, 40).unwrap();
         skills.add_xp(skills::SkillId::LeatherArmor, 50).unwrap();
+        skills.add_xp(skills::SkillId::MailArmor, 60).unwrap();
+        skills.add_xp(skills::SkillId::PlateArmor, 70).unwrap();
+        skills.add_xp(skills::SkillId::PaddedArmor, 80).unwrap();
+        skills.add_xp(skills::SkillId::HybridArmor, 90).unwrap();
         let messages = vec![
             ServerMessage::AuthError {
                 message: "bad".to_string(),
@@ -429,6 +437,34 @@ mod tests {
                 skill: skills::SkillId::LeatherArmor,
                 xp_amount: 5,
                 total_xp: 50,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::MailArmor,
+                xp_amount: 5,
+                total_xp: 60,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::PlateArmor,
+                xp_amount: 5,
+                total_xp: 70,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::PaddedArmor,
+                xp_amount: 5,
+                total_xp: 80,
+                new_level: 0,
+                leveled_up: false,
+            },
+            ServerMessage::SkillXpGained {
+                skill: skills::SkillId::HybridArmor,
+                xp_amount: 5,
+                total_xp: 90,
                 new_level: 0,
                 leveled_up: false,
             },

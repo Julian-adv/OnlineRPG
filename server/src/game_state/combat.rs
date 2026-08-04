@@ -2,11 +2,11 @@ use crate::game::{character_hp, combat};
 use crate::types::{
     AttackRejectReason, ClientKind, MonsterState, PlayerId, Position, ServerMessage,
 };
-use onlinerpg_shared::combat::resolve_physical_damage;
+use onlinerpg_shared::combat::{resolve_physical_damage, PhysicalProtection};
 use onlinerpg_shared::inventory::{ArmorConstruction, EquipSlot, GroundItem, PlayerInventory};
 use onlinerpg_shared::skills::{
-    armor_skill_guard_bonus, shield_skill_guard_bonus, weapon_skill_attack_bonus,
-    weapon_skill_attack_cooldown_ms, weapon_skill_melee_range, SkillId,
+    armor_skill_construction, armor_skill_guard_bonus, shield_skill_guard_bonus,
+    weapon_skill_attack_bonus, weapon_skill_attack_cooldown_ms, weapon_skill_melee_range, SkillId,
     DEFAULT_WEAPON_ATTACK_COOLDOWN_MS, DEFAULT_WEAPON_MELEE_RANGE_METERS,
 };
 use onlinerpg_shared::xp;
@@ -107,6 +107,7 @@ pub(super) struct PlayerWeaponAttackProfile {
 pub(super) struct PlayerDefenseProfile {
     pub(super) effective_guard: i32,
     pub(super) primary_armor_construction: Option<ArmorConstruction>,
+    pub(super) primary_armor_protection: PhysicalProtection,
     pub(super) primary_armor_instance_id: Option<u64>,
     pub(super) shield_skill: Option<SkillId>,
     pub(super) shield_skill_level: u32,
@@ -240,12 +241,13 @@ impl super::GameState {
             shield_skill,
             armor_skill,
             primary_armor_construction,
+            primary_armor_protection,
             primary_armor_instance_id,
         ) = {
             let inventories = self.inventories.read().await;
-            inventories
-                .get(player_id)
-                .map_or((0, None, None, None, None), |inventory| {
+            inventories.get(player_id).map_or(
+                (0, None, None, None, PhysicalProtection::default(), None),
+                |inventory| {
                     let shield_skill = inventory
                         .equipped
                         .get(&EquipSlot::OffHand)
@@ -256,20 +258,24 @@ impl super::GameState {
                         .equipped
                         .get(&EquipSlot::Chest)
                         .filter(|item| !item.is_broken());
-                    let armor_skill = primary_armor
-                        .and_then(|item| self.item_defs.get(&item.item_def_id))
-                        .and_then(|def| def.defense_skill);
-                    let primary_armor_construction = primary_armor
-                        .and_then(|item| self.item_defs.get(&item.item_def_id))
-                        .and_then(|def| def.armor_construction);
+                    let primary_armor_def =
+                        primary_armor.and_then(|item| self.item_defs.get(&item.item_def_id));
+                    let armor_skill = primary_armor_def.and_then(|def| def.defense_skill);
+                    let primary_armor_construction =
+                        primary_armor_def.and_then(|def| def.armor_construction);
+                    let primary_armor_protection = primary_armor_def
+                        .map(|def| def.physical_protection())
+                        .unwrap_or_default();
                     (
                         self.equipped_guard_bonus(inventory),
                         shield_skill,
                         armor_skill,
                         primary_armor_construction,
+                        primary_armor_protection,
                         primary_armor.map(|item| item.instance_id),
                     )
-                })
+                },
+            )
         };
         let shield_skill_level = if let Some(skill) = shield_skill {
             self.skill_level(player_id, skill).await
@@ -294,6 +300,7 @@ impl super::GameState {
                 + shield_skill_guard_bonus
                 + armor_skill_guard_bonus,
             primary_armor_construction,
+            primary_armor_protection,
             primary_armor_instance_id,
             shield_skill,
             shield_skill_level,
@@ -912,11 +919,8 @@ impl super::GameState {
             weapon_damage_roll.as_deref(),
             0,
         );
-        let damage = resolve_physical_damage(
-            result.damage,
-            damage_type,
-            defense.primary_armor_construction,
-        );
+        let damage =
+            resolve_physical_damage(result.damage, damage_type, defense.primary_armor_protection);
         self.skill_balance_metrics
             .record_mitigation(defense.primary_armor_construction, damage);
 
@@ -986,17 +990,18 @@ impl super::GameState {
             shield_xp,
         );
 
-        let armor_xp = if defense.armor_skill == Some(SkillId::LeatherArmor) {
+        let armor_xp = if let Some(skill) = defense
+            .armor_skill
+            .filter(|skill| armor_skill_construction(*skill).is_some())
+        {
             let amount = combat::armor_skill_defense_xp(result.hit);
             let xp_result = if amount > 0 {
-                self.add_skill_xp(target_player_id, SkillId::LeatherArmor, amount)
-                    .await
+                self.add_skill_xp(target_player_id, skill, amount).await
             } else {
                 None
             };
             if xp_result.is_some_and(|xp| {
-                armor_skill_guard_bonus(SkillId::LeatherArmor, xp.new_level)
-                    != defense.armor_skill_guard_bonus
+                armor_skill_guard_bonus(skill, xp.new_level) != defense.armor_skill_guard_bonus
             }) {
                 guard_bonus_changed = true;
             }

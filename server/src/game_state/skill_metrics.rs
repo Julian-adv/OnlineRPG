@@ -1,6 +1,6 @@
 use crate::types::{AttackRejectReason, ClientKind};
 use onlinerpg_shared::inventory::ArmorConstruction;
-use onlinerpg_shared::skills::{skill_xp_for_level, SkillId};
+use onlinerpg_shared::skills::{armor_skill_construction, skill_xp_for_level, SkillId};
 use onlinerpg_shared::PhysicalDamageResult;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -476,7 +476,7 @@ impl SkillBalanceMetrics {
                 data.weapon_rows_created = data
                     .weapon_rows_created
                     .saturating_add(u64::from(created_row));
-            } else if matches!(skill, SkillId::Shield | SkillId::LeatherArmor) {
+            } else if skill == SkillId::Shield || armor_skill_construction(skill).is_some() {
                 data.defense_xp_messages = data.defense_xp_messages.saturating_add(1);
                 data.defense_rows_created = data
                     .defense_rows_created
@@ -497,9 +497,12 @@ impl SkillBalanceMetrics {
         monster_hit: bool,
         xp: u64,
     ) {
-        let Some(skill @ (SkillId::Shield | SkillId::LeatherArmor)) = skill else {
+        let Some(skill) = skill else {
             return;
         };
+        if skill != SkillId::Shield && armor_skill_construction(skill).is_none() {
+            return;
+        }
         self.with_data(|data| {
             data.defense.record(monster_hit, xp);
             data.defense_by_skill

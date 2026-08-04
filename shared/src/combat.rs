@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::inventory::ArmorConstruction;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PhysicalDamageType {
@@ -45,6 +43,29 @@ impl std::str::FromStr for PhysicalDamageType {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhysicalProtection {
+    pub slash: u32,
+    pub pierce: u32,
+    pub blunt: u32,
+}
+
+impl PhysicalProtection {
+    pub fn for_damage_type(self, damage_type: PhysicalDamageType) -> u32 {
+        match damage_type {
+            PhysicalDamageType::Untyped => 0,
+            PhysicalDamageType::Slash => self.slash,
+            PhysicalDamageType::Pierce => self.pierce,
+            PhysicalDamageType::Blunt => self.blunt,
+        }
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.slash == 0 && self.pierce == 0 && self.blunt == 0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PhysicalDamageResult {
     pub damage_type: PhysicalDamageType,
@@ -53,39 +74,14 @@ pub struct PhysicalDamageResult {
     pub final_damage: u32,
 }
 
-pub fn construction_protection(
-    construction: Option<ArmorConstruction>,
-    damage_type: PhysicalDamageType,
-) -> u32 {
-    match (construction, damage_type) {
-        (Some(ArmorConstruction::Padded), PhysicalDamageType::Slash) => 1,
-        (Some(ArmorConstruction::Padded), PhysicalDamageType::Blunt) => 2,
-        (
-            Some(ArmorConstruction::Leather),
-            PhysicalDamageType::Slash | PhysicalDamageType::Pierce | PhysicalDamageType::Blunt,
-        ) => 1,
-        (Some(ArmorConstruction::Mail), PhysicalDamageType::Slash) => 2,
-        (Some(ArmorConstruction::Mail), PhysicalDamageType::Pierce) => 1,
-        (
-            Some(ArmorConstruction::Plate),
-            PhysicalDamageType::Slash | PhysicalDamageType::Pierce,
-        ) => 3,
-        (Some(ArmorConstruction::Plate), PhysicalDamageType::Blunt) => 1,
-        (
-            Some(ArmorConstruction::Hybrid),
-            PhysicalDamageType::Slash | PhysicalDamageType::Pierce | PhysicalDamageType::Blunt,
-        ) => 2,
-        _ => 0,
-    }
-}
-
 pub fn resolve_physical_damage(
     raw_damage: u32,
     damage_type: PhysicalDamageType,
-    construction: Option<ArmorConstruction>,
+    protection: PhysicalProtection,
 ) -> PhysicalDamageResult {
-    let protection = construction_protection(construction, damage_type);
-    let mitigated_damage = protection.min(raw_damage.saturating_sub(1));
+    let mitigated_damage = protection
+        .for_damage_type(damage_type)
+        .min(raw_damage.saturating_sub(1));
     PhysicalDamageResult {
         damage_type,
         raw_damage,
@@ -122,91 +118,18 @@ mod tests {
     }
 
     #[test]
-    fn active_construction_profiles_are_explicit() {
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Padded), PhysicalDamageType::Slash),
-            1
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Padded), PhysicalDamageType::Pierce),
-            0
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Padded), PhysicalDamageType::Blunt),
-            2
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Padded), PhysicalDamageType::Untyped),
-            0
-        );
-
-        for damage_type in [
-            PhysicalDamageType::Slash,
-            PhysicalDamageType::Pierce,
-            PhysicalDamageType::Blunt,
-        ] {
-            assert_eq!(
-                construction_protection(Some(ArmorConstruction::Leather), damage_type),
-                1,
-                "leather {damage_type:?}"
-            );
-        }
-        assert_eq!(
-            construction_protection(
-                Some(ArmorConstruction::Leather),
-                PhysicalDamageType::Untyped
-            ),
-            0
-        );
-
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Mail), PhysicalDamageType::Slash),
-            2
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Mail), PhysicalDamageType::Pierce),
-            1
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Mail), PhysicalDamageType::Blunt),
-            0
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Mail), PhysicalDamageType::Untyped),
-            0
-        );
-
-        for damage_type in [PhysicalDamageType::Slash, PhysicalDamageType::Pierce] {
-            assert_eq!(
-                construction_protection(Some(ArmorConstruction::Plate), damage_type),
-                3,
-                "plate {damage_type:?}"
-            );
-        }
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Plate), PhysicalDamageType::Blunt),
-            1
-        );
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Plate), PhysicalDamageType::Untyped),
-            0
-        );
-
-        for damage_type in [
-            PhysicalDamageType::Slash,
-            PhysicalDamageType::Pierce,
-            PhysicalDamageType::Blunt,
-        ] {
-            assert_eq!(
-                construction_protection(Some(ArmorConstruction::Hybrid), damage_type),
-                2,
-                "hybrid {damage_type:?}"
-            );
-        }
-        assert_eq!(
-            construction_protection(Some(ArmorConstruction::Hybrid), PhysicalDamageType::Untyped),
-            0
-        );
+    fn authored_protection_selects_only_the_matching_physical_channel() {
+        let protection = PhysicalProtection {
+            slash: 1,
+            pierce: 2,
+            blunt: 3,
+        };
+        assert_eq!(protection.for_damage_type(PhysicalDamageType::Untyped), 0);
+        assert_eq!(protection.for_damage_type(PhysicalDamageType::Slash), 1);
+        assert_eq!(protection.for_damage_type(PhysicalDamageType::Pierce), 2);
+        assert_eq!(protection.for_damage_type(PhysicalDamageType::Blunt), 3);
+        assert!(!protection.is_empty());
+        assert!(PhysicalProtection::default().is_empty());
     }
 
     #[test]
@@ -218,19 +141,39 @@ mod tests {
                 PhysicalDamageType::Pierce,
                 PhysicalDamageType::Blunt,
             ] {
-                let unarmored = resolve_physical_damage(raw_damage, damage_type, None);
+                let unarmored =
+                    resolve_physical_damage(raw_damage, damage_type, PhysicalProtection::default());
                 assert_eq!(unarmored.raw_damage, raw_damage);
                 assert_eq!(unarmored.final_damage, raw_damage);
 
-                for construction in [
-                    ArmorConstruction::Padded,
-                    ArmorConstruction::Leather,
-                    ArmorConstruction::Mail,
-                    ArmorConstruction::Plate,
-                    ArmorConstruction::Hybrid,
+                for protection in [
+                    PhysicalProtection {
+                        slash: 1,
+                        pierce: 0,
+                        blunt: 2,
+                    },
+                    PhysicalProtection {
+                        slash: 1,
+                        pierce: 1,
+                        blunt: 1,
+                    },
+                    PhysicalProtection {
+                        slash: 2,
+                        pierce: 1,
+                        blunt: 0,
+                    },
+                    PhysicalProtection {
+                        slash: 3,
+                        pierce: 3,
+                        blunt: 1,
+                    },
+                    PhysicalProtection {
+                        slash: 2,
+                        pierce: 2,
+                        blunt: 2,
+                    },
                 ] {
-                    let armored =
-                        resolve_physical_damage(raw_damage, damage_type, Some(construction));
+                    let armored = resolve_physical_damage(raw_damage, damage_type, protection);
                     assert!(armored.final_damage <= raw_damage);
                     assert!(armored.mitigated_damage <= raw_damage);
                     assert_eq!(armored.final_damage + armored.mitigated_damage, raw_damage);

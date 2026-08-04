@@ -7,6 +7,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::inventory::ArmorConstruction;
+
 pub const SKILL_LEVEL_CAP: u32 = 30;
 pub const DEFAULT_WEAPON_MELEE_RANGE_METERS: f32 = 2.0;
 pub const DEFAULT_WEAPON_ATTACK_COOLDOWN_MS: u32 = 1_533;
@@ -29,6 +31,14 @@ pub enum SkillId {
     Healing,
     #[serde(rename = "leather_armor")]
     LeatherArmor,
+    #[serde(rename = "mail_armor")]
+    MailArmor,
+    #[serde(rename = "plate_armor")]
+    PlateArmor,
+    #[serde(rename = "padded_armor")]
+    PaddedArmor,
+    #[serde(rename = "hybrid_armor")]
+    HybridArmor,
 }
 
 impl SkillId {
@@ -41,6 +51,10 @@ impl SkillId {
             SkillId::Shield => "shield",
             SkillId::Healing => "healing",
             SkillId::LeatherArmor => "leather_armor",
+            SkillId::MailArmor => "mail_armor",
+            SkillId::PlateArmor => "plate_armor",
+            SkillId::PaddedArmor => "padded_armor",
+            SkillId::HybridArmor => "hybrid_armor",
         }
     }
 
@@ -54,6 +68,10 @@ impl SkillId {
             SkillId::Shield => "Shield",
             SkillId::Healing => "Healing",
             SkillId::LeatherArmor => "Leather Armor",
+            SkillId::MailArmor => "Mail Armor",
+            SkillId::PlateArmor => "Plate Armor",
+            SkillId::PaddedArmor => "Padded Armor",
+            SkillId::HybridArmor => "Hybrid Armor",
         }
     }
 }
@@ -70,6 +88,10 @@ impl std::str::FromStr for SkillId {
             "shield" => Ok(SkillId::Shield),
             "healing" => Ok(SkillId::Healing),
             "leather_armor" => Ok(SkillId::LeatherArmor),
+            "mail_armor" => Ok(SkillId::MailArmor),
+            "plate_armor" => Ok(SkillId::PlateArmor),
+            "padded_armor" => Ok(SkillId::PaddedArmor),
+            "hybrid_armor" => Ok(SkillId::HybridArmor),
             _ => Err(()),
         }
     }
@@ -82,7 +104,14 @@ pub fn weapon_skill_attack_bonus(skill: SkillId, skill_level: u32) -> i32 {
         SkillId::OneHandedSword | SkillId::Dagger | SkillId::Spear => {
             ((skill_level.min(SKILL_LEVEL_CAP) + 5) / 10).min(3) as i32
         }
-        SkillId::Fishing | SkillId::Shield | SkillId::Healing | SkillId::LeatherArmor => 0,
+        SkillId::Fishing
+        | SkillId::Shield
+        | SkillId::Healing
+        | SkillId::LeatherArmor
+        | SkillId::MailArmor
+        | SkillId::PlateArmor
+        | SkillId::PaddedArmor
+        | SkillId::HybridArmor => 0,
     }
 }
 
@@ -94,7 +123,11 @@ pub fn weapon_skill_melee_range(skill: SkillId) -> f32 {
         | SkillId::Fishing
         | SkillId::Shield
         | SkillId::Healing
-        | SkillId::LeatherArmor => DEFAULT_WEAPON_MELEE_RANGE_METERS,
+        | SkillId::LeatherArmor
+        | SkillId::MailArmor
+        | SkillId::PlateArmor
+        | SkillId::PaddedArmor
+        | SkillId::HybridArmor => DEFAULT_WEAPON_MELEE_RANGE_METERS,
     }
 }
 
@@ -106,7 +139,11 @@ pub fn weapon_skill_attack_cooldown_ms(skill: SkillId) -> u32 {
         | SkillId::Fishing
         | SkillId::Shield
         | SkillId::Healing
-        | SkillId::LeatherArmor => DEFAULT_WEAPON_ATTACK_COOLDOWN_MS,
+        | SkillId::LeatherArmor
+        | SkillId::MailArmor
+        | SkillId::PlateArmor
+        | SkillId::PaddedArmor
+        | SkillId::HybridArmor => DEFAULT_WEAPON_ATTACK_COOLDOWN_MS,
     }
 }
 
@@ -121,18 +158,29 @@ pub fn shield_skill_guard_bonus(skill_level: u32) -> i32 {
     ((skill_level.min(SKILL_LEVEL_CAP) + 5) / 10).min(3) as i32
 }
 
-/// Guard added once while the explicitly mapped primary body armor is worn.
-/// Construction-specific variants enter this match only with an implemented
-/// skill vertical slice.
-pub fn armor_skill_guard_bonus(skill: SkillId, skill_level: u32) -> i32 {
+/// Construction owned by an implemented armor-proficiency slice.
+pub fn armor_skill_construction(skill: SkillId) -> Option<ArmorConstruction> {
     match skill {
-        SkillId::LeatherArmor => ((skill_level.min(SKILL_LEVEL_CAP) + 5) / 10).min(3) as i32,
+        SkillId::LeatherArmor => Some(ArmorConstruction::Leather),
+        SkillId::MailArmor => Some(ArmorConstruction::Mail),
+        SkillId::PlateArmor => Some(ArmorConstruction::Plate),
+        SkillId::PaddedArmor => Some(ArmorConstruction::Padded),
+        SkillId::HybridArmor => Some(ArmorConstruction::Hybrid),
         SkillId::Fishing
         | SkillId::OneHandedSword
         | SkillId::Dagger
         | SkillId::Spear
         | SkillId::Shield
-        | SkillId::Healing => 0,
+        | SkillId::Healing => None,
+    }
+}
+
+/// Guard added once while explicitly mapped primary body armor is worn.
+pub fn armor_skill_guard_bonus(skill: SkillId, skill_level: u32) -> i32 {
+    if armor_skill_construction(skill).is_some() {
+        ((skill_level.min(SKILL_LEVEL_CAP) + 5) / 10).min(3) as i32
+    } else {
+        0
     }
 }
 
@@ -238,6 +286,10 @@ mod tests {
             (SkillId::Shield, "shield", "Shield"),
             (SkillId::Healing, "healing", "Healing"),
             (SkillId::LeatherArmor, "leather_armor", "Leather Armor"),
+            (SkillId::MailArmor, "mail_armor", "Mail Armor"),
+            (SkillId::PlateArmor, "plate_armor", "Plate Armor"),
+            (SkillId::PaddedArmor, "padded_armor", "Padded Armor"),
+            (SkillId::HybridArmor, "hybrid_armor", "Hybrid Armor"),
         ] {
             assert_eq!(id.as_str(), wire);
             assert_eq!(id.display_name(), display);
@@ -282,6 +334,10 @@ mod tests {
         assert_eq!(weapon_skill_attack_bonus(SkillId::Shield, 30), 0);
         assert_eq!(weapon_skill_attack_bonus(SkillId::Healing, 30), 0);
         assert_eq!(weapon_skill_attack_bonus(SkillId::LeatherArmor, 30), 0);
+        assert_eq!(weapon_skill_attack_bonus(SkillId::MailArmor, 30), 0);
+        assert_eq!(weapon_skill_attack_bonus(SkillId::PlateArmor, 30), 0);
+        assert_eq!(weapon_skill_attack_bonus(SkillId::PaddedArmor, 30), 0);
+        assert_eq!(weapon_skill_attack_bonus(SkillId::HybridArmor, 30), 0);
     }
 
     #[test]
@@ -302,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn leather_armor_uses_one_construction_guard_ladder() {
+    fn mapped_armor_skills_use_the_shared_guard_ladder() {
         for (level, expected) in [
             (0, 0),
             (4, 0),
@@ -314,12 +370,41 @@ mod tests {
             (30, 3),
             (u32::MAX, 3),
         ] {
-            assert_eq!(
-                armor_skill_guard_bonus(SkillId::LeatherArmor, level),
-                expected,
-                "level {level}"
-            );
+            for skill in [
+                SkillId::LeatherArmor,
+                SkillId::MailArmor,
+                SkillId::PlateArmor,
+                SkillId::PaddedArmor,
+                SkillId::HybridArmor,
+            ] {
+                assert_eq!(
+                    armor_skill_guard_bonus(skill, level),
+                    expected,
+                    "{skill:?} level {level}"
+                );
+            }
         }
+        assert_eq!(
+            armor_skill_construction(SkillId::LeatherArmor),
+            Some(ArmorConstruction::Leather)
+        );
+        assert_eq!(
+            armor_skill_construction(SkillId::MailArmor),
+            Some(ArmorConstruction::Mail)
+        );
+        assert_eq!(
+            armor_skill_construction(SkillId::PlateArmor),
+            Some(ArmorConstruction::Plate)
+        );
+        assert_eq!(
+            armor_skill_construction(SkillId::PaddedArmor),
+            Some(ArmorConstruction::Padded)
+        );
+        assert_eq!(
+            armor_skill_construction(SkillId::HybridArmor),
+            Some(ArmorConstruction::Hybrid)
+        );
+        assert_eq!(armor_skill_construction(SkillId::Shield), None);
         assert_eq!(armor_skill_guard_bonus(SkillId::Shield, 30), 0);
     }
 
@@ -422,6 +507,10 @@ mod tests {
         assert_eq!(skills.get(SkillId::Shield), SkillProgress::default());
         assert_eq!(skills.get(SkillId::Healing), SkillProgress::default());
         assert_eq!(skills.get(SkillId::LeatherArmor), SkillProgress::default());
+        assert_eq!(skills.get(SkillId::MailArmor), SkillProgress::default());
+        assert_eq!(skills.get(SkillId::PlateArmor), SkillProgress::default());
+        assert_eq!(skills.get(SkillId::PaddedArmor), SkillProgress::default());
+        assert_eq!(skills.get(SkillId::HybridArmor), SkillProgress::default());
         // …and an empty map round-trips as an empty map, not a null.
         let json = serde_json::to_string(&skills).unwrap();
         assert_eq!(json, r#"{"map":{}}"#);
@@ -437,6 +526,10 @@ mod tests {
         skills.add_xp(SkillId::Shield, 30).unwrap();
         skills.add_xp(SkillId::Healing, 40).unwrap();
         skills.add_xp(SkillId::LeatherArmor, 50).unwrap();
+        skills.add_xp(SkillId::MailArmor, 60).unwrap();
+        skills.add_xp(SkillId::PlateArmor, 70).unwrap();
+        skills.add_xp(SkillId::PaddedArmor, 80).unwrap();
+        skills.add_xp(SkillId::HybridArmor, 90).unwrap();
 
         assert_eq!(skills.get(SkillId::Fishing).level, 1);
         assert_eq!(skills.get(SkillId::OneHandedSword).level, 2);
@@ -445,6 +538,10 @@ mod tests {
         assert_eq!(skills.get(SkillId::Shield).xp, 30);
         assert_eq!(skills.get(SkillId::Healing).xp, 40);
         assert_eq!(skills.get(SkillId::LeatherArmor).xp, 50);
+        assert_eq!(skills.get(SkillId::MailArmor).xp, 60);
+        assert_eq!(skills.get(SkillId::PlateArmor).xp, 70);
+        assert_eq!(skills.get(SkillId::PaddedArmor).xp, 80);
+        assert_eq!(skills.get(SkillId::HybridArmor).xp, 90);
         let decoded: Skills =
             serde_json::from_str(&serde_json::to_string(&skills).unwrap()).unwrap();
         assert_eq!(decoded, skills);

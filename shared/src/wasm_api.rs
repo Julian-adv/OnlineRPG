@@ -100,17 +100,6 @@ pub fn armor_skill_guard_bonus(skill: &str, skill_level: u32) -> i32 {
 }
 
 #[wasm_bindgen]
-pub fn armor_construction_protection(construction: &str, damage_type: &str) -> u32 {
-    let Ok(construction) = construction.parse() else {
-        return 0;
-    };
-    let Ok(damage_type) = damage_type.parse() else {
-        return 0;
-    };
-    crate::combat::construction_protection(Some(construction), damage_type)
-}
-
-#[wasm_bindgen]
 pub fn durability_condition(current: u32, max: u32) -> Option<String> {
     crate::inventory::durability_condition(current, max)
         .map(|condition| condition.as_str().to_string())

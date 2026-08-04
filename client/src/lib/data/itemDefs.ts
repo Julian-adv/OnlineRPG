@@ -32,6 +32,17 @@ export type GarmentForm =
   | 'robe'
   | 'coat'
 
+export const BODY_REGIONS = [
+  'head',
+  'torso',
+  'arms',
+  'hands',
+  'legs',
+  'feet',
+] as const
+
+export type BodyRegion = (typeof BODY_REGIONS)[number]
+
 export interface ItemDefinition {
   id: string
   name: string
@@ -58,6 +69,12 @@ export interface ItemDefinition {
   equipmentLayer?: EquipmentLayer
   /** Physical garment shape, independent of construction. */
   garmentForm?: GarmentForm
+  /** Semicolon-delimited anatomical regions spanned by this garment. */
+  bodyCoverage?: string
+  /** Authored aggregate protection applied after a matching physical hit. */
+  slashProtection?: number
+  pierceProtection?: number
+  bluntProtection?: number
   /** Base price in the smallest currency unit (copper). */
   basePrice?: number
   /** Guard (AC) bonus granted while equipped. Summed across equipped items. */
@@ -85,6 +102,17 @@ const itemDefs = itemsJson as Record<string, ItemDefinition>
 
 export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
+}
+
+export function itemBodyCoverage(def: ItemDefinition): BodyRegion[] {
+  return (def.bodyCoverage?.split(';') ?? []).filter(
+    (region): region is BodyRegion =>
+      (BODY_REGIONS as readonly string[]).includes(region)
+  )
+}
+
+export function bodyRegionDisplayName(region: BodyRegion): string {
+  return region[0].toUpperCase() + region.slice(1)
 }
 
 export function isConsumable(def: ItemDefinition): boolean {

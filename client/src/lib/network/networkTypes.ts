@@ -77,11 +77,7 @@ export type CharacterAttributes = {
   guard: number
 }
 
-export type EquipmentBurdenTier =
-  | 'unburdened'
-  | 'light'
-  | 'medium'
-  | 'heavy'
+export type EquipmentBurdenTier = 'unburdened' | 'light' | 'medium' | 'heavy'
 
 export type EquipmentBurden = {
   equipped_weight: number
@@ -250,6 +246,10 @@ export type SkillId =
   | 'shield'
   | 'healing'
   | 'leather_armor'
+  | 'mail_armor'
+  | 'plate_armor'
+  | 'padded_armor'
+  | 'hybrid_armor'
 
 /** Shared `FishingAction` wire strings (`ClientMessage::FishingRespond`).
  *  `hook` answers a bite; the rest are held stances during the fight. */

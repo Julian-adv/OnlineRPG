@@ -1,5 +1,6 @@
 use super::*;
 use onlinerpg_shared::skills::{skill_xp_for_level, SkillId, SkillProgress, Skills};
+use onlinerpg_shared::PhysicalProtection;
 
 /// `GameState.players` is a list (numeric ids can't key a wasm-serialized
 /// map), so snapshot assertions look their player up by id.
@@ -30,6 +31,34 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
             xp: skill_xp_for_level(25),
         },
     );
+    skills.map.insert(
+        SkillId::MailArmor,
+        SkillProgress {
+            level: 15,
+            xp: skill_xp_for_level(15),
+        },
+    );
+    skills.map.insert(
+        SkillId::PlateArmor,
+        SkillProgress {
+            level: 5,
+            xp: skill_xp_for_level(5),
+        },
+    );
+    skills.map.insert(
+        SkillId::PaddedArmor,
+        SkillProgress {
+            level: 15,
+            xp: skill_xp_for_level(15),
+        },
+    );
+    skills.map.insert(
+        SkillId::HybridArmor,
+        SkillProgress {
+            level: 25,
+            xp: skill_xp_for_level(25),
+        },
+    );
     game_state.register_player_skills(&player_id, skills).await;
     game_state.inventories.write().await.insert(
         player_id,
@@ -38,6 +67,8 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
                 bag_item(2, "traveler_robe", 1),
                 bag_item(3, "padded_battle_robe", 1),
                 bag_item(4, "brigandine_coat", 1),
+                bag_item(5, "chain_mail", 1),
+                bag_item(6, "breastplate", 1),
             ],
             equipped: [(EquipSlot::Chest, bag_item(1, "leather_armor", 1))]
                 .into_iter()
@@ -51,26 +82,46 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
     let profile = game_state.player_defense_profile(&player_id).await;
     assert_eq!(profile.armor_skill, None);
     assert_eq!(profile.primary_armor_construction, None);
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection::default()
+    );
     assert_eq!(profile.effective_guard, 10);
 
     game_state.equip_item(&player_id, 3).await;
     drain(&mut rx);
     let profile = game_state.player_defense_profile(&player_id).await;
-    assert_eq!(profile.armor_skill, None);
+    assert_eq!(profile.armor_skill, Some(SkillId::PaddedArmor));
     assert_eq!(
         profile.primary_armor_construction,
         Some(onlinerpg_shared::inventory::ArmorConstruction::Padded)
     );
-    assert_eq!(profile.effective_guard, 10);
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection {
+            slash: 1,
+            pierce: 0,
+            blunt: 2,
+        }
+    );
+    assert_eq!(profile.effective_guard, 12);
 
     game_state.equip_item(&player_id, 4).await;
     let profile = game_state.player_defense_profile(&player_id).await;
-    assert_eq!(profile.armor_skill, None);
+    assert_eq!(profile.armor_skill, Some(SkillId::HybridArmor));
     assert_eq!(
         profile.primary_armor_construction,
         Some(onlinerpg_shared::inventory::ArmorConstruction::Hybrid)
     );
-    assert_eq!(profile.effective_guard, 12);
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection {
+            slash: 2,
+            pierce: 2,
+            blunt: 2,
+        }
+    );
+    assert_eq!(profile.effective_guard, 15);
     let burden = drain(&mut rx)
         .into_iter()
         .find_map(|message| match message {
@@ -86,6 +137,40 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
     );
     assert_eq!(burden.movement_speed, 3.0);
 
+    game_state.equip_item(&player_id, 5).await;
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.armor_skill, Some(SkillId::MailArmor));
+    assert_eq!(
+        profile.primary_armor_construction,
+        Some(onlinerpg_shared::inventory::ArmorConstruction::Mail)
+    );
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection {
+            slash: 2,
+            pierce: 1,
+            blunt: 0,
+        }
+    );
+    assert_eq!(profile.effective_guard, 17);
+
+    game_state.equip_item(&player_id, 6).await;
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.armor_skill, Some(SkillId::PlateArmor));
+    assert_eq!(
+        profile.primary_armor_construction,
+        Some(onlinerpg_shared::inventory::ArmorConstruction::Plate)
+    );
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection {
+            slash: 3,
+            pierce: 3,
+            blunt: 1,
+        }
+    );
+    assert_eq!(profile.effective_guard, 18);
+
     game_state.equip_item(&player_id, 1).await;
     let profile = game_state.player_defense_profile(&player_id).await;
     assert_eq!(profile.armor_skill, Some(SkillId::LeatherArmor));
@@ -93,10 +178,23 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
         profile.primary_armor_construction,
         Some(onlinerpg_shared::inventory::ArmorConstruction::Leather)
     );
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection {
+            slash: 1,
+            pierce: 1,
+            blunt: 1,
+        }
+    );
     assert_eq!(profile.effective_guard, 15);
 
     game_state.unequip_item(&player_id, EquipSlot::Chest).await;
-    assert_eq!(game_state.effective_guard(&player_id).await, 10);
+    let profile = game_state.player_defense_profile(&player_id).await;
+    assert_eq!(profile.effective_guard, 10);
+    assert_eq!(
+        profile.primary_armor_protection,
+        PhysicalProtection::default()
+    );
 }
 
 #[tokio::test]

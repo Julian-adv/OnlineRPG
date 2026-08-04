@@ -4,19 +4,20 @@ This document defines the long-term armor foundation. It deliberately covers
 more than the current game implements so new equipment can fit one coherent
 model, while keeping each implementation phase small and testable.
 
-The runtime now has five deliberately narrow physical-mitigation profiles. Every
-equipped item's `guard` is added to the character's DEX-derived Guard, and
-active Shield and Leather Armor skills may each add one trained bonus. After a
-hit lands, the server resolves `untyped`, `slash`, `pierce`, or `blunt` damage.
-A primary Padded construction mitigates slash 1 and blunt 2; a primary Leather
-construction mitigates slash, pierce, and blunt by 1 each. A primary Mail
-construction mitigates slash 2 and pierce 1 but not blunt. A primary Plate
-construction mitigates slash and pierce by 3 and blunt by 1. A primary Hybrid
-construction mitigates slash, pierce, and blunt by 2 each. None protects against
-untyped damage, and every positive hit deals at least 1 final damage. The wider
-coverage, durability, construction-specific burden, and multi-layer occupancy
-design remains staged. Equipped-weight movement burden is active as a separate
-vertical slice.
+The runtime now has five deliberately narrow, item-authored physical-mitigation
+profiles. Every
+equipped item's `guard` is added to the character's DEX-derived Guard, and an
+active Shield plus one mapped Padded, Leather, Mail, Plate, or Hybrid Armor skill
+may add a trained bonus. After a hit lands, the server resolves `untyped`,
+`slash`, `pierce`, or `blunt` damage.
+A Padded Battle Robe mitigates slash 1 and blunt 2; Leather Armor mitigates
+slash, pierce, and blunt by 1 each. Chain Mail mitigates slash 2 and pierce 1
+but not blunt. A Breastplate mitigates slash and pierce by 3 and blunt by 1. A
+Brigandine Coat mitigates slash, pierce, and blunt by 2 each. None protects
+against untyped damage, and every positive hit deals at least 1 final damage.
+Per-instance durability and authored body-region identity are active; weighted
+coverage, construction-specific burden, and multi-layer occupancy remain
+staged. Equipped-weight movement burden is active as a separate vertical slice.
 
 ## Design rules
 
@@ -38,16 +39,16 @@ vertical slice.
 An item may need values on several independent axes. “Robe,” “mail,” and
 “plate” therefore do not belong in one flat armor enum.
 
-| Axis | Question answered | Examples |
-|------|-------------------|----------|
-| Equipment kind | What broad rules own the item? | clothing, body armor, shield, accessory |
-| Construction | How is physical protection built? | none, padded, leather, mail, plate, hybrid |
-| Layer | Where is it worn relative to other gear? | under, primary armor, outer, held, accessory |
-| Garment form | What shape is the item? | shirt, robe, gambeson, hauberk, breastplate, greaves |
-| Equip slot | Which inventory position does it occupy? | shirt, chest, pants, head, hands, boots, back, off-hand |
-| Coverage | Which body regions can it protect? | torso, head, arms, hands, legs, feet |
-| Set/tier | Where does it sit in progression and loot? | Leather set T1–2, Mail loadout T2–3, Plate set T3–4 |
-| Protection profile | What happens after a hit lands? | slash, pierce, blunt, wards |
+| Axis               | Question answered                          | Examples                                                |
+| ------------------ | ------------------------------------------ | ------------------------------------------------------- |
+| Equipment kind     | What broad rules own the item?             | clothing, body armor, shield, accessory                 |
+| Construction       | How is physical protection built?          | none, padded, leather, mail, plate, hybrid              |
+| Layer              | Where is it worn relative to other gear?   | under, primary armor, outer, held, accessory            |
+| Garment form       | What shape is the item?                    | shirt, robe, gambeson, hauberk, breastplate, greaves    |
+| Equip slot         | Which inventory position does it occupy?   | shirt, chest, pants, head, hands, boots, back, off-hand |
+| Coverage           | Which anatomical regions does it span?     | torso, head, arms, hands, legs, feet                    |
+| Set/tier           | Where does it sit in progression and loot? | Leather set T1–2, Mail loadout T2–3, Plate set T3–4     |
+| Protection profile | What happens after a hit lands?            | slash, pierce, blunt, wards                             |
 
 ### Equipment kind
 
@@ -69,14 +70,14 @@ to agree.
 
 The canonical constructions are:
 
-| Construction | Meaning | Initial gameplay identity |
-|--------------|---------|---------------------------|
-| none | Ordinary clothing with no physical armor structure | no physical protection |
-| padded | Quilted or layered textile armor | light protection; useful against impact |
-| leather | Purpose-built leather armor | light, balanced physical protection |
-| mail | Interlinked metal rings | strong against cuts; less complete against impact |
-| plate | Shaped rigid metal plates | broad physical protection with greater equipment burden |
-| hybrid | Two or more intentional constructions in one protective garment | authored profile; do not average by name |
+| Construction | Meaning                                                         | Initial gameplay identity                               |
+| ------------ | --------------------------------------------------------------- | ------------------------------------------------------- |
+| none         | Ordinary clothing with no physical armor structure              | no physical protection                                  |
+| padded       | Quilted or layered textile armor                                | light protection; useful against impact                 |
+| leather      | Purpose-built leather armor                                     | light, balanced physical protection                     |
+| mail         | Interlinked metal rings                                         | strong against cuts; less complete against impact       |
+| plate        | Shaped rigid metal plates                                       | broad physical protection with greater equipment burden |
+| hybrid       | Two or more intentional constructions in one protective garment | authored profile; do not average by name                |
 
 “Chain Mail” can remain the player-facing item name, but **mail** is the better
 internal construction term. A jack of plate or coat-of-plates belongs under
@@ -111,14 +112,15 @@ over body armor, add an explicit outer-body occupancy rule; do not overload
 
 `robe` is a garment form, not a protection construction:
 
-| Item concept | Kind | Construction | Likely layer/slot | Physical rule |
-|--------------|------|--------------|-------------------|---------------|
-| `traveler_robe` | clothing | none | primary/chest | no physical Guard or mitigation |
-| `padded_battle_robe` | body armor | padded | primary/chest | slash 1 / blunt 2 mitigation; no armor skill |
-| leather coat | body armor | leather | primary/chest | balanced slash/pierce/blunt protection |
-| mail robe/hauberk | body armor | mail | primary/chest | cut-focused slash 2 / pierce 1 protection |
-| enchanted robe | clothing | none | primary/chest initially | magical ward/effect, not physical armor skill |
-| cloak | clothing | none unless explicitly reinforced | outer/back | utility, appearance, or authored ward |
+| Item concept         | Kind       | Construction                      | Likely layer/slot       | Physical rule                                              |
+| -------------------- | ---------- | --------------------------------- | ----------------------- | ---------------------------------------------------------- |
+| `traveler_robe`      | clothing   | none                              | primary/chest           | no physical Guard or mitigation                            |
+| `padded_battle_robe` | body armor | padded                            | primary/chest           | slash 1 / blunt 2 mitigation; Padded Armor skill           |
+| `brigandine_coat`    | body armor | hybrid                            | primary/chest           | balanced slash/pierce/blunt mitigation; Hybrid Armor skill |
+| leather coat         | body armor | leather                           | primary/chest           | balanced slash/pierce/blunt protection                     |
+| mail robe/hauberk    | body armor | mail                              | primary/chest           | cut-focused slash 2 / pierce 1 protection                  |
+| enchanted robe       | clothing   | none                              | primary/chest initially | magical ward/effect, not physical armor skill              |
+| cloak                | clothing   | none unless explicitly reinforced | outer/back              | utility, appearance, or authored ward                      |
 
 This prevents appearance from silently deciding combat behavior. A magical
 robe can have a ward without becoming “light armor,” and an armored robe can be
@@ -126,17 +128,24 @@ categorized by its actual construction.
 
 ### Coverage and occupancy
 
-`EquipSlot` describes inventory occupancy; coverage describes protection. They
-are related but not identical. A chest-slot hauberk may cover torso and part of
-the legs, while a breastplate primarily covers the torso. This distinction is
-needed even if the first mitigation implementation uses an aggregate profile
-instead of random hit locations.
+`EquipSlot` describes inventory occupancy; `bodyCoverage` describes anatomical
+reach. They are related but not identical. A chest-slot hauberk covers torso,
+arms, and legs, while a breastplate covers the torso. Coverage alone grants no
+Guard, mitigation, or skill: an ordinary robe can span the same regions as an
+armored robe while remaining clothing.
 
-The first coverage implementation should use authored, weighted aggregate
-coverage. A random hit-location system adds animation, messaging, balance, and
-monster-anatomy complexity and should be a separately approved feature. Exact
-coverage weights must come from playtesting, not be fixed in this architecture
-document.
+Phase Q establishes six canonical regions: `head`, `torso`, `arms`, `hands`,
+`legs`, and `feet`. Every clothing or body-armor garment authors a non-empty,
+canonically ordered set, while weapons, shields, and accessories must not use
+the field. Form validation keeps helmets on head, gloves on hands, boots on
+feet, leggings on legs, cuirasses on torso, and extended chest garments within
+torso/arms/legs.
+
+The first gameplay coverage consumer should use separately authored, weighted
+aggregate coverage. A random hit-location system adds animation, messaging,
+balance, and monster-anatomy complexity and should be a separately approved
+feature. Exact weights must come from playtesting; Phase Q's region identity
+does not alter the current aggregate chest mitigation.
 
 ## Current item mapping
 
@@ -145,28 +154,28 @@ prior stats; the three merchant alternatives are new in the runtime-taxonomy
 slice. “Set/loadout” follows [ITEM_TIERS.md](ITEM_TIERS.md); construction is the
 item's physical build.
 
-| Item(s) | Slot | Current Guard | Weight | Construction | Current set/loadout |
-|---------|------|--------------:|-------:|--------------|----------------------|
-| `leather_helmet` | head | 1 | 1 | leather | Leather |
-| `leather_armor` | chest | 2 | 8 | leather | Leather |
-| `leather_gloves` | hands | 1 | 0.5 | leather | Leather |
-| `leather_pants` | pants | 1 | 4 | leather | Leather |
-| `leather_boots` | boots | 1 | 3 | leather | Leather |
-| `leather_belt` | belt | 0 | 1 | none/accessory | Leather set accessory |
-| `chain_mail` | chest | 5 | 30 | mail | Mail loadout |
-| `traveler_robe` | chest | 0 | 3 | none/clothing | merchant clothing |
-| `padded_battle_robe` | chest | 0 | 6 | padded | merchant alternative |
-| `brigandine_coat` | chest | 2 | 14 | hybrid | merchant alternative |
-| `iron_helmet` | head | 2 | 4 | plate | Mail loadout |
-| `iron_gauntlets` | hands | 2 | 2 | plate | Mail loadout |
-| `iron_boots` | boots | 2 | 6 | plate | Mail loadout |
-| `breastplate` | chest | 7 | 20 | plate | Plate |
-| `plate_helmet` | head | 3 | 5 | plate | Plate |
-| `plate_gauntlets` | hands | 3 | 3 | plate | Plate |
-| `plate_greaves` | pants | 3 | 8 | plate | Plate |
-| `plate_boots` | boots | 3 | 7 | plate | Plate |
-| `wooden_shield`, `raven_shield` | off-hand | 1, 2 | 6 each | shield, not body construction | independent shield track |
-| `ring_of_protection` | ring | 1 | 0.1 | accessory, not body construction | independent accessory track |
+| Item(s)                         | Slot     | Coverage          | Current Guard | Weight | Construction   | Current set/loadout         |
+| ------------------------------- | -------- | ----------------- | ------------: | -----: | -------------- | --------------------------- |
+| `leather_helmet`                | head     | head              |             1 |      1 | leather        | Leather                     |
+| `leather_armor`                 | chest    | torso             |             2 |      8 | leather        | Leather                     |
+| `leather_gloves`                | hands    | hands             |             1 |    0.5 | leather        | Leather                     |
+| `leather_pants`                 | pants    | legs              |             1 |      4 | leather        | Leather                     |
+| `leather_boots`                 | boots    | feet              |             1 |      3 | leather        | Leather                     |
+| `leather_belt`                  | belt     | —                 |             0 |      1 | none/accessory | Leather set accessory       |
+| `chain_mail`                    | chest    | torso, arms, legs |             5 |     30 | mail           | Mail loadout                |
+| `traveler_robe`                 | chest    | torso, arms, legs |             0 |      3 | none/clothing  | merchant clothing           |
+| `padded_battle_robe`            | chest    | torso, arms, legs |             0 |      6 | padded         | merchant alternative        |
+| `brigandine_coat`               | chest    | torso, arms       |             2 |     14 | hybrid         | merchant alternative        |
+| `iron_helmet`                   | head     | head              |             2 |      4 | plate          | Mail loadout                |
+| `iron_gauntlets`                | hands    | hands             |             2 |      2 | plate          | Mail loadout                |
+| `iron_boots`                    | boots    | feet              |             2 |      6 | plate          | Mail loadout                |
+| `breastplate`                   | chest    | torso             |             7 |     20 | plate          | Plate                       |
+| `plate_helmet`                  | head     | head              |             3 |      5 | plate          | Plate                       |
+| `plate_gauntlets`               | hands    | hands             |             3 |      3 | plate          | Plate                       |
+| `plate_greaves`                 | pants    | legs              |             3 |      8 | plate          | Plate                       |
+| `plate_boots`                   | boots    | feet              |             3 |      7 | plate          | Plate                       |
+| `wooden_shield`, `raven_shield` | off-hand | —                 |          1, 2 | 6 each | shield         | independent shield track    |
+| `ring_of_protection`            | ring     | —                 |             1 |    0.1 | accessory      | independent accessory track |
 
 The current “Mail set” is therefore a progression loadout, not a pure mail
 construction set: it combines a mail chest with plate extremity pieces. It also
@@ -182,10 +191,21 @@ Current full-loadout totals are:
 Mail and Plate now have nearly equal armor-only weight but different Guard and
 typed mitigation profiles. Their resulting progression remains a playtest gate.
 
-The first armor-skill slice maps only `leather_armor`, the primary chest piece,
-to `Leather Armor`. Other leather pieces are classified but cannot activate or
-train the skill by themselves. Mail and Plate are implemented construction
-values, not registered skills.
+Every functional primary chest body armor authors a complete
+`slashProtection` / `pierceProtection` / `bluntProtection` triple. Construction
+still identifies build, proficiency, repair family, and reporting; it no longer
+silently supplies combat numbers.
+
+The first armor-skill slice maps only the `leather_armor` primary chest to
+Leather Armor. Protocol v24 adds the second mapping from the `chain_mail`
+primary chest to Mail Armor. Protocol v25 maps the `breastplate` primary chest
+to Plate Armor. Protocol v26 maps the Guard-0 `padded_battle_robe` primary chest
+to Padded Armor because its construction supplies real physical mitigation.
+Protocol v27 maps the `brigandine_coat` primary chest to Hybrid Armor. Other
+leather pieces and every Plate extremity remain stat-only; they cannot activate
+or train a proficiency by themselves. Garment form alone never activates a
+skill: an ordinary coat would still require explicit body-armor construction
+and `defenseSkill` metadata.
 
 ## Defense pipeline
 
@@ -196,7 +216,7 @@ validate attack
 → d20 + attack bonus versus effective Guard
 → roll raw damage on hit
 → resolve authoritative physical damage type
-→ apply the active primary-construction profile
+→ apply the active primary chest item's authored protection profile
 → clamp every positive hit to at least 1 final damage
 → subtract final damage from HP
 ```
@@ -209,39 +229,41 @@ effective Guard
 + active mapped primary-armor skill bonus
 ```
 
-The active profile is intentionally small:
+The active profiles are intentionally small:
 
-| Primary construction | Slash | Pierce | Blunt | Untyped |
-|---|---:|---:|---:|---:|
-| Padded | 1 | 0 | 2 | 0 |
-| Leather | 1 | 1 | 1 | 0 |
-| Mail | 2 | 1 | 0 | 0 |
-| Plate | 3 | 3 | 1 | 0 |
-| Hybrid | 2 | 2 | 2 | 0 |
-| none | 0 | 0 | 0 | 0 |
+| Primary item (construction) | Slash | Pierce | Blunt | Untyped |
+| --------------------------- | ----: | -----: | ----: | ------: |
+| Padded Battle Robe (padded) |     1 |      0 |     2 |       0 |
+| Leather Armor (leather)     |     1 |      1 |     1 |       0 |
+| Chain Mail (mail)           |     2 |      1 |     0 |       0 |
+| Breastplate (plate)         |     3 |      3 |     1 |       0 |
+| Brigandine Coat (hybrid)    |     2 |      2 |     2 |       0 |
+| none                        |     0 |      0 |     0 |       0 |
 
 `padded_battle_robe` moved from Guard 2 to Guard 0 when this profile became
 active. The upstream economy rebalance keeps Leather Armor at Guard 2, Chain
 Mail at Guard 5, and Breastplate at Guard 7; typed mitigation is an additional
-construction channel on top of those tier baselines. This combined protection
+item-authored channel on top of those tier baselines. This combined protection
 is intentionally called out for playtesting rather than silently lowering the
 upstream values during integration. The server publishes raw, mitigated, and
 final damage in the combat outcome. There are still no random hit locations,
 elemental resistances, casting penalties, stealth penalties, player mana, or
 player stamina.
 
-Mail's slash 2 / pierce 1 profile retains blunt as its deliberate weakness and
-does not register an armor skill. Plate provides broad slash and pierce
-protection with blunt 1 as the relative weakness of rigid plate. Only the
-equipped chest item's primary construction activates mitigation; plate helmets,
-gauntlets, greaves, and boots retain their item Guard without duplicating the
-full chest profile.
+Mail's slash 2 / pierce 1 profile retains blunt as its deliberate weakness;
+the mapped Chain Mail chest also activates Mail Armor. Plate provides broad
+slash and pierce protection with blunt 1 as the relative weakness of rigid
+plate; the mapped Breastplate chest also activates Plate Armor. Only the
+equipped functional primary chest supplies mitigation and may activate an armor
+skill; plate helmets, gauntlets, greaves, and boots retain their item Guard
+without duplicating a chest profile or activating Plate Armor.
 
 `brigandine_coat` migrated from Guard 4 to Guard 2. Its overlapping rigid plates
 and textile backing form an authored Hybrid profile that mitigates slash,
 pierce, and blunt by 2 each. The remaining Guard represents deflection while
-the migrated points become reliable typed protection. Hybrid has no registered
-armor skill and does not activate or train Leather Armor.
+the migrated points become reliable typed protection. The name and coat form
+alone grant no armor behavior; the explicitly mapped Brigandine Coat activates
+and trains Hybrid Armor.
 
 ### Target pipeline
 
@@ -295,8 +317,8 @@ type; SCP-939 supplies an explicit pierce natural attack; missing metadata
 falls back to untyped. The server never infers a type from an item or monster
 name.
 
-Construction gives a default identity, while a future individual item may
-override its profile:
+Construction communicates a default identity, while each primary chest authors
+its exact protection numbers:
 
 - padded favors impact cushioning;
 - leather provides modest balanced protection;
@@ -306,8 +328,8 @@ override its profile:
 - hybrid combines rigid and cushioning layers for balanced protection above
   Leather's baseline.
 
-All five current constructions have active numbers. Unknown or legacy attacks
-use the documented untyped fallback and receive no current construction
+All five current primary armor items have active numbers. Unknown or legacy
+attacks use the documented untyped fallback and receive no current physical
 mitigation.
 
 Magical wards and elemental resistances are separate modifier channels. An
@@ -335,25 +357,25 @@ from bag contents and makes movement the first burden consumer:
 The server compares equipped weight with the character's `STR × 15` carry
 capacity and publishes the tier, equipped weight, capacity, and effective speed:
 
-| Equipped load / capacity | Tier | Movement speed |
-|---|---|---:|
-| ≤ 20% | Unburdened | 3.0 m/s (100%) |
-| > 20% and ≤ 35% | Light | 2.7 m/s (90%) |
-| > 35% and ≤ 50% | Medium | 2.4 m/s (80%) |
-| > 50% | Heavy | 2.1 m/s (70%) |
+| Equipped load / capacity | Tier       | Movement speed |
+| ------------------------ | ---------- | -------------: |
+| ≤ 20%                    | Unburdened | 3.0 m/s (100%) |
+| > 20% and ≤ 35%          | Light      |  2.7 m/s (90%) |
+| > 35% and ≤ 50%          | Medium     |  2.4 m/s (80%) |
+| > 50%                    | Heavy      |  2.1 m/s (70%) |
 
 Bag weight affects pickup and ownership limits but never movement speed. All
 equipped items count, including weapons, shields, accessories, and clothing;
 quantity does not multiply an equipped item because equipment slots hold one
 instance. At Strength 10, the current armor-only examples are:
 
-| Loadout | Equipped weight | Tier | Speed |
-|---|---:|---|---:|
-| Padded Battle Robe | 6 | Unburdened | 3.0 m/s |
-| Leather body pieces | 16.5 | Unburdened | 3.0 m/s |
-| Mail loadout | 42 | Light | 2.7 m/s |
-| Plate set | 43 | Light | 2.7 m/s |
-| Brigandine Coat | 14 | Unburdened | 3.0 m/s |
+| Loadout             | Equipped weight | Tier       |   Speed |
+| ------------------- | --------------: | ---------- | ------: |
+| Padded Battle Robe  |               6 | Unburdened | 3.0 m/s |
+| Leather body pieces |            16.5 | Unburdened | 3.0 m/s |
+| Mail loadout        |              42 | Light      | 2.7 m/s |
+| Plate set           |              43 | Light      | 2.7 m/s |
+| Brigandine Coat     |              14 | Unburdened | 3.0 m/s |
 
 A weapon or shield can push any example into the next band, and higher Strength
 raises the thresholds. The current Mail/Plate weight relationship is therefore
@@ -468,17 +490,18 @@ slot is presented as visually complete.
 
 ## Skills and proficiency
 
-Leather Armor is the first approved construction-specific proficiency. It
-trains only when a server-approved monster hit lands while the explicitly
-mapped leather chest is equipped. A hit grants 5 XP; a miss grants none. Its
-level bands add +0/+1/+2/+3 Guard once, separately from item Guard and Shield.
-The chest anchor prevents mixed extremity pieces from activating multiple armor
-skills from one attack.
+Padded Armor, Leather Armor, Mail Armor, Plate Armor, and Hybrid Armor are approved
+construction-specific proficiencies. Each trains only when a server-approved
+monster hit lands while its explicitly mapped primary chest is functional and
+equipped. A hit grants 5 XP; a miss grants none. All five use the +0/+1/+2/+3
+Guard bands once, separately from item Guard and Shield. Padded demonstrates
+that physical mitigation can establish eligibility even when item Guard is 0.
+The chest anchor and shared skill-to-construction mapping prevent mixed
+extremity pieces from activating multiple armor skills from one attack.
 
-No Light Armor, Heavy Armor, Mail, Plate, padded/hybrid armor, Tailoring, or
-Smithing skill is registered. Padded, Mail, Plate, and Hybrid construction
-metadata exists so content is classified correctly, not as a promise that each
-construction needs a skill.
+No Light Armor, Heavy Armor, Tailoring, or Smithing skill is registered. Future
+construction metadata must still be classified explicitly and does not promise
+that every construction automatically receives a skill.
 
 Any approved defensive proficiency must define:
 
@@ -503,14 +526,14 @@ them.
 ```text
 existing:
   category, equipSlot, material, armorConstruction, equipmentKind,
-  equipmentLayer, garmentForm, weight, guard, worldModel, chestTier
+  equipmentLayer, garmentForm, bodyCoverage, weight, guard, worldModel, chestTier,
+  slashProtection, pierceProtection, bluntProtection
 
 classification consumer:
-  coverage
+  weighted coverage factors (only when gameplay consumes them)
   setId (only if set mechanics need it; loot documentation may be enough)
 
 combat consumer:
-  physicalProtection { slash, pierce, blunt }
   wards/resistances
 
 burden consumer:
@@ -550,8 +573,8 @@ while allowing intentional hybrids through explicit overrides.
 - `traveler_robe`, `padded_battle_robe`, and `brigandine_coat` establish the
   clothing/robe, padded/robe, and hybrid/coat distinctions.
 - Current garments use one `primary` slot layer. Chest robes and coats replace
-  other chest gear, and tests verify that swapping them cannot leak Leather
-  Armor activation or bonuses.
+  other chest gear, and tests verify that swapping them cannot leak a mapped
+  armor skill or bonus.
 - Generated-data parity tests cover server, browser, and agent definitions.
 
 ### C. Wearable appearance and layer UX
@@ -568,24 +591,26 @@ Completed profiles:
 - weapons and natural attacks carry slash, pierce, blunt, or neutral untyped
   identities;
 - the shared resolver produces authoritative raw, mitigated, and final damage;
-- Padded supplies the first aggregate profile and migrated its robe's Guard;
+- Padded supplies the first aggregate profile, migrated its robe's Guard, and
+  did not register a skill during the mitigation phase;
 - Leather supplies balanced typed protection, migrated one chest Guard point,
   and continues to compose with its existing proficiency without changing XP;
 - Mail supplies cut-focused protection, migrated two chest Guard points, and
-  remains explicitly skill-free;
+  did not register a skill during the mitigation phase;
 - Plate supplies broad protection with a Blunt weakness, migrated three chest
-  Guard points, and remains explicitly skill-free;
+  Guard points, and did not register a skill during the mitigation phase;
 - Hybrid supplies balanced mixed-material protection, migrated two Brigandine
-  Coat Guard points, and remains explicitly skill-free;
+  Coat Guard points, and did not register a skill during the mitigation phase;
 - protocol v20 publishes the type and mitigation breakdown to browser and
   agent clients;
-- browser item tooltips and agent equipped-item summaries read the shared
-  protection table, so active construction behavior is visible before combat;
+- browser item tooltips and agent equipped-item summaries read the active
+  protection values, so item behavior is visible before combat;
 - deterministic, property, server-integration, generated-data parity, and
   client tests cover the slice.
 
-Per-item overrides and authored coverage remain separate follow-up profiles
-rather than implied behavior.
+Protection authoring is completed in phase O, and Phase Q adds body-region
+identity. Weighted coverage remains a separate follow-up rather than an implied
+combat behavior.
 
 ### E. Equipment burden consumer — movement completed
 
@@ -619,8 +644,8 @@ rather than implied behavior.
   miss/hit training rule.
 - The trained Guard term is applied once and publishes the final combined Guard
   after threshold changes.
-- Review observed progression and Shield interaction before approving Mail,
-  Plate, padded/hybrid, or a different proficiency shape.
+- Mail, Plate, Padded, and Hybrid are approved later as phases K, L, M, and N;
+  a different proficiency shape still requires separate review.
 
 ### H. Construction-aware repair economy — completed
 
@@ -647,7 +672,7 @@ rather than implied behavior.
   than silently scaling to the target's larger maximum.
 - Pristine, Worn, Damaged, Critical, and Broken bands use shared integer
   boundaries and appear beside raw condition in browser and agent summaries.
-- Bands are informational. Guard, mitigation, and Leather Armor activation stay
+- Bands are informational. Guard, mitigation, and mapped proficiency activation stay
   unchanged at every positive condition and turn off only at Broken.
 - Capped restoration, family mismatch, full-condition, combat, defeated, and
   no-XP behavior have server integration coverage. Kit quality tiers, crafting,
@@ -665,6 +690,132 @@ rather than implied behavior.
   gold-neutral. Resident inventory transfers preserve the same instance state.
 - The multiplier can only reduce a sale payout, so the existing merchant
   buy/sell anti-arbitrage invariant remains conservative. It awards no skill XP.
+
+### K. Second armor proficiency slice — Mail Armor completed
+
+- Protocol v24 adds `mail_armor` as a generic persisted/wire skill and maps only
+  the `chain_mail` primary chest through explicit `defenseSkill` metadata.
+- A shared skill-to-construction mapping validates Leather against Leather and
+  Mail Armor against Mail; mismatched kind, slot, layer, construction, or Guard
+  fails item-definition loading.
+- Accepted landed monster hits grant 5 XP to the one mapped active armor skill;
+  misses, rejected attacks, other constructions, and Broken Mail grant none.
+- Mail Armor reuses the +0/+1/+2/+3 Guard ladder, authoritative combined-Guard
+  updates, sparse persistence, aggregate defense metrics, browser UI, agent
+  state, tooltip metadata, and durability/repair paths.
+- Chain Mail keeps Guard 5, slash 2 / pierce 1 mitigation, weight 30, maximum
+  condition 90, and Metal repair ownership. Plate extremities do not activate
+  the skill; Plate, Padded, and Hybrid Armor are approved separately in phases
+  L, M, and N.
+
+### L. Third armor proficiency slice — Plate Armor completed
+
+- Protocol v25 adds `plate_armor` as a generic persisted/wire skill and maps
+  only the `breastplate` primary chest through explicit `defenseSkill` metadata.
+- The shared mapping validates Plate Armor against Plate construction with the
+  same kind, chest slot, primary layer, and positive-Guard requirements.
+- Accepted landed monster hits grant 5 XP to Plate Armor while a functional
+  Breastplate is active; misses, rejected attacks, extremity-only loadouts,
+  other constructions, and Broken Plate grant none.
+- Plate Armor reuses the +0/+1/+2/+3 Guard ladder, authoritative combined-Guard
+  updates, sparse persistence, aggregate defense metrics, browser UI, agent
+  state, tooltip metadata, and durability/repair paths.
+- Breastplate keeps Guard 7, slash 3 / pierce 3 / blunt 1 mitigation, weight 20,
+  maximum condition 120, and Metal repair ownership. Plate helmets, gauntlets,
+  greaves, and boots remain stat-only; Padded and Hybrid Armor are approved
+  separately in phases M and N.
+
+### M. Fourth armor proficiency slice — Padded Armor completed
+
+- Protocol v26 adds `padded_armor` as a generic persisted/wire skill and maps
+  only the `padded_battle_robe` primary chest through explicit `defenseSkill`
+  metadata. Robe remains a garment form; `traveler_robe` stays ordinary clothing.
+- Armor-skill validation now accepts either positive Guard or real typed
+  physical protection after kind, chest slot, primary layer, and exact
+  construction checks. Shield validation still requires positive Guard.
+- Accepted landed monster hits grant 5 XP to Padded Armor; misses, rejected
+  attacks, ordinary robes, other constructions, and Broken Padded armor grant
+  none.
+- Padded Armor reuses the +0/+1/+2/+3 Guard ladder, authoritative combined-Guard
+  updates, sparse persistence, aggregate defense metrics, browser UI, agent
+  state, tooltip metadata, and durability/repair paths.
+- Padded Battle Robe keeps Guard 0, slash 1 / blunt 2 mitigation, weight 6,
+  maximum condition 40, and Cloth repair ownership. Hybrid Armor is approved
+  separately in phase N.
+
+### N. Fifth armor proficiency slice — Hybrid Armor completed
+
+- Protocol v27 adds `hybrid_armor` as a generic persisted/wire skill and maps
+  only the `brigandine_coat` primary chest through explicit `defenseSkill`
+  metadata. Coat remains a garment form rather than a skill category.
+- The shared mapping validates Hybrid Armor against Hybrid construction with
+  the same body-armor kind, chest slot, primary layer, and protection checks.
+- Accepted landed monster hits grant 5 XP to Hybrid Armor; misses, rejected
+  attacks, ordinary clothing, other constructions, and Broken Hybrid armor
+  grant none.
+- Hybrid Armor reuses the +0/+1/+2/+3 Guard ladder, authoritative combined-Guard
+  updates, sparse persistence, aggregate defense metrics, browser UI, agent
+  state, tooltip metadata, and durability/repair paths.
+- Brigandine Coat keeps Guard 2, slash 2 / pierce 2 / blunt 2 mitigation, weight
+  14, maximum condition 100, and Hybrid repair ownership.
+
+### O. Item-authored physical protection — completed
+
+- `slashProtection`, `pierceProtection`, and `bluntProtection` move the five
+  active primary-chest profiles from a hardcoded construction table into item
+  definitions without changing any current Guard or mitigation value.
+- Startup validation requires a complete triple with at least one positive
+  channel on primary chest body armor and rejects protection fields on ordinary
+  clothing, shields, accessories, or extremity pieces.
+- Server combat snapshots the functional equipped chest's exact profile. A
+  Broken, removed, or ordinary-clothing chest supplies zero mitigation.
+- Browser tooltips and agent equipment summaries consume the same generated
+  fields. Construction remains independent metadata for skills, repairs, and
+  aggregate metrics rather than an implicit stat lookup.
+- Shared boundary tests preserve the minimum-one-damage rule. Generated-data,
+  server profile/combat, browser, and agent tests protect the authoring path.
+  No protocol or persistence bump is required because combat outcomes already
+  carry raw, mitigated, and final damage and item definitions are build data.
+
+### P. Active defense profile observability — completed
+
+- The agent client now retains the server-authored `GuardUpdated` value as
+  state-only input and reports it as the exact hit target in world state. Guard
+  refreshes do not wake the LLM or become duplicate event prose.
+- The browser Character Stats pane continues to use that authoritative Guard
+  and now presents the equipped primary body armor's name, mapped defense
+  skill, and authored slash/pierce/blunt profile without requiring a tooltip.
+- Empty chest slots and ordinary clothing report no physical armor profile. A
+  Broken body armor profile remains identifiable but is marked inactive because
+  it supplies no item Guard, physical mitigation, or armor-skill training.
+- The browser projection is generated from the same item definitions and
+  per-instance condition already received for inventory. It does not reproduce
+  Guard math or resolve combat locally.
+- Focused agent and browser store tests cover state-only Guard replacement,
+  ordinary clothing exclusion, a functional Hybrid profile, and a Broken
+  Padded profile. No combat balance, wire shape, persistence, or protocol bump
+  is required.
+
+### Q. Authored garment body coverage — completed
+
+- Shared data defines `head`, `torso`, `arms`, `hands`, `legs`, and `feet` as
+  stable body-region identities. `bodyCoverage` stores canonical semicolon-
+  delimited region sets in item source data without adding them to the network
+  protocol.
+- All 17 current clothing/body-armor garments author coverage. Cuirasses are
+  torso-only; helmets, gloves, leggings, and boots map to their matching region;
+  Hauberk and Robe forms span torso/arms/legs; Brigandine Coat spans torso/arms.
+- Server boot validation requires non-empty, unique, canonically ordered
+  coverage on garments, rejects it on held/accessory gear, and checks each set
+  against `garmentForm`.
+- Browser tooltips and agent equipment summaries expose the same generated
+  coverage. Ordinary clothing can cover regions without gaining construction,
+  Guard, mitigation, durability, or an armor skill.
+- Coverage remains structural metadata. It neither changes the current
+  aggregate primary-chest mitigation nor activates skills on extremity pieces;
+  weighted aggregate coverage and random hit locations remain separate,
+  playtest-gated phases. No protocol, persistence, or combat balance bump is
+  required.
 
 Each phase needs an explicit owner approval and a completion gate. A later
 phase may move earlier only as a complete vertical slice with its prerequisites;
@@ -700,8 +851,8 @@ the broad architecture is not permission to implement all subsystems at once.
    full Strength range after live playtesting?
 7. Are physical and magical armor enchantments item modifiers, crafted
    upgrades, affixes, or separate item definitions?
-8. Does playtesting justify separate Mail or Plate skills, or should Leather
-   Armor remain the only construction-specific proficiency?
+8. After comparing all five construction-specific progressions, should a future
+   construction receive another dedicated skill or remain stat-only?
 
 ## Historical terminology references
 

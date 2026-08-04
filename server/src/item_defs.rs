@@ -1,8 +1,9 @@
 use onlinerpg_shared::inventory::{
-    ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily,
+    parse_body_coverage, ArmorConstruction, BodyRegion, EquipSlot, EquipmentKind, EquipmentLayer,
+    GarmentForm, RepairFamily,
 };
-use onlinerpg_shared::skills::SkillId;
-use onlinerpg_shared::PhysicalDamageType;
+use onlinerpg_shared::skills::{armor_skill_construction, SkillId};
+use onlinerpg_shared::{PhysicalDamageType, PhysicalProtection};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -48,6 +49,14 @@ pub struct ItemDefinition {
     pub equipment_layer: Option<EquipmentLayer>,
     #[serde(rename = "garmentForm", default)]
     pub garment_form: Option<GarmentForm>,
+    #[serde(rename = "bodyCoverage", default)]
+    pub body_coverage: Option<String>,
+    #[serde(rename = "slashProtection", default)]
+    pub slash_protection: Option<u32>,
+    #[serde(rename = "pierceProtection", default)]
+    pub pierce_protection: Option<u32>,
+    #[serde(rename = "bluntProtection", default)]
+    pub blunt_protection: Option<u32>,
     /// Base price in the smallest currency unit. Items without a price
     /// cannot be bought or sold.
     #[serde(rename = "basePrice")]
@@ -153,6 +162,22 @@ impl ItemDefinition {
         self.category.as_deref() == Some("armor")
             && self.equip_slot.is_some()
             && self.equip_slot != Some(EquipSlot::OffHand)
+    }
+
+    pub fn physical_protection(&self) -> PhysicalProtection {
+        PhysicalProtection {
+            slash: self.slash_protection.unwrap_or_default(),
+            pierce: self.pierce_protection.unwrap_or_default(),
+            blunt: self.blunt_protection.unwrap_or_default(),
+        }
+    }
+
+    #[cfg(test)]
+    fn body_coverage(&self) -> Vec<BodyRegion> {
+        self.body_coverage
+            .as_deref()
+            .and_then(|value| parse_body_coverage(value).ok())
+            .unwrap_or_default()
     }
 
     /// Main-hand tool that enables casting (`ClientMessage::FishingCast`).
@@ -287,6 +312,35 @@ fn validate_armor_construction(def: &ItemDefinition) -> Result<(), String> {
     }
 }
 
+fn validate_physical_protection(def: &ItemDefinition) -> Result<(), String> {
+    let fields = [
+        def.slash_protection,
+        def.pierce_protection,
+        def.blunt_protection,
+    ];
+    let is_primary_chest = def.is_body_armor()
+        && def.equip_slot == Some(EquipSlot::Chest)
+        && def.equipment_layer == Some(EquipmentLayer::Primary);
+
+    if is_primary_chest {
+        if fields.iter().any(Option::is_none) {
+            return Err(
+                "primary chest body armor requires a complete physical protection profile"
+                    .to_string(),
+            );
+        }
+        if def.physical_protection().is_empty() {
+            return Err(
+                "primary chest body armor requires positive physical protection".to_string(),
+            );
+        }
+    } else if fields.iter().any(Option::is_some) {
+        return Err("physical protection is only valid on primary chest body armor".to_string());
+    }
+
+    Ok(())
+}
+
 fn expected_equipment_kind(def: &ItemDefinition) -> Result<Option<EquipmentKind>, String> {
     let Some(slot) = def.equip_slot else {
         return Ok(None);
@@ -365,6 +419,51 @@ fn validate_equipment_taxonomy(def: &ItemDefinition) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_body_coverage(def: &ItemDefinition) -> Result<(), String> {
+    let is_garment = matches!(
+        def.equipment_kind,
+        Some(EquipmentKind::Clothing | EquipmentKind::BodyArmor)
+    );
+    let Some(authored) = def.body_coverage.as_deref() else {
+        return if is_garment {
+            Err("worn garment requires bodyCoverage".to_string())
+        } else {
+            Ok(())
+        };
+    };
+    if !is_garment {
+        return Err("bodyCoverage is only valid on clothing or body armor".to_string());
+    }
+
+    let regions = parse_body_coverage(authored)?;
+    let Some(form) = def.garment_form else {
+        return Err("bodyCoverage requires garmentForm".to_string());
+    };
+    let exact = |expected: BodyRegion| regions.as_slice() == [expected];
+    let extended_torso = regions.contains(&BodyRegion::Torso)
+        && regions.iter().all(|region| {
+            matches!(
+                region,
+                BodyRegion::Torso | BodyRegion::Arms | BodyRegion::Legs
+            )
+        });
+    let valid = match form {
+        GarmentForm::Helmet => exact(BodyRegion::Head),
+        GarmentForm::Cuirass => exact(BodyRegion::Torso),
+        GarmentForm::Leggings => exact(BodyRegion::Legs),
+        GarmentForm::Gloves => exact(BodyRegion::Hands),
+        GarmentForm::Boots => exact(BodyRegion::Feet),
+        GarmentForm::Hauberk | GarmentForm::Robe | GarmentForm::Coat => extended_torso,
+    };
+    if !valid {
+        return Err(format!(
+            "bodyCoverage is invalid for garmentForm '{}'",
+            form.as_str()
+        ));
+    }
+    Ok(())
+}
+
 fn validate_defense_skill(def: &ItemDefinition) -> Result<(), String> {
     match def.defense_skill {
         None => return Ok(()),
@@ -375,31 +474,44 @@ fn validate_defense_skill(def: &ItemDefinition) -> Result<(), String> {
             if def.equip_slot != Some(EquipSlot::OffHand) {
                 return Err("Shield defenseSkill requires equipSlot 'off_hand'".to_string());
             }
+            if !def.guard.is_some_and(|guard| guard > 0) {
+                return Err("Shield defenseSkill requires a positive guard value".to_string());
+            }
         }
-        Some(SkillId::LeatherArmor) => {
+        Some(skill) if armor_skill_construction(skill).is_some() => {
+            let display_name = skill.display_name();
+            let expected_construction = armor_skill_construction(skill).unwrap();
             if !def.is_body_armor() {
-                return Err("Leather Armor defenseSkill requires worn body armor".to_string());
+                return Err(format!(
+                    "{display_name} defenseSkill requires worn body armor"
+                ));
             }
             if def.equip_slot != Some(EquipSlot::Chest) {
-                return Err("Leather Armor defenseSkill requires equipSlot 'chest'".to_string());
+                return Err(format!(
+                    "{display_name} defenseSkill requires equipSlot 'chest'"
+                ));
             }
-            if def.armor_construction != Some(ArmorConstruction::Leather) {
-                return Err(
-                    "Leather Armor defenseSkill requires armorConstruction 'leather'".to_string(),
-                );
+            if def.armor_construction != Some(expected_construction) {
+                return Err(format!(
+                    "{display_name} defenseSkill requires armorConstruction '{}'",
+                    expected_construction.as_str()
+                ));
             }
             if def.equipment_layer != Some(EquipmentLayer::Primary) {
-                return Err(
-                    "Leather Armor defenseSkill requires equipmentLayer 'primary'".to_string(),
-                );
+                return Err(format!(
+                    "{display_name} defenseSkill requires equipmentLayer 'primary'"
+                ));
+            }
+            let has_physical_protection = !def.physical_protection().is_empty();
+            if !def.guard.is_some_and(|guard| guard > 0) && !has_physical_protection {
+                return Err(format!(
+                    "{display_name} defenseSkill requires Guard or physical protection"
+                ));
             }
         }
         Some(_) => {
             return Err("defenseSkill is not supported for defense combat".to_string());
         }
-    }
-    if !def.guard.is_some_and(|guard| guard > 0) {
-        return Err("defenseSkill requires a positive guard value".to_string());
     }
     Ok(())
 }
@@ -488,7 +600,13 @@ impl ItemDefs {
             if let Err(reason) = validate_equipment_taxonomy(def) {
                 panic!("item '{}': {reason}", def.id);
             }
+            if let Err(reason) = validate_body_coverage(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
             if let Err(reason) = validate_armor_construction(def) {
+                panic!("item '{}': {reason}", def.id);
+            }
+            if let Err(reason) = validate_physical_protection(def) {
                 panic!("item '{}': {reason}", def.id);
             }
             if let Err(reason) = validate_weapon_skill(def) {
@@ -785,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn shields_and_leather_chest_are_the_only_mapped_defensive_items() {
+    fn shields_and_approved_primary_armor_are_the_only_mapped_defensive_items() {
         let defs = ItemDefs::load();
         for id in ["wooden_shield", "raven_shield"] {
             assert_eq!(
@@ -803,15 +921,46 @@ mod tests {
             Some(2),
             "upstream tier-two armor baseline"
         );
+        assert_eq!(
+            defs.get("chain_mail").unwrap().defense_skill,
+            Some(SkillId::MailArmor)
+        );
+        assert_eq!(
+            defs.get("chain_mail").unwrap().guard,
+            Some(5),
+            "upstream tier-three armor baseline"
+        );
+        assert_eq!(
+            defs.get("breastplate").unwrap().defense_skill,
+            Some(SkillId::PlateArmor)
+        );
+        assert_eq!(
+            defs.get("breastplate").unwrap().guard,
+            Some(7),
+            "upstream tier-four armor baseline"
+        );
+        assert_eq!(
+            defs.get("padded_battle_robe").unwrap().defense_skill,
+            Some(SkillId::PaddedArmor)
+        );
+        assert_eq!(defs.get("padded_battle_robe").unwrap().guard, None);
+        assert_eq!(
+            defs.get("brigandine_coat").unwrap().defense_skill,
+            Some(SkillId::HybridArmor)
+        );
+        assert_eq!(defs.get("brigandine_coat").unwrap().guard, Some(2));
         for id in [
             "torch",
             "leather_helmet",
-            "chain_mail",
-            "breastplate",
+            "iron_helmet",
+            "iron_gauntlets",
+            "iron_boots",
+            "plate_helmet",
+            "plate_gauntlets",
+            "plate_greaves",
+            "plate_boots",
             "ring_of_protection",
             "traveler_robe",
-            "padded_battle_robe",
-            "brigandine_coat",
         ] {
             assert_eq!(defs.get(id).unwrap().defense_skill, None, "{id} unmapped");
         }
@@ -850,7 +999,134 @@ mod tests {
     }
 
     #[test]
-    fn body_armor_construction_and_leather_skill_are_explicit() {
+    fn primary_chest_physical_protection_is_complete_and_item_authored() {
+        let defs = ItemDefs::load();
+        for (id, expected) in [
+            (
+                "padded_battle_robe",
+                PhysicalProtection {
+                    slash: 1,
+                    pierce: 0,
+                    blunt: 2,
+                },
+            ),
+            (
+                "leather_armor",
+                PhysicalProtection {
+                    slash: 1,
+                    pierce: 1,
+                    blunt: 1,
+                },
+            ),
+            (
+                "chain_mail",
+                PhysicalProtection {
+                    slash: 2,
+                    pierce: 1,
+                    blunt: 0,
+                },
+            ),
+            (
+                "breastplate",
+                PhysicalProtection {
+                    slash: 3,
+                    pierce: 3,
+                    blunt: 1,
+                },
+            ),
+            (
+                "brigandine_coat",
+                PhysicalProtection {
+                    slash: 2,
+                    pierce: 2,
+                    blunt: 2,
+                },
+            ),
+        ] {
+            let def = defs.get(id).unwrap();
+            assert_eq!(def.physical_protection(), expected, "{id} profile");
+            assert_eq!(validate_physical_protection(def), Ok(()), "{id}");
+        }
+
+        for id in ["traveler_robe", "leather_helmet", "wooden_shield"] {
+            let def = defs.get(id).unwrap();
+            assert_eq!(def.physical_protection(), PhysicalProtection::default());
+            assert_eq!(validate_physical_protection(def), Ok(()), "{id}");
+        }
+
+        let incomplete = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "incomplete_profile",
+            "name": "Incomplete Profile",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "equipmentLayer": "primary",
+            "slashProtection": 1
+        }))
+        .unwrap();
+        assert!(validate_physical_protection(&incomplete)
+            .unwrap_err()
+            .contains("complete physical protection profile"));
+
+        let empty = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "empty_profile",
+            "name": "Empty Profile",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "equipmentLayer": "primary",
+            "slashProtection": 0,
+            "pierceProtection": 0,
+            "bluntProtection": 0
+        }))
+        .unwrap();
+        assert!(validate_physical_protection(&empty)
+            .unwrap_err()
+            .contains("positive physical protection"));
+
+        let helmet = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "helmet_profile",
+            "name": "Helmet Profile",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "head",
+            "stackable": false,
+            "category": "armor",
+            "equipmentLayer": "primary",
+            "slashProtection": 1,
+            "pierceProtection": 1,
+            "bluntProtection": 1
+        }))
+        .unwrap();
+        assert!(validate_physical_protection(&helmet)
+            .unwrap_err()
+            .contains("only valid on primary chest body armor"));
+
+        let clothing = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "clothing_profile",
+            "name": "Clothing Profile",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "clothing",
+            "equipmentLayer": "primary",
+            "slashProtection": 1,
+            "pierceProtection": 1,
+            "bluntProtection": 1
+        }))
+        .unwrap();
+        assert!(validate_physical_protection(&clothing)
+            .unwrap_err()
+            .contains("only valid on primary chest body armor"));
+    }
+
+    #[test]
+    fn body_armor_construction_and_mapped_skills_are_explicit() {
         let defs = ItemDefs::load();
         for id in [
             "leather_helmet",
@@ -875,8 +1151,16 @@ mod tests {
             "upstream tier-three armor baseline"
         );
         assert_eq!(
+            defs.get("chain_mail").unwrap().defense_skill,
+            Some(SkillId::MailArmor)
+        );
+        assert_eq!(
             defs.get("padded_battle_robe").unwrap().armor_construction,
             Some(ArmorConstruction::Padded)
+        );
+        assert_eq!(
+            defs.get("padded_battle_robe").unwrap().defense_skill,
+            Some(SkillId::PaddedArmor)
         );
         assert_eq!(
             defs.get("brigandine_coat").unwrap().armor_construction,
@@ -886,6 +1170,10 @@ mod tests {
             defs.get("brigandine_coat").unwrap().guard,
             Some(2),
             "the Hybrid mitigation slice migrates two former Guard points"
+        );
+        assert_eq!(
+            defs.get("brigandine_coat").unwrap().defense_skill,
+            Some(SkillId::HybridArmor)
         );
         for id in [
             "iron_helmet",
@@ -911,6 +1199,10 @@ mod tests {
             Some(7),
             "upstream tier-four armor baseline"
         );
+        assert_eq!(
+            defs.get("breastplate").unwrap().defense_skill,
+            Some(SkillId::PlateArmor)
+        );
 
         let leather = serde_json::from_value::<ItemDefinition>(json!({
             "id": "test_leather",
@@ -922,12 +1214,99 @@ mod tests {
             "category": "armor",
             "armorConstruction": "leather",
             "equipmentLayer": "primary",
+            "slashProtection": 1,
+            "pierceProtection": 1,
+            "bluntProtection": 1,
             "guard": 1,
             "defenseSkill": "leather_armor"
         }))
         .unwrap();
         assert_eq!(validate_armor_construction(&leather), Ok(()));
+        assert_eq!(validate_physical_protection(&leather), Ok(()));
         assert_eq!(validate_defense_skill(&leather), Ok(()));
+
+        let mail = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "test_mail",
+            "name": "Test Mail",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "mail",
+            "equipmentLayer": "primary",
+            "slashProtection": 2,
+            "pierceProtection": 1,
+            "bluntProtection": 0,
+            "guard": 1,
+            "defenseSkill": "mail_armor"
+        }))
+        .unwrap();
+        assert_eq!(validate_armor_construction(&mail), Ok(()));
+        assert_eq!(validate_physical_protection(&mail), Ok(()));
+        assert_eq!(validate_defense_skill(&mail), Ok(()));
+
+        let plate = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "test_plate",
+            "name": "Test Plate",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "plate",
+            "equipmentLayer": "primary",
+            "slashProtection": 3,
+            "pierceProtection": 3,
+            "bluntProtection": 1,
+            "guard": 1,
+            "defenseSkill": "plate_armor"
+        }))
+        .unwrap();
+        assert_eq!(validate_armor_construction(&plate), Ok(()));
+        assert_eq!(validate_physical_protection(&plate), Ok(()));
+        assert_eq!(validate_defense_skill(&plate), Ok(()));
+
+        let padded = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "test_padded",
+            "name": "Test Padded",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "padded",
+            "equipmentLayer": "primary",
+            "slashProtection": 1,
+            "pierceProtection": 0,
+            "bluntProtection": 2,
+            "defenseSkill": "padded_armor"
+        }))
+        .unwrap();
+        assert_eq!(validate_armor_construction(&padded), Ok(()));
+        assert_eq!(validate_physical_protection(&padded), Ok(()));
+        assert_eq!(validate_defense_skill(&padded), Ok(()));
+
+        let hybrid = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "test_hybrid",
+            "name": "Test Hybrid",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "hybrid",
+            "equipmentLayer": "primary",
+            "slashProtection": 2,
+            "pierceProtection": 2,
+            "bluntProtection": 2,
+            "guard": 1,
+            "defenseSkill": "hybrid_armor"
+        }))
+        .unwrap();
+        assert_eq!(validate_armor_construction(&hybrid), Ok(()));
+        assert_eq!(validate_physical_protection(&hybrid), Ok(()));
+        assert_eq!(validate_defense_skill(&hybrid), Ok(()));
 
         for (slot, construction, expected) in [
             ("head", "leather", "equipSlot 'chest'"),
@@ -949,6 +1328,115 @@ mod tests {
             .unwrap();
             assert!(validate_defense_skill(&def).unwrap_err().contains(expected));
         }
+
+        let bad_mail = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "bad_mail",
+            "name": "Bad Mail",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "plate",
+            "equipmentLayer": "primary",
+            "guard": 1,
+            "defenseSkill": "mail_armor"
+        }))
+        .unwrap();
+        assert!(validate_defense_skill(&bad_mail)
+            .unwrap_err()
+            .contains("armorConstruction 'mail'"));
+
+        let bad_plate = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "bad_plate",
+            "name": "Bad Plate",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "hybrid",
+            "equipmentLayer": "primary",
+            "guard": 1,
+            "defenseSkill": "plate_armor"
+        }))
+        .unwrap();
+        assert!(validate_defense_skill(&bad_plate)
+            .unwrap_err()
+            .contains("armorConstruction 'plate'"));
+
+        let bad_padded = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "bad_padded",
+            "name": "Bad Padded",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "hybrid",
+            "equipmentLayer": "primary",
+            "defenseSkill": "padded_armor"
+        }))
+        .unwrap();
+        assert!(validate_defense_skill(&bad_padded)
+            .unwrap_err()
+            .contains("armorConstruction 'padded'"));
+
+        let bad_hybrid = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "bad_hybrid",
+            "name": "Bad Hybrid",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "armor",
+            "armorConstruction": "leather",
+            "equipmentLayer": "primary",
+            "guard": 1,
+            "defenseSkill": "hybrid_armor"
+        }))
+        .unwrap();
+        assert!(validate_defense_skill(&bad_hybrid)
+            .unwrap_err()
+            .contains("armorConstruction 'hybrid'"));
+
+        let ordinary_robe = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "ordinary_robe",
+            "name": "Ordinary Robe",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "clothing",
+            "armorConstruction": "padded",
+            "equipmentKind": "clothing",
+            "equipmentLayer": "primary",
+            "garmentForm": "robe",
+            "defenseSkill": "padded_armor"
+        }))
+        .unwrap();
+        assert!(validate_defense_skill(&ordinary_robe)
+            .unwrap_err()
+            .contains("requires worn body armor"));
+
+        let ordinary_coat = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "ordinary_coat",
+            "name": "Ordinary Coat",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "chest",
+            "stackable": false,
+            "category": "clothing",
+            "armorConstruction": "hybrid",
+            "equipmentKind": "clothing",
+            "equipmentLayer": "primary",
+            "garmentForm": "coat",
+            "defenseSkill": "hybrid_armor"
+        }))
+        .unwrap();
+        assert!(validate_defense_skill(&ordinary_coat)
+            .unwrap_err()
+            .contains("requires worn body armor"));
     }
 
     #[test]
@@ -1130,6 +1618,106 @@ mod tests {
             assert_eq!(def.equipment_layer, Some(layer), "{id} layer");
             assert_eq!(def.garment_form, None, "{id} form");
         }
+    }
+
+    #[test]
+    fn garment_body_coverage_is_authored_by_form() {
+        let defs = ItemDefs::load();
+        for (ids, expected) in [
+            (
+                &["leather_helmet", "iron_helmet", "plate_helmet"][..],
+                &[BodyRegion::Head][..],
+            ),
+            (
+                &["leather_armor", "breastplate"][..],
+                &[BodyRegion::Torso][..],
+            ),
+            (
+                &["leather_gloves", "iron_gauntlets", "plate_gauntlets"][..],
+                &[BodyRegion::Hands][..],
+            ),
+            (
+                &["leather_pants", "plate_greaves"][..],
+                &[BodyRegion::Legs][..],
+            ),
+            (
+                &["leather_boots", "iron_boots", "plate_boots"][..],
+                &[BodyRegion::Feet][..],
+            ),
+            (
+                &["chain_mail", "traveler_robe", "padded_battle_robe"][..],
+                &[BodyRegion::Torso, BodyRegion::Arms, BodyRegion::Legs][..],
+            ),
+            (
+                &["brigandine_coat"][..],
+                &[BodyRegion::Torso, BodyRegion::Arms][..],
+            ),
+        ] {
+            for id in ids {
+                assert_eq!(defs.get(id).unwrap().body_coverage(), expected, "{id}");
+            }
+        }
+        for id in ["wooden_shield", "ring_of_protection", "iron_sword"] {
+            assert!(defs.get(id).unwrap().body_coverage().is_empty(), "{id}");
+        }
+    }
+
+    #[test]
+    fn body_coverage_rejects_missing_or_contradictory_regions() {
+        let garment = |form: &str, coverage: Option<&str>| {
+            let mut value = json!({
+                "id": "test_garment",
+                "name": "Test Garment",
+                "description": "Test definition",
+                "weight": 1,
+                "equipSlot": "chest",
+                "stackable": false,
+                "category": "clothing",
+                "equipmentKind": "clothing",
+                "equipmentLayer": "primary",
+                "garmentForm": form
+            });
+            if let Some(coverage) = coverage {
+                value["bodyCoverage"] = json!(coverage);
+            }
+            serde_json::from_value::<ItemDefinition>(value).unwrap()
+        };
+
+        assert!(validate_body_coverage(&garment("robe", None))
+            .unwrap_err()
+            .contains("requires bodyCoverage"));
+        assert!(
+            validate_body_coverage(&garment("robe", Some("torso;wings")))
+                .unwrap_err()
+                .contains("unknown region")
+        );
+        assert!(validate_body_coverage(&garment("robe", Some("legs;torso")))
+            .unwrap_err()
+            .contains("must follow"));
+        assert!(validate_body_coverage(&garment("robe", Some("head")))
+            .unwrap_err()
+            .contains("invalid for garmentForm 'robe'"));
+        assert_eq!(
+            validate_body_coverage(&garment("robe", Some("torso;arms;legs"))),
+            Ok(())
+        );
+
+        let shield = serde_json::from_value::<ItemDefinition>(json!({
+            "id": "covered_shield",
+            "name": "Covered Shield",
+            "description": "Test definition",
+            "weight": 1,
+            "equipSlot": "off_hand",
+            "stackable": false,
+            "category": "armor",
+            "equipmentKind": "shield",
+            "equipmentLayer": "held",
+            "bodyCoverage": "arms"
+        }))
+        .unwrap();
+        assert!(validate_body_coverage(&shield)
+            .unwrap_err()
+            .contains("only valid on clothing or body armor"));
     }
 
     #[test]

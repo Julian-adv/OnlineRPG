@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { ItemDefinition } from '../data/itemDefs'
-  import { skillDisplayName } from '../stores/skillsStore'
   import {
-    armor_construction_protection,
-    durability_condition,
-  } from '../wasm/onlinerpg_shared'
+    bodyRegionDisplayName,
+    itemBodyCoverage,
+    type ItemDefinition,
+  } from '../data/itemDefs'
+  import { skillDisplayName } from '../stores/skillsStore'
+  import { durability_condition } from '../wasm/onlinerpg_shared'
 
   interface Props {
     def: ItemDefinition
@@ -40,21 +41,23 @@
     (['slash', 'pierce', 'blunt'] as const)
       .map((damageType) => ({
         damageType,
-        amount: def.equipSlot === 'chest' && def.armorConstruction
-          ? armor_construction_protection(def.armorConstruction, damageType)
-          : 0,
+        amount:
+          damageType === 'slash'
+            ? (def.slashProtection ?? 0)
+            : damageType === 'pierce'
+              ? (def.pierceProtection ?? 0)
+              : (def.bluntProtection ?? 0),
       }))
       .filter(({ amount }) => amount > 0)
   )
+  const bodyCoverage = $derived(itemBodyCoverage(def))
   const condition = $derived(
     def.maxDurability && durability !== null
       ? durability_condition(durability, def.maxDurability)
       : undefined
   )
   const conditionName = $derived(
-    condition
-      ? condition[0].toUpperCase() + condition.slice(1)
-      : undefined
+    condition ? condition[0].toUpperCase() + condition.slice(1) : undefined
   )
 </script>
 
@@ -145,6 +148,10 @@
       <span
         >Form: {def.garmentForm[0].toUpperCase() +
           def.garmentForm.slice(1)}</span
+      >
+    {/if}
+    {#if bodyCoverage.length > 0}
+      <span>Coverage: {bodyCoverage.map(bodyRegionDisplayName).join(', ')}</span
       >
     {/if}
   </div>

@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use onlinerpg_shared::inventory::{
-    durability_condition, ArmorConstruction, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm,
-    RepairFamily,
+    durability_condition, parse_body_coverage, ArmorConstruction, BodyRegion, EquipSlot,
+    EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily,
 };
 use onlinerpg_shared::skills::SkillId;
-use onlinerpg_shared::{combat::construction_protection, PhysicalDamageType};
+use onlinerpg_shared::{PhysicalDamageType, PhysicalProtection};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -41,6 +41,14 @@ pub struct ItemDef {
     #[serde(rename = "garmentForm", default)]
     #[allow(dead_code)]
     pub garment_form: Option<GarmentForm>,
+    #[serde(rename = "bodyCoverage", default)]
+    pub body_coverage: Option<String>,
+    #[serde(rename = "slashProtection", default)]
+    pub slash_protection: Option<u32>,
+    #[serde(rename = "pierceProtection", default)]
+    pub pierce_protection: Option<u32>,
+    #[serde(rename = "bluntProtection", default)]
+    pub blunt_protection: Option<u32>,
     #[serde(rename = "weaponSkill", default)]
     pub weapon_skill: Option<SkillId>,
     #[serde(rename = "defenseSkill", default)]
@@ -64,6 +72,21 @@ pub struct ItemDef {
 impl ItemDef {
     pub fn is_consumable(&self) -> bool {
         self.consumable
+    }
+
+    pub fn physical_protection(&self) -> PhysicalProtection {
+        PhysicalProtection {
+            slash: self.slash_protection.unwrap_or_default(),
+            pierce: self.pierce_protection.unwrap_or_default(),
+            blunt: self.blunt_protection.unwrap_or_default(),
+        }
+    }
+
+    pub fn body_coverage(&self) -> Vec<BodyRegion> {
+        self.body_coverage
+            .as_deref()
+            .and_then(|value| parse_body_coverage(value).ok())
+            .unwrap_or_default()
     }
 }
 
@@ -90,21 +113,29 @@ pub fn equipment_summary(item_def_id: &str) -> Option<String> {
     }
     if let Some(construction) = def.armor_construction {
         details.push(format!("{} construction", construction.display_name()));
-        if def.equip_slot == Some(EquipSlot::Chest) {
-            let protection = [
-                PhysicalDamageType::Slash,
-                PhysicalDamageType::Pierce,
-                PhysicalDamageType::Blunt,
-            ]
-            .into_iter()
-            .filter_map(|damage_type| {
-                let amount = construction_protection(Some(construction), damage_type);
-                (amount > 0).then(|| format!("{} {amount}", damage_type.display_name()))
-            })
-            .collect::<Vec<_>>();
-            if !protection.is_empty() {
-                details.push(format!("Protection {}", protection.join(", ")));
-            }
+    }
+    let coverage = def
+        .body_coverage()
+        .into_iter()
+        .map(|region| region.display_name())
+        .collect::<Vec<_>>();
+    if !coverage.is_empty() {
+        details.push(format!("Coverage {}", coverage.join(", ")));
+    }
+    if def.equip_slot == Some(EquipSlot::Chest) {
+        let protection = [
+            PhysicalDamageType::Slash,
+            PhysicalDamageType::Pierce,
+            PhysicalDamageType::Blunt,
+        ]
+        .into_iter()
+        .filter_map(|damage_type| {
+            let amount = def.physical_protection().for_damage_type(damage_type);
+            (amount > 0).then(|| format!("{} {amount}", damage_type.display_name()))
+        })
+        .collect::<Vec<_>>();
+        if !protection.is_empty() {
+            details.push(format!("Protection {}", protection.join(", ")));
         }
     }
     if let Some(skill) = def.defense_skill {
@@ -257,13 +288,19 @@ mod tests {
             Some(ArmorConstruction::Mail)
         );
         assert_eq!(get("chain_mail").and_then(|def| def.guard), Some(5));
-        assert_eq!(get("chain_mail").and_then(|def| def.defense_skill), None);
+        assert_eq!(
+            get("chain_mail").and_then(|def| def.defense_skill),
+            Some(SkillId::MailArmor)
+        );
         assert_eq!(
             get("breastplate").and_then(|def| def.armor_construction),
             Some(ArmorConstruction::Plate)
         );
         assert_eq!(get("breastplate").and_then(|def| def.guard), Some(7));
-        assert_eq!(get("breastplate").and_then(|def| def.defense_skill), None);
+        assert_eq!(
+            get("breastplate").and_then(|def| def.defense_skill),
+            Some(SkillId::PlateArmor)
+        );
         assert_eq!(
             get("wooden_shield").and_then(|def| def.armor_construction),
             None
@@ -281,10 +318,66 @@ mod tests {
             Some(ArmorConstruction::Padded)
         );
         assert_eq!(
+            get("padded_battle_robe").and_then(|def| def.defense_skill),
+            Some(SkillId::PaddedArmor)
+        );
+        assert_eq!(
             get("brigandine_coat").and_then(|def| def.armor_construction),
             Some(ArmorConstruction::Hybrid)
         );
         assert_eq!(get("brigandine_coat").and_then(|def| def.guard), Some(2));
+        assert_eq!(
+            get("brigandine_coat").and_then(|def| def.defense_skill),
+            Some(SkillId::HybridArmor)
+        );
+        for (id, expected) in [
+            (
+                "padded_battle_robe",
+                PhysicalProtection {
+                    slash: 1,
+                    pierce: 0,
+                    blunt: 2,
+                },
+            ),
+            (
+                "leather_armor",
+                PhysicalProtection {
+                    slash: 1,
+                    pierce: 1,
+                    blunt: 1,
+                },
+            ),
+            (
+                "chain_mail",
+                PhysicalProtection {
+                    slash: 2,
+                    pierce: 1,
+                    blunt: 0,
+                },
+            ),
+            (
+                "breastplate",
+                PhysicalProtection {
+                    slash: 3,
+                    pierce: 3,
+                    blunt: 1,
+                },
+            ),
+            (
+                "brigandine_coat",
+                PhysicalProtection {
+                    slash: 2,
+                    pierce: 2,
+                    blunt: 2,
+                },
+            ),
+        ] {
+            assert_eq!(get(id).map(ItemDef::physical_protection), Some(expected));
+        }
+        assert_eq!(
+            get("traveler_robe").map(ItemDef::physical_protection),
+            Some(PhysicalProtection::default())
+        );
         assert_eq!(
             get("padded_battle_robe").and_then(|def| def.max_durability),
             Some(40)
@@ -310,33 +403,50 @@ mod tests {
                 get(id).and_then(|def| def.equipment_layer),
                 Some(EquipmentLayer::Primary)
             );
-            assert_eq!(get(id).and_then(|def| def.defense_skill), None);
         }
+        assert_eq!(get("traveler_robe").and_then(|def| def.defense_skill), None);
+        assert_eq!(
+            get("traveler_robe").map(ItemDef::body_coverage),
+            Some(vec![BodyRegion::Torso, BodyRegion::Arms, BodyRegion::Legs])
+        );
+        assert_eq!(
+            get("brigandine_coat").map(ItemDef::body_coverage),
+            Some(vec![BodyRegion::Torso, BodyRegion::Arms])
+        );
+        assert!(get("wooden_shield").unwrap().body_coverage().is_empty());
         assert_eq!(
             equipment_summary("leather_armor").as_deref(),
             Some(
-                "Guard +2; Leather construction; Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor; Repair family Leather"
+                "Guard +2; Leather construction; Coverage Torso; Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor; Repair family Leather"
             )
         );
         assert_eq!(
             equipment_summary("padded_battle_robe").as_deref(),
-            Some("Padded construction; Protection Slash 1, Blunt 2; Repair family Cloth")
+            Some(
+                "Padded construction; Coverage Torso, Arms, Legs; Protection Slash 1, Blunt 2; Skill Padded Armor; Repair family Cloth"
+            )
         );
         assert_eq!(
             equipment_summary("chain_mail").as_deref(),
-            Some("Guard +5; Mail construction; Protection Slash 2, Pierce 1; Repair family Metal")
+            Some(
+                "Guard +5; Mail construction; Coverage Torso, Arms, Legs; Protection Slash 2, Pierce 1; Skill Mail Armor; Repair family Metal"
+            )
         );
         assert_eq!(
             equipment_summary("breastplate").as_deref(),
-            Some("Guard +7; Plate construction; Protection Slash 3, Pierce 3, Blunt 1; Repair family Metal")
+            Some(
+                "Guard +7; Plate construction; Coverage Torso; Protection Slash 3, Pierce 3, Blunt 1; Skill Plate Armor; Repair family Metal"
+            )
         );
         assert_eq!(
             equipment_summary("brigandine_coat").as_deref(),
-            Some("Guard +2; Hybrid construction; Protection Slash 2, Pierce 2, Blunt 2; Repair family Hybrid")
+            Some(
+                "Guard +2; Hybrid construction; Coverage Torso, Arms; Protection Slash 2, Pierce 2, Blunt 2; Skill Hybrid Armor; Repair family Hybrid"
+            )
         );
         assert_eq!(
             equipment_summary("leather_helmet").as_deref(),
-            Some("Guard +1; Leather construction")
+            Some("Guard +1; Leather construction; Coverage Head")
         );
         for (id, family, amount) in [
             ("cloth_repair_kit", RepairFamily::Cloth, 20),

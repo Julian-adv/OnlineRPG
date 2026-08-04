@@ -15,8 +15,8 @@ threshold. XP clamps at the level-30 threshold.
 The map is sparse. A fresh character has no row for an untrained skill, and a
 missing entry reads as level 0 with 0 XP. The first valid XP award creates an
 entry even when its total is still below level 1. Fishing, One-Handed Sword,
-Dagger, Spear, Shield, Healing, and Leather Armor coexist in the same generic
-map.
+Dagger, Spear, Shield, Healing, Leather Armor, Mail Armor, Plate Armor, and
+Padded Armor, and Hybrid Armor coexist in the same generic map.
 
 ## Phase 1: One-Handed Sword
 
@@ -42,11 +42,11 @@ have positive `NdM` damage dice.
 One-Handed Sword affects the attack roll only:
 
 | Skill level | Attack bonus |
-|---|---:|
-| 0–4 | +0 |
-| 5–14 | +1 |
-| 15–24 | +2 |
-| 25–30 | +3 |
+| ----------- | -----------: |
+| 0–4         |           +0 |
+| 5–14        |           +1 |
+| 15–24       |           +2 |
+| 25–30       |           +3 |
 
 The shared weapon-skill bonus function clamps inputs above 30 and is exported
 through WASM so the browser shows the same value the server uses.
@@ -93,8 +93,10 @@ unknown-row-preserving upsert. It has no table, character column, or save path
 of its own.
 
 The existing private `SkillsUpdate` and `SkillXpGained` messages carry all
-skills. Protocol version 19 identifies Leather Armor; the strict handshake
-refuses older clients. Protocol 18 introduced Healing and protocol 17
+skills. Protocol version 27 identifies Hybrid Armor and the strict handshake
+refuses older clients. Protocol 26 introduced Padded Armor, protocol 25
+introduced Plate Armor, protocol 24 introduced Mail Armor, protocol 19
+introduced Leather Armor, protocol 18 introduced Healing, and protocol 17
 introduced Shield.
 
 ## Browser and agent parity
@@ -102,12 +104,17 @@ introduced Shield.
 The browser reuses the existing skills store and Character Skills tab. It only
 renders trained map entries, shows level/progress, displays shared accuracy,
 Guard, or treatment bonuses, marks level 30 as max with a complete bar, and
-labels mapped item tooltips with the relevant action skill.
+labels mapped item tooltips with the relevant action skill. Character Stats
+uses the exact server-authored Guard and summarizes the equipped primary body
+armor's mapped skill and authored physical profile; Broken armor remains named
+but is explicitly inactive.
 
 The agent-client sends the same target-only attack request, follows the same
 animation cadence, accepts generic skill snapshots and deltas, and stores them
-without waking the LLM for every XP event. Neither client supplies equipment,
-skill level, outcome, bonus, or XP to the server.
+without waking the LLM for every XP event. It also stores `GuardUpdated` as
+state-only data and exposes the exact effective Guard beside its semantic
+equipment summary without waking the LLM for the update itself. Neither client
+supplies equipment, skill level, outcome, bonus, Guard, or XP to the server.
 
 ## Phase 1 limits
 
@@ -232,11 +239,11 @@ unmapped item requests award no Healing XP.
 A Bandage restores `2d4` base HP. Training adds a small flat modifier:
 
 | Skill level | Healing bonus |
-|---|---:|
-| 0–4 | +0 HP |
-| 5–14 | +1 HP |
-| 15–24 | +2 HP |
-| 25–30 | +3 HP |
+| ----------- | ------------: |
+| 0–4         |         +0 HP |
+| 5–14        |         +1 HP |
+| 15–24       |         +2 HP |
+| 25–30       |         +3 HP |
 
 Healing cannot exceed max HP. XP equals the HP actually restored after that
 cap, so treating a one-point scratch earns 1 XP rather than the uncapped dice
@@ -253,33 +260,50 @@ profession. Magical healing remains a future spell-system concern; Alchemy
 may later govern potion manufacture without turning potion drinking into
 Healing training.
 
-## Armor vertical slice: Leather Armor
+## Armor vertical slices: Padded, Leather, Mail, Plate, and Hybrid Armor
 
-The first construction-specific armor skill uses wire id `leather_armor` and
-display name **Leather Armor**. It does not introduce Light/Heavy categories.
-Current worn body armor is explicitly classified by `armorConstruction` as
-`padded`, `leather`, `mail`, `plate`, or `hybrid`; shields, clothing, and
-accessories have no body-armor construction. Equippable items also declare
-`equipmentKind` and `equipmentLayer`, while garments declare `garmentForm`.
-Padded, Mail, Plate, and Hybrid are real catalog classifications but do not
-have registered skills.
+Construction-specific armor skills do not introduce Light/Heavy buckets.
+Worn body armor is classified by `armorConstruction` as `padded`, `leather`,
+`mail`, `plate`, or `hybrid`; shields, clothing, and accessories have no
+body-armor construction. Equippable items also declare `equipmentKind` and
+`equipmentLayer`, while garments declare `garmentForm`.
 
-Only the `leather_armor` chest definition maps through `defenseSkill`. The
-primary chest anchors the active armor skill, so wearing leather boots, gloves,
-pants, or a helmet alone does not train the skill, and mixed extremity pieces
-cannot activate several armor skills from one attack. The ordinary robe,
-padded battle robe, and brigandine coat all occupy the same primary chest slot
-but have no `defenseSkill`, so swapping to any of them immediately removes the
-Leather Armor term and training eligibility.
+The first slice maps the `leather_armor` chest to wire id `leather_armor` and
+display name **Leather Armor**. Protocol v24 adds `chain_mail` through wire id
+`mail_armor` and display name **Mail Armor**. Protocol v25 adds `breastplate`
+through wire id `plate_armor` and display name **Plate Armor**. Protocol v26
+adds `padded_battle_robe` through wire id `padded_armor` and display name
+**Padded Armor**. Protocol v27 adds `brigandine_coat` through wire id
+`hybrid_armor` and display name **Hybrid Armor**. A shared mapping binds each
+skill to its matching construction, and startup validation rejects a wrong
+kind, slot, primary layer, construction, or an item with neither Guard nor
+physical protection. Future construction values still require an explicit,
+approved mapping rather than becoming skills automatically.
 
-Leather Armor adds one trained Guard term while that chest item is equipped:
+The primary chest anchors the active armor skill. Leather boots, gloves, pants,
+and helmets do not activate Leather Armor; Plate helmets, gauntlets, greaves,
+and boots do not activate either Mail or Plate Armor. Mixed pieces therefore
+cannot create several armor-skill events from one hit. The Padded Battle Robe is
+an armored robe and maps Padded Armor despite having no item Guard; the ordinary
+Traveler Robe remains clothing with no physical skill. The Brigandine Coat is
+body armor and maps Hybrid Armor because of its authored Hybrid construction;
+the word “coat” and garment form alone never establish skill eligibility.
+
+Authored `bodyCoverage` records whether a garment spans head, torso, arms,
+hands, legs, or feet, but it does not select or train a skill. A Traveler's Robe
+and Padded Battle Robe both span torso/arms/legs while only the explicitly
+constructed and mapped Padded item activates Padded Armor. Extremity coverage
+therefore remains semantic foundation rather than a second skill trigger.
+
+Any mapped armor skill adds one trained Guard term while its chest is
+functional and equipped:
 
 | Skill level | Guard bonus |
-|---|---:|
-| 0–4 | +0 |
-| 5–14 | +1 |
-| 15–24 | +2 |
-| 25–30 | +3 |
+| ----------- | ----------: |
+| 0–4         |          +0 |
+| 5–14        |          +1 |
+| 15–24       |          +2 |
+| 25–30       |          +3 |
 
 The item Guard and trained Guard are separate and each is applied once. Shield
 may be active at the same time, but its item and skill terms remain separate.
@@ -292,29 +316,32 @@ DEX-derived base Guard
 + active primary-armor skill bonus
 ```
 
-Leather Armor trains only when an accepted server-resolved monster attack
-lands on the living wearer. Each hit awards 5 XP; a miss awards 0 because the
-blow never reached the armor. Ownership, life, floor, reach, and monster
-cooldown gates run first. Rejected, replayed, unmapped, Padded, Mail, Plate, and
-Hybrid cases
-award nothing. A bonus-band crossing emits one final `GuardUpdated` after the
-generic XP delta, including any simultaneously active Shield term.
+The active mapped armor skill trains only when an accepted server-resolved
+monster attack lands on the living wearer. Each hit awards 5 XP; a miss awards
+0 because the blow never reached the armor. Ownership, life, floor, reach, and
+monster cooldown gates run first. Rejected, replayed, Broken, unmapped, and
+ordinary-clothing cases award nothing. Swapping among Padded, Leather, Mail,
+Plate, and Hybrid changes which single skill receives the next valid hit; it
+never trains more than one. A bonus-band crossing emits one final
+`GuardUpdated` after the generic XP delta, including any simultaneously active
+Shield term.
 
 The skill slice reuses sparse persistence, generic messages, the Skills tab,
 item tooltips, agent state, and aggregate defense metrics. The later protocol
-v20 physical-damage slice adds damage types, followed by Padded, Leather, Mail,
-Plate, and Hybrid construction profiles, without changing Leather Armor
-eligibility, XP, or trained Guard bands. The Leather chest retains Guard 2 and
-mitigates slash, pierce, and blunt by 1 each. Mail retains Guard 5 and mitigates
-slash 2 / pierce 1. Plate retains Guard 7 and mitigates slash 3 / pierce 3 /
-blunt 1. Hybrid retains Guard 2 and mitigates slash, pierce, and blunt by 2
-each. Mail, Plate, and Hybrid have no `defenseSkill` and never create a skill
-row. A landed hit
-trains Leather Armor after all request gates regardless of its exact
-final-damage amount; the authoritative hit result owns training, not potion use.
-Hit location, casting penalties, Mail/Plate/Hybrid skills, class
-restrictions, and wearable body rendering remain separate stages in
-[ARMOR_SYSTEM.md](ARMOR_SYSTEM.md).
+v20 physical-damage slice adds damage types plus Padded, Leather, Mail, Plate,
+and Hybrid mitigation identities. The current primary chests now author their
+exact `slashProtection`, `pierceProtection`, and `bluntProtection` values rather
+than deriving numbers from construction. The Leather chest retains Guard 2 and
+mitigates slash, pierce, and blunt by 1 each. Chain Mail retains Guard 5 and
+mitigates slash 2 / pierce 1. Plate retains Guard 7 and mitigates slash 3 /
+pierce 3 / blunt 1. Hybrid retains Guard 2 and mitigates slash, pierce, and
+blunt by 2 each. The Padded Battle Robe, Leather, Chain Mail, and Breastplate
+chests and Brigandine Coat map their matching skills without changing those
+authored item profiles. A landed hit trains the one active mapped skill regardless of
+its exact final-damage amount; the authoritative hit result owns training, not
+product or repair-kit use. Hit location, casting penalties, future
+construction-specific skills, class restrictions, and wearable body rendering
+remain separate stages in [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md).
 
 Protocol v21 adds equipped-weight movement burden without adding or training a
 skill. Strength changes the burden thresholds through carry capacity, but no
@@ -322,9 +349,10 @@ Armor, Athletics, or movement proficiency modifies the tier or speed. Bag
 contents remain outside this calculation.
 
 Protocol v23 adds per-instance condition to primary chest body armor. A broken
-Leather chest no longer activates or trains Leather Armor until repaired;
-construction-aware Cloth, Leather, Metal, and Hybrid kits repair only their
-matching family by an authored 20, 30, 45, or 50 condition, capped at maximum.
+Padded, Leather, Mail, Plate, or Hybrid chest no longer activates or trains its
+armor skill until repaired; construction-aware Cloth, Leather, Metal, and
+Hybrid kits repair only their matching family by an authored 20, 30, 45, or 50 condition,
+capped at maximum.
 Pristine, Worn, Damaged, Critical, and Broken are condition labels rather than
 skills or gradual protection modifiers. Using a finished kit is equipment
 maintenance and does not create or train Smithing, Tailoring, or a generic
