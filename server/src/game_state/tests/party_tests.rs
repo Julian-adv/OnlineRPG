@@ -1343,3 +1343,55 @@ async fn blank_party_chat_sends_nothing() {
     assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
     assert!(matches!(bob_rx.try_recv(), Err(MpscTryRecvError::Empty)));
 }
+
+/// A client without the web UI's channel state types the command instead, so
+/// the server has to route it — otherwise the line lands in local chat.
+#[tokio::test]
+async fn typed_party_chat_routes_to_the_party_and_not_to_a_bystander() {
+    let game_state = make_test_game_state("party_chat_typed");
+    let auth = make_test_auth("party_chat_typed");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    // Standing next to the sender, deliberately out of the party.
+    let mut dave_rx = add(&game_state, "dave", 1.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut dave_rx] {
+        drain(rx);
+    }
+
+    game_state
+        .send_chat_message(&pid("bob"), "/p meet at the west gate".to_string(), &auth)
+        .await;
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyChatMessage { from, message }) => {
+                assert_eq!(from, "bob");
+                assert_eq!(message, "meet at the west gate");
+            }
+            other => panic!("Expected party chat, got {:?}", other),
+        }
+    }
+    assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn bare_typed_party_chat_draws_a_usage_reply() {
+    let game_state = make_test_game_state("party_chat_usage");
+    let auth = make_test_auth("party_chat_usage");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .send_chat_message(&pid("bob"), "/p".to_string(), &auth)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("/p <message>"), "{message}")
+        }
+        other => panic!("Expected usage reply, got {:?}", other),
+    }
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}

@@ -126,6 +126,20 @@ pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
     Some((!rest.is_empty()).then_some(rest))
 }
 
+/// `/p <message>` speaks on the party channel. Parsed here and not only in the
+/// web client's channel UI, or a client without that UI (agent-client `say`, a
+/// third-party one — doc/REMOTE_AGENT_CLIENT.md) has its party line broadcast
+/// to everyone nearby.
+pub(crate) fn parse_party_chat_command(message: &str) -> Option<&str> {
+    strip_command(message, "/p")
+}
+
+/// `/s <message>` says the rest as ordinary local chat — the web client's
+/// "back to say" prefix, honoured here so other clients can type it too.
+pub(crate) fn parse_say_command(message: &str) -> Option<&str> {
+    strip_command(message, "/s")
+}
+
 /// Operator commands (doc/TODO.md 운영자 커맨드). `requires_admin` gates them
 /// through this same parser, so the syntax is defined once. Parts return
 /// unvalidated, like the whisper parser: a malformed command draws a usage
@@ -267,6 +281,36 @@ impl super::GameState {
             return;
         }
 
+        if let Some(party_message) = parse_party_chat_command(&message) {
+            if party_message.is_empty() {
+                self.send_system_message(player_id, "Party chat: /p <message>")
+                    .await;
+            } else {
+                self.send_party_chat(player_id, party_message.to_string())
+                    .await;
+            }
+            return;
+        }
+
+        if let Some(said) = parse_say_command(&message) {
+            if said.is_empty() {
+                self.send_system_message(player_id, "Say: /s <message>")
+                    .await;
+            } else {
+                self.speak_locally(player_id, said.to_string()).await;
+            }
+            return;
+        }
+
+        self.speak_locally(player_id, message).await;
+    }
+
+    /// Fan a spoken line out to everyone in range, minus anyone who blocked the
+    /// speaker. Takes the message already past command parsing, which is what
+    /// lets `/s` hand it the remainder without re-dispatching: `/s /give x` is
+    /// spoken, never run behind `requires_admin`'s back, and `/s /p x` is
+    /// spoken, never rerouted to the party.
+    async fn speak_locally(&self, player_id: &PlayerId, message: String) {
         let player_name = {
             let players = self.players.read().await;
             players.get(player_id).map(|player| player.name.clone())

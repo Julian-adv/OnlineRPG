@@ -129,6 +129,98 @@ fn reply_command_parses_message() {
     assert_eq!(parse_reply_command("hello /r there"), None);
 }
 
+#[test]
+fn party_chat_command_parses_message() {
+    use super::chat::parse_party_chat_command;
+
+    assert_eq!(
+        parse_party_chat_command("/p meet at the west gate"),
+        Some("meet at the west gate")
+    );
+    assert_eq!(parse_party_chat_command(" /p  hi "), Some("hi"));
+    assert_eq!(parse_party_chat_command("/p"), Some(""));
+    // The commands `/p` sits next to must not be swallowed.
+    assert_eq!(parse_party_chat_command("/party bob"), None);
+    assert_eq!(parse_party_chat_command("/pos"), None);
+    assert_eq!(parse_party_chat_command("hello /p there"), None);
+}
+
+#[test]
+fn say_command_parses_message() {
+    use super::chat::parse_say_command;
+
+    assert_eq!(parse_say_command("/s hello there"), Some("hello there"));
+    assert_eq!(parse_say_command(" /s  hi "), Some("hi"));
+    assert_eq!(parse_say_command("/s"), Some(""));
+    assert_eq!(parse_say_command("/summon rica"), None);
+    assert_eq!(parse_say_command("hello /s there"), None);
+}
+
+#[tokio::test]
+async fn say_prefix_speaks_the_rest_without_re_dispatching_it() {
+    let game_state = make_test_game_state("say_prefix");
+    let auth = make_test_auth("say_prefix");
+    let speaker_id = pid("speaker");
+    let listener_id = pid("listener");
+    game_state
+        .add_player(make_player("speaker", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    // A command behind `/s` is spoken, not run: `requires_admin` and the party
+    // router only ever see the raw `/s ...` text.
+    for (typed, spoken) in [
+        ("/s hello there", "hello there"),
+        ("/s /give goblin_sword", "/give goblin_sword"),
+        ("/s /p secret plan", "/p secret plan"),
+    ] {
+        game_state
+            .send_chat_message(&speaker_id, typed.to_string(), &auth)
+            .await;
+        match listener_rx.try_recv() {
+            Ok(ServerMessage::ChatMessage { player_id, message }) => {
+                assert_eq!(player_id, speaker_id);
+                assert_eq!(message, spoken);
+            }
+            other => panic!("Expected {spoken:?} spoken, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn bare_say_prefix_draws_a_usage_reply() {
+    let game_state = make_test_game_state("say_prefix_bare");
+    let auth = make_test_auth("say_prefix_bare");
+    let speaker_id = pid("speaker");
+    let listener_id = pid("listener");
+    game_state
+        .add_player(make_player("speaker", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut speaker_rx = game_state.register_direct_channel(&speaker_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&speaker_id, "/s".to_string(), &auth)
+        .await;
+    match speaker_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("/s <message>"), "{message}")
+        }
+        other => panic!("Expected usage reply, got {:?}", other),
+    }
+    // Never an empty line spoken at everyone nearby.
+    assert!(matches!(
+        listener_rx.try_recv(),
+        Err(MpscTryRecvError::Empty)
+    ));
+}
+
 #[tokio::test]
 async fn reply_targets_the_last_whisper_partner() {
     let game_state = make_test_game_state("whisper_reply");
