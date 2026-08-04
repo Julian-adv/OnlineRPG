@@ -175,6 +175,38 @@ async fn resident_sells_lowest_enchantment_first() {
 }
 
 #[tokio::test]
+async fn resident_sale_takes_one_unit_out_of_a_stack() {
+    let game_state = make_test_game_state("resident_partial_stack");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![bag_item(11, "healing_potion", 5)],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_item(&pid("seller"), &pid("npc_karl"), "healing_potion")
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 9_400);
+    assert_eq!(game_state.get_player_gold(&pid("npc_karl")).await, 600);
+    let inventories = game_state.inventories.read().await;
+    let buyer_bag = &inventories[&pid("seller")].bag;
+    assert_eq!(buyer_bag.len(), 1);
+    assert_eq!(buyer_bag[0].item_def_id, "healing_potion");
+    assert_eq!(buyer_bag[0].quantity, 1);
+    let npc_bag = &inventories[&pid("npc_karl")].bag;
+    assert_eq!(npc_bag.len(), 1, "the rest of the stack stays in stock");
+    assert_eq!(npc_bag[0].quantity, 4);
+}
+
+#[tokio::test]
 async fn resident_shop_state_reports_wishlist_and_stock() {
     let game_state = make_test_game_state("resident_shop_state");
     setup_resident_trade(
