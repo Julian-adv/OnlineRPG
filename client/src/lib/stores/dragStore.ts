@@ -132,8 +132,11 @@ export function startDrag(
         // uses the same test, and no call site can implement (or forget) it
         // differently.
         const qsIndex = quickslotAt(ue.clientX, ue.clientY)
-        if (qsIndex >= 0) assignQuickslot(qsIndex, meta.defId)
-        else onDrop(ue.clientX, ue.clientY)
+        if (qsIndex < 0) {
+          onDrop(ue.clientX, ue.clientY)
+        } else if (meta.groupItems === undefined) {
+          assignQuickslot(qsIndex, meta.defId)
+        }
       } else {
         onClick?.()
       }

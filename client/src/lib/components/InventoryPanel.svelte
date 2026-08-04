@@ -61,6 +61,9 @@
    *  separate single-drag + quantity-popup flow above and are inert here. */
   let selectMode = $state(false)
   const selected = new SvelteSet<number>()
+  const bagIds = $derived(
+    new Set($inventoryStore.bag.map((item) => item.instance_id))
+  )
 
   // Closing the panel must not leave Select mode (and a stale selection)
   // armed for whenever it's reopened.
@@ -68,8 +71,16 @@
     if (!visible) {
       selectMode = false
       selected.clear()
+      return
+    }
+    for (const id of selected) {
+      if (!bagIds.has(id)) selected.delete(id)
     }
   })
+
+  function liveBagIds(ids: Iterable<number>): number[] {
+    return [...ids].filter((id) => bagIds.has(id))
+  }
 
   function isSelectable(slot: ItemInstance): boolean {
     return getItemDef(slot.item_def_id)?.stackable !== true
@@ -133,7 +144,7 @@
    *  dropped. */
   function onGroupPointerDown(e: PointerEvent, slot: ItemInstance) {
     const def = getItemDef(slot.item_def_id)
-    const groupIds = new SvelteSet(selected)
+    const groupIds = new SvelteSet(liveBagIds(selected))
     groupIds.add(slot.instance_id)
     // Several selected instances can share the same item_def_id (e.g. two
     // separately-caught, non-stackable old_boot entries) — consolidate them
@@ -172,9 +183,12 @@
           !pointInRect(x, y, panelEl.getBoundingClientRect()) &&
           !isOverAnyDialog(x, y)
         ) {
-          networkManager.sendDropItems(
-            [...groupIds].map((instance_id) => ({ instance_id, qty: 1 }))
-          )
+          const dropIds = liveBagIds(groupIds)
+          if (dropIds.length > 0) {
+            networkManager.sendDropItems(
+              dropIds.map((instance_id) => ({ instance_id, qty: 1 }))
+            )
+          }
           selected.clear()
         }
       },

@@ -78,4 +78,22 @@ describe('sortBag', () => {
       'worn_iron_sword',
     ])
   })
+
+  it('sorts equal names by quantity descending', () => {
+    const bag = [
+      makeItem({
+        instance_id: 1,
+        item_def_id: 'healing_potion',
+        quantity: 2,
+      }),
+      makeItem({
+        instance_id: 2,
+        item_def_id: 'healing_potion',
+        quantity: 5,
+        enchant: 1,
+      }),
+    ]
+
+    expect(sortBag(bag).map((item) => item.quantity)).toEqual([5, 2])
+  })
 })

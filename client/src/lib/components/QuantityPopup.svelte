@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tick } from 'svelte'
+
   interface Props {
     visible: boolean
     itemName: string
@@ -11,9 +13,16 @@
   let { visible, itemName, icon, max, onConfirm, onCancel }: Props = $props()
 
   let qty = $state(1)
+  let inputEl = $state<HTMLInputElement | null>(null)
 
   $effect(() => {
-    if (visible) qty = max
+    if (!visible) return
+    qty = max
+    tick().then(() => {
+      if (!visible) return
+      inputEl?.focus()
+      inputEl?.select()
+    })
   })
 
   function clamp(n: number): number {
@@ -26,11 +35,7 @@
     qty = clamp(value)
   }
 
-  /** +/- buttons wrap around instead of stopping at the ends: one past max
-   *  loops to 1, one below 1 loops to max — quicker than clamping when the
-   *  player actually wants the far end (e.g. tapping minus once from a
-   *  freshly-opened "all 5" popup to get back to "all 5" after overshooting
-   *  to 1). Typing a number directly still clamps (see `onInput`). */
+  // +/- wraps between 1 and max; typed values clamp.
   function step(delta: number) {
     const zeroBased = qty - 1 + delta
     qty = (((zeroBased % max) + max) % max) + 1
@@ -62,6 +67,7 @@
       <div class="qty-row">
         <button class="step-btn" onclick={() => step(-1)}>−</button>
         <input
+          bind:this={inputEl}
           class="qty-input"
           type="number"
           min="1"

@@ -874,14 +874,24 @@ impl super::GameState {
             self.send_gold_update(npc_player_id).await;
         }
         for plan in &plans {
-            self.send_trade_notice(
-                npc_player_id,
-                player_name.clone(),
-                &plan.item_def_id,
-                DealKind::Buy,
-                plan.price,
-            )
-            .await;
+            let normal_price = buy_price(plan.base_price, 0);
+            for unit in 0..plan.qty {
+                let unit_price = if unit == 0 {
+                    plan.deal_taken.as_ref().map_or(normal_price, |deal| {
+                        buy_price(plan.base_price, deal.modifier_pct)
+                    })
+                } else {
+                    normal_price
+                };
+                self.send_trade_notice(
+                    npc_player_id,
+                    player_name.clone(),
+                    &plan.item_def_id,
+                    DealKind::Buy,
+                    unit_price,
+                )
+                .await;
+            }
         }
     }
 
@@ -1428,14 +1438,24 @@ impl super::GameState {
             self.send_gold_update(npc_player_id).await;
         }
         for plan in &plans {
-            self.send_trade_notice(
-                npc_player_id,
-                player_name.clone(),
-                &plan.item_def_id,
-                DealKind::Sell,
-                plan.payout,
-            )
-            .await;
+            let normal_payout = sell_payout(plan.base_price, rate, 0);
+            for unit in 0..plan.qty {
+                let unit_payout = if unit == 0 {
+                    plan.deal_taken.as_ref().map_or(normal_payout, |deal| {
+                        sell_payout(plan.base_price, rate, deal.modifier_pct)
+                    })
+                } else {
+                    normal_payout
+                };
+                self.send_trade_notice(
+                    npc_player_id,
+                    player_name.clone(),
+                    &plan.item_def_id,
+                    DealKind::Sell,
+                    unit_payout,
+                )
+                .await;
+            }
         }
     }
 

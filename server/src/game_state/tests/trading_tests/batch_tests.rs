@@ -213,6 +213,51 @@ async fn buy_items_batch_merges_stackables_and_splits_non_stackables() {
 }
 
 #[tokio::test]
+async fn buy_items_batch_notifies_the_merchant_once_per_unit() {
+    let game_state = make_test_game_state("batch_buy_notices");
+    game_state
+        .add_player(make_npc("npc_rica", "Rica", 0.0, 0.0))
+        .await;
+    game_state.add_player(make_player("buyer", 1.0, 0.0)).await;
+    game_state
+        .register_player_character(&pid("buyer"), 1, 0, attrs_with_cha(10), 10_000, None)
+        .await;
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("buyer"), PlayerInventory::default());
+    let mut npc_rx = game_state.register_direct_channel(&pid("npc_rica")).await;
+
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("npc_rica"),
+            vec![TradeLineItem {
+                item_def_id: "healing_potion".to_string(),
+                qty: 3,
+            }],
+        )
+        .await;
+
+    for _ in 0..3 {
+        match npc_rx.try_recv() {
+            Ok(ServerMessage::TradeNotice {
+                item_def_id,
+                kind: DealKind::Buy,
+                price,
+                ..
+            }) => {
+                assert_eq!(item_def_id, "healing_potion");
+                assert_eq!(price, 600);
+            }
+            other => panic!("Expected per-unit TradeNotice, got {other:?}"),
+        }
+    }
+    assert!(npc_rx.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn drop_items_batch_drops_partial_quantity_and_spawns_one_ground_item_per_unit() {
     let game_state = make_test_game_state("batch_drop_partial");
     game_state.add_player(make_player("owner", 1.0, 0.0)).await;

@@ -28,9 +28,7 @@
   interface CartEntry {
     kind: 'buy' | 'sell' | 'buyback'
     itemDefId: string
-    /** Bag group backing a sell entry (same key as `sellEntries`); absent
-     *  for buy entries. May span several real instances (fragmented same-def
-     *  stacks), split out again at confirm time via `splitGroupQty`. */
+    /** Bag group key for a sell entry; backing instances resolve on confirm. */
     groupKey?: string
     /** Buyback entry backing a buyback entry; absent otherwise. */
     entryId?: number
@@ -330,7 +328,7 @@
     // A shared allocator so a deal-priced row and a plain row for the same
     // item def (same group) deplete one pool instead of each independently
     // draining the group's full instance list.
-    const allocator = createGroupAllocator(sellEntries)
+    const allocator = createGroupAllocator()
     const sellItems = dealsFirst(cart.filter((e) => e.kind === 'sell'))
       .filter((e) => e.groupKey !== undefined)
       .flatMap((e) => {
