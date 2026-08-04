@@ -698,7 +698,6 @@
                 : 'female_knight.glb'
           console.log(`✅ Found animation: ${selection.name} (${source})`)
         }
-
       }
 
       console.log(`Found ${validAnimations.length} valid animations`)

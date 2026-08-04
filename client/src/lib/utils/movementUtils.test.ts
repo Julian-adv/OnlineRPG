@@ -25,9 +25,7 @@ describe('movementConfigForSpeed', () => {
 
   it('keeps debug scaling separate and sanitizes invalid speeds', () => {
     expect(movementConfigForSpeed(2.7, 10).maxSpeed).toBe(27)
-    expect(movementConfigForSpeed(Number.NaN)).toEqual(
-      DEFAULT_MOVEMENT_CONFIG
-    )
+    expect(movementConfigForSpeed(Number.NaN)).toEqual(DEFAULT_MOVEMENT_CONFIG)
     expect(movementConfigForSpeed(99).maxSpeed).toBe(3)
   })
 })

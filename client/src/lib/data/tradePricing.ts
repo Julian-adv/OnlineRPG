@@ -12,8 +12,7 @@ export function npcSellPrice(
   const standardPayout = Math.max(
     1,
     Math.floor(
-      ((def.basePrice ?? 0) * sellRatePercent * (100 + modifierPercent)) /
-        10000
+      ((def.basePrice ?? 0) * sellRatePercent * (100 + modifierPercent)) / 10000
     )
   )
   const conditionPercent =

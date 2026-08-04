@@ -41,9 +41,7 @@ export interface PlayerWeaponCombatProfile {
 export function getPlayerWeaponCombatProfile(
   itemDefId?: string | null
 ): PlayerWeaponCombatProfile {
-  const weaponSkill = itemDefId
-    ? getItemDef(itemDefId)?.weaponSkill
-    : undefined
+  const weaponSkill = itemDefId ? getItemDef(itemDefId)?.weaponSkill : undefined
   const rangeMeters = weaponSkill
     ? weapon_skill_melee_range(weaponSkill)
     : PLAYER_ATTACK_RANGE_METERS
