@@ -701,6 +701,7 @@ impl SharedState {
                 position,
                 rotation,
                 append,
+                sprinting,
                 ..
             } => {
                 // On the entrance stairs the wire floor is still 0 while the Y
@@ -722,6 +723,7 @@ impl SharedState {
                     rotation,
                     floor_level: self.self_floor_level,
                     append,
+                    sprinting,
                 }
             }
             ClientMessage::RequestSpawnMonster {

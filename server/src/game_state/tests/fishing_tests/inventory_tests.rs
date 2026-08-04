@@ -47,10 +47,8 @@ async fn a_full_bag_spills_the_catch_on_the_ground() {
     );
 }
 
-/// `category "fish"` rides the same heal path as potions: eating a trout
-/// restores its dice and consumes the fish.
 #[tokio::test]
-async fn eating_a_fish_heals_like_a_potion() {
+async fn eating_a_fish_regenerates_hp_from_its_nutrition() {
     let game_state = make_test_game_state("fishing_eat");
     let (id, mut rx) = make_angler(&game_state, "angler_hungry").await;
     game_state
@@ -70,12 +68,13 @@ async fn eating_a_fish_heals_like_a_potion() {
         .health = 2;
 
     game_state.use_item(&id, 800).await;
+    assert_eq!(game_state.players.read().await[&id].health, 2);
+    for _ in 0..10 {
+        game_state.tick_food_regeneration().await;
+    }
 
     let health = game_state.players.read().await.get(&id).unwrap().health;
-    assert!(
-        (4..=10).contains(&health),
-        "2d4 heal from 2 HP lands in 4..=10 (capped), got {health}"
-    );
+    assert_eq!(health, 4, "nutrition 40 restores 2 HP over ten ticks");
     assert!(
         game_state
             .inventories

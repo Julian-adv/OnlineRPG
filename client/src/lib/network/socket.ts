@@ -408,10 +408,17 @@ class NetworkManager {
     position: { x: number; y: number; z: number },
     rotation: number,
     floorLevel: number,
-    append = false
+    append = false,
+    sprinting = false
   ) {
     this.sendMessage({
-      PlayerMove: { position, rotation, floor_level: floorLevel, append },
+      PlayerMove: {
+        position,
+        rotation,
+        floor_level: floorLevel,
+        append,
+        sprinting,
+      },
     })
   }
 

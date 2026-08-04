@@ -32,7 +32,7 @@
 {#if $hungerState}
   <div
     class="status-content"
-    class:buffed={$hungerState.band === 'WellFed'}
+    class:hungry={$hungerState.band === 'Hungry'}
     class:weak={$hungerState.band === 'Weak'}
     class:poisoned={poisonRemainingSeconds > 0}
   >
@@ -79,8 +79,10 @@
         {/each}
       </div>
 
-      {#if $hungerState.band === 'Weak'}
-        <div class="status-note">Natural healing is disabled.</div>
+      {#if HUNGER_BAND_INFO[$hungerState.band].note}
+        <div class="status-note">
+          {HUNGER_BAND_INFO[$hungerState.band].note}
+        </div>
       {/if}
     </section>
 
@@ -128,10 +130,6 @@
         transparent 45%
       ),
       rgba(12, 13, 14, 0.72);
-  }
-
-  .buffed .status-card {
-    border-color: rgba(140, 220, 110, 0.28);
   }
 
   .weak .status-card,
@@ -208,11 +206,6 @@
     border-radius: inherit;
     background: linear-gradient(90deg, #9d7437, #d4ad63);
     box-shadow: 0 0 8px rgba(212, 173, 99, 0.3);
-  }
-
-  .buffed .satiation-fill {
-    background: linear-gradient(90deg, #628e51, #9bcc7f);
-    box-shadow: 0 0 8px rgba(155, 204, 127, 0.28);
   }
 
   .weak .satiation-fill,

@@ -200,6 +200,8 @@ pub enum ClientMessage {
         /// replace.
         #[serde(default)]
         append: bool,
+        #[serde(default)]
+        sprinting: bool,
     },
     /// Floor change that happens *between* waypoints. `PlayerMove::floor_level`
     /// only lands when its waypoint is reached, and a stairwell is a single leg
@@ -450,6 +452,7 @@ impl ClientMessage {
             rotation,
             floor_level,
             append: false,
+            sprinting: false,
         }
     }
 }
@@ -499,6 +502,8 @@ pub enum ServerMessage {
         rotation: f32,
         #[serde(default)]
         floor_level: i8,
+        #[serde(default)]
+        sprinting: bool,
     },
     PlayerTeleported {
         player_id: PlayerId,

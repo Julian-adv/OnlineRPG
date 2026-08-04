@@ -8,6 +8,8 @@ import {
   getMovementMode,
   hasTargetChanged,
   DEFAULT_MOVEMENT_CONFIG,
+  SPRINT_SPEED_MULT,
+  scaleMovementConfig,
   type Position,
   type MovementState,
   type MovementConfig,
@@ -22,6 +24,10 @@ import type { TerrainHeightManager } from './terrainHeightManager'
 const MOVEMENT_CONFIG: MovementConfig = {
   ...DEFAULT_MOVEMENT_CONFIG,
 }
+const SPRINT_MOVEMENT_CONFIG = scaleMovementConfig(
+  MOVEMENT_CONFIG,
+  SPRINT_SPEED_MULT
+)
 
 /// Far enough that the player went somewhere, rather than the resting flush
 /// that lands on the spot they already stopped at.
@@ -49,6 +55,8 @@ class PlayerStateManager {
 
   // Server-authoritative target rotation for each remote player.
   private targetRotations = new SvelteMap<number, number>()
+  // Only read inside the update loop — no reactivity needed.
+  private targetSprinting = new Map<number, boolean>()
 
   // Queue for pending attacks when player is still moving
   private attackQueue = new SvelteMap<number, string[]>()
@@ -57,7 +65,7 @@ class PlayerStateManager {
   // Applied when the attack ends.
   private pendingMove = new Map<
     number,
-    { position: Position; rotation: number }
+    { position: Position; rotation: number; sprinting: boolean }
   >()
 
   // Timestamp (performance.now()) when each player's attack animation started
@@ -85,6 +93,7 @@ class PlayerStateManager {
         // Apply buffered position/rotation from move received during attack
         this.targetPositions.set(playerId, pending.position)
         this.targetRotations.set(playerId, pending.rotation)
+        this.targetSprinting.set(playerId, pending.sprinting)
         this.players.set(playerId, {
           ...p,
           state: 'idle',
@@ -136,10 +145,14 @@ class PlayerStateManager {
       if (!movement) return
 
       // Calculate movement step
+      const sprinting = this.targetSprinting.get(playerId) ?? false
+      const movementConfig = sprinting
+        ? SPRINT_MOVEMENT_CONFIG
+        : MOVEMENT_CONFIG
       const result = calculateMovementStep(
         currentPos,
         movement,
-        MOVEMENT_CONFIG,
+        movementConfig,
         dt
       )
 
@@ -193,7 +206,11 @@ class PlayerStateManager {
       } else {
         // Torch has no jog animation, so skip the jog tier for torch-holders.
         const hasTorch = otherPlayers.get(playerId)?.torchOn ?? false
-        const movementMode = getMovementMode(movement.totalDistance, hasTorch)
+        const movementMode = getMovementMode(
+          movement.totalDistance,
+          hasTorch,
+          sprinting
+        )
 
         this.players.set(playerId, {
           position: result.newPos,
@@ -209,6 +226,7 @@ class PlayerStateManager {
   // Initialize remote player state with position and rotation
   initPlayer(playerId: number, position: Position, rotation: number) {
     this.targetPositions.set(playerId, { ...position })
+    this.targetSprinting.delete(playerId)
     this.players.set(playerId, {
       position: { ...position },
       state: 'idle',
@@ -223,6 +241,7 @@ class PlayerStateManager {
     this.movementData.delete(playerId)
     this.targetPositions.delete(playerId)
     this.targetRotations.delete(playerId)
+    this.targetSprinting.delete(playerId)
     this.attackQueue.delete(playerId)
     this.pendingMove.delete(playerId)
     this.attackStartTimes.delete(playerId)
@@ -234,6 +253,7 @@ class PlayerStateManager {
     this.movementData.clear()
     this.targetPositions.clear()
     this.targetRotations.clear()
+    this.targetSprinting.clear()
     this.attackQueue.clear()
     this.pendingMove.clear()
     this.attackStartTimes.clear()
@@ -256,6 +276,7 @@ class PlayerStateManager {
     this.attackQueue.delete(playerId)
     this.attackStartTimes.delete(playerId)
     this.targetPositions.set(playerId, { ...position })
+    this.targetSprinting.delete(playerId)
     this.players.set(playerId, {
       position: { ...position },
       state: 'idle',
@@ -266,6 +287,7 @@ class PlayerStateManager {
 
   teleportPlayer(playerId: number, position: Position, rotation: number) {
     this.targetPositions.set(playerId, { ...position })
+    this.targetSprinting.delete(playerId)
     this.movementData.delete(playerId)
     this.players.set(playerId, {
       position: { ...position },
@@ -349,7 +371,8 @@ class PlayerStateManager {
   setTargetPosition(
     playerId: number,
     targetPosition: Position,
-    rotation: number
+    rotation: number,
+    sprinting = false
   ) {
     const player = this.players.get(playerId)
 
@@ -358,6 +381,7 @@ class PlayerStateManager {
       this.pendingMove.set(playerId, {
         position: { ...targetPosition },
         rotation,
+        sprinting,
       })
       return
     }
@@ -377,6 +401,7 @@ class PlayerStateManager {
 
     this.targetPositions.set(playerId, { ...targetPosition })
     this.targetRotations.set(playerId, rotation)
+    this.targetSprinting.set(playerId, sprinting)
   }
 
   private executeAttack(playerId: number) {

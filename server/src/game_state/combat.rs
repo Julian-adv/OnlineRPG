@@ -101,9 +101,22 @@ impl super::GameState {
 
     async fn claim_player_attack_window(&self, player_id: &PlayerId) -> bool {
         let now = Self::now_ms();
+        // Hunger only lengthens the interval, so an attack still inside the
+        // base window never needs the hunger lookup — spam-clicks stay cheap.
+        if self
+            .last_player_attacks
+            .read()
+            .await
+            .get(player_id)
+            .is_some_and(|last| now.saturating_sub(*last) < *PLAYER_ATTACK_INTERVAL_MS)
+        {
+            return false;
+        }
+        let attack_mult = self.hunger_attack_mult(player_id).await.max(f32::EPSILON);
+        let required_interval = (*PLAYER_ATTACK_INTERVAL_MS as f32 / attack_mult).ceil() as u64;
         let mut last_attacks = self.last_player_attacks.write().await;
         let last = last_attacks.entry(*player_id).or_insert(0);
-        if now.saturating_sub(*last) < *PLAYER_ATTACK_INTERVAL_MS {
+        if now.saturating_sub(*last) < required_interval {
             return false;
         }
         *last = now;
@@ -406,6 +419,7 @@ impl super::GameState {
                 self.on_dungeon_monster_dead(&monster_id).await;
 
                 // Award XP to the player who killed the monster.
+                self.drain_hunger_for_kill(player_id).await;
                 // Depth-scaled dungeon monsters yield XP for their
                 // effective level, not the base definition level.
                 let xp_def = self.monster_defs.get(&monster_type);
@@ -692,6 +706,7 @@ impl super::GameState {
         }
 
         if result.hit {
+            self.cancel_food_regeneration(target_player_id).await;
             self.mark_dirty(target_player_id).await;
         }
 
@@ -738,9 +753,6 @@ impl super::GameState {
     pub async fn tick_regeneration(&self) {
         let mut updates = Vec::new();
 
-        // Weak-from-hunger or food-poisoned players don't regenerate
-        // (doc/HUNGER.md); potions remain the escape hatch.
-        let regen_blocked = self.hunger_regen_blocked().await;
         {
             let players = self.players.read().await;
             let player_chars = self.player_characters.read().await;
@@ -752,10 +764,6 @@ impl super::GameState {
                     if now.saturating_sub(player.last_combat_at) < super::OUT_OF_COMBAT_MS {
                         continue;
                     }
-                    if regen_blocked.contains(player_id) {
-                        continue;
-                    }
-
                     let con = player_chars
                         .get(player_id)
                         .map(|(_, _, attrs)| attrs.con)
@@ -769,6 +777,18 @@ impl super::GameState {
             }
         }
 
+        if updates.is_empty() {
+            return;
+        }
+
+        let candidates: Vec<PlayerId> = updates.iter().map(|(pid, _)| *pid).collect();
+        let include_hungry = self
+            .regen_ticks
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            % 2
+            == 1;
+        let regen_ready = self.hunger_regen_ready(&candidates, include_hungry).await;
+        updates.retain(|(pid, _)| regen_ready.contains(pid));
         if updates.is_empty() {
             return;
         }
@@ -823,6 +843,7 @@ impl super::GameState {
     pub(super) async fn on_player_died(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
         self.cancel_concentration_if_active(player_id).await;
+        self.cancel_food_regeneration(player_id).await;
         self.apply_player_death_penalty(player_id).await;
     }
 

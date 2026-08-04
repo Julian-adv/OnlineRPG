@@ -481,17 +481,14 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
         } => {
             use onlinerpg_shared::hunger::HungerState;
             let mut line = match state {
-                HungerState::WellFed => format!(
-                    "[Hunger] You feel well fed ({satiation}/1000): +10% move and attack speed."
+                HungerState::Normal => format!(
+                    "[Hunger] You are adequately fed ({satiation}/1000) and can sprint."
                 ),
                 HungerState::Hungry => format!(
-                    "[Hunger] You are getting hungry ({satiation}/1000). Eating food (the use action) restores the well-fed bonus."
+                    "[Hunger] You are getting hungry ({satiation}/1000): sprinting is unavailable and natural healing is slower."
                 ),
                 HungerState::Weak => format!(
                     "[Hunger] You are weak from hunger ({satiation}/1000): slower movement and attacks, less carry weight, and no natural healing. Eat something."
-                ),
-                HungerState::Stuffed => format!(
-                    "[Hunger] You are stuffed ({satiation}/1000); the well-fed bonus is gone until it settles."
                 ),
             };
             if *poisoned_ms > 0 {

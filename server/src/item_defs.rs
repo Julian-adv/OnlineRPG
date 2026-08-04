@@ -26,8 +26,7 @@ pub struct ItemDefinition {
     /// currency).
     #[serde(default)]
     pub category: Option<String>,
-    /// Dice notation (e.g. "1d8", "6d4") whose meaning depends on `category`.
-    /// Read it through `damage_dice()` / `heal_dice()` rather than directly.
+    /// Dice notation whose meaning depends on `category`.
     #[serde(default)]
     pub dice: Option<String>,
     #[serde(default)]
@@ -82,13 +81,8 @@ pub struct ItemDefinition {
 pub enum UseEffect {
     /// Restore HP by rolling the given dice notation.
     Heal(String),
-    /// Restore satiation (doc/HUNGER.md). Fish also heal by their dice, and
-    /// raw fish risk food poisoning — unless grilled first at a campfire.
-    Eat {
-        nutrition: u32,
-        heal_dice: Option<String>,
-        raw_fish: bool,
-    },
+    /// Restore satiation and regenerate HP from nutrition. Raw fish can poison.
+    Eat { nutrition: u32, raw_fish: bool },
     /// Light a campfire near the user.
     PlaceCampfire,
     /// Teleport the user back to the town spawn point.
@@ -119,8 +113,8 @@ impl ItemDefinition {
 
     /// A catch that lands in the bag sealed and pays out coins when opened
     /// (`use_item`). Its `dice` column is the copper roll (the
-    /// category-decides-meaning pattern: weapon → damage, fish/potion →
-    /// heal, coin_catch → gold). Production code dispatches through
+    /// category-decides-meaning pattern: weapon → damage, potion → heal,
+    /// coin_catch → gold). Production code dispatches through
     /// `use_effect`; the tests keep this named predicate for the economy
     /// guardrail.
     #[cfg(test)]
@@ -153,17 +147,14 @@ impl ItemDefinition {
     pub fn use_effect(&self) -> Option<UseEffect> {
         match self.category.as_deref()? {
             "healing_potion" => self.dice.clone().map(UseEffect::Heal),
-            // Eating a fish heals by its dice and feeds a little — raw.
             "fish" => Some(UseEffect::Eat {
                 nutrition: self
                     .nutrition
                     .unwrap_or(onlinerpg_shared::hunger::RAW_FISH_NUTRITION),
-                heal_dice: self.dice.clone(),
                 raw_fish: true,
             }),
             "food" => self.nutrition.map(|nutrition| UseEffect::Eat {
                 nutrition,
-                heal_dice: None,
                 raw_fish: false,
             }),
             "campfire_kit" => Some(UseEffect::PlaceCampfire),

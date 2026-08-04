@@ -93,6 +93,7 @@ fn move_cmd(position: Position, append: bool) -> MoveCommand {
         rotation: 0.0,
         floor_level: 0,
         append,
+        sprinting: false,
     }
 }
 

@@ -561,10 +561,9 @@ impl super::GameState {
             UseEffect::Heal(dice) => self.use_healing_item(player_id, instance_id, &dice).await,
             UseEffect::Eat {
                 nutrition,
-                heal_dice,
                 raw_fish,
             } => {
-                self.use_eat_item(player_id, instance_id, nutrition, heal_dice, raw_fish, None)
+                self.use_eat_item(player_id, instance_id, nutrition, raw_fish, None)
                     .await
             }
             UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
@@ -631,16 +630,12 @@ impl super::GameState {
         self.roll_heal_and_broadcast(player_id, heal_dice).await;
     }
 
-    /// Eat food or fish (doc/HUNGER.md): raw fish near a campfire grills
-    /// instead. Unlike potions, full HP just skips the heal component;
-    /// untracked (NPC) eaters get heal + decrement only. `force_poison`
-    /// pins the raw-fish roll for tests.
+    /// Eat food or fish; raw fish near a campfire grills instead.
     pub(super) async fn use_eat_item(
         &self,
         player_id: &PlayerId,
         instance_id: u64,
         nutrition: u32,
-        heal_dice: Option<String>,
         raw_fish: bool,
         force_poison: Option<bool>,
     ) {
@@ -679,21 +674,13 @@ impl super::GameState {
         let outcome = self
             .apply_eat(player_id, nutrition, raw_fish, force_poison)
             .await;
-        if matches!(outcome, super::hunger::EatOutcome::TooStuffed) {
-            self.send_system_message(player_id, "You are too stuffed to eat another bite")
-                .await;
-            return;
-        }
-
-        if let Some(dice) = heal_dice {
-            self.roll_heal_and_broadcast(player_id, &dice).await;
-        }
-
         self.consume_one_and_sync(player_id, instance_id).await;
+        self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(nutrition))
+            .await;
         let name = self.item_name(&def_id);
         self.send_system_message(player_id, format!("You eat the {name}."))
             .await;
-        if let super::hunger::EatOutcome::Fed(msg) = outcome {
+        if let Some(msg) = outcome {
             self.mark_dirty(player_id).await;
             self.send_direct_message(player_id, msg).await;
         }

@@ -491,6 +491,7 @@ mod tests {
                 },
                 rotation: 0.0,
                 floor_level: 0,
+                sprinting: false,
             }),
             None
         );

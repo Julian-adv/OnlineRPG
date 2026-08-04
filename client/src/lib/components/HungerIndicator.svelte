@@ -25,7 +25,7 @@
     return () => clearInterval(timer)
   })
 
-  const buffed = $derived($hungerState?.band === 'WellFed')
+  const hungry = $derived($hungerState?.band === 'Hungry')
   const weak = $derived($hungerState?.band === 'Weak')
   const satiationPct = $derived(($hungerState?.satiation ?? 0) / 10)
   const modifiers = $derived($hungerState ? hungerModifiers($hungerState) : [])
@@ -33,14 +33,10 @@
     const h = $hungerState
     if (!h) return ''
     const lines = [`Open character status. Satiation ${h.satiation}/1000`]
-    if (h.band === 'WellFed')
-      lines.push(
-        `${formatHungerModifier(h.moveMult)} move & attack speed, ${formatHungerModifier(h.carryMult)} carry weight`
-      )
+    if (h.band === 'Hungry')
+      lines.push('Sprinting disabled, natural healing takes twice as long')
     if (h.band === 'Weak')
       lines.push('Slowed, weaker carry, no natural healing — eat!')
-    if (h.band === 'Stuffed')
-      lines.push('Too full — the vigor returns as it settles')
     if (h.poisonedUntil != null) lines.push('Food poisoning: heavy penalties')
     return lines.join('\n')
   })
@@ -60,7 +56,7 @@
 {#if $hungerState}
   <div
     class="hunger"
-    class:buffed
+    class:hungry
     class:weak
     class:poisoned={$hungerState.poisonedUntil != null}
     aria-label={accessibleSummary}
@@ -117,8 +113,10 @@
         {/each}
       </div>
 
-      {#if weak}
-        <div class="tooltip-note">Natural healing is disabled.</div>
+      {#if HUNGER_BAND_INFO[$hungerState.band].note}
+        <div class="tooltip-note">
+          {HUNGER_BAND_INFO[$hungerState.band].note}
+        </div>
       {/if}
       {#if $hungerState.poisonedUntil != null}
         <div class="poison-warning">
@@ -169,11 +167,6 @@
     border: 1px solid rgba(255, 255, 255, 0.12);
     white-space: nowrap;
     user-select: none;
-  }
-
-  .hunger.buffed .primary-badge {
-    color: #b8e6a3;
-    border-color: rgba(140, 220, 110, 0.35);
   }
 
   .hunger.weak .primary-badge {
@@ -241,10 +234,6 @@
     opacity: 1;
     visibility: visible;
     transform: translateX(0);
-  }
-
-  .hunger.buffed .hunger-tooltip {
-    border-color: rgba(140, 220, 110, 0.28);
   }
 
   .hunger.weak .hunger-tooltip,
@@ -320,11 +309,6 @@
     border-radius: inherit;
     background: linear-gradient(90deg, #9d7437, #d4ad63);
     box-shadow: 0 0 8px rgba(212, 173, 99, 0.3);
-  }
-
-  .buffed .satiation-fill {
-    background: linear-gradient(90deg, #628e51, #9bcc7f);
-    box-shadow: 0 0 8px rgba(155, 204, 127, 0.28);
   }
 
   .weak .satiation-fill,

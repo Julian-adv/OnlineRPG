@@ -123,6 +123,7 @@ export type ClientMessage =
         rotation: number
         floor_level: number
         append: boolean
+        sprinting: boolean
       }
     }
   | { PlayerFloorChanged: { floor_level: number } }

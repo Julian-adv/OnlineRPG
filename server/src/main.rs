@@ -485,8 +485,8 @@ async fn main() -> ExitCode {
         },
     ));
 
-    // Hunger (doc/HUNGER.md): grills every 250ms, campfires every 1s,
-    // decay every 20s; each sub-tick early-outs on an empty map.
+    // Hunger (doc/HUNGER.md): grills every 250ms; campfires, timed effects,
+    // and food regeneration every second. Activity drain rides movement/kills.
     let game_state_for_hunger = Arc::clone(&game_state);
     let mut hunger_tick_count = 0u64;
     background.spawn(run_ticks(
@@ -501,9 +501,8 @@ async fn main() -> ExitCode {
                 game_state.tick_grills().await;
                 if count.is_multiple_of(4) {
                     game_state.tick_campfires().await;
-                }
-                if count.is_multiple_of(80) {
-                    game_state.tick_hunger_decay().await;
+                    game_state.tick_hunger_effects().await;
+                    game_state.tick_food_regeneration().await;
                 }
             }
         },

@@ -28,10 +28,12 @@
     torchLightEnabled,
   } from '../stores/debugStore'
   import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
-  import { hungerState } from '../stores/hungerStore'
+  import { hungerState, SPRINT_MIN_SATIATION } from '../stores/hungerStore'
   import { getItemDef } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
+    SPRINT_SPEED_MULT,
+    scaleMovementConfig,
     type Position,
     type MovementState,
     type MovementConfig,
@@ -193,12 +195,36 @@
   let speedMult = $derived(
     ($debugSpeedMode ? 10 : 1) * ($hungerState?.moveMult ?? 1)
   )
-  let MOVEMENT_CONFIG = $derived<MovementConfig>({
-    ...DEFAULT_MOVEMENT_CONFIG,
-    maxSpeed: DEFAULT_MOVEMENT_CONFIG.maxSpeed * speedMult,
-    acceleration: DEFAULT_MOVEMENT_CONFIG.acceleration * speedMult,
-    deceleration: DEFAULT_MOVEMENT_CONFIG.deceleration * speedMult,
-  })
+  let clickSprinting = false
+  let startingClickMovement = false
+
+  function sprintAvailable(): boolean {
+    return ($hungerState?.satiation ?? 0) > SPRINT_MIN_SATIATION
+  }
+
+  function isSprintingNow(): boolean {
+    if (!sprintAvailable()) return false
+    if (
+      clickSprinting &&
+      (startingClickMovement || playerControlMachine?.stateName === 'moving')
+    )
+      return true
+    return inputHandler.isSprintPressed && inputHandler.hasKeysPressed
+  }
+
+  // Called per frame — cache the scaled config so steady movement reuses one
+  // object instead of allocating twice a frame.
+  let cachedMoveMult = 1
+  let cachedMoveConfig: MovementConfig = DEFAULT_MOVEMENT_CONFIG
+
+  function movementConfig(): MovementConfig {
+    const mult = speedMult * (isSprintingNow() ? SPRINT_SPEED_MULT : 1)
+    if (mult !== cachedMoveMult) {
+      cachedMoveMult = mult
+      cachedMoveConfig = scaleMovementConfig(DEFAULT_MOVEMENT_CONFIG, mult)
+    }
+    return cachedMoveConfig
+  }
 
   // Character rotation and current speed
   let playerRotation = $state(0)
@@ -340,6 +366,7 @@
   function stopMovement() {
     clearStandUpTimer()
     currentSpeed = 0
+    clickSprinting = false
     // Settle into idle BEFORE emitting: the projection derives 'moving' vs
     // 'idle' from the machine's owned state, so the transition must precede the
     // emit. Leaving the moving state also drops its target/movementState/path —
@@ -387,7 +414,13 @@
     lastSentPosition = wrappedPosition
     const floorLevel = wireFloorLevel()
     lastSentFloorLevel = floorLevel
-    networkManager.sendPlayerMove(wrappedPosition, rotation, floorLevel, append)
+    networkManager.sendPlayerMove(
+      wrappedPosition,
+      rotation,
+      floorLevel,
+      append,
+      isSprintingNow()
+    )
   }
 
   const keyboardMoveSender = createKeyboardMoveSender(sendPlayerMove)
@@ -476,6 +509,7 @@
       hasTorch: $localTorchEquipped || $torchLightEnabled,
       isInCombat: combatController.isInCombat,
       attackCounter: combatController.attackCounter,
+      isSprinting: isSprintingNow(),
     })
 
     // Only update if state actually changed
@@ -746,7 +780,7 @@
       pathWaypoints: m?.waypoints ?? [],
       currentWaypointIndex: m?.waypointIndex ?? 0,
       chaseGoal: m?.chaseGoal ?? null,
-      config: MOVEMENT_CONFIG,
+      config: movementConfig(),
       isInCombat: combatController.isInCombat,
       combatController,
       cooldownMs:
@@ -797,7 +831,7 @@
       hasMovementTarget: movingState() !== null,
       isInCombat: combatController.isInCombat,
       direction: inputHandler.getMovementDirection(),
-      config: MOVEMENT_CONFIG,
+      config: movementConfig(),
       deltaTimeSeconds: deltaTime / 1000,
       sampleHeight,
       isMovementBlocked,
@@ -932,18 +966,20 @@
 
   function handleClickToMove(
     clickPosition: Position,
-    options: { pickupAfterArrival?: number | null } = {}
+    options: { pickupAfterArrival?: number | null; sprinting?: boolean } = {}
   ) {
     // Any fresh movement cancels a pending prop break/open (breakProp/openProp
     // re-arm it after their own walk-up call below).
     dungeonManager.clearPendingBreak()
     dungeonManager.clearPendingOpen()
     const pickupAfterArrival = options.pickupAfterArrival ?? null
+    clickSprinting = options.sprinting === true && sprintAvailable()
 
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /
     // dungeonManager.startFloorAt), which differs from the clicked room's floor, so
     // the search traverses the stairs instead of being confined to one floor.
+    startingClickMovement = true
     runMoveRequest({
       clickPosition,
       pickupAfterArrival,
@@ -962,6 +998,8 @@
         options
       ),
     })
+    startingClickMovement = false
+    if (playerControlMachine.stateName !== 'moving') clickSprinting = false
   }
 
   function enterInteraction(
@@ -1259,9 +1297,9 @@
       },
       breakProp,
       openProp,
-      moveToGround: (position) => {
+      moveToGround: (position, sprinting) => {
         combatController.cancelCombat()
-        handleClickToMove(position)
+        handleClickToMove(position, { sprinting })
       },
       castFishing: (intent) => {
         if (!currentPlayer || currentPlayer.health <= 0) return

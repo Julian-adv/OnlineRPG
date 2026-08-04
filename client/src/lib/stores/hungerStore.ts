@@ -1,6 +1,9 @@
 import { writable } from 'svelte/store'
 
-export type HungerBand = 'Stuffed' | 'WellFed' | 'Hungry' | 'Weak'
+export type HungerBand = 'Normal' | 'Hungry' | 'Weak'
+
+/** Mirrors shared/src/hunger.rs NORMAL_MIN — the server denies sprint at or below it. */
+export const SPRINT_MIN_SATIATION = 300
 
 /** The local player's hunger, pushed by the server on transitions and eating
  *  (doc/HUNGER.md). `null` until the first HungerUpdate arrives. The

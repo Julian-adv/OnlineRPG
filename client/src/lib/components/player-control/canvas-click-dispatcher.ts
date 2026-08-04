@@ -35,7 +35,7 @@ export interface CanvasClickActions {
   breakProp(intent: BreakPropIntent): void
   /** Walk up to a clicked chest, opening it (lid animation) on arrival. */
   openProp(intent: OpenPropIntent): void
-  moveToGround(position: Position): void
+  moveToGround(position: Position, sprinting: boolean): void
   /** Stop, face the water, and cast the equipped rod (server validates). */
   castFishing(intent: CastFishingIntent): void
 }
@@ -86,7 +86,7 @@ export function dispatchCanvasClickIntent(
       actions.openProp(intent)
       return
     case 'move_to_ground':
-      actions.moveToGround(intent.position)
+      actions.moveToGround(intent.position, intent.sprinting)
       return
     case 'cast_fishing':
       actions.castFishing(intent)
