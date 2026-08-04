@@ -441,6 +441,19 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Reclaim buyback entries for characters who never trade again; trades
+    // filter expiry inline, so this only has to beat memory growth.
+    let game_state_for_buybacks = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "buyback expiry",
+        game_state::BUYBACK_SWEEP_PERIOD,
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_buybacks);
+            async move { game_state.tick_buyback_expiry().await }
+        },
+    ));
+
     // Evict terrain tiles idle for a full period so memory tracks the
     // live working set.
     let game_state_for_terrain_sweep = Arc::clone(&game_state);

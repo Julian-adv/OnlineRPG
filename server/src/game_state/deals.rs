@@ -94,6 +94,20 @@ pub(crate) struct DealKey {
     pub kind: DealKind,
 }
 
+fn deal_key(
+    player_id: &PlayerId,
+    merchant_name: &str,
+    item_def_id: &str,
+    kind: DealKind,
+) -> DealKey {
+    DealKey {
+        player_id: *player_id,
+        merchant_name: merchant_name.to_string(),
+        item_def_id: item_def_id.to_string(),
+        kind,
+    }
+}
+
 /// A granted, not-yet-redeemed deal. Single-use: redeeming one unit
 /// consumes it (its cost was already charged to the budgets at grant).
 #[derive(Debug, Clone)]
@@ -296,12 +310,7 @@ impl super::GameState {
             let mut deals = self.deals.write().await;
             deals.retain(|_, entry| entry.expires_at_ms > now_ms);
             deals.insert(
-                DealKey {
-                    player_id: *target_player_id,
-                    merchant_name: merchant_name.clone(),
-                    item_def_id: item_def_id.to_string(),
-                    kind,
-                },
+                deal_key(target_player_id, &merchant_name, item_def_id, kind),
                 DealEntry {
                     modifier_pct: applied,
                     expires_at_ms,
@@ -387,14 +396,53 @@ impl super::GameState {
         item_def_id: &str,
         kind: DealKind,
     ) -> Option<DealEntry> {
-        let key = DealKey {
-            player_id: *player_id,
-            merchant_name: merchant_name.to_string(),
-            item_def_id: item_def_id.to_string(),
-            kind,
-        };
-        let entry = self.deals.write().await.remove(&key)?;
-        (entry.expires_at_ms > Self::now_ms()).then_some(entry)
+        self.take_deals(player_id, merchant_name, kind, &[item_def_id])
+            .await
+            .pop()
+            .flatten()
+    }
+
+    /// Redeem the deals for a batch's lines, in order under one lock: a deal
+    /// is single-use, so only the first line touching a def gets one. An
+    /// expired entry is consumed rather than restored.
+    pub(crate) async fn take_deals(
+        &self,
+        player_id: &PlayerId,
+        merchant_name: &str,
+        kind: DealKind,
+        item_def_ids: &[&str],
+    ) -> Vec<Option<DealEntry>> {
+        let now_ms = Self::now_ms();
+        let mut deals = self.deals.write().await;
+        item_def_ids
+            .iter()
+            .map(|item_def_id| {
+                deals
+                    .remove(&deal_key(player_id, merchant_name, item_def_id, kind))
+                    .filter(|entry| entry.expires_at_ms > now_ms)
+            })
+            .collect()
+    }
+
+    /// Put back every deal a failed batch took, in one lock acquisition.
+    /// A batch that took none never touches the lock.
+    pub(crate) async fn restore_deals(
+        &self,
+        player_id: &PlayerId,
+        merchant_name: &str,
+        kind: DealKind,
+        taken: &[(&str, DealEntry)],
+    ) {
+        if taken.is_empty() {
+            return;
+        }
+        let mut deals = self.deals.write().await;
+        for (item_def_id, entry) in taken {
+            deals.insert(
+                deal_key(player_id, merchant_name, item_def_id, kind),
+                entry.clone(),
+            );
+        }
     }
 
     /// Put back a deal taken by `take_deal` after a failed trade.
@@ -408,13 +456,8 @@ impl super::GameState {
         entry: Option<DealEntry>,
     ) {
         let Some(entry) = entry else { return };
-        let key = DealKey {
-            player_id: *player_id,
-            merchant_name: merchant_name.to_string(),
-            item_def_id: item_def_id.to_string(),
-            kind,
-        };
-        self.deals.write().await.insert(key, entry);
+        self.restore_deals(player_id, merchant_name, kind, &[(item_def_id, entry)])
+            .await
     }
 
     /// Notify a player that a deal was consumed (or cleared).

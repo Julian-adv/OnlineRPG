@@ -182,7 +182,9 @@ impl super::GameState {
 
     /// D&D 5e carry weight: STR * 15, scaled by the hunger band
     /// (doc/HUNGER.md). Dropping below a cap only refuses new pickups and
-    /// purchases — it never blocks movement.
+    /// purchases — it never blocks movement. Reads `player_characters` and
+    /// `hunger`, which rank below `player_gold`/`inventories`: call it before
+    /// taking those, never under them.
     pub(super) async fn max_carry_weight(&self, player_id: &PlayerId) -> f32 {
         let base = {
             let chars = self.player_characters.read().await;

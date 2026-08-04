@@ -285,6 +285,165 @@ async fn buyback_items_batch_rejoins_one_stack() {
     assert_eq!(bag[0].quantity, 3);
 }
 
+/// An aborted batch must put back every deal it took — otherwise a failed
+/// trade silently burns the player's haggled discounts.
+#[tokio::test]
+async fn buy_items_batch_restores_every_deal_when_it_aborts() {
+    let game_state = make_test_game_state("batch_buy_deal_restore");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 100).await;
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("buyer"), PlayerInventory::default());
+    for item_def_id in ["wooden_shield", "dagger"] {
+        game_state
+            .offer_deal(
+                &pid("npc_rica"),
+                &pid("buyer"),
+                item_def_id,
+                DealKind::Buy,
+                -10,
+                "deal",
+            )
+            .await;
+        game_state.clear_deal_cooldowns_for_test().await;
+    }
+
+    // 100 copper buys neither line.
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("npc_rica"),
+            vec![
+                TradeLineItem {
+                    item_def_id: "wooden_shield".to_string(),
+                    qty: 1,
+                },
+                TradeLineItem {
+                    item_def_id: "dagger".to_string(),
+                    qty: 1,
+                },
+            ],
+        )
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 100);
+    assert!(game_state.inventories.read().await[&pid("buyer")]
+        .bag
+        .is_empty());
+    assert_eq!(
+        game_state
+            .active_deals_for(&pid("buyer"), "Rica")
+            .await
+            .len(),
+        2,
+        "both deals must survive the abort"
+    );
+}
+
+/// Within one batch a deal is redeemed by exactly one unit, and only the first
+/// line touching that def.
+#[tokio::test]
+async fn buy_items_batch_redeems_each_deal_once() {
+    let game_state = make_test_game_state("batch_buy_deal_once");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 30_000).await;
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("buyer"), PlayerInventory::default());
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "wooden_shield",
+            DealKind::Buy,
+            -10,
+            "deal",
+        )
+        .await;
+
+    // 3 shields at 2500: one at -10% (2250) plus two at full price.
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("npc_rica"),
+            vec![
+                TradeLineItem {
+                    item_def_id: "wooden_shield".to_string(),
+                    qty: 2,
+                },
+                TradeLineItem {
+                    item_def_id: "wooden_shield".to_string(),
+                    qty: 1,
+                },
+            ],
+        )
+        .await;
+
+    assert_eq!(
+        game_state.get_player_gold(&pid("buyer")).await,
+        30_000 - (2_250 + 2_500 + 2_500)
+    );
+    assert!(game_state
+        .active_deals_for(&pid("buyer"), "Rica")
+        .await
+        .is_empty());
+}
+
+/// Recording a whole batch at once must trim to `BUYBACK_CAP` exactly as the
+/// per-unit path did: oldest dropped first, order preserved.
+#[tokio::test]
+async fn sell_items_batch_keeps_only_the_newest_buyback_entries() {
+    let game_state = make_test_game_state("batch_buyback_cap");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    game_state.inventories.write().await.insert(
+        pid("buyer"),
+        PlayerInventory {
+            bag: vec![bag_item(7, "iron_sword", 8), bag_item(8, "dagger", 6)],
+            ..Default::default()
+        },
+    );
+
+    // 14 units in one call, cap 10: the 4 oldest (swords) fall off.
+    game_state
+        .sell_items(
+            &pid("buyer"),
+            &pid("npc_rica"),
+            vec![
+                BagLineItem {
+                    instance_id: 7,
+                    qty: 8,
+                },
+                BagLineItem {
+                    instance_id: 8,
+                    qty: 6,
+                },
+            ],
+        )
+        .await;
+
+    let buybacks = game_state.buybacks.read().await;
+    let list = &buybacks[&(1, "Rica".to_string())];
+    assert_eq!(list.len(), 10);
+    assert_eq!(
+        list.iter()
+            .filter(|s| s.entry.item_def_id == "iron_sword")
+            .count(),
+        4,
+        "the oldest four sword entries are the ones dropped"
+    );
+    assert_eq!(
+        list.iter()
+            .filter(|s| s.entry.item_def_id == "dagger")
+            .count(),
+        6
+    );
+    let ids: Vec<u64> = list.iter().map(|s| s.entry.entry_id).collect();
+    assert!(ids.windows(2).all(|w| w[0] < w[1]), "kept in sale order");
+}
+
 #[tokio::test]
 async fn buy_items_batch_notifies_the_merchant_once_per_unit() {
     let game_state = make_test_game_state("batch_buy_notices");

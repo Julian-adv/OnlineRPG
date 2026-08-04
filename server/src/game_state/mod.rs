@@ -14,6 +14,12 @@ pub struct StoredBuyback {
     pub entry: BuybackEntry,
     pub expires_at_ms: u64,
 }
+
+impl StoredBuyback {
+    pub fn is_live(&self, now_ms: u64) -> bool {
+        self.expires_at_ms > now_ms
+    }
+}
 use onlinerpg_shared::serialize_server_msg;
 use onlinerpg_shared::NoSpawnZone;
 use onlinerpg_shared::Position;
@@ -111,6 +117,7 @@ mod skills;
 pub(crate) use skills::skills_from_rows;
 mod time;
 mod trading;
+pub use trading::BUYBACK_SWEEP_PERIOD;
 
 #[cfg(test)]
 mod tests;
@@ -261,9 +268,9 @@ pub struct GameState {
     /// that merchant, repurchasable at the recorded payout. Keyed by
     /// character (not the per-session player id) so the list survives a
     /// reconnect. Capped per pair (oldest dropped) and in-memory only.
-    /// Entries expire after `BUYBACK_TTL_MS`; `sweep_buybacks` drops them
-    /// along with pairs left empty, so the map stays bounded on a long
-    /// uptime — nothing else ever removes a key.
+    /// Entries expire after `BUYBACK_TTL_MS`; reads filter expiry inline and
+    /// `tick_buyback_expiry` drops them along with pairs left empty, so the
+    /// map stays bounded on a long uptime — nothing else ever removes a key.
     #[allow(clippy::type_complexity)]
     buybacks: Arc<RwLock<HashMap<(i64, String), Vec<StoredBuyback>>>>,
     /// player_id → character names whose chat/whispers this player never
