@@ -168,10 +168,10 @@ impl super::GameState {
         &self,
         mover_id: &PlayerId,
         monster_id: String,
-        new_position: Position,
+        mut new_position: Position,
         rotation: f32,
         state: MonsterState,
-        target_position: Position,
+        mut target_position: Position,
     ) {
         let now = Self::now_ms();
         let (old_position, owner_id, monster) = {
@@ -189,6 +189,11 @@ impl super::GameState {
                 self.send_direct_message(mover_id, correction).await;
                 return;
             }
+            // Store canonical X like player moves do; the budget and sweep
+            // below are already periodic. See the regression test for what a
+            // non-canonical stored X costs.
+            new_position = new_position.wrapped_x();
+            target_position = target_position.wrapped_x();
             // Rate-limit client-reported movement with a token bucket that
             // refills at the monster's run speed. Movement is simulated by the
             // owning client, so without this an owner could teleport the monster
@@ -466,6 +471,10 @@ impl super::GameState {
     /// configured ambient type, sit outside every no-spawn zone, and be within
     /// range of the requesting player. Terrain checks (grassland, water) are
     /// the client's responsibility — the server has no terrain data.
+    ///
+    /// Returns the position to store: the request with X wrapped into the
+    /// canonical range, so validation and authoritative state share one
+    /// representation.
     pub async fn validate_spawn_request(
         &self,
         player_id: &PlayerId,
