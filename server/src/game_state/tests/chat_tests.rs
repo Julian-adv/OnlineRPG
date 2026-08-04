@@ -404,6 +404,55 @@ async fn blocked_senders_whisper_is_suppressed_but_still_echoed() {
 }
 
 #[tokio::test]
+async fn blocked_sender_does_not_become_the_reply_target() {
+    let game_state = make_test_game_state("block_reply_target");
+    let auth = make_test_auth("block_reply_target");
+    let sender_id = pid("sender");
+    let blocker_id = pid("blocker");
+    let friend_id = pid("friend");
+    game_state.add_player(make_player("sender", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("blocker", 5.0, 0.0))
+        .await;
+    game_state.add_player(make_player("friend", 9.0, 0.0)).await;
+
+    let mut sender_rx = game_state.register_direct_channel(&sender_id).await;
+    let mut blocker_rx = game_state.register_direct_channel(&blocker_id).await;
+    let mut friend_rx = game_state.register_direct_channel(&friend_id).await;
+
+    game_state
+        .set_player_blocks(&blocker_id, vec!["sender".to_string()])
+        .await;
+    game_state
+        .send_chat_message(&friend_id, "/w blocker hey".to_string(), &auth)
+        .await;
+    while blocker_rx.try_recv().is_ok() {}
+    while friend_rx.try_recv().is_ok() {}
+
+    game_state
+        .send_chat_message(&sender_id, "/w blocker psst".to_string(), &auth)
+        .await;
+    while sender_rx.try_recv().is_ok() {}
+
+    // The suppressed whisper must leave the blocker's /r aimed at the friend.
+    game_state
+        .send_chat_message(&blocker_id, "/r still you".to_string(), &auth)
+        .await;
+    match friend_rx.try_recv() {
+        Ok(ServerMessage::WhisperMessage { from, to, message }) => {
+            assert_eq!(from, "blocker");
+            assert_eq!(to, "friend");
+            assert_eq!(message, "still you");
+        }
+        other => panic!("Reply must still go to the friend, got {:?}", other),
+    }
+    match sender_rx.try_recv() {
+        Err(MpscTryRecvError::Empty) => {}
+        other => panic!("Reply must not reach the blocked sender, got {:?}", other),
+    }
+}
+
+#[tokio::test]
 async fn block_command_persists_resolves_case_and_unblocks() {
     let auth = make_test_auth("block_command_flow");
     let account = auth.login_npc("npc_block_cmd_test").unwrap();
