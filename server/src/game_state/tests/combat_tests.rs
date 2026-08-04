@@ -264,25 +264,26 @@ async fn non_finite_spawn_request_is_rejected() {
         y: 0.5,
         z: 22.0,
     };
-    assert!(
-        game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await
-    );
+    assert!(game_state
+        .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
+        .await
+        .is_some());
 
     for (label, position) in non_finite_positions(valid) {
         assert!(
-            !game_state
+            game_state
                 .validate_spawn_request(&player_id, "goblin", &position, 1.5)
-                .await,
+                .await
+                .is_none(),
             "position {label}"
         );
     }
     for (rotation, value_name) in NON_FINITE {
         assert!(
-            !game_state
+            game_state
                 .validate_spawn_request(&player_id, "goblin", &valid, rotation)
-                .await,
+                .await
+                .is_none(),
             "rotation {value_name}"
         );
     }
@@ -343,6 +344,74 @@ async fn ambient_spawn_allowance_is_bounded_and_expires() {
         .await
         .keys()
         .all(|(owner_id, _)| owner_id != &player_id));
+}
+
+#[tokio::test]
+async fn wrapped_spawn_cannot_bypass_no_spawn_zone() {
+    let zone = onlinerpg_shared::NoSpawnZone {
+        min_x: -1.0,
+        min_z: -1.0,
+        max_x: 1.0,
+        max_z: 1.0,
+    };
+    let game_state = make_game_state_with_zones(
+        "wrapped_spawn_zone",
+        SplitWorldTiles,
+        SeaOnlyWater,
+        vec![zone],
+    );
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 0.0, 0.0))
+        .await;
+    let wrapped_zone_position = Position {
+        x: onlinerpg_shared::WORLD_WIDTH_X,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    assert!(game_state
+        .validate_spawn_request(&player_id, "goblin", &wrapped_zone_position, 0.0)
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn ambient_spawn_stores_canonical_world_x() {
+    let game_state = make_test_game_state("canonical_spawn_position");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 1.0, 0.0))
+        .await;
+    let raw_position = Position {
+        x: onlinerpg_shared::WORLD_WIDTH_X * 2.0 + 1.0,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    let position = game_state
+        .validate_spawn_request(&player_id, "goblin", &raw_position, 0.0)
+        .await
+        .expect("the periodic position is in range");
+    assert_eq!(position.x, 1.0);
+
+    let monster = game_state
+        .spawn_monster(
+            "goblin".to_string(),
+            position,
+            0.0,
+            Some(player_id),
+            0,
+            None,
+            false,
+        )
+        .await
+        .expect("spawn should fit the test cap");
+    assert_eq!(monster.position.x, 1.0);
+    assert_eq!(
+        game_state.monsters.read().await[&monster.id].position.x,
+        1.0
+    );
 }
 
 /// A client-owned monster is still untrusted movement. Staying within the
