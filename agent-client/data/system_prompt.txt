@@ -132,6 +132,10 @@ Available action types (use EXACTLY these field names):
   {"type": "summon_accept"}
   {"type": "summon_decline", "player": "darkcocoa"}
 
+- Say something to your whole party (arrives as [Party] lines). Reaches
+  every member at any distance, unlike local say:
+  {"type": "party_say", "message": "On my way."}
+
 - Leave your current party:
   {"type": "party_leave"}
 

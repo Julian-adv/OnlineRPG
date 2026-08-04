@@ -14,3 +14,8 @@ export function whisperChatEntry(
     name: outgoing ? `To ${to}` : `From ${from}`,
   }
 }
+
+/** Party lines carry the sender's name as-is; the panel adds the [Party] tag. */
+export function partyChatEntry(from: string, message: string): ChatEntry {
+  return { text: message, sender: 'party', name: from }
+}

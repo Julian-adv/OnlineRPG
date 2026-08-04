@@ -168,6 +168,14 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             }
             Some(format!("[Whisper] {from}: {message}"))
         }
+        ServerMessage::PartyChatMessage { from, message } => {
+            // Skip the echo of our own outgoing party line.
+            let self_name = state.self_player.as_ref().map(|p| p.name.as_str());
+            if Some(from.as_str()) == self_name {
+                return None;
+            }
+            Some(format!("[Party] {from}: {message}"))
+        }
         ServerMessage::SystemMessage { message } => Some(format!("[System] {message}")),
         ServerMessage::InteractionRejected { reason } => {
             Some(format!("[InteractionRejected] {reason}"))

@@ -1586,6 +1586,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PartyChat { message } => {
+            if let Some(id) = &state.player_id {
+                game_state.send_party_chat(id, message).await;
+            }
+        }
+
         ClientMessage::RequestPartyPositions => {
             if let Some(id) = state.player_id {
                 if state.party_positions_poll_due() {

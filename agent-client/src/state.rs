@@ -906,6 +906,16 @@ impl SharedState {
                     EventUrgency::Urgent
                 }
             }
+            // Party chat is addressed to our group, so it wakes us like a
+            // whisper; the own-echo Noise rule is the same.
+            ServerMessage::PartyChatMessage { from, .. } => {
+                let self_name = self.self_player.as_ref().map(|p| p.name.as_str());
+                if Some(from.as_str()) == self_name {
+                    EventUrgency::Noise
+                } else {
+                    EventUrgency::Urgent
+                }
+            }
             // Routine: feedback on our own command (/who output, whisper
             // errors) — worth seeing, not worth an immediate wakeup.
             ServerMessage::SystemMessage { .. } => EventUrgency::Routine,

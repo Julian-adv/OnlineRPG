@@ -120,6 +120,12 @@ pub(super) enum AgentAction {
     /// Leave your current party.
     #[serde(rename = "party_leave", alias = "leave_party")]
     PartyLeave,
+    /// Say something to your party, wherever its members are.
+    #[serde(rename = "party_say", alias = "party_chat")]
+    PartySay {
+        #[serde(alias = "text")]
+        message: String,
+    },
     /// Use an item from the bag: gear is equipped (or taken off if already
     /// worn), consumables are drunk, eaten or read. Mirrors the web quickslot.
     #[serde(rename = "use", alias = "use_item", alias = "equip", alias = "eat")]
@@ -395,6 +401,9 @@ pub(super) fn action_to_command(
             target_name: player.clone(),
         }),
         AgentAction::PartyLeave => Some(ClientMessage::PartyLeave),
+        AgentAction::PartySay { message } => Some(ClientMessage::PartyChat {
+            message: message.clone(),
+        }),
         // Answering needs the stored invite; handled in
         // `execute::handle_response`.
         AgentAction::PartyAccept { .. }

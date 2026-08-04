@@ -2,6 +2,8 @@
   import { untrack } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { gameStore } from '../stores/gameStore'
+  import { partyRoster } from '../stores/partyStore'
+  import { chatChannel, shouldRevertToSay } from '../stores/chatChannelStore'
   import { networkManager } from '../network/socket'
   import { handleCommand, visibleCommandNames } from '../chat-commands'
   import { chatInputKeyIntent } from '../chat-input-keys'
@@ -16,13 +18,37 @@
     isTranslatorApiSupported,
   } from '../translation/chatTranslator'
 
-  type Tab = 'say' | 'combat'
+  type Tab = 'say' | 'party' | 'combat'
   const TRANSCRIPT_FADE_DELAY_MS = 20_000
 
   let activeTab = $state<Tab>('say')
   let chatMessages = $derived($gameStore.chatMessages)
+  // The Chat tab shows everything; this tab isolates the party channel plus
+  // the party/summon system lines (join, leave, disband, calls).
+  let partyMessages = $derived(
+    $gameStore.chatMessages.filter(
+      (e) =>
+        e.sender === 'party' ||
+        (e.sender === 'system' &&
+          (e.text.startsWith('Party:') || e.text.startsWith('Summon:')))
+    )
+  )
   let combatMessages = $derived($gameStore.combatMessages)
   let isConnected = $derived($gameStore.isConnected)
+  let inParty = $derived($partyRoster !== null)
+
+  // Party chat is sticky (a /p holds until /s). Losing the party reverts
+  // the input to say only once the draft is empty: silently retargeting a
+  // half-typed party line at public chat would leak it to everyone nearby.
+  $effect(() => {
+    if (shouldRevertToSay(inParty, $chatChannel, messageInput)) {
+      chatChannel.set('say')
+    }
+  })
+
+  function toggleChannel() {
+    chatChannel.set($chatChannel === 'party' ? 'say' : 'party')
+  }
 
   // Translated text per message id, for the active target language only —
   // cleared and retranslated from scratch whenever the target changes. Source
@@ -114,7 +140,11 @@
   // and coalesce bursts: a run of combat messages costs one flush, not one each.
   $effect(() => {
     const len =
-      activeTab === 'say' ? chatMessages.length : combatMessages.length
+      activeTab === 'say'
+        ? chatMessages.length
+        : activeTab === 'party'
+          ? partyMessages.length
+          : combatMessages.length
     if (!chatContainer || !len || scrollFrame !== undefined) return
     scrollFrame = requestAnimationFrame(() => {
       scrollFrame = undefined
@@ -131,6 +161,7 @@
 
   $effect(() => {
     void chatMessages.length
+    void partyMessages.length
     void combatMessages.length
     void activeTab
     void interacting
@@ -156,7 +187,11 @@
       return
     }
     if (isConnected) {
-      networkManager.sendChatMessage(trimmed)
+      if ($chatChannel === 'party' && !trimmed.startsWith('/')) {
+        networkManager.sendPartyChat(trimmed)
+      } else {
+        networkManager.sendChatMessage(trimmed)
+      }
       messageInput = ''
     }
   }
@@ -200,11 +235,17 @@
     }
   }
 
+  // Typed lines are invisible on the Combat tab, so focusing the input hops
+  // off it; Chat and Party both show them and keep their place.
+  function leaveCombatTab() {
+    if (activeTab === 'combat') activeTab = 'say'
+  }
+
   function handleGlobalKeydown(event: KeyboardEvent) {
     if (event.isComposing || event.keyCode === 229) return
     if (event.key === 'Enter' && document.activeElement !== chatInput) {
       event.preventDefault()
-      activeTab = 'say'
+      leaveCombatTab()
       chatInput?.focus()
     }
   }
@@ -221,10 +262,16 @@
 
   let chatInput = $state<HTMLInputElement>()
 
-  // NPC "Talk" action (click or context menu) asks for input focus.
+  // NPC "Talk" action (click or context menu) asks for input focus. The
+  // counter is consumed, not tested: a stale value must not steal focus on
+  // remount (world re-entry, map-editor toggle). The untrack matters too —
+  // leaveCombatTab reads activeTab, and tracking it here would rerun this
+  // effect on every tab click, bouncing the tab back.
+  let seenFocusRequest = $chatFocusRequest
   $effect(() => {
-    if ($chatFocusRequest > 0) {
-      activeTab = 'say'
+    if ($chatFocusRequest > seenFocusRequest) {
+      seenFocusRequest = $chatFocusRequest
+      untrack(() => leaveCombatTab())
       chatInput?.focus()
     }
   })
@@ -249,6 +296,13 @@
       Chat
     </button>
     <button
+      class="tab tab-party"
+      class:active={activeTab === 'party'}
+      onclick={() => (activeTab = 'party')}
+    >
+      Party
+    </button>
+    <button
       class="tab"
       class:active={activeTab === 'combat'}
       onclick={() => (activeTab = 'combat')}
@@ -258,7 +312,7 @@
   </div>
 
   <div class="chat-body">
-    {#if isTranslatorApiSupported() && activeTab === 'say'}
+    {#if isTranslatorApiSupported() && activeTab !== 'combat'}
       <select
         class="translate-lang-select"
         value={$translationEnabled ? $translationTargetLanguage : TRANSLATE_OFF}
@@ -271,24 +325,39 @@
         {/each}
       </select>
     {/if}
+    {#snippet chatRow(entry: (typeof chatMessages)[number])}
+      <div
+        class="message"
+        class:whisper={entry.sender === 'whisper'}
+        class:party={entry.sender === 'party'}
+      >
+        {#if entry.name}
+          {#if entry.sender === 'party'}
+            <span class="party-tag">[Party]</span>
+          {/if}
+          <span
+            class="name"
+            class:local={entry.sender === 'local'}
+            class:remote={entry.sender === 'remote'}>{entry.name}:</span
+          >
+          {displayText(entry)}
+        {:else}
+          <span class="system">{displayText(entry)}</span>
+        {/if}
+        {#if isTranslating(entry)}
+          <span class="translating-hint">translating…</span>
+        {/if}
+      </div>
+    {/snippet}
+
     <div class="chat-messages" bind:this={chatContainer} role="log">
       {#if activeTab === 'say'}
         {#each chatMessages as entry (entry.id)}
-          <div class="message" class:whisper={entry.sender === 'whisper'}>
-            {#if entry.name}
-              <span
-                class="name"
-                class:local={entry.sender === 'local'}
-                class:remote={entry.sender === 'remote'}>{entry.name}:</span
-              >
-              {displayText(entry)}
-            {:else}
-              <span class="system">{displayText(entry)}</span>
-            {/if}
-            {#if isTranslating(entry)}
-              <span class="translating-hint">translating…</span>
-            {/if}
-          </div>
+          {@render chatRow(entry)}
+        {/each}
+      {:else if activeTab === 'party'}
+        {#each partyMessages as entry (entry.id)}
+          {@render chatRow(entry)}
         {/each}
       {:else}
         {#each combatMessages as entry (entry.id)}
@@ -313,6 +382,17 @@
   </div>
 
   <div class="chat-input" class:disconnected={!isConnected}>
+    <button
+      class="channel-btn"
+      class:party={$chatChannel === 'party'}
+      disabled={!inParty}
+      onclick={toggleChannel}
+      title={inParty
+        ? 'Switch between party and normal chat (/p and /s)'
+        : 'Join a party to use party chat'}
+    >
+      {$chatChannel === 'party' ? 'Party' : 'Say'}
+    </button>
     <div class="input-wrap">
       {#if commandGhost}
         <div class="input-ghost" aria-hidden="true">
@@ -328,17 +408,20 @@
         onkeydown={handleKeyDown}
         onfocus={() => {
           inputFocused = true
-          activeTab = 'say'
+          leaveCombatTab()
         }}
         onblur={() => {
           inputFocused = false
           restoreViewportAfterKeyboard()
         }}
-        placeholder="Type a message... (/help for commands)"
+        placeholder={$chatChannel === 'party'
+          ? 'Message your party...'
+          : 'Type a message... (/help for commands)'}
         disabled={!isConnected}
       />
     </div>
     <button
+      class="send-btn"
       onclick={sendMessage}
       disabled={!isConnected || !messageInput.trim()}
     >
@@ -491,6 +574,22 @@
     font-weight: 600;
   }
 
+  /* Party channel: the PartyPanel's blue, distinct from local green, remote
+     yellow, whisper purple, combat orange and system grey. */
+  .message.party {
+    color: #a8d1ff;
+  }
+
+  .message.party .name {
+    color: #7ec8ff;
+    font-weight: 600;
+  }
+
+  .party-tag {
+    color: #7ec8ff;
+    font-weight: 700;
+  }
+
   .message.combat {
     color: #f6ad55;
   }
@@ -513,6 +612,38 @@
 
   .chat-input.disconnected {
     background: #742a2a;
+  }
+
+  /* The channel toggle doubles as the mode light: grey says local, party
+     blue says the next line goes to the party. */
+  .channel-btn {
+    margin: 2px 0 2px 2px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 4px;
+    background: #2d3748;
+    color: #9fb2c3;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    flex: none;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .channel-btn.party {
+    background: #2b6cb0;
+    color: #e6f2ff;
+  }
+
+  .channel-btn:hover:not(:disabled) {
+    color: #ffffff;
+  }
+
+  .channel-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .input-wrap {
@@ -589,7 +720,7 @@
     cursor: pointer;
   }
 
-  .chat-input button {
+  .send-btn {
     margin: 2px;
     padding: 8px 15px;
     border: none;
@@ -601,11 +732,11 @@
     transition: background-color 0.2s;
   }
 
-  .chat-input button:hover:not(:disabled) {
+  .send-btn:hover:not(:disabled) {
     background: #3182ce;
   }
 
-  .chat-input button:disabled {
+  .send-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -669,10 +800,16 @@
       font-size: 12px;
     }
 
-    .chat-input button {
+    .send-btn {
       margin: 2px;
       padding: 4px 8px;
       font-size: 11px;
+    }
+
+    .channel-btn {
+      margin: 2px 0 2px 2px;
+      padding: 4px 6px;
+      font-size: 10px;
     }
 
     .translate-lang-select {
