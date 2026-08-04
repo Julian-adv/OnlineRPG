@@ -1,5 +1,5 @@
 use super::auth_db;
-use crate::auth::{unix_now, AccountBan, AuthService};
+use crate::auth::{ban_message, unix_now, AuthService, DEFAULT_BAN_REASON};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use std::collections::HashMap;
@@ -58,6 +58,15 @@ impl OnlineCounts {
 
 /// `message` is `prefix` as a whole slash-command word; returns the trimmed
 /// remainder.
+/// `<name> [minutes]` tail shared by `/ban` and `/mute`; both leave the
+/// duration unvalidated so a bad one draws a usage reply.
+fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
+    match rest.split_once(' ') {
+        Some((name, minutes)) => (name, Some(minutes.trim())),
+        None => (rest, None),
+    }
+}
+
 fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = message.trim().strip_prefix(prefix)?;
     (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
@@ -150,17 +159,11 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
         return Some(AdminCommand::Unban(rest));
     }
     if let Some(rest) = strip_command(message, "/ban") {
-        let (name, minutes) = match rest.split_once(' ') {
-            Some((name, minutes)) => (name, Some(minutes.trim())),
-            None => (rest, None),
-        };
+        let (name, minutes) = split_name_and_minutes(rest);
         return Some(AdminCommand::Ban { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/mute") {
-        let (name, minutes) = match rest.split_once(' ') {
-            Some((name, minutes)) => (name, Some(minutes.trim())),
-            None => (rest, None),
-        };
+        let (name, minutes) = split_name_and_minutes(rest);
         return Some(AdminCommand::Mute { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/summon") {
@@ -652,15 +655,9 @@ impl super::GameState {
         let (canonical, account) = {
             let auth = auth.clone();
             let query = name.to_string();
-            match auth_db(move || {
-                let canonical = auth.resolve_character_name(&query)?;
-                let account = auth.account_of_character(&query)?;
-                Ok((canonical, account))
-            })
-            .await
-            {
-                Ok((Some(canonical), Some(account))) => (canonical, account),
-                Ok(_) => return Err(format!("Ban: no character named {name}.")),
+            match auth_db(move || auth.account_of_character(&query)).await {
+                Ok(Some(found)) => found,
+                Ok(None) => return Err(format!("Ban: no character named {name}.")),
                 Err(err) => {
                     error!("Ban lookup failed: {err}");
                     return Err("Ban: could not read the character.".to_string());
@@ -680,21 +677,16 @@ impl super::GameState {
         }
 
         let until_unix = minutes.map(|m| unix_now() + m * 60);
-        let ban = AccountBan {
-            reason: Some("Banned by an operator".to_string()),
-            until_unix,
-        };
 
-        // Held across the write and the eviction, and taken by the login path
-        // around its own ban check: without that, a login landing in between
-        // is admitted and its session is not yet visible here to evict.
+        // Held across the write and the eviction; the login path takes it
+        // around its own ban check. See `finish_auth`.
         let _sessions = self.lock_character_sessions().await;
         {
             let auth = auth.clone();
             let account = account.clone();
-            let reason = ban.reason.clone();
             if let Err(err) =
-                auth_db(move || auth.ban_account(&account, reason.as_deref(), until_unix)).await
+                auth_db(move || auth.ban_account(&account, Some(DEFAULT_BAN_REASON), until_unix))
+                    .await
             {
                 error!("Ban write failed: {err}");
                 return Err("Ban: could not record the ban.".to_string());
@@ -702,9 +694,8 @@ impl super::GameState {
         }
         info!(admin = ?admin_id, target = %canonical, ?minutes, "admin ban");
 
-        // Keyed by account, so this also lands on an alt and on a session that
-        // has not entered the game yet. The message carries the remaining time.
-        self.evict_account_session_locked(&account, &ban.message(), auth)
+        let kicked_with = ban_message(Some(DEFAULT_BAN_REASON), until_unix);
+        self.evict_account_session_locked(&account, &kicked_with, auth)
             .await;
 
         Ok(match minutes {
@@ -724,7 +715,7 @@ impl super::GameState {
         let auth_for_lookup = auth.clone();
         let query = name.to_string();
         let account = match auth_db(move || auth_for_lookup.account_of_character(&query)).await {
-            Ok(Some(account)) => account,
+            Ok(Some((_, account))) => account,
             Ok(None) => name.to_string(),
             Err(err) => {
                 error!("Unban lookup failed: {err}");

@@ -679,13 +679,13 @@ fn admin_command_parses_actions() {
     assert_eq!(parse_admin_command("/kick"), Some(AdminCommand::Kick("")));
 }
 
-/// The gap review found: the ban is stored per account, so eviction has to be
-/// per account too. A session playing an alt — or sitting at character select
-/// with no character at all — must still be closed.
+/// The ban is stored per account, so eviction has to be per account too. A
+/// session playing an alt — or sitting at character select with no character
+/// at all — must still be closed.
 #[tokio::test]
 async fn ban_evicts_the_account_session_playing_any_character() {
     let game_state = make_test_game_state("admin_ban_alt");
-    let (auth, _db) = make_test_auth_with_path("admin_ban_alt");
+    let auth = make_test_auth("admin_ban_alt");
     let admin_id = pid("admin");
     let alt_id = pid("Bob");
     game_state.add_player(make_player("admin", 0.0, 0.0)).await;
@@ -694,17 +694,8 @@ async fn ban_evicts_the_account_session_playing_any_character() {
 
     // One account owning two characters; only the alt is online.
     let account = auth.login_npc("npc_ban_alt").unwrap();
-    let attributes = test_attributes();
     for name in ["Alice", "Bob"] {
-        auth.create_character(
-            &account,
-            name,
-            &attributes,
-            16,
-            CharacterClass::Knight,
-            Gender::Male,
-        )
-        .unwrap();
+        create_test_character(&auth, &account, name);
     }
     let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = game_state
@@ -746,21 +737,13 @@ async fn ban_evicts_the_account_session_playing_any_character() {
 #[tokio::test]
 async fn ban_evicts_a_session_still_at_character_select() {
     let game_state = make_test_game_state("admin_ban_select");
-    let (auth, _db) = make_test_auth_with_path("admin_ban_select");
+    let auth = make_test_auth("admin_ban_select");
     let admin_id = pid("admin");
     game_state.add_player(make_player("admin", 0.0, 0.0)).await;
     let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
 
     let account = auth.login_npc("npc_ban_select").unwrap();
-    auth.create_character(
-        &account,
-        "Idler",
-        &test_attributes(),
-        16,
-        CharacterClass::Knight,
-        Gender::Male,
-    )
-    .unwrap();
+    create_test_character(&auth, &account, "Idler");
     let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = game_state
         .register_account_session(&account, kick_tx, &auth)
@@ -788,21 +771,13 @@ async fn ban_evicts_a_session_still_at_character_select() {
 #[tokio::test]
 async fn ban_refuses_an_operators_own_alt() {
     let game_state = make_test_game_state("admin_ban_self");
-    let (auth, _db) = make_test_auth_with_path("admin_ban_self");
+    let auth = make_test_auth("admin_ban_self");
     let admin_id = pid("admin");
     game_state.add_player(make_player("admin", 0.0, 0.0)).await;
     let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
 
     let account = auth.login_npc("npc_ban_self").unwrap();
-    auth.create_character(
-        &account,
-        "AdminAlt",
-        &test_attributes(),
-        16,
-        CharacterClass::Knight,
-        Gender::Male,
-    )
-    .unwrap();
+    create_test_character(&auth, &account, "AdminAlt");
     let (kick_tx, _kick_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = game_state
         .register_account_session(&account, kick_tx, &auth)

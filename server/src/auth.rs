@@ -72,15 +72,21 @@ pub struct AccountBan {
 }
 
 impl AccountBan {
-    /// Client-facing text, so a kicked player learns why and for how long.
     pub fn message(&self) -> String {
-        let reason = self.reason.as_deref().unwrap_or("Banned by an operator");
-        match self.until_unix {
-            None => reason.to_string(),
-            Some(until) => {
-                let minutes = ((until - unix_now()).max(0) + 59) / 60;
-                format!("{reason} ({minutes} minute(s) remaining)")
-            }
+        ban_message(self.reason.as_deref(), self.until_unix)
+    }
+}
+
+pub const DEFAULT_BAN_REASON: &str = "Banned by an operator";
+
+/// Client-facing text, so a kicked player learns why and for how long.
+pub fn ban_message(reason: Option<&str>, until_unix: Option<i64>) -> String {
+    let reason = reason.unwrap_or(DEFAULT_BAN_REASON);
+    match until_unix {
+        None => reason.to_string(),
+        Some(until) => {
+            let minutes = ((until - unix_now()).max(0) as u64).div_ceil(60);
+            format!("{reason} ({minutes} minute(s) remaining)")
         }
     }
 }
@@ -515,6 +521,20 @@ impl AuthService {
     /// `world_time`) rather than wall time because the chest refills at
     /// nightfall; keeping the raw timestamp instead of a derived night index
     /// leaves the refill rule free to change later.
+    fn ensure_dungeon_chest_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_dungeon_chests (
+                character_id INTEGER NOT NULL,
+                entrance_id TEXT NOT NULL,
+                opened_game_seconds INTEGER NOT NULL,
+                PRIMARY KEY (character_id, entrance_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
     /// Bans key on the account, not the character: a banned player can delete
     /// and recreate characters, but the Google subject stays put. `until_unix`
     /// is NULL for a permanent ban and an epoch second for a timed one —
@@ -527,20 +547,6 @@ impl AuthService {
                 until_unix INTEGER,
                 banned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
                 FOREIGN KEY (account_name) REFERENCES accounts(player_name) ON DELETE CASCADE
-            )",
-            [],
-        )?;
-        Ok(())
-    }
-
-    fn ensure_dungeon_chest_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS character_dungeon_chests (
-                character_id INTEGER NOT NULL,
-                entrance_id TEXT NOT NULL,
-                opened_game_seconds INTEGER NOT NULL,
-                PRIMARY KEY (character_id, entrance_id),
-                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
             [],
         )?;
@@ -810,16 +816,20 @@ impl AuthService {
         Ok(())
     }
 
-    /// Account that owns a character, matched ignoring ASCII case like the
-    /// other name lookups. `None` when no such character exists.
-    pub fn account_of_character(&self, character_name: &str) -> Result<Option<String>, AuthError> {
+    /// Canonical name and owning account for a character, matched ignoring
+    /// ASCII case like the other name lookups. `None` when no such character
+    /// exists.
+    pub fn account_of_character(
+        &self,
+        character_name: &str,
+    ) -> Result<Option<(String, String)>, AuthError> {
         let conn = self.open_connection()?;
         let found = conn
             .query_row(
-                "SELECT account_name FROM characters
+                "SELECT character_name, account_name FROM characters
                  WHERE character_name = ?1 COLLATE NOCASE",
                 params![character_name],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         Ok(found)
@@ -1308,8 +1318,8 @@ mod tests {
 
         // An operator types a character name; the ban lands on the account.
         assert_eq!(
-            auth.account_of_character("ruffian").unwrap().as_deref(),
-            Some(account.as_str()),
+            auth.account_of_character("ruffian").unwrap(),
+            Some(("Ruffian".to_string(), account.clone())),
             "resolved ignoring case, like every other name lookup"
         );
         assert!(auth.active_ban(&account).unwrap().is_none());

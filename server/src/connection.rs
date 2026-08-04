@@ -573,16 +573,18 @@ async fn finish_auth(
 
     let (kick_tx, kick_rx) = mpsc::unbounded_channel();
 
-    // The single gate both login paths pass through: a ban has to stop the
-    // session here, not at character select, because the account carries it.
-    //
-    // Checked while holding the session lock that `/ban` also takes, and
-    // registering through the locked variant so the two cannot interleave —
-    // otherwise a ban landing between check and registration would admit this
-    // session and find nothing to evict.
+    // The single gate both login paths pass through: a ban stops the session
+    // here, not at character select, because the account carries it. Checked
+    // and registered under the one lock `/ban` also takes, so a ban landing
+    // in between cannot admit a session it can no longer see to evict.
     let account_session_id = {
         let _sessions = game_state.lock_character_sessions().await;
-        match auth_service.active_ban(&account_name) {
+        let ban = {
+            let auth = auth_service.clone();
+            let account = account_name.clone();
+            crate::game_state::auth_db(move || auth.active_ban(&account)).await
+        };
+        match ban {
             Ok(Some(ban)) => {
                 info!("Rejected banned account '{}'", account_name);
                 return vec![ServerMessage::AuthError {

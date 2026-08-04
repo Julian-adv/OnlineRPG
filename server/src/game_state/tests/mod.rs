@@ -268,19 +268,6 @@ pub(crate) fn make_test_game_state(test_name: &str) -> GameState {
     make_game_state_with(test_name, SplitWorldTiles, SeaOnlyWater)
 }
 
-/// Middling attributes for tests that only need a character row to exist.
-fn test_attributes() -> onlinerpg_shared::CharacterAttributes {
-    onlinerpg_shared::CharacterAttributes {
-        r#str: 12,
-        dex: 12,
-        con: 12,
-        int: 12,
-        wis: 12,
-        cha: 12,
-        guard: 10,
-    }
-}
-
 /// Temp-file AuthService for tests whose paths touch the auth DB.
 pub(crate) fn make_test_auth(test_name: &str) -> crate::auth::AuthService {
     make_test_auth_with_path(test_name).0

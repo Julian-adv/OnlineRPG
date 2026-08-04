@@ -489,24 +489,18 @@ impl super::GameState {
     /// keeps the disconnect path from cleaning up a second time.
     pub(crate) async fn kick_player(&self, player_id: &PlayerId, reason: &str, auth: &AuthService) {
         let _sessions = self.character_session_lock.lock().await;
-        let session = {
-            let mut sessions = self.account_sessions.write().await;
-            let key = sessions.iter().find_map(|(key, session)| {
-                (session.player_id == Some(*player_id)).then(|| key.clone())
-            });
-            key.and_then(|key| sessions.remove(&key))
-        };
-        if let Some(session) = session {
-            let _ = session.kick_tx.send(ServerMessage::Kicked {
-                player_id: *player_id,
-                reason: reason.to_string(),
-            });
+        match self.account_of_player(player_id).await {
+            Some(account) => {
+                self.evict_account_session_locked(&account, reason, auth)
+                    .await
+            }
+            // No session row to close, but per-player state still has to go.
+            None => self.cleanup_player_session(player_id, auth).await,
         }
-        self.cleanup_player_session(player_id, auth).await;
     }
 
-    /// Account behind an online player id, read from the session map (the same
-    /// place `kick_player` looks). `None` once the session is gone.
+    /// Account behind an online player id, read from the session map. `None`
+    /// once the session is gone.
     pub(crate) async fn account_of_player(&self, player_id: &PlayerId) -> Option<String> {
         self.account_sessions
             .read()
@@ -515,13 +509,13 @@ impl super::GameState {
             .find_map(|(key, session)| (session.player_id == Some(*player_id)).then(|| key.clone()))
     }
 
-    /// Force-disconnect a whole account, whichever character it is playing —
-    /// or none at all, as at character select. `/ban` needs this: the session
-    /// map is keyed by account, so a character-name lookup misses an alt and
-    /// misses a session that has not entered the game yet.
+    /// Force-disconnect a whole account, whichever character it is playing — or
+    /// none at all, as at character select. The `kick_tx` message makes the
+    /// connection loop close the socket, and removing the session first keeps
+    /// the disconnect path from cleaning up a second time.
     ///
-    /// Assumes `lock_character_sessions` is held, so the caller can serialize
-    /// the ban write with the login path.
+    /// Assumes `lock_character_sessions` is held, so `/ban` can serialize its
+    /// write with the login path.
     pub(crate) async fn evict_account_session_locked(
         &self,
         account_name: &str,
