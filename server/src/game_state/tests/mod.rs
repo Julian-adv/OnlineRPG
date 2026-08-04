@@ -19,6 +19,7 @@ mod dungeon_tests;
 mod enchant_tests;
 mod fishing_tests;
 mod hunger_tests;
+mod inventory_tests;
 mod movement_tests;
 mod party_tests;
 mod persistence_tests;

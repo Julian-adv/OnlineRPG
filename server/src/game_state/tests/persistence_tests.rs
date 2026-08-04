@@ -214,3 +214,71 @@ async fn open_door_state_is_stamped_onto_served_house_data() {
     game_state.apply_open_door_state(&mut served).await;
     assert!(!served[0].rooms[0].wall_north[0].is_open);
 }
+
+/// Bags saved before trading/pickup learned to stack hold one row per unit;
+/// the login load must merge them (same def, same enchant) so old characters
+/// heal on their next session.
+#[tokio::test]
+async fn login_load_merges_legacy_split_stacks() {
+    let auth = make_test_auth("load_merges_stacks");
+    let account = auth.login_npc("npc_stack_merge").unwrap();
+    let record = create_test_character(&auth, &account, "Stacker");
+    let split_row = |enchant: i32| crate::auth::ItemRow {
+        item_def_id: "apple".to_string(),
+        quantity: 1,
+        equip_slot: None,
+        enchant,
+    };
+    let torch_row = || crate::auth::ItemRow {
+        item_def_id: "torch".to_string(),
+        quantity: 1,
+        equip_slot: None,
+        enchant: 0,
+    };
+    auth.save_batch(
+        &[],
+        &[(
+            record.id,
+            vec![
+                split_row(0),
+                split_row(0),
+                split_row(1),
+                torch_row(),
+                torch_row(),
+            ],
+        )],
+        &[],
+        &[],
+        None,
+    )
+    .unwrap();
+
+    let game_state = make_test_game_state("load_merges_stacks");
+    let p = pid("loader");
+    game_state.add_player(make_player("loader", 0.0, 0.0)).await;
+    game_state
+        .register_player_character(&p, record.id, 0, attrs_with_cha(12), 0, None)
+        .await;
+    game_state.load_player_inventory(&p, record.id, &auth).await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&p].bag;
+    let apples: Vec<_> = bag
+        .iter()
+        .filter(|i| i.item_def_id == "apple" && i.enchant == 0)
+        .collect();
+    assert_eq!(apples.len(), 1, "split enchant-0 apples must merge on load");
+    assert_eq!(apples[0].quantity, 2);
+    assert_eq!(
+        bag.iter()
+            .filter(|i| i.item_def_id == "apple" && i.enchant == 1)
+            .count(),
+        1,
+        "a different enchant must keep its own slot"
+    );
+    assert_eq!(
+        bag.iter().filter(|i| i.item_def_id == "torch").count(),
+        2,
+        "non-stackables must not merge on load"
+    );
+}

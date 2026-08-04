@@ -252,6 +252,33 @@ async fn buy_item_applies_deal_once() {
 }
 
 #[tokio::test]
+async fn bought_stackables_merge_into_one_bag_entry() {
+    let game_state = make_test_game_state("buy_stacks");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 1_000).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        inventories.insert(pid("buyer"), Default::default());
+    }
+
+    for _ in 0..2 {
+        game_state
+            .buy_item(&pid("buyer"), &pid("npc_rica"), "apple")
+            .await;
+        game_state
+            .buy_item(&pid("buyer"), &pid("npc_rica"), "torch")
+            .await;
+    }
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("buyer")].bag;
+    let apples: Vec<_> = bag.iter().filter(|i| i.item_def_id == "apple").collect();
+    assert_eq!(apples.len(), 1, "stackable purchases must share one entry");
+    assert_eq!(apples[0].quantity, 2);
+    let torches: Vec<_> = bag.iter().filter(|i| i.item_def_id == "torch").collect();
+    assert_eq!(torches.len(), 2, "non-stackables keep their own slots");
+}
+
+#[tokio::test]
 async fn sell_item_applies_deal_bonus() {
     let game_state = make_test_game_state("sell_with_deal");
     let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 18, 0).await;
