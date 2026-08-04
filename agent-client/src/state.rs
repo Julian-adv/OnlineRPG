@@ -57,6 +57,22 @@ pub enum Carried {
     InBag(u64),
 }
 
+/// Result of looking up every bag copy of a named item, for actions that can
+/// request more than one unit (sell/drop with a qty). See
+/// `AgentState::find_carried_bag_copies`.
+pub enum CarriedBagCopies {
+    /// At least one bag copy has unspent quantity this turn. `copies` is
+    /// (instance_id, remaining_qty) pairs — several entries when the same
+    /// item_def_id is fragmented across separate stacks or individually
+    /// picked-up non-stackable copies.
+    InBag {
+        def_id: String,
+        copies: Vec<(u64, u32)>,
+    },
+    /// Known only as an equipped item — no bag copy to sell/drop.
+    WornOnly { def_id: String },
+}
+
 /// How urgently an event needs LLM attention.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventUrgency {
@@ -1907,27 +1923,34 @@ impl SharedState {
             .map(|(id, p)| (*id, p.is_official_npc))
     }
 
-    /// Like [`Self::find_carried`], but bag items win over worn ones —
-    /// selling should reach the spare in the bag, not the equipped copy.
-    ///
+    /// Every bag copy of the resolved item still available this turn.
     /// `spent` counts the units of each instance already given away earlier
     /// this turn, keyed by instance id: the bag snapshot only refreshes when
     /// InventoryUpdated arrives, and a stack survives a sale one unit at a
     /// time, so an instance stays sellable until its whole quantity is gone.
-    pub fn find_carried_bag_first(
+    pub fn find_carried_bag_copies(
         &self,
         asked: &str,
         spent: &HashMap<u64, u32>,
-    ) -> Option<(String, Carried)> {
+    ) -> Option<CarriedBagCopies> {
         let (id, placed) = self.find_carried(asked)?;
-        if let Some(item) = self.self_bag.iter().find(|i| {
-            i.item_def_id == id && spent.get(&i.instance_id).copied().unwrap_or(0) < i.quantity
-        }) {
-            return Some((id, Carried::InBag(item.instance_id)));
+        let copies: Vec<(u64, u32)> = self
+            .self_bag
+            .iter()
+            .filter(|i| i.item_def_id == id)
+            .filter_map(|i| {
+                let already = spent.get(&i.instance_id).copied().unwrap_or(0);
+                let remaining = i.quantity.saturating_sub(already);
+                (remaining > 0).then_some((i.instance_id, remaining))
+            })
+            .collect();
+        if !copies.is_empty() {
+            return Some(CarriedBagCopies::InBag { def_id: id, copies });
         }
         match placed {
-            Carried::Worn(_) => Some((id, placed)),
-            // Every bag copy was already spent this turn.
+            Carried::Worn(_) => Some(CarriedBagCopies::WornOnly { def_id: id }),
+            // Every bag copy was already spent this turn — same outcome as
+            // not finding it at all.
             Carried::InBag(_) => None,
         }
     }
@@ -2480,19 +2503,78 @@ pub(crate) mod tests {
 
         let mut spent: HashMap<u64, u32> = HashMap::new();
         for unit in 1..=3 {
-            let placed = s
-                .find_carried_bag_first("healing_potion", &spent)
-                .unwrap_or_else(|| panic!("unit {unit} of 3 should still be in the bag"))
-                .1;
-            assert!(matches!(placed, Carried::InBag(7)));
+            let copies = s
+                .find_carried_bag_copies("healing_potion", &spent)
+                .unwrap_or_else(|| panic!("unit {unit} of 3 should still be in the bag"));
+            let CarriedBagCopies::InBag { copies, .. } = copies else {
+                panic!("expected InBag");
+            };
+            assert_eq!(copies, vec![(7, 4 - unit)]);
             *spent.entry(7).or_default() += 1;
         }
-        assert!(s.find_carried_bag_first("healing_potion", &spent).is_none());
+        assert!(s
+            .find_carried_bag_copies("healing_potion", &spent)
+            .is_none());
 
         let dropped = HashMap::from([(7, u32::MAX)]);
         assert!(s
-            .find_carried_bag_first("healing_potion", &dropped)
+            .find_carried_bag_copies("healing_potion", &dropped)
             .is_none());
+    }
+
+    /// A stack fragmented across two separate bag entries (e.g. two
+    /// non-stackable pickups sharing an item_def_id, or a stack that never
+    /// merged) is gathered as one pool spanning both instances.
+    #[test]
+    fn fragmented_stacks_are_gathered_across_every_instance() {
+        let (mut s, _rx) = test_state();
+        s.self_bag = vec![
+            onlinerpg_shared::inventory::ItemInstance {
+                instance_id: 1,
+                item_def_id: "old_boot".to_string(),
+                quantity: 1,
+                enchant: 0,
+            },
+            onlinerpg_shared::inventory::ItemInstance {
+                instance_id: 2,
+                item_def_id: "old_boot".to_string(),
+                quantity: 1,
+                enchant: 0,
+            },
+        ];
+
+        let CarriedBagCopies::InBag { def_id, copies } = s
+            .find_carried_bag_copies("old_boot", &HashMap::new())
+            .unwrap()
+        else {
+            panic!("expected InBag");
+        };
+        assert_eq!(def_id, "old_boot");
+        assert_eq!(copies, vec![(1, 1), (2, 1)]);
+    }
+
+    /// Worn-only items report `WornOnly`, not `None` — the caller needs to
+    /// tell "nothing by that name" apart from "you're wearing it".
+    #[test]
+    fn worn_only_item_is_not_a_bag_copy() {
+        let (mut s, _rx) = test_state();
+        s.self_equipped.insert(
+            onlinerpg_shared::inventory::EquipSlot::MainHand,
+            onlinerpg_shared::inventory::ItemInstance {
+                instance_id: 9,
+                item_def_id: "iron_sword".to_string(),
+                quantity: 1,
+                enchant: 0,
+            },
+        );
+
+        let CarriedBagCopies::WornOnly { def_id } = s
+            .find_carried_bag_copies("iron_sword", &HashMap::new())
+            .unwrap()
+        else {
+            panic!("expected WornOnly");
+        };
+        assert_eq!(def_id, "iron_sword");
     }
 
     /// Standing where the chest room is, on the deepest floor.

@@ -43,7 +43,9 @@
   // While an item is dragged, the slot it would drop into (-1 otherwise).
   // Uses the same snap logic as the drop handler so highlight and drop agree.
   const dropIndex = $derived(
-    $dragMeta ? quickslotAt($dragPos.x, $dragPos.y) : -1
+    $dragMeta && $dragMeta.groupItems === undefined
+      ? quickslotAt($dragPos.x, $dragPos.y)
+      : -1
   )
 
   /**

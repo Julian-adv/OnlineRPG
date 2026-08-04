@@ -10,21 +10,26 @@
   import { gameStore } from '../stores/gameStore'
   import { remotePlayerManager } from '../managers/remotePlayerManager'
   import { inventoryStore, playerGold } from '../stores/inventoryStore'
-  import type { ItemInstance } from '../stores/inventoryStore'
   import { getItemDef, type ItemDefinition } from '../data/itemDefs'
   import { getNpcCapabilities } from '../data/traderDefs'
   import { MAX_TRADE_DISTANCE_METERS } from '../data/tradeConstants'
   import GoldAmount from './GoldAmount.svelte'
   import { itemTooltip } from '../actions/itemTooltip'
   import { networkManager } from '../network/socket'
+  import QuantityPopup from './QuantityPopup.svelte'
+  import {
+    groupBagForSelection,
+    createGroupAllocator,
+    type SelectableGroup,
+  } from './inventoryGroups'
 
   const session = $derived($shopSession)
 
   interface CartEntry {
     kind: 'buy' | 'sell' | 'buyback'
     itemDefId: string
-    /** Bag instance backing a sell entry; absent for buy entries. */
-    instanceId?: number
+    /** Bag group key for a sell entry; backing instances resolve on confirm. */
+    groupKey?: string
     /** Buyback entry backing a buyback entry; absent otherwise. */
     entryId?: number
     qty: number
@@ -37,7 +42,20 @@
     dealPct?: number
   }
 
+  /** A row awaiting a quantity choice, shown via QuantityPopup. Clicking a
+   *  buy/sell row with more than one unit available opens this instead of
+   *  stacking one unit per click. */
+  interface PendingAdd {
+    kind: 'buy' | 'sell'
+    itemDefId: string
+    groupKey?: string
+    def: ItemDefinition
+    max: number
+    unitPrice: number
+  }
+
   let cart = $state<CartEntry[]>([])
+  let pendingAdd = $state<PendingAdd | null>(null)
   let portraitFailed = $state(false)
   let now = $state(Date.now())
 
@@ -89,16 +107,18 @@
   })
 
   // Residents only buy their wishlist; merchants buy anything priced.
-  const sellEntries = $derived.by(() => {
+  // Grouped/sorted the same way the bag grid is: same-def stackable stacks
+  // (potions, scrolls, food) merge into one row instead of one per fragment.
+  const sellEntries = $derived.by((): SelectableGroup[] => {
     if (!session) return []
     const wishlist = session.wishlist
-    return $inventoryStore.bag
-      .map((item) => ({ item, def: getItemDef(item.item_def_id) }))
-      .filter(
-        (entry): entry is { item: ItemInstance; def: ItemDefinition } =>
-          (entry.def?.basePrice ?? 0) > 0 &&
-          (wishlist.length === 0 || wishlist.includes(entry.item.item_def_id))
+    return groupBagForSelection($inventoryStore.bag).filter((group) => {
+      const basePrice = getItemDef(group.itemDefId)?.basePrice ?? 0
+      return (
+        basePrice > 0 &&
+        (wishlist.length === 0 || wishlist.includes(group.itemDefId))
       )
+    })
   })
 
   /** Live haggled modifier for an item, 0 when none (or expired). */
@@ -148,7 +168,14 @@
   const netCost = $derived(buyTotal - sellTotal)
   const canConfirm = $derived(cart.length > 0 && netCost <= $playerGold)
 
-  function addBuy(itemDefId: string, def: ItemDefinition) {
+  /** Buying a catalog item has no owned "stack" to bound quantity by, so the
+   *  popup caps at what the player can currently afford — a UX convenience
+   *  only; the server re-validates gold/weight for real on confirm. */
+  function affordableQty(unitPrice: number): number {
+    return Math.max(1, Math.floor($playerGold / Math.max(1, unitPrice)))
+  }
+
+  function addBuy(itemDefId: string, def: ItemDefinition, stockMax?: number) {
     // The first added unit carries any haggled deal (single-use server-side).
     const pct = dealPct(itemDefId, 'buy')
     const hasDealEntry = cart.some(
@@ -164,52 +191,91 @@
       })
       return
     }
+    const unitPrice = def.basePrice ?? 0
+    const max =
+      stockMax !== undefined
+        ? Math.max(1, stockMax - reservedBuyQty(itemDefId))
+        : affordableQty(unitPrice)
+    if (max <= 1) {
+      addBuyUnits(itemDefId, unitPrice, 1)
+      return
+    }
+    pendingAdd = { kind: 'buy', itemDefId, def, max, unitPrice }
+  }
+
+  function addBuyUnits(itemDefId: string, unitPrice: number, qty: number) {
     const existing = cart.find(
       (e) => e.kind === 'buy' && e.itemDefId === itemDefId && !e.dealPct
     )
     if (existing) {
-      existing.qty += 1
+      existing.qty += qty
     } else {
-      cart.push({
-        kind: 'buy',
-        itemDefId,
-        qty: 1,
-        unitPrice: def.basePrice ?? 0,
-      })
+      cart.push({ kind: 'buy', itemDefId, qty, unitPrice })
     }
   }
 
-  function addSell(item: ItemInstance, def: ItemDefinition) {
-    const pct = dealPct(item.item_def_id, 'sell')
+  function addSell(group: SelectableGroup, def: ItemDefinition) {
+    const pct = dealPct(group.itemDefId, 'sell')
     const hasDealEntry = cart.some(
-      (e) => e.kind === 'sell' && e.itemDefId === item.item_def_id && e.dealPct
+      (e) => e.kind === 'sell' && e.itemDefId === group.itemDefId && e.dealPct
     )
     if (pct !== 0 && !hasDealEntry) {
       cart.push({
         kind: 'sell',
-        itemDefId: item.item_def_id,
-        instanceId: item.instance_id,
+        itemDefId: group.itemDefId,
+        groupKey: group.key,
         qty: 1,
         unitPrice: sellPrice(def, pct),
         dealPct: pct,
       })
       return
     }
+    const max = group.totalQty - reservedQty(group.key)
+    if (max <= 0) return
+    const unitPrice = sellPrice(def, 0)
+    if (max <= 1) {
+      addSellUnits(group.itemDefId, group.key, unitPrice, 1)
+      return
+    }
+    pendingAdd = {
+      kind: 'sell',
+      itemDefId: group.itemDefId,
+      groupKey: group.key,
+      def,
+      max,
+      unitPrice,
+    }
+  }
+
+  function addSellUnits(
+    itemDefId: string,
+    groupKey: string,
+    unitPrice: number,
+    qty: number
+  ) {
     const existing = cart.find(
-      (e) =>
-        e.kind === 'sell' && e.instanceId === item.instance_id && !e.dealPct
+      (e) => e.kind === 'sell' && e.groupKey === groupKey && !e.dealPct
     )
     if (existing) {
-      if (reservedQty(item.instance_id) < item.quantity) existing.qty += 1
-    } else if (reservedQty(item.instance_id) < item.quantity) {
-      cart.push({
-        kind: 'sell',
-        itemDefId: item.item_def_id,
-        instanceId: item.instance_id,
-        qty: 1,
-        unitPrice: sellPrice(def, 0),
-      })
+      existing.qty += qty
+    } else {
+      cart.push({ kind: 'sell', itemDefId, groupKey, qty, unitPrice })
     }
+  }
+
+  function confirmPendingAdd(qty: number) {
+    if (!pendingAdd) return
+    const { kind, itemDefId, groupKey, unitPrice } = pendingAdd
+    if (kind === 'buy') {
+      addBuyUnits(itemDefId, unitPrice, qty)
+    } else if (groupKey !== undefined) {
+      addSellUnits(itemDefId, groupKey, unitPrice, qty)
+    }
+    pendingAdd = null
+  }
+
+  function cancelPendingAdd() {
+    pendingAdd = null
   }
 
   function addBuyback(entry: BuybackEntry) {
@@ -235,10 +301,10 @@
     }
   }
 
-  /** Units of this bag item already reserved in the cart. */
-  function reservedQty(instanceId: number): number {
+  /** Units of this bag group already reserved in the cart. */
+  function reservedQty(groupKey: string): number {
     return cart
-      .filter((e) => e.kind === 'sell' && e.instanceId === instanceId)
+      .filter((e) => e.kind === 'sell' && e.groupKey === groupKey)
       .reduce((sum, e) => sum + e.qty, 0)
   }
 
@@ -249,32 +315,46 @@
       .reduce((sum, e) => sum + e.qty, 0)
   }
 
-  function onConfirm() {
-    if (!session || !canConfirm) return
-    // Deal entries go first so the server applies the single-use modifier
-    // to the unit the cart priced with it.
-    const ordered = [...cart].sort(
+  /** Deal entries first, so the server's single-use modifier lands on the
+   *  unit the cart priced with it. */
+  function dealsFirst(entries: CartEntry[]): CartEntry[] {
+    return [...entries].sort(
       (a, b) => Number(Boolean(b.dealPct)) - Number(Boolean(a.dealPct))
     )
-    // Sells go first so their proceeds can fund the buys.
-    for (const entry of ordered) {
-      if (entry.kind !== 'sell' || entry.instanceId === undefined) continue
-      const owned = $inventoryStore.bag.find(
-        (i) => i.instance_id === entry.instanceId
-      )
-      const qty = Math.min(entry.qty, owned?.quantity ?? 0)
-      for (let i = 0; i < qty; i++) {
-        networkManager.sendSellItem(session.merchantPlayerId, entry.instanceId)
-      }
+  }
+
+  function onConfirm() {
+    if (!session || !canConfirm) return
+    // A shared allocator so a deal-priced row and a plain row for the same
+    // item def (same group) deplete one pool instead of each independently
+    // draining the group's full instance list.
+    const allocator = createGroupAllocator()
+    const sellItems = dealsFirst(cart.filter((e) => e.kind === 'sell'))
+      .filter((e) => e.groupKey !== undefined)
+      .flatMap((e) => {
+        const group = sellEntries.find((g) => g.key === e.groupKey)
+        if (!group) return []
+        return allocator
+          .take(group, e.qty)
+          .map((l) => ({ instance_id: l.instanceId, qty: l.qty }))
+      })
+    const buyItems = dealsFirst(cart.filter((e) => e.kind === 'buy')).map(
+      (e) => ({ item_def_id: e.itemDefId, qty: e.qty })
+    )
+    const buybackIds = cart
+      .filter((e) => e.kind === 'buyback' && e.entryId !== undefined)
+      .map((e) => e.entryId!)
+
+    // Sells first so their proceeds can fund the buys — each is its own
+    // all-or-nothing batch; the connection processes them in send order.
+    if (sellItems.length > 0) {
+      networkManager.sendSellItems(session.merchantPlayerId, sellItems)
     }
-    for (const entry of ordered) {
-      if (entry.kind === 'buy') {
-        for (let i = 0; i < entry.qty; i++) {
-          networkManager.sendBuyItem(session.merchantPlayerId, entry.itemDefId)
-        }
-      } else if (entry.kind === 'buyback' && entry.entryId !== undefined) {
-        networkManager.sendBuybackItem(session.merchantPlayerId, entry.entryId)
-      }
+    if (buyItems.length > 0) {
+      networkManager.sendBuyItems(session.merchantPlayerId, buyItems)
+    }
+    if (buybackIds.length > 0) {
+      networkManager.sendBuybackItems(session.merchantPlayerId, buybackIds)
     }
     cart = []
   }
@@ -340,7 +420,7 @@
               <button
                 class="item-row"
                 disabled={reservedBuyQty(entry.itemDefId) >= entry.quantity}
-                onclick={() => addBuy(entry.itemDefId, def)}
+                onclick={() => addBuy(entry.itemDefId, def, entry.quantity)}
                 use:itemTooltip={{ def, side: 'left' }}
               >
                 <img
@@ -404,7 +484,7 @@
         </div>
         <div class="column-title">Cart</div>
         <div class="item-list">
-          {#each cart as entry (entry.kind + ':' + (entry.instanceId ?? entry.entryId ?? entry.itemDefId) + (entry.dealPct ? ':deal' : ''))}
+          {#each cart as entry (entry.kind + ':' + (entry.groupKey ?? entry.entryId ?? entry.itemDefId) + (entry.dealPct ? ':deal' : ''))}
             {@const def = getItemDef(entry.itemDefId)}
             {#if def}
               <button
@@ -472,33 +552,45 @@
       <div class="trade-column">
         <div class="column-title">Sell ({session.sellRatePercent}%)</div>
         <div class="item-list">
-          {#each sellEntries as { item, def } (item.instance_id)}
-            {@const reserved = reservedQty(item.instance_id)}
-            {@const pct = dealPct(item.item_def_id, 'sell')}
-            <button
-              class="item-row"
-              disabled={reserved >= item.quantity}
-              onclick={() => addSell(item, def)}
-              use:itemTooltip={{ def, item, side: 'right' }}
-            >
-              <img
-                class="item-icon"
-                src="/items/{def.icon}"
-                alt=""
-                draggable="false"
-              />
-              <span class="item-name">
-                {def.name}{item.quantity > 1 ? ` ×${item.quantity}` : ''}
-              </span>
-              {#if pct !== 0}
-                <span class="deal-badge" class:markup={isMarkup('sell', pct)}
-                  >{pct > 0 ? '+' : ''}{pct}%</span
-                >
-              {/if}
-              <span class="item-price"
-                ><GoldAmount copper={sellPrice(def, pct)} /></span
+          {#each sellEntries as group (group.key)}
+            {@const def = getItemDef(group.itemDefId)}
+            {#if def}
+              {@const reserved = reservedQty(group.key)}
+              {@const pct = dealPct(group.itemDefId, 'sell')}
+              <button
+                class="item-row"
+                disabled={reserved >= group.totalQty}
+                onclick={() => addSell(group, def)}
+                use:itemTooltip={{
+                  def,
+                  item: {
+                    instance_id: group.instances[0].instanceId,
+                    item_def_id: group.itemDefId,
+                    quantity: group.totalQty,
+                    enchant: group.enchant,
+                  },
+                  side: 'right',
+                }}
               >
-            </button>
+                <img
+                  class="item-icon"
+                  src="/items/{def.icon}"
+                  alt=""
+                  draggable="false"
+                />
+                <span class="item-name">
+                  {def.name}{group.totalQty > 1 ? ` ×${group.totalQty}` : ''}
+                </span>
+                {#if pct !== 0}
+                  <span class="deal-badge" class:markup={isMarkup('sell', pct)}
+                    >{pct > 0 ? '+' : ''}{pct}%</span
+                  >
+                {/if}
+                <span class="item-price"
+                  ><GoldAmount copper={sellPrice(def, pct)} /></span
+                >
+              </button>
+            {/if}
           {:else}
             <div class="empty-note">Nothing to sell</div>
           {/each}
@@ -507,6 +599,15 @@
     </div>
   </div>
 {/if}
+
+<QuantityPopup
+  visible={pendingAdd !== null}
+  itemName={pendingAdd?.def.name ?? ''}
+  icon={pendingAdd?.def.icon ?? ''}
+  max={pendingAdd?.max ?? 1}
+  onConfirm={confirmPendingAdd}
+  onCancel={cancelPendingAdd}
+/>
 
 <style>
   .trade-window {

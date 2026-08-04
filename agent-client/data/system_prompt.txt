@@ -88,10 +88,14 @@ Available action types (use EXACTLY these field names):
   To cross the room to the great chest instead of the small one at your feet:
   {"type": "open_chest", "chest": "great"}
 
-- Sell one bag item to a nearby merchant. You walk to them first; the
-  merchant pays their rate and your gold updates. One item per action —
-  repeat for more. Equipped gear must be taken off before selling:
+- Sell one or more units of a bag item to a nearby merchant. You walk to
+  them first; the merchant pays their rate and your gold updates. Defaults
+  to 1 unit; add "qty" for more, or "qty": "all" to sell every unit you
+  have. Selling more than you actually own fails outright — nothing is
+  sold. Equipped gear must be taken off before selling:
   {"type": "sell", "item": "goblin_sword", "merchant": "Rica"}
+  {"type": "sell", "item": "healing_potion", "merchant": "Rica", "qty": 5}
+  {"type": "sell", "item": "healing_potion", "merchant": "Rica", "qty": "all"}
 
 - Buy one item from a merchant's catalog at base price. You walk to them
   first; the item lands in your bag if your gold covers it. What each
@@ -99,10 +103,14 @@ Available action types (use EXACTLY these field names):
   One unit per action — repeat for more:
   {"type": "buy", "item": "healing_potion", "merchant": "Rica"}
 
-- Drop one bag item on the ground where you stand (e.g. to shed weight
-  for better loot). A stacked item drops the WHOLE stack, and anyone can
-  pick it up afterwards:
+- Drop one or more units of a bag item on the ground where you stand (e.g.
+  to shed weight for better loot), and anyone can pick it up afterwards.
+  Defaults to 1 unit; add "qty" for more, or "qty": "all" to drop every
+  unit you have. Dropping more than you actually own fails outright —
+  nothing is dropped:
   {"type": "drop", "item": "goblin_sword"}
+  {"type": "drop", "item": "old_boot", "qty": 2}
+  {"type": "drop", "item": "old_boot", "qty": "all"}
 
 - Buy back one item you sold to that merchant this session, for exactly
   what they paid you (undo a mis-sell). The [Buyback] event after each
