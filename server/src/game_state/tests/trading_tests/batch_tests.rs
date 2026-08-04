@@ -98,31 +98,16 @@ async fn sell_items_batch_is_all_or_nothing_when_a_line_is_invalid() {
 #[tokio::test]
 async fn sell_items_batch_resident_is_all_or_nothing_on_insufficient_wallet() {
     let game_state = make_test_game_state("batch_sell_resident_atomic");
-    game_state
-        .add_player(make_npc("npc_karl", "Karl", 0.0, 0.0))
-        .await;
-    game_state.add_player(make_player("seller", 1.0, 0.0)).await;
-    game_state
-        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 0, None)
-        .await;
-    game_state
-        .register_player_character(&pid("npc_karl"), 2, 0, attrs_with_cha(10), 100, None)
-        .await;
     // Torches aren't stackable, so two purchased separately stay as two
     // instances; Karl's wishlist pays 60 each (base 50 @ 120%) — 120 total,
     // more than his 100-copper wallet.
-    game_state.inventories.write().await.insert(
-        pid("seller"),
-        PlayerInventory {
-            bag: vec![bag_item(1, "torch", 1), bag_item(2, "torch", 1)],
-            ..Default::default()
-        },
-    );
-    game_state
-        .inventories
-        .write()
-        .await
-        .insert(pid("npc_karl"), PlayerInventory::default());
+    setup_resident_trade(
+        &game_state,
+        100,
+        vec![],
+        vec![bag_item(1, "torch", 1), bag_item(2, "torch", 1)],
+    )
+    .await;
 
     game_state
         .sell_items(
@@ -210,6 +195,94 @@ async fn buy_items_batch_merges_stackables_and_splits_non_stackables() {
         "non-stackable units stay as separate instances"
     );
     assert!(torches.iter().all(|t| t.quantity == 1));
+}
+
+/// The resident's receipt draws from a range reserved before the locks, so
+/// every unit must still land on its own id. (No wishlist item is stackable,
+/// so the merge branch is unreachable from data alone.)
+#[tokio::test]
+async fn sell_items_batch_gives_each_resident_unit_its_own_id() {
+    let game_state = make_test_game_state("batch_sell_resident_stacks");
+    setup_resident_trade(
+        &game_state,
+        10_000,
+        vec![bag_item(50, "healing_potion", 1)],
+        vec![bag_item(1, "torch", 1), bag_item(2, "torch", 1)],
+    )
+    .await;
+
+    game_state
+        .sell_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![
+                BagLineItem {
+                    instance_id: 1,
+                    qty: 1,
+                },
+                BagLineItem {
+                    instance_id: 2,
+                    qty: 1,
+                },
+            ],
+        )
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let karl = &inventories[&pid("npc_karl")].bag;
+    assert_eq!(
+        karl.iter().filter(|i| i.item_def_id == "torch").count(),
+        2,
+        "non-stackables keep one slot per unit"
+    );
+    let ids: Vec<_> = karl.iter().map(|i| i.instance_id).collect();
+    assert_eq!(
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        ids.len(),
+        "every received unit gets its own id"
+    );
+}
+
+#[tokio::test]
+async fn buyback_items_batch_rejoins_one_stack() {
+    let game_state = make_test_game_state("batch_buyback_stacks");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 10_000).await;
+    game_state.inventories.write().await.insert(
+        pid("buyer"),
+        PlayerInventory {
+            bag: vec![bag_item(7, "healing_potion", 3)],
+            ..Default::default()
+        },
+    );
+
+    game_state
+        .sell_items(
+            &pid("buyer"),
+            &pid("npc_rica"),
+            vec![BagLineItem {
+                instance_id: 7,
+                qty: 2,
+            }],
+        )
+        .await;
+    let entry_ids: Vec<u64> = {
+        let buybacks = game_state.buybacks.read().await;
+        buybacks[&(1, "Rica".to_string())]
+            .iter()
+            .map(|s| s.entry.entry_id)
+            .collect()
+    };
+    assert_eq!(entry_ids.len(), 2, "one buyback entry per sold unit");
+
+    game_state
+        .buyback_items(&pid("buyer"), &pid("npc_rica"), entry_ids)
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("buyer")].bag;
+    assert_eq!(bag.len(), 1, "both repurchased units rejoin the one stack");
+    assert_eq!(bag[0].instance_id, 7);
+    assert_eq!(bag[0].quantity, 3);
 }
 
 #[tokio::test]

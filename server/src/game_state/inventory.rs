@@ -41,30 +41,77 @@ fn enchant_success_bp(enchant: i32) -> u32 {
     }
 }
 
+/// One unit-insert request: `quantity` units of one def at one enchant level,
+/// backed by ids starting at `first_instance_id`.
+pub(super) struct BagInsert<'a> {
+    pub stackable: bool,
+    pub item_def_id: &'a str,
+    pub enchant: i32,
+    pub first_instance_id: u64,
+    pub quantity: u32,
+}
+
+impl<'a> BagInsert<'a> {
+    pub(super) fn one(
+        stackable: bool,
+        item_def_id: &'a str,
+        enchant: i32,
+        first_instance_id: u64,
+    ) -> Self {
+        Self {
+            stackable,
+            item_def_id,
+            enchant,
+            first_instance_id,
+            quantity: 1,
+        }
+    }
+}
+
 /// The one bag-insert rule for every acquisition path (buying, loot, grilling,
-/// pickup, login load): units join an existing same-def, same-enchant entry
-/// when the def is stackable, and take their own slot otherwise. `instance_id`
-/// goes unused when the unit stacks.
-pub(super) fn stack_into_bag(
-    bag: &mut Vec<ItemInstance>,
-    stackable: bool,
-    item_def_id: &str,
-    enchant: i32,
-    instance_id: u64,
-    quantity: u32,
-) {
-    match bag
-        .iter_mut()
-        .find(|item| stackable && item.item_def_id == item_def_id && item.enchant == enchant)
-    {
-        Some(stack) => stack.quantity += quantity,
-        None => bag.push(ItemInstance {
-            instance_id,
+/// pickup, login load): stackable units join an existing same-def, same-enchant
+/// entry, non-stackables take one slot per unit off consecutive ids. Returns
+/// how many ids were consumed, so batch callers can advance a reserved range.
+/// Equip/unequip move an existing instance instead and stay outside this rule,
+/// which `ItemDefs::load`'s stackable-vs-equippable assert keeps safe.
+pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> u64 {
+    let BagInsert {
+        stackable,
+        item_def_id,
+        enchant,
+        first_instance_id,
+        quantity,
+    } = insert;
+    if quantity == 0 {
+        return 0;
+    }
+
+    if stackable {
+        if let Some(stack) = bag
+            .iter_mut()
+            .find(|item| item.item_def_id == item_def_id && item.enchant == enchant)
+        {
+            stack.quantity += quantity;
+            return 0;
+        }
+        bag.push(ItemInstance {
+            instance_id: first_instance_id,
             item_def_id: item_def_id.to_string(),
             quantity,
             enchant,
-        }),
+        });
+        return 1;
     }
+
+    for offset in 0..quantity as u64 {
+        bag.push(ItemInstance {
+            instance_id: first_instance_id + offset,
+            item_def_id: item_def_id.to_string(),
+            quantity: 1,
+            enchant,
+        });
+    }
+    quantity as u64
 }
 
 /// Remove one unit of `instance_id` from the bag, dropping the instance when
@@ -122,7 +169,7 @@ pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
 
 impl super::GameState {
     /// Reserve a range of instance IDs (single lock acquisition).
-    async fn reserve_instance_ids(&self, count: u64) -> u64 {
+    pub(super) async fn reserve_instance_ids(&self, count: u64) -> u64 {
         let mut id = self.next_item_instance_id.write().await;
         let start = *id;
         *id += count;
@@ -212,23 +259,25 @@ impl super::GameState {
         let mut inventory = PlayerInventory::default();
 
         if !rows.is_empty() {
-            let start_id = self.reserve_instance_ids(rows.len() as u64).await;
+            // A non-stackable row saved with quantity N unfolds into N slots,
+            // so reserve per unit rather than per row.
+            let units: u64 = rows.iter().map(|r| r.quantity.max(1) as u64).sum();
+            let mut next_id = self.reserve_instance_ids(units).await;
 
-            for (offset, row) in rows.into_iter().enumerate() {
-                let instance_id = start_id + offset as u64;
-
+            for row in rows {
                 match row.equip_slot {
                     Some(slot_str) => {
                         if let Ok(slot) = slot_str.parse::<EquipSlot>() {
                             inventory.equipped.insert(
                                 slot,
                                 ItemInstance {
-                                    instance_id,
+                                    instance_id: next_id,
                                     item_def_id: row.item_def_id,
                                     quantity: 1,
                                     enchant: row.enchant,
                                 },
                             );
+                            next_id += 1;
                         } else {
                             warn!(
                                 "Unknown equip slot '{}' in DB for character {}",
@@ -239,17 +288,15 @@ impl super::GameState {
                     None => {
                         // Merging here also heals bags saved before trading
                         // and pickup learned to stack.
-                        let stackable = self
-                            .item_defs
-                            .get(&row.item_def_id)
-                            .is_some_and(|d| d.stackable);
-                        stack_into_bag(
+                        next_id += stack_into_bag(
                             &mut inventory.bag,
-                            stackable,
-                            &row.item_def_id,
-                            row.enchant,
-                            instance_id,
-                            row.quantity,
+                            BagInsert {
+                                stackable: self.item_defs.stackable(&row.item_def_id),
+                                item_def_id: &row.item_def_id,
+                                enchant: row.enchant,
+                                first_instance_id: next_id,
+                                quantity: row.quantity,
+                            },
                         );
                     }
                 }
@@ -312,7 +359,10 @@ impl super::GameState {
                 Some(inv) => inv,
                 None => return false,
             };
-            stack_into_bag(&mut inv.bag, stackable, item_def_id, 0, instance_id, 1);
+            stack_into_bag(
+                &mut inv.bag,
+                BagInsert::one(stackable, item_def_id, 0, instance_id),
+            );
             inv.clone()
         };
 
@@ -354,11 +404,7 @@ impl super::GameState {
             } else {
                 stack_into_bag(
                     &mut inv.bag,
-                    stackable,
-                    item_def_id,
-                    0,
-                    reserved_instance_id,
-                    1,
+                    BagInsert::one(stackable, item_def_id, 0, reserved_instance_id),
                 );
                 Placement::Bagged(inv.clone())
             }
@@ -1214,10 +1260,7 @@ impl super::GameState {
         }
 
         let item_weight = self.item_defs.weight(&ground_item.item_def_id);
-        let stackable = self
-            .item_defs
-            .get(&ground_item.item_def_id)
-            .is_some_and(|d| d.stackable);
+        let stackable = self.item_defs.stackable(&ground_item.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
 
         // Acquire write lock for both weight check and mutation atomically
@@ -1250,11 +1293,12 @@ impl super::GameState {
                 }
                 stack_into_bag(
                     &mut inv.bag,
-                    stackable,
-                    &ground_item.item_def_id,
-                    ground_item.enchant,
-                    instance_id,
-                    1,
+                    BagInsert::one(
+                        stackable,
+                        &ground_item.item_def_id,
+                        ground_item.enchant,
+                        instance_id,
+                    ),
                 );
                 inv.clone()
             } else {

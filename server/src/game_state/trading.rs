@@ -3,13 +3,12 @@ use std::collections::HashMap;
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::inventory::ItemInstance;
 use onlinerpg_shared::messages::{BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem};
 use tracing::info;
 
 use super::combat::reachable_dist_sq;
 use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout, DealEntry};
-use super::inventory::stack_into_bag;
+use super::inventory::{stack_into_bag, BagInsert};
 use super::StoredBuyback;
 
 /// Maximum distance between player and trader for any shop interaction.
@@ -449,7 +448,7 @@ impl super::GameState {
         let price = buy_price(base_price, deal.as_ref().map_or(0, |d| d.modifier_pct));
 
         let item_weight = self.item_defs.weight(item_def_id);
-        let stackable = self.item_defs.get(item_def_id).is_some_and(|d| d.stackable);
+        let stackable = self.item_defs.stackable(item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
         let instance_id = self.next_instance_id().await;
 
@@ -545,7 +544,10 @@ impl super::GameState {
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
-            stack_into_bag(&mut inv.bag, stackable, item_def_id, 0, instance_id, 1);
+            stack_into_bag(
+                &mut inv.bag,
+                BagInsert::one(stackable, item_def_id, 0, instance_id),
+            );
             let snapshot = inv.clone();
 
             *gold_map.get_mut(player_id).expect("checked above") -= price;
@@ -674,6 +676,12 @@ impl super::GameState {
             return;
         }
 
+        // One id per unit, reserved before the locks rather than one counter
+        // acquisition per unit under them. An aborted batch skips the range.
+        let mut next_id = self
+            .reserve_instance_ids(plans.iter().map(|p| p.qty as u64).sum())
+            .await;
+
         let mut gold_map = self.player_gold.write().await;
         let mut inventories = self.inventories.write().await;
 
@@ -775,42 +783,17 @@ impl super::GameState {
         {
             let inv = inventories.get_mut(player_id).expect("checked above");
             for plan in &plans {
-                let stackable = self
-                    .item_defs
-                    .get(&plan.item_def_id)
-                    .map(|d| d.stackable)
-                    .unwrap_or(false);
-                let existing = stackable.then(|| {
-                    inv.bag
-                        .iter_mut()
-                        .find(|i| i.item_def_id == plan.item_def_id && i.enchant == 0)
-                });
-                match existing.flatten() {
-                    Some(stack) => stack.quantity += plan.qty,
-                    // Non-stackable items (e.g. weapons) always take one bag
-                    // slot per unit, so N units become N separate instances
-                    // instead of one instance with quantity N.
-                    None if !stackable => {
-                        for _ in 0..plan.qty {
-                            let instance_id = self.next_instance_id().await;
-                            inv.bag.push(ItemInstance {
-                                instance_id,
-                                item_def_id: plan.item_def_id.clone(),
-                                quantity: 1,
-                                enchant: 0,
-                            });
-                        }
-                    }
-                    None => {
-                        let instance_id = self.next_instance_id().await;
-                        inv.bag.push(ItemInstance {
-                            instance_id,
-                            item_def_id: plan.item_def_id.clone(),
-                            quantity: plan.qty,
-                            enchant: 0,
-                        });
-                    }
-                }
+                let stackable = self.item_defs.stackable(&plan.item_def_id);
+                next_id += stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert {
+                        stackable,
+                        item_def_id: &plan.item_def_id,
+                        enchant: 0,
+                        first_instance_id: next_id,
+                        quantity: plan.qty,
+                    },
+                );
             }
         }
 
@@ -1048,17 +1031,10 @@ impl super::GameState {
                 }
                 // Keep the sold unit's enchantment: a +3 sword stays +3 in
                 // the resident's bag.
-                let stackable = self
-                    .item_defs
-                    .get(&item_def_id)
-                    .is_some_and(|d| d.stackable);
+                let stackable = self.item_defs.stackable(&item_def_id);
                 stack_into_bag(
                     &mut npc_inv.bag,
-                    stackable,
-                    &item_def_id,
-                    sold_enchant,
-                    npc_instance_id,
-                    1,
+                    BagInsert::one(stackable, &item_def_id, sold_enchant, npc_instance_id),
                 );
                 Some(npc_inv.clone())
             } else {
@@ -1186,6 +1162,12 @@ impl super::GameState {
             deal_taken: Option<DealEntry>,
             payout: i64,
         }
+
+        // One id per unit, reserved before the locks: a resident's received
+        // units draw from it, a merchant's buyback entries do.
+        let mut next_unit_id = self
+            .reserve_instance_ids(items.iter().map(|i| i.qty as u64).sum())
+            .await;
 
         let mut gold_map = self.player_gold.write().await;
         let mut inventories = self.inventories.write().await;
@@ -1334,14 +1316,18 @@ impl super::GameState {
             }
 
             if is_resident {
-                let npc_instance_id = self.next_instance_id().await;
+                let stackable = self.item_defs.stackable(&plan.item_def_id);
                 let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
-                npc_inv.bag.push(ItemInstance {
-                    instance_id: npc_instance_id,
-                    item_def_id: plan.item_def_id.clone(),
-                    quantity: plan.qty,
-                    enchant: plan.enchant,
-                });
+                next_unit_id += stack_into_bag(
+                    &mut npc_inv.bag,
+                    BagInsert {
+                        stackable,
+                        item_def_id: &plan.item_def_id,
+                        enchant: plan.enchant,
+                        first_instance_id: next_unit_id,
+                        quantity: plan.qty,
+                    },
+                );
             }
         }
 
@@ -1371,7 +1357,8 @@ impl super::GameState {
             for plan in &plans {
                 let unit_price = sell_payout(plan.base_price, rate, 0);
                 for _ in 0..plan.qty {
-                    let entry_id = self.next_instance_id().await;
+                    let entry_id = next_unit_id;
+                    next_unit_id += 1;
                     latest_buyback = Some(
                         self.record_buyback(
                             player_id,
@@ -1607,17 +1594,10 @@ impl super::GameState {
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
-            let stackable = self
-                .item_defs
-                .get(&entry.item_def_id)
-                .is_some_and(|d| d.stackable);
+            let stackable = self.item_defs.stackable(&entry.item_def_id);
             stack_into_bag(
                 &mut inv.bag,
-                stackable,
-                &entry.item_def_id,
-                entry.enchant,
-                entry.entry_id,
-                1,
+                BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id),
             );
             let snapshot = inv.clone();
             *gold_map.get_mut(player_id).expect("checked above") -= entry.price;
@@ -1780,12 +1760,11 @@ impl super::GameState {
 
             let inv = inventories.get_mut(player_id).expect("checked above");
             for entry in &entries {
-                inv.bag.push(ItemInstance {
-                    instance_id: entry.entry_id,
-                    item_def_id: entry.item_def_id.clone(),
-                    quantity: 1,
-                    enchant: entry.enchant,
-                });
+                let stackable = self.item_defs.stackable(&entry.item_def_id);
+                stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id),
+                );
             }
             let snapshot = inv.clone();
             *gold_map.get_mut(player_id).expect("checked above") -= total_price;

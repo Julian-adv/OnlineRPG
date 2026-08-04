@@ -206,6 +206,13 @@ impl ItemDefs {
                 "item '{}': consumable flag out of step with its use_effect",
                 def.id
             );
+            // `equip_item` moves a whole bag entry into the slot and equipped
+            // rows save as quantity 1, so the rest of a stack would vanish.
+            assert!(
+                !(def.stackable && def.equip_slot.is_some()),
+                "item '{}' is both stackable and equippable",
+                def.id
+            );
         }
 
         info!("Loaded {} item definitions", defs.len());
@@ -297,6 +304,10 @@ impl ItemDefs {
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
         self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
+    }
+
+    pub fn stackable(&self, item_def_id: &str) -> bool {
+        self.defs.get(item_def_id).is_some_and(|d| d.stackable)
     }
 
     /// The fishing catch table: every item def with a `catchWeight` — fish,

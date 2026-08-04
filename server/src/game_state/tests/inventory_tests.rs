@@ -1,20 +1,73 @@
 use super::*;
-use crate::game_state::inventory::stack_into_bag;
+use crate::game_state::inventory::{stack_into_bag, BagInsert};
+
+fn insert(
+    bag: &mut Vec<ItemInstance>,
+    stackable: bool,
+    def: &str,
+    enchant: i32,
+    id: u64,
+    qty: u32,
+) -> u64 {
+    stack_into_bag(
+        bag,
+        BagInsert {
+            stackable,
+            item_def_id: def,
+            enchant,
+            first_instance_id: id,
+            quantity: qty,
+        },
+    )
+}
 
 #[test]
 fn stack_into_bag_merges_only_same_def_and_enchant() {
     let mut bag = Vec::new();
-    stack_into_bag(&mut bag, true, "apple", 0, 1, 1);
-    stack_into_bag(&mut bag, true, "apple", 0, 2, 1);
-    stack_into_bag(&mut bag, true, "apple", 1, 3, 1);
-    stack_into_bag(&mut bag, false, "torch", 0, 4, 1);
-    stack_into_bag(&mut bag, false, "torch", 0, 5, 1);
+    insert(&mut bag, true, "apple", 0, 1, 1);
+    insert(&mut bag, true, "apple", 0, 2, 1);
+    insert(&mut bag, true, "apple", 1, 3, 1);
+    insert(&mut bag, false, "torch", 0, 4, 1);
+    insert(&mut bag, false, "torch", 0, 5, 1);
 
     assert_eq!(bag.len(), 4, "merge only the same-def same-enchant pair");
     assert_eq!(bag[0].item_def_id, "apple");
     assert_eq!(bag[0].quantity, 2);
     assert_eq!(bag[1].enchant, 1);
     assert_eq!(bag[1].quantity, 1);
+}
+
+/// A non-stackable line never collapses into one multi-unit slot, and the
+/// returned count is what batch callers advance their reserved range by.
+#[test]
+fn stack_into_bag_unfolds_non_stackable_quantities_into_one_slot_each() {
+    let mut bag = Vec::new();
+    assert_eq!(insert(&mut bag, false, "torch", 0, 100, 3), 3);
+    assert_eq!(bag.len(), 3);
+    assert!(bag.iter().all(|i| i.quantity == 1));
+    assert_eq!(
+        bag.iter().map(|i| i.instance_id).collect::<Vec<_>>(),
+        vec![100, 101, 102]
+    );
+
+    assert_eq!(
+        insert(&mut bag, true, "apple", 0, 200, 4),
+        1,
+        "a new stack takes one id"
+    );
+    assert_eq!(
+        insert(&mut bag, true, "apple", 0, 201, 4),
+        0,
+        "a merge takes none"
+    );
+    assert_eq!(
+        insert(&mut bag, true, "apple", 0, 202, 0),
+        0,
+        "an empty line is a no-op"
+    );
+    let apples: Vec<_> = bag.iter().filter(|i| i.item_def_id == "apple").collect();
+    assert_eq!(apples.len(), 1);
+    assert_eq!(apples[0].quantity, 8);
 }
 
 /// give_item feeds /give, dungeon chest loot, and grilling — repeated grants
