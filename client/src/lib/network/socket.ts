@@ -1,7 +1,9 @@
 import type {
+  BagLineItem,
   FishingAction,
   Position,
   PositionCorrection,
+  TradeLineItem,
 } from './networkTypes'
 import { hmrSingleton } from '../utils/hmr'
 import type { MonsterData } from '../types/Monster'
@@ -589,6 +591,14 @@ class NetworkManager {
     this.sendMessage({ DropItem: { instance_id: instanceId } })
   }
 
+  sendDropItems(items: BagLineItem[]) {
+    const valid = items.filter((i) =>
+      this.isNetworkableInstanceId(i.instance_id, 'drop')
+    )
+    if (valid.length === 0) return
+    this.sendMessage({ DropItems: { items: valid } })
+  }
+
   /// Sent at the pickup clip's first frame so nearby players see the crouch
   /// from the top; `sendPickupItem` follows at the grab moment.
   sendPickupStarted() {
@@ -654,6 +664,33 @@ class NetworkManager {
   sendBuybackItem(merchantPlayerId: number, entryId: number) {
     this.sendMessage({
       BuybackItem: { merchant_player_id: merchantPlayerId, entry_id: entryId },
+    })
+  }
+
+  sendBuyItems(merchantPlayerId: number, items: TradeLineItem[]) {
+    if (items.length === 0) return
+    this.sendMessage({
+      BuyItems: { merchant_player_id: merchantPlayerId, items },
+    })
+  }
+
+  sendSellItems(merchantPlayerId: number, items: BagLineItem[]) {
+    const valid = items.filter((i) =>
+      this.isNetworkableInstanceId(i.instance_id, 'sell')
+    )
+    if (valid.length === 0) return
+    this.sendMessage({
+      SellItems: { merchant_player_id: merchantPlayerId, items: valid },
+    })
+  }
+
+  sendBuybackItems(merchantPlayerId: number, entryIds: number[]) {
+    if (entryIds.length === 0) return
+    this.sendMessage({
+      BuybackItems: {
+        merchant_player_id: merchantPlayerId,
+        entry_ids: entryIds,
+      },
     })
   }
 

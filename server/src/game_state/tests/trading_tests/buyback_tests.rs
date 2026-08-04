@@ -147,6 +147,35 @@ async fn haggled_damaged_armor_applies_condition_after_the_bonus() {
 }
 
 #[tokio::test]
+async fn buyback_returns_the_unit_into_its_stack() {
+    let game_state = make_test_game_state("buyback_stacks");
+    let (_buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+        inv.bag.push(bag_item(7, "apple", 2));
+        inventories.insert(pid("buyer"), inv);
+    }
+
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 7)
+        .await;
+    let entry_id = {
+        let buybacks = game_state.buybacks.read().await;
+        buybacks[&(1, "Rica".to_string())][0].entry.entry_id
+    };
+
+    game_state
+        .buyback_item(&pid("buyer"), &pid("npc_rica"), entry_id)
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("buyer")].bag;
+    assert_eq!(bag.len(), 1, "the bought-back apple must rejoin its stack");
+    assert_eq!(bag[0].quantity, 2);
+}
+
+#[tokio::test]
 async fn buyback_rejects_without_enough_gold() {
     let game_state = make_test_game_state("buyback_no_gold");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;

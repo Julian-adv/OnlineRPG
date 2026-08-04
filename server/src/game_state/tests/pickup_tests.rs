@@ -180,3 +180,43 @@ async fn pickup_animation_is_not_sent_beyond_the_delivery_radius() {
         );
     }
 }
+
+#[tokio::test]
+async fn picked_up_stackable_joins_the_existing_stack() {
+    let game_state = make_test_game_state("pickup_stacks");
+    game_state.add_player(make_player("picker", 0.0, 0.0)).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+        inv.bag.push(bag_item(11, "apple", 1));
+        inventories.insert(pid("picker"), inv);
+    }
+    {
+        let mut ground_items = game_state.ground_items.write().await;
+        ground_items.insert(
+            42,
+            ServerGroundItem {
+                item: GroundItem {
+                    instance_id: 42,
+                    item_def_id: "apple".to_string(),
+                    position: Position {
+                        x: 0.5,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    floor_level: 0,
+                    enchant: 0,
+                    durability: None,
+                },
+                dropped_at_ms: 0,
+            },
+        );
+    }
+
+    game_state.pickup_item(&pid("picker"), 42).await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("picker")].bag;
+    assert_eq!(bag.len(), 1, "the picked-up apple must join the stack");
+    assert_eq!(bag[0].quantity, 2);
+}

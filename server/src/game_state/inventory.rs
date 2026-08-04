@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::auth::{AuthService, ItemRow};
 use crate::item_defs::{ItemDefinition, UseEffect};
 use crate::types::{PlayerId, ServerMessage};
@@ -6,6 +8,7 @@ use onlinerpg_shared::inventory::{
     durability_condition, resolve_equipment_burden, EquipSlot, EquipmentBurden, GroundItem,
     ItemInstance, PlayerInventory, RepairFamily,
 };
+use onlinerpg_shared::messages::BagLineItem;
 use onlinerpg_shared::skills::{healing_skill_hp_bonus, SkillId};
 use rand::Rng;
 use tracing::{info, warn};
@@ -39,6 +42,36 @@ fn enchant_success_bp(enchant: i32) -> u32 {
         10 => 312,
         11 => 156,
         _ => 100, // the 1% floor
+    }
+}
+
+/// The one bag-insert rule for every acquisition path (buying, loot, grilling,
+/// pickup, login load): units join an existing same-def, same-enchant entry
+/// when the def is stackable, and take their own slot otherwise. `instance_id`
+/// goes unused when the unit stacks.
+pub(super) fn stack_into_bag(
+    bag: &mut Vec<ItemInstance>,
+    stackable: bool,
+    item_def_id: &str,
+    enchant: i32,
+    instance_id: u64,
+    quantity: u32,
+    durability: Option<u32>,
+) {
+    match bag.iter_mut().find(|item| {
+        stackable
+            && item.item_def_id == item_def_id
+            && item.enchant == enchant
+            && item.durability == durability
+    }) {
+        Some(stack) => stack.quantity += quantity,
+        None => bag.push(ItemInstance {
+            instance_id,
+            item_def_id: item_def_id.to_string(),
+            quantity,
+            enchant,
+            durability,
+        }),
     }
 }
 
@@ -249,14 +282,21 @@ impl super::GameState {
                         }
                     }
                     None => {
-                        inventory.bag.push(ItemInstance {
+                        // Merging here also heals bags saved before trading
+                        // and pickup learned to stack.
+                        let stackable = self
+                            .item_defs
+                            .get(&row.item_def_id)
+                            .is_some_and(|d| d.stackable);
+                        stack_into_bag(
+                            &mut inventory.bag,
+                            stackable,
+                            &row.item_def_id,
+                            row.enchant,
                             instance_id,
-                            durability: self
-                                .loaded_item_durability(&row.item_def_id, row.durability),
-                            item_def_id: row.item_def_id,
-                            quantity: row.quantity,
-                            enchant: row.enchant,
-                        });
+                            row.quantity,
+                            self.loaded_item_durability(&row.item_def_id, row.durability),
+                        );
                     }
                 }
             }
@@ -306,10 +346,10 @@ impl super::GameState {
     }
 
     pub async fn give_item(&self, player_id: &PlayerId, item_def_id: &str) -> bool {
-        if self.item_defs.get(item_def_id).is_none() {
+        let Some(stackable) = self.item_defs.get(item_def_id).map(|d| d.stackable) else {
             warn!("give_item: unknown item_def_id {:?}", item_def_id);
             return false;
-        }
+        };
 
         let instance_id = self.next_instance_id().await;
         let snapshot = {
@@ -318,13 +358,15 @@ impl super::GameState {
                 Some(inv) => inv,
                 None => return false,
             };
-            inv.bag.push(ItemInstance {
+            stack_into_bag(
+                &mut inv.bag,
+                stackable,
+                item_def_id,
+                0,
                 instance_id,
-                item_def_id: item_def_id.to_string(),
-                quantity: 1,
-                enchant: 0,
-                durability: self.initial_item_durability(item_def_id),
-            });
+                1,
+                self.initial_item_durability(item_def_id),
+            );
             inv.clone()
         };
 
@@ -356,32 +398,26 @@ impl super::GameState {
             Bagged(PlayerInventory),
             Overweight,
         }
-        let placement =
-            {
-                let mut inventories = self.inventories.write().await;
-                let Some(inv) = inventories.get_mut(player_id) else {
-                    return;
-                };
-                if self.calc_total_weight(inv) + def_weight > max_weight {
-                    Placement::Overweight
-                } else {
-                    match inv.bag.iter_mut().find(|item| {
-                        stackable && item.item_def_id == item_def_id && item.enchant == 0
-                    }) {
-                        Some(stack) => stack.quantity += 1,
-                        None => {
-                            inv.bag.push(ItemInstance {
-                                instance_id: reserved_instance_id,
-                                item_def_id: item_def_id.to_string(),
-                                quantity: 1,
-                                enchant: 0,
-                                durability: self.initial_item_durability(item_def_id),
-                            });
-                        }
-                    }
-                    Placement::Bagged(inv.clone())
-                }
+        let placement = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
             };
+            if self.calc_total_weight(inv) + def_weight > max_weight {
+                Placement::Overweight
+            } else {
+                stack_into_bag(
+                    &mut inv.bag,
+                    stackable,
+                    item_def_id,
+                    0,
+                    reserved_instance_id,
+                    1,
+                    self.initial_item_durability(item_def_id),
+                );
+                Placement::Bagged(inv.clone())
+            }
+        };
 
         match placement {
             Placement::Bagged(snapshot) => {
@@ -1245,6 +1281,9 @@ impl super::GameState {
         let position = self
             .loot_drop_position(player_position, floor_level, preferred)
             .await;
+        // For the unit that splits off a stack — the stack keeps its own id.
+        // Reserved outside the lock like award_item; unused otherwise.
+        let split_instance_id = self.next_instance_id().await;
 
         let (snapshot, dropped, dropped_from_off_hand) = {
             let mut inventories = self.inventories.write().await;
@@ -1255,7 +1294,19 @@ impl super::GameState {
 
             let (dropped, dropped_from_off_hand) =
                 if let Some(idx) = inv.bag.iter().position(|i| i.instance_id == instance_id) {
-                    (inv.bag.remove(idx), false)
+                    if inv.bag[idx].quantity > 1 {
+                        inv.bag[idx].quantity -= 1;
+                        let unit = ItemInstance {
+                            instance_id: split_instance_id,
+                            item_def_id: inv.bag[idx].item_def_id.clone(),
+                            quantity: 1,
+                            enchant: inv.bag[idx].enchant,
+                            durability: inv.bag[idx].durability,
+                        };
+                        (unit, false)
+                    } else {
+                        (inv.bag.remove(idx), false)
+                    }
                 } else if let Some(slot) = inv
                     .equipped
                     .iter()
@@ -1276,7 +1327,7 @@ impl super::GameState {
         };
 
         let ground_item = GroundItem {
-            instance_id,
+            instance_id: dropped.instance_id,
             item_def_id: dropped.item_def_id,
             position,
             floor_level,
@@ -1293,6 +1344,112 @@ impl super::GameState {
         // Dropping the equipped rod is as much "putting it away" as
         // unequipping it — same mid-session abort.
         self.abort_fishing_if_rod_lost(player_id).await;
+    }
+
+    /// Drop multiple bag stacks (partial quantities allowed) in one
+    /// all-or-nothing transaction: every line is validated against the bag
+    /// before anything is removed. Bag-only — unlike `drop_item`, there is no
+    /// equipped-slot fallback, since batch selection only ever offers bag
+    /// items. `GroundItem` has no quantity field, so each unit lands as its
+    /// own scattered ground item rather than one N-quantity entity.
+    pub async fn drop_items(&self, player_id: &PlayerId, items: Vec<BagLineItem>) {
+        if items.is_empty() {
+            return;
+        }
+        let (player_position, rotation, floor_level) = {
+            let players = self.players.read().await;
+            match players.get(player_id) {
+                Some(p) => (p.position, p.rotation, p.floor_level),
+                None => return,
+            }
+        };
+
+        struct Plan {
+            instance_id: u64,
+            qty: u32,
+            item_def_id: String,
+            enchant: i32,
+            durability: Option<u32>,
+        }
+
+        let mut reserved: HashMap<u64, u32> = HashMap::new();
+        let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
+
+        let snapshot = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+
+            for req in &items {
+                if req.qty == 0 {
+                    continue;
+                }
+                let Some(item) = inv.bag.iter().find(|i| i.instance_id == req.instance_id) else {
+                    drop(inventories);
+                    self.send_system_message(player_id, "Item not found").await;
+                    return;
+                };
+                let already = *reserved.get(&req.instance_id).unwrap_or(&0);
+                if already + req.qty > item.quantity {
+                    drop(inventories);
+                    self.send_system_message(player_id, "Not enough of that item")
+                        .await;
+                    return;
+                }
+                reserved.insert(req.instance_id, already + req.qty);
+                plans.push(Plan {
+                    instance_id: req.instance_id,
+                    qty: req.qty,
+                    item_def_id: item.item_def_id.clone(),
+                    enchant: item.enchant,
+                    durability: item.durability,
+                });
+            }
+            if plans.is_empty() {
+                drop(inventories);
+                return;
+            }
+
+            // Every line is now guaranteed to apply cleanly — mutate.
+            for plan in &plans {
+                let idx = inv
+                    .bag
+                    .iter()
+                    .position(|i| i.instance_id == plan.instance_id)
+                    .expect("checked above");
+                if inv.bag[idx].quantity > plan.qty {
+                    inv.bag[idx].quantity -= plan.qty;
+                } else {
+                    inv.bag.remove(idx);
+                }
+            }
+            inv.clone()
+        };
+
+        self.mark_inventory_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, snapshot).await;
+
+        let total_units: u32 = plans.iter().map(|p| p.qty).sum();
+        let mut next_ground_id = self.reserve_instance_ids(total_units as u64).await;
+        for plan in &plans {
+            for _ in 0..plan.qty {
+                let preferred = drop_landing_position(player_position, rotation);
+                let position = self
+                    .loot_drop_position(player_position, floor_level, preferred)
+                    .await;
+                self.spawn_ground_item(GroundItem {
+                    instance_id: next_ground_id,
+                    item_def_id: plan.item_def_id.clone(),
+                    position,
+                    floor_level,
+                    enchant: plan.enchant,
+                    durability: plan.durability,
+                })
+                .await;
+                next_ground_id += 1;
+            }
+        }
     }
 
     pub async fn debug_drop_item(&self, player_id: &PlayerId, item_def_id: &str) {
@@ -1369,6 +1526,10 @@ impl super::GameState {
         }
 
         let item_weight = self.item_defs.weight(&ground_item.item_def_id);
+        let stackable = self
+            .item_defs
+            .get(&ground_item.item_def_id)
+            .is_some_and(|d| d.stackable);
         let max_weight = self.max_carry_weight(player_id).await;
 
         // Acquire write lock for both weight check and mutation atomically
@@ -1399,13 +1560,15 @@ impl super::GameState {
                         .await;
                     return;
                 }
-                inv.bag.push(ItemInstance {
+                stack_into_bag(
+                    &mut inv.bag,
+                    stackable,
+                    &ground_item.item_def_id,
+                    ground_item.enchant,
                     instance_id,
-                    item_def_id: ground_item.item_def_id,
-                    quantity: 1,
-                    enchant: ground_item.enchant,
-                    durability: ground_item.durability,
-                });
+                    1,
+                    ground_item.durability,
+                );
                 inv.clone()
             } else {
                 return;
