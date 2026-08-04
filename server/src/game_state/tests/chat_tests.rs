@@ -651,12 +651,183 @@ fn admin_command_parses_actions() {
         parse_admin_command("/goto Abuser"),
         Some(AdminCommand::Goto("Abuser"))
     );
+    assert_eq!(
+        parse_admin_command("/ban Abuser"),
+        Some(AdminCommand::Ban {
+            name: "Abuser",
+            minutes: None
+        })
+    );
+    assert_eq!(
+        parse_admin_command("/ban Abuser 60"),
+        Some(AdminCommand::Ban {
+            name: "Abuser",
+            minutes: Some("60")
+        })
+    );
+    // /unban must not be read as /ban: the shorter prefix is checked second.
+    assert_eq!(
+        parse_admin_command("/unban Abuser"),
+        Some(AdminCommand::Unban("Abuser"))
+    );
     // Whole-word rule: /kickstart is not /kick.
     assert_eq!(parse_admin_command("/kickstart party"), None);
+    assert_eq!(parse_admin_command("/banish Abuser"), None);
     assert_eq!(parse_admin_command("hello /kick Abuser"), None);
     // Unvalidated on purpose: a bare command parses (and is admin-gated),
     // then draws a usage reply instead of leaking into local chat.
     assert_eq!(parse_admin_command("/kick"), Some(AdminCommand::Kick("")));
+}
+
+/// The gap review found: the ban is stored per account, so eviction has to be
+/// per account too. A session playing an alt — or sitting at character select
+/// with no character at all — must still be closed.
+#[tokio::test]
+async fn ban_evicts_the_account_session_playing_any_character() {
+    let game_state = make_test_game_state("admin_ban_alt");
+    let (auth, _db) = make_test_auth_with_path("admin_ban_alt");
+    let admin_id = pid("admin");
+    let alt_id = pid("Bob");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    game_state.add_player(make_player("Bob", 5.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    // One account owning two characters; only the alt is online.
+    let account = auth.login_npc("npc_ban_alt").unwrap();
+    let attributes = test_attributes();
+    for name in ["Alice", "Bob"] {
+        auth.create_character(
+            &account,
+            name,
+            &attributes,
+            16,
+            CharacterClass::Knight,
+            Gender::Male,
+        )
+        .unwrap();
+    }
+    let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session_id = game_state
+        .register_account_session(&account, kick_tx, &auth)
+        .await;
+    assert!(
+        game_state
+            .attach_player_to_account_session(&account, session_id, alt_id)
+            .await
+    );
+
+    // Banning the *offline* character has to close the session held by the alt.
+    game_state
+        .send_chat_message(&admin_id, "/ban Alice 30".to_string(), &auth)
+        .await;
+
+    match kick_rx.try_recv() {
+        Ok(ServerMessage::Kicked { reason, .. }) => assert!(
+            reason.contains("30 minute"),
+            "the kick carries the remaining time: {reason}"
+        ),
+        other => panic!("expected the alt's session to be kicked, got {other:?}"),
+    }
+    assert!(
+        !game_state
+            .is_current_account_session(&account, session_id)
+            .await,
+        "the banned account must hold no session"
+    );
+    assert!(
+        auth.active_ban(&account).unwrap().is_some(),
+        "and the ban itself is recorded"
+    );
+    let _ = drain(&mut admin_rx);
+}
+
+/// A session that authenticated but has not entered the game has no player id,
+/// so a character-name lookup cannot see it — the account key can.
+#[tokio::test]
+async fn ban_evicts_a_session_still_at_character_select() {
+    let game_state = make_test_game_state("admin_ban_select");
+    let (auth, _db) = make_test_auth_with_path("admin_ban_select");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    let account = auth.login_npc("npc_ban_select").unwrap();
+    auth.create_character(
+        &account,
+        "Idler",
+        &test_attributes(),
+        16,
+        CharacterClass::Knight,
+        Gender::Male,
+    )
+    .unwrap();
+    let (kick_tx, mut kick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session_id = game_state
+        .register_account_session(&account, kick_tx, &auth)
+        .await;
+    // Deliberately no attach_player_to_account_session: still at select.
+
+    game_state
+        .send_chat_message(&admin_id, "/ban Idler".to_string(), &auth)
+        .await;
+
+    assert!(
+        matches!(kick_rx.try_recv(), Ok(ServerMessage::Kicked { .. })),
+        "a pre-game session must be closed too"
+    );
+    assert!(
+        !game_state
+            .is_current_account_session(&account, session_id)
+            .await
+    );
+    let _ = drain(&mut admin_rx);
+}
+
+/// Self-ban has to compare accounts: an operator's own alt is a different
+/// character name on the same account.
+#[tokio::test]
+async fn ban_refuses_an_operators_own_alt() {
+    let game_state = make_test_game_state("admin_ban_self");
+    let (auth, _db) = make_test_auth_with_path("admin_ban_self");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    let account = auth.login_npc("npc_ban_self").unwrap();
+    auth.create_character(
+        &account,
+        "AdminAlt",
+        &test_attributes(),
+        16,
+        CharacterClass::Knight,
+        Gender::Male,
+    )
+    .unwrap();
+    let (kick_tx, _kick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let session_id = game_state
+        .register_account_session(&account, kick_tx, &auth)
+        .await;
+    assert!(
+        game_state
+            .attach_player_to_account_session(&account, session_id, admin_id)
+            .await
+    );
+
+    game_state
+        .send_chat_message(&admin_id, "/ban AdminAlt".to_string(), &auth)
+        .await;
+
+    assert!(
+        drain(&mut admin_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::SystemMessage { message } if message.contains("your own account")
+        )),
+        "banning an alt of your own account must be refused"
+    );
+    assert!(
+        auth.active_ban(&account).unwrap().is_none(),
+        "and must not have written a ban"
+    );
 }
 
 #[tokio::test]

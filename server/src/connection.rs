@@ -572,9 +572,36 @@ async fn finish_auth(
         .collect::<Vec<Character>>();
 
     let (kick_tx, kick_rx) = mpsc::unbounded_channel();
-    let account_session_id = game_state
-        .register_account_session(&account_name, kick_tx, auth_service)
-        .await;
+
+    // The single gate both login paths pass through: a ban has to stop the
+    // session here, not at character select, because the account carries it.
+    //
+    // Checked while holding the session lock that `/ban` also takes, and
+    // registering through the locked variant so the two cannot interleave —
+    // otherwise a ban landing between check and registration would admit this
+    // session and find nothing to evict.
+    let account_session_id = {
+        let _sessions = game_state.lock_character_sessions().await;
+        match auth_service.active_ban(&account_name) {
+            Ok(Some(ban)) => {
+                info!("Rejected banned account '{}'", account_name);
+                return vec![ServerMessage::AuthError {
+                    message: ban.message(),
+                }];
+            }
+            Ok(None) => {}
+            Err(err) => {
+                // Fail closed: an unreadable ban table must not become a way in.
+                error!("Ban check failed for '{}': {}", account_name, err);
+                return vec![ServerMessage::AuthError {
+                    message: "Could not verify the account. Try again shortly.".to_string(),
+                }];
+            }
+        }
+        game_state
+            .register_account_session_locked(&account_name, kick_tx, auth_service)
+            .await
+    };
 
     state.account_name = Some(account_name.clone());
     state.account_session_id = Some(account_session_id);
@@ -1742,6 +1769,47 @@ mod tests {
         assert!(!token_matches("secret-token", "secret-tokeN"));
         assert!(!token_matches("secret", "secret-token"));
         assert!(!token_matches("", "secret-token"));
+    }
+
+    /// The gate both login paths share: a banned account must not reach the
+    /// character list, and lifting the ban must let it back in.
+    #[tokio::test]
+    async fn finish_auth_refuses_a_banned_account() {
+        let game_state = crate::game_state::tests::make_test_game_state("auth_ban_gate");
+        let auth = crate::game_state::tests::make_test_auth("auth_ban_gate");
+        let account = auth.login_npc("npc_ban_gate").unwrap();
+
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account.clone(), true).await;
+        assert!(
+            matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
+            "unbanned account authenticates: {ok:?}"
+        );
+
+        auth.ban_account(&account, Some("testing"), None).unwrap();
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let refused = finish_auth(&game_state, &auth, &mut state, account.clone(), true).await;
+        match refused.as_slice() {
+            [ServerMessage::AuthError { message }] => {
+                assert!(
+                    message.contains("testing"),
+                    "reason reaches the client: {message}"
+                )
+            }
+            other => panic!("expected an auth error, got {other:?}"),
+        }
+        assert!(
+            state.account_name.is_none(),
+            "a refused session must not be left holding the account"
+        );
+
+        auth.unban_account(&account).unwrap();
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account, true).await;
+        assert!(
+            matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
+            "lifting the ban restores access: {ok:?}"
+        );
     }
 
     #[test]

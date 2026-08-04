@@ -1,5 +1,5 @@
 use super::auth_db;
-use crate::auth::AuthService;
+use crate::auth::{unix_now, AccountBan, AuthService};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use std::collections::HashMap;
@@ -13,6 +13,8 @@ const MAX_BLOCKS: usize = 100;
 /// `/mute` duration (minutes): default when unstated, and the cap (one day).
 const MUTE_DEFAULT_MINUTES: u64 = 10;
 const MUTE_MAX_MINUTES: u64 = 1440;
+/// A year of minutes: longer than that, use a permanent ban (no minutes).
+const BAN_MAX_MINUTES: i64 = 525_600;
 
 /// `/who` breakdown. Splits by client program rather than by "human vs bot":
 /// the server cannot tell whether a person or an LLM is driving a web client,
@@ -122,6 +124,11 @@ pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
 #[derive(Debug, PartialEq)]
 pub(crate) enum AdminCommand<'a> {
     Kick(&'a str),
+    Ban {
+        name: &'a str,
+        minutes: Option<&'a str>,
+    },
+    Unban(&'a str),
     Mute {
         name: &'a str,
         minutes: Option<&'a str>,
@@ -137,6 +144,17 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
     }
     if let Some(rest) = strip_command(message, "/unmute") {
         return Some(AdminCommand::Unmute(rest));
+    }
+    // Before /ban: otherwise the shorter prefix claims "/unban <name>".
+    if let Some(rest) = strip_command(message, "/unban") {
+        return Some(AdminCommand::Unban(rest));
+    }
+    if let Some(rest) = strip_command(message, "/ban") {
+        let (name, minutes) = match rest.split_once(' ') {
+            Some((name, minutes)) => (name, Some(minutes.trim())),
+            None => (rest, None),
+        };
+        return Some(AdminCommand::Ban { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/mute") {
         let (name, minutes) = match rest.split_once(' ') {
@@ -562,6 +580,10 @@ impl super::GameState {
                 self.mute_command(admin_id, name, minutes).await
             }
             AdminCommand::Unmute(name) => self.unmute_command(name).await,
+            AdminCommand::Ban { name, minutes } => {
+                self.ban_command(admin_id, name, minutes, auth).await
+            }
+            AdminCommand::Unban(name) => self.unban_command(name, auth).await,
             AdminCommand::Summon(name) => self.summon_command(admin_id, name).await,
             AdminCommand::Goto(name) => self.goto_command(admin_id, name).await,
         }
@@ -604,6 +626,122 @@ impl super::GameState {
         self.kick_player(&target_id, "Removed by an operator", auth)
             .await;
         Ok(format!("Kick: {canonical} was disconnected."))
+    }
+
+    /// Ban the account behind a character name, so deleting and recreating
+    /// characters does not shed it. Resolved against the DB, not the online
+    /// roster: banning someone who just logged off has to work.
+    async fn ban_command(
+        &self,
+        admin_id: &PlayerId,
+        name: &str,
+        raw_minutes: Option<&str>,
+        auth: &AuthService,
+    ) -> Result<String, String> {
+        if name.is_empty() {
+            return Err("Ban: /ban <name> [minutes]".to_string());
+        }
+        let minutes = match raw_minutes {
+            None => None,
+            Some(raw) => match raw.parse::<i64>() {
+                Ok(m) if (1..=BAN_MAX_MINUTES).contains(&m) => Some(m),
+                _ => return Err(format!("Ban: minutes must be 1–{BAN_MAX_MINUTES}.")),
+            },
+        };
+
+        let (canonical, account) = {
+            let auth = auth.clone();
+            let query = name.to_string();
+            match auth_db(move || {
+                let canonical = auth.resolve_character_name(&query)?;
+                let account = auth.account_of_character(&query)?;
+                Ok((canonical, account))
+            })
+            .await
+            {
+                Ok((Some(canonical), Some(account))) => (canonical, account),
+                Ok(_) => return Err(format!("Ban: no character named {name}.")),
+                Err(err) => {
+                    error!("Ban lookup failed: {err}");
+                    return Err("Ban: could not read the character.".to_string());
+                }
+            }
+        };
+
+        // Compare accounts, not character names: an operator's own alt is a
+        // different name on the same account, and banning it would lock them
+        // out with no way back in through the game.
+        if self
+            .account_of_player(admin_id)
+            .await
+            .is_some_and(|admin| admin.eq_ignore_ascii_case(&account))
+        {
+            return Err("Ban: that's your own account.".to_string());
+        }
+
+        let until_unix = minutes.map(|m| unix_now() + m * 60);
+        let ban = AccountBan {
+            reason: Some("Banned by an operator".to_string()),
+            until_unix,
+        };
+
+        // Held across the write and the eviction, and taken by the login path
+        // around its own ban check: without that, a login landing in between
+        // is admitted and its session is not yet visible here to evict.
+        let _sessions = self.lock_character_sessions().await;
+        {
+            let auth = auth.clone();
+            let account = account.clone();
+            let reason = ban.reason.clone();
+            if let Err(err) =
+                auth_db(move || auth.ban_account(&account, reason.as_deref(), until_unix)).await
+            {
+                error!("Ban write failed: {err}");
+                return Err("Ban: could not record the ban.".to_string());
+            }
+        }
+        info!(admin = ?admin_id, target = %canonical, ?minutes, "admin ban");
+
+        // Keyed by account, so this also lands on an alt and on a session that
+        // has not entered the game yet. The message carries the remaining time.
+        self.evict_account_session_locked(&account, &ban.message(), auth)
+            .await;
+
+        Ok(match minutes {
+            None => format!("Ban: {canonical} is banned. /unban {canonical} undoes this."),
+            Some(m) => format!("Ban: {canonical} is banned for {m}m."),
+        })
+    }
+
+    async fn unban_command(&self, name: &str, auth: &AuthService) -> Result<String, String> {
+        if name.is_empty() {
+            return Err("Unban: /unban <name>".to_string());
+        }
+        // A character name is what an operator has to hand, but a ban outlives
+        // its characters — so an unmatched name is tried as the account itself,
+        // or a banned account whose last character was deleted could only be
+        // recovered by editing the database.
+        let auth_for_lookup = auth.clone();
+        let query = name.to_string();
+        let account = match auth_db(move || auth_for_lookup.account_of_character(&query)).await {
+            Ok(Some(account)) => account,
+            Ok(None) => name.to_string(),
+            Err(err) => {
+                error!("Unban lookup failed: {err}");
+                return Err("Unban: could not read the character.".to_string());
+            }
+        };
+        let auth = auth.clone();
+        match auth_db(move || auth.unban_account(&account)).await {
+            Ok(true) => Ok(format!("Unban: {name} can log in again.")),
+            Ok(false) => Err(format!(
+                "Unban: {name} is not banned. Name a character on the account, or the account."
+            )),
+            Err(err) => {
+                error!("Unban write failed: {err}");
+                Err("Unban: could not clear the ban.".to_string())
+            }
+        }
     }
 
     async fn mute_command(

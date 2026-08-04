@@ -318,7 +318,22 @@ impl super::GameState {
         self.character_session_lock.lock().await
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_account_session(
+        &self,
+        account_name: &str,
+        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        auth: &AuthService,
+    ) -> u64 {
+        let _sessions = self.character_session_lock.lock().await;
+        self.register_account_session_locked(account_name, kick_tx, auth)
+            .await
+    }
+
+    /// Body of `register_account_session` for callers already holding
+    /// `lock_character_sessions` — the mutex is not reentrant, so a login that
+    /// checks a ban under the lock has to register through this.
+    pub(crate) async fn register_account_session_locked(
         &self,
         account_name: &str,
         kick_tx: mpsc::UnboundedSender<ServerMessage>,
@@ -326,7 +341,6 @@ impl super::GameState {
     ) -> u64 {
         use std::sync::atomic::Ordering;
 
-        let _sessions = self.character_session_lock.lock().await;
         let session_id = self.next_account_session.fetch_add(1, Ordering::Relaxed);
         let key = account_name.to_ascii_lowercase();
         let replaced = self.account_sessions.write().await.insert(
@@ -489,6 +503,47 @@ impl super::GameState {
             });
         }
         self.cleanup_player_session(player_id, auth).await;
+    }
+
+    /// Account behind an online player id, read from the session map (the same
+    /// place `kick_player` looks). `None` once the session is gone.
+    pub(crate) async fn account_of_player(&self, player_id: &PlayerId) -> Option<String> {
+        self.account_sessions
+            .read()
+            .await
+            .iter()
+            .find_map(|(key, session)| (session.player_id == Some(*player_id)).then(|| key.clone()))
+    }
+
+    /// Force-disconnect a whole account, whichever character it is playing —
+    /// or none at all, as at character select. `/ban` needs this: the session
+    /// map is keyed by account, so a character-name lookup misses an alt and
+    /// misses a session that has not entered the game yet.
+    ///
+    /// Assumes `lock_character_sessions` is held, so the caller can serialize
+    /// the ban write with the login path.
+    pub(crate) async fn evict_account_session_locked(
+        &self,
+        account_name: &str,
+        reason: &str,
+        auth: &AuthService,
+    ) {
+        let session = self
+            .account_sessions
+            .write()
+            .await
+            .remove(&account_name.to_ascii_lowercase());
+        let Some(session) = session else {
+            return;
+        };
+        let _ = session.kick_tx.send(ServerMessage::Kicked {
+            player_id: session.player_id.unwrap_or(PlayerId::from(0)),
+            reason: reason.to_string(),
+        });
+        // Only a session that reached the game has per-player state to clear.
+        if let Some(player_id) = session.player_id {
+            self.cleanup_player_session(&player_id, auth).await;
+        }
     }
 
     /// Synchronously write a player's character row and inventory to the DB,

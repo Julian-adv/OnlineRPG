@@ -64,6 +64,34 @@ pub struct SkillRow {
     pub xp: u64,
 }
 
+/// A ban in force on an account. `until_unix` is `None` for a permanent ban.
+#[derive(Debug, Clone)]
+pub struct AccountBan {
+    pub reason: Option<String>,
+    pub until_unix: Option<i64>,
+}
+
+impl AccountBan {
+    /// Client-facing text, so a kicked player learns why and for how long.
+    pub fn message(&self) -> String {
+        let reason = self.reason.as_deref().unwrap_or("Banned by an operator");
+        match self.until_unix {
+            None => reason.to_string(),
+            Some(until) => {
+                let minutes = ((until - unix_now()).max(0) + 59) / 60;
+                format!("{reason} ({minutes} minute(s) remaining)")
+            }
+        }
+    }
+}
+
+pub(crate) fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthService {
     pool: r2d2::Pool<SqliteConnectionManager>,
@@ -341,6 +369,7 @@ impl AuthService {
         Self::ensure_characters_schema(&conn)?;
         Self::migrate_item_definition_ids(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
+        Self::ensure_bans_schema(&conn)?;
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
         Self::ensure_dungeon_chest_schema(&conn)?;
@@ -486,6 +515,24 @@ impl AuthService {
     /// `world_time`) rather than wall time because the chest refills at
     /// nightfall; keeping the raw timestamp instead of a derived night index
     /// leaves the refill rule free to change later.
+    /// Bans key on the account, not the character: a banned player can delete
+    /// and recreate characters, but the Google subject stays put. `until_unix`
+    /// is NULL for a permanent ban and an epoch second for a timed one —
+    /// wall-clock, because a monotonic `Instant` cannot survive a restart.
+    fn ensure_bans_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS account_bans (
+                account_name TEXT PRIMARY KEY,
+                reason TEXT,
+                until_unix INTEGER,
+                banned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                FOREIGN KEY (account_name) REFERENCES accounts(player_name) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
     fn ensure_dungeon_chest_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS character_dungeon_chests (
@@ -761,6 +808,81 @@ impl AuthService {
             params![character_id, blocked_name],
         )?;
         Ok(())
+    }
+
+    /// Account that owns a character, matched ignoring ASCII case like the
+    /// other name lookups. `None` when no such character exists.
+    pub fn account_of_character(&self, character_name: &str) -> Result<Option<String>, AuthError> {
+        let conn = self.open_connection()?;
+        let found = conn
+            .query_row(
+                "SELECT account_name FROM characters
+                 WHERE character_name = ?1 COLLATE NOCASE",
+                params![character_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found)
+    }
+
+    /// Ban an account, replacing any existing ban so a re-ban can extend or
+    /// shorten it. `until_unix` is `None` for a permanent ban.
+    pub fn ban_account(
+        &self,
+        account_name: &str,
+        reason: Option<&str>,
+        until_unix: Option<i64>,
+    ) -> Result<(), AuthError> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "INSERT INTO account_bans (account_name, reason, until_unix)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(account_name) DO UPDATE SET
+                reason = excluded.reason,
+                until_unix = excluded.until_unix,
+                banned_at = strftime('%s', 'now')",
+            params![account_name, reason, until_unix],
+        )?;
+        Ok(())
+    }
+
+    pub fn unban_account(&self, account_name: &str) -> Result<bool, AuthError> {
+        let conn = self.open_connection()?;
+        let removed = conn.execute(
+            "DELETE FROM account_bans WHERE account_name = ?1",
+            params![account_name],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// The ban in force on an account right now, or `None`. An expired row is
+    /// deleted on read so the table does not accumulate dead bans.
+    pub fn active_ban(&self, account_name: &str) -> Result<Option<AccountBan>, AuthError> {
+        let conn = self.open_connection()?;
+        let row: Option<(Option<String>, Option<i64>)> = conn
+            .query_row(
+                "SELECT reason, until_unix FROM account_bans WHERE account_name = ?1",
+                params![account_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((reason, until_unix)) = row else {
+            return Ok(None);
+        };
+        if let Some(until) = until_unix {
+            if until <= unix_now() {
+                // Scoped to the deadline just read: a re-ban landing between
+                // the select and this delete carries a different `until_unix`
+                // (or NULL) and must survive.
+                conn.execute(
+                    "DELETE FROM account_bans
+                     WHERE account_name = ?1 AND until_unix = ?2",
+                    params![account_name, until],
+                )?;
+                return Ok(None);
+            }
+        }
+        Ok(Some(AccountBan { reason, until_unix }))
     }
 
     fn dungeon_chest_opens_on(
@@ -1156,6 +1278,157 @@ mod tests {
         )
         .unwrap();
         assert!(auth.login_npc("npc_bob").is_err());
+    }
+
+    #[test]
+    fn a_ban_survives_recreating_the_character_and_expires_on_its_own() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_ban_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_google("sub-ban").unwrap();
+        let attributes = CharacterAttributes {
+            r#str: 12,
+            dex: 12,
+            con: 12,
+            int: 12,
+            wis: 12,
+            cha: 12,
+            guard: 10,
+        };
+        let record = auth
+            .create_character(
+                &account,
+                "Ruffian",
+                &attributes,
+                16,
+                CharacterClass::Knight,
+                Gender::Male,
+            )
+            .unwrap();
+
+        // An operator types a character name; the ban lands on the account.
+        assert_eq!(
+            auth.account_of_character("ruffian").unwrap().as_deref(),
+            Some(account.as_str()),
+            "resolved ignoring case, like every other name lookup"
+        );
+        assert!(auth.active_ban(&account).unwrap().is_none());
+
+        auth.ban_account(&account, Some("griefing"), None).unwrap();
+        let ban = auth.active_ban(&account).unwrap().expect("ban in force");
+        assert_eq!(ban.reason.as_deref(), Some("griefing"));
+        assert_eq!(ban.until_unix, None, "no minutes means permanent");
+
+        // Deleting the character does not shed the ban — the account carries it.
+        auth.delete_character(&account, record.id).unwrap();
+        assert!(auth.active_ban(&account).unwrap().is_some());
+        assert_eq!(
+            auth.login_google("sub-ban").unwrap(),
+            account,
+            "the same Google subject still resolves to the banned account"
+        );
+
+        // Re-banning replaces the row, so a permanent ban can be shortened.
+        let until = unix_now() + 600;
+        auth.ban_account(&account, Some("cooling off"), Some(until))
+            .unwrap();
+        let ban = auth.active_ban(&account).unwrap().expect("timed ban");
+        assert_eq!(ban.until_unix, Some(until));
+        assert!(ban.message().contains("10 minute"), "{}", ban.message());
+
+        // A ban whose deadline has passed reads as absent and is swept.
+        auth.ban_account(&account, None, Some(unix_now() - 1))
+            .unwrap();
+        assert!(auth.active_ban(&account).unwrap().is_none());
+        assert!(
+            !auth.unban_account(&account).unwrap(),
+            "the expired row was cleared on read, so there is nothing left to lift"
+        );
+
+        // Lifting a live ban reports that it did something, once.
+        auth.ban_account(&account, None, None).unwrap();
+        assert!(auth.unban_account(&account).unwrap());
+        assert!(!auth.unban_account(&account).unwrap());
+        assert!(auth.active_ban(&account).unwrap().is_none());
+    }
+
+    /// The expiry path cleans up after itself, and a fresh ban placed after an
+    /// expiry is honoured rather than swallowed by the cleanup.
+    #[test]
+    fn an_expired_ban_is_swept_and_a_later_ban_still_applies() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_ban_sweep_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_ban_sweep").unwrap();
+
+        auth.ban_account(&account, None, Some(unix_now() - 1))
+            .unwrap();
+        assert!(
+            auth.active_ban(&account).unwrap().is_none(),
+            "an expired ban stops applying"
+        );
+        assert!(
+            !auth.unban_account(&account).unwrap(),
+            "and the row is gone, so there is nothing left to lift"
+        );
+
+        auth.ban_account(&account, Some("re-banned"), None).unwrap();
+        let ban = auth
+            .active_ban(&account)
+            .unwrap()
+            .expect("the new ban applies");
+        assert_eq!(ban.reason.as_deref(), Some("re-banned"));
+    }
+
+    /// A ban outlives its characters, so `/unban` has to be able to name the
+    /// account directly — otherwise deleting the last character strands it.
+    #[test]
+    fn an_account_can_be_unbanned_after_its_last_character_is_gone() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_ban_orphan_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_ban_orphan").unwrap();
+        let record = auth
+            .create_character(
+                &account,
+                "Lonely",
+                &CharacterAttributes {
+                    r#str: 12,
+                    dex: 12,
+                    con: 12,
+                    int: 12,
+                    wis: 12,
+                    cha: 12,
+                    guard: 10,
+                },
+                16,
+                CharacterClass::Knight,
+                Gender::Male,
+            )
+            .unwrap();
+        auth.ban_account(&account, None, None).unwrap();
+        auth.delete_character(&account, record.id).unwrap();
+
+        // The character route is gone...
+        assert!(auth.account_of_character("Lonely").unwrap().is_none());
+        // ...but the ban is still there, and the account name still lifts it.
+        assert!(auth.active_ban(&account).unwrap().is_some());
+        assert!(auth.unban_account(&account).unwrap());
+        assert!(auth.active_ban(&account).unwrap().is_none());
+    }
+
+    #[test]
+    fn banning_an_unknown_character_finds_no_account() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_ban_miss_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        assert!(auth.account_of_character("nobody").unwrap().is_none());
     }
 
     #[test]
