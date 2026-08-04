@@ -276,6 +276,9 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// player_id → the character name `/r` replies to (last whisper sent or
+    /// received). In-memory only, dropped on logout.
+    whisper_partners: Arc<RwLock<HashMap<PlayerId, String>>>,
     /// Lowercased character name → (canonical name, mute expiry). Keyed by
     /// name, not session, so a relog does not clear it; in-memory only, so a
     /// restart does. Expired entries are pruned on mute/unmute and on lookup.
@@ -395,6 +398,7 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            whisper_partners: Arc::new(RwLock::new(HashMap::new())),
             muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
