@@ -82,6 +82,21 @@ pub struct BuybackEntry {
     pub price: i64,
 }
 
+/// One line of a batched `BuyItems` request: buy `qty` units of one item def.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradeLineItem {
+    pub item_def_id: String,
+    pub qty: u32,
+}
+
+/// One line of a batched `SellItems` or `DropItems` request: act on `qty`
+/// units of one bag stack.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BagLineItem {
+    pub instance_id: u64,
+    pub qty: u32,
+}
+
 /// One party member as listed in `PartyState`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartyMember {
@@ -303,6 +318,12 @@ pub enum ClientMessage {
     DropItem {
         instance_id: u64,
     },
+    /// Drop multiple bag stacks (partial quantities allowed) in one
+    /// all-or-nothing transaction, so a multi-item bag cleanup round-trips
+    /// once instead of once per stack.
+    DropItems {
+        items: Vec<BagLineItem>,
+    },
     /// The pickup crouch started. Sent at the clip's first frame, whereas
     /// `PickupItem` waits for the grab moment ~35% in, so nearby players see
     /// the whole animation instead of joining it late.
@@ -339,6 +360,23 @@ pub enum ClientMessage {
     BuybackItem {
         merchant_player_id: PlayerId,
         entry_id: u64,
+    },
+    /// Buy multiple units, possibly of different items, in one all-or-nothing
+    /// transaction (see `SellItems` for the mirror).
+    BuyItems {
+        merchant_player_id: PlayerId,
+        items: Vec<TradeLineItem>,
+    },
+    /// Sell multiple bag stacks (partial quantities allowed) in one
+    /// all-or-nothing transaction.
+    SellItems {
+        merchant_player_id: PlayerId,
+        items: Vec<BagLineItem>,
+    },
+    /// Repurchase multiple buyback entries at once, all-or-nothing.
+    BuybackItems {
+        merchant_player_id: PlayerId,
+        entry_ids: Vec<u64>,
     },
     /// NPC-only (LLM haggling): offer a price modifier on one item to a
     /// nearby player. The server clamps the modifier to the player's price

@@ -1528,6 +1528,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::DropItems { items } => {
+            if let Some(id) = &state.player_id {
+                game_state.drop_items(id, items).await;
+            }
+        }
+
         ClientMessage::PickupStarted => {
             if let Some(id) = &state.player_id {
                 game_state.broadcast_pickup_animation(id).await;
@@ -1623,6 +1629,35 @@ async fn handle_client_message(
             if let Some(id) = &state.player_id {
                 game_state
                     .buyback_item(id, &merchant_player_id, entry_id)
+                    .await;
+            }
+        }
+
+        ClientMessage::BuyItems {
+            merchant_player_id,
+            items,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state.buy_items(id, &merchant_player_id, items).await;
+            }
+        }
+
+        ClientMessage::SellItems {
+            merchant_player_id,
+            items,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state.sell_items(id, &merchant_player_id, items).await;
+            }
+        }
+
+        ClientMessage::BuybackItems {
+            merchant_player_id,
+            entry_ids,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .buyback_items(id, &merchant_player_id, entry_ids)
                     .await;
             }
         }
