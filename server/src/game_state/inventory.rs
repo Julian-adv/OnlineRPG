@@ -107,6 +107,37 @@ pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> 
     quantity as u64
 }
 
+/// The one bag-draw rule for def-keyed stock sales: requests carry no enchant,
+/// so units leave lowest-enchant-first. Returns the (enchant, quantity,
+/// durability) draws taken, stopping short if the bag runs out.
+pub(super) fn draw_from_bag(
+    bag: &mut Vec<ItemInstance>,
+    item_def_id: &str,
+    mut quantity: u32,
+) -> Vec<(i32, u32, Option<u32>)> {
+    let mut draws = Vec::new();
+    while quantity > 0 {
+        let Some(idx) = bag
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.item_def_id == item_def_id)
+            .min_by_key(|(_, item)| item.enchant)
+            .map(|(idx, _)| idx)
+        else {
+            break;
+        };
+        let take = quantity.min(bag[idx].quantity);
+        draws.push((bag[idx].enchant, take, bag[idx].durability));
+        if bag[idx].quantity > take {
+            bag[idx].quantity -= take;
+        } else {
+            bag.remove(idx);
+        }
+        quantity -= take;
+    }
+    draws
+}
+
 /// Remove one unit of `instance_id` from the bag, dropping the instance when
 /// the stack empties.
 fn consume_one(inv: &mut PlayerInventory, instance_id: u64) {

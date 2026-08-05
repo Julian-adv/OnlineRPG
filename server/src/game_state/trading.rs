@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::inventory::{durability_value_percent, ItemInstance};
+use onlinerpg_shared::inventory::durability_value_percent;
 use onlinerpg_shared::messages::{BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem};
 use tracing::info;
 
 use super::combat::reachable_dist_sq;
 use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout, DealEntry};
-use super::inventory::{stack_into_bag, BagInsert};
+use super::inventory::{draw_from_bag, stack_into_bag, BagInsert};
 use super::StoredBuyback;
 
 /// Maximum distance between player and trader for any shop interaction.
@@ -533,14 +533,8 @@ impl super::GameState {
                         )
                         .await;
                 };
-                // Stock requests are def-only, so sell the lowest enchant first.
-                let Some(idx) = npc_inv
-                    .bag
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, item)| item.item_def_id == item_def_id)
-                    .min_by_key(|(_, item)| item.enchant)
-                    .map(|(idx, _)| idx)
+                let Some(&(purchased_enchant, _, purchased_durability)) =
+                    draw_from_bag(&mut npc_inv.bag, item_def_id, 1).first()
                 else {
                     drop(inventories);
                     drop(gold_map);
@@ -555,36 +549,26 @@ impl super::GameState {
                         )
                         .await;
                 };
-                let mut transferred = npc_inv.bag[idx].clone();
-                if npc_inv.bag[idx].quantity > 1 {
-                    npc_inv.bag[idx].quantity -= 1;
-                } else {
-                    npc_inv.bag.remove(idx);
-                }
-                transferred.instance_id = instance_id;
-                transferred.quantity = 1;
-                (Some(npc_inv.clone()), Some(transferred))
+                (
+                    Some(npc_inv.clone()),
+                    Some((purchased_enchant, purchased_durability)),
+                )
             } else {
                 (None, None)
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
-            let transferred_item = transferred_item.unwrap_or_else(|| ItemInstance {
-                instance_id,
-                item_def_id: item_def_id.to_string(),
-                quantity: 1,
-                enchant: 0,
-                durability: self.initial_item_durability(item_def_id),
-            });
+            let (purchased_enchant, purchased_durability) =
+                transferred_item.unwrap_or_else(|| (0, self.initial_item_durability(item_def_id)));
             stack_into_bag(
                 &mut inv.bag,
                 BagInsert {
                     stackable,
-                    item_def_id: &transferred_item.item_def_id,
-                    enchant: transferred_item.enchant,
-                    first_instance_id: transferred_item.instance_id,
-                    quantity: transferred_item.quantity,
-                    durability: transferred_item.durability,
+                    item_def_id,
+                    enchant: purchased_enchant,
+                    first_instance_id: instance_id,
+                    quantity: 1,
+                    durability: purchased_durability,
                 },
             );
             let snapshot = inv.clone();
@@ -673,15 +657,14 @@ impl super::GameState {
             price: i64,
         }
 
-        struct ResidentPurchase {
-            item_def_id: String,
-            quantity: u32,
+        struct Purchase<'a> {
+            item_def_id: &'a str,
+            qty: u32,
             enchant: i32,
             durability: Option<u32>,
         }
 
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
-        let mut requested: HashMap<String, u32> = HashMap::new();
         for req in &items {
             if req.qty == 0 {
                 continue;
@@ -711,7 +694,6 @@ impl super::GameState {
                     .send_trade_error(player_id, "That item has no price")
                     .await;
             };
-            *requested.entry(req.item_def_id.clone()).or_insert(0) += req.qty;
             plans.push(Plan {
                 item_def_id: req.item_def_id.clone(),
                 qty: req.qty,
@@ -748,14 +730,18 @@ impl super::GameState {
                     .send_trade_error(player_id, "They have nothing to sell")
                     .await;
             };
-            for (item_def_id, qty) in &requested {
+            let mut requested: HashMap<&str, u32> = HashMap::new();
+            for plan in &plans {
+                *requested.entry(plan.item_def_id.as_str()).or_default() += plan.qty;
+            }
+            for (item_def_id, qty) in requested {
                 let available: u32 = npc_inv
                     .bag
                     .iter()
-                    .filter(|i| &i.item_def_id == item_def_id)
+                    .filter(|i| i.item_def_id == item_def_id)
                     .map(|i| i.quantity)
                     .sum();
-                if available < *qty {
+                if available < qty {
                     drop(inventories);
                     drop(gold_map);
                     return self
@@ -806,76 +792,52 @@ impl super::GameState {
         }
 
         // Every line is now guaranteed to apply cleanly — mutate. Resident
-        // stock carries its authored per-instance modifiers into the buyer's
-        // bag; catalog purchases are freshly created at full durability.
-        let resident_purchases = if is_resident {
+        // stock draws fan a line out into one purchase per stock entry taken;
+        // merchant catalogs are infinite, so a line maps straight through.
+        // Both paths retain the item's durability condition.
+        let purchases: Vec<Purchase> = if is_resident {
             let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
             let mut purchases = Vec::new();
             for plan in &plans {
-                let mut remaining = plan.qty;
-                while remaining > 0 {
-                    let idx = npc_inv
-                        .bag
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, item)| item.item_def_id == plan.item_def_id)
-                        .min_by_key(|(_, item)| item.enchant)
-                        .map(|(idx, _)| idx)
-                        .expect("availability checked above");
-                    let take = remaining.min(npc_inv.bag[idx].quantity);
-                    let enchant = npc_inv.bag[idx].enchant;
-                    let durability = npc_inv.bag[idx].durability;
-                    if npc_inv.bag[idx].quantity > take {
-                        npc_inv.bag[idx].quantity -= take;
-                    } else {
-                        npc_inv.bag.remove(idx);
-                    }
-                    purchases.push(ResidentPurchase {
-                        item_def_id: plan.item_def_id.clone(),
-                        quantity: take,
+                for (enchant, qty, durability) in
+                    draw_from_bag(&mut npc_inv.bag, &plan.item_def_id, plan.qty)
+                {
+                    purchases.push(Purchase {
+                        item_def_id: &plan.item_def_id,
+                        qty,
                         enchant,
                         durability,
                     });
-                    remaining -= take;
                 }
             }
             purchases
         } else {
-            Vec::new()
+            plans
+                .iter()
+                .map(|plan| Purchase {
+                    item_def_id: &plan.item_def_id,
+                    qty: plan.qty,
+                    enchant: 0,
+                    durability: self.initial_item_durability(&plan.item_def_id),
+                })
+                .collect()
         };
 
         {
             let inv = inventories.get_mut(player_id).expect("checked above");
-            if is_resident {
-                for purchase in &resident_purchases {
-                    let stackable = self.item_defs.stackable(&purchase.item_def_id);
-                    next_id += stack_into_bag(
-                        &mut inv.bag,
-                        BagInsert {
-                            stackable,
-                            item_def_id: &purchase.item_def_id,
-                            enchant: purchase.enchant,
-                            first_instance_id: next_id,
-                            quantity: purchase.quantity,
-                            durability: purchase.durability,
-                        },
-                    );
-                }
-            } else {
-                for plan in &plans {
-                    let stackable = self.item_defs.stackable(&plan.item_def_id);
-                    next_id += stack_into_bag(
-                        &mut inv.bag,
-                        BagInsert {
-                            stackable,
-                            item_def_id: &plan.item_def_id,
-                            enchant: 0,
-                            first_instance_id: next_id,
-                            quantity: plan.qty,
-                            durability: self.initial_item_durability(&plan.item_def_id),
-                        },
-                    );
-                }
+            for purchase in &purchases {
+                let stackable = self.item_defs.stackable(purchase.item_def_id);
+                next_id += stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert {
+                        stackable,
+                        item_def_id: purchase.item_def_id,
+                        enchant: purchase.enchant,
+                        first_instance_id: next_id,
+                        quantity: purchase.qty,
+                        durability: purchase.durability,
+                    },
+                );
             }
         }
 
