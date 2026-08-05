@@ -43,6 +43,16 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.chars().count() <= MAX_NAME_CHARS && name.chars().all(valid_name_char)
 }
 
+/// Character names must also start with a letter; digit/underscore-leading
+/// names created before this rule are grandfathered.
+fn valid_character_name(name: &str) -> bool {
+    valid_name(name)
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| !matches!(c, '0'..='9' | '_'))
+}
+
 /// One persisted inventory row: a bag stack (`equip_slot: None`) or an
 /// equipped item.
 #[derive(Debug, Clone, PartialEq)]
@@ -215,7 +225,7 @@ impl AuthError {
             AuthError::InvalidInput(message) => message,
             AuthError::AccountNotFound => "Account not found",
             AuthError::InvalidCharacterName => {
-                "Character name is empty, too long, or contains invalid characters"
+                "Character name must start with a letter and contain only letters, digits, or _"
             }
             AuthError::CharacterLimitReached => {
                 "A maximum of 3 characters can be created per account"
@@ -984,7 +994,7 @@ impl AuthService {
             return Err(AuthError::InvalidInput("Account name is required"));
         }
 
-        if !valid_name(character_name) {
+        if !valid_character_name(character_name) {
             return Err(AuthError::InvalidCharacterName);
         }
 
@@ -1634,8 +1644,17 @@ mod tests {
             )
         };
         assert!(create("Bad\nName").is_err());
+        assert!(create("30000").is_err());
+        assert!(create("_Player").is_err());
         assert!(create("김철수").is_ok());
         assert!(create("ㅇㅇ_Player1").is_ok());
+        assert!(create("Player1").is_ok());
+
+        assert!(!valid_character_name("30000"));
+        assert!(!valid_character_name("9lives"));
+        assert!(!valid_character_name("_x"));
+        assert!(valid_character_name("x_9"));
+        assert!(valid_character_name("가9"));
 
         assert!(!valid_name(""));
         assert!(!valid_name("Bad\u{1b}[31mName"));
