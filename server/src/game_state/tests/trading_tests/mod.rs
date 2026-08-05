@@ -24,6 +24,13 @@ async fn set_floor(game_state: &GameState, name: &str, floor: i8) {
         .floor_level = floor;
 }
 
+/// Occupy a bed, which is all the server sees of a scheduled NPC going to sleep.
+async fn put_in_bed(game_state: &GameState, name: &str) {
+    game_state
+        .set_player_interaction(&pid(name), Some("bed".to_string()), Some(3))
+        .await;
+}
+
 /// Spawn a merchant NPC and a buyer with the given CHA/gold next to each
 /// other, returning the buyer's direct-message receiver and the NPC's.
 async fn setup_haggle(game_state: &GameState, cha: u8, gold: i64) -> (DirectRx, DirectRx) {
