@@ -124,6 +124,7 @@ describe('dispatchPlayerControlEvent', () => {
     const intent: ClickIntent = {
       type: 'move_to_ground',
       position: { x: 4, y: 5, z: 6 },
+      sprinting: false,
     }
 
     dispatchPlayerControlEvent(
@@ -131,6 +132,9 @@ describe('dispatchPlayerControlEvent', () => {
       actions
     )
 
-    expect(actions.moveToGround).toHaveBeenCalledWith({ x: 4, y: 5, z: 6 })
+    expect(actions.moveToGround).toHaveBeenCalledWith(
+      { x: 4, y: 5, z: 6 },
+      false
+    )
   })
 })

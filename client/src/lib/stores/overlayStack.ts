@@ -11,6 +11,7 @@ export type OverlayId =
   | 'settings'
   | 'loading'
   | 'respawn'
+  | 'chatChannelMenu'
 
 /** `layer` is paint order, not raw z-index: `.game-hud`'s z-index:1 stacking
  *  context traps the panels' 40/45 below the root-level dialogs (each 30,
@@ -25,6 +26,8 @@ const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   respawn: { layer: 3 },
   worldMap: { layer: 4 },
   settings: { layer: 5 },
+  // A transient popup: whenever it is open, Escape must hit it first.
+  chatChannelMenu: { layer: 6 },
 }
 
 const stack = writable<OverlayId[]>([])

@@ -15,6 +15,8 @@ import {
 } from './stores/debugStore'
 import { computeGrassPlacement, regenerateVegMeta } from './utils/grass-data'
 import { dungeonManager } from './managers/dungeonManager'
+import { chatChannel } from './stores/chatChannelStore'
+import { partyRoster } from './stores/partyStore'
 
 /** Every command lives here once: its `/help` line, whether it is admin-only,
  *  and who executes it. */
@@ -54,9 +56,34 @@ const COMMANDS: Record<string, Command> = {
   '/escape': { desc: 'Return to the starting point when you get stuck' },
   '/w': { desc: 'Send a private message: /w <player> <message>' },
   '/whisper': { desc: 'Send a private message: /whisper <player> <message>' },
+  '/r': { desc: 'Reply to the last whisper: /r <message>' },
+  '/reply': { desc: 'Reply to the last whisper: /reply <message>' },
   '/block': { desc: 'Block whispers from a player: /block <player>' },
   '/unblock': { desc: 'Unblock a player: /unblock <player>' },
   '/party': { desc: 'Invite a player to your party: /party <player>' },
+  '/p': {
+    desc: 'Talk to your party and stay in party chat: /p [message]',
+    run: (args) => {
+      const message = args.trim()
+      if (!get(partyRoster)) {
+        addChatMessage({
+          text: 'Party: you are not in a party.',
+          sender: 'system',
+        })
+        return
+      }
+      chatChannel.set('party')
+      if (message) networkManager.sendPartyChat(message)
+    },
+  },
+  '/s': {
+    desc: 'Talk normally and leave party chat: /s [message]',
+    run: (args) => {
+      const message = args.trim()
+      chatChannel.set('say')
+      if (message) networkManager.sendChatMessage(message)
+    },
+  },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',

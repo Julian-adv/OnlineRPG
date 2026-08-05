@@ -132,6 +132,7 @@ export type ClientMessage =
         rotation: number
         floor_level: number
         append: boolean
+        sprinting: boolean
       }
     }
   | { PlayerFloorChanged: { floor_level: number } }
@@ -161,6 +162,7 @@ export type ClientMessage =
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
+  | { PartyChat: { message: string } }
   | 'RequestPartyPositions'
   | { OpenDungeonChest: { entrance_id: string } }
   | {

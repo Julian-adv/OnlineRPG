@@ -717,6 +717,7 @@ impl SharedState {
                 position,
                 rotation,
                 append,
+                sprinting,
                 ..
             } => {
                 // On the entrance stairs the wire floor is still 0 while the Y
@@ -738,6 +739,7 @@ impl SharedState {
                     rotation,
                     floor_level: self.self_floor_level,
                     append,
+                    sprinting,
                 }
             }
             ClientMessage::RequestSpawnMonster {
@@ -931,6 +933,16 @@ impl SharedState {
             // Urgent: a whisper is always addressed to us; the echo of our
             // own outgoing whisper is the Noise case.
             ServerMessage::WhisperMessage { from, .. } => {
+                let self_name = self.self_player.as_ref().map(|p| p.name.as_str());
+                if Some(from.as_str()) == self_name {
+                    EventUrgency::Noise
+                } else {
+                    EventUrgency::Urgent
+                }
+            }
+            // Party chat is addressed to our group, so it wakes us like a
+            // whisper; the own-echo Noise rule is the same.
+            ServerMessage::PartyChatMessage { from, .. } => {
                 let self_name = self.self_player.as_ref().map(|p| p.name.as_str());
                 if Some(from.as_str()) == self_name {
                     EventUrgency::Noise

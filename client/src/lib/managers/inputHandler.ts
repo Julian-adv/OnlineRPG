@@ -111,7 +111,7 @@ export type ClickIntent =
       propId: number
       position: Position
     }
-  | { type: 'move_to_ground'; position: Position }
+  | { type: 'move_to_ground'; position: Position; sprinting: boolean }
   | {
       /** Rod equipped + clicked point is underwater terrain: cast, don't walk. */
       type: 'cast_fishing'
@@ -170,7 +170,13 @@ class InputHandler {
   }
 
   get hasKeysPressed(): boolean {
-    return this.keysPressed.size > 0
+    return this.getMovementDirection() !== null
+  }
+
+  get isSprintPressed(): boolean {
+    return (
+      this.keysPressed.has('ShiftLeft') || this.keysPressed.has('ShiftRight')
+    )
   }
 
   clearTransientInput() {
@@ -395,6 +401,7 @@ class InputHandler {
         ) {
           return {
             type: 'move_to_ground',
+            sprinting: event.shiftKey,
             position: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
           }
         }
@@ -499,6 +506,7 @@ class InputHandler {
       }
       return {
         type: 'move_to_ground',
+        sprinting: event.shiftKey,
         position: {
           x: groundHit.point.x,
           y: groundHit.point.y,
@@ -519,6 +527,7 @@ class InputHandler {
     ) {
       return {
         type: 'move_to_ground',
+        sprinting: event.shiftKey,
         position: {
           x: this._fallbackGroundPoint.x,
           y: this._fallbackGroundPoint.y,

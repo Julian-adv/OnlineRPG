@@ -1,5 +1,6 @@
 use super::*;
 use crate::pathfinding::{PathResult, PathWaypoint};
+use crate::world::{shortest_world_delta_x, WORLD_MAX_X, WORLD_MIN_X};
 use crate::{MonsterState, PlayerId, Position};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
@@ -299,6 +300,42 @@ fn attack_tree() -> BehaviorTree {
     }
 }
 
+fn chase_tree() -> BehaviorTree {
+    BehaviorTree {
+        description: None,
+        root: BehaviorNode::Sequence {
+            children: vec![
+                BehaviorNode::Condition {
+                    name: "target_in_range".into(),
+                    params: HashMap::from([("range".into(), 25.0)]),
+                },
+                BehaviorNode::Action {
+                    name: "chase_target".into(),
+                    params: HashMap::new(),
+                },
+            ],
+        },
+    }
+}
+
+fn leash_tree() -> BehaviorTree {
+    BehaviorTree {
+        description: None,
+        root: BehaviorNode::Sequence {
+            children: vec![
+                BehaviorNode::Condition {
+                    name: "is_beyond_leash".into(),
+                    params: HashMap::from([("range".into(), 30.0)]),
+                },
+                BehaviorNode::Action {
+                    name: "return_to_spawn".into(),
+                    params: HashMap::new(),
+                },
+            ],
+        },
+    }
+}
+
 fn flee_tree() -> BehaviorTree {
     BehaviorTree {
         description: None,
@@ -441,21 +478,7 @@ fn behavior_tree_does_not_flee_without_target() {
 fn behavior_tree_return_sends_walk_target_to_spawn() {
     let mut brain = make_brain();
     brain.position.x = 70.0;
-    let tree = BehaviorTree {
-        description: None,
-        root: BehaviorNode::Sequence {
-            children: vec![
-                BehaviorNode::Condition {
-                    name: "is_beyond_leash".into(),
-                    params: HashMap::from([("range".into(), 30.0)]),
-                },
-                BehaviorNode::Action {
-                    name: "return_to_spawn".into(),
-                    params: HashMap::new(),
-                },
-            ],
-        },
-    };
+    let tree = leash_tree();
     let mut rng = SmallRng::seed_from_u64(42);
 
     let result = brain.tick_with_behavior_tree(16.0, &[], &tree, &DirectPath, &mut rng);
@@ -933,4 +956,100 @@ fn a_correction_repaths_a_fleeing_monster() {
         "a correction must not end the flee"
     );
     assert!(!brain.waypoints.is_empty(), "the brain must have repathed");
+}
+
+/// The world is a cylinder in X. A monster at the east edge chasing a player
+/// just across the seam has to step east into the wrap, not crawl a whole
+/// world width west — and its stored position stays canonical, the same
+/// convention the server's movement sweep keeps.
+#[test]
+fn chase_across_world_seam_takes_the_short_way() {
+    let mut brain = make_brain();
+    let start = Position {
+        x: WORLD_MAX_X - 0.2,
+        y: 0.0,
+        z: 10.0,
+    };
+    brain.position = start;
+    brain.spawn_position = start;
+    let tree = chase_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+
+    // 3.2m east of the monster, on the far side of the seam.
+    let players = attacker_at(WORLD_MIN_X + 3.0, 10.0);
+
+    brain.tick_with_behavior_tree(50.0, &players, &tree, &DirectPath, &mut rng);
+
+    assert_eq!(brain.state(), AiState::Chase);
+    let moved = shortest_world_delta_x(start.x, brain.position.x);
+    assert!(
+        moved > 0.0 && moved < 1.0,
+        "expected a short step east across the seam, got {moved}"
+    );
+    assert!(
+        brain.position.x >= WORLD_MIN_X && brain.position.x < WORLD_MAX_X,
+        "stored X must stay canonical, got {}",
+        brain.position.x
+    );
+}
+
+/// The flee leg points away from the threat, so its delta runs threat -> self.
+/// Across the seam a raw subtraction flips that sign and runs the monster into
+/// its attacker.
+#[test]
+fn flee_across_world_seam_runs_away_from_the_threat() {
+    let mut brain = make_brain();
+    let start = Position {
+        x: WORLD_MIN_X + 1.0,
+        y: 0.0,
+        z: 10.0,
+    };
+    brain.position = start;
+    brain.spawn_position = start;
+    brain.target_player_id = Some(1.into());
+    brain.health = 2;
+    let tree = flee_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+
+    // Attacker 2m west, on the far side of the seam.
+    let players = attacker_at(WORLD_MAX_X - 1.0, 10.0);
+
+    brain.tick_with_behavior_tree(16.0, &players, &tree, &DirectPath, &mut rng);
+
+    assert_eq!(brain.state(), AiState::Flee);
+    let destination = brain.target_position.expect("flee picks a destination");
+    let away = shortest_world_delta_x(start.x, destination.x);
+    assert!(
+        away > 0.0,
+        "the flee leg must point east, away from the attacker, got {away}"
+    );
+}
+
+/// Leash range is a distance, so it takes the periodic one: a monster two
+/// meters from its spawn across the seam has not wandered a world width.
+#[test]
+fn leash_measures_periodic_distance_to_spawn() {
+    let mut brain = make_brain();
+    brain.spawn_position = Position {
+        x: WORLD_MAX_X - 1.0,
+        y: 0.0,
+        z: 10.0,
+    };
+    brain.position = Position {
+        x: WORLD_MIN_X + 1.0,
+        y: 0.0,
+        z: 10.0,
+    };
+    let tree = leash_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+
+    let result = brain.tick_with_behavior_tree(16.0, &[], &tree, &DirectPath, &mut rng);
+
+    assert_ne!(brain.state(), AiState::Return);
+    // The leash condition has to fail outright. Letting it pass and relying on
+    // `return_to_spawn` to notice it already arrived would still emit a pose.
+    assert!(
+        result.commands.is_empty(),
+        "a monster inside its leash must not report a return"
+    );
 }

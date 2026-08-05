@@ -63,7 +63,8 @@ pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
 /// v25: Plate Armor skill identity carried by generic skill messages.
 /// v26: Padded Armor skill identity carried by generic skill messages.
 /// v27: Hybrid Armor skill identity carried by generic skill messages.
-pub const PROTOCOL_VERSION: u32 = 27;
+/// v28: party chat (PartyChat → PartyChatMessage).
+pub const PROTOCOL_VERSION: u32 = 28;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -117,6 +118,7 @@ mod tests {
             rotation: 1.5,
             floor_level: 1,
             append: false,
+            sprinting: false,
         };
         let bytes = serialize_client_msg(&msg).unwrap();
         let decoded = deserialize_client_msg(&bytes).unwrap();

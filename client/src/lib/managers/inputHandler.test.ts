@@ -15,11 +15,12 @@ import { resetFishingStore } from '../stores/fishingStore'
 const RECT = { left: 0, top: 0, width: 100, height: 100 }
 
 /** A canvas click at the viewport center, as processCanvasClick consumes it. */
-function centerClick(): MouseEvent {
+function centerClick(shiftKey = false): MouseEvent {
   return {
     clientX: RECT.width / 2,
     clientY: RECT.height / 2,
     target: { getBoundingClientRect: () => RECT },
+    shiftKey,
   } as unknown as MouseEvent
 }
 
@@ -88,6 +89,18 @@ describe('processCanvasClick cast-vs-walk', () => {
     )
 
     expect(intent.type).toBe('move_to_ground')
+  })
+
+  it('marks a Shift-click ground path as sprinting', () => {
+    const intent = inputHandler.processCanvasClick(
+      centerClick(true),
+      contextWith()
+    )
+
+    expect(intent.type).toBe('move_to_ground')
+    if (intent.type === 'move_to_ground') {
+      expect(intent.sprinting).toBe(true)
+    }
   })
 
   it('walks when the water is too shallow to fish', () => {

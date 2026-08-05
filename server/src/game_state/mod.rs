@@ -14,6 +14,12 @@ pub struct StoredBuyback {
     pub entry: BuybackEntry,
     pub expires_at_ms: u64,
 }
+
+impl StoredBuyback {
+    pub fn is_live(&self, now_ms: u64) -> bool {
+        self.expires_at_ms > now_ms
+    }
+}
 use onlinerpg_shared::serialize_server_msg;
 use onlinerpg_shared::NoSpawnZone;
 use onlinerpg_shared::Position;
@@ -112,9 +118,12 @@ mod skills;
 pub(crate) use skills::skills_from_rows;
 mod time;
 mod trading;
+pub use trading::BUYBACK_SWEEP_PERIOD;
 
+// Visible crate-wide so tests outside this module (e.g. the login gate in
+// `connection`) can reuse the temp-DB and game-state factories.
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) const EVENT_DELIVERY_RADIUS: f32 = onlinerpg_shared::EVENT_DELIVERY_RADIUS;
 
@@ -263,14 +272,17 @@ pub struct GameState {
     /// that merchant, repurchasable at the recorded payout. Keyed by
     /// character (not the per-session player id) so the list survives a
     /// reconnect. Capped per pair (oldest dropped) and in-memory only.
-    /// Entries expire after `BUYBACK_TTL_MS`; `sweep_buybacks` drops them
-    /// along with pairs left empty, so the map stays bounded on a long
-    /// uptime — nothing else ever removes a key.
+    /// Entries expire after `BUYBACK_TTL_MS`; reads filter expiry inline and
+    /// `tick_buyback_expiry` drops them along with pairs left empty, so the
+    /// map stays bounded on a long uptime — nothing else ever removes a key.
     #[allow(clippy::type_complexity)]
     buybacks: Arc<RwLock<HashMap<(i64, String), Vec<StoredBuyback>>>>,
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// player_id → the character name `/r` replies to (last whisper sent or
+    /// received). In-memory only, dropped on logout.
+    whisper_partners: Arc<RwLock<HashMap<PlayerId, String>>>,
     /// Lowercased character name → (canonical name, mute expiry). Keyed by
     /// name, not session, so a relog does not clear it; in-memory only, so a
     /// restart does. Expired entries are pruned on mute/unmute and on lookup.
@@ -301,6 +313,9 @@ pub struct GameState {
     /// player_id → satiation + food poisoning (doc/HUNGER.md). Owner-private
     /// like gold; official NPCs have no entry (the exemption).
     hunger: Arc<RwLock<HashMap<PlayerId, hunger::HungerData>>>,
+    food_regeneration: Arc<RwLock<HashMap<PlayerId, hunger::FoodRegeneration>>>,
+    /// Regen sweep counter: Hungry players heal on alternate sweeps (×0.5).
+    regen_ticks: Arc<std::sync::atomic::AtomicU64>,
     /// Lit campfires keyed by id, expired by `tick_campfires`.
     campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
     /// One grill cast per player, resolved by `tick_grills`.
@@ -391,12 +406,15 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            whisper_partners: Arc::new(RwLock::new(HashMap::new())),
             muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
             dungeon_discovery_cells,
             hunger: Arc::new(RwLock::new(HashMap::new())),
+            food_regeneration: Arc::new(RwLock::new(HashMap::new())),
+            regen_ticks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             campfires: Arc::new(RwLock::new(HashMap::new())),
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
         }

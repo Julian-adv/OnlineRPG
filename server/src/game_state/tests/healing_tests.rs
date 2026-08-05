@@ -158,6 +158,10 @@ async fn rejected_bandages_and_finished_products_do_not_train_healing() {
     let fish_id = pid("fish_eater");
     let _fish_rx = setup_healer(&game_state, "fish_eater", 10, 100, 0, "raw_trout", 1).await;
     game_state.use_item(&fish_id, 100).await;
+    assert_eq!(game_state.players.read().await[&fish_id].health, 10);
+    for _ in 0..onlinerpg_shared::hunger::FOOD_REGEN_DURATION_SECS {
+        game_state.tick_food_regeneration().await;
+    }
     assert!(game_state.players.read().await[&fish_id].health > 10);
     assert!(!game_state.player_skills.read().await[&fish_id]
         .map

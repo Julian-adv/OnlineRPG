@@ -38,3 +38,39 @@ async fn setup_haggle(game_state: &GameState, cha: u8, gold: i64) -> (DirectRx, 
     let npc_rx = game_state.register_direct_channel(&pid("npc_rica")).await;
     (buyer_rx, npc_rx)
 }
+
+/// Spawn the resident trader Karl (wishlist: torch, dagger @120%) next to a
+/// seller. Karl's wallet and bag are set explicitly; the seller starts with
+/// the given bag and no gold.
+async fn setup_resident_trade(
+    game_state: &GameState,
+    npc_gold: i64,
+    npc_bag: Vec<ItemInstance>,
+    seller_bag: Vec<ItemInstance>,
+) {
+    game_state
+        .add_player(make_npc("npc_karl", "Karl", 0.0, 0.0))
+        .await;
+    game_state.add_player(make_player("seller", 1.0, 0.0)).await;
+    game_state
+        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 0, None)
+        .await;
+    game_state
+        .register_player_character(&pid("npc_karl"), 2, 0, attrs_with_cha(10), npc_gold, None)
+        .await;
+    let mut inventories = game_state.inventories.write().await;
+    inventories.insert(
+        pid("npc_karl"),
+        PlayerInventory {
+            bag: npc_bag,
+            ..Default::default()
+        },
+    );
+    inventories.insert(
+        pid("seller"),
+        PlayerInventory {
+            bag: seller_bag,
+            ..Default::default()
+        },
+    );
+}

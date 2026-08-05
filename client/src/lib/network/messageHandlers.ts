@@ -74,7 +74,7 @@ import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
-import { whisperChatEntry } from '../chat-format'
+import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
 import type {
@@ -378,7 +378,8 @@ export function handleServerMessage(
           y: deckY ?? data.position.y,
           z: data.position.z,
         },
-        data.rotation
+        data.rotation,
+        data.sprinting === true
       )
       const existing = state.otherPlayers.get(data.player_id)
       if (existing && existing.floorLevel !== data.floor_level) {
@@ -456,6 +457,11 @@ export function handleServerMessage(
       addChatMessage(whisperChatEntry(data.from, data.to, data.message, own))
       break
     }
+
+    case 'PartyChatMessage':
+      // No chat bubble — the party channel is private to the party.
+      addChatMessage(partyChatEntry(data.from, data.message))
+      break
 
     case 'SystemMessage':
       addChatMessage({ text: data.message, sender: 'system' })
@@ -1341,8 +1347,7 @@ export function handleServerMessage(
 }
 
 const HUNGER_BAND_MESSAGES: Record<HungerBand, string> = {
-  WellFed: 'You feel well fed. Your step lightens.',
-  Hungry: 'Your stomach growls. The well-fed vigor fades.',
+  Normal: 'Your stomach settles. You can sprint and recover normally.',
+  Hungry: 'Your stomach growls. You can no longer sprint.',
   Weak: 'You are weak with hunger. You need to eat.',
-  Stuffed: 'You are stuffed. The comfortable vigor is gone until it settles.',
 }

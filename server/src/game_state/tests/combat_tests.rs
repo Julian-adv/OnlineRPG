@@ -351,25 +351,26 @@ async fn non_finite_spawn_request_is_rejected() {
         y: 0.5,
         z: 22.0,
     };
-    assert!(
-        game_state
-            .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-            .await
-    );
+    assert!(game_state
+        .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
+        .await
+        .is_some());
 
     for (label, position) in non_finite_positions(valid) {
         assert!(
-            !game_state
+            game_state
                 .validate_spawn_request(&player_id, "goblin", &position, 1.5)
-                .await,
+                .await
+                .is_none(),
             "position {label}"
         );
     }
     for (rotation, value_name) in NON_FINITE {
         assert!(
-            !game_state
+            game_state
                 .validate_spawn_request(&player_id, "goblin", &valid, rotation)
-                .await,
+                .await
+                .is_none(),
             "rotation {value_name}"
         );
     }
@@ -430,6 +431,150 @@ async fn ambient_spawn_allowance_is_bounded_and_expires() {
         .await
         .keys()
         .all(|(owner_id, _)| owner_id != &player_id));
+}
+
+#[tokio::test]
+async fn wrapped_spawn_cannot_bypass_no_spawn_zone() {
+    let zone = onlinerpg_shared::NoSpawnZone {
+        min_x: -1.0,
+        min_z: -1.0,
+        max_x: 1.0,
+        max_z: 1.0,
+    };
+    let game_state = make_game_state_with_zones(
+        "wrapped_spawn_zone",
+        SplitWorldTiles,
+        SeaOnlyWater,
+        vec![zone],
+    );
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 0.0, 0.0))
+        .await;
+    let wrapped_zone_position = Position {
+        x: onlinerpg_shared::WORLD_WIDTH_X,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    assert!(game_state
+        .validate_spawn_request(&player_id, "goblin", &wrapped_zone_position, 0.0)
+        .await
+        .is_none());
+
+    // Positive control: the same fixture accepts a periodic-equivalent
+    // position clear of the zone's margin, so the rejection above is the zone
+    // and not a missing rule or player.
+    let wrapped_clear_position = Position {
+        x: onlinerpg_shared::WORLD_WIDTH_X,
+        y: 0.0,
+        z: 40.0,
+    };
+    assert_eq!(
+        game_state
+            .validate_spawn_request(&player_id, "goblin", &wrapped_clear_position, 0.0)
+            .await
+            .expect("clear of the zone and within range")
+            .x,
+        0.0
+    );
+}
+
+#[tokio::test]
+async fn ambient_spawn_stores_canonical_world_x() {
+    let game_state = make_test_game_state("canonical_spawn_position");
+    let player_id = pid("spawner");
+    game_state
+        .add_player(make_player("spawner", 1.0, 0.0))
+        .await;
+    let raw_position = Position {
+        x: onlinerpg_shared::WORLD_WIDTH_X * 2.0 + 1.0,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    let position = game_state
+        .validate_spawn_request(&player_id, "goblin", &raw_position, 0.0)
+        .await
+        .expect("the periodic position is in range");
+    assert_eq!(position.x, 1.0);
+
+    let monster = game_state
+        .spawn_monster(
+            "goblin".to_string(),
+            position,
+            0.0,
+            Some(player_id),
+            0,
+            None,
+            false,
+        )
+        .await
+        .expect("spawn should fit the test cap");
+    assert_eq!(monster.position.x, 1.0);
+    assert_eq!(
+        game_state.monsters.read().await[&monster.id].position.x,
+        1.0
+    );
+}
+
+/// Spawn canonicalization only holds if moves keep it. The budget and the
+/// terrain sweep both measure periodic distance, so an owner could otherwise
+/// report a whole-world-width offset as a short move and park the monster
+/// outside every spatial-hash lookup — invisible to watchers while its
+/// periodic attack reach still landed.
+#[tokio::test]
+async fn client_monster_move_stores_canonical_world_x() {
+    let game_state = make_test_game_state("monster_move_canonical_x");
+    let owner_id = pid("owner");
+    let start = pos(1.0);
+
+    game_state.add_player(make_player("owner", 1.0, 0.0)).await;
+    game_state
+        .add_player(make_player("observer", 1.0, 0.0))
+        .await;
+    let mut observer_rx = game_state.register_direct_channel(&pid("observer")).await;
+
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let mut monster = make_monster("wrapping_monster", start, 0);
+        monster.owner_id = Some(owner_id);
+        monster.move_budget = 10.0;
+        monster.last_move_at = GameState::now_ms();
+        monsters.insert(monster.id.clone(), monster);
+    }
+
+    let wrapped = pos(1.5 + onlinerpg_shared::WORLD_WIDTH_X * 2.0);
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "wrapping_monster".to_string(),
+            wrapped,
+            0.0,
+            MonsterState::Run,
+            wrapped,
+        )
+        .await;
+
+    assert_eq!(
+        game_state.monsters.read().await["wrapping_monster"]
+            .position
+            .x,
+        1.5
+    );
+    // The watcher still sees it move rather than leave: a non-canonical X
+    // would fall outside every queried spatial cell and read as a departure.
+    match observer_rx.try_recv() {
+        Ok(ServerMessage::MonsterMoved {
+            position,
+            target_position,
+            ..
+        }) => {
+            assert_eq!(position.x, 1.5);
+            assert_eq!(target_position.x, 1.5);
+        }
+        other => panic!("a periodic-equivalent move must fan out, got {other:?}"),
+    }
 }
 
 /// A client-owned monster is still untrusted movement. Staying within the

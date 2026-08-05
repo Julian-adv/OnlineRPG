@@ -1,5 +1,5 @@
 use super::auth_db;
-use crate::auth::AuthService;
+use crate::auth::{ban_message, unix_now, AuthService, DEFAULT_BAN_REASON};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
 use std::collections::HashMap;
@@ -13,6 +13,8 @@ const MAX_BLOCKS: usize = 100;
 /// `/mute` duration (minutes): default when unstated, and the cap (one day).
 const MUTE_DEFAULT_MINUTES: u64 = 10;
 const MUTE_MAX_MINUTES: u64 = 1440;
+/// A year of minutes: longer than that, use a permanent ban (no minutes).
+const BAN_MAX_MINUTES: i64 = 525_600;
 
 /// `/who` breakdown. Splits by client program rather than by "human vs bot":
 /// the server cannot tell whether a person or an LLM is driving a web client,
@@ -56,6 +58,15 @@ impl OnlineCounts {
 
 /// `message` is `prefix` as a whole slash-command word; returns the trimmed
 /// remainder.
+/// `<name> [minutes]` tail shared by `/ban` and `/mute`; both leave the
+/// duration unvalidated so a bad one draws a usage reply.
+fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
+    match rest.split_once(' ') {
+        Some((name, minutes)) => (name, Some(minutes.trim())),
+        None => (rest, None),
+    }
+}
+
 fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
     let rest = message.trim().strip_prefix(prefix)?;
     (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
@@ -71,6 +82,13 @@ pub(crate) fn parse_whisper_command(message: &str) -> Option<(&str, &str)> {
         Some((name, message)) => (name, message.trim()),
         None => (rest, ""),
     })
+}
+
+/// `/r <message>` (or `/reply`) whispers back to the last whisper partner.
+pub(crate) fn parse_reply_command(message: &str) -> Option<&str> {
+    ["/reply", "/r"]
+        .iter()
+        .find_map(|prefix| strip_command(message, prefix))
 }
 
 /// `/block <name>` mutes a character, `/unblock <name>` undoes it, bare
@@ -108,6 +126,20 @@ pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
     Some((!rest.is_empty()).then_some(rest))
 }
 
+/// `/p <message>` speaks on the party channel. Parsed here and not only in the
+/// web client's channel UI, or a client without that UI (agent-client `say`, a
+/// third-party one — doc/REMOTE_AGENT_CLIENT.md) has its party line broadcast
+/// to everyone nearby.
+pub(crate) fn parse_party_chat_command(message: &str) -> Option<&str> {
+    strip_command(message, "/p")
+}
+
+/// `/s <message>` says the rest as ordinary local chat — the web client's
+/// "back to say" prefix, honoured here so other clients can type it too.
+pub(crate) fn parse_say_command(message: &str) -> Option<&str> {
+    strip_command(message, "/s")
+}
+
 /// Operator commands (doc/TODO.md 운영자 커맨드). `requires_admin` gates them
 /// through this same parser, so the syntax is defined once. Parts return
 /// unvalidated, like the whisper parser: a malformed command draws a usage
@@ -115,6 +147,11 @@ pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
 #[derive(Debug, PartialEq)]
 pub(crate) enum AdminCommand<'a> {
     Kick(&'a str),
+    Ban {
+        name: &'a str,
+        minutes: Option<&'a str>,
+    },
+    Unban(&'a str),
     Mute {
         name: &'a str,
         minutes: Option<&'a str>,
@@ -131,11 +168,16 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
     if let Some(rest) = strip_command(message, "/unmute") {
         return Some(AdminCommand::Unmute(rest));
     }
+    // Before /ban: otherwise the shorter prefix claims "/unban <name>".
+    if let Some(rest) = strip_command(message, "/unban") {
+        return Some(AdminCommand::Unban(rest));
+    }
+    if let Some(rest) = strip_command(message, "/ban") {
+        let (name, minutes) = split_name_and_minutes(rest);
+        return Some(AdminCommand::Ban { name, minutes });
+    }
     if let Some(rest) = strip_command(message, "/mute") {
-        let (name, minutes) = match rest.split_once(' ') {
-            Some((name, minutes)) => (name, Some(minutes.trim())),
-            None => (rest, None),
-        };
+        let (name, minutes) = split_name_and_minutes(rest);
         return Some(AdminCommand::Mute { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/summon") {
@@ -223,6 +265,11 @@ impl super::GameState {
             return;
         }
 
+        if let Some(reply) = parse_reply_command(&message) {
+            self.send_reply(player_id, reply).await;
+            return;
+        }
+
         if let Some(target) = parse_party_command(&message) {
             match target {
                 Some(name) => self.invite_to_party(player_id, name).await,
@@ -234,6 +281,36 @@ impl super::GameState {
             return;
         }
 
+        if let Some(party_message) = parse_party_chat_command(&message) {
+            if party_message.is_empty() {
+                self.send_system_message(player_id, "Party chat: /p <message>")
+                    .await;
+            } else {
+                self.send_party_chat(player_id, party_message.to_string())
+                    .await;
+            }
+            return;
+        }
+
+        if let Some(said) = parse_say_command(&message) {
+            if said.is_empty() {
+                self.send_system_message(player_id, "Say: /s <message>")
+                    .await;
+            } else {
+                self.speak_locally(player_id, said.to_string()).await;
+            }
+            return;
+        }
+
+        self.speak_locally(player_id, message).await;
+    }
+
+    /// Fan a spoken line out to everyone in range, minus anyone who blocked the
+    /// speaker. Takes the message already past command parsing, which is what
+    /// lets `/s` hand it the remainder without re-dispatching: `/s /give x` is
+    /// spoken, never run behind `requires_admin`'s back, and `/s /p x` is
+    /// spoken, never rerouted to the party.
+    async fn speak_locally(&self, player_id: &PlayerId, message: String) {
         let player_name = {
             let players = self.players.read().await;
             players.get(player_id).map(|player| player.name.clone())
@@ -320,6 +397,14 @@ impl super::GameState {
                 .get(&target_id)
                 .is_some_and(|names| names.contains(&from))
         };
+        {
+            let mut partners = self.whisper_partners.write().await;
+            partners.insert(*player_id, to.clone());
+            // A blocked sender must not become the recipient's `/r` target.
+            if !suppressed {
+                partners.insert(target_id, from.clone());
+            }
+        }
         let whisper = ServerMessage::WhisperMessage {
             from,
             to,
@@ -331,6 +416,29 @@ impl super::GameState {
             self.send_direct_message(&target_id, whisper.clone()).await;
         }
         self.send_direct_message(player_id, whisper).await;
+    }
+
+    /// `/r <message>` — whisper the last partner. The target is remembered by
+    /// name, so it survives their relog and fails the same way a stale `/w`
+    /// would if they left.
+    async fn send_reply(&self, player_id: &PlayerId, message: &str) {
+        if message.is_empty() {
+            self.send_system_message(player_id, "Reply: /r <message>")
+                .await;
+            return;
+        }
+        let partner = self.whisper_partners.read().await.get(player_id).cloned();
+        match partner {
+            Some(target_name) => self.send_whisper(player_id, &target_name, message).await,
+            None => {
+                self.send_system_message(player_id, "Reply: no one to reply to yet.")
+                    .await
+            }
+        }
+    }
+
+    pub(crate) async fn forget_whisper_partner(&self, player_id: &PlayerId) {
+        self.whisper_partners.write().await.remove(player_id);
     }
 
     /// Install a character's persisted `/block` list for this session. Empty
@@ -493,9 +601,14 @@ impl super::GameState {
         None
     }
 
-    /// Muted-sender gate shared by chat and whisper; true when the message
-    /// was refused (the sender got a countdown reply).
-    async fn refuse_if_muted(&self, player_id: &PlayerId, name: &str, verb: &str) -> bool {
+    /// Muted-sender gate shared by chat, whisper and party chat; true when
+    /// the message was refused (the sender got a countdown reply).
+    pub(super) async fn refuse_if_muted(
+        &self,
+        player_id: &PlayerId,
+        name: &str,
+        verb: &str,
+    ) -> bool {
         let Some(minutes) = self.muted_minutes_left(name).await else {
             return false;
         };
@@ -519,6 +632,10 @@ impl super::GameState {
                 self.mute_command(admin_id, name, minutes).await
             }
             AdminCommand::Unmute(name) => self.unmute_command(name).await,
+            AdminCommand::Ban { name, minutes } => {
+                self.ban_command(admin_id, name, minutes, auth).await
+            }
+            AdminCommand::Unban(name) => self.unban_command(name, auth).await,
             AdminCommand::Summon(name) => self.summon_command(admin_id, name).await,
             AdminCommand::Goto(name) => self.goto_command(admin_id, name).await,
         }
@@ -561,6 +678,110 @@ impl super::GameState {
         self.kick_player(&target_id, "Removed by an operator", auth)
             .await;
         Ok(format!("Kick: {canonical} was disconnected."))
+    }
+
+    /// Ban the account behind a character name, so deleting and recreating
+    /// characters does not shed it. Resolved against the DB, not the online
+    /// roster: banning someone who just logged off has to work.
+    async fn ban_command(
+        &self,
+        admin_id: &PlayerId,
+        name: &str,
+        raw_minutes: Option<&str>,
+        auth: &AuthService,
+    ) -> Result<String, String> {
+        if name.is_empty() {
+            return Err("Ban: /ban <name> [minutes]".to_string());
+        }
+        let minutes = match raw_minutes {
+            None => None,
+            Some(raw) => match raw.parse::<i64>() {
+                Ok(m) if (1..=BAN_MAX_MINUTES).contains(&m) => Some(m),
+                _ => return Err(format!("Ban: minutes must be 1–{BAN_MAX_MINUTES}.")),
+            },
+        };
+
+        let (canonical, account) = {
+            let auth = auth.clone();
+            let query = name.to_string();
+            match auth_db(move || auth.account_of_character(&query)).await {
+                Ok(Some(found)) => found,
+                Ok(None) => return Err(format!("Ban: no character named {name}.")),
+                Err(err) => {
+                    error!("Ban lookup failed: {err}");
+                    return Err("Ban: could not read the character.".to_string());
+                }
+            }
+        };
+
+        // Compare accounts, not character names: an operator's own alt is a
+        // different name on the same account, and banning it would lock them
+        // out with no way back in through the game.
+        if self
+            .account_of_player(admin_id)
+            .await
+            .is_some_and(|admin| admin.eq_ignore_ascii_case(&account))
+        {
+            return Err("Ban: that's your own account.".to_string());
+        }
+
+        let until_unix = minutes.map(|m| unix_now() + m * 60);
+
+        // Held across the write and the eviction; the login path takes it
+        // around its own ban check. See `finish_auth`.
+        let _sessions = self.lock_character_sessions().await;
+        {
+            let auth = auth.clone();
+            let account = account.clone();
+            if let Err(err) =
+                auth_db(move || auth.ban_account(&account, Some(DEFAULT_BAN_REASON), until_unix))
+                    .await
+            {
+                error!("Ban write failed: {err}");
+                return Err("Ban: could not record the ban.".to_string());
+            }
+        }
+        info!(admin = ?admin_id, target = %canonical, ?minutes, "admin ban");
+
+        let kicked_with = ban_message(Some(DEFAULT_BAN_REASON), until_unix);
+        self.evict_account_session_locked(&account, &kicked_with, auth)
+            .await;
+
+        Ok(match minutes {
+            None => format!("Ban: {canonical} is banned. /unban {canonical} undoes this."),
+            Some(m) => format!("Ban: {canonical} is banned for {m}m."),
+        })
+    }
+
+    async fn unban_command(&self, name: &str, auth: &AuthService) -> Result<String, String> {
+        if name.is_empty() {
+            return Err("Unban: /unban <name>".to_string());
+        }
+        // A character name is what an operator has to hand, but a ban outlives
+        // its characters — so an unmatched name is tried as the account itself,
+        // or a banned account whose last character was deleted could only be
+        // recovered by editing the database.
+        let auth_for_lookup = auth.clone();
+        let query = name.to_string();
+        let account = match auth_db(move || auth_for_lookup.account_of_character(&query)).await {
+            Ok(Some((_, account))) => account,
+            Ok(None) => name.to_string(),
+            Err(err) => {
+                error!("Unban lookup failed: {err}");
+                return Err("Unban: could not read the character.".to_string());
+            }
+        };
+        let auth = auth.clone();
+        match auth_db(move || auth.unban_account(&account)).await {
+            Ok(true) => Ok(format!("Unban: {name} can log in again.")),
+            Ok(false) => Err(format!(
+                "Unban: {name} is not banned. Name a character on the account, or the account."
+            )),
+            Err(err) => {
+                error!("Unban write failed: {err}");
+                Err("Unban: could not clear the ban.".to_string())
+            }
+        }
     }
 
     async fn mute_command(

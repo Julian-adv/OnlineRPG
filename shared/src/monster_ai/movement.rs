@@ -3,7 +3,7 @@
 //! the next waypoint.
 
 use super::{AiCommand, AiState, MonsterBrain, PathProvider};
-use crate::world::bearing_xz;
+use crate::world::{bearing_xz, shortest_world_delta_x, wrap_world_x};
 use crate::Position;
 use rand::Rng;
 
@@ -33,7 +33,7 @@ impl MonsterBrain {
         let angle: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
         let dist: f32 = rng.gen_range(min_move_dist..max_move_dist);
 
-        let target_x = self.position.x + angle.cos() * dist;
+        let target_x = wrap_world_x(self.position.x + angle.cos() * dist);
         let target_z = self.position.z + angle.sin() * dist;
 
         // Walk vs run probability based on distance
@@ -105,11 +105,12 @@ impl MonsterBrain {
     /// blocked. Leaves `waypoints` empty when no path is available.
     pub(super) fn start_flee_path(&mut self, safe_dist: f32, path_provider: &dyn PathProvider) {
         if let Some(threat) = self.last_known_target_pos {
-            let dx = self.position.x - threat.x;
+            // Away from the threat, so the delta runs threat -> self.
+            let dx = shortest_world_delta_x(threat.x, self.position.x);
             let dz = self.position.z - threat.z;
             let dist = (dx * dx + dz * dz).sqrt();
             if dist > f32::EPSILON {
-                let dest_x = self.position.x + dx / dist * safe_dist;
+                let dest_x = wrap_world_x(self.position.x + dx / dist * safe_dist);
                 let dest_z = self.position.z + dz / dist * safe_dist;
                 if self.try_path_to(dest_x, dest_z, path_provider) {
                     return;
@@ -142,10 +143,21 @@ impl MonsterBrain {
     // Movement helpers
     // =========================================================================
 
+    /// Waypoints are canonical like `position`, so facing one takes the
+    /// periodic delta. `PathWaypoint` isn't a `Position`, hence not
+    /// `Position::bearing_xz_to`.
+    fn face_toward(&mut self, x: f32, z: f32) {
+        self.rotation = bearing_xz(
+            shortest_world_delta_x(self.position.x, x),
+            z - self.position.z,
+        )
+        .unwrap_or(self.rotation);
+    }
+
     pub(super) fn face_first_waypoint(&mut self) {
         if let Some(wp) = self.waypoints.first() {
-            self.rotation =
-                bearing_xz(wp.x - self.position.x, wp.z - self.position.z).unwrap_or(self.rotation);
+            let (x, z) = (wp.x, wp.z);
+            self.face_toward(x, z);
         }
     }
 
@@ -155,16 +167,24 @@ impl MonsterBrain {
         goal_z: f32,
         path_provider: &dyn PathProvider,
     ) {
+        // Query in the periodic frame nearest the monster: a canonical goal on
+        // the far side of the seam would otherwise ask for a path a whole world
+        // width long. A house straddling the seam is invisible to the query —
+        // the gap `passability::wrapped_block_info` covers on the server.
+        let local_goal_x = self.position.x + shortest_world_delta_x(self.position.x, goal_x);
         let result = path_provider.find_path(
             self.position.x,
             self.position.z,
             self.path_floor,
-            goal_x,
+            local_goal_x,
             goal_z,
             self.path_floor,
         );
         let turned_mid_leg = self.current_waypoint_idx < self.waypoints.len();
         self.waypoints = result.waypoints;
+        for wp in &mut self.waypoints {
+            wp.x = wrap_world_x(wp.x);
+        }
         self.current_waypoint_idx = 0;
         self.path_elapsed_ms = 0.0;
         // Only a repath that cuts a leg short is a bend. Replacing a finished
@@ -182,7 +202,7 @@ impl MonsterBrain {
         }
 
         let wp = &self.waypoints[self.current_waypoint_idx];
-        let dx = wp.x - self.position.x;
+        let dx = shortest_world_delta_x(self.position.x, wp.x);
         let dz = wp.z - self.position.z;
         let dist = (dx * dx + dz * dz).sqrt();
         let step = self.move_speed * delta_ms / 1000.0;
@@ -198,12 +218,12 @@ impl MonsterBrain {
             }
 
             let next = &self.waypoints[self.current_waypoint_idx];
-            self.rotation = bearing_xz(next.x - self.position.x, next.z - self.position.z)
-                .unwrap_or(self.rotation);
+            let (x, z) = (next.x, next.z);
+            self.face_toward(x, z);
         } else {
             let nx = dx / dist;
             let nz = dz / dist;
-            self.position.x += nx * step;
+            self.position.x = wrap_world_x(self.position.x + nx * step);
             self.position.z += nz * step;
             self.rotation = bearing_xz(dx, dz).unwrap_or(self.rotation);
         }
@@ -218,11 +238,7 @@ impl MonsterBrain {
     ) -> bool {
         match &self.last_known_target_pos {
             None => true,
-            Some(last) => {
-                let dx = target_pos.x - last.x;
-                let dz = target_pos.z - last.z;
-                (dx * dx + dz * dz) > threshold * threshold
-            }
+            Some(last) => last.dist_xz_sq(target_pos) > threshold * threshold,
         }
     }
 }

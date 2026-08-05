@@ -4,8 +4,9 @@
 
 use super::*;
 use onlinerpg_shared::hunger::{
-    HungerState, CAMPFIRE_DURATION_MS, FOOD_POISONING_MS, GRILL_CAST_MS, SATIATION_MAX,
-    SATIATION_RESPAWN, SATIATION_START, WELL_FED_MAX, WELL_FED_MIN,
+    HungerState, CAMPFIRE_DURATION_MS, FOOD_POISONING_MS, GRILL_CAST_MS,
+    MOVEMENT_DRAIN_INTERVAL_SECS, SATIATION_MAX, SATIATION_RESPAWN, SATIATION_START,
+    SPRINT_DRAIN_INTERVAL_SECS,
 };
 use tokio::time::{advance, Duration};
 
@@ -58,26 +59,16 @@ fn last_hunger_update(msgs: &[ServerMessage]) -> Option<(u32, HungerState, u64)>
     })
 }
 
-/// The tuning anchor: one full meal per game day. The Well-Fed band must
-/// cover a day's decay, and a day's decay must be at least 90% of the band —
-/// eat one loaf a day and you stay fed, skip it and you go hungry.
 #[test]
-fn one_meal_per_game_day_keeps_you_fed_and_no_more() {
-    let day_secs = super::super::time::REAL_DAY_DURATION_SECONDS as u64;
-    let decay_per_day = day_secs / onlinerpg_shared::hunger::DECAY_INTERVAL_SECS;
-    let band_width = u64::from(WELL_FED_MAX - WELL_FED_MIN);
-    assert!(
-        band_width >= decay_per_day,
-        "a full stomach ({band_width}) must last a game day ({decay_per_day})"
-    );
-    assert!(
-        decay_per_day * 10 >= band_width * 9,
-        "a day's decay ({decay_per_day}) must nearly drain the band ({band_width}) or one meal a day stops mattering"
-    );
-    // The day's meal exists in the catalog: bread covers a full day.
+fn one_meal_covers_the_active_day_budget() {
+    let half_day_secs = super::super::time::REAL_DAY_DURATION_SECONDS as f32 / 2.0;
+    let half_day_movement = half_day_secs / MOVEMENT_DRAIN_INTERVAL_SECS;
+    let kills = 150.0;
+    let sprint = 180.0 / SPRINT_DRAIN_INTERVAL_SECS;
+    let active_day_budget = half_day_movement + kills + sprint;
     let defs = ItemDefs::load();
     let bread = defs.get("bread").expect("bread is in items.csv");
-    assert!(u64::from(bread.nutrition.unwrap()) >= decay_per_day);
+    assert!(bread.nutrition.unwrap() as f32 >= active_day_budget);
 }
 
 #[tokio::test]
@@ -93,37 +84,34 @@ async fn eating_feeds_and_consumes_the_food() {
     assert!(bag_ids(&game_state, &id).await.is_empty(), "bread is eaten");
     let msgs = drain(&mut rx);
     let (satiation, state, poisoned) = last_hunger_update(&msgs).expect("HungerUpdate sent");
-    assert_eq!((satiation, state, poisoned), (740, HungerState::WellFed, 0));
+    assert_eq!((satiation, state, poisoned), (740, HungerState::Normal, 0));
 }
 
 #[tokio::test]
-async fn a_normal_range_meal_never_overshoots_into_stuffed() {
-    let game_state = make_test_game_state("soft_cap");
+async fn meals_only_clamp_at_the_hard_cap() {
+    let game_state = make_test_game_state("hard_cap");
     let (id, _rx) = make_eater(&game_state, "capped", 700).await;
     put_in_bag(&game_state, &id, 1, "jerky").await;
 
     game_state.use_item(&id, 1).await;
 
-    // 700 + 300 clamps to the soft cap, not into the Stuffed band.
-    assert_eq!(game_state.hunger_satiation(&id).await, Some(850));
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(SATIATION_MAX));
 }
 
 #[tokio::test]
-async fn deliberate_overeating_reaches_stuffed_and_the_cap_refuses() {
-    let game_state = make_test_game_state("stuffed");
+async fn eating_at_the_cap_is_allowed_and_wastes_excess_nutrition() {
+    let game_state = make_test_game_state("overeat");
     let (id, mut rx) = make_eater(&game_state, "glutton", 820).await;
     put_in_bag(&game_state, &id, 1, "jerky").await;
     game_state.use_item(&id, 1).await;
-    // 820 is above the 800 threshold: the full 300 lands, capped at 1000.
     assert_eq!(game_state.hunger_satiation(&id).await, Some(SATIATION_MAX));
     let msgs = drain(&mut rx);
-    assert_eq!(last_hunger_update(&msgs).unwrap().1, HungerState::Stuffed);
+    assert_eq!(last_hunger_update(&msgs).unwrap().1, HungerState::Normal);
 
-    // At the hard cap another bite is refused and not consumed.
     put_in_bag(&game_state, &id, 2, "apple").await;
     game_state.use_item(&id, 2).await;
     assert_eq!(game_state.hunger_satiation(&id).await, Some(SATIATION_MAX));
-    assert_eq!(bag_ids(&game_state, &id).await, vec!["apple".to_string()]);
+    assert!(bag_ids(&game_state, &id).await.is_empty());
 }
 
 #[tokio::test(start_paused = true)]
@@ -134,23 +122,21 @@ async fn raw_fish_poisoning_drains_four_times_faster_and_expires() {
     drain(&mut rx);
 
     // Forced poison keeps the 70% roll out of the assertion.
-    game_state
-        .use_eat_item(&id, 1, 40, None, true, Some(true))
-        .await;
+    game_state.use_eat_item(&id, 1, 40, true, Some(true)).await;
     let msgs = drain(&mut rx);
     let (satiation, _, poisoned_ms) = last_hunger_update(&msgs).unwrap();
     assert_eq!(satiation, 540);
     assert_eq!(poisoned_ms, FOOD_POISONING_MS);
 
-    // Poisoned decay: 4 per bucket instead of 1.
-    game_state.tick_hunger_decay().await;
+    game_state
+        .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+        .await;
     assert_eq!(game_state.hunger_satiation(&id).await, Some(536));
 
-    // After the 5 minutes pass, the expiry announces itself and decay is 1.
     advance(Duration::from_millis(FOOD_POISONING_MS + 1)).await;
     drain(&mut rx);
-    game_state.tick_hunger_decay().await;
-    assert_eq!(game_state.hunger_satiation(&id).await, Some(535));
+    game_state.tick_hunger_effects().await;
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(536));
     let msgs = drain(&mut rx);
     assert_eq!(last_hunger_update(&msgs).unwrap().2, 0, "expiry is pushed");
 }
@@ -161,21 +147,21 @@ async fn an_unpoisoned_raw_fish_still_feeds_a_little() {
     let (id, _rx) = make_eater(&game_state, "lucky", 500).await;
     put_in_bag(&game_state, &id, 1, "raw_minnow").await;
 
-    game_state
-        .use_eat_item(&id, 1, 40, Some("1d3".into()), true, Some(false))
-        .await;
+    game_state.use_eat_item(&id, 1, 40, true, Some(false)).await;
 
     assert_eq!(game_state.hunger_satiation(&id).await, Some(540));
     assert!(bag_ids(&game_state, &id).await.is_empty());
 }
 
 #[tokio::test]
-async fn decay_announces_only_band_transitions() {
+async fn activity_drain_announces_only_band_transitions() {
     let game_state = make_test_game_state("decay_bands");
-    let (_id, mut rx) = make_eater(&game_state, "walker", WELL_FED_MIN).await;
+    let (id, mut rx) = make_eater(&game_state, "walker", 300).await;
     drain(&mut rx);
 
-    game_state.tick_hunger_decay().await;
+    game_state
+        .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+        .await;
     let msgs = drain(&mut rx);
     assert_eq!(
         last_hunger_update(&msgs).map(|u| u.1),
@@ -183,11 +169,98 @@ async fn decay_announces_only_band_transitions() {
         "crossing 300 → 299 is a transition"
     );
 
-    game_state.tick_hunger_decay().await;
+    game_state
+        .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+        .await;
     assert!(
         last_hunger_update(&drain(&mut rx)).is_none(),
         "299 → 298 stays quiet"
     );
+}
+
+#[tokio::test]
+async fn sprint_stops_at_300_without_draining_into_weakness() {
+    let game_state = make_test_game_state("sprint_floor");
+    let (id, mut rx) = make_eater(&game_state, "runner", 301).await;
+    drain(&mut rx);
+
+    game_state
+        .record_movement_activity(&[(id, SPRINT_DRAIN_INTERVAL_SECS, true)])
+        .await;
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(300));
+    assert_eq!(last_hunger_update(&drain(&mut rx)).unwrap().0, 300);
+
+    game_state
+        .record_movement_activity(&[(id, 10.0, true)])
+        .await;
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(300));
+
+    game_state
+        .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+        .await;
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(299));
+}
+
+#[tokio::test]
+async fn server_applies_sprint_speed_and_rejects_it_without_fuel() {
+    let game_state = make_test_game_state("sprint_speed");
+    let (runner, _rx1) = make_eater(&game_state, "fast_runner", 500).await;
+    let (hungry, _rx2) = make_eater(&game_state, "hungry_runner", 300).await;
+
+    for id in [runner, hungry] {
+        let start = game_state.players.read().await[&id].position;
+        game_state
+            .update_player_position(
+                &id,
+                MoveCommand {
+                    position: Position {
+                        x: start.x + 10.0,
+                        ..start
+                    },
+                    rotation: 0.0,
+                    floor_level: 0,
+                    append: false,
+                    sprinting: true,
+                },
+                false,
+                false,
+            )
+            .await;
+    }
+
+    game_state.tick_player_movement(1.0).await;
+
+    let walk_step = onlinerpg_shared::PLAYER_MOVE_SPEED * super::super::player::MOVE_SPEED_SLACK;
+    let sprint_step = walk_step * onlinerpg_shared::hunger::SPRINT_MOVE_MULT;
+    let players = game_state.players.read().await;
+    assert!((players[&runner].position.x - (100.0 + sprint_step)).abs() < 0.001);
+    assert!((players[&hungry].position.x - (100.0 + walk_step)).abs() < 0.001);
+    drop(players);
+    assert_eq!(game_state.hunger_satiation(&runner).await, Some(499));
+    assert_eq!(game_state.hunger_satiation(&hungry).await, Some(300));
+}
+
+#[tokio::test]
+async fn food_restores_hp_over_ten_seconds() {
+    let game_state = make_test_game_state("food_regen");
+    let (id, _rx) = make_eater(&game_state, "diner", 500).await;
+    put_in_bag(&game_state, &id, 1, "bread").await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .health = 1;
+
+    game_state.use_item(&id, 1).await;
+    assert_eq!(game_state.players.read().await[&id].health, 1);
+
+    game_state.tick_food_regeneration().await;
+    assert_eq!(game_state.players.read().await[&id].health, 3);
+    game_state.cancel_food_regeneration(&id).await;
+    game_state.tick_food_regeneration().await;
+    assert_eq!(game_state.players.read().await[&id].health, 3);
 }
 
 #[tokio::test]
@@ -208,7 +281,24 @@ async fn weak_and_poisoned_players_do_not_regenerate() {
 
     let players = game_state.players.read().await;
     assert_eq!(players[&weak_id].health, 5, "Weak: no natural healing");
-    assert!(players[&fed_id].health > 5, "Well-Fed heals normally");
+    assert!(players[&fed_id].health > 5, "normal hunger heals normally");
+}
+
+#[tokio::test]
+async fn hungry_players_regenerate_every_other_natural_tick() {
+    let game_state = make_test_game_state("hungry_regen");
+    let (id, _rx) = make_eater(&game_state, "slow_healer", 200).await;
+    {
+        let mut players = game_state.players.write().await;
+        let player = players.get_mut(&id).unwrap();
+        player.health = 5;
+        player.last_combat_at = 0;
+    }
+
+    game_state.tick_regeneration().await;
+    assert_eq!(game_state.players.read().await[&id].health, 5);
+    game_state.tick_regeneration().await;
+    assert!(game_state.players.read().await[&id].health > 5);
 }
 
 #[tokio::test]
@@ -219,12 +309,64 @@ async fn weak_hunger_shrinks_carry_weight() {
     assert_eq!(game_state.max_carry_weight(&id).await, 90.0);
 
     let (fed, _rx2) = make_eater(&game_state, "fed_porter", 500).await;
-    // Well-Fed ×1.15.
-    assert!((game_state.max_carry_weight(&fed).await - 172.5).abs() < 0.01);
+    assert!((game_state.max_carry_weight(&fed).await - 150.0).abs() < 0.01);
 }
 
 #[tokio::test]
-async fn respawn_resets_satiation_to_the_well_fed_floor() {
+async fn weak_hunger_slows_the_authoritative_attack_interval() {
+    let game_state = make_test_game_state("weak_attack_speed");
+    let (id, mut rx) = make_eater(&game_state, "tired_fighter", 50).await;
+    let mut monster = make_monster(
+        "training_target",
+        Position {
+            x: 101.0,
+            y: 0.0,
+            z: 50.0,
+        },
+        0,
+    );
+    monster.health = 100;
+    monster.max_health = 100;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("training_target".into(), monster);
+
+    game_state
+        .broadcast_player_attack(&id, "training_target".into())
+        .await;
+    drain(&mut rx);
+
+    game_state.last_player_attacks.write().await.insert(
+        id,
+        GameState::now_ms().saturating_sub(*super::super::combat::PLAYER_ATTACK_INTERVAL_MS),
+    );
+    game_state
+        .broadcast_player_attack(&id, "training_target".into())
+        .await;
+    assert!(!drain(&mut rx)
+        .iter()
+        .any(|msg| matches!(msg, ServerMessage::PlayerAttacked { .. })));
+
+    let weak_interval = (*super::super::combat::PLAYER_ATTACK_INTERVAL_MS as f32
+        / onlinerpg_shared::hunger::WEAK_ATTACK_MULT)
+        .ceil() as u64;
+    game_state
+        .last_player_attacks
+        .write()
+        .await
+        .insert(id, GameState::now_ms().saturating_sub(weak_interval));
+    game_state
+        .broadcast_player_attack(&id, "training_target".into())
+        .await;
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|msg| matches!(msg, ServerMessage::PlayerAttacked { .. })));
+}
+
+#[tokio::test]
+async fn respawn_resets_satiation_to_the_normal_floor() {
     let game_state = make_test_game_state("respawn");
     let (id, _rx) = make_eater(&game_state, "casualty", 30).await;
     game_state
@@ -418,7 +560,7 @@ async fn npcs_are_exempt_from_hunger_but_can_still_eat() {
         last_hunger_update(&drain(&mut rx)).is_none(),
         "no HungerUpdate for the exempt"
     );
-    game_state.tick_hunger_decay().await;
+    game_state.tick_hunger_effects().await;
     assert_eq!(game_state.hunger_satiation(&id).await, None);
 }
 

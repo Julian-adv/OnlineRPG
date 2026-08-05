@@ -23,6 +23,7 @@ describe('projectPlayerState', () => {
       hasTorch: false,
       isInCombat: false,
       attackCounter: 0,
+      isSprinting: false,
     })
 
     expect(state).toEqual({
@@ -44,10 +45,27 @@ describe('projectPlayerState', () => {
       hasTorch: false,
       isInCombat: true,
       attackCounter: 7,
+      isSprinting: false,
     })
 
     expect(state.movementMode).toBe('run')
     expect(state.attackCounter).toBe(7)
+  })
+
+  it('projects sprinting as run', () => {
+    const state = projectPlayerState({
+      currentPosition: { x: 0, y: 0, z: 0 },
+      isMoving: true,
+      currentSpeed: 4.5,
+      playerRotation: 0,
+      totalDistance: 20,
+      hasTorch: false,
+      isInCombat: false,
+      attackCounter: 0,
+      isSprinting: true,
+    })
+
+    expect(state.movementMode).toBe('run')
   })
 })
 

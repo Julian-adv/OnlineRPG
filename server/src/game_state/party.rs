@@ -4,7 +4,7 @@ use onlinerpg_shared::messages::{
 };
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
-use tracing::info;
+use tracing::{info, warn};
 
 pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
 
@@ -586,6 +586,60 @@ impl super::GameState {
         .await;
         self.send_system_message(caster_id, format!("Summon: {member_name} is at your side."))
             .await;
+    }
+
+    /// Deliver a party-channel line to every online member, the sender's echo
+    /// included — one payload, like `PartyPositions`. Members who blocked the
+    /// sender are skipped; the echo still arrives, so the block stays
+    /// invisible (the whisper rule).
+    pub async fn send_party_chat(&self, player_id: &PlayerId, message: String) {
+        if message.trim().is_empty() {
+            return;
+        }
+        let Some(sender_name) = ({
+            let players = self.players.read().await;
+            players.get(player_id).map(|p| p.name.clone())
+        }) else {
+            warn!("Party chat from non-existent player: {}", player_id);
+            return;
+        };
+        if self.refuse_if_muted(player_id, &sender_name, "chat").await {
+            return;
+        }
+        let member_ids = {
+            let parties = self.parties.read().await;
+            parties
+                .party_of(player_id)
+                .map(|party| party.members.clone())
+                .unwrap_or_default()
+        };
+        if member_ids.is_empty() {
+            self.send_system_message(player_id, "Party: you are not in a party.")
+                .await;
+            return;
+        }
+        let recipients: Vec<PlayerId> = {
+            let blocked = self.blocked_names.read().await;
+            member_ids
+                .into_iter()
+                .filter(|id| {
+                    id == player_id
+                        || !blocked
+                            .get(id)
+                            .is_some_and(|names| names.contains(&sender_name))
+                })
+                .collect()
+        };
+        // Content stays out of logs like local chat (privacy, F-012).
+        info!(from = %sender_name, len = message.len(), "party chat");
+        self.send_direct_message_to_players(
+            &recipients,
+            ServerMessage::PartyChatMessage {
+                from: sender_name,
+                message,
+            },
+        )
+        .await;
     }
 
     pub async fn leave_party(&self, player_id: &PlayerId) {

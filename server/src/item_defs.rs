@@ -31,8 +31,7 @@ pub struct ItemDefinition {
     /// accessory, currency).
     #[serde(default)]
     pub category: Option<String>,
-    /// Dice notation (e.g. "1d8", "6d4") whose meaning depends on `category`.
-    /// Read it through `damage_dice()` / `heal_dice()` rather than directly.
+    /// Dice notation whose meaning depends on `category`.
     #[serde(default)]
     pub dice: Option<String>,
     #[serde(rename = "damageType", default)]
@@ -130,11 +129,9 @@ pub enum UseEffect {
         dice: String,
         skill: Option<SkillId>,
     },
-    /// Restore satiation (doc/HUNGER.md). Fish also heal by their dice, and
-    /// raw fish risk food poisoning — unless grilled first at a campfire.
+    /// Restore satiation and regenerate HP from nutrition. Raw fish can poison.
     Eat {
         nutrition: u32,
-        heal_dice: Option<String>,
         raw_fish: bool,
     },
     /// Light a campfire near the user.
@@ -193,8 +190,8 @@ impl ItemDefinition {
 
     /// A catch that lands in the bag sealed and pays out coins when opened
     /// (`use_item`). Its `dice` column is the copper roll (the
-    /// category-decides-meaning pattern: weapon → damage, fish/potion →
-    /// heal, coin_catch → gold). Production code dispatches through
+    /// category-decides-meaning pattern: weapon → damage, potion → heal,
+    /// coin_catch → gold). Production code dispatches through
     /// `use_effect`; the tests keep this named predicate for the economy
     /// guardrail.
     #[cfg(test)]
@@ -234,17 +231,14 @@ impl ItemDefinition {
                 dice,
                 skill: self.use_skill,
             }),
-            // Eating a fish heals by its dice and feeds a little — raw.
             "fish" => Some(UseEffect::Eat {
                 nutrition: self
                     .nutrition
                     .unwrap_or(onlinerpg_shared::hunger::RAW_FISH_NUTRITION),
-                heal_dice: self.dice.clone(),
                 raw_fish: true,
             }),
             "food" => self.nutrition.map(|nutrition| UseEffect::Eat {
                 nutrition,
-                heal_dice: None,
                 raw_fish: false,
             }),
             "campfire_kit" => Some(UseEffect::PlaceCampfire),
@@ -636,6 +630,13 @@ impl ItemDefs {
                 "item '{}': consumable flag out of step with its use_effect",
                 def.id
             );
+            // `equip_item` moves a whole bag entry into the slot and equipped
+            // rows save as quantity 1, so the rest of a stack would vanish.
+            assert!(
+                !(def.stackable && def.equip_slot.is_some()),
+                "item '{}' is both stackable and equippable",
+                def.id
+            );
         }
 
         info!("Loaded {} item definitions", defs.len());
@@ -733,6 +734,10 @@ impl ItemDefs {
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
         self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
+    }
+
+    pub fn stackable(&self, item_def_id: &str) -> bool {
+        self.defs.get(item_def_id).is_some_and(|d| d.stackable)
     }
 
     /// The fishing catch table: every item def with a `catchWeight` — fish,

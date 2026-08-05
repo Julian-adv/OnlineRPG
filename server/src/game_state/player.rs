@@ -11,7 +11,7 @@ use tracing::{error, info, warn};
 use super::skill_metrics::SkillSaveKind;
 
 /// Headroom over walk speed so the sim absorbs network jitter and catches up.
-const MOVE_SPEED_SLACK: f32 = 1.15;
+pub(super) const MOVE_SPEED_SLACK: f32 = 1.15;
 /// Longest accepted move target; the farthest in-view click is ~42m.
 const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 
@@ -75,6 +75,7 @@ pub(super) struct MoveIntent {
     /// NPC connections are exempt: schedule force-moves may legitimately
     /// cross closed doors.
     check_collision: bool,
+    sprinting: bool,
 }
 
 /// FIFO of client-validated legs. `append: false` PlayerMoves replace the
@@ -107,6 +108,7 @@ pub(crate) struct MoveCommand {
     pub(crate) rotation: f32,
     pub(crate) floor_level: i8,
     pub(crate) append: bool,
+    pub(crate) sprinting: bool,
 }
 
 /// Run a blocking DB save on the blocking pool and report whether it committed.
@@ -310,6 +312,7 @@ impl super::GameState {
             gold_map.remove(player_id);
         }
         self.remove_player_blocks(player_id).await;
+        self.forget_whisper_partner(player_id).await;
         self.forget_player_skills(player_id).await;
         self.remove_dungeon_discoveries(player_id).await;
         self.forget_hunger(player_id).await;
@@ -320,7 +323,22 @@ impl super::GameState {
         self.character_session_lock.lock().await
     }
 
+    #[cfg(test)]
     pub(crate) async fn register_account_session(
+        &self,
+        account_name: &str,
+        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        auth: &AuthService,
+    ) -> u64 {
+        let _sessions = self.character_session_lock.lock().await;
+        self.register_account_session_locked(account_name, kick_tx, auth)
+            .await
+    }
+
+    /// Body of `register_account_session` for callers already holding
+    /// `lock_character_sessions` — the mutex is not reentrant, so a login that
+    /// checks a ban under the lock has to register through this.
+    pub(crate) async fn register_account_session_locked(
         &self,
         account_name: &str,
         kick_tx: mpsc::UnboundedSender<ServerMessage>,
@@ -328,7 +346,6 @@ impl super::GameState {
     ) -> u64 {
         use std::sync::atomic::Ordering;
 
-        let _sessions = self.character_session_lock.lock().await;
         let session_id = self.next_account_session.fetch_add(1, Ordering::Relaxed);
         let key = account_name.to_ascii_lowercase();
         let replaced = self.account_sessions.write().await.insert(
@@ -477,20 +494,55 @@ impl super::GameState {
     /// keeps the disconnect path from cleaning up a second time.
     pub(crate) async fn kick_player(&self, player_id: &PlayerId, reason: &str, auth: &AuthService) {
         let _sessions = self.character_session_lock.lock().await;
-        let session = {
-            let mut sessions = self.account_sessions.write().await;
-            let key = sessions.iter().find_map(|(key, session)| {
-                (session.player_id == Some(*player_id)).then(|| key.clone())
-            });
-            key.and_then(|key| sessions.remove(&key))
-        };
-        if let Some(session) = session {
-            let _ = session.kick_tx.send(ServerMessage::Kicked {
-                player_id: *player_id,
-                reason: reason.to_string(),
-            });
+        match self.account_of_player(player_id).await {
+            Some(account) => {
+                self.evict_account_session_locked(&account, reason, auth)
+                    .await
+            }
+            // No session row to close, but per-player state still has to go.
+            None => self.cleanup_player_session(player_id, auth).await,
         }
-        self.cleanup_player_session(player_id, auth).await;
+    }
+
+    /// Account behind an online player id, read from the session map. `None`
+    /// once the session is gone.
+    pub(crate) async fn account_of_player(&self, player_id: &PlayerId) -> Option<String> {
+        self.account_sessions
+            .read()
+            .await
+            .iter()
+            .find_map(|(key, session)| (session.player_id == Some(*player_id)).then(|| key.clone()))
+    }
+
+    /// Force-disconnect a whole account, whichever character it is playing — or
+    /// none at all, as at character select. The `kick_tx` message makes the
+    /// connection loop close the socket, and removing the session first keeps
+    /// the disconnect path from cleaning up a second time.
+    ///
+    /// Assumes `lock_character_sessions` is held, so `/ban` can serialize its
+    /// write with the login path.
+    pub(crate) async fn evict_account_session_locked(
+        &self,
+        account_name: &str,
+        reason: &str,
+        auth: &AuthService,
+    ) {
+        let session = self
+            .account_sessions
+            .write()
+            .await
+            .remove(&account_name.to_ascii_lowercase());
+        let Some(session) = session else {
+            return;
+        };
+        let _ = session.kick_tx.send(ServerMessage::Kicked {
+            player_id: session.player_id.unwrap_or(PlayerId::from(0)),
+            reason: reason.to_string(),
+        });
+        // Only a session that reached the game has per-player state to clear.
+        if let Some(player_id) = session.player_id {
+            self.cleanup_player_session(&player_id, auth).await;
+        }
     }
 
     /// Synchronously write a player's character row and inventory to the DB,
@@ -849,6 +901,7 @@ impl super::GameState {
             rotation: new_rotation,
             floor_level,
             append,
+            sprinting,
         } = cmd;
         if exceeds_positive_floor_limit(floor_level) {
             self.reject_out_of_range_floor(player_id, floor_level, "move")
@@ -886,6 +939,7 @@ impl super::GameState {
         };
 
         if trusted {
+            let sprinting = sprinting && self.hunger_sprint_allowed(player_id).await;
             self.apply_player_position(
                 player_id,
                 new_position,
@@ -896,6 +950,7 @@ impl super::GameState {
                     position: new_position,
                     rotation: new_rotation,
                     floor_level,
+                    sprinting,
                 },
             )
             .await;
@@ -942,6 +997,7 @@ impl super::GameState {
             rotation: new_rotation,
             floor_level,
             check_collision: !is_official_npc,
+            sprinting,
         });
     }
 
@@ -968,7 +1024,8 @@ impl super::GameState {
                 .collect::<HashMap<_, _>>()
         };
         let elapsed = dt.max(0.0);
-        let mut moved: Vec<(PlayerId, Position, i8, Player)> = Vec::new();
+        let mut moved: Vec<(PlayerId, Position, i8, Player, bool)> = Vec::new();
+        let mut activities: Vec<(PlayerId, f32, bool)> = Vec::new();
         let mut refused: Vec<RefusedMove> = Vec::new();
         {
             let mut queues = self.movement_intents.write().await;
@@ -978,7 +1035,7 @@ impl super::GameState {
             // Hunger scales the speed itself, slack wraps the scaled value — a
             // Weak player's sim must not outrun their slowed client.
             let mover_ids: Vec<PlayerId> = queues.keys().copied().collect();
-            let hunger_mults = self.hunger_move_mults_for(&mover_ids).await;
+            let hunger_profiles = self.hunger_movement_profiles_for(&mover_ids).await;
             let mut players = self.players.write().await;
             let cache = self.passability_read();
             queues.retain(|player_id, waypoints| {
@@ -990,13 +1047,26 @@ impl super::GameState {
                     return false;
                 }
 
+                let (hunger_mult, sprint_allowed) = hunger_profiles
+                    .get(player_id)
+                    .copied()
+                    .unwrap_or((1.0, true));
+                let sprinting = waypoints
+                    .front()
+                    .is_some_and(|intent| intent.sprinting && sprint_allowed);
+                let sprint_mult = if sprinting {
+                    onlinerpg_shared::hunger::SPRINT_MOVE_MULT
+                } else {
+                    1.0
+                };
                 let max_step = movement_speeds
                     .get(player_id)
                     .copied()
                     .unwrap_or(PLAYER_MOVE_SPEED)
                     * MOVE_SPEED_SLACK
                     * elapsed
-                    * hunger_mults.get(player_id).copied().unwrap_or(1.0);
+                    * hunger_mult
+                    * sprint_mult;
                 let old_position = player.position;
                 let old_floor = player.floor_level;
                 let old_rotation = player.rotation;
@@ -1089,24 +1159,37 @@ impl super::GameState {
                 let position_changed = player.position.x != old_position.x
                     || player.position.y != old_position.y
                     || player.position.z != old_position.z;
+                // Rotation-only updates are not activity: only actual
+                // displacement burns satiation (doc/HUNGER.md).
+                if position_changed {
+                    activities.push((*player_id, dt.max(0.0), sprinting));
+                }
                 if position_changed
                     || player.floor_level != old_floor
                     || player.rotation != old_rotation
                 {
-                    moved.push((*player_id, old_position, old_floor, player.clone()));
+                    moved.push((
+                        *player_id,
+                        old_position,
+                        old_floor,
+                        player.clone(),
+                        sprinting,
+                    ));
                 }
                 !blocked && !waypoints.is_empty()
             });
         }
 
         self.correct_refused_positions(refused).await;
+        self.record_movement_activity(&activities).await;
 
-        for (player_id, old_position, old_floor, moved_player) in moved {
+        for (player_id, old_position, old_floor, moved_player, sprinting) in moved {
             let update_msg = ServerMessage::PlayerMoved {
                 player_id,
                 position: moved_player.position,
                 rotation: moved_player.rotation,
                 floor_level: moved_player.floor_level,
+                sprinting,
             };
             self.finish_position_update(
                 &player_id,
@@ -1339,6 +1422,7 @@ impl super::GameState {
             position: moved_player.position,
             rotation: moved_player.rotation,
             floor_level,
+            sprinting: false,
         };
         self.finish_position_update(player_id, position, current_floor, moved_player, update_msg)
             .await;

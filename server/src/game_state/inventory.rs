@@ -45,34 +45,66 @@ fn enchant_success_bp(enchant: i32) -> u32 {
     }
 }
 
+/// One unit-insert request: `quantity` units of one def at one enchant level,
+/// backed by ids starting at `first_instance_id`.
+pub(super) struct BagInsert<'a> {
+    pub stackable: bool,
+    pub item_def_id: &'a str,
+    pub enchant: i32,
+    pub first_instance_id: u64,
+    pub quantity: u32,
+    pub durability: Option<u32>,
+}
+
 /// The one bag-insert rule for every acquisition path (buying, loot, grilling,
-/// pickup, login load): units join an existing same-def, same-enchant entry
-/// when the def is stackable, and take their own slot otherwise. `instance_id`
-/// goes unused when the unit stacks.
-pub(super) fn stack_into_bag(
-    bag: &mut Vec<ItemInstance>,
-    stackable: bool,
-    item_def_id: &str,
-    enchant: i32,
-    instance_id: u64,
-    quantity: u32,
-    durability: Option<u32>,
-) {
-    match bag.iter_mut().find(|item| {
-        stackable
-            && item.item_def_id == item_def_id
-            && item.enchant == enchant
-            && item.durability == durability
-    }) {
-        Some(stack) => stack.quantity += quantity,
-        None => bag.push(ItemInstance {
-            instance_id,
+/// pickup, login load): stackable units join an existing same-def, same-enchant,
+/// same-condition entry; non-stackables take one slot per unit off consecutive
+/// ids. Returns
+/// how many ids were consumed, so batch callers can advance a reserved range.
+/// Equip/unequip move an existing instance instead and stay outside this rule,
+/// which `ItemDefs::load`'s stackable-vs-equippable assert keeps safe.
+pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> u64 {
+    let BagInsert {
+        stackable,
+        item_def_id,
+        enchant,
+        first_instance_id,
+        quantity,
+        durability,
+    } = insert;
+    if quantity == 0 {
+        return 0;
+    }
+
+    if stackable {
+        if let Some(stack) = bag.iter_mut().find(|item| {
+            item.item_def_id == item_def_id
+                && item.enchant == enchant
+                && item.durability == durability
+        }) {
+            stack.quantity += quantity;
+            return 0;
+        }
+        bag.push(ItemInstance {
+            instance_id: first_instance_id,
             item_def_id: item_def_id.to_string(),
             quantity,
             enchant,
             durability,
-        }),
+        });
+        return 1;
     }
+
+    for offset in 0..quantity as u64 {
+        bag.push(ItemInstance {
+            instance_id: first_instance_id + offset,
+            item_def_id: item_def_id.to_string(),
+            quantity: 1,
+            enchant,
+            durability,
+        });
+    }
+    quantity as u64
 }
 
 /// Remove one unit of `instance_id` from the bag, dropping the instance when
@@ -143,7 +175,7 @@ impl super::GameState {
     }
 
     /// Reserve a range of instance IDs (single lock acquisition).
-    async fn reserve_instance_ids(&self, count: u64) -> u64 {
+    pub(super) async fn reserve_instance_ids(&self, count: u64) -> u64 {
         let mut id = self.next_item_instance_id.write().await;
         let start = *id;
         *id += count;
@@ -156,7 +188,9 @@ impl super::GameState {
 
     /// D&D 5e carry weight: STR * 15, scaled by the hunger band
     /// (doc/HUNGER.md). Dropping below a cap only refuses new pickups and
-    /// purchases — it never blocks movement.
+    /// purchases — it never blocks movement. Reads `player_characters` and
+    /// `hunger`, which rank below `player_gold`/`inventories`: call it before
+    /// taking those, never under them.
     pub(super) async fn max_carry_weight(&self, player_id: &PlayerId) -> f32 {
         let base = {
             let chars = self.player_characters.read().await;
@@ -255,25 +289,27 @@ impl super::GameState {
         let mut inventory = PlayerInventory::default();
 
         if !rows.is_empty() {
-            let start_id = self.reserve_instance_ids(rows.len() as u64).await;
+            // A non-stackable row saved with quantity N unfolds into N slots,
+            // so reserve per unit rather than per row.
+            let units: u64 = rows.iter().map(|r| r.quantity.max(1) as u64).sum();
+            let mut next_id = self.reserve_instance_ids(units).await;
 
-            for (offset, row) in rows.into_iter().enumerate() {
-                let instance_id = start_id + offset as u64;
-
+            for row in rows {
+                let durability = self.loaded_item_durability(&row.item_def_id, row.durability);
                 match row.equip_slot {
                     Some(slot_str) => {
                         if let Ok(slot) = slot_str.parse::<EquipSlot>() {
                             inventory.equipped.insert(
                                 slot,
                                 ItemInstance {
-                                    instance_id,
-                                    durability: self
-                                        .loaded_item_durability(&row.item_def_id, row.durability),
+                                    instance_id: next_id,
                                     item_def_id: row.item_def_id,
                                     quantity: 1,
                                     enchant: row.enchant,
+                                    durability,
                                 },
                             );
+                            next_id += 1;
                         } else {
                             warn!(
                                 "Unknown equip slot '{}' in DB for character {}",
@@ -284,18 +320,16 @@ impl super::GameState {
                     None => {
                         // Merging here also heals bags saved before trading
                         // and pickup learned to stack.
-                        let stackable = self
-                            .item_defs
-                            .get(&row.item_def_id)
-                            .is_some_and(|d| d.stackable);
-                        stack_into_bag(
+                        next_id += stack_into_bag(
                             &mut inventory.bag,
-                            stackable,
-                            &row.item_def_id,
-                            row.enchant,
-                            instance_id,
-                            row.quantity,
-                            self.loaded_item_durability(&row.item_def_id, row.durability),
+                            BagInsert {
+                                stackable: self.item_defs.stackable(&row.item_def_id),
+                                item_def_id: &row.item_def_id,
+                                enchant: row.enchant,
+                                first_instance_id: next_id,
+                                quantity: row.quantity,
+                                durability,
+                            },
                         );
                     }
                 }
@@ -360,12 +394,14 @@ impl super::GameState {
             };
             stack_into_bag(
                 &mut inv.bag,
-                stackable,
-                item_def_id,
-                0,
-                instance_id,
-                1,
-                self.initial_item_durability(item_def_id),
+                BagInsert {
+                    stackable,
+                    item_def_id,
+                    enchant: 0,
+                    first_instance_id: instance_id,
+                    quantity: 1,
+                    durability: self.initial_item_durability(item_def_id),
+                },
             );
             inv.clone()
         };
@@ -408,12 +444,14 @@ impl super::GameState {
             } else {
                 stack_into_bag(
                     &mut inv.bag,
-                    stackable,
-                    item_def_id,
-                    0,
-                    reserved_instance_id,
-                    1,
-                    self.initial_item_durability(item_def_id),
+                    BagInsert {
+                        stackable,
+                        item_def_id,
+                        enchant: 0,
+                        first_instance_id: reserved_instance_id,
+                        quantity: 1,
+                        durability: self.initial_item_durability(item_def_id),
+                    },
                 );
                 Placement::Bagged(inv.clone())
             }
@@ -572,10 +610,9 @@ impl super::GameState {
             }
             UseEffect::Eat {
                 nutrition,
-                heal_dice,
                 raw_fish,
             } => {
-                self.use_eat_item(player_id, instance_id, nutrition, heal_dice, raw_fish, None)
+                self.use_eat_item(player_id, instance_id, nutrition, raw_fish, None)
                     .await
             }
             UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
@@ -887,16 +924,12 @@ impl super::GameState {
             .record_healing(skill, skill_level, restored_hp, skill_xp);
     }
 
-    /// Eat food or fish (doc/HUNGER.md): raw fish near a campfire grills
-    /// instead. Unlike potions, full HP just skips the heal component;
-    /// untracked (NPC) eaters get heal + decrement only. `force_poison`
-    /// pins the raw-fish roll for tests.
+    /// Eat food or fish; raw fish near a campfire grills instead.
     pub(super) async fn use_eat_item(
         &self,
         player_id: &PlayerId,
         instance_id: u64,
         nutrition: u32,
-        heal_dice: Option<String>,
         raw_fish: bool,
         force_poison: Option<bool>,
     ) {
@@ -935,21 +968,13 @@ impl super::GameState {
         let outcome = self
             .apply_eat(player_id, nutrition, raw_fish, force_poison)
             .await;
-        if matches!(outcome, super::hunger::EatOutcome::TooStuffed) {
-            self.send_system_message(player_id, "You are too stuffed to eat another bite")
-                .await;
-            return;
-        }
-
-        if let Some(dice) = heal_dice {
-            self.roll_heal_and_broadcast(player_id, &dice).await;
-        }
-
         self.consume_one_and_sync(player_id, instance_id).await;
+        self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(nutrition))
+            .await;
         let name = self.item_name(&def_id);
         self.send_system_message(player_id, format!("You eat the {name}."))
             .await;
-        if let super::hunger::EatOutcome::Fed(msg) = outcome {
+        if let Some(msg) = outcome {
             self.mark_dirty(player_id).await;
             self.send_direct_message(player_id, msg).await;
         }
@@ -1008,39 +1033,6 @@ impl super::GameState {
         self.spawn_campfire(placement, floor_level).await;
         self.send_system_message(player_id, "You light a campfire.")
             .await;
-    }
-
-    /// Roll `dice` and heal an alive, wounded player, broadcasting the new HP.
-    async fn roll_heal_and_broadcast(&self, player_id: &PlayerId, dice: &str) {
-        let healed = {
-            let mut players = self.players.write().await;
-            players.get_mut(player_id).and_then(|player| {
-                (player.health > 0 && player.health < player.max_health).then(|| {
-                    let amount = crate::game::combat::roll_dice(dice);
-                    player.health = (player.health + amount).min(player.max_health);
-                    (
-                        player.health,
-                        player.max_health,
-                        player.position,
-                        player.floor_level,
-                    )
-                })
-            })
-        };
-        if let Some((health, max_health, position, floor_level)) = healed {
-            self.send_direct_message_to_players_within_position(
-                &position,
-                floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-                ServerMessage::PlayerHealthUpdate {
-                    player_id: *player_id,
-                    health,
-                    max_health,
-                },
-                None,
-            )
-            .await;
-        }
     }
 
     /// If the player is defeated (or gone), message them and return true so
@@ -1526,10 +1518,7 @@ impl super::GameState {
         }
 
         let item_weight = self.item_defs.weight(&ground_item.item_def_id);
-        let stackable = self
-            .item_defs
-            .get(&ground_item.item_def_id)
-            .is_some_and(|d| d.stackable);
+        let stackable = self.item_defs.stackable(&ground_item.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
 
         // Acquire write lock for both weight check and mutation atomically
@@ -1562,12 +1551,14 @@ impl super::GameState {
                 }
                 stack_into_bag(
                     &mut inv.bag,
-                    stackable,
-                    &ground_item.item_def_id,
-                    ground_item.enchant,
-                    instance_id,
-                    1,
-                    ground_item.durability,
+                    BagInsert {
+                        stackable,
+                        item_def_id: &ground_item.item_def_id,
+                        enchant: ground_item.enchant,
+                        first_instance_id: instance_id,
+                        quantity: 1,
+                        durability: ground_item.durability,
+                    },
                 );
                 inv.clone()
             } else {

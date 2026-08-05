@@ -9,7 +9,6 @@ use super::{
     DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
     FLEE_SAFE_DIST_MARGIN,
 };
-use crate::world::bearing_xz;
 use crate::MonsterState;
 use rand::Rng;
 use std::collections::HashMap;
@@ -87,9 +86,9 @@ impl MonsterBrain {
             }
             "is_beyond_leash" => {
                 let range = param(params, "range", DEFAULT_LEASH_RANGE);
-                let dx = self.position.x - self.spawn_position.x;
-                let dz = self.position.z - self.spawn_position.z;
-                (self.state == AiState::Return || dx * dx + dz * dz > range * range).into()
+                (self.state == AiState::Return
+                    || self.position.dist_xz_sq(&self.spawn_position) > range * range)
+                    .into()
             }
             "health_below_ratio" => {
                 let ratio = param(params, "ratio", DEFAULT_FLEE_HEALTH_RATIO);
@@ -173,9 +172,7 @@ impl MonsterBrain {
         path_provider: &dyn PathProvider,
     ) -> BehaviorStatus {
         let arrive_dist = param(params, "arriveDist", DEFAULT_RETURN_ARRIVE_DIST);
-        let dx = self.spawn_position.x - self.position.x;
-        let dz = self.spawn_position.z - self.position.z;
-        if dx * dx + dz * dz <= arrive_dist * arrive_dist {
+        if self.position.dist_xz_sq(&self.spawn_position) <= arrive_dist * arrive_dist {
             self.transition_to_idle(commands);
             return BehaviorStatus::Success;
         }
@@ -285,8 +282,6 @@ impl MonsterBrain {
             None => return BehaviorStatus::Failure,
         };
 
-        let dx = target.position.x - self.position.x;
-        let dz = target.position.z - self.position.z;
         let range = param(params, "range", self.attack_range);
         // Engage at `range`, release further out: see ATTACK_RELEASE_MARGIN_METERS.
         let limit = if self.state == AiState::Attack {
@@ -295,12 +290,15 @@ impl MonsterBrain {
             range
         };
         // A swing already under way finishes; see `swing_left_ms`.
-        if self.swing_left_ms <= 0.0 && dx * dx + dz * dz > limit * limit {
+        if self.swing_left_ms <= 0.0 && self.position.dist_xz_sq(&target.position) > limit * limit {
             return BehaviorStatus::Failure;
         }
 
         let target_id = target.id;
-        self.rotation = bearing_xz(dx, dz).unwrap_or(self.rotation);
+        self.rotation = self
+            .position
+            .bearing_xz_to(&target.position)
+            .unwrap_or(self.rotation);
         if self.state != AiState::Attack {
             self.state = AiState::Attack;
             self.state_timer_ms = 0.0;

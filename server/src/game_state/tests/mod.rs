@@ -96,6 +96,7 @@ fn move_cmd(position: Position, append: bool) -> MoveCommand {
         rotation: 0.0,
         floor_level: 0,
         append,
+        sprinting: false,
     }
 }
 
@@ -236,6 +237,15 @@ fn make_game_state_with(
     height: impl onlinerpg_terrain::height::HeightTiles + 'static,
     water: impl onlinerpg_terrain::water::WaterTiles + 'static,
 ) -> GameState {
+    make_game_state_with_zones(test_name, height, water, vec![])
+}
+
+fn make_game_state_with_zones(
+    test_name: &str,
+    height: impl onlinerpg_terrain::height::HeightTiles + 'static,
+    water: impl onlinerpg_terrain::water::WaterTiles + 'static,
+    no_spawn_zones: Vec<onlinerpg_shared::NoSpawnZone>,
+) -> GameState {
     let housing_dir = std::env::temp_dir().join(format!(
         "onlinerpg_{test_name}_housing_{}",
         uuid::Uuid::new_v4()
@@ -251,19 +261,19 @@ fn make_game_state_with(
         world_drop_defs,
         GameState::default_start_datetime(),
         housing_io,
-        vec![],
+        no_spawn_zones,
         dungeon_defs,
         Arc::new(onlinerpg_terrain::height::HeightSampler::new(height)),
         Arc::new(onlinerpg_terrain::water::WaterSampler::new(water)),
     )
 }
 
-fn make_test_game_state(test_name: &str) -> GameState {
+pub(crate) fn make_test_game_state(test_name: &str) -> GameState {
     make_game_state_with(test_name, SplitWorldTiles, SeaOnlyWater)
 }
 
 /// Temp-file AuthService for tests whose paths touch the auth DB.
-fn make_test_auth(test_name: &str) -> crate::auth::AuthService {
+pub(crate) fn make_test_auth(test_name: &str) -> crate::auth::AuthService {
     make_test_auth_with_path(test_name).0
 }
 

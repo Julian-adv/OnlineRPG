@@ -1223,6 +1223,7 @@
 
   <GameSceneMonstersLayer
     monsters={monsterManager.monsters}
+    {currentPlayer}
     bind:monsterModels
   />
 

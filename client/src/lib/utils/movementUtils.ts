@@ -91,18 +91,19 @@ export function isSlopeTooSteepUphill(
  */
 export function getMovementMode(
   distance: number,
-  hasTorch = false
+  hasTorch = false,
+  sprinting = false
 ): MovementMode {
+  if (sprinting) {
+    return 'run'
+  }
   if (hasTorch) {
     return distance <= 3 ? 'walk' : 'run'
   }
   if (distance <= 3) {
     return 'walk'
-  } else if (distance <= 8) {
-    return 'jog'
-  } else {
-    return 'run'
   }
+  return 'jog'
 }
 
 // Default movement configuration
@@ -135,6 +136,21 @@ export function movementConfigForSpeed(
       DEFAULT_MOVEMENT_CONFIG.acceleration * burdenScale * debugScale,
     deceleration:
       DEFAULT_MOVEMENT_CONFIG.deceleration * burdenScale * debugScale,
+  }
+}
+
+// Mirrors shared/src/hunger.rs SPRINT_MOVE_MULT.
+export const SPRINT_SPEED_MULT = 1.5
+
+export function scaleMovementConfig(
+  config: MovementConfig,
+  mult: number
+): MovementConfig {
+  return {
+    ...config,
+    maxSpeed: config.maxSpeed * mult,
+    acceleration: config.acceleration * mult,
+    deceleration: config.deceleration * mult,
   }
 }
 

@@ -212,6 +212,8 @@ pub enum ClientMessage {
         /// replace.
         #[serde(default)]
         append: bool,
+        #[serde(default)]
+        sprinting: bool,
     },
     /// Floor change that happens *between* waypoints. `PlayerMove::floor_level`
     /// only lands when its waypoint is reached, and a stairwell is a single leg
@@ -427,6 +429,11 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
+    /// Say something to the sender's party. Delivered to every online member
+    /// wherever they are (no AOI cut), echoed to the sender included.
+    PartyChat {
+        message: String,
+    },
     /// Ask where the sender's party members are right now (map open). A
     /// one-shot snapshot: steady-state updates are pushed by the server's
     /// party-position tick whenever a member relocates.
@@ -457,6 +464,7 @@ impl ClientMessage {
             rotation,
             floor_level,
             append: false,
+            sprinting: false,
         }
     }
 }
@@ -506,6 +514,8 @@ pub enum ServerMessage {
         rotation: f32,
         #[serde(default)]
         floor_level: i8,
+        #[serde(default)]
+        sprinting: bool,
     },
     PlayerTeleported {
         player_id: PlayerId,
@@ -589,6 +599,13 @@ pub enum ServerMessage {
     /// whisper errors). Not `ChatMessage`: clients must render it as a system
     /// line, not the player's own speech.
     SystemMessage {
+        message: String,
+    },
+    /// A party-channel line, sent to every online member (the sender's echo
+    /// included). Carries the name like `WhisperMessage`: party chat ignores
+    /// distance, so the sender may be outside a member's AOI.
+    PartyChatMessage {
+        from: String,
         message: String,
     },
     /// Direct to the invitee: a party invite to answer with `PartyRespond`

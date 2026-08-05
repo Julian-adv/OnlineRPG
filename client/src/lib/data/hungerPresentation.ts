@@ -1,29 +1,27 @@
 import type { HungerBand, HungerSnapshot } from '../stores/hungerStore'
 
 export const HUNGER_BAND_INFO = {
-  WellFed: {
-    label: 'Well Fed',
-    icon: '🍖',
-    description: 'You feel energized and ready for adventure.',
+  Normal: {
+    label: 'Normal',
+    icon: '🍞',
+    description: 'You have enough fuel to sprint and recover normally.',
+    note: undefined,
   },
   Hungry: {
     label: 'Hungry',
     icon: '🍽️',
-    description: 'A meal would help, but you can keep going.',
+    description: 'Sprinting is unavailable and natural healing is slower.',
+    note: 'Sprinting is disabled. Natural healing takes twice as long.',
   },
   Weak: {
     label: 'Weak',
     icon: '🦴',
     description: 'You need food before your strength returns.',
-  },
-  Stuffed: {
-    label: 'Stuffed',
-    icon: '🫃',
-    description: 'The vigor returns once your meal settles.',
+    note: 'Natural healing is disabled.',
   },
 } satisfies Record<
   HungerBand,
-  { label: string; icon: string; description: string }
+  { label: string; icon: string; description: string; note: string | undefined }
 >
 
 export function hungerModifiers(hunger: HungerSnapshot) {

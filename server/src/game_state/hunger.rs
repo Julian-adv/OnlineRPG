@@ -8,7 +8,9 @@
 
 use onlinerpg_shared::hunger::{
     effective_multipliers, hunger_state, Campfire, CAMPFIRE_DURATION_MS, CAMPFIRE_GRILL_RADIUS,
-    FOOD_POISONING_MS, FOOD_POISONING_PCT, GRILL_CAST_MS, POISON_DRAIN_MULT, SATIATION_RESPAWN,
+    FOOD_POISONING_MS, FOOD_POISONING_PCT, FOOD_REGEN_DURATION_SECS, GRILL_CAST_MS,
+    MOVEMENT_DRAIN_INTERVAL_SECS, NORMAL_MIN, POISON_DRAIN_MULT, SATIATION_RESPAWN,
+    SPRINT_DRAIN_INTERVAL_SECS,
 };
 use onlinerpg_shared::{PlayerId, Position, ServerMessage};
 use rand::Rng;
@@ -18,6 +20,14 @@ use tokio::time::Instant;
 pub(crate) struct HungerData {
     pub satiation: u32,
     pub poisoned_until: Option<Instant>,
+    movement_seconds: f32,
+    sprint_seconds: f32,
+}
+
+pub(crate) struct FoodRegeneration {
+    total: u32,
+    delivered: u32,
+    ticks_elapsed: u8,
 }
 
 pub(crate) struct CampfireEntry {
@@ -30,14 +40,6 @@ pub(crate) struct GrillSession {
     pub campfire_id: u64,
     pub instance_id: u64,
     pub grilled_def_id: String,
-}
-
-/// The satiation/poison side of one meal, decoded by `use_eat_item`.
-pub(super) enum EatOutcome {
-    /// No hunger entry (official NPC): heal and decrement still proceed.
-    Untracked,
-    TooStuffed,
-    Fed(ServerMessage),
 }
 
 fn remaining_ms(until: Option<Instant>, now: Instant) -> u64 {
@@ -78,12 +80,15 @@ impl super::GameState {
             HungerData {
                 satiation,
                 poisoned_until: None,
+                movement_seconds: 0.0,
+                sprint_seconds: 0.0,
             },
         );
     }
 
     pub(crate) async fn forget_hunger(&self, player_id: &PlayerId) {
         self.hunger.write().await.remove(player_id);
+        self.food_regeneration.write().await.remove(player_id);
     }
 
     #[cfg(test)]
@@ -104,12 +109,12 @@ impl super::GameState {
         self.send_direct_message(player_id, msg).await;
     }
 
-    /// Off-baseline move multipliers for the given movers; absent id = 1.0
-    /// (NPCs and the well-baselined majority never enter the map).
-    pub(super) async fn hunger_move_mults_for(
+    /// Off-baseline movement profiles for the given movers; an absent id means
+    /// (1.0, sprint allowed) — the well-baselined majority never enters the map.
+    pub(super) async fn hunger_movement_profiles_for(
         &self,
         ids: &[PlayerId],
-    ) -> std::collections::HashMap<PlayerId, f32> {
+    ) -> std::collections::HashMap<PlayerId, (f32, bool)> {
         let now = Instant::now();
         let hunger = self.hunger.read().await;
         ids.iter()
@@ -117,39 +122,68 @@ impl super::GameState {
                 let d = hunger.get(pid)?;
                 let poisoned = d.poisoned_until.is_some_and(|u| u > now);
                 let (m, _, _) = effective_multipliers(d.satiation, poisoned);
-                (m != 1.0).then_some((*pid, m))
+                let sprint_allowed = d.satiation > NORMAL_MIN;
+                (m != 1.0 || !sprint_allowed).then_some((*pid, (m, sprint_allowed)))
             })
             .collect()
     }
 
-    pub(super) async fn hunger_carry_mult(&self, player_id: &PlayerId) -> f32 {
+    async fn hunger_mults(&self, player_id: &PlayerId) -> (f32, f32, f32) {
         let hunger = self.hunger.read().await;
         hunger
             .get(player_id)
             .map(|d| {
                 let poisoned = d.poisoned_until.is_some_and(|u| u > Instant::now());
-                effective_multipliers(d.satiation, poisoned).2
+                effective_multipliers(d.satiation, poisoned)
             })
-            .unwrap_or(1.0)
+            .unwrap_or((1.0, 1.0, 1.0))
     }
 
-    /// Weak or food-poisoned players don't regenerate (doc/HUNGER.md).
-    /// Snapshot for the regen loop; untracked players (NPCs) regen freely.
-    pub(super) async fn hunger_regen_blocked(&self) -> std::collections::HashSet<PlayerId> {
-        let now = Instant::now();
+    pub(super) async fn hunger_carry_mult(&self, player_id: &PlayerId) -> f32 {
+        self.hunger_mults(player_id).await.2
+    }
+
+    pub(super) async fn hunger_attack_mult(&self, player_id: &PlayerId) -> f32 {
+        self.hunger_mults(player_id).await.1
+    }
+
+    /// Untracked (NPC) movers never sprint.
+    pub(super) async fn hunger_sprint_allowed(&self, player_id: &PlayerId) -> bool {
         let hunger = self.hunger.read().await;
         hunger
+            .get(player_id)
+            .is_some_and(|d| d.satiation > NORMAL_MIN)
+    }
+
+    /// Weak and poisoned players never regen; Hungry players only when
+    /// `include_hungry` (alternate regen ticks — the ×0.5).
+    pub(super) async fn hunger_regen_ready(
+        &self,
+        candidates: &[PlayerId],
+        include_hungry: bool,
+    ) -> std::collections::HashSet<PlayerId> {
+        let now = Instant::now();
+        let hunger = self.hunger.read().await;
+        candidates
             .iter()
-            .filter_map(|(pid, d)| {
-                let poisoned = d.poisoned_until.is_some_and(|u| u > now);
-                let weak = hunger_state(d.satiation) == onlinerpg_shared::hunger::HungerState::Weak;
-                (weak || poisoned).then_some(*pid)
+            .filter(|pid| {
+                let Some(d) = hunger.get(pid) else {
+                    return true;
+                };
+                if d.poisoned_until.is_some_and(|u| u > now) {
+                    return false;
+                }
+                match hunger_state(d.satiation) {
+                    onlinerpg_shared::hunger::HungerState::Weak => false,
+                    onlinerpg_shared::hunger::HungerState::Hungry => include_hungry,
+                    onlinerpg_shared::hunger::HungerState::Normal => true,
+                }
             })
+            .copied()
             .collect()
     }
 
-    /// Reset to the Well-Fed floor on respawn so death never compounds
-    /// starvation; poison does not survive death either.
+    /// Reset to the normal floor on respawn; poison does not survive death.
     pub(crate) async fn reset_hunger_on_respawn(&self, player_id: &PlayerId) {
         let updated = {
             let mut hunger = self.hunger.write().await;
@@ -157,6 +191,8 @@ impl super::GameState {
                 Some(data) => {
                     data.satiation = SATIATION_RESPAWN;
                     data.poisoned_until = None;
+                    data.movement_seconds = 0.0;
+                    data.sprint_seconds = 0.0;
                     true
                 }
                 None => false,
@@ -168,44 +204,96 @@ impl super::GameState {
         }
     }
 
-    /// The 20s decay bucket: one point per tick, four while poisoned. O(n)
-    /// integer work; `HungerUpdate` goes out only on a band transition or
-    /// poison expiry, so 5,000 players cost a handful of messages a day.
-    pub async fn tick_hunger_decay(&self) {
-        let mut updates: Vec<(PlayerId, ServerMessage)> = Vec::new();
-        let mut newly_dirty: Vec<PlayerId> = Vec::new();
+    /// Push poison expiry the moment it lapses. Read-locked bail-out first:
+    /// poison is rare, so the 1s sweep must not write-lock 5,000 entries.
+    pub async fn tick_hunger_effects(&self) {
+        let now = Instant::now();
         {
-            let now = Instant::now();
-            let mut hunger = self.hunger.write().await;
-            for (pid, data) in hunger.iter_mut() {
-                let was_poisoned = data.poisoned_until.is_some();
-                let still_poisoned = data.poisoned_until.is_some_and(|u| u > now);
-                if was_poisoned && !still_poisoned {
-                    data.poisoned_until = None;
-                }
-
-                let drain = if still_poisoned { POISON_DRAIN_MULT } else { 1 };
-                let old_state = hunger_state(data.satiation);
-                data.satiation = data.satiation.saturating_sub(drain);
-                let new_state = hunger_state(data.satiation);
-
-                if old_state != new_state || (was_poisoned && !still_poisoned) {
-                    updates.push((
-                        *pid,
-                        hunger_update_msg(data.satiation, remaining_ms(data.poisoned_until, now)),
-                    ));
-                }
-                if old_state != new_state {
-                    newly_dirty.push(*pid);
-                }
+            let hunger = self.hunger.read().await;
+            if !hunger
+                .values()
+                .any(|d| d.poisoned_until.is_some_and(|u| u <= now))
+            {
+                return;
             }
         }
-        if !newly_dirty.is_empty() {
-            self.dirty_players.write().await.extend(newly_dirty);
+        let mut updates: Vec<(PlayerId, ServerMessage)> = Vec::new();
+        {
+            let mut hunger = self.hunger.write().await;
+            for (pid, data) in hunger.iter_mut() {
+                if data.poisoned_until.is_some_and(|u| u <= now) {
+                    data.poisoned_until = None;
+                    updates.push((*pid, hunger_update_msg(data.satiation, 0)));
+                }
+            }
         }
         for (pid, msg) in updates {
             self.send_direct_message(&pid, msg).await;
         }
+    }
+
+    pub(super) async fn record_movement_activity(&self, activities: &[(PlayerId, f32, bool)]) {
+        if activities.is_empty() {
+            return;
+        }
+        fn take_points(accumulated: &mut f32, interval: f32) -> u32 {
+            let points = (*accumulated / interval).floor() as u32;
+            *accumulated -= points as f32 * interval;
+            points
+        }
+        let now = Instant::now();
+        let mut updates = Vec::new();
+        let mut dirty = Vec::new();
+        {
+            let mut hunger = self.hunger.write().await;
+            for (pid, active_seconds, sprinting) in activities {
+                let Some(data) = hunger.get_mut(pid) else {
+                    continue;
+                };
+                let poisoned = data.poisoned_until.is_some_and(|u| u > now);
+                let drain_mult = if poisoned { POISON_DRAIN_MULT } else { 1 };
+                let old_state = hunger_state(data.satiation);
+                let drained_seconds = active_seconds.max(0.0) * drain_mult as f32;
+
+                data.movement_seconds += drained_seconds;
+                let movement_points =
+                    take_points(&mut data.movement_seconds, MOVEMENT_DRAIN_INTERVAL_SECS);
+
+                if *sprinting && data.satiation > NORMAL_MIN {
+                    data.sprint_seconds += drained_seconds;
+                }
+                // Sprint drain floors at the Normal minimum: sprinting alone
+                // never pushes a player into Hungry.
+                let sprint_points =
+                    take_points(&mut data.sprint_seconds, SPRINT_DRAIN_INTERVAL_SECS)
+                        .min(data.satiation.saturating_sub(NORMAL_MIN));
+                data.satiation -= sprint_points;
+                data.satiation = data.satiation.saturating_sub(movement_points);
+
+                let new_state = hunger_state(data.satiation);
+                let sprint_depleted = *sprinting && data.satiation == NORMAL_MIN;
+                if old_state != new_state || sprint_depleted {
+                    updates.push((
+                        *pid,
+                        hunger_update_msg(data.satiation, remaining_ms(data.poisoned_until, now)),
+                    ));
+                    dirty.push(*pid);
+                }
+            }
+        }
+        if !dirty.is_empty() {
+            self.dirty_players.write().await.extend(dirty);
+        }
+        for (pid, msg) in updates {
+            self.send_direct_message(&pid, msg).await;
+        }
+    }
+
+    /// One kill costs one drain point (×4 poisoned), funneled through the
+    /// activity path as one movement interval's worth of effort.
+    pub(super) async fn drain_hunger_for_kill(&self, player_id: &PlayerId) {
+        self.record_movement_activity(&[(*player_id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+            .await;
     }
 
     /// Apply an `Eat`'s satiation/poison side. `force_poison` pins the
@@ -216,7 +304,7 @@ impl super::GameState {
         nutrition: u32,
         raw_fish: bool,
         force_poison: Option<bool>,
-    ) -> EatOutcome {
+    ) -> Option<ServerMessage> {
         // thread_rng is !Send — roll before any await.
         let rolled_poison = raw_fish
             && force_poison
@@ -224,21 +312,104 @@ impl super::GameState {
 
         let now = Instant::now();
         let mut hunger = self.hunger.write().await;
-        let Some(data) = hunger.get_mut(player_id) else {
-            return EatOutcome::Untracked;
-        };
-        if data.satiation >= onlinerpg_shared::hunger::SATIATION_MAX {
-            return EatOutcome::TooStuffed;
-        }
+        // No hunger entry (official NPC): heal and decrement still proceed.
+        let data = hunger.get_mut(player_id)?;
         data.satiation = onlinerpg_shared::hunger::apply_nutrition(data.satiation, nutrition);
         if rolled_poison {
             // Reinfection refreshes the clock rather than stacking.
             data.poisoned_until = Some(now + Duration::from_millis(FOOD_POISONING_MS));
         }
-        EatOutcome::Fed(hunger_update_msg(
+        Some(hunger_update_msg(
             data.satiation,
             remaining_ms(data.poisoned_until, now),
         ))
+    }
+
+    pub(super) async fn start_food_regeneration(&self, player_id: &PlayerId, amount: u32) {
+        if amount == 0 {
+            return;
+        }
+        let mut regeneration = self.food_regeneration.write().await;
+        let entry = regeneration.entry(*player_id).or_insert(FoodRegeneration {
+            total: 0,
+            delivered: 0,
+            ticks_elapsed: 0,
+        });
+        // A new meal folds the undelivered remainder into a fresh window.
+        entry.total = entry
+            .total
+            .saturating_sub(entry.delivered)
+            .saturating_add(amount);
+        entry.delivered = 0;
+        entry.ticks_elapsed = 0;
+    }
+
+    pub(super) async fn cancel_food_regeneration(&self, player_id: &PlayerId) {
+        self.food_regeneration.write().await.remove(player_id);
+    }
+
+    pub async fn tick_food_regeneration(&self) {
+        if self.food_regeneration.read().await.is_empty() {
+            return;
+        }
+        let portions: Vec<(PlayerId, u32)> = {
+            let mut regeneration = self.food_regeneration.write().await;
+            let mut portions = Vec::with_capacity(regeneration.len());
+            regeneration.retain(|pid, regen| {
+                regen.ticks_elapsed += 1;
+                let target = regen.total.saturating_mul(u32::from(regen.ticks_elapsed))
+                    / u32::from(FOOD_REGEN_DURATION_SECS);
+                let amount = target.saturating_sub(regen.delivered);
+                regen.delivered = target;
+                if amount > 0 {
+                    portions.push((*pid, amount));
+                }
+                regen.ticks_elapsed < FOOD_REGEN_DURATION_SECS
+            });
+            portions
+        };
+        if portions.is_empty() {
+            return;
+        }
+
+        let mut messages = Vec::new();
+        {
+            let mut players = self.players.write().await;
+            for (pid, amount) in portions {
+                let Some(player) = players.get_mut(&pid) else {
+                    continue;
+                };
+                if player.health == 0 || player.health >= player.max_health {
+                    continue;
+                }
+                player.health = player.health.saturating_add(amount).min(player.max_health);
+                messages.push((
+                    pid,
+                    player.position,
+                    player.floor_level,
+                    player.health,
+                    player.max_health,
+                ));
+            }
+        }
+        let healed: Vec<PlayerId> = messages.iter().map(|(pid, ..)| *pid).collect();
+        if !healed.is_empty() {
+            self.dirty_players.write().await.extend(healed);
+        }
+        for (pid, position, floor, health, max_health) in messages {
+            self.send_direct_message_to_players_within_position(
+                &position,
+                floor,
+                super::EVENT_DELIVERY_RADIUS,
+                ServerMessage::PlayerHealthUpdate {
+                    player_id: pid,
+                    health,
+                    max_health,
+                },
+                None,
+            )
+            .await;
+        }
     }
 
     // ---- Campfires ----
