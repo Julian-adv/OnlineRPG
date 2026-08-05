@@ -8,7 +8,7 @@ use tracing::info;
 
 use super::combat::reachable_dist_sq;
 use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout, DealEntry};
-use super::inventory::{stack_into_bag, BagInsert};
+use super::inventory::{draw_from_bag, stack_into_bag, BagInsert};
 use super::StoredBuyback;
 
 /// Maximum distance between player and trader for any shop interaction.
@@ -530,14 +530,8 @@ impl super::GameState {
                         )
                         .await;
                 };
-                // Stock requests are def-only, so sell the lowest enchant first.
-                let Some(idx) = npc_inv
-                    .bag
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, item)| item.item_def_id == item_def_id)
-                    .min_by_key(|(_, item)| item.enchant)
-                    .map(|(idx, _)| idx)
+                let Some(&(purchased_enchant, _)) =
+                    draw_from_bag(&mut npc_inv.bag, item_def_id, 1).first()
                 else {
                     drop(inventories);
                     drop(gold_map);
@@ -552,12 +546,6 @@ impl super::GameState {
                         )
                         .await;
                 };
-                let purchased_enchant = npc_inv.bag[idx].enchant;
-                if npc_inv.bag[idx].quantity > 1 {
-                    npc_inv.bag[idx].quantity -= 1;
-                } else {
-                    npc_inv.bag.remove(idx);
-                }
                 (Some(npc_inv.clone()), purchased_enchant)
             } else {
                 (None, 0)
@@ -654,14 +642,13 @@ impl super::GameState {
             price: i64,
         }
 
-        struct ResidentPurchase {
-            item_def_id: String,
-            quantity: u32,
+        struct Purchase<'a> {
+            item_def_id: &'a str,
+            qty: u32,
             enchant: i32,
         }
 
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
-        let mut requested: HashMap<String, u32> = HashMap::new();
         for req in &items {
             if req.qty == 0 {
                 continue;
@@ -691,7 +678,6 @@ impl super::GameState {
                     .send_trade_error(player_id, "That item has no price")
                     .await;
             };
-            *requested.entry(req.item_def_id.clone()).or_insert(0) += req.qty;
             plans.push(Plan {
                 item_def_id: req.item_def_id.clone(),
                 qty: req.qty,
@@ -728,14 +714,18 @@ impl super::GameState {
                     .send_trade_error(player_id, "They have nothing to sell")
                     .await;
             };
-            for (item_def_id, qty) in &requested {
+            let mut requested: HashMap<&str, u32> = HashMap::new();
+            for plan in &plans {
+                *requested.entry(plan.item_def_id.as_str()).or_default() += plan.qty;
+            }
+            for (item_def_id, qty) in requested {
                 let available: u32 = npc_inv
                     .bag
                     .iter()
-                    .filter(|i| &i.item_def_id == item_def_id)
+                    .filter(|i| i.item_def_id == item_def_id)
                     .map(|i| i.quantity)
                     .sum();
-                if available < *qty {
+                if available < qty {
                     drop(inventories);
                     drop(gold_map);
                     return self
@@ -785,71 +775,47 @@ impl super::GameState {
             return self.send_trade_error(player_id, "Not enough gold").await;
         }
 
-        // Every line is now guaranteed to apply cleanly — mutate.
-        let resident_purchases = if is_resident {
+        // Every line is now guaranteed to apply cleanly — mutate. Resident
+        // stock draws fan a line out into one purchase per stock entry taken;
+        // merchant catalogs are infinite, so a line maps straight through.
+        let purchases: Vec<Purchase> = if is_resident {
             let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
             let mut purchases = Vec::new();
             for plan in &plans {
-                let mut remaining = plan.qty;
-                while remaining > 0 {
-                    let idx = npc_inv
-                        .bag
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, item)| item.item_def_id == plan.item_def_id)
-                        .min_by_key(|(_, item)| item.enchant)
-                        .map(|(idx, _)| idx)
-                        .expect("availability checked above");
-                    let take = remaining.min(npc_inv.bag[idx].quantity);
-                    let enchant = npc_inv.bag[idx].enchant;
-                    if npc_inv.bag[idx].quantity > take {
-                        npc_inv.bag[idx].quantity -= take;
-                    } else {
-                        npc_inv.bag.remove(idx);
-                    }
-                    purchases.push(ResidentPurchase {
-                        item_def_id: plan.item_def_id.clone(),
-                        quantity: take,
+                for (enchant, qty) in draw_from_bag(&mut npc_inv.bag, &plan.item_def_id, plan.qty) {
+                    purchases.push(Purchase {
+                        item_def_id: &plan.item_def_id,
+                        qty,
                         enchant,
                     });
-                    remaining -= take;
                 }
             }
             purchases
         } else {
-            Vec::new()
+            plans
+                .iter()
+                .map(|plan| Purchase {
+                    item_def_id: &plan.item_def_id,
+                    qty: plan.qty,
+                    enchant: 0,
+                })
+                .collect()
         };
 
         {
             let inv = inventories.get_mut(player_id).expect("checked above");
-            if is_resident {
-                for purchase in &resident_purchases {
-                    let stackable = self.item_defs.stackable(&purchase.item_def_id);
-                    next_id += stack_into_bag(
-                        &mut inv.bag,
-                        BagInsert {
-                            stackable,
-                            item_def_id: &purchase.item_def_id,
-                            enchant: purchase.enchant,
-                            first_instance_id: next_id,
-                            quantity: purchase.quantity,
-                        },
-                    );
-                }
-            } else {
-                for plan in &plans {
-                    let stackable = self.item_defs.stackable(&plan.item_def_id);
-                    next_id += stack_into_bag(
-                        &mut inv.bag,
-                        BagInsert {
-                            stackable,
-                            item_def_id: &plan.item_def_id,
-                            enchant: 0,
-                            first_instance_id: next_id,
-                            quantity: plan.qty,
-                        },
-                    );
-                }
+            for purchase in &purchases {
+                let stackable = self.item_defs.stackable(purchase.item_def_id);
+                next_id += stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert {
+                        stackable,
+                        item_def_id: purchase.item_def_id,
+                        enchant: purchase.enchant,
+                        first_instance_id: next_id,
+                        quantity: purchase.qty,
+                    },
+                );
             }
         }
 

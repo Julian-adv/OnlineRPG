@@ -82,9 +82,7 @@ fn enchanted_bag_item(
     enchant: i32,
 ) -> ItemInstance {
     ItemInstance {
-        instance_id,
-        item_def_id: item_def_id.to_string(),
-        quantity,
         enchant,
+        ..bag_item(instance_id, item_def_id, quantity)
     }
 }
