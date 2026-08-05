@@ -14,6 +14,9 @@ pub const WORLD_MIN_X: f32 = -16_416.0;
 /// location as `WORLD_MIN_X` and therefore belongs to the wrapped interval's
 /// exclusive end.
 pub const WORLD_MAX_X: f32 = WORLD_MIN_X + WORLD_WIDTH_X;
+/// South/north bounds of the square baked terrain. Z does not wrap.
+pub const WORLD_MIN_Z: f32 = -16_416.0;
+pub const WORLD_MAX_Z: f32 = WORLD_MIN_Z + WORLD_WIDTH_X;
 
 /// Normalize a world X coordinate into the terrain's canonical baked range.
 #[inline]

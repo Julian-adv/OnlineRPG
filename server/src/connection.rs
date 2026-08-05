@@ -1587,6 +1587,23 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::OpenTeleportGate { gate_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.open_teleport_gate(id, &gate_id).await;
+            }
+        }
+
+        ClientMessage::UseTeleportGate {
+            gate_id,
+            destination_gate_id,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .use_teleport_gate(id, &gate_id, &destination_gate_id)
+                    .await;
+            }
+        }
+
         ClientMessage::OpenShop { merchant_player_id } => {
             if let Some(id) = &state.player_id {
                 game_state.open_shop(id, &merchant_player_id, true).await;

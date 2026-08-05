@@ -622,6 +622,19 @@ class NetworkManager {
     this.sendMessage({ UseItem: { instance_id: instanceId } })
   }
 
+  sendOpenTeleportGate(gateId: string) {
+    this.sendMessage({ OpenTeleportGate: { gate_id: gateId } })
+  }
+
+  sendUseTeleportGate(gateId: string, destinationGateId: string) {
+    this.sendMessage({
+      UseTeleportGate: {
+        gate_id: gateId,
+        destination_gate_id: destinationGateId,
+      },
+    })
+  }
+
   sendOpenShop(merchantPlayerId: number) {
     markShopRequested(merchantPlayerId)
     this.sendMessage({ OpenShop: { merchant_player_id: merchantPlayerId } })

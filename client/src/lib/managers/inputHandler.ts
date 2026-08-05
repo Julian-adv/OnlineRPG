@@ -20,6 +20,13 @@ function hasAncestorBridge(obj: THREE.Object3D | null): boolean {
   return false
 }
 
+function isHierarchyVisible(obj: THREE.Object3D | null): boolean {
+  for (let current = obj; current; current = current.parent) {
+    if (!current.visible) return false
+  }
+  return true
+}
+
 /** Walk up the parent chain to the first object carrying `key` in userData. */
 export function findAncestorWithUserData(
   obj: THREE.Object3D | null,
@@ -94,6 +101,12 @@ export type ClickIntent =
   | {
       type: 'interact_npc'
       playerId: number
+      position: Position
+      distance: number
+    }
+  | {
+      type: 'open_teleport_gate'
+      gateId: string
       position: Position
       distance: number
     }
@@ -357,8 +370,33 @@ class InputHandler {
 
     // Check intersection with object meshes
     if (context.objectMeshes.length > 0) {
-      const objectHits = raycaster.intersectObjects(context.objectMeshes, true)
+      // Three's raycaster includes descendants of invisible groups. Filter the
+      // hierarchy so culled town gates and hidden editor objects cannot steal
+      // clicks from the visible scene.
+      const objectHits = raycaster
+        .intersectObjects(context.objectMeshes, true)
+        .filter((hit) => isHierarchyVisible(hit.object))
       if (objectHits.length > 0) {
+        const gate = findAncestorWithUserData(
+          objectHits[0].object,
+          'teleportGateId'
+        )
+        if (gate) {
+          const gatePosition = new THREE.Vector3()
+          gate.getWorldPosition(gatePosition)
+          const dx = gatePosition.x - context.playerPosition.x
+          const dz = gatePosition.z - context.playerPosition.z
+          return {
+            type: 'open_teleport_gate',
+            gateId: gate.userData.teleportGateId as string,
+            position: {
+              x: gatePosition.x,
+              y: gatePosition.y,
+              z: gatePosition.z,
+            },
+            distance: Math.sqrt(dx * dx + dz * dz),
+          }
+        }
         const hitPoint = objectHits[0].point
         const pp = context.playerPosition
         const dx = hitPoint.x - pp.x

@@ -28,6 +28,7 @@ mod persistence_tests;
 mod pickup_tests;
 mod player_tests;
 mod skills_tests;
+mod teleport_gate_tests;
 mod trading_tests;
 
 /// Stable numeric id derived from a fixture's name, so tests keep naming

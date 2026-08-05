@@ -177,6 +177,21 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             Some(format!("[Party] {from}: {message}"))
         }
         ServerMessage::SystemMessage { message } => Some(format!("[System] {message}")),
+        ServerMessage::TeleportGateTravelled {
+            requested_town,
+            arrival_description,
+            fare,
+            misfired,
+        } => Some(if *misfired {
+            format!(
+                "[TownGate] Wild misfire: paid {fare} copper for {requested_town}, thrown to {arrival_description}."
+            )
+        } else {
+            format!("[TownGate] Arrived in {arrival_description} for {fare} copper.")
+        }),
+        ServerMessage::TeleportGateError { message } => {
+            Some(format!("[TownGate] Travel refused: {message}"))
+        }
         ServerMessage::InteractionRejected { reason } => {
             Some(format!("[InteractionRejected] {reason}"))
         }

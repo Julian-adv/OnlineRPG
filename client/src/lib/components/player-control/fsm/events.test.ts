@@ -81,6 +81,7 @@ function makeActions() {
     enterPickup: vi.fn(),
     approachAndPickup: vi.fn(),
     interactNpc: vi.fn(),
+    openTeleportGate: vi.fn(),
     breakProp: vi.fn(),
     openProp: vi.fn(),
     moveToGround: vi.fn(),
@@ -105,7 +106,23 @@ describe('dispatchPlayerControlEvent', () => {
 
     expect(actions.requestMove).toHaveBeenCalledWith(
       { x: 1, y: 2, z: 3 },
-      { pickupAfterArrival: 99 }
+      { pickupAfterArrival: 99, teleportGateAfterArrival: null }
+    )
+  })
+
+  it('preserves a gate activation across a delayed move request', () => {
+    const actions = makeActions()
+    const event: PlayerControlEvent = {
+      type: 'delayed_request_move',
+      position: { x: 4, y: 0, z: 8 },
+      teleportGateAfterArrival: 'aldermark',
+    }
+
+    dispatchPlayerControlEvent(event, actions)
+
+    expect(actions.requestMove).toHaveBeenCalledWith(
+      { x: 4, y: 0, z: 8 },
+      { pickupAfterArrival: null, teleportGateAfterArrival: 'aldermark' }
     )
   })
 

@@ -70,6 +70,10 @@ import {
 } from '../stores/partyStore'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
+import {
+  teleportGateBusy,
+  teleportGateSession,
+} from '../stores/teleportGateStore'
 import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
@@ -421,6 +425,10 @@ export function handleServerMessage(
         // Any teleport settles the summon toast — an accepted one succeeded,
         // and one surviving the player's own departure would mislead.
         pendingPartySummons.set([])
+        // A gate menu is tied to the gate at the old location. This also
+        // closes it for admin, party-summon, and dungeon teleports.
+        teleportGateBusy.set(false)
+        teleportGateSession.set(null)
         break
       }
       const tpDeckY = bridgeManager.findDeckYAt(
@@ -1056,6 +1064,44 @@ export function handleServerMessage(
 
     case 'GoldUpdate':
       playerGold.set(Number(data.gold))
+      break
+
+    case 'TeleportGateState':
+      teleportGateBusy.set(false)
+      teleportGateSession.set({
+        gateId: data.gate_id,
+        townName: data.town_name,
+        destinations: (data.destinations ?? []).map(
+          (destination: {
+            gate_id: string
+            town_name: string
+            distance_m: number
+            fare: number
+          }) => ({
+            gateId: destination.gate_id,
+            townName: destination.town_name,
+            distanceM: Number(destination.distance_m),
+            fare: Number(destination.fare),
+          })
+        ),
+        misfireChanceBps: Number(data.misfire_chance_bps),
+      })
+      break
+
+    case 'TeleportGateTravelled':
+      teleportGateBusy.set(false)
+      teleportGateSession.set(null)
+      addChatMessage({
+        sender: 'system',
+        text: data.misfired
+          ? `The gate misfired! You paid ${Number(data.fare)} copper for ${data.requested_town}, but were thrown to ${data.arrival_description}.`
+          : `Town gate: arrived in ${data.arrival_description}.`,
+      })
+      break
+
+    case 'TeleportGateError':
+      teleportGateBusy.set(false)
+      addChatMessage({ text: data.message, sender: 'system' })
       break
 
     case 'GuardUpdated':

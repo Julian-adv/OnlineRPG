@@ -116,6 +116,7 @@ mod salary;
 mod skill_metrics;
 mod skills;
 pub(crate) use skills::skills_from_rows;
+mod teleport_gates;
 mod time;
 mod trading;
 pub use trading::BUYBACK_SWEEP_PERIOD;
@@ -320,6 +321,7 @@ pub struct GameState {
     campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
     /// One grill cast per player, resolved by `tick_grills`.
     grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
+    gate_traveling: Arc<Mutex<HashSet<PlayerId>>>,
 }
 
 impl GameState {
@@ -417,6 +419,7 @@ impl GameState {
             regen_ticks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             campfires: Arc::new(RwLock::new(HashMap::new())),
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
+            gate_traveling: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 

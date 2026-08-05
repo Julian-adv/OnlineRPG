@@ -20,6 +20,7 @@
   import { inputHandler, type ClickIntent } from '../managers/inputHandler'
   import { getNpcCapabilities } from '../data/traderDefs'
   import { NPC_TRADE_RANGE_METERS } from '../data/tradeConstants'
+  import { TELEPORT_GATE_INTERACTION_RANGE_METERS } from '../data/teleportGateDefs'
   import { npcContextMenu, requestChatFocus } from '../stores/npcMenuStore'
   import {
     mapEditorMode,
@@ -206,6 +207,7 @@
   )
   let clickSprinting = false
   let startingClickMovement = false
+  let pendingTeleportGateAfterMove: string | null = null
 
   function sprintAvailable(): boolean {
     return ($hungerState?.satiation ?? 0) > SPRINT_MIN_SATIATION
@@ -379,6 +381,7 @@
     clearStandUpTimer()
     currentSpeed = 0
     clickSprinting = false
+    pendingTeleportGateAfterMove = null
     // Settle into idle BEFORE emitting: the projection derives 'moving' vs
     // 'idle' from the machine's owned state, so the transition must precede the
     // emit. Leaving the moving state also drops its target/movementState/path —
@@ -723,12 +726,18 @@
       currentSpeed = nextCurrentSpeed
       playerRotation = nextPlayerRotation
       const pickupAfterArrival = movingState()?.pendingPickupAfterMove ?? null
+      const teleportGateAfterArrival = pendingTeleportGateAfterMove
       // stopMovement() settles to idle (and emits); the pickup/attack branches
       // below override that state when arrival hands off to them.
       stopMovement()
 
       if (pickupAfterArrival !== null) {
         enterPickup(pickupAfterArrival)
+        return
+      }
+
+      if (teleportGateAfterArrival !== null) {
+        networkManager.sendOpenTeleportGate(teleportGateAfterArrival)
         return
       }
 
@@ -757,6 +766,7 @@
     },
     cancelCombat: () => combatController.cancelCombat(),
     markMoving: () => {
+      pendingTeleportGateAfterMove = null
       transitionTo('keyboard_moving')
     },
     setKeyboardIdleRuntime: () => {
@@ -864,12 +874,18 @@
   function createMoveRequestActions(
     clickPosition: Position,
     pickupAfterArrival: number | null,
-    options: { pickupAfterArrival?: number | null }
+    options: {
+      pickupAfterArrival?: number | null
+      teleportGateAfterArrival?: string | null
+    }
   ): MoveRequestActions {
     return {
       clearPendingPickupAfterMove: () => {
         const m = movingState()
         if (m) m.pendingPickupAfterMove = null
+        if (options.teleportGateAfterArrival == null) {
+          pendingTeleportGateAfterMove = null
+        }
       },
       exitPickupAndRetry: () => {
         exitPickupInteraction()
@@ -885,6 +901,7 @@
             type: 'delayed_request_move',
             position: { ...clickPosition },
             pickupAfterArrival,
+            teleportGateAfterArrival: options.teleportGateAfterArrival ?? null,
           })
         }, STAND_UP_DURATION)
       },
@@ -984,13 +1001,18 @@
 
   function handleClickToMove(
     clickPosition: Position,
-    options: { pickupAfterArrival?: number | null; sprinting?: boolean } = {}
+    options: {
+      pickupAfterArrival?: number | null
+      teleportGateAfterArrival?: string | null
+      sprinting?: boolean
+    } = {}
   ) {
     // Any fresh movement cancels a pending prop break/open (breakProp/openProp
     // re-arm it after their own walk-up call below).
     dungeonManager.clearPendingBreak()
     dungeonManager.clearPendingOpen()
     const pickupAfterArrival = options.pickupAfterArrival ?? null
+    pendingTeleportGateAfterMove = options.teleportGateAfterArrival ?? null
     clickSprinting = options.sprinting === true && sprintAvailable()
 
     // Start A* from the player's current passability floor — on a stair shaft
@@ -1022,7 +1044,10 @@
       ),
     })
     startingClickMovement = false
-    if (playerControlMachine.stateName !== 'moving') clickSprinting = false
+    if (playerControlMachine.stateName !== 'moving') {
+      clickSprinting = false
+      pendingTeleportGateAfterMove = null
+    }
   }
 
   function enterInteraction(
@@ -1112,6 +1137,31 @@
       y: intent.position.y,
       z: intent.position.z + (dz / dist) * stopShort,
     })
+  }
+
+  function approachTeleportGate(
+    intent: Extract<ClickIntent, { type: 'open_teleport_gate' }>
+  ) {
+    if (!currentPlayer) return
+    combatController.cancelCombat()
+    if (intent.distance <= TELEPORT_GATE_INTERACTION_RANGE_METERS) {
+      stopMovement()
+      networkManager.sendOpenTeleportGate(intent.gateId)
+      return
+    }
+
+    const dx = currentPlayer.position.x - intent.position.x
+    const dz = currentPlayer.position.z - intent.position.z
+    const distance = Math.sqrt(dx * dx + dz * dz) || 1
+    const stopShort = TELEPORT_GATE_INTERACTION_RANGE_METERS - 1
+    handleClickToMove(
+      {
+        x: intent.position.x + (dx / distance) * stopShort,
+        y: intent.position.y,
+        z: intent.position.z + (dz / distance) * stopShort,
+      },
+      { teleportGateAfterArrival: intent.gateId }
+    )
   }
 
   /** Shared walk-up for a clicked interactive prop: cancel combat, move to
@@ -1318,6 +1368,7 @@
           requestChatFocus()
         }
       },
+      openTeleportGate: approachTeleportGate,
       breakProp,
       openProp,
       moveToGround: (position, sprinting) => {

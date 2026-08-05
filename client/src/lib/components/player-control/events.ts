@@ -7,6 +7,7 @@ export type PlayerControlEvent =
       type: 'request_move' | 'delayed_request_move'
       position: Position
       pickupAfterArrival?: number | null
+      teleportGateAfterArrival?: string | null
     }
   | { type: 'anim_interaction_finished' }
   | { type: 'anim_pickup_grab' }

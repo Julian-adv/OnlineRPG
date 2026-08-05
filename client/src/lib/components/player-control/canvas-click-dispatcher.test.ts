@@ -16,6 +16,7 @@ function makeActions() {
     enterPickup: vi.fn(),
     approachAndPickup: vi.fn(),
     interactNpc: vi.fn(),
+    openTeleportGate: vi.fn(),
     breakProp: vi.fn(),
     openProp: vi.fn(),
     moveToGround: vi.fn(),
@@ -86,6 +87,22 @@ describe('dispatchCanvasClickIntent pickup handling', () => {
 
     expect(actions.approachAndPickup).toHaveBeenCalledWith(intent)
     expect(actions.enterPickup).not.toHaveBeenCalled()
+  })
+})
+
+describe('dispatchCanvasClickIntent town gate handling', () => {
+  it('routes a gate click to the travel approach action', () => {
+    const actions = makeActions()
+    const intent: ClickIntent = {
+      type: 'open_teleport_gate',
+      gateId: 'aldermark',
+      position: { x: 3, y: 0, z: 4 },
+      distance: 5,
+    }
+
+    dispatchCanvasClickIntent(intent, false, actions)
+
+    expect(actions.openTeleportGate).toHaveBeenCalledWith(intent)
   })
 })
 

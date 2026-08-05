@@ -17,6 +17,7 @@ pub mod messages;
 pub mod monster_ai;
 pub mod pathfinding;
 pub mod skills;
+pub mod teleport;
 pub mod tree_format;
 pub mod world;
 pub mod worldgen;
@@ -66,7 +67,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v26: Padded Armor skill identity carried by generic skill messages.
 /// v27: Hybrid Armor skill identity carried by generic skill messages.
 /// v28: party chat (PartyChat → PartyChatMessage).
-pub const PROTOCOL_VERSION: u32 = 28;
+/// v29: town teleport-gate quotes, paid travel, and rare wild-arrival results.
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -97,11 +99,12 @@ pub use inventory::{EquipmentBurden, EquipmentBurdenTier};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
     ActiveDeal, AttackRejectReason, ClientMessage, DealKind, ServerMessage,
+    TeleportGateDestination,
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,
-    EVENT_DELIVERY_RADIUS, NPC_SIGHT_RADIUS, PLAYER_MOVE_SPEED, WORLD_MAX_X, WORLD_MIN_X,
-    WORLD_WIDTH_X,
+    EVENT_DELIVERY_RADIUS, NPC_SIGHT_RADIUS, PLAYER_MOVE_SPEED, WORLD_MAX_X, WORLD_MAX_Z,
+    WORLD_MIN_X, WORLD_MIN_Z, WORLD_WIDTH_X,
 };
 
 #[cfg(test)]
@@ -147,6 +150,23 @@ mod tests {
         let bytes = serialize_client_msg(&msg).unwrap();
         let decoded = deserialize_client_msg(&bytes).unwrap();
         assert!(matches!(decoded, ClientMessage::RequestRespawn));
+    }
+
+    #[test]
+    fn roundtrip_teleport_gate_request() {
+        let msg = ClientMessage::UseTeleportGate {
+            gate_id: "aldermark".to_string(),
+            destination_gate_id: "garasden".to_string(),
+        };
+        let bytes = serialize_client_msg(&msg).unwrap();
+        let decoded = deserialize_client_msg(&bytes).unwrap();
+        assert!(matches!(
+            decoded,
+            ClientMessage::UseTeleportGate {
+                gate_id,
+                destination_gate_id,
+            } if gate_id == "aldermark" && destination_gate_id == "garasden"
+        ));
     }
 
     #[test]
@@ -474,6 +494,26 @@ mod tests {
             },
             ServerMessage::EquipmentBurdenUpdated {
                 burden: inventory::resolve_equipment_burden(43.0, 150.0),
+            },
+            ServerMessage::TeleportGateState {
+                gate_id: "aldermark".to_string(),
+                town_name: "Aldermark".to_string(),
+                destinations: vec![TeleportGateDestination {
+                    gate_id: "garasden".to_string(),
+                    town_name: "Garasden".to_string(),
+                    distance_m: 3_971,
+                    fare: 3_000,
+                }],
+                misfire_chance_bps: 100,
+            },
+            ServerMessage::TeleportGateTravelled {
+                requested_town: "Garasden".to_string(),
+                arrival_description: "Garasden".to_string(),
+                fare: 3_000,
+                misfired: false,
+            },
+            ServerMessage::TeleportGateError {
+                message: "Move closer to the town gate".to_string(),
             },
             ServerMessage::Kicked {
                 player_id: 1.into(),

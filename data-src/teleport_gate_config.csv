@@ -1,0 +1,2 @@
+id,interactionRangeM,arrivalOffsetM,baseFareCopper,farePerKmCopper,misfireChanceBps,dungeonMisfirePercent
+town_network,6,4,1000,500,50,20

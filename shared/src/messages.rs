@@ -94,6 +94,14 @@ pub struct BuybackEntry {
     pub price: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeleportGateDestination {
+    pub gate_id: String,
+    pub town_name: String,
+    pub distance_m: u32,
+    pub fare: i64,
+}
+
 /// One line of a batched `BuyItems` request: buy `qty` units of one item def.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeLineItem {
@@ -283,6 +291,13 @@ pub enum ClientMessage {
     /// toggle-delivery range, so doors others left open render correctly.
     RequestDungeonDoors {
         entrance_id: String,
+    },
+    OpenTeleportGate {
+        gate_id: String,
+    },
+    UseTeleportGate {
+        gate_id: String,
+        destination_gate_id: String,
     },
     DebugTeleport {
         position: Position,
@@ -896,6 +911,21 @@ pub enum ServerMessage {
     /// Direct message: the receiving player's current gold (smallest unit).
     GoldUpdate {
         gold: i64,
+    },
+    TeleportGateState {
+        gate_id: String,
+        town_name: String,
+        destinations: Vec<TeleportGateDestination>,
+        misfire_chance_bps: u16,
+    },
+    TeleportGateTravelled {
+        requested_town: String,
+        arrival_description: String,
+        fare: i64,
+        misfired: bool,
+    },
+    TeleportGateError {
+        message: String,
     },
     /// Direct message: the receiving player's effective guard — base attribute,
     /// every equipped item's guard bonus, and an active defensive-skill bonus.

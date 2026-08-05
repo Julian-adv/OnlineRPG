@@ -1,0 +1,58 @@
+{
+  "aldermark": {
+    "id": "aldermark",
+    "name": "Aldermark",
+    "x": -1467.2,
+    "z": 4741.6,
+    "rotation": -1.5707963
+  },
+  "brovik": {
+    "id": "brovik",
+    "name": "Brovik",
+    "x": 2739.3,
+    "z": -1339.3,
+    "rotation": -1.5707963
+  },
+  "edra": {
+    "id": "edra",
+    "name": "Edra",
+    "x": 5848,
+    "z": 240,
+    "rotation": -1.5707963
+  },
+  "frihavn": {
+    "id": "frihavn",
+    "name": "Frihavn",
+    "x": 3958.9,
+    "z": -11469.7,
+    "rotation": -1.5707963
+  },
+  "garasden": {
+    "id": "garasden",
+    "name": "Garasden",
+    "x": 1937.6,
+    "z": 2746.2,
+    "rotation": -1.5707963
+  },
+  "mistfall": {
+    "id": "mistfall",
+    "name": "Mistfall",
+    "x": -11176,
+    "z": 3208,
+    "rotation": -1.5707963
+  },
+  "riftmark": {
+    "id": "riftmark",
+    "name": "Riftmark",
+    "x": -2696,
+    "z": 10328,
+    "rotation": -1.5707963
+  },
+  "stenhavn": {
+    "id": "stenhavn",
+    "name": "Stenhavn",
+    "x": 9460.6,
+    "z": -4267.2,
+    "rotation": -1.5707963
+  }
+}

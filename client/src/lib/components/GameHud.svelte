@@ -23,6 +23,7 @@
   import RespawnDialog from './RespawnDialog.svelte'
   import WorldMapDialog from './WorldMapDialog.svelte'
   import ServerNotice from './ServerNotice.svelte'
+  import TeleportGateDialog from './TeleportGateDialog.svelte'
   import {
     mapEditorMode,
     worldMapVisible,
@@ -115,6 +116,7 @@
     <PartyPanel />
     <NpcContextMenu />
     <FishingPrompt />
+    <TeleportGateDialog />
   {/if}
 
   <div class="bottom-hud">

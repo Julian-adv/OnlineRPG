@@ -1,0 +1,11 @@
+{
+  "town_network": {
+    "id": "town_network",
+    "interactionRangeM": 6,
+    "arrivalOffsetM": 4,
+    "baseFareCopper": 1000,
+    "farePerKmCopper": 500,
+    "misfireChanceBps": 50,
+    "dungeonMisfirePercent": 20
+  }
+}

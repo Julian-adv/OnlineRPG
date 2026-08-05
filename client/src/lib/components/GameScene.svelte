@@ -47,6 +47,7 @@
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
   import GameSceneCampfiresLayer from './game-scene/GameSceneCampfiresLayer.svelte'
+  import GameSceneTeleportGatesLayer from './game-scene/GameSceneTeleportGatesLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
@@ -203,6 +204,9 @@
     undefined
   )
   let campfiresLayerRef = $state<GameSceneCampfiresLayer | undefined>(undefined)
+  let teleportGatesLayerRef = $state<GameSceneTeleportGatesLayer | undefined>(
+    undefined
+  )
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
   let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
   let signpostBubblePos = $derived(
@@ -660,6 +664,8 @@
 
       // Update campfire flames
       campfiresLayerRef?.update(deltaTime, camera)
+
+      teleportGatesLayerRef?.update(deltaTime)
 
       // Update camera with preserved offset
       const cameraUpdateStart = performance.now()
@@ -1198,7 +1204,10 @@
       ...(housingLayerRef?.getDoorMeshes() ?? []),
       ...(dungeonLayerRef?.getDoorMeshes() ?? []),
     ]}
-    objectMeshes={objectOverlayRef ? [objectOverlayRef.getGroup()] : []}
+    objectMeshes={[
+      ...(objectOverlayRef ? [objectOverlayRef.getGroup()] : []),
+      ...(teleportGatesLayerRef ? [teleportGatesLayerRef.getGroup()] : []),
+    ]}
     propMeshes={dungeonLayerRef?.getPropMeshes() ?? []}
     groundItemMeshes={groundItemsLayerRef?.getGroup()
       ? [groundItemsLayerRef.getGroup()!]
@@ -1233,6 +1242,12 @@
   />
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
+
+  <GameSceneTeleportGatesLayer
+    bind:this={teleportGatesLayerRef}
+    heightManager={terrainHeightManager}
+    playerPosition={currentPlayer?.position ?? null}
+  />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
     <!-- Both position objects are mutated in place upstream, so the line

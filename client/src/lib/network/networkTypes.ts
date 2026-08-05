@@ -179,6 +179,10 @@ export type ClientMessage =
       }
     }
   | { RequestDungeonDoors: { entrance_id: string } }
+  | { OpenTeleportGate: { gate_id: string } }
+  | {
+      UseTeleportGate: { gate_id: string; destination_gate_id: string }
+    }
   | { DebugTeleport: { position: Position } }
   | { DebugDropItem: { item_def_id: string } }
   | { DebugSetTime: { hour: number; minute: number } }

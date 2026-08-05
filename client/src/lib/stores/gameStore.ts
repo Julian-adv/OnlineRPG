@@ -8,6 +8,7 @@ import { resetPartyStores } from './partyStore'
 import { resetFishingStore } from './fishingStore'
 import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
+import { resetTeleportGateStore } from './teleportGateStore'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
 
@@ -121,6 +122,7 @@ export const resetGameStore = () => {
   resetPartyStores()
   resetDiscoveredDungeons()
   resetHungerStore()
+  resetTeleportGateStore()
   groundItemManager.reset()
   campfireManager.reset()
 }

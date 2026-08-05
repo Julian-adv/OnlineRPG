@@ -47,7 +47,10 @@ export function createCanvasIntentEvent({
 export interface PlayerControlEventActions extends CanvasClickActions {
   requestMove(
     position: Position,
-    options?: { pickupAfterArrival?: number | null }
+    options?: {
+      pickupAfterArrival?: number | null
+      teleportGateAfterArrival?: string | null
+    }
   ): void
   onInteractionFinished(): void
   onPickupGrab(): void
@@ -72,6 +75,7 @@ export function dispatchPlayerControlEvent(
     case 'delayed_request_move':
       actions.requestMove(event.position, {
         pickupAfterArrival: event.pickupAfterArrival ?? null,
+        teleportGateAfterArrival: event.teleportGateAfterArrival ?? null,
       })
       return
     case 'anim_interaction_finished':

@@ -12,6 +12,7 @@ type NpcIntent = Extract<ClickIntent, { type: 'interact_npc' }>
 type BreakPropIntent = Extract<ClickIntent, { type: 'break_prop' }>
 type OpenPropIntent = Extract<ClickIntent, { type: 'open_prop' }>
 type CastFishingIntent = Extract<ClickIntent, { type: 'cast_fishing' }>
+type TeleportGateIntent = Extract<ClickIntent, { type: 'open_teleport_gate' }>
 
 export interface CanvasClickActions {
   /** Player is at melee range — start the attack swing immediately. */
@@ -31,6 +32,7 @@ export interface CanvasClickActions {
   enterPickup(intent: PickupIntent): void
   approachAndPickup(intent: PickupIntent): void
   interactNpc(intent: NpcIntent): void
+  openTeleportGate(intent: TeleportGateIntent): void
   /** Walk up to a clicked barrel/crate, breaking it on arrival. */
   breakProp(intent: BreakPropIntent): void
   /** Walk up to a clicked chest, opening it (lid animation) on arrival. */
@@ -79,6 +81,9 @@ export function dispatchCanvasClickIntent(
       return
     case 'interact_npc':
       actions.interactNpc(intent)
+      return
+    case 'open_teleport_gate':
+      actions.openTeleportGate(intent)
       return
     case 'break_prop':
       actions.breakProp(intent)
