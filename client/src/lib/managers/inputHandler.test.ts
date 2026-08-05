@@ -183,22 +183,22 @@ describe('processCanvasClick cast-vs-walk', () => {
 })
 
 describe('shouldSuppressContextMenu', () => {
-  it('always suppresses on the game canvas, even while text is selected', () => {
+  it('always suppresses on canvases, even under selected text', () => {
     expect(
       shouldSuppressContextMenu({
-        onGameCanvas: true,
+        canvasTarget: true,
         typingTarget: false,
-        textSelected: true,
+        selectionAtPointer: true,
       })
     ).toBe(true)
   })
 
-  it('suppresses on plain HUD targets', () => {
+  it('suppresses on HUD targets when text is selected elsewhere', () => {
     expect(
       shouldSuppressContextMenu({
-        onGameCanvas: false,
+        canvasTarget: false,
         typingTarget: false,
-        textSelected: false,
+        selectionAtPointer: false,
       })
     ).toBe(true)
   })
@@ -206,19 +206,19 @@ describe('shouldSuppressContextMenu', () => {
   it('keeps the paste menu on text fields', () => {
     expect(
       shouldSuppressContextMenu({
-        onGameCanvas: false,
+        canvasTarget: false,
         typingTarget: true,
-        textSelected: false,
+        selectionAtPointer: false,
       })
     ).toBe(false)
   })
 
-  it('keeps the copy menu while HUD text is selected', () => {
+  it('keeps the copy menu when the pointer is over selected HUD text', () => {
     expect(
       shouldSuppressContextMenu({
-        onGameCanvas: false,
+        canvasTarget: false,
         typingTarget: false,
-        textSelected: true,
+        selectionAtPointer: true,
       })
     ).toBe(false)
   })

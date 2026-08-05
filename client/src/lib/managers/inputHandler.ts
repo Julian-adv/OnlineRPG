@@ -2,6 +2,7 @@ import { Vector2, Raycaster } from 'three'
 import * as THREE from 'three'
 import { get } from 'svelte/store'
 import { myFishing } from '../stores/fishingStore'
+import { pointInRect } from '../stores/dragStore'
 import { isTypingTarget } from '../utils/dom'
 import {
   max_cast_distance_m,
@@ -641,10 +642,17 @@ class InputHandler {
     window.addEventListener('blur', onWindowBlur)
 
     const onContextMenu = (event: MouseEvent) => {
+      const canvasTarget = event.target instanceof HTMLCanvasElement
       const suppress = shouldSuppressContextMenu({
-        onGameCanvas: event.target === canvas,
+        canvasTarget,
         typingTarget: isTypingTarget(event.target),
-        textSelected: window.getSelection()?.isCollapsed === false,
+        selectionAtPointer:
+          !canvasTarget &&
+          hasSelectionAtPoint(
+            window.getSelection(),
+            event.clientX,
+            event.clientY
+          ),
       })
       if (suppress) event.preventDefault()
     }
@@ -661,19 +669,30 @@ class InputHandler {
   }
 }
 
-/** Right-click is a game input, so the native context menu is suppressed
- *  across the whole game screen (HUD overlays included), not just the canvas.
- *  Exceptions apply to DOM targets only: text fields keep their paste menu,
- *  and a text selection (chat log copy) keeps its copy menu. The canvas is
- *  never exempt — a selection elsewhere on the page survives canvas clicks,
- *  and must not leak the browser menu into the 3D view. */
+function hasSelectionAtPoint(
+  selection: Selection | null,
+  x: number,
+  y: number
+): boolean {
+  if (!selection || selection.isCollapsed) return false
+  for (let i = 0; i < selection.rangeCount; i++) {
+    for (const rect of selection.getRangeAt(i).getClientRects()) {
+      if (pointInRect(x, y, rect)) return true
+    }
+  }
+  return false
+}
+
+/** Suppress native menus except when editing or copying selected text.
+ *  Canvases are never exempt — a selection elsewhere must not leak the
+ *  browser menu into the 3D view. */
 export function shouldSuppressContextMenu(state: {
-  onGameCanvas: boolean
+  canvasTarget: boolean
   typingTarget: boolean
-  textSelected: boolean
+  selectionAtPointer: boolean
 }): boolean {
-  if (state.onGameCanvas) return true
-  return !state.typingTarget && !state.textSelected
+  if (state.canvasTarget) return true
+  return !state.typingTarget && !state.selectionAtPointer
 }
 
 export const inputHandler = new InputHandler()
