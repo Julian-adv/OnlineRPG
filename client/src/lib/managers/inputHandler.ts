@@ -640,18 +640,40 @@ class InputHandler {
     document.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onWindowBlur)
 
-    const onContextMenu = (event: MouseEvent) => event.preventDefault()
+    const onContextMenu = (event: MouseEvent) => {
+      const suppress = shouldSuppressContextMenu({
+        onGameCanvas: event.target === canvas,
+        typingTarget: isTypingTarget(event.target),
+        textSelected: window.getSelection()?.isCollapsed === false,
+      })
+      if (suppress) event.preventDefault()
+    }
     canvas.addEventListener('mousedown', onCanvasClick)
-    canvas.addEventListener('contextmenu', onContextMenu)
+    document.addEventListener('contextmenu', onContextMenu, true)
 
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onWindowBlur)
       canvas.removeEventListener('mousedown', onCanvasClick)
-      canvas.removeEventListener('contextmenu', onContextMenu)
+      document.removeEventListener('contextmenu', onContextMenu, true)
     }
   }
+}
+
+/** Right-click is a game input, so the native context menu is suppressed
+ *  across the whole game screen (HUD overlays included), not just the canvas.
+ *  Exceptions apply to DOM targets only: text fields keep their paste menu,
+ *  and a text selection (chat log copy) keeps its copy menu. The canvas is
+ *  never exempt — a selection elsewhere on the page survives canvas clicks,
+ *  and must not leak the browser menu into the 3D view. */
+export function shouldSuppressContextMenu(state: {
+  onGameCanvas: boolean
+  typingTarget: boolean
+  textSelected: boolean
+}): boolean {
+  if (state.onGameCanvas) return true
+  return !state.typingTarget && !state.textSelected
 }
 
 export const inputHandler = new InputHandler()
