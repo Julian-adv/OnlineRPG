@@ -166,6 +166,71 @@ pub(super) async fn handle_response(
             continue;
         }
 
+        // A new movement intent replaces a running follow.
+        if matches!(
+            action,
+            AgentAction::Move { .. } | AgentAction::Attack { .. } | AgentAction::Follow { .. }
+        ) {
+            let mut s = state.lock().await;
+            if let Some(name) = s.cancel_follow() {
+                info!("Follow of {name} cancelled by a new movement action");
+            }
+        }
+
+        // Keep following a character until something else takes over.
+        if let AgentAction::Follow { target } = action {
+            let name = target.trim();
+            let target_id = {
+                let mut s = state.lock().await;
+                match s.resolve_nearby_player(name) {
+                    Some((id, _)) => id,
+                    None => {
+                        warn!("follow: no nearby character named '{name}'");
+                        s.push_agent_event(format!(
+                            "[MoveFailed] No character named '{name}' is nearby to follow."
+                        ));
+                        continue;
+                    }
+                }
+            };
+            let name = name.to_string();
+            let task_state = Arc::clone(state);
+            let task_name = name.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    match approach_player(&task_state, &target_id).await {
+                        ChaseResult::InRange => {
+                            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                        }
+                        ChaseResult::Lost(loss) => {
+                            let mut s = task_state.lock().await;
+                            s.follow_task = None;
+                            s.push_agent_event(format!(
+                                "[FollowEnded] You are no longer following {task_name} — {}.",
+                                loss.clause()
+                            ));
+                            break;
+                        }
+                        ChaseResult::Error => {
+                            let mut s = task_state.lock().await;
+                            s.follow_task = None;
+                            s.push_agent_event(format!(
+                                "[FollowEnded] Something went wrong while following {task_name}."
+                            ));
+                            break;
+                        }
+                    }
+                }
+            });
+            let mut s = state.lock().await;
+            s.follow_task = Some((name.clone(), handle));
+            s.push_agent_event(format!(
+                "[Following] You are now following {name}. Any move or attack you \
+                 issue stops the follow."
+            ));
+            continue;
+        }
+
         // For attack actions, chase the monster and attack
         if let AgentAction::Attack { monster_id } = action {
             info!("Agent attacking monster {monster_id}, chasing...");
@@ -838,6 +903,11 @@ pub(super) async fn handle_response(
                 match execute_move(state, gx, gz, floor).await {
                     MoveResult::Arrived => {
                         info!("Agent arrived at ({gx:.1}, {gz:.1})");
+                        let mut s = state.lock().await;
+                        s.push_agent_event(format!(
+                            "[Arrived] You reached ({gx:.1}, {gz:.1}). Look around and \
+                             decide your next move."
+                        ));
                     }
                     MoveResult::Blocked => {
                         warn!("Path blocked to ({gx:.1}, {gz:.1})");
