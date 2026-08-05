@@ -30,6 +30,10 @@
     카메라에서 로드가 시선 축과 겹쳐 안 보이던 것을 화면에 보이게 트는 각도).
     Mixamo에서 재임포트하면 오프셋이 사라지므로 다시 적용할 것.
 
+- Guitar Playing https://www.mixamo.com/#/?page=1&query=Guitar+Playing&type=Motion%2CMotionPack (social pack, `guitar_playing`)
+  - 체중 이동이 있어 Hips location bake가 필요한 첫 클립이다.
+    `graft-glb-clip.py`로 social 팩에 이어붙였다.
+
 ## Mixamo Animation Export Workflow
 
 새 Mixamo 애니메이션을 offhand/locomotion 등의 pack에 추가할 때:
@@ -39,7 +43,8 @@
    - Skin: **Without Skin**
    - FPS: **30**
    - Keyframe Reduction: **none**
-   - 이동 동작은 반드시 **In Place** 체크 (현재 export는 Hips location을 bake하지 않음)
+   - 이동 동작은 반드시 **In Place** 체크 (Hips location이 bake되므로 그대로 두면
+     캐릭터가 제자리를 벗어난다)
 
 2. **Blender에서 import + retarget bake** (Text Editor/Python Console)
 
@@ -53,6 +58,10 @@
        action_name="torch_walk",
    )
    ```
+
+   기존 팩에 클립 하나만 넣을 때는 아래 3~4단계 대신
+   `python tools/graft-glb-clip.py 팩.glb 도너.glb 클립이름 출력.glb`를 쓴다
+   ([ANIMATION.md](../ANIMATION.md) 참고 — 팩 전체 재-export는 기존 클립을 잃는다).
 
 3. **`export_animations.py`의 `EXPORT_PACKS`에 액션 이름 추가** (예: `offhand` pack에 `"torch_walk"`)
 
@@ -83,5 +92,6 @@
 - **Armature.001 바인딩**: FBX import는 항상 새 Armature.001에 연결된다. `Armature`에
   바인딩된 액션으로 만들려면 retarget bake 단계가 필수.
 - **Hips location 스케일**: Mixamo는 센티미터 단위라 Hips pose location을 그대로 쓰면
-  캐릭터가 수 km 밖으로 날아간다. `import_mixamo_animation.py`는 location 채널을
-  bake하지 않으므로 in-place 애니메이션만 지원한다.
+  캐릭터가 수 km 밖으로 날아간다. `import_mixamo_animation.py`는 rest 대비 월드 변위를
+  두 리그의 Hips rest 높이 비로 스케일해 bake한다. 제자리 클립에서 드리프트를 없애려면
+  `bake_root_location=False`로 rest에 고정한다.

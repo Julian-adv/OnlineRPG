@@ -232,6 +232,16 @@ impl super::GameState {
             return;
         }
 
+        // Emote: no object to claim, so pass object_id None and skip the
+        // occupancy check — several players can play at once. Stored on the
+        // player so late joiners see the pose; cleared by StopInteraction when
+        // the player moves.
+        if message.trim() == "/play_music" {
+            self.set_player_interaction(player_id, Some("guitar_playing".to_string()), None)
+                .await;
+            return;
+        }
+
         if message.trim() == "/who" {
             let counts = {
                 let players = self.players.read().await;

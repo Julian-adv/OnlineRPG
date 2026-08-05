@@ -589,10 +589,13 @@
 
     const newAction = mixer.clipAction(clip)
 
-    // The fishing idle is a stance held for the whole wait, not a one-shot
-    // gesture like pickup — it loops until the fishing session ends.
+    // The fishing idle and the music emote are stances held for the whole
+    // state, not one-shot gestures like pickup — they loop until it ends.
+    // Clamping instead would freeze the performance mid-strum.
     const playOnce =
-      playerState !== 'moving' && interactionAnim !== FishingAnimationName.IDLE
+      playerState !== 'moving' &&
+      interactionAnim !== FishingAnimationName.IDLE &&
+      interactionAnim !== 'guitar_playing'
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce

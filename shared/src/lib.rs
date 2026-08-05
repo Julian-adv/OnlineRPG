@@ -219,6 +219,7 @@ mod tests {
         CharacterClass::Rogue,
         CharacterClass::Wizard,
         CharacterClass::Tourist,
+        CharacterClass::Bard,
         CharacterClass::Merchant,
         CharacterClass::Guard,
     ];

@@ -59,6 +59,7 @@
   const FEMALE_EQUIP_BG: Partial<Record<CharacterClass, string>> = {
     caveman: '/character_concepts/cavewoman.png',
     rogue: '/character_concepts/female_rogue.png',
+    bard: '/character_concepts/female_bard.png',
   }
   const equipBg = $derived(
     (gender === 'female' && FEMALE_EQUIP_BG[characterClass]) ||
@@ -81,6 +82,7 @@
     valkyrie: 'Valkyrie',
     ranger: 'Ranger',
     priest: 'Priest',
+    bard: 'Bard',
     merchant: 'Merchant',
     guard: 'Guard',
   }

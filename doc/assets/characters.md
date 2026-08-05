@@ -47,6 +47,18 @@
 - valkyrie — 단일 성별; 원화 `character_concepts/valkyrie.jpg`
 - rogue (남) — 남성 rogue 모델; 원화 `character_concepts/rogue.png` (Gemini/Nano Banana); female_rogue는 [Thief → Rogue](#thief--rogue) 참고
 
+## Bard
+
+`female_bard.glb` — 단일 성별(female). Meshy.ai Premium 등급, 생성 2026-08-05 (프롬프트명 "Crimson Vanguard").
+
+- 원화 ![원화](../../client/public/character_concepts/female_bard.png)
+
+기존 워크플로우와 다른 점: Meshy 출력이 63개 분리 셸에 뒤집힌 면 403개, 열린 경계 1,093개라 Mixamo 업로드가 실패했다. Blender에서 커스텀 스플릿 노멀 제거 → Recalculate Outside → 8변 이하 구멍만 메움으로 정리 후 업로드 성공. 큰 개구부는 다른 조각에 가려 보이지 않아 남겼다(머티리얼 `doubleSided`).
+
+- Mixamo 업로드용 FBX는 머티리얼 제거 + 텍스처 임베드 해제 필요 — metallic/roughness/emissive가 물려 있으면 "unable to map your existing skeleton"으로 실패
+- 텍스처: baseColor 2048² JPEG + normal 1024² JPEG (Meshy 원본 2048² PNG에서 축소)
+- emissive 미연결 (Meshy 기본 `EmissiveColor [1,1,1]` 방치 시 백색 발광)
+
 ## NPC Models
 
 플레이어 클래스 아님.
