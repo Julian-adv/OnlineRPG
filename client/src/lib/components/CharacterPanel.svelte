@@ -5,7 +5,7 @@
     primaryArmorDefense,
   } from '../stores/inventoryStore'
   import type { EquipSlot } from '../stores/inventoryStore'
-  import { getItemDef } from '../data/itemDefs'
+  import { bodyRegionDisplayName, getItemDef } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
   import type {
     CharacterAttributes,
@@ -266,7 +266,7 @@
               class:broken={armorDefense !== null && !armorDefense.functional}
               title={armorDefense
                 ? armorDefense.functional
-                  ? 'Authored physical protection from the equipped primary chest'
+                  ? 'Effective physical protection after weighted equipped-body coverage'
                   : 'Broken armor remains equipped but supplies no Guard, mitigation, or skill training'
                 : 'No primary body armor is supplying physical protection'}
             >
@@ -280,9 +280,15 @@
                 <span class="armor-detail">
                   {armorDefense.defenseSkill
                     ? `${skillDisplayName(armorDefense.defenseSkill)} · `
-                    : ''}S{armorDefense.protection.slash}/P{armorDefense
-                    .protection.pierce}/B{armorDefense.protection
-                    .blunt}{armorDefense.functional ? '' : ' · inactive'}
+                    : ''}S{armorDefense.effectiveProtection
+                    .slash}/P{armorDefense.effectiveProtection
+                    .pierce}/B{armorDefense.effectiveProtection.blunt} · {armorDefense.coveragePercent}%
+                  coverage{armorDefense.functional ? '' : ' · inactive'}
+                </span>
+                <span class="armor-coverage-detail">
+                  {armorDefense.missingRegions.length === 0
+                    ? 'Full body coverage'
+                    : `Covered: ${armorDefense.coveredRegions.map(bodyRegionDisplayName).join(', ') || 'None'} · Missing: ${armorDefense.missingRegions.map(bodyRegionDisplayName).join(', ')}`}
                 </span>
               {:else}
                 <span class="armor-name">None</span>
@@ -546,8 +552,17 @@
     text-align: right;
   }
 
+  .armor-coverage-detail {
+    grid-column: 2 / -1;
+    color: #809ab5;
+    font-size: 9px;
+    line-height: 1.25;
+    text-align: right;
+  }
+
   .armor-profile-row.broken .armor-name,
-  .armor-profile-row.broken .armor-detail {
+  .armor-profile-row.broken .armor-detail,
+  .armor-profile-row.broken .armor-coverage-detail {
     color: #f4a261;
   }
 

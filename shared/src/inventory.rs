@@ -342,6 +342,16 @@ pub enum BodyRegion {
     Feet,
 }
 
+pub const BODY_REGIONS: [BodyRegion; 6] = [
+    BodyRegion::Head,
+    BodyRegion::Torso,
+    BodyRegion::Arms,
+    BodyRegion::Hands,
+    BodyRegion::Legs,
+    BodyRegion::Feet,
+];
+pub const BODY_COVERAGE_SCALE: u32 = 100;
+
 impl BodyRegion {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -365,6 +375,17 @@ impl BodyRegion {
         }
     }
 
+    pub fn coverage_weight(self) -> u32 {
+        match self {
+            Self::Head => 10,
+            Self::Torso => 40,
+            Self::Arms => 15,
+            Self::Hands => 5,
+            Self::Legs => 20,
+            Self::Feet => 10,
+        }
+    }
+
     fn order(self) -> u8 {
         match self {
             Self::Head => 0,
@@ -375,6 +396,21 @@ impl BodyRegion {
             Self::Feet => 5,
         }
     }
+}
+
+pub fn body_coverage_percent(regions: impl IntoIterator<Item = BodyRegion>) -> u32 {
+    let mut seen = [false; 6];
+    regions
+        .into_iter()
+        .filter(|region| {
+            let index = region.order() as usize;
+            let is_new = !seen[index];
+            seen[index] = true;
+            is_new
+        })
+        .map(BodyRegion::coverage_weight)
+        .sum::<u32>()
+        .min(BODY_COVERAGE_SCALE)
 }
 
 impl std::str::FromStr for BodyRegion {
@@ -785,6 +821,17 @@ mod tests {
         ] {
             assert!(parse_body_coverage(invalid).is_err(), "{invalid}");
         }
+
+        assert_eq!(body_coverage_percent(BODY_REGIONS), BODY_COVERAGE_SCALE);
+        assert_eq!(
+            body_coverage_percent([
+                BodyRegion::Torso,
+                BodyRegion::Arms,
+                BodyRegion::Legs,
+                BodyRegion::Legs,
+            ]),
+            75
+        );
     }
 
     const ALL_SLOTS: &[EquipSlot] = &[

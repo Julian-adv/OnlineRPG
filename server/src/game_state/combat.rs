@@ -2,8 +2,10 @@ use crate::game::{character_hp, combat};
 use crate::types::{
     AttackRejectReason, ClientKind, MonsterState, PlayerId, Position, ServerMessage,
 };
-use onlinerpg_shared::combat::{resolve_physical_damage, PhysicalProtection};
-use onlinerpg_shared::inventory::{ArmorConstruction, EquipSlot, GroundItem, PlayerInventory};
+use onlinerpg_shared::combat::{apply_body_coverage, resolve_physical_damage, PhysicalProtection};
+use onlinerpg_shared::inventory::{
+    body_coverage_percent, ArmorConstruction, EquipSlot, GroundItem, PlayerInventory,
+};
 use onlinerpg_shared::skills::{
     armor_skill_construction, armor_skill_guard_bonus, shield_skill_guard_bonus,
     weapon_skill_attack_bonus, weapon_skill_attack_cooldown_ms, weapon_skill_melee_range, SkillId,
@@ -108,6 +110,8 @@ pub(super) struct PlayerDefenseProfile {
     pub(super) effective_guard: i32,
     pub(super) primary_armor_construction: Option<ArmorConstruction>,
     pub(super) primary_armor_protection: PhysicalProtection,
+    pub(super) weighted_armor_protection: PhysicalProtection,
+    pub(super) armor_coverage_percent: u32,
     pub(super) primary_armor_instance_id: Option<u64>,
     pub(super) shield_skill: Option<SkillId>,
     pub(super) shield_skill_level: u32,
@@ -243,10 +247,11 @@ impl super::GameState {
             primary_armor_construction,
             primary_armor_protection,
             primary_armor_instance_id,
+            armor_coverage_percent,
         ) = {
             let inventories = self.inventories.read().await;
             inventories.get(player_id).map_or(
-                (0, None, None, None, PhysicalProtection::default(), None),
+                (0, None, None, None, PhysicalProtection::default(), None, 0),
                 |inventory| {
                     let shield_skill = inventory
                         .equipped
@@ -266,6 +271,15 @@ impl super::GameState {
                     let primary_armor_protection = primary_armor_def
                         .map(|def| def.physical_protection())
                         .unwrap_or_default();
+                    let armor_coverage_percent = body_coverage_percent(
+                        inventory
+                            .equipped
+                            .values()
+                            .filter(|item| !item.is_broken())
+                            .filter_map(|item| self.item_defs.get(&item.item_def_id))
+                            .filter(|def| def.is_body_armor())
+                            .flat_map(|def| def.body_coverage()),
+                    );
                     (
                         self.equipped_guard_bonus(inventory),
                         shield_skill,
@@ -273,6 +287,7 @@ impl super::GameState {
                         primary_armor_construction,
                         primary_armor_protection,
                         primary_armor.map(|item| item.instance_id),
+                        armor_coverage_percent,
                     )
                 },
             )
@@ -294,6 +309,8 @@ impl super::GameState {
         let armor_skill_guard_bonus = armor_skill
             .map(|skill| armor_skill_guard_bonus(skill, armor_skill_level))
             .unwrap_or_default();
+        let weighted_armor_protection =
+            apply_body_coverage(primary_armor_protection, armor_coverage_percent);
         PlayerDefenseProfile {
             effective_guard: base_guard
                 + equipment_guard
@@ -301,6 +318,8 @@ impl super::GameState {
                 + armor_skill_guard_bonus,
             primary_armor_construction,
             primary_armor_protection,
+            weighted_armor_protection,
+            armor_coverage_percent,
             primary_armor_instance_id,
             shield_skill,
             shield_skill_level,
@@ -922,10 +941,16 @@ impl super::GameState {
             weapon_damage_roll.as_deref(),
             0,
         );
-        let damage =
-            resolve_physical_damage(result.damage, damage_type, defense.primary_armor_protection);
-        self.skill_balance_metrics
-            .record_mitigation(defense.primary_armor_construction, damage);
+        let damage = resolve_physical_damage(
+            result.damage,
+            damage_type,
+            defense.weighted_armor_protection,
+        );
+        self.skill_balance_metrics.record_mitigation(
+            defense.primary_armor_construction,
+            defense.armor_coverage_percent,
+            damage,
+        );
 
         debug!(
             "Monster {} attacks player {}: Roll {}, Hit: {}, Damage: {} {} -> {} (mitigated {})",

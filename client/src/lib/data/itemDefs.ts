@@ -43,6 +43,21 @@ export const BODY_REGIONS = [
 
 export type BodyRegion = (typeof BODY_REGIONS)[number]
 
+export const BODY_REGION_WEIGHTS: Record<BodyRegion, number> = {
+  head: 10,
+  torso: 40,
+  arms: 15,
+  hands: 5,
+  legs: 20,
+  feet: 10,
+}
+
+export type PhysicalProtection = {
+  slash: number
+  pierce: number
+  blunt: number
+}
+
 export interface ItemDefinition {
   id: string
   name: string
@@ -113,6 +128,40 @@ export function itemBodyCoverage(def: ItemDefinition): BodyRegion[] {
 
 export function bodyRegionDisplayName(region: BodyRegion): string {
   return region[0].toUpperCase() + region.slice(1)
+}
+
+export function itemCoverageText(def: ItemDefinition): string | undefined {
+  const regions = itemBodyCoverage(def)
+  if (regions.length === 0) return undefined
+  const names = regions.map(bodyRegionDisplayName).join(', ')
+  return def.equipmentKind === 'body_armor'
+    ? `Armor Coverage: ${names} (${bodyCoveragePercent(regions)}% weight)`
+    : `Garment Coverage: ${names} (not defensive)`
+}
+
+export function bodyCoveragePercent(regions: Iterable<BodyRegion>): number {
+  const unique = new Set(regions)
+  return Math.min(
+    100,
+    [...unique].reduce(
+      (total, region) => total + BODY_REGION_WEIGHTS[region],
+      0
+    )
+  )
+}
+
+export function applyBodyCoverage(
+  protection: PhysicalProtection,
+  coveragePercent: number
+): PhysicalProtection {
+  const coverage = Math.max(0, Math.min(100, coveragePercent))
+  const scale = (value: number) =>
+    value === 0 || coverage === 0 ? 0 : Math.ceil((value * coverage) / 100)
+  return {
+    slash: scale(protection.slash),
+    pierce: scale(protection.pierce),
+    blunt: scale(protection.blunt),
+  }
 }
 
 export function isConsumable(def: ItemDefinition): boolean {

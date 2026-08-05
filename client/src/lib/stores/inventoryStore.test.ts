@@ -8,6 +8,9 @@ import {
   resetInventoryStore,
   setEquipmentBurden,
   setInventory,
+  type EquipSlot,
+  type ItemInstance,
+  type PrimaryArmorDefense,
 } from './inventoryStore'
 
 describe('equipment burden state', () => {
@@ -126,7 +129,11 @@ describe('primary armor defense profile', () => {
       construction: 'hybrid',
       defenseSkill: 'hybrid_armor',
       functional: true,
+      coveredRegions: ['torso', 'arms'],
+      missingRegions: ['head', 'hands', 'legs', 'feet'],
+      coveragePercent: 55,
       protection: { slash: 2, pierce: 2, blunt: 2 },
+      effectiveProtection: { slash: 2, pierce: 2, blunt: 2 },
     })
   })
 
@@ -147,7 +154,212 @@ describe('primary armor defense profile', () => {
     expect(get(primaryArmorDefense)).toMatchObject({
       itemDefId: 'padded_battle_robe',
       functional: false,
+      coveredRegions: [],
+      missingRegions: ['head', 'torso', 'arms', 'hands', 'legs', 'feet'],
+      coveragePercent: 0,
       protection: { slash: 1, pierce: 0, blunt: 2 },
+      effectiveProtection: { slash: 0, pierce: 0, blunt: 0 },
     })
+  })
+
+  it('unions equipped regions and restores the complete plate profile', () => {
+    setInventory({
+      bag: [],
+      equipped: {
+        head: {
+          instance_id: 4,
+          item_def_id: 'plate_helmet',
+          quantity: 1,
+          enchant: 0,
+          durability: null,
+        },
+        chest: {
+          instance_id: 5,
+          item_def_id: 'breastplate',
+          quantity: 1,
+          enchant: 0,
+          durability: 120,
+        },
+        hands: {
+          instance_id: 6,
+          item_def_id: 'plate_gauntlets',
+          quantity: 1,
+          enchant: 0,
+          durability: null,
+        },
+        pants: {
+          instance_id: 7,
+          item_def_id: 'plate_greaves',
+          quantity: 1,
+          enchant: 0,
+          durability: null,
+        },
+        boots: {
+          instance_id: 8,
+          item_def_id: 'plate_boots',
+          quantity: 1,
+          enchant: 0,
+          durability: null,
+        },
+      },
+    })
+
+    expect(get(primaryArmorDefense)).toMatchObject({
+      coveragePercent: 85,
+      coveredRegions: ['head', 'torso', 'hands', 'legs', 'feet'],
+      missingRegions: ['arms'],
+      effectiveProtection: { slash: 3, pierce: 3, blunt: 1 },
+    })
+
+    const plateInventory = get(inventoryStore)
+    setInventory({
+      ...plateInventory,
+      equipped: {
+        ...plateInventory.equipped,
+        chest: {
+          instance_id: 9,
+          item_def_id: 'chain_mail',
+          quantity: 1,
+          enchant: 0,
+          durability: 90,
+        },
+      },
+    })
+    expect(get(primaryArmorDefense)).toMatchObject({
+      coveragePercent: 100,
+      coveredRegions: ['head', 'torso', 'arms', 'hands', 'legs', 'feet'],
+      missingRegions: [],
+      effectiveProtection: { slash: 2, pierce: 1, blunt: 0 },
+    })
+  })
+
+  it('matches the current armor loadout contract', () => {
+    const cases: Array<{
+      name: string
+      loadout: Array<[EquipSlot, string]>
+      expected: Partial<PrimaryArmorDefense> | null
+    }> = [
+      {
+        name: 'clothing',
+        loadout: [['chest', 'traveler_robe']],
+        expected: null,
+      },
+      {
+        name: 'padded',
+        loadout: [['chest', 'padded_battle_robe']],
+        expected: {
+          itemDefId: 'padded_battle_robe',
+          construction: 'padded',
+          defenseSkill: 'padded_armor',
+          functional: true,
+          coveredRegions: ['torso', 'arms', 'legs'],
+          missingRegions: ['head', 'hands', 'feet'],
+          coveragePercent: 75,
+          protection: { slash: 1, pierce: 0, blunt: 2 },
+          effectiveProtection: { slash: 1, pierce: 0, blunt: 2 },
+        },
+      },
+      {
+        name: 'leather',
+        loadout: [
+          ['head', 'leather_helmet'],
+          ['chest', 'leather_armor'],
+          ['hands', 'leather_gloves'],
+          ['pants', 'leather_pants'],
+          ['boots', 'leather_boots'],
+        ],
+        expected: {
+          itemDefId: 'leather_armor',
+          construction: 'leather',
+          defenseSkill: 'leather_armor',
+          functional: true,
+          coveredRegions: ['head', 'torso', 'hands', 'legs', 'feet'],
+          missingRegions: ['arms'],
+          coveragePercent: 85,
+          protection: { slash: 1, pierce: 1, blunt: 1 },
+          effectiveProtection: { slash: 1, pierce: 1, blunt: 1 },
+        },
+      },
+      {
+        name: 'mail',
+        loadout: [
+          ['head', 'iron_helmet'],
+          ['chest', 'chain_mail'],
+          ['hands', 'iron_gauntlets'],
+          ['boots', 'iron_boots'],
+        ],
+        expected: {
+          itemDefId: 'chain_mail',
+          construction: 'mail',
+          defenseSkill: 'mail_armor',
+          functional: true,
+          coveredRegions: ['head', 'torso', 'arms', 'hands', 'legs', 'feet'],
+          missingRegions: [],
+          coveragePercent: 100,
+          protection: { slash: 2, pierce: 1, blunt: 0 },
+          effectiveProtection: { slash: 2, pierce: 1, blunt: 0 },
+        },
+      },
+      {
+        name: 'plate',
+        loadout: [
+          ['head', 'plate_helmet'],
+          ['chest', 'breastplate'],
+          ['hands', 'plate_gauntlets'],
+          ['pants', 'plate_greaves'],
+          ['boots', 'plate_boots'],
+        ],
+        expected: {
+          itemDefId: 'breastplate',
+          construction: 'plate',
+          defenseSkill: 'plate_armor',
+          functional: true,
+          coveredRegions: ['head', 'torso', 'hands', 'legs', 'feet'],
+          missingRegions: ['arms'],
+          coveragePercent: 85,
+          protection: { slash: 3, pierce: 3, blunt: 1 },
+          effectiveProtection: { slash: 3, pierce: 3, blunt: 1 },
+        },
+      },
+      {
+        name: 'hybrid',
+        loadout: [['chest', 'brigandine_coat']],
+        expected: {
+          itemDefId: 'brigandine_coat',
+          construction: 'hybrid',
+          defenseSkill: 'hybrid_armor',
+          functional: true,
+          coveredRegions: ['torso', 'arms'],
+          missingRegions: ['head', 'hands', 'legs', 'feet'],
+          coveragePercent: 55,
+          protection: { slash: 2, pierce: 2, blunt: 2 },
+          effectiveProtection: { slash: 2, pierce: 2, blunt: 2 },
+        },
+      },
+    ]
+
+    let nextInstanceId = 10
+    for (const loadoutCase of cases) {
+      const equipped = Object.fromEntries(
+        loadoutCase.loadout.map(([slot, itemDefId]) => [
+          slot,
+          {
+            instance_id: nextInstanceId++,
+            item_def_id: itemDefId,
+            quantity: 1,
+            enchant: 0,
+            durability: null,
+          },
+        ])
+      ) as Partial<Record<EquipSlot, ItemInstance>>
+      setInventory({ bag: [], equipped })
+
+      const profile = get(primaryArmorDefense)
+      if (loadoutCase.expected === null) {
+        expect(profile, loadoutCase.name).toBeNull()
+      } else {
+        expect(profile, loadoutCase.name).toMatchObject(loadoutCase.expected)
+      }
+    }
   })
 })

@@ -1,4 +1,5 @@
 use super::*;
+use onlinerpg_shared::inventory::ArmorConstruction;
 use onlinerpg_shared::skills::{skill_xp_for_level, SkillId, SkillProgress, Skills};
 use onlinerpg_shared::PhysicalProtection;
 
@@ -86,6 +87,11 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
         profile.primary_armor_protection,
         PhysicalProtection::default()
     );
+    assert_eq!(profile.armor_coverage_percent, 0);
+    assert_eq!(
+        profile.weighted_armor_protection,
+        PhysicalProtection::default()
+    );
     assert_eq!(profile.effective_guard, 10);
 
     game_state.equip_item(&player_id, 3).await;
@@ -104,6 +110,11 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
             blunt: 2,
         }
     );
+    assert_eq!(profile.armor_coverage_percent, 75);
+    assert_eq!(
+        profile.weighted_armor_protection,
+        profile.primary_armor_protection
+    );
     assert_eq!(profile.effective_guard, 12);
 
     game_state.equip_item(&player_id, 4).await;
@@ -120,6 +131,11 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
             pierce: 2,
             blunt: 2,
         }
+    );
+    assert_eq!(profile.armor_coverage_percent, 55);
+    assert_eq!(
+        profile.weighted_armor_protection,
+        profile.primary_armor_protection
     );
     assert_eq!(profile.effective_guard, 15);
     let burden = drain(&mut rx)
@@ -152,6 +168,11 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
             blunt: 0,
         }
     );
+    assert_eq!(profile.armor_coverage_percent, 75);
+    assert_eq!(
+        profile.weighted_armor_protection,
+        profile.primary_armor_protection
+    );
     assert_eq!(profile.effective_guard, 17);
 
     game_state.equip_item(&player_id, 6).await;
@@ -166,6 +187,15 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
         PhysicalProtection {
             slash: 3,
             pierce: 3,
+            blunt: 1,
+        }
+    );
+    assert_eq!(profile.armor_coverage_percent, 40);
+    assert_eq!(
+        profile.weighted_armor_protection,
+        PhysicalProtection {
+            slash: 2,
+            pierce: 2,
             blunt: 1,
         }
     );
@@ -186,6 +216,11 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
             blunt: 1,
         }
     );
+    assert_eq!(profile.armor_coverage_percent, 40);
+    assert_eq!(
+        profile.weighted_armor_protection,
+        profile.primary_armor_protection
+    );
     assert_eq!(profile.effective_guard, 15);
 
     game_state.unequip_item(&player_id, EquipSlot::Chest).await;
@@ -195,6 +230,173 @@ async fn primary_chest_garments_replace_each_other_without_leaking_armor_skills(
         profile.primary_armor_protection,
         PhysicalProtection::default()
     );
+    assert_eq!(profile.armor_coverage_percent, 0);
+}
+
+#[tokio::test]
+async fn current_armor_loadouts_match_weighted_coverage_contract() {
+    let game_state = make_test_game_state("armor_loadout_contract");
+    let player_id = pid("coverage_tester");
+    game_state
+        .add_player(make_player("coverage_tester", 0.0, 0.0))
+        .await;
+
+    let cases = [
+        (
+            "clothing",
+            vec![(EquipSlot::Chest, "traveler_robe")],
+            None,
+            None,
+            0,
+            PhysicalProtection::default(),
+            PhysicalProtection::default(),
+        ),
+        (
+            "padded",
+            vec![(EquipSlot::Chest, "padded_battle_robe")],
+            Some(ArmorConstruction::Padded),
+            Some(SkillId::PaddedArmor),
+            75,
+            PhysicalProtection {
+                slash: 1,
+                pierce: 0,
+                blunt: 2,
+            },
+            PhysicalProtection {
+                slash: 1,
+                pierce: 0,
+                blunt: 2,
+            },
+        ),
+        (
+            "leather",
+            vec![
+                (EquipSlot::Head, "leather_helmet"),
+                (EquipSlot::Chest, "leather_armor"),
+                (EquipSlot::Hands, "leather_gloves"),
+                (EquipSlot::Pants, "leather_pants"),
+                (EquipSlot::Boots, "leather_boots"),
+            ],
+            Some(ArmorConstruction::Leather),
+            Some(SkillId::LeatherArmor),
+            85,
+            PhysicalProtection {
+                slash: 1,
+                pierce: 1,
+                blunt: 1,
+            },
+            PhysicalProtection {
+                slash: 1,
+                pierce: 1,
+                blunt: 1,
+            },
+        ),
+        (
+            "mail",
+            vec![
+                (EquipSlot::Head, "iron_helmet"),
+                (EquipSlot::Chest, "chain_mail"),
+                (EquipSlot::Hands, "iron_gauntlets"),
+                (EquipSlot::Boots, "iron_boots"),
+            ],
+            Some(ArmorConstruction::Mail),
+            Some(SkillId::MailArmor),
+            100,
+            PhysicalProtection {
+                slash: 2,
+                pierce: 1,
+                blunt: 0,
+            },
+            PhysicalProtection {
+                slash: 2,
+                pierce: 1,
+                blunt: 0,
+            },
+        ),
+        (
+            "plate",
+            vec![
+                (EquipSlot::Head, "plate_helmet"),
+                (EquipSlot::Chest, "breastplate"),
+                (EquipSlot::Hands, "plate_gauntlets"),
+                (EquipSlot::Pants, "plate_greaves"),
+                (EquipSlot::Boots, "plate_boots"),
+            ],
+            Some(ArmorConstruction::Plate),
+            Some(SkillId::PlateArmor),
+            85,
+            PhysicalProtection {
+                slash: 3,
+                pierce: 3,
+                blunt: 1,
+            },
+            PhysicalProtection {
+                slash: 3,
+                pierce: 3,
+                blunt: 1,
+            },
+        ),
+        (
+            "hybrid",
+            vec![(EquipSlot::Chest, "brigandine_coat")],
+            Some(ArmorConstruction::Hybrid),
+            Some(SkillId::HybridArmor),
+            55,
+            PhysicalProtection {
+                slash: 2,
+                pierce: 2,
+                blunt: 2,
+            },
+            PhysicalProtection {
+                slash: 2,
+                pierce: 2,
+                blunt: 2,
+            },
+        ),
+    ];
+
+    for (
+        case,
+        loadout,
+        expected_construction,
+        expected_skill,
+        expected_coverage,
+        expected_authored,
+        expected_effective,
+    ) in cases
+    {
+        let equipped = loadout
+            .into_iter()
+            .enumerate()
+            .map(|(index, (slot, item_def_id))| (slot, bag_item(index as u64 + 1, item_def_id, 1)))
+            .collect();
+        game_state.inventories.write().await.insert(
+            player_id,
+            PlayerInventory {
+                bag: vec![],
+                equipped,
+            },
+        );
+
+        let profile = game_state.player_defense_profile(&player_id).await;
+        assert_eq!(
+            profile.primary_armor_construction, expected_construction,
+            "{case} construction"
+        );
+        assert_eq!(profile.armor_skill, expected_skill, "{case} skill");
+        assert_eq!(
+            profile.armor_coverage_percent, expected_coverage,
+            "{case} coverage"
+        );
+        assert_eq!(
+            profile.primary_armor_protection, expected_authored,
+            "{case} authored protection"
+        );
+        assert_eq!(
+            profile.weighted_armor_protection, expected_effective,
+            "{case} effective protection"
+        );
+    }
 }
 
 #[tokio::test]

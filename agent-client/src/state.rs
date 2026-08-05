@@ -2144,6 +2144,39 @@ impl SharedState {
                 .collect();
             worn.sort();
             lines.push(format!("You are wearing: {}", worn.join(", ")));
+            if let Some(profile) = crate::item_defs::active_armor_profile(&self.self_equipped) {
+                let covered = profile
+                    .covered_regions
+                    .iter()
+                    .map(|region| region.display_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let gaps = if profile.missing_regions.is_empty() {
+                    "full body coverage".to_string()
+                } else {
+                    format!(
+                        "missing {}",
+                        profile
+                            .missing_regions
+                            .iter()
+                            .map(|region| region.display_name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                let status = if profile.functional {
+                    "active"
+                } else {
+                    "inactive (Broken)"
+                };
+                lines.push(format!(
+                    "Armor profile: {status}; {}% weighted coverage (covered {covered}; {gaps}); effective protection Slash {}, Pierce {}, Blunt {}",
+                    profile.coverage_percent,
+                    profile.protection.slash,
+                    profile.protection.pierce,
+                    profile.protection.blunt
+                ));
+            }
         }
         if let Some(burden) = self.equipment_burden {
             lines.push(format!(
@@ -2480,6 +2513,39 @@ pub(crate) mod tests {
         state.push_event(ServerMessage::GuardUpdated { guard: 29 });
         assert_eq!(state.effective_guard, Some(29));
         assert!(state.events.is_empty());
+    }
+
+    #[test]
+    fn world_state_reports_weighted_active_armor_profile() {
+        let (mut state, _rx) = test_state();
+        let item = |instance_id, item_def_id: &str| onlinerpg_shared::inventory::ItemInstance {
+            instance_id,
+            item_def_id: item_def_id.to_string(),
+            quantity: 1,
+            enchant: 0,
+            durability: None,
+        };
+        state.self_equipped.insert(
+            onlinerpg_shared::inventory::EquipSlot::Chest,
+            item(1, "breastplate"),
+        );
+        state.self_equipped.insert(
+            onlinerpg_shared::inventory::EquipSlot::Head,
+            item(2, "plate_helmet"),
+        );
+
+        assert!(state.format_world_state().contains(
+            "Armor profile: active; 50% weighted coverage (covered Head, Torso; missing Arms, Hands, Legs, Feet); effective protection Slash 2, Pierce 2, Blunt 1"
+        ));
+
+        state
+            .self_equipped
+            .get_mut(&onlinerpg_shared::inventory::EquipSlot::Chest)
+            .unwrap()
+            .durability = Some(0);
+        assert!(state.format_world_state().contains(
+            "Armor profile: inactive (Broken); 10% weighted coverage (covered Head; missing Torso, Arms, Hands, Legs, Feet); effective protection Slash 0, Pierce 0, Blunt 0"
+        ));
     }
 
     /// The world state lists reachable ground items closest first, and

@@ -1,9 +1,5 @@
 <script lang="ts">
-  import {
-    bodyRegionDisplayName,
-    itemBodyCoverage,
-    type ItemDefinition,
-  } from '../data/itemDefs'
+  import { itemCoverageText, type ItemDefinition } from '../data/itemDefs'
   import { skillDisplayName } from '../stores/skillsStore'
   import { durability_condition } from '../wasm/onlinerpg_shared'
 
@@ -50,7 +46,7 @@
       }))
       .filter(({ amount }) => amount > 0)
   )
-  const bodyCoverage = $derived(itemBodyCoverage(def))
+  const coverageText = $derived(itemCoverageText(def))
   const condition = $derived(
     def.maxDurability && durability !== null
       ? durability_condition(durability, def.maxDurability)
@@ -150,9 +146,8 @@
           def.garmentForm.slice(1)}</span
       >
     {/if}
-    {#if bodyCoverage.length > 0}
-      <span>Coverage: {bodyCoverage.map(bodyRegionDisplayName).join(', ')}</span
-      >
+    {#if coverageText}
+      <span>{coverageText}</span>
     {/if}
   </div>
 </div>

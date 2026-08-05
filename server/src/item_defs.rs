@@ -169,8 +169,7 @@ impl ItemDefinition {
         }
     }
 
-    #[cfg(test)]
-    fn body_coverage(&self) -> Vec<BodyRegion> {
+    pub fn body_coverage(&self) -> Vec<BodyRegion> {
         self.body_coverage
             .as_deref()
             .and_then(|value| parse_body_coverage(value).ok())

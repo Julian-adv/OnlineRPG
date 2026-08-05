@@ -74,6 +74,26 @@ pub struct PhysicalDamageResult {
     pub final_damage: u32,
 }
 
+pub fn apply_body_coverage(
+    protection: PhysicalProtection,
+    coverage_percent: u32,
+) -> PhysicalProtection {
+    let coverage = u64::from(coverage_percent.min(crate::inventory::BODY_COVERAGE_SCALE));
+    let scale = |value: u32| {
+        if value == 0 || coverage == 0 {
+            return 0;
+        }
+        let scaled = (u64::from(value) * coverage)
+            .div_ceil(u64::from(crate::inventory::BODY_COVERAGE_SCALE));
+        scaled.min(u64::from(u32::MAX)) as u32
+    };
+    PhysicalProtection {
+        slash: scale(protection.slash),
+        pierce: scale(protection.pierce),
+        blunt: scale(protection.blunt),
+    }
+}
+
 pub fn resolve_physical_damage(
     raw_damage: u32,
     damage_type: PhysicalDamageType,
@@ -130,6 +150,50 @@ mod tests {
         assert_eq!(protection.for_damage_type(PhysicalDamageType::Blunt), 3);
         assert!(!protection.is_empty());
         assert!(PhysicalProtection::default().is_empty());
+    }
+
+    #[test]
+    fn body_coverage_scales_authored_protection_without_region_rolls() {
+        let plate = PhysicalProtection {
+            slash: 3,
+            pierce: 3,
+            blunt: 1,
+        };
+        assert_eq!(
+            apply_body_coverage(plate, 40),
+            PhysicalProtection {
+                slash: 2,
+                pierce: 2,
+                blunt: 1,
+            }
+        );
+        assert_eq!(apply_body_coverage(plate, 85), plate);
+        assert_eq!(
+            apply_body_coverage(
+                PhysicalProtection {
+                    slash: 2,
+                    pierce: 1,
+                    blunt: 0,
+                },
+                75,
+            ),
+            PhysicalProtection {
+                slash: 2,
+                pierce: 1,
+                blunt: 0,
+            }
+        );
+        assert_eq!(apply_body_coverage(plate, 0), PhysicalProtection::default());
+        assert_eq!(apply_body_coverage(plate, 150), plate);
+
+        let mut previous = PhysicalProtection::default();
+        for coverage in 0..=100 {
+            let current = apply_body_coverage(plate, coverage);
+            assert!(current.slash >= previous.slash && current.slash <= plate.slash);
+            assert!(current.pierce >= previous.pierce && current.pierce <= plate.pierce);
+            assert!(current.blunt >= previous.blunt && current.blunt <= plate.blunt);
+            previous = current;
+        }
     }
 
     #[test]

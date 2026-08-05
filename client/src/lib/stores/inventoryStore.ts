@@ -6,7 +6,16 @@ import type {
   PlayerInventory,
   SkillId,
 } from '../network/networkTypes'
-import { getItemDef, type ArmorConstruction } from '../data/itemDefs'
+import {
+  applyBodyCoverage,
+  BODY_REGIONS,
+  bodyCoveragePercent,
+  getItemDef,
+  itemBodyCoverage,
+  type ArmorConstruction,
+  type BodyRegion,
+  type PhysicalProtection,
+} from '../data/itemDefs'
 
 export type { EquipSlot, ItemInstance, PlayerInventory }
 
@@ -34,11 +43,11 @@ export type PrimaryArmorDefense = {
   construction: ArmorConstruction
   defenseSkill: SkillId | null
   functional: boolean
-  protection: {
-    slash: number
-    pierce: number
-    blunt: number
-  }
+  coveredRegions: BodyRegion[]
+  missingRegions: BodyRegion[]
+  coveragePercent: number
+  protection: PhysicalProtection
+  effectiveProtection: PhysicalProtection
 }
 
 /** Item defs that act as a carried light source (mirrors shared TORCH_ITEM_IDS). */
@@ -70,17 +79,36 @@ export const primaryArmorDefense = derived(inventoryStore, (inv) => {
     return null
   }
 
+  const covered = new Set<BodyRegion>()
+  for (const equippedItem of Object.values(inv.equipped)) {
+    if (!equippedItem || equippedItem.durability === 0) continue
+    const equippedDef = getItemDef(equippedItem.item_def_id)
+    if (equippedDef?.equipmentKind !== 'body_armor') continue
+    for (const region of itemBodyCoverage(equippedDef)) covered.add(region)
+  }
+  const coveredRegions = BODY_REGIONS.filter((region) => covered.has(region))
+  const missingRegions = BODY_REGIONS.filter((region) => !covered.has(region))
+  const coveragePercent = bodyCoveragePercent(coveredRegions)
+  const functional = item.durability == null || item.durability > 0
+  const protection = {
+    slash: def.slashProtection ?? 0,
+    pierce: def.pierceProtection ?? 0,
+    blunt: def.bluntProtection ?? 0,
+  }
+
   return {
     itemDefId: def.id,
     name: def.name,
     construction: def.armorConstruction,
     defenseSkill: def.defenseSkill ?? null,
-    functional: item.durability == null || item.durability > 0,
-    protection: {
-      slash: def.slashProtection ?? 0,
-      pierce: def.pierceProtection ?? 0,
-      blunt: def.bluntProtection ?? 0,
-    },
+    functional,
+    coveredRegions,
+    missingRegions,
+    coveragePercent,
+    protection,
+    effectiveProtection: functional
+      ? applyBodyCoverage(protection, coveragePercent)
+      : { slash: 0, pierce: 0, blunt: 0 },
   } satisfies PrimaryArmorDefense
 })
 

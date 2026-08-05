@@ -8,19 +8,20 @@ actual-HP-restored measurements. The first five armor slices add Padded Armor,
 Leather Armor, Mail Armor, Plate Armor, and Hybrid Armor to the same
 per-defense-skill breakdown. Their item-authored physical-mitigation profiles
 also record aggregate raw, mitigated, and final damage by physical type and
-primary construction, without player identity.
+primary construction, without player identity. Weighted coverage stabilization
+adds fixed 0%, 1–49%, 50–74%, 75–99%, and 100% bands to the same report.
 
 ## Baseline
 
 The current cumulative XP thresholds and the Sword/Dagger 1.533-second attack
 window imply these uninterrupted-combat bounds:
 
-| Target | XP | All misses, 5 XP | All hits, 10 XP | All kills, 20 XP |
-|---|---:|---:|---:|---:|
-| Level 5 | 5,500 | 1,100 / 28.1m | 550 / 14.1m | 275 / 7.0m |
-| Level 15 | 124,000 | 24,800 / 10.6h | 12,400 / 5.3h | 6,200 / 2.6h |
-| Level 25 | 552,500 | 110,500 / 47.1h | 55,250 / 23.5h | 27,625 / 11.8h |
-| Level 30 | 945,500 | 189,100 / 80.5h | 94,550 / 40.3h | 47,275 / 20.1h |
+| Target   |      XP | All misses, 5 XP | All hits, 10 XP | All kills, 20 XP |
+| -------- | ------: | ---------------: | --------------: | ---------------: |
+| Level 5  |   5,500 |    1,100 / 28.1m |     550 / 14.1m |       275 / 7.0m |
+| Level 15 | 124,000 |   24,800 / 10.6h |   12,400 / 5.3h |     6,200 / 2.6h |
+| Level 25 | 552,500 |  110,500 / 47.1h |  55,250 / 23.5h |   27,625 / 11.8h |
+| Level 30 | 945,500 |  189,100 / 80.5h |  94,550 / 40.3h |   47,275 / 20.1h |
 
 Travel, target acquisition, death, and downtime make real progression slower.
 The table is a bound, not an approved progression target.
@@ -92,7 +93,7 @@ The `skill_balance` log line contains:
 - mapped Bandage uses, actual HP restored, awarded XP, skill-band
   results, `SkillXpGained` messages, and newly created Healing rows;
 - physical hits plus raw, mitigated, and final damage totals, broken down by
-  damage type and primary armor construction;
+  damage type, primary armor construction, and fixed equipped-coverage band;
 - successful periodic, logout, and shutdown skill-save batches and rows;
 - observed attacks and time projected to levels 5, 15, 25, and 30.
 
@@ -128,7 +129,10 @@ with the balance review. Before tuning, review at least:
     progression compared with Mail and Hybrid.
 14. Hybrid's balanced mitigation, migrated Brigandine Guard, and skill
     progression compared with lighter Leather and more deflective Plate.
-15. Equipment-burden time-to-target by Strength, complete loadout, and movement
+15. Raw, mitigated, and final damage across 0%, 1–49%, 50–74%, 75–99%, and 100%
+    coverage; especially lone Breastplate at 40%, Hybrid at 55%, extended chest
+    garments at 75%, complete Plate at 85%, and complete Mail at 100%.
+16. Equipment-burden time-to-target by Strength, complete loadout, and movement
     tier; especially Mail's weight 67 versus Plate's weight 43 and the effect of
     adding a weapon and shield. Bag-only weight must remain a zero-speed-effect
     control.

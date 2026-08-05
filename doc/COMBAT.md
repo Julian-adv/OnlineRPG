@@ -201,7 +201,7 @@ d20 굴림 + attack_bonus ≤ target_guard  →  빗나감
 - 피해 보너스는 기존대로 `STR modifier + weapon enchant`다. 스킬 레벨은 피해를 변경하지 않는다.
 - 몬스터는 `attackBonus`가 정의되어 있으면 그 값을 쓰고, 없으면 레벨 기반 기본값을 쓴다.
 
-Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. 장착한 primary chest의 `slashProtection`, `pierceProtection`, `bluntProtection` 값이 해당 channel을 경감한다. 현재 Padded Battle Robe는 slash 1 / blunt 2, Leather Armor는 slash 1 / pierce 1 / blunt 1, Chain Mail은 slash 2 / pierce 1, Breastplate는 slash 3 / pierce 3 / blunt 1, Brigandine Coat는 slash 2 / pierce 2 / blunt 2를 명시한다. 다섯 profile 모두 untyped은 경감하지 않고 Chain Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 통합된 upstream 장비 기준은 `leather_armor` Guard 2, `chain_mail` Guard 5, `breastplate` Guard 7을 유지하면서 typed mitigation을 추가 channel로 적용한다. `padded_battle_robe`는 Guard 0, `brigandine_coat`는 Guard 2의 별도 상점 대안이다. 이 조합의 총 방어력은 playtest 대상이다. Padded Armor, Leather Armor, Mail Armor, Plate Armor, Hybrid Armor는 같은 Guard band와 landed-hit XP 규칙을 공유하지만 각각 명시적으로 매핑된 primary chest만 활성화한다. `armorConstruction`은 build·skill·repair·metrics identity를 유지하지만 경감 수치를 암묵적으로 결정하지 않는다. 다른 부위 파츠는 해당 파츠의 Guard만 제공한다. `bodyCoverage`는 현재 garment의 head/torso/arms/hands/legs/feet 범위만 설명하며 hit-location roll, 경감 weight, 또는 추가 skill trigger를 만들지 않는다. multi-layer occupancy, weighted coverage, construction별 추가 부담, 마법 간섭, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
+Guard 판정 뒤에는 물리 경감 vertical slice가 적용된다. 서버가 공격을 `untyped`, `slash`, `pierce`, `blunt` 중 하나로 확정한다. 장착한 primary chest의 `slashProtection`, `pierceProtection`, `bluntProtection`은 authored profile이며, 기능 중인 장착 body armor의 `bodyCoverage` 합집합이 Head 10 / Torso 40 / Arms 15 / Hands 5 / Legs 20 / Feet 10 비중으로 이를 조정한다. 같은 부위는 한 번만 세고, 각 양수 channel은 `ceil(authored × coverage / 100)`으로 계산한다. 일반 의복과 Broken armor는 coverage에 참여하지 않는다. 현재 Padded Battle Robe는 slash 1 / blunt 2, Leather Armor는 slash 1 / pierce 1 / blunt 1, Chain Mail은 slash 2 / pierce 1, Breastplate는 slash 3 / pierce 3 / blunt 1, Brigandine Coat는 slash 2 / pierce 2 / blunt 2를 명시한다. torso-only Breastplate는 40%에서 2/2/1, 현 Plate set은 85%에서 3/3/1을 적용한다. 다섯 profile 모두 untyped은 경감하지 않고 Chain Mail은 blunt도 경감하지 않으며, 양수 raw hit은 항상 최소 1 피해를 준다. 통합된 upstream 장비 기준은 `leather_armor` Guard 2, `chain_mail` Guard 5, `breastplate` Guard 7을 유지하면서 typed mitigation을 추가 channel로 적용한다. `padded_battle_robe`는 Guard 0, `brigandine_coat`는 Guard 2의 별도 상점 대안이다. 이 조합의 총 방어력과 coverage weight는 playtest 대상이다. Padded Armor, Leather Armor, Mail Armor, Plate Armor, Hybrid Armor는 같은 Guard band와 landed-hit XP 규칙을 공유하지만 각각 명시적으로 매핑된 primary chest만 활성화한다. `armorConstruction`은 build·skill·repair·metrics identity를 유지하지만 경감 수치를 암묵적으로 결정하지 않는다. 다른 부위 파츠는 Guard와 coverage를 제공하지만 chest-anchored armor skill을 활성화하지 않는다. hit-location roll, multi-layer occupancy, construction별 추가 부담, 마법 간섭, body armor 렌더링은 [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md)의 후속 단계다.
 
 프로토콜 v23에서 primary chest body armor는 인스턴스별 내구도를 가진다.
 서버가 승인한 몬스터의 실제 명중만 방어 판정에 사용된 동일한 chest 인스턴스의
@@ -259,7 +259,9 @@ raw damage
 → equipped weapon damageType 우선
 → 없으면 monster natural damageType
 → 둘 다 없으면 untyped
-→ primary armor construction 경감
+→ 기능 중인 body armor coverage 합집합 계산
+→ primary chest authored profile을 coverage로 조정
+→ matching physical channel 경감
 → final damage (양수 raw hit은 최소 1)
 ```
 
@@ -286,9 +288,10 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 - 서버는 접속, 장비 변경, 방어 스킬 보너스 구간 변경 시 정확한 유효 Guard를
   `GuardUpdated`로 전송한다. 브라우저 Character Stats와 에이전트 world state는
   이 값을 그대로 표시하며 Guard 공식을 로컬에서 다시 계산하지 않는다.
-- 브라우저는 장착한 primary body armor의 이름, 매핑된 방어 스킬,
-  slash/pierce/blunt profile도 함께 요약한다. Broken armor는 장착 상태와 authored
-  profile은 보이지만 비활성으로 표시되고 실제 Guard·경감·스킬 훈련에는 참여하지 않는다.
+- 브라우저는 장착한 primary body armor의 이름, 매핑된 방어 스킬, weighted
+  coverage와 effective slash/pierce/blunt profile도 함께 요약한다. Broken armor는
+  장착 상태와 authored profile은 보이지만 비활성으로 표시되고 실제 Guard·경감·
+  스킬 훈련에는 참여하지 않는다.
 
 | GUARD | 의미               |
 | ----- | ------------------ |

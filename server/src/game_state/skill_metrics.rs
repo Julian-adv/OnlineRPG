@@ -158,6 +158,7 @@ struct MetricsData {
     mitigation: MitigationStats,
     mitigation_by_type: BTreeMap<String, MitigationStats>,
     mitigation_by_construction: BTreeMap<String, MitigationStats>,
+    mitigation_by_coverage_band: [MitigationStats; 5],
     healing: HealingStats,
     healing_by_skill_band: [HealingStats; 4],
     healing_xp_messages: u64,
@@ -192,6 +193,7 @@ pub(super) struct SkillBalanceSnapshot {
     pub mitigation: MitigationStats,
     pub mitigation_by_type: BTreeMap<String, MitigationStats>,
     pub mitigation_by_construction: BTreeMap<String, MitigationStats>,
+    pub mitigation_by_coverage_band: [MitigationStats; 5],
     pub healing: HealingStats,
     pub healing_by_skill_band: [HealingStats; 4],
     pub healing_xp_messages: u64,
@@ -324,9 +326,20 @@ impl SkillBalanceSnapshot {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let mitigation_coverage = ["0", "1-49", "50-74", "75-99", "100"]
+            .into_iter()
+            .zip(self.mitigation_by_coverage_band)
+            .map(|(label, stats)| {
+                format!(
+                    "{label}:{}hits/{}raw/{}mit/{}final",
+                    stats.hits, stats.raw_damage, stats.mitigated_damage, stats.final_damage
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
 
         format!(
-            "skill_balance uptime={} requests={} resolved={} rejected={} cooldown={} weapon={} hits={} hit_rate={:.1}% kills={} xp={} cadence_ms={}/{:?}/{:?} skills=[{}] bands=[{}] difficulty=[{}] clients=[{}] levels=[{}] monsters=[{}] messages={} new_rows={} defense={} hits_taken={} avoids={} defense_xp={} defense_skills=[{}] defense_bands=[{}] defense_messages={} defense_new_rows={} mitigation_hits={} raw_damage={} mitigated_damage={} final_damage={} mitigation_types=[{}] mitigation_constructions=[{}] bandage_uses={} restored_hp={} healing_xp={} healing_bands=[{}] healing_messages={} healing_new_rows={} saves={}/{}/{} rows_written={} projections=[{}]",
+            "skill_balance uptime={} requests={} resolved={} rejected={} cooldown={} weapon={} hits={} hit_rate={:.1}% kills={} xp={} cadence_ms={}/{:?}/{:?} skills=[{}] bands=[{}] difficulty=[{}] clients=[{}] levels=[{}] monsters=[{}] messages={} new_rows={} defense={} hits_taken={} avoids={} defense_xp={} defense_skills=[{}] defense_bands=[{}] defense_messages={} defense_new_rows={} mitigation_hits={} raw_damage={} mitigated_damage={} final_damage={} mitigation_types=[{}] mitigation_constructions=[{}] mitigation_coverage=[{}] bandage_uses={} restored_hp={} healing_xp={} healing_bands=[{}] healing_messages={} healing_new_rows={} saves={}/{}/{} rows_written={} projections=[{}]",
             format_duration(self.uptime_secs),
             self.attack_requests,
             self.resolved_attacks,
@@ -362,6 +375,7 @@ impl SkillBalanceSnapshot {
             self.mitigation.final_damage,
             mitigation_types,
             mitigation_constructions,
+            mitigation_coverage,
             self.healing.uses,
             self.healing.restored_hp,
             self.healing.xp,
@@ -516,6 +530,7 @@ impl SkillBalanceMetrics {
     pub(super) fn record_mitigation(
         &self,
         construction: Option<ArmorConstruction>,
+        coverage_percent: u32,
         result: PhysicalDamageResult,
     ) {
         if result.raw_damage == 0 {
@@ -536,6 +551,7 @@ impl SkillBalanceMetrics {
                 )
                 .or_default()
                 .record(result);
+            data.mitigation_by_coverage_band[coverage_band(coverage_percent)].record(result);
         });
     }
 
@@ -607,6 +623,7 @@ impl SkillBalanceMetrics {
             mitigation: data.mitigation,
             mitigation_by_type: data.mitigation_by_type,
             mitigation_by_construction: data.mitigation_by_construction,
+            mitigation_by_coverage_band: data.mitigation_by_coverage_band,
             healing: data.healing,
             healing_by_skill_band: data.healing_by_skill_band,
             healing_xp_messages: data.healing_xp_messages,
@@ -656,6 +673,16 @@ fn client_band(kind: ClientKind) -> usize {
     }
 }
 
+fn coverage_band(percent: u32) -> usize {
+    match percent {
+        0 => 0,
+        1..=49 => 1,
+        50..=74 => 2,
+        75..=99 => 3,
+        _ => 4,
+    }
+}
+
 fn format_duration(seconds: u64) -> String {
     if seconds < 60 {
         format!("{seconds}s")
@@ -682,6 +709,20 @@ mod tests {
         assert_eq!(client_band(ClientKind::Web), 0);
         assert_eq!(client_band(ClientKind::Cli), 1);
         assert_eq!(client_band(ClientKind::Other), 2);
+        assert_eq!(
+            [
+                coverage_band(0),
+                coverage_band(1),
+                coverage_band(49),
+                coverage_band(50),
+                coverage_band(74),
+                coverage_band(75),
+                coverage_band(99),
+                coverage_band(100),
+                coverage_band(999),
+            ],
+            [0, 1, 1, 2, 2, 3, 3, 4, 4]
+        );
     }
 
     #[test]
@@ -702,6 +743,16 @@ mod tests {
         );
         metrics.record_xp_message(SkillId::OneHandedSword, true);
         metrics.record_save(SkillSaveKind::Periodic, 1);
+        metrics.record_mitigation(
+            Some(ArmorConstruction::Plate),
+            40,
+            PhysicalDamageResult {
+                damage_type: onlinerpg_shared::PhysicalDamageType::Slash,
+                raw_damage: 8,
+                mitigated_damage: 2,
+                final_damage: 6,
+            },
+        );
 
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.attack_requests, 1);
@@ -724,10 +775,14 @@ mod tests {
         assert_eq!(snapshot.weapon_rows_created, 1);
         assert_eq!(snapshot.saves.periodic_batches, 1);
         assert_eq!(snapshot.saves.rows_written, 1);
+        assert_eq!(snapshot.mitigation_by_coverage_band[1].hits, 1);
+        assert_eq!(snapshot.mitigation_by_coverage_band[1].mitigated_damage, 2);
 
         let report = snapshot.render(Duration::from_millis(1_533));
         assert!(report.contains("hit_rate=100.0%"));
         assert!(report.contains("lv5=550attacks/14.7m"));
         assert!(report.contains("kobold:10xp/1a"));
+        assert!(report
+            .contains("mitigation_coverage=[0:0hits/0raw/0mit/0final,1-49:1hits/8raw/2mit/6final"));
     }
 }

@@ -15,9 +15,10 @@ slash, pierce, and blunt by 1 each. Chain Mail mitigates slash 2 and pierce 1
 but not blunt. A Breastplate mitigates slash and pierce by 3 and blunt by 1. A
 Brigandine Coat mitigates slash, pierce, and blunt by 2 each. None protects
 against untyped damage, and every positive hit deals at least 1 final damage.
-Per-instance durability and authored body-region identity are active; weighted
-coverage, construction-specific burden, and multi-layer occupancy remain
-staged. Equipped-weight movement burden is active as a separate vertical slice.
+Per-instance durability, authored body-region identity, and deterministic
+weighted aggregate coverage are active. Construction-specific burden and
+multi-layer occupancy remain staged. Equipped-weight movement burden is active
+as a separate vertical slice.
 
 ## Design rules
 
@@ -141,11 +142,36 @@ the field. Form validation keeps helmets on head, gloves on hands, boots on
 feet, leggings on legs, cuirasses on torso, and extended chest garments within
 torso/arms/legs.
 
-The first gameplay coverage consumer should use separately authored, weighted
-aggregate coverage. A random hit-location system adds animation, messaging,
-balance, and monster-anatomy complexity and should be a separately approved
-feature. Exact weights must come from playtesting; Phase Q's region identity
-does not alter the current aggregate chest mitigation.
+Phase R makes coverage a deterministic aggregate defense consumer. The shared
+region budget is provisional:
+
+| Region | Weight |
+| ------ | -----: |
+| Head   |    10% |
+| Torso  |    40% |
+| Arms   |    15% |
+| Hands  |     5% |
+| Legs   |    20% |
+| Feet   |    10% |
+
+Every region covered by at least one functional equipped body-armor item counts
+once. Overlapping garments and extremity pieces therefore cannot stack the same
+region, ordinary clothing contributes nothing, and Broken armor is excluded.
+The active functional primary chest still owns the authored physical profile
+and armor skill. Each positive channel is ceiling-scaled by aggregate coverage:
+
+```text
+effective protection
+= ceil(authored primary-chest protection × coverage percent / 100)
+```
+
+Ceiling rounding preserves useful low integer profiles while fuller loadouts
+can restore stronger Plate channels. A torso-only Breastplate has 40% coverage
+and resolves its authored 3/3/1 profile as 2/2/1; the current Plate set covers
+85% and restores 3/3/1. The current Mail loadout reaches 100% because its
+Hauberk already spans torso, arms, and legs. Exact weights and rounding remain
+playtest gates. Random hit locations still require separate animation,
+messaging, balance, and monster-anatomy approval.
 
 ## Current item mapping
 
@@ -202,8 +228,9 @@ primary chest to Mail Armor. Protocol v25 maps the `breastplate` primary chest
 to Plate Armor. Protocol v26 maps the Guard-0 `padded_battle_robe` primary chest
 to Padded Armor because its construction supplies real physical mitigation.
 Protocol v27 maps the `brigandine_coat` primary chest to Hybrid Armor. Other
-leather pieces and every Plate extremity remain stat-only; they cannot activate
-or train a proficiency by themselves. Garment form alone never activates a
+leather pieces and every Plate extremity cannot activate or train a proficiency
+by themselves; their functional body regions contribute to weighted aggregate
+coverage. Garment form alone never activates a
 skill: an ordinary coat would still require explicit body-armor construction
 and `defenseSkill` metadata.
 
@@ -272,7 +299,9 @@ validate attack and snapshot authoritative equipment
 → resolve accuracy/evasion
 → resolve shield block or deflection
 → roll raw typed damage
-→ apply body-armor coverage and physical mitigation
+→ union functional equipped body-armor coverage
+→ scale the primary chest's authored physical profile
+→ apply physical mitigation
 → apply resistances and magical wards
 → clamp and apply final damage to HP
 → apply durability wear from the resolved outcome
@@ -530,8 +559,10 @@ existing:
   slashProtection, pierceProtection, bluntProtection
 
 classification consumer:
-  weighted coverage factors (only when gameplay consumes them)
   setId (only if set mechanics need it; loot documentation may be enough)
+
+shared coverage consumer:
+  body-region weights
 
 combat consumer:
   wards/resistances
@@ -817,6 +848,87 @@ combat behavior.
   playtest-gated phases. No protocol, persistence, or combat balance bump is
   required.
 
+### R. Deterministic weighted aggregate coverage — completed
+
+- Shared Head/Torso/Arms/Hands/Legs/Feet weights total 100 and consume the
+  union of functional equipped body-armor regions; overlap counts once.
+- The active primary chest keeps ownership of construction, durability,
+  proficiency, and authored slash/pierce/blunt values. Coverage ceiling-scales
+  those values without creating a second armor skill or protection stack.
+- Ordinary clothing, Broken items, held gear, and accessories contribute no
+  coverage. Extremity armor contributes coverage but still cannot activate or
+  train the chest-anchored proficiency.
+- Current complete loadouts retain their existing effective profiles. A lone
+  Breastplate resolves 3/3/1 as 2/2/1 until additional functional regions raise
+  aggregate coverage.
+- Browser Character Stats and agent world state show the weighted percentage
+  and effective profile from synchronized inventory definitions. Combat remains
+  server-authoritative and outcomes continue to publish actual mitigation.
+- This phase does not add random hit locations, protocol fields, persistence
+  state, construction-specific burden, or multi-layer occupancy.
+
+### S. Coverage balance observability — completed
+
+- The existing opt-in process-lifetime balance report records mitigation in
+  fixed 0%, 1–49%, 50–74%, 75–99%, and 100% coverage bands.
+- Each band contains only aggregate hit count plus raw, mitigated, and final
+  damage totals. It stores no account, character, player, network, or
+  per-character history.
+- Coverage bands complement the existing physical-type and primary-construction
+  breakdowns, allowing Breastplate, Hybrid, extended-chest, complete Plate, and
+  complete Mail outcomes to be compared before weights or rounding change.
+- Reporting stays disabled by default and requires the existing
+  `SKILL_BALANCE_REPORT_SECS` opt-in. This phase changes no gameplay, protocol,
+  persistence, client state, skill XP, or balance constant.
+
+### T. Coverage-gap decision support — completed
+
+- Browser Character Stats lists the canonical covered and missing regions
+  beneath weighted percentage and effective slash/pierce/blunt protection.
+- The agent world state carries the same ordered region sets so it can choose
+  equipment for a real gap rather than infer coverage from an item name.
+- Full coverage collapses to a clear `Full body coverage` state; partial and
+  Broken profiles keep their exact gaps visible.
+- Both clients derive this read-only presentation from synchronized inventory
+  instances and generated item definitions. The server remains authoritative
+  for coverage and mitigation during combat.
+- This phase changes no gameplay, balance, protocol, persistence, item data,
+  skill XP, or equipment occupancy.
+
+### U. Item-level coverage contribution — completed
+
+- Browser tooltips and agent equipment summaries show the weighted contribution
+  of each body-armor item before it is equipped.
+- Body armor uses `Armor Coverage: … (N% weight)`. Ordinary clothing uses
+  `Garment Coverage: … (not defensive)` so a robe's anatomical reach cannot be
+  mistaken for Guard, mitigation, or armor-skill eligibility.
+- Shields, weapons, accessories, and other non-garments show no body-coverage
+  line. The same shared/generated region definitions drive both clients.
+- This phase changes no aggregate formula, combat result, balance, protocol,
+  persistence, item data, skill XP, or equipment occupancy.
+
+### V. Cross-client loadout contract — completed
+
+The current progression loadouts are locked to one canonical matrix:
+
+| Loadout            | Functional armor regions             | Coverage | Effective slash / pierce / blunt | Proficiency anchor                |
+| ------------------ | ------------------------------------ | -------: | -------------------------------: | --------------------------------- |
+| Traveler's Robe    | None; ordinary clothing only         |       0% |                 No armor profile | None                              |
+| Padded Battle Robe | Torso, arms, legs                    |      75% |                        1 / 0 / 2 | Padded Battle Robe → Padded Armor |
+| Leather set        | Head, torso, hands, legs, feet       |      85% |                        1 / 1 / 1 | Leather Armor → Leather Armor     |
+| Mail set           | Head, torso, arms, hands, legs, feet |     100% |                        2 / 1 / 0 | Chain Mail → Mail Armor           |
+| Plate set          | Head, torso, hands, legs, feet       |      85% |                        3 / 3 / 1 | Breastplate → Plate Armor         |
+| Brigandine Coat    | Torso, arms                          |      55% |                        2 / 2 / 2 | Brigandine Coat → Hybrid Armor    |
+
+- Server integration, browser-store, and agent-client tests now exercise this
+  same matrix, including ordered covered/missing regions in both client
+  projections.
+- The contract makes the current mixed Mail set and Plate's uncovered arms
+  explicit. A later item or balance change must update all three projections
+  and this table together.
+- This stabilization phase changes no runtime formula, item definition, combat
+  result, balance, protocol, persistence, skill XP, or equipment occupancy.
+
 Each phase needs an explicit owner approval and a completion gate. A later
 phase may move earlier only as a complete vertical slice with its prerequisites;
 the broad architecture is not permission to implement all subsystems at once.
@@ -845,8 +957,9 @@ the broad architecture is not permission to implement all subsystems at once.
    once their Guard and typed mitigation are playtested together?
 4. Does Hybrid's balanced mitigation and retained Guard create a clear enough
    tradeoff against lighter Leather and more deflective Plate in playtesting?
-5. Does aggregate coverage remain sufficient, or does later gameplay justify
-   hit locations?
+5. Do the provisional 10/40/15/5/20/10 region weights and ceiling rounding
+   remain readable after playtesting, and does aggregate coverage remain
+   sufficient without hit locations?
 6. Do the 20% / 35% / 50% movement bands remain readable and fair across the
    full Strength range after live playtesting?
 7. Are physical and magical armor enchantments item modifiers, crafted

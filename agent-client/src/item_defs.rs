@@ -6,9 +6,10 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use onlinerpg_shared::combat::apply_body_coverage;
 use onlinerpg_shared::inventory::{
-    durability_condition, parse_body_coverage, ArmorConstruction, BodyRegion, EquipSlot,
-    EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily,
+    body_coverage_percent, durability_condition, parse_body_coverage, ArmorConstruction,
+    BodyRegion, EquipSlot, EquipmentKind, EquipmentLayer, GarmentForm, RepairFamily, BODY_REGIONS,
 };
 use onlinerpg_shared::skills::SkillId;
 use onlinerpg_shared::{PhysicalDamageType, PhysicalProtection};
@@ -114,13 +115,24 @@ pub fn equipment_summary(item_def_id: &str) -> Option<String> {
     if let Some(construction) = def.armor_construction {
         details.push(format!("{} construction", construction.display_name()));
     }
-    let coverage = def
-        .body_coverage()
-        .into_iter()
+    let body_coverage = def.body_coverage();
+    let coverage = body_coverage
+        .iter()
         .map(|region| region.display_name())
         .collect::<Vec<_>>();
     if !coverage.is_empty() {
-        details.push(format!("Coverage {}", coverage.join(", ")));
+        if def.equipment_kind == Some(EquipmentKind::BodyArmor) {
+            details.push(format!(
+                "Armor coverage {} ({}% weight)",
+                coverage.join(", "),
+                body_coverage_percent(body_coverage.iter().copied())
+            ));
+        } else {
+            details.push(format!(
+                "Garment coverage {} (not defensive)",
+                coverage.join(", ")
+            ));
+        }
     }
     if def.equip_slot == Some(EquipSlot::Chest) {
         let protection = [
@@ -177,6 +189,55 @@ pub fn equipment_instance_summary(
         }
     }
     (!details.is_empty()).then(|| details.join("; "))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveArmorProfile {
+    pub functional: bool,
+    pub coverage_percent: u32,
+    pub covered_regions: Vec<BodyRegion>,
+    pub missing_regions: Vec<BodyRegion>,
+    pub protection: PhysicalProtection,
+}
+
+pub fn active_armor_profile(
+    equipped: &HashMap<EquipSlot, onlinerpg_shared::inventory::ItemInstance>,
+) -> Option<ActiveArmorProfile> {
+    let chest = equipped.get(&EquipSlot::Chest)?;
+    let chest_def = get(&chest.item_def_id)?;
+    if chest_def.equipment_kind != Some(EquipmentKind::BodyArmor)
+        || chest_def.equipment_layer != Some(EquipmentLayer::Primary)
+    {
+        return None;
+    }
+    let authored_regions = equipped
+        .values()
+        .filter(|item| !item.is_broken())
+        .filter_map(|item| get(&item.item_def_id))
+        .filter(|def| def.equipment_kind == Some(EquipmentKind::BodyArmor))
+        .flat_map(ItemDef::body_coverage)
+        .collect::<Vec<_>>();
+    let covered_regions = BODY_REGIONS
+        .into_iter()
+        .filter(|region| authored_regions.contains(region))
+        .collect::<Vec<_>>();
+    let missing_regions = BODY_REGIONS
+        .into_iter()
+        .filter(|region| !authored_regions.contains(region))
+        .collect::<Vec<_>>();
+    let coverage_percent = body_coverage_percent(covered_regions.iter().copied());
+    let functional = !chest.is_broken();
+    Some(ActiveArmorProfile {
+        functional,
+        coverage_percent,
+        covered_regions,
+        missing_regions,
+        protection: if functional {
+            apply_body_coverage(chest_def.physical_protection(), coverage_percent)
+        } else {
+            PhysicalProtection::default()
+        },
+    })
 }
 
 /// Pick the item the agent meant out of a candidate list — what it carries,
@@ -417,36 +478,40 @@ mod tests {
         assert_eq!(
             equipment_summary("leather_armor").as_deref(),
             Some(
-                "Guard +2; Leather construction; Coverage Torso; Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor; Repair family Leather"
+                "Guard +2; Leather construction; Armor coverage Torso (40% weight); Protection Slash 1, Pierce 1, Blunt 1; Skill Leather Armor; Repair family Leather"
             )
         );
         assert_eq!(
             equipment_summary("padded_battle_robe").as_deref(),
             Some(
-                "Padded construction; Coverage Torso, Arms, Legs; Protection Slash 1, Blunt 2; Skill Padded Armor; Repair family Cloth"
+                "Padded construction; Armor coverage Torso, Arms, Legs (75% weight); Protection Slash 1, Blunt 2; Skill Padded Armor; Repair family Cloth"
             )
         );
         assert_eq!(
             equipment_summary("chain_mail").as_deref(),
             Some(
-                "Guard +5; Mail construction; Coverage Torso, Arms, Legs; Protection Slash 2, Pierce 1; Skill Mail Armor; Repair family Metal"
+                "Guard +5; Mail construction; Armor coverage Torso, Arms, Legs (75% weight); Protection Slash 2, Pierce 1; Skill Mail Armor; Repair family Metal"
             )
         );
         assert_eq!(
             equipment_summary("breastplate").as_deref(),
             Some(
-                "Guard +7; Plate construction; Coverage Torso; Protection Slash 3, Pierce 3, Blunt 1; Skill Plate Armor; Repair family Metal"
+                "Guard +7; Plate construction; Armor coverage Torso (40% weight); Protection Slash 3, Pierce 3, Blunt 1; Skill Plate Armor; Repair family Metal"
             )
         );
         assert_eq!(
             equipment_summary("brigandine_coat").as_deref(),
             Some(
-                "Guard +2; Hybrid construction; Coverage Torso, Arms; Protection Slash 2, Pierce 2, Blunt 2; Skill Hybrid Armor; Repair family Hybrid"
+                "Guard +2; Hybrid construction; Armor coverage Torso, Arms (55% weight); Protection Slash 2, Pierce 2, Blunt 2; Skill Hybrid Armor; Repair family Hybrid"
             )
         );
         assert_eq!(
             equipment_summary("leather_helmet").as_deref(),
-            Some("Guard +1; Leather construction; Coverage Head")
+            Some("Guard +1; Leather construction; Armor coverage Head (10% weight)")
+        );
+        assert_eq!(
+            equipment_summary("traveler_robe").as_deref(),
+            Some("Garment coverage Torso, Arms, Legs (not defensive)")
         );
         for (id, family, amount) in [
             ("cloth_repair_kit", RepairFamily::Cloth, 20),
@@ -482,6 +547,243 @@ mod tests {
         assert!(equipment_instance_summary(&armor)
             .unwrap()
             .contains("BROKEN, condition 0/60"));
+    }
+
+    #[test]
+    fn active_armor_profile_uses_weighted_equipped_region_union() {
+        let item = |instance_id, item_def_id: &str, durability| {
+            onlinerpg_shared::inventory::ItemInstance {
+                instance_id,
+                item_def_id: item_def_id.to_string(),
+                quantity: 1,
+                enchant: 0,
+                durability,
+            }
+        };
+        let mut equipped = HashMap::from([
+            (EquipSlot::Chest, item(1, "breastplate", Some(120))),
+            (EquipSlot::Head, item(2, "plate_helmet", None)),
+        ]);
+        assert_eq!(
+            active_armor_profile(&equipped),
+            Some(ActiveArmorProfile {
+                functional: true,
+                coverage_percent: 50,
+                covered_regions: vec![BodyRegion::Head, BodyRegion::Torso],
+                missing_regions: vec![
+                    BodyRegion::Arms,
+                    BodyRegion::Hands,
+                    BodyRegion::Legs,
+                    BodyRegion::Feet,
+                ],
+                protection: PhysicalProtection {
+                    slash: 2,
+                    pierce: 2,
+                    blunt: 1,
+                },
+            })
+        );
+
+        equipped.insert(EquipSlot::Chest, item(3, "chain_mail", Some(90)));
+        equipped.insert(EquipSlot::Hands, item(4, "plate_gauntlets", None));
+        equipped.insert(EquipSlot::Boots, item(5, "plate_boots", None));
+        assert_eq!(
+            active_armor_profile(&equipped),
+            Some(ActiveArmorProfile {
+                functional: true,
+                coverage_percent: 100,
+                covered_regions: BODY_REGIONS.to_vec(),
+                missing_regions: vec![],
+                protection: PhysicalProtection {
+                    slash: 2,
+                    pierce: 1,
+                    blunt: 0,
+                },
+            })
+        );
+
+        equipped.insert(EquipSlot::Chest, item(6, "breastplate", Some(0)));
+        assert_eq!(
+            active_armor_profile(&equipped),
+            Some(ActiveArmorProfile {
+                functional: false,
+                coverage_percent: 25,
+                covered_regions: vec![BodyRegion::Head, BodyRegion::Hands, BodyRegion::Feet],
+                missing_regions: vec![BodyRegion::Torso, BodyRegion::Arms, BodyRegion::Legs],
+                protection: PhysicalProtection::default(),
+            })
+        );
+    }
+
+    #[test]
+    fn current_armor_loadouts_match_weighted_coverage_contract() {
+        let cases = [
+            ("clothing", vec![(EquipSlot::Chest, "traveler_robe")], None),
+            (
+                "padded",
+                vec![(EquipSlot::Chest, "padded_battle_robe")],
+                Some((
+                    ArmorConstruction::Padded,
+                    SkillId::PaddedArmor,
+                    75,
+                    vec![BodyRegion::Torso, BodyRegion::Arms, BodyRegion::Legs],
+                    vec![BodyRegion::Head, BodyRegion::Hands, BodyRegion::Feet],
+                    PhysicalProtection {
+                        slash: 1,
+                        pierce: 0,
+                        blunt: 2,
+                    },
+                )),
+            ),
+            (
+                "leather",
+                vec![
+                    (EquipSlot::Head, "leather_helmet"),
+                    (EquipSlot::Chest, "leather_armor"),
+                    (EquipSlot::Hands, "leather_gloves"),
+                    (EquipSlot::Pants, "leather_pants"),
+                    (EquipSlot::Boots, "leather_boots"),
+                ],
+                Some((
+                    ArmorConstruction::Leather,
+                    SkillId::LeatherArmor,
+                    85,
+                    vec![
+                        BodyRegion::Head,
+                        BodyRegion::Torso,
+                        BodyRegion::Hands,
+                        BodyRegion::Legs,
+                        BodyRegion::Feet,
+                    ],
+                    vec![BodyRegion::Arms],
+                    PhysicalProtection {
+                        slash: 1,
+                        pierce: 1,
+                        blunt: 1,
+                    },
+                )),
+            ),
+            (
+                "mail",
+                vec![
+                    (EquipSlot::Head, "iron_helmet"),
+                    (EquipSlot::Chest, "chain_mail"),
+                    (EquipSlot::Hands, "iron_gauntlets"),
+                    (EquipSlot::Boots, "iron_boots"),
+                ],
+                Some((
+                    ArmorConstruction::Mail,
+                    SkillId::MailArmor,
+                    100,
+                    BODY_REGIONS.to_vec(),
+                    vec![],
+                    PhysicalProtection {
+                        slash: 2,
+                        pierce: 1,
+                        blunt: 0,
+                    },
+                )),
+            ),
+            (
+                "plate",
+                vec![
+                    (EquipSlot::Head, "plate_helmet"),
+                    (EquipSlot::Chest, "breastplate"),
+                    (EquipSlot::Hands, "plate_gauntlets"),
+                    (EquipSlot::Pants, "plate_greaves"),
+                    (EquipSlot::Boots, "plate_boots"),
+                ],
+                Some((
+                    ArmorConstruction::Plate,
+                    SkillId::PlateArmor,
+                    85,
+                    vec![
+                        BodyRegion::Head,
+                        BodyRegion::Torso,
+                        BodyRegion::Hands,
+                        BodyRegion::Legs,
+                        BodyRegion::Feet,
+                    ],
+                    vec![BodyRegion::Arms],
+                    PhysicalProtection {
+                        slash: 3,
+                        pierce: 3,
+                        blunt: 1,
+                    },
+                )),
+            ),
+            (
+                "hybrid",
+                vec![(EquipSlot::Chest, "brigandine_coat")],
+                Some((
+                    ArmorConstruction::Hybrid,
+                    SkillId::HybridArmor,
+                    55,
+                    vec![BodyRegion::Torso, BodyRegion::Arms],
+                    vec![
+                        BodyRegion::Head,
+                        BodyRegion::Hands,
+                        BodyRegion::Legs,
+                        BodyRegion::Feet,
+                    ],
+                    PhysicalProtection {
+                        slash: 2,
+                        pierce: 2,
+                        blunt: 2,
+                    },
+                )),
+            ),
+        ];
+
+        for (case, loadout, expected) in cases {
+            let equipped = loadout
+                .into_iter()
+                .enumerate()
+                .map(|(index, (slot, item_def_id))| {
+                    (
+                        slot,
+                        onlinerpg_shared::inventory::ItemInstance {
+                            instance_id: index as u64 + 1,
+                            item_def_id: item_def_id.to_string(),
+                            quantity: 1,
+                            enchant: 0,
+                            durability: None,
+                        },
+                    )
+                })
+                .collect::<HashMap<_, _>>();
+            let chest_def = equipped
+                .get(&EquipSlot::Chest)
+                .and_then(|item| get(&item.item_def_id))
+                .expect("contract loadouts have a defined chest item");
+
+            match expected {
+                None => {
+                    assert_eq!(chest_def.armor_construction, None, "{case} construction");
+                    assert_eq!(chest_def.defense_skill, None, "{case} skill");
+                    assert_eq!(active_armor_profile(&equipped), None, "{case} profile");
+                }
+                Some((construction, skill, coverage, covered, missing, protection)) => {
+                    assert_eq!(
+                        chest_def.armor_construction,
+                        Some(construction),
+                        "{case} construction"
+                    );
+                    assert_eq!(chest_def.defense_skill, Some(skill), "{case} skill");
+                    assert_eq!(
+                        active_armor_profile(&equipped),
+                        Some(ActiveArmorProfile {
+                            functional: true,
+                            coverage_percent: coverage,
+                            covered_regions: covered,
+                            missing_regions: missing,
+                            protection,
+                        }),
+                        "{case} profile"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

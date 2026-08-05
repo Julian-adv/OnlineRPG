@@ -4,7 +4,7 @@ use onlinerpg_shared::skills::{
     Skills, DEFAULT_WEAPON_ATTACK_COOLDOWN_MS, DEFAULT_WEAPON_MELEE_RANGE_METERS, SKILL_LEVEL_CAP,
     SPEAR_ATTACK_COOLDOWN_MS, SPEAR_MELEE_RANGE_METERS,
 };
-use onlinerpg_shared::PhysicalDamageType;
+use onlinerpg_shared::{PhysicalDamageType, PhysicalProtection};
 
 async fn setup_trained_weapon_attacker(
     game_state: &GameState,
@@ -1622,6 +1622,16 @@ async fn plate_primary_armor_combines_broad_mitigation_and_skill_training() {
         },
     );
     assert_eq!(game_state.effective_guard(&defender_id).await, 7);
+    let defense = game_state.player_defense_profile(&defender_id).await;
+    assert_eq!(defense.armor_coverage_percent, 40);
+    assert_eq!(
+        defense.weighted_armor_protection,
+        PhysicalProtection {
+            slash: 2,
+            pierce: 2,
+            blunt: 1,
+        }
+    );
     let mut rx = game_state.register_direct_channel(&defender_id).await;
     let mut expected_health = 1_000;
     let mut observed_total_mitigation = 0;
@@ -1629,8 +1639,8 @@ async fn plate_primary_armor_combines_broad_mitigation_and_skill_training() {
     let mut observed_pierce_mitigation = 0;
 
     for (id, monster_type, expected_type, profile_protection) in [
-        ("plate_slash", "goblin", PhysicalDamageType::Slash, 3),
-        ("plate_pierce", "scp939", PhysicalDamageType::Pierce, 3),
+        ("plate_slash", "goblin", PhysicalDamageType::Slash, 2),
+        ("plate_pierce", "scp939", PhysicalDamageType::Pierce, 2),
         (
             "plate_untyped",
             "test_monster",
@@ -1719,6 +1729,11 @@ async fn plate_primary_armor_combines_broad_mitigation_and_skill_training() {
     );
     assert_eq!(
         metrics.mitigation_by_construction["plate"].mitigated_damage,
+        u64::from(observed_total_mitigation)
+    );
+    assert_eq!(metrics.mitigation_by_coverage_band[1].hits, 3);
+    assert_eq!(
+        metrics.mitigation_by_coverage_band[1].mitigated_damage,
         u64::from(observed_total_mitigation)
     );
 }
