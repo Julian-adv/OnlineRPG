@@ -219,7 +219,7 @@
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
-  let currentMovementAnimationIndex = $state<number | undefined>(undefined) // Locked animation for current movement
+  let lastMovementMode: MovementMode | undefined
   let weaponAttached = $state(false)
   let weaponObject: THREE.Object3D | null = null
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
@@ -555,34 +555,24 @@
       : undefined
     let clip: THREE.AnimationClip | undefined
     if (playerState === 'idle') {
-      currentMovementAnimationIndex = undefined
       clip =
         torchIdle ??
         pickRandom(DEFAULT_IDLE_INDICES.map((i) => validAnimations[i]))
     } else if (playerState === 'moving') {
-      if (currentMovementAnimationIndex === undefined) {
-        currentMovementAnimationIndex = selectMovementAnimation(movementMode)
-      }
-      const torchMoveClip = movementMode === 'walk' ? torchWalk : torchRun
-      clip = torchMoveClip ?? validAnimations[currentMovementAnimationIndex]
+      const torchMoveClip = movementMode === 'run' ? torchRun : torchWalk
+      clip =
+        torchMoveClip ?? validAnimations[selectMovementAnimation(movementMode)]
     } else if (playerState === 'attack') {
-      // Use slash1 animation
-      currentMovementAnimationIndex = undefined
-      // Find index for slash1 or fallback
-      // Assuming AnimationIndex.SLASH1 exists and maps correctly
       clip = validAnimations[AnimationIndex.SLASH1]
     } else if (playerState === 'jump') {
       // One-shot feedback when slope is too steep to climb. After the clip
       // finishes, PlayerControl flips the state back to idle/moving and we
       // crossfade to the next animation naturally.
-      currentMovementAnimationIndex = undefined
       clip = validAnimations[AnimationIndex.JUMP]
     } else if (playerState === 'dead') {
-      currentMovementAnimationIndex = undefined
       dyingFinishedNotified = false
       clip = validAnimations[AnimationIndex.DYING]
     } else if (playerState === 'interact') {
-      currentMovementAnimationIndex = undefined
       interactionFinishedNotified = false
       clip = interactionAnim
         ? socialClipsByName.get(interactionAnim)
@@ -940,13 +930,15 @@
 
     // Update animation state
     if (validAnimations.length > 0) {
-      // Only update animation if the player state has changed or attack counter increased
-      // Note: idle transitions are handled above by OVERLAP_BEFORE_END logic
+      const movementModeChanged =
+        playerState === 'moving' && lastMovementMode !== movementMode
       if (
         lastPlayerState !== playerState ||
+        movementModeChanged ||
         (playerState === 'attack' && lastAttackCounter !== attackCounter)
       ) {
         lastPlayerState = playerState
+        lastMovementMode = movementMode
         if (attackCounter !== undefined) lastAttackCounter = attackCounter
         playAnimationForState()
       }

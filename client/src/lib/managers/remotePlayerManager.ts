@@ -204,7 +204,6 @@ class PlayerStateManager {
           this.executeAttack(playerId)
         }
       } else {
-        // Torch has no jog animation, so skip the jog tier for torch-holders.
         const hasTorch = otherPlayers.get(playerId)?.torchOn ?? false
         const movementMode = getMovementMode(
           movement.totalDistance,

@@ -5,8 +5,7 @@
 use super::*;
 use onlinerpg_shared::hunger::{
     HungerState, CAMPFIRE_DURATION_MS, FOOD_POISONING_MS, GRILL_CAST_MS,
-    MOVEMENT_DRAIN_INTERVAL_SECS, SATIATION_MAX, SATIATION_RESPAWN, SATIATION_START,
-    SPRINT_DRAIN_INTERVAL_SECS,
+    MOVEMENT_DRAIN_INTERVAL_SECS, SATIATION_MAX, SATIATION_START, SPRINT_DRAIN_INTERVAL_SECS,
 };
 use tokio::time::{advance, Duration};
 
@@ -366,7 +365,7 @@ async fn weak_hunger_slows_the_authoritative_attack_interval() {
 }
 
 #[tokio::test]
-async fn respawn_resets_satiation_to_the_normal_floor() {
+async fn respawn_preserves_satiation() {
     let game_state = make_test_game_state("respawn");
     let (id, _rx) = make_eater(&game_state, "casualty", 30).await;
     game_state
@@ -379,10 +378,7 @@ async fn respawn_resets_satiation_to_the_normal_floor() {
 
     game_state.respawn_player(&id).await;
 
-    assert_eq!(
-        game_state.hunger_satiation(&id).await,
-        Some(SATIATION_RESPAWN)
-    );
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(30));
 }
 
 #[tokio::test(start_paused = true)]
