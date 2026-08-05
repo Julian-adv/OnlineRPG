@@ -155,10 +155,12 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             if !player_within_event_range(state, player_id) {
                 return None;
             }
-            Some(format!(
-                "[Chat] {}: {message}",
-                player_name(state, player_id)
-            ))
+            let is_npc = state
+                .nearby_players
+                .get(player_id)
+                .is_some_and(|p| p.is_official_npc);
+            let tag = if is_npc { "[NpcChat]" } else { "[Chat]" };
+            Some(format!("{tag} {}: {message}", player_name(state, player_id)))
         }
         ServerMessage::WhisperMessage { from, message, .. } => {
             // Skip the echo of our own outgoing whisper.

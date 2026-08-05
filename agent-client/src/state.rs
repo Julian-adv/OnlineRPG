@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
 use onlinerpg_shared::dungeon::{
-    dungeon_cache_key, floor_cells, floor_level_for_passability, passability_floor_for_level,
-    path_max_nodes, set_floor_cells,
+    cell_center, dungeon_cache_key, floor_cells, floor_level_for_passability,
+    passability_floor_for_level, path_max_nodes, set_floor_cells, world_to_cell,
 };
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
@@ -438,6 +438,9 @@ pub struct SharedState {
     no_spawn_zones: Vec<NoSpawnZone>,
     /// Spectator panel handle; feeds it chat/combat/system lines
     watch: Option<Arc<crate::watch::NpcWatch>>,
+    /// Running follow loop: (target name, task handle). Any move or attack
+    /// the LLM issues aborts it; losing the target ends it with an event.
+    pub follow_task: Option<(String, tokio::task::JoinHandle<()>)>,
 }
 
 impl SharedState {
@@ -491,7 +494,16 @@ impl SharedState {
             pending_commands: Vec::new(),
             no_spawn_zones: Vec::new(),
             watch,
+            follow_task: None,
         }
+    }
+
+    /// Abort a running follow loop, if any. Returns the name that was
+    /// being followed.
+    pub fn cancel_follow(&mut self) -> Option<String> {
+        let (name, handle) = self.follow_task.take()?;
+        handle.abort();
+        Some(name)
     }
 
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
@@ -1735,6 +1747,50 @@ impl SharedState {
                 ));
             }
             line.push_str(&self.format_room_props(p));
+            // Floor map in world coordinates: without it the LLM aims moves
+            // into solid rock and collects [MoveFailed] walls.
+            if let Some(d) = dungeon.as_ref() {
+                if let Some(layout) = d.layouts().get(depth as usize - 1) {
+                    let me = world_to_cell(&d.entrance, p.position.x, p.position.z);
+                    let rooms = layout
+                        .rooms
+                        .iter()
+                        .enumerate()
+                        .map(|(i, room)| {
+                            let c = cell_center(&d.entrance, depth, room.center());
+                            format!(
+                                "room {} center ({:.0}, {:.0}) {}x{}m{}",
+                                i + 1,
+                                c.x,
+                                c.z,
+                                room.w,
+                                room.d,
+                                if room.contains(me.0, me.1) {
+                                    " (you are here)"
+                                } else {
+                                    ""
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    line.push_str(&format!("\nRooms on this floor: {rooms}"));
+                    let up = cell_center(
+                        &d.entrance,
+                        depth,
+                        (layout.up_shaft.x, layout.up_shaft.z),
+                    );
+                    line.push_str(&format!("\nStairs up at ({:.0}, {:.0})", up.x, up.z));
+                    if let Some(down) = &layout.down_shaft {
+                        let dn = cell_center(&d.entrance, depth, (down.x, down.z));
+                        line.push_str(&format!("; stairs down at ({:.0}, {:.0})", dn.x, dn.z));
+                    }
+                    line.push_str(
+                        "\nEverything outside rooms and corridors is solid rock — aim \
+                         moves at room centers or stairs.",
+                    );
+                }
+            }
             return Some(line);
         }
         let dungeon = self
@@ -1903,12 +1959,15 @@ impl SharedState {
         None
     }
 
-    /// Push a synthetic agent event visible to the LLM.
+    /// Push a synthetic agent event visible to the LLM. Synthetic events are
+    /// feedback on the agent's own actions (arrival, a failed move, a kill),
+    /// so they wake the LLM driver instead of waiting out the idle interval.
     pub fn push_agent_event(&mut self, event: String) {
         if let Some(watch) = &self.watch {
             watch.push("agent", event.clone());
         }
         self.agent_events.push(event);
+        self.urgent_notify.notify_one();
     }
 
     /// Resolve a player name (or raw id) among nearby players, as used by
@@ -2121,13 +2180,19 @@ impl SharedState {
             if self.self_player_id.as_ref() == Some(&p.id) {
                 continue;
             }
+            // A character on another floor is a dot straight above or below —
+            // not someone standing next to us.
+            if p.floor_level != self.self_floor_level {
+                continue;
+            }
             if let Some(sp) = sp {
                 if p.position.dist_xz_sq(&sp.position) > sight_sq {
                     continue;
                 }
             }
+            let npc_tag = if p.is_official_npc { " (NPC)" } else { "" };
             lines.push(format!(
-                "Player: {} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
+                "Player: {}{npc_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
             if p.is_official_npc {
@@ -2137,8 +2202,12 @@ impl SharedState {
             }
         }
 
-        // Exclude monsters beyond LLM sight radius
+        // Exclude monsters beyond LLM sight radius or on another floor —
+        // cross-floor monsters read as phantom respawns to the LLM.
         for m in self.nearby_monsters.values() {
+            if m.floor_level != self.self_floor_level {
+                continue;
+            }
             if let Some(sp) = sp {
                 if m.position.dist_xz_sq(&sp.position) > sight_sq {
                     continue;
