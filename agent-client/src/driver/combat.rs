@@ -109,10 +109,12 @@ pub(super) async fn tick_combat(
             let mut s = state.lock().await;
             let note = match reason {
                 // Gone from the world state right after we were trading
-                // blows — almost always our kill.
+                // blows — usually our kill, but it may also have simply
+                // walked out of sight, so don't assert a corpse.
                 LostReason::TargetGone => format!(
-                    "[CombatEnded] {monster_id} is gone — dead or despawned. Pick up any \
-                     loot and decide your next move."
+                    "[CombatEnded] {monster_id} is no longer there — you may have killed it, \
+                     or it left your sight. Check the ground for loot, then decide your \
+                     next move."
                 ),
                 other => format!(
                     "[CombatEnded] You broke off from {monster_id} — {}.",
@@ -124,6 +126,11 @@ pub(super) async fn tick_combat(
         }
         ChaseResult::Error => {
             info!("Combat ended: error during chase of {monster_id}");
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[CombatEnded] You lost {monster_id} — something went wrong on the way. \
+                 Decide your next move."
+            ));
             return None;
         }
     }

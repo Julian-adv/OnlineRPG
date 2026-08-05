@@ -80,6 +80,11 @@ pub(super) async fn check_schedule_transition(
                 "[{label}] Schedule transition: moving to {}",
                 entry.display_label()
             );
+            // The schedule outranks a follow, and two walkers on one body
+            // would only fight.
+            if let Some(name) = state.lock().await.cancel_follow() {
+                info!("[{label}] Follow of {name} cancelled by a schedule transition");
+            }
             execute_schedule_move(state, entry).await;
         }
     }

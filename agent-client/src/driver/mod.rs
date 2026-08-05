@@ -253,9 +253,11 @@ pub async fn llm_driver(
 
         tokio::select! {
             _ = urgent_notify.notified() => {
-                debug!("[{label}] LLM driver: urgent event received");
+                // Sets both the rate-limit floor below and the queue priority.
+                let woken_by = LlmPriority::from(state.lock().await.take_wake_urgency());
+                debug!("[{label}] LLM driver: woken by a {woken_by:?} event");
                 last_activity_at = Instant::now();
-                pending_urgency = LlmPriority::Urgent;
+                pending_urgency = pending_urgency.min(woken_by);
                 // Start the debounce window now, even mid-call: it then runs
                 // alongside the in-flight prompt instead of only starting once
                 // that one lands. Double-submission is already ruled out below.

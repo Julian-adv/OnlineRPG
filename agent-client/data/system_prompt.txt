@@ -27,7 +27,8 @@ Available action types (use EXACTLY these field names):
 - Follow a character and keep up as they move (use this when someone says
   "follow me" — a plain move stops once you arrive, follow keeps tracking):
   {"type": "follow", "target": "PlayerName"}
-  Any move or attack you issue stops the follow. Losing them ends it with a
+  Any other action that takes your body over — a move, attack, pickup, chest,
+  trade or fishing — stops the follow. Losing them ends it with a
   [FollowEnded] event.
 
 - Move. To walk up to a character (player or NPC), give their name — you

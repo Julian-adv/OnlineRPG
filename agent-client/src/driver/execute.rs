@@ -27,6 +27,39 @@ use super::movement::{execute_move, MoveResult};
 /// the web client's grab moment partway into its pickup animation.
 const PICKUP_GRAB_DELAY_MS: u64 = 700;
 
+/// How long a follow rests once it has caught up before checking again.
+const FOLLOW_RECHECK: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// How far the followed character must have travelled during a timed-out
+/// chase for that chase to count as "they are still walking" rather than
+/// "we are stuck".
+const FOLLOW_PROGRESS_M: f32 = 1.0;
+
+/// Where a character stands right now, if we can still see them.
+async fn target_pos(
+    state: &Arc<Mutex<SharedState>>,
+    id: &onlinerpg_shared::PlayerId,
+) -> Option<onlinerpg_shared::Position> {
+    state
+        .lock()
+        .await
+        .nearby_players
+        .get(id)
+        .map(|p| p.position)
+}
+
+/// Whether the character moved appreciably since `before`.
+async fn target_moved(
+    state: &Arc<Mutex<SharedState>>,
+    id: &onlinerpg_shared::PlayerId,
+    before: Option<onlinerpg_shared::Position>,
+) -> bool {
+    let (Some(was), Some(now)) = (before, target_pos(state, id).await) else {
+        return false;
+    };
+    was.dist_xz_sq(&now) > FOLLOW_PROGRESS_M * FOLLOW_PROGRESS_M
+}
+
 /// Feedback for an attack whose chase never reached the monster, so the agent
 /// stops re-issuing it. The reason comes from the chase itself, not a guess.
 fn unreachable_note(monster_id: &str, loss: &LostReason) -> String {
@@ -116,6 +149,17 @@ pub(super) async fn handle_response(
         }
     };
 
+    if !agent_resp.unknown_types.is_empty() {
+        let mut s = state.lock().await;
+        for unknown in &agent_resp.unknown_types {
+            warn!("Unknown action type '{unknown}' skipped");
+            s.push_agent_event(format!(
+                "[ActionFailed] '{unknown}' is not an action type — it did nothing. \
+                 Use one of the types listed in your instructions."
+            ));
+        }
+    }
+
     // Process memory update if present
     if let (Some(ref update), Some(ref path)) = (&agent_resp.memory_update, memory_file) {
         let update = update.trim();
@@ -146,31 +190,25 @@ pub(super) async fn handle_response(
     // sell would resend an instance the server has already emptied.
     let mut spent_units: HashMap<u64, u32> = HashMap::new();
 
+    // Holding position means holding it: a follow started before the trade
+    // window opened would keep walking us away from the customer.
+    if skip_movement {
+        let mut s = state.lock().await;
+        if let Some(name) = s.cancel_follow() {
+            info!("Follow of {name} cancelled — NPC is holding position");
+        }
+    }
+
     for action in &agent_resp.actions {
         // Skip movement/attack when the NPC must stay put — resting on a
         // scheduled object, or serving a customer with an open trade window.
-        if skip_movement
-            && matches!(
-                action,
-                AgentAction::Move { .. }
-                    | AgentAction::Attack { .. }
-                    | AgentAction::Pickup { .. }
-                    | AgentAction::OpenChest { .. }
-                    | AgentAction::Sell { .. }
-                    | AgentAction::Buy { .. }
-                    | AgentAction::Buyback { .. }
-                    | AgentAction::BreakProp { .. }
-            )
-        {
+        if skip_movement && action.blocked_while_holding_position() {
             debug!("Skipping {:?} action — NPC is holding position", action);
             continue;
         }
 
-        // A new movement intent replaces a running follow.
-        if matches!(
-            action,
-            AgentAction::Move { .. } | AgentAction::Attack { .. } | AgentAction::Follow { .. }
-        ) {
+        // A running follow yields, or the two tasks fight over the same body.
+        if action.takes_over_movement() {
             let mut s = state.lock().await;
             if let Some(name) = s.cancel_follow() {
                 info!("Follow of {name} cancelled by a new movement action");
@@ -198,35 +236,40 @@ pub(super) async fn handle_response(
             let task_name = name.clone();
             let handle = tokio::spawn(async move {
                 loop {
-                    match approach_player(&task_state, &target_id).await {
+                    let before = target_pos(&task_state, &target_id).await;
+                    let ended = match approach_player(&task_state, &target_id).await {
                         ChaseResult::InRange => {
-                            tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+                            tokio::time::sleep(FOLLOW_RECHECK).await;
+                            None
                         }
-                        ChaseResult::Lost(loss) => {
-                            let mut s = task_state.lock().await;
-                            s.follow_task = None;
-                            s.push_agent_event(format!(
-                                "[FollowEnded] You are no longer following {task_name} — {}.",
-                                loss.clause()
-                            ));
-                            break;
+                        // A chase that runs out of time while the target keeps
+                        // walking is following working, not failing — only a
+                        // deadline against a target that never moved is stuck.
+                        ChaseResult::Lost(LostReason::Timeout)
+                            if target_moved(&task_state, &target_id, before).await =>
+                        {
+                            None
                         }
-                        ChaseResult::Error => {
-                            let mut s = task_state.lock().await;
-                            s.follow_task = None;
-                            s.push_agent_event(format!(
-                                "[FollowEnded] Something went wrong while following {task_name}."
-                            ));
-                            break;
-                        }
+                        ChaseResult::Lost(loss) => Some(format!(
+                            "[FollowEnded] You are no longer following {task_name} — {}.",
+                            loss.clause()
+                        )),
+                        ChaseResult::Error => Some(format!(
+                            "[FollowEnded] Something went wrong while following {task_name}."
+                        )),
+                    };
+                    if let Some(note) = ended {
+                        task_state.lock().await.push_agent_event(note);
+                        break;
                     }
                 }
             });
             let mut s = state.lock().await;
             s.follow_task = Some((name.clone(), handle));
             s.push_agent_event(format!(
-                "[Following] You are now following {name}. Any move or attack you \
-                 issue stops the follow."
+                "[Following] You are now following {name}. Any other action that \
+                 takes your body over — a move, attack, pickup, chest, trade or \
+                 fishing — stops the follow."
             ));
             continue;
         }

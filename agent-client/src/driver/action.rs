@@ -17,6 +17,10 @@ pub(super) struct AgentResponse {
     pub actions: Vec<AgentAction>,
     /// Optional memory update: appended to the NPC's memory file for future sessions.
     pub memory_update: Option<String>,
+    /// `type` strings that matched no action, recovered positionally from the
+    /// raw JSON. Reported back so the LLM stops reissuing them.
+    #[serde(skip)]
+    pub unknown_types: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +59,7 @@ pub(super) enum AgentAction {
         depth: Option<i32>,
     },
     /// Keep following a character: re-approach whenever they move, until the
-    /// LLM issues another move or attack, or the target is lost.
+    /// LLM issues anything else that walks us somewhere, or the target is lost.
     #[serde(rename = "follow", alias = "follow_player")]
     Follow {
         #[serde(alias = "player", alias = "name", alias = "character")]
@@ -235,9 +239,54 @@ pub(super) enum AgentAction {
     #[serde(rename = "wait", alias = "idle", alias = "observe", alias = "none")]
     Wait,
     /// Catch-all for action types the LLM invented. Parsing succeeds so the
-    /// rest of the response still runs; execution skips it.
+    /// rest of the response still runs; execution skips it and reports the
+    /// name back so the LLM stops reissuing it.
     #[serde(other)]
     Unknown,
+}
+
+impl AgentAction {
+    /// Whether this action takes the body over: it walks the agent somewhere,
+    /// or plants it (fishing, respawning). A running follow yields to it, and
+    /// an NPC holding position skips it. Exhaustive on purpose — a new variant
+    /// must not be able to slip past this.
+    pub(super) fn takes_over_movement(&self) -> bool {
+        match self {
+            Self::Move { .. }
+            | Self::Attack { .. }
+            | Self::Follow { .. }
+            | Self::Pickup { .. }
+            | Self::OpenChest { .. }
+            | Self::BreakProp { .. }
+            | Self::Sell { .. }
+            | Self::Buy { .. }
+            | Self::Buyback { .. }
+            | Self::Fish { .. }
+            | Self::Respawn => true,
+            Self::Say { .. }
+            | Self::StopFishing
+            | Self::OfferDeal { .. }
+            | Self::OpenTrade { .. }
+            | Self::PartyInvite { .. }
+            | Self::PartyAccept { .. }
+            | Self::PartyDecline { .. }
+            | Self::SummonAccept { .. }
+            | Self::SummonDecline { .. }
+            | Self::PartyLeave
+            | Self::PartySay { .. }
+            | Self::Use { .. }
+            | Self::Drop { .. }
+            | Self::Reroll
+            | Self::Wait
+            | Self::Unknown => false,
+        }
+    }
+
+    /// Of those, the ones an NPC pinned in place must not run at all. Fishing
+    /// and respawning keep it where it is, so they stay allowed.
+    pub(super) fn blocked_while_holding_position(&self) -> bool {
+        self.takes_over_movement() && !matches!(self, Self::Fish { .. } | Self::Respawn)
+    }
 }
 
 /// Whether an `open_chest` selector asks for the great chest rather than the
@@ -327,8 +376,31 @@ pub(super) fn parse_agent_response(text: &str) -> anyhow::Result<AgentResponse> 
     let mut value: serde_json::Value = serde_json::from_str(json_str)
         .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))?;
     normalize_move_targets(&mut value);
-    serde_json::from_value(value)
-        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))
+    let raw_types = action_type_names(&value);
+    let mut parsed: AgentResponse = serde_json::from_value(value)
+        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))?;
+    // `#[serde(other)]` cannot keep the tag it swallowed, but actions
+    // deserialize one-for-one with the raw array, so position recovers it.
+    parsed.unknown_types = parsed
+        .actions
+        .iter()
+        .zip(raw_types)
+        .filter(|(a, _)| matches!(a, AgentAction::Unknown))
+        .filter_map(|(_, name)| name)
+        .collect();
+    Ok(parsed)
+}
+
+/// The `type` of each raw action, positionally aligned with `actions`. The
+/// pre-pass above must never add or drop an entry, or the alignment breaks.
+fn action_type_names(value: &serde_json::Value) -> Vec<Option<String>> {
+    let Some(actions) = value.get("actions").and_then(|a| a.as_array()) else {
+        return Vec::new();
+    };
+    actions
+        .iter()
+        .map(|a| Some(a.get("type")?.as_str()?.to_string()))
+        .collect()
 }
 
 /// LLMs keep writing `{"type":"move","target":[x,z]}` or `"target":{"x":..}`
@@ -352,7 +424,10 @@ fn normalize_move_targets(value: &mut serde_json::Value) {
                 }
             }
             Some(serde_json::Value::Object(obj)) => {
-                match (obj.get("x").and_then(|n| n.as_f64()), obj.get("z").and_then(|n| n.as_f64())) {
+                match (
+                    obj.get("x").and_then(|n| n.as_f64()),
+                    obj.get("z").and_then(|n| n.as_f64()),
+                ) {
                     (Some(x), Some(z)) => Some((x, obj.get("y").and_then(|n| n.as_f64()), z)),
                     _ => None,
                 }
@@ -592,10 +667,12 @@ mod tests {
 
     #[test]
     fn move_target_xyz_array_becomes_xyz() {
-        let action = parse_single_action(
-            r#"{"actions": [{"type": "move", "target": [-1460, 1.1, 4730]}]}"#,
-        );
-        let AgentAction::Move { target, x, y, z, .. } = action else {
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "move", "target": [-1460, 1.1, 4730]}]}"#);
+        let AgentAction::Move {
+            target, x, y, z, ..
+        } = action
+        else {
             panic!("expected Move");
         };
         assert_eq!(target, None);
@@ -632,18 +709,23 @@ mod tests {
 
     #[test]
     fn unknown_action_type_does_not_discard_response() {
+        // The unknown sits at index 1 so a shift in the positional name
+        // recovery would fail this rather than land on it by luck.
         let resp = parse_agent_response(
-            r#"{"actions": [{"type": "look", "reason": "scan"}, {"type": "say", "message": "hi"}],
+            r#"{"actions": [{"type": "move", "x": 1.0, "z": 2.0},
+                           {"type": "look", "reason": "scan"},
+                           {"type": "say", "message": "hi"}],
                 "memory_update": "kept"}"#,
         )
         .unwrap();
-        assert_eq!(resp.actions.len(), 2);
-        assert!(matches!(resp.actions[0], AgentAction::Unknown));
-        let AgentAction::Say { ref message } = resp.actions[1] else {
+        assert_eq!(resp.actions.len(), 3);
+        assert!(matches!(resp.actions[1], AgentAction::Unknown));
+        let AgentAction::Say { ref message } = resp.actions[2] else {
             panic!("expected Say to survive");
         };
         assert_eq!(message, "hi");
         assert_eq!(resp.memory_update.as_deref(), Some("kept"));
+        assert_eq!(resp.unknown_types, ["look"]);
     }
 
     #[test]
