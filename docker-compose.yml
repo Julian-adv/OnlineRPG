@@ -4,7 +4,7 @@ name: openmmo
 # is available and falls back to building locally, so the stack comes up on a
 # clean host before anything has been pushed to GHCR.
 x-server-image: &server-image
-  image: ghcr.io/julian-adv/openmmo-server:${TAG:-latest}
+  image: ${IMAGE_BASE:-ghcr.io/julian-adv}/openmmo-server:${TAG:-latest}
   build:
     context: .
     dockerfile: docker/server.Dockerfile
@@ -47,8 +47,9 @@ services:
       - npcs:/npcs
       - terrain:/terrain
     healthcheck:
-      test:
-        ["CMD", "curl", "-fsS", "http://localhost:10007/api/terrain/height/0/0"]
+      # Announcements answer regardless of the baked terrain range; a terrain
+      # route would stay unhealthy forever under a custom TERRAIN_REGION_*.
+      test: ["CMD", "curl", "-fsS", "http://localhost:10007/api/announcements"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -56,7 +57,7 @@ services:
     restart: unless-stopped
 
   client:
-    image: ghcr.io/julian-adv/openmmo-client:${TAG:-latest}
+    image: ${IMAGE_BASE:-ghcr.io/julian-adv}/openmmo-client:${TAG:-latest}
     build:
       context: .
       dockerfile: docker/client.Dockerfile
@@ -75,7 +76,7 @@ services:
   # state. Start with `docker compose --profile agent up`.
   agent-client:
     profiles: [agent]
-    image: ghcr.io/julian-adv/openmmo-agent-client:${AGENT_TAG:-latest}
+    image: ${IMAGE_BASE:-ghcr.io/julian-adv}/openmmo-agent-client:${AGENT_TAG:-latest}
     build:
       context: .
       dockerfile: docker/agent-client.Dockerfile

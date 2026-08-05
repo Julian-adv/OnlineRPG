@@ -22,14 +22,11 @@ pub mod world;
 pub mod worldgen;
 pub mod xp;
 
-/// Repo-root-relative path of the NPC auth token file, read by agent-client
-/// (whose cwd is one level down).
-///
-/// This is the server's *default* location only. The server writes the token
-/// under its `--state-dir`, so a deploy that moves that directory — a
-/// container mounting a volume, for instance — must hand agent-client the
-/// token explicitly via `npc_token` in config.toml or `NPC_AUTH_TOKEN`.
-pub const NPC_TOKEN_PATH_FROM_ROOT: &str = "data/npc_token";
+/// File name of the NPC auth token inside the server's `--state-dir`
+/// (default `data/`). agent-client reads `../data/<this>` as its zero-config
+/// fallback; a deploy that moves `--state-dir` must hand agent-client the
+/// token explicitly via `npc_token` in config.toml.
+pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 
 /// Wire protocol version, sent in `ClientMessage::ClientInfo` and checked for
 /// exact equality by the server. Bump it whenever a message shape or its

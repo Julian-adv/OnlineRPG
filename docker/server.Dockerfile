@@ -28,15 +28,19 @@ COPY tools/cargo-build-data.rs tools/
 COPY data-src/ data-src/
 
 # agent-client is a workspace member, so cargo needs its manifest to resolve the
-# workspace at all. Stub the sources instead of copying them: cargo does not run
-# build scripts for members outside the -p selection, and a stub keeps this
+# workspace at all. Stub the sources instead of copying them: a stub keeps this
 # image's cache from busting on unrelated agent-client edits.
 COPY agent-client/Cargo.toml agent-client/
-RUN mkdir -p agent-client/src \
-    && echo 'fn main() {}' > agent-client/src/main.rs \
-    && echo 'fn main() {}' > agent-client/build.rs
+COPY docker/stub-members.sh docker/
+RUN sh docker/stub-members.sh agent-client
 
-RUN cargo build --release --locked -p onlinerpg-server -p terrain-gen
+# The cache mounts keep dependency compiles out of the layer, so the binaries
+# must be copied out within the same RUN.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=target-server,target=/build/target \
+    cargo build --release --locked -p onlinerpg-server -p terrain-gen \
+    && mkdir -p /out \
+    && cp target/release/onlinerpg-server target/release/terrain-gen /out/
 
 FROM debian:bookworm-slim AS server
 # curl backs the compose healthcheck; gosu drops root once the entrypoint has
@@ -47,9 +51,8 @@ RUN apt-get update \
     && groupadd -g 10001 openmmo \
     && useradd -u 10001 -g 10001 -m -s /usr/sbin/nologin openmmo
 
-COPY --from=builder /build/target/release/onlinerpg-server /usr/local/bin/
-COPY --from=builder /build/target/release/terrain-gen /usr/local/bin/
-COPY docker/server-entrypoint.sh docker/terrain-bake.sh /usr/local/bin/
+COPY --from=builder /out/ /usr/local/bin/
+COPY docker/entrypoint-lib.sh docker/server-entrypoint.sh docker/terrain-bake.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/server-entrypoint.sh /usr/local/bin/terrain-bake.sh
 
 # Tracked files a fresh volume would otherwise mask. Zone files define town

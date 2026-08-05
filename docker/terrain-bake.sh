@@ -7,6 +7,8 @@
 # any tiles are written. The range only controls disk usage (~65 MB/region).
 set -eu
 
+. /usr/local/bin/entrypoint-lib.sh
+
 TERRAIN_DIR="${TERRAIN_DIR:-/terrain}"
 REGION_MIN="${TERRAIN_REGION_MIN:--2}"
 REGION_MAX="${TERRAIN_REGION_MAX:-1}"
@@ -18,11 +20,8 @@ seed_zones() {
     # Zone files carry town no-spawn areas and monster spawn rectangles. They
     # are tracked in git and terrain-gen never writes them, so without this the
     # world bakes fine but monsters spawn inside towns.
-    if [ -d "$SEED_ZONES" ]; then
-        mkdir -p "$TERRAIN_DIR/zones"
-        cp -Rn "$SEED_ZONES/." "$TERRAIN_DIR/zones/"
-    fi
-    chown -R 10001:10001 "$TERRAIN_DIR"
+    seed_into "$SEED_ZONES" "$TERRAIN_DIR/zones"
+    chown -R openmmo:openmmo "$TERRAIN_DIR/zones"
 }
 
 # worldgen.json is written last, so its presence means a bake ran to completion.
@@ -30,6 +29,7 @@ seed_zones() {
 if [ -f "$TERRAIN_DIR/worldgen.json" ] && [ -z "${TERRAIN_FORCE_BAKE:-}" ]; then
     echo "terrain-init: worldgen.json present, skipping bake"
     seed_zones
+    own_volume "$TERRAIN_DIR"
     exit 0
 fi
 
@@ -44,4 +44,7 @@ terrain-gen bake \
     --region-z-max "$REGION_MAX"
 
 seed_zones
+# The bake ran as root and rewrote the tree, so own_volume's fast path
+# would wrongly skip.
+chown -R openmmo:openmmo "$TERRAIN_DIR"
 echo "terrain-init: done"

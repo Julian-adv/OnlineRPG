@@ -36,51 +36,53 @@ jobs:
             runner: ubuntu-24.04
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
+          # cache_peer: the two agent-client targets share the same builder and
+          # slim layers, so each also reads the other's layer cache.
           - image: server
             package: openmmo-server
             dockerfile: docker/server.Dockerfile
             target: server
-            tag_prefix: ''
-            moving_tag: latest
           - image: client
             package: openmmo-client
             dockerfile: docker/client.Dockerfile
             target: ''
-            tag_prefix: ''
-            moving_tag: latest
           - image: agent-client-slim
             package: openmmo-agent-client
             dockerfile: docker/agent-client.Dockerfile
             target: slim
-            tag_prefix: ''
-            moving_tag: latest
+            cache_peer: agent-client-codex
           - image: agent-client-codex
             package: openmmo-agent-client
             dockerfile: docker/agent-client.Dockerfile
             target: codex
-            tag_prefix: codex-
-            moving_tag: codex
+            cache_peer: agent-client-slim
 
     steps:
       - uses: actions/checkout@v5
       - id: registry
         run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
+      # client/public mixes tracked files with the fetched assets, and a
+      # restored cache may hold stale copies of the tracked ones — the git
+      # checkout resets those, then fetch-assets verifies/refreshes the rest.
+      - name: Cache client assets
+        if: matrix.image == 'client'
+        uses: actions/cache@v4
+        with:
+          path: client/public
+          key: client-assets-${{ hashFiles('assets.lock') }}
       - name: Fetch client assets
         if: matrix.image == 'client'
-        run: bash tools/fetch-assets.sh
+        run: |
+          git checkout -- client/public
+          bash tools/fetch-assets.sh
+
+      # Tags live only in the merge job; this build pushes by digest, so meta
+      # here supplies just the OCI labels.
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }}
-          # The codex variant shares the agent-client package, so it takes a
-          # `codex` tag namespace and never competes for `latest`.
-          flavor: latest=false
-          tags: |
-            type=raw,value=${{ matrix.moving_tag }},enable=${{ github.ref == 'refs/heads/master' }}
-            type=sha,prefix=${{ matrix.tag_prefix }}sha-
-            type=semver,pattern=${{ matrix.tag_prefix }}{{version}}
-            type=semver,pattern=${{ matrix.tag_prefix }}{{major}}.{{minor}}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -100,7 +102,9 @@ jobs:
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+          cache-from: |
+            type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+            ${{ matrix.cache_peer && format('type=gha,scope={0}-{1}', matrix.cache_peer, matrix.platform) || '' }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.platform }}
 
       - name: Export digest
@@ -160,6 +164,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ steps.registry.outputs.owner }}/${{ matrix.package }}
+          # The codex variant shares the agent-client package, so it takes a
+          # `codex` tag namespace and never competes for `latest`.
           flavor: latest=false
           tags: |
             type=raw,value=${{ matrix.moving_tag }},enable=${{ github.ref == 'refs/heads/master' }}

@@ -533,10 +533,14 @@ impl super::GameState {
                         )
                         .await;
                 };
+                // Stock requests are def-only, so sell the lowest enchant first.
                 let Some(idx) = npc_inv
                     .bag
                     .iter()
-                    .position(|i| i.item_def_id == item_def_id)
+                    .enumerate()
+                    .filter(|(_, item)| item.item_def_id == item_def_id)
+                    .min_by_key(|(_, item)| item.enchant)
+                    .map(|(idx, _)| idx)
                 else {
                     drop(inventories);
                     drop(gold_map);
@@ -669,6 +673,13 @@ impl super::GameState {
             price: i64,
         }
 
+        struct ResidentPurchase {
+            item_def_id: String,
+            quantity: u32,
+            enchant: i32,
+            durability: Option<u32>,
+        }
+
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
         let mut requested: HashMap<String, u32> = HashMap::new();
         for req in &items {
@@ -797,44 +808,56 @@ impl super::GameState {
         // Every line is now guaranteed to apply cleanly — mutate. Resident
         // stock carries its authored per-instance modifiers into the buyer's
         // bag; catalog purchases are freshly created at full durability.
-        let mut transferred_items = Vec::new();
-        if is_resident {
+        let resident_purchases = if is_resident {
             let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
-            for (item_def_id, mut remaining) in requested {
+            let mut purchases = Vec::new();
+            for plan in &plans {
+                let mut remaining = plan.qty;
                 while remaining > 0 {
                     let idx = npc_inv
                         .bag
                         .iter()
-                        .position(|i| i.item_def_id == item_def_id)
+                        .enumerate()
+                        .filter(|(_, item)| item.item_def_id == plan.item_def_id)
+                        .min_by_key(|(_, item)| item.enchant)
+                        .map(|(idx, _)| idx)
                         .expect("availability checked above");
                     let take = remaining.min(npc_inv.bag[idx].quantity);
-                    let mut transferred = npc_inv.bag[idx].clone();
-                    transferred.quantity = take;
+                    let enchant = npc_inv.bag[idx].enchant;
+                    let durability = npc_inv.bag[idx].durability;
                     if npc_inv.bag[idx].quantity > take {
                         npc_inv.bag[idx].quantity -= take;
                     } else {
                         npc_inv.bag.remove(idx);
                     }
-                    transferred_items.push(transferred);
+                    purchases.push(ResidentPurchase {
+                        item_def_id: plan.item_def_id.clone(),
+                        quantity: take,
+                        enchant,
+                        durability,
+                    });
                     remaining -= take;
                 }
             }
-        }
+            purchases
+        } else {
+            Vec::new()
+        };
 
         {
             let inv = inventories.get_mut(player_id).expect("checked above");
             if is_resident {
-                for transferred in transferred_items {
-                    let stackable = self.item_defs.stackable(&transferred.item_def_id);
+                for purchase in &resident_purchases {
+                    let stackable = self.item_defs.stackable(&purchase.item_def_id);
                     next_id += stack_into_bag(
                         &mut inv.bag,
                         BagInsert {
                             stackable,
-                            item_def_id: &transferred.item_def_id,
-                            enchant: transferred.enchant,
+                            item_def_id: &purchase.item_def_id,
+                            enchant: purchase.enchant,
                             first_instance_id: next_id,
-                            quantity: transferred.quantity,
-                            durability: transferred.durability,
+                            quantity: purchase.quantity,
+                            durability: purchase.durability,
                         },
                     );
                 }

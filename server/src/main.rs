@@ -227,11 +227,8 @@ struct Args {
     skill_balance_report_secs: u64,
 }
 
-/// Normalize an optional CLI/env value, treating blank as absent.
-///
-/// Compose `.env` files spell an unset optional key as `KEY=`, and clap
-/// reports that as `Some("")` rather than `None`. Without this the server
-/// would reject the empty string as a too-short token and refuse to start.
+/// Treat blank CLI/env values as absent: compose `.env` files spell an unset
+/// optional key as `KEY=`, which clap reports as `Some("")`.
 fn optional_value(raw: Option<&str>) -> Option<&str> {
     raw.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -250,7 +247,7 @@ struct StatePaths {
 fn state_paths(state_dir: &Path) -> StatePaths {
     StatePaths {
         db: state_dir.join("game_data.db"),
-        npc_token: state_dir.join("npc_token"),
+        npc_token: state_dir.join(onlinerpg_shared::NPC_TOKEN_FILENAME),
         housing: state_dir.join("housing"),
         announcements: state_dir.join("announcements"),
     }
@@ -778,10 +775,6 @@ mod tests {
         assert_eq!(args.npc_data_dir, PathBuf::from("/srv/npcs"));
     }
 
-    /// Compose `.env` files spell an unset optional key as `KEY=`, so the
-    /// server receives an empty string rather than nothing at all. Without
-    /// this the token length check rejects it and the container never starts,
-    /// and blank Google client ids get counted as configured sign-in clients.
     #[test]
     fn blank_optional_values_are_treated_as_absent() {
         assert_eq!(optional_value(None), None);
@@ -864,7 +857,6 @@ mod tests {
         );
     }
 
-    #[cfg(test)]
     fn walk_relative(base: &Path, dir: &Path) -> Vec<String> {
         let mut found = Vec::new();
         let Ok(entries) = std::fs::read_dir(dir) else {

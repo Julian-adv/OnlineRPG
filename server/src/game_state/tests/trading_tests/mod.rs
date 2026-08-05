@@ -74,3 +74,18 @@ async fn setup_resident_trade(
         },
     );
 }
+
+fn enchanted_bag_item(
+    instance_id: u64,
+    item_def_id: &str,
+    quantity: u32,
+    enchant: i32,
+) -> ItemInstance {
+    ItemInstance {
+        instance_id,
+        item_def_id: item_def_id.to_string(),
+        quantity,
+        enchant,
+        durability: None,
+    }
+}

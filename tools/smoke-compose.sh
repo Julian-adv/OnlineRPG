@@ -44,9 +44,6 @@ echo "==> smoke testing $BASE"
 check "client serves index.html" \
     bash -c "curl -fsS '$BASE/' | grep -q '<div id=\"app\"'"
 
-check "wasm bundle is reachable" \
-    bash -c "curl -fsS -o /dev/null '$BASE/' -w '%{http_code}' | grep -q '^200$'"
-
 # Proves nginx resolves and reaches the server's REST port.
 check "/api proxies to the terrain REST API" \
     curl -fsS -o /dev/null "$BASE/api/terrain/height/0/0"

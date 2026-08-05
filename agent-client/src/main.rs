@@ -161,8 +161,9 @@ fn resolve_npc_token(config_value: Option<String>) -> anyhow::Result<String> {
     if let Some(token) = config_value {
         return Ok(token);
     }
-    // Server writes the token at the repo root; our cwd is one level down.
-    let path = format!("../{}", onlinerpg_shared::NPC_TOKEN_PATH_FROM_ROOT);
+    // Server writes the token under its default state dir at the repo root;
+    // our cwd is one level down.
+    let path = format!("../data/{}", onlinerpg_shared::NPC_TOKEN_FILENAME);
     let token = std::fs::read_to_string(&path)
         .map_err(|e| {
             anyhow::anyhow!(
