@@ -18,16 +18,18 @@ COPY agent-client/ agent-client/
 COPY tools/cargo-build-data.rs tools/
 COPY data-src/ data-src/
 
-# Mirror of server.Dockerfile: stub the members we are not building so cargo can
-# still resolve the workspace without pulling their sources into this context.
 COPY server/Cargo.toml server/
 COPY tools/terrain-gen/Cargo.toml tools/terrain-gen/
-RUN mkdir -p server/src tools/terrain-gen/src \
-    && echo 'fn main() {}' > server/src/main.rs \
-    && echo 'fn main() {}' > server/build.rs \
-    && echo 'fn main() {}' > tools/terrain-gen/src/main.rs
+COPY docker/stub-members.sh docker/
+RUN sh docker/stub-members.sh server tools/terrain-gen
 
-RUN cargo build --release --locked -p agent-client
+# The cache mounts keep dependency compiles out of the layer, so the binary
+# must be copied out within the same RUN.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=target-agent-client,target=/build/target \
+    cargo build --release --locked -p agent-client \
+    && mkdir -p /out \
+    && cp target/release/agent-client /out/
 
 FROM debian:bookworm-slim AS slim
 RUN apt-get update \
@@ -36,8 +38,8 @@ RUN apt-get update \
     && groupadd -g 10001 openmmo \
     && useradd -u 10001 -g 10001 -m -s /usr/sbin/nologin openmmo
 
-COPY --from=builder /build/target/release/agent-client /usr/local/bin/
-COPY docker/agent-entrypoint.sh /usr/local/bin/
+COPY --from=builder /out/agent-client /usr/local/bin/
+COPY docker/entrypoint-lib.sh docker/agent-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/agent-entrypoint.sh
 
 # config.toml is gitignored deployment state and arrives as a bind mount.
@@ -54,7 +56,6 @@ WORKDIR /app/agent-client
 ENTRYPOINT ["/usr/local/bin/agent-entrypoint.sh"]
 
 FROM slim AS codex
-USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
@@ -62,4 +63,3 @@ RUN apt-get update \
     && npm install -g @openai/codex \
     && npm cache clean --force \
     && rm -rf /var/lib/apt/lists/*
-WORKDIR /app/agent-client

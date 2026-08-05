@@ -3,6 +3,11 @@
 # Builds the web bundle (Svelte + wasm) and serves it from nginx.
 # Binary assets must be fetched from the pinned Hugging Face dataset first.
 
+# The bundle is built with this placeholder client id (Vite inlines
+# import.meta.env at build time) and the entrypoint substitutes the
+# deployment's value at startup. Defined once here for both stages.
+ARG CLIENT_ID_PLACEHOLDER=__GOOGLE_CLIENT_ID__
+
 FROM node:22-bookworm AS builder
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -12,7 +17,8 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Pinned so a wasm-pack release cannot silently change the emitted glue code.
 ARG WASM_PACK_VERSION=0.15.0
-RUN cargo install wasm-pack --version "${WASM_PACK_VERSION}" --locked
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    cargo install wasm-pack --version "${WASM_PACK_VERSION}" --locked
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
@@ -33,40 +39,38 @@ COPY agent-client/data/animation_durations.json agent-client/data/
 COPY agent-client/Cargo.toml agent-client/
 COPY server/Cargo.toml server/
 COPY tools/terrain-gen/Cargo.toml tools/terrain-gen/
-RUN mkdir -p agent-client/src server/src tools/terrain-gen/src \
-    && echo 'fn main() {}' > agent-client/src/main.rs \
-    && echo 'fn main() {}' > agent-client/build.rs \
-    && echo 'fn main() {}' > server/src/main.rs \
-    && echo 'fn main() {}' > server/build.rs \
-    && echo 'fn main() {}' > tools/terrain-gen/src/main.rs
-COPY client/ client/
+COPY docker/stub-members.sh docker/
+RUN sh docker/stub-members.sh agent-client server tools/terrain-gen
 
-WORKDIR /build
-RUN set -eu; \
-    while IFS= read -r line; do \
-        case "$line" in \
-            "file "*) \
-                entry=${line#file }; \
-                hash=${entry%% *}; \
-                path=${entry#* }; \
-                test -f "$path" || { echo "error: missing asset: $path" >&2; exit 1; }; \
-                actual=$(sha256sum "$path" | cut -d ' ' -f 1); \
-                test "$actual" = "$hash" || { echo "error: checksum mismatch: $path" >&2; exit 1; }; \
-                ;; \
-        esac; \
-    done < assets.lock
+# The public assets are ~750 MB and change rarely; keeping them (and their
+# checksum pass) in their own layers means source edits reuse the cache.
+COPY client/public/ client/public/
+RUN sed -n 's/^file \([0-9a-f]*\) /\1  /p' assets.lock | sha256sum -c --quiet
 
+COPY client/package.json client/package-lock.json client/
 WORKDIR /build/client
 RUN npm ci
-# Vite inlines import.meta.env at build time, so the client ID cannot be a
-# runtime env var. Bake a placeholder and let the entrypoint substitute the
-# deployment's value into the emitted bundle.
-ENV VITE_GOOGLE_CLIENT_ID=__GOOGLE_CLIENT_ID__
-RUN npm run build
+
+# Enumerated so the asset layer above is not re-copied. A new build input at
+# the client root must be added here.
+COPY client/index.html client/vite.config.ts client/svelte.config.js \
+     client/tsconfig.json client/tsconfig.app.json client/tsconfig.node.json ./
+COPY client/src/ src/
+
+ARG CLIENT_ID_PLACEHOLDER
+ENV VITE_GOOGLE_CLIENT_ID=${CLIENT_ID_PLACEHOLDER}
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,id=target-wasm,target=/build/target \
+    npm run build
 
 FROM nginx:alpine
 COPY --from=builder /build/client/dist /usr/share/nginx/html
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY docker/client-entrypoint.sh /docker-entrypoint.d/40-resolver.sh
-RUN chmod +x /docker-entrypoint.d/40-resolver.sh
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY docker/client-entrypoint.sh /docker-entrypoint.d/40-client-id.sh
+RUN chmod +x /docker-entrypoint.d/40-client-id.sh
+ARG CLIENT_ID_PLACEHOLDER
+# The entrypoint needs the same placeholder the bundle was built with, and the
+# base image needs the resolver export for the template's ${NGINX_LOCAL_RESOLVERS}.
+ENV CLIENT_ID_PLACEHOLDER=${CLIENT_ID_PLACEHOLDER} \
+    NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 EXPOSE 80

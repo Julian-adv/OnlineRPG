@@ -2,6 +2,8 @@
 # Validates the bind-mounted config before starting, then drops privileges.
 set -eu
 
+. /usr/local/bin/entrypoint-lib.sh
+
 CONFIG=data/config.toml
 
 # Docker silently creates a directory when a bind-mount source is missing, so a
@@ -23,6 +25,6 @@ fi
 
 # npcs/ is mounted read-only from the server; only the cache is ours to write.
 mkdir -p data/cache
-chown -R 10001:10001 data/cache
+own_volume data/cache
 
 exec gosu openmmo agent-client "$@"

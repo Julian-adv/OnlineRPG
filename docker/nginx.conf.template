@@ -1,15 +1,19 @@
 # Serves the built client and proxies the game's two backend ports.
 # Mirrors client/vite.config.ts so dev and container behave the same.
+#
+# Rendered to conf.d/default.conf at startup by the base image's envsubst
+# entrypoint, which substitutes only *defined* env vars — the nginx runtime
+# $vars below pass through untouched.
 
 server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
 
-    # Rewritten at startup by /docker-entrypoint.d/40-resolver.sh from
-    # /etc/resolv.conf. Hardcoding Docker's 127.0.0.11 would break on any
-    # non-default network mode.
-    resolver __RESOLVER__ valid=10s ipv6=off;
+    # Exported from /etc/resolv.conf by the base image (see
+    # NGINX_ENTRYPOINT_LOCAL_RESOLVERS in client.Dockerfile). Hardcoding
+    # Docker's 127.0.0.11 would break on any non-default network mode.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
 
     # Resolving the upstream through a variable defers DNS to request time, so
     # nginx starts even while the server container is still coming up. A
