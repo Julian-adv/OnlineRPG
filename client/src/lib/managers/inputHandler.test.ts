@@ -9,7 +9,11 @@ vi.mock('../wasm/onlinerpg_shared', () => ({
   max_cast_distance_m: () => MAX_CAST_DISTANCE_M,
 }))
 
-import { inputHandler, type RaycastContext } from './inputHandler'
+import {
+  inputHandler,
+  shouldSuppressContextMenu,
+  type RaycastContext,
+} from './inputHandler'
 import { resetFishingStore } from '../stores/fishingStore'
 
 const RECT = { left: 0, top: 0, width: 100, height: 100 }
@@ -175,5 +179,47 @@ describe('processCanvasClick cast-vs-walk', () => {
     )
 
     expect(intent.type).toBe('move_to_ground')
+  })
+})
+
+describe('shouldSuppressContextMenu', () => {
+  it('always suppresses on the game canvas, even while text is selected', () => {
+    expect(
+      shouldSuppressContextMenu({
+        onGameCanvas: true,
+        typingTarget: false,
+        textSelected: true,
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses on plain HUD targets', () => {
+    expect(
+      shouldSuppressContextMenu({
+        onGameCanvas: false,
+        typingTarget: false,
+        textSelected: false,
+      })
+    ).toBe(true)
+  })
+
+  it('keeps the paste menu on text fields', () => {
+    expect(
+      shouldSuppressContextMenu({
+        onGameCanvas: false,
+        typingTarget: true,
+        textSelected: false,
+      })
+    ).toBe(false)
+  })
+
+  it('keeps the copy menu while HUD text is selected', () => {
+    expect(
+      shouldSuppressContextMenu({
+        onGameCanvas: false,
+        typingTarget: false,
+        textSelected: true,
+      })
+    ).toBe(false)
   })
 })
