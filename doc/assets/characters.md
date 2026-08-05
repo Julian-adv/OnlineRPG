@@ -54,6 +54,20 @@
 - guard — 경비병 NPC Karl (`guard.glb`, CharacterClass::Guard); 원화 `../images/karl-concept.png`, 3D는 Meshy.ai (라이센스는 위 License 표 참조)
 - npc_woman — 상인 NPC Rica (`npc_woman.glb`); 원화 `../images/rica-concept.png` (Gemini) (커밋 fb299e7)
 
+## 텍스처 재패킹 (2026-08-06)
+
+Meshy/Tripo 내보내기가 노멀·metallicRoughness 맵을 2048² RGBA PNG로 임베드해
+캐릭터당 12~15MB였다. `tools/repack-glb-textures.py`로 전체 재패킹:
+노멀·MR은 JPEG 4:4:4 1024²(q92/q90), 베이스컬러는 해상도 유지한 채 JPEG q92
+(female_knight만 PNG였음), 플랫 노멀맵(knight, npc_woman)과 알파가 상수라
+무의미했던 specularTexture(female_knight)는 제거.
+합계 168.5MB → 33.9MB, 텍스처 VRAM 900MB → 464MB.
+스크립트는 멱등이라 재실행해도 재인코딩하지 않는다.
+
+베이스컬러 축소는 보류. `--base-max 1024`면 23.5MB/VRAM 229MB까지 내려가지만
+선택 화면 크기에서 사슬갑옷·문장 같은 패턴 면이 뭉갠다(guard 45dB가 최악).
+1536은 NPOT 리샘플 탓에 1024보다도 나쁘니 중간값은 없다.
+
 ## License (AI 제작 캐릭터)
 
 위 AI 워크플로우로 만든 플레이어 캐릭터 전부(knight, barbarian, caveman, priest, rogue, ranger, valkyrie의 male/female)의 도구별 라이센스. 3D 도구는 female_knight만 Tripo, 그 외 전부 Meshy. (조사 2026-07, 약관 변경 가능)
