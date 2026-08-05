@@ -890,7 +890,7 @@ impl super::GameState {
         // the guaranteed range.
         let roll_bp = rand::thread_rng().gen_range(0..ENCHANT_BP_SCALE);
 
-        let (snapshot, message) = {
+        let (snapshot, message, enchant_log) = {
             let mut inventories = self.inventories.write().await;
             let inv = match inventories.get_mut(player_id) {
                 Some(inv) => inv,
@@ -919,19 +919,32 @@ impl super::GameState {
                 .get_mut(&EquipSlot::MainHand)
                 .expect("checked above");
             let name = self.item_name(&weapon.item_def_id);
-            let message = if roll_bp >= enchant_success_bp(weapon.enchant) {
+            let (message, enchant_log) = if roll_bp >= enchant_success_bp(weapon.enchant) {
+                let log = format!(
+                    "destroyed {} enchanting at +{}",
+                    weapon.item_def_id, weapon.enchant
+                );
                 inv.equipped.remove(&EquipSlot::MainHand);
-                format!("The runes flare out of control — your {name} bursts into glittering dust!")
+                (
+                    format!(
+                        "The runes flare out of control — your {name} bursts into glittering dust!"
+                    ),
+                    log,
+                )
             } else {
                 weapon.enchant += 1;
-                format!(
-                    "The runes sink into your {name}, honing its edge. (+{})",
-                    weapon.enchant
+                (
+                    format!(
+                        "The runes sink into your {name}, honing its edge. (+{})",
+                        weapon.enchant
+                    ),
+                    format!("enchanted {} to +{}", weapon.item_def_id, weapon.enchant),
                 )
             };
-            (inv.clone(), message)
+            (inv.clone(), message, enchant_log)
         };
 
+        info!("{} {enchant_log}", self.player_name_of(player_id).await);
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
         self.send_system_message(player_id, message).await;
