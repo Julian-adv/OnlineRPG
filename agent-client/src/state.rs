@@ -546,8 +546,8 @@ impl SharedState {
         })
     }
 
-    /// Check all nearby players and emit an agent event for any player
-    /// that just entered NEARBY_PLAYER_RADIUS for the first time.
+    /// Emit an agent event for any player on our floor that just entered
+    /// NEARBY_PLAYER_RADIUS for the first time.
     fn check_nearby_player_proximity(&mut self) {
         let self_pos = match self.self_player.as_ref() {
             Some(p) => &p.position,
@@ -559,8 +559,7 @@ impl SharedState {
         };
 
         let arrived: Vec<(PlayerId, String)> = self
-            .nearby_players
-            .iter()
+            .players_on_my_floor()
             .filter(|(pid, _)| *pid != self_id && !self.seen_nearby_players.contains(pid))
             .filter_map(|(pid, player)| {
                 let dist = crate::geom::PlanarDelta::between(&player.position, self_pos).dist;
