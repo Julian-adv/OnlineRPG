@@ -1,362 +1,283 @@
-# Skill System
+# Skill System Design
 
-OpenMMO uses a small, use-based progression model: a character improves a
-trained skill by completing legitimate server-resolved actions that use it.
-Ultima Online is inspiration for that broad idea, not a rules specification.
-OpenMMO keeps its own combat, level, persistence, protocol, and client model.
+> Status: **Proposed**. This document defines the intended gameplay contract.
+> Implementation and balance changes should be reviewed separately after the
+> design is accepted.
 
-## Shared model
+OpenMMO uses a small, use-based progression model: characters improve skills by
+completing legitimate actions that the server accepts and resolves. Ultima
+Online is inspiration for that broad idea, not a rules specification. OpenMMO
+keeps its own combat, character-level, persistence, protocol, and client model.
 
-All trained skills use `SkillId`, `SkillProgress`, and `Skills` from
-`shared/src/skills.rs`. Skill levels run from 0 through 30. Reaching level `n`
-costs `100 × n²` XP for that level; `skill_xp_for_level` supplies the cumulative
-threshold. XP clamps at the level-30 threshold.
+## Goals
 
-The map is sparse. A fresh character has no row for an untrained skill, and a
-missing entry reads as level 0 with 0 XP. The first valid XP award creates an
-entry even when its total is still below level 1. Fishing, One-Handed Sword,
-Dagger, Spear, Shield, Healing, Leather Armor, Mail Armor, Plate Armor, and
-Padded Armor, and Hybrid Armor coexist in the same generic map.
+- Reward real gameplay instead of client-declared training events.
+- Keep skill definitions explicit and data-authored.
+- Use one progression, persistence, and messaging model across skill families.
+- Keep bonuses small enough that equipment and character attributes remain
+  meaningful.
+- Make browser, agent, and server behavior describe the same rules.
+- Add one bounded vertical slice at a time so balance can be measured before
+  another family expands.
 
-## Phase 1: One-Handed Sword
+## Non-goals
 
-The wire id is `one_handed_sword`, displayed as **One-Handed Sword**. Items are
-classified explicitly by the optional `weaponSkill` field in
-`data-src/items.csv`; names, model paths, and damage dice are not used to infer
-the skill.
+The initial system does not add a total skill-point cap, skill locks, decay,
+trainers, skill books, random gain chance, difficulty-based gain, diminishing
+returns, PvP training, target-dummy training, class restrictions, active combat
+abilities, or skill-based critical hits. Those require separate designs.
 
-Mapped items:
+Equipment condition, repair, and resale are defined in
+[DURABILITY.md](DURABILITY.md). Using a finished product does not automatically
+train the profession that might eventually make that product.
 
-- `iron_sword`
-- `worn_iron_sword`
-- `goblin_sword`
-- `small_sword`
+## Shared progression model
 
-In Phase 1, Dagger, spear, torch variants, fishing rod, and unarmed attacks were
-not mapped. At startup, a `weaponSkill` assignment must deserialize to a known
-`SkillId`, be supported by the current phase, belong to a main-hand weapon, and
-have positive `NdM` damage dice.
+All trained skills use one stable wire identifier and one sparse progress map.
+Skill levels run from 0 through 30. Reaching level `n` costs `100 × n²` XP for
+that level, and the cumulative threshold is the sum of those per-level costs.
+XP clamps at the level-30 threshold.
 
-### Accuracy
+A missing map entry means level 0 with 0 XP. The first valid award creates the
+entry, even when the award is not enough to reach level 1. This avoids creating
+rows for skills a character has never used.
 
-One-Handed Sword affects the attack roll only:
+The proposed shared skill set is:
 
-| Skill level | Attack bonus |
-| ----------- | -----------: |
-| 0–4         |           +0 |
-| 5–14        |           +1 |
-| 15–24       |           +2 |
-| 25–30       |           +3 |
+| Domain     | Skill identifiers                                                            |
+| ---------- | ---------------------------------------------------------------------------- |
+| Gathering  | `fishing`                                                                    |
+| Weapons    | `one_handed_sword`, `dagger`, `spear`                                        |
+| Defense    | `shield`                                                                     |
+| Treatment  | `healing`                                                                    |
+| Body armor | `padded_armor`, `leather_armor`, `mail_armor`, `plate_armor`, `hybrid_armor` |
 
-The shared weapon-skill bonus function clamps inputs above 30 and is exported
-through WASM so the browser shows the same value the server uses.
-The player formula is:
+Adding another identifier is a protocol and gameplay decision. Unknown item
+metadata must fail validation rather than silently creating a new skill.
 
-```text
-level attack bonus + Strength modifier + weapon enchant + weapon skill bonus
-```
+## Server authority
 
-Skill does not change damage. Damage remains weapon dice plus Strength modifier
-plus weapon enchant.
+The server owns every input that determines a skill award:
 
-### XP
+- the acting character and authoritative equipment;
+- target existence, life state, floor, range, and ownership;
+- cooldown or action-window acceptance;
+- hit, miss, damage, healing, and kill outcomes;
+- the mapped skill, current progress, bonus, and XP amount.
 
-The provisional Phase 1 award is centralized by attack outcome:
+The client may request an action, but it never supplies the trained skill,
+result, level, bonus, or XP. Rejected, stale, duplicated, out-of-range,
+cross-floor, or otherwise invalid requests award nothing.
 
-```text
-accepted resolved miss = 5 XP
-accepted resolved hit  = 10 XP
-killing blow           = 20 XP total
-```
+XP is attached to a resolved gameplay event, not to an animation packet,
+inventory click, product consumption, or client prediction.
 
-Equivalently: `5 + (hit ? 5 : 0) + (killing_blow ? 10 : 0)`.
+## Explicit item mappings
 
-The server grants XP only when the attacker exists and is alive, the target is
-alive and on the same floor, melee range is valid, the per-player attack window
-is atomically accepted, the captured authoritative main-hand item maps to
-One-Handed Sword, and the server resolves the attack. Invalid, stale,
-out-of-range, cross-floor, dead-attacker, cooldown-rejected, and duplicate kill
-requests grant no XP. Only the transition from positive HP to zero earns the
-kill portion.
+Skills are assigned by item metadata, never inferred from names, icons, model
+paths, material strings, or damage dice.
 
-Player attack cadence is authoritative and per attacker, not per target. The
-server uses a monotonic 1.533-second window based on the visible `slash1`
-animation. Player, target, floor, and range are checked before the window is
-claimed; switching targets cannot bypass it. Cooldown state is removed with the
-player.
+| Metadata                           | Purpose                                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
+| `weaponSkill`                      | Main-hand weapon accuracy family                                                       |
+| `defenseSkill`                     | Shield or primary body-armor proficiency                                               |
+| `useSkill`                         | Skill used by an authoritative item action, such as Bandage treatment                  |
+| `armorConstruction`                | Padded, Leather, Mail, Plate, or Hybrid body-armor identity                            |
+| `equipmentKind` / `equipmentLayer` | Distinguish body armor, shields, clothing, accessories, held items, and primary layers |
 
-## Persistence and protocol
+Startup validation must reject mappings whose slot, equipment kind, layer,
+construction, dice, Guard, or protection profile is incompatible with the
+declared skill.
 
-One-Handed Sword uses the existing `character_skills` rows, generic dirty set,
-batch save, logout/session-replacement detach, shutdown flush, login load, and
-unknown-row-preserving upsert. It has no table, character column, or save path
-of its own.
+## Shared bonus bands
 
-The existing private `SkillsUpdate` and `SkillXpGained` messages carry all
-skills. Protocol version 27 identifies Hybrid Armor and the strict handshake
-refuses older clients. Protocol 26 introduced Padded Armor, protocol 25
-introduced Plate Armor, protocol 24 introduced Mail Armor, protocol 19
-introduced Leather Armor, protocol 18 introduced Healing, and protocol 17
-introduced Shield.
+Weapon accuracy, Shield Guard, primary-armor Guard, and Bandage treatment use
+the same small four-band progression:
 
-## Browser and agent parity
+| Skill level | Bonus |
+| ----------- | ----: |
+| 0–4         |    +0 |
+| 5–14        |    +1 |
+| 15–24       |    +2 |
+| 25–30       |    +3 |
 
-The browser reuses the existing skills store and Character Skills tab. It only
-renders trained map entries, shows level/progress, displays shared accuracy,
-Guard, or treatment bonuses, marks level 30 as max with a complete bar, and
-labels mapped item tooltips with the relevant action skill. Character Stats
-uses the exact server-authored Guard and summarizes the equipped primary body
-armor's mapped skill and authored physical profile; Broken armor remains named
-but is explicitly inactive.
+The meaning of the bonus depends on the skill family. A weapon skill adds to
+the attack roll, Shield and armor skills add to Guard, and Healing adds HP to a
+valid Bandage treatment. No initial skill adds directly to weapon damage.
 
-The agent-client sends the same target-only attack request, follows the same
-animation cadence, accepts generic skill snapshots and deltas, and stores them
-without waking the LLM for every XP event. It also stores `GuardUpdated` as
-state-only data and exposes the exact effective Guard beside its semantic
-equipment summary without waking the LLM for the update itself. Neither client
-supplies equipment, skill level, outcome, bonus, Guard, or XP to the server.
+## Weapon skills
 
-## Phase 1 limits
+### Mappings and combat profiles
 
-Phase 1 adds no skill-based damage, critical hits, attack-speed bonus, special
-attacks, PvP training, training targets, difficulty scaling, diminishing
-returns, random gain chance, total skill cap, locks, decay, trainers, skill
-books, weapon requirements, or future skill placeholders. Fishing balance and
-character XP/level rules are unchanged. Future work belongs in
-`SKILL_SYSTEM_ROADMAP.md` and requires a separately approved vertical slice.
+| Skill            | Initial mapped items                                   | Reach | Authoritative attack window |
+| ---------------- | ------------------------------------------------------ | ----: | --------------------------: |
+| One-Handed Sword | Iron Sword, Worn Iron Sword, Goblin Sword, Small Sword |   2 m |                     1.533 s |
+| Dagger           | Dagger                                                 |   2 m |                     1.533 s |
+| Spear            | Spear                                                  |   3 m |                     2.467 s |
 
-## Phase 2: Stabilization
+The server captures the equipped main-hand definition before resolution. The
+browser and agent use the same authored profile for chase range and presentation,
+but only the server accepts the action window.
 
-Phase 2 begins with opt-in aggregate server reporting rather than another
-skill or an immediate balance change. The report measures outcomes by skill
-band, target difficulty, configured monster type, and client kind, along with
-attack cadence, rejection counts, skill messages, new rows, and save batches.
-It contains no player identifiers and is disabled by default.
-
-The baseline, report flag, field definitions, and review procedure are in
-`doc/SKILL_BALANCE.md`. Phase 1 XP, accuracy, and cooldown values remain
-provisional until gameplay data supports a reviewed adjustment.
-
-## Phase 3: Dagger
-
-Phase 3 adds exactly one weapon skill with wire id `dagger` and display name
-**Dagger**. Only the existing `dagger` item maps to it. During Phase 3, Spear,
-torches, fishing rod, and unarmed attacks remained unmapped.
-
-Dagger reuses the generic XP curve, sparse persistence rows, private protocol
-messages, Skills tab, item tooltip, combat profile, cooldown, and aggregate
-balance reporting. Accepted misses, hits, and killing blows provisionally use
-the same 5/10/20 XP awards and +0/+1/+2/+3 accuracy ladder as One-Handed Sword;
-damage remains the Dagger item's `1d4` plus Strength and enchantment.
-
-The item currently reuses `weapons/sword.glb` and the existing `slash1`
-animation, so it keeps the same 2-meter melee validation and 1.533-second
-authoritative cadence. This is a content-backed provisional choice, not a
-promise that every future weapon family shares the same animation or range.
-
-The server captures the authoritative main-hand definition before resolving an
-attack and awards XP only to its explicit skill. The browser and agent-client
-consume the same generic snapshots/deltas; neither can choose the awarded
-skill. Aggregate reports include a per-skill breakdown without player identity.
-
-Phase 3 was started under an explicit project-owner override of Phase 2's
-representative-data completion gate. That override permits this vertical slice;
-it does not approve balance changes or mark the Phase 2 review complete.
-
-## Phase 4: Spear
-
-Phase 4 adds the `spear` wire skill and maps only the existing `spear` item.
-The pinned `weapons/spear.glb` asset uses the dedicated `slash3` combat clip.
-Asset sampling places its forward tip strike at about 1.060 seconds; the full
-clip is 2.467 seconds. Browser hit, miss, and damage presentation use those
-Spear timings.
-
-Spear has a server-authoritative 3-meter melee reach and 2.467-second attack
-window. The browser click/chase controller and agent chase/attack loop read the
-same shared profile. Sword and Dagger retain `slash1`, 2 meters, and 1.533
-seconds. Range and cadence are captured with the authoritative equipped weapon
-before each server-resolved attack.
-
-Spear provisionally reuses the +0/+1/+2/+3 accuracy ladder and 5/10/20 XP
-awards. Skill does not add damage: the Spear item still deals `1d6` plus
-Strength and enchantment. Sparse persistence, generic messages, Skills UI,
-tooltips, no-identity metrics, and agent snapshots/deltas require no
-family-specific storage or protocol path.
-
-## Phase 5: Shield
-
-Phase 5 adds one defensive skill with wire id `shield` and display name
-**Shield**. The existing `wooden_shield` and `raven_shield` items map through
-the explicit optional `defenseSkill` field. A mapping is valid only for
-off-hand armor with positive item Guard; torches, helmets, rings, and other
-armor remain unmapped.
-
-Effective Guard stays readable and is calculated once by the server:
+The attack formula is:
 
 ```text
-base attribute Guard + every equipped item's Guard + active Shield skill bonus
+character-level attack bonus
++ Strength modifier
++ weapon enchantment
++ mapped weapon-skill bonus
 ```
 
-The base attribute Guard is still the character-roll value derived from DEX;
-Shield does not recalculate DEX or replace that term.
+Damage remains the weapon dice plus Strength modifier and enchantment. Weapon
+skill does not change damage in the initial design.
 
-The item value and trained value are separate terms. A Wooden Shield contributes
-its item Guard +1 exactly once; Shield levels 0–4/5–14/15–24/25–30 add
-+0/+1/+2/+3 while a mapped shield is equipped. Removing or replacing the
-shield removes only the trained modifier. `GuardUpdated` carries the exact
-resolved number on join, equipment changes, and skill-bonus thresholds.
+### Weapon XP
 
-Shield training is owned by the server's monster-attack resolution. After the
-monster ownership, alive, floor, reach, and per-monster cooldown gates accept
-an attack against a living defender, a mapped equipped shield earns 10 XP when
-the monster misses and 5 XP when it hits. A failed defense still teaches, but
-an out-of-range, cross-floor, stale, unowned, cooldown-replayed, or unmapped
-request earns nothing. The requesting browser or agent supplies neither the
-shield, Guard, result, skill level, nor XP amount.
+Accepted server-resolved attacks award:
 
-Shield reuses the generic sparse rows, dirty persistence, snapshots/deltas,
-Skills UI, tooltip metadata, and no-identity balance report. It adds no block
-animation, damage reduction, reflected damage, active parry packet, PvP
-training, or second defensive family.
+| Outcome      | Total XP |
+| ------------ | -------: |
+| Miss         |        5 |
+| Hit          |       10 |
+| Killing blow |       20 |
 
-## Phase 6: Healing
+Equivalently, the award is `5 + (hit ? 5 : 0) + (killing blow ? 10 : 0)`.
+Only the authoritative transition from positive HP to zero earns the killing
+blow portion. Switching targets cannot bypass the per-attacker action window.
 
-Phase 6 adds one noncombat skill with wire id `healing` and display name
-**Healing**. Healing represents applying treatment, not consuming a finished
-medical product. Only the Bandage maps through the explicit optional
-`useSkill` field. A valid mapping must be a consumable `bandage` with positive
-dice. Healing Potions keep their existing instant-heal path but have no
-`useSkill`; fish likewise heal without training. Scrolls and other consumables
-remain unmapped.
+## Shield
 
-A valid Healing action requires a connected, living, injured player and the
-mapped Bandage instance in that player's bag. This slice supports
-self-treatment only. The server atomically consumes one Bandage before
-applying its authoritative roll, so concurrent duplicate `UseItem` packets
-cannot reuse an instance. Full-health, defeated, missing, unusable, and
-unmapped item requests award no Healing XP.
+Only explicitly mapped off-hand shields with positive item Guard activate the
+Shield skill. Torches, weapons, accessories, and other armor do not.
 
-A Bandage restores `2d4` base HP. Training adds a small flat modifier:
-
-| Skill level | Healing bonus |
-| ----------- | ------------: |
-| 0–4         |         +0 HP |
-| 5–14        |         +1 HP |
-| 15–24       |         +2 HP |
-| 25–30       |         +3 HP |
-
-Healing cannot exceed max HP. XP equals the HP actually restored after that
-cap, so treating a one-point scratch earns 1 XP rather than the uncapped dice
-roll. The existing generic curve converts that XP into levels. A capped skill
-still permits Bandage use but stops adding XP or messages. A Healing Potion
-always uses only its own `6d4` roll regardless of Healing level and awards no
-Healing XP.
-
-Healing reuses sparse skill rows, dirty persistence, snapshots/deltas, the
-Skills tab, agent state, tooltip metadata, and aggregate no-identity metrics.
-It adds no party-target treatment, resurrection, spellcasting, treatment
-channel, crafting, potion recipes, class restriction, or additional
-profession. Magical healing remains a future spell-system concern; Alchemy
-may later govern potion manufacture without turning potion drinking into
-Healing training.
-
-## Armor vertical slices: Padded, Leather, Mail, Plate, and Hybrid Armor
-
-Construction-specific armor skills do not introduce Light/Heavy buckets.
-Worn body armor is classified by `armorConstruction` as `padded`, `leather`,
-`mail`, `plate`, or `hybrid`; shields, clothing, and accessories have no
-body-armor construction. Equippable items also declare `equipmentKind` and
-`equipmentLayer`, while garments declare `garmentForm`.
-
-The first slice maps the `leather_armor` chest to wire id `leather_armor` and
-display name **Leather Armor**. Protocol v24 adds `chain_mail` through wire id
-`mail_armor` and display name **Mail Armor**. Protocol v25 adds `breastplate`
-through wire id `plate_armor` and display name **Plate Armor**. Protocol v26
-adds `padded_battle_robe` through wire id `padded_armor` and display name
-**Padded Armor**. Protocol v27 adds `brigandine_coat` through wire id
-`hybrid_armor` and display name **Hybrid Armor**. A shared mapping binds each
-skill to its matching construction, and startup validation rejects a wrong
-kind, slot, primary layer, construction, or an item with neither Guard nor
-physical protection. Future construction values still require an explicit,
-approved mapping rather than becoming skills automatically.
-
-The primary chest anchors the active armor skill. Leather boots, gloves, pants,
-and helmets do not activate Leather Armor; Plate helmets, gauntlets, greaves,
-and boots do not activate either Mail or Plate Armor. Mixed pieces therefore
-cannot create several armor-skill events from one hit. The Padded Battle Robe is
-an armored robe and maps Padded Armor despite having no item Guard; the ordinary
-Traveler Robe remains clothing with no physical skill. The Brigandine Coat is
-body armor and maps Hybrid Armor because of its authored Hybrid construction;
-the word “coat” and garment form alone never establish skill eligibility.
-
-Authored `bodyCoverage` records whether a garment spans head, torso, arms,
-hands, legs, or feet, but it does not select or train a skill. A Traveler's Robe
-and Padded Battle Robe both span torso/arms/legs while only the explicitly
-constructed and mapped Padded item activates Padded Armor. Extremity coverage
-therefore remains semantic foundation rather than a second skill trigger.
-
-Any mapped armor skill adds one trained Guard term while its chest is
-functional and equipped:
-
-| Skill level | Guard bonus |
-| ----------- | ----------: |
-| 0–4         |          +0 |
-| 5–14        |          +1 |
-| 15–24       |          +2 |
-| 25–30       |          +3 |
-
-The item Guard and trained Guard are separate and each is applied once. Shield
-may be active at the same time, but its item and skill terms remain separate.
-The authoritative total is:
+Effective Guard is:
 
 ```text
 DEX-derived base Guard
-+ every equipped item's Guard
++ Guard from equipped items
 + active Shield skill bonus
 + active primary-armor skill bonus
 ```
 
-The active mapped armor skill trains only when an accepted server-resolved
-monster attack lands on the living wearer. Each hit awards 5 XP; a miss awards
-0 because the blow never reached the armor. Ownership, life, floor, reach, and
-monster cooldown gates run first. Rejected, replayed, Broken, unmapped, and
-ordinary-clothing cases award nothing. Swapping among Padded, Leather, Mail,
-Plate, and Hybrid changes which single skill receives the next valid hit; it
-never trains more than one. A bonus-band crossing emits one final
-`GuardUpdated` after the generic XP delta, including any simultaneously active
-Shield term.
+Item Guard and trained Guard are separate terms and each is applied once.
+Removing the mapped shield removes only its item contribution and Shield skill
+bonus.
 
-The skill slice reuses sparse persistence, generic messages, the Skills tab,
-item tooltips, agent state, and aggregate defense metrics. The later protocol
-v20 physical-damage slice adds damage types plus Padded, Leather, Mail, Plate,
-and Hybrid mitigation identities. The current primary chests now author their
-exact `slashProtection`, `pierceProtection`, and `bluntProtection` values rather
-than deriving numbers from construction. The Leather chest retains Guard 2 and
-mitigates slash, pierce, and blunt by 1 each. Chain Mail retains Guard 5 and
-mitigates slash 2 / pierce 1. Plate retains Guard 7 and mitigates slash 3 /
-pierce 3 / blunt 1. Hybrid retains Guard 2 and mitigates slash, pierce, and
-blunt by 2 each. The Padded Battle Robe, Leather, Chain Mail, and Breastplate
-chests and Brigandine Coat map their matching skills without changing those
-authored item profiles. A landed hit trains the one active mapped skill regardless of
-its exact final-damage amount; the authoritative hit result owns training, not
-product or repair-kit use. Hit location, casting penalties, future
-construction-specific skills, class restrictions, and wearable body rendering
-remain separate stages in [ARMOR_SYSTEM.md](ARMOR_SYSTEM.md).
+An accepted monster attack against a living defender trains Shield as follows:
 
-Protocol v21 adds equipped-weight movement burden without adding or training a
-skill. Strength changes the burden thresholds through carry capacity, but no
-Armor, Athletics, or movement proficiency modifies the tier or speed. Bag
-contents remain outside this calculation.
+| Outcome        |  XP |
+| -------------- | --: |
+| Monster misses |  10 |
+| Monster hits   |   5 |
 
-Protocol v23 adds per-instance condition to primary chest body armor. A broken
-Padded, Leather, Mail, Plate, or Hybrid chest no longer activates or trains its
-armor skill until repaired; construction-aware Cloth, Leather, Metal, and
-Hybrid kits repair only their matching family by an authored 20, 30, 45, or 50 condition,
-capped at maximum.
-Pristine, Worn, Damaged, Critical, and Broken are condition labels rather than
-skills or gradual protection modifiers. Using a finished kit is equipment
-maintenance and does not create or train Smithing, Tailoring, or a generic
-repair skill. The generic skill persistence and XP formulas are unchanged.
-NPC resale value now consumes the same raw condition on a smooth 25–100% scale,
-but selling and buyback also grant no XP and do not introduce Trading or
-Appraisal as trained skills.
+A successful avoidance teaches more, but a failed defense still teaches. The
+initial slice adds no block animation, active parry request, damage reflection,
+or Shield-specific mitigation packet.
+
+## Healing
+
+Healing means applying treatment. It does not mean consuming any item that
+restores HP.
+
+Only Bandages map to `healing` through `useSkill`. A valid initial action is
+self-treatment by a connected, living, injured character who owns the mapped
+Bandage instance. The server consumes one Bandage atomically before applying
+the authoritative roll.
+
+A Bandage restores `2d4 + Healing bonus` HP, capped at maximum HP. XP equals
+the HP actually restored after the cap. Treating a one-point injury therefore
+awards 1 XP. Full-health, defeated, missing-item, unusable-item, and duplicated
+requests award nothing and must not consume a Bandage.
+
+Healing Potions, fish, and other finished products may restore HP through their
+own item effects, but drinking or eating them awards no Healing XP and receives
+no Healing bonus. A Healing Potion remains a `6d4` product. Future Alchemy may
+govern manufacturing without turning potion drinking into treatment training.
+
+Party treatment, resurrection, magical healing, treatment channels, crafting,
+and profession restrictions are outside the initial Healing slice.
+
+## Body-armor proficiencies
+
+Body armor uses construction-specific skills rather than Light/Heavy buckets.
+The initial mappings are:
+
+| Construction | Skill           | Initial primary chest |
+| ------------ | --------------- | --------------------- |
+| Padded       | `padded_armor`  | Padded Battle Robe    |
+| Leather      | `leather_armor` | Leather Armor         |
+| Mail         | `mail_armor`    | Chain Mail            |
+| Plate        | `plate_armor`   | Breastplate           |
+| Hybrid       | `hybrid_armor`  | Brigandine Coat       |
+
+The explicitly mapped, functional primary chest anchors the active armor skill.
+Helmets, gloves, gauntlets, pants, greaves, boots, ordinary clothing, and other
+layers do not activate a second armor skill. Mixed equipment therefore cannot
+create several armor-skill awards from one hit.
+
+An armored robe or coat may qualify when its metadata explicitly says it is
+primary body armor with a mapped construction. Garment form or a word in the
+item name is never sufficient. An ordinary Traveler's Robe remains clothing.
+
+Each active mapped armor skill uses the shared +0/+1/+2/+3 Guard bands. Item
+Guard, authored slash/pierce/blunt protection, and trained Guard are separate
+values. Construction identifies proficiency and repair compatibility; it does
+not implicitly derive mitigation numbers.
+
+An accepted, landed monster hit awards 5 XP to the one active armor skill. A
+miss awards 0 because the blow did not reach the armor. Rejected attacks,
+replayed cooldown requests, unmapped gear, ordinary clothing, and Broken armor
+award nothing. If a bonus threshold is crossed, clients receive one final
+authoritative Guard value containing all simultaneously active item, Shield,
+and primary-armor terms.
+
+`bodyCoverage` may describe head, torso, arms, hands, legs, and feet, but it is
+not a skill trigger. Hit-location rolls, weighted regional mitigation,
+multi-layer occupancy, casting penalties, and construction-specific movement
+rules require separate designs.
+
+## Equipment burden is not a skill
+
+Equipped weight may use Strength-based capacity to select an unburdened, light,
+medium, or heavy movement band. Bag contents, armor skill level, and a future
+Athletics skill do not modify that band in the initial design. Movement burden
+does not train a skill.
+
+## Durability is not a skill action
+
+Broken primary armor cannot activate or train its armor proficiency until it is
+repaired. Wear, repair-kit use, selling, and buyback grant no armor, repair,
+appraisal, trading, tailoring, or smithing XP. Future crafting skills may
+produce maintenance supplies, but consuming a finished kit remains equipment
+maintenance. See [DURABILITY.md](DURABILITY.md).
+
+## Persistence and protocol
+
+All skills share one sparse character-skill table, generic dirty tracking,
+batch save, logout and shutdown flush, and login load. A new skill does not add
+a character column or a family-specific save path.
+
+Generic private messages carry full skill snapshots and XP deltas. A protocol
+version must change whenever a new wire identifier or message shape would make
+an older client unsafe. The handshake must reject incompatible clients rather
+than allowing partial interpretation.
+
+Persistence should preserve unknown rows so a temporarily older server does
+not erase progress it cannot interpret.
+
+## Browser and agent parity
+
+Both clients consume the same generic snapshots and deltas. They may display
+trained entries, level progress, the relevant bonus, mapped item metadata, and
+the exact authoritative Guard value.
+
+The agent stores routine skill and Guard updates as state-only information so
+every XP event does not wake the language model. Neither client computes a
+trusted outcome or chooses which skill receives XP.
+
+## Balance and change control
+
+The XP awards, bands, ranges, and action windows above are initial values. Any
+balance change should use aggregate, non-identifying telemetry and receive a
+separate review. Expanding a family, changing what trains it, or adding a new
+bonus is a new vertical slice—not an automatic consequence of adding an item.
