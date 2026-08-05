@@ -515,7 +515,7 @@ impl super::GameState {
             }
 
             // Residents have finite stock: take the unit out of their bag.
-            let npc_snapshot = if is_resident {
+            let (npc_snapshot, purchased_enchant) = if is_resident {
                 let Some(npc_inv) = inventories.get_mut(npc_player_id) else {
                     drop(inventories);
                     drop(gold_map);
@@ -530,10 +530,14 @@ impl super::GameState {
                         )
                         .await;
                 };
+                // Stock requests are def-only, so sell the lowest enchant first.
                 let Some(idx) = npc_inv
                     .bag
                     .iter()
-                    .position(|i| i.item_def_id == item_def_id)
+                    .enumerate()
+                    .filter(|(_, item)| item.item_def_id == item_def_id)
+                    .min_by_key(|(_, item)| item.enchant)
+                    .map(|(idx, _)| idx)
                 else {
                     drop(inventories);
                     drop(gold_map);
@@ -548,20 +552,21 @@ impl super::GameState {
                         )
                         .await;
                 };
+                let purchased_enchant = npc_inv.bag[idx].enchant;
                 if npc_inv.bag[idx].quantity > 1 {
                     npc_inv.bag[idx].quantity -= 1;
                 } else {
                     npc_inv.bag.remove(idx);
                 }
-                Some(npc_inv.clone())
+                (Some(npc_inv.clone()), purchased_enchant)
             } else {
-                None
+                (None, 0)
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
             stack_into_bag(
                 &mut inv.bag,
-                BagInsert::one(stackable, item_def_id, 0, instance_id),
+                BagInsert::one(stackable, item_def_id, purchased_enchant, instance_id),
             );
             let snapshot = inv.clone();
 
@@ -647,6 +652,12 @@ impl super::GameState {
             base_price: i64,
             deal_taken: Option<DealEntry>,
             price: i64,
+        }
+
+        struct ResidentPurchase {
+            item_def_id: String,
+            quantity: u32,
+            enchant: i32,
         }
 
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
@@ -775,40 +786,70 @@ impl super::GameState {
         }
 
         // Every line is now guaranteed to apply cleanly — mutate.
-        if is_resident {
+        let resident_purchases = if is_resident {
             let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
-            for (item_def_id, mut remaining) in requested {
+            let mut purchases = Vec::new();
+            for plan in &plans {
+                let mut remaining = plan.qty;
                 while remaining > 0 {
                     let idx = npc_inv
                         .bag
                         .iter()
-                        .position(|i| i.item_def_id == item_def_id)
+                        .enumerate()
+                        .filter(|(_, item)| item.item_def_id == plan.item_def_id)
+                        .min_by_key(|(_, item)| item.enchant)
+                        .map(|(idx, _)| idx)
                         .expect("availability checked above");
                     let take = remaining.min(npc_inv.bag[idx].quantity);
+                    let enchant = npc_inv.bag[idx].enchant;
                     if npc_inv.bag[idx].quantity > take {
                         npc_inv.bag[idx].quantity -= take;
                     } else {
                         npc_inv.bag.remove(idx);
                     }
+                    purchases.push(ResidentPurchase {
+                        item_def_id: plan.item_def_id.clone(),
+                        quantity: take,
+                        enchant,
+                    });
                     remaining -= take;
                 }
             }
-        }
+            purchases
+        } else {
+            Vec::new()
+        };
 
         {
             let inv = inventories.get_mut(player_id).expect("checked above");
-            for plan in &plans {
-                let stackable = self.item_defs.stackable(&plan.item_def_id);
-                next_id += stack_into_bag(
-                    &mut inv.bag,
-                    BagInsert {
-                        stackable,
-                        item_def_id: &plan.item_def_id,
-                        enchant: 0,
-                        first_instance_id: next_id,
-                        quantity: plan.qty,
-                    },
-                );
+            if is_resident {
+                for purchase in &resident_purchases {
+                    let stackable = self.item_defs.stackable(&purchase.item_def_id);
+                    next_id += stack_into_bag(
+                        &mut inv.bag,
+                        BagInsert {
+                            stackable,
+                            item_def_id: &purchase.item_def_id,
+                            enchant: purchase.enchant,
+                            first_instance_id: next_id,
+                            quantity: purchase.quantity,
+                        },
+                    );
+                }
+            } else {
+                for plan in &plans {
+                    let stackable = self.item_defs.stackable(&plan.item_def_id);
+                    next_id += stack_into_bag(
+                        &mut inv.bag,
+                        BagInsert {
+                            stackable,
+                            item_def_id: &plan.item_def_id,
+                            enchant: 0,
+                            first_instance_id: next_id,
+                            quantity: plan.qty,
+                        },
+                    );
+                }
             }
         }
 

@@ -197,6 +197,197 @@ async fn buy_items_batch_merges_stackables_and_splits_non_stackables() {
     assert!(torches.iter().all(|t| t.quantity == 1));
 }
 
+#[tokio::test]
+async fn buy_items_batch_preserves_resident_enchantments_lowest_first() {
+    let game_state = make_test_game_state("batch_buy_resident_enchantments");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![
+            enchanted_bag_item(11, "spear", 1, 3),
+            bag_item(12, "spear", 1),
+            enchanted_bag_item(13, "spear", 1, 1),
+        ],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![TradeLineItem {
+                item_def_id: "spear".to_string(),
+                qty: 2,
+            }],
+        )
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let buyer_bag = &inventories[&pid("seller")].bag;
+    assert_eq!(buyer_bag.len(), 2);
+    let mut buyer_enchants: Vec<_> = buyer_bag.iter().map(|item| item.enchant).collect();
+    buyer_enchants.sort_unstable();
+    assert_eq!(buyer_enchants, vec![0, 1]);
+    let npc_bag = &inventories[&pid("npc_karl")].bag;
+    assert_eq!(npc_bag.len(), 1);
+    assert_eq!(npc_bag[0].enchant, 3);
+}
+
+#[tokio::test]
+async fn buy_items_batch_takes_only_the_requested_units_from_a_resident_stack() {
+    let game_state = make_test_game_state("batch_buy_resident_partial_stack");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![bag_item(11, "healing_potion", 5)],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 10_000);
+
+    game_state
+        .buy_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![TradeLineItem {
+                item_def_id: "healing_potion".to_string(),
+                qty: 2,
+            }],
+        )
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 8_800);
+    let inventories = game_state.inventories.read().await;
+    let buyer_bag = &inventories[&pid("seller")].bag;
+    assert_eq!(buyer_bag.len(), 1);
+    assert_eq!(buyer_bag[0].quantity, 2, "only the paid-for units transfer");
+    let npc_bag = &inventories[&pid("npc_karl")].bag;
+    assert_eq!(npc_bag.len(), 1);
+    assert_eq!(npc_bag[0].quantity, 3);
+}
+
+/// A resident line can fan out into several bag inserts (one per stock entry),
+/// and each insert must consume its own slice of the reserved id range.
+#[tokio::test]
+async fn buy_items_batch_gives_each_bought_unit_its_own_id() {
+    let game_state = make_test_game_state("batch_buy_resident_ids");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![
+            enchanted_bag_item(11, "spear", 1, 3),
+            bag_item(12, "spear", 1),
+            enchanted_bag_item(13, "spear", 1, 1),
+            bag_item(14, "healing_potion", 3),
+        ],
+        vec![bag_item(100, "torch", 1)],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 20_000);
+
+    game_state
+        .buy_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![
+                TradeLineItem {
+                    item_def_id: "spear".to_string(),
+                    qty: 2,
+                },
+                TradeLineItem {
+                    item_def_id: "healing_potion".to_string(),
+                    qty: 2,
+                },
+            ],
+        )
+        .await;
+
+    let inventories = game_state.inventories.read().await;
+    let buyer_bag = &inventories[&pid("seller")].bag;
+    assert_eq!(
+        buyer_bag
+            .iter()
+            .filter(|i| i.item_def_id == "spear")
+            .count(),
+        2
+    );
+    assert!(buyer_bag
+        .iter()
+        .any(|i| i.item_def_id == "healing_potion" && i.quantity == 2));
+    let ids: Vec<_> = buyer_bag.iter().map(|i| i.instance_id).collect();
+    assert_eq!(
+        ids.iter().collect::<std::collections::HashSet<_>>().len(),
+        ids.len(),
+        "every bought unit gets its own id, clear of the bag's existing ones"
+    );
+    assert!(ids.contains(&100), "the pre-existing torch keeps its id");
+}
+
+/// Two lines for the same def are checked against stock as one total.
+#[tokio::test]
+async fn buy_items_batch_totals_repeated_lines_against_resident_stock() {
+    let game_state = make_test_game_state("batch_buy_resident_repeated_lines");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![
+            enchanted_bag_item(11, "spear", 1, 3),
+            bag_item(12, "spear", 1),
+            enchanted_bag_item(13, "spear", 1, 1),
+        ],
+        vec![],
+    )
+    .await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 20_000);
+    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
+
+    game_state
+        .buy_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![
+                TradeLineItem {
+                    item_def_id: "spear".to_string(),
+                    qty: 2,
+                },
+                TradeLineItem {
+                    item_def_id: "spear".to_string(),
+                    qty: 2,
+                },
+            ],
+        )
+        .await;
+
+    match seller_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("out of that item"), "got: {message}")
+        }
+        other => panic!("Expected TradeError, got {:?}", other),
+    }
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 20_000);
+    let inventories = game_state.inventories.read().await;
+    assert!(inventories[&pid("seller")].bag.is_empty());
+    assert_eq!(inventories[&pid("npc_karl")].bag.len(), 3);
+}
+
 /// The resident's receipt draws from a range reserved before the locks, so
 /// every unit must still land on its own id. (No wishlist item is stackable,
 /// so the merge branch is unreachable from data alone.)
