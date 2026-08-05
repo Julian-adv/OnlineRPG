@@ -59,6 +59,9 @@
 
   onMount(async () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
+    // Comparing against the container build's placeholder is not possible here:
+    // Vite inlines this, so the check would fold to a constant and let the
+    // minifier drop the placeholder the entrypoint has to substitute.
     if (!clientId) {
       errorMessage = 'VITE_GOOGLE_CLIENT_ID is not configured'
       return

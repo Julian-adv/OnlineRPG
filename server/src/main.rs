@@ -34,6 +34,7 @@ use housing::routes::housing_router;
 use housing::HousingIO;
 use npc_schedule::routes::npc_router;
 use npc_schedule::NpcIO;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use terrain::io::TerrainIO;
@@ -191,8 +192,21 @@ struct Args {
     admin_emails: String,
 
     /// Directory for terrain data files
-    #[arg(long, default_value = "./data/terrain")]
+    #[arg(long, env = "TERRAIN_DIR", default_value = "./data/terrain")]
     terrain_dir: String,
+
+    /// Directory for mutable server state: the SQLite DB, the NPC auth token,
+    /// housing files and operator announcements. Defaults to the layout the
+    /// systemd units expect (CWD = repo root), so existing deploys are
+    /// unaffected when the flag is omitted.
+    #[arg(long, env = "STATE_DIR", default_value = "./data")]
+    state_dir: PathBuf,
+
+    /// Directory holding per-NPC schedule files. The map editor writes here
+    /// over REST, so it is server-owned state even though it lives under
+    /// `agent-client/` in a source checkout.
+    #[arg(long, env = "NPC_DATA_DIR", default_value = "./agent-client/data/npcs")]
+    npc_data_dir: PathBuf,
 
     /// Google OAuth client ID used to verify browser sign-in tokens
     #[arg(long, env = "GOOGLE_CLIENT_ID")]
@@ -203,16 +217,44 @@ struct Args {
     #[arg(long, env = "GOOGLE_CLI_CLIENT_ID")]
     google_cli_client_id: Option<String>,
 
-    /// Shared secret for headless NPC clients (default: data/npc_token,
-    /// generated on first run)
+    /// Shared secret for headless NPC clients (default: <state-dir>/npc_token,
+    /// generated on first run). Blank is treated as unset.
     #[arg(long, env = "NPC_AUTH_TOKEN")]
     npc_token: Option<String>,
 }
 
+/// Normalize an optional CLI/env value, treating blank as absent.
+///
+/// Compose `.env` files spell an unset optional key as `KEY=`, and clap
+/// reports that as `Some("")` rather than `None`. Without this the server
+/// would reject the empty string as a too-short token and refuse to start.
+fn optional_value(raw: Option<&str>) -> Option<&str> {
+    raw.map(str::trim).filter(|value| !value.is_empty())
+}
+
+/// Paths to the mutable server state that `--state-dir` owns.
+///
+/// Kept as a pure function so the default layout can be asserted in tests:
+/// a silent drift here would point a fresh deploy at an empty database.
+struct StatePaths {
+    db: PathBuf,
+    npc_token: PathBuf,
+    housing: PathBuf,
+    announcements: PathBuf,
+}
+
+fn state_paths(state_dir: &Path) -> StatePaths {
+    StatePaths {
+        db: state_dir.join("game_data.db"),
+        npc_token: state_dir.join("npc_token"),
+        housing: state_dir.join("housing"),
+        announcements: state_dir.join("announcements"),
+    }
+}
+
 /// Read the NPC token file, generating a random one on first run so local
 /// bots work with zero config (they read the same file).
-fn load_or_create_npc_token() -> std::io::Result<String> {
-    let path = std::path::Path::new(onlinerpg_shared::NPC_TOKEN_PATH_FROM_ROOT);
+fn load_or_create_npc_token(path: &Path) -> std::io::Result<String> {
     if let Ok(existing) = std::fs::read_to_string(path) {
         let existing = existing.trim().to_string();
         if !existing.is_empty() {
@@ -254,7 +296,8 @@ async fn main() -> ExitCode {
     let item_defs = item_defs::ItemDefs::load();
     let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);
-    let auth_service = match AuthService::new(AuthService::default_db_path()) {
+    let paths = state_paths(&args.state_dir);
+    let auth_service = match AuthService::new(paths.db.clone()) {
         Ok(service) => Arc::new(service),
         Err(e) => {
             error!("Failed to initialize auth service: {}", e);
@@ -264,8 +307,8 @@ async fn main() -> ExitCode {
 
     let google_client_ids: Vec<String> = [&args.google_client_id, &args.google_cli_client_id]
         .into_iter()
-        .flatten()
-        .cloned()
+        .filter_map(|value| optional_value(value.as_deref()))
+        .map(str::to_string)
         .collect();
     let google = if google_client_ids.is_empty() {
         warn!("No --google-client-id / GOOGLE_CLIENT_ID set: Google sign-in disabled");
@@ -277,9 +320,9 @@ async fn main() -> ExitCode {
         );
         Some(GoogleAuthVerifier::new(google_client_ids))
     };
-    let npc_token = match args.npc_token.clone() {
-        Some(token) => token,
-        None => match load_or_create_npc_token() {
+    let npc_token = match optional_value(args.npc_token.as_deref()) {
+        Some(token) => token.to_string(),
+        None => match load_or_create_npc_token(&paths.npc_token) {
             Ok(token) => token,
             Err(e) => {
                 error!("failed to load/create NPC token: {e}");
@@ -319,14 +362,10 @@ async fn main() -> ExitCode {
         }
     };
 
-    let housing_io = Arc::new(HousingIO::new(std::path::PathBuf::from("./data/housing")));
-    let npc_io = Arc::new(NpcIO::new(std::path::PathBuf::from(
-        "./agent-client/data/npcs",
-    )));
-    let terrain_io = Arc::new(TerrainIO::new(std::path::PathBuf::from(&args.terrain_dir)));
-    let announcement_store = Arc::new(AnnouncementStore::new(std::path::PathBuf::from(
-        "./data/announcements",
-    )));
+    let housing_io = Arc::new(HousingIO::new(paths.housing));
+    let npc_io = Arc::new(NpcIO::new(args.npc_data_dir.clone()));
+    let terrain_io = Arc::new(TerrainIO::new(PathBuf::from(&args.terrain_dir)));
+    let announcement_store = Arc::new(AnnouncementStore::new(paths.announcements));
     announcement_store.warm().await;
 
     // Load no-spawn zones (towns) from per-region zone files. Monster spawn
@@ -656,6 +695,162 @@ mod tests {
     fn temp_auth(name: &str) -> (AuthService, std::path::PathBuf) {
         let db_path = test_util::unique_temp_dir(name).join("auth.db");
         (AuthService::new(db_path.clone()).unwrap(), db_path)
+    }
+
+    /// The systemd units run with CWD = repo root and pass no path flags, so
+    /// these defaults are the compatibility contract with the existing deploy.
+    /// Drift here would silently point a live server at an empty database.
+    #[test]
+    fn default_flags_reproduce_the_pre_flag_layout() {
+        let args = Args::parse_from(["onlinerpg-server"]);
+        let paths = state_paths(&args.state_dir);
+
+        assert_eq!(args.state_dir, PathBuf::from("./data"));
+        assert_eq!(paths.db, PathBuf::from("./data/game_data.db"));
+        assert_eq!(paths.npc_token, PathBuf::from("./data/npc_token"));
+        assert_eq!(paths.housing, PathBuf::from("./data/housing"));
+        assert_eq!(paths.announcements, PathBuf::from("./data/announcements"));
+        assert_eq!(
+            args.npc_data_dir,
+            PathBuf::from("./agent-client/data/npcs"),
+            "npcs live outside --state-dir and need their own flag"
+        );
+        assert_eq!(args.terrain_dir, "./data/terrain");
+    }
+
+    /// Every state path must follow --state-dir. Missing one would leave that
+    /// single file behind in ./data while the rest moved to the volume.
+    #[test]
+    fn custom_state_dir_moves_every_derived_path() {
+        let args = Args::parse_from([
+            "onlinerpg-server",
+            "--state-dir",
+            "/srv/state",
+            "--npc-data-dir",
+            "/srv/npcs",
+        ]);
+        let paths = state_paths(&args.state_dir);
+
+        assert_eq!(paths.db, PathBuf::from("/srv/state/game_data.db"));
+        assert_eq!(paths.npc_token, PathBuf::from("/srv/state/npc_token"));
+        assert_eq!(paths.housing, PathBuf::from("/srv/state/housing"));
+        assert_eq!(
+            paths.announcements,
+            PathBuf::from("/srv/state/announcements")
+        );
+        assert_eq!(args.npc_data_dir, PathBuf::from("/srv/npcs"));
+    }
+
+    /// Compose `.env` files spell an unset optional key as `KEY=`, so the
+    /// server receives an empty string rather than nothing at all. Without
+    /// this the token length check rejects it and the container never starts,
+    /// and blank Google client ids get counted as configured sign-in clients.
+    #[test]
+    fn blank_optional_values_are_treated_as_absent() {
+        assert_eq!(optional_value(None), None);
+        assert_eq!(optional_value(Some("")), None);
+        assert_eq!(optional_value(Some("   ")), None);
+        assert_eq!(optional_value(Some("  token  ")), Some("token"));
+    }
+
+    #[test]
+    fn npc_token_is_generated_once_and_reread() {
+        let path = test_util::unique_temp_dir("npc_token_roundtrip").join("npc_token");
+
+        let created = load_or_create_npc_token(&path).unwrap();
+        assert!(created.len() >= MIN_NPC_TOKEN_LEN);
+        assert_eq!(load_or_create_npc_token(&path).unwrap(), created);
+    }
+
+    /// The token is a shared secret; a readable file would leak it to every
+    /// other local user on a multi-tenant host.
+    #[cfg(unix)]
+    #[test]
+    fn npc_token_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = test_util::unique_temp_dir("npc_token_perms").join("npc_token");
+        load_or_create_npc_token(&path).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// A blank file (truncated write, manual edit) must not become the token:
+    /// MIN_NPC_TOKEN_LEN would reject it later and refuse to start.
+    #[test]
+    fn empty_npc_token_file_is_regenerated() {
+        let path = test_util::unique_temp_dir("npc_token_empty").join("npc_token");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "   \n").unwrap();
+
+        let token = load_or_create_npc_token(&path).unwrap();
+
+        assert!(token.trim().len() >= MIN_NPC_TOKEN_LEN);
+    }
+
+    /// Guards acceptance criterion 3: a flag-free server must touch exactly
+    /// the paths it touched before --state-dir existed. The expected set is a
+    /// hand-audited constant of the pre-flag behaviour, not a snapshot of the
+    /// current code, so a regression cannot silently rewrite the baseline.
+    ///
+    /// Only AuthService::new and load_or_create_npc_token create anything;
+    /// HousingIO/NpcIO/AnnouncementStore construct lazily.
+    #[test]
+    fn flag_free_startup_touches_only_the_legacy_paths() {
+        let root = test_util::unique_temp_dir("state_dir_compat");
+        let state_dir = root.join("data");
+        let paths = state_paths(&state_dir);
+
+        AuthService::new(paths.db.clone()).unwrap();
+        load_or_create_npc_token(&paths.npc_token).unwrap();
+        let _ = HousingIO::new(paths.housing.clone());
+        let _ = NpcIO::new(root.join("agent-client/data/npcs"));
+        let _ = AnnouncementStore::new(paths.announcements.clone());
+
+        let mut created: Vec<String> = walk_relative(&root, &root);
+        created.sort();
+
+        assert_eq!(
+            created,
+            vec![
+                "data".to_string(),
+                "data/game_data.db".to_string(),
+                "data/npc_token".to_string(),
+            ],
+            "startup side effects drifted from the pre-flag layout"
+        );
+        assert!(!paths.housing.exists(), "housing must stay lazy");
+        assert!(
+            !paths.announcements.exists(),
+            "announcements must stay lazy"
+        );
+    }
+
+    #[cfg(test)]
+    fn walk_relative(base: &Path, dir: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return found;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // SQLite may leave -wal/-shm siblings; they are not layout.
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if name.ends_with("-wal") || name.ends_with("-shm") {
+                continue;
+            }
+            found.push(
+                path.strip_prefix(base)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            if path.is_dir() {
+                found.extend(walk_relative(base, &path));
+            }
+        }
+        found
     }
 
     #[tokio::test]
