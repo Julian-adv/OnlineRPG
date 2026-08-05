@@ -94,6 +94,7 @@ describe('startClickMovement', () => {
     const started = startClickMovement({
       currentPos,
       clickPosition,
+      initialSpeed: 0,
       pickupAfterArrival: null,
       currentFloor: 0,
       getFloorAt: vi.fn(() => 1),
@@ -124,6 +125,7 @@ describe('startClickMovement', () => {
     startClickMovement({
       currentPos,
       clickPosition,
+      initialSpeed: 0,
       pickupAfterArrival: null,
       currentFloor: 0,
       getFloorAt: vi.fn(() => 1),
@@ -141,6 +143,7 @@ describe('startClickMovement', () => {
     const started = startClickMovement({
       currentPos,
       clickPosition,
+      initialSpeed: 0,
       pickupAfterArrival: 42,
       currentFloor: 0,
       getFloorAt: vi.fn(() => 2),
@@ -152,6 +155,22 @@ describe('startClickMovement', () => {
     expect(started.pathWaypoints).toEqual([{ x: 4, z: 5, floor: 2 }])
     expect(started.movementTarget).toEqual({ x: 4, y: 9, z: 5 })
     expect(started.pendingPickupAfterMoveInstanceId).toBe(42)
+  })
+
+  it('carries active movement speed into a replacement path', () => {
+    const started = startClickMovement({
+      currentPos,
+      clickPosition,
+      initialSpeed: 2.25,
+      pickupAfterArrival: null,
+      currentFloor: 0,
+      getFloorAt: () => 0,
+      findPath: () => ({ waypoints: [] }),
+      waypointHeight: () => 0,
+      sendPlayerMove: vi.fn(),
+    })
+
+    expect(started.movementState.currentSpeed).toBe(2.25)
   })
 })
 
@@ -165,6 +184,7 @@ function actions(): MoveRequestActions {
 }
 
 const deps = {
+  initialSpeed: 0,
   currentFloor: 0,
   getFloorAt: () => 0,
   findPath: () => ({ waypoints: [] }),
@@ -219,7 +239,37 @@ describe('runMoveRequest', () => {
     })
 
     expect(a.clearPendingPickupAfterMove).not.toHaveBeenCalled()
-    expect(a.applyStartedMovement).toHaveBeenCalledOnce()
+    expect(a.applyStartedMovement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        movementState: expect.objectContaining({ currentSpeed: 0 }),
+      })
+    )
+  })
+
+  it('preserves momentum when an active click path is replaced', () => {
+    const a = actions()
+    runMoveRequest({
+      ...deps,
+      clickPosition: { x: 2, y: 0, z: 1 },
+      initialSpeed: 2.4,
+      pickupAfterArrival: null,
+      currentPlayer: { health: 10, position: { x: 1, y: 0, z: 0 } },
+      interactionExit: 'none',
+      isMoving: true,
+      hasKeyboardInput: false,
+      actions: a,
+    })
+
+    expect(a.applyStartedMovement).toHaveBeenCalledWith(
+      expect.objectContaining({
+        movementState: expect.objectContaining({ currentSpeed: 2.4 }),
+      })
+    )
+    expect(deps.sendPlayerMove).toHaveBeenLastCalledWith(
+      { x: 2, y: 0, z: 1 },
+      expect.any(Number),
+      false
+    )
   })
 
   it('clears pending pickup and ignores blocked requests', () => {

@@ -889,6 +889,7 @@
         }, STAND_UP_DURATION)
       },
       applyStartedMovement: (started) => {
+        currentSpeed = started.movementState.currentSpeed
         playerRotation = started.playerRotation
         // The moving state OWNS the path data. Transition before emit: the
         // projection derives 'moving' from the machine's owned state.
@@ -997,8 +998,13 @@
     // dungeonManager.startFloorAt), which differs from the clicked room's floor, so
     // the search traverses the stairs instead of being confined to one floor.
     startingClickMovement = true
+    const initialSpeed = Math.min(
+      movingState()?.movementState.currentSpeed ?? 0,
+      movementConfig().maxSpeed
+    )
     runMoveRequest({
       clickPosition,
+      initialSpeed,
       pickupAfterArrival,
       currentPlayer,
       interactionExit: getInteractionExitKind(playerState),

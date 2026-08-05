@@ -81,6 +81,7 @@ export function decideMoveRequest({
 interface StartClickMovementInput extends Pathing {
   currentPos: Position
   clickPosition: Position
+  initialSpeed: number
   pickupAfterArrival: number | null
   sendPlayerMove: SendPlayerMove
 }
@@ -97,6 +98,7 @@ export interface StartedClickMovement {
 export function startClickMovement({
   currentPos,
   clickPosition,
+  initialSpeed,
   pickupAfterArrival,
   sendPlayerMove,
   ...pathing
@@ -105,7 +107,11 @@ export function startClickMovement({
   return {
     ...leg,
     currentWaypointIndex: 0,
-    movementState: initMovementState(currentPos, leg.movementTarget, 0),
+    movementState: initMovementState(
+      currentPos,
+      leg.movementTarget,
+      initialSpeed
+    ),
     pendingPickupAfterMoveInstanceId: pickupAfterArrival,
   }
 }
@@ -128,6 +134,7 @@ export interface MoveRequestActions {
 
 interface RunMoveRequestInput extends Pathing {
   clickPosition: Position
+  initialSpeed: number
   pickupAfterArrival: number | null
   currentPlayer: MoveRequestPlayer | null
   interactionExit: InteractionExitKind
@@ -139,6 +146,7 @@ interface RunMoveRequestInput extends Pathing {
 
 export function runMoveRequest({
   clickPosition,
+  initialSpeed,
   pickupAfterArrival,
   currentPlayer,
   interactionExit,
@@ -187,6 +195,7 @@ export function runMoveRequest({
         z: currentPlayer.position.z,
       },
       clickPosition,
+      initialSpeed,
       pickupAfterArrival,
       currentFloor,
       getFloorAt,
