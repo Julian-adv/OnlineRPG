@@ -85,22 +85,25 @@ export function isSlopeTooSteepUphill(
 }
 
 /**
- * Determine movement mode based on distance.
- * When `hasTorch` is true, jog is skipped (no torch_jog animation exists);
- * short distances use walk and longer distances use run.
+ * Movement-mode policy: sprint runs, torch walks, combat chase runs,
+ * otherwise short distances walk and the rest (unknown distance too) jog.
  */
 export function getMovementMode(
-  distance: number,
+  distance?: number,
   hasTorch = false,
-  sprinting = false
+  sprinting = false,
+  inCombat = false
 ): MovementMode {
   if (sprinting) {
     return 'run'
   }
   if (hasTorch) {
-    return distance <= 3 ? 'walk' : 'run'
+    return 'walk'
   }
-  if (distance <= 3) {
+  if (inCombat) {
+    return 'run'
+  }
+  if (distance !== undefined && distance <= 3) {
     return 'walk'
   }
   return 'jog'

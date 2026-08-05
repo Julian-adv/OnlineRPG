@@ -67,6 +67,32 @@ describe('projectPlayerState', () => {
 
     expect(state.movementMode).toBe('run')
   })
+
+  it('reserves torch run for sprinting during combat', () => {
+    const walking = projectPlayerState({
+      currentPosition: { x: 0, y: 0, z: 0 },
+      isMoving: true,
+      currentSpeed: 3,
+      playerRotation: 0,
+      hasTorch: true,
+      isInCombat: true,
+      attackCounter: 1,
+      isSprinting: false,
+    })
+    const sprinting = projectPlayerState({
+      currentPosition: { x: 0, y: 0, z: 0 },
+      isMoving: true,
+      currentSpeed: 4.5,
+      playerRotation: 0,
+      hasTorch: true,
+      isInCombat: true,
+      attackCounter: 1,
+      isSprinting: true,
+    })
+
+    expect(walking.movementMode).toBe('walk')
+    expect(sprinting.movementMode).toBe('run')
+  })
 })
 
 describe('shouldEmitProjectedPlayerState', () => {

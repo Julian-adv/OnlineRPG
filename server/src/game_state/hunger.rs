@@ -9,8 +9,7 @@
 use onlinerpg_shared::hunger::{
     effective_multipliers, hunger_state, Campfire, CAMPFIRE_DURATION_MS, CAMPFIRE_GRILL_RADIUS,
     FOOD_POISONING_MS, FOOD_POISONING_PCT, FOOD_REGEN_DURATION_SECS, GRILL_CAST_MS,
-    MOVEMENT_DRAIN_INTERVAL_SECS, NORMAL_MIN, POISON_DRAIN_MULT, SATIATION_RESPAWN,
-    SPRINT_DRAIN_INTERVAL_SECS,
+    MOVEMENT_DRAIN_INTERVAL_SECS, NORMAL_MIN, POISON_DRAIN_MULT, SPRINT_DRAIN_INTERVAL_SECS,
 };
 use onlinerpg_shared::{PlayerId, Position, ServerMessage};
 use rand::Rng;
@@ -183,23 +182,20 @@ impl super::GameState {
             .collect()
     }
 
-    /// Reset to the normal floor on respawn; poison does not survive death.
+    /// Clear transient hunger state on respawn without changing satiation.
     pub(crate) async fn reset_hunger_on_respawn(&self, player_id: &PlayerId) {
-        let updated = {
+        let poison_cleared = {
             let mut hunger = self.hunger.write().await;
             match hunger.get_mut(player_id) {
                 Some(data) => {
-                    data.satiation = SATIATION_RESPAWN;
-                    data.poisoned_until = None;
                     data.movement_seconds = 0.0;
                     data.sprint_seconds = 0.0;
-                    true
+                    data.poisoned_until.take().is_some()
                 }
                 None => false,
             }
         };
-        if updated {
-            self.mark_dirty(player_id).await;
+        if poison_cleared {
             self.send_hunger_update(player_id).await;
         }
     }

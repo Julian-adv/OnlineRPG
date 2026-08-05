@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 pub const SATIATION_MAX: u32 = 1000;
 /// New characters start comfortably fed.
 pub const SATIATION_START: u32 = 700;
-/// Respawn resets to the normal floor so death never compounds starvation.
-pub const SATIATION_RESPAWN: u32 = 300;
 
 pub const MOVEMENT_DRAIN_INTERVAL_SECS: f32 = 30.0;
 pub const SPRINT_DRAIN_INTERVAL_SECS: f32 = 1.0;
