@@ -830,6 +830,77 @@ mod tests {
             "...and must not reach the floor below it"
         );
     }
+
+    /// A bed placed over a standing mover seals its whole footprint. The
+    /// movement validator waives one step out of a sealed cell across
+    /// furniture (`blocking_entry_for_mover`); A* must plan that same step,
+    /// or a mover woken on a bed paths nowhere and callers fall back to
+    /// teleporting it through walls.
+    #[test]
+    fn astar_escapes_a_furniture_sealed_start() {
+        let cache = furniture_cache(vec![(5, 5), (5, 6)]);
+        let result = find_path(5.5, 5.5, 0, 8.5, 5.5, 0, &cache, 500);
+        assert!(
+            result.found,
+            "a mover sealed onto a bed must still path out"
+        );
+    }
+
+    /// The waiver is furniture-only: sealed in by something that does not
+    /// yield, A* must still plan nothing.
+    #[test]
+    fn astar_grants_no_escape_from_a_wall_sealed_start() {
+        let (id, rp) = make_rect_room(1, 1);
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+
+        let result = find_path(10.5, 10.5, 0, 13.5, 10.5, 0, &cache, 500);
+        assert!(
+            !result.found,
+            "walls never yield, even to a sealed-in mover"
+        );
+        assert!(result.waypoints.is_empty());
+    }
+
+    /// Furniture sealed against a wall: the furniture sides open, the wall
+    /// side stays solid, so the escape goes around the wall — never through.
+    #[test]
+    fn sealed_start_escape_respects_walls() {
+        let mut cache = furniture_cache(vec![(5, 5)]);
+        // A wall along the east edge of x=5 for z in 4..=6.
+        cache.insert(
+            "house".to_string(),
+            RuntimePassability {
+                house_origin_x: 5.0,
+                house_origin_z: 4.0,
+                min_x: 5.0,
+                max_x: 6.0,
+                min_z: 4.0,
+                max_z: 7.0,
+                floors: vec![RuntimeFloorGrid {
+                    floor_level: 0,
+                    origin_x: 0,
+                    origin_z: 0,
+                    width: 1,
+                    depth: 3,
+                    y_base: 0.0,
+                    wall_height: 3.0,
+                    cells: vec![EDGE_E; 3],
+                }],
+                stairwells: vec![],
+                yields_to_trapped_mover: false,
+            },
+        );
+
+        let result = find_path(5.5, 5.5, 0, 8.5, 5.5, 0, &cache, 500);
+        assert!(result.found, "a detour around the wall exists");
+        let first = &result.waypoints[0];
+        assert!(
+            !(first.x.floor() as i32 == 6 && first.z.floor() as i32 == 5),
+            "the escape step must not cross the wall side: {:?}",
+            result.waypoints
+        );
+    }
 }
 
 #[cfg(test)]

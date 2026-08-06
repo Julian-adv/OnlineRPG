@@ -332,16 +332,21 @@ impl WorldCache {
         segment_index: usize,
         is_open: bool,
     ) {
-        if let Some(house) = self.houses.get(house_id) {
-            if let Some(room) = house.rooms.get(room_index as usize) {
-                pathfinding::update_door_edge(
-                    &mut self.passability_cache,
-                    house_id,
-                    room,
-                    wall_dir,
-                    segment_index,
-                    is_open,
-                );
+        if let Some(house) = self.houses.get_mut(house_id) {
+            if let Some(room) = house.rooms.get_mut(room_index as usize) {
+                // The wall is the source of truth (door hunting reads
+                // `is_open` off it); the edge is derived from it.
+                if let Some(wall) = room.wall_mut(wall_dir).get_mut(segment_index) {
+                    wall.is_open = is_open;
+                    pathfinding::update_door_edge(
+                        &mut self.passability_cache,
+                        house_id,
+                        room,
+                        wall_dir,
+                        segment_index,
+                        is_open,
+                    );
+                }
             }
         }
     }
@@ -3821,5 +3826,87 @@ pub(crate) mod tests {
             .drain_agent_events()
             .iter()
             .any(|e| e.contains("Bran picked up gold_ring")));
+    }
+
+    /// A `DoorToggled` must land on both faces of the door: the passability
+    /// edge A* walks and the `HouseData` wall the door hunt reads. With only
+    /// the edge updated, `closed_doors_on_our_floor` kept re-listing a door
+    /// that was already open and the agent toggled it shut again.
+    #[test]
+    fn door_toggle_keeps_house_walls_in_step_with_the_edges() {
+        use onlinerpg_shared::housing::{
+            HouseData, PassabilityGrid, RoomData, WallConfig, WallDirection, WallVariant,
+        };
+
+        let wall = |variant| WallConfig {
+            variant,
+            texture: 0,
+            is_open: false,
+        };
+        let room = RoomData {
+            room_type: Default::default(),
+            roof_type: Default::default(),
+            roof_ridge_dir: Default::default(),
+            stair_reversed: false,
+            local_x: 0,
+            local_z: 0,
+            size_x: 1,
+            size_z: 1,
+            floor_level: 0,
+            floor_texture: 0,
+            roof_texture: 0,
+            wall_height: 3.0,
+            wall_north: vec![wall(WallVariant::WithDoor)],
+            wall_south: vec![wall(WallVariant::Solid)],
+            wall_east: vec![wall(WallVariant::Solid)],
+            wall_west: vec![wall(WallVariant::Solid)],
+        };
+
+        let house = HouseData {
+            id: "h".to_string(),
+            owner_id: "test".to_string(),
+            origin: onlinerpg_shared::Position {
+                x: 10.0,
+                y: 0.0,
+                z: 10.0,
+            },
+            rooms: vec![room],
+            passability: vec![PassabilityGrid {
+                floor_level: 0,
+                origin_x: 0,
+                origin_z: 0,
+                width: 1,
+                depth: 1,
+                // All four edges walled (N=1, E=2, S=4, W=8), door shut.
+                cells: vec![1 | 2 | 4 | 8],
+            }],
+        };
+
+        let mut world = WorldCache::new();
+        world.add_house(house);
+
+        let door_blocked = |world: &WorldCache| {
+            pathfinding::is_movement_blocked(
+                world.passability_cache(),
+                10.5,
+                10.5,
+                10.5,
+                9.5,
+                0,
+                None,
+            )
+        };
+        assert!(door_blocked(&world), "the north door starts shut");
+
+        world.update_door("h", 0, WallDirection::North, 0, true);
+        assert!(
+            world.houses()["h"].rooms[0].wall_north[0].is_open,
+            "HouseData must track the open"
+        );
+        assert!(!door_blocked(&world), "the edge must open with the door");
+
+        world.update_door("h", 0, WallDirection::North, 0, false);
+        assert!(!world.houses()["h"].rooms[0].wall_north[0].is_open);
+        assert!(door_blocked(&world), "the edge must seal again");
     }
 }
