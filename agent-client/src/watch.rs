@@ -213,6 +213,9 @@ impl WatchHub {
 struct AppState {
     hub: Arc<WatchHub>,
     minimap: MinimapSource,
+    /// Changes on every process start; the page reloads itself when it
+    /// sees a new value, so a redeploy never needs a manual refresh.
+    boot_id: u64,
 }
 
 /// Where the panel reads baked region minimaps from. These are the same PNGs
@@ -285,7 +288,11 @@ async fn guard_host(req: Request, next: Next) -> Response {
 }
 
 pub async fn serve(hub: Arc<WatchHub>, minimap: MinimapSource, port: u16) {
-    let app_state = Arc::new(AppState { hub, minimap });
+    let boot_id = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(1);
+    let app_state = Arc::new(AppState { hub, minimap, boot_id });
     let app = Router::new()
         .route("/", get(page))
         .route("/api/npcs", get(npcs))
@@ -363,12 +370,85 @@ async fn state_snapshot(State(app): State<Arc<AppState>>, Query(q): Query<NpcQue
                 .collect()
         };
 
+        // Underground: ship the real floor layout so the map can draw rock,
+        // rooms and stairs instead of the surface terrain.
+        let dungeon = if s.self_floor_level < 0 {
+            s.dungeon_here().and_then(|d| {
+                use onlinerpg_shared::dungeon::{cell_center, dungeon_origin, GRID};
+                let depth = s.self_floor_level.unsigned_abs();
+                d.layouts().get(depth as usize - 1).map(|layout| {
+                    let (ox, oz) = dungeon_origin(d.entrance.x, d.entrance.z);
+                    let rows: Vec<String> = (0..GRID)
+                        .map(|z| {
+                            (0..GRID)
+                                .map(|x| {
+                                    if layout.carved[(x + z * GRID) as usize] {
+                                        '.'
+                                    } else {
+                                        '#'
+                                    }
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    let up =
+                        cell_center(&d.entrance, depth, (layout.up_shaft.x, layout.up_shaft.z));
+                    let down = layout.down_shaft.as_ref().map(|sh| {
+                        let p = cell_center(&d.entrance, depth, (sh.x, sh.z));
+                        json!({ "x": p.x, "z": p.z })
+                    });
+                    json!({
+                        "name": d.name,
+                        "origin": { "x": ox, "z": oz },
+                        "grid": GRID,
+                        "rows": rows,
+                        "stairs_up": { "x": up.x, "z": up.z },
+                        "stairs_down": down,
+                    })
+                })
+            })
+        } else {
+            None
+        };
+
+        let dungeon_entrances: Vec<serde_json::Value> = {
+            let wc = s.world_cache.read().unwrap();
+            wc.all_dungeons()
+                .iter()
+                .map(|d| {
+                    json!({
+                        "name": d.name,
+                        "x": d.entrance.x,
+                        "z": d.entrance.z,
+                        "floors": d.max_depth(),
+                    })
+                })
+                .collect()
+        };
+        let ground_items: Vec<serde_json::Value> = s
+            .ground_items_in_sight()
+            .into_iter()
+            .map(|(_, i)| {
+                json!({
+                    "x": i.position.x,
+                    "z": i.position.z,
+                    "item": i.item_def_id,
+                    "floor": i.floor_level,
+                })
+            })
+            .collect();
+
         json!({
             "npc": label,
+            "boot": app.boot_id,
+            "sight": onlinerpg_shared::NPC_SIGHT_RADIUS,
             "connected": connected && s.in_game,
             "self": s.self_player,
             "gold": s.self_gold,
             "floor": s.self_floor_level,
+            "dungeon": dungeon,
+            "dungeon_entrances": dungeon_entrances,
+            "ground_items": ground_items,
             "bag": s.self_bag,
             "time": { "hour": s.game_hour, "minute": s.game_minute, "night": s.is_night },
             "players": s.nearby_players.values().collect::<Vec<_>>(),
