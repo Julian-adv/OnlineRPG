@@ -153,6 +153,8 @@ export type ClientMessage =
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
+  | { PartyKick: { target_id: number } }
+  | { PartyPromote: { target_id: number } }
   | { PartyChat: { message: string } }
   | 'RequestPartyPositions'
   | { OpenDungeonChest: { entrance_id: string } }
