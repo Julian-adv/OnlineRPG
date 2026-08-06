@@ -1395,3 +1395,362 @@ async fn bare_typed_party_chat_draws_a_usage_reply() {
     }
     assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
 }
+
+// --- Kick and leadership handover ---
+
+#[tokio::test]
+async fn leader_kicks_member_with_notices() {
+    let game_state = make_test_game_state("party_kick");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut carol_rx = add(&game_state, "carol", 10.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    game_state.kick_from_party(&pid("alice"), &pid("bob")).await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::PartyState { members, .. }) => assert!(members.is_empty()),
+        other => panic!("Expected cleared state for bob, got {:?}", other),
+    }
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("you were removed"), "{message}")
+        }
+        other => panic!("Expected removal notice for bob, got {:?}", other),
+    }
+    for rx in [&mut alice_rx, &mut carol_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyState { leader_id, members }) => {
+                assert_eq!(leader_id, pid("alice"));
+                let names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
+                assert_eq!(names, ["alice", "carol"]);
+            }
+            other => panic!("Expected shrunk roster, got {:?}", other),
+        }
+        match rx.try_recv() {
+            Ok(ServerMessage::SystemMessage { message }) => {
+                assert!(message.contains("bob was removed"), "{message}")
+            }
+            other => panic!("Expected removal line, got {:?}", other),
+        }
+    }
+}
+
+#[tokio::test]
+async fn only_the_leader_kicks() {
+    let game_state = make_test_game_state("party_kick_leader_only");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut carol_rx = add(&game_state, "carol", 10.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    game_state.kick_from_party(&pid("bob"), &pid("carol")).await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("only the party leader"), "{message}")
+        }
+        other => panic!("Expected refusal for bob, got {:?}", other),
+    }
+    assert!(matches!(carol_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn kick_rejects_self_outsiders_and_the_partyless() {
+    let game_state = make_test_game_state("party_kick_rejects");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut dave_rx = add(&game_state, "dave", 15.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut dave_rx);
+
+    game_state
+        .kick_from_party(&pid("alice"), &pid("alice"))
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("that's you"), "{message}")
+        }
+        other => panic!("Expected self-kick refusal, got {:?}", other),
+    }
+
+    game_state
+        .kick_from_party(&pid("alice"), &pid("dave"))
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("not in your party"), "{message}")
+        }
+        other => panic!("Expected outsider refusal, got {:?}", other),
+    }
+    assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+
+    game_state
+        .kick_from_party(&pid("dave"), &pid("alice"))
+        .await;
+    match dave_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("not in a party"), "{message}")
+        }
+        other => panic!("Expected partyless refusal, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn kick_to_one_disbands() {
+    let game_state = make_test_game_state("party_kick_disband");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state.kick_from_party(&pid("alice"), &pid("bob")).await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::PartyState { members, .. }) => assert!(members.is_empty()),
+        other => panic!("Expected cleared state for bob, got {:?}", other),
+    }
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("you were removed"), "{message}")
+        }
+        other => panic!("Expected removal notice for bob, got {:?}", other),
+    }
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyState { members, .. }) => assert!(members.is_empty()),
+        other => panic!("Expected cleared state for alice, got {:?}", other),
+    }
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("disbanded"), "{message}")
+        }
+        other => panic!("Expected disband notice, got {:?}", other),
+    }
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("bob was removed"), "{message}")
+        }
+        other => panic!("Expected removal line, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn promote_hands_over_leadership() {
+    let game_state = make_test_game_state("party_promote_cmd");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut carol_rx = add(&game_state, "carol", 10.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    game_state
+        .promote_party_leader(&pid("alice"), &pid("bob"))
+        .await;
+    for rx in [&mut alice_rx, &mut bob_rx, &mut carol_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyState { leader_id, members }) => {
+                assert_eq!(leader_id, pid("bob"));
+                // The roster order is untouched by a handover.
+                let names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
+                assert_eq!(names, ["alice", "bob", "carol"]);
+            }
+            other => panic!("Expected handed-over roster, got {:?}", other),
+        }
+        match rx.try_recv() {
+            Ok(ServerMessage::SystemMessage { message }) => {
+                assert!(message.contains("bob is now the party leader"), "{message}")
+            }
+            other => panic!("Expected handover line, got {:?}", other),
+        }
+    }
+
+    // The lead actually moved: the new leader may kick.
+    game_state.kick_from_party(&pid("bob"), &pid("carol")).await;
+    match carol_rx.try_recv() {
+        Ok(ServerMessage::PartyState { members, .. }) => assert!(members.is_empty()),
+        other => panic!("Expected carol kicked by the new leader, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn promote_requires_leadership_and_membership() {
+    let game_state = make_test_game_state("party_promote_rejects");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut dave_rx = add(&game_state, "dave", 15.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut dave_rx);
+
+    game_state
+        .promote_party_leader(&pid("bob"), &pid("alice"))
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("only the party leader"), "{message}")
+        }
+        other => panic!("Expected refusal for bob, got {:?}", other),
+    }
+
+    game_state
+        .promote_party_leader(&pid("alice"), &pid("alice"))
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("already lead"), "{message}")
+        }
+        other => panic!("Expected self-promote refusal, got {:?}", other),
+    }
+
+    game_state
+        .promote_party_leader(&pid("alice"), &pid("dave"))
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("not in your party"), "{message}")
+        }
+        other => panic!("Expected outsider refusal, got {:?}", other),
+    }
+    assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn party_kick_and_leader_chat_commands() {
+    let game_state = make_test_game_state("party_subcommands");
+    let auth = make_test_auth("party_subcommands");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    let mut carol_rx = add(&game_state, "carol", 10.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    form_party(&game_state, "alice", "carol").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    game_state
+        .send_chat_message(&pid("alice"), "/party kick".to_string(), &auth)
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("/party kick <name>"), "{message}")
+        }
+        other => panic!("Expected usage reply, got {:?}", other),
+    }
+
+    game_state
+        .send_chat_message(&pid("alice"), "/party kick nobody".to_string(), &auth)
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("no one called nobody"), "{message}")
+        }
+        other => panic!("Expected unknown-name reply, got {:?}", other),
+    }
+
+    // Names resolve ignoring case, like invites.
+    game_state
+        .send_chat_message(&pid("alice"), "/party leader BOB".to_string(), &auth)
+        .await;
+    match alice_rx.try_recv() {
+        Ok(ServerMessage::PartyState { leader_id, .. }) => assert_eq!(leader_id, pid("bob")),
+        other => panic!("Expected handover via command, got {:?}", other),
+    }
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    game_state
+        .send_chat_message(&pid("bob"), "/party kick carol".to_string(), &auth)
+        .await;
+    match carol_rx.try_recv() {
+        Ok(ServerMessage::PartyState { members, .. }) => assert!(members.is_empty()),
+        other => panic!("Expected carol kicked via command, got {:?}", other),
+    }
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    game_state
+        .send_chat_message(&pid("bob"), "/party leave".to_string(), &auth)
+        .await;
+    match bob_rx.try_recv() {
+        Ok(ServerMessage::PartyState { members, .. }) => assert!(members.is_empty()),
+        other => panic!("Expected bob out via /party leave, got {:?}", other),
+    }
+}
+
+// --- Roster vitals ---
+
+#[tokio::test]
+async fn party_state_carries_hp_and_class() {
+    let game_state = make_test_game_state("party_state_vitals");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 5.0).await;
+    set_health(&game_state, "bob", 4).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut bob_rx);
+
+    let members = loop {
+        match alice_rx.try_recv() {
+            Ok(ServerMessage::PartyState { members, .. }) => break members,
+            Ok(_) => continue,
+            Err(err) => panic!("Expected roster, got {:?}", err),
+        }
+    };
+    let bob = members.iter().find(|m| m.name == "bob").unwrap();
+    assert_eq!(bob.hp, 4);
+    assert_eq!(bob.max_hp, 10);
+    assert_eq!(bob.class, CharacterClass::Knight);
+}
+
+#[tokio::test]
+async fn vitals_tick_pushes_only_dirty_parties() {
+    let game_state = make_test_game_state("party_vitals_tick");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    let mut dave_rx = add(&game_state, "dave", 15.0).await;
+    form_party(&game_state, "alice", "bob").await;
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut dave_rx);
+
+    // Nothing queued: the tick sends nothing.
+    game_state.tick_party_vitals().await;
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+
+    // A queued member pushes the whole party's vitals to every member,
+    // beyond any AOI (bob is 500m away).
+    set_health(&game_state, "bob", 3).await;
+    game_state.mark_party_vitals_dirty(&pid("bob")).await;
+    game_state.tick_party_vitals().await;
+    for rx in [&mut alice_rx, &mut bob_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PartyVitals { members }) => {
+                assert_eq!(members.len(), 2);
+                let bob = members.iter().find(|m| m.id == pid("bob")).unwrap();
+                assert_eq!(bob.hp, 3);
+                assert_eq!(bob.max_hp, 10);
+            }
+            other => panic!("Expected vitals push, got {:?}", other),
+        }
+    }
+
+    // A partyless player's queued change is dropped by the tick.
+    set_health(&game_state, "dave", 2).await;
+    game_state.mark_party_vitals_dirty(&pid("dave")).await;
+    game_state.tick_party_vitals().await;
+    assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+}

@@ -223,6 +223,9 @@ pub struct GameState {
     /// party-position push; the tick maps them to parties, so entries from
     /// partyless players just drop out there.
     party_position_dirty: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Players whose health changed since the last party-vitals push;
+    /// `party_position_dirty`'s twin.
+    party_vitals_dirty: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
     /// Serializes account replacement and character deletion with game entry.
@@ -382,6 +385,7 @@ impl GameState {
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
             party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
+            party_vitals_dirty: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
             character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),

@@ -97,11 +97,24 @@ pub struct BagLineItem {
     pub qty: u32,
 }
 
-/// One party member as listed in `PartyState`.
+/// One party member as listed in `PartyState`. `hp`/`max_hp` are the
+/// roster-time snapshot; steady-state updates ride `PartyVitals`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartyMember {
     pub id: PlayerId,
     pub name: String,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub class: crate::character::CharacterClass,
+}
+
+/// One member's health as listed in `PartyVitals`. No name or class: the
+/// roster from `PartyState` already carries them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartyMemberVitals {
+    pub id: PlayerId,
+    pub hp: u32,
+    pub max_hp: u32,
 }
 
 /// How long a party invite stays acceptable. Shared so the server's
@@ -417,6 +430,15 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
+    /// Leader-only: remove `target_id` from the sender's party. A party
+    /// reduced to one member disbands, like `PartyLeave`.
+    PartyKick {
+        target_id: PlayerId,
+    },
+    /// Leader-only: hand party leadership to `target_id`.
+    PartyPromote {
+        target_id: PlayerId,
+    },
     /// Say something to the sender's party. Delivered to every online member
     /// wherever they are (no AOI cut), echoed to the sender included.
     PartyChat {
@@ -629,6 +651,12 @@ pub enum ServerMessage {
     /// themselves); empty when the requester is not in a party.
     PartyPositions {
         members: Vec<PartyMemberPosition>,
+    },
+    /// Party member health with no AOI cut, `PartyPositions`' twin: pushed to
+    /// the whole party when a member's health changes. The roster snapshot in
+    /// `PartyState` seeds the panel; this keeps it current.
+    PartyVitals {
+        members: Vec<PartyMemberVitals>,
     },
     GameState {
         /// A list, not a map keyed by id: `PlayerId` is numeric and

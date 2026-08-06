@@ -49,7 +49,7 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v17: PartyPositions pushed server-side on relocation (was a poll answer)
 ///      and now includes the recipient; clients filter themselves.
 /// v18: party chat (PartyChat → PartyChatMessage).
-pub const PROTOCOL_VERSION: u32 = 19;
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

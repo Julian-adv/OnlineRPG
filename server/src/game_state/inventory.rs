@@ -790,6 +790,7 @@ impl super::GameState {
             })
         };
         if let Some((health, max_health, position, floor_level)) = healed {
+            self.mark_party_vitals_dirty(player_id).await;
             self.send_direct_message_to_players_within_position(
                 &position,
                 floor_level,
