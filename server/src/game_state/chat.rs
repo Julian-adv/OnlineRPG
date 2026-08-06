@@ -16,6 +16,12 @@ const MUTE_MAX_MINUTES: u64 = 1440;
 /// A year of minutes: longer than that, use a permanent ban (no minutes).
 const BAN_MAX_MINUTES: i64 = 525_600;
 
+/// `/spawnmob` per-command cap; the global and ambient per-player monster
+/// limits in `spawn_monster` still apply on top.
+const SPAWNMOB_MAX_COUNT: u32 = 10;
+/// Meters from the admin to each spawned monster.
+const SPAWNMOB_RING_RADIUS: f32 = 3.0;
+
 /// `/who` breakdown. Splits by client program rather than by "human vs bot":
 /// the server cannot tell whether a person or an LLM is driving a web client,
 /// and does not try to (`doc/REMOTE_AGENT_CLIENT.md`). Official NPCs are
@@ -159,6 +165,10 @@ pub(crate) enum AdminCommand<'a> {
     Unmute(&'a str),
     Summon(&'a str),
     Goto(&'a str),
+    Spawnmob {
+        monster_type: &'a str,
+        count: Option<&'a str>,
+    },
 }
 
 pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
@@ -182,6 +192,13 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
     }
     if let Some(rest) = strip_command(message, "/summon") {
         return Some(AdminCommand::Summon(rest));
+    }
+    if let Some(rest) = strip_command(message, "/spawnmob") {
+        let (monster_type, count) = split_name_and_minutes(rest);
+        return Some(AdminCommand::Spawnmob {
+            monster_type,
+            count,
+        });
     }
     strip_command(message, "/goto").map(AdminCommand::Goto)
 }
@@ -648,6 +665,10 @@ impl super::GameState {
             AdminCommand::Unban(name) => self.unban_command(name, auth).await,
             AdminCommand::Summon(name) => self.summon_command(admin_id, name).await,
             AdminCommand::Goto(name) => self.goto_command(admin_id, name).await,
+            AdminCommand::Spawnmob {
+                monster_type,
+                count,
+            } => self.spawnmob_command(admin_id, monster_type, count).await,
         }
         .unwrap_or_else(std::convert::identity);
         self.send_system_message(admin_id, reply).await;
@@ -873,6 +894,78 @@ impl super::GameState {
             .await;
         info!(admin = ?admin_id, target = %canonical, "admin goto");
         Ok(format!("Goto: you are at {canonical}'s side."))
+    }
+
+    /// Spawn monsters in a ring around the admin for combat testing. The
+    /// admin's own client owns them (`MonsterAssigned`), so their AI runs
+    /// like an ambient spawn's — ownerless monsters would neither fight back
+    /// nor despawn their corpses.
+    async fn spawnmob_command(
+        &self,
+        admin_id: &PlayerId,
+        monster_type: &str,
+        raw_count: Option<&str>,
+    ) -> Result<String, String> {
+        let types = || self.monster_defs.ids().join(", ");
+        if monster_type.is_empty() {
+            return Err(format!(
+                "Spawnmob: /spawnmob <type> [count] — types: {}",
+                types()
+            ));
+        }
+        if self.monster_defs.get(monster_type).is_none() {
+            return Err(format!(
+                "Spawnmob: unknown type {monster_type} — types: {}",
+                types()
+            ));
+        }
+        let count = match raw_count {
+            None => 1,
+            Some(raw) => match raw.parse::<u32>() {
+                Ok(n) if (1..=SPAWNMOB_MAX_COUNT).contains(&n) => n,
+                _ => {
+                    return Err(format!(
+                        "Spawnmob: count must be 1\u{2013}{SPAWNMOB_MAX_COUNT}."
+                    ))
+                }
+            },
+        };
+        let Some((center, rotation, floor, _)) = self.player_pose(admin_id).await else {
+            warn!("/spawnmob from non-existent player: {admin_id}");
+            return Err("Spawnmob: server error, try again.".to_string());
+        };
+
+        let mut spawned = 0u32;
+        for i in 0..count {
+            let angle = i as f32 / count as f32 * std::f32::consts::TAU;
+            let position = self.open_spot_beside(&center, angle, SPAWNMOB_RING_RADIUS);
+            let Some(monster) = self
+                .spawn_monster(
+                    monster_type.to_string(),
+                    position,
+                    rotation,
+                    Some(*admin_id),
+                    floor,
+                    None,
+                    true,
+                )
+                .await
+            else {
+                break;
+            };
+            self.send_direct_message(admin_id, ServerMessage::MonsterAssigned { monster })
+                .await;
+            spawned += 1;
+        }
+        info!(admin = ?admin_id, monster_type, spawned, "admin spawnmob");
+        if spawned == 0 {
+            return Err(format!("Spawnmob: {monster_type} is at its spawn limit."));
+        }
+        Ok(if spawned == count {
+            format!("Spawnmob: {spawned} {monster_type} spawned.")
+        } else {
+            format!("Spawnmob: {spawned} of {count} {monster_type} spawned (limit reached).")
+        })
     }
 
     /// Last resort for a player wedged somewhere movement can't undo: return

@@ -1388,14 +1388,19 @@ impl super::GameState {
 
     /// A walkable spot on a small ring beside `center` for a teleport
     /// arrival, golden-angle-seeded by the mover's id so simultaneous
-    /// arrivals don't stack. A blocked spot (dungeon walls run 1m from a
-    /// corridor's center) retries at half radius and finally lands on
-    /// `center` itself — a walkable cell by construction.
+    /// arrivals don't stack.
     pub(crate) fn arrival_beside(&self, mover: &PlayerId, center: &Position) -> Position {
         let angle = (mover.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
+        self.open_spot_beside(center, angle, ARRIVAL_RING_RADIUS)
+    }
+
+    /// A walkable spot at `angle` from `center`. A blocked spot (dungeon
+    /// walls run 1m from a corridor's center) retries at half radius and
+    /// finally lands on `center` itself — a walkable cell by construction.
+    pub(crate) fn open_spot_beside(&self, center: &Position, angle: f32, radius: f32) -> Position {
         let cache = self.passability_read();
         let cell_floor = super::passability::authoritative_floor(&cache, center);
-        for radius in [ARRIVAL_RING_RADIUS, ARRIVAL_RING_RADIUS * 0.5] {
+        for radius in [radius, radius * 0.5] {
             let candidate = Position {
                 x: center.x + angle.cos() * radius,
                 y: center.y,
