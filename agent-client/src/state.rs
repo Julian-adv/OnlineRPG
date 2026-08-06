@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
 use onlinerpg_shared::dungeon::{
-    dungeon_cache_key, floor_cells, floor_level_for_passability, passability_floor_for_level,
-    path_max_nodes, set_floor_cells,
+    cell_center, dungeon_cache_key, floor_cells, floor_level_for_passability,
+    passability_floor_for_level, path_max_nodes, set_floor_cells, world_to_cell,
 };
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
@@ -73,8 +73,9 @@ pub enum CarriedBagCopies {
     WornOnly { def_id: String },
 }
 
-/// How urgently an event needs LLM attention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How urgently an event needs LLM attention. Ordered most urgent first, so
+/// `min` picks the one that decides a batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventUrgency {
     /// Must be processed immediately (combat damage to self, death, direct chat, kicked)
     Urgent,
@@ -438,6 +439,11 @@ pub struct SharedState {
     no_spawn_zones: Vec<NoSpawnZone>,
     /// Spectator panel handle; feeds it chat/combat/system lines
     watch: Option<Arc<crate::watch::NpcWatch>>,
+    /// Running follow loop: (target name, task handle). Anything that takes
+    /// the body over aborts it; losing the target ends it with an event.
+    pub follow_task: Option<(String, tokio::task::JoinHandle<()>)>,
+    /// Most urgent reason the driver has been woken for since it last looked.
+    wake_urgency: EventUrgency,
 }
 
 impl SharedState {
@@ -491,7 +497,38 @@ impl SharedState {
             pending_commands: Vec::new(),
             no_spawn_zones: Vec::new(),
             watch,
+            follow_task: None,
+            wake_urgency: EventUrgency::Noise,
         }
+    }
+
+    /// Abort a running follow loop, if any. Returns the name that was being
+    /// followed. A loop that already ended left its own note, so it does not
+    /// count as cancelled.
+    pub fn cancel_follow(&mut self) -> Option<String> {
+        let (name, handle) = self.follow_task.take()?;
+        if handle.is_finished() {
+            return None;
+        }
+        handle.abort();
+        Some(name)
+    }
+
+    /// Characters on our own floor. Someone a floor above is a dot straight
+    /// overhead, not a neighbour, so nothing the LLM sees or names should
+    /// reach them.
+    fn players_on_my_floor(&self) -> impl Iterator<Item = (&PlayerId, &Player)> {
+        self.nearby_players
+            .iter()
+            .filter(|(_, p)| p.floor_level == self.self_floor_level)
+    }
+
+    /// Monsters on our own floor — cross-floor ones read to the LLM as
+    /// phantom respawns.
+    fn monsters_on_my_floor(&self) -> impl Iterator<Item = &Monster> {
+        self.nearby_monsters
+            .values()
+            .filter(|m| m.floor_level == self.self_floor_level)
     }
 
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
@@ -502,16 +539,15 @@ impl SharedState {
         let self_id = self.self_player_id.as_ref();
         let radius_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
 
-        self.nearby_players.iter().any(|(id, p)| {
-            if self_id == Some(id) || p.is_official_npc {
-                return false;
-            }
-            p.position.dist_xz_sq(&self_player.position) <= radius_sq
+        self.players_on_my_floor().any(|(id, p)| {
+            self_id != Some(id)
+                && !p.is_official_npc
+                && p.position.dist_xz_sq(&self_player.position) <= radius_sq
         })
     }
 
-    /// Check all nearby players and emit an agent event for any player
-    /// that just entered NEARBY_PLAYER_RADIUS for the first time.
+    /// Emit an agent event for any player on our floor that just entered
+    /// NEARBY_PLAYER_RADIUS for the first time.
     fn check_nearby_player_proximity(&mut self) {
         let self_pos = match self.self_player.as_ref() {
             Some(p) => &p.position,
@@ -522,29 +558,33 @@ impl SharedState {
             None => return,
         };
 
-        for (pid, player) in &self.nearby_players {
-            if pid == self_id {
-                continue;
-            }
-            if self.seen_nearby_players.contains(pid) {
-                continue;
-            }
-            let dx = player.position.x - self_pos.x;
-            let dz = player.position.z - self_pos.z;
-            let dist = (dx * dx + dz * dz).sqrt();
-            if dist <= NEARBY_PLAYER_RADIUS {
-                self.seen_nearby_players.insert(*pid);
-                self.agent_events.push(format!(
-                    "[PlayerNearby] {} Lv.{} appeared {:.1}m away at ({:.1}, {:.1}, {:.1})",
-                    player.name,
-                    player.level,
-                    dist,
-                    player.position.x,
-                    player.position.y,
-                    player.position.z
-                ));
-                self.urgent_notify.notify_one();
-            }
+        let arrived: Vec<(PlayerId, String)> = self
+            .players_on_my_floor()
+            .filter(|(pid, _)| *pid != self_id && !self.seen_nearby_players.contains(pid))
+            .filter_map(|(pid, player)| {
+                let dist = crate::geom::PlanarDelta::between(&player.position, self_pos).dist;
+                (dist <= NEARBY_PLAYER_RADIUS).then(|| {
+                    (
+                        *pid,
+                        format!(
+                            "[PlayerNearby] {} Lv.{} appeared {:.1}m away at ({:.1}, {:.1}, {:.1})",
+                            player.name,
+                            player.level,
+                            dist,
+                            player.position.x,
+                            player.position.y,
+                            player.position.z
+                        ),
+                    )
+                })
+            })
+            .collect();
+
+        for (pid, event) in arrived {
+            self.seen_nearby_players.insert(pid);
+            self.agent_events.push(event);
+            // A person arriving, not our own bookkeeping — urgent lane.
+            self.wake(EventUrgency::Urgent);
         }
     }
 
@@ -1602,7 +1642,7 @@ impl SharedState {
                         "[TimeChange] It is now {hour:02}:{minute:02} ({}).",
                         if night { "night" } else { "day" }
                     ));
-                    self.urgent_notify.notify_one();
+                    self.wake(EventUrgency::Routine);
                 }
                 return urgency;
             }
@@ -1619,7 +1659,7 @@ impl SharedState {
 
         // Notify Claude driver if urgent
         if urgency == EventUrgency::Urgent {
-            self.urgent_notify.notify_one();
+            self.wake(EventUrgency::Urgent);
         }
 
         urgency
@@ -1735,6 +1775,50 @@ impl SharedState {
                 ));
             }
             line.push_str(&self.format_room_props(p));
+            // Floor map in world coordinates: without it the LLM aims moves
+            // into solid rock and collects [MoveFailed] walls. Cell centres
+            // sit on .5 — rounding them to whole metres names the next cell.
+            if let Some(d) = dungeon.as_ref() {
+                if let Some(layout) = d.layouts().get(depth as usize - 1) {
+                    let me = world_to_cell(&d.entrance, p.position.x, p.position.z);
+                    let rooms = layout
+                        .rooms
+                        .iter()
+                        .enumerate()
+                        .map(|(i, room)| {
+                            let c = cell_center(&d.entrance, depth, room.center());
+                            format!(
+                                "room {} center ({:.1}, {:.1}) {}x{}m{}",
+                                i + 1,
+                                c.x,
+                                c.z,
+                                room.w,
+                                room.d,
+                                if room.contains(me.0, me.1) {
+                                    " (you are here)"
+                                } else {
+                                    ""
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    line.push_str(&format!("\nRooms on this floor: {rooms}"));
+                    // Only the up shaft's exit row and the down shaft's entry
+                    // row are landings on this floor; the rest of a shaft is
+                    // blocked here, so its min corner is not a reachable goal.
+                    let up = cell_center(&d.entrance, depth, layout.up_shaft.exit_cell());
+                    line.push_str(&format!("\nStairs up at ({:.1}, {:.1})", up.x, up.z));
+                    if let Some(down) = &layout.down_shaft {
+                        let dn = cell_center(&d.entrance, depth, down.entry_cell());
+                        line.push_str(&format!("; stairs down at ({:.1}, {:.1})", dn.x, dn.z));
+                    }
+                    line.push_str(
+                        "\nEverything outside rooms and corridors is solid rock — aim \
+                         moves at room centers or stairs.",
+                    );
+                }
+            }
             return Some(line);
         }
         let dungeon = self
@@ -1903,21 +1987,41 @@ impl SharedState {
         None
     }
 
-    /// Push a synthetic agent event visible to the LLM.
+    /// Push a synthetic agent event visible to the LLM. Synthetic events are
+    /// feedback on the agent's own actions (arrival, a failed move, a kill),
+    /// so they wake the LLM driver instead of waiting out the idle interval.
+    /// They wake it at `Routine` though: an agent's own arrival note must
+    /// never outrank a human talking to some other NPC in the LLM queue.
     pub fn push_agent_event(&mut self, event: String) {
         if let Some(watch) = &self.watch {
             watch.push("agent", event.clone());
         }
         self.agent_events.push(event);
+        self.wake(EventUrgency::Routine);
+    }
+
+    /// Wake the LLM driver, remembering how urgent the reason was. The driver
+    /// takes the urgency at wake-up to pick its rate-limit floor and the
+    /// prompt's scheduler priority.
+    fn wake(&mut self, urgency: EventUrgency) {
+        self.wake_urgency = self.wake_urgency.min(urgency);
+        self.urgent_notify.notify_one();
+    }
+
+    /// Take the urgency accumulated since the last wake-up, resetting it.
+    pub fn take_wake_urgency(&mut self) -> EventUrgency {
+        std::mem::replace(&mut self.wake_urgency, EventUrgency::Noise)
     }
 
     /// Resolve a player name (or raw id) among nearby players, as used by
     /// player-targeting LLM actions. Returns `(player_id, is_official_npc)`.
     /// `name_or_id` stays `&str` because it comes straight from LLM output and
     /// may be either form; the resolved handle is what gets typed.
+    /// Only same-floor characters resolve: the world state the LLM saw lists
+    /// no one else, and a cross-floor chase would burn its A* budget to reach
+    /// a name it never should have been offered.
     pub fn resolve_nearby_player(&self, name_or_id: &str) -> Option<(PlayerId, bool)> {
-        self.nearby_players
-            .iter()
+        self.players_on_my_floor()
             .find(|(id, p)| {
                 p.name.eq_ignore_ascii_case(name_or_id)
                     || name_or_id.parse::<u64>().is_ok_and(|n| id.get() == n)
@@ -2117,7 +2221,7 @@ impl SharedState {
         // Nearby players (exclude self and humans beyond the sight radius)
         let sp = self.self_player.as_ref();
         let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
-        for p in self.nearby_players.values() {
+        for (_, p) in self.players_on_my_floor() {
             if self.self_player_id.as_ref() == Some(&p.id) {
                 continue;
             }
@@ -2126,8 +2230,9 @@ impl SharedState {
                     continue;
                 }
             }
+            let npc_tag = if p.is_official_npc { " (NPC)" } else { "" };
             lines.push(format!(
-                "Player: {} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
+                "Player: {}{npc_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
             if p.is_official_npc {
@@ -2138,7 +2243,7 @@ impl SharedState {
         }
 
         // Exclude monsters beyond LLM sight radius
-        for m in self.nearby_monsters.values() {
+        for m in self.monsters_on_my_floor() {
             if let Some(sp) = sp {
                 if m.position.dist_xz_sq(&sp.position) > sight_sq {
                     continue;
@@ -2462,6 +2567,100 @@ pub(crate) mod tests {
         }
     }
 
+    /// Every coordinate the underground state line hands the LLM has to be a
+    /// cell it can actually stand on. A shaft is walkable on this floor only
+    /// along one row — its min corner and the cell half a metre over are both
+    /// rock — so a wrong end or a rounded centre reads as a wall.
+    #[test]
+    fn the_floor_map_only_names_cells_the_agent_can_stand_on() {
+        let (mut s, _crypt, _rx) = dungeon_state();
+        let mut orientations = std::collections::HashSet::new();
+
+        for def in onlinerpg_shared::dungeon::entrances() {
+            let dungeon = s
+                .world_cache
+                .read()
+                .unwrap()
+                .dungeon_by_id(&def.id)
+                .expect("registered dungeon");
+
+            // Every door open: a shut one is a detour the mover handles, so it
+            // must not be confused with a cell walled off for good.
+            let doors: Vec<(u8, u32)> = (1..=dungeon.max_depth())
+                .flat_map(|d| {
+                    dungeon
+                        .closed_doors(d, &HashSet::new())
+                        .into_iter()
+                        .map(move |door| (d, door.door_id))
+                })
+                .collect();
+            s.world_cache
+                .write()
+                .unwrap()
+                .set_dungeon_doors(&dungeon.id, &doors);
+
+            for depth in 1..=dungeon.max_depth() {
+                let layout = &dungeon.layouts()[depth as usize - 1];
+                orientations.insert(layout.up_shaft.reversed);
+                let floor = dungeon.passability_floor(depth);
+                stand_at(&mut s, &dungeon, depth, layout.rooms[0].center());
+
+                let line = s.format_dungeon_state().expect("underground state line");
+                let where_ = format!("{} floor {depth}", dungeon.id);
+                let named = coordinates_in(&line);
+                assert!(
+                    named.len() > layout.rooms.len(),
+                    "{where_} should name every room plus the stairs, got {named:?}"
+                );
+                for (x, z) in named {
+                    let p = Position { x, y: 0.0, z };
+                    // Printed coordinates must survive the round trip back to
+                    // the cell they name. Cell centres sit on .5, so rounding
+                    // them to whole metres silently names the cell next door.
+                    let cell = world_to_cell(&dungeon.entrance, x, z);
+                    let centre = cell_center(&dungeon.entrance, depth, cell);
+                    assert_eq!(
+                        (centre.x, centre.z),
+                        (x, z),
+                        "{where_} prints ({x}, {z}), which reads back as the cell \
+                         centred on ({}, {})\n{line}",
+                        centre.x,
+                        centre.z
+                    );
+                    assert!(
+                        s.world_cache.read().unwrap().is_walkable(&p, floor),
+                        "{where_} points the agent at ({x}, {z}), which is solid rock\n{line}"
+                    );
+                    // A shaft's interior is carved but walled off from this
+                    // floor, so walkable is not enough — the goal has to be
+                    // routable too.
+                    assert!(
+                        s.find_path_to(x, z, floor).found,
+                        "{where_} points the agent at ({x}, {z}), which no route \
+                         reaches\n{line}"
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            orientations.len(),
+            2,
+            "sample covers only one shaft orientation, so it cannot catch an \
+             entry/exit mix-up"
+        );
+    }
+
+    /// Pull every "(x, z)" pair out of a state line.
+    fn coordinates_in(line: &str) -> Vec<(f32, f32)> {
+        line.split('(')
+            .skip(1)
+            .filter_map(|rest| rest.split_once(')'))
+            .filter_map(|(inner, _)| inner.split_once(','))
+            .filter_map(|(x, z)| Some((x.trim().parse().ok()?, z.trim().parse().ok()?)))
+            .collect()
+    }
+
     /// Breakables are offered off the live passability the same way chests
     /// are, and a smashed one drops out of the listing.
     #[tokio::test]
@@ -2579,19 +2778,30 @@ pub(crate) mod tests {
         assert_eq!(def_id, "iron_sword");
     }
 
-    /// Standing where the chest room is, on the deepest floor.
-    fn in_the_chest_room(s: &mut SharedState, dungeon: &crate::dungeon::Dungeon) -> u8 {
-        let depth = dungeon.max_depth();
-        let layout = dungeon.layouts().last().unwrap();
-        let cell = layout.chest.unwrap();
-        let room = layout.room_at(cell.0, cell.1).unwrap();
-        let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, room.center());
+    /// Put the agent on `depth`, standing on `cell`.
+    fn stand_at(
+        s: &mut SharedState,
+        dungeon: &crate::dungeon::Dungeon,
+        depth: u8,
+        cell: (i32, i32),
+    ) -> Position {
+        let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, cell);
         s.self_floor_level = -(depth as i8);
         s.self_player = Some(Player {
             position: stand,
             floor_level: -(depth as i8),
             ..test_player(stand.x, stand.z)
         });
+        stand
+    }
+
+    /// Standing where the chest room is, on the deepest floor.
+    fn in_the_chest_room(s: &mut SharedState, dungeon: &crate::dungeon::Dungeon) -> u8 {
+        let depth = dungeon.max_depth();
+        let layout = dungeon.layouts().last().unwrap();
+        let cell = layout.chest.unwrap();
+        let room = layout.room_at(cell.0, cell.1).unwrap();
+        stand_at(s, dungeon, depth, room.center());
         depth
     }
 

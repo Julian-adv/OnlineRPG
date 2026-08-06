@@ -16,7 +16,10 @@ for f in "${files[@]}"; do
     cp "$f" "$stage/$f"
 done
 
-hf upload "$repo" "$stage" . --repo-type dataset --delete 'client/**' \
+# --delete=PATTERN, not --delete PATTERN: hf.exe's Windows launcher expands a
+# bare wildcard argument against the cwd, which blows the pattern up into a file
+# list. Attached to the flag it no longer matches anything and survives intact.
+hf upload "$repo" "$stage" . --repo-type dataset --delete='client/**' \
     --commit-message "Sync assets from working tree"
 
 rev=$(python3 -c "import json, urllib.request; \
