@@ -1155,3 +1155,98 @@ async fn escape_command_refused_while_in_combat() {
         "/escape must not double as a combat disengage"
     );
 }
+
+#[tokio::test]
+async fn play_music_hands_the_track_to_neighbours() {
+    let game_state = make_test_game_state("play_music");
+    let auth = make_test_auth("play_music");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    // A fragment is enough — the server resolves it to the whole title.
+    game_state
+        .send_chat_message(&bard_id, "/play_music twilight".to_string(), &auth)
+        .await;
+
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::PlayerInteractionChanged {
+            player_id,
+            object_type,
+        }) => {
+            assert_eq!(player_id, bard_id);
+            assert_eq!(object_type.as_deref(), Some("guitar_playing"));
+        }
+        other => panic!("Expected the strum pose, got {other:?}"),
+    }
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::PlayerMusicStarted { player_id, track }) => {
+            assert_eq!(player_id, bard_id);
+            assert_eq!(track, "Twilight Fields");
+        }
+        other => panic!("Expected the track, got {other:?}"),
+    }
+    // The title is a chat-log line each client writes for itself, like a
+    // chest being opened — the bard does not speak it.
+    assert!(listener_rx.try_recv().is_err());
+}
+
+/// A client with no track list of its own — the agent-client — just types
+/// `/play_music`, and the tune has to come from somewhere.
+#[tokio::test]
+async fn bare_play_music_picks_a_track_for_the_performer() {
+    let game_state = make_test_game_state("play_music_bare");
+    let auth = make_test_auth("play_music_bare");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&bard_id, "/play_music".to_string(), &auth)
+        .await;
+
+    assert!(matches!(
+        listener_rx.try_recv(),
+        Ok(ServerMessage::PlayerInteractionChanged { .. })
+    ));
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::PlayerMusicStarted { track, .. }) => {
+            assert!(!track.is_empty(), "a random tune, not silence");
+        }
+        other => panic!("Expected a randomly picked track, got {other:?}"),
+    }
+}
+
+/// An unknown title is a typo, not a performance: no pose, no tune, and the
+/// only word about it goes back to whoever typed it.
+#[tokio::test]
+async fn an_unknown_song_title_refuses_the_performance() {
+    let game_state = make_test_game_state("play_music_unknown");
+    let auth = make_test_auth("play_music_unknown");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut bard_rx = game_state.register_direct_channel(&bard_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&bard_id, "/play_music nonesuch".to_string(), &auth)
+        .await;
+
+    assert!(matches!(
+        bard_rx.try_recv(),
+        Ok(ServerMessage::SystemMessage { .. })
+    ));
+    assert!(listener_rx.try_recv().is_err(), "nobody else hears a thing");
+}

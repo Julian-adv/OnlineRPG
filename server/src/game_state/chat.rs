@@ -2,6 +2,7 @@ use super::auth_db;
 use crate::auth::{ban_message, unix_now, AuthService, DEFAULT_BAN_REASON};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
+use onlinerpg_shared::messages::strip_command;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -56,8 +57,6 @@ impl OnlineCounts {
     }
 }
 
-/// `message` is `prefix` as a whole slash-command word; returns the trimmed
-/// remainder.
 /// `<name> [minutes]` tail shared by `/ban` and `/mute`; both leave the
 /// duration unvalidated so a bad one draws a usage reply.
 fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
@@ -65,11 +64,6 @@ fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
         Some((name, minutes)) => (name, Some(minutes.trim())),
         None => (rest, None),
     }
-}
-
-fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
-    let rest = message.trim().strip_prefix(prefix)?;
-    (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
 }
 
 /// `/w <name> <message>` (or `/whisper`). Returns the parts unvalidated so a
@@ -232,13 +226,8 @@ impl super::GameState {
             return;
         }
 
-        // Emote: no object to claim, so pass object_id None and skip the
-        // occupancy check — several players can play at once. Stored on the
-        // player so late joiners see the pose; cleared by StopInteraction when
-        // the player moves.
-        if message.trim() == "/play_music" {
-            self.set_player_interaction(player_id, Some("guitar_playing".to_string()), None)
-                .await;
+        if let Some(track) = strip_command(&message, "/play_music") {
+            self.play_music(player_id, track).await;
             return;
         }
 
@@ -313,6 +302,41 @@ impl super::GameState {
         }
 
         self.speak_locally(player_id, message).await;
+    }
+
+    /// `/play_music [title]` — an emote with no object to claim, so object_id
+    /// is None and the occupancy check is skipped: several players can play at
+    /// once. The pose is stored on the player so late joiners see it, and
+    /// StopInteraction clears it — the performer's client sends one when the
+    /// track ends. The title is resolved here, nowhere else, so every client
+    /// picks tracks the same way — including one with no audio at all
+    /// (agent-client): a bare `/play_music` gets a random tune. Nearby clients
+    /// play it along and name it in the chat log, the way they announce a
+    /// chest being opened — the performer says nothing.
+    async fn play_music(&self, player_id: &PlayerId, query: &str) {
+        let Some(track) = crate::bgm_defs::bgm_defs().resolve(query) else {
+            self.send_system_message(player_id, "No such song.").await;
+            return;
+        };
+
+        self.set_player_interaction(
+            player_id,
+            Some(onlinerpg_shared::messages::MUSIC_EMOTE.to_string()),
+            None,
+        )
+        .await;
+
+        let listeners = self
+            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
+            .await;
+        self.send_direct_message_to_players(
+            &listeners,
+            ServerMessage::PlayerMusicStarted {
+                player_id: *player_id,
+                track: track.to_string(),
+            },
+        )
+        .await;
     }
 
     /// Fan a spoken line out to everyone in range, minus anyone who blocked the

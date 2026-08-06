@@ -63,6 +63,7 @@ __pycache__/
 # Generated data files
 data/*.db
 data/npc_token
+data/bgm.json
 data/dungeons.json
 data/items.json
 data/map_labels.json

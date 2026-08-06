@@ -146,6 +146,19 @@ pub struct ClientEnvReport {
     pub user_agent: String,
 }
 
+/// Interaction the server stores for a `/play_music` performance. A wire
+/// contract, not a private constant: the server sets it, and both clients
+/// compare `PlayerInteractionChanged` against it to know a tune is over.
+pub const MUSIC_EMOTE: &str = "guitar_playing";
+
+/// `message` is `prefix` as a whole slash-command word; returns the trimmed
+/// remainder. Shared because the agent-client types the commands this parses —
+/// the two sides must agree on what counts as the command word.
+pub fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = message.trim().strip_prefix(prefix)?;
+    (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The
@@ -796,6 +809,15 @@ pub enum ServerMessage {
     PlayerInteractionChanged {
         player_id: PlayerId,
         object_type: Option<String>,
+    },
+    /// A player started a `/play_music` performance; nearby clients play the
+    /// named BGM track. `track` is the title the server resolved from its
+    /// registry — receivers play it only if their own BGM list has it.
+    /// The performance ends with the emote (`PlayerInteractionChanged` /
+    /// [`MUSIC_EMOTE`] giving way to anything else).
+    PlayerMusicStarted {
+        player_id: PlayerId,
+        track: String,
     },
     InteractionRejected {
         reason: String,

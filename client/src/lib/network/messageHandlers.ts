@@ -10,7 +10,7 @@ import {
   serverNotice,
 } from '../stores/gameStore'
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
-import { Vector3 } from 'three'
+import { MathUtils, Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { FishingAnimationName } from '../types/animations'
 import {
@@ -69,6 +69,12 @@ import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
+import {
+  startMusicPerformance,
+  stopMusicPerformance,
+  applyInteractionChange,
+} from '../managers/musicPerformance'
+import { emoteRequest, MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
@@ -184,7 +190,10 @@ async function applyObjectInteraction(
   const pos = placement
     ? { x: placement.x, y: placement.y, z: placement.z }
     : undefined
-  const rot = placement ? placement.rotation : undefined
+  // Placements store degrees (the mesh converts on the way in); a player's
+  // rotation is radians everywhere else, so a bed at 270° laid the sleeper
+  // out crosswise.
+  const rot = placement ? MathUtils.degToRad(placement.rotation) : undefined
   remotePlayerManager.handleInteraction(playerId, anim, offsetY, pos, rot)
 }
 
@@ -331,6 +340,7 @@ export function handleServerMessage(
     }
 
     case 'PlayerLeft': {
+      stopMusicPerformance(data.player_id)
       let leftName: string | null = null
       gameStore.update((state) => {
         const player = state.otherPlayers.get(data.player_id)
@@ -882,7 +892,27 @@ export function handleServerMessage(
       break
     }
 
+    case 'PlayerMusicStarted': {
+      const isMe = isSelfPlayer(data.player_id)
+      startMusicPerformance(data.player_id, data.track, isMe)
+      // Our own /play_music went to the server unresolved; its reply names
+      // the track and is what strikes up our emote.
+      if (isMe) emoteRequest.set(MUSIC_EMOTE_ANIM)
+      const who = isMe
+        ? null
+        : (get(gameStore).otherPlayers.get(data.player_id)?.name ?? 'Someone')
+      addChatMessage({
+        text: who
+          ? `${who} plays "${data.track}".`
+          : `You play "${data.track}".`,
+        sender: 'system',
+      })
+      break
+    }
+
     case 'PlayerInteractionChanged': {
+      // Leaving the strum ends the tune, for the performer too.
+      applyInteractionChange(data.player_id, data.object_type ?? null)
       const state = get(gameStore)
       if (state.currentPlayer?.id === data.player_id) {
         break

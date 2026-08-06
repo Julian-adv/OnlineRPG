@@ -58,6 +58,7 @@
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
+  import { MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
 
   interface Props {
     position: Vector3
@@ -256,7 +257,6 @@
   const FISHING_ROD_ROTATION = new THREE.Euler(0, -Math.PI / 6, -Math.PI / 3)
 
   const MANDOLIN_ITEM_DEF_ID = 'mandolin'
-  const MUSIC_EMOTE_ANIM = 'guitar_playing'
 
   // The mandolin's origin sits on the strum point with the neck along +X and
   // the soundboard facing +Z. Fitted to the guitar_playing clip by
@@ -656,7 +656,7 @@
     const playOnce =
       playerState !== 'moving' &&
       interactionAnim !== FishingAnimationName.IDLE &&
-      interactionAnim !== 'guitar_playing'
+      interactionAnim !== MUSIC_EMOTE_ANIM
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce

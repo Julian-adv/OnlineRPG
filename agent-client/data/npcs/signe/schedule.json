@@ -1,0 +1,27 @@
+{
+  "schedule": [
+    {
+      "at": "0:00",
+      "pos": [-1470.0, 1.1, 4750.9],
+      "rotation": -50.1,
+      "floor_level": 0,
+      "label": "busking pitch on the town square"
+    },
+    {
+      "at": "2:00",
+      "pos": [-1468.0, 1.2, 4746.1],
+      "rotation": 90.0,
+      "floor_level": 0,
+      "label": "her bed for the night",
+      "action": "bed",
+      "object_id": 23
+    },
+    {
+      "at": "11:00",
+      "pos": [-1470.0, 1.1, 4750.9],
+      "rotation": -50.1,
+      "floor_level": 0,
+      "label": "busking pitch on the town square"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+mod bgm_defs;
 mod claude;
 mod codex;
 mod driver;
@@ -432,6 +433,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::SpawnMonsterRequest { .. } => "SpawnMonsterRequest",
         ServerMessage::NoSpawnZones { .. } => "NoSpawnZones",
         ServerMessage::PlayerInteractionChanged { .. } => "PlayerInteractionChanged",
+        ServerMessage::PlayerMusicStarted { .. } => "PlayerMusicStarted",
         ServerMessage::InteractionRejected { .. } => "InteractionRejected",
         ServerMessage::InventoryState { .. } => "InventoryState",
         ServerMessage::InventoryUpdated { .. } => "InventoryUpdated",
@@ -502,6 +504,28 @@ always_active = true
         assert!(!config.npcs[0].always_active(), "registry NPC");
         assert!(config.npcs[1].always_active(), "player-run agent");
         assert!(config.npcs[2].always_active(), "explicit override wins");
+    }
+
+    /// Every registry NPC must find the prompt files the directory convention
+    /// promises. A missing one is a startup crash on the server, in the dark.
+    #[test]
+    fn registry_npcs_resolve_to_prompt_files_that_exist() {
+        for id in ["karl", "rica", "signe"] {
+            let config = parse(&format!(
+                "server = \"ws://127.0.0.1:10006\"\n\n[[npcs]]\nid = \"{id}\"\n"
+            ));
+            let mut npc = config.npcs.into_iter().next().expect("one npc");
+            resolve_from_registry(&mut npc).expect("registry row");
+            for path in [
+                npc.template_prompt.expect("class template"),
+                npc.instance_prompt.expect("instance prompt"),
+            ] {
+                assert!(
+                    std::path::Path::new(&path).exists(),
+                    "{id}: {path} is missing"
+                );
+            }
+        }
     }
 
     #[test]

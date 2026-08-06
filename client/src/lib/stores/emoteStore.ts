@@ -6,3 +6,12 @@ import { writable } from 'svelte/store'
  *  object id, and the server rejects a second player claiming the same one
  *  ("occupied") — two players can play music side by side. */
 export const emoteRequest = writable<string | null>(null)
+
+/** Set when an emote should end on its own — `/play_music` does it when the
+ *  track runs out. `PlayerControl` leaves the interaction and clears it. */
+export const emoteStopRequest = writable(false)
+
+/** Clip the `/play_music` emote holds, and the interaction the server stores
+ *  for it. Must match `MUSIC_EMOTE` in `shared/src/messages.rs` — the server
+ *  and agent-client read it from there. */
+export const MUSIC_EMOTE_ANIM = 'guitar_playing'

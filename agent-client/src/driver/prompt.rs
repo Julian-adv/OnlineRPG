@@ -237,6 +237,19 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                 list.join(", ")
             ))
         }
+        ServerMessage::PlayerMusicStarted { player_id, track } => {
+            if !player_within_event_range(state, player_id) {
+                return None;
+            }
+            let who = if state.self_player_id.as_ref() == Some(player_id) {
+                "You".to_string()
+            } else {
+                player_name(state, player_id)
+            };
+            // Everyone in earshot hears the same tune; it plays until the
+            // performer moves or the track runs out.
+            Some(format!("[PlayMusic] {who} started playing \"{track}\"."))
+        }
         ServerMessage::PlayerJoined { player } => {
             if !within_event_range(state, player.position.x, player.position.z) {
                 return None;
@@ -536,15 +549,7 @@ fn caught_line(item_def_id: &str, size_cm: u16, trophy: bool) -> String {
 /// Resolve a player_id to a display name using SharedState.
 /// Falls back to the raw ID if the player is not found.
 pub(super) fn player_name(state: &SharedState, player_id: &PlayerId) -> String {
-    if state.self_player_id.as_ref() == Some(player_id) {
-        if let Some(ref p) = state.self_player {
-            return p.name.clone();
-        }
-    }
-    if let Some(p) = state.nearby_players.get(player_id) {
-        return p.name.clone();
-    }
-    player_id.to_string()
+    state.player_display_name(player_id)
 }
 
 /// Resolve which schedule entry is currently active based on game time.
@@ -621,7 +626,43 @@ fn format_schedule_context(
 
 #[cfg(test)]
 mod tests {
-    use super::caught_line;
+    use super::{caught_line, format_event};
+    use crate::state::tests::{test_player, test_state};
+    use crate::state::NPC_SIGHT_RADIUS;
+    use onlinerpg_shared::{PlayerId, ServerMessage};
+
+    /// A tune someone strikes up nearby is worth a prompt line — the title is
+    /// what makes it something an NPC can talk about. Out of earshot it is
+    /// not our business.
+    #[test]
+    fn music_reaches_the_llm_only_within_earshot() {
+        let (mut state, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        state.self_player_id = Some(me.id);
+        state.self_player = Some(me);
+
+        let mut bard = test_player(5.0, 0.0);
+        bard.id = PlayerId::from(2);
+        bard.name = "Rica".to_string();
+        state.nearby_players.insert(bard.id, bard);
+
+        let music = |player_id| ServerMessage::PlayerMusicStarted {
+            player_id,
+            track: "Twilight Fields".to_string(),
+        };
+
+        let line = format_event(&state, &music(PlayerId::from(2))).expect("bard is in earshot");
+        assert!(line.contains("Rica"), "{line}");
+        assert!(line.contains("Twilight Fields"), "{line}");
+
+        state
+            .nearby_players
+            .get_mut(&PlayerId::from(2))
+            .unwrap()
+            .position
+            .x = NPC_SIGHT_RADIUS + 10.0;
+        assert_eq!(format_event(&state, &music(PlayerId::from(2))), None);
+    }
 
     // The wording contract with the LLM: each catch category tells the model
     // what it can actually do next (against the real embedded item defs).

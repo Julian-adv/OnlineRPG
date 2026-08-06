@@ -608,6 +608,7 @@ async fn run_npc_session(
             if !s.in_game {
                 continue;
             }
+            s.check_music_finished();
 
             // Clone Arc to avoid borrow conflict: world_cache (immutable) vs monster_ai (mutable).
             // Must drop the RwLockReadGuard before any .await (not Send).

@@ -1,5 +1,11 @@
 # Music Assets
 
+앰비언트 트랙 목록은 `data-src/bgm.csv`가 단일 진실 소스다 (제목·파일명·재생
+시간). 웹 클라이언트가 플레이리스트와 `/play_music` 재생에 쓰고, 서버가 곡
+제목을 해석하며, 오디오가 없는 agent-client는 재생 시간으로 연주가 끝나는
+시점을 안다. 전투 BGM은 여기에 없다 — 클라이언트(`bgmManager.ts`) 전용이라
+`/play_music`으로 부를 수 없다.
+
 ## BGM
 
 suno.com에서 다음의 프롬프트로 생성

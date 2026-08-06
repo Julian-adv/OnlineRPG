@@ -980,6 +980,11 @@ pub(super) async fn handle_response(
 
         {
             let mut s = state.lock().await;
+            if let AgentAction::Say { message } = action {
+                if s.refuses_second_tune(message) {
+                    continue;
+                }
+            }
             let player_pos = s.self_player.as_ref().map(|p| &p.position).cloned();
             if let Some(cmd) = action_to_command(action, player_pos.as_ref()) {
                 if let Err(e) = s.send_command(cmd).await {

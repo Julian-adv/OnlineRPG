@@ -19,7 +19,16 @@ use rand::Rng;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 
+pub(crate) use onlinerpg_shared::messages::MUSIC_EMOTE;
+
 const MAX_EVENTS: usize = 200;
+/// How far we may drift before our own performance counts as abandoned.
+const MUSIC_STAY_PUT_RADIUS: f32 = 1.5;
+/// Quiet spell between our own songs, so a busker is not one unbroken stream.
+/// The web client's playlist rests 0-60s between tracks; this is the same
+/// idea with a floor under it, since a performance is something people watch.
+const MUSIC_REST_MIN_SECS: u64 = 15;
+const MUSIC_REST_MAX_SECS: u64 = 45;
 /// Distance threshold for "player appeared nearby" agent events (in game units).
 const NEARBY_PLAYER_RADIUS: f32 = 10.0;
 /// How many ground items the world state lists before summarising the rest.
@@ -333,6 +342,14 @@ impl WorldCache {
 }
 
 /// Shared state between WebSocket reader and Claude driver tasks.
+/// Our own `/play_music` performance in flight. We have no audio to end it
+/// for us, so the track's length from the registry is the clock, and walking
+/// off the starting spot abandons it — as it does for a human player.
+struct SelfPerformance {
+    ends_at: std::time::Instant,
+    from: Position,
+}
+
 pub struct SharedState {
     pub characters: Vec<Character>,
     pub in_game: bool,
@@ -398,6 +415,12 @@ pub struct SharedState {
     latest_time: Option<ServerMessage>,
     /// Players we've already seen within NEARBY_PLAYER_RADIUS -- prevents duplicate events
     seen_nearby_players: HashSet<PlayerId>,
+    /// Who is playing what right now, so the end of a tune is an event too.
+    music_performers: HashMap<PlayerId, String>,
+    /// Our own running performance (`check_music_finished` is its clock).
+    self_performance: Option<SelfPerformance>,
+    /// Until when the square stays quiet after our own song (`MUSIC_REST_*`).
+    self_music_rest_until: Option<std::time::Instant>,
     /// Synthetic agent-side events (e.g. "player appeared nearby")
     agent_events: Vec<String>,
     /// Terrain height sampler (shared across NPC connections)
@@ -481,6 +504,9 @@ impl SharedState {
             latest_player_moves: HashMap::new(),
             latest_time: None,
             seen_nearby_players: HashSet::new(),
+            music_performers: HashMap::new(),
+            self_performance: None,
+            self_music_rest_until: None,
             agent_events: Vec::new(),
             height_sampler,
             world_cache,
@@ -586,6 +612,100 @@ impl SharedState {
             // A person arriving, not our own bookkeeping — urgent lane.
             self.wake(EventUrgency::Urgent);
         }
+    }
+
+    /// A tune ended: say so, since the agent heard it start. Silent for
+    /// anyone who was not playing.
+    fn finish_music(&mut self, player_id: &PlayerId) {
+        let Some(track) = self.music_performers.remove(player_id) else {
+            return;
+        };
+        let is_self = self.self_player_id.as_ref() == Some(player_id);
+        let who = if is_self {
+            self.self_performance = None;
+            let rest = rand::thread_rng().gen_range(MUSIC_REST_MIN_SECS..=MUSIC_REST_MAX_SECS);
+            self.self_music_rest_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(rest));
+            "You".to_string()
+        } else {
+            self.player_display_name(player_id)
+        };
+        let line = format!("[PlayMusic] {who} finished \"{track}\".");
+        if is_self {
+            // No wake yet: the rest ending is what invites the next song, and
+            // waking now would only draw a command we would have to refuse.
+            self.agent_events.push(line);
+        } else {
+            self.push_agent_event(line);
+        }
+    }
+
+    /// Drop a `/play_music` the agent typed while its own tune is still
+    /// running, or during the quiet spell after it: a second command restarts
+    /// the music for every listener, and the LLM is not patient enough to wait
+    /// on its own. The note it gets back does not wake the driver — the end of
+    /// the rest does that, and waking here would only invite another attempt.
+    pub fn refuses_second_tune(&mut self, message: &str) -> bool {
+        // The same parser the server runs on the other end of this command.
+        if onlinerpg_shared::messages::strip_command(message, "/play_music").is_none() {
+            return false;
+        }
+        let now = std::time::Instant::now();
+        let resting = self
+            .self_player
+            .as_ref()
+            .and_then(|me| me.object_type.as_deref())
+            .filter(|held| *held != MUSIC_EMOTE);
+        let why = if let Some(held) = resting {
+            // Playing would replace the pose the schedule put us in, and
+            // nothing would put us back until the next schedule entry.
+            format!("you are using the {held} and would have to get up first")
+        } else if let Some(perf) = &self.self_performance {
+            format!(
+                "you are still playing, with about {}s to go",
+                perf.ends_at.saturating_duration_since(now).as_secs()
+            )
+        } else if let Some(rest_until) = self.self_music_rest_until {
+            format!(
+                "the square is quiet between songs for another {}s",
+                rest_until.saturating_duration_since(now).as_secs()
+            )
+        } else {
+            return false;
+        };
+        self.agent_events.push(format!(
+            "[PlayMusic] Ignored — {why}. One song at a time; wait for the note \
+             that says you can start another."
+        ));
+        true
+    }
+
+    /// Stop strumming once the track we started has run its length, and invite
+    /// the next song when the quiet spell after it is over. The web client
+    /// ends a performance when its audio ends and rests before the next track;
+    /// we have no audio, so this tick is our equivalent — without it an NPC
+    /// bard plays one tune forever, or one unbroken stream of them.
+    pub fn check_music_finished(&mut self) {
+        if let Some(rest_until) = self.self_music_rest_until {
+            if std::time::Instant::now() >= rest_until {
+                self.self_music_rest_until = None;
+                self.push_agent_event(
+                    "[PlayMusic] The square is quiet again — time for another song.".to_string(),
+                );
+            }
+        }
+
+        let Some(perf) = &self.self_performance else {
+            return;
+        };
+        let walked_off = self.self_player.as_ref().is_some_and(|me| {
+            perf.from.dist_xz_sq(&me.position) > MUSIC_STAY_PUT_RADIUS * MUSIC_STAY_PUT_RADIUS
+        });
+        if !walked_off && std::time::Instant::now() < perf.ends_at {
+            return;
+        }
+        self.self_performance = None;
+        self.pending_commands.push(ClientMessage::StopInteraction);
     }
 
     /// Our floor as a passability cache index, for path queries. Standing on a
@@ -1327,6 +1447,31 @@ impl SharedState {
             | ServerMessage::PlayerDisappeared { player_id } => {
                 self.nearby_players.remove(player_id);
                 self.seen_nearby_players.remove(player_id);
+                // Out of earshot: the tune is gone, and [PlayerLeft] already
+                // says why — no second line about it.
+                self.music_performers.remove(player_id);
+            }
+            ServerMessage::PlayerMusicStarted { player_id, track } => {
+                self.music_performers.insert(*player_id, track.clone());
+                if self.self_player_id.as_ref() == Some(player_id) {
+                    self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
+                        ends_at: std::time::Instant::now() + crate::bgm_defs::duration(track),
+                        from: me.position,
+                    });
+                }
+            }
+            ServerMessage::PlayerInteractionChanged {
+                player_id,
+                object_type,
+            } => {
+                if self.self_player_id.as_ref() == Some(player_id) {
+                    if let Some(me) = self.self_player.as_mut() {
+                        me.object_type = object_type.clone();
+                    }
+                }
+                if object_type.as_deref() != Some(MUSIC_EMOTE) {
+                    self.finish_music(player_id);
+                }
             }
             ServerMessage::MonsterSpawned { monster } => {
                 self.nearby_monsters
@@ -1681,6 +1826,21 @@ impl SharedState {
     /// Drain pending commands (from monster AI reactions, spawn requests, etc.)
     pub fn drain_pending_commands(&mut self) -> Vec<ClientMessage> {
         std::mem::take(&mut self.pending_commands)
+    }
+
+    /// Display name for a player id, falling back to the raw id for someone
+    /// out of sight. The one statement of that contract — prompt rendering
+    /// and synthetic events both go through here.
+    pub fn player_display_name(&self, player_id: &PlayerId) -> String {
+        if self.self_player_id.as_ref() == Some(player_id) {
+            if let Some(p) = &self.self_player {
+                return p.name.clone();
+            }
+        }
+        if let Some(p) = self.nearby_players.get(player_id) {
+            return p.name.clone();
+        }
+        player_id.to_string()
     }
 
     /// Drain synthetic agent-side events (e.g. player proximity alerts).
@@ -3151,5 +3311,145 @@ pub(crate) mod tests {
         assert_eq!(s.classify_event(&positions), EventUrgency::Noise);
         s.push_event(positions);
         assert!(s.events.is_empty());
+    }
+
+    /// The LLM will happily call for a new song halfway through the last one,
+    /// which restarts the music for everyone listening. The command is dropped
+    /// and the model is told why — on its next prompt, not by waking it here.
+    #[test]
+    fn a_second_tune_is_refused_while_the_first_still_plays() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        assert!(!s.refuses_second_tune("/play_music"), "nothing playing yet");
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+        });
+
+        assert!(s.refuses_second_tune("/play_music creekside"));
+        assert!(s.refuses_second_tune("/play_music"));
+        assert!(
+            !s.refuses_second_tune("Any requests?"),
+            "ordinary talk goes through"
+        );
+        assert!(
+            !s.refuses_second_tune("/play_musical chairs"),
+            "only the whole command word counts"
+        );
+
+        let events = s.drain_agent_events();
+        assert_eq!(events.len(), 2, "one note per dropped command: {events:?}");
+        assert!(events[0].contains("still playing"), "{events:?}");
+    }
+
+    /// A busker pauses between songs. The agent gets no invitation to play
+    /// until the quiet spell is over, and asking early is refused with what
+    /// is left of it.
+    #[test]
+    fn a_song_is_followed_by_a_quiet_spell_before_the_next() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+        });
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+
+        let rest_until = s.self_music_rest_until.expect("a rest was scheduled");
+        let rest = rest_until.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            rest.as_secs() >= MUSIC_REST_MIN_SECS - 1 && rest.as_secs() <= MUSIC_REST_MAX_SECS,
+            "{rest:?}"
+        );
+
+        assert!(
+            s.refuses_second_tune("/play_music"),
+            "no encore during the rest"
+        );
+        s.check_music_finished();
+        assert!(
+            s.self_music_rest_until.is_some(),
+            "the square is still resting"
+        );
+
+        s.self_music_rest_until =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        s.check_music_finished();
+        let events = s.drain_agent_events();
+        assert!(
+            events.last().is_some_and(|e| e.contains("another song")),
+            "{events:?}"
+        );
+        assert!(!s.refuses_second_tune("/play_music"), "the rest is over");
+
+        // In bed on the night schedule: playing would drop the sleeping pose
+        // and nothing would put it back until morning.
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: Some("bed".to_string()),
+        });
+        assert!(s.refuses_second_tune("/play_music"));
+        let events = s.drain_agent_events();
+        assert!(
+            events.last().is_some_and(|e| e.contains("bed")),
+            "{events:?}"
+        );
+    }
+
+    /// The agent hears a tune start and end. Its own performance has no audio
+    /// to end it, so the registry's length is the clock — without that an NPC
+    /// bard would strum the same song forever.
+    #[test]
+    fn a_tune_is_announced_at_both_ends_and_our_own_stops_itself() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+        });
+
+        s.check_music_finished();
+        assert!(
+            s.drain_pending_commands().is_empty(),
+            "the song is still playing"
+        );
+
+        if let Some(p) = s.self_performance.as_mut() {
+            p.ends_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        }
+        s.check_music_finished();
+        assert!(matches!(
+            s.drain_pending_commands().as_slice(),
+            [ClientMessage::StopInteraction]
+        ));
+
+        // The server clears the interaction; that is what the LLM reads.
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("You finished \"Twilight Fields\"")),
+            "{events:?}"
+        );
     }
 }

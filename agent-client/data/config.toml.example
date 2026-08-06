@@ -147,3 +147,10 @@ llm = "codex"
 id = "rica"
 account = "npc_merchant"
 llm = "codex"
+
+# The square's busker. Like the other registry NPCs she only thinks when
+# someone is in sight — a song nobody can hear is an LLM call for nothing.
+[[npcs]]
+id = "signe"
+account = "npc_bard"
+llm = "codex"

@@ -17,7 +17,6 @@ import { computeGrassPlacement, regenerateVegMeta } from './utils/grass-data'
 import { dungeonManager } from './managers/dungeonManager'
 import { chatChannel } from './stores/chatChannelStore'
 import { partyRoster } from './stores/partyStore'
-import { emoteRequest } from './stores/emoteStore'
 
 /** Every command lives here once: its `/help` line, whether it is admin-only,
  *  and who executes it. */
@@ -85,15 +84,10 @@ const COMMANDS: Record<string, Command> = {
       if (message) networkManager.sendChatMessage(message)
     },
   },
-  '/play_music': {
-    desc: 'Play a tune where you stand; move to stop',
-    run: () => {
-      emoteRequest.set('guitar_playing')
-      // The server stores the emote and tells nearby players; it never echoes
-      // the command back as speech.
-      networkManager.sendChatMessage('/play_music')
-    },
-  },
+  // No client-side handler: the server is the one resolver of song titles
+  // (a fragment or nothing both work), and its PlayerMusicStarted reply is
+  // what starts our emote and music together.
+  '/play_music': { desc: 'Play a tune where you stand: /play_music [song]' },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',
