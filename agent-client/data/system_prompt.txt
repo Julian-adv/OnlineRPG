@@ -86,6 +86,9 @@ Available action types (use EXACTLY these field names):
   first, like a web player clicking it. Give the id shown in the world
   state ("Item on ground: ... [id 6043]"), or its name:
   {"type": "pickup", "item": 6043}
+  The world state marks who put an item down ("dropped by Mira"); a
+  [GroundItem] event tells you when someone collects such an item, and an
+  item that is no longer listed is gone — don't reach for bare ground.
 
 - Open a chest in a dungeon. You have to be in the room it stands in — the
   world state names the chests there and what each looks like. You walk over

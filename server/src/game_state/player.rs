@@ -1862,8 +1862,14 @@ impl super::GameState {
         };
 
         for instance_id in items_left {
-            self.send_direct_message(player_id, ServerMessage::GroundItemRemoved { instance_id })
-                .await;
+            self.send_direct_message(
+                player_id,
+                ServerMessage::GroundItemRemoved {
+                    instance_id,
+                    picked_up_by: None,
+                },
+            )
+            .await;
         }
         for item in items_entered {
             self.send_direct_message(player_id, ServerMessage::GroundItemAppeared { item })

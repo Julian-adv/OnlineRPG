@@ -60,6 +60,7 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
                     position: entity_position,
                     floor_level: 0,
                     enchant: 0,
+                    dropped_by: None,
                 },
                 dropped_at_ms: 0,
             },

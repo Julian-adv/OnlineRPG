@@ -697,6 +697,7 @@ impl GameState {
             position,
             floor_level,
             enchant: 0,
+            dropped_by: None,
         })
         .await;
     }

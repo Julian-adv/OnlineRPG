@@ -889,9 +889,12 @@ pub enum ServerMessage {
     GroundItemAppeared {
         item: inventory::GroundItem,
     },
-    /// A ground item was picked up or despawned.
+    /// A ground item was picked up, despawned, or left the client's view.
     GroundItemRemoved {
         instance_id: u64,
+        /// Who picked it up, when someone did — `None` for a despawn or an
+        /// item that merely dropped out of range.
+        picked_up_by: Option<PlayerId>,
     },
     /// Response to OpenShop (or pushed by an NPC's OpenTrade): the trader's
     /// goods. Display prices come from item definitions; the server

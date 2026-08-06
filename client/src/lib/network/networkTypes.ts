@@ -283,6 +283,8 @@ export type ServerGroundItem = {
   floor_level: number
   /** Carries a dropped weapon's enchantment across the drop/pickup cycle. */
   enchant: number
+  /** The player who put it there, if one did; null for loot and world drops. */
+  dropped_by: number | null
 }
 
 export type ServerCampfire = {

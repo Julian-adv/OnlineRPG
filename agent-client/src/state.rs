@@ -29,6 +29,12 @@ const MUSIC_STAY_PUT_RADIUS: f32 = 1.5;
 /// idea with a floor under it, since a performance is something people watch.
 const MUSIC_REST_MIN_SECS: u64 = 15;
 const MUSIC_REST_MAX_SECS: u64 = 45;
+/// How close to us an item has to land to be a tip for the music — forgiving,
+/// since a shy listener tosses their coins from the edge of the crowd.
+const TIP_RADIUS: f32 = 6.0;
+/// Cap on tips noticed per song, so a floor strewn with junk — dropped by
+/// someone bored or malicious — can't grow the prompt without bound.
+const MAX_TIPS_PER_SONG: usize = 5;
 /// Distance threshold for "player appeared nearby" agent events (in game units).
 const NEARBY_PLAYER_RADIUS: f32 = 10.0;
 /// How many ground items the world state lists before summarising the rest.
@@ -406,6 +412,10 @@ pub struct SharedState {
     /// Items lying on the ground, keyed by instance id (from the join
     /// snapshot plus GroundItemSpawned/Appeared/Removed).
     ground_items: HashMap<u64, GroundItem>,
+    /// Whether this agent busks, from `NpcConfig::plays_music` — the same
+    /// gate that put the songbook and tip rules into its prompt, so it is
+    /// never instructed about tips it will not receive.
+    pub plays_music: bool,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -421,6 +431,12 @@ pub struct SharedState {
     self_performance: Option<SelfPerformance>,
     /// Until when the square stays quiet after our own song (`MUSIC_REST_*`).
     self_music_rest_until: Option<std::time::Instant>,
+    /// Tips left while we were still playing, as (instance id, event line).
+    /// Held until the song ends: the thanks belong in the quiet spell, and
+    /// walking over mid-song would abandon the performance.
+    pending_tips: Vec<(u64, String)>,
+    /// Tips noticed since the current song started (`MAX_TIPS_PER_SONG`).
+    tips_noticed: usize,
     /// An invented song title already woke the driver; the next one waits for
     /// the ordinary prompt, so a model that keeps guessing cannot spin.
     bad_song_title_refused: bool,
@@ -502,6 +518,7 @@ impl SharedState {
             merchant_buyback: HashMap::new(),
             nearby_monsters: HashMap::new(),
             ground_items: HashMap::new(),
+            plays_music: false,
             events: Vec::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
@@ -510,6 +527,8 @@ impl SharedState {
             music_performers: HashMap::new(),
             self_performance: None,
             self_music_rest_until: None,
+            pending_tips: Vec::new(),
+            tips_noticed: 0,
             bad_song_title_refused: false,
             agent_events: Vec::new(),
             height_sampler,
@@ -630,6 +649,9 @@ impl SharedState {
             let rest = rand::thread_rng().gen_range(MUSIC_REST_MIN_SECS..=MUSIC_REST_MAX_SECS);
             self.self_music_rest_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(rest));
+            // The break gets its own allowance: the last song of the evening
+            // must not leave the counter stuck with no next song to reset it.
+            self.tips_noticed = 0;
             "You".to_string()
         } else {
             self.player_display_name(player_id)
@@ -639,8 +661,83 @@ impl SharedState {
             // No wake yet: the rest ending is what invites the next song, and
             // waking now would only draw a command we would have to refuse.
             self.agent_events.push(line);
+            // Tips are the exception — the quiet spell is when they get
+            // thanked and picked up, and nothing else wakes us before it ends.
+            for (_, tip) in std::mem::take(&mut self.pending_tips) {
+                self.push_agent_event(tip);
+            }
         } else {
             self.push_agent_event(line);
+        }
+    }
+
+    /// A name the agent can say out loud, never a raw id: someone who acted
+    /// and then walked out of sight is just "Someone".
+    fn visible_name(&self, player_id: &PlayerId) -> String {
+        self.nearby_players
+            .get(player_id)
+            .map_or_else(|| "Someone".to_string(), |p| p.name.clone())
+    }
+
+    /// Someone took an item a player had put down — a tip snatched, or a
+    /// gift collected again. Ordinary loot churn stays silent: the world
+    /// state already lists what lies about, and a hunting ground would file
+    /// a line for every corpse otherwise.
+    fn note_pickup(&mut self, item: &GroundItem, picker: &PlayerId) {
+        let line = format!(
+            "[GroundItem] {} picked up {} [id {}].",
+            self.visible_name(picker),
+            item.item_def_id,
+            item.instance_id
+        );
+        // Mid-song this is not worth an LLM turn; it rides along with the
+        // next prompt, which the end of the song brings soon enough.
+        if self.self_performance.is_some() {
+            self.agent_events.push(line);
+        } else {
+            self.push_agent_event(line);
+        }
+    }
+
+    /// Someone left something at the busker's feet. Announced at once when we
+    /// are between songs; held for the end of the song while we are playing.
+    /// Only a busker is tipped — a guard's kill drops and a merchant's
+    /// neighbours stay ordinary loot — and not while the schedule holds us
+    /// in a pose: walking over from a bed would drop it with nothing to
+    /// restore it until morning.
+    fn note_tip(&mut self, item: &GroundItem) {
+        let Some(dropper) = item
+            .dropped_by
+            .filter(|id| self.self_player_id != Some(*id))
+        else {
+            return;
+        };
+        let Some(me) = self.self_player.as_ref() else {
+            return;
+        };
+        let posing = me
+            .object_type
+            .as_deref()
+            .is_some_and(|held| held != MUSIC_EMOTE);
+        if !self.plays_music
+            || posing
+            || item.floor_level != self.self_floor_level
+            || self.tips_noticed >= MAX_TIPS_PER_SONG
+            || item.position.dist_xz_sq(&me.position) > TIP_RADIUS * TIP_RADIUS
+        {
+            return;
+        }
+        let note = format!(
+            "[Tip] {} left {} at your feet [id {}].",
+            self.visible_name(&dropper),
+            item.item_def_id,
+            item.instance_id
+        );
+        self.tips_noticed += 1;
+        if self.self_performance.is_some() {
+            self.pending_tips.push((item.instance_id, note));
+        } else {
+            self.push_agent_event(note);
         }
     }
 
@@ -1480,6 +1577,7 @@ impl SharedState {
                 self.music_performers.insert(*player_id, track.clone());
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.bad_song_title_refused = false;
+                    self.tips_noticed = 0;
                     self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
                         ends_at: std::time::Instant::now() + crate::bgm_defs::duration(track),
                         from: me.position,
@@ -1531,12 +1629,27 @@ impl SharedState {
                 self.nearby_monsters.remove(monster_id);
                 self.monster_ai.remove_monster(monster_id);
             }
-            ServerMessage::GroundItemSpawned { item }
-            | ServerMessage::GroundItemAppeared { item } => {
+            ServerMessage::GroundItemSpawned { item } => {
+                self.note_tip(item);
                 self.remember_ground_item(item.clone());
             }
-            ServerMessage::GroundItemRemoved { instance_id } => {
-                self.ground_items.remove(instance_id);
+            // Not a fresh drop, just an item coming into view — never a tip.
+            ServerMessage::GroundItemAppeared { item } => {
+                self.remember_ground_item(item.clone());
+            }
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by,
+            } => {
+                let removed = self.ground_items.remove(instance_id);
+                self.pending_tips.retain(|(id, _)| id != instance_id);
+                // Only player-dropped items are worth a line — see note_pickup.
+                if let Some(item) = removed.filter(|item| item.dropped_by.is_some()) {
+                    if let Some(picker) = picked_up_by.filter(|id| self.self_player_id != Some(*id))
+                    {
+                        self.note_pickup(&item, &picker);
+                    }
+                }
             }
             ServerMessage::CharacterCreated { ref character } => {
                 self.characters.push(character.clone());
@@ -2453,8 +2566,15 @@ impl SharedState {
         let ground = self.ground_items_in_sight();
         let hidden = ground.len().saturating_sub(MAX_LISTED_GROUND_ITEMS);
         for (d_sq, i) in ground.into_iter().take(MAX_LISTED_GROUND_ITEMS) {
+            let dropped_by = match i.dropped_by.as_ref() {
+                Some(id) if self.self_player_id.as_ref() == Some(id) => {
+                    ", dropped by you".to_string()
+                }
+                Some(id) => format!(", dropped by {}", self.visible_name(id)),
+                None => String::new(),
+            };
             lines.push(format!(
-                "Item on ground: {} ({:.1}m away) [id {}]",
+                "Item on ground: {} ({:.1}m away) [id {}]{dropped_by}",
                 i.item_def_id,
                 d_sq.sqrt(),
                 i.instance_id
@@ -2527,6 +2647,15 @@ pub(crate) mod tests {
             position: p(x, 0.0, z),
             floor_level: floor,
             enchant: 0,
+            dropped_by: None,
+        }
+    }
+
+    /// A `ground_item` a player put down, as a tip test sees it.
+    fn dropped_item(id: u64, def: &str, x: f32, z: f32, by: PlayerId) -> GroundItem {
+        GroundItem {
+            dropped_by: Some(by),
+            ..ground_item(id, def, x, z, 0)
         }
     }
 
@@ -3513,5 +3642,184 @@ pub(crate) mod tests {
                 .any(|e| e.contains("You finished \"Twilight Fields\"")),
             "{events:?}"
         );
+    }
+
+    /// Coins thrown at a busker's feet wait for the end of the song — walking
+    /// over mid-tune would abandon the performance — and then name who to
+    /// thank. Loot that no player dropped is not a tip.
+    #[test]
+    fn tips_left_during_a_song_are_announced_when_it_ends() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.plays_music = true;
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let mut listener = test_player(1.0, 0.0);
+        listener.id = PlayerId::from(2);
+        listener.name = "Mira".to_string();
+        s.nearby_players.insert(listener.id, listener);
+        let tipper = PlayerId::from(2);
+
+        // A tip before the first note of the day counts too: a busker is a
+        // busker whether or not it happens to be playing right then.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(1, "old_boot", 1.0, 0.0, tipper),
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("[Tip] Mira left old_boot")),
+            "{events:?}"
+        );
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(2, "coin_pile", 1.0, 0.0, tipper),
+        });
+        // A tip thrown from too far off, a monster's loot, and our own drop.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(3, "small_sword", TIP_RADIUS + 2.0, 0.0, tipper),
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: ground_item(4, "goblin_sword", 1.0, 0.0, 0),
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(5, "mandolin", 1.0, 0.0, PlayerId::from(1)),
+        });
+        assert_eq!(s.pending_tips.len(), 1, "{:?}", s.pending_tips);
+        assert!(
+            s.drain_agent_events().is_empty(),
+            "the song comes before the thanks"
+        );
+
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events
+                .last()
+                .is_some_and(|e| e.contains("[Tip] Mira left coin_pile") && e.contains("[id 2]")),
+            "{events:?}"
+        );
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
+        // Still on the ground, and still remembered as Mira's.
+        assert!(
+            s.format_world_state()
+                .contains("Item on ground: coin_pile (1.0m away) [id 2], dropped by Mira"),
+            "{}",
+            s.format_world_state()
+        );
+
+        // Tipped again during the quiet spell: nothing to wait for now.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(6, "gold_ring", 1.0, 0.0, tipper),
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events.last().is_some_and(|e| e.contains("gold_ring")),
+            "{events:?}"
+        );
+
+        // Once the schedule has put it to bed, a tip is not worth getting up.
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: Some("bed".to_string()),
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(7, "gold_ring", 1.0, 0.0, tipper),
+        });
+        let events = s.drain_agent_events();
+        assert!(!events.iter().any(|e| e.contains("[Tip]")), "{events:?}");
+    }
+
+    /// Nobody tips a guard for standing there: a drop in front of an agent
+    /// that does not busk is ordinary loot, and stays out of its events.
+    #[test]
+    fn only_a_busker_reads_a_drop_as_a_tip() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let mut passer_by = test_player(1.0, 0.0);
+        passer_by.id = PlayerId::from(2);
+        s.nearby_players.insert(passer_by.id, passer_by);
+
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(1, "coin_pile", 1.0, 0.0, PlayerId::from(2)),
+        });
+
+        let events = s.drain_agent_events();
+        assert!(!events.iter().any(|e| e.contains("[Tip]")), "{events:?}");
+    }
+
+    /// A tip someone else grabs first is not thanked for at the end of the
+    /// song — the bard would be pointing at bare ground. It hears who took
+    /// it instead, and only once the song is over.
+    #[test]
+    fn a_tip_taken_before_the_song_ends_is_forgotten() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.plays_music = true;
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let mut listener = test_player(1.0, 0.0);
+        listener.id = PlayerId::from(2);
+        s.nearby_players.insert(listener.id, listener);
+        let mut thief = test_player(1.0, 1.0);
+        thief.id = PlayerId::from(3);
+        thief.name = "Bran".to_string();
+        s.nearby_players.insert(thief.id, thief);
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(1, "coin_pile", 1.0, 0.0, PlayerId::from(2)),
+        });
+        s.push_event(ServerMessage::GroundItemRemoved {
+            instance_id: 1,
+            picked_up_by: Some(PlayerId::from(3)),
+        });
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Noise, "not mid-song");
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+
+        let events = s.drain_agent_events();
+        assert!(!events.iter().any(|e| e.contains("[Tip]")), "{events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("[GroundItem] Bran picked up coin_pile")),
+            "{events:?}"
+        );
+
+        // Between songs there is nothing to hold it back.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(2, "gold_ring", 1.0, 0.0, PlayerId::from(2)),
+        });
+        s.take_wake_urgency();
+        s.push_event(ServerMessage::GroundItemRemoved {
+            instance_id: 2,
+            picked_up_by: Some(PlayerId::from(3)),
+        });
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
+        assert!(s
+            .drain_agent_events()
+            .iter()
+            .any(|e| e.contains("Bran picked up gold_ring")));
     }
 }

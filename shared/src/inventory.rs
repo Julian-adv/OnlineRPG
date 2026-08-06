@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::Position;
+use crate::{PlayerId, Position};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +129,12 @@ pub struct GroundItem {
     /// doesn't wipe it.
     #[serde(default)]
     pub enchant: i32,
+    /// The player who put it there, if one did — loot and world drops carry
+    /// `None`. On the item rather than the spawn message so attribution
+    /// survives AOI churn and rejoins: a busker's uncollected tip is still
+    /// its tip after a reconnect.
+    #[serde(default)]
+    pub dropped_by: Option<PlayerId>,
 }
 
 #[cfg(test)]
