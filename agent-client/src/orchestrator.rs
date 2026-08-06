@@ -608,6 +608,7 @@ async fn run_npc_session(
             if !s.in_game {
                 continue;
             }
+            s.check_music_finished();
 
             // Clone Arc to avoid borrow conflict: world_cache (immutable) vs monster_ai (mutable).
             // Must drop the RwLockReadGuard before any .await (not Send).
@@ -755,6 +756,18 @@ async fn roll_stats_with_agent(
 /// Optional: agents run fine on the shared prompt alone.
 const USER_PROMPT_FILE: &str = "data/user_prompt.txt";
 
+/// The songs a bard may call up, straight from the registry so the prompt
+/// cannot drift from what `/play_music` will resolve.
+fn songbook_prompt() -> String {
+    let mut section = String::from(
+        "## Your Songbook\nEvery tune you know. Use a title exactly as written here:\n",
+    );
+    for title in crate::bgm_defs::songbook() {
+        section.push_str(&format!("- {title}\n"));
+    }
+    section
+}
+
 /// Build the system prompt for an NPC by layering, outermost first.
 ///
 /// Every agent starts from the shared prompt — the JSON schema and the action
@@ -788,6 +801,13 @@ fn build_system_prompt(npc: &NpcConfig) -> anyhow::Result<String> {
         .and_then(crate::shop_info::merchant_prompt_for)
     {
         parts.push(shop);
+    }
+    // A bard announces the song before playing it, so it needs the titles in
+    // front of it — both to pick one and to match a listener's request.
+    let plays_music = npc.character_class.as_deref() == Some("bard")
+        || role.is_some_and(|path| path.ends_with("bard.txt"));
+    if plays_music {
+        parts.push(songbook_prompt());
     }
     if let Some(ref memory_path) = npc.memory_file {
         match std::fs::read_to_string(memory_path) {

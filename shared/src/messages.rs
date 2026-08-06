@@ -159,6 +159,38 @@ pub struct ClientEnvReport {
     pub user_agent: String,
 }
 
+/// Interaction the server stores for a `/play_music` performance. A wire
+/// contract, not a private constant: the server sets it, and both clients
+/// compare `PlayerInteractionChanged` against it to know a tune is over.
+pub const MUSIC_EMOTE: &str = "guitar_playing";
+
+/// `message` is `prefix` as a whole slash-command word; returns the trimmed
+/// remainder. Shared because the agent-client types the commands this parses —
+/// the two sides must agree on what counts as the command word.
+pub fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = message.trim().strip_prefix(prefix)?;
+    (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
+}
+
+/// The title a `/play_music` argument names: a whole title first, then a
+/// fragment of one, ignoring case. Shared for the same reason as
+/// `strip_command` — the server resolves the query and the agent-client
+/// decides beforehand whether it would resolve at all. An empty query is the
+/// server's random pick, which is the caller's business, not this rule's.
+pub fn resolve_title<'a>(
+    mut titles: impl Iterator<Item = &'a str> + Clone,
+    query: &str,
+) -> Option<&'a str> {
+    let wanted = query.trim().to_lowercase();
+    if wanted.is_empty() {
+        return None;
+    }
+    titles
+        .clone()
+        .find(|t| t.to_lowercase() == wanted)
+        .or_else(|| titles.find(|t| t.to_lowercase().contains(&wanted)))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The
@@ -824,6 +856,19 @@ pub enum ServerMessage {
     PlayerInteractionChanged {
         player_id: PlayerId,
         object_type: Option<String>,
+    },
+    /// A player started a `/play_music` performance; nearby clients play the
+    /// named BGM track. `track` is the title the server resolved from its
+    /// registry — receivers play it only if their own BGM list has it.
+    /// The performance ends with the emote (`PlayerInteractionChanged` /
+    /// [`MUSIC_EMOTE`] giving way to anything else). Also sent to a player
+    /// who comes into earshot mid-performance, with `elapsed_secs` saying
+    /// how far in the tune already is.
+    PlayerMusicStarted {
+        player_id: PlayerId,
+        track: String,
+        #[serde(default)]
+        elapsed_secs: f32,
     },
     InteractionRejected {
         reason: String,

@@ -213,6 +213,15 @@
       >
         Priest
       </button>
+      <button
+        type="button"
+        class="class-btn"
+        class:class-selected={selectedClass === 'bard'}
+        disabled={isBusy()}
+        onclick={() => selectClass('bard')}
+      >
+        Bard
+      </button>
     </div>
 
     <div class="bottom-bar">

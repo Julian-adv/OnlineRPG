@@ -16,6 +16,7 @@ export type CharacterClass =
   | 'valkyrie'
   | 'ranger'
   | 'priest'
+  | 'bard'
   | 'merchant'
   | 'guard'
 

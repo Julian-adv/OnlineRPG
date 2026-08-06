@@ -49,7 +49,13 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v17: PartyPositions pushed server-side on relocation (was a poll answer)
 ///      and now includes the recipient; clients filter themselves.
 /// v18: party chat (PartyChat → PartyChatMessage).
-pub const PROTOCOL_VERSION: u32 = 20;
+/// v20: `/play_music` picks a BGM track and nearby clients play it along
+///      (PlayerMusicStarted).
+/// v21: PlayerMusicStarted carries `elapsed_secs` and is re-sent to players
+///      entering earshot of a running performance.
+/// v22: PartyMember carries hp/max_hp/class, PartyVitals pushes member
+///      health, and PartyKick/PartyPromote (leader kick + handover).
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -219,6 +225,7 @@ mod tests {
         CharacterClass::Rogue,
         CharacterClass::Wizard,
         CharacterClass::Tourist,
+        CharacterClass::Bard,
         CharacterClass::Merchant,
         CharacterClass::Guard,
     ];

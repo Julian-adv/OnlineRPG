@@ -58,6 +58,7 @@
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
+  import { MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
 
   interface Props {
     position: Vector3
@@ -255,6 +256,21 @@
   // points it forward and ~25° up (about 60° bent off the forearm).
   const FISHING_ROD_ROTATION = new THREE.Euler(0, -Math.PI / 6, -Math.PI / 3)
 
+  const MANDOLIN_ITEM_DEF_ID = 'mandolin'
+
+  // The mandolin's origin sits on the strum point with the neck along +X and
+  // the soundboard facing +Z. Fitted to the guitar_playing clip by
+  // `tools/fit-hand-prop.mjs --tilt 15 --push 0.06 --lift 0.04`: 15° hangs the
+  // body down off the chest to the waist, the lift carries the neck up onto the
+  // fretting fingers instead of through the fist, and the push trades the sound
+  // box's depth in the torso against clearance for the strumming wrist, which
+  // the clip otherwise buries in it — 0.06 leaves the wrist 1 cm proud of the
+  // face. All three pivot on the fretting hand, so none of them costs the neck
+  // that grip. The position is no longer the plain palm offset because of them:
+  // it puts the origin back where the hand can hold it.
+  const MANDOLIN_ROTATION = new THREE.Euler(-2.413, -0.409, -0.353)
+  const MANDOLIN_POSITION = new THREE.Vector3(-0.03, 0.103, 0.126)
+
   // The source cast clip keeps rod-jerking flourishes after the swing; cut
   // where the pose meets the idle stance.
   const FISHING_CAST_TRIM_S = 2.5
@@ -280,6 +296,9 @@
         'rod_tip',
         FALLBACK_ROD_TIP_LOCAL_OFFSET
       )
+    } else if (itemDefId === MANDOLIN_ITEM_DEF_ID) {
+      weaponObject.position.copy(MANDOLIN_POSITION)
+      weaponObject.rotation.copy(MANDOLIN_ROTATION)
     }
     rightHandBone.add(weaponObject)
     weaponAttached = true
@@ -450,6 +469,48 @@
     })
   })
 
+  // ── Music emote prop ────────────────────────────────────
+  // The mandolin rides the emote rather than the equip slot, so a bard need
+  // not carry one. It keys off `interactionAnim`, which the server broadcasts
+  // for /play_music — remote players see the instrument too, and the equipped
+  // weapon is already hidden for the duration by `playAnimationForState`.
+  let musicPropObject: THREE.Object3D | null = null
+  let musicPropAttached = false
+  let musicPropGeneration = 0
+
+  function detachMusicProp() {
+    musicPropObject?.parent?.remove(musicPropObject)
+    musicPropObject = null
+  }
+
+  $effect(() => {
+    const wanted =
+      playerState === 'interact' && interactionAnim === MUSIC_EMOTE_ANIM
+    // Read modelRoot so the effect re-runs once the model finishes loading
+    const root = modelRoot
+    if (!root || !clonedScene) return
+    if (wanted === musicPropAttached) return
+
+    const gen = ++musicPropGeneration
+    musicPropAttached = wanted
+    if (!wanted) {
+      detachMusicProp()
+      return
+    }
+
+    const itemDef = getItemDef(MANDOLIN_ITEM_DEF_ID)
+    if (!itemDef?.worldModel) return
+    loadGLB(getWeaponModelPath(itemDef.worldModel)).then((gltf) => {
+      if (gen !== musicPropGeneration || !clonedScene) return
+      const rightHandBone = findBoneByName(clonedScene, 'RightHand')
+      if (!rightHandBone) return
+      musicPropObject = gltf.scene.clone()
+      musicPropObject.position.copy(MANDOLIN_POSITION)
+      musicPropObject.rotation.copy(MANDOLIN_ROTATION)
+      rightHandBone.add(musicPropObject)
+    })
+  })
+
   // ── Torch fire particles ────────────────────────────────
   let torchFire: TorchFireParticles | null = null
   let torchFireGroup = $state<THREE.Group | null>(null)
@@ -589,10 +650,13 @@
 
     const newAction = mixer.clipAction(clip)
 
-    // The fishing idle is a stance held for the whole wait, not a one-shot
-    // gesture like pickup — it loops until the fishing session ends.
+    // The fishing idle and the music emote are stances held for the whole
+    // state, not one-shot gestures like pickup — they loop until it ends.
+    // Clamping instead would freeze the performance mid-strum.
     const playOnce =
-      playerState !== 'moving' && interactionAnim !== FishingAnimationName.IDLE
+      playerState !== 'moving' &&
+      interactionAnim !== FishingAnimationName.IDLE &&
+      interactionAnim !== MUSIC_EMOTE_ANIM
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce
@@ -765,6 +829,8 @@
       weaponAttached = false
       attachedWeaponItemId = null
       attachedOffhandItemId = null
+      musicPropObject = null
+      musicPropAttached = false
       detachTorchFire()
       if (isCurrentPlayer) localPlayerRightHand.set(null)
     }

@@ -34,6 +34,8 @@
   import { FishingAnimationName } from '../../types/animations'
   import { dungeonManager } from '../../managers/dungeonManager'
   import { housingManager } from '../../managers/housingManager'
+  import { campfireManager } from '../../managers/campfireManager'
+  import type { Position } from '../../network/networkTypes'
   import {
     shortestWrappedDeltaX,
     unwrapWorldXNear,
@@ -255,18 +257,63 @@
     )
   }
 
-  /** Pick the unified shadow light's target. Returns the world position plus, when
-   *  it landed on a wall torch, that torch's index (so the pool can skip it). */
+  /** Height above the fire bed where the campfire's light sits. */
+  const CAMPFIRE_LIGHT_HEIGHT = 1.0
+  /** A campfire further than this is left to the torches. */
+  const CAMPFIRE_LIGHT_RANGE = 14
+  const CAMPFIRE_LIGHT_RANGE_SQ = CAMPFIRE_LIGHT_RANGE * CAMPFIRE_LIGHT_RANGE
+  /** A fire throws more light than a torch in hand. */
+  const CAMPFIRE_INTENSITY_SCALE = 1.25
+
+  /** The burning campfire closest to the player, within range. Surface only —
+   *  the campfire layer hides underground, so its light must too. */
+  function nearestCampfire(playerPos: {
+    x: number
+    z: number
+  }): Position | null {
+    if (isUnderground) return null
+    let best: Position | null = null
+    let bestDist = CAMPFIRE_LIGHT_RANGE_SQ
+    for (const fire of campfireManager.fires.values()) {
+      const dx = shortestWrappedDeltaX(playerPos.x, fire.x)
+      const dz = fire.z - playerPos.z
+      const dist = dx * dx + dz * dz
+      if (dist < bestDist) {
+        bestDist = dist
+        best = fire
+      }
+    }
+    return best
+  }
+
+  /** Pick the unified shadow light's target. Returns the world position, the
+   *  intensity it should burn at, and — when it landed on a wall torch — that
+   *  torch's index (so the pool can skip it). */
   function computeUnifiedTorchTarget(
     wallPositions: THREE.Vector3[]
-  ): { target: THREE.Vector3; wallIdx: number } | null {
+  ): { target: THREE.Vector3; wallIdx: number; scale: number } | null {
     if (torchEffectsDisabled) return null
     if (!currentPlayer) return null
+    // A campfire outshines any torch, held or not: the one light goes to the
+    // fire while the player is near it.
+    const fire = nearestCampfire(currentPlayer.position)
+    if (fire) {
+      return {
+        target: _unifiedTorchTmp.set(
+          unwrapWorldXNear(currentPlayer.position.x, fire.x),
+          fire.y + CAMPFIRE_LIGHT_HEIGHT,
+          fire.z
+        ),
+        wallIdx: -1,
+        scale: CAMPFIRE_INTENSITY_SCALE,
+      }
+    }
     if (get(localTorchEquipped) || get(torchLightEnabled)) {
       const p = currentPlayer.position
       return {
         target: setTorchTargetFromPose(p.x, p.z, p.y, currentPlayer.rotation),
         wallIdx: -1,
+        scale: 1,
       }
     }
     // No lit player torch: the nearest lit source — remote torch or wall torch,
@@ -302,6 +349,7 @@
       return {
         target: _unifiedTorchTmp.copy(wallPositions[bestWallIdx]),
         wallIdx: bestWallIdx,
+        scale: WALL_TORCH_INTENSITY_SCALE,
       }
     }
     if (bestRp) {
@@ -314,6 +362,7 @@
           bestRp.rotation
         ),
         wallIdx: -1,
+        scale: 1,
       }
     }
     return null
@@ -379,7 +428,7 @@
           result.target.x,
           result.target.y,
           result.target.z,
-          occupiedWallIdx >= 0 ? WALL_TORCH_INTENSITY_SCALE : 1
+          result.scale
         )
       } else {
         unifiedTorchLight.intensity = 0

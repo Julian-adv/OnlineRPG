@@ -2,6 +2,7 @@ use super::auth_db;
 use crate::auth::{ban_message, unix_now, AuthService, DEFAULT_BAN_REASON};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
+use onlinerpg_shared::messages::strip_command;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -9,6 +10,8 @@ use tracing::{error, info, warn};
 /// Upper bound on one character's `/block` list, so the per-recipient chat
 /// filter and the DB rows stay bounded at 5,000 concurrent users.
 const MAX_BLOCKS: usize = 100;
+/// How close an NPC's new fire may be to one already burning.
+const NPC_CAMPFIRE_MIN_GAP: f32 = 6.0;
 
 /// `/mute` duration (minutes): default when unstated, and the cap (one day).
 const MUTE_DEFAULT_MINUTES: u64 = 10;
@@ -56,8 +59,6 @@ impl OnlineCounts {
     }
 }
 
-/// `message` is `prefix` as a whole slash-command word; returns the trimmed
-/// remainder.
 /// `<name> [minutes]` tail shared by `/ban` and `/mute`; both leave the
 /// duration unvalidated so a bad one draws a usage reply.
 fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
@@ -65,11 +66,6 @@ fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
         Some((name, minutes)) => (name, Some(minutes.trim())),
         None => (rest, None),
     }
-}
-
-fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
-    let rest = message.trim().strip_prefix(prefix)?;
-    (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
 }
 
 /// `/w <name> <message>` (or `/whisper`). Returns the parts unvalidated so a
@@ -229,6 +225,17 @@ fn prune_expired_mutes(muted: &mut HashMap<String, (String, Instant)>) {
     muted.retain(|_, (_, expiry)| *expiry > now);
 }
 
+/// The one builder of a mid-performance `PlayerMusicStarted`, so the elapsed
+/// clock and message shape cannot drift between the AOI-entry and join paths.
+pub(super) fn music_started_msg(performer: PlayerId, entry: &(String, Instant)) -> ServerMessage {
+    let (track, started) = entry;
+    ServerMessage::PlayerMusicStarted {
+        player_id: performer,
+        track: track.clone(),
+        elapsed_secs: started.elapsed().as_secs_f32(),
+    }
+}
+
 impl super::GameState {
     pub async fn send_chat_message(
         &self,
@@ -254,6 +261,16 @@ impl super::GameState {
 
         if message.trim() == "/escape" {
             self.escape_to_spawn(player_id).await;
+            return;
+        }
+
+        if let Some(track) = strip_command(&message, "/play_music") {
+            self.play_music(player_id, track).await;
+            return;
+        }
+
+        if message.trim() == "/light_campfire" {
+            self.light_npc_campfire(player_id).await;
             return;
         }
 
@@ -347,6 +364,85 @@ impl super::GameState {
         }
 
         self.speak_locally(player_id, message).await;
+    }
+
+    /// `/play_music [title]` — an emote with no object to claim, so object_id
+    /// is None and the occupancy check is skipped: several players can play at
+    /// once. The pose is stored on the player so late joiners see it, and
+    /// StopInteraction clears it — the performer's client sends one when the
+    /// track ends. The title is resolved here, nowhere else, so every client
+    /// picks tracks the same way — including one with no audio at all
+    /// (agent-client): a bare `/play_music` gets a random tune. Nearby clients
+    /// play it along and name it in the chat log, the way they announce a
+    /// chest being opened — the performer says nothing.
+    async fn play_music(&self, player_id: &PlayerId, query: &str) {
+        let Some(track) = crate::bgm_defs::bgm_defs().resolve(query) else {
+            self.send_system_message(player_id, "No such song.").await;
+            return;
+        };
+
+        self.set_player_interaction(
+            player_id,
+            Some(onlinerpg_shared::messages::MUSIC_EMOTE.to_string()),
+            None,
+        )
+        .await;
+        self.music_performances
+            .write()
+            .await
+            .insert(*player_id, (track.to_string(), Instant::now()));
+
+        let listeners = self
+            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
+            .await;
+        self.send_direct_message_to_players(
+            &listeners,
+            ServerMessage::PlayerMusicStarted {
+                player_id: *player_id,
+                track: track.to_string(),
+                elapsed_secs: 0.0,
+            },
+        )
+        .await;
+    }
+
+    /// `/light_campfire` — an NPC lights a fire in front of itself with no kit
+    /// to spend; players still need one. Why NPCs get it free, and why a fire
+    /// lit after dark burns to sunrise, is in doc/HUNGER.md.
+    async fn light_npc_campfire(&self, player_id: &PlayerId) {
+        let is_npc = {
+            let players = self.players.read().await;
+            players.get(player_id).is_some_and(|p| p.is_official_npc)
+        };
+        if !is_npc {
+            self.send_system_message(player_id, "Use a campfire kit to light a fire.")
+                .await;
+            return;
+        }
+        let Some((placement, floor_level)) = self.campfire_placement(player_id).await else {
+            return;
+        };
+        // One fire per pitch: an NPC that lights another every turn would spawn
+        // a particle system and a light for every client in range.
+        if self
+            .nearby_campfire(&placement, floor_level, NPC_CAMPFIRE_MIN_GAP)
+            .await
+            .is_some()
+        {
+            self.send_system_message(player_id, "A fire is already burning here.")
+                .await;
+            return;
+        }
+        let datetime = self.current_game_datetime();
+        let duration_ms = if Self::is_night(&datetime) {
+            self.real_ms_until_sunrise()
+        } else {
+            onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS
+        };
+        self.spawn_campfire(placement, floor_level, duration_ms)
+            .await;
+        self.send_system_message(player_id, "You light a campfire.")
+            .await;
     }
 
     /// Fan a spoken line out to everyone in range, minus anyone who blocked the

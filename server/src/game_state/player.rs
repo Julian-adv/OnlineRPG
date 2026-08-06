@@ -686,7 +686,10 @@ impl super::GameState {
         }
     }
 
-    pub async fn add_player(&self, mut player: Player) -> Option<ServerMessage> {
+    /// Registers the player and returns the messages that materialize the
+    /// surroundings for them: the visible-state snapshot, plus any
+    /// performances already underway in earshot (delivered mid-track).
+    pub async fn add_player(&self, mut player: Player) -> Vec<ServerMessage> {
         // Normalize persisted legacy positions before they enter the spatial
         // index or are sent to clients.
         player.position.x = onlinerpg_shared::wrap_world_x(player.position.x);
@@ -770,12 +773,13 @@ impl super::GameState {
             .map(|e| e.campfire.clone())
             .collect();
 
+        let mut msgs = Vec::new();
         if !other_players.is_empty()
             || !monsters.is_empty()
             || !ground_items.is_empty()
             || !campfires.is_empty()
         {
-            return Some(ServerMessage::GameState {
+            msgs.push(ServerMessage::GameState {
                 players: other_players,
                 monsters,
                 ground_items,
@@ -783,11 +787,23 @@ impl super::GameState {
             });
         }
 
-        None
+        let performances = self.music_performances.read().await;
+        if !performances.is_empty() {
+            for id in &nearby_player_ids {
+                if *id != player_id {
+                    if let Some(entry) = performances.get(id) {
+                        msgs.push(super::chat::music_started_msg(*id, entry));
+                    }
+                }
+            }
+        }
+
+        msgs
     }
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
+        self.music_performances.write().await.remove(player_id);
         self.ambient_spawn_allowances
             .write()
             .await
@@ -1582,6 +1598,9 @@ impl super::GameState {
             )
             .await;
         } else if let Ok(Some((position, floor_level))) = rejected_or_position {
+            if object_type.as_deref() != Some(onlinerpg_shared::messages::MUSIC_EMOTE) {
+                self.music_performances.write().await.remove(player_id);
+            }
             self.send_direct_message_to_players_within_position(
                 &position,
                 floor_level,
@@ -1761,6 +1780,26 @@ impl super::GameState {
                 .collect::<Vec<_>>()
         };
 
+        // Coming into earshot of a running performance delivers it mid-track,
+        // in either direction. Collected here, sent after the appearances so
+        // the receiver already knows the performer.
+        let music_msgs: Vec<(PlayerId, ServerMessage)> = if entered_players.is_empty() {
+            Vec::new()
+        } else {
+            let performances = self.music_performances.read().await;
+            let mut msgs = Vec::new();
+            let mut push = |to: PlayerId, performer: PlayerId| {
+                if let Some(entry) = performances.get(&performer) {
+                    msgs.push((to, super::chat::music_started_msg(performer, entry)));
+                }
+            };
+            for other in &entered_players {
+                push(*player_id, other.id);
+                push(other.id, *player_id);
+            }
+            msgs
+        };
+
         for other in entered_players {
             self.send_direct_message(
                 player_id,
@@ -1776,6 +1815,9 @@ impl super::GameState {
                 },
             )
             .await;
+        }
+        for (to, msg) in music_msgs {
+            self.send_direct_message(&to, msg).await;
         }
 
         let (monsters_left, monsters_entered) = {

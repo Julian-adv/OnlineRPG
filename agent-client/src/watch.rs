@@ -409,7 +409,7 @@ async fn minimap_png(
 pub fn feed_kind(msg: &onlinerpg_shared::ServerMessage) -> Option<&'static str> {
     use onlinerpg_shared::ServerMessage as M;
     Some(match msg {
-        M::ChatMessage { .. } | M::PartyChatMessage { .. } => "chat",
+        M::ChatMessage { .. } | M::PartyChatMessage { .. } | M::PlayerMusicStarted { .. } => "chat",
         M::PlayerAttacked { .. }
         | M::MonsterAttackedPlayer { .. }
         | M::MonsterDead { .. }

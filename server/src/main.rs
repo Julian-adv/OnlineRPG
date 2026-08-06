@@ -1,6 +1,7 @@
 mod announcements;
 mod api_auth;
 mod auth;
+mod bgm_defs;
 mod celestial;
 mod conn_limit;
 mod connection;

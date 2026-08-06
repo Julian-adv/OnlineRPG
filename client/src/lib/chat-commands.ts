@@ -84,6 +84,10 @@ const COMMANDS: Record<string, Command> = {
       if (message) networkManager.sendChatMessage(message)
     },
   },
+  // No client-side handler: the server is the one resolver of song titles
+  // (a fragment or nothing both work), and its PlayerMusicStarted reply is
+  // what starts our emote and music together.
+  '/play_music': { desc: 'Play a tune where you stand: /play_music [song]' },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',

@@ -10,6 +10,7 @@ import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
+import { refreshBardZone } from '../managers/bardZone'
 
 export interface PlayerDamageInfo {
   damage: number
@@ -114,6 +115,7 @@ export const resetGameStore = () => {
     otherPlayers: new SvelteMap(),
     chatBubbles: new Map(),
   })
+  refreshBardZone(new Map())
   isAdminUser.set(false)
   resetInventoryStore()
   resetSkillsStore()

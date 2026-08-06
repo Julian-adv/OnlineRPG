@@ -110,6 +110,11 @@
   } from './player-control/fsm/control-state'
   import { createLocalPlayerControlMachine } from './player-control/fsm/state-definitions'
   import { wrapWorldX } from '../terrain/world-wrap'
+  import {
+    emoteRequest,
+    emoteStopRequest,
+    MUSIC_EMOTE_ANIM,
+  } from '../stores/emoteStore'
 
   interface Props {
     onStateChange: (state: PlayerState) => void
@@ -337,7 +342,13 @@
   }
 
   function exitObjectInteraction(notify = true) {
-    if (currentPlayer) {
+    // Stepping out walks the player off the seat they were using. An emote
+    // claims no object — it plays where the player stands — so every exit
+    // path leaves an emote in place.
+    const stepOut =
+      playerState.state !== 'interact' ||
+      playerState.interactionAnim !== MUSIC_EMOTE_ANIM
+    if (stepOut && currentPlayer) {
       applyObjectInteractionPosition(
         currentPlayer,
         getObjectInteractionExitPosition(
@@ -1029,6 +1040,56 @@
 
     networkManager.sendInteractObject(intent.objectType, intent.objectId)
   }
+
+  /** Enter an emote clip in place. Unlike enterInteraction there is no object
+   *  to face, snap to, or claim, and the server already heard about it through
+   *  the chat command — so no sendInteractObject here. */
+  function startEmote(anim: string) {
+    if (!currentPlayer) return
+    if (getInteractionExitKind(playerState) === 'pickup') {
+      finishPendingPickup()
+    }
+
+    const result = beginObjectInteraction({
+      intent: {
+        type: 'interact_object',
+        objectId: 0,
+        objectType: anim,
+        interaction: anim,
+        position: {
+          x: currentPlayer.position.x,
+          y: currentPlayer.position.y,
+          z: currentPlayer.position.z,
+        },
+        rotation: playerRotation,
+      },
+      previousPlayerState: playerState,
+      cancelCombat: () => combatController.cancelCombat(),
+    })
+
+    setPlayerState(result.nextPlayerState)
+    transitionTo('object_interacting')
+  }
+
+  $effect(() => {
+    const anim = $emoteRequest
+    if (!anim) return
+    emoteRequest.set(null)
+    startEmote(anim)
+  })
+
+  $effect(() => {
+    if (!$emoteStopRequest) return
+    emoteStopRequest.set(false)
+    // Only the performance ends here: by now the player may have sat down on
+    // something, and that pose is not ours to cancel.
+    if (
+      playerState.state === 'interact' &&
+      playerState.interactionAnim === MUSIC_EMOTE_ANIM
+    ) {
+      exitObjectInteraction()
+    }
+  })
 
   function enterPickup(instanceId: number) {
     const result = beginPickupInteraction({
