@@ -212,6 +212,7 @@ impl NpcConfig {
 /// Resources shared across all NPC connections.
 pub struct SharedResources {
     pub height_sampler: Arc<HeightSampler>,
+    pub splat_sampler: Arc<crate::splat::SplatSampler>,
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     pub behavior_trees: Arc<HashMap<String, BehaviorTree>>,
     pub type_mapping: Arc<HashMap<String, String>>,
@@ -528,6 +529,7 @@ async fn run_npc_session(
         characters,
         cmd_tx,
         Arc::clone(&shared.height_sampler),
+        Arc::clone(&shared.splat_sampler),
         Arc::clone(&shared.world_cache),
         watch.clone(),
     )));

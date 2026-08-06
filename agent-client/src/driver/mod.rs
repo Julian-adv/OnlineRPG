@@ -216,6 +216,7 @@ pub async fn llm_driver(
             info!("[{label}] LLM driver: NPC is sleeping, skipping initial prompt");
         } else if always_active || s.has_nearby_human_players() {
             let agent_events = s.drain_agent_events();
+            s.refresh_terrain_grid().await;
             let initial_prompt = build_prompt(&s, &[], &agent_events, &schedule, active_schedule.0);
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
@@ -368,6 +369,7 @@ pub async fn llm_driver(
                 .map(|e| LlmPriority::from(s.classify_event(e)))
                 .fold(pending_urgency, std::cmp::min);
 
+            s.refresh_terrain_grid().await;
             let prompt = build_prompt(&s, &events, &agent_events, &schedule, active_schedule.0);
             (prompt, has_events, max_urgency)
         };
