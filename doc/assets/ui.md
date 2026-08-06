@@ -30,4 +30,5 @@
 - `client/public/icons/party/class-ranger.svg` — original OpenMMO vector asset authored with OpenAI Codex, workspace-provided tier (exact tier not exposed), 2026-08-05; project-owned
 - `client/public/icons/party/class-priest.svg` — original OpenMMO vector asset authored with OpenAI GPT Image 2, ChatGPT Pro tier, 2026-08-05; project-owned
 - `client/public/icons/party/class-rogue.svg` — original OpenMMO vector asset authored with OpenAI GPT Image 2, ChatGPT Pro tier, 2026-08-05; project-owned
+- `client/public/icons/party/class-bard.svg` — original OpenMMO mandolin vector asset authored with OpenAI Codex, workspace-provided tier (exact tier not exposed), 2026-08-06; project-owned
 - `client/public/icons/party/leader-crown.svg` — original OpenMMO vector asset authored with OpenAI Codex, workspace-provided tier (exact tier not exposed), 2026-08-05; project-owned

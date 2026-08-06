@@ -9,6 +9,7 @@
 - `class-ranger.svg`: 레인저용 활과 화살
 - `class-priest.svg`: 프리스트용 십자가
 - `class-rogue.svg`: 로그용 교차 쌍단검
+- `class-bard.svg`: 바드용 만돌린
 - `leader-crown.svg`: 클래스와 무관한 파티장 표시
 
 정적 경로는 `/icons/party/<파일명>`이다.

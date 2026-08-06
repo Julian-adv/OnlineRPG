@@ -73,7 +73,7 @@ describe('applyPartyVitals', () => {
 })
 
 describe('classIconPath', () => {
-  it('maps the seven web-creatable classes to their icons', () => {
+  it('maps the eight web-creatable classes to their icons', () => {
     for (const cls of [
       'knight',
       'barbarian',
@@ -82,6 +82,7 @@ describe('classIconPath', () => {
       'ranger',
       'priest',
       'rogue',
+      'bard',
     ]) {
       expect(classIconPath(cls)).toBe(`/icons/party/class-${cls}.svg`)
     }

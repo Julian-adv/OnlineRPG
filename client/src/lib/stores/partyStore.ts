@@ -99,7 +99,7 @@ export const MAX_PENDING_PARTY_INVITES = 3
 /** Mirrors the server-side cap (`PARTY_MAX_MEMBERS` in party.rs). */
 export const PARTY_MAX_MEMBERS = 8
 
-/** Classes with an icon in /icons/party/ — the web-creatable seven. The
+/** Classes with an icon in /icons/party/ — the web-creatable eight. The
  *  agent client can legally create more (samurai, wizard, ...), so unknown
  *  classes fall back to a letter badge instead of a broken image. */
 const CLASS_ICONS = new Set([
@@ -110,6 +110,7 @@ const CLASS_ICONS = new Set([
   'ranger',
   'priest',
   'rogue',
+  'bard',
 ])
 
 export function classIconPath(cls: string): string | null {
