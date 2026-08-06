@@ -28,6 +28,11 @@ impl ItemDef {
     pub fn is_consumable(&self) -> bool {
         self.consumable
     }
+
+    /// What `/play_music` requires the performer to carry.
+    pub fn is_instrument(&self) -> bool {
+        self.category.as_deref() == Some("instrument")
+    }
 }
 
 fn defs() -> &'static HashMap<String, ItemDef> {

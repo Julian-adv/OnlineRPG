@@ -421,6 +421,10 @@ pub struct SharedState {
     /// gate that put the songbook and tip rules into its prompt, so it is
     /// never instructed about tips it will not receive.
     pub plays_music: bool,
+    /// Def ids this NPC could offer as keepsakes (`NpcRow::
+    /// offerable_keepsake_ids`) — what `take_up_instrument` keeps out of
+    /// its hands, since an offer only reaches items in the bag.
+    pub keepsake_ids: Vec<String>,
     events: Vec<ServerMessage>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
@@ -524,6 +528,7 @@ impl SharedState {
             nearby_monsters: HashMap::new(),
             ground_items: HashMap::new(),
             plays_music: false,
+            keepsake_ids: Vec::new(),
             events: Vec::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
@@ -867,6 +872,46 @@ impl SharedState {
             .push(ClientMessage::RequestDungeonDoors {
                 entrance_id: dungeon.id.clone(),
             });
+    }
+
+    /// A busker plays on a workhorse instrument — never the starter sword,
+    /// and never an offerable keepsake: those stay in the bag, the only
+    /// place `shop_info::keepsake_section` offers from. On the join
+    /// snapshot, anything else in the main hand is swapped for the cheapest
+    /// workhorse. Snapshot-only: what to hold mid-session (a fishing rod,
+    /// say) stays the agent's own choice.
+    fn take_up_instrument(&mut self) {
+        if !self.plays_music {
+            return;
+        }
+        let keepsakes = &self.keepsake_ids;
+        let workhorse_instr = |i: &onlinerpg_shared::inventory::ItemInstance| {
+            crate::item_defs::get(&i.item_def_id).is_some_and(|d| d.is_instrument())
+                && !keepsakes.contains(&i.item_def_id)
+        };
+        let price = |i: &onlinerpg_shared::inventory::ItemInstance| {
+            crate::item_defs::get(&i.item_def_id)
+                .and_then(|d| d.base_price)
+                .unwrap_or(0)
+        };
+        let Some(workhorse) = self
+            .self_bag
+            .iter()
+            .filter(|i| workhorse_instr(i))
+            .min_by_key(|i| price(i))
+        else {
+            return;
+        };
+        let held_is_workhorse = self
+            .self_equipped
+            .get(&onlinerpg_shared::inventory::EquipSlot::MainHand)
+            .is_some_and(|i| workhorse_instr(i) && price(i) <= price(workhorse));
+        if held_is_workhorse {
+            return;
+        }
+        let instance_id = workhorse.instance_id;
+        self.pending_commands
+            .push(ClientMessage::EquipItem { instance_id });
     }
 
     /// Dungeon whose footprint covers our position, if any.
@@ -1730,6 +1775,10 @@ impl SharedState {
             | ServerMessage::InventoryUpdated { ref inventory } => {
                 self.self_bag = inventory.bag.clone();
                 self.self_equipped = inventory.equipped.clone();
+                // The join snapshot only — mid-session hands are the agent's.
+                if matches!(msg, ServerMessage::InventoryState { .. }) {
+                    self.take_up_instrument();
+                }
             }
             // A player sold to us = we bought a wishlist item (the server
             // only lets residents buy their wishlist): shopping mood
@@ -3826,6 +3875,79 @@ pub(crate) mod tests {
             .drain_agent_events()
             .iter()
             .any(|e| e.contains("Bran picked up gold_ring")));
+    }
+
+    /// A bard joining with the starter sword in hand swaps to its workhorse
+    /// — the cheapest instrument that is not an offerable keepsake — so the
+    /// good mandolin stays in the bag where the keepsake offer can reach
+    /// it. A bard already holding the workhorse (or a non-bard) is left
+    /// alone.
+    #[test]
+    fn a_joining_bard_takes_up_the_worn_mandolin() {
+        use onlinerpg_shared::inventory::{EquipSlot, ItemInstance, PlayerInventory};
+
+        let item = |instance_id: u64, def: &str| ItemInstance {
+            instance_id,
+            item_def_id: def.to_string(),
+            quantity: 1,
+            enchant: 0,
+        };
+        let mut inventory = PlayerInventory {
+            bag: vec![item(1, "worn_mandolin"), item(2, "mandolin")],
+            equipped: HashMap::from([(EquipSlot::MainHand, item(3, "worn_iron_sword"))]),
+        };
+
+        let (mut s, _rx) = test_state();
+        s.plays_music = true;
+        s.keepsake_ids = vec!["mandolin".to_string()];
+        s.push_event(ServerMessage::InventoryState {
+            inventory: inventory.clone(),
+        });
+        let equips: Vec<_> = s
+            .drain_pending_commands()
+            .into_iter()
+            .filter(|c| matches!(c, ClientMessage::EquipItem { instance_id: 1 }))
+            .collect();
+        assert_eq!(equips.len(), 1, "swap to the worn workhorse, once");
+
+        // With an instrument in hand, the next snapshot changes nothing.
+        inventory.bag = vec![item(2, "mandolin"), item(4, "worn_iron_sword")];
+        inventory.equipped = HashMap::from([(EquipSlot::MainHand, item(1, "worn_mandolin"))]);
+        s.push_event(ServerMessage::InventoryState {
+            inventory: inventory.clone(),
+        });
+        assert!(
+            !s.drain_pending_commands()
+                .iter()
+                .any(|c| matches!(c, ClientMessage::EquipItem { .. })),
+            "the workhorse in hand is left alone"
+        );
+
+        // Holding the good mandolin steps down to the worn one, freeing the
+        // keepsake back into the bag.
+        inventory.bag = vec![item(1, "worn_mandolin"), item(4, "worn_iron_sword")];
+        inventory.equipped = HashMap::from([(EquipSlot::MainHand, item(2, "mandolin"))]);
+        s.push_event(ServerMessage::InventoryState {
+            inventory: inventory.clone(),
+        });
+        assert!(
+            s.drain_pending_commands()
+                .iter()
+                .any(|c| matches!(c, ClientMessage::EquipItem { instance_id: 1 })),
+            "the good mandolin in hand gives way to the workhorse"
+        );
+
+        // A non-bard keeps whatever it holds.
+        let (mut guard, _rx2) = test_state();
+        inventory.equipped = HashMap::from([(EquipSlot::MainHand, item(3, "worn_iron_sword"))]);
+        guard.push_event(ServerMessage::InventoryState { inventory });
+        assert!(
+            !guard
+                .drain_pending_commands()
+                .iter()
+                .any(|c| matches!(c, ClientMessage::EquipItem { .. })),
+            "only buskers reach for an instrument"
+        );
     }
 
     /// A `DoorToggled` must land on both faces of the door: the passability

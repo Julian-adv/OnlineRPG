@@ -531,7 +531,16 @@ async fn run_npc_session(
         Arc::clone(&shared.world_cache),
         watch.clone(),
     )));
-    state.lock().await.plays_music = npc.plays_music();
+    {
+        let mut s = state.lock().await;
+        s.plays_music = npc.plays_music();
+        s.keepsake_ids = npc
+            .id
+            .as_deref()
+            .and_then(crate::shop_info::npc_by_id)
+            .map(|row| row.offerable_keepsake_ids().map(String::from).collect())
+            .unwrap_or_default();
+    }
     if let Some(w) = &watch {
         w.set_state(Arc::clone(&state));
         w.push("system", "Session connected".to_string());
