@@ -1183,7 +1183,10 @@ mod tests {
             let AgentAction::Sell { item, merchant, .. } = parse_single_action(json) else {
                 panic!("expected Sell for {json}");
             };
-            assert_eq!((item.as_str(), merchant.as_deref()), ("goblin_sword", Some("Rica")));
+            assert_eq!(
+                (item.as_str(), merchant.as_deref()),
+                ("goblin_sword", Some("Rica"))
+            );
         }
     }
 
@@ -1214,7 +1217,10 @@ mod tests {
             let AgentAction::Buyback { item, merchant } = parse_single_action(json) else {
                 panic!("expected Buyback for {json}");
             };
-            assert_eq!((item.as_str(), merchant.as_deref()), ("iron_sword", Some("Rica")));
+            assert_eq!(
+                (item.as_str(), merchant.as_deref()),
+                ("iron_sword", Some("Rica"))
+            );
         }
     }
 
@@ -1506,9 +1512,7 @@ mod tests {
             .expect("serde unknown-variant error should list the variants");
         let parser: std::collections::BTreeSet<&str> = listed
             .split('`')
-            .filter(|s| {
-                !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
             .collect();
         let documented: std::collections::BTreeSet<&str> = ACTION_SPECS
             .iter()

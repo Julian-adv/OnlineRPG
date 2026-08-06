@@ -4520,7 +4520,8 @@ pub(crate) mod tests {
         let (mut s, _rx) = test_state();
         let mut deep = monster("m_deep");
         deep.floor_level = -1;
-        s.nearby_monsters.insert("m_surface".into(), monster("m_surface"));
+        s.nearby_monsters
+            .insert("m_surface".into(), monster("m_surface"));
         s.nearby_monsters.insert("m_deep".into(), deep);
         s.sighted_pois.insert("m:m_surface".into());
 
@@ -4537,7 +4538,8 @@ pub(crate) mod tests {
     #[test]
     fn invalid_target_rejection_drops_the_ghost_monster() {
         let (mut s, _rx) = test_state();
-        s.nearby_monsters.insert("m_ghost".into(), monster("m_ghost"));
+        s.nearby_monsters
+            .insert("m_ghost".into(), monster("m_ghost"));
         s.push_event(ServerMessage::PlayerAttackRejected {
             monster_id: "m_ghost".into(),
             reason: onlinerpg_shared::AttackRejectReason::InvalidTarget,

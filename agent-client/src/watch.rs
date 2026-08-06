@@ -292,7 +292,11 @@ pub async fn serve(hub: Arc<WatchHub>, minimap: MinimapSource, port: u16) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(1);
-    let app_state = Arc::new(AppState { hub, minimap, boot_id });
+    let app_state = Arc::new(AppState {
+        hub,
+        minimap,
+        boot_id,
+    });
     let app = Router::new()
         .route("/", get(page))
         .route("/api/npcs", get(npcs))

@@ -12,8 +12,8 @@ mod openai;
 mod openrouter;
 mod orchestrator;
 mod shop_info;
-mod state;
 mod splat;
+mod state;
 mod terrain_http;
 mod watch;
 mod ws;
@@ -231,10 +231,7 @@ async fn main() -> anyhow::Result<()> {
         &config.terrain,
         &config.terrain_cache,
     ));
-    let splat_sampler = Arc::new(create_splat_sampler(
-        &config.terrain,
-        &config.terrain_cache,
-    ));
+    let splat_sampler = Arc::new(create_splat_sampler(&config.terrain, &config.terrain_cache));
 
     // NPC patrols keep loading tiles; sweep idle ones like the server does.
     let height_sampler_for_sweep = Arc::clone(&height_sampler);

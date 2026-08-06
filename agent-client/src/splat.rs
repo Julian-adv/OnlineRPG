@@ -84,7 +84,10 @@ impl HttpSplatTiles {
         let response = self.http.get(&url).send().await?.error_for_status()?;
         let bytes = response.bytes().await?.to_vec();
         if bytes.len() != SPLATMAP_SIZE {
-            anyhow::bail!("{url} returned {} bytes, expected {SPLATMAP_SIZE}", bytes.len());
+            anyhow::bail!(
+                "{url} returned {} bytes, expected {SPLATMAP_SIZE}",
+                bytes.len()
+            );
         }
         Ok(bytes)
     }

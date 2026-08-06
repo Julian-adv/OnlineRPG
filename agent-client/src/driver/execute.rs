@@ -492,7 +492,9 @@ pub(super) async fn handle_response(
             qty,
         } = action
         {
-            let Some((merchant_id, merchant_name)) = reach_merchant(state, "SellFailed", merchant.as_deref()).await else {
+            let Some((merchant_id, merchant_name)) =
+                reach_merchant(state, "SellFailed", merchant.as_deref()).await
+            else {
                 continue;
             };
             let mut s = state.lock().await;
@@ -615,7 +617,8 @@ pub(super) async fn handle_response(
         // Buy back a unit sold to this merchant this session, at the exact
         // payout recorded server-side. Entry list arrives via BuybackUpdated.
         if let AgentAction::Buyback { item, merchant } = action {
-            let Some((merchant_id, merchant_name)) = reach_merchant(state, "BuybackFailed", merchant.as_deref()).await
+            let Some((merchant_id, merchant_name)) =
+                reach_merchant(state, "BuybackFailed", merchant.as_deref()).await
             else {
                 continue;
             };
