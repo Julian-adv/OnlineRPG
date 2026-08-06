@@ -165,6 +165,11 @@ impl WorldCache {
         self.dungeons.iter().find(|d| d.id == id).map(Arc::clone)
     }
 
+    /// Every registered dungeon — the watch panel draws their entrances.
+    pub fn all_dungeons(&self) -> &[Arc<Dungeon>] {
+        &self.dungeons
+    }
+
     pub fn open_dungeon_doors(&self, id: &str, depth: u8) -> HashSet<u32> {
         self.dungeon_doors
             .get(&(id.to_string(), depth))
@@ -449,6 +454,10 @@ pub struct SharedState {
     /// An invented song title already woke the driver; the next one waits for
     /// the ordinary prompt, so a model that keeps guessing cannot spin.
     bad_song_title_refused: bool,
+    /// POIs currently inside NPC_SIGHT_RADIUS (monsters, loot, dungeon
+    /// entrances), keyed by a typed id. Entry fires a [Sighted] event so the
+    /// LLM reacts mid-walk instead of at the next scheduled turn.
+    sighted_pois: HashSet<String>,
     /// Synthetic agent-side events (e.g. "player appeared nearby")
     agent_events: Vec<String>,
     /// Terrain height sampler (shared across NPC connections)
@@ -540,6 +549,7 @@ impl SharedState {
             pending_tips: Vec::new(),
             tips_noticed: 0,
             bad_song_title_refused: false,
+            sighted_pois: HashSet::new(),
             agent_events: Vec::new(),
             height_sampler,
             world_cache,
@@ -836,6 +846,112 @@ impl SharedState {
         }
         self.self_performance = None;
         self.pending_commands.push(ClientMessage::StopInteraction);
+    }
+
+    /// Emit a [Sighted] event when any point of interest — a monster, dropped
+    /// loot, a dungeon entrance — enters NPC_SIGHT_RADIUS on our floor, and
+    /// forget it once it drifts well past the edge so a re-entry announces
+    /// again. Without this the agent walks straight past everything between
+    /// scheduled turns. Only an aggressive monster wakes the driver; the rest
+    /// ride to the next prompt so a long walk isn't cut every few metres.
+    fn check_sightings(&mut self) {
+        let (self_pos, self_floor) = match self.self_player.as_ref() {
+            Some(p) => (p.position, self.self_floor_level),
+            None => return,
+        };
+        let dist_to = |x: f32, z: f32| {
+            let dx = x - self_pos.x;
+            let dz = z - self_pos.z;
+            (dx * dx + dz * dz).sqrt()
+        };
+
+        // (typed key, description, wakes_driver)
+        let mut newly: Vec<(String, String, bool)> = Vec::new();
+        // Keys still close enough to stay "seen" — a wider ring than the entry
+        // radius so a POI hovering at the edge doesn't announce every tick.
+        let mut nearby: HashSet<String> = HashSet::new();
+        let forget_radius = NPC_SIGHT_RADIUS + 5.0;
+
+        for (id, m) in &self.nearby_monsters {
+            if m.floor_level != self_floor || m.state == MonsterState::Dead {
+                continue;
+            }
+            let dist = dist_to(m.position.x, m.position.z);
+            let key = format!("m:{id}");
+            if dist <= forget_radius {
+                nearby.insert(key.clone());
+            }
+            if dist <= NPC_SIGHT_RADIUS && !self.sighted_pois.contains(&key) {
+                newly.push((
+                    key,
+                    format!(
+                        "[Sighted] {} [{id}] HP {}/{} — {:.0}m away.",
+                        m.monster_type, m.health, m.max_health, dist
+                    ),
+                    m.aggressive,
+                ));
+            }
+        }
+
+        for (iid, item) in &self.ground_items {
+            if item.floor_level != self_floor {
+                continue;
+            }
+            let dist = dist_to(item.position.x, item.position.z);
+            let key = format!("i:{iid}");
+            if dist <= forget_radius {
+                nearby.insert(key.clone());
+            }
+            if dist <= NPC_SIGHT_RADIUS && !self.sighted_pois.contains(&key) {
+                newly.push((
+                    key,
+                    format!(
+                        "[Sighted] loot on the ground: {} [id {iid}] — {:.0}m away.",
+                        item.item_def_id, dist
+                    ),
+                    false,
+                ));
+            }
+        }
+
+        // Dungeon entrances only matter above ground.
+        if self_floor >= 0 {
+            let entrances: Vec<(String, f32, f32, u8)> = {
+                let wc = self.world_cache.read().unwrap();
+                wc.all_dungeons()
+                    .iter()
+                    .map(|d| (d.name.clone(), d.entrance.x, d.entrance.z, d.max_depth()))
+                    .collect()
+            };
+            for (name, ex, ez, floors) in entrances {
+                let dist = dist_to(ex, ez);
+                let key = format!("d:{name}");
+                if dist <= forget_radius {
+                    nearby.insert(key.clone());
+                }
+                if dist <= NPC_SIGHT_RADIUS && !self.sighted_pois.contains(&key) {
+                    newly.push((
+                        key,
+                        format!(
+                            "[Sighted] {name} entrance ({floors} floors) — {dist:.0}m away."
+                        ),
+                        false,
+                    ));
+                }
+            }
+        }
+
+        // Drop anything now well outside sight, so a re-entry announces again.
+        self.sighted_pois.retain(|k| nearby.contains(k));
+
+        for (key, note, wake) in newly {
+            self.sighted_pois.insert(key);
+            if wake {
+                self.push_agent_event(note);
+            } else {
+                self.push_agent_event_quiet(note);
+            }
+        }
     }
 
     /// Our floor as a passability cache index, for path queries. Standing on a
@@ -1913,6 +2029,20 @@ impl SharedState {
             _ => {}
         }
 
+        // Check if any POI just entered sight — our own moves come back as
+        // PlayerMoved, so walking into one is covered too.
+        match &msg {
+            ServerMessage::GameState { .. }
+            | ServerMessage::MonsterSpawned { .. }
+            | ServerMessage::MonsterAssigned { .. }
+            | ServerMessage::MonsterMoved { .. }
+            | ServerMessage::GroundItemAppeared { .. }
+            | ServerMessage::PlayerMoved { .. } => {
+                self.check_sightings();
+            }
+            _ => {}
+        }
+
         let urgency = self.classify_event(&msg);
 
         // Deduplicate high-frequency movement events: keep only latest per entity
@@ -2346,11 +2476,23 @@ impl SharedState {
     /// They wake it at `Routine` though: an agent's own arrival note must
     /// never outrank a human talking to some other NPC in the LLM queue.
     pub fn push_agent_event(&mut self, event: String) {
+        self.push_agent_event_inner(event, true);
+    }
+
+    /// Same, but without waking the driver: the event rides along with
+    /// whatever prompt happens next (scenery noted in passing, not danger).
+    pub fn push_agent_event_quiet(&mut self, event: String) {
+        self.push_agent_event_inner(event, false);
+    }
+
+    fn push_agent_event_inner(&mut self, event: String, wake: bool) {
         if let Some(watch) = &self.watch {
             watch.push("agent", event.clone());
         }
         self.agent_events.push(event);
-        self.wake(EventUrgency::Routine);
+        if wake {
+            self.wake(EventUrgency::Routine);
+        }
     }
 
     /// Wake the LLM driver, remembering how urgent the reason was. The driver
@@ -2380,6 +2522,23 @@ impl SharedState {
                     || name_or_id.parse::<u64>().is_ok_and(|n| id.get() == n)
             })
             .map(|(id, p)| (*id, p.is_official_npc))
+    }
+
+    /// The nearest NPC merchant on our floor, for trade actions that omit a
+    /// merchant name. Usually there is exactly one in range, so guessing is
+    /// safe and spares the LLM from naming it.
+    pub fn nearest_merchant(&self) -> Option<PlayerId> {
+        let self_pos = self.self_player.as_ref().map(|p| p.position)?;
+        self.players_on_my_floor()
+            .filter(|(_, p)| {
+                p.is_official_npc && crate::shop_info::shop_line_for(&p.name).is_some()
+            })
+            .min_by(|(_, a), (_, b)| {
+                let da = a.position.dist_xz_sq(&self_pos);
+                let db = b.position.dist_xz_sq(&self_pos);
+                da.total_cmp(&db)
+            })
+            .map(|(id, _)| *id)
     }
 
     /// Every bag copy of the resolved item still available this turn.
@@ -2489,6 +2648,15 @@ impl SharedState {
                 p.position.y,
                 p.position.z
             ));
+            if p.health == 0 {
+                lines.push(
+                    "You are DEFEATED (HP 0). You do NOT recover on your own and most \
+                     actions stay blocked. Respawn now with {\"type\": \"respawn\"} — \
+                     the death penalty was already paid when you fell; respawning \
+                     costs nothing more."
+                        .to_string(),
+                );
+            }
         }
         if let Some(line) = self.format_dungeon_state() {
             lines.push(line);
