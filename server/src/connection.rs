@@ -1083,6 +1083,9 @@ async fn handle_client_message(
             game_state
                 .load_player_inventory(&id, character_id, auth_service)
                 .await;
+            if state.is_official_npc {
+                game_state.seed_npc_keepsakes(&id, &player.name).await;
+            }
 
             // Missing rows = never trained.
             let skills = crate::game_state::skills_from_rows(&skill_rows);

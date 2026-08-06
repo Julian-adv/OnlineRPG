@@ -330,8 +330,15 @@ impl super::GameState {
     /// picks tracks the same way — including one with no audio at all
     /// (agent-client): a bare `/play_music` gets a random tune. Nearby clients
     /// play it along and name it in the chat log, the way they announce a
-    /// chest being opened — the performer says nothing.
+    /// chest being opened — the performer says nothing. Playing takes an
+    /// instrument in the inventory (bards start with a worn mandolin); the
+    /// same rule binds NPCs, who carry theirs as a keepsake.
     async fn play_music(&self, player_id: &PlayerId, query: &str) {
+        if !self.holds_instrument(player_id).await {
+            self.send_system_message(player_id, "You need an instrument to play music.")
+                .await;
+            return;
+        }
         let Some(track) = crate::bgm_defs::bgm_defs().resolve(query) else {
             self.send_system_message(player_id, "No such song.").await;
             return;
@@ -360,6 +367,19 @@ impl super::GameState {
             },
         )
         .await;
+    }
+
+    /// An instrument anywhere in the inventory — bag or hands — is what
+    /// turns the strum emote into a performance.
+    async fn holds_instrument(&self, player_id: &PlayerId) -> bool {
+        let inventories = self.inventories.read().await;
+        inventories.get(player_id).is_some_and(|inv| {
+            inv.items().any(|item| {
+                self.item_defs
+                    .get(&item.item_def_id)
+                    .is_some_and(|def| def.is_instrument())
+            })
+        })
     }
 
     /// `/light_campfire` — an NPC lights a fire in front of itself with no kit

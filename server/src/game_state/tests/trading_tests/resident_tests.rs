@@ -1,4 +1,5 @@
 use super::*;
+use onlinerpg_shared::messages::TradeLineItem;
 
 // --- Resident (non-merchant) trading (economy phase 3) ---
 
@@ -356,6 +357,202 @@ async fn cross_floor_open_trade_is_rejected_before_reaching_the_player() {
         }
         other => panic!("Expected cross-floor TradeError, got {other:?}"),
     }
+}
+
+// --- Keepsakes: offer-only resident stock (Signe's mandolin) ---
+
+#[tokio::test]
+async fn keepsake_is_hidden_from_walk_in_stock_until_offered() {
+    let game_state = make_test_game_state("keepsake_stock");
+    setup_keepsake_trade(
+        &game_state,
+        vec![bag_item(11, "mandolin", 1), bag_item(12, "spear", 1)],
+        10_000,
+    )
+    .await;
+    let mut buyer_rx = game_state.register_direct_channel(&pid("buyer")).await;
+
+    game_state
+        .open_shop(&pid("buyer"), &pid("npc_signe"), true)
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::ShopState { stock, .. }) => {
+            assert_eq!(stock.len(), 1, "keepsake must not show to walk-ins");
+            assert_eq!(stock[0].item_def_id, "spear");
+        }
+        other => panic!("Expected ShopState, got {:?}", other),
+    }
+
+    game_state
+        .offer_deal(
+            &pid("npc_signe"),
+            &pid("buyer"),
+            "mandolin",
+            DealKind::Buy,
+            -10,
+            "a friend of the music",
+        )
+        .await;
+    while buyer_rx.try_recv().is_ok() {}
+
+    game_state
+        .open_shop(&pid("buyer"), &pid("npc_signe"), true)
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::ShopState { stock, .. }) => {
+            assert!(
+                stock.iter().any(|s| s.item_def_id == "mandolin"),
+                "the offered keepsake appears for the offeree"
+            );
+        }
+        other => panic!("Expected ShopState, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn keepsake_sells_only_through_a_personal_offer() {
+    let game_state = make_test_game_state("keepsake_buy");
+    setup_keepsake_trade(&game_state, vec![bag_item(11, "mandolin", 1)], 10_000).await;
+    let mut buyer_rx = game_state.register_direct_channel(&pid("buyer")).await;
+
+    game_state
+        .buy_item(&pid("buyer"), &pid("npc_signe"), "mandolin")
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("part with"), "got: {message}")
+        }
+        other => panic!("Expected TradeError, got {:?}", other),
+    }
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 10_000);
+
+    // Mandolin base 4000 at -10% → 3600 (CHA 10 resident band is ±20).
+    game_state
+        .offer_deal(
+            &pid("npc_signe"),
+            &pid("buyer"),
+            "mandolin",
+            DealKind::Buy,
+            -10,
+            "she has earned it",
+        )
+        .await;
+    game_state
+        .buy_item(&pid("buyer"), &pid("npc_signe"), "mandolin")
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 6_400);
+    assert_eq!(game_state.get_player_gold(&pid("npc_signe")).await, 3_600);
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(inventories[&pid("buyer")].bag[0].item_def_id, "mandolin");
+    assert!(inventories[&pid("npc_signe")].bag.is_empty());
+}
+
+#[tokio::test]
+async fn keepsake_batch_buy_is_one_unit_behind_the_offer() {
+    let game_state = make_test_game_state("keepsake_batch");
+    setup_keepsake_trade(&game_state, vec![bag_item(11, "mandolin", 1)], 10_000).await;
+    let mut buyer_rx = game_state.register_direct_channel(&pid("buyer")).await;
+
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("npc_signe"),
+            vec![TradeLineItem {
+                item_def_id: "mandolin".to_string(),
+                qty: 2,
+            }],
+        )
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("only part with one"), "got: {message}")
+        }
+        other => panic!("Expected TradeError, got {:?}", other),
+    }
+
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("npc_signe"),
+            vec![TradeLineItem {
+                item_def_id: "mandolin".to_string(),
+                qty: 1,
+            }],
+        )
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("part with"), "got: {message}")
+        }
+        other => panic!("Expected TradeError, got {:?}", other),
+    }
+
+    game_state
+        .offer_deal(
+            &pid("npc_signe"),
+            &pid("buyer"),
+            "mandolin",
+            DealKind::Buy,
+            0,
+            "a regular",
+        )
+        .await;
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("npc_signe"),
+            vec![TradeLineItem {
+                item_def_id: "mandolin".to_string(),
+                qty: 1,
+            }],
+        )
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 6_000);
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(inventories[&pid("buyer")].bag[0].item_def_id, "mandolin");
+    assert!(inventories[&pid("npc_signe")].bag.is_empty());
+}
+
+#[tokio::test]
+async fn seed_npc_keepsakes_refills_missing_items_once() {
+    let game_state = make_test_game_state("keepsake_seed");
+    setup_keepsake_trade(&game_state, vec![], 0).await;
+
+    game_state
+        .seed_npc_keepsakes(&pid("npc_signe"), "Signe")
+        .await;
+    game_state
+        .seed_npc_keepsakes(&pid("npc_signe"), "Signe")
+        .await;
+    {
+        let inventories = game_state.inventories.read().await;
+        let bag = &inventories[&pid("npc_signe")].bag;
+        assert_eq!(bag.len(), 2, "seeding twice must not duplicate");
+        assert!(bag.iter().any(|i| i.item_def_id == "mandolin"));
+        assert!(bag.iter().any(|i| i.item_def_id == "worn_mandolin"));
+    }
+
+    // An equipped keepsake still counts as owned.
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let inv = inventories.get_mut(&pid("npc_signe")).unwrap();
+        let pos = inv
+            .bag
+            .iter()
+            .position(|i| i.item_def_id == "worn_mandolin")
+            .unwrap();
+        let item = inv.bag.remove(pos);
+        inv.equipped.insert(EquipSlot::MainHand, item);
+    }
+    game_state
+        .seed_npc_keepsakes(&pid("npc_signe"), "Signe")
+        .await;
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("npc_signe")].bag;
+    assert_eq!(bag.len(), 1);
+    assert_eq!(bag[0].item_def_id, "mandolin");
 }
 
 #[tokio::test]

@@ -31,16 +31,25 @@ pub struct NpcDefinition {
     /// Salary stops accumulating past this wallet balance.
     #[serde(rename = "walletCap", default)]
     pub wallet_cap: i64,
+    /// Personal belongings, hidden from walk-in stock: only a player the
+    /// NPC personally offered a deal on the item may buy it. Refilled into
+    /// the NPC's bag on join.
+    #[serde(default, deserialize_with = "crate::semicolon_list::deserialize")]
+    pub keepsakes: Vec<String>,
 }
 
 impl NpcDefinition {
-    /// Whether this NPC trades as a resident (has a wishlist).
+    /// Whether this NPC trades as a resident (has a wishlist or keepsakes).
     pub fn trades(&self) -> bool {
-        !self.wishlist.is_empty()
+        !self.wishlist.is_empty() || !self.keepsakes.is_empty()
     }
 
     pub fn wants(&self, item_def_id: &str) -> bool {
         self.wishlist.iter().any(|id| id == item_def_id)
+    }
+
+    pub fn keeps(&self, item_def_id: &str) -> bool {
+        self.keepsakes.iter().any(|id| id == item_def_id)
     }
 }
 
@@ -65,6 +74,13 @@ impl NpcDefs {
                         .get_by_npc_name(&def.npc_name)
                         .is_none(),
                 "NPC {} is defined both as a merchant and a resident trader",
+                def.npc_name
+            );
+            // Wishlist items are never resold; a keepsake is offer-only
+            // sellable — the two sets must not overlap.
+            assert!(
+                !def.wishlist.iter().any(|id| def.keeps(id)),
+                "NPC {} lists an item as both wishlist and keepsake",
                 def.npc_name
             );
         }

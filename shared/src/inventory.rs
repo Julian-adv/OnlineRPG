@@ -114,6 +114,16 @@ impl PlayerInventory {
             .get(&EquipSlot::MainHand)
             .map(|item| item.item_def_id.clone())
     }
+
+    /// Everything the player carries: bag and worn gear alike.
+    pub fn items(&self) -> impl Iterator<Item = &ItemInstance> {
+        self.bag.iter().chain(self.equipped.values())
+    }
+
+    /// Whether the player carries the item anywhere, bag or worn.
+    pub fn has_item(&self, item_def_id: &str) -> bool {
+        self.items().any(|item| item.item_def_id == item_def_id)
+    }
 }
 
 /// Item defs that act as a carried light source.

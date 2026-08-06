@@ -1156,6 +1156,17 @@ async fn escape_command_refused_while_in_combat() {
     );
 }
 
+/// Playing takes an instrument; the test bards carry the starter mandolin.
+async fn hand_a_mandolin(game_state: &GameState, player: &str) {
+    game_state.inventories.write().await.insert(
+        pid(player),
+        PlayerInventory {
+            bag: vec![bag_item(1, "worn_mandolin", 1)],
+            ..Default::default()
+        },
+    );
+}
+
 #[tokio::test]
 async fn play_music_hands_the_track_to_neighbours() {
     let game_state = make_test_game_state("play_music");
@@ -1166,6 +1177,7 @@ async fn play_music_hands_the_track_to_neighbours() {
     game_state
         .add_player(make_player("listener", 10.0, 0.0))
         .await;
+    hand_a_mandolin(&game_state, "bard").await;
     let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
 
     // A fragment is enough — the server resolves it to the whole title.
@@ -1212,6 +1224,7 @@ async fn bare_play_music_picks_a_track_for_the_performer() {
     game_state
         .add_player(make_player("listener", 10.0, 0.0))
         .await;
+    hand_a_mandolin(&game_state, "bard").await;
     let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
 
     game_state
@@ -1242,6 +1255,7 @@ async fn an_unknown_song_title_refuses_the_performance() {
     game_state
         .add_player(make_player("listener", 10.0, 0.0))
         .await;
+    hand_a_mandolin(&game_state, "bard").await;
     let mut bard_rx = game_state.register_direct_channel(&bard_id).await;
     let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
 
@@ -1254,4 +1268,48 @@ async fn an_unknown_song_title_refuses_the_performance() {
         Ok(ServerMessage::SystemMessage { .. })
     ));
     assert!(listener_rx.try_recv().is_err(), "nobody else hears a thing");
+}
+
+/// No instrument, no performance: the empty-handed strummer gets told why,
+/// and nobody else sees a pose or hears a note.
+#[tokio::test]
+async fn play_music_without_an_instrument_is_refused() {
+    let game_state = make_test_game_state("play_music_no_instrument");
+    let auth = make_test_auth("play_music_no_instrument");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut bard_rx = game_state.register_direct_channel(&bard_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&bard_id, "/play_music twilight".to_string(), &auth)
+        .await;
+
+    match bard_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("instrument"), "got: {message}")
+        }
+        other => panic!("Expected the refusal, got {other:?}"),
+    }
+    assert!(listener_rx.try_recv().is_err(), "no pose, no tune");
+
+    // An equipped instrument counts too.
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv = PlayerInventory::default();
+        inv.equipped
+            .insert(EquipSlot::MainHand, bag_item(1, "worn_mandolin", 1));
+        inventories.insert(bard_id, inv);
+    }
+    game_state
+        .send_chat_message(&bard_id, "/play_music twilight".to_string(), &auth)
+        .await;
+    assert!(matches!(
+        listener_rx.try_recv(),
+        Ok(ServerMessage::PlayerInteractionChanged { .. })
+    ));
 }

@@ -111,6 +111,11 @@ impl ItemDefinition {
         self.category.as_deref() == Some("fish")
     }
 
+    /// What `/play_music` requires the performer to carry.
+    pub fn is_instrument(&self) -> bool {
+        self.category.as_deref() == Some("instrument")
+    }
+
     /// A catch that lands in the bag sealed and pays out coins when opened
     /// (`use_item`). Its `dice` column is the copper roll (the
     /// category-decides-meaning pattern: weapon → damage, potion → heal,

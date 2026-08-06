@@ -75,6 +75,30 @@ async fn setup_resident_trade(
     );
 }
 
+/// Spawn the bard Signe (keepsake: mandolin, no wishlist) next to a buyer
+/// with the given gold. Signe's bag is set explicitly.
+async fn setup_keepsake_trade(game_state: &GameState, npc_bag: Vec<ItemInstance>, buyer_gold: i64) {
+    game_state
+        .add_player(make_npc("npc_signe", "Signe", 0.0, 0.0))
+        .await;
+    game_state.add_player(make_player("buyer", 1.0, 0.0)).await;
+    game_state
+        .register_player_character(&pid("buyer"), 1, 0, attrs_with_cha(10), buyer_gold, None)
+        .await;
+    game_state
+        .register_player_character(&pid("npc_signe"), 2, 0, attrs_with_cha(10), 0, None)
+        .await;
+    let mut inventories = game_state.inventories.write().await;
+    inventories.insert(
+        pid("npc_signe"),
+        PlayerInventory {
+            bag: npc_bag,
+            ..Default::default()
+        },
+    );
+    inventories.insert(pid("buyer"), PlayerInventory::default());
+}
+
 fn enchanted_bag_item(
     instance_id: u64,
     item_def_id: &str,

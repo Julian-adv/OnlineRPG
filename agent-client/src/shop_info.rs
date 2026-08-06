@@ -36,6 +36,8 @@ pub struct NpcRow {
     salary_per_day: i64,
     #[serde(rename = "walletCap", default)]
     wallet_cap: i64,
+    #[serde(default)]
+    keepsakes: String,
 }
 
 /// Registry lookup by NPC id, for resolving `[[npcs]]` config entries that
@@ -144,12 +146,14 @@ pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
     Some(section)
 }
 
-/// Build the per-turn "Your Personal Trading" section for a non-merchant
-/// trader. Prompt steering alone cannot stop an LLM from chasing its
-/// wishlist forever, so satiation is structural: items already in the
-/// NPC's bag are omitted, and once every wish is satisfied the section —
-/// the temptation itself — vanishes from the prompt entirely. The bag is
-/// server-persisted, so the desire only returns if the item leaves it.
+/// Build the per-turn trading sections for a non-merchant trader: the
+/// "Your Personal Trading" wishlist and/or the "Your Keepsakes" offers.
+/// Prompt steering alone cannot stop an LLM from chasing its wishlist
+/// forever, so satiation is structural: items already in the NPC's bag are
+/// omitted, and once every wish is satisfied the section — the temptation
+/// itself — vanishes from the prompt entirely. Keepsakes work the other
+/// way around: the offer exists only while the item is still in the bag,
+/// so a sold keepsake stops being offered. The bag is server-persisted.
 pub fn resident_trade_prompt_for(
     npc_name: &str,
     bag: &[onlinerpg_shared::inventory::ItemInstance],
@@ -158,6 +162,19 @@ pub fn resident_trade_prompt_for(
         .values()
         .find(|t| t.npc_name.eq_ignore_ascii_case(npc_name))?;
 
+    // Each section ends in '\n', so joining leaves a blank line between them.
+    let out = [wishlist_section(trader, bag), keepsake_section(trader, bag)]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!out.is_empty()).then_some(out)
+}
+
+fn wishlist_section(
+    trader: &NpcRow,
+    bag: &[onlinerpg_shared::inventory::ItemInstance],
+) -> Option<String> {
     let wanted: Vec<&str> = id_list(&trader.wishlist)
         .filter(|id| !bag.iter().any(|item| item.item_def_id == *id))
         .collect();
@@ -195,6 +212,55 @@ pub fn resident_trade_prompt_for(
          really need right now.\n",
         format_price(trader.salary_per_day),
         format_price(trader.wallet_cap),
+    ));
+    Some(section)
+}
+
+/// Keepsakes still in the NPC's bag, with the rules for offering one: the
+/// server hides them from walk-in stock and only sells to a player holding
+/// the NPC's own `offer_deal`, so the LLM's judgement of who has earned
+/// one is the whole gate on who gets asked. That judgement itself lives in
+/// the role template — this section states only the mechanic. Unpriced
+/// keepsakes (a bard's own worn instrument) can never sell and are left
+/// out — no futile offers.
+fn keepsake_section(
+    trader: &NpcRow,
+    bag: &[onlinerpg_shared::inventory::ItemInstance],
+) -> Option<String> {
+    let held: Vec<(&str, &str, i64)> = id_list(&trader.keepsakes)
+        .filter(|id| bag.iter().any(|item| item.item_def_id == *id))
+        .filter_map(|id| {
+            let item = crate::item_defs::get(id)?;
+            Some((id, item.name.as_str(), item.base_price?))
+        })
+        .collect();
+    let (first, ..) = *held.first()?;
+
+    let mut section = String::from(
+        "## Your Keepsakes\n\
+         Personal belongings in your bag, not shop stock — nobody can buy \
+         one unless you personally offer it first:\n",
+    );
+    for (item_id, name, price) in &held {
+        section.push_str(&format!(
+            "- {item_id} ({name}): base price {}\n",
+            format_price(*price)
+        ));
+    }
+    section.push_str(&format!(
+        "Offer a keepsake only to a player who has genuinely warmed to you — \
+         your role tells you who has earned it. Never advertise one, never \
+         offer it to a stranger, and never to another NPC. To offer, pair a \
+         \"say\" naming the thing and its price with:\n\
+         {{\"type\": \"offer_deal\", \"player\": \"PlayerName\", \"item\": \
+         \"{first}\", \"kind\": \"buy\", \"modifier_pct\": 0, \"reason\": \
+         \"a regular who has earned it\"}}\n\
+         {{\"type\": \"open_trade\", \"player\": \"PlayerName\"}}\n\
+         modifier_pct 0 sells at base price; negative is a friend's \
+         discount, positive a premium. The offer unlocks the item for that \
+         player for a few minutes, and the trade window lets them buy it. \
+         Offer each person at most once — if they let it pass, let it rest. \
+         Keep keepsakes in your bag, not worn.\n",
     ));
     Some(section)
 }
@@ -284,5 +350,32 @@ mod tests {
 
         assert!(resident_trade_prompt_for("Nobody", &bag(&[])).is_none());
         assert!(resident_trade_prompt_for("Rica", &bag(&[])).is_none());
+    }
+
+    /// Signe's keepsake mandolin: the offer exists only while it is in her
+    /// bag — the inverse of wishlist satiation. Her own worn mandolin has
+    /// no price, so it never shows up as something to offer.
+    #[test]
+    fn signe_offers_her_spare_mandolin_only_while_she_still_has_it() {
+        let section = resident_trade_prompt_for("Signe", &bag(&["mandolin", "worn_mandolin"]))
+            .expect("mandolin in bag");
+        assert!(section.contains("Your Keepsakes"));
+        assert!(section.contains("- mandolin"));
+        assert!(section.contains("40s"), "base 4000 formats as 40s");
+        assert!(section.contains("offer_deal"));
+        assert!(section.contains("open_trade"));
+        assert!(
+            !section.contains("worn_mandolin"),
+            "her own instrument is not for sale"
+        );
+        assert!(
+            !section.contains("Personal Trading"),
+            "no wishlist, no buying urge"
+        );
+
+        assert!(
+            resident_trade_prompt_for("Signe", &bag(&["worn_mandolin", "clump_of_kelp"])).is_none(),
+            "spare sold: only the unsellable worn instrument is left"
+        );
     }
 }
