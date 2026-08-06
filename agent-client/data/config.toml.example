@@ -154,3 +154,11 @@ llm = "codex"
 id = "signe"
 account = "npc_bard"
 llm = "codex"
+
+# Night merchant. Opens the stall after dark and sells only what a night
+# traveller needs; off duty in the day, when Rica is awake to sell the rest.
+# Driven by the schedule alone, so no LLM backend is required.
+[[npcs]]
+id = "wick"
+account = "npc_night_merchant"
+llm = "none"

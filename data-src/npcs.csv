@@ -2,3 +2,4 @@ id,npcName,class,wishlist,wishlistRatePercent,salaryPerDay,walletCap,keepsakes
 rica,Rica,merchant,,,,,
 karl,Karl,guard,torch;dagger,120,5000,30000,
 signe,Signe,bard,,,,,mandolin;worn_mandolin
+wick,Wick,merchant,,,,,
