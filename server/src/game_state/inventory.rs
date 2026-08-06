@@ -12,8 +12,10 @@ use tracing::{info, warn};
 use super::party::SummonCast;
 use super::ServerGroundItem;
 
-/// Ground items despawn after 5 minutes.
-const GROUND_ITEM_LIFETIME_MS: u64 = 5 * 60 * 1000;
+/// Ground items despawn after 30 minutes — long enough that a tip dropped at
+/// the start of the longest song (~5 min) still lies there through the rest
+/// and the thanks after it.
+const GROUND_ITEM_LIFETIME_MS: u64 = 30 * 60 * 1000;
 
 const MAX_PICKUP_DISTANCE: f32 = 2.5;
 
@@ -464,6 +466,7 @@ impl super::GameState {
                     position,
                     floor_level,
                     enchant: 0,
+                    dropped_by: Some(*player_id),
                 })
                 .await;
             }
@@ -1052,6 +1055,7 @@ impl super::GameState {
                 position,
                 floor_level,
                 enchant: 0,
+                dropped_by: None,
             })
             .await;
         }
@@ -1120,6 +1124,7 @@ impl super::GameState {
             position,
             floor_level,
             enchant: dropped.enchant,
+            dropped_by: Some(*player_id),
         };
 
         self.mark_inventory_dirty(player_id).await;
@@ -1229,6 +1234,7 @@ impl super::GameState {
                     position,
                     floor_level,
                     enchant: plan.enchant,
+                    dropped_by: Some(*player_id),
                 })
                 .await;
                 next_ground_id += 1;
@@ -1259,6 +1265,7 @@ impl super::GameState {
             position,
             floor_level,
             enchant: 0,
+            dropped_by: Some(*player_id),
         })
         .await;
     }
@@ -1361,7 +1368,10 @@ impl super::GameState {
             &item_position,
             player_floor,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemRemoved { instance_id },
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by: Some(*player_id),
+            },
             None,
         )
         .await;
@@ -1446,7 +1456,10 @@ impl super::GameState {
             &ground_item.position,
             player_floor,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemRemoved { instance_id },
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by: Some(*player_id),
+            },
             None,
         )
         .await;
@@ -1487,7 +1500,10 @@ impl super::GameState {
                 &position,
                 floor_level,
                 super::EVENT_DELIVERY_RADIUS,
-                ServerMessage::GroundItemRemoved { instance_id: id },
+                ServerMessage::GroundItemRemoved {
+                    instance_id: id,
+                    picked_up_by: None,
+                },
                 None,
             )
             .await;

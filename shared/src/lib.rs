@@ -53,9 +53,12 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      (PlayerMusicStarted).
 /// v21: PlayerMusicStarted carries `elapsed_secs` and is re-sent to players
 ///      entering earshot of a running performance.
-/// v22: PartyMember carries hp/max_hp/class, PartyVitals pushes member
+/// v22: GroundItem carries `dropped_by` and GroundItemRemoved
+///      `picked_up_by`, so a busker knows who left the coins at its feet —
+///      and who took them.
+/// v23: PartyMember carries hp/max_hp/class, PartyVitals pushes member
 ///      health, and PartyKick/PartyPromote (leader kick + handover).
-pub const PROTOCOL_VERSION: u32 = 22;
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

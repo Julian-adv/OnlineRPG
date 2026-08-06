@@ -470,8 +470,9 @@
   })
 
   // ── Music emote prop ────────────────────────────────────
-  // The mandolin rides the emote rather than the equip slot, so a bard need
-  // not carry one. It keys off `interactionAnim`, which the server broadcasts
+  // The server requires an instrument in the performer's inventory, but the
+  // prop rides the emote rather than the equip slot and is deliberately one
+  // fixed model. It keys off `interactionAnim`, which the server broadcasts
   // for /play_music — remote players see the instrument too, and the equipped
   // weapon is already hidden for the duration by `playAnimationForState`.
   let musicPropObject: THREE.Object3D | null = null

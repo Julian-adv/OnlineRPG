@@ -16,6 +16,16 @@ const STARTER_ITEMS: &[(&str, u32, Option<&str>)] = &[
     ("worn_torch", 1, None),
 ];
 
+/// Class additions to the starter kit, under the same no-basePrice rule.
+fn class_starter_items(
+    class: &CharacterClass,
+) -> &'static [(&'static str, u32, Option<&'static str>)] {
+    match class {
+        CharacterClass::Bard => &[("worn_mandolin", 1, None)],
+        _ => &[],
+    }
+}
+
 /// Item defs renamed after release, applied to stored inventories at startup.
 /// (old_id, new_id) — new_id must exist in items.csv.
 const RENAMED_ITEM_IDS: &[(&str, &str)] = &[
@@ -1086,7 +1096,9 @@ impl AuthService {
                 "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot) \
                  VALUES (?1, ?2, ?3, ?4)",
             )?;
-            for (item_def_id, quantity, equip_slot) in STARTER_ITEMS {
+            for (item_def_id, quantity, equip_slot) in
+                STARTER_ITEMS.iter().chain(class_starter_items(&class))
+            {
                 stmt.execute(params![id, item_def_id, quantity, equip_slot])?;
             }
         }
@@ -1272,6 +1284,50 @@ impl AuthService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bard_starts_with_a_worn_mandolin_on_top_of_the_common_kit() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_bard_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_google("sub-bard").unwrap();
+        let attributes = CharacterAttributes {
+            r#str: 10,
+            dex: 12,
+            con: 10,
+            int: 10,
+            wis: 10,
+            cha: 14,
+            guard: 0,
+        };
+
+        let bard = auth
+            .create_character(
+                &account,
+                "Lark",
+                &attributes,
+                12,
+                CharacterClass::Bard,
+                Gender::Female,
+            )
+            .unwrap();
+        let items = auth.load_inventory(bard.id).unwrap();
+        assert!(items.iter().any(|r| r.item_def_id == "worn_mandolin"));
+        assert!(items.iter().any(|r| r.item_def_id == "worn_iron_sword"));
+
+        let knight = auth
+            .create_character(
+                &account,
+                "Tass",
+                &attributes,
+                16,
+                CharacterClass::Knight,
+                Gender::Male,
+            )
+            .unwrap();
+        let items = auth.load_inventory(knight.id).unwrap();
+        assert!(items.iter().all(|r| r.item_def_id != "worn_mandolin"));
+    }
 
     #[test]
     fn npc_login_enforces_prefix_and_google_separation() {

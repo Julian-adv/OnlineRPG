@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::messages::{BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem};
+use onlinerpg_shared::messages::{
+    ActiveDeal, BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem,
+};
 use tracing::info;
 
 use super::combat::reachable_dist_sq;
@@ -220,14 +222,18 @@ impl super::GameState {
                 stock: Vec::new(),
                 buyback: self.buyback_list(player_id, &def.npc_name).await,
             },
+            // `stock` is written first: it borrows `active_deals`, which the
+            // literal then moves.
             TraderDef::Resident(def) => ServerMessage::ShopState {
+                stock: self
+                    .resident_stock(npc_player_id, &def, &active_deals)
+                    .await,
                 merchant_player_id: *npc_player_id,
                 merchant_name: def.npc_name.clone(),
                 catalog: Vec::new(),
                 sell_rate_percent: def.wishlist_rate_percent,
                 active_deals,
                 wishlist: def.wishlist.clone(),
-                stock: self.resident_stock(npc_player_id, &def).await,
                 buyback: Vec::new(),
             },
         };
@@ -374,19 +380,29 @@ impl super::GameState {
     /// A resident's purchasable stock: priced bag items that are not on its
     /// wishlist. Wishlist purchases are kept (never resold) so the
     /// buy/sell item sets stay disjoint — no money pump is possible even
-    /// though the wishlist rate exceeds the sale price.
+    /// though the wishlist rate exceeds the sale price. Keepsakes appear
+    /// only to a player holding a live buy deal the NPC offered on them.
     async fn resident_stock(
         &self,
         npc_player_id: &PlayerId,
         def: &NpcDefinition,
+        active_deals: &[ActiveDeal],
     ) -> Vec<StockEntry> {
         let inventories = self.inventories.read().await;
         let Some(inv) = inventories.get(npc_player_id) else {
             return Vec::new();
         };
+        let offered = |item_def_id: &str| {
+            active_deals
+                .iter()
+                .any(|d| d.kind == DealKind::Buy && d.item_def_id == item_def_id)
+        };
         let mut stock: Vec<StockEntry> = Vec::new();
         for item in &inv.bag {
             if def.wants(&item.item_def_id) {
+                continue;
+            }
+            if def.keeps(&item.item_def_id) && !offered(&item.item_def_id) {
                 continue;
             }
             if self
@@ -409,6 +425,44 @@ impl super::GameState {
             }
         }
         stock
+    }
+
+    /// Refill an official NPC's keepsakes on join. Idempotent per session —
+    /// an item already in the bag (or worn) is not granted again — so a sold
+    /// keepsake only returns with the next join, and the NPC has one to
+    /// offer again.
+    pub async fn seed_npc_keepsakes(&self, npc_player_id: &PlayerId, npc_name: &str) {
+        let Some(def) = npc_defs().get_trader_by_npc_name(npc_name) else {
+            return;
+        };
+        let missing: Vec<&String> = {
+            let inventories = self.inventories.read().await;
+            let Some(inv) = inventories.get(npc_player_id) else {
+                return;
+            };
+            def.keepsakes
+                .iter()
+                .filter(|id| !inv.has_item(id))
+                .collect()
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let mut next_id = self.reserve_instance_ids(missing.len() as u64).await;
+        {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(npc_player_id) else {
+                return;
+            };
+            for item_def_id in missing {
+                let stackable = self.item_defs.stackable(item_def_id);
+                next_id += stack_into_bag(
+                    &mut inv.bag,
+                    BagInsert::one(stackable, item_def_id, 0, next_id),
+                );
+            }
+        }
+        self.mark_inventory_dirty(npc_player_id).await;
     }
 
     /// Buy one unit of `item_def_id` from a trading NPC. Merchants create
@@ -455,11 +509,18 @@ impl super::GameState {
 
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
+        let is_keepsake = matches!(&def, TraderDef::Resident(r) if r.keeps(item_def_id));
 
         // Single-use haggled modifier; must be restored if the buy fails.
         let deal = self
             .take_deal(player_id, &npc_name, item_def_id, DealKind::Buy)
             .await;
+        // A keepsake sells only through the deal the NPC personally offered.
+        if is_keepsake && deal.is_none() {
+            return self
+                .send_trade_error(player_id, "They won't part with that")
+                .await;
+        }
         let price = buy_price(base_price, deal.as_ref().map_or(0, |d| d.modifier_pct));
 
         let item_weight = self.item_defs.weight(item_def_id);
@@ -667,6 +728,12 @@ impl super::GameState {
                             .send_trade_error(player_id, "They won't part with that")
                             .await;
                     }
+                    // One personal offer covers one unit.
+                    if r.keeps(&req.item_def_id) && req.qty > 1 {
+                        return self
+                            .send_trade_error(player_id, "They will only part with one")
+                            .await;
+                    }
                 }
             }
             let Some(base_price) = self
@@ -762,8 +829,20 @@ impl super::GameState {
             total_price += price;
         }
 
+        // Post-pricing refusals share one restore-the-taken-deals bail-out.
+        // A keepsake sells only through the deal the NPC personally offered.
         let gold = gold_map.get(player_id).copied().unwrap_or(0);
-        if gold < total_price {
+        let refusal = if matches!(&def, TraderDef::Resident(r) if plans
+            .iter()
+            .any(|p| r.keeps(&p.item_def_id) && p.deal_taken.is_none()))
+        {
+            Some("They won't part with that")
+        } else if gold < total_price {
+            Some("Not enough gold")
+        } else {
+            None
+        };
+        if let Some(message) = refusal {
             let restore: Vec<(&str, DealEntry)> = plans
                 .iter()
                 .filter_map(|p| Some((p.item_def_id.as_str(), p.deal_taken.clone()?)))
@@ -772,7 +851,7 @@ impl super::GameState {
                 .await;
             drop(inventories);
             drop(gold_map);
-            return self.send_trade_error(player_id, "Not enough gold").await;
+            return self.send_trade_error(player_id, message).await;
         }
 
         // Every line is now guaranteed to apply cleanly — mutate. Resident

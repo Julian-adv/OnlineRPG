@@ -196,6 +196,17 @@ impl NpcConfig {
             .or(self.character_name.as_deref())
             .unwrap_or("agent")
     }
+
+    /// Whether this agent busks. The one gate for everything bard: the
+    /// songbook and tip prompt sections, and the `[Tip]` events in state —
+    /// so an agent is never instructed about tips it will not receive.
+    pub fn plays_music(&self) -> bool {
+        self.character_class.as_deref() == Some("bard")
+            || self
+                .template_prompt
+                .as_deref()
+                .is_some_and(|path| path.ends_with("bard.txt"))
+    }
 }
 
 /// Resources shared across all NPC connections.
@@ -520,6 +531,7 @@ async fn run_npc_session(
         Arc::clone(&shared.world_cache),
         watch.clone(),
     )));
+    state.lock().await.plays_music = npc.plays_music();
     if let Some(w) = &watch {
         w.set_state(Arc::clone(&state));
         w.push("system", "Session connected".to_string());
@@ -804,9 +816,7 @@ fn build_system_prompt(npc: &NpcConfig) -> anyhow::Result<String> {
     }
     // A bard announces the song before playing it, so it needs the titles in
     // front of it — both to pick one and to match a listener's request.
-    let plays_music = npc.character_class.as_deref() == Some("bard")
-        || role.is_some_and(|path| path.ends_with("bard.txt"));
-    if plays_music {
+    if npc.plays_music() {
         parts.push(songbook_prompt());
     }
     if let Some(ref memory_path) = npc.memory_file {

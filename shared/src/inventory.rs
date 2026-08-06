@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::Position;
+use crate::{PlayerId, Position};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,6 +114,16 @@ impl PlayerInventory {
             .get(&EquipSlot::MainHand)
             .map(|item| item.item_def_id.clone())
     }
+
+    /// Everything the player carries: bag and worn gear alike.
+    pub fn items(&self) -> impl Iterator<Item = &ItemInstance> {
+        self.bag.iter().chain(self.equipped.values())
+    }
+
+    /// Whether the player carries the item anywhere, bag or worn.
+    pub fn has_item(&self, item_def_id: &str) -> bool {
+        self.items().any(|item| item.item_def_id == item_def_id)
+    }
 }
 
 /// Item defs that act as a carried light source.
@@ -129,6 +139,12 @@ pub struct GroundItem {
     /// doesn't wipe it.
     #[serde(default)]
     pub enchant: i32,
+    /// The player who put it there, if one did — loot and world drops carry
+    /// `None`. On the item rather than the spawn message so attribution
+    /// survives AOI churn and rejoins: a busker's uncollected tip is still
+    /// its tip after a reconnect.
+    #[serde(default)]
+    pub dropped_by: Option<PlayerId>,
 }
 
 #[cfg(test)]

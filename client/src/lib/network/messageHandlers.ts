@@ -238,6 +238,28 @@ function isSelfPlayer(playerId: number): boolean {
   return get(gameStore).currentPlayer?.id === playerId
 }
 
+/// Who did it, for a chat line: "You" for us, their name for anyone else.
+function actorName(playerId: number): string {
+  const state = get(gameStore)
+  if (state.currentPlayer?.id === playerId) return 'You'
+  return state.otherPlayers.get(playerId)?.name ?? 'Someone'
+}
+
+/// One chat line for a ground item changing hands. Silent unless a player
+/// did it (actorId set) and the item is known.
+function announceGroundItem(
+  actorId: number | null | undefined,
+  itemDefId: string | undefined,
+  verb: string
+) {
+  if (actorId == null || !itemDefId) return
+  const name = getItemDef(itemDefId)?.name ?? itemDefId
+  addChatMessage({
+    text: `${actorName(actorId)} ${verb} ${name}.`,
+    sender: 'system',
+  })
+}
+
 export function handleServerMessage(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   raw: any,
@@ -947,14 +969,9 @@ export function handleServerMessage(
       break
 
     case 'DungeonChestOpened': {
-      const state = get(gameStore)
-      const isMe = state.currentPlayer?.id === data.player_id
-      const who = isMe
-        ? 'You'
-        : (state.otherPlayers.get(data.player_id)?.name ?? 'Someone')
       const items = (data.item_def_ids as string[]).join(', ')
       addChatMessage({
-        text: `${who} opened the treasure chest: ${items} + ${data.gold} gold!`,
+        text: `${actorName(data.player_id)} opened the treasure chest: ${items} + ${data.gold} gold!`,
         sender: 'system',
       })
       break
@@ -1031,19 +1048,29 @@ export function handleServerMessage(
       setInventory(data.inventory)
       break
 
-    case 'GroundItemSpawned':
-      groundItemManager.spawn(data.item as ServerGroundItem, {
-        animateSpawn: true,
-      })
+    case 'GroundItemSpawned': {
+      const item = data.item as ServerGroundItem
+      groundItemManager.spawn(item, { animateSpawn: true })
+      // Only what a hand put down: loot announces itself by landing.
+      announceGroundItem(item.dropped_by, item.item_def_id, 'dropped')
       break
+    }
 
     case 'GroundItemAppeared':
       groundItemManager.spawn(data.item as ServerGroundItem)
       break
 
-    case 'GroundItemRemoved':
+    case 'GroundItemRemoved': {
+      // Read the def before the removal drops it — who looted what matters
+      // in a party, where one bag takes the drop everybody fought for.
+      const defId =
+        data.picked_up_by != null
+          ? groundItemManager.items.get(data.instance_id)?.itemDefId
+          : undefined
       groundItemManager.remove(data.instance_id)
+      announceGroundItem(data.picked_up_by, defId, 'picked up')
       break
+    }
 
     case 'ShopState': {
       const session = {
@@ -1248,8 +1275,7 @@ export function handleServerMessage(
       // Bystander celebration: everyone in radius hears about a trophy.
       if (!isSelf && data.outcome?.Caught?.trophy) {
         const { item_def_id, size_cm } = data.outcome.Caught
-        const who =
-          get(gameStore).otherPlayers.get(data.player_id)?.name ?? 'Someone'
+        const who = actorName(data.player_id)
         const fishName = getItemDef(item_def_id)?.name ?? item_def_id
         addCombatMessage({
           text: `${who} landed a trophy ${fishName} — ${size_cm} cm!`,

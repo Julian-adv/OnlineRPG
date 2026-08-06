@@ -403,6 +403,7 @@ impl super::GameState {
                         position: drop_position,
                         floor_level: monster_floor_level,
                         enchant: 0,
+                        dropped_by: None,
                     })
                 } else {
                     None

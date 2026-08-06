@@ -26,6 +26,7 @@ async fn pickup_broadcasts_the_pickup_animation() {
                     },
                     floor_level: 0,
                     enchant: 0,
+                    dropped_by: None,
                 },
                 dropped_at_ms: 0,
             },
@@ -65,12 +66,21 @@ async fn pickup_broadcasts_the_pickup_animation() {
 
     // The pickup itself no longer carries the animation.
     game_state.pickup_item(&pid("picker"), 42).await;
-    for msg in drain(&mut watcher_rx) {
+    let after_pickup = drain(&mut watcher_rx);
+    for msg in &after_pickup {
         assert!(
             !matches!(msg, ServerMessage::PlayerInteractionChanged { .. }),
             "pickup_item must not broadcast the animation a second time"
         );
     }
+    // Who took it, so a bard knows its tip walked off.
+    assert!(
+        after_pickup.iter().any(|msg| {
+            matches!(msg, ServerMessage::GroundItemRemoved { instance_id, picked_up_by }
+                if *instance_id == 42 && picked_up_by.as_ref() == Some(&pid("picker")))
+        }),
+        "the removal must say who picked it up"
+    );
 }
 
 /// The killing blow lands partway into the swing, so a monster's loot must not
@@ -98,6 +108,7 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
             position: drop_position,
             floor_level: 0,
             enchant: 0,
+            dropped_by: None,
         }),
         drop_position,
         0,
@@ -133,14 +144,17 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
         "the drop must exist once the blade has landed"
     );
     assert!(
-        drain(&mut killer_rx).iter().any(
-            |msg| matches!(msg, ServerMessage::GroundItemSpawned { item } if item.instance_id == 7)
-        ),
+        drain(&mut killer_rx).iter().any(|msg| {
+            matches!(msg, ServerMessage::GroundItemSpawned { item }
+                if item.instance_id == 7 && item.dropped_by.is_none())
+        }),
         "the drop must be announced once the blade has landed"
     );
 }
 
-/// A hand-dropped item owes nobody an animation, so it lands at once.
+/// A hand-dropped item owes nobody an animation, so it lands at once — and
+/// the spawn names who dropped it, which is how a busker knows a tip from
+/// the rest of what lies about.
 #[tokio::test]
 async fn a_hand_dropped_item_spawns_immediately() {
     let game_state = make_test_game_state("hand_drop_is_immediate");
@@ -154,9 +168,17 @@ async fn a_hand_dropped_item_spawns_immediately() {
         inventories.insert(pid("dropper"), inv);
     }
 
+    let mut dropper_rx = game_state.register_direct_channel(&pid("dropper")).await;
     game_state.drop_item(&pid("dropper"), 11).await;
 
     assert!(game_state.ground_items.read().await.contains_key(&11));
+    assert!(
+        drain(&mut dropper_rx).iter().any(|msg| {
+            matches!(msg, ServerMessage::GroundItemSpawned { item }
+                if item.instance_id == 11 && item.dropped_by.as_ref() == Some(&pid("dropper")))
+        }),
+        "the spawn must say who dropped it"
+    );
 }
 
 #[tokio::test]
@@ -204,6 +226,7 @@ async fn picked_up_stackable_joins_the_existing_stack() {
                     },
                     floor_level: 0,
                     enchant: 0,
+                    dropped_by: None,
                 },
                 dropped_at_ms: 0,
             },
