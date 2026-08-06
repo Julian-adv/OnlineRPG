@@ -89,6 +89,25 @@ const COMMANDS: Record<string, Command> = {
     desc: 'Set the server banner, or clear it with a bare /notice',
     admin: true,
   },
+  '/kick': { desc: 'Disconnect an online player: /kick <name>', admin: true },
+  '/ban': {
+    desc: 'Ban an account, permanently unless timed: /ban <name> [minutes]',
+    admin: true,
+  },
+  '/unban': {
+    desc: 'Lift a ban by character or account name: /unban <name>',
+    admin: true,
+  },
+  '/mute': {
+    desc: 'Mute an online player, 10m unless timed: /mute <name> [minutes]',
+    admin: true,
+  },
+  '/unmute': { desc: 'Unmute a player: /unmute <name>', admin: true },
+  '/summon': {
+    desc: 'Teleport a player to your side: /summon <name>',
+    admin: true,
+  },
+  '/goto': { desc: "Teleport to a player's side: /goto <name>", admin: true },
 
   '/pos': {
     desc: 'Show your current position',
