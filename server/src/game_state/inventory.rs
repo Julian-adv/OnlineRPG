@@ -725,17 +725,36 @@ impl super::GameState {
         {
             return;
         }
+        let Some((placement, floor_level)) = self.campfire_placement(player_id).await else {
+            return;
+        };
+        self.consume_one_and_sync(player_id, instance_id).await;
+        self.spawn_campfire(
+            placement,
+            floor_level,
+            onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS,
+        )
+        .await;
+        self.send_system_message(player_id, "You light a campfire.")
+            .await;
+    }
+
+    /// Where a fire lit by `player_id` would land: a step in front of them, or
+    /// their own feet when something blocks the way. `None` once the refusal
+    /// (indoors, in water) has been sent to them.
+    pub(super) async fn campfire_placement(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<(crate::types::Position, i8)> {
         let (position, rotation, floor_level) = {
             let players = self.players.read().await;
-            let Some(p) = players.get(player_id) else {
-                return;
-            };
+            let p = players.get(player_id)?;
             (p.position, p.rotation, p.floor_level)
         };
         if floor_level != super::fishing::OVERWORLD_FLOOR {
             self.send_system_message(player_id, "You can only build a campfire outdoors")
                 .await;
-            return;
+            return None;
         }
         let forward = crate::types::Position {
             x: position.x + rotation.sin() * CAMPFIRE_PLACEMENT_DISTANCE_M,
@@ -763,13 +782,9 @@ impl super::GameState {
         if in_water {
             self.send_system_message(player_id, "You can't light a fire in water")
                 .await;
-            return;
+            return None;
         }
-
-        self.consume_one_and_sync(player_id, instance_id).await;
-        self.spawn_campfire(placement, floor_level).await;
-        self.send_system_message(player_id, "You light a campfire.")
-            .await;
+        Some((placement, floor_level))
     }
 
     /// Roll `dice` and heal an alive, wounded player, broadcasting the new HP.

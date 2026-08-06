@@ -10,6 +10,8 @@ use tracing::{error, info, warn};
 /// Upper bound on one character's `/block` list, so the per-recipient chat
 /// filter and the DB rows stay bounded at 5,000 concurrent users.
 const MAX_BLOCKS: usize = 100;
+/// How close an NPC's new fire may be to one already burning.
+const NPC_CAMPFIRE_MIN_GAP: f32 = 6.0;
 
 /// `/mute` duration (minutes): default when unstated, and the cap (one day).
 const MUTE_DEFAULT_MINUTES: u64 = 10;
@@ -242,6 +244,11 @@ impl super::GameState {
             return;
         }
 
+        if message.trim() == "/light_campfire" {
+            self.light_npc_campfire(player_id).await;
+            return;
+        }
+
         if message.trim() == "/who" {
             let counts = {
                 let players = self.players.read().await;
@@ -353,6 +360,45 @@ impl super::GameState {
             },
         )
         .await;
+    }
+
+    /// `/light_campfire` — an NPC lights a fire in front of itself with no kit
+    /// to spend; players still need one. Why NPCs get it free, and why a fire
+    /// lit after dark burns to sunrise, is in doc/HUNGER.md.
+    async fn light_npc_campfire(&self, player_id: &PlayerId) {
+        let is_npc = {
+            let players = self.players.read().await;
+            players.get(player_id).is_some_and(|p| p.is_official_npc)
+        };
+        if !is_npc {
+            self.send_system_message(player_id, "Use a campfire kit to light a fire.")
+                .await;
+            return;
+        }
+        let Some((placement, floor_level)) = self.campfire_placement(player_id).await else {
+            return;
+        };
+        // One fire per pitch: an NPC that lights another every turn would spawn
+        // a particle system and a light for every client in range.
+        if self
+            .nearby_campfire(&placement, floor_level, NPC_CAMPFIRE_MIN_GAP)
+            .await
+            .is_some()
+        {
+            self.send_system_message(player_id, "A fire is already burning here.")
+                .await;
+            return;
+        }
+        let datetime = self.current_game_datetime();
+        let duration_ms = if Self::is_night(&datetime) {
+            self.real_ms_until_sunrise()
+        } else {
+            onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS
+        };
+        self.spawn_campfire(placement, floor_level, duration_ms)
+            .await;
+        self.send_system_message(player_id, "You light a campfire.")
+            .await;
     }
 
     /// Fan a spoken line out to everyone in range, minus anyone who blocked the

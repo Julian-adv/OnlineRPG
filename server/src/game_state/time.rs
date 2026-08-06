@@ -11,6 +11,18 @@ pub const GAME_SECONDS_PER_REAL_SECOND: f64 =
     (GAME_HOURS_PER_DAY as f64 * GAME_MINUTES_PER_HOUR as f64 * 60.0) / REAL_DAY_DURATION_SECONDS;
 pub const GAME_SECONDS_PER_DAY: i64 = GAME_HOURS_PER_DAY * GAME_MINUTES_PER_HOUR * 60;
 
+/// The next time the clock reads `secs_into_day`, rolling to tomorrow once
+/// today's has passed.
+fn next_game_seconds_at(current: i64, secs_into_day: i64) -> i64 {
+    let day_start = current - current.rem_euclid(GAME_SECONDS_PER_DAY);
+    let target = day_start + secs_into_day;
+    if target <= current {
+        target + GAME_SECONDS_PER_DAY
+    } else {
+        target
+    }
+}
+
 impl super::GameState {
     pub fn default_start_datetime() -> GameDateTime {
         GameDateTime {
@@ -84,11 +96,7 @@ impl super::GameState {
         let minute = i64::from(minute).clamp(0, GAME_MINUTES_PER_HOUR - 1);
 
         let current = self.current_total_game_seconds();
-        let day_start = current - current.rem_euclid(GAME_SECONDS_PER_DAY);
-        let mut target = day_start + (hour * GAME_MINUTES_PER_HOUR + minute) * 60;
-        if target <= current {
-            target += GAME_SECONDS_PER_DAY;
-        }
+        let target = next_game_seconds_at(current, (hour * GAME_MINUTES_PER_HOUR + minute) * 60);
 
         // The write guard must drop before broadcast_game_time, which
         // re-acquires the clock lock for reading.
@@ -106,6 +114,18 @@ impl super::GameState {
 
     pub fn is_night(datetime: &GameDateTime) -> bool {
         crate::celestial::is_night(datetime)
+    }
+
+    /// Real milliseconds until the next sunrise — how long a fire meant to last
+    /// the night has to burn. Sunrise moves with the season, so it is read from
+    /// today's solar window rather than a fixed hour.
+    pub fn real_ms_until_sunrise(&self) -> u64 {
+        let current = self.current_total_game_seconds();
+        let datetime = Self::total_game_seconds_to_datetime(current);
+        let window = crate::celestial::get_solar_daylight_window(datetime.month, datetime.day);
+        let into_day = (window.sunrise_hour * (GAME_MINUTES_PER_HOUR * 60) as f64).round() as i64;
+        let sunrise = next_game_seconds_at(current, into_day);
+        ((sunrise - current) as f64 / GAME_SECONDS_PER_REAL_SECOND * 1000.0) as u64
     }
 
     /// Whole game days since the clock's epoch — the rollover key for
