@@ -10,6 +10,7 @@ import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
 import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
 import { resetPartyStores } from '../stores/partyStore'
+import { resetFriendStores } from '../stores/friendStore'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { monsterManager } from '../managers/monsterManager'
 import {
@@ -263,6 +264,9 @@ class NetworkManager {
       // The old connection's party died with it server-side (disconnect =
       // leave); a rejoin into an empty area sends no GameState snapshot.
       resetPartyStores()
+      // Friendships survive, but the roster and presence arrive fresh with
+      // the rejoin — until then everything on hand is stale.
+      resetFriendStores()
       this.connect()
       const googleIdToken = getApiAuthToken()
       if (googleIdToken && this.lastCharacterId) {
@@ -633,6 +637,12 @@ class NetworkManager {
     this.sendMessage({ CloseShop: { merchant_player_id: merchantPlayerId } })
   }
 
+  /** Invite a player to the party by name (the friend panel's button; typed
+   *  invites go through `/party <name>` as ordinary chat). */
+  sendPartyInvite(targetName: string) {
+    this.sendMessage({ PartyInvite: { target_name: targetName } })
+  }
+
   /** Answer a party invite (ServerMessage::PartyInviteReceived). */
   sendPartyRespond(inviterId: number, accept: boolean) {
     this.sendMessage({ PartyRespond: { inviter_id: inviterId, accept } })
@@ -655,6 +665,21 @@ class NetworkManager {
   /** One-shot party-position snapshot for a just-opened map. */
   sendRequestPartyPositions() {
     this.sendMessage('RequestPartyPositions')
+  }
+
+  /** Answer a friend request (ServerMessage::FriendRequestReceived). */
+  sendFriendRespond(requesterId: number, accept: boolean) {
+    this.sendMessage({ FriendRespond: { requester_id: requesterId, accept } })
+  }
+
+  /** Drop a friendship, both directions. */
+  sendFriendRemove(name: string) {
+    this.sendMessage({ FriendRemove: { name } })
+  }
+
+  /** Poll which friends are online; there is no presence push. */
+  sendRequestFriendsOnline() {
+    this.sendMessage('RequestFriendsOnline')
   }
 
   sendBuyItem(merchantPlayerId: number, itemDefId: string) {

@@ -63,6 +63,7 @@
   } from '../stores/debugStore'
   import { isAdminUser } from '../stores/gameStore'
   import { closeTopOverlay } from '../stores/overlayStack'
+  import { friendPanelVisible } from '../stores/friendStore'
 
   function toDegrees(radians: number) {
     const degrees = (radians * 180) / Math.PI
@@ -76,7 +77,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    // Debug shortcuts follow the panel; Escape and M/I/C below are ordinary
+    // Debug shortcuts follow the panel; Escape and M/I/C/F below are ordinary
     // gameplay keys, which is why this component still renders for non-admins.
     if ($isAdminUser && event.ctrlKey && event.key === 'd') {
       event.preventDefault()
@@ -101,6 +102,10 @@
     if ((event.key === 'c' || event.key === 'C') && isGameKey(event)) {
       event.preventDefault()
       characterPanelVisible.update((v) => !v)
+    }
+    if ((event.key === 'f' || event.key === 'F') && isGameKey(event)) {
+      event.preventDefault()
+      friendPanelVisible.update((v) => !v)
     }
   }
 

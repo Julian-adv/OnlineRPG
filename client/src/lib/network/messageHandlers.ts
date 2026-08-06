@@ -63,6 +63,15 @@ import {
   type PartyMemberEntry,
   type PartyMemberPositionEntry,
 } from '../stores/partyStore'
+import {
+  applyFriendList,
+  applyFriendsOnline,
+  friendList,
+  friendOnlineNoticeEnabled,
+  pendingFriendRequests,
+  resetFriendStores,
+  MAX_PENDING_FRIEND_REQUESTS,
+} from '../stores/friendStore'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
@@ -533,6 +542,54 @@ export function handleServerMessage(
       break
     }
 
+    case 'FriendList':
+      applyFriendList(
+        (
+          data.friends as {
+            character_id: number
+            name: string
+            level: number
+          }[]
+        ).map((f) => ({
+          characterId: f.character_id,
+          name: f.name,
+          level: f.level,
+        }))
+      )
+      break
+
+    case 'FriendsOnline': {
+      const announced = applyFriendsOnline(
+        data.friends as { character_id: number; level: number }[],
+        get(friendList)
+      )
+      if (get(friendOnlineNoticeEnabled)) {
+        for (const name of announced) {
+          addChatMessage({
+            text: `Friend: ${name} is online.`,
+            sender: 'system',
+          })
+        }
+      }
+      break
+    }
+
+    case 'FriendRequestReceived':
+      pendingFriendRequests.update((queue) =>
+        queue.length >= MAX_PENDING_FRIEND_REQUESTS ||
+        queue.some((request) => request.requesterId === data.requester_id)
+          ? queue
+          : [
+              ...queue,
+              {
+                requesterId: data.requester_id,
+                requesterName: data.requester_name,
+                offeredAt: Date.now(),
+              },
+            ]
+      )
+      break
+
     case 'PartyPositions':
       applyPartyPositions(
         data.members as PartyMemberPositionEntry[],
@@ -546,6 +603,9 @@ export function handleServerMessage(
       // with the old one (in-memory, disconnect = leave), and the server
       // cannot re-send what no longer exists.
       resetPartyStores()
+      // Friendships persist, but this session's roster arrives as its own
+      // FriendList; anything held from the old one is stale.
+      resetFriendStores()
       gameStore.update((state) => {
         state.otherPlayers.clear()
         remotePlayerManager.reset()

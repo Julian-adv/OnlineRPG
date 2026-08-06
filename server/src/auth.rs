@@ -381,6 +381,7 @@ impl AuthService {
         Self::ensure_characters_schema(&conn)?;
         Self::migrate_item_definition_ids(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
+        Self::ensure_friends_schema(&conn)?;
         Self::ensure_bans_schema(&conn)?;
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
@@ -457,6 +458,31 @@ impl AuthService {
             [],
         )?;
 
+        Ok(())
+    }
+
+    /// Friendships, one row per direction. Ids rather than names (unlike
+    /// `character_blocks`): deleting a character must take its friendships
+    /// with it, which both cascades give for free, and a name would leave a
+    /// permanently-offline ghost on every friend's list.
+    fn ensure_friends_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_friends (
+                character_id INTEGER NOT NULL,
+                friend_id INTEGER NOT NULL,
+                PRIMARY KEY (character_id, friend_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                FOREIGN KEY (friend_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        // The reverse-direction cascade needs it, and so does nothing else:
+        // every read is by `character_id`, which the primary key covers.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_character_friends_friend_id \
+             ON character_friends(friend_id)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -778,20 +804,68 @@ impl AuthService {
         Ok(characters)
     }
 
-    /// Canonical spelling of an existing character name, matched ignoring
+    /// Id, canonical name and level of an existing character, matched ignoring
     /// ASCII case (the in-memory `match_name` rule in SQL — SQLite NOCASE is
     /// ASCII-only, like `eq_ignore_ascii_case`).
-    pub fn resolve_character_name(&self, name: &str) -> Result<Option<String>, AuthError> {
+    pub fn resolve_character_brief(
+        &self,
+        name: &str,
+    ) -> Result<Option<(i64, String, u32)>, AuthError> {
         let conn = self.open_connection()?;
         let found = conn
             .query_row(
-                "SELECT character_name FROM characters
+                "SELECT id, character_name, level FROM characters
                  WHERE character_name = ?1 COLLATE NOCASE",
                 params![name],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
         Ok(found)
+    }
+
+    /// One character's friends as (id, name, level). The join is what makes
+    /// storing ids affordable: offline friends still have a name to show.
+    pub fn load_friends(&self, character_id: i64) -> Result<Vec<(i64, String, u32)>, AuthError> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.character_name, c.level
+             FROM character_friends f
+             JOIN characters c ON c.id = f.friend_id
+             WHERE f.character_id = ?1",
+        )?;
+        let friends = stmt
+            .query_map(params![character_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(friends)
+    }
+
+    /// Both directions in one transaction, so no crash can leave a one-sided
+    /// friendship the callers never expect to see.
+    pub fn add_friend(&self, character_id: i64, friend_id: i64) -> Result<(), AuthError> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        for (a, b) in [(character_id, friend_id), (friend_id, character_id)] {
+            tx.execute(
+                "INSERT OR IGNORE INTO character_friends (character_id, friend_id) \
+                 VALUES (?1, ?2)",
+                params![a, b],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_friend(&self, character_id: i64, friend_id: i64) -> Result<(), AuthError> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "DELETE FROM character_friends \
+             WHERE (character_id = ?1 AND friend_id = ?2) \
+                OR (character_id = ?2 AND friend_id = ?1)",
+            params![character_id, friend_id],
+        )?;
+        Ok(())
     }
 
     pub fn load_blocked_names(&self, character_id: i64) -> Result<Vec<String>, AuthError> {

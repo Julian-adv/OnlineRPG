@@ -9,6 +9,7 @@
   } from '../stores/graphicsSettings'
   import VolumeControl from './VolumeControl.svelte'
   import { minimapEnabled } from '../stores/minimapStore'
+  import { friendOnlineNoticeEnabled } from '../stores/friendStore'
   import { mountOverlay } from '../stores/overlayStack'
 
   interface Props {
@@ -50,6 +51,26 @@
           class="quality-btn"
           class:active={!$minimapEnabled}
           onclick={() => minimapEnabled.set(false)}
+        >
+          Off
+        </button>
+      </div>
+    </div>
+
+    <div class="setting-row">
+      <span class="setting-label">Friend Online Notice</span>
+      <div class="quality-row">
+        <button
+          class="quality-btn"
+          class:active={$friendOnlineNoticeEnabled}
+          onclick={() => friendOnlineNoticeEnabled.set(true)}
+        >
+          On
+        </button>
+        <button
+          class="quality-btn"
+          class:active={!$friendOnlineNoticeEnabled}
+          onclick={() => friendOnlineNoticeEnabled.set(false)}
         >
           Off
         </button>

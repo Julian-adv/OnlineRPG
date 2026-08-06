@@ -105,6 +105,7 @@ mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
+mod friends;
 pub(crate) mod hunger;
 mod inventory;
 mod monster;
@@ -282,6 +283,9 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// Per-session friend snapshots (DB-backed) and pending friend requests
+    /// (in-memory, both sides online). Seeded at login, dropped on logout.
+    friends: Arc<RwLock<friends::Friends>>,
     /// player_id → the character name `/r` replies to (last whisper sent or
     /// received). In-memory only, dropped on logout.
     whisper_partners: Arc<RwLock<HashMap<PlayerId, String>>>,
@@ -408,6 +412,7 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            friends: Arc::new(RwLock::new(friends::Friends::default())),
             whisper_partners: Arc::new(RwLock::new(HashMap::new())),
             muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),

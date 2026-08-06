@@ -123,6 +123,31 @@ pub struct PartyMemberPosition {
     pub floor_level: i8,
 }
 
+/// One friend as listed in `FriendList`. Keyed by character id, not the
+/// per-session `PlayerId`: a friendship outlives both sessions, and offline
+/// friends have no player id at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendEntry {
+    pub character_id: i64,
+    pub name: String,
+    pub level: u32,
+}
+
+/// One online friend as listed in `FriendsOnline`. No name — `FriendList`
+/// already carries it — but the level rides along, so a friend's level-ups
+/// show without re-sending the whole roster.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineFriend {
+    pub character_id: i64,
+    pub level: u32,
+}
+
+/// How long a friend request stays answerable. Four times
+/// `PARTY_INVITE_TTL`: a party invite is an offer to play *now*, a friend
+/// request can wait out the fight the target is in. The web client mirrors it
+/// (`FRIEND_REQUEST_TTL_MS` in `friendStore.ts`).
+pub const FRIEND_REQUEST_TTL: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Web client's rendering environment, so performance complaints can be
 /// matched against actual hardware. The client sends it after entering the
 /// game, but only when the environment changed since the last report. Field
@@ -454,6 +479,19 @@ pub enum ClientMessage {
     PartyChat {
         message: String,
     },
+    /// Accept or decline a pending friend request from `requester_id`.
+    FriendRespond {
+        requester_id: PlayerId,
+        accept: bool,
+    },
+    /// Drop a friendship, both directions. Name-based like `PartyInvite`: the
+    /// friend may be offline, so no player id exists to name them by.
+    FriendRemove {
+        name: String,
+    },
+    /// Ask which of the sender's friends are online right now. Polled by the
+    /// client (faster while the panel is open); there is no presence push.
+    RequestFriendsOnline,
     /// Ask where the sender's party members are right now (map open). A
     /// one-shot snapshot: steady-state updates are pushed by the server's
     /// party-position tick whenever a member relocates.
@@ -653,6 +691,23 @@ pub enum ServerMessage {
     PartyState {
         leader_id: PlayerId,
         members: Vec<PartyMember>,
+    },
+    /// The whole friend roster, offline friends included. Sent at login and
+    /// re-sent after any change, to both sides of it.
+    FriendList {
+        friends: Vec<FriendEntry>,
+    },
+    /// Answer to `RequestFriendsOnline`: which friends are online right now.
+    /// Absence from the list is the offline signal, so a shrinking list needs
+    /// no separate message.
+    FriendsOnline {
+        friends: Vec<OnlineFriend>,
+    },
+    /// Direct to the target: a friend request to answer with `FriendRespond`
+    /// before it expires server-side.
+    FriendRequestReceived {
+        requester_id: PlayerId,
+        requester_name: String,
     },
     /// Party member locations with no AOI cut — the point is members beyond
     /// it. Pushed to the whole party when a member relocates, and sent
