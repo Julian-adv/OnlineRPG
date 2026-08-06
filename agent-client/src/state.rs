@@ -1451,7 +1451,9 @@ impl SharedState {
                 // says why — no second line about it.
                 self.music_performers.remove(player_id);
             }
-            ServerMessage::PlayerMusicStarted { player_id, track } => {
+            ServerMessage::PlayerMusicStarted {
+                player_id, track, ..
+            } => {
                 self.music_performers.insert(*player_id, track.clone());
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
@@ -3329,6 +3331,7 @@ pub(crate) mod tests {
         s.push_event(ServerMessage::PlayerMusicStarted {
             player_id: PlayerId::from(1),
             track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
         });
 
         assert!(s.refuses_second_tune("/play_music creekside"));
@@ -3361,6 +3364,7 @@ pub(crate) mod tests {
         s.push_event(ServerMessage::PlayerMusicStarted {
             player_id: PlayerId::from(1),
             track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
         });
         s.push_event(ServerMessage::PlayerInteractionChanged {
             player_id: PlayerId::from(1),
@@ -3422,6 +3426,7 @@ pub(crate) mod tests {
         s.push_event(ServerMessage::PlayerMusicStarted {
             player_id: PlayerId::from(1),
             track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
         });
 
         s.check_music_finished();

@@ -1,4 +1,8 @@
-import { playPerformance, stopPerformance } from './bgmManager'
+import {
+  playPerformance,
+  stopPerformance,
+  fadeOutPerformance,
+} from './bgmManager'
 import { emoteStopRequest, MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
 
 /** Whose `/play_music` we are listening to. Several bards can strum at once,
@@ -13,7 +17,8 @@ let myPerformance = 0
 export function startMusicPerformance(
   playerId: number,
   track: string,
-  isSelf: boolean
+  isSelf: boolean,
+  elapsedSecs = 0
 ) {
   let onEnded: (() => void) | undefined
   if (isSelf) {
@@ -25,7 +30,7 @@ export function startMusicPerformance(
       emoteStopRequest.set(true)
     }
   }
-  if (playPerformance(track, onEnded)) {
+  if (playPerformance(track, onEnded, elapsedSecs)) {
     performerId = playerId
   }
 }
@@ -45,4 +50,12 @@ export function stopMusicPerformance(playerId: number) {
   if (performerId !== playerId) return
   performerId = null
   stopPerformance()
+}
+
+/** Earshot was lost by distance rather than by the tune ending — fade out
+ *  instead of cutting. */
+export function fadeOutMusicPerformance(playerId: number) {
+  if (performerId !== playerId) return
+  performerId = null
+  fadeOutPerformance()
 }

@@ -11,8 +11,8 @@ const BATTLE_BGM_FILES = [
   'Triumph of the Vanguard.m4a',
 ]
 const BATTLE_LINGER_MS = 5000
-const BATTLE_FADE_OUT_MS = 3000
-const BATTLE_FADE_STEP_MS = 50
+const FADE_OUT_MS = 3000
+const FADE_STEP_MS = 50
 const BATTLE_QUIET_MIN_SEC = 5
 const BATTLE_QUIET_MAX_SEC = 20
 
@@ -23,8 +23,26 @@ const STORAGE_KEY_VOLUME = 'onlinerpg_bgmVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_bgmMuted'
 const DEFAULT_VOLUME = 0.1
 
+/** localStorage can be absent or throw (private mode); settings then just
+ *  don't persist. */
+function storageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function storageSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Not persisted.
+  }
+}
+
 function loadVolume(): number {
-  const saved = localStorage.getItem(STORAGE_KEY_VOLUME)
+  const saved = storageGet(STORAGE_KEY_VOLUME)
   if (saved !== null) {
     const v = parseFloat(saved)
     if (!isNaN(v)) return Math.max(0, Math.min(1, v))
@@ -35,7 +53,7 @@ function loadVolume(): number {
 export const currentBgmTrack = writable<string>('')
 export const bgmVolume = writable<number>(loadVolume())
 export const bgmMuted = writable<boolean>(
-  localStorage.getItem(STORAGE_KEY_MUTED) === 'true'
+  storageGet(STORAGE_KEY_MUTED) === 'true'
 )
 
 /** What owns the speakers right now. Battle music outranks a `/play_music`
@@ -67,8 +85,36 @@ function applyAudioSettings(
   }
 }
 
-let isFadingOut = false
 let battleAudio: HTMLAudioElement | null = null
+
+/** Walk `el.volume` toward `target` over `ms`, then `onDone(arrived)` —
+ *  `arrived` is false when `abort()` cut the fade short. Callers keep the
+ *  returned timer as their "fade in flight" sentinel; while one is live they
+ *  must not let other code write the element's volume. */
+function fadeVolume(
+  el: HTMLAudioElement,
+  target: number,
+  ms: number,
+  abort: () => boolean,
+  onDone: (arrived: boolean) => void
+): ReturnType<typeof setInterval> {
+  const step = Math.abs(target - el.volume) / (ms / FADE_STEP_MS)
+  const timer = setInterval(() => {
+    if (abort()) {
+      clearInterval(timer)
+      onDone(false)
+      return
+    }
+    const delta = target - el.volume
+    if (Math.abs(delta) <= step) {
+      clearInterval(timer)
+      onDone(true)
+      return
+    }
+    el.volume = Math.min(1, Math.max(0, el.volume + Math.sign(delta) * step))
+  }, FADE_STEP_MS)
+  return timer
+}
 
 function shufflePlaylist() {
   playlist = [...BGM_TRACKS]
@@ -98,7 +144,7 @@ function playNext() {
 
 function playTrack() {
   if (mode !== 'normal') return
-  if (get(bgmMuted)) {
+  if (get(bgmMuted) || inBardZone) {
     currentBgmTrack.set('')
     return
   }
@@ -146,7 +192,6 @@ export function startBattleMusic() {
   // A recital cannot outrank a fight: end it, and let the performer's client
   // tell the server so the strum animation stops everywhere.
   const performanceEnded = releasePerformance()
-  isFadingOut = false
 
   // Pause normal BGM
   clearTimeout(quietTimer)
@@ -158,6 +203,7 @@ export function startBattleMusic() {
   // Clear any pending linger/fade/quiet from a previous battle
   clearTimeout(battleLingerTimer)
   clearInterval(battleFadeTimer)
+  battleFadeTimer = undefined
   clearTimeout(battleQuietTimer)
 
   const file =
@@ -200,35 +246,22 @@ export function stopBattleMusic() {
 function fadeOutBattleMusic() {
   if (mode === 'battle' || !battleAudio) return
 
-  const startVol = battleAudio.volume
-  if (startVol === 0) {
-    battleAudio.pause()
-    currentBgmTrack.set('')
-    scheduleNormalBgmResume()
-    return
-  }
-
-  isFadingOut = true
-  const steps = BATTLE_FADE_OUT_MS / BATTLE_FADE_STEP_MS
-  const volStep = startVol / steps
-  let remaining = steps
-
+  const el = battleAudio
+  const startVol = el.volume
   clearInterval(battleFadeTimer)
-  battleFadeTimer = setInterval(() => {
-    remaining--
-    if (remaining <= 0 || !battleAudio) {
-      clearInterval(battleFadeTimer)
-      isFadingOut = false
-      if (battleAudio) {
-        battleAudio.pause()
-        battleAudio.volume = startVol
-      }
+  battleFadeTimer = fadeVolume(
+    el,
+    0,
+    FADE_OUT_MS,
+    () => false,
+    () => {
+      battleFadeTimer = undefined
+      el.pause()
+      el.volume = startVol
       currentBgmTrack.set('')
       scheduleNormalBgmResume()
-      return
     }
-    battleAudio!.volume = Math.max(0, battleAudio!.volume - volStep)
-  }, BATTLE_FADE_STEP_MS)
+  )
 }
 
 function scheduleNormalBgmResume() {
@@ -243,6 +276,7 @@ function resumeNormalBgm() {
   if (mode !== 'normal') return
   if (get(bgmMuted)) return
   if (takePerformanceFloor()) return
+  if (inBardZone) return
   if (!audio) {
     playTrack()
     return
@@ -257,6 +291,7 @@ function resumeNormalBgm() {
 }
 
 function pauseForMute() {
+  cancelBardFade()
   audio?.pause()
   battleAudio?.pause()
   // The performer's own track keeps running, silenced: its `ended` is what
@@ -295,8 +330,57 @@ function resumeAfterUnmute() {
 
 let performanceAudio: HTMLAudioElement | null = null
 let performanceEnded: (() => void) | null = null
+let performanceFadeTimer: ReturnType<typeof setInterval> | undefined
+
+/** Inside a bard NPC's earshot the playlist stays silent — performing or not —
+ *  so a performance never has to land on top of the BGM. */
+let inBardZone = false
+let bardFadeTimer: ReturnType<typeof setInterval> | undefined
+
+/** Stop the playlist fade and put its volume back where the settings say. */
+function cancelBardFade() {
+  if (bardFadeTimer === undefined) return
+  clearInterval(bardFadeTimer)
+  bardFadeTimer = undefined
+  applyAudioSettings(audio)
+}
+
+export function setBardZone(inside: boolean) {
+  if (inBardZone === inside) return
+  inBardZone = inside
+  if (!inside) {
+    cancelBardFade()
+    resumeNormalBgm()
+    return
+  }
+  if (mode !== 'normal') return
+  clearTimeout(quietTimer)
+  if (!audio || audio.paused) {
+    currentBgmTrack.set('')
+    return
+  }
+
+  const el = audio
+  bardFadeTimer = fadeVolume(
+    el,
+    0,
+    FADE_OUT_MS,
+    // Battle music or a performance taking the speakers mid-fade owns
+    // `currentBgmTrack` now — back out without touching it.
+    () => mode !== 'normal',
+    (arrived) => {
+      bardFadeTimer = undefined
+      if (arrived) {
+        el.pause()
+        currentBgmTrack.set('')
+      }
+      applyAudioSettings(el)
+    }
+  )
+}
 
 function applyPerformanceVolume() {
+  if (performanceFadeTimer !== undefined) return
   applyAudioSettings(
     performanceAudio,
     mode === 'performance' ? getTargetVolume() : 0
@@ -318,6 +402,8 @@ function takePerformanceFloor(): boolean {
  *  Returns the end callback so the caller decides when the performer hears
  *  about it. Never restarts the playlist — callers do, when they want it. */
 function releasePerformance(): (() => void) | null {
+  clearInterval(performanceFadeTimer)
+  performanceFadeTimer = undefined
   if (!performanceAudio) return null
   const onEnded = performanceEnded
   performanceEnded = null
@@ -334,10 +420,33 @@ function releasePerformance(): (() => void) | null {
   return onEnded
 }
 
+/** Walking into a performance already underway: rise from silence to the set
+ *  volume instead of jumping in. */
+function startPerformanceFadeIn(el: HTMLAudioElement) {
+  el.volume = 0
+  clearInterval(performanceFadeTimer)
+  performanceFadeTimer = fadeVolume(
+    el,
+    getTargetVolume(),
+    FADE_OUT_MS,
+    () => mode !== 'performance',
+    () => {
+      performanceFadeTimer = undefined
+      applyPerformanceVolume()
+    }
+  )
+}
+
 /** Start `track` for a nearby `/play_music`. `onEnded` marks the local player
  *  as the performer and fires when the track runs out — that is the cue to
- *  stop the emote. Returns false when the track is unknown or inaudible here. */
-export function playPerformance(track: string, onEnded?: () => void): boolean {
+ *  stop the emote. `offsetSecs` > 0 joins a tune mid-track (the listener just
+ *  came into earshot) and fades it in. Returns false when the track is
+ *  unknown or inaudible here. */
+export function playPerformance(
+  track: string,
+  onEnded?: () => void,
+  offsetSecs = 0
+): boolean {
   const file = bgmFileFor(track)
   if (!file) return false
 
@@ -366,11 +475,23 @@ export function playPerformance(track: string, onEnded?: () => void): boolean {
   el.addEventListener('error', finish)
   el.dataset.trackName = track
   el.src = `/bgm/${file}`
+  if (offsetSecs > 0) {
+    el.addEventListener(
+      'loadedmetadata',
+      () => {
+        // Past the end just clamps and fires `ended` — a stale performance
+        // cleans itself up.
+        el.currentTime = offsetSecs
+      },
+      { once: true }
+    )
+  }
   if (audible) {
     mode = 'performance'
     currentBgmTrack.set(track)
   }
   applyPerformanceVolume()
+  if (audible && offsetSecs > 0) startPerformanceFadeIn(el)
   el.play().catch(() => {})
 
   // Whoever was playing lost the floor — tell them, so a performer whose track
@@ -386,14 +507,34 @@ export function stopPerformance() {
   resumeNormalBgm()
 }
 
+/** A listener crossed out of the performance's delivery circle (either side
+ *  moved): fade the tune down, then let it go. An inaudible copy just stops. */
+export function fadeOutPerformance() {
+  if (!performanceAudio) return
+  if (mode !== 'performance') {
+    stopPerformance()
+    return
+  }
+  clearInterval(performanceFadeTimer)
+  performanceFadeTimer = fadeVolume(
+    performanceAudio,
+    0,
+    FADE_OUT_MS,
+    // A mode change mid-fade (mute took the speakers) ends it early; a
+    // replacement performance cannot get here — releasePerformance cancels.
+    () => mode !== 'performance',
+    () => stopPerformance()
+  )
+}
+
 bgmVolume.subscribe((v) => {
   clearTimeout(volumeSaveTimer)
   volumeSaveTimer = setTimeout(
-    () => localStorage.setItem(STORAGE_KEY_VOLUME, String(v)),
+    () => storageSet(STORAGE_KEY_VOLUME, String(v)),
     300
   )
-  applyAudioSettings(audio)
-  if (!isFadingOut) applyAudioSettings(battleAudio)
+  if (bardFadeTimer === undefined) applyAudioSettings(audio)
+  if (battleFadeTimer === undefined) applyAudioSettings(battleAudio)
   applyPerformanceVolume()
   if (getTargetVolume() <= 0) {
     pauseForMute()
@@ -403,7 +544,7 @@ bgmVolume.subscribe((v) => {
 })
 
 bgmMuted.subscribe((m) => {
-  localStorage.setItem(STORAGE_KEY_MUTED, String(m))
+  storageSet(STORAGE_KEY_MUTED, String(m))
   applyAudioSettings(audio)
   applyAudioSettings(battleAudio)
   applyPerformanceVolume()

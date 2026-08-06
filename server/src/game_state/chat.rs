@@ -198,6 +198,17 @@ fn prune_expired_mutes(muted: &mut HashMap<String, (String, Instant)>) {
     muted.retain(|_, (_, expiry)| *expiry > now);
 }
 
+/// The one builder of a mid-performance `PlayerMusicStarted`, so the elapsed
+/// clock and message shape cannot drift between the AOI-entry and join paths.
+pub(super) fn music_started_msg(performer: PlayerId, entry: &(String, Instant)) -> ServerMessage {
+    let (track, started) = entry;
+    ServerMessage::PlayerMusicStarted {
+        player_id: performer,
+        track: track.clone(),
+        elapsed_secs: started.elapsed().as_secs_f32(),
+    }
+}
+
 impl super::GameState {
     pub async fn send_chat_message(
         &self,
@@ -325,6 +336,10 @@ impl super::GameState {
             None,
         )
         .await;
+        self.music_performances
+            .write()
+            .await
+            .insert(*player_id, (track.to_string(), Instant::now()));
 
         let listeners = self
             .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
@@ -334,6 +349,7 @@ impl super::GameState {
             ServerMessage::PlayerMusicStarted {
                 player_id: *player_id,
                 track: track.to_string(),
+                elapsed_secs: 0.0,
             },
         )
         .await;

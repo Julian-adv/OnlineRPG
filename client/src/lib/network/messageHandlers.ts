@@ -72,8 +72,10 @@ import { combatController } from '../managers/combatController'
 import {
   startMusicPerformance,
   stopMusicPerformance,
+  fadeOutMusicPerformance,
   applyInteractionChange,
 } from '../managers/musicPerformance'
+import { refreshBardZone } from '../managers/bardZone'
 import { emoteRequest, MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
@@ -204,12 +206,14 @@ function addRemotePlayerToState(state: GameState, sp: ServerPlayer) {
     applyObjectInteraction(sp.id, sp.object_type, sp.position.x, sp.position.z)
   }
   state.otherPlayers.set(sp.id, toRemotePlayer(sp))
+  refreshBardZone(state.otherPlayers)
 }
 
 /** Remove a remote player's visual and store entry. */
 function removeRemotePlayerFromState(state: GameState, playerId: number) {
   remotePlayerManager.removePlayer(playerId)
   state.otherPlayers.delete(playerId)
+  refreshBardZone(state.otherPlayers)
   // A leaving player's FishingEnded may never arrive; drop their bobber.
   removeBobber(playerId)
 }
@@ -357,6 +361,8 @@ export function handleServerMessage(
     }
 
     case 'PlayerDisappeared': {
+      // Out of earshot by distance: their tune fades rather than cuts.
+      fadeOutMusicPerformance(data.player_id)
       gameStore.update((state) => {
         removeRemotePlayerFromState(state, data.player_id)
         return state
@@ -565,6 +571,7 @@ export function handleServerMessage(
             state.otherPlayers.set(serverPlayer.id, player)
           }
         })
+        refreshBardZone(state.otherPlayers)
         return state
       })
 
@@ -894,7 +901,7 @@ export function handleServerMessage(
 
     case 'PlayerMusicStarted': {
       const isMe = isSelfPlayer(data.player_id)
-      startMusicPerformance(data.player_id, data.track, isMe)
+      startMusicPerformance(data.player_id, data.track, isMe, data.elapsed_secs)
       // Our own /play_music went to the server unresolved; its reply names
       // the track and is what strikes up our emote.
       if (isMe) emoteRequest.set(MUSIC_EMOTE_ANIM)

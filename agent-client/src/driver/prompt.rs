@@ -237,7 +237,9 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                 list.join(", ")
             ))
         }
-        ServerMessage::PlayerMusicStarted { player_id, track } => {
+        ServerMessage::PlayerMusicStarted {
+            player_id, track, ..
+        } => {
             if !player_within_event_range(state, player_id) {
                 return None;
             }
@@ -649,6 +651,7 @@ mod tests {
         let music = |player_id| ServerMessage::PlayerMusicStarted {
             player_id,
             track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
         };
 
         let line = format_event(&state, &music(PlayerId::from(2))).expect("bard is in earshot");

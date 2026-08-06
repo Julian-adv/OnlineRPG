@@ -1184,9 +1184,14 @@ async fn play_music_hands_the_track_to_neighbours() {
         other => panic!("Expected the strum pose, got {other:?}"),
     }
     match listener_rx.try_recv() {
-        Ok(ServerMessage::PlayerMusicStarted { player_id, track }) => {
+        Ok(ServerMessage::PlayerMusicStarted {
+            player_id,
+            track,
+            elapsed_secs,
+        }) => {
             assert_eq!(player_id, bard_id);
             assert_eq!(track, "Twilight Fields");
+            assert_eq!(elapsed_secs, 0.0);
         }
         other => panic!("Expected the track, got {other:?}"),
     }

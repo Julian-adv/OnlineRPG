@@ -5,11 +5,13 @@ import { MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
 const playPerformance =
   vi.fn<(track: string, onEnded?: () => void) => boolean>()
 const stopPerformance = vi.fn()
+const fadeOutPerformance = vi.fn()
 
 vi.mock('./bgmManager', () => ({
   playPerformance: (track: string, onEnded?: () => void) =>
     playPerformance(track, onEnded),
   stopPerformance: () => stopPerformance(),
+  fadeOutPerformance: () => fadeOutPerformance(),
 }))
 
 type Performance = typeof import('./musicPerformance')
@@ -23,6 +25,7 @@ beforeEach(async () => {
   vi.resetModules()
   playPerformance.mockReset().mockReturnValue(true)
   stopPerformance.mockReset()
+  fadeOutPerformance.mockReset()
   performance = await import('./musicPerformance')
   ;({ emoteStopRequest } = await import('../stores/emoteStore'))
   emoteStopRequest.set(false)
@@ -48,6 +51,20 @@ describe('musicPerformance', () => {
     // Sitting down replaces the strum instead of clearing it.
     performance.applyInteractionChange(1, 'bench')
     expect(stopPerformance).toHaveBeenCalledTimes(1)
+  })
+
+  it('fades out only the audible performer, freeing the slot', () => {
+    performance.startMusicPerformance(1, 'Twilight Fields', false)
+
+    performance.fadeOutMusicPerformance(2)
+    expect(fadeOutPerformance).not.toHaveBeenCalled()
+
+    performance.fadeOutMusicPerformance(1)
+    expect(fadeOutPerformance).toHaveBeenCalledTimes(1)
+
+    // The slot already let go — a later stop for the same player is a no-op.
+    performance.stopMusicPerformance(1)
+    expect(stopPerformance).not.toHaveBeenCalled()
   })
 
   it('leaves the slot alone when the track cannot be played here', () => {

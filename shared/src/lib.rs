@@ -51,7 +51,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v18: party chat (PartyChat → PartyChatMessage).
 /// v20: `/play_music` picks a BGM track and nearby clients play it along
 ///      (PlayerMusicStarted).
-pub const PROTOCOL_VERSION: u32 = 20;
+/// v21: PlayerMusicStarted carries `elapsed_secs` and is re-sent to players
+///      entering earshot of a running performance.
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

@@ -176,6 +176,10 @@ pub struct GameState {
     last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
+    /// player_id → (resolved track title, performance start). Source of the
+    /// `elapsed_secs` sent to players entering earshot mid-performance;
+    /// cleared with the `MUSIC_EMOTE` interaction.
+    music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
     ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
@@ -355,6 +359,7 @@ impl GameState {
             last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
+            music_performances: Arc::new(RwLock::new(HashMap::new())),
             ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),

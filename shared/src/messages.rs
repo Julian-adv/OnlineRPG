@@ -814,10 +814,14 @@ pub enum ServerMessage {
     /// named BGM track. `track` is the title the server resolved from its
     /// registry — receivers play it only if their own BGM list has it.
     /// The performance ends with the emote (`PlayerInteractionChanged` /
-    /// [`MUSIC_EMOTE`] giving way to anything else).
+    /// [`MUSIC_EMOTE`] giving way to anything else). Also sent to a player
+    /// who comes into earshot mid-performance, with `elapsed_secs` saying
+    /// how far in the tune already is.
     PlayerMusicStarted {
         player_id: PlayerId,
         track: String,
+        #[serde(default)]
+        elapsed_secs: f32,
     },
     InteractionRejected {
         reason: String,
