@@ -981,7 +981,7 @@ pub(super) async fn handle_response(
         {
             let mut s = state.lock().await;
             if let AgentAction::Say { message } = action {
-                if s.refuses_second_tune(message) {
+                if s.refuses_play_command(message) {
                     continue;
                 }
             }

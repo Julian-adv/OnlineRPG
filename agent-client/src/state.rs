@@ -421,6 +421,9 @@ pub struct SharedState {
     self_performance: Option<SelfPerformance>,
     /// Until when the square stays quiet after our own song (`MUSIC_REST_*`).
     self_music_rest_until: Option<std::time::Instant>,
+    /// An invented song title already woke the driver; the next one waits for
+    /// the ordinary prompt, so a model that keeps guessing cannot spin.
+    bad_song_title_refused: bool,
     /// Synthetic agent-side events (e.g. "player appeared nearby")
     agent_events: Vec<String>,
     /// Terrain height sampler (shared across NPC connections)
@@ -507,6 +510,7 @@ impl SharedState {
             music_performers: HashMap::new(),
             self_performance: None,
             self_music_rest_until: None,
+            bad_song_title_refused: false,
             agent_events: Vec::new(),
             height_sampler,
             world_cache,
@@ -640,15 +644,32 @@ impl SharedState {
         }
     }
 
-    /// Drop a `/play_music` the agent typed while its own tune is still
-    /// running, or during the quiet spell after it: a second command restarts
-    /// the music for every listener, and the LLM is not patient enough to wait
-    /// on its own. The note it gets back does not wake the driver — the end of
-    /// the rest does that, and waking here would only invite another attempt.
-    pub fn refuses_second_tune(&mut self, message: &str) -> bool {
+    /// Drop a `/play_music` the agent typed for a song that does not exist, or
+    /// while its own tune is still running, or during the quiet spell after it:
+    /// a second command restarts the music for every listener, and the LLM is
+    /// not patient enough to wait on its own. A timing refusal does not wake the
+    /// driver — the end of the rest does that, and waking here would only invite
+    /// another attempt. A made-up title does wake it, once: the bard has already
+    /// announced the song to the square, and nothing else would prompt it to
+    /// take that back before the idle interval, an hour later.
+    pub fn refuses_play_command(&mut self, message: &str) -> bool {
         // The same parser the server runs on the other end of this command.
-        if onlinerpg_shared::messages::strip_command(message, "/play_music").is_none() {
+        let Some(query) = onlinerpg_shared::messages::strip_command(message, "/play_music") else {
             return false;
+        };
+        // An empty query is the server's random pick, and always resolves.
+        let query = query.trim();
+        if !query.is_empty() && !crate::bgm_defs::knows(query) {
+            self.push_agent_event(format!(
+                "[PlayMusic] Ignored — there is no song called \"{query}\" in your songbook. \
+                 Use a title exactly as the songbook writes it. If you already announced this \
+                 one, tell them you had the name wrong and offer a song you do know."
+            ));
+            if !self.bad_song_title_refused {
+                self.bad_song_title_refused = true;
+                self.wake(EventUrgency::Urgent);
+            }
+            return true;
         }
         let now = std::time::Instant::now();
         let resting = self
@@ -675,7 +696,9 @@ impl SharedState {
         };
         self.agent_events.push(format!(
             "[PlayMusic] Ignored — {why}. One song at a time; wait for the note \
-             that says you can start another."
+             that says you can start another. If you already announced the \
+             title, tell them it is coming rather than leaving the promise \
+             hanging."
         ));
         true
     }
@@ -1456,6 +1479,7 @@ impl SharedState {
             } => {
                 self.music_performers.insert(*player_id, track.clone());
                 if self.self_player_id.as_ref() == Some(player_id) {
+                    self.bad_song_title_refused = false;
                     self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
                         ends_at: std::time::Instant::now() + crate::bgm_defs::duration(track),
                         from: me.position,
@@ -3326,7 +3350,10 @@ pub(crate) mod tests {
         s.self_player = Some(me);
         s.in_game = true;
 
-        assert!(!s.refuses_second_tune("/play_music"), "nothing playing yet");
+        assert!(
+            !s.refuses_play_command("/play_music"),
+            "nothing playing yet"
+        );
 
         s.push_event(ServerMessage::PlayerMusicStarted {
             player_id: PlayerId::from(1),
@@ -3334,20 +3361,50 @@ pub(crate) mod tests {
             elapsed_secs: 0.0,
         });
 
-        assert!(s.refuses_second_tune("/play_music creekside"));
-        assert!(s.refuses_second_tune("/play_music"));
+        assert!(s.refuses_play_command("/play_music creekside"));
+        assert!(s.refuses_play_command("/play_music"));
         assert!(
-            !s.refuses_second_tune("Any requests?"),
+            !s.refuses_play_command("Any requests?"),
             "ordinary talk goes through"
         );
         assert!(
-            !s.refuses_second_tune("/play_musical chairs"),
+            !s.refuses_play_command("/play_musical chairs"),
             "only the whole command word counts"
         );
 
         let events = s.drain_agent_events();
         assert_eq!(events.len(), 2, "one note per dropped command: {events:?}");
         assert!(events[0].contains("still playing"), "{events:?}");
+    }
+
+    /// A title the LLM invented never reaches the server: it would answer
+    /// "No such song" an hour before the idle prompt showed it, with the
+    /// square still waiting on a song the bard announced.
+    #[test]
+    fn a_song_the_bard_does_not_know_is_refused_before_it_is_sent() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        assert!(s.refuses_play_command("/play_music Ballad of the Missing Track"));
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Urgent);
+        let events = s.drain_agent_events();
+        assert!(
+            events[0].contains("Ballad of the Missing Track") && events[0].contains("songbook"),
+            "{events:?}"
+        );
+
+        // A second guess is still refused, but only at the routine cadence.
+        assert!(s.refuses_play_command("/play_music Another Invention"));
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
+
+        // Songbook titles pass, including one folded from a "(1)" variant.
+        assert!(!s.refuses_play_command("/play_music Twilight Fields"));
+        assert!(!s.refuses_play_command("/play_music Wanderer of the Old Fields"));
+        assert!(!s.refuses_play_command("/play_music creekside"));
+        assert!(!s.refuses_play_command("/play_music"), "the random pick");
     }
 
     /// A busker pauses between songs. The agent gets no invitation to play
@@ -3379,7 +3436,7 @@ pub(crate) mod tests {
         );
 
         assert!(
-            s.refuses_second_tune("/play_music"),
+            s.refuses_play_command("/play_music"),
             "no encore during the rest"
         );
         s.check_music_finished();
@@ -3396,7 +3453,7 @@ pub(crate) mod tests {
             events.last().is_some_and(|e| e.contains("another song")),
             "{events:?}"
         );
-        assert!(!s.refuses_second_tune("/play_music"), "the rest is over");
+        assert!(!s.refuses_play_command("/play_music"), "the rest is over");
 
         // In bed on the night schedule: playing would drop the sleeping pose
         // and nothing would put it back until morning.
@@ -3404,7 +3461,7 @@ pub(crate) mod tests {
             player_id: PlayerId::from(1),
             object_type: Some("bed".to_string()),
         });
-        assert!(s.refuses_second_tune("/play_music"));
+        assert!(s.refuses_play_command("/play_music"));
         let events = s.drain_agent_events();
         assert!(
             events.last().is_some_and(|e| e.contains("bed")),

@@ -159,6 +159,25 @@ pub fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
     (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
 }
 
+/// The title a `/play_music` argument names: a whole title first, then a
+/// fragment of one, ignoring case. Shared for the same reason as
+/// `strip_command` — the server resolves the query and the agent-client
+/// decides beforehand whether it would resolve at all. An empty query is the
+/// server's random pick, which is the caller's business, not this rule's.
+pub fn resolve_title<'a>(
+    mut titles: impl Iterator<Item = &'a str> + Clone,
+    query: &str,
+) -> Option<&'a str> {
+    let wanted = query.trim().to_lowercase();
+    if wanted.is_empty() {
+        return None;
+    }
+    titles
+        .clone()
+        .find(|t| t.to_lowercase() == wanted)
+        .or_else(|| titles.find(|t| t.to_lowercase().contains(&wanted)))
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// Mandatory first message: protocol check plus who is connecting. The

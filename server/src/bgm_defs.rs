@@ -28,21 +28,11 @@ impl BgmDefs {
     /// client resolves through the server, so an agent-client that knows no
     /// titles can still strike up a tune.
     pub fn resolve(&self, query: &str) -> Option<&str> {
-        let query = query.trim();
-        if query.is_empty() {
+        if query.trim().is_empty() {
             let i = rand::thread_rng().gen_range(0..self.titles.len());
             return Some(self.titles[i].as_str());
         }
-        let wanted = query.to_lowercase();
-        self.titles
-            .iter()
-            .find(|t| t.to_lowercase() == wanted)
-            .or_else(|| {
-                self.titles
-                    .iter()
-                    .find(|t| t.to_lowercase().contains(&wanted))
-            })
-            .map(String::as_str)
+        onlinerpg_shared::messages::resolve_title(self.titles.iter().map(String::as_str), query)
     }
 }
 
