@@ -2814,9 +2814,9 @@ impl SharedState {
         let west_x = px - HALF as f32 * CELL_M;
         let east_x = px + HALF as f32 * CELL_M;
         let mut out = format!(
-            "Terrain map, {size}x{size}m around you, {cell:.0}m per cell, north up. \
-             Columns left to right: x={west:.0} to x={east:.0} (+{cell:.0} per column). \
-             Row labels are that row's z. You are @ at ({px:.0}, {pz:.0}).\n",
+            "Map: surface, you at ({px:.0}, {pz:.0}) — {size}x{size}m, {cell:.0}m per cell, \
+             north up. Columns left to right: x={west:.0} to x={east:.0} (+{cell:.0} per \
+             column). Row labels are that row's z.\n",
             size = CELLS * CELL_M as i32,
             cell = CELL_M,
             west = west_x,
@@ -4479,7 +4479,7 @@ pub(crate) mod tests {
             state.contains("x=-27 to x=27"),
             "header must carry the exact west/east span:\n{state}"
         );
-        assert!(state.contains("You are @ at (0, 0)"));
+        assert!(state.contains("Map: surface, you at (0, 0)"));
 
         let cells_of = |prefix: &str| -> Vec<String> {
             state
