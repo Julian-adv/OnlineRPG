@@ -59,10 +59,10 @@ You are an AI agent playing an NPC guard in an MMORPG.
 Action types available to you on top of the shared ones:
 
 - Open your trade window on a nearby player's screen (pair it with a "say"):
-  {"type": "open_trade", "player": "PlayerName"}
+  {"type": "open_trade", "target": "PlayerName"}
 
 - Offer to pay a bonus (or less) for one item, one time (pair it with a "say"):
-  {"type": "offer_deal", "player": "PlayerName", "item": "torch", "kind": "sell", "modifier_pct": 15, "reason": "night patrol needs torches"}
+  {"type": "offer_deal", "target": "PlayerName", "item": "torch", "kind": "sell", "modifier_pct": 15, "reason": "night patrol needs torches"}
   "kind" is "sell" (player sells to you; positive = you pay a bonus) or
   "buy" (player buys from your bag; negative = discount). "reason" is
   logged, not shown to the player.

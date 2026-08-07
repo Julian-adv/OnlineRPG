@@ -1,6 +1,187 @@
 use super::*;
 
+/// A resolved `move` target.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MoveTarget {
+    Character { id: PlayerId, name: String },
+    Monster { id: String },
+    GroundItem { instance_id: u64, name: String },
+    Prop { prop_id: u32 },
+    Chest { selector: String },
+    Dungeon { id: String, name: String },
+}
+
+/// Why a `move` target did not resolve.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MoveTargetError {
+    /// A monster species where an id belongs, with the ids that match and
+    /// how far away each one is.
+    SpeciesNotId {
+        species: String,
+        candidates: Vec<(String, f32)>,
+    },
+    /// A well-formed monster id that is no longer in sight.
+    MonsterGone { id: String },
+    Unknown {
+        asked: String,
+        addressable: Vec<String>,
+    },
+}
+
+/// Whether a string has the shape of a monster id (`m2_1`), which is how the
+/// ladder tells "the goblin called m2_1" from "a goblin".
+fn looks_like_monster_id(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix(['m', 'M']) else {
+        return false;
+    };
+    let Some((floor, index)) = rest.split_once('_') else {
+        return false;
+    };
+    !floor.is_empty()
+        && !index.is_empty()
+        && floor.bytes().all(|b| b.is_ascii_digit())
+        && index.bytes().all(|b| b.is_ascii_digit())
+}
+
 impl SharedState {
+    /// Resolve a visible `move` target by id shape, then by exact name.
+    pub fn resolve_move_target(&self, raw: &str) -> Result<MoveTarget, MoveTargetError> {
+        let asked = raw.trim();
+
+        if looks_like_monster_id(asked) {
+            return match self
+                .monsters_on_my_floor()
+                .find(|m| m.id.eq_ignore_ascii_case(asked))
+            {
+                Some(m) => Ok(MoveTarget::Monster { id: m.id.clone() }),
+                None => Err(MoveTargetError::MonsterGone {
+                    id: asked.to_string(),
+                }),
+            };
+        }
+
+        if let Ok(n) = asked.parse::<u64>() {
+            if let Some((_, item)) = self
+                .ground_items_in_sight()
+                .iter()
+                .find(|(_, i)| i.instance_id == n)
+            {
+                return Ok(MoveTarget::GroundItem {
+                    instance_id: item.instance_id,
+                    name: item.item_def_id.clone(),
+                });
+            }
+            if let Some(b) = self
+                .breakables_in_sight()
+                .iter()
+                .find(|b| u64::from(b.prop_id) == n)
+            {
+                return Ok(MoveTarget::Prop { prop_id: b.prop_id });
+            }
+            if let Some((id, p)) = self.players_on_my_floor().find(|(id, _)| id.get() == n) {
+                return Ok(MoveTarget::Character {
+                    id: *id,
+                    name: p.name.clone(),
+                });
+            }
+            return Err(self.unknown_target(asked));
+        }
+
+        if let Some((id, p)) = self
+            .players_on_my_floor()
+            .find(|(_, p)| p.name.eq_ignore_ascii_case(asked))
+        {
+            return Ok(MoveTarget::Character {
+                id: *id,
+                name: p.name.clone(),
+            });
+        }
+
+        if let Some(d) = self.dungeon_named(asked) {
+            return Ok(MoveTarget::Dungeon {
+                id: d.id.clone(),
+                name: d.name.clone(),
+            });
+        }
+
+        if asked.to_lowercase().contains("chest") && !self.chests_in_sight().is_empty() {
+            return Ok(MoveTarget::Chest {
+                selector: asked.to_string(),
+            });
+        }
+
+        if let Some((_, item)) = self
+            .ground_items_in_sight()
+            .iter()
+            .find(|(_, i)| i.item_def_id.eq_ignore_ascii_case(asked))
+        {
+            return Ok(MoveTarget::GroundItem {
+                instance_id: item.instance_id,
+                name: item.item_def_id.clone(),
+            });
+        }
+
+        // A species name, not an id. Monsters are only ever addressed by id,
+        // so hand back the ids that match instead of guessing which one.
+        let candidates = self.monster_ids_of_species(asked);
+        if !candidates.is_empty() {
+            return Err(MoveTargetError::SpeciesNotId {
+                species: asked.to_string(),
+                candidates,
+            });
+        }
+
+        Err(self.unknown_target(asked))
+    }
+
+    /// Ids and distances of the monsters in sight of a given type, nearest
+    /// first — what a species-instead-of-id mistake gets told to use.
+    fn monster_ids_of_species(&self, species: &str) -> Vec<(String, f32)> {
+        let Some(sp) = self.self_player.as_ref() else {
+            return Vec::new();
+        };
+        let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
+        let mut found: Vec<(String, f32)> = self
+            .monsters_on_my_floor()
+            .filter(|m| m.monster_type.eq_ignore_ascii_case(species))
+            .filter_map(|m| {
+                let d_sq = m.position.dist_xz_sq(&sp.position);
+                (d_sq <= sight_sq).then(|| (m.id.clone(), d_sq.sqrt()))
+            })
+            .collect();
+        found.sort_by(|a, b| a.1.total_cmp(&b.1));
+        found
+    }
+
+    /// A target that matched nothing, carrying a sample of what would have.
+    fn unknown_target(&self, asked: &str) -> MoveTargetError {
+        let mut addressable: Vec<String> = self
+            .players_on_my_floor()
+            .filter(|(_, p)| self.self_player_id.as_ref() != Some(&p.id))
+            .map(|(_, p)| p.name.clone())
+            .take(4)
+            .collect();
+        addressable.extend(self.monsters_on_my_floor().map(|m| m.id.clone()).take(4));
+        addressable.extend(
+            self.ground_items_in_sight()
+                .iter()
+                .take(3)
+                .map(|(_, i)| format!("{} [id {}]", i.item_def_id, i.instance_id)),
+        );
+        addressable.extend(
+            self.world_cache
+                .read()
+                .unwrap()
+                .all_dungeons()
+                .iter()
+                .map(|d| d.name.clone()),
+        );
+        MoveTargetError::Unknown {
+            asked: asked.to_string(),
+            addressable,
+        }
+    }
+
     /// Abort a running follow loop, if any. Returns the name that was being
     /// followed. A loop that already ended left its own note, so it does not
     /// count as cancelled.

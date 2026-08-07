@@ -280,3 +280,25 @@ fn terrain_grid_is_absent_underground() {
     s.self_floor_level = -1;
     assert!(s.terrain_grid_job().is_none());
 }
+
+/// Entrances are listed above ground whatever the distance: a name the
+/// agent never sees is a name it can never move to.
+#[test]
+fn world_state_names_the_dungeon_entrances() {
+    let (mut s, _rx) = test_state();
+    s.self_player = Some(test_player(-1450.0, 4720.0));
+    s.world_cache.write().unwrap().register_dungeons();
+
+    let lines: Vec<String> = s
+        .format_world_state()
+        .lines()
+        .filter(|l| l.starts_with("Dungeon:"))
+        .map(str::to_string)
+        .collect();
+
+    // Nearest first, and the far one is listed too — the world state is
+    // the only place its name can be learned.
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(lines[0].contains("Old Crypt"), "{lines:?}");
+    assert!(lines[1].contains("Orc Warrens"), "{lines:?}");
+}

@@ -487,7 +487,7 @@ async fn run_npc_session(
                 Ok(msg) => {
                     if matches!(msg, onlinerpg_shared::ServerMessage::GameTimeSync { .. }) {
                         let mut s = state_for_rx.lock().await;
-                        let _ = s.send_command(ClientMessage::Heartbeat).await;
+                        let _ = s.send_background_command(ClientMessage::Heartbeat).await;
                         s.push_event(msg);
                         continue;
                     }
@@ -571,7 +571,7 @@ async fn run_npc_session(
             };
 
             for cmd in commands.into_iter().chain(pending) {
-                if let Err(e) = s.send_command(cmd).await {
+                if let Err(e) = s.send_background_command(cmd).await {
                     tracing::warn!("Monster AI command failed: {e}");
                     break;
                 }

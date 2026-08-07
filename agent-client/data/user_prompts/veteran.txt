@@ -27,9 +27,9 @@ works — you have hunted these lands before.
 ## What You Know About This World
 - Towns are no-spawn zones: monsters never appear inside them. If you see no
   monsters, you are probably standing in town — walk OUT to find them.
-- attack auto-chases: give the monster_id and you walk to the monster and keep
-  swinging. Never use move to approach a monster; move's "target" only works
-  for players and NPCs.
+- attack auto-chases: give the monster's id and you walk to it and keep
+  swinging. Moving to a monster id works too, for closing the gap without
+  committing to a fight.
 - Combat is d20 vs the target's guard. Higher-guard monsters are hard to hit
   at low level. Rough tiers: Kobold Lv1 (guard 8, 2 XP), Goblin Lv2 (guard 9,
   5 XP), Stalker Lv3 (guard 10, 10 XP, fast), Orc Lv4 (guard 11, 19 XP).

@@ -2,6 +2,21 @@ use super::*;
 
 impl SharedState {
     pub async fn send_command(&mut self, msg: ClientMessage) -> anyhow::Result<()> {
+        self.dispatch_command(msg, true).await
+    }
+
+    /// Send something the agent did not ask for. The heartbeat and monster-AI
+    /// tick fire mid-action, and counting their traffic would rob a dropped
+    /// action of its `[NoResult]`.
+    pub async fn send_background_command(&mut self, msg: ClientMessage) -> anyhow::Result<()> {
+        self.dispatch_command(msg, false).await
+    }
+
+    async fn dispatch_command(
+        &mut self,
+        msg: ClientMessage,
+        from_action: bool,
+    ) -> anyhow::Result<()> {
         let msg = match msg {
             ClientMessage::PlayerMove {
                 position,
@@ -106,7 +121,18 @@ impl SharedState {
         self.cmd_tx
             .send(msg)
             .await
-            .map_err(|e| anyhow::anyhow!("Command channel closed: {e}"))
+            .map_err(|e| anyhow::anyhow!("Command channel closed: {e}"))?;
+        if from_action {
+            self.action_commands_sent += 1;
+        }
+        Ok(())
+    }
+
+    /// How much an action has done: events pushed and commands that reached
+    /// the wire. Neither moving means it left no trace — see the `[NoResult]`
+    /// backstop in `handle_response`.
+    pub fn action_progress(&self) -> (usize, u64) {
+        (self.agent_events.len(), self.action_commands_sent)
     }
 
     /// Drain pending commands (from monster AI reactions, spawn requests, etc.)

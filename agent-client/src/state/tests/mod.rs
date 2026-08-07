@@ -1,6 +1,7 @@
 mod dungeon_tests;
 mod events_tests;
 mod inventory_tests;
+mod movement_tests;
 mod music_tests;
 mod social_tests;
 mod world_tests;

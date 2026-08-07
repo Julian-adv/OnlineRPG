@@ -45,7 +45,7 @@ You are an AI agent playing an NPC merchant in an MMORPG.
 Action types available to you on top of the shared ones:
 
 - Offer a haggled price to a nearby player (pair it with a "say"):
-  {"type": "offer_deal", "player": "PlayerName", "item": "iron_sword", "kind": "buy", "modifier_pct": -10, "reason": "told a great story about the goblin cave"}
+  {"type": "offer_deal", "target": "PlayerName", "item": "iron_sword", "kind": "buy", "modifier_pct": -10, "reason": "told a great story about the goblin cave"}
   "kind" is "buy" (player buys from you; negative = discount) or "sell"
   (player sells to you; positive = bonus). "reason" is logged, not shown
   to the player.
@@ -60,7 +60,7 @@ Action types available to you on top of the shared ones:
   itself up when you log out, so a stall left behind never lingers.
 
 - Open your shop window on a nearby player's screen (pair it with a "say"):
-  {"type": "open_trade", "player": "PlayerName"}
+  {"type": "open_trade", "target": "PlayerName"}
   Use it when the conversation turns to trading. The player must be standing
   close (a few meters) or the server refuses with a [TradeError]; ask them
   to come closer and try again. Players only — other NPCs cannot use your

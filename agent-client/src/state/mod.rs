@@ -148,6 +148,7 @@ mod world_state;
 
 pub use events::EventUrgency;
 pub use inventory::{Carried, CarriedBagCopies};
+pub use movement::{MoveTarget, MoveTargetError};
 pub use social::{PendingPartyInvite, PendingPartySummon};
 pub use world_cache::WorldCache;
 
@@ -268,6 +269,10 @@ pub struct SharedState {
     sighted_pois: HashSet<String>,
     /// Synthetic agent-side events (e.g. "player appeared nearby")
     agent_events: Vec<String>,
+    /// Commands an agent action put on the wire, ever. Read only as a
+    /// difference, so background traffic must stay out of it — see
+    /// [`Self::send_background_command`].
+    action_commands_sent: u64,
     /// Terrain height sampler (shared across NPC connections)
     pub height_sampler: Arc<HeightSampler>,
     pub splat_sampler: Arc<crate::splat::SplatSampler>,
@@ -366,6 +371,7 @@ impl SharedState {
             bad_song_title_refused: false,
             sighted_pois: HashSet::new(),
             agent_events: Vec::new(),
+            action_commands_sent: 0,
             height_sampler,
             splat_sampler,
             world_cache,

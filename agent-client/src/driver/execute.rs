@@ -10,18 +10,21 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::dungeon::ChestKind;
-use crate::state::{Carried, CarriedBagCopies, SharedState};
+use crate::state::{Carried, CarriedBagCopies, MoveTarget, MoveTargetError, SharedState};
 use onlinerpg_shared::messages::BagLineItem;
 
 use super::action::{
     action_to_command, asks_for_great_chest, parse_turn_tolerant, resolve_move_goal, AgentAction,
-    PickupRef, Qty,
+    GoalError, PickupRef, Qty,
 };
 use super::combat::{
     approach_player, chase_monster, chest_arrive_range, walk_to_ground_item, walk_to_point,
     ChaseResult, LostReason,
 };
 use super::movement::{execute_move, MoveResult};
+#[cfg(test)]
+use super::outcome::reports_failure;
+use super::outcome::{settle_action, ActionOutcome};
 use super::MEMORY_LINES;
 
 /// Pause between the crouch broadcast and the actual pickup, approximating
@@ -59,6 +62,114 @@ async fn target_moved(
         return false;
     };
     was.dist_xz_sq(&now) > FOLLOW_PROGRESS_M * FOLLOW_PROGRESS_M
+}
+
+/// Feedback for a `move` target string that resolved to nothing. Each case
+/// hands back the ids or names that would have worked, so the LLM can fix the
+/// target next turn instead of reissuing the same string.
+fn move_target_failure(e: &MoveTargetError) -> String {
+    match e {
+        MoveTargetError::SpeciesNotId {
+            species,
+            candidates,
+        } => {
+            let list: Vec<String> = candidates
+                .iter()
+                .take(5)
+                .map(|(id, d)| format!("{id} ({d:.0}m)"))
+                .collect();
+            format!(
+                "[MoveFailed] '{species}' names a kind of monster, not one monster. \
+                 Nearby {species}s: {}. Use the id.",
+                list.join(", ")
+            )
+        }
+        MoveTargetError::MonsterGone { id } => format!(
+            "[MoveFailed] Monster {id} is not in sight — it died, or it wandered off. \
+             Pick an id from the current world state."
+        ),
+        MoveTargetError::Unknown { asked, addressable } => {
+            if addressable.is_empty() {
+                format!("[MoveFailed] Nothing here is called '{asked}'.")
+            } else {
+                format!(
+                    "[MoveFailed] Nothing here is called '{asked}'. You can move to: {}.",
+                    addressable.join(", ")
+                )
+            }
+        }
+    }
+}
+
+/// What a resolved target is, for the message about a depth that does not
+/// belong with it.
+fn describe_target(t: &MoveTarget) -> &'static str {
+    match t {
+        MoveTarget::Character { .. } => "a character",
+        MoveTarget::Monster { .. } => "a monster",
+        MoveTarget::GroundItem { .. } => "an item on the ground",
+        MoveTarget::Prop { .. } => "a prop",
+        MoveTarget::Chest { .. } => "a chest",
+        MoveTarget::Dungeon { .. } => "a dungeon",
+    }
+}
+
+type Approach = (onlinerpg_shared::Position, i8, f32);
+
+async fn prop_approach(state: &Arc<Mutex<SharedState>>, prop_id: u32) -> Option<Approach> {
+    let s = state.lock().await;
+    let prop = s
+        .breakables_in_sight()
+        .into_iter()
+        .find(|b| b.prop_id == prop_id)?;
+    let gap = crate::geom::PlanarDelta::between(&prop.approach, &prop.position).dist;
+    Some((prop.approach, s.self_floor_level, chest_arrive_range(gap)))
+}
+
+async fn chest_approach(
+    state: &Arc<Mutex<SharedState>>,
+    selector: &str,
+) -> Option<(Approach, &'static str)> {
+    let s = state.lock().await;
+    let sighted = s.chests_in_sight();
+    let chest = if asks_for_great_chest(Some(selector)) {
+        sighted
+            .iter()
+            .find(|c| c.kind == ChestKind::Treasure)
+            .or(sighted.first())
+    } else {
+        sighted.first()
+    }?;
+    let gap = crate::geom::PlanarDelta::between(&chest.approach, &chest.position).dist;
+    let label = match chest.kind {
+        ChestKind::Treasure => "the great chest",
+        ChestKind::Prop(_) => "a small chest",
+    };
+    Some((
+        (chest.approach, s.self_floor_level, chest_arrive_range(gap)),
+        label,
+    ))
+}
+
+/// Walk to a resolved dungeon sighting, reporting either way.
+async fn walk_to_sighting(state: &Arc<Mutex<SharedState>>, approach: Option<Approach>, what: &str) {
+    let Some((pos, floor, range)) = approach else {
+        let mut s = state.lock().await;
+        s.push_agent_event(format!(
+            "[MoveFailed] {what} is no longer in this room to walk to."
+        ));
+        return;
+    };
+    let outcome = match walk_to_point(state, pos, floor, range).await {
+        ChaseResult::InRange => format!("[Arrived] You stand next to {what}."),
+        ChaseResult::Lost(loss) => {
+            format!("[MoveFailed] You did not reach {what} — {}.", loss.clause())
+        }
+        ChaseResult::Error => {
+            format!("[MoveFailed] Something went wrong walking to {what}.")
+        }
+    };
+    state.lock().await.push_agent_event(outcome);
 }
 
 /// Feedback for an attack whose chase never reached the monster, so the agent
@@ -178,14 +289,13 @@ pub(super) async fn handle_response(
         Err(e) => {
             warn!("Failed to parse agent response: {e}");
             warn!("Raw response: {response}");
-            // Whole response was not valid JSON — tell the agent so, instead of
-            // leaving it to guess why nothing happened.
+            // The response itself stays out of the prompt: a model fed its
+            // own malformed output continues in that shape.
             let mut s = state.lock().await;
-            s.push_agent_event(
-                "[BadResponse] Your last message was not valid JSON and nothing ran. \
-                 Reply with only the JSON object — no prose, no code fences."
-                    .to_string(),
-            );
+            s.push_agent_event(format!(
+                "[BadResponse] Your last reply was not the required JSON object ({e}), so \
+                 nothing ran. Reply with only the JSON object — no prose, no code fences."
+            ));
             return None;
         }
     };
@@ -243,13 +353,39 @@ pub(super) async fn handle_response(
         }
     }
 
+    let mut pending: Option<(&AgentAction, (usize, u64))> = None;
+    let mut lost_position: Option<&str> = None;
+    let mut skipped: Vec<&str> = Vec::new();
+
     for action in &agent_resp.actions {
+        if let Some((prev, mark)) = pending.take() {
+            if settle_action(state, prev, mark).await == ActionOutcome::Failed
+                && prev.takes_over_movement()
+            {
+                warn!("Position lost by a failed {}", prev.label());
+                lost_position = lost_position.or(Some(prev.label()));
+            }
+        }
+
+        if lost_position.is_some() && action.takes_over_movement() {
+            skipped.push(action.label());
+            continue;
+        }
+
         // Skip movement/attack when the NPC must stay put — resting on a
         // scheduled object, or serving a customer with an open trade window.
         if skip_movement && action.blocked_while_holding_position() {
             debug!("Skipping {:?} action — NPC is holding position", action);
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[ActionFailed] You are holding position right now, so your {} did not \
+                 run. Finish what you are doing first.",
+                action.label()
+            ));
             continue;
         }
+
+        pending = Some((action, state.lock().await.action_progress()));
 
         // A running follow yields, or the two tasks fight over the same body.
         if action.takes_over_movement() {
@@ -890,111 +1026,224 @@ pub(super) async fn handle_response(
             depth,
         } = action
         {
-            // Name-targeted move: walk up to the character and stop a
-            // polite distance short instead of pathing onto their exact
-            // position (which would overlap the models).
-            if let Some(name) = target.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                let target_id = {
+            // A name resolves across every namespace the world state prints,
+            // and that decides which mover runs.
+            let named = target.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let resolved = match named {
+                Some(name) => {
                     let mut s = state.lock().await;
-                    match s.resolve_nearby_player(name) {
-                        Some((id, _)) => id,
-                        None => {
-                            warn!("move: no nearby character named '{name}'");
-                            s.push_agent_event(format!(
-                                "[MoveFailed] No character named '{name}' is nearby to walk to."
-                            ));
+                    match s.resolve_move_target(name) {
+                        Ok(t) => Some(t),
+                        Err(e) => {
+                            warn!("move: could not resolve target '{name}' ({e:?})");
+                            s.push_agent_event(move_target_failure(&e));
                             continue;
                         }
                     }
-                };
-                match approach_player(state, &target_id).await {
+                }
+                None => None,
+            };
+
+            // A depth names a dungeon floor: walk to the entrance, then
+            // descend to that floor's landing (a cross-floor A* from across
+            // the map would blow its node budget). Only explicit coordinates
+            // override the landing.
+            match (&resolved, depth) {
+                (Some(MoveTarget::Dungeon { id, .. }), _) => {
+                    let goal = resolve_move_goal(x, z, &None, &None, None).ok();
+                    move_to_dungeon_floor(state, *depth, goal, Some(id)).await;
+                    continue;
+                }
+                (None, Some(_)) => {
+                    let goal = resolve_move_goal(x, z, &None, &None, None).ok();
+                    move_to_dungeon_floor(state, *depth, goal, None).await;
+                    continue;
+                }
+                (Some(other), Some(d)) => {
+                    let mut s = state.lock().await;
+                    s.push_agent_event(format!(
+                        "[MoveFailed] \"depth\": {d} only goes with a dungeon name, but \
+                         '{}' is {}. Move to it without a depth, or name a dungeon.",
+                        named.unwrap_or_default(),
+                        describe_target(other)
+                    ));
+                    continue;
+                }
+                (_, None) => {}
+            }
+
+            match resolved {
+                // Stop a polite distance short instead of pathing onto their
+                // exact position, which would overlap the models.
+                Some(MoveTarget::Character { id, name }) => {
+                    match approach_player(state, &id).await {
+                        ChaseResult::InRange => {
+                            info!("Agent walked up to {name}");
+                            let mut s = state.lock().await;
+                            if let Some(face_cmd) = s.face_player_command(&id) {
+                                if let Err(e) = s.send_command(face_cmd).await {
+                                    error!("Failed to send face-character move: {e}");
+                                }
+                            }
+                            s.push_agent_event(format!(
+                                "[Arrived] You walked up to character {} ({name}) and now stand \
+                                 right next to them. No further movement is needed to interact.",
+                                id.get()
+                            ));
+                        }
+                        ChaseResult::Lost(loss) => {
+                            warn!("move: could not reach '{name}' ({loss:?})");
+                            let why = match loss {
+                                LostReason::TargetGone => "they moved out of sight".to_string(),
+                                LostReason::TooFar(d) => {
+                                    format!("they are {d:.0}m away, too far to follow")
+                                }
+                                other => other.clause(),
+                            };
+                            let mut s = state.lock().await;
+                            s.push_agent_event(format!(
+                                "[MoveFailed] You could not reach {name} — {why}."
+                            ));
+                        }
+                        ChaseResult::Error => {
+                            error!("move: error while approaching '{name}'");
+                            let mut s = state.lock().await;
+                            s.push_agent_event(format!(
+                                "[MoveFailed] Something went wrong walking to {name}."
+                            ));
+                        }
+                    }
+                }
+                // Walking to a monster is the same chase an attack runs, minus
+                // the swing: it closes the gap so the next attack lands.
+                Some(MoveTarget::Monster { id }) => match chase_monster(state, &id).await {
                     ChaseResult::InRange => {
-                        info!("Agent walked up to {name}");
+                        info!("Agent walked up to monster {id}");
                         let mut s = state.lock().await;
-                        if let Some(face_cmd) = s.face_player_command(&target_id) {
+                        if let Some(face_cmd) = s.face_monster_command(&id) {
                             if let Err(e) = s.send_command(face_cmd).await {
-                                error!("Failed to send face-character move: {e}");
+                                error!("Failed to send face-monster move: {e}");
                             }
                         }
                         s.push_agent_event(format!(
-                            "[Arrived] You walked up to {name} and now stand right next \
-                             to them. No further movement is needed to interact."
+                            "[Arrived] You stand within striking distance of {id}. \
+                             Attack it with {{\"type\": \"attack\", \"target\": \"{id}\"}}."
                         ));
                     }
                     ChaseResult::Lost(loss) => {
-                        warn!("move: could not reach '{name}' ({loss:?})");
-                        let why = match loss {
-                            LostReason::TargetGone => "they moved out of sight".to_string(),
-                            LostReason::TooFar(d) => {
-                                format!("they are {d:.0}m away, too far to follow")
-                            }
-                            other => other.clause(),
-                        };
+                        warn!("move: could not reach monster {id} ({loss:?})");
                         let mut s = state.lock().await;
-                        s.push_agent_event(format!(
-                            "[MoveFailed] You could not reach {name} — {why}."
-                        ));
+                        s.push_agent_event(unreachable_note(&id, &loss));
                     }
                     ChaseResult::Error => {
-                        error!("move: error while approaching '{name}'");
-                    }
-                }
-                continue;
-            }
-
-            // A depth names a dungeon floor: walk to the entrance first (a
-            // cross-floor A* from across the map would blow its node budget),
-            // then descend to that floor's stair landing.
-            if let Some(depth) = depth {
-                // Only an explicit coordinate pair overrides the floor's landing;
-                // a direction/distance is meaningless across floors.
-                let goal = resolve_move_goal(x, z, &None, &None, None);
-                move_to_dungeon_floor(state, *depth, goal).await;
-                continue;
-            }
-
-            // A bare coordinate carries no floor, so stay on the one we're on
-            // rather than dropping to the ground floor.
-            let (goal, floor) = {
-                let s = state.lock().await;
-                let pp = s.self_player.as_ref().map(|p| &p.position);
-                (
-                    resolve_move_goal(x, z, direction, distance, pp),
-                    s.passability_floor(),
-                )
-            };
-            if let Some((gx, gz)) = goal {
-                match execute_move(state, gx, gz, floor).await {
-                    MoveResult::Arrived => {
-                        info!("Agent arrived at ({gx:.1}, {gz:.1})");
+                        error!("move: error while chasing monster {id}");
                         let mut s = state.lock().await;
                         s.push_agent_event(format!(
-                            "[Arrived] You reached ({gx:.1}, {gz:.1}). Look around and \
-                             decide your next move."
+                            "[MoveFailed] Something went wrong walking to {id}."
                         ));
                     }
-                    MoveResult::Blocked => {
-                        warn!("Path blocked to ({gx:.1}, {gz:.1})");
-                        let mut s = state.lock().await;
-                        s.push_agent_event(format!(
-                            "[MoveFailed] No route to ({gx:.1}, {gz:.1}) — a wall or a shut \
-                             door stands in the way. Try a different goal."
-                        ));
-                    }
-                    MoveResult::Error => {
-                        error!("Move error to ({gx:.1}, {gz:.1})");
+                },
+                Some(MoveTarget::GroundItem { instance_id, name }) => {
+                    match walk_to_ground_item(state, instance_id).await {
+                        ChaseResult::InRange => {
+                            info!("Agent walked to ground item {name} [{instance_id}]");
+                            let mut s = state.lock().await;
+                            s.push_agent_event(format!(
+                                "[Arrived] You stand over ground item {instance_id} ({name}). \
+                                 Take it with {{\"type\": \"pickup\", \"target\": \
+                                 {instance_id}}}."
+                            ));
+                        }
+                        ChaseResult::Lost(loss) => {
+                            let mut s = state.lock().await;
+                            s.push_agent_event(format!(
+                                "[MoveFailed] You did not reach {name} [id {instance_id}] — {}.",
+                                loss.clause()
+                            ));
+                        }
+                        ChaseResult::Error => {
+                            let mut s = state.lock().await;
+                            s.push_agent_event(format!(
+                                "[MoveFailed] Something went wrong walking to {name}."
+                            ));
+                        }
                     }
                 }
-            } else {
-                // Partial coordinates (x without z, direction without
-                // distance) used to vanish silently — tell the LLM instead.
-                warn!("move: no usable goal (x={x:?} z={z:?} dir={direction:?} dist={distance:?})");
-                let mut s = state.lock().await;
-                s.push_agent_event(
-                    "[MoveFailed] That move had no usable goal — give both x and z, \
-                     or a direction with a distance."
-                        .to_string(),
-                );
+                Some(MoveTarget::Prop { prop_id }) => {
+                    walk_to_sighting(
+                        state,
+                        prop_approach(state, prop_id).await,
+                        &format!("prop {prop_id}"),
+                    )
+                    .await;
+                }
+                Some(MoveTarget::Chest { selector }) => {
+                    match chest_approach(state, &selector).await {
+                        Some((approach, label)) => {
+                            walk_to_sighting(state, Some(approach), label).await;
+                        }
+                        None => walk_to_sighting(state, None, "the selected chest").await,
+                    }
+                }
+                Some(MoveTarget::Dungeon { .. }) => unreachable!("handled above"),
+                None => {
+                    // A bare coordinate carries no floor, so stay on the one
+                    // we're on rather than dropping to the ground floor.
+                    let (goal, floor) = {
+                        let s = state.lock().await;
+                        let pp = s.self_player.as_ref().map(|p| &p.position);
+                        (
+                            resolve_move_goal(x, z, direction, distance, pp),
+                            s.passability_floor(),
+                        )
+                    };
+                    match goal {
+                        Ok((gx, gz)) => match execute_move(state, gx, gz, floor).await {
+                            MoveResult::Arrived => {
+                                info!("Agent arrived at ({gx:.1}, {gz:.1})");
+                                let mut s = state.lock().await;
+                                s.push_agent_event(format!(
+                                    "[Arrived] You reached ({gx:.1}, {gz:.1}). Look around and \
+                                     decide your next move."
+                                ));
+                            }
+                            MoveResult::Blocked => {
+                                warn!("Path blocked to ({gx:.1}, {gz:.1})");
+                                let mut s = state.lock().await;
+                                s.push_agent_event(format!(
+                                    "[MoveFailed] No route to ({gx:.1}, {gz:.1}) — a wall or a \
+                                     shut door stands in the way. Try a different goal."
+                                ));
+                            }
+                            MoveResult::Error => {
+                                error!("Move error to ({gx:.1}, {gz:.1})");
+                                let mut s = state.lock().await;
+                                s.push_agent_event(format!(
+                                    "[MoveFailed] Something went wrong on the way to \
+                                     ({gx:.1}, {gz:.1})."
+                                ));
+                            }
+                        },
+                        Err(GoalError::BadDirection(dir)) => {
+                            warn!("move: '{dir}' is not a direction");
+                            let mut s = state.lock().await;
+                            s.push_agent_event(format!(
+                                "[MoveFailed] '{dir}' is not a direction, so you stayed put. \
+                                 Use north, south, east, west, northeast, northwest, \
+                                 southeast or southwest."
+                            ));
+                        }
+                        Err(GoalError::NoGoal) => {
+                            warn!("move: no usable goal (x={x:?} z={z:?} dir={direction:?} dist={distance:?})");
+                            let mut s = state.lock().await;
+                            s.push_agent_event(
+                                "[MoveFailed] That move had no usable goal — give a target, \
+                                 both x and z, or a direction with a distance."
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
             }
             continue;
         }
@@ -1013,6 +1262,19 @@ pub(super) async fn handle_response(
                 }
             }
         }
+    }
+
+    if let Some((prev, mark)) = pending.take() {
+        settle_action(state, prev, mark).await;
+    }
+
+    if let Some(failed) = lost_position.filter(|_| !skipped.is_empty()) {
+        let mut s = state.lock().await;
+        s.push_agent_event(format!(
+            "[Aborted] Your {failed} failed, so the rest of the turn that needed you to be \
+             somewhere did not run: {}. Reissue what still applies.",
+            skipped.join(", ")
+        ));
     }
 
     last_attack_target
@@ -1119,31 +1381,40 @@ async fn reach_merchant(
 /// before it reaches the stairs.
 async fn move_to_dungeon_floor(
     state: &Arc<Mutex<SharedState>>,
-    depth: i32,
+    depth: Option<i32>,
     goal_xz: Option<(f32, f32)>,
+    named: Option<&str>,
 ) {
-    let depth = depth.unsigned_abs().min(u8::MAX as u32) as u8;
+    // No depth means "walk to that entrance and stop there", which only a
+    // named dungeon can ask for.
+    let depth = depth.map(|d| d.unsigned_abs().min(u8::MAX as u32) as u8);
 
-    let (dungeon, outside) = {
+    let (dungeon, outside, floor_level) = {
         let mut s = state.lock().await;
         let Some(position) = s.self_player.as_ref().map(|p| p.position) else {
             return;
         };
-        if depth == 0 && s.self_floor_level >= 0 {
-            debug!("move depth 0: already above ground");
+        if depth == Some(0) && s.self_floor_level >= 0 {
+            s.push_agent_event(
+                "[Arrived] You are already above ground — there is no dungeon to leave."
+                    .to_string(),
+            );
             return;
         }
         let dungeon = {
             let world = s.world_cache.read().unwrap();
-            world
-                .dungeon_at(position.x, position.z)
-                .or_else(|| world.nearest_dungeon(position.x, position.z))
+            match named {
+                Some(id) => world.dungeon_by_id(id),
+                None => world
+                    .dungeon_at(position.x, position.z)
+                    .or_else(|| world.nearest_dungeon(position.x, position.z)),
+            }
         };
         let Some(dungeon) = dungeon else {
             s.push_agent_event("[MoveFailed] There is no dungeon here to go into.".to_string());
             return;
         };
-        if depth > dungeon.max_depth() {
+        if depth.is_some_and(|d| d > dungeon.max_depth()) {
             s.push_agent_event(format!(
                 "[MoveFailed] {} only goes down to floor {}.",
                 dungeon.name,
@@ -1153,11 +1424,34 @@ async fn move_to_dungeon_floor(
         }
         s.request_dungeon_doors_here();
         let outside = !dungeon.footprint_contains(position.x, position.z);
-        (dungeon, outside)
+        (dungeon, outside, s.self_floor_level)
     };
 
+    // A bare "go to X" from underground asks to be at X, and we already are;
+    // walking the surface grid from three floors down would report the
+    // opposite of what happened.
+    if depth.is_none() && floor_level < 0 {
+        let mut s = state.lock().await;
+        s.push_agent_event(if outside {
+            format!(
+                "[MoveFailed] You are on floor {} of another dungeon. Come back up with \
+                 {{\"type\": \"move\", \"depth\": 0}} before heading for {}.",
+                floor_level.abs(),
+                dungeon.name
+            )
+        } else {
+            format!(
+                "[Arrived] You are already inside {}, on floor {}. Name a \"depth\" to change \
+                 floor, or 0 to leave.",
+                dungeon.name,
+                floor_level.abs()
+            )
+        });
+        return;
+    }
+
     // Leg 1: get onto the dungeon's own grid on the surface.
-    if outside || depth == 0 {
+    if outside || depth.is_none_or(|d| d == 0) {
         let entrance = dungeon.entrance;
         if matches!(
             execute_move(state, entrance.x, entrance.z, 0).await,
@@ -1172,11 +1466,29 @@ async fn move_to_dungeon_floor(
             return;
         }
         state.lock().await.request_dungeon_doors_here();
-        if depth == 0 {
-            info!("Agent left {}", dungeon.name);
-            return;
+        match depth {
+            Some(0) => {
+                info!("Agent left {}", dungeon.name);
+                let mut s = state.lock().await;
+                s.push_agent_event(format!("[Arrived] You are back outside {}.", dungeon.name));
+                return;
+            }
+            None => {
+                info!("Agent reached the {} entrance", dungeon.name);
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[Arrived] You stand at the entrance of {} ({} floors deep). Go in with \
+                     {{\"type\": \"move\", \"target\": \"{}\", \"depth\": 1}}.",
+                    dungeon.name,
+                    dungeon.max_depth(),
+                    dungeon.name
+                ));
+                return;
+            }
+            Some(_) => {}
         }
     }
+    let depth = depth.unwrap_or(1);
 
     // Leg 2: descend. The shared A* walks the stair shafts on its own; the
     // mover opens whatever doors stand in the way.
@@ -1203,7 +1515,14 @@ async fn move_to_dungeon_floor(
                 dungeon.name
             ));
         }
-        MoveResult::Error => error!("Descent to {} floor {depth} errored", dungeon.name),
+        MoveResult::Error => {
+            error!("Descent to {} floor {depth} errored", dungeon.name);
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[MoveFailed] Something went wrong on the way to floor {depth} of {}.",
+                dungeon.name
+            ));
+        }
     }
 }
 
@@ -1439,5 +1758,117 @@ mod tests {
         ] {
             assert!(resolve_ground_item(&s, &r).is_none(), "for {r}");
         }
+    }
+
+    #[test]
+    fn failure_is_read_off_the_event_tag() {
+        for failure in [
+            "[MoveFailed] No route to (1.0, 2.0).",
+            "[ChestFailed] You see no chest.",
+            "[PropFailed] Prop 3 is already smashed.",
+            "[ActionFailed] 'dance' is not an action type.",
+            "[NoResult] Your use did nothing.",
+            "[Unreachable] Monster m2_1 is gone.",
+        ] {
+            assert!(reports_failure(failure), "{failure}");
+        }
+        for fine in [
+            "[Arrived] You reached (1.0, 2.0).",
+            "[Chat] Karl: hello",
+            "[Following] You are now following Karl.",
+            "no tag at all",
+        ] {
+            assert!(!reports_failure(fine), "{fine}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_action_that_left_no_trace_gets_a_no_result() {
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        let mark = state.lock().await.action_progress();
+
+        let outcome = settle_action(
+            &state,
+            &AgentAction::Use {
+                item: "torch".to_string(),
+            },
+            mark,
+        )
+        .await;
+
+        assert_eq!(outcome, ActionOutcome::Failed);
+        let events = state.lock().await.drain_agent_events();
+        assert!(
+            events.iter().any(|e| e.starts_with("[NoResult]")),
+            "{events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn self_reporting_actions_are_left_alone() {
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        let mark = state.lock().await.action_progress();
+
+        for action in [
+            AgentAction::Say {
+                message: "hello".to_string(),
+            },
+            AgentAction::Wait,
+        ] {
+            assert_eq!(
+                settle_action(&state, &action, mark).await,
+                ActionOutcome::Ran
+            );
+        }
+        assert!(state.lock().await.drain_agent_events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_dispatched_command_counts_as_a_result() {
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        let mark = state.lock().await.action_progress();
+        state
+            .lock()
+            .await
+            .send_command(onlinerpg_shared::ClientMessage::PartyLeave)
+            .await
+            .unwrap();
+
+        let outcome = settle_action(&state, &AgentAction::PartyLeave, mark).await;
+
+        assert_eq!(outcome, ActionOutcome::Ran);
+        assert!(state.lock().await.drain_agent_events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn background_traffic_is_not_an_actions_result() {
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        let mark = state.lock().await.action_progress();
+        state
+            .lock()
+            .await
+            .send_background_command(onlinerpg_shared::ClientMessage::Heartbeat)
+            .await
+            .unwrap();
+
+        let outcome = settle_action(
+            &state,
+            &AgentAction::Use {
+                item: "torch".to_string(),
+            },
+            mark,
+        )
+        .await;
+
+        assert_eq!(outcome, ActionOutcome::Failed);
+        let events = state.lock().await.drain_agent_events();
+        assert!(
+            events.iter().any(|e| e.starts_with("[NoResult]")),
+            "{events:?}"
+        );
     }
 }
