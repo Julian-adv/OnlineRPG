@@ -13,16 +13,18 @@ describe('wrapLines', () => {
 
   it('breaks a single unspaced run wider than the line', () => {
     const lines = wrapLines('ㅁ'.repeat(25), 100, false, measure)
-    expect(lines).toEqual(['ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ', 'ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ', 'ㅁㅁㅁㅁㅁ'])
+    expect(lines).toEqual([
+      'ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ',
+      'ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ',
+      'ㅁㅁㅁㅁㅁ',
+    ])
     for (const line of lines) expect(measure(line)).toBeLessThanOrEqual(100)
   })
 
   it('continues the line after an oversized word is broken', () => {
-    expect(wrapLines('ab ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ cd', 100, false, measure)).toEqual([
-      'ab',
-      'ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ',
-      'ㅁㅁ cd',
-    ])
+    expect(
+      wrapLines('ab ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ cd', 100, false, measure)
+    ).toEqual(['ab', 'ㅁㅁㅁㅁㅁㅁㅁㅁㅁㅁ', 'ㅁㅁ cd'])
   })
 
   it('keeps explicit newlines and empty lines', () => {
@@ -48,10 +50,6 @@ describe('wrapLines', () => {
     const measureGlyphs = (s: string) => glyphs(s) * 10
 
     const lines = wrapLines(family.repeat(5), 20, false, measureGlyphs)
-    expect(lines).toEqual([
-      family + family,
-      family + family,
-      family,
-    ])
+    expect(lines).toEqual([family + family, family + family, family])
   })
 })
