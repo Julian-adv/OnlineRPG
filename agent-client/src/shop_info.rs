@@ -40,6 +40,16 @@ pub struct NpcRow {
     keepsakes: String,
 }
 
+impl NpcRow {
+    /// Keepsakes this NPC could actually offer: the listed ids that carry a
+    /// base price. `keepsake_section` never offers an unpriced one, so an
+    /// unpriced entry (a worn instrument, say) is fair game to wear out.
+    pub fn offerable_keepsake_ids(&self) -> impl Iterator<Item = &str> {
+        id_list(&self.keepsakes)
+            .filter(|id| crate::item_defs::get(id).is_some_and(|d| d.base_price.is_some()))
+    }
+}
+
 /// Registry lookup by NPC id, for resolving `[[npcs]]` config entries that
 /// reference the registry instead of spelling every field out.
 pub fn npc_by_id(id: &str) -> Option<&'static NpcRow> {
@@ -227,7 +237,8 @@ fn keepsake_section(
     trader: &NpcRow,
     bag: &[onlinerpg_shared::inventory::ItemInstance],
 ) -> Option<String> {
-    let held: Vec<(&str, &str, i64)> = id_list(&trader.keepsakes)
+    let held: Vec<(&str, &str, i64)> = trader
+        .offerable_keepsake_ids()
         .filter(|id| bag.iter().any(|item| item.item_def_id == *id))
         .filter_map(|id| {
             let item = crate::item_defs::get(id)?;
