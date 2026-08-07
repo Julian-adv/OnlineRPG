@@ -281,6 +281,8 @@ export type ServerGroundItem = {
   item_def_id: string
   position: Position
   floor_level: number
+  /** Units in the pile; only stackable defs ever exceed 1. */
+  quantity: number
   /** Carries a dropped weapon's enchantment across the drop/pickup cycle. */
   enchant: number
   /** The player who put it there, if one did; null for loot and world drops. */

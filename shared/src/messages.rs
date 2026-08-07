@@ -896,6 +896,16 @@ pub enum ServerMessage {
         /// item that merely dropped out of range.
         picked_up_by: Option<PlayerId>,
     },
+    /// A pile shrank without emptying: someone took part of it, having been
+    /// able to carry only some of the units.
+    GroundItemQuantityChanged {
+        instance_id: u64,
+        quantity: u32,
+        /// Who took the units, for the loot line in chat.
+        picked_up_by: Option<PlayerId>,
+        /// How many units they took.
+        taken: u32,
+    },
     /// Response to OpenShop (or pushed by an NPC's OpenTrade): the trader's
     /// goods. Display prices come from item definitions; the server
     /// re-validates them on Buy/Sell.

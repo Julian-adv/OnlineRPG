@@ -265,6 +265,63 @@
     def?.worldModel || def?.icon ? null : makeNameTexture(label)
   )
 
+  // Unit count for a pile of stackables — one model is drawn either way, so the
+  // badge is the only thing saying twelve potions lie here rather than one.
+  // Outlined text on a canvas cut to fit the glyphs, the way TextLabel does it:
+  // a fixed-size canvas would waste most of its pixels on a string this short
+  // and leave the badge blurry once scaled down to item size.
+  const QTY_FONT_PX = 64
+  const QTY_PIXELS_PER_UNIT = 320
+  const QTY_BADGE_LIFT = 0.12
+
+  function makeQuantityTexture(text: string): {
+    texture: THREE.CanvasTexture
+    width: number
+    height: number
+  } {
+    const font = `bold ${QTY_FONT_PX}px sans-serif`
+    const outline = QTY_FONT_PX * 0.16
+    const pad = Math.ceil(outline)
+    const measureCtx = document.createElement('canvas').getContext('2d')!
+    measureCtx.font = font
+
+    const c = document.createElement('canvas')
+    c.width = Math.ceil(measureCtx.measureText(text).width) + pad * 2
+    c.height = Math.ceil(QTY_FONT_PX * 1.25) + pad * 2
+    const ctx = c.getContext('2d')!
+    ctx.font = font
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)'
+    ctx.lineWidth = outline
+    ctx.strokeText(text, c.width / 2, c.height / 2)
+    ctx.fillStyle = '#ffe9a8'
+    ctx.fillText(text, c.width / 2, c.height / 2)
+
+    const texture = new THREE.CanvasTexture(c)
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    texture.colorSpace = THREE.SRGBColorSpace
+    return {
+      texture,
+      width: c.width / QTY_PIXELS_PER_UNIT,
+      height: c.height / QTY_PIXELS_PER_UNIT,
+    }
+  }
+
+  const qtyBadge = $derived(
+    data.quantity > 1 ? makeQuantityTexture(`x${data.quantity}`) : null
+  )
+  // Sits above the model's top, so a spear's badge clears the spear.
+  const qtyBadgeY = $derived(
+    (worldModelBox ? worldModelBox.max.y : 0.3) + QTY_BADGE_LIFT
+  )
+  $effect(() => {
+    const badge = qtyBadge
+    return () => badge?.texture.dispose()
+  })
+
   // Icon billboard for items with no world model (fish, jewellery, armor):
   // the inventory icon floats over the spot instead of a placeholder box.
   // Textures come from the shared icon cache — do not dispose them.
@@ -520,6 +577,22 @@
         />
       </T.Sprite>
     {/each}
+  {/if}
+
+  {#if qtyBadge && !data.inHand}
+    <!-- Count badge for a pile. At the root group so it billboards upright
+         instead of tilting with the terrain or spinning with the model. -->
+    <T.Sprite
+      position.y={qtyBadgeY}
+      scale={[qtyBadge.width, qtyBadge.height, 1]}
+      renderOrder={3}
+    >
+      <T.SpriteMaterial
+        map={qtyBadge.texture}
+        transparent={true}
+        depthWrite={false}
+      />
+    </T.Sprite>
   {/if}
 
   {#if displayMode === 'icon'}

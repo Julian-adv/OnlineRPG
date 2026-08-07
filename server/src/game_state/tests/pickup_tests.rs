@@ -25,6 +25,7 @@ async fn pickup_broadcasts_the_pickup_animation() {
                         z: 0.0,
                     },
                     floor_level: 0,
+                    quantity: 1,
                     enchant: 0,
                     dropped_by: None,
                 },
@@ -107,6 +108,7 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
             item_def_id: "test_item".to_string(),
             position: drop_position,
             floor_level: 0,
+            quantity: 1,
             enchant: 0,
             dropped_by: None,
         }),
@@ -225,6 +227,7 @@ async fn picked_up_stackable_joins_the_existing_stack() {
                         z: 0.0,
                     },
                     floor_level: 0,
+                    quantity: 1,
                     enchant: 0,
                     dropped_by: None,
                 },
@@ -239,4 +242,116 @@ async fn picked_up_stackable_joins_the_existing_stack() {
     let bag = &inventories[&pid("picker")].bag;
     assert_eq!(bag.len(), 1, "the picked-up apple must join the stack");
     assert_eq!(bag[0].quantity, 2);
+}
+
+/// Puts a pile of `quantity` apples at the picker's feet.
+async fn place_apple_pile(game_state: &GameState, instance_id: u64, quantity: u32) {
+    game_state.ground_items.write().await.insert(
+        instance_id,
+        ServerGroundItem {
+            item: GroundItem {
+                instance_id,
+                item_def_id: "apple".to_string(),
+                position: Position {
+                    x: 0.5,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                floor_level: 0,
+                quantity,
+                enchant: 0,
+                dropped_by: None,
+            },
+            dropped_at_ms: 0,
+        },
+    );
+}
+
+#[tokio::test]
+async fn a_whole_pile_comes_along_in_one_pickup() {
+    let game_state = make_test_game_state("pickup_whole_pile");
+    game_state.add_player(make_player("picker", 0.0, 0.0)).await;
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("picker"), Default::default());
+    place_apple_pile(&game_state, 42, 12).await;
+
+    game_state.pickup_item(&pid("picker"), 42).await;
+
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("picker")].bag;
+    assert_eq!(bag.len(), 1);
+    assert_eq!(bag[0].quantity, 12, "one click takes the whole pile");
+    drop(inventories);
+    assert!(
+        game_state.ground_items.read().await.is_empty(),
+        "an emptied pile is gone"
+    );
+}
+
+/// A pile heavier than the remaining headroom must not be stranded: the picker
+/// takes what fits and the rest stays put.
+#[tokio::test]
+async fn pickup_takes_only_what_fits_and_leaves_the_rest() {
+    let game_state = make_test_game_state("pickup_partial_by_weight");
+    game_state.add_player(make_player("picker", 0.0, 0.0)).await;
+    // Default carry limit is 150; 495 apples at 0.3 each leave room for 5 more.
+    game_state.inventories.write().await.insert(
+        pid("picker"),
+        PlayerInventory {
+            bag: vec![bag_item(11, "apple", 495)],
+            ..Default::default()
+        },
+    );
+    let mut picker_rx = game_state.register_direct_channel(&pid("picker")).await;
+    place_apple_pile(&game_state, 42, 12).await;
+
+    game_state.pickup_item(&pid("picker"), 42).await;
+
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(inventories[&pid("picker")].bag[0].quantity, 500);
+    drop(inventories);
+
+    let ground_items = game_state.ground_items.read().await;
+    assert_eq!(
+        ground_items[&42].item.quantity, 7,
+        "the units that didn't fit stay on the ground"
+    );
+    drop(ground_items);
+
+    assert!(
+        drain(&mut picker_rx).iter().any(|msg| {
+            matches!(msg, ServerMessage::GroundItemQuantityChanged { instance_id, quantity, taken, .. }
+                if *instance_id == 42 && *quantity == 7 && *taken == 5)
+        }),
+        "nearby clients must learn the pile shrank rather than vanished"
+    );
+}
+
+#[tokio::test]
+async fn a_pile_that_does_not_fit_at_all_stays_whole() {
+    let game_state = make_test_game_state("pickup_no_headroom");
+    game_state.add_player(make_player("picker", 0.0, 0.0)).await;
+    game_state.inventories.write().await.insert(
+        pid("picker"),
+        PlayerInventory {
+            bag: vec![bag_item(11, "apple", 500)],
+            ..Default::default()
+        },
+    );
+    place_apple_pile(&game_state, 42, 3).await;
+
+    game_state.pickup_item(&pid("picker"), 42).await;
+
+    assert_eq!(
+        game_state.ground_items.read().await[&42].item.quantity,
+        3,
+        "nothing was taken"
+    );
+    assert_eq!(
+        game_state.inventories.read().await[&pid("picker")].bag[0].quantity,
+        500
+    );
 }

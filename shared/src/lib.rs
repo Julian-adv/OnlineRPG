@@ -56,7 +56,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v22: GroundItem carries `dropped_by` and GroundItemRemoved
 ///      `picked_up_by`, so a busker knows who left the coins at its feet —
 ///      and who took them.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// v23: GroundItem carries `quantity`, so a dropped stack lands as one pile,
+///      and GroundItemQuantityChanged reports a pile someone took part of.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

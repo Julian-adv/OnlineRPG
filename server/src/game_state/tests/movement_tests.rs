@@ -59,6 +59,7 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
                     item_def_id: "test_item".to_string(),
                     position: entity_position,
                     floor_level: 0,
+                    quantity: 1,
                     enchant: 0,
                     dropped_by: None,
                 },

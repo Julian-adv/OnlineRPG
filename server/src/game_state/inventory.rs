@@ -465,6 +465,7 @@ impl super::GameState {
                     item_def_id: item_def_id.to_string(),
                     position,
                     floor_level,
+                    quantity: 1,
                     enchant: 0,
                     dropped_by: Some(*player_id),
                 })
@@ -1053,6 +1054,7 @@ impl super::GameState {
                 item_def_id,
                 position,
                 floor_level,
+                quantity: 1,
                 enchant: 0,
                 dropped_by: None,
             })
@@ -1122,6 +1124,7 @@ impl super::GameState {
             item_def_id: dropped.item_def_id,
             position,
             floor_level,
+            quantity: 1,
             enchant: dropped.enchant,
             dropped_by: Some(*player_id),
         };
@@ -1141,8 +1144,7 @@ impl super::GameState {
     /// all-or-nothing transaction: every line is validated against the bag
     /// before anything is removed. Bag-only — unlike `drop_item`, there is no
     /// equipped-slot fallback, since batch selection only ever offers bag
-    /// items. `GroundItem` has no quantity field, so each unit lands as its
-    /// own scattered ground item rather than one N-quantity entity.
+    /// items.
     pub async fn drop_items(&self, player_id: &PlayerId, items: Vec<BagLineItem>) {
         if items.is_empty() {
             return;
@@ -1219,10 +1221,25 @@ impl super::GameState {
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
 
-        let total_units: u32 = plans.iter().map(|p| p.qty).sum();
-        let mut next_ground_id = self.reserve_instance_ids(total_units as u64).await;
+        // A stackable line lands as a single N-unit pile, a non-stackable one
+        // scatters unit by unit since those units are distinct objects.
+        let total: u64 = plans
+            .iter()
+            .map(|plan| {
+                if self.item_defs.stackable(&plan.item_def_id) {
+                    1
+                } else {
+                    plan.qty as u64
+                }
+            })
+            .sum();
+        let mut next_ground_id = self.reserve_instance_ids(total).await;
+
         for plan in &plans {
-            for _ in 0..plan.qty {
+            let stackable = self.item_defs.stackable(&plan.item_def_id);
+            let piles = if stackable { 1 } else { plan.qty };
+            let quantity = if stackable { plan.qty } else { 1 };
+            for _ in 0..piles {
                 let preferred = drop_landing_position(player_position, rotation);
                 let position = self
                     .loot_drop_position(player_position, floor_level, preferred)
@@ -1232,6 +1249,7 @@ impl super::GameState {
                     item_def_id: plan.item_def_id.clone(),
                     position,
                     floor_level,
+                    quantity,
                     enchant: plan.enchant,
                     dropped_by: Some(*player_id),
                 })
@@ -1263,6 +1281,7 @@ impl super::GameState {
             item_def_id: item_def_id.to_string(),
             position,
             floor_level,
+            quantity: 1,
             enchant: 0,
             dropped_by: Some(*player_id),
         })
@@ -1317,63 +1336,94 @@ impl super::GameState {
         let item_weight = self.item_defs.weight(&ground_item.item_def_id);
         let stackable = self.item_defs.stackable(&ground_item.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
+        // For the bag entry when only part of the pile comes along — the pile
+        // that stays behind keeps its own id. Reserved outside the locks like
+        // `drop_item`'s split id; unused when the pile empties.
+        let bag_instance_id = self.next_instance_id().await;
 
         // Acquire write lock for both weight check and mutation atomically
         let item_position = ground_item.position;
-        let snapshot = {
+        let (take, remaining, snapshot) = {
             let mut ground_items = self.ground_items.write().await;
-            if ground_items.remove(&instance_id).is_none() {
+            let Some(entry) = ground_items.get_mut(&instance_id) else {
                 self.send_system_message(player_id, "Item no longer exists")
+                    .await;
+                return;
+            };
+            // Re-read under the lock: another picker may have thinned the pile
+            // since the distance check above read it.
+            let available = entry.item.quantity.max(1);
+
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            // Carry what fits and leave the rest, so a heavy pile is never
+            // stranded on the ground with no way to take any of it.
+            let headroom = max_weight - self.calc_total_weight(inv);
+            let take = if item_weight <= 0.0 {
+                available
+            } else {
+                available.min((headroom / item_weight).floor().max(0.0) as u32)
+            };
+            if take == 0 {
+                drop(inventories);
+                drop(ground_items);
+                self.send_system_message(player_id, "Too heavy to carry")
                     .await;
                 return;
             }
 
-            let mut inventories = self.inventories.write().await;
-            if let Some(inv) = inventories.get_mut(player_id) {
-                let current_weight = self.calc_total_weight(inv);
-                if current_weight + item_weight > max_weight {
-                    // Put it back on the ground
-                    ground_items.insert(
-                        instance_id,
-                        ServerGroundItem {
-                            item: ground_item,
-                            dropped_at_ms: Self::now_ms(),
-                        },
-                    );
-                    drop(inventories);
-                    drop(ground_items);
-                    self.send_system_message(player_id, "Too heavy to carry")
-                        .await;
-                    return;
-                }
-                stack_into_bag(
-                    &mut inv.bag,
-                    BagInsert::one(
-                        stackable,
-                        &ground_item.item_def_id,
-                        ground_item.enchant,
-                        instance_id,
-                    ),
-                );
-                inv.clone()
+            let item_def_id = entry.item.item_def_id.clone();
+            let enchant = entry.item.enchant;
+            if take < available {
+                entry.item.quantity = available - take;
             } else {
-                return;
+                ground_items.remove(&instance_id);
             }
+            stack_into_bag(
+                &mut inv.bag,
+                BagInsert {
+                    stackable,
+                    item_def_id: &item_def_id,
+                    enchant,
+                    first_instance_id: bag_instance_id,
+                    quantity: take,
+                },
+            );
+            (take, available - take, inv.clone())
         };
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
+        let update = if remaining == 0 {
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by: Some(*player_id),
+            }
+        } else {
+            ServerMessage::GroundItemQuantityChanged {
+                instance_id,
+                quantity: remaining,
+                picked_up_by: Some(*player_id),
+                taken: take,
+            }
+        };
         self.send_direct_message_to_players_within_position(
             &item_position,
             player_floor,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemRemoved {
-                instance_id,
-                picked_up_by: Some(*player_id),
-            },
+            update,
             None,
         )
         .await;
+        if remaining > 0 {
+            self.send_system_message(
+                player_id,
+                &format!("Too heavy to carry it all — took {take}, left {remaining}."),
+            )
+            .await;
+        }
     }
 
     /// Show the pickup crouch on nearby clients. Driven by `PickupStarted` at
