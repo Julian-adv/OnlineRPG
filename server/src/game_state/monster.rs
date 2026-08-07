@@ -189,6 +189,12 @@ impl super::GameState {
                 self.send_direct_message(mover_id, correction).await;
                 return;
             }
+            if state == MonsterState::Dead {
+                let correction = Self::move_correction(monster_id, monster);
+                drop(monsters);
+                self.send_direct_message(mover_id, correction).await;
+                return;
+            }
             // Store canonical X like player moves do; the budget and sweep
             // below are already periodic. See the regression test for what a
             // non-canonical stored X costs.
