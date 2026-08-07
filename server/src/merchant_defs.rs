@@ -80,4 +80,40 @@ mod tests {
             "no merchant sells fishing_rod — the rod would be unobtainable"
         );
     }
+
+    /// A merchant lives in two CSVs — the shop in `merchants.csv`, the NPC
+    /// identity in `npcs.csv` — and adding only one of them leaves a shop no
+    /// agent can ever run.
+    #[test]
+    fn every_merchant_has_an_npc_registry_entry() {
+        let registry: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/npcs.json")).unwrap();
+        for name in MerchantDefs::load().by_npc_name.keys() {
+            assert!(
+                registry
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .any(|npc| npc["npcName"] == name.as_str()),
+                "merchant {name} has no entry in npcs.csv"
+            );
+        }
+    }
+
+    /// Rica sleeps at night, so trade would stop with the town asleep unless
+    /// someone else keeps a counter open (see doc/TODO.md).
+    #[test]
+    fn a_merchant_stocks_night_essentials() {
+        let defs = MerchantDefs::load();
+        let night = defs
+            .by_npc_name
+            .get("Wick")
+            .expect("the night merchant is missing from merchants.csv");
+        for essential in ["torch", "healing_potion", "bread"] {
+            assert!(
+                night.sells(essential),
+                "the night merchant does not stock {essential}"
+            );
+        }
+    }
 }
