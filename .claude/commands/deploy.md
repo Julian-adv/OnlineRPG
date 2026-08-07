@@ -31,6 +31,25 @@ the reference.
   ```
   A pure internal change (logging, refactor with no player-visible effect) needs
   no announcement — say so and skip it.
+- **Terrain or housing edited on this host?** `data/terrain/` and
+  `data/housing/` are not in git, so the deploy does not carry them. Sync
+  **before** launching so the deploy's restart loads them — syncing after
+  costs prod a second restart (server + agent-client, which caches houses
+  for pathfinding).
+  - Terrain: `REMOTE=prod bash tools/sync-terrain.sh` (mtime-based dry run;
+    do **not** add `--checksum` — 1.16M files, it reads every one). Review
+    the transferred-files count (a handful is normal), rerun with `--apply`,
+    then spot-check an md5sum on prod.
+  - Housing (furniture placements live inside each house JSON): the sync
+    script excludes `data/housing/` on purpose — the server writes live
+    state (door open/close) into these files and prod is authoritative.
+    List candidates with
+    `rsync -ain data/housing/ prod:work/OnlineRPG/data/housing/`, keep only
+    the files actually edited here, and for each: fetch prod's copy and
+    diff it (prod-only changes — placed furniture, new houses — would be
+    lost), back it up on prod as `<file>.bak-YYYYMMDD`, then scp the local
+    file over. Never bulk-apply housing.
+  Nothing to sync when neither directory has local edits — say so and move on.
 
 ## 2. Launch the deploy, detached
 
