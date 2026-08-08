@@ -15,3 +15,7 @@ export const emoteStopRequest = writable(false)
  *  for it. Must match `MUSIC_EMOTE` in `shared/src/messages.rs` — the server
  *  and agent-client read it from there. */
 export const MUSIC_EMOTE_ANIM = 'guitar_playing'
+
+/** One-shot clips `/emote <name>` plays. Must match `ONE_SHOT_EMOTES` in
+ *  `shared/src/messages.rs` — the server validates the command against it. */
+export const ONE_SHOT_EMOTE_ANIMS = new Set(['excited'])

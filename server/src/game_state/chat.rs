@@ -249,6 +249,11 @@ impl super::GameState {
             return;
         }
 
+        if let Some(name) = strip_command(&message, "/emote") {
+            self.play_emote(player_id, name).await;
+            return;
+        }
+
         if message.trim() == "/who" {
             let counts = {
                 let players = self.players.read().await;
@@ -367,6 +372,20 @@ impl super::GameState {
             },
         )
         .await;
+    }
+
+    /// `/emote <name>` — like `/play_music` with nothing attached: no object
+    /// to claim, no item requirement. A typo or a bare `/emote` gets the list
+    /// back; the client-side flow is documented on `ONE_SHOT_EMOTES`.
+    async fn play_emote(&self, player_id: &PlayerId, name: &str) {
+        let emotes = onlinerpg_shared::messages::ONE_SHOT_EMOTES;
+        if !emotes.contains(&name) {
+            self.send_system_message(player_id, format!("Emotes: {}", emotes.join(", ")))
+                .await;
+            return;
+        }
+        self.set_player_interaction(player_id, Some(name.to_string()), None)
+            .await;
     }
 
     /// An instrument anywhere in the inventory — bag or hands — is what

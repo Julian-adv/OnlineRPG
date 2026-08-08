@@ -51,6 +51,8 @@ logs/
 *.mp3
 *.m4a
 *.blend
+# Raw source drops (Meshy obj zips, Mixamo fbx) — synced via HF too
+/assets/
 
 # Blender backup files
 *.blend1

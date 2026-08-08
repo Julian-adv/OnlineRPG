@@ -40,6 +40,7 @@
     CHARACTER_ANIMATION_PACK_PATHS,
     getCharacterModelPath,
     getDefaultWeaponModel,
+    getNpcModelPath,
     getWeaponModelPath,
   } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
@@ -178,7 +179,9 @@
   // svelte-ignore state_referenced_locally
   const defaultWeaponModel = getDefaultWeaponModel(characterClass)
   // svelte-ignore state_referenced_locally
-  const modelPath = getCharacterModelPath(characterClass, gender)
+  const modelPath =
+    (npcPlayerId !== undefined ? getNpcModelPath(name) : undefined) ??
+    getCharacterModelPath(characterClass, gender)
   const modelPromise = loadGLB(modelPath).then((g) => {
     activeGltfData = g
   })

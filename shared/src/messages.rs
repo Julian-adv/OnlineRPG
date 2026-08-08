@@ -151,6 +151,12 @@ pub struct ClientEnvReport {
 /// compare `PlayerInteractionChanged` against it to know a tune is over.
 pub const MUSIC_EMOTE: &str = "guitar_playing";
 
+/// One-shot clips `/emote <name>` may store as the interaction. Same wire
+/// contract as [`MUSIC_EMOTE`]: the server validates against this list, and
+/// clients start the clip off the broadcast and send `StopInteraction` when
+/// it ends. Clip names live in `social.glb`.
+pub const ONE_SHOT_EMOTES: &[&str] = &["excited"];
+
 /// `message` is `prefix` as a whole slash-command word; returns the trimmed
 /// remainder. Shared because the agent-client types the commands this parses —
 /// the two sides must agree on what counts as the command word.

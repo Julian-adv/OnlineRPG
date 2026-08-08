@@ -114,6 +114,7 @@
     emoteRequest,
     emoteStopRequest,
     MUSIC_EMOTE_ANIM,
+    ONE_SHOT_EMOTE_ANIMS,
   } from '../stores/emoteStore'
 
   interface Props {
@@ -328,6 +329,16 @@
   }
 
   function onInteractionFinished() {
+    // A one-shot emote ends itself; notify so the server drops the stored
+    // pose and remotes clear it. Held poses (bench, forge) stay until the
+    // player moves, and pickup has its own exit below.
+    if (
+      playerState.state === 'interact' &&
+      ONE_SHOT_EMOTE_ANIMS.has(playerState.interactionAnim ?? '')
+    ) {
+      exitObjectInteraction()
+      return
+    }
     exitPickupInteraction()
   }
 
@@ -341,13 +352,15 @@
     })
   }
 
+  const EMOTE_ANIMS = new Set([MUSIC_EMOTE_ANIM, ...ONE_SHOT_EMOTE_ANIMS])
+
   function exitObjectInteraction(notify = true) {
     // Stepping out walks the player off the seat they were using. An emote
     // claims no object — it plays where the player stands — so every exit
     // path leaves an emote in place.
     const stepOut =
       playerState.state !== 'interact' ||
-      playerState.interactionAnim !== MUSIC_EMOTE_ANIM
+      !EMOTE_ANIMS.has(playerState.interactionAnim ?? '')
     if (stepOut && currentPlayer) {
       applyObjectInteractionPosition(
         currentPlayer,

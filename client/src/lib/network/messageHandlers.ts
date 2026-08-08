@@ -76,7 +76,11 @@ import {
   applyInteractionChange,
 } from '../managers/musicPerformance'
 import { refreshBardZone } from '../managers/bardZone'
-import { emoteRequest, MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
+import {
+  emoteRequest,
+  MUSIC_EMOTE_ANIM,
+  ONE_SHOT_EMOTE_ANIMS,
+} from '../stores/emoteStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
@@ -944,6 +948,11 @@ export function handleServerMessage(
       applyInteractionChange(data.player_id, data.object_type ?? null)
       const state = get(gameStore)
       if (state.currentPlayer?.id === data.player_id) {
+        // Our own /emote went to the server unresolved; this broadcast is
+        // its reply, the way PlayerMusicStarted starts /play_music.
+        if (data.object_type && ONE_SHOT_EMOTE_ANIMS.has(data.object_type)) {
+          emoteRequest.set(data.object_type)
+        }
         break
       }
       const ft: string | null = data.object_type ?? null

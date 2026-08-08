@@ -90,6 +90,9 @@ const COMMANDS: Record<string, Command> = {
   '/play_music': {
     desc: 'Play a tune where you stand (needs an instrument): /play_music [song]',
   },
+  '/emote': {
+    desc: 'Play an emote where you stand: /emote excited',
+  },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',
