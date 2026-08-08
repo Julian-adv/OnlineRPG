@@ -155,7 +155,7 @@ pub const MUSIC_EMOTE: &str = "guitar_playing";
 /// contract as [`MUSIC_EMOTE`]: the server validates against this list, and
 /// clients start the clip off the broadcast and send `StopInteraction` when
 /// it ends. Clip names live in `social.glb`.
-pub const ONE_SHOT_EMOTES: &[&str] = &["excited"];
+pub const ONE_SHOT_EMOTES: &[&str] = &["excited", "clap"];
 
 /// `message` is `prefix` as a whole slash-command word; returns the trimmed
 /// remainder. Shared because the agent-client types the commands this parses —

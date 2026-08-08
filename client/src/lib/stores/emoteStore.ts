@@ -18,4 +18,4 @@ export const MUSIC_EMOTE_ANIM = 'guitar_playing'
 
 /** One-shot clips `/emote <name>` plays. Must match `ONE_SHOT_EMOTES` in
  *  `shared/src/messages.rs` — the server validates the command against it. */
-export const ONE_SHOT_EMOTE_ANIMS = new Set(['excited'])
+export const ONE_SHOT_EMOTE_ANIMS = new Set(['excited', 'clap'])

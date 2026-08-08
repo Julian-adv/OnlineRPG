@@ -59,7 +59,7 @@
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
-  import { MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
+  import { MUSIC_EMOTE_ANIM, ONE_SHOT_EMOTE_ANIMS } from '../stores/emoteStore'
 
   interface Props {
     position: Vector3
@@ -968,13 +968,14 @@
     } else if (
       currentAction &&
       interactionAnim &&
-      // Pickup and the fishing cast are interactions remote players end on
-      // their own (no StopInteraction follows the clip), so the finish
-      // callback must fire for remotes too. Held poses (bench, forge) keep
-      // waiting for their StopInteraction.
+      // Pickup, the fishing cast, and one-shot emotes are interactions
+      // remote players end on their own rather than waiting a round-trip for
+      // StopInteraction, so the finish callback must fire for remotes too.
+      // Held poses (bench, forge) keep waiting for their StopInteraction.
       (isCurrentPlayer ||
         interactionAnim === 'pickup' ||
-        interactionAnim === FishingAnimationName.CAST)
+        interactionAnim === FishingAnimationName.CAST ||
+        ONE_SHOT_EMOTE_ANIMS.has(interactionAnim))
     ) {
       const clip = currentAction.getClip()
       if (clip.name === interactionAnim) {
