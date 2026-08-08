@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
@@ -692,6 +690,19 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
+        let items: Vec<TradeLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+        if items.is_empty() {
+            return;
+        }
+        let Some(quantities) = super::checked_batch_quantities(
+            items
+                .iter()
+                .map(|item| (item.item_def_id.as_str(), item.qty)),
+        ) else {
+            return self
+                .send_trade_error(player_id, "Invalid batch quantity")
+                .await;
+        };
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
 
@@ -711,9 +722,6 @@ impl super::GameState {
 
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
         for req in &items {
-            if req.qty == 0 {
-                continue;
-            }
             match &def {
                 TraderDef::Merchant(m) => {
                     if !m.sells(&req.item_def_id) {
@@ -753,15 +761,9 @@ impl super::GameState {
                 price: 0,
             });
         }
-        if plans.is_empty() {
-            return;
-        }
-
         // One id per unit, reserved before the locks rather than one counter
         // acquisition per unit under them. An aborted batch skips the range.
-        let mut next_id = self
-            .reserve_instance_ids(plans.iter().map(|p| p.qty as u64).sum())
-            .await;
+        let mut next_id = self.reserve_instance_ids(quantities.total).await;
         let max_weight = self.max_carry_weight(player_id).await;
 
         let mut gold_map = self.player_gold.write().await;
@@ -781,11 +783,7 @@ impl super::GameState {
                     .send_trade_error(player_id, "They have nothing to sell")
                     .await;
             };
-            let mut requested: HashMap<&str, u32> = HashMap::new();
-            for plan in &plans {
-                *requested.entry(plan.item_def_id.as_str()).or_default() += plan.qty;
-            }
-            for (item_def_id, qty) in requested {
+            for (item_def_id, qty) in quantities.by_key {
                 let available: u32 = npc_inv
                     .bag
                     .iter()
@@ -1251,6 +1249,20 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
+        // Drop no-op lines before aggregation and mutation. Keeping trader
+        // validation first preserves the existing error response for an
+        // all-zero request sent to an invalid or unreachable trader.
+        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+        if items.is_empty() {
+            return;
+        }
+        let Some(quantities) =
+            super::checked_batch_quantities(items.iter().map(|item| (item.instance_id, item.qty)))
+        else {
+            return self
+                .send_trade_error(player_id, "Invalid batch quantity")
+                .await;
+        };
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
         let rate = match &def {
@@ -1268,18 +1280,9 @@ impl super::GameState {
             payout: i64,
         }
 
-        // Drop no-op lines before the locks: the plan loop below runs under
-        // both write locks, so a client's padding must not reach it.
-        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
-        if items.is_empty() {
-            return;
-        }
-
         // One id per unit, reserved before the locks: a resident's received
         // units draw from it, a merchant's buyback entries do.
-        let mut next_unit_id = self
-            .reserve_instance_ids(items.iter().map(|i| i.qty as u64).sum())
-            .await;
+        let mut next_unit_id = self.reserve_instance_ids(quantities.total).await;
         // Only a resident carries what it buys.
         let npc_max_weight = if is_resident {
             Some(self.max_carry_weight(npc_player_id).await)
@@ -1296,7 +1299,6 @@ impl super::GameState {
             return self.send_trade_error(player_id, "Player not found").await;
         }
 
-        let mut reserved: HashMap<u64, u32> = HashMap::new();
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
         for req in &items {
             let Some(item) = inventories
@@ -1309,16 +1311,18 @@ impl super::GameState {
                     .send_trade_error(player_id, "Item not found in bag")
                     .await;
             };
-            let already_reserved = *reserved.get(&req.instance_id).unwrap_or(&0);
-            if already_reserved + req.qty > item.quantity {
+            let requested_qty = quantities
+                .by_key
+                .get(&req.instance_id)
+                .copied()
+                .expect("every retained request was included in batch aggregation");
+            if requested_qty > item.quantity {
                 drop(inventories);
                 drop(gold_map);
                 return self
                     .send_trade_error(player_id, "Not enough of that item")
                     .await;
             }
-            reserved.insert(req.instance_id, already_reserved + req.qty);
-
             let item_def_id = item.item_def_id.clone();
             let enchant = item.enchant;
             let Some(base_price) = self.item_defs.get(&item_def_id).and_then(|d| d.base_price)

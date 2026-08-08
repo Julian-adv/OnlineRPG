@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::auth::{AuthService, ItemRow};
 use crate::item_defs::UseEffect;
 use crate::types::{PlayerId, ServerMessage};
@@ -1147,6 +1145,17 @@ impl super::GameState {
         if items.is_empty() {
             return;
         }
+        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+        if items.is_empty() {
+            return;
+        }
+        let Some(quantities) =
+            super::checked_batch_quantities(items.iter().map(|item| (item.instance_id, item.qty)))
+        else {
+            self.send_system_message(player_id, "Invalid batch quantity")
+                .await;
+            return;
+        };
         let (player_position, rotation, floor_level) = {
             let players = self.players.read().await;
             match players.get(player_id) {
@@ -1162,7 +1171,6 @@ impl super::GameState {
             enchant: i32,
         }
 
-        let mut reserved: HashMap<u64, u32> = HashMap::new();
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
 
         let snapshot = {
@@ -1172,22 +1180,22 @@ impl super::GameState {
             };
 
             for req in &items {
-                if req.qty == 0 {
-                    continue;
-                }
                 let Some(item) = inv.bag.iter().find(|i| i.instance_id == req.instance_id) else {
                     drop(inventories);
                     self.send_system_message(player_id, "Item not found").await;
                     return;
                 };
-                let already = *reserved.get(&req.instance_id).unwrap_or(&0);
-                if already + req.qty > item.quantity {
+                let requested_qty = quantities
+                    .by_key
+                    .get(&req.instance_id)
+                    .copied()
+                    .expect("every retained request was included in batch aggregation");
+                if requested_qty > item.quantity {
                     drop(inventories);
                     self.send_system_message(player_id, "Not enough of that item")
                         .await;
                     return;
                 }
-                reserved.insert(req.instance_id, already + req.qty);
                 plans.push(Plan {
                     instance_id: req.instance_id,
                     qty: req.qty,
@@ -1195,11 +1203,6 @@ impl super::GameState {
                     enchant: item.enchant,
                 });
             }
-            if plans.is_empty() {
-                drop(inventories);
-                return;
-            }
-
             // Every line is now guaranteed to apply cleanly — mutate.
             for plan in &plans {
                 let idx = inv
@@ -1219,8 +1222,7 @@ impl super::GameState {
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
 
-        let total_units: u32 = plans.iter().map(|p| p.qty).sum();
-        let mut next_ground_id = self.reserve_instance_ids(total_units as u64).await;
+        let mut next_ground_id = self.reserve_instance_ids(quantities.total).await;
         for plan in &plans {
             for _ in 0..plan.qty {
                 let preferred = drop_landing_position(player_position, rotation);
