@@ -60,6 +60,79 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
     }
 }
 
+/// Rica's schedule puts her in bed at night; the server only learns of it
+/// through the `InteractObject` that leaves her occupying a bed.
+#[tokio::test]
+async fn a_sleeping_merchant_refuses_to_open_shop() {
+    let game_state = make_test_game_state("sleeping_merchant_shop");
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 100).await;
+    put_in_bed(&game_state, "npc_rica").await;
+
+    game_state
+        .open_shop(&pid("buyer"), &pid("npc_rica"), true)
+        .await;
+
+    assert!(
+        drain(&mut buyer_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::TradeError { message } if message.contains("asleep")
+        )),
+        "opening a sleeping merchant's shop must be refused"
+    );
+}
+
+/// The check sits in the shared validation, so a window opened before bedtime
+/// stops transacting too rather than trading with a sleeping merchant.
+#[tokio::test]
+async fn falling_asleep_stops_an_open_shop_from_selling() {
+    let game_state = make_test_game_state("sleeping_merchant_buy");
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 1000).await;
+    game_state
+        .open_shop(&pid("buyer"), &pid("npc_rica"), true)
+        .await;
+    let _ = drain(&mut buyer_rx);
+
+    put_in_bed(&game_state, "npc_rica").await;
+    game_state
+        .buy_item(&pid("buyer"), &pid("npc_rica"), "wooden_shield")
+        .await;
+
+    assert!(
+        drain(&mut buyer_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::TradeError { message } if message.contains("asleep")
+        )),
+        "buying from a sleeping merchant must be refused"
+    );
+    assert_eq!(
+        game_state.get_player_gold(&pid("buyer")).await,
+        1000,
+        "and must not charge the buyer"
+    );
+}
+
+/// Only a bed means asleep — an NPC resting on a chair is still open for
+/// business.
+#[tokio::test]
+async fn a_merchant_on_a_chair_still_trades() {
+    let game_state = make_test_game_state("chair_merchant");
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 100).await;
+    game_state
+        .set_player_interaction(&pid("npc_rica"), Some("chair".to_string()), Some(7))
+        .await;
+
+    game_state
+        .open_shop(&pid("buyer"), &pid("npc_rica"), true)
+        .await;
+
+    assert!(
+        drain(&mut buyer_rx)
+            .iter()
+            .any(|m| matches!(m, ServerMessage::ShopState { .. })),
+        "a seated merchant must still open the shop"
+    );
+}
+
 #[tokio::test]
 async fn cross_floor_offer_deal_is_rejected_without_consuming_ledger() {
     let game_state = make_test_game_state("cross_floor_offer");

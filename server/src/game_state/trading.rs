@@ -16,6 +16,11 @@ use super::StoredBuyback;
 /// Maximum distance between player and trader for any shop interaction.
 const MAX_TRADE_DISTANCE: f32 = 6.0;
 
+/// Interaction object an NPC occupies while asleep. Schedules send NPCs to bed
+/// at night (`agent-client/data/npcs/*/schedule.json`), and the resulting
+/// `InteractObject` is what the server sees of it.
+const BED_OBJECT_TYPE: &str = "bed";
+
 /// Most recent sold units kept per (player, merchant) for buyback; older
 /// entries are dropped oldest-first.
 const BUYBACK_CAP: usize = 10;
@@ -182,6 +187,12 @@ impl super::GameState {
             return Err("That character is not a trader");
         }
         let def = trader_def_by_name(&npc.name).ok_or("This NPC does not trade")?;
+
+        // Every trade path validates here, so this closes the shop window and
+        // any transaction already inside one.
+        if npc.object_type.as_deref() == Some(BED_OBJECT_TYPE) {
+            return Err("The trader is asleep");
+        }
 
         let dist_sq = reachable_dist_sq(
             player.position,
