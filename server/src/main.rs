@@ -398,6 +398,7 @@ async fn main() -> ExitCode {
         height_sampler,
         water_sampler,
     ));
+    game_state.load_npc_schedules(&npc_io).await;
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.
     if let Err(err) = game_state.init_passability(&terrain_io).await {
@@ -581,7 +582,7 @@ async fn main() -> ExitCode {
             terrain_io,
             Arc::clone(&game_state),
         ))
-        .merge(npc_router(npc_io))
+        .merge(npc_router(npc_io, Arc::clone(&game_state)))
         .merge(announcements_router(announcement_store))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&auth_ctx),

@@ -60,13 +60,11 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
     }
 }
 
-/// Rica's schedule puts her in bed at night; the server only learns of it
-/// through the `InteractObject` that leaves her occupying a bed.
 #[tokio::test]
 async fn a_sleeping_merchant_refuses_to_open_shop() {
     let game_state = make_test_game_state("sleeping_merchant_shop");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 100).await;
-    put_in_bed(&game_state, "npc_rica").await;
+    put_in_bed(&game_state, "Rica");
 
     game_state
         .open_shop(&pid("buyer"), &pid("npc_rica"), true)
@@ -90,9 +88,9 @@ async fn falling_asleep_stops_an_open_shop_from_selling() {
     game_state
         .open_shop(&pid("buyer"), &pid("npc_rica"), true)
         .await;
-    let _ = drain(&mut buyer_rx);
+    drain(&mut buyer_rx);
 
-    put_in_bed(&game_state, "npc_rica").await;
+    put_in_bed(&game_state, "Rica");
     game_state
         .buy_item(&pid("buyer"), &pid("npc_rica"), "wooden_shield")
         .await;
@@ -111,15 +109,11 @@ async fn falling_asleep_stops_an_open_shop_from_selling() {
     );
 }
 
-/// Only a bed means asleep — an NPC resting on a chair is still open for
-/// business.
 #[tokio::test]
 async fn a_merchant_on_a_chair_still_trades() {
     let game_state = make_test_game_state("chair_merchant");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 100).await;
-    game_state
-        .set_player_interaction(&pid("npc_rica"), Some("chair".to_string()), Some(7))
-        .await;
+    game_state.set_npc_schedule("Rica", vec![schedule_entry("chair")]);
 
     game_state
         .open_shop(&pid("buyer"), &pid("npc_rica"), true)
@@ -131,6 +125,63 @@ async fn a_merchant_on_a_chair_still_trades() {
             .any(|m| matches!(m, ServerMessage::ShopState { .. })),
         "a seated merchant must still open the shop"
     );
+}
+
+/// The haggle path must refuse too: a deal granted in sleep could never be
+/// redeemed, yet would burn the daily ledgers.
+#[tokio::test]
+async fn a_sleeping_merchant_refuses_to_offer_deals() {
+    let game_state = make_test_game_state("sleeping_merchant_offer");
+    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    put_in_bed(&game_state, "Rica");
+    let ledger_before = game_state.deal_ledger_state_for_test("Rica", "buyer").await;
+
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "wooden_shield",
+            DealKind::Buy,
+            -10,
+            "loyal customer",
+        )
+        .await;
+
+    assert!(matches!(buyer_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::DealResult {
+            accepted, message, ..
+        }) => {
+            assert!(!accepted);
+            assert!(message.contains("asleep"), "got: {message}");
+        }
+        other => panic!("Expected DealResult rejection for NPC, got {other:?}"),
+    }
+    assert_eq!(
+        game_state.deal_ledger_state_for_test("Rica", "buyer").await,
+        ledger_before,
+        "the refused offer must not consume budgets or the cooldown"
+    );
+}
+
+/// An NPC-pushed window refused for sleep must report to the NPC, not to the
+/// target player who never asked for it.
+#[tokio::test]
+async fn a_sleeping_merchant_cannot_push_a_trade_window() {
+    let game_state = make_test_game_state("sleeping_merchant_push");
+    let (mut buyer_rx, mut npc_rx) = setup_haggle(&game_state, 10, 100).await;
+    put_in_bed(&game_state, "Rica");
+
+    game_state.open_trade(&pid("npc_rica"), &pid("buyer")).await;
+
+    assert!(
+        matches!(buyer_rx.try_recv(), Err(MpscTryRecvError::Empty)),
+        "the refusal must not reach the target player"
+    );
+    assert!(drain(&mut npc_rx).iter().any(|m| matches!(
+        m,
+        ServerMessage::TradeError { message } if message.contains("asleep")
+    )));
 }
 
 #[tokio::test]

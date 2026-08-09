@@ -5,21 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScheduleEntry {
-    pub at: String,
-    pub pos: [f32; 3],
-    #[serde(default)]
-    pub rotation: f32,
-    #[serde(default)]
-    pub floor_level: u8,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action: Option<String>,
-    #[serde(default)]
-    pub waypoints: Vec<[f32; 3]>,
-}
+pub use onlinerpg_shared::schedule::ScheduleEntry;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ScheduleFile {
@@ -101,8 +87,8 @@ mod tests {
                 rotation: 90.0,
                 floor_level: 1,
                 label: Some("counter".into()),
-                action: None,
                 waypoints: vec![[4.0, 5.0, 6.0]],
+                ..Default::default()
             }],
         };
 

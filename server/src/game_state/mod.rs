@@ -6,6 +6,7 @@ use bytes::Bytes;
 use onlinerpg_shared::housing::{HouseData, RoomData, WallDirection};
 use onlinerpg_shared::inventory::PlayerInventory;
 use onlinerpg_shared::messages::BuybackEntry;
+use onlinerpg_shared::schedule::{parse_conditions, resolve_active_schedule, ScheduleEntry};
 
 /// A buyback entry plus the wall-clock deadline after which it is dropped.
 /// The expiry is server-side only — `BuybackEntry` is the wire type.
@@ -184,6 +185,8 @@ pub struct GameState {
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
+    /// NPC name → schedule.json copy; sleep resolves against this + game clock.
+    npc_schedules: Arc<std::sync::RwLock<HashMap<String, Vec<ScheduleEntry>>>>,
     monster_defs: MonsterDefs,
     item_defs: ItemDefs,
     /// Global rare bonus-drop table shared by every loot source.
@@ -337,6 +340,74 @@ impl GameState {
         self.cancel_grill_if_active(player_id).await;
     }
 
+    /// Replace `npc_name`'s schedule, parsing each entry's `at` condition.
+    /// Entries with an invalid condition never activate.
+    pub fn set_npc_schedule(&self, npc_name: &str, mut entries: Vec<ScheduleEntry>) {
+        for e in parse_conditions(&mut entries) {
+            warn!("Schedule entry for {npc_name}: {e}");
+        }
+        self.npc_schedules
+            .write()
+            .expect("npc schedules lock poisoned")
+            .insert(npc_name.to_string(), entries);
+    }
+
+    /// Store a schedule under the character name its directory id maps to.
+    /// Ids outside the registry are ignored: such NPCs have no server-side
+    /// rules keyed on schedules.
+    pub fn set_npc_schedule_for_id(&self, npc_id: &str, entries: Vec<ScheduleEntry>) {
+        match crate::npc_defs::npc_defs().npc_name_by_id(npc_id) {
+            Some(npc_name) => self.set_npc_schedule(npc_name, entries),
+            None => warn!("Schedule for unknown NPC id {npc_id} not tracked"),
+        }
+    }
+
+    pub async fn load_npc_schedules(&self, npc_io: &crate::npc_schedule::NpcIO) {
+        let names = match npc_io.list_npcs().await {
+            Ok(names) => names,
+            Err(e) => return warn!("Failed to list NPC schedules: {e}"),
+        };
+        for name in names {
+            match npc_io.read_schedule(&name).await {
+                Ok(file) => self.set_npc_schedule_for_id(&name, file.schedule),
+                Err(e) => warn!("Failed to read schedule for {name}: {e}"),
+            }
+        }
+    }
+
+    /// Write `name`'s schedule file and refresh the in-memory copy, so sleep
+    /// decisions never go stale against what's on disk.
+    pub async fn update_npc_schedule(
+        &self,
+        npc_io: &crate::npc_schedule::NpcIO,
+        name: &str,
+        file: crate::npc_schedule::ScheduleFile,
+    ) -> std::io::Result<()> {
+        npc_io.write_schedule(name, &file).await?;
+        self.set_npc_schedule_for_id(name, file.schedule);
+        Ok(())
+    }
+
+    /// Whether the NPC's active schedule entry keeps it in bed right now,
+    /// resolved from the server's clock and schedule copy.
+    pub fn is_npc_asleep(&self, npc_name: &str) -> bool {
+        let datetime = self.current_game_datetime();
+        let schedules = self
+            .npc_schedules
+            .read()
+            .expect("npc schedules lock poisoned");
+        let Some(schedule) = schedules.get(npc_name) else {
+            return false;
+        };
+        let (active, _) = resolve_active_schedule(
+            schedule,
+            Some(Self::is_night(&datetime)),
+            Some(u32::from(datetime.hour)),
+            Some(u32::from(datetime.minute)),
+        );
+        active.is_some_and(|i| schedule[i].is_sleeping())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         monster_defs: MonsterDefs,
@@ -367,6 +438,7 @@ impl GameState {
                 start_real: Instant::now(),
                 start_game_seconds: Self::datetime_to_total_game_seconds(&initial_datetime),
             })),
+            npc_schedules: Arc::new(std::sync::RwLock::new(HashMap::new())),
             monster_defs,
             item_defs,
             world_drop_defs,

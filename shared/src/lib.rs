@@ -15,6 +15,7 @@ pub mod inventory;
 pub mod messages;
 pub mod monster_ai;
 pub mod pathfinding;
+pub mod schedule;
 pub mod skills;
 pub mod tree_format;
 pub mod world;

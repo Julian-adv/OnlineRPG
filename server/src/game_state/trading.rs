@@ -16,11 +16,6 @@ use super::StoredBuyback;
 /// Maximum distance between player and trader for any shop interaction.
 const MAX_TRADE_DISTANCE: f32 = 6.0;
 
-/// Interaction object an NPC occupies while asleep. Schedules send NPCs to bed
-/// at night (`agent-client/data/npcs/*/schedule.json`), and the resulting
-/// `InteractObject` is what the server sees of it.
-const BED_OBJECT_TYPE: &str = "bed";
-
 /// Most recent sold units kept per (player, merchant) for buyback; older
 /// entries are dropped oldest-first.
 const BUYBACK_CAP: usize = 10;
@@ -188,12 +183,6 @@ impl super::GameState {
         }
         let def = trader_def_by_name(&npc.name).ok_or("This NPC does not trade")?;
 
-        // Every trade path validates here, so this closes the shop window and
-        // any transaction already inside one.
-        if npc.object_type.as_deref() == Some(BED_OBJECT_TYPE) {
-            return Err("The trader is asleep");
-        }
-
         let dist_sq = reachable_dist_sq(
             player.position,
             player.floor_level,
@@ -203,6 +192,11 @@ impl super::GameState {
         .ok_or("The trader is on another floor")?;
         if dist_sq > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE {
             return Err("Too far away to trade");
+        }
+
+        // Checked after range so sleep state can't be probed from afar.
+        if self.is_npc_asleep(&npc.name) {
+            return Err("The trader is asleep");
         }
 
         Ok(def)
@@ -277,14 +271,22 @@ impl super::GameState {
                         Some(d) if d > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE => {
                             Err("the player is too far away to trade — ask them to come closer")
                         }
-                        Some(_) => Ok(()),
+                        Some(_) => Ok(npc.name.clone()),
                     }
                 }
                 (None, _) => return,
             }
         };
-        if let Err(reason) = valid {
-            return self.send_trade_error(npc_player_id, reason).await;
+        let npc_name = match valid {
+            Ok(name) => name,
+            Err(reason) => return self.send_trade_error(npc_player_id, reason).await,
+        };
+        // open_shop's re-validation reports to the *target*; check sleep here
+        // so the refusal reaches the NPC that pushed the window.
+        if self.is_npc_asleep(&npc_name) {
+            return self
+                .send_trade_error(npc_player_id, "you cannot trade while asleep")
+                .await;
         }
         // open_shop re-validates with the roles in their normal order and
         // sends ShopState + GoldUpdate to the target player. Don't register
