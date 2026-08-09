@@ -6,6 +6,7 @@ import { shopSession } from './tradeStore'
 export type OverlayId =
   | 'worldMap'
   | 'character'
+  | 'friends'
   | 'inventory'
   | 'trade'
   | 'settings'
@@ -21,6 +22,9 @@ export type OverlayId =
 const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   character: { layer: 0, close: () => characterPanelVisible.set(false) },
   inventory: { layer: 0, close: () => inventoryVisible.set(false) },
+  // Registers its closer through mountOverlay, like the dialogs: the store
+  // lives with the friend list, not in debugStore with the other panels.
+  friends: { layer: 0 },
   trade: { layer: 1, close: () => shopSession.set(null) },
   loading: { layer: 2 },
   respawn: { layer: 3 },

@@ -60,6 +60,10 @@ const COMMANDS: Record<string, Command> = {
   '/reply': { desc: 'Reply to the last whisper: /reply <message>' },
   '/block': { desc: 'Block whispers from a player: /block <player>' },
   '/unblock': { desc: 'Unblock a player: /unblock <player>' },
+  '/friend': {
+    desc: 'Friends: /friend add <player>, /friend remove <player>, or /friend',
+  },
+  '/f': { desc: 'Short form of /friend: /f add <player>' },
   '/party': { desc: 'Invite a player to your party: /party <player>' },
   '/p': {
     desc: 'Talk to your party and stay in party chat: /p [message]',

@@ -10,7 +10,7 @@ pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
 
 /// Mirrors auth's character-name cap; anything longer cannot be a real name,
 /// and rejecting it early keeps oversized input out of the echoed failure.
-const MAX_TARGET_NAME_CHARS: usize = 32;
+pub(super) const MAX_TARGET_NAME_CHARS: usize = 32;
 
 /// Outstanding invites one player may have pending at once (spam brake).
 const PARTY_PENDING_INVITE_CAP: usize = 5;

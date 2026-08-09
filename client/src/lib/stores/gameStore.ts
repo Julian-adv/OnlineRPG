@@ -5,6 +5,7 @@ import type { CharacterClass, Gender } from '../network/networkTypes'
 import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
+import { resetFriendStores } from './friendStore'
 import { resetFishingStore } from './fishingStore'
 import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
@@ -121,6 +122,7 @@ export const resetGameStore = () => {
   resetSkillsStore()
   resetFishingStore()
   resetPartyStores()
+  resetFriendStores()
   resetDiscoveredDungeons()
   resetHungerStore()
   groundItemManager.reset()
