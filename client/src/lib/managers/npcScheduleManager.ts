@@ -6,6 +6,8 @@ export interface NpcScheduleEntry {
   rotation: number
   floor_level: number
   label?: string
+  action?: string
+  object_id?: number
   waypoints: [number, number, number][]
 }
 

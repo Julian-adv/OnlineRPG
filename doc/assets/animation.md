@@ -34,6 +34,16 @@
   - 체중 이동이 있어 Hips location bake가 필요한 첫 클립이다.
     `graft-glb-clip.py`로 social 팩에 이어붙였다.
 
+- Clapping https://www.mixamo.com/#/?query=clapping&type=Motion%2CMotionPack (social pack, `clap`, `/emote clap`)
+  - Excited와 같은 방식: `assets/Clapping.fbx`(버커니어 스킨, 33본)에서 리타겟 →
+    `graft-glb-clip.py`로 이식.
+
+- Excited https://www.mixamo.com/#/?query=excited&type=Motion%2CMotionPack (social pack, `excited`, `/emote excited`)
+  - 예외적으로 Without Skin이 아니라 night_merchant(버커니어) 스킨째 받은 FBX(`assets/Excited.fbx`,
+    손가락 본 없는 33본)에서 리타겟했다 — social 팩 스킨 조인트도 33개라 손실 없음.
+    social.glb를 타겟 armature로 임포트해 retarget bake 후 `graft-glb-clip.py`로 이식.
+    작업 blend: `~/assets_original/excited_social_work.blend` (all_animation.blend에는 아직 없음).
+
 ## Mixamo Animation Export Workflow
 
 새 Mixamo 애니메이션을 offhand/locomotion 등의 pack에 추가할 때:

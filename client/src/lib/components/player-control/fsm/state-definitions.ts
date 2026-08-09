@@ -135,11 +135,9 @@ export function createAnimationEventStateOverrides({
         }
       },
     },
-    object_interacting: {
-      handleEvent: (event) => {
-        if (event.type === 'anim_interaction_finished') return true
-      },
-    },
+    // object_interacting has no override: anim_interaction_finished falls
+    // through to the shared dispatcher, whose handler exits one-shot emotes
+    // and ignores held poses (bench, forge).
   }
 }
 

@@ -108,6 +108,36 @@ pub(crate) fn parse_block_command(message: &str) -> Option<BlockCommand<'_>> {
     })
 }
 
+/// `/friend add <name>` asks, `/friend remove <name>` drops, bare `/friend`
+/// lists. `/f` is the short form, like `/w` for `/whisper`.
+#[derive(Debug, PartialEq)]
+pub(crate) enum FriendCommand<'a> {
+    List,
+    Add(&'a str),
+    Remove(&'a str),
+    /// A subcommand that is none of the above, so it draws usage instead of
+    /// being read as a name.
+    Usage,
+}
+
+pub(crate) fn parse_friend_command(message: &str) -> Option<FriendCommand<'_>> {
+    let rest = ["/friend", "/f"]
+        .iter()
+        .find_map(|prefix| strip_command(message, prefix))?;
+    if rest.is_empty() {
+        return Some(FriendCommand::List);
+    }
+    let (subcommand, name) = match rest.split_once(' ') {
+        Some((subcommand, name)) => (subcommand, name.trim()),
+        None => (rest, ""),
+    };
+    Some(match subcommand {
+        "add" => FriendCommand::Add(name),
+        "remove" | "delete" => FriendCommand::Remove(name),
+        _ => FriendCommand::Usage,
+    })
+}
+
 /// `/notice <message>` sets the server banner, bare `/notice` clears it.
 /// `requires_admin` gates the command through this same parser, so the syntax
 /// is defined once.
@@ -211,7 +241,7 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
 /// ASCII case (the characters table enforces it), so the first match is the
 /// match. Used by `/unblock` against the stored block list; online-player
 /// lookups go through the `player_ids_by_name` index instead, and `/block`
-/// applies the same rule in SQL (`AuthService::resolve_character_name`).
+/// applies the same rule in SQL (`AuthService::resolve_character_brief`).
 fn match_name<T, I>(mut candidates: I, name_of: impl Fn(&T) -> &str, query: &str) -> Option<T>
 where
     I: Iterator<Item = T>,
@@ -274,6 +304,11 @@ impl super::GameState {
             return;
         }
 
+        if let Some(name) = strip_command(&message, "/emote") {
+            self.play_emote(player_id, name).await;
+            return;
+        }
+
         if message.trim() == "/who" {
             let counts = {
                 let players = self.players.read().await;
@@ -299,6 +334,27 @@ impl super::GameState {
 
         if let Some(command) = parse_block_command(&message) {
             self.handle_block_command(player_id, command, auth).await;
+            return;
+        }
+
+        if let Some(command) = parse_friend_command(&message) {
+            match command {
+                FriendCommand::List => {
+                    let list = self.describe_friends(player_id).await;
+                    self.send_system_message(player_id, list).await;
+                }
+                FriendCommand::Add(name) => self.request_friend(player_id, name, auth).await,
+                FriendCommand::Remove(name) => {
+                    self.remove_friend_by_name(player_id, name, auth).await
+                }
+                FriendCommand::Usage => {
+                    self.send_system_message(
+                        player_id,
+                        "Friend: /friend add <name>, /friend remove <name>, or /friend to list.",
+                    )
+                    .await
+                }
+            }
             return;
         }
 
@@ -411,6 +467,20 @@ impl super::GameState {
             },
         )
         .await;
+    }
+
+    /// `/emote <name>` — like `/play_music` with nothing attached: no object
+    /// to claim, no item requirement. A typo or a bare `/emote` gets the list
+    /// back; the client-side flow is documented on `ONE_SHOT_EMOTES`.
+    async fn play_emote(&self, player_id: &PlayerId, name: &str) {
+        let emotes = onlinerpg_shared::messages::ONE_SHOT_EMOTES;
+        if !emotes.contains(&name) {
+            self.send_system_message(player_id, format!("Emotes: {}", emotes.join(", ")))
+                .await;
+            return;
+        }
+        self.set_player_interaction(player_id, Some(name.to_string()), None)
+            .await;
     }
 
     /// An instrument anywhere in the inventory — bag or hands — is what
@@ -616,6 +686,15 @@ impl super::GameState {
         self.blocked_names.write().await.remove(player_id);
     }
 
+    /// Whether `player_id` has `name` blocked. The name must already be the
+    /// canonical spelling — the stored list holds nothing else.
+    pub(crate) async fn has_blocked(&self, player_id: &PlayerId, name: &str) -> bool {
+        let blocked = self.blocked_names.read().await;
+        blocked
+            .get(player_id)
+            .is_some_and(|names| names.contains(name))
+    }
+
     async fn handle_block_command(
         &self,
         player_id: &PlayerId,
@@ -648,11 +727,12 @@ impl super::GameState {
     ) -> String {
         // Resolve against the DB, not online players: blocking someone who
         // just logged off must work, and every online character is in the DB.
-        let canonical = {
+        // The id comes along because a block also breaks any friendship.
+        let (blocked_character_id, canonical) = {
             let auth = auth.clone();
             let query = name.to_string();
-            match auth_db(move || auth.resolve_character_name(&query)).await {
-                Ok(Some(canonical)) => canonical,
+            match auth_db(move || auth.resolve_character_brief(&query)).await {
+                Ok(Some((id, canonical, _))) => (id, canonical),
                 Ok(None) => return format!("Block: no character named {name}."),
                 Err(err) => {
                     error!("Block lookup failed: {err}");
@@ -695,7 +775,21 @@ impl super::GameState {
             .entry(*player_id)
             .or_default()
             .insert(canonical.clone());
-        format!("Block: {canonical} is blocked; their chat and whispers are hidden. /unblock {canonical} undoes this.")
+
+        // Blocking and friendship are mutually exclusive: a friend you cannot
+        // hear is a state no other path knows how to explain.
+        let unfriended = self
+            .is_friend_character(player_id, blocked_character_id)
+            .await
+            && self
+                .drop_friendship(player_id, blocked_character_id, auth)
+                .await;
+        let note = if unfriended {
+            " They are no longer your friend."
+        } else {
+            ""
+        };
+        format!("Block: {canonical} is blocked; their chat and whispers are hidden.{note} /unblock {canonical} undoes this.")
     }
 
     async fn unblock_character(

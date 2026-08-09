@@ -106,20 +106,15 @@ describe('createAnimationEventStateOverrides', () => {
     expect(onInteractionFinished).toHaveBeenCalledOnce()
   })
 
-  it('keeps object interaction animation-finished events as a no-op consume', () => {
+  it('leaves object interaction anim events to the fallback dispatcher', () => {
     const overrides = createAnimationEventStateOverrides({
       onInteractionFinished: vi.fn(),
       onPickupGrab: vi.fn(),
     })
 
-    expect(
-      overrides.object_interacting?.handleEvent?.({
-        type: 'anim_interaction_finished',
-      })
-    ).toBe(true)
-    expect(
-      overrides.object_interacting?.handleEvent?.({ type: 'anim_pickup_grab' })
-    ).toBeUndefined()
+    // No override: the machine falls through to dispatchPlayerControlEvent,
+    // which routes anim_interaction_finished to the handler.
+    expect(overrides.object_interacting).toBeUndefined()
   })
 })
 

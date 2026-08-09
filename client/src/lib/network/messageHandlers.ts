@@ -65,6 +65,15 @@ import {
   type PartyMemberPositionEntry,
   type PartyMemberVitalsEntry,
 } from '../stores/partyStore'
+import {
+  applyFriendList,
+  applyFriendsOnline,
+  friendList,
+  friendOnlineNoticeEnabled,
+  pendingFriendRequests,
+  resetFriendStores,
+  MAX_PENDING_FRIEND_REQUESTS,
+} from '../stores/friendStore'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
@@ -78,7 +87,11 @@ import {
   applyInteractionChange,
 } from '../managers/musicPerformance'
 import { refreshBardZone } from '../managers/bardZone'
-import { emoteRequest, MUSIC_EMOTE_ANIM } from '../stores/emoteStore'
+import {
+  emoteRequest,
+  MUSIC_EMOTE_ANIM,
+  ONE_SHOT_EMOTE_ANIMS,
+} from '../stores/emoteStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
@@ -561,6 +574,54 @@ export function handleServerMessage(
       applyPartyVitals(data.members as PartyMemberVitalsEntry[])
       break
 
+    case 'FriendList':
+      applyFriendList(
+        (
+          data.friends as {
+            character_id: number
+            name: string
+            level: number
+          }[]
+        ).map((f) => ({
+          characterId: f.character_id,
+          name: f.name,
+          level: f.level,
+        }))
+      )
+      break
+
+    case 'FriendsOnline': {
+      const announced = applyFriendsOnline(
+        data.friends as { character_id: number; level: number }[],
+        get(friendList)
+      )
+      if (get(friendOnlineNoticeEnabled)) {
+        for (const name of announced) {
+          addChatMessage({
+            text: `Friend: ${name} is online.`,
+            sender: 'system',
+          })
+        }
+      }
+      break
+    }
+
+    case 'FriendRequestReceived':
+      pendingFriendRequests.update((queue) =>
+        queue.length >= MAX_PENDING_FRIEND_REQUESTS ||
+        queue.some((request) => request.requesterId === data.requester_id)
+          ? queue
+          : [
+              ...queue,
+              {
+                requesterId: data.requester_id,
+                requesterName: data.requester_name,
+                offeredAt: Date.now(),
+              },
+            ]
+      )
+      break
+
     case 'PartyPositions':
       applyPartyPositions(
         data.members as PartyMemberPositionEntry[],
@@ -574,6 +635,9 @@ export function handleServerMessage(
       // with the old one (in-memory, disconnect = leave), and the server
       // cannot re-send what no longer exists.
       resetPartyStores()
+      // Friendships persist, but this session's roster arrives as its own
+      // FriendList; anything held from the old one is stale.
+      resetFriendStores()
       gameStore.update((state) => {
         state.otherPlayers.clear()
         remotePlayerManager.reset()
@@ -950,6 +1014,11 @@ export function handleServerMessage(
       applyInteractionChange(data.player_id, data.object_type ?? null)
       const state = get(gameStore)
       if (state.currentPlayer?.id === data.player_id) {
+        // Our own /emote went to the server unresolved; this broadcast is
+        // its reply, the way PlayerMusicStarted starts /play_music.
+        if (data.object_type && ONE_SHOT_EMOTE_ANIMS.has(data.object_type)) {
+          emoteRequest.set(data.object_type)
+        }
         break
       }
       const ft: string | null = data.object_type ?? null

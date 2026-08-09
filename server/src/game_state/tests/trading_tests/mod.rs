@@ -24,6 +24,24 @@ async fn set_floor(game_state: &GameState, name: &str, floor: i8) {
         .floor_level = floor;
 }
 
+/// One always-active schedule entry (`at: "0:00"`) with the given action.
+fn schedule_entry(action: &str) -> onlinerpg_shared::schedule::ScheduleEntry {
+    onlinerpg_shared::schedule::ScheduleEntry {
+        at: "0:00".to_string(),
+        action: Some(action.to_string()),
+        ..Default::default()
+    }
+}
+
+/// Schedule the NPC into bed right now; the server resolves sleep from its
+/// own schedule copy and clock.
+fn put_in_bed(game_state: &GameState, npc_name: &str) {
+    game_state.set_npc_schedule(
+        npc_name,
+        vec![schedule_entry(onlinerpg_shared::schedule::BED_OBJECT_TYPE)],
+    );
+}
+
 /// Spawn a merchant NPC and a buyer with the given CHA/gold next to each
 /// other, returning the buyer's direct-message receiver and the NPC's.
 async fn setup_haggle(game_state: &GameState, cha: u8, gold: i64) -> (DirectRx, DirectRx) {

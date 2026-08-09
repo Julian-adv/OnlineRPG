@@ -151,6 +151,7 @@ export type ClientMessage =
   | { FishingCast: { position: Position } }
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
+  | { PartyInvite: { target_name: string } }
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
@@ -158,6 +159,9 @@ export type ClientMessage =
   | { PartyPromote: { target_id: number } }
   | { PartyChat: { message: string } }
   | 'RequestPartyPositions'
+  | { FriendRespond: { requester_id: number; accept: boolean } }
+  | { FriendRemove: { name: string } }
+  | 'RequestFriendsOnline'
   | { OpenDungeonChest: { entrance_id: string } }
   | {
       BreakDungeonProp: { entrance_id: string; depth: number; prop_id: number }

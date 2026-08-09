@@ -26,91 +26,7 @@ use crate::state::{SharedState, WorldCache};
 use crate::ws;
 use crate::LlmType;
 
-/// Parsed schedule condition (validated at load time).
-#[derive(Debug, Clone, PartialEq)]
-pub enum ScheduleCondition {
-    Day,
-    Night,
-    Time {
-        hour: u32,
-        minute: u32,
-    },
-    /// Recurring: fires every hour at the given minute (e.g. `"*:00"`).
-    Recurring {
-        minute: u32,
-    },
-}
-
-/// A single schedule entry: go to a position at a specific time condition.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ScheduleEntry {
-    /// When to activate: "day", "night", or "H:MM" / "HH:MM" (game time).
-    pub at: String,
-    /// Target position [x, y, z] (final/rest position).
-    pub pos: [f32; 3],
-    /// Facing rotation in degrees.
-    #[serde(default)]
-    pub rotation: f32,
-    /// Floor level (0 = ground, 1 = 2nd floor, etc.).
-    #[serde(default)]
-    pub floor_level: u8,
-    /// Human-readable label for LLM prompt context.
-    pub label: Option<String>,
-    /// Object type to interact with after arriving (e.g. "bed").
-    pub action: Option<String>,
-    /// Object placement ID to interact with.
-    pub object_id: Option<u32>,
-    /// Optional patrol route: list of [x, y, z] waypoints to visit before going to `pos`.
-    #[serde(default)]
-    pub waypoints: Vec<[f32; 3]>,
-    /// Parsed condition (set after deserialization).
-    #[serde(skip)]
-    pub condition: Option<ScheduleCondition>,
-}
-
-impl ScheduleEntry {
-    pub fn is_sleeping(&self) -> bool {
-        self.action.as_deref() == Some("bed")
-    }
-
-    pub fn display_label(&self) -> &str {
-        self.label.as_deref().unwrap_or("schedule position")
-    }
-
-    /// Parse the `at` field into a `ScheduleCondition`. Returns error for invalid formats.
-    /// Supports: `"day"`, `"night"`, `"H:MM"` / `"HH:MM"`, or `"*:MM"` (recurring every hour).
-    pub fn parse_condition(&mut self) -> Result<(), String> {
-        self.condition = Some(match self.at.as_str() {
-            "day" => ScheduleCondition::Day,
-            "night" => ScheduleCondition::Night,
-            time_str => {
-                let (h, m) = time_str
-                    .split_once(':')
-                    .ok_or_else(|| format!("invalid schedule condition: {time_str}"))?;
-                let minute = m
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| format!("invalid minute in: {time_str}"))?;
-                if minute >= 60 {
-                    return Err(format!("minute out of range in: {time_str}"));
-                }
-                if h.trim() == "*" {
-                    ScheduleCondition::Recurring { minute }
-                } else {
-                    let hour = h
-                        .trim()
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid hour in: {time_str}"))?;
-                    if hour >= 24 {
-                        return Err(format!("hour out of range in: {time_str}"));
-                    }
-                    ScheduleCondition::Time { hour, minute }
-                }
-            }
-        });
-        Ok(())
-    }
-}
+use onlinerpg_shared::schedule::{parse_conditions, ScheduleEntry};
 
 /// Wrapper for deserializing a schedule file.
 #[derive(Debug, Deserialize)]
@@ -944,15 +860,11 @@ fn spawn_llm_task(
         match std::fs::read_to_string(path) {
             Ok(content) => match serde_json::from_str::<ScheduleFile>(&content) {
                 Ok(mut f) => {
-                    // Validate all conditions at load time
-                    let mut valid = true;
-                    for entry in &mut f.schedule {
-                        if let Err(e) = entry.parse_condition() {
-                            error!("[{}] Schedule entry error: {e}", label);
-                            valid = false;
-                        }
+                    let errors = parse_conditions(&mut f.schedule);
+                    for e in &errors {
+                        error!("[{}] Schedule entry error: {e}", label);
                     }
-                    if valid {
+                    if errors.is_empty() {
                         info!(
                             "[{}] Loaded {} schedule entries from {path}",
                             label,

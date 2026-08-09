@@ -15,10 +15,10 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::geom::PlanarDelta;
-use crate::orchestrator::ScheduleEntry;
 use crate::state::SharedState;
+use onlinerpg_shared::schedule::ScheduleEntry;
 
-use super::prompt::resolve_active_schedule;
+use onlinerpg_shared::schedule::resolve_active_schedule;
 
 pub(super) const MOVE_SPEED: f32 = onlinerpg_shared::PLAYER_MOVE_SPEED;
 

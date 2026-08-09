@@ -194,6 +194,11 @@ impl super::GameState {
             return Err("Too far away to trade");
         }
 
+        // Checked after range so sleep state can't be probed from afar.
+        if self.is_npc_asleep(&npc.name) {
+            return Err("The trader is asleep");
+        }
+
         Ok(def)
     }
 
@@ -266,14 +271,22 @@ impl super::GameState {
                         Some(d) if d > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE => {
                             Err("the player is too far away to trade — ask them to come closer")
                         }
-                        Some(_) => Ok(()),
+                        Some(_) => Ok(npc.name.clone()),
                     }
                 }
                 (None, _) => return,
             }
         };
-        if let Err(reason) = valid {
-            return self.send_trade_error(npc_player_id, reason).await;
+        let npc_name = match valid {
+            Ok(name) => name,
+            Err(reason) => return self.send_trade_error(npc_player_id, reason).await,
+        };
+        // open_shop's re-validation reports to the *target*; check sleep here
+        // so the refusal reaches the NPC that pushed the window.
+        if self.is_npc_asleep(&npc_name) {
+            return self
+                .send_trade_error(npc_player_id, "you cannot trade while asleep")
+                .await;
         }
         // open_shop re-validates with the roles in their normal order and
         // sends ShopState + GoldUpdate to the target player. Don't register

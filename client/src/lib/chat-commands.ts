@@ -60,6 +60,10 @@ const COMMANDS: Record<string, Command> = {
   '/reply': { desc: 'Reply to the last whisper: /reply <message>' },
   '/block': { desc: 'Block whispers from a player: /block <player>' },
   '/unblock': { desc: 'Unblock a player: /unblock <player>' },
+  '/friend': {
+    desc: 'Friends: /friend add <player>, /friend remove <player>, or /friend',
+  },
+  '/f': { desc: 'Short form of /friend: /f add <player>' },
   '/party': { desc: 'Invite a player to your party: /party <player>' },
   '/p': {
     desc: 'Talk to your party and stay in party chat: /p [message]',
@@ -89,6 +93,9 @@ const COMMANDS: Record<string, Command> = {
   // what starts our emote and music together.
   '/play_music': {
     desc: 'Play a tune where you stand (needs an instrument): /play_music [song]',
+  },
+  '/emote': {
+    desc: 'Play an emote where you stand: /emote excited',
   },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/notice': {

@@ -5,8 +5,8 @@
 
 use onlinerpg_shared::{PlayerId, ServerMessage};
 
-use crate::orchestrator::ScheduleEntry;
 use crate::state::{SharedState, NPC_SIGHT_RADIUS};
+use onlinerpg_shared::schedule::ScheduleEntry;
 
 fn within_event_range(state: &SharedState, x: f32, z: f32) -> bool {
     let Some(self_p) = state.self_player.as_ref() else {
@@ -552,59 +552,6 @@ fn caught_line(item_def_id: &str, size_cm: u16, trophy: bool) -> String {
 /// Falls back to the raw ID if the player is not found.
 pub(super) fn player_name(state: &SharedState, player_id: &PlayerId) -> String {
     state.player_display_name(player_id)
-}
-
-/// Resolve which schedule entry is currently active based on game time.
-/// Returns `(entry_index, game_hour)` — the hour component ensures recurring
-/// entries re-trigger each hour even though the index stays the same.
-/// Conditions are pre-validated at load time via `ScheduleEntry::parse_condition`.
-pub(super) fn resolve_active_schedule(
-    schedule: &[ScheduleEntry],
-    is_night: Option<bool>,
-    game_hour: Option<u32>,
-    game_minute: Option<u32>,
-) -> (Option<usize>, Option<u32>) {
-    use crate::orchestrator::ScheduleCondition;
-
-    let mut best: Option<usize> = None;
-
-    for (i, entry) in schedule.iter().enumerate() {
-        let condition = match entry.condition.as_ref() {
-            Some(c) => c,
-            None => continue,
-        };
-        let matched = match condition {
-            ScheduleCondition::Day => is_night == Some(false),
-            ScheduleCondition::Night => is_night == Some(true),
-            ScheduleCondition::Time {
-                hour: eh,
-                minute: em,
-            } => match (game_hour, game_minute) {
-                (Some(gh), Some(gm)) => gh * 60 + gm >= eh * 60 + em,
-                _ => false,
-            },
-            ScheduleCondition::Recurring { minute: em } => match (game_hour, game_minute) {
-                (Some(_), Some(gm)) => gm >= *em,
-                _ => false,
-            },
-        };
-
-        if matched {
-            best = Some(i);
-        }
-    }
-
-    let hour_for_recurring = best.and_then(|i| {
-        if matches!(
-            schedule[i].condition,
-            Some(ScheduleCondition::Recurring { .. })
-        ) {
-            game_hour
-        } else {
-            None
-        }
-    });
-    (best, hour_for_recurring)
 }
 
 /// Format current schedule context for inclusion in LLM prompts.

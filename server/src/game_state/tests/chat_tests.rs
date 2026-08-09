@@ -1243,6 +1243,73 @@ async fn bare_play_music_picks_a_track_for_the_performer() {
     }
 }
 
+/// `/emote excited` needs no instrument and claims no object: the pose goes
+/// out to neighbours and to the performer, whose client starts the clip on it.
+#[tokio::test]
+async fn emote_shows_the_pose_to_neighbours_and_performer() {
+    let game_state = make_test_game_state("emote");
+    let auth = make_test_auth("emote");
+    let cheerer_id = pid("cheerer");
+    let listener_id = pid("listener");
+    game_state
+        .add_player(make_player("cheerer", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut cheerer_rx = game_state.register_direct_channel(&cheerer_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&cheerer_id, "/emote excited".to_string(), &auth)
+        .await;
+
+    for rx in [&mut cheerer_rx, &mut listener_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PlayerInteractionChanged {
+                player_id,
+                object_type,
+            }) => {
+                assert_eq!(player_id, cheerer_id);
+                assert_eq!(object_type.as_deref(), Some("excited"));
+            }
+            other => panic!("Expected the cheer pose, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+}
+
+/// A typo or a bare `/emote` sets no pose; the sender alone gets the list of
+/// emotes back.
+#[tokio::test]
+async fn an_unknown_emote_lists_the_available_ones() {
+    let game_state = make_test_game_state("emote_unknown");
+    let auth = make_test_auth("emote_unknown");
+    let cheerer_id = pid("cheerer");
+    let listener_id = pid("listener");
+    game_state
+        .add_player(make_player("cheerer", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut cheerer_rx = game_state.register_direct_channel(&cheerer_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&cheerer_id, "/emote moonwalk".to_string(), &auth)
+        .await;
+
+    match cheerer_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("excited"), "the list names each emote");
+        }
+        other => panic!("Expected the emote list, got {other:?}"),
+    }
+    assert!(cheerer_rx.try_recv().is_err());
+    assert!(listener_rx.try_recv().is_err());
+}
+
 /// An unknown title is a typo, not a performance: no pose, no tune, and the
 /// only word about it goes back to whoever typed it.
 #[tokio::test]

@@ -31,8 +31,8 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 use crate::llm_scheduler::{LlmPriority, LlmScheduler};
-use crate::orchestrator::ScheduleEntry;
 use crate::state::SharedState;
+use onlinerpg_shared::schedule::ScheduleEntry;
 
 pub(crate) use action::wants_reroll;
 use combat::{load_attack_cooldown, tick_combat};

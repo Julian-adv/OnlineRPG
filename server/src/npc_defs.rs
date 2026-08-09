@@ -57,6 +57,7 @@ impl NpcDefinition {
 /// the stable identity is the character name).
 pub struct NpcDefs {
     by_npc_name: HashMap<String, NpcDefinition>,
+    npc_name_by_id: HashMap<String, String>,
 }
 
 impl NpcDefs {
@@ -86,17 +87,29 @@ impl NpcDefs {
         }
 
         info!("Loaded {} NPC definition(s)", by_id.len());
+        let npc_name_by_id = by_id
+            .iter()
+            .map(|(id, def)| (id.clone(), def.npc_name.clone()))
+            .collect();
         let by_npc_name = by_id
             .into_values()
             .map(|def| (def.npc_name.clone(), def))
             .collect();
 
-        Self { by_npc_name }
+        Self {
+            by_npc_name,
+            npc_name_by_id,
+        }
     }
 
     /// The NPC's resident-trader definition, if it trades.
     pub fn get_trader_by_npc_name(&self, npc_name: &str) -> Option<&NpcDefinition> {
         self.by_npc_name.get(npc_name).filter(|def| def.trades())
+    }
+
+    /// Character name for a registry id (the schedule directory name).
+    pub fn npc_name_by_id(&self, id: &str) -> Option<&str> {
+        self.npc_name_by_id.get(id).map(String::as_str)
     }
 }
 
