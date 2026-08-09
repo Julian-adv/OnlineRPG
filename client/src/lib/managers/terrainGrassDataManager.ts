@@ -2,15 +2,25 @@ import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import {
   decodeGrassData,
   encodeGrassBuffer,
+  removeGrassInRect,
   type GrassPlacementData,
 } from '../utils/grass-data'
+import { worldRectToTileBounds } from '../components/game-scene/terrain-utils'
 import { tileKey } from './terrain-height-types'
 import type { TerrainHeightManager } from './terrainHeightManager'
+
+export interface GrassCarveRect {
+  minX: number
+  minZ: number
+  maxX: number
+  maxZ: number
+}
 
 export class TerrainGrassDataManager {
   private cache = new Map<string, GrassPlacementData>()
   private originalGrass = new Map<string, GrassPlacementData>()
   private inflight = new Map<string, Promise<GrassPlacementData | null>>()
+  private ensureInflight = new Map<string, Promise<boolean>>()
   /** Tiles known to have no server data (404). Prevents repeated fetches. */
   private missingTiles = new Set<string>()
   private terrainApiUrl: string
@@ -97,24 +107,100 @@ export class TerrainGrassDataManager {
 
   /** Ensure an original grass snapshot exists for the given tile.
    *  Tells the server to copy current grass as original if none exists yet,
-   *  and caches a local copy. */
-  ensureOriginalGrass(tileX: number, tileZ: number): void {
+   *  and caches a local copy. Must complete before saving carved grass —
+   *  if the carved PUT lands first, the server snapshots the carved tile as
+   *  "original" and the pristine state is lost. Resolves false if the
+   *  snapshot could not be guaranteed. */
+  ensureOriginalGrass(tileX: number, tileZ: number): Promise<boolean> {
     const key = tileKey(tileX, tileZ)
-    if (this.originalGrass.has(key)) return
+    if (this.originalGrass.has(key)) return Promise.resolve(true)
+    const pending = this.ensureInflight.get(key)
+    if (pending) return pending
     const current = this.cache.get(key)
-    if (!current) return
-    // Cache locally
-    this.originalGrass.set(key, {
+    if (!current) return Promise.resolve(false)
+    const snapshot: GrassPlacementData = {
       shortCount: current.shortCount,
       tallCount: current.tallCount,
       flowerCount: current.flowerCount,
       buffer: current.buffer.slice(0),
-    })
-    // Tell server to snapshot (fire-and-forget, no data transfer)
-    apiFetch(
-      `${this.terrainApiUrl}/api/terrain/grass-original/${tileX}/${tileZ}/ensure`,
-      { method: 'POST' }
-    ).catch(() => {})
+    }
+    const promise = (async () => {
+      const response = await apiFetch(
+        `${this.terrainApiUrl}/api/terrain/grass-original/${tileX}/${tileZ}/ensure`,
+        { method: 'POST' }
+      ).catch(() => null)
+      this.ensureInflight.delete(key)
+      if (!response?.ok) {
+        console.error(
+          `Grass original ensure failed (${tileX}, ${tileZ}): ${response?.status ?? 'network error'}`
+        )
+        return false
+      }
+      this.originalGrass.set(key, snapshot)
+      return true
+    })()
+    this.ensureInflight.set(key, promise)
+    return promise
+  }
+
+  /** Remove grass inside the given world rects across every affected tile.
+   *  Owns the carve invariant: the original snapshot is ensured before a
+   *  carved tile is saved, and the save is skipped if that guarantee fails. */
+  async removeGrassInRects(rects: GrassCarveRect[]): Promise<void> {
+    if (rects.length === 0) return
+
+    const tileBuckets = new Map<
+      string,
+      { tx: number; tz: number; rects: GrassCarveRect[] }
+    >()
+    for (const rect of rects) {
+      const { tileMinX, tileMaxX, tileMinZ, tileMaxZ } = worldRectToTileBounds(
+        rect.minX,
+        rect.minZ,
+        rect.maxX,
+        rect.maxZ
+      )
+      for (let tz = tileMinZ; tz <= tileMaxZ; tz++) {
+        for (let tx = tileMinX; tx <= tileMaxX; tx++) {
+          const key = tileKey(tx, tz)
+          let bucket = tileBuckets.get(key)
+          if (!bucket) {
+            bucket = { tx, tz, rects: [] }
+            tileBuckets.set(key, bucket)
+          }
+          bucket.rects.push(rect)
+        }
+      }
+    }
+
+    await Promise.all(
+      [...tileBuckets.values()].map(async ({ tx, tz, rects }) => {
+        let data =
+          this.getCachedGrassData(tx, tz) ?? (await this.loadGrassData(tx, tz))
+        if (!data) return
+        let changed = false
+        for (const rect of rects) {
+          const filtered = removeGrassInRect(
+            data,
+            rect.minX,
+            rect.minZ,
+            rect.maxX,
+            rect.maxZ
+          )
+          if (filtered) {
+            data = filtered
+            changed = true
+          }
+        }
+        if (!changed) return
+        // Snapshot from the still-uncarved cache before persisting the carve.
+        if (!(await this.ensureOriginalGrass(tx, tz))) {
+          console.error(`Skipping grass carve save (${tx}, ${tz}): no original`)
+          return
+        }
+        await this.saveGrassData(tx, tz, data)
+      })
+    )
   }
 
   /** Load original (pre-housing) grass data from server. Returns null if none exists. */

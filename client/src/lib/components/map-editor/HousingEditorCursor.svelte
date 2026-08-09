@@ -45,11 +45,7 @@
   import { ORTHOGRAPHIC_FRUSTUM_HEIGHT } from '../game-scene/camera-utils'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { TerrainGrassDataManager } from '../../managers/terrainGrassDataManager'
-  import { removeGrassInRect } from '../../utils/grass-data'
-  import {
-    TERRAIN_TILE_SIZE,
-    worldRectToTileBounds,
-  } from '../game-scene/terrain-utils'
+  import { worldRectToTileBounds } from '../game-scene/terrain-utils'
 
   interface Props {
     camera: THREE.OrthographicCamera | undefined
@@ -608,18 +604,8 @@
         const grassMaxX = roomMaxX + GRASS_MARGIN
         const grassMaxZ = roomMaxZ + GRASS_MARGIN
 
-        const tileMinX = Math.floor(
-          (grassMinX + TERRAIN_TILE_SIZE / 2) / TERRAIN_TILE_SIZE
-        )
-        const tileMaxX = Math.floor(
-          (grassMaxX + TERRAIN_TILE_SIZE / 2) / TERRAIN_TILE_SIZE
-        )
-        const tileMinZ = Math.floor(
-          (grassMinZ + TERRAIN_TILE_SIZE / 2) / TERRAIN_TILE_SIZE
-        )
-        const tileMaxZ = Math.floor(
-          (grassMaxZ + TERRAIN_TILE_SIZE / 2) / TERRAIN_TILE_SIZE
-        )
+        const { tileMinX, tileMaxX, tileMinZ, tileMaxZ } =
+          worldRectToTileBounds(grassMinX, grassMinZ, grassMaxX, grassMaxZ)
 
         // Restore original grass for affected tiles
         const restorePromises: Promise<boolean>[] = []
@@ -630,39 +616,30 @@
         }
         await Promise.all(restorePromises)
 
-        // Re-remove grass under remaining 1F rooms
+        // Re-remove grass under all remaining 1F rooms on the restored tiles —
+        // restoreFromOriginal brings back whole 64m tiles, so every house on
+        // them must be re-carved, not just rooms near the deleted one.
+        const recarveRects: Rect[] = []
         for (const h of housingManager.getAllHouses()) {
           for (const room of groundFloorRooms(h)) {
-            const {
-              minX: rMinX,
-              minZ: rMinZ,
-              maxX: rMaxX,
-              maxZ: rMaxZ,
-            } = roomGrassRect(h, room)
-            // Only process if overlapping the restored grass area
+            const rect = roomGrassRect(h, room)
+            const rb = worldRectToTileBounds(
+              rect.minX,
+              rect.minZ,
+              rect.maxX,
+              rect.maxZ
+            )
             if (
-              rMinX > grassMaxX ||
-              rMaxX < grassMinX ||
-              rMinZ > grassMaxZ ||
-              rMaxZ < grassMinZ
+              rb.tileMinX > tileMaxX ||
+              rb.tileMaxX < tileMinX ||
+              rb.tileMinZ > tileMaxZ ||
+              rb.tileMaxZ < tileMinZ
             )
               continue
-            for (let tz = tileMinZ; tz <= tileMaxZ; tz++) {
-              for (let tx = tileMinX; tx <= tileMaxX; tx++) {
-                const cached = grassDataManager.getCachedGrassData(tx, tz)
-                if (!cached) continue
-                const filtered = removeGrassInRect(
-                  cached,
-                  rMinX,
-                  rMinZ,
-                  rMaxX,
-                  rMaxZ
-                )
-                if (filtered) grassDataManager.saveGrassData(tx, tz, filtered)
-              }
-            }
+            recarveRects.push(rect)
           }
         }
+        await grassDataManager.removeGrassInRects(recarveRects)
       }
     }
   }
@@ -713,61 +690,6 @@
     }
   }
 
-  async function removeGrassInRects(rects: Rect[]) {
-    const gm = grassDataManager
-    if (!gm || rects.length === 0) return
-
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
-    const tileBuckets = new Map<
-      string,
-      { tx: number; tz: number; rects: Rect[] }
-    >()
-    for (const rect of rects) {
-      const { tileMinX, tileMaxX, tileMinZ, tileMaxZ } = worldRectToTileBounds(
-        rect.minX,
-        rect.minZ,
-        rect.maxX,
-        rect.maxZ
-      )
-      for (let tz = tileMinZ; tz <= tileMaxZ; tz++) {
-        for (let tx = tileMinX; tx <= tileMaxX; tx++) {
-          const key = `${tx},${tz}`
-          let bucket = tileBuckets.get(key)
-          if (!bucket) {
-            bucket = { tx, tz, rects: [] }
-            tileBuckets.set(key, bucket)
-          }
-          bucket.rects.push(rect)
-        }
-      }
-    }
-
-    await Promise.all(
-      [...tileBuckets.values()].map(async ({ tx, tz, rects }) => {
-        let data =
-          gm.getCachedGrassData(tx, tz) ?? (await gm.loadGrassData(tx, tz))
-        if (!data) return
-
-        gm.ensureOriginalGrass(tx, tz)
-        let changed = false
-        for (const rect of rects) {
-          const filtered = removeGrassInRect(
-            data,
-            rect.minX,
-            rect.minZ,
-            rect.maxX,
-            rect.maxZ
-          )
-          if (filtered) {
-            data = filtered
-            changed = true
-          }
-        }
-        if (changed) await gm.saveGrassData(tx, tz, data)
-      })
-    )
-  }
-
   async function reinstallSelectedHouse() {
     const houseId = get(selectedHouseId)
     if (houseId == null || !heightManager) return
@@ -795,7 +717,9 @@
     // Height tiles and grass tiles are disjoint files — persist both in parallel.
     await Promise.all([
       heightManager.saveAllDirty(),
-      removeGrassInRects(rooms.map((room) => roomGrassRect(house, room))),
+      grassDataManager?.removeGrassInRects(
+        rooms.map((room) => roomGrassRect(house, room))
+      ),
     ])
 
     const saved = await housingManager.updateHouse(house)
@@ -979,29 +903,14 @@
 
       // Remove grass under the house footprint (+ 1m margin)
       if (grassDataManager) {
-        const rectMinX = pos.x - GRASS_MARGIN
-        const rectMinZ = pos.z - GRASS_MARGIN
-        const rectMaxX = pos.x + sx + GRASS_MARGIN
-        const rectMaxZ = pos.z + sz + GRASS_MARGIN
-
-        const { tileMinX, tileMaxX, tileMinZ, tileMaxZ } =
-          worldRectToTileBounds(rectMinX, rectMinZ, rectMaxX, rectMaxZ)
-
-        for (let tz = tileMinZ; tz <= tileMaxZ; tz++) {
-          for (let tx = tileMinX; tx <= tileMaxX; tx++) {
-            grassDataManager.ensureOriginalGrass(tx, tz)
-            const cached = grassDataManager.getCachedGrassData(tx, tz)
-            if (!cached) continue
-            const filtered = removeGrassInRect(
-              cached,
-              rectMinX,
-              rectMinZ,
-              rectMaxX,
-              rectMaxZ
-            )
-            if (filtered) grassDataManager.saveGrassData(tx, tz, filtered)
-          }
-        }
+        await grassDataManager.removeGrassInRects([
+          {
+            minX: pos.x - GRASS_MARGIN,
+            minZ: pos.z - GRASS_MARGIN,
+            maxX: pos.x + sx + GRASS_MARGIN,
+            maxZ: pos.z + sz + GRASS_MARGIN,
+          },
+        ])
       }
     }
   }
