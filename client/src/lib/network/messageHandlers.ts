@@ -72,6 +72,7 @@ import {
   resetFriendStores,
   MAX_PENDING_FRIEND_REQUESTS,
 } from '../stores/friendStore'
+import { enqueueConsent } from '../stores/consentQueue'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
@@ -512,18 +513,15 @@ export function handleServerMessage(
       break
 
     case 'PartyInviteReceived':
-      pendingPartyInvites.update((queue) =>
-        queue.length >= MAX_PENDING_PARTY_INVITES ||
-        queue.some((invite) => invite.inviterId === data.inviter_id)
-          ? queue
-          : [
-              ...queue,
-              {
-                inviterId: data.inviter_id,
-                inviterName: data.inviter_name,
-                offeredAt: Date.now(),
-              },
-            ]
+      enqueueConsent(
+        pendingPartyInvites,
+        MAX_PENDING_PARTY_INVITES,
+        (invite) => invite.inviterId === data.inviter_id,
+        {
+          inviterId: data.inviter_id,
+          inviterName: data.inviter_name,
+          offeredAt: Date.now(),
+        }
       )
       break
 
@@ -601,18 +599,15 @@ export function handleServerMessage(
     }
 
     case 'FriendRequestReceived':
-      pendingFriendRequests.update((queue) =>
-        queue.length >= MAX_PENDING_FRIEND_REQUESTS ||
-        queue.some((request) => request.requesterId === data.requester_id)
-          ? queue
-          : [
-              ...queue,
-              {
-                requesterId: data.requester_id,
-                requesterName: data.requester_name,
-                offeredAt: Date.now(),
-              },
-            ]
+      enqueueConsent(
+        pendingFriendRequests,
+        MAX_PENDING_FRIEND_REQUESTS,
+        (request) => request.requesterId === data.requester_id,
+        {
+          requesterId: data.requester_id,
+          requesterName: data.requester_name,
+          offeredAt: Date.now(),
+        }
       )
       break
 

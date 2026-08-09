@@ -1,8 +1,10 @@
 use super::auth_db;
+use super::consent::{answer_consent, PendingConsent};
 use crate::auth::AuthService;
 use crate::types::{PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{FriendEntry, OnlineFriend, FRIEND_REQUEST_TTL};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info, warn};
 
@@ -18,20 +20,12 @@ const FRIEND_PENDING_REQUEST_CAP: usize = 5;
 pub(crate) struct FriendSnapshot {
     character_id: i64,
     name: String,
-    /// Lowercased `name`, so a poll does not re-lowercase up to 100 names for
-    /// every one of 5,000 players.
-    lower_name: String,
+    /// Lowercased `name`, shared: a poll clones a refcount, not a String, for
+    /// up to 100 names on every one of 5,000 players.
+    lower_name: Arc<str>,
     /// Level as of this session's login. Only offline friends are shown with
     /// it — an online friend's live level rides `FriendsOnline`.
     level: u32,
-}
-
-/// A friend request awaiting an answer. Same discipline as party invites: a
-/// declined request stays here (answered) until it expires, so declining does
-/// not hand the spam brake back to the requester.
-struct PendingRequest {
-    expires_at: Instant,
-    answered: bool,
 }
 
 /// All friend state behind one lock. The lists are per-session snapshots of
@@ -40,7 +34,7 @@ struct PendingRequest {
 #[derive(Default)]
 pub(crate) struct Friends {
     lists: HashMap<PlayerId, Vec<FriendSnapshot>>,
-    requests: HashMap<(PlayerId, PlayerId), PendingRequest>,
+    requests: HashMap<(PlayerId, PlayerId), PendingConsent>,
 }
 
 impl Friends {
@@ -89,7 +83,7 @@ impl FriendParty {
         FriendSnapshot {
             character_id: self.character_id,
             name: self.name.clone(),
-            lower_name: self.name.to_ascii_lowercase(),
+            lower_name: self.name.to_ascii_lowercase().into(),
             level: self.level,
         }
     }
@@ -107,7 +101,7 @@ impl super::GameState {
             .into_iter()
             .map(|(character_id, name, level)| FriendSnapshot {
                 character_id,
-                lower_name: name.to_ascii_lowercase(),
+                lower_name: name.to_ascii_lowercase().into(),
                 name,
                 level,
             })
@@ -152,7 +146,7 @@ impl super::GameState {
     /// the cost is one hash lookup per friend rather than a scan of the
     /// roster; a friendless player is answered with nothing at all.
     pub async fn send_friends_online(&self, player_id: &PlayerId) {
-        let snapshot: Vec<(i64, String)> = {
+        let snapshot: Vec<(i64, Arc<str>)> = {
             let state = self.friends.read().await;
             state
                 .list(player_id)
@@ -169,7 +163,9 @@ impl super::GameState {
             let names = self.player_ids_by_name.read().await;
             snapshot
                 .iter()
-                .filter_map(|(character_id, lower)| names.get(lower).map(|id| (*character_id, *id)))
+                .filter_map(|(character_id, lower)| {
+                    names.get(lower.as_ref()).map(|id| (*character_id, *id))
+                })
                 .collect()
         };
         let friends: Vec<OnlineFriend> = {
@@ -189,7 +185,7 @@ impl super::GameState {
     }
 
     pub async fn describe_friends(&self, player_id: &PlayerId) -> String {
-        let entries: Vec<(String, String)> = {
+        let entries: Vec<(String, Arc<str>)> = {
             let state = self.friends.read().await;
             state
                 .list(player_id)
@@ -200,25 +196,20 @@ impl super::GameState {
         if entries.is_empty() {
             return "Friends: no one yet. /friend add <name> asks someone.".to_string();
         }
-        let online: Vec<bool> = {
+        // Online first, then by name — the panel's order, in text.
+        let mut listed: Vec<(bool, String)> = {
             let names = self.player_ids_by_name.read().await;
             entries
-                .iter()
-                .map(|(_, lower)| names.contains_key(lower))
+                .into_iter()
+                .map(|(name, lower)| (!names.contains_key(lower.as_ref()), name))
                 .collect()
         };
-        // Online first, then by name — the panel's order, in text.
-        let mut listed: Vec<(bool, &str)> = entries
-            .iter()
-            .zip(&online)
-            .map(|((name, _), online)| (!*online, name.as_str()))
-            .collect();
         listed.sort_unstable();
         let parts: Vec<String> = listed
             .into_iter()
             .map(|(offline, name)| {
                 if offline {
-                    name.to_string()
+                    name
                 } else {
                     format!("{name} (online)")
                 }
@@ -251,9 +242,11 @@ impl super::GameState {
             let requester = players
                 .get(requester_id)
                 .map(|p| (p.name.clone(), p.level, p.is_official_npc));
-            let target = target_id
-                .and_then(|id| players.get(&id))
-                .map(|p| (p.id, p.name.clone(), p.level, p.is_official_npc));
+            let target = target_id.and_then(|id| {
+                players
+                    .get(&id)
+                    .map(|p| (id, p.name.clone(), p.level, p.is_official_npc))
+            });
             (requester, target)
         };
         let Some((requester_name, requester_level, requester_is_npc)) = requester else {
@@ -349,7 +342,7 @@ impl super::GameState {
             } else if state
                 .requests
                 .get(&(target_id, *requester_id))
-                .is_some_and(|r| !r.answered && r.expires_at > Instant::now())
+                .is_some_and(PendingConsent::awaiting)
             {
                 // Their list can have filled since they asked, and the
                 // reciprocal path skips the accept path's own cap check.
@@ -374,10 +367,7 @@ impl super::GameState {
             } else {
                 state.requests.insert(
                     (*requester_id, target_id),
-                    PendingRequest {
-                        expires_at: Instant::now() + FRIEND_REQUEST_TTL,
-                        answered: false,
-                    },
+                    PendingConsent::new(FRIEND_REQUEST_TTL),
                 );
                 Outcome::Deliver
             }
@@ -427,22 +417,7 @@ impl super::GameState {
     ) {
         let usable = {
             let mut state = self.friends.write().await;
-            let key = (*requester_id, *target_id);
-            let now = Instant::now();
-            let usable = state
-                .requests
-                .get(&key)
-                .is_some_and(|r| !r.answered && r.expires_at > now);
-            if usable {
-                if accept {
-                    state.requests.remove(&key);
-                } else if let Some(request) = state.requests.get_mut(&key) {
-                    // Keep the declined entry until it expires: the spam brake
-                    // must not reset on the target's own click.
-                    request.answered = true;
-                }
-            }
-            usable
+            answer_consent(&mut state.requests, (*requester_id, *target_id), accept)
         };
         if !usable {
             self.send_system_message(target_id, "Friend: that request has expired.")

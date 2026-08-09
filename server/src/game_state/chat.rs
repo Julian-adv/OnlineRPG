@@ -688,7 +688,7 @@ impl super::GameState {
             let auth = auth.clone();
             let query = name.to_string();
             match auth_db(move || auth.resolve_character_brief(&query)).await {
-                Ok(Some((id, canonical, _))) => (id, canonical),
+                Ok(Some((id, canonical))) => (id, canonical),
                 Ok(None) => return format!("Block: no character named {name}."),
                 Err(err) => {
                     error!("Block lookup failed: {err}");

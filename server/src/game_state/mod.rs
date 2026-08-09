@@ -102,6 +102,7 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 mod chat;
 pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
+mod consent;
 mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;

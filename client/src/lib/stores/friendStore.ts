@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store'
+import { persistedBoolean } from './persisted'
 
 /** One friend from ServerMessage::FriendList. Keyed by character id: a
  *  friendship outlives both sessions, and offline friends have no player id. */
@@ -42,61 +43,36 @@ export const pendingFriendRequests = writable<PendingFriendRequest[]>([])
 
 export const friendPanelVisible = writable(false)
 
-const ONLINE_NOTICE_KEY = 'friendOnlineNotice'
-
-function storedNoticeEnabled(): boolean {
-  try {
-    return localStorage.getItem(ONLINE_NOTICE_KEY) !== 'off'
-  } catch {
-    return true
-  }
-}
-
 /** Whether a friend coming online prints a chat line. Client-side only: the
  *  server pushes nothing either way, so this hides a notice rather than
  *  hiding the player. */
-export const friendOnlineNoticeEnabled = writable(storedNoticeEnabled())
-
-friendOnlineNoticeEnabled.subscribe((enabled) => {
-  try {
-    localStorage.setItem(ONLINE_NOTICE_KEY, enabled ? 'on' : 'off')
-  } catch {
-    // Private-mode storage refusal; the preference just won't persist.
-  }
-})
+export const friendOnlineNoticeEnabled = persistedBoolean(
+  'friendOnlineNotice',
+  true
+)
 
 /** Ids in the last answered poll, or null before the first one. Null reports
  *  nothing: on the session's first answer every online friend would otherwise
  *  look like they had just arrived. */
 let lastOnlineIds: Set<number> | null = null
 
-/** Which friends became online between two poll answers — the whole online
- *  notice, kept pure so it is testable without a socket. */
-export function newlyOnlineNames(
-  previous: Set<number> | null,
-  current: Iterable<number>,
-  nameOf: Map<number, string>
-): string[] {
-  if (previous === null) return []
-  const names: string[] = []
-  for (const id of current) {
-    if (!previous.has(id)) {
-      const name = nameOf.get(id)
-      if (name !== undefined) names.push(name)
-    }
-  }
-  return names
-}
-
-/** Apply a poll answer and return the names to announce. */
+/** Apply a poll answer and return the names to announce: friends online now
+ *  that were absent from the previous answer. */
 export function applyFriendsOnline(
   entries: { character_id: number; level: number }[],
   roster: FriendEntry[]
 ): string[] {
-  const nameOf = new Map(roster.map((f) => [f.characterId, f.name]))
-  const ids = entries.map((e) => e.character_id)
-  const announced = newlyOnlineNames(lastOnlineIds, ids, nameOf)
-  lastOnlineIds = new Set(ids)
+  const announced: string[] = []
+  if (lastOnlineIds !== null) {
+    const previous = lastOnlineIds
+    const nameOf = new Map(roster.map((f) => [f.characterId, f.name]))
+    for (const { character_id } of entries) {
+      if (previous.has(character_id)) continue
+      const name = nameOf.get(character_id)
+      if (name !== undefined) announced.push(name)
+    }
+  }
+  lastOnlineIds = new Set(entries.map((e) => e.character_id))
   onlineFriends.set(new Map(entries.map((e) => [e.character_id, e.level])))
   return announced
 }
