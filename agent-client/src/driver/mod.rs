@@ -33,10 +33,11 @@ use tracing::{debug, error, info, warn};
 use crate::llm_scheduler::{LlmPriority, LlmScheduler};
 use crate::state::SharedState;
 use onlinerpg_shared::schedule::ScheduleEntry;
+use onlinerpg_shared::ClientMessage;
 
 pub(crate) use action::wants_reroll;
 use combat::{load_attack_cooldown, tick_combat};
-use execute::handle_response;
+use execute::{append_memory, handle_response};
 use movement::{
     check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
 };
@@ -175,6 +176,7 @@ pub async fn llm_driver(
     // Track the highest urgency since the last prompt
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
+    let mut dead_since: Option<Instant> = None;
 
     // Fetch housing + furniture data so pathfinding avoids buildings and solid
     // props the same way the browser client does. An agent without a schedule
@@ -294,6 +296,28 @@ pub async fn llm_driver(
                 }
             }
             _ = tokio::time::sleep(tick_duration) => {}
+        }
+
+        // === Auto-respawn ===
+        // Respawn as an LLM action needs a turn, and turns are skipped with
+        // no audience — a dead NPC would otherwise stay dead forever. The
+        // driver revives itself after a short delay.
+        let self_dead = {
+            let s = state.lock().await;
+            s.in_game && s.self_player.as_ref().is_some_and(|p| p.health == 0)
+        };
+        if self_dead && dead_since.is_none() {
+            info!(
+                "[{label}] LLM driver: agent is dead, auto-respawn in {}s",
+                RESPAWN_DELAY.as_secs()
+            );
+        }
+        if respawn_due(self_dead, &mut dead_since, Instant::now()) {
+            request_respawn(&state, &memory_file, &label).await;
+        }
+        if self_dead {
+            attack_target = None;
+            continue;
         }
 
         // === Combat tick ===
@@ -429,6 +453,47 @@ pub async fn llm_driver(
     }
 }
 
+/// Grace period between noticing our own death and requesting respawn.
+const RESPAWN_DELAY: Duration = Duration::from_secs(5);
+
+/// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
+/// so a lost request is retried after another delay. Revival clears it.
+fn respawn_due(dead: bool, dead_since: &mut Option<Instant>, now: Instant) -> bool {
+    if !dead {
+        *dead_since = None;
+        return false;
+    }
+    match *dead_since {
+        None => {
+            *dead_since = Some(now);
+            false
+        }
+        Some(t) if now.duration_since(t) >= RESPAWN_DELAY => {
+            *dead_since = None;
+            true
+        }
+        Some(_) => false,
+    }
+}
+
+/// Ask the server to revive us (heal + teleport to spawn + hunger reset)
+/// and note the death in memory so the LLM learns it died even though it
+/// never got a turn while dead.
+async fn request_respawn(
+    state: &Arc<Mutex<SharedState>>,
+    memory_file: &Option<String>,
+    label: &str,
+) {
+    info!("[{label}] LLM driver: requesting respawn");
+    if let Some(path) = memory_file {
+        append_memory(path, "I was killed and woke up back at the spawn point.");
+    }
+    let mut s = state.lock().await;
+    if let Err(e) = s.send_command(ClientMessage::RequestRespawn).await {
+        error!("[{label}] Respawn request failed: {e}");
+    }
+}
+
 /// Drop a turn without prompting: events drain (so they cannot pile up)
 /// but what was said still lands in the conversation history.
 fn discard_turn(s: &mut SharedState) {
@@ -473,5 +538,42 @@ async fn await_llm_response(
             error!("[{label}] LLM task panicked: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::tests::{test_player, test_state};
+
+    #[test]
+    fn respawn_fires_only_after_the_delay_and_rearms_while_still_dead() {
+        let mut since = None;
+        let t0 = Instant::now();
+        assert!(!respawn_due(true, &mut since, t0));
+        assert!(!respawn_due(true, &mut since, t0 + RESPAWN_DELAY / 2));
+        assert!(respawn_due(true, &mut since, t0 + RESPAWN_DELAY));
+        assert!(!respawn_due(true, &mut since, t0 + RESPAWN_DELAY));
+        assert!(respawn_due(true, &mut since, t0 + RESPAWN_DELAY * 2));
+        assert!(!respawn_due(false, &mut since, t0 + RESPAWN_DELAY * 2));
+        assert!(since.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_respawn_sends_the_request_and_notes_the_death() {
+        let (mut s, mut rx) = test_state();
+        let mut me = test_player(0.0, 0.0);
+        me.health = 0;
+        s.self_player = Some(me);
+        let state = Arc::new(Mutex::new(s));
+        let dir = RunDir::create().unwrap();
+        let memory = dir.path().join("memory.txt").to_str().unwrap().to_string();
+
+        request_respawn(&state, &Some(memory.clone()), "test").await;
+
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::RequestRespawn)));
+        assert!(std::fs::read_to_string(&memory)
+            .unwrap()
+            .contains("I was killed"));
     }
 }

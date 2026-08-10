@@ -138,7 +138,7 @@ fn pick_pending<T>(items: &[T], name: Option<&str>, name_of: impl Fn(&T) -> &str
 /// Append a memory update, dropping lines already in the file (and repeats
 /// within the update itself), then rewrite the file keeping only the newest
 /// `MEMORY_LINES` lines.
-fn append_memory(path: &str, update: &str) {
+pub(super) fn append_memory(path: &str, update: &str) {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
     let mut lines: Vec<&str> = existing
         .lines()
