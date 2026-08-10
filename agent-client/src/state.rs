@@ -376,6 +376,8 @@ pub struct SharedState {
     pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState, bool)>,
     /// Burning campfires in our AOI, for the grill-your-catch decision.
     pub campfires: HashMap<u64, onlinerpg_shared::hunger::Campfire>,
+    /// Laid-out stalls in our AOI, so a merchant knows its own is out.
+    pub stalls: HashMap<u64, onlinerpg_shared::stall::Stall>,
     /// Our own bag (from InventoryState/InventoryUpdated), so a trading
     /// NPC knows what it carries.
     pub self_bag: Vec<onlinerpg_shared::inventory::ItemInstance>,
@@ -513,6 +515,7 @@ impl SharedState {
             self_gold: None,
             self_hunger: None,
             campfires: HashMap::new(),
+            stalls: HashMap::new(),
             self_bag: Vec::new(),
             self_equipped: HashMap::new(),
             trade_satiated_until: None,
@@ -1377,6 +1380,9 @@ impl SharedState {
             ServerMessage::CampfireSpawned { .. }
             | ServerMessage::CampfireAppeared { .. }
             | ServerMessage::CampfireRemoved { .. }
+            | ServerMessage::StallPlaced { .. }
+            | ServerMessage::StallAppeared { .. }
+            | ServerMessage::StallRemoved { .. }
             | ServerMessage::GrillStarted => EventUrgency::Noise,
 
             // Auth/character events: routine (handled before game entry)
@@ -1567,6 +1573,7 @@ impl SharedState {
                 monsters,
                 ground_items,
                 campfires,
+                stalls,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
@@ -1577,6 +1584,10 @@ impl SharedState {
                 self.campfires.clear();
                 for campfire in campfires {
                     self.campfires.insert(campfire.id, campfire.clone());
+                }
+                self.stalls.clear();
+                for stall in stalls {
+                    self.stalls.insert(stall.id, stall.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -1721,6 +1732,13 @@ impl SharedState {
             }
             ServerMessage::CampfireRemoved { campfire_id } => {
                 self.campfires.remove(campfire_id);
+            }
+            ServerMessage::StallPlaced { ref stall }
+            | ServerMessage::StallAppeared { ref stall } => {
+                self.stalls.insert(stall.id, stall.clone());
+            }
+            ServerMessage::StallRemoved { stall_id } => {
+                self.stalls.remove(stall_id);
             }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;
@@ -2511,6 +2529,15 @@ impl SharedState {
                 lines.push(format!(
                     "Campfire nearby: {:.1}m away (use a raw fish within 3m to grill it)",
                     d2.sqrt()
+                ));
+            }
+            if let Some(own_stall) = self
+                .self_player_id
+                .and_then(|id| self.stalls.values().find(|s| s.owner == id))
+            {
+                lines.push(format!(
+                    "Your stall is laid out {:.1}m away",
+                    own_stall.position.dist_xz_sq(&p.position).sqrt()
                 ));
             }
         }

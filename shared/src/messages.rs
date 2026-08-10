@@ -762,6 +762,8 @@ pub enum ServerMessage {
         ground_items: Vec<inventory::GroundItem>,
         #[serde(default)]
         campfires: Vec<crate::hunger::Campfire>,
+        #[serde(default)]
+        stalls: Vec<crate::stall::Stall>,
     },
     GameTimeSync {
         datetime: GameDateTime,
@@ -1117,6 +1119,18 @@ pub enum ServerMessage {
     /// Burned out or left the receiver's AOI.
     CampfireRemoved {
         campfire_id: u64,
+    },
+    /// A merchant just laid out a stall nearby.
+    StallPlaced {
+        stall: crate::stall::Stall,
+    },
+    /// An already-laid stall entered the receiver's AOI.
+    StallAppeared {
+        stall: crate::stall::Stall,
+    },
+    /// Packed up or left the receiver's AOI.
+    StallRemoved {
+        stall_id: u64,
     },
     /// Direct to the griller: the 3s grill cast began.
     GrillStarted,

@@ -11,6 +11,7 @@ import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
+import { stallManager } from '../managers/stallManager'
 import { refreshBardZone } from '../managers/bardZone'
 
 export interface PlayerDamageInfo {
@@ -127,6 +128,7 @@ export const resetGameStore = () => {
   resetHungerStore()
   groundItemManager.reset()
   campfireManager.reset()
+  stallManager.reset()
 }
 
 const MAX_MESSAGES = 100

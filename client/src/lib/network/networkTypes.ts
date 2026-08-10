@@ -299,6 +299,14 @@ export type ServerCampfire = {
   floor_level: number
 }
 
+export type ServerStall = {
+  id: number
+  owner: number
+  position: Position
+  rotation: number
+  floor_level: number
+}
+
 export type AuthSuccessPayload = {
   accountName: string
   characters: AccountCharacter[]

@@ -4,7 +4,6 @@ import {
   applyFriendList,
   applyFriendsOnline,
   friendList,
-  newlyOnlineNames,
   onlineFriends,
   pendingFriendRequests,
   resetFriendStores,
@@ -16,33 +15,6 @@ const roster: FriendEntry[] = [
   { characterId: 1, name: 'alice', level: 12 },
   { characterId: 2, name: 'bob', level: 8 },
 ]
-
-describe('newlyOnlineNames', () => {
-  it('reports nothing before the first answer', () => {
-    // Otherwise every friend already online would look like a new arrival.
-    expect(newlyOnlineNames(null, [1, 2], new Map([[1, 'alice']]))).toEqual([])
-  })
-
-  it('reports only ids absent from the previous answer', () => {
-    const names = new Map([
-      [1, 'alice'],
-      [2, 'bob'],
-    ])
-    expect(newlyOnlineNames(new Set([1]), [1, 2], names)).toEqual(['bob'])
-  })
-
-  it('reports nothing when the set is unchanged', () => {
-    expect(
-      newlyOnlineNames(new Set([1]), [1], new Map([[1, 'alice']]))
-    ).toEqual([])
-  })
-
-  it('skips ids the roster cannot name', () => {
-    expect(newlyOnlineNames(new Set(), [9], new Map([[1, 'alice']]))).toEqual(
-      []
-    )
-  })
-})
 
 describe('applyFriendsOnline', () => {
   beforeEach(() => resetFriendStores())
@@ -86,6 +58,13 @@ describe('applyFriendsOnline', () => {
     expect(
       applyFriendsOnline([{ character_id: 1, level: 12 }], roster)
     ).toEqual(['alice'])
+  })
+
+  it('skips ids the roster cannot name', () => {
+    applyFriendsOnline([], roster)
+    expect(applyFriendsOnline([{ character_id: 9, level: 1 }], roster)).toEqual(
+      []
+    )
   })
 })
 

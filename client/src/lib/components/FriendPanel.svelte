@@ -11,7 +11,6 @@
   } from '../stores/friendStore'
   import { networkManager } from '../network/socket'
   import { requestChatDraft } from '../stores/npcMenuStore'
-  import { mountOverlay } from '../stores/overlayStack'
 
   const visible = $derived($friendPanelVisible)
   const friends = $derived(sortFriends($friendList, $onlineFriends))
@@ -33,11 +32,6 @@
       period
     )
     return () => clearInterval(timer)
-  })
-
-  $effect(() => {
-    if (!visible) return
-    return mountOverlay('friends', () => friendPanelVisible.set(false))
   })
 
   function whisper(friend: FriendEntry) {

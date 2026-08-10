@@ -102,6 +102,7 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 mod chat;
 pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
+mod consent;
 mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
@@ -117,6 +118,7 @@ pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
 pub(crate) use skills::skills_from_rows;
+mod stall;
 mod time;
 mod trading;
 pub use trading::BUYBACK_SWEEP_PERIOD;
@@ -332,6 +334,8 @@ pub struct GameState {
     campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
     /// One grill cast per player, resolved by `tick_grills`.
     grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
+    /// Laid-out merchant stalls keyed by id, at most one per owner.
+    stalls: Arc<RwLock<HashMap<u64, onlinerpg_shared::stall::Stall>>>,
 }
 
 impl GameState {
@@ -500,6 +504,7 @@ impl GameState {
             regen_ticks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             campfires: Arc::new(RwLock::new(HashMap::new())),
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
+            stalls: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

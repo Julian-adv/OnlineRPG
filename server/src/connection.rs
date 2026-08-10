@@ -179,6 +179,17 @@ const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(2);
 /// a rewritten client can ask for.
 const FRIENDS_ONLINE_MIN_INTERVAL: Duration = Duration::from_secs(5);
 
+/// True at most once per clamp window; a clamped poll does not refresh the
+/// window, so spam cannot starve refreshes.
+fn poll_due(last_poll: &mut Option<Instant>, min_interval: Duration) -> bool {
+    let now = Instant::now();
+    if last_poll.is_some_and(|last| now.duration_since(last) < min_interval) {
+        return false;
+    }
+    *last_poll = Some(now);
+    true
+}
+
 impl ConnectionState {
     fn new(client_ip: IpAddr) -> Self {
         Self {
@@ -203,31 +214,18 @@ impl ConnectionState {
         }
     }
 
-    /// True at most once per clamp window; a clamped poll does not refresh
-    /// the window, so spam cannot starve refreshes.
     fn party_positions_poll_due(&mut self) -> bool {
-        let now = Instant::now();
-        if self
-            .last_party_positions_poll
-            .is_some_and(|last| now.duration_since(last) < PARTY_POSITIONS_MIN_INTERVAL)
-        {
-            return false;
-        }
-        self.last_party_positions_poll = Some(now);
-        true
+        poll_due(
+            &mut self.last_party_positions_poll,
+            PARTY_POSITIONS_MIN_INTERVAL,
+        )
     }
 
-    /// Same clamp discipline as `party_positions_poll_due`.
     fn friends_online_poll_due(&mut self) -> bool {
-        let now = Instant::now();
-        if self
-            .last_friends_online_poll
-            .is_some_and(|last| now.duration_since(last) < FRIENDS_ONLINE_MIN_INTERVAL)
-        {
-            return false;
-        }
-        self.last_friends_online_poll = Some(now);
-        true
+        poll_due(
+            &mut self.last_friends_online_poll,
+            FRIENDS_ONLINE_MIN_INTERVAL,
+        )
     }
 
     fn require_auth(&self, action: &str) -> Result<String, Vec<ServerMessage>> {
@@ -1087,17 +1085,21 @@ async fn handle_client_message(
                 );
                 return Ok(vec![]);
             }
-            match auth_service.load_blocked_names(character_id) {
-                Ok(blocked) => game_state.set_player_blocks(&id, blocked).await,
+            let auth = Arc::clone(auth_service);
+            match crate::game_state::auth_db(move || {
+                Ok((
+                    auth.load_blocked_names(character_id)?,
+                    auth.load_friends(character_id)?,
+                ))
+            })
+            .await
+            {
+                Ok((blocked, friends)) => {
+                    game_state.set_player_blocks(&id, blocked).await;
+                    game_state.set_player_friends(&id, friends).await;
+                }
                 Err(err) => warn!(
-                    "Failed to load block list for character {}: {}",
-                    character_id, err
-                ),
-            }
-            match auth_service.load_friends(character_id) {
-                Ok(friends) => game_state.set_player_friends(&id, friends).await,
-                Err(err) => warn!(
-                    "Failed to load friend list for character {}: {}",
+                    "Failed to load block/friend lists for character {}: {}",
                     character_id, err
                 ),
             }

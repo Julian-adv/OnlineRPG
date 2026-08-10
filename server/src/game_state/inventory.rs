@@ -19,7 +19,7 @@ const GROUND_ITEM_LIFETIME_MS: u64 = 30 * 60 * 1000;
 
 const MAX_PICKUP_DISTANCE: f32 = 2.5;
 
-const CAMPFIRE_PLACEMENT_DISTANCE_M: f32 = 1.0;
+const PLACEMENT_DISTANCE_M: f32 = 1.0;
 
 /// Enchant odds are expressed in basis points (1/100 of a percent) out of
 /// this scale; the handler's roll must use the same bound.
@@ -742,12 +742,26 @@ impl super::GameState {
             .await;
     }
 
-    /// Where a fire lit by `player_id` would land: a step in front of them, or
-    /// their own feet when something blocks the way. `None` once the refusal
-    /// (indoors, in water) has been sent to them.
     pub(super) async fn campfire_placement(
         &self,
         player_id: &PlayerId,
+    ) -> Option<(crate::types::Position, i8)> {
+        self.outdoor_placement(
+            player_id,
+            "You can only build a campfire outdoors",
+            "You can't light a fire in water",
+        )
+        .await
+    }
+
+    /// Where something placed by `player_id` would land: a step in front of
+    /// them, or their own feet when something blocks the way. `None` once the
+    /// refusal (indoors, in water) has been sent to them.
+    pub(super) async fn outdoor_placement(
+        &self,
+        player_id: &PlayerId,
+        indoors_refusal: &str,
+        water_refusal: &str,
     ) -> Option<(crate::types::Position, i8)> {
         let (position, rotation, floor_level) = {
             let players = self.players.read().await;
@@ -755,14 +769,13 @@ impl super::GameState {
             (p.position, p.rotation, p.floor_level)
         };
         if floor_level != super::fishing::OVERWORLD_FLOOR {
-            self.send_system_message(player_id, "You can only build a campfire outdoors")
-                .await;
+            self.send_system_message(player_id, indoors_refusal).await;
             return None;
         }
         let forward = crate::types::Position {
-            x: position.x + rotation.sin() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+            x: position.x + rotation.sin() * PLACEMENT_DISTANCE_M,
             y: position.y,
-            z: position.z + rotation.cos() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+            z: position.z + rotation.cos() * PLACEMENT_DISTANCE_M,
         };
         let placement = {
             let cache = self.passability_read();
@@ -783,8 +796,7 @@ impl super::GameState {
             .await
             .is_some_and(|depth| depth > onlinerpg_shared::fishing::MIN_FISHABLE_DEPTH_M);
         if in_water {
-            self.send_system_message(player_id, "You can't light a fire in water")
-                .await;
+            self.send_system_message(player_id, water_refusal).await;
             return None;
         }
         Some((placement, floor_level))

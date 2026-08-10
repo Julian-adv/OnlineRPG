@@ -27,6 +27,7 @@ import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
 import { campfireManager } from '../managers/campfireManager'
+import { stallManager } from '../managers/stallManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -74,6 +75,7 @@ import {
   resetFriendStores,
   MAX_PENDING_FRIEND_REQUESTS,
 } from '../stores/friendStore'
+import { enqueueConsent } from '../stores/consentQueue'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
@@ -514,18 +516,15 @@ export function handleServerMessage(
       break
 
     case 'PartyInviteReceived':
-      pendingPartyInvites.update((queue) =>
-        queue.length >= MAX_PENDING_PARTY_INVITES ||
-        queue.some((invite) => invite.inviterId === data.inviter_id)
-          ? queue
-          : [
-              ...queue,
-              {
-                inviterId: data.inviter_id,
-                inviterName: data.inviter_name,
-                offeredAt: Date.now(),
-              },
-            ]
+      enqueueConsent(
+        pendingPartyInvites,
+        MAX_PENDING_PARTY_INVITES,
+        (invite) => invite.inviterId === data.inviter_id,
+        {
+          inviterId: data.inviter_id,
+          inviterName: data.inviter_name,
+          offeredAt: Date.now(),
+        }
       )
       break
 
@@ -607,18 +606,15 @@ export function handleServerMessage(
     }
 
     case 'FriendRequestReceived':
-      pendingFriendRequests.update((queue) =>
-        queue.length >= MAX_PENDING_FRIEND_REQUESTS ||
-        queue.some((request) => request.requesterId === data.requester_id)
-          ? queue
-          : [
-              ...queue,
-              {
-                requesterId: data.requester_id,
-                requesterName: data.requester_name,
-                offeredAt: Date.now(),
-              },
-            ]
+      enqueueConsent(
+        pendingFriendRequests,
+        MAX_PENDING_FRIEND_REQUESTS,
+        (request) => request.requesterId === data.requester_id,
+        {
+          requesterId: data.requester_id,
+          requesterName: data.requester_name,
+          offeredAt: Date.now(),
+        }
       )
       break
 
@@ -695,6 +691,10 @@ export function handleServerMessage(
       campfireManager.reset()
       if (data.campfires) {
         for (const campfire of data.campfires) campfireManager.spawn(campfire)
+      }
+      stallManager.reset()
+      if (data.stalls) {
+        for (const stall of data.stalls) stallManager.spawn(stall)
       }
       break
 
@@ -1437,6 +1437,15 @@ export function handleServerMessage(
 
     case 'CampfireRemoved':
       campfireManager.remove(data.campfire_id)
+      break
+
+    case 'StallPlaced':
+    case 'StallAppeared':
+      stallManager.spawn(data.stall)
+      break
+
+    case 'StallRemoved':
+      stallManager.remove(data.stall_id)
       break
 
     case 'GrillStarted':

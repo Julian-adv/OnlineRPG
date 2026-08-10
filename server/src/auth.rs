@@ -814,20 +814,17 @@ impl AuthService {
         Ok(characters)
     }
 
-    /// Id, canonical name and level of an existing character, matched ignoring
+    /// Id and canonical name of an existing character, matched ignoring
     /// ASCII case (the in-memory `match_name` rule in SQL — SQLite NOCASE is
     /// ASCII-only, like `eq_ignore_ascii_case`).
-    pub fn resolve_character_brief(
-        &self,
-        name: &str,
-    ) -> Result<Option<(i64, String, u32)>, AuthError> {
+    pub fn resolve_character_brief(&self, name: &str) -> Result<Option<(i64, String)>, AuthError> {
         let conn = self.open_connection()?;
         let found = conn
             .query_row(
-                "SELECT id, character_name, level FROM characters
+                "SELECT id, character_name FROM characters
                  WHERE character_name = ?1 COLLATE NOCASE",
                 params![name],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         Ok(found)

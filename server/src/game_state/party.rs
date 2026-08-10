@@ -1,3 +1,4 @@
+use super::consent::{answer_consent, PendingConsent};
 use crate::types::{Player, PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
     PartyMember, PartyMemberPosition, PartyMemberVitals, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
@@ -31,17 +32,10 @@ pub(crate) struct Parties {
     member_of: HashMap<PlayerId, u64>,
     /// (inviter, invitee) → pending invite. Swept lazily on the invite paths
     /// and purged with the player, so it stays tiny without its own tick.
-    invites: HashMap<(PlayerId, PlayerId), PendingInvite>,
+    invites: HashMap<(PlayerId, PlayerId), PendingConsent>,
     /// (caster, member) → summon expiry, same lifecycle as `invites`. No
     /// pending cap: the consumed scroll is the spam brake.
     summons: HashMap<(PlayerId, PlayerId), Instant>,
-}
-
-pub(crate) struct PendingInvite {
-    expires_at: Instant,
-    /// A declined invite stays here (answered) until it expires: removing it
-    /// would hand the spam brake back to the inviter on every decline.
-    answered: bool,
 }
 
 impl Parties {
@@ -238,10 +232,7 @@ impl super::GameState {
                     None => {
                         parties.invites.insert(
                             (*inviter_id, target_id),
-                            PendingInvite {
-                                expires_at: now + PARTY_INVITE_TTL,
-                                answered: false,
-                            },
+                            PendingConsent::new(PARTY_INVITE_TTL),
                         );
                         Outcome::Deliver
                     }
@@ -294,22 +285,7 @@ impl super::GameState {
     ) {
         let valid = {
             let mut parties = self.parties.write().await;
-            let key = (*inviter_id, *invitee_id);
-            let now = Instant::now();
-            let usable = parties
-                .invites
-                .get(&key)
-                .is_some_and(|invite| !invite.answered && invite.expires_at > now);
-            if usable {
-                if accept {
-                    parties.invites.remove(&key);
-                } else if let Some(invite) = parties.invites.get_mut(&key) {
-                    // Keep the declined entry until it expires: the spam
-                    // brake must not reset on the victim's own click.
-                    invite.answered = true;
-                }
-            }
-            usable
+            answer_consent(&mut parties.invites, (*inviter_id, *invitee_id), accept)
         };
         if !valid {
             self.send_system_message(invitee_id, "Party: that invite has expired.")

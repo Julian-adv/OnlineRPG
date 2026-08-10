@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store'
+import { persistedBoolean } from './persisted'
 
 export interface TranslationLanguage {
   code: string
@@ -33,16 +34,11 @@ const STORAGE_KEY_ENABLED = 'onlinerpg_translationEnabled'
 const STORAGE_KEY_TARGET = 'onlinerpg_translationTargetLanguage'
 const DEFAULT_TARGET = 'en'
 
-export const translationEnabled = writable<boolean>(
-  localStorage.getItem(STORAGE_KEY_ENABLED) === 'true'
-)
+export const translationEnabled = persistedBoolean(STORAGE_KEY_ENABLED, false)
 export const translationTargetLanguage = writable<string>(
   localStorage.getItem(STORAGE_KEY_TARGET) ?? DEFAULT_TARGET
 )
 
-translationEnabled.subscribe((v) => {
-  localStorage.setItem(STORAGE_KEY_ENABLED, String(v))
-})
 translationTargetLanguage.subscribe((v) => {
   localStorage.setItem(STORAGE_KEY_TARGET, v)
 })

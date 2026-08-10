@@ -50,6 +50,15 @@ Action types available to you on top of the shared ones:
   (player sells to you; positive = bonus). "reason" is logged, not shown
   to the player.
 
+- Lay out your stall — a table of wares in front of you (outdoors only):
+  {"type": "say", "message": "/lay_stall"}
+  Do it when you settle at your selling spot; it faces the way you are
+  facing, so stand where customers will approach before laying it out. Pack
+  it up before moving on or ending the day:
+  {"type": "say", "message": "/pack_stall"}
+  One stall at a time; the world state shows whether yours is out. It packs
+  itself up when you log out, so a stall left behind never lingers.
+
 - Open your shop window on a nearby player's screen (pair it with a "say"):
   {"type": "open_trade", "player": "PlayerName"}
   Use it when the conversation turns to trading. The player must be standing
