@@ -369,6 +369,8 @@
     if (riverRocksGroup) riverRocksGroup.visible = !underground
     const shoreSprayGroup = shoreSprayRef?.getGroup?.()
     if (shoreSprayGroup) shoreSprayGroup.visible = !underground
+    const objectGroup = objectOverlayRef?.getGroup()
+    if (objectGroup) objectGroup.visible = !underground
     if (underground) {
       // The housing layer's per-frame detection is skipped underground;
       // clear its state so stale floor offsets can't leak into physics.
@@ -376,6 +378,12 @@
       playerFloorOffset.set(0)
     }
   })
+
+  // Hiding the overlay is not enough: THREE's raycaster does not skip invisible
+  // objects, so surface signs and bridges stay pickable unless dropped here.
+  const pickableObjectMeshes = $derived(
+    objectOverlayRef && !$isUnderground ? [objectOverlayRef.getGroup()] : []
+  )
 
   $effect(() => {
     if (!directionalLight) return
@@ -1199,7 +1207,7 @@
       ...(housingLayerRef?.getDoorMeshes() ?? []),
       ...(dungeonLayerRef?.getDoorMeshes() ?? []),
     ]}
-    objectMeshes={objectOverlayRef ? [objectOverlayRef.getGroup()] : []}
+    objectMeshes={pickableObjectMeshes}
     propMeshes={dungeonLayerRef?.getPropMeshes() ?? []}
     groundItemMeshes={groundItemsLayerRef?.getGroup()
       ? [groundItemsLayerRef.getGroup()!]
