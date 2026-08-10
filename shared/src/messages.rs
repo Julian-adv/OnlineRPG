@@ -594,8 +594,12 @@ pub enum ServerMessage {
         #[serde(default)]
         floor_level: i8,
     },
-    /// A dungeon treasure chest was opened (loot already delivered to the
-    /// opener's inventory/wallet; broadcast nearby for the celebration).
+    /// A dungeon treasure chest was opened. The rolled items burst out of
+    /// the chest as ground drops moments later; the gold goes straight to
+    /// the opener's wallet. Broadcast nearby — except when `item_def_ids`
+    /// is empty and `gold` is 0: that is a re-open of a chest the opener
+    /// already claimed tonight (real opens always pay gold), sent to the
+    /// opener alone so their lid swings on an empty box.
     DungeonChestOpened {
         entrance_id: String,
         player_id: PlayerId,

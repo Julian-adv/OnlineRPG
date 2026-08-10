@@ -41,6 +41,12 @@ pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> =
 pub(super) static PLAYER_ATTACK_INTERVAL_MS: LazyLock<u64> =
     LazyLock::new(|| anim_delay_ms("player_attack_interval"));
 
+// Hand-measured length of the ChestOpen clip in chest_animated.glb (re-measure
+// if the GLB is re-exported): how long treasure-chest loot is withheld before
+// bursting out, so the lid is open by the time the drops exist.
+pub(super) static CHEST_LOOT_EJECT_DELAY: LazyLock<Duration> =
+    LazyLock::new(|| Duration::from_millis(anim_delay_ms("chest_loot_eject")));
+
 fn dropped_weapon_position(monster_position: Position) -> Position {
     let angle = rand::thread_rng().gen_range(0.0..TAU);
     offset_position_at_angle(monster_position, angle, WEAPON_DROP_OFFSET_METERS)

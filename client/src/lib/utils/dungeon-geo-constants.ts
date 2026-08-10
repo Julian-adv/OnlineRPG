@@ -25,9 +25,6 @@ export const DUNGEON_FLOOR_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
 export const DUNGEON_VOID_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
   (e) => e.label === 'Void'
 )
-export const DUNGEON_CHEST_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
-  (e) => e.glb === 'housing/dark_wooden_planks_1k'
-)
 /** Grey roof tiles for the surface entrance roof. */
 export const DUNGEON_CEILING_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
   (e) => e.glb === 'housing/grey_roof_tiles_02_1k'

@@ -5,3 +5,4 @@ player_attack_damage_text,750,damage number pops after a slash1 hit
 sword_miss,450,whiff sfx on a missed slash1 swing
 prop_swing_impact,660,barrel/crate shatters as the slash1 blade lands
 fishing_cast_swing,1600,fishing_cast rod whips forward - whoosh plays and splash follows CAST_MS later
+chest_loot_eject,600,ChestOpen clip length - treasure loot bursts out once the lid lands open

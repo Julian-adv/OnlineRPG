@@ -26,9 +26,12 @@ const MONSTER_RESPAWN_MS: u64 = 5 * 60 * 1000;
 const BOSS_RESPAWN_MS: u64 = 30 * 60 * 1000;
 /// Retry delay when a spawn attempt failed (e.g. global monster cap).
 const SPAWN_RETRY_MS: u64 = 10 * 1000;
-const CHEST_INTERACT_RANGE: f32 = 2.5;
+/// Ejected treasure-chest loot lands this far from the chest, scattered at a
+/// random angle. The minimum keeps items out from under the chest itself.
+const CHEST_LOOT_SCATTER_MIN: f32 = 0.8;
+const CHEST_LOOT_SCATTER_MAX: f32 = 3.0;
 /// How close a player must stand to a prop to break (barrel/crate) or open
-/// (chest) it.
+/// (chest, the treasure chest included) it.
 const PROP_INTERACT_RANGE: f32 = 2.5;
 /// How close a player must stand to a doorway to work it; the client gates the
 /// click at 2m from the leaf it hit. `toggle_dungeon_door` adds half the
@@ -445,8 +448,11 @@ impl GameState {
 
     /// Open the final-floor treasure chest: requires standing next to it on
     /// the last floor with the boss dead, and one open per character per
-    /// night. Loot (2–3 equipment rolls + depth-scaled gold) goes straight to
-    /// the opener; the open is broadcast nearby.
+    /// night. The rolled items burst out of the chest as ground drops
+    /// scattered around it (anyone nearby may grab them); the depth-scaled
+    /// gold goes straight to the opener. The open is broadcast nearby.
+    /// Re-opening an already-claimed chest still swings the lid: the clicker
+    /// alone gets an item-less `DungeonChestOpened` showing an empty box.
     pub async fn open_dungeon_chest(
         &self,
         player_id: &PlayerId,
@@ -469,7 +475,7 @@ impl GameState {
             }
         };
 
-        let position_check = {
+        let (chest_pos, total, position_check) = {
             let dungeons = self.dungeons.read().await;
             let Some(rt) = dungeons.get(entrance_id) else {
                 return;
@@ -480,39 +486,48 @@ impl GameState {
                 None => return,
             };
             let Some(chest) = last.chest else { return };
+            let chest_pos = cell_center(&entrance.position(), total, chest);
 
-            if player_floor != -(total as i8) {
+            let check = if player_floor != -(total as i8) {
                 Some("You must be on the deepest floor")
             } else {
-                let chest_pos = cell_center(&entrance.position(), total, chest);
                 let dx = onlinerpg_shared::shortest_world_delta_x(chest_pos.x, player_pos.x);
                 let dz = player_pos.z - chest_pos.z;
-                if dx * dx + dz * dz > CHEST_INTERACT_RANGE * CHEST_INTERACT_RANGE {
+                if dx * dx + dz * dz > PROP_INTERACT_RANGE * PROP_INTERACT_RANGE {
                     Some("Too far from the chest")
                 } else if !rt.floors.get(&total).is_some_and(|fr| fr.boss_defeated) {
                     Some("The guardian still lives")
                 } else {
                     None
                 }
-            }
+            };
+            (chest_pos, total, check)
         };
 
-        let now_seconds = self.current_total_game_seconds();
-        let chest_check = if position_check.is_some() {
-            position_check
-        } else if self
-            .claim_chest_open(character_id, entrance_id, now_seconds)
-            .await
-        {
-            None
-        } else {
-            Some("The chest is empty (it refills at nightfall)")
-        };
-        if let Some(reason) = chest_check {
+        if let Some(reason) = position_check {
             self.send_direct_message(
                 player_id,
                 ServerMessage::InteractionRejected {
                     reason: reason.to_string(),
+                },
+            )
+            .await;
+            return;
+        }
+        let now_seconds = self.current_total_game_seconds();
+        if !self
+            .claim_chest_open(character_id, entrance_id, now_seconds)
+            .await
+        {
+            // Already claimed tonight: an item-less open swings the lid on
+            // an empty box, for the clicker only.
+            self.send_direct_message(
+                player_id,
+                ServerMessage::DungeonChestOpened {
+                    entrance_id: entrance_id.to_string(),
+                    player_id: *player_id,
+                    item_def_ids: Vec::new(),
+                    gold: 0,
                 },
             )
             .await;
@@ -542,13 +557,7 @@ impl GameState {
 
         // Roll loot: guaranteed signature drops, then an independent chance
         // roll per pool item (doc/ITEM_TIERS.md — 던전당 기대 ~5회).
-        let depth = {
-            let dungeons = self.dungeons.read().await;
-            dungeons
-                .get(entrance_id)
-                .map(|rt| rt.layouts.len() as i64)
-                .unwrap_or(5)
-        };
+        let depth = total as i64;
         let (item_def_ids, gold) = {
             use rand::Rng;
             let mut rng = rand::thread_rng();
@@ -565,11 +574,7 @@ impl GameState {
             (items, gold)
         };
 
-        for item_def_id in &item_def_ids {
-            // give_item falls back to an inventory error when over carry
-            // weight; the player keeps what fits.
-            self.give_item(player_id, item_def_id).await;
-        }
+        self.eject_chest_loot(item_def_ids.clone(), chest_pos, player_floor);
         let new_gold = {
             let mut gold_map = self.player_gold.write().await;
             let wallet = gold_map.entry(*player_id).or_insert(0);
@@ -600,10 +605,27 @@ impl GameState {
             None,
         )
         .await;
+    }
 
-        // Rare bonus world drops land as ground items next to the opener,
-        // on top of the equipment/gold that goes straight to their bags.
-        self.spawn_world_drops(player_pos, player_floor).await;
+    /// Burst a treasure chest's loot out as scattered ground items once the
+    /// lid has swung open. The wait lives server-side so a client that skips
+    /// the lid animation can't reach the loot early (same rule as kill loot).
+    fn eject_chest_loot(&self, item_def_ids: Vec<String>, chest_pos: Position, floor_level: i8) {
+        let game_state = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(*super::combat::CHEST_LOOT_EJECT_DELAY).await;
+            game_state
+                .spawn_scattered_items(
+                    item_def_ids,
+                    chest_pos,
+                    floor_level,
+                    CHEST_LOOT_SCATTER_MIN,
+                    CHEST_LOOT_SCATTER_MAX,
+                )
+                .await;
+            // Rare bonus world drops burst out with the rest.
+            game_state.spawn_world_drops(chest_pos, floor_level).await;
+        });
     }
 
     /// Break a destructible dungeon prop (barrel/crate): requires standing

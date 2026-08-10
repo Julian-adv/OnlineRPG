@@ -1027,14 +1027,30 @@ export function handleServerMessage(
       break
     }
 
-    case 'InteractionRejected':
+    case 'InteractionRejected': {
+      // The event only cancels an in-flight interaction animation, so the
+      // refusal would otherwise be silent. Reasons are sentences except the
+      // machine codes mapped here (same pattern as PlayerAttackRejected).
+      const reasonText: Record<string, string> = {
+        occupied: 'Someone is already using it.',
+      }
+      addChatMessage({
+        text: reasonText[data.reason] ?? data.reason,
+        sender: 'system',
+      })
       events.interactionRejected.emit(data.reason)
       break
+    }
 
     case 'DungeonChestOpened': {
-      const items = (data.item_def_ids as string[]).join(', ')
+      // No items + no gold = re-open of a chest already claimed tonight;
+      // the lid still swings, showing an empty box.
+      dungeonManager.markTreasureChestOpened(data.entrance_id)
+      const empty = (data.item_def_ids as string[]).length === 0 && !data.gold
       addChatMessage({
-        text: `${actorName(data.player_id)} opened the treasure chest: ${items} + ${data.gold} gold!`,
+        text: empty
+          ? 'The treasure chest is empty.'
+          : `${actorName(data.player_id)} opened the treasure chest! (+${data.gold} gold)`,
         sender: 'system',
       })
       break

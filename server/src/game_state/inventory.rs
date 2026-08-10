@@ -1036,13 +1036,10 @@ impl super::GameState {
     /// Roll the global world-drop table for a loot event at `origin` and spawn
     /// any rare bonus items that hit as ground items scattered nearby. Shared
     /// by every loot source (monster kills, dungeon chests, broken props) so a
-    /// rare drop can spill from anything that yields loot. Each drop is
-    /// clamped onto walkable floor inside dungeons so it never lands in a wall.
-    /// Table entries are validated against `ItemDefs` at load time, so every
-    /// rolled id is guaranteed to have a definition here.
+    /// rare drop can spill from anything that yields loot. Table entries are
+    /// validated against `ItemDefs` at load time, so every rolled id is
+    /// guaranteed to have a definition here.
     pub(super) async fn spawn_world_drops(&self, origin: crate::types::Position, floor_level: i8) {
-        use std::f32::consts::TAU;
-
         /// How far from the loot origin a world drop scatters.
         const WORLD_DROP_OFFSET_METERS: f32 = 1.5;
 
@@ -1050,11 +1047,34 @@ impl super::GameState {
             let mut rng = rand::thread_rng();
             self.world_drop_defs.roll(&mut rng)
         };
+        self.spawn_scattered_items(
+            item_def_ids,
+            origin,
+            floor_level,
+            WORLD_DROP_OFFSET_METERS,
+            WORLD_DROP_OFFSET_METERS,
+        )
+        .await;
+    }
+
+    /// Spawn items as ground drops scattered around `origin`, each at a random
+    /// angle and a radius in `min_r..=max_r`. Each drop is clamped onto
+    /// walkable floor inside dungeons so it never lands in a wall; anyone may
+    /// pick them up.
+    pub(super) async fn spawn_scattered_items(
+        &self,
+        item_def_ids: Vec<String>,
+        origin: crate::types::Position,
+        floor_level: i8,
+        min_r: f32,
+        max_r: f32,
+    ) {
+        use std::f32::consts::TAU;
 
         for item_def_id in item_def_ids {
             let angle = rand::thread_rng().gen_range(0.0..TAU);
-            let preferred =
-                super::combat::offset_position_at_angle(origin, angle, WORLD_DROP_OFFSET_METERS);
+            let radius = rand::thread_rng().gen_range(min_r..=max_r);
+            let preferred = super::combat::offset_position_at_angle(origin, angle, radius);
             let position = self
                 .loot_drop_position(origin, floor_level, preferred)
                 .await;

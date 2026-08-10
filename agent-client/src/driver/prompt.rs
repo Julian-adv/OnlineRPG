@@ -239,10 +239,15 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             } else {
                 player_name(state, player_id)
             };
-            Some(format!(
-                "[Chest] {who} opened the treasure chest: {} + {gold} gold.",
-                item_def_ids.join(", ")
-            ))
+            let tail = if item_def_ids.is_empty() && *gold == 0 {
+                "it was empty (it refills at nightfall).".to_string()
+            } else {
+                format!(
+                    "{} burst out onto the ground nearby; the gold ({gold}) went to the opener.",
+                    item_def_ids.join(", ")
+                )
+            };
+            Some(format!("[Chest] {who} opened the treasure chest — {tail}"))
         }
         ServerMessage::DungeonPropBroken { depth, prop_id, .. } => Some(format!(
             "[Prop] Prop {prop_id} on floor {depth} was smashed — its cell is now walkable."

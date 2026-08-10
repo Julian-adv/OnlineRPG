@@ -83,6 +83,11 @@ export interface PendingPropBreak {
 export const ENTRANCE_DOOR_DEPTH = 0
 export const ENTRANCE_DOOR_ID = 0
 
+/** Sentinel propId for the final-floor treasure chest in the click walk-up
+ *  flow. Never sent to the server — the dungeon layer routes it to
+ *  OpenDungeonChest instead of OpenDungeonProp. */
+export const TREASURE_CHEST_PROP_ID = -1
+
 /** One interior door placement from wasm `dungeon_interior_doors`. `wall` is
  *  0/1/2/3 for the room's N/E/S/W wall; `doorId` is the toggle-packet id. */
 export interface InteriorDoorSpec {
@@ -332,6 +337,12 @@ class DungeonManager {
    *  the open once the player is within range. Same lifecycle as
    *  `pendingBreakState`. */
   private pendingOpenState: PendingPropBreak | null = null
+  /** Whether this session saw the treasure chest open (DungeonChestOpened
+   *  broadcast). Drives the lid pose across floor rebuilds. Kept out of
+   *  `openedProps` because the chest claim is per-character per night, not
+   *  an instance-wide fact like the prop sets (which server snapshots
+   *  replace wholesale). */
+  private treasureChestOpenedState = false
   /** Open doors by depth → set of door ids, synced from the server. depth 0 is
    *  the surface entrance door; ≥1 are interior room doors. Cleared on
    *  enter/exit; (re)populated by the snapshot + live toggle broadcasts. */
@@ -458,6 +469,7 @@ class DungeonManager {
     dungeon_add_passability(id, entrance.x, entrance.y, entrance.z)
     this.brokenProps.clear()
     this.openedProps.clear()
+    this.treasureChestOpenedState = false
     this.openDoors.clear()
     this.doorSyncInside = true
     this.doorSnapshotRequest = null
@@ -475,6 +487,7 @@ class DungeonManager {
     this.layouts = []
     this.brokenProps.clear()
     this.openedProps.clear()
+    this.treasureChestOpenedState = false
     this.openDoors.clear()
     this.doorSyncInside = true
     this.doorSnapshotRequest = null
@@ -556,6 +569,18 @@ class DungeonManager {
     }
     if (set.has(propId)) return
     set.add(propId)
+    dungeonPropsRevision.update((n) => n + 1)
+  }
+
+  get treasureChestOpened(): boolean {
+    return this.treasureChestOpenedState
+  }
+
+  /** Record the treasure chest opening (live broadcast); the render layer
+   *  plays the lid animation off the revision bump. */
+  markTreasureChestOpened(entranceId: string) {
+    if (entranceId !== this.id || this.treasureChestOpenedState) return
+    this.treasureChestOpenedState = true
     dungeonPropsRevision.update((n) => n + 1)
   }
 
