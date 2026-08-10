@@ -553,3 +553,62 @@ async fn teleport_clears_pending_move_intent() {
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_x(&game_state, &player_id).await, 5.0);
 }
+
+#[tokio::test]
+async fn rejected_far_move_snaps_client_back() {
+    let game_state = make_test_game_state("movement_far_reject_snap");
+    let player_id = pid("phantom");
+    game_state
+        .add_player(make_player("phantom", 0.0, 0.0))
+        .await;
+    let mut direct_rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state
+        .update_player_position(&player_id, move_cmd(pos(100.0), false), false, false)
+        .await;
+
+    let corrections = |msgs: Vec<ServerMessage>| {
+        msgs.into_iter()
+            .filter(|m| matches!(m, ServerMessage::PositionCorrected { .. }))
+            .count()
+    };
+    assert_eq!(corrections(drain(&mut direct_rx)), 1);
+
+    // A client that keeps predicting along a rejected path resends every
+    // second; the snap rides the correction throttle instead of matching it.
+    game_state
+        .update_player_position(&player_id, move_cmd(pos(101.0), false), false, false)
+        .await;
+    assert_eq!(corrections(drain(&mut direct_rx)), 0);
+}
+
+#[tokio::test]
+async fn dead_player_move_is_refused_and_snapped() {
+    let game_state = make_test_game_state("movement_dead_reject_snap");
+    let player_id = pid("corpse");
+    game_state.add_player(make_player("corpse", 0.0, 0.0)).await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&player_id)
+        .unwrap()
+        .health = 0;
+    let mut direct_rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state
+        .update_player_position(&player_id, move_cmd(pos(10.0), false), false, false)
+        .await;
+
+    assert!(drain(&mut direct_rx)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::PositionCorrected { .. })));
+    assert!(game_state
+        .movement_intents
+        .read()
+        .await
+        .get(&player_id)
+        .is_none());
+    game_state.tick_player_movement(60.0).await;
+    assert_eq!(player_x(&game_state, &player_id).await, 0.0);
+}

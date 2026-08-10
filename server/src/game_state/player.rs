@@ -2,15 +2,15 @@ use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
-use onlinerpg_shared::{shortest_world_delta_x, wrap_world_x, PLAYER_MOVE_SPEED};
+use onlinerpg_shared::{
+    shortest_world_delta_x, wrap_world_x, MAX_MOVE_TARGET_DISTANCE, PLAYER_MOVE_SPEED,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 /// Headroom over walk speed so the sim absorbs network jitter and catches up.
 pub(super) const MOVE_SPEED_SLACK: f32 = 1.15;
-/// Longest accepted move target; the farthest in-view click is ~42m.
-const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
@@ -924,10 +924,12 @@ impl super::GameState {
             return;
         }
         if !(new_position.is_finite() && new_rotation.is_finite()) {
-            warn!(
-                "Rejected non-finite move from player {}",
-                self.player_name_of(player_id).await
-            );
+            if self.snap_refused_move_back(player_id).await {
+                warn!(
+                    "Rejected non-finite move from player {}",
+                    self.player_name_of(player_id).await
+                );
+            }
             return;
         }
         new_position.x = wrap_world_x(new_position.x);
@@ -936,10 +938,10 @@ impl super::GameState {
         // Deliberately does not carry the name out: this runs for every move
         // packet, and the only consumers are the two rejection logs below,
         // which can afford their own lookup.
-        let (current_floor, current_position) = {
+        let (current_floor, current_position, health) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.floor_level, p.position),
+                Some(p) => (p.floor_level, p.position, p.health),
                 None => {
                     warn!("Attempted to move non-existent player: {}", player_id);
                     return;
@@ -972,6 +974,14 @@ impl super::GameState {
             return;
         }
 
+        // The tick's health backstop would only drop the queue silently; the
+        // client predicts every move it sends, so refuse here with a snap or
+        // its phantom walks off without the body.
+        if health == 0 {
+            self.snap_refused_move_back(player_id).await;
+            return;
+        }
+
         let mut queues = self.movement_intents.write().await;
         // Appended legs chain off the queue tail, so the distance guard must
         // measure the new leg, not the whole path from the current position.
@@ -986,11 +996,15 @@ impl super::GameState {
         };
         let dist_sq = leg_start.dist_xz_sq(&new_position);
         if dist_sq > MAX_MOVE_TARGET_DISTANCE * MAX_MOVE_TARGET_DISTANCE {
-            warn!(
-                "Rejected move target {:.0}m away from player {}",
-                dist_sq.sqrt(),
-                self.player_name_of(player_id).await
-            );
+            // The snap takes other locks; don't hold every mover's queue meanwhile.
+            drop(queues);
+            if self.snap_refused_move_back(player_id).await {
+                warn!(
+                    "Rejected move target {:.0}m away from player {}",
+                    dist_sq.sqrt(),
+                    self.player_name_of(player_id).await
+                );
+            }
             return;
         }
         let queue = queues.entry(*player_id).or_default();
@@ -1244,37 +1258,48 @@ impl super::GameState {
         }
     }
 
-    /// Refuse a client-reported floor above the housing limit and snap the
-    /// client back. It reads its own floor from local geometry and so keeps
-    /// resending the rejected value: without a snap every later move packet is
-    /// dropped too and the player is stranded with no signal. Rides the
-    /// refused-move throttle, warn included.
-    async fn reject_out_of_range_floor(&self, player_id: &PlayerId, floor_level: i8, source: &str) {
+    /// Snap a client whose move was refused outright (too far, dead) back to
+    /// the authoritative pose. Nothing else reconciles the two sims — the
+    /// mover never receives its own `PlayerMoved` — so a silent drop leaves
+    /// the client's prediction walking a path the server never accepted.
+    /// Rides the shared correction throttle; returns whether a snap was sent.
+    async fn snap_refused_move_back(&self, player_id: &PlayerId) -> bool {
         let now = std::time::Instant::now();
         let due = {
             let mut last = self.last_position_correction.write().await;
             correction_due(&mut last, player_id, now)
         };
         if !due {
-            return;
+            return false;
         }
-        let Some((position, rotation, current_floor)) = self.get_player_position(player_id).await
+        let Some((position, rotation, floor_level)) = self.get_player_position(player_id).await
         else {
-            return;
+            return false;
         };
-        warn!(
-            "Rejected {} with out-of-range floor {} from player {}",
-            source, floor_level, player_id
-        );
         self.send_direct_message(
             player_id,
             ServerMessage::PositionCorrected {
                 position,
                 rotation,
-                floor_level: current_floor,
+                floor_level,
             },
         )
         .await;
+        true
+    }
+
+    /// Refuse a client-reported floor above the housing limit and snap the
+    /// client back. It reads its own floor from local geometry and so keeps
+    /// resending the rejected value: without a snap every later move packet is
+    /// dropped too and the player is stranded with no signal. Rides the
+    /// refused-move throttle, warn included.
+    async fn reject_out_of_range_floor(&self, player_id: &PlayerId, floor_level: i8, source: &str) {
+        if self.snap_refused_move_back(player_id).await {
+            warn!(
+                "Rejected {} with out-of-range floor {} from player {}",
+                source, floor_level, player_id
+            );
+        }
     }
 
     /// Store a position immediately (trusted server-side path) and run the
