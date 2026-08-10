@@ -1,7 +1,7 @@
 use onlinerpg_shared::inventory::EquipSlot;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::info;
 
 /// Chest roll chance for items whose home tier is below the dungeon's
@@ -178,6 +178,12 @@ pub struct ItemDefs {
     /// Precomputed at load — defs are immutable, and bites roll every ~5-12 s
     /// per angler.
     catch_table: Arc<Vec<crate::game_state::fishing::CatchCandidate>>,
+}
+
+/// Process-wide shared instance; `load()` remains for isolated tests.
+pub fn item_defs() -> &'static ItemDefs {
+    static DEFS: OnceLock<ItemDefs> = OnceLock::new();
+    DEFS.get_or_init(ItemDefs::load)
 }
 
 impl ItemDefs {

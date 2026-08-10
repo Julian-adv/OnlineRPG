@@ -39,7 +39,6 @@
   import {
     CHARACTER_ANIMATION_PACK_PATHS,
     getCharacterModelPath,
-    getDefaultWeaponModel,
     getNpcModelPath,
     getWeaponModelPath,
   } from '../utils/modelPaths'
@@ -174,10 +173,7 @@
   let activeGltfData = $state<GLTF | null>(null)
   let locomotionGltfData = $state<GLTF | null>(null)
   let combatMeleeGltfData = $state<GLTF | null>(null)
-  let weaponGltfData = $state<GLTF | null>(null)
 
-  // svelte-ignore state_referenced_locally
-  const defaultWeaponModel = getDefaultWeaponModel(characterClass)
   // svelte-ignore state_referenced_locally
   const modelPath =
     (npcPlayerId !== undefined ? getNpcModelPath(name) : undefined) ??
@@ -195,16 +191,10 @@
   ).then((g) => {
     combatMeleeGltfData = g
   })
-  const weaponPromise = defaultWeaponModel
-    ? loadGLB(getWeaponModelPath(defaultWeaponModel)).then((g) => {
-        weaponGltfData = g
-      })
-    : Promise.resolve()
   const glbReady = Promise.all([
     modelPromise,
     locomotionPromise,
     combatMeleePromise,
-    weaponPromise,
   ])
 
   // Animation system - following gpt-all-in-one.html approach
@@ -224,7 +214,6 @@
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
   let lastMovementMode: MovementMode | undefined
-  let weaponAttached = $state(false)
   let weaponObject: THREE.Object3D | null = null
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
   const _nametagPos = new THREE.Vector3()
@@ -281,12 +270,12 @@
   function attachWeaponModel(
     gltfScene: THREE.Object3D,
     characterRoot: THREE.Object3D,
-    itemDefId?: string | null
-  ): boolean {
+    itemDefId: string
+  ): void {
     const rightHandBone = findBoneByName(characterRoot, 'RightHand')
     if (!rightHandBone) {
       console.warn('Could not find right hand bone for weapon attachment')
-      return false
+      return
     }
 
     weaponObject = gltfScene.clone()
@@ -304,8 +293,6 @@
       weaponObject.rotation.copy(MANDOLIN_ROTATION)
     }
     rightHandBone.add(weaponObject)
-    weaponAttached = true
-    return true
   }
 
   let rodTipNode: THREE.Object3D | null = null
@@ -333,18 +320,12 @@
     return rodTipNode?.getWorldPosition(rodTipScratch) ?? null
   }
 
-  function tryAttachWeapon(characterRoot: THREE.Object3D): boolean {
-    if (!defaultWeaponModel || weaponAttached || !weaponGltfData) return false
-    return attachWeaponModel(weaponGltfData.scene, characterRoot)
-  }
-
   function detachWeapon() {
     if (weaponObject && weaponObject.parent) {
       weaponObject.parent.remove(weaponObject)
     }
     weaponObject = null
     rodTipNode = null
-    weaponAttached = false
   }
 
   let offhandObject: THREE.Object3D | null = null
@@ -387,9 +368,7 @@
       : mainHand
   )
 
-  // undefined = nothing applied yet; null = "no equipped item" applied
-  // (bare hands locally, class default weapon for remotes).
-  let attachedWeaponItemId: string | null | undefined = undefined
+  let attachedWeaponItemId: string | null = null
   let weaponAttachGeneration = 0
 
   $effect(() => {
@@ -401,14 +380,9 @@
     if (itemDefId === attachedWeaponItemId) return
 
     detachWeapon()
-    attachedWeaponItemId = undefined
+    attachedWeaponItemId = null
 
-    if (!itemDefId) {
-      if (isCurrentPlayer || tryAttachWeapon(clonedScene)) {
-        attachedWeaponItemId = null
-      }
-      return
-    }
+    if (!itemDefId) return
 
     const itemDef = getItemDef(itemDefId)
     if (!itemDef?.worldModel) return
@@ -830,7 +804,6 @@
         modelRoot = null
       }
       clonedScene = null
-      weaponAttached = false
       attachedWeaponItemId = null
       attachedOffhandItemId = null
       musicPropObject = null

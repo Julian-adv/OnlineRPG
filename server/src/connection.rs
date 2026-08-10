@@ -1114,6 +1114,7 @@ async fn handle_client_message(
                 .load_player_inventory(&id, character_id, auth_service)
                 .await;
             if state.is_official_npc {
+                game_state.seed_npc_loadout(&id, &player.name).await;
                 game_state.seed_npc_keepsakes(&id, &player.name).await;
             }
 
