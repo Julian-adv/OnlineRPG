@@ -2,8 +2,8 @@
   "schedule": [
     {
       "at": "night",
-      "pos": [-1484.0, 0.9, 4741.0],
-      "rotation": 90.0,
+      "pos": [-1472.0, 0.9, 4746.0],
+      "rotation": -41.9,
       "floor_level": 0,
       "label": "night stall on the Aldermark road"
     },

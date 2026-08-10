@@ -108,6 +108,7 @@ reasoning_effort = "none"                      # "none"/"low"/"medium"/"high"; "
 #   template_prompt = data/templates/{class}.txt
 #   instance_prompt = data/npcs/{id}/instance.txt
 #   memory_file     = data/npcs/{id}/memory.txt
+#   favor_file      = data/npcs/{id}/favor.json
 #   schedule_file   = data/npcs/{id}/schedule.json (when the file exists)
 # gender = "female"  # optional; new characters default to male
 # Any of them can still be set explicitly to override the convention, and an
@@ -116,7 +117,9 @@ reasoning_effort = "none"                      # "none"/"low"/"medium"/"high"; "
 # --- Prompt layering ---
 # Every agent starts from system_prompt_file above: the JSON schema and the
 # action types they all share. Its role file is appended on top and may add
-# further actions, then instance_prompt and memory_file.
+# further actions, then instance_prompt. memory_file and favor_file are not
+# baked in: the driver re-reads them into every prompt, so notes and favor
+# written mid-session take effect without a restart.
 #
 # An agent with no `id` has no class template, so pick its role yourself.
 # Two are shipped, or point at your own file:

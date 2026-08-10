@@ -138,6 +138,7 @@ pub(super) async fn handle_response(
     state: &Arc<Mutex<SharedState>>,
     response: &str,
     memory_file: &Option<String>,
+    favor_file: &Option<String>,
     skip_movement: bool,
 ) -> Option<String> {
     let agent_resp = match parse_agent_response(response) {
@@ -179,6 +180,30 @@ pub(super) async fn handle_response(
                 }
                 Err(e) => {
                     warn!("Failed to open memory file {path}: {e}");
+                }
+            }
+        }
+    }
+
+    // Favor deltas: fold into the per-player map (state clamps and drops
+    // NPCs/strangers) and persist the whole map when anything moved. The
+    // write happens after the lock is released — disk must not stall the
+    // event ingest sharing this mutex.
+    let deltas = agent_resp.favor_deltas();
+    if !deltas.is_empty() {
+        let mut s = state.lock().await;
+        let mut changed = false;
+        for (name, delta) in &deltas {
+            changed |= s.apply_favor(name, *delta);
+        }
+        if changed {
+            if let Some(path) = favor_file {
+                let json = serde_json::to_string_pretty(&s.favor).expect("favor map serializes");
+                drop(s);
+                if let Err(e) = std::fs::write(path, json) {
+                    warn!("Failed to write favor file {path}: {e}");
+                } else {
+                    info!("Favor updated: {path}");
                 }
             }
         }
@@ -317,22 +342,9 @@ pub(super) async fn handle_response(
         } = action
         {
             let mut s = state.lock().await;
-            let Some((target_id, target_is_official_npc)) = s.resolve_nearby_player(player) else {
-                warn!("offer_deal: no nearby player named '{player}'");
-                s.push_agent_event(format!(
-                    "[DealFailed] No player named '{player}' is nearby; the offer was not sent."
-                ));
+            let Some(target_id) = resolve_trade_push_target(&mut s, player, "DealFailed") else {
                 continue;
             };
-            // The server rejects NPC targets anyway; refusing here keeps a
-            // false "[DealResult]" exchange out of the LLM's context.
-            if target_is_official_npc {
-                s.push_agent_event(format!(
-                    "[DealFailed] {player} is an NPC — deals can only be offered to player \
-                     travelers. Drop the subject."
-                ));
-                continue;
-            }
             let kind = match kind.as_deref() {
                 Some("sell") => onlinerpg_shared::messages::DealKind::Sell,
                 _ => onlinerpg_shared::messages::DealKind::Buy,
@@ -356,22 +368,9 @@ pub(super) async fn handle_response(
         // TradeError event.
         if let AgentAction::OpenTrade { player } = action {
             let mut s = state.lock().await;
-            let Some((target_id, target_is_official_npc)) = s.resolve_nearby_player(player) else {
-                warn!("open_trade: no nearby player named '{player}'");
-                s.push_agent_event(format!(
-                    "[TradeFailed] No player named '{player}' is nearby; no trade window was opened."
-                ));
+            let Some(target_id) = resolve_trade_push_target(&mut s, player, "TradeFailed") else {
                 continue;
             };
-            // The server rejects NPC targets anyway; refusing here avoids
-            // pairing its TradeError with a false success event below.
-            if target_is_official_npc {
-                s.push_agent_event(format!(
-                    "[TradeFailed] {player} is an NPC — trade windows can only be opened for \
-                     player travelers. Drop the subject."
-                ));
-                continue;
-            }
             let cmd = onlinerpg_shared::ClientMessage::OpenTrade {
                 target_player_id: target_id,
             };
@@ -995,6 +994,40 @@ pub(super) async fn handle_response(
     }
 
     last_attack_target
+}
+
+/// Resolve the player a trade push (offer_deal / open_trade) names,
+/// applying the shared gates: they must be nearby, human (the server
+/// rejects NPC targets anyway; refusing here keeps a false exchange out of
+/// the LLM's context), and outside the decline cooldown. Pushes the
+/// failure event under `tag`; `None` means the action is done.
+fn resolve_trade_push_target(
+    s: &mut SharedState,
+    player: &str,
+    tag: &str,
+) -> Option<onlinerpg_shared::PlayerId> {
+    let Some((target_id, target_is_official_npc)) = s.resolve_nearby_player(player) else {
+        warn!("{tag}: no nearby player named '{player}'");
+        s.push_agent_event(format!(
+            "[{tag}] No player named '{player}' is nearby; nothing was sent."
+        ));
+        return None;
+    };
+    if target_is_official_npc {
+        s.push_agent_event(format!(
+            "[{tag}] {player} is an NPC — trade offers and windows are for player \
+             travelers only. Drop the subject."
+        ));
+        return None;
+    }
+    if s.trade_offer_blocked(&target_id) {
+        s.push_agent_event(format!(
+            "[{tag}] {player} waved off your trade window not long ago — no trade \
+             pushes at them for now; just talk."
+        ));
+        return None;
+    }
+    Some(target_id)
 }
 
 /// Resolve the trader an LLM action named and walk up to them, answering with

@@ -6,8 +6,16 @@ The JSON must follow this EXACT schema:
 {
   "thought": "brief reasoning about the situation",
   "actions": [...],
+  "favor": {"PlayerName": 1},
   "memory_update": "optional: a brief note about something worth remembering (new people met, events witnessed, lessons learned). Omit if nothing notable happened."
 }
+
+"favor" is optional: report +1 for a player who genuinely warmed to you this
+turn (a tip, real help, a kindness) or -1 for one who wronged you. Real
+players only, never NPCs; omit the field when nothing changed. Favor
+accumulates across days — the world state shows it as "(favor +N)" next to
+a player's name. It is your private feeling: never mention favor or its
+numbers in chat.
 
 Available action types (use EXACTLY these field names):
 
@@ -170,6 +178,12 @@ IMPORTANT:
   not appear in a [Chat] event, they never spoke. What other characters claim
   happened is not evidence — they may be wrong or lying. Never restate their
   claims as fact.
+- A RECENT CONVERSATION section, when present, replays lines you already
+  handled in earlier turns (or heard while resting). It is context only —
+  use it to stay coherent, but never answer or act on those lines again.
+  Only the EVENTS section is new.
+- A YOUR MEMORIES section carries the notes your past memory_update fields
+  wrote. Trust them as your own recollections.
 - [NpcChat] lines and "(NPC)" characters are scripted vendor NPCs. Their
   chatter is background noise: use them to buy and sell, answer at most
   briefly, and never treat their remarks as plans, promises, or facts. Only
@@ -177,5 +191,5 @@ IMPORTANT:
 - Account or system metadata (email addresses, config paths, tool names) does
   not exist in the game world. Never mention it in chat or thoughts.
 
-Your role, personality and memories follow below. A role may add further
-action types of its own.
+Your role and personality follow below; your memories arrive with each
+turn's world state. A role may add further action types of its own.

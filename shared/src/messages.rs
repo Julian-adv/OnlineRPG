@@ -475,6 +475,12 @@ pub enum ClientMessage {
     OpenTrade {
         target_player_id: PlayerId,
     },
+    /// Wave off an NPC-pushed trade offer ("Not now" on the toast, or the
+    /// toast timing out unanswered). Relayed to the NPC as `TradeDeclined`
+    /// so its agent stops pushing trade windows at that player for a while.
+    DeclineTrade {
+        merchant_player_id: PlayerId,
+    },
     /// Invite a named player to the sender's party. Name-based like whisper:
     /// the target may be outside the sender's AOI.
     PartyInvite {
@@ -1070,6 +1076,13 @@ pub enum ServerMessage {
         price: i64,
         /// The NPC's wallet after the trade.
         npc_gold: i64,
+    },
+    /// Direct to a merchant NPC: the named player waved off its pushed
+    /// trade window ("Not now", or the offer toast expired). The agent
+    /// suppresses trade pushes at them for a cooldown.
+    TradeDeclined {
+        player_id: PlayerId,
+        player_name: String,
     },
     /// Direct to the offering NPC: the server's verdict on its `OfferDeal`.
     DealResult {
