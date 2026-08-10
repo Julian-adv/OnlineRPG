@@ -160,6 +160,15 @@ fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
         .count()
 }
 
+fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntranceDef {
+    game_state
+        .dungeon_defs
+        .all()
+        .next()
+        .expect("a dungeon def")
+        .clone()
+}
+
 fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {
     std::iter::from_fn(|| rx.try_recv().ok()).find_map(|msg| match msg {
         ServerMessage::PositionCorrected {

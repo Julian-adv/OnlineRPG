@@ -936,8 +936,8 @@ impl super::GameState {
         // Dungeon floors (negative) are validated against the entrance
         // registry and the floor's expected world Y before being stored.
         // Deliberately does not carry the name out: this runs for every move
-        // packet, and the only consumers are the two rejection logs below,
-        // which can afford their own lookup.
+        // packet, and the only consumers are the rejection logs below, which
+        // can afford their own lookup.
         let (current_floor, current_position, health) = {
             let players = self.players.read().await;
             match players.get(player_id) {
@@ -948,6 +948,7 @@ impl super::GameState {
                 }
             }
         };
+        let declared_floor = floor_level;
         let floor_level = if floor_level < 0 || current_floor < 0 {
             self.validated_dungeon_floor(player_id, current_floor, floor_level, &new_position)
                 .await
@@ -971,6 +972,15 @@ impl super::GameState {
                 },
             )
             .await;
+            return;
+        }
+
+        // A coerced floor means the declared (position, floor) pair failed
+        // dungeon validation (which already warned why), and the mover never
+        // sees its own PlayerMoved — snap so its floor resyncs instead of
+        // diverging silently.
+        if floor_level != declared_floor {
+            self.snap_refused_move_back(player_id).await;
             return;
         }
 

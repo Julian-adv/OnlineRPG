@@ -9,8 +9,9 @@
 use std::collections::{HashMap, HashSet};
 
 use onlinerpg_shared::dungeon::{
-    cell_center, dungeon_origin, floor_world_y, generate_dungeon_for, interior_doors,
-    monster_level_for_depth, FloorLayout, PropKind, ENTRANCE_DOOR_ID, FLOOR_Y_TOLERANCE, GRID,
+    cell_center, dungeon_origin, floor_height_at, floor_world_y, generate_dungeon_for,
+    interior_doors, monster_level_for_depth, FloorLayout, PropKind, ENTRANCE_DOOR_ID,
+    FLOOR_Y_TOLERANCE, GRID,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
@@ -1248,8 +1249,9 @@ impl GameState {
     /// Movement here mirrors the codebase's trust model (terrain
     /// collision is client-side): we only require that the position lies
     /// inside a known dungeon footprint and that the reported Y matches
-    /// the floor's world Y, which is what walking the stair shafts
-    /// produces naturally.
+    /// the floor's ground height there, stair ramps included — clients
+    /// flip their claimed floor partway down a shaft, so mid-ramp
+    /// positions must validate for either adjacent floor.
     pub(super) async fn validated_dungeon_floor(
         &self,
         player_id: &PlayerId,
@@ -1271,13 +1273,22 @@ impl GameState {
         };
 
         self.ensure_dungeon_runtime(&entrance.id).await;
-        let depth = (-requested_floor) as usize;
-        let total = {
+        let depth = requested_floor.unsigned_abs() as usize;
+        let (total, expected_y) = {
             let dungeons = self.dungeons.read().await;
-            dungeons
-                .get(&entrance.id)
-                .map(|d| d.layouts.len())
-                .unwrap_or(0)
+            match dungeons.get(&entrance.id) {
+                Some(d) => (
+                    d.layouts.len(),
+                    floor_height_at(
+                        &entrance.position(),
+                        &d.layouts,
+                        depth as u8,
+                        position.x,
+                        position.z,
+                    ),
+                ),
+                None => (0, None),
+            }
         };
         if depth == 0 || depth > total {
             warn!(
@@ -1286,8 +1297,10 @@ impl GameState {
             );
             return current_floor;
         }
-
-        let expected_y = floor_world_y(entrance.y, depth as u8);
+        // None only for an out-of-range depth, refused above.
+        let Some(expected_y) = expected_y else {
+            return current_floor;
+        };
         if (position.y - expected_y).abs() > FLOOR_Y_TOLERANCE {
             warn!(
                 "Player {} floor {} Y mismatch: reported {:.1}, expected {:.1}",

@@ -583,6 +583,131 @@ async fn rejected_far_move_snaps_client_back() {
 }
 
 #[tokio::test]
+async fn implausible_dungeon_floor_move_is_refused_and_snapped() {
+    let game_state = make_test_game_state("movement_floor_coerce_snap");
+    let player_id = pid("faller");
+    game_state.add_player(make_player("faller", 0.0, 0.0)).await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    // No dungeon footprint at the origin, so the claimed floor is coerced;
+    // the mover must be told rather than left predicting floor -1.
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                floor_level: -1,
+                ..move_cmd(pos(1.0), false)
+            },
+            false,
+            false,
+        )
+        .await;
+
+    let (position, _, floor_level) =
+        first_correction(&mut rx).expect("a coerced floor must snap the client back");
+    assert_eq!(floor_level, 0);
+    assert_eq!((position.x, position.z), (0.0, 0.0));
+    assert!(
+        !game_state
+            .movement_intents
+            .read()
+            .await
+            .contains_key(&player_id),
+        "a refused floor move must not enqueue an intent"
+    );
+}
+
+#[tokio::test]
+async fn plausible_dungeon_floor_move_is_not_snapped() {
+    use onlinerpg_shared::dungeon::{floor_height_at, generate_dungeon_for};
+
+    let game_state = make_test_game_state("movement_floor_plausible");
+    let entrance = first_dungeon(&game_state);
+    let player_id = pid("delver");
+    game_state
+        .add_player(make_player("delver", entrance.x, entrance.z))
+        .await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    // The ground Y an honest client reports for the claimed floor.
+    let layouts = generate_dungeon_for(&entrance.id);
+    let (x, z) = (entrance.x + 1.0, entrance.z);
+    let y = floor_height_at(&entrance.position(), &layouts, 1, x, z).expect("depth 1 exists");
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                floor_level: -1,
+                ..move_cmd(Position { x, y, z }, false)
+            },
+            false,
+            false,
+        )
+        .await;
+
+    assert!(
+        first_correction(&mut rx).is_none(),
+        "a valid descent must not be snapped"
+    );
+    assert!(game_state
+        .movement_intents
+        .read()
+        .await
+        .contains_key(&player_id));
+}
+
+/// Keyboard descents stream mid-ramp positions, and the client flips its
+/// claimed floor near the top of the shaft — long before the flat floor Y is
+/// within tolerance. Those honest packets must validate, not snap.
+#[tokio::test]
+async fn mid_ramp_descent_claim_is_not_snapped() {
+    use onlinerpg_shared::dungeon::{dungeon_origin, floor_height_at, generate_dungeon_for};
+
+    let game_state = make_test_game_state("movement_floor_mid_ramp");
+    let entrance = first_dungeon(&game_state);
+    let layouts = generate_dungeon_for(&entrance.id);
+    let e_pos = entrance.position();
+    let (ox, oz) = dungeon_origin(entrance.x, entrance.z);
+    // A point on the entrance shaft just past the client's depth-switch
+    // fraction: barely descended, so far from floor -1's flat Y.
+    let (x, y, z) = (0..80)
+        .flat_map(|i| (0..80).map(move |j| (i, j)))
+        .find_map(|(i, j)| {
+            let (x, z) = (ox + i as f32 + 0.5, oz + j as f32 + 0.5);
+            let y = floor_height_at(&e_pos, &layouts, 1, x, z)?;
+            let descended = entrance.y - y;
+            (descended > 0.7 && descended < 1.4).then_some((x, y, z))
+        })
+        .expect("a mid-ramp cell on the entrance shaft");
+
+    let player_id = pid("stepper");
+    game_state.add_player(make_player("stepper", x, z)).await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    game_state
+        .update_player_position(
+            &player_id,
+            MoveCommand {
+                floor_level: -1,
+                ..move_cmd(Position { x, y, z }, false)
+            },
+            false,
+            false,
+        )
+        .await;
+
+    assert!(
+        first_correction(&mut rx).is_none(),
+        "an honest mid-ramp packet must not be snapped"
+    );
+    assert!(game_state
+        .movement_intents
+        .read()
+        .await
+        .contains_key(&player_id));
+}
+
+#[tokio::test]
 async fn dead_player_move_is_refused_and_snapped() {
     let game_state = make_test_game_state("movement_dead_reject_snap");
     let player_id = pid("corpse");
