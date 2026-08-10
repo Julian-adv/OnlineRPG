@@ -100,16 +100,3 @@ export function getCharacterModelPath(
   }
   return KNIGHT_CHARACTER_MODEL_PATH
 }
-
-export function getDefaultWeaponModel(
-  characterClass: CharacterClass
-): string | null {
-  switch (characterClass) {
-    case 'merchant':
-      return null
-    case 'guard':
-      return 'weapons/spear.glb'
-    default:
-      return 'weapons/sword.glb'
-  }
-}

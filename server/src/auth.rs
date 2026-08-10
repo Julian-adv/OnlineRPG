@@ -1162,7 +1162,14 @@ impl AuthService {
 
         let id = conn.last_insert_rowid();
 
-        {
+        // A registry NPC with an issued loadout skips the starter kit —
+        // otherwise the worn starter sword would occupy main_hand. The gear
+        // itself is granted and worn by `seed_npc_loadout` on every join.
+        let issued = account_name.starts_with(NPC_ACCOUNT_PREFIX)
+            && crate::npc_defs::npc_defs()
+                .get_by_npc_name(character_name)
+                .is_some_and(|def| !def.loadout.is_empty());
+        if !issued {
             let mut stmt = conn.prepare(
                 "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot) \
                  VALUES (?1, ?2, ?3, ?4)",
@@ -1398,6 +1405,46 @@ mod tests {
             .unwrap();
         let items = auth.load_inventory(knight.id).unwrap();
         assert!(items.iter().all(|r| r.item_def_id != "worn_mandolin"));
+    }
+
+    #[test]
+    fn a_registry_npc_with_a_loadout_skips_the_starter_kit() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_loadout_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_loadout_test").unwrap();
+        let def = crate::npc_defs::npc_defs().get_by_npc_name("Karl").unwrap();
+        assert!(
+            !def.loadout.is_empty(),
+            "Karl's registry row carries a loadout"
+        );
+        let attributes = CharacterAttributes {
+            r#str: 15,
+            dex: 13,
+            con: 14,
+            int: 9,
+            wis: 11,
+            cha: 10,
+            guard: 11,
+        };
+
+        let karl = auth
+            .create_character(
+                &account,
+                "Karl",
+                &attributes,
+                20,
+                CharacterClass::Guard,
+                Gender::Male,
+            )
+            .unwrap();
+        let items = auth.load_inventory(karl.id).unwrap();
+        assert!(
+            items.is_empty(),
+            "issued gear comes from join-time seeding, not creation: {items:?}"
+        );
     }
 
     #[test]

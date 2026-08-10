@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use onlinerpg_shared::monster_ai::BehaviorTree;
-use onlinerpg_shared::{Character, CharacterClass, ClientMessage, Gender, ServerMessage};
+use onlinerpg_shared::{
+    Character, CharacterAttributes, CharacterClass, ClientMessage, Gender, ServerMessage,
+};
 use onlinerpg_terrain::height::HeightSampler;
 use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
@@ -371,9 +373,10 @@ async fn run_npc_session(
                 label, char_name, class, gender
             );
 
-            // Registry NPCs are fixtures of the town with a fixed post; they
-            // take the roll they are given. Only a user's own character
-            // shops around for a better one.
+            // Registry NPCs reroll by a fixed class heuristic instead of
+            // asking their LLM; only a user's own character shops around
+            // by taste. Either way it is the same reroll button a player
+            // gets — the server never hands out custom numbers.
             let agent = npc
                 .id
                 .is_none()
@@ -616,7 +619,7 @@ const MAX_STAT_ROLLS: u32 = 20;
 /// Roll starting stats, letting the agent accept or reroll each result the
 /// way a human works the web client's reroll button. Whatever is on the table
 /// when it accepts — or when the rolls run out — is what it plays. Without an
-/// LLM the first roll stands, as before.
+/// LLM a fixed class heuristic does the accepting instead.
 ///
 /// The decisions go through the scheduler like any other call, so a fleet
 /// starting up with fresh accounts still honours `max_concurrent`.
@@ -655,8 +658,12 @@ async fn roll_stats_with_agent(
             a.r#str, a.dex, a.con, a.int, a.wis, a.cha, a.guard
         );
 
+        // Agentless: the loop bound keeps the last roll if none ever fits.
         let Some(agent) = agent else {
-            return Ok(());
+            if roll_fits_class(&a, class, gender) {
+                return Ok(());
+            }
+            continue;
         };
         let left = MAX_STAT_ROLLS - attempt;
         if left == 0 {
@@ -688,6 +695,20 @@ async fn roll_stats_with_agent(
         }
     }
     Ok(())
+}
+
+/// The agentless acceptance bar: every attribute the class favours (positive
+/// stat adjustment) reached 14. A guard rerolls until STR and CON can carry
+/// a fight; a class with no favourites takes the first roll.
+fn roll_fits_class(a: &CharacterAttributes, class: &CharacterClass, gender: Gender) -> bool {
+    const KEY_STAT_MIN: u8 = 14;
+    let values = [a.r#str, a.dex, a.con, a.int, a.wis, a.cha];
+    class
+        .stat_adjustments(gender)
+        .iter()
+        .zip(values)
+        .filter(|(adj, _)| **adj > 0)
+        .all(|(_, value)| value >= KEY_STAT_MIN)
 }
 
 /// Role prompt for agents with no class template — the plain player agent's
@@ -968,6 +989,23 @@ mod tests {
             class: Some(class),
             gender: None,
         }
+    }
+
+    #[test]
+    fn a_guard_rerolls_until_str_and_con_carry_a_fight() {
+        let attrs = |str_: u8, con: u8| CharacterAttributes {
+            r#str: str_,
+            dex: 10,
+            con,
+            int: 10,
+            wis: 10,
+            cha: 10,
+            guard: 10,
+        };
+        let class = CharacterClass::Guard;
+        assert!(roll_fits_class(&attrs(14, 14), &class, Gender::Male));
+        assert!(!roll_fits_class(&attrs(15, 13), &class, Gender::Male));
+        assert!(!roll_fits_class(&attrs(11, 16), &class, Gender::Male));
     }
 
     #[test]

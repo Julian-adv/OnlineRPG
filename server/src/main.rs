@@ -291,7 +291,7 @@ async fn main() -> ExitCode {
     let args = Args::parse();
     world_config::log_world_config();
     let monster_defs = monster_defs::MonsterDefs::load();
-    let item_defs = item_defs::ItemDefs::load();
+    let item_defs = item_defs::item_defs().clone();
     let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);
     let paths = state_paths(&args.state_dir);

@@ -1,3 +1,4 @@
+use crate::item_defs::item_defs;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -36,6 +37,10 @@ pub struct NpcDefinition {
     /// the NPC's bag on join.
     #[serde(default, deserialize_with = "crate::semicolon_list::deserialize")]
     pub keepsakes: Vec<String>,
+    /// Working gear granted at creation and topped up on join, equipped
+    /// into free slots. Never sellable, unlike keepsakes.
+    #[serde(default, deserialize_with = "crate::semicolon_list::deserialize")]
+    pub loadout: Vec<String>,
 }
 
 impl NpcDefinition {
@@ -50,6 +55,17 @@ impl NpcDefinition {
 
     pub fn keeps(&self, item_def_id: &str) -> bool {
         self.keepsakes.iter().any(|id| id == item_def_id)
+    }
+
+    pub fn in_loadout(&self, item_def_id: &str) -> bool {
+        self.loadout.iter().any(|id| id == item_def_id)
+    }
+
+    /// Items this resident never sells: wishlist purchases are kept, and
+    /// issued loadout gear is not merchandise. (A keepsake is the softer
+    /// case — sellable, but only through a deal the NPC offered.)
+    pub fn refuses_to_sell(&self, item_def_id: &str) -> bool {
+        self.wants(item_def_id) || self.in_loadout(item_def_id)
     }
 }
 
@@ -84,6 +100,19 @@ impl NpcDefs {
                 "NPC {} lists an item as both wishlist and keepsake",
                 def.npc_name
             );
+            // Loadout gear is never sellable; a keepsake is — contradictory.
+            assert!(
+                !def.loadout.iter().any(|id| def.keeps(id)),
+                "NPC {} lists an item as both loadout and keepsake",
+                def.npc_name
+            );
+            for id in &def.loadout {
+                assert!(
+                    item_defs().get(id).is_some(),
+                    "NPC {} loadout item {id} is not in items.csv",
+                    def.npc_name
+                );
+            }
         }
 
         info!("Loaded {} NPC definition(s)", by_id.len());
@@ -107,6 +136,10 @@ impl NpcDefs {
         self.by_npc_name.get(npc_name).filter(|def| def.trades())
     }
 
+    pub fn get_by_npc_name(&self, npc_name: &str) -> Option<&NpcDefinition> {
+        self.by_npc_name.get(npc_name)
+    }
+
     /// Character name for a registry id (the schedule directory name).
     pub fn npc_name_by_id(&self, id: &str) -> Option<&str> {
         self.npc_name_by_id.get(id).map(String::as_str)
@@ -116,4 +149,14 @@ impl NpcDefs {
 pub fn npc_defs() -> &'static NpcDefs {
     static DEFS: OnceLock<NpcDefs> = OnceLock::new();
     DEFS.get_or_init(NpcDefs::load)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_live_registry_loads_and_validates() {
+        npc_defs();
+    }
 }

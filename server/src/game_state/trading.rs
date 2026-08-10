@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
+use onlinerpg_shared::inventory::ItemInstance;
 use onlinerpg_shared::messages::{
     ActiveDeal, BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem,
 };
@@ -79,6 +80,9 @@ impl TraderDef {
                     }
                     DealKind::Buy if r.wants(item_def_id) => {
                         Err("you do not resell your wishlist items")
+                    }
+                    DealKind::Buy if r.in_loadout(item_def_id) => {
+                        Err("you never sell your issued gear")
                     }
                     _ => Ok((r.wishlist_rate_percent, resident_half_band_pct(cha))),
                 }
@@ -200,6 +204,15 @@ impl super::GameState {
         }
 
         Ok(def)
+    }
+
+    /// The registry definition behind an official-NPC seller, or None for a
+    /// player. Selling issued loadout gear is refused for NPCs — join-time
+    /// seeding would mint a fresh copy, making it a gold faucet.
+    async fn seller_npc_def(&self, player_id: &PlayerId) -> Option<&'static NpcDefinition> {
+        let players = self.players.read().await;
+        let seller = players.get(player_id).filter(|p| p.is_official_npc)?;
+        npc_defs().get_by_npc_name(&seller.name)
     }
 
     /// `register` records this player as actively shopping with the NPC so it
@@ -435,7 +448,7 @@ impl super::GameState {
         };
         let mut stock: Vec<StockEntry> = Vec::new();
         for item in &inv.bag {
-            if def.wants(&item.item_def_id) {
+            if def.refuses_to_sell(&item.item_def_id) {
                 continue;
             }
             if def.keeps(&item.item_def_id) && !offered(&item.item_def_id) {
@@ -471,15 +484,30 @@ impl super::GameState {
         let Some(def) = npc_defs().get_trader_by_npc_name(npc_name) else {
             return;
         };
+        self.seed_npc_items(npc_player_id, &def.keepsakes, false)
+            .await;
+    }
+
+    /// Grant an official NPC's registry loadout on join: missing items are
+    /// created and worn (free slots first, bag otherwise). Also covers a
+    /// fresh character's first join — creation writes no loadout rows.
+    pub async fn seed_npc_loadout(&self, npc_player_id: &PlayerId, npc_name: &str) {
+        let Some(def) = npc_defs().get_by_npc_name(npc_name) else {
+            return;
+        };
+        self.seed_npc_items(npc_player_id, &def.loadout, true).await;
+    }
+
+    /// Grant whichever of `wanted` the NPC no longer carries, worn or
+    /// bagged. `wear` puts an item into its free equip slot (loadout);
+    /// otherwise everything lands in the bag (keepsakes).
+    async fn seed_npc_items(&self, npc_player_id: &PlayerId, wanted: &[String], wear: bool) {
         let missing: Vec<&String> = {
             let inventories = self.inventories.read().await;
             let Some(inv) = inventories.get(npc_player_id) else {
                 return;
             };
-            def.keepsakes
-                .iter()
-                .filter(|id| !inv.has_item(id))
-                .collect()
+            wanted.iter().filter(|id| !inv.has_item(id)).collect()
         };
         if missing.is_empty() {
             return;
@@ -491,11 +519,35 @@ impl super::GameState {
                 return;
             };
             for item_def_id in missing {
-                let stackable = self.item_defs.stackable(item_def_id);
-                next_id += stack_into_bag(
-                    &mut inv.bag,
-                    BagInsert::one(stackable, item_def_id, 0, next_id),
-                );
+                let free_slot = if wear {
+                    self.item_defs
+                        .get(item_def_id)
+                        .and_then(|d| d.equip_slot)
+                        .filter(|slot| !inv.equipped.contains_key(slot))
+                } else {
+                    None
+                };
+                match free_slot {
+                    Some(slot) => {
+                        inv.equipped.insert(
+                            slot,
+                            ItemInstance {
+                                instance_id: next_id,
+                                item_def_id: item_def_id.clone(),
+                                quantity: 1,
+                                enchant: 0,
+                            },
+                        );
+                        next_id += 1;
+                    }
+                    None => {
+                        let stackable = self.item_defs.stackable(item_def_id);
+                        next_id += stack_into_bag(
+                            &mut inv.bag,
+                            BagInsert::one(stackable, item_def_id, 0, next_id),
+                        );
+                    }
+                }
             }
         }
         self.mark_inventory_dirty(npc_player_id).await;
@@ -524,8 +576,7 @@ impl super::GameState {
                 }
             }
             TraderDef::Resident(r) => {
-                if r.wants(item_def_id) {
-                    // Wishlist purchases are kept; see `resident_stock`.
+                if r.refuses_to_sell(item_def_id) {
                     return self
                         .send_trade_error(player_id, "They won't part with that")
                         .await;
@@ -759,7 +810,7 @@ impl super::GameState {
                     }
                 }
                 TraderDef::Resident(r) => {
-                    if r.wants(&req.item_def_id) {
+                    if r.refuses_to_sell(&req.item_def_id) {
                         return self
                             .send_trade_error(player_id, "They won't part with that")
                             .await;
@@ -1043,6 +1094,13 @@ impl super::GameState {
             };
             item.item_def_id.clone()
         };
+        if let Some(seller) = self.seller_npc_def(player_id).await {
+            if seller.in_loadout(&item_def_id) {
+                return self
+                    .send_trade_error(player_id, "You never sell your issued gear")
+                    .await;
+            }
+        }
         let Some(base_price) = self
             .item_defs
             .get(&item_def_id)
@@ -1311,6 +1369,8 @@ impl super::GameState {
             return;
         }
 
+        let seller_def = self.seller_npc_def(player_id).await;
+
         // One id per unit, reserved before the locks: a resident's received
         // units draw from it, a merchant's buyback entries do.
         let mut next_unit_id = self
@@ -1357,6 +1417,13 @@ impl super::GameState {
 
             let item_def_id = item.item_def_id.clone();
             let enchant = item.enchant;
+            if seller_def.is_some_and(|seller| seller.in_loadout(&item_def_id)) {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "You never sell your issued gear")
+                    .await;
+            }
             let Some(base_price) = self.item_defs.get(&item_def_id).and_then(|d| d.base_price)
             else {
                 drop(inventories);

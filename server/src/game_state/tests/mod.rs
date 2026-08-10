@@ -250,7 +250,7 @@ fn make_game_state_with_zones(
         uuid::Uuid::new_v4()
     ));
     let housing_io = Arc::new(HousingIO::new(housing_dir));
-    let item_defs = ItemDefs::load();
+    let item_defs = crate::item_defs::item_defs().clone();
     let world_drop_defs = crate::world_drop_defs::WorldDropDefs::load(&item_defs);
     let monster_defs = MonsterDefs::load();
     let dungeon_defs = crate::dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);

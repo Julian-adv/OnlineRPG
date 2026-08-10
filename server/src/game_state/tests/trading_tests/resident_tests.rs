@@ -80,11 +80,11 @@ async fn resident_wallet_caps_purchases() {
 #[tokio::test]
 async fn resident_sells_stock_but_keeps_wishlist_items() {
     let game_state = make_test_game_state("resident_stock");
-    // Karl carries a spear (sellable stock) and a torch (wishlist: kept).
+    // Karl carries a shield (sellable stock) and a torch (wishlist: kept).
     setup_resident_trade(
         &game_state,
         0,
-        vec![bag_item(11, "spear", 1), bag_item(12, "torch", 1)],
+        vec![bag_item(11, "wooden_shield", 1), bag_item(12, "torch", 1)],
         vec![],
     )
     .await;
@@ -94,16 +94,19 @@ async fn resident_sells_stock_but_keeps_wishlist_items() {
     }
     let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
 
-    // Spear base 3500 — instance moves to the buyer, gold to Karl.
+    // Shield base 2500 — instance moves to the buyer, gold to Karl.
     game_state
-        .buy_item(&pid("seller"), &pid("npc_karl"), "spear")
+        .buy_item(&pid("seller"), &pid("npc_karl"), "wooden_shield")
         .await;
-    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 6_500);
-    assert_eq!(game_state.get_player_gold(&pid("npc_karl")).await, 3_500);
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 7_500);
+    assert_eq!(game_state.get_player_gold(&pid("npc_karl")).await, 2_500);
     {
         let inventories = game_state.inventories.read().await;
         assert_eq!(inventories[&pid("seller")].bag.len(), 1);
-        assert_eq!(inventories[&pid("seller")].bag[0].item_def_id, "spear");
+        assert_eq!(
+            inventories[&pid("seller")].bag[0].item_def_id,
+            "wooden_shield"
+        );
         assert_eq!(inventories[&pid("npc_karl")].bag.len(), 1);
         assert_eq!(inventories[&pid("npc_karl")].bag[0].item_def_id, "torch");
     }
@@ -113,7 +116,7 @@ async fn resident_sells_stock_but_keeps_wishlist_items() {
     game_state
         .buy_item(&pid("seller"), &pid("npc_karl"), "torch")
         .await;
-    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 6_500);
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 7_500);
     match seller_rx.try_recv() {
         Ok(ServerMessage::TradeError { message }) => {
             assert!(message.contains("part with"), "got: {message}")
@@ -128,7 +131,7 @@ async fn resident_sale_preserves_enchantment() {
     setup_resident_trade(
         &game_state,
         0,
-        vec![enchanted_bag_item(11, "spear", 1, 3)],
+        vec![enchanted_bag_item(11, "wooden_shield", 1, 3)],
         vec![],
     )
     .await;
@@ -139,7 +142,7 @@ async fn resident_sale_preserves_enchantment() {
         .insert(pid("seller"), 10_000);
 
     game_state
-        .buy_item(&pid("seller"), &pid("npc_karl"), "spear")
+        .buy_item(&pid("seller"), &pid("npc_karl"), "wooden_shield")
         .await;
 
     let inventories = game_state.inventories.read().await;
@@ -154,8 +157,8 @@ async fn resident_sells_lowest_enchantment_first() {
         &game_state,
         0,
         vec![
-            enchanted_bag_item(11, "spear", 1, 3),
-            bag_item(12, "spear", 1),
+            enchanted_bag_item(11, "wooden_shield", 1, 3),
+            bag_item(12, "wooden_shield", 1),
         ],
         vec![],
     )
@@ -167,7 +170,7 @@ async fn resident_sells_lowest_enchantment_first() {
         .insert(pid("seller"), 10_000);
 
     game_state
-        .buy_item(&pid("seller"), &pid("npc_karl"), "spear")
+        .buy_item(&pid("seller"), &pid("npc_karl"), "wooden_shield")
         .await;
 
     let inventories = game_state.inventories.read().await;
@@ -214,7 +217,7 @@ async fn resident_shop_state_reports_wishlist_and_stock() {
         &game_state,
         4_321,
         vec![
-            bag_item(11, "spear", 1),
+            bag_item(11, "wooden_shield", 1),
             bag_item(12, "torch", 1),
             bag_item(13, "worn_iron_sword", 1),
         ],
@@ -242,7 +245,7 @@ async fn resident_shop_state_reports_wishlist_and_stock() {
             assert_eq!(wishlist, vec!["torch".to_string(), "dagger".to_string()]);
             // Stock excludes the wishlist torch and the unpriced worn sword.
             assert_eq!(stock.len(), 1);
-            assert_eq!(stock[0].item_def_id, "spear");
+            assert_eq!(stock[0].item_def_id, "wooden_shield");
             assert_eq!(stock[0].quantity, 1);
         }
         other => panic!("Expected ShopState, got {:?}", other),
@@ -609,4 +612,110 @@ async fn salary_pays_once_per_day_rollover_up_to_cap() {
     // Same day again: no double payment.
     game_state.tick_npc_salaries().await;
     assert_eq!(game_state.get_player_gold(&pid("npc_karl")).await, 30_000);
+}
+
+// --- Loadout: issued gear seeded on join, never sold ---
+
+#[tokio::test]
+async fn a_registry_loadout_is_granted_and_worn_on_join() {
+    let game_state = make_test_game_state("loadout_seed");
+    setup_resident_trade(&game_state, 0, vec![], vec![]).await;
+    let def = crate::npc_defs::npc_defs().get_by_npc_name("Karl").unwrap();
+    let worn = def
+        .loadout
+        .iter()
+        .filter_map(|id| game_state.item_defs.get(id).and_then(|d| d.equip_slot))
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    game_state.seed_npc_loadout(&pid("npc_karl"), "Karl").await;
+    {
+        let inventories = game_state.inventories.read().await;
+        let inv = &inventories[&pid("npc_karl")];
+        for id in &def.loadout {
+            assert!(inv.has_item(id), "missing loadout item {id}");
+        }
+        assert_eq!(inv.equipped.len(), worn, "distinct-slot items are worn");
+    }
+
+    // A later join grants nothing on top.
+    game_state.seed_npc_loadout(&pid("npc_karl"), "Karl").await;
+    let inventories = game_state.inventories.read().await;
+    let inv = &inventories[&pid("npc_karl")];
+    assert_eq!(inv.items().count(), def.loadout.len());
+}
+
+#[tokio::test]
+async fn loadout_gear_is_not_for_sale_even_from_the_bag() {
+    let game_state = make_test_game_state("loadout_stock");
+    setup_resident_trade(
+        &game_state,
+        0,
+        vec![bag_item(11, "spear", 1), bag_item(12, "iron_sword", 1)],
+        vec![],
+    )
+    .await;
+    game_state
+        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 50_000, None)
+        .await;
+    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
+
+    game_state
+        .open_shop(&pid("seller"), &pid("npc_karl"), true)
+        .await;
+    match seller_rx.try_recv() {
+        Ok(ServerMessage::ShopState { stock, .. }) => {
+            assert_eq!(stock.len(), 1, "issued gear must not show in stock");
+            assert_eq!(stock[0].item_def_id, "iron_sword");
+        }
+        other => panic!("Expected ShopState, got {:?}", other),
+    }
+    let _gold_update = seller_rx.try_recv();
+
+    game_state
+        .buy_item(&pid("seller"), &pid("npc_karl"), "spear")
+        .await;
+    match seller_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("part with"), "got: {message}")
+        }
+        other => panic!("Expected TradeError, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn an_npc_never_sells_its_issued_gear_to_a_merchant() {
+    let game_state = make_test_game_state("npc_sells_loadout");
+    game_state
+        .add_player(make_npc("npc_rica", "Rica", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_npc("npc_karl", "Karl", 1.0, 0.0))
+        .await;
+    game_state
+        .register_player_character(&pid("npc_karl"), 2, 0, attrs_with_cha(10), 0, None)
+        .await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        inventories.insert(
+            pid("npc_karl"),
+            PlayerInventory {
+                bag: vec![bag_item(11, "spear", 1)],
+                ..Default::default()
+            },
+        );
+    }
+    let mut karl_rx = game_state.register_direct_channel(&pid("npc_karl")).await;
+
+    game_state
+        .sell_item(&pid("npc_karl"), &pid("npc_rica"), 11)
+        .await;
+    match karl_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("issued gear"), "got: {message}")
+        }
+        other => panic!("Expected TradeError, got {:?}", other),
+    }
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(inventories[&pid("npc_karl")].bag.len(), 1, "spear retained");
 }

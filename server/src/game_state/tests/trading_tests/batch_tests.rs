@@ -204,9 +204,9 @@ async fn buy_items_batch_preserves_resident_enchantments_lowest_first() {
         &game_state,
         0,
         vec![
-            enchanted_bag_item(11, "spear", 1, 3),
-            bag_item(12, "spear", 1),
-            enchanted_bag_item(13, "spear", 1, 1),
+            enchanted_bag_item(11, "wooden_shield", 1, 3),
+            bag_item(12, "wooden_shield", 1),
+            enchanted_bag_item(13, "wooden_shield", 1, 1),
         ],
         vec![],
     )
@@ -222,7 +222,7 @@ async fn buy_items_batch_preserves_resident_enchantments_lowest_first() {
             &pid("seller"),
             &pid("npc_karl"),
             vec![TradeLineItem {
-                item_def_id: "spear".to_string(),
+                item_def_id: "wooden_shield".to_string(),
                 qty: 2,
             }],
         )
@@ -285,9 +285,9 @@ async fn buy_items_batch_gives_each_bought_unit_its_own_id() {
         &game_state,
         0,
         vec![
-            enchanted_bag_item(11, "spear", 1, 3),
-            bag_item(12, "spear", 1),
-            enchanted_bag_item(13, "spear", 1, 1),
+            enchanted_bag_item(11, "wooden_shield", 1, 3),
+            bag_item(12, "wooden_shield", 1),
+            enchanted_bag_item(13, "wooden_shield", 1, 1),
             bag_item(14, "healing_potion", 3),
         ],
         vec![bag_item(100, "torch", 1)],
@@ -305,7 +305,7 @@ async fn buy_items_batch_gives_each_bought_unit_its_own_id() {
             &pid("npc_karl"),
             vec![
                 TradeLineItem {
-                    item_def_id: "spear".to_string(),
+                    item_def_id: "wooden_shield".to_string(),
                     qty: 2,
                 },
                 TradeLineItem {
@@ -321,7 +321,7 @@ async fn buy_items_batch_gives_each_bought_unit_its_own_id() {
     assert_eq!(
         buyer_bag
             .iter()
-            .filter(|i| i.item_def_id == "spear")
+            .filter(|i| i.item_def_id == "wooden_shield")
             .count(),
         2
     );
@@ -345,9 +345,9 @@ async fn buy_items_batch_totals_repeated_lines_against_resident_stock() {
         &game_state,
         0,
         vec![
-            enchanted_bag_item(11, "spear", 1, 3),
-            bag_item(12, "spear", 1),
-            enchanted_bag_item(13, "spear", 1, 1),
+            enchanted_bag_item(11, "wooden_shield", 1, 3),
+            bag_item(12, "wooden_shield", 1),
+            enchanted_bag_item(13, "wooden_shield", 1, 1),
         ],
         vec![],
     )
@@ -365,11 +365,11 @@ async fn buy_items_batch_totals_repeated_lines_against_resident_stock() {
             &pid("npc_karl"),
             vec![
                 TradeLineItem {
-                    item_def_id: "spear".to_string(),
+                    item_def_id: "wooden_shield".to_string(),
                     qty: 2,
                 },
                 TradeLineItem {
-                    item_def_id: "spear".to_string(),
+                    item_def_id: "wooden_shield".to_string(),
                     qty: 2,
                 },
             ],
