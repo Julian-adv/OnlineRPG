@@ -27,6 +27,7 @@ import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
 import { campfireManager } from '../managers/campfireManager'
+import { stallManager } from '../managers/stallManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -684,6 +685,10 @@ export function handleServerMessage(
       campfireManager.reset()
       if (data.campfires) {
         for (const campfire of data.campfires) campfireManager.spawn(campfire)
+      }
+      stallManager.reset()
+      if (data.stalls) {
+        for (const stall of data.stalls) stallManager.spawn(stall)
       }
       break
 
@@ -1426,6 +1431,15 @@ export function handleServerMessage(
 
     case 'CampfireRemoved':
       campfireManager.remove(data.campfire_id)
+      break
+
+    case 'StallPlaced':
+    case 'StallAppeared':
+      stallManager.spawn(data.stall)
+      break
+
+    case 'StallRemoved':
+      stallManager.remove(data.stall_id)
       break
 
     case 'GrillStarted':

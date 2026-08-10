@@ -130,6 +130,12 @@ NPC 종류에 따라 클릭의 기본 액션을 다르게 한다. 경비병을 �
 - 아이템 기본가(`basePrice`) 추가가 선행 작업이다 — 스프레드, 가격 밴드, 가격 감정 전부 기본가에서 파생된다. [data/items.json](../data/items.json)은 [data-src/items.csv](../data-src/items.csv)에서 생성되므로, CSV에 `basePrice` 컬럼을 추가하고 재생성한다.
 - 플레이어 채팅은 신뢰할 수 없는 입력으로 취급한다. 페르소나 프롬프트에 방어 지시를 넣되, 실질 방어선은 서버 검증이다.
 
+### 상인 좌판 (2026-08-10)
+
+- 상인 클래스는 `/lay_stall`로 눈앞에 좌판 테이블(black_market_table.glb)을 펼치고 `/pack_stall`로 접는다. NPC 모닥불 `/light_campfire`와 같은 무료 채팅 커맨드 패턴 ([HUNGER.md](HUNGER.md)).
+- 좌판은 서버 메모리에만 존재한다 — 1인 1개, 야외 전용, 로그아웃 시 자동 철수. StallPlaced/StallAppeared/StallRemoved와 GameState의 `stalls`로 동기화 (프로토콜 v24).
+- 순수 소품이다. 거래는 기존 open_trade 그대로이고, 좌판은 상인이 장사 자리를 잡았다는 시각적 신호다.
+
 ## 미감정 아이템 (Unidentified Items)
 
 ### 문제: MMO에서 NetHack식 미감정은 깨진다

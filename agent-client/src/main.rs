@@ -462,6 +462,9 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::CampfireSpawned { .. } => "CampfireSpawned",
         ServerMessage::CampfireAppeared { .. } => "CampfireAppeared",
         ServerMessage::CampfireRemoved { .. } => "CampfireRemoved",
+        ServerMessage::StallPlaced { .. } => "StallPlaced",
+        ServerMessage::StallAppeared { .. } => "StallAppeared",
+        ServerMessage::StallRemoved { .. } => "StallRemoved",
         ServerMessage::GrillStarted => "GrillStarted",
         ServerMessage::GrillEnded { .. } => "GrillEnded",
     }

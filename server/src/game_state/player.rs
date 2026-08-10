@@ -773,18 +773,32 @@ impl super::GameState {
             })
             .map(|e| e.campfire.clone())
             .collect();
+        let stalls: Vec<_> = self
+            .stalls
+            .read()
+            .await
+            .values()
+            .filter(|s| {
+                s.floor_level == player_floor
+                    && s.position.dist_xz_sq(&player_position)
+                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
+            })
+            .cloned()
+            .collect();
 
         let mut msgs = Vec::new();
         if !other_players.is_empty()
             || !monsters.is_empty()
             || !ground_items.is_empty()
             || !campfires.is_empty()
+            || !stalls.is_empty()
         {
             msgs.push(ServerMessage::GameState {
                 players: other_players,
                 monsters,
                 ground_items,
                 campfires,
+                stalls,
             });
         }
 
@@ -805,6 +819,7 @@ impl super::GameState {
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
         self.music_performances.write().await.remove(player_id);
+        self.remove_player_stall(player_id).await;
         self.ambient_spawn_allowances
             .write()
             .await
@@ -1899,6 +1914,28 @@ impl super::GameState {
         }
         for campfire in fires_entered {
             self.send_direct_message(player_id, ServerMessage::CampfireAppeared { campfire })
+                .await;
+        }
+
+        let (stalls_left, stalls_entered) = {
+            let stalls = self.stalls.read().await;
+            let (left, entered) = aoi_diff(
+                stalls.values(),
+                |s| (s.position, s.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter().map(|s| s.id).collect::<Vec<_>>(),
+                entered.into_iter().cloned().collect::<Vec<_>>(),
+            )
+        };
+        for stall_id in stalls_left {
+            self.send_direct_message(player_id, ServerMessage::StallRemoved { stall_id })
+                .await;
+        }
+        for stall in stalls_entered {
+            self.send_direct_message(player_id, ServerMessage::StallAppeared { stall })
                 .await;
         }
 

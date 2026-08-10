@@ -17,6 +17,7 @@ pub mod monster_ai;
 pub mod pathfinding;
 pub mod schedule;
 pub mod skills;
+pub mod stall;
 pub mod tree_format;
 pub mod world;
 pub mod worldgen;
@@ -60,7 +61,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v23: friends (FriendRespond/FriendRemove/RequestFriendsOnline →
 ///      FriendList/FriendsOnline/FriendRequestReceived); FriendList is
 ///      pushed at login, so older builds must not connect.
-pub const PROTOCOL_VERSION: u32 = 23;
+/// v24: merchant stalls (`/lay_stall`/`/pack_stall` →
+///      StallPlaced/StallAppeared/StallRemoved); GameState carries `stalls`.
+pub const PROTOCOL_VERSION: u32 = 24;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -199,6 +202,7 @@ mod tests {
             monsters,
             ground_items: Vec::new(),
             campfires: Vec::new(),
+            stalls: Vec::new(),
         };
         let bytes = serialize_server_msg(&msg).unwrap();
         let decoded = deserialize_server_msg(&bytes).unwrap();

@@ -279,6 +279,16 @@ impl super::GameState {
             return;
         }
 
+        if message.trim() == "/lay_stall" {
+            self.lay_stall(player_id).await;
+            return;
+        }
+
+        if message.trim() == "/pack_stall" {
+            self.pack_stall(player_id).await;
+            return;
+        }
+
         if let Some(name) = strip_command(&message, "/emote") {
             self.play_emote(player_id, name).await;
             return;

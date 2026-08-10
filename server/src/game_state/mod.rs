@@ -118,6 +118,7 @@ pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
 pub(crate) use skills::skills_from_rows;
+mod stall;
 mod time;
 mod trading;
 pub use trading::BUYBACK_SWEEP_PERIOD;
@@ -330,6 +331,8 @@ pub struct GameState {
     campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
     /// One grill cast per player, resolved by `tick_grills`.
     grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
+    /// Laid-out merchant stalls keyed by id, at most one per owner.
+    stalls: Arc<RwLock<HashMap<u64, onlinerpg_shared::stall::Stall>>>,
 }
 
 impl GameState {
@@ -497,6 +500,7 @@ impl GameState {
             regen_ticks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             campfires: Arc::new(RwLock::new(HashMap::new())),
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
+            stalls: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

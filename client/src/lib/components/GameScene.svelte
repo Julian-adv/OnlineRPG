@@ -47,6 +47,7 @@
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
   import GameSceneCampfiresLayer from './game-scene/GameSceneCampfiresLayer.svelte'
+  import GameSceneStallsLayer from './game-scene/GameSceneStallsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
@@ -1233,6 +1234,7 @@
   />
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
+  <GameSceneStallsLayer />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
     <!-- Both position objects are mutated in place upstream, so the line
