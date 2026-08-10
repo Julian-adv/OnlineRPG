@@ -33,19 +33,28 @@ fn monster_within_event_range(state: &SharedState, monster_id: &str) -> bool {
     within_event_range(state, m.position.x, m.position.z)
 }
 
-/// Build a prompt string from current state and events.
+/// Build a prompt string from current state and events. `memory` is the
+/// tail of the NPC's memory file, re-read per prompt so notes written this
+/// session reach a stateless backend without a restart.
 pub(super) fn build_prompt(
     state: &SharedState,
     events: &[ServerMessage],
     agent_events: &[String],
     schedule: &[ScheduleEntry],
     active_schedule_idx: Option<usize>,
+    memory: Option<&str>,
 ) -> String {
     let mut prompt = String::new();
 
     prompt.push_str("=== CURRENT STATE ===\n");
     prompt.push_str(&state.format_world_state());
     prompt.push('\n');
+
+    if let Some(memory) = memory {
+        prompt.push_str("\n=== YOUR MEMORIES (notes you wrote in past turns) ===\n");
+        prompt.push_str(memory);
+        prompt.push('\n');
+    }
 
     // A customer is mid-trade: stay put and keep helping them. Movement is
     // suppressed server-side regardless, but telling the LLM keeps its
@@ -65,30 +74,41 @@ pub(super) fn build_prompt(
         );
     }
 
-    // Resident-trader wishlist, rebuilt every turn from the live bag:
-    // owned items drop out, and a fully satisfied wishlist removes the
-    // section (and with it the urge to trade) entirely. It is also
-    // suppressed for a cooldown after each successful purchase, and
-    // whenever no human player is in sight — only players can sell to the
-    // NPC, so without one around the desire would only produce futile
-    // NPC-to-NPC pestering.
+    // Resident-trader Personal Trading section, rebuilt every turn from
+    // the live bag and the favor ledger. It needs a regular in sight —
+    // favor past the trade threshold, outside the decline cooldown — and
+    // its buy-list half additionally sits out the post-purchase
+    // satiation. Strangers hear small talk and cost no section tokens.
     let satiated = state
         .trade_satiated_until
         .is_some_and(|until| std::time::Instant::now() < until);
-    if !satiated && state.has_nearby_human_players() {
-        if let Some(p) = state.self_player.as_ref() {
-            if let Some(section) =
-                crate::shop_info::resident_trade_prompt_for(&p.name, &state.self_bag)
-            {
-                prompt.push('\n');
-                prompt.push_str(&section);
-            }
+    if let Some(p) = state.self_player.as_ref() {
+        let audience = state.trade_worthy_players();
+        if let Some(section) = crate::shop_info::resident_trade_prompt_for(
+            &p.name,
+            &state.self_bag,
+            !satiated,
+            &audience,
+        ) {
+            prompt.push('\n');
+            prompt.push_str(&section);
         }
     }
 
     if let Some(ctx) = format_schedule_context(schedule, active_schedule_idx) {
         prompt.push_str(&ctx);
         prompt.push('\n');
+    }
+
+    if !state.chat_history().is_empty() {
+        prompt.push_str(
+            "\n=== RECENT CONVERSATION (context only — you already handled \
+             these lines; never answer them again) ===\n",
+        );
+        for line in state.chat_history() {
+            prompt.push_str(line);
+            prompt.push('\n');
+        }
     }
 
     let has_server_events = events.iter().any(|e| format_event(state, e).is_some());
@@ -108,6 +128,29 @@ pub(super) fn build_prompt(
 
     prompt.push_str("\nWhat do you do?");
     prompt
+}
+
+/// Fold a drained event batch into the rolling conversation history:
+/// what people said and what music started, nothing transient. Runs on
+/// every drain — including the ones whose prompt is skipped — so a waking
+/// NPC still knows what it heard.
+pub(super) fn record_conversation(state: &mut SharedState, events: &[ServerMessage]) {
+    let lines: Vec<String> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                ServerMessage::ChatMessage { .. }
+                    | ServerMessage::WhisperMessage { .. }
+                    | ServerMessage::PartyChatMessage { .. }
+                    | ServerMessage::PlayerMusicStarted { .. }
+            )
+        })
+        .filter_map(|e| format_event(state, e))
+        .collect();
+    for line in lines {
+        state.push_chat_history(&line);
+    }
 }
 
 /// Format a server event as a human-readable line for LLM prompts.
@@ -450,6 +493,11 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             crate::shop_info::format_price(*npc_gold),
         )),
         ServerMessage::TradeError { message } => Some(format!("[TradeError] {message}")),
+        ServerMessage::TradeDeclined { player_name, .. } => Some(format!(
+            "[TradeDeclined] {player_name} waved off your trade window — let \
+             trading rest with them for a good while and just talk. Trade \
+             pushes at them are blocked meanwhile."
+        )),
         ServerMessage::PartyInviteReceived { inviter_name, .. } => Some(format!(
             "[PartyInvite] {inviter_name} invited you to their party. Accept with \
              {{\"type\":\"party_accept\"}} or decline with party_decline."
@@ -575,10 +623,56 @@ fn format_schedule_context(
 
 #[cfg(test)]
 mod tests {
-    use super::{caught_line, format_event};
+    use super::{build_prompt, caught_line, format_event, record_conversation};
     use crate::state::tests::{test_player, test_state};
     use crate::state::NPC_SIGHT_RADIUS;
     use onlinerpg_shared::{PlayerId, ServerMessage};
+
+    /// Drained conversation returns as RECENT CONVERSATION in the next
+    /// prompt — replayed as context, while transient events (a death, a
+    /// move) stay out of it. Memory notes render under YOUR MEMORIES.
+    #[test]
+    fn drained_chat_returns_as_history() {
+        let (mut state, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        state.self_player_id = Some(me.id);
+        state.self_player = Some(me);
+
+        let mut jake = test_player(2.0, 0.0);
+        jake.id = PlayerId::from(2);
+        jake.name = "jake1".to_string();
+        state.nearby_players.insert(jake.id, jake);
+
+        let heard = vec![
+            ServerMessage::ChatMessage {
+                player_id: PlayerId::from(2),
+                message: "first song please".to_string(),
+            },
+            ServerMessage::PlayerDead {
+                player_id: PlayerId::from(2),
+            },
+        ];
+        record_conversation(&mut state, &heard);
+
+        let prompt = build_prompt(&state, &[], &[], &[], None, None);
+        assert!(prompt.contains("RECENT CONVERSATION"), "{prompt}");
+        assert!(
+            prompt.contains("[Chat] jake1: first song please"),
+            "{prompt}"
+        );
+        assert!(
+            !prompt.contains("[PlayerDead]"),
+            "combat noise is not conversation: {prompt}"
+        );
+        assert!(
+            !prompt.contains("=== YOUR MEMORIES"),
+            "no memories, no section: {prompt}"
+        );
+
+        let prompt = build_prompt(&state, &[], &[], &[], None, Some("jake1 tips well"));
+        assert!(prompt.contains("=== YOUR MEMORIES"), "{prompt}");
+        assert!(prompt.contains("jake1 tips well"), "{prompt}");
+    }
 
     /// A tune someone strikes up nearby is worth a prompt line — the title is
     /// what makes it something an NPC can talk about. Out of earshot it is

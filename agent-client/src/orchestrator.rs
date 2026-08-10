@@ -94,6 +94,8 @@ pub struct NpcConfig {
     pub instance_prompt: Option<String>,
     /// Path to memory file (accumulated experiences, auto-updated by LLM).
     pub memory_file: Option<String>,
+    /// Path to favor file (per-player accumulated favor, auto-updated by LLM).
+    pub favor_file: Option<String>,
     /// Path to schedule file (time-based positioning).
     pub schedule_file: Option<String>,
 }
@@ -744,17 +746,9 @@ fn build_system_prompt(npc: &NpcConfig) -> anyhow::Result<String> {
     if npc.plays_music() {
         parts.push(songbook_prompt());
     }
-    if let Some(ref memory_path) = npc.memory_file {
-        match std::fs::read_to_string(memory_path) {
-            Ok(content) if !content.trim().is_empty() => {
-                parts.push(format!("=== YOUR MEMORIES ===\n{content}"));
-            }
-            Ok(_) => {}
-            Err(_) => {
-                let _ = std::fs::write(memory_path, "");
-            }
-        }
-    }
+    // Memories are deliberately NOT baked in here: the driver re-reads the
+    // memory file into every prompt (load_memory_tail), so notes written
+    // mid-session reach even a stateless backend.
 
     info!("[{}] Prompt layers: {}", npc.label(), files.join(" + "));
     Ok(parts.join("\n\n"))
@@ -894,6 +888,7 @@ fn spawn_llm_task(
     let driver_config = driver::DriverConfig {
         label: label.to_string(),
         memory_file: npc.memory_file.clone(),
+        favor_file: npc.favor_file.clone(),
         min_interval,
         urgent_min_interval,
         debounce,

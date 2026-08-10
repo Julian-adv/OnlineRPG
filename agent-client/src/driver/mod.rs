@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::llm_scheduler::{LlmPriority, LlmScheduler};
 use crate::state::SharedState;
@@ -40,7 +40,7 @@ use execute::handle_response;
 use movement::{
     check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
 };
-use prompt::build_prompt;
+use prompt::{build_prompt, record_conversation};
 
 /// Trait for LLM backends that can send a prompt and return a text response.
 #[async_trait]
@@ -85,6 +85,9 @@ impl Drop for RunDir {
 pub struct DriverConfig {
     pub label: String,
     pub memory_file: Option<String>,
+    /// JSON map of player name -> accumulated favor, loaded at startup and
+    /// rewritten whenever the LLM's `favor` deltas change it.
+    pub favor_file: Option<String>,
     pub min_interval: Duration,
     /// Floor between prompts once an urgent event is pending — a player
     /// talking to us shouldn't wait out the routine cadence.
@@ -114,6 +117,7 @@ pub async fn llm_driver(
     let DriverConfig {
         label,
         memory_file,
+        favor_file,
         min_interval,
         urgent_min_interval,
         debounce,
@@ -140,6 +144,18 @@ pub async fn llm_driver(
     }
 
     info!("[{label}] LLM driver: in game, ready.");
+
+    // Favor persists across sessions; the map feeds prompt rendering and
+    // the keepsake gate from the first turn.
+    if let Some(path) = &favor_file {
+        match std::fs::read_to_string(path) {
+            Ok(txt) if !txt.trim().is_empty() => match serde_json::from_str(&txt) {
+                Ok(map) => state.lock().await.favor = map,
+                Err(e) => warn!("[{label}] Ignoring unreadable favor file {path}: {e}"),
+            },
+            _ => {}
+        }
+    }
 
     let attack_cooldown = load_attack_cooldown();
 
@@ -203,12 +219,19 @@ pub async fn llm_driver(
     {
         let mut s = state.lock().await;
         if is_sleeping {
-            s.drain_events();
-            s.drain_agent_events();
+            discard_turn(&mut s);
             info!("[{label}] LLM driver: NPC is sleeping, skipping initial prompt");
         } else if always_active || s.has_nearby_human_players() {
             let agent_events = s.drain_agent_events();
-            let initial_prompt = build_prompt(&s, &[], &agent_events, &schedule, active_schedule.0);
+            let memory = load_memory_tail(&memory_file);
+            let initial_prompt = build_prompt(
+                &s,
+                &[],
+                &agent_events,
+                &schedule,
+                active_schedule.0,
+                memory.as_deref(),
+            );
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
             match scheduler
@@ -228,8 +251,14 @@ pub async fn llm_driver(
                         let s = state.lock().await;
                         has_action || s.trade_busy || s.self_fishing
                     };
-                    attack_target =
-                        handle_response(&state, &response, &memory_file, skip_movement).await;
+                    attack_target = handle_response(
+                        &state,
+                        &response,
+                        &memory_file,
+                        &favor_file,
+                        skip_movement,
+                    )
+                    .await;
                     last_prompt_at = Instant::now();
                 }
                 Err(e) => {
@@ -237,8 +266,7 @@ pub async fn llm_driver(
                 }
             }
         } else {
-            s.drain_events();
-            s.drain_agent_events();
+            discard_turn(&mut s);
             info!("[{label}] LLM driver: no human players nearby, skipping initial prompt");
         }
     }
@@ -294,7 +322,8 @@ pub async fn llm_driver(
                     has_scheduled_action || s.trade_busy || s.self_fishing
                 };
                 let new_target =
-                    handle_response(&state, &response, &memory_file, skip_movement).await;
+                    handle_response(&state, &response, &memory_file, &favor_file, skip_movement)
+                        .await;
                 if new_target.is_some() {
                     attack_target = new_target;
                 }
@@ -336,38 +365,54 @@ pub async fn llm_driver(
         }
         prompt_pending_since = None;
 
-        // Drain events and build prompt, determine priority from events
-        let (prompt, has_events, priority) = {
+        // Drain first; the prompt build (and its memory-file read) only
+        // happens when something actually needs answering.
+        let (events, agent_events, priority) = {
             let mut s = state.lock().await;
 
             // Skip the LLM while asleep, and — for an operator-run NPC — while
             // nobody is around to see it. Events still drain so they can't pile
-            // up unbounded.
+            // up unbounded; what was said still lands in the conversation
+            // history, so a waking NPC knows what it heard.
             if is_sleeping || !(always_active || s.has_nearby_human_players()) {
-                s.drain_events();
-                s.drain_agent_events();
+                discard_turn(&mut s);
                 pending_urgency = LlmPriority::Idle;
                 continue;
             }
 
             let events = s.drain_events();
             let agent_events = s.drain_agent_events();
-            let has_events = !events.is_empty() || !agent_events.is_empty();
 
             // Determine priority from the most urgent event (lower = more urgent)
             let max_urgency = events
                 .iter()
                 .map(|e| LlmPriority::from(s.classify_event(e)))
                 .fold(pending_urgency, std::cmp::min);
-
-            let prompt = build_prompt(&s, &events, &agent_events, &schedule, active_schedule.0);
-            (prompt, has_events, max_urgency)
+            (events, agent_events, max_urgency)
         };
         pending_urgency = LlmPriority::Idle; // reset for next cycle
 
-        if !has_events {
+        if events.is_empty() && agent_events.is_empty() {
             continue;
         }
+
+        // File I/O outside the state lock.
+        let memory = load_memory_tail(&memory_file);
+        let prompt = {
+            let mut s = state.lock().await;
+            // History is recorded after the build: this prompt shows the
+            // batch under EVENTS, the next one under RECENT CONVERSATION.
+            let prompt = build_prompt(
+                &s,
+                &events,
+                &agent_events,
+                &schedule,
+                active_schedule.0,
+                memory.as_deref(),
+            );
+            record_conversation(&mut s, &events);
+            prompt
+        };
 
         // Submit to scheduler as background task (doesn't block combat ticks)
         info!(
@@ -382,6 +427,32 @@ pub async fn llm_driver(
             sched.submit(&lbl, priority, prompt, inv).await
         }));
     }
+}
+
+/// Drop a turn without prompting: events drain (so they cannot pile up)
+/// but what was said still lands in the conversation history.
+fn discard_turn(s: &mut SharedState) {
+    let events = s.drain_events();
+    record_conversation(s, &events);
+    s.drain_agent_events();
+}
+
+/// How many memory-file lines the per-prompt MEMORIES section carries:
+/// the newest notes stay, the oldest age out instead of growing the prompt.
+const MEMORY_PROMPT_LINES: usize = 40;
+
+/// Tail of the NPC's memory file. Re-read per prompt — the file is tiny —
+/// so notes written this session reach a stateless backend without a
+/// restart (the file used to be baked into the system prompt at startup).
+fn load_memory_tail(memory_file: &Option<String>) -> Option<String> {
+    let path = memory_file.as_ref()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let start = lines.len().saturating_sub(MEMORY_PROMPT_LINES);
+    Some(lines[start..].join("\n"))
 }
 
 /// Await a finished LLM submission and unwrap the join/scheduler result.

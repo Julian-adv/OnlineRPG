@@ -359,6 +359,8 @@ fn resolve_from_registry(npc: &mut NpcConfig) -> anyhow::Result<()> {
         .get_or_insert_with(|| format!("data/npcs/{id}/instance.txt"));
     npc.memory_file
         .get_or_insert_with(|| format!("data/npcs/{id}/memory.txt"));
+    npc.favor_file
+        .get_or_insert_with(|| format!("data/npcs/{id}/favor.json"));
     if npc.schedule_file.is_none() {
         // Schedules are optional, and a missing path is logged as an error
         // downstream — only derive it when the conventional file exists.
@@ -449,6 +451,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::BuybackUpdated { .. } => "BuybackUpdated",
         ServerMessage::DealResult { .. } => "DealResult",
         ServerMessage::TradeNotice { .. } => "TradeNotice",
+        ServerMessage::TradeDeclined { .. } => "TradeDeclined",
         ServerMessage::TradeBusy { .. } => "TradeBusy",
         ServerMessage::PartyInviteReceived { .. } => "PartyInviteReceived",
         ServerMessage::PartyInviteResult { .. } => "PartyInviteResult",

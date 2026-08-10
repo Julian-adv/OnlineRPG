@@ -17,10 +17,38 @@ pub(super) struct AgentResponse {
     pub actions: Vec<AgentAction>,
     /// Optional memory update: appended to the NPC's memory file for future sessions.
     pub memory_update: Option<String>,
+    /// Optional per-player favor deltas ({"name": ±1}). Kept as raw JSON so
+    /// a malformed shape can never sink the actions; `favor_deltas` coerces.
+    pub favor: Option<serde_json::Value>,
     /// `type` strings that matched no action, recovered positionally from the
     /// raw JSON. Reported back so the LLM stops reissuing them.
     #[serde(skip)]
     pub unknown_types: Vec<String>,
+}
+
+impl AgentResponse {
+    /// Favor deltas in whatever shape the LLM sent them — an integer, a
+    /// float, or a numeric string ("+1"). Unusable entries are dropped.
+    /// Pure shape coercion: policy (step size, bounds, who qualifies)
+    /// belongs to `SharedState::apply_favor`.
+    pub(super) fn favor_deltas(&self) -> Vec<(String, i32)> {
+        let Some(map) = self.favor.as_ref().and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+        map.iter()
+            .filter_map(|(name, v)| {
+                let n = v
+                    .as_i64()
+                    .or_else(|| v.as_f64().map(|f| f.round() as i64))
+                    .or_else(|| {
+                        v.as_str()
+                            .and_then(|s| s.trim().trim_start_matches('+').parse().ok())
+                    })?;
+                let n = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                Some((name.clone(), n))
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -728,6 +756,39 @@ mod tests {
         assert_eq!(resp.unknown_types, ["look"]);
     }
 
+    /// Favor arrives in whatever shape the LLM chose — int, string, float —
+    /// and a garbage entry (or a garbage favor field altogether) drops out
+    /// without sinking the actions. Values pass through unclamped: the
+    /// step-size policy lives in `apply_favor` alone.
+    #[test]
+    fn favor_deltas_tolerate_llm_spellings() {
+        let resp = parse_agent_response(
+            r#"{"actions": [{"type": "wait"}],
+                "favor": {"jake1": 1, "mira": "+1", "tom": 3.7, "bad": "warm"}}"#,
+        )
+        .unwrap();
+        let mut deltas = resp.favor_deltas();
+        deltas.sort();
+        assert_eq!(
+            deltas,
+            [
+                ("jake1".to_string(), 1),
+                ("mira".to_string(), 1),
+                ("tom".to_string(), 4)
+            ],
+            "floats round, strings parse, the unparseable entry is dropped"
+        );
+
+        let resp =
+            parse_agent_response(r#"{"actions": [{"type": "wait"}], "favor": "jake1 is nice"}"#)
+                .unwrap();
+        assert!(resp.favor_deltas().is_empty());
+        assert_eq!(resp.actions.len(), 1, "actions survive a malformed favor");
+
+        let resp = parse_agent_response(r#"{"actions": [{"type": "wait"}]}"#).unwrap();
+        assert!(resp.favor_deltas().is_empty());
+    }
+
     #[test]
     fn party_actions_parse_with_aliases() {
         let action = parse_single_action(
@@ -1077,7 +1138,9 @@ mod tests {
             .replace(": N}", ": 1}")
     }
 
-    /// Action hints in `text`: balanced JSON objects starting at `{"`.
+    /// Action hints in `text`: balanced JSON objects starting at `{"` that
+    /// carry a "type" key. Objects without one (the favor examples)
+    /// document response fields, not actions.
     fn extract_hints(text: &str) -> Vec<&str> {
         let bytes = text.as_bytes();
         let (mut out, mut i) = (Vec::new(), 0);
@@ -1087,7 +1150,10 @@ mod tests {
                     serde_json::Deserializer::from_str(&text[i..]).into_iter::<serde_json::Value>();
                 if let Some(Ok(_)) = stream.next() {
                     let len = stream.byte_offset();
-                    out.push(&text[i..i + len]);
+                    let hint = &text[i..i + len];
+                    if hint.contains("\"type\"") {
+                        out.push(hint);
+                    }
                     i += len;
                     continue;
                 }

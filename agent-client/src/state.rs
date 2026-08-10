@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
@@ -22,6 +22,28 @@ use tokio::sync::{mpsc, Notify};
 pub(crate) use onlinerpg_shared::messages::MUSIC_EMOTE;
 
 const MAX_EVENTS: usize = 200;
+/// Rolling window of conversation lines kept as prompt context. Stateless
+/// backends (one `codex exec` per prompt) see only this window, so it is
+/// the NPC's entire short-term memory of who said what.
+const MAX_CHAT_HISTORY: usize = 30;
+/// How many of our own recent song titles the world state lists, so a bard
+/// can favor tunes it has not played lately.
+const MAX_RECENT_SONGS: usize = 8;
+/// Accumulated favor a player can hold with this NPC, in either direction.
+const FAVOR_MIN: i32 = -5;
+const FAVOR_MAX: i32 = 5;
+/// Favor at which a player counts as a regular: resident traders bring up
+/// their wishlist, and keepsake offers, only around such players —
+/// strangers get small talk, not personal business.
+const TRADE_FAVOR_THRESHOLD: i32 = 3;
+
+/// Push onto a capped ring: the oldest entry falls off past `cap`.
+fn push_capped(q: &mut VecDeque<String>, item: String, cap: usize) {
+    q.push_back(item);
+    if q.len() > cap {
+        q.pop_front();
+    }
+}
 /// How far we may drift before our own performance counts as abandoned.
 const MUSIC_STAY_PUT_RADIUS: f32 = 1.5;
 /// Quiet spell between our own songs, so a busker is not one unbroken stream.
@@ -42,6 +64,9 @@ const MAX_LISTED_GROUND_ITEMS: usize = 10;
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
 /// a wishlist item (see `trade_satiated_until`).
 const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// How long trade pushes (open_trade/offer_deal) at a player stay blocked
+/// after they wave off our trade window (`TradeDeclined`).
+const TRADE_DECLINE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// Cap on remembered party invites, matching the web client's toast queue.
 const MAX_PENDING_PARTY_INVITES: usize = 3;
 /// From the shared crate so the server's invite TTL and the agent's pruning
@@ -392,6 +417,9 @@ pub struct SharedState {
     /// `TradeBusy`). We stay put and keep serving them — the LLM's movement
     /// actions are suppressed — until the trade ends.
     pub trade_busy: bool,
+    /// Until when trade pushes at each player stay blocked after they waved
+    /// off our trade window (`TradeDeclined` → `TRADE_DECLINE_COOLDOWN`).
+    trade_declined_until: HashMap<PlayerId, std::time::Instant>,
     /// True between our own FishingCasted and FishingEnded. Suppresses LLM
     /// movement (like `trade_busy`) and adds a stay-put prompt line;
     /// `stop_fishing` stays the deliberate exit.
@@ -428,6 +456,15 @@ pub struct SharedState {
     /// its hands, since an offer only reaches items in the bag.
     pub keepsake_ids: Vec<String>,
     events: Vec<ServerMessage>,
+    /// Conversation lines already shown to (or heard while asleep by) the
+    /// LLM, kept as the RECENT CONVERSATION prompt section (`MAX_CHAT_HISTORY`).
+    chat_history: VecDeque<String>,
+    /// Titles of our own recent performances, oldest first (`MAX_RECENT_SONGS`).
+    recent_songs: VecDeque<String>,
+    /// Accumulated per-player favor, keyed by canonical display name. Fed by
+    /// the LLM's `favor` response field, clamped to FAVOR_MIN..=FAVOR_MAX,
+    /// persisted to the NPC's favor file. Gates keepsake offers structurally.
+    pub favor: BTreeMap<String, i32>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
     /// Latest position per player -- deduplicates high-frequency PlayerMoved events
@@ -520,6 +557,7 @@ impl SharedState {
             self_equipped: HashMap::new(),
             trade_satiated_until: None,
             trade_busy: false,
+            trade_declined_until: HashMap::new(),
             self_fishing: false,
             fishing_stance: None,
             pending_party_invites: Vec::new(),
@@ -533,6 +571,9 @@ impl SharedState {
             plays_music: false,
             keepsake_ids: Vec::new(),
             events: Vec::new(),
+            chat_history: VecDeque::new(),
+            recent_songs: VecDeque::new(),
+            favor: BTreeMap::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
             latest_time: None,
@@ -595,16 +636,18 @@ impl SharedState {
 
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
     pub fn has_nearby_human_players(&self) -> bool {
-        let Some(self_player) = self.self_player.as_ref() else {
-            return false;
-        };
+        self.nearby_human_players().next().is_some()
+    }
+
+    /// Human players on our floor, within sight, excluding ourselves.
+    fn nearby_human_players(&self) -> impl Iterator<Item = (&PlayerId, &Player)> {
+        let self_pos = self.self_player.as_ref().map(|p| p.position);
         let self_id = self.self_player_id.as_ref();
         let radius_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
-
-        self.players_on_my_floor().any(|(id, p)| {
-            self_id != Some(id)
+        self.players_on_my_floor().filter(move |(id, p)| {
+            self_id != Some(*id)
                 && !p.is_official_npc
-                && p.position.dist_xz_sq(&self_player.position) <= radius_sq
+                && self_pos.is_some_and(|sp| p.position.dist_xz_sq(&sp) <= radius_sq)
         })
     }
 
@@ -1639,11 +1682,20 @@ impl SharedState {
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.bad_song_title_refused = false;
                     self.tips_noticed = 0;
+                    push_capped(&mut self.recent_songs, track.clone(), MAX_RECENT_SONGS);
                     self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
                         ends_at: std::time::Instant::now() + crate::bgm_defs::duration(track),
                         from: me.position,
                     });
                 }
+            }
+            ServerMessage::TradeDeclined { player_id, .. } => {
+                // Prune on insert so the map cannot grow one dead entry per
+                // decliner over a long session.
+                let now = std::time::Instant::now();
+                self.trade_declined_until.retain(|_, until| now < *until);
+                self.trade_declined_until
+                    .insert(*player_id, now + TRADE_DECLINE_COOLDOWN);
             }
             ServerMessage::PlayerInteractionChanged {
                 player_id,
@@ -2057,6 +2109,68 @@ impl SharedState {
     /// Drain synthetic agent-side events (e.g. player proximity alerts).
     pub fn drain_agent_events(&mut self) -> Vec<String> {
         std::mem::take(&mut self.agent_events)
+    }
+
+    /// Remember a conversation line for the RECENT CONVERSATION prompt
+    /// section, stamped with the game clock so the LLM can judge staleness.
+    pub fn push_chat_history(&mut self, line: &str) {
+        let stamped = match (self.game_hour, self.game_minute) {
+            (Some(h), Some(m)) => format!("[{h:02}:{m:02}] {line}"),
+            _ => line.to_string(),
+        };
+        push_capped(&mut self.chat_history, stamped, MAX_CHAT_HISTORY);
+    }
+
+    /// Conversation lines already handled, oldest first.
+    pub fn chat_history(&self) -> &VecDeque<String> {
+        &self.chat_history
+    }
+
+    /// Apply one favor delta from the LLM. Only a nearby human player
+    /// counts — unknown names and NPCs are dropped — and both the step
+    /// (±1) and the running total are clamped. Returns whether anything
+    /// changed, so the caller knows to persist.
+    pub fn apply_favor(&mut self, name: &str, delta: i32) -> bool {
+        let delta = delta.clamp(-1, 1);
+        if delta == 0 {
+            return false;
+        }
+        let Some((id, is_npc)) = self.resolve_nearby_player(name) else {
+            return false;
+        };
+        if is_npc {
+            return false;
+        }
+        let canonical = self.player_display_name(&id);
+        let entry = self.favor.entry(canonical).or_insert(0);
+        let next = (*entry + delta).clamp(FAVOR_MIN, FAVOR_MAX);
+        let changed = next != *entry;
+        *entry = next;
+        changed
+    }
+
+    /// Whether this player waved off our trade window recently, so
+    /// open_trade/offer_deal at them are structurally suppressed until the
+    /// cooldown runs out.
+    pub fn trade_offer_blocked(&self, player_id: &PlayerId) -> bool {
+        self.trade_declined_until
+            .get(player_id)
+            .is_some_and(|until| std::time::Instant::now() < *until)
+    }
+
+    /// Nearby human players whose favor has crossed the trade threshold —
+    /// the audience the whole Personal Trading section (wishlist pitches
+    /// and keepsake offers alike) is written for. A regular inside the
+    /// decline cooldown drops out: they just said not now, so not even
+    /// the section should court them.
+    pub fn trade_worthy_players(&self) -> Vec<String> {
+        self.nearby_human_players()
+            .filter(|(id, p)| {
+                !self.trade_offer_blocked(id)
+                    && self.favor.get(&p.name).copied().unwrap_or(0) >= TRADE_FAVOR_THRESHOLD
+            })
+            .map(|(_, p)| p.name.clone())
+            .collect()
     }
 
     /// Record an open we are about to send. A clutter prop is marked opened
@@ -2570,6 +2684,15 @@ impl SharedState {
             worn.sort();
             lines.push(format!("You are wearing: {}", worn.join(", ")));
         }
+        // Data only — what to do with the list is the role template's call
+        // (bard.txt: prefer something fresh, unless a listener asks again).
+        if self.plays_music && !self.recent_songs.is_empty() {
+            let list: Vec<&str> = self.recent_songs.iter().map(String::as_str).collect();
+            lines.push(format!(
+                "Songs you played recently, oldest first: {}",
+                list.join(", ")
+            ));
+        }
 
         if !self.party_members.is_empty() {
             let names: Vec<String> = self
@@ -2611,8 +2734,12 @@ impl SharedState {
                 }
             }
             let npc_tag = if p.is_official_npc { " (NPC)" } else { "" };
+            let favor_tag = match self.favor.get(&p.name) {
+                Some(v) if !p.is_official_npc && *v != 0 => format!(" (favor {v:+})"),
+                _ => String::new(),
+            };
             lines.push(format!(
-                "Player: {}{npc_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
+                "Player: {}{npc_tag}{favor_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
             if p.is_official_npc {
@@ -2760,6 +2887,160 @@ pub(crate) mod tests {
             last_combat_at: 0,
             client_kind: Default::default(),
         }
+    }
+
+    /// Chat history is a capped ring stamped with the game clock — the
+    /// short-term memory a stateless backend gets replayed each prompt.
+    #[test]
+    fn chat_history_stamps_and_caps() {
+        let (mut s, _rx) = test_state();
+        s.push_chat_history("[Chat] jake1: hello");
+        assert_eq!(s.chat_history()[0], "[Chat] jake1: hello");
+
+        s.game_hour = Some(20);
+        s.game_minute = Some(26);
+        for i in 0..40 {
+            s.push_chat_history(&format!("[Chat] jake1: line {i}"));
+        }
+        assert_eq!(s.chat_history().len(), 30, "capped at MAX_CHAT_HISTORY");
+        assert_eq!(s.chat_history()[0], "[20:26] [Chat] jake1: line 10");
+        assert_eq!(s.chat_history()[29], "[20:26] [Chat] jake1: line 39");
+    }
+
+    /// Our own performances land in the recent-song list, oldest first and
+    /// capped; the world state shows the list only to an agent that busks,
+    /// and never counts someone else's tune as ours.
+    #[test]
+    fn recent_songs_render_for_the_busker_only() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.plays_music = true;
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(2),
+            track: "Someone Else's Tune".to_string(),
+            elapsed_secs: 0.0,
+        });
+        for i in 0..10 {
+            s.push_event(ServerMessage::PlayerMusicStarted {
+                player_id: PlayerId::from(1),
+                track: format!("Song {i}"),
+                elapsed_secs: 0.0,
+            });
+        }
+
+        let world = s.format_world_state();
+        assert!(
+            world.contains("Songs you played recently, oldest first: Song 2,"),
+            "capped at MAX_RECENT_SONGS, oldest dropped: {world}"
+        );
+        assert!(world.contains("Song 9"), "{world}");
+        assert!(!world.contains("Someone Else's Tune"), "{world}");
+
+        s.plays_music = false;
+        assert!(!s.format_world_state().contains("Songs you played recently"));
+    }
+
+    /// Favor: nearby human players only, one step per call, clamped in
+    /// total. Crossing the threshold makes a player keepsake-worthy and
+    /// the world state shows the standing next to their name.
+    #[test]
+    fn favor_accumulates_and_gates_keepsakes() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        let mut jake = test_player(3.0, 0.0);
+        jake.id = PlayerId::from(2);
+        jake.name = "jake1".to_string();
+        s.nearby_players.insert(jake.id, jake);
+
+        let mut wick = test_player(4.0, 0.0);
+        wick.id = PlayerId::from(3);
+        wick.name = "Wick".to_string();
+        wick.is_official_npc = true;
+        s.nearby_players.insert(wick.id, wick);
+
+        assert!(!s.apply_favor("Wick", 1), "NPCs never earn favor");
+        assert!(!s.apply_favor("stranger", 1), "unknown names are dropped");
+        assert!(
+            s.apply_favor("jake1", 5),
+            "an oversized delta still steps once"
+        );
+        assert_eq!(s.favor.get("jake1"), Some(&1));
+        assert!(s.trade_worthy_players().is_empty());
+
+        for _ in 0..10 {
+            s.apply_favor("jake1", 1);
+        }
+        assert_eq!(s.favor.get("jake1"), Some(&FAVOR_MAX));
+        assert_eq!(s.trade_worthy_players(), ["jake1"]);
+        assert!(
+            s.format_world_state().contains("jake1 (favor +5)"),
+            "{}",
+            s.format_world_state()
+        );
+
+        // Even a favored regular is not courted while their decline
+        // cooldown runs — the keepsake section drops them too.
+        s.push_event(ServerMessage::TradeDeclined {
+            player_id: PlayerId::from(2),
+            player_name: "jake1".to_string(),
+        });
+        assert!(s.trade_worthy_players().is_empty());
+    }
+
+    /// The wishlist pitch needs an audience with any favor at all, and a
+    /// waved-off trade window blocks pushes at that player for the
+    /// cooldown — dropping them from the audience despite their favor.
+    #[test]
+    fn a_declined_trade_offer_blocks_further_pushes() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        let mut jake = test_player(3.0, 0.0);
+        jake.id = PlayerId::from(2);
+        jake.name = "jake1".to_string();
+        s.nearby_players.insert(jake.id, jake);
+
+        assert!(!s.trade_offer_blocked(&PlayerId::from(2)));
+        assert!(
+            s.trade_worthy_players().is_empty(),
+            "a stranger does not earn the shopping list"
+        );
+        s.apply_favor("jake1", 1);
+        assert!(
+            s.trade_worthy_players().is_empty(),
+            "one kindness does not yet make a regular"
+        );
+        for _ in 0..2 {
+            s.apply_favor("jake1", 1);
+        }
+        assert_eq!(
+            s.trade_worthy_players(),
+            ["jake1"],
+            "favor at the trade threshold earns the pitch"
+        );
+
+        s.push_event(ServerMessage::TradeDeclined {
+            player_id: PlayerId::from(2),
+            player_name: "jake1".to_string(),
+        });
+
+        assert!(s.trade_offer_blocked(&PlayerId::from(2)));
+        assert!(
+            !s.trade_offer_blocked(&PlayerId::from(3)),
+            "the block is per player, not global"
+        );
+        assert!(
+            s.trade_worthy_players().is_empty(),
+            "the only regular declined: the section vanishes"
+        );
     }
 
     /// The world state lists reachable ground items closest first, and
