@@ -1131,7 +1131,14 @@ export function handleServerMessage(
           ? groundItemManager.items.get(data.instance_id)?.itemDefId
           : undefined
       groundItemManager.remove(data.instance_id)
-      announceGroundItem(data.picked_up_by, defId, 'picked up')
+      // Self currency pickups: the server's system line reports the payout.
+      const selfCurrency =
+        defId != null &&
+        getItemDef(defId)?.category === 'currency' &&
+        isSelfPlayer(data.picked_up_by)
+      if (!selfCurrency) {
+        announceGroundItem(data.picked_up_by, defId, 'picked up')
+      }
       break
     }
 

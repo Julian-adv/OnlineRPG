@@ -1477,6 +1477,8 @@ impl super::GameState {
 
         let copper: i64 = rand::thread_rng().gen_range(1..=10);
         self.award_copper(player_id, copper).await;
+        self.send_system_message(player_id, format!("You picked up {copper} copper."))
+            .await;
         info!(
             "Player {} picked up a coin pile: +{} copper",
             self.player_name_of(player_id).await,
