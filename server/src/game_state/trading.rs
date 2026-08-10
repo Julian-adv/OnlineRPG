@@ -40,10 +40,10 @@ const SHOP_HOLD_TICKS: u8 = 4;
 /// catalog with unlimited stock and an effectively unlimited wallet;
 /// residents (non-merchants) buy only their wishlist from a finite,
 /// salary-funded wallet and sell from their real inventory.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) enum TraderDef {
-    Merchant(MerchantDefinition),
-    Resident(NpcDefinition),
+    Merchant(&'static MerchantDefinition),
+    Resident(&'static NpcDefinition),
 }
 
 impl TraderDef {
@@ -99,11 +99,11 @@ fn live_entries(list: &[StoredBuyback], now_ms: u64) -> Vec<BuybackEntry> {
 /// Look up how an NPC (by character name) trades, if at all.
 pub(crate) fn trader_def_by_name(npc_name: &str) -> Option<TraderDef> {
     if let Some(def) = merchant_defs().get_by_npc_name(npc_name) {
-        return Some(TraderDef::Merchant(def.clone()));
+        return Some(TraderDef::Merchant(def));
     }
     npc_defs()
         .get_trader_by_npc_name(npc_name)
-        .map(|def| TraderDef::Resident(def.clone()))
+        .map(TraderDef::Resident)
 }
 
 impl super::GameState {
@@ -230,9 +230,7 @@ impl super::GameState {
             // `stock` is written first: it borrows `active_deals`, which the
             // literal then moves.
             TraderDef::Resident(def) => ServerMessage::ShopState {
-                stock: self
-                    .resident_stock(npc_player_id, &def, &active_deals)
-                    .await,
+                stock: self.resident_stock(npc_player_id, def, &active_deals).await,
                 merchant_player_id: *npc_player_id,
                 merchant_name: def.npc_name.clone(),
                 catalog: Vec::new(),
