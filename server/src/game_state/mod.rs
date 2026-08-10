@@ -179,12 +179,15 @@ pub struct GameState {
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
     last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
-    monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
+    monsters: Arc<RwLock<monster::MonsterRegistry>>,
     /// player_id → (resolved track title, performance start). Source of the
     /// `elapsed_secs` sent to players entering earshot mid-performance;
     /// cleared with the `MUSIC_EMOTE` interaction.
     music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
     ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
+    /// monster id → when it was first found with no player inside its AOI.
+    /// Drives the abandoned-monster despawn in `tick_abandoned_monsters`.
+    abandoned_monsters: Arc<RwLock<HashMap<String, u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -437,9 +440,10 @@ impl GameState {
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
             last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
-            monsters: Arc::new(RwLock::new(HashMap::new())),
+            monsters: Arc::new(RwLock::new(monster::MonsterRegistry::default())),
             music_performances: Arc::new(RwLock::new(HashMap::new())),
             ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
+            abandoned_monsters: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {

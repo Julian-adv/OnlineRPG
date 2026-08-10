@@ -15,8 +15,12 @@ pub struct WorldConfig {
     pub ambient_spawns: Vec<AmbientSpawnRule>,
 }
 
+/// Sized for the 5,000-user target: a player can hold the sum of every
+/// `maxPerPlayer` (27) at once, so anything below users x 27 starves whoever
+/// logs in last. Raising it is only safe because the spawn caps are O(1)
+/// against `MonsterRegistry`'s maintained counts rather than a map scan.
 fn default_max_monsters_total() -> u32 {
-    1000
+    135_000
 }
 
 fn default_max_distance() -> f32 {

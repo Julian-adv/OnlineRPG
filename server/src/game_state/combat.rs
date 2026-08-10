@@ -355,10 +355,12 @@ impl super::GameState {
                     monster_id, monster.health, monster.max_health
                 );
 
-                if monster.health == 0 {
-                    monster.state = MonsterState::Dead;
-                    is_dead = true;
-                }
+                is_dead = monster.health == 0;
+            }
+            if is_dead {
+                // Through the registry so the kill frees its spawn slot now,
+                // not when the corpse is swept 30s later.
+                monsters.mark_dead(&monster_id);
             }
 
             if is_dead {
