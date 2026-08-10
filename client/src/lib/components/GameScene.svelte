@@ -363,6 +363,8 @@
     if (treeGroup) treeGroup.visible = !underground
     const housingGroup = housingLayerRef?.getGroup()
     if (housingGroup) housingGroup.visible = !underground
+    const objectGroup = objectOverlayRef?.getGroup()
+    if (objectGroup) objectGroup.visible = !underground
     const windGroup = windParticlesRef?.getGroup?.()
     if (windGroup) windGroup.visible = !underground
     const riverRocksGroup = riverRocksRef?.getGroup?.()
