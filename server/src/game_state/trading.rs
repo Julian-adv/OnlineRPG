@@ -295,6 +295,29 @@ impl super::GameState {
         self.open_shop(target_player_id, npc_player_id, false).await;
     }
 
+    /// The player waved off an NPC-pushed trade window ("Not now", or the
+    /// offer toast expired). Relay to the NPC so its agent lets trading
+    /// rest with them. Light validation only: a spurious decline merely
+    /// quiets the NPC toward that player, which is the player's
+    /// prerogative anyway.
+    pub async fn decline_trade(&self, player_id: &PlayerId, merchant_player_id: &PlayerId) {
+        let player_name = {
+            let players = self.players.read().await;
+            match (players.get(player_id), players.get(merchant_player_id)) {
+                (Some(p), Some(m)) if m.is_official_npc && !p.is_official_npc => p.name.clone(),
+                _ => return,
+            }
+        };
+        self.send_direct_message(
+            merchant_player_id,
+            ServerMessage::TradeDeclined {
+                player_id: *player_id,
+                player_name,
+            },
+        )
+        .await;
+    }
+
     /// Record that `player_id` opened `merchant_id`'s trade window. When this
     /// is the merchant's first active customer, tell its LLM to hold position
     /// (`TradeBusy { busy: true }`) so it doesn't wander off mid-trade.

@@ -1790,6 +1790,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::DeclineTrade { merchant_player_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.decline_trade(id, &merchant_player_id).await;
+            }
+        }
+
         // Consumed by `handle_handshake` above; a repeat never reaches here.
         ClientMessage::ClientInfo { .. } => {}
     }

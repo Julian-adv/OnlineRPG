@@ -301,6 +301,39 @@ async fn resident_deal_band_is_wider_and_wishlist_scoped() {
     }
 }
 
+/// A player's "Not now" on a pushed trade window reaches the NPC as
+/// TradeDeclined, so its agent can let trading rest. Declines from an NPC
+/// or aimed at a non-NPC are dropped, not relayed.
+#[tokio::test]
+async fn a_waved_off_trade_window_reaches_the_npc() {
+    let game_state = make_test_game_state("decline_trade");
+    setup_resident_trade(&game_state, 1_000, vec![], vec![]).await;
+    let mut npc_rx = game_state.register_direct_channel(&pid("npc_karl")).await;
+    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
+
+    game_state
+        .decline_trade(&pid("seller"), &pid("npc_karl"))
+        .await;
+    match npc_rx.try_recv() {
+        Ok(ServerMessage::TradeDeclined {
+            player_id,
+            player_name,
+        }) => {
+            assert_eq!(player_id, pid("seller"));
+            assert_eq!(player_name, "seller");
+        }
+        other => panic!("Expected TradeDeclined, got {:?}", other),
+    }
+
+    game_state
+        .decline_trade(&pid("npc_karl"), &pid("seller"))
+        .await;
+    assert!(
+        matches!(seller_rx.try_recv(), Err(MpscTryRecvError::Empty)),
+        "a decline aimed at a non-NPC must not be relayed"
+    );
+}
+
 #[tokio::test]
 async fn open_trade_pushes_shop_state_to_the_player() {
     let game_state = make_test_game_state("open_trade");

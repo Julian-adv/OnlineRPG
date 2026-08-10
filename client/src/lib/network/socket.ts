@@ -637,6 +637,12 @@ class NetworkManager {
     this.sendMessage({ CloseShop: { merchant_player_id: merchantPlayerId } })
   }
 
+  /** Tell the merchant NPC its pushed trade offer was waved off ("Not now",
+   *  or the toast expired), so its agent stops offering for a while. */
+  sendDeclineTrade(merchantPlayerId: number) {
+    this.sendMessage({ DeclineTrade: { merchant_player_id: merchantPlayerId } })
+  }
+
   /** Invite a player to the party by name (the friend panel's button; typed
    *  invites go through `/party <name>` as ordinary chat). */
   sendPartyInvite(targetName: string) {

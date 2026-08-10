@@ -200,6 +200,7 @@ export type ClientMessage =
   | { UseItem: { instance_id: number } }
   | { OpenShop: { merchant_player_id: number } }
   | { CloseShop: { merchant_player_id: number } }
+  | { DeclineTrade: { merchant_player_id: number } }
   | { BuyItem: { merchant_player_id: number; item_def_id: string } }
   | { SellItem: { merchant_player_id: number; instance_id: number } }
   | { BuybackItem: { merchant_player_id: number; entry_id: number } }

@@ -63,7 +63,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      pushed at login, so older builds must not connect.
 /// v24: merchant stalls (`/lay_stall`/`/pack_stall` →
 ///      StallPlaced/StallAppeared/StallRemoved); GameState carries `stalls`.
-pub const PROTOCOL_VERSION: u32 = 24;
+/// v25: declined trade offers (DeclineTrade → TradeDeclined), so an NPC
+///      stops pushing trade windows at a player who waved one off.
+pub const PROTOCOL_VERSION: u32 = 25;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
