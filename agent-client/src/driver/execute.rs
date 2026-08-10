@@ -22,6 +22,7 @@ use super::combat::{
     ChaseResult, LostReason,
 };
 use super::movement::{execute_move, MoveResult};
+use super::MEMORY_LINES;
 
 /// Pause between the crouch broadcast and the actual pickup, approximating
 /// the web client's grab moment partway into its pickup animation.
@@ -134,6 +135,37 @@ fn pick_pending<T>(items: &[T], name: Option<&str>, name_of: impl Fn(&T) -> &str
     }
 }
 
+/// Append a memory update, dropping lines already in the file (and repeats
+/// within the update itself), then rewrite the file keeping only the newest
+/// `MEMORY_LINES` lines.
+fn append_memory(path: &str, update: &str) {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<&str> = existing
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let before = lines.len();
+    for line in update.lines().map(str::trim) {
+        if !line.is_empty() && !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    if lines.len() == before {
+        debug!("Memory update skipped, all lines duplicate: {path}");
+        return;
+    }
+    let added = lines.len() - before;
+    let start = lines.len().saturating_sub(MEMORY_LINES);
+    match std::fs::write(path, lines[start..].join("\n") + "\n") {
+        Ok(()) => info!(
+            "Memory updated: {path} (+{added} lines, {} kept)",
+            lines.len() - start
+        ),
+        Err(e) => warn!("Failed to write memory file {path}: {e}"),
+    }
+}
+
 pub(super) async fn handle_response(
     state: &Arc<Mutex<SharedState>>,
     response: &str,
@@ -161,28 +193,8 @@ pub(super) async fn handle_response(
         }
     }
 
-    // Process memory update if present
     if let (Some(ref update), Some(ref path)) = (&agent_resp.memory_update, memory_file) {
-        let update = update.trim();
-        if !update.is_empty() {
-            use std::io::Write;
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                Ok(mut f) => {
-                    if let Err(e) = writeln!(f, "\n{update}") {
-                        warn!("Failed to write memory update to {path}: {e}");
-                    } else {
-                        info!("Memory updated: {path} (+{} bytes)", update.len());
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to open memory file {path}: {e}");
-                }
-            }
-        }
+        append_memory(path, update);
     }
 
     // Favor deltas: fold into the per-player map (state clamps and drops
@@ -1207,6 +1219,53 @@ mod tests {
             s.remember_ground_item(item);
         }
         s
+    }
+
+    /// Keep the returned `RunDir` alive — dropping it deletes the file.
+    fn temp_memory_file() -> (crate::driver::RunDir, String) {
+        let dir = crate::driver::RunDir::create().unwrap();
+        let path = dir.path().join("memory.txt").to_str().unwrap().to_string();
+        (dir, path)
+    }
+
+    #[test]
+    fn append_memory_skips_lines_already_in_the_file() {
+        let (_dir, path) = temp_memory_file();
+        append_memory(&path, "jake1 speaks Korean.\nRica is a trader.");
+        append_memory(&path, "jake1 speaks Korean.\njake1 sold me a torch.");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content.lines().collect::<Vec<_>>(),
+            vec![
+                "jake1 speaks Korean.",
+                "Rica is a trader.",
+                "jake1 sold me a torch."
+            ]
+        );
+    }
+
+    #[test]
+    fn append_memory_dedups_within_one_update_and_skips_all_duplicate_updates() {
+        let (_dir, path) = temp_memory_file();
+        append_memory(&path, "a\na\nb");
+        let after_first = std::fs::read_to_string(&path).unwrap();
+        append_memory(&path, "  a  \nb");
+        let after_second = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after_first, after_second);
+        assert_eq!(after_second.lines().collect::<Vec<_>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn append_memory_caps_the_file_at_the_newest_lines() {
+        let (_dir, path) = temp_memory_file();
+        let bulk: Vec<String> = (0..MEMORY_LINES).map(|i| format!("note {i}")).collect();
+        append_memory(&path, &bulk.join("\n"));
+        append_memory(&path, "the newest note");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), MEMORY_LINES);
+        assert_eq!(lines.first(), Some(&"note 1"));
+        assert_eq!(lines.last(), Some(&"the newest note"));
     }
 
     #[test]

@@ -437,9 +437,10 @@ fn discard_turn(s: &mut SharedState) {
     s.drain_agent_events();
 }
 
-/// How many memory-file lines the per-prompt MEMORIES section carries:
-/// the newest notes stay, the oldest age out instead of growing the prompt.
-const MEMORY_PROMPT_LINES: usize = 40;
+/// Cap on memory.txt and on the per-prompt MEMORIES tail: `append_memory`
+/// rewrites the file to its newest lines, and `load_memory_tail` guards
+/// against legacy files still longer than the cap.
+const MEMORY_LINES: usize = 50;
 
 /// Tail of the NPC's memory file. Re-read per prompt — the file is tiny —
 /// so notes written this session reach a stateless backend without a
@@ -451,7 +452,7 @@ fn load_memory_tail(memory_file: &Option<String>) -> Option<String> {
     if lines.is_empty() {
         return None;
     }
-    let start = lines.len().saturating_sub(MEMORY_PROMPT_LINES);
+    let start = lines.len().saturating_sub(MEMORY_LINES);
     Some(lines[start..].join("\n"))
 }
 
