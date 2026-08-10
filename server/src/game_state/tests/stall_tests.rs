@@ -8,7 +8,9 @@ async fn only_a_merchant_lays_a_stall_and_only_one_at_a_time() {
     let game_state = make_test_game_state("stall_lay");
     let auth = make_test_auth("stall_lay");
     let knight_id = pid("knight");
-    game_state.add_player(make_player("knight", 100.0, 50.0)).await;
+    game_state
+        .add_player(make_player("knight", 100.0, 50.0))
+        .await;
     let merchant_id = pid("npc_wick");
     let mut merchant = make_player("npc_wick", 100.0, 50.0);
     merchant.class = CharacterClass::Merchant;
