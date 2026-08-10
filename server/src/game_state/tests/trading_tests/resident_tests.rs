@@ -1,5 +1,5 @@
 use super::*;
-use onlinerpg_shared::messages::TradeLineItem;
+use onlinerpg_shared::messages::{BagLineItem, TradeLineItem};
 
 // --- Resident (non-merchant) trading (economy phase 3) ---
 
@@ -718,4 +718,63 @@ async fn an_npc_never_sells_its_issued_gear_to_a_merchant() {
     }
     let inventories = game_state.inventories.read().await;
     assert_eq!(inventories[&pid("npc_karl")].bag.len(), 1, "spear retained");
+}
+
+#[tokio::test]
+async fn an_npc_never_drops_its_issued_gear() {
+    let game_state = make_test_game_state("npc_drops_loadout");
+    game_state
+        .add_player(make_npc("npc_karl", "Karl", 0.0, 0.0))
+        .await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv = PlayerInventory {
+            bag: vec![bag_item(11, "spear", 1), bag_item(12, "torch", 1)],
+            ..Default::default()
+        };
+        inv.equipped
+            .insert(EquipSlot::Chest, bag_item(13, "leather_armor", 1));
+        inventories.insert(pid("npc_karl"), inv);
+    }
+    let mut karl_rx = game_state.register_direct_channel(&pid("npc_karl")).await;
+
+    // Bagged and worn loadout gear alike stay put.
+    for instance_id in [11, 13] {
+        game_state.drop_item(&pid("npc_karl"), instance_id).await;
+        match karl_rx.try_recv() {
+            Ok(ServerMessage::SystemMessage { message }) => {
+                assert!(message.contains("issued gear"), "got: {message}")
+            }
+            other => panic!("Expected SystemMessage, got {:?}", other),
+        }
+    }
+
+    // One issued line poisons the whole batch — the torch stays too.
+    game_state
+        .drop_items(
+            &pid("npc_karl"),
+            vec![
+                BagLineItem {
+                    instance_id: 12,
+                    qty: 1,
+                },
+                BagLineItem {
+                    instance_id: 11,
+                    qty: 1,
+                },
+            ],
+        )
+        .await;
+    match karl_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("issued gear"), "got: {message}")
+        }
+        other => panic!("Expected SystemMessage, got {:?}", other),
+    }
+
+    let inventories = game_state.inventories.read().await;
+    let inv = &inventories[&pid("npc_karl")];
+    assert_eq!(inv.bag.len(), 2, "bagged items retained");
+    assert_eq!(inv.equipped.len(), 1, "worn gear retained");
+    assert!(game_state.ground_items.read().await.is_empty());
 }

@@ -1088,6 +1088,7 @@ impl super::GameState {
         // For the unit that splits off a stack — the stack keeps its own id.
         // Reserved outside the lock like award_item; unused otherwise.
         let split_instance_id = self.next_instance_id().await;
+        let npc_def = self.official_npc_def(player_id).await;
 
         let (snapshot, dropped, dropped_from_off_hand) = {
             let mut inventories = self.inventories.write().await;
@@ -1095,6 +1096,18 @@ impl super::GameState {
                 Some(inv) => inv,
                 None => return,
             };
+
+            // Dropped loadout gear would be lootable and re-seeded on the
+            // NPC's next join — an item faucet, like selling it.
+            if npc_def.is_some_and(|def| {
+                inv.items()
+                    .any(|i| i.instance_id == instance_id && def.in_loadout(&i.item_def_id))
+            }) {
+                drop(inventories);
+                self.send_system_message(player_id, "You never drop your issued gear")
+                    .await;
+                return;
+            }
 
             let (dropped, dropped_from_off_hand) =
                 if let Some(idx) = inv.bag.iter().position(|i| i.instance_id == instance_id) {
@@ -1174,6 +1187,7 @@ impl super::GameState {
             enchant: i32,
         }
 
+        let npc_def = self.official_npc_def(player_id).await;
         let mut reserved: HashMap<u64, u32> = HashMap::new();
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
 
@@ -1196,6 +1210,12 @@ impl super::GameState {
                 if already + req.qty > item.quantity {
                     drop(inventories);
                     self.send_system_message(player_id, "Not enough of that item")
+                        .await;
+                    return;
+                }
+                if npc_def.is_some_and(|def| def.in_loadout(&item.item_def_id)) {
+                    drop(inventories);
+                    self.send_system_message(player_id, "You never drop your issued gear")
                         .await;
                     return;
                 }
