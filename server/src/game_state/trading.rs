@@ -206,13 +206,16 @@ impl super::GameState {
         Ok(def)
     }
 
-    /// The registry definition behind an official-NPC seller, or None for a
-    /// player. Selling issued loadout gear is refused for NPCs — join-time
-    /// seeding would mint a fresh copy, making it a gold faucet.
-    async fn seller_npc_def(&self, player_id: &PlayerId) -> Option<&'static NpcDefinition> {
+    /// The registry definition behind an official-NPC player, or None for a
+    /// player. Selling or dropping issued loadout gear is refused for NPCs —
+    /// join-time seeding would mint a fresh copy, making it an item faucet.
+    pub(super) async fn official_npc_def(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<&'static NpcDefinition> {
         let players = self.players.read().await;
-        let seller = players.get(player_id).filter(|p| p.is_official_npc)?;
-        npc_defs().get_by_npc_name(&seller.name)
+        let npc = players.get(player_id).filter(|p| p.is_official_npc)?;
+        npc_defs().get_by_npc_name(&npc.name)
     }
 
     /// `register` records this player as actively shopping with the NPC so it
@@ -1094,7 +1097,7 @@ impl super::GameState {
             };
             item.item_def_id.clone()
         };
-        if let Some(seller) = self.seller_npc_def(player_id).await {
+        if let Some(seller) = self.official_npc_def(player_id).await {
             if seller.in_loadout(&item_def_id) {
                 return self
                     .send_trade_error(player_id, "You never sell your issued gear")
@@ -1369,7 +1372,7 @@ impl super::GameState {
             return;
         }
 
-        let seller_def = self.seller_npc_def(player_id).await;
+        let seller_def = self.official_npc_def(player_id).await;
 
         // One id per unit, reserved before the locks: a resident's received
         // units draw from it, a merchant's buyback entries do.
