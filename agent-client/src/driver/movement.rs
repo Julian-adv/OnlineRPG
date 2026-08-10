@@ -9,7 +9,7 @@ use std::time::Duration;
 use onlinerpg_shared::furniture::FurniturePlacement;
 use onlinerpg_shared::housing::{HouseData, WallDirection, WallVariant};
 use onlinerpg_shared::pathfinding::{self, PathWaypoint};
-use onlinerpg_shared::ClientMessage;
+use onlinerpg_shared::{ClientMessage, Position};
 use onlinerpg_terrain::coords::{tile_to_region, world_to_tile};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -30,6 +30,15 @@ const SCHEDULE_ARRIVAL_RADIUS: f32 = 2.0;
 /// How many shut doors one move may open on its way to the goal. A floor
 /// carries a handful; the cap only stops a pathological loop.
 const MAX_DOORS_PER_MOVE: usize = 6;
+
+/// How many times one move restarts pathfinding after the server snaps us
+/// back (`PositionCorrected`). Corrections are throttled server-side, so a
+/// persistent disagreement burns through these in a few seconds and gives up.
+const MAX_CORRECTION_REPATHS: usize = 3;
+
+/// Forced moves are split into legs under the server's target-distance cap;
+/// the margin absorbs whatever the two sims still disagree by.
+const FORCE_MOVE_LEG_DIST: f32 = onlinerpg_shared::MAX_MOVE_TARGET_DISTANCE * 0.8;
 
 /// Wait for the server's door-toggle reply before re-pathing — that message,
 /// not the request, is what reopens the cells for A*.
@@ -170,17 +179,44 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         // Schedules are authored in housing floors, which the wire and the
         // passability cache number the same way.
         s.self_floor_level = entry.floor_level as i8;
-        let cmd = ClientMessage::player_move(
-            onlinerpg_shared::Position { x, y, z },
-            rot_rad,
-            entry.floor_level as i8,
-        );
-        if let Err(e) = s.send_command(cmd).await {
-            error!("Failed to send schedule move: {e}");
+        let target = Position { x, y, z };
+        // A forced move can span the whole map; legs keep every target under
+        // the server's distance cap so none is silently refused.
+        let from = s.self_player.as_ref().map_or(target, |p| p.position);
+        for (i, leg) in force_move_legs(&from, target).into_iter().enumerate() {
+            let cmd = ClientMessage::PlayerMove {
+                position: leg,
+                rotation: rot_rad,
+                floor_level: entry.floor_level as i8,
+                append: i > 0,
+                sprinting: false,
+            };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send schedule move: {e}");
+                break;
+            }
         }
 
         send_interact_if_needed(&mut s, entry).await;
     }
+}
+
+/// Straight-line legs from `from` to `to`, each under the server's move
+/// target cap. The last leg is exactly `to`.
+fn force_move_legs(from: &Position, to: Position) -> Vec<Position> {
+    let delta = PlanarDelta::between(from, &to);
+    let legs = (delta.dist / FORCE_MOVE_LEG_DIST).ceil().max(1.0) as u32;
+    (1..legs)
+        .map(|i| {
+            let t = i as f32 / legs as f32;
+            Position {
+                x: from.x + delta.dx * t,
+                y: from.y + (to.y - from.y) * t,
+                z: from.z + delta.dz * t,
+            }
+        })
+        .chain(std::iter::once(to))
+        .collect()
 }
 
 /// Execute a move to the target position using A* pathfinding, opening any
@@ -194,18 +230,25 @@ pub(super) async fn execute_move(
     goal_z: f32,
     goal_floor: u8,
 ) -> MoveResult {
-    for _ in 0..=MAX_DOORS_PER_MOVE {
+    let mut doors_opened = 0;
+    let mut repaths = 0;
+    while doors_opened <= MAX_DOORS_PER_MOVE && repaths <= MAX_CORRECTION_REPATHS {
         let before = state.lock().await.position_corrections;
         match walk_path(state, goal_x, goal_z, goal_floor).await {
             MoveResult::Blocked => {
                 // A refused step is a disagreement with the server, not a shut
-                // door; hunting for one to open would not help.
+                // door. The correction already resynced our predicted position
+                // to the authoritative one (`relocate_self`), so a fresh path
+                // from there — not a door hunt — is what reconciles the sims.
                 if state.lock().await.position_corrections != before {
-                    return MoveResult::Blocked;
+                    repaths += 1;
+                    info!("Re-pathing after a server position correction ({repaths}/{MAX_CORRECTION_REPATHS})");
+                    continue;
                 }
                 if !open_blocking_door(state).await {
                     return MoveResult::Blocked;
                 }
+                doors_opened += 1;
             }
             other => return other,
         }
@@ -598,5 +641,50 @@ pub(super) async fn fetch_houses_around(
             world.add_house(house);
         }
         info!("[{label}] Loaded {count} house(s) for pathfinding");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn force_move_legs_stay_under_cap_and_end_exactly() {
+        let from = Position {
+            x: 0.0,
+            y: 1.0,
+            z: 0.0,
+        };
+        let to = Position {
+            x: 90.0,
+            y: 4.0,
+            z: 90.0,
+        };
+        let legs = force_move_legs(&from, to);
+        assert!(legs.len() > 1);
+        let mut prev = from;
+        for leg in &legs {
+            assert!(
+                PlanarDelta::between(&prev, leg).dist < onlinerpg_shared::MAX_MOVE_TARGET_DISTANCE
+            );
+            prev = *leg;
+        }
+        assert_eq!(*legs.last().unwrap(), to);
+    }
+
+    #[test]
+    fn short_force_move_is_a_single_exact_leg() {
+        let from = Position {
+            x: 10.0,
+            y: 0.0,
+            z: 10.0,
+        };
+        let to = Position {
+            x: 13.0,
+            y: 0.0,
+            z: 14.0,
+        };
+        let legs = force_move_legs(&from, to);
+        assert_eq!(legs, vec![to]);
     }
 }
