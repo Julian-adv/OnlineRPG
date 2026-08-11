@@ -40,6 +40,12 @@ enum Attendance {
     Bystander(PlayerId),
 }
 
+struct Handoff {
+    monster_id: String,
+    new_owner: PlayerId,
+    old_owner: Option<PlayerId>,
+}
+
 /// Alive-monster tallies, kept current by spawn/kill rather than recounted.
 /// Its own struct so `MonsterRegistry` can update it while holding a
 /// `&mut Monster` — separate fields, so the borrows stay disjoint.
@@ -641,16 +647,7 @@ impl super::GameState {
                 "Removed monster {} (owner {} disconnected)",
                 monster.id, owner_id
             );
-            self.send_direct_message_to_players_within_position(
-                &monster.position,
-                monster.floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-                ServerMessage::MonsterRemoved {
-                    monster_id: monster.id,
-                },
-                None,
-            )
-            .await;
+            self.announce_monster_removed(&monster).await;
         }
     }
 
@@ -761,10 +758,6 @@ impl super::GameState {
     /// Same predicate as `player_ids_within_position(.., EVENT_DELIVERY_RADIUS)`
     /// but against a per-tick snapshot, so a sweep over every monster locks the
     /// roster once instead of twice per monster.
-    ///
-    /// Runs once per monster per tick, so it allocates nothing and stops early:
-    /// finding the owner settles the question, and only the nearest bystander
-    /// is worth tracking.
     fn attendance(roster: &PlayerSnapshot, monster: &crate::types::Monster) -> Attendance {
         let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
         let mut nearest: Option<(PlayerId, f32)> = None;
@@ -785,9 +778,8 @@ impl super::GameState {
                 if monster.owner_id == Some(*id) {
                     return Attendance::Owner;
                 }
-                match nearest {
-                    Some((_, best)) if best <= dist_sq => {}
-                    _ => nearest = Some((*id, dist_sq)),
+                if nearest.is_none_or(|(_, best)| dist_sq < best) {
+                    nearest = Some((*id, dist_sq));
                 }
             }
         }
@@ -812,51 +804,48 @@ impl super::GameState {
     /// Handoff applies to dungeon monsters too; the despawn does not, since a
     /// dungeon floor already despawns its own on exit.
     pub async fn tick_monster_ownership(&self) {
-        self.tick_monster_ownership_body().await
-    }
-
-    fn player_snapshot(
-        players: &std::collections::HashMap<PlayerId, crate::types::Player>,
-    ) -> PlayerSnapshot {
-        let mut roster = PlayerSnapshot::default();
-        for (id, player) in players {
+        let roster = {
+            let players = self.players.read().await;
+            let mut roster = PlayerSnapshot::default();
+            for (id, player) in players.iter() {
+                roster
+                    .entry(super::SpatialCell::from_position(&player.position))
+                    .or_default()
+                    .push((*id, player.position, player.floor_level));
+            }
             roster
-                .entry(super::SpatialCell::from_position(&player.position))
-                .or_default()
-                .push((*id, player.position, player.floor_level));
-        }
-        roster
-    }
+        };
 
-    pub(crate) async fn tick_monster_ownership_body(&self) {
-        let roster = Self::player_snapshot(&*self.players.read().await);
-
-        // Resolve every monster against the snapshot in one pass, then act.
         let mut expired: Vec<String> = Vec::new();
-        let mut handoffs: Vec<(String, PlayerId, Option<PlayerId>)> = Vec::new();
+        let mut handoffs: Vec<Handoff> = Vec::new();
         {
             let monsters = self.monsters.read().await;
             for monster in monsters.values() {
                 match Self::attendance(&roster, monster) {
                     Attendance::Owner => {}
-                    Attendance::Bystander(nearest) => {
-                        handoffs.push((monster.id.clone(), nearest, monster.owner_id));
+                    Attendance::Bystander(new_owner) => handoffs.push(Handoff {
+                        monster_id: monster.id.clone(),
+                        new_owner,
+                        old_owner: monster.owner_id,
+                    }),
+                    Attendance::Nobody => {
+                        // A dungeon floor despawns its own on exit.
+                        if !monster.is_in_dungeon() {
+                            expired.push(monster.id.clone());
+                        }
                     }
-                    // A dungeon floor despawns its own on exit.
-                    Attendance::Nobody if !monster.is_in_dungeon() => {
-                        expired.push(monster.id.clone())
-                    }
-                    Attendance::Nobody => {}
                 }
             }
         }
 
         self.hand_off_monsters(handoffs).await;
+        self.despawn_monsters(expired).await;
+    }
 
+    async fn despawn_monsters(&self, expired: Vec<String>) {
         if expired.is_empty() {
             return;
         }
-
         let removed: Vec<crate::types::Monster> = {
             let mut monsters = self.monsters.write().await;
             expired
@@ -864,26 +853,16 @@ impl super::GameState {
                 .filter_map(|id| monsters.remove(id))
                 .collect()
         };
-
         for monster in removed {
             debug!("Despawned abandoned monster {}", monster.id);
             self.announce_monster_removed(&monster).await;
         }
     }
 
-    /// Give a monster whose owner left its AOI to a player still inside it.
-    ///
-    /// The owner's client is what runs the monster's AI, and it tears the brain
-    /// down the moment the monster leaves its own AOI. Without this the monster
-    /// stays visible and attackable to whoever is standing there while nobody
-    /// simulates it — it never chases, never retaliates. Applies in dungeons
-    /// too: a floor is 80m across, wider than the 43m AOI, and the existing
-    /// handoff only fires when a player leaves the floor entirely.
-    ///
     /// Deliberately ignores `max_per_player`: the monster already exists, and
     /// refusing would strand it. The adopter simply gets no new ambient spawns
     /// until back under the cap.
-    async fn hand_off_monsters(&self, handoffs: Vec<(String, PlayerId, Option<PlayerId>)>) {
+    async fn hand_off_monsters(&self, handoffs: Vec<Handoff>) {
         if handoffs.is_empty() {
             return;
         }
@@ -891,9 +870,9 @@ impl super::GameState {
             let mut monsters = self.monsters.write().await;
             handoffs
                 .into_iter()
-                .filter_map(|(id, new_owner, old_owner)| {
-                    let monster = monsters.reassign_owner(&id, new_owner)?;
-                    Some((monster.clone(), new_owner, old_owner))
+                .filter_map(|h| {
+                    let monster = monsters.reassign_owner(&h.monster_id, h.new_owner)?;
+                    Some((monster.clone(), h.new_owner, h.old_owner))
                 })
                 .collect()
         };

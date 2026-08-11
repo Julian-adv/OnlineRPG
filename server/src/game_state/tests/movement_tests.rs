@@ -738,3 +738,66 @@ async fn dead_player_move_is_refused_and_snapped() {
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_x(&game_state, &player_id).await, 0.0);
 }
+
+/// `SpatialCell::within_radius` is a conservative superset: every point within
+/// the radius must land in one of the cells it yields. Under-scanning is
+/// silent — the ownership sweep would despawn a monster a player is standing
+/// next to — so pin the property directly rather than through a behaviour.
+#[test]
+fn within_radius_covers_every_point_inside_the_radius() {
+    use onlinerpg_shared::{wrap_world_x, WORLD_MIN_X, WORLD_WIDTH_X};
+
+    let radius = super::super::EVENT_DELIVERY_RADIUS;
+    let mut seed = 0x5EED_F00Du64;
+    let mut next = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as f32 / (u32::MAX as f32 / 2.0)
+    };
+
+    // Both world edges, the middle, and random interior points: the seam is
+    // where a naive implementation breaks.
+    let centers: Vec<f32> = [
+        WORLD_MIN_X,
+        WORLD_MIN_X + 1.0,
+        WORLD_MIN_X + radius,
+        0.0,
+        WORLD_MIN_X + WORLD_WIDTH_X - radius,
+        WORLD_MIN_X + WORLD_WIDTH_X - 1.0,
+    ]
+    .into_iter()
+    .chain((0..40).map(|_| WORLD_MIN_X + next() * WORLD_WIDTH_X))
+    .collect();
+
+    for center_x in centers {
+        let center = Position {
+            x: wrap_world_x(center_x),
+            y: 0.0,
+            z: next() * 400.0 - 200.0,
+        };
+        let cells: std::collections::HashSet<_> =
+            super::super::SpatialCell::within_radius(&center, radius).collect();
+
+        for _ in 0..80 {
+            // Points ringing the boundary, inside and just outside.
+            let angle = next() * std::f32::consts::TAU;
+            let dist = next() * radius * 1.2;
+            let probe = Position {
+                x: wrap_world_x(center.x + angle.cos() * dist),
+                y: 0.0,
+                z: center.z + angle.sin() * dist,
+            };
+            if center.dist_xz_sq(&probe) > radius * radius {
+                continue;
+            }
+            assert!(
+                cells.contains(&super::super::SpatialCell::from_position(&probe)),
+                "{:?} is {:.1}m from {:?} but its cell was not enumerated",
+                probe,
+                center.dist_xz_sq(&probe).sqrt(),
+                center
+            );
+        }
+    }
+}

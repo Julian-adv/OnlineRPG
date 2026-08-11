@@ -58,26 +58,33 @@ impl SpatialCell {
     /// Every cell that can hold a point within `radius` of `position`, as a
     /// conservative superset — callers still test the exact distance.
     ///
-    /// The spatial hash stores canonical positions, so near either X edge the
-    /// neighborhood is queried from translated copies one circumference away;
-    /// that is what lets cells from the opposite edge participate.
+    /// The spatial hash stores canonical positions, so a query near either X
+    /// edge is repeated from a copy translated one circumference away; that is
+    /// what lets cells from the opposite edge participate. Those copies are
+    /// only emitted within reach of a seam — everywhere else they are pure
+    /// misses, and this runs once per monster per ownership tick and twice per
+    /// monster move. Canonical order first, so the common case hits before any
+    /// translated copy is walked.
     fn within_radius(position: &Position, radius: f32) -> impl Iterator<Item = SpatialCell> + '_ {
-        let cell_radius = (radius / PLAYER_SPATIAL_CELL_SIZE).ceil() as i32;
-        [
-            -onlinerpg_shared::WORLD_WIDTH_X,
-            0.0,
-            onlinerpg_shared::WORLD_WIDTH_X,
-        ]
-        .into_iter()
-        .flat_map(move |shift_x| {
-            let center = Self::from_position(&Position {
-                x: position.x + shift_x,
-                ..*position
-            });
-            (center.x - cell_radius..=center.x + cell_radius).flat_map(move |x| {
-                (center.z - cell_radius..=center.z + cell_radius).map(move |z| SpatialCell { x, z })
+        // A cell's own width past the radius: the translated query is rounded
+        // out to cell boundaries, so reach is radius + one cell.
+        let seam_reach = radius + PLAYER_SPATIAL_CELL_SIZE;
+        let west = (position.x - onlinerpg_shared::WORLD_MIN_X < seam_reach)
+            .then_some(onlinerpg_shared::WORLD_WIDTH_X);
+        let east = (onlinerpg_shared::WORLD_MAX_X - position.x < seam_reach)
+            .then_some(-onlinerpg_shared::WORLD_WIDTH_X);
+        [Some(0.0), west, east]
+            .into_iter()
+            .flatten()
+            .flat_map(move |shift_x| {
+                let x = position.x + shift_x;
+                Self::covering(
+                    x - radius,
+                    x + radius,
+                    position.z - radius,
+                    position.z + radius,
+                )
             })
-        })
     }
 
     /// Every cell overlapping the given XZ box, by integer cell range —

@@ -299,19 +299,9 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     );
 }
 
-/// Sets up one monster on `floor`, its owner far away, and a second player
-/// standing next to it. Returns (monster id, owner, owner rx, adopter, adopter rx).
-async fn abandoned_next_to_a_bystander(
-    game_state: &GameState,
-    floor: i8,
-) -> (String, PlayerId, DirectRx, PlayerId, DirectRx) {
-    let (owner, adopter) = (pid("leaver"), pid("stayer"));
-    game_state.add_player(make_player("leaver", 0.0, 0.0)).await;
-    game_state.add_player(make_player("stayer", 0.0, 0.0)).await;
-    set_player_on_floor(game_state, &owner, 0.0, 0.0, floor).await;
-    set_player_on_floor(game_state, &adopter, 0.0, 0.0, floor).await;
-
-    let monster = game_state
+/// One goblin at (10, 0, 0) on `floor`, owned by `owner`.
+async fn spawn_owned_goblin(game_state: &GameState, owner: PlayerId, floor: i8) -> String {
+    game_state
         .spawn_monster(
             "goblin".to_string(),
             Position {
@@ -326,7 +316,27 @@ async fn abandoned_next_to_a_bystander(
             false,
         )
         .await
-        .expect("spawn succeeds under the caps");
+        .expect("spawn succeeds under the caps")
+        .id
+}
+
+/// Puts `name` on `floor` at the origin and returns its id.
+async fn add_player_on_floor(game_state: &GameState, name: &str, floor: i8) -> PlayerId {
+    let id = pid(name);
+    game_state.add_player(make_player(name, 0.0, 0.0)).await;
+    set_player_on_floor(game_state, &id, 0.0, 0.0, floor).await;
+    id
+}
+
+/// Sets up one monster on `floor`, its owner walked far away, and a second
+/// player standing next to it.
+async fn abandoned_next_to_a_bystander(
+    game_state: &GameState,
+    floor: i8,
+) -> (String, DirectRx, PlayerId, DirectRx) {
+    let owner = add_player_on_floor(game_state, "leaver", floor).await;
+    let adopter = add_player_on_floor(game_state, "stayer", floor).await;
+    let monster_id = spawn_owned_goblin(game_state, owner, floor).await;
 
     // The owner walks out of the monster's AOI; the bystander stays put.
     set_player_on_floor(game_state, &owner, 1000.0, 1000.0, floor).await;
@@ -335,7 +345,7 @@ async fn abandoned_next_to_a_bystander(
     let mut adopter_rx = game_state.register_direct_channel(&adopter).await;
     drain(&mut owner_rx);
     drain(&mut adopter_rx);
-    (monster.id, owner, owner_rx, adopter, adopter_rx)
+    (monster_id, owner_rx, adopter, adopter_rx)
 }
 
 async fn owner_of(game_state: &GameState, monster_id: &str) -> Option<PlayerId> {
@@ -353,7 +363,7 @@ async fn owner_of(game_state: &GameState, monster_id: &str) -> Option<PlayerId> 
 #[tokio::test]
 async fn a_monster_its_owner_left_is_handed_to_a_player_still_beside_it() {
     let game_state = make_test_game_state("handoff_surface");
-    let (monster_id, _, mut owner_rx, adopter, mut adopter_rx) =
+    let (monster_id, mut owner_rx, adopter, mut adopter_rx) =
         abandoned_next_to_a_bystander(&game_state, 0).await;
 
     game_state.tick_monster_ownership().await;
@@ -383,7 +393,7 @@ async fn a_monster_its_owner_left_is_handed_to_a_player_still_beside_it() {
 #[tokio::test]
 async fn handoff_also_covers_a_dungeon_floor() {
     let game_state = make_test_game_state("handoff_dungeon");
-    let (monster_id, _, _, adopter, _) = abandoned_next_to_a_bystander(&game_state, -1).await;
+    let (monster_id, _, adopter, _) = abandoned_next_to_a_bystander(&game_state, -1).await;
 
     game_state.tick_monster_ownership().await;
 
@@ -399,31 +409,14 @@ async fn handoff_also_covers_a_dungeon_floor() {
 #[tokio::test]
 async fn the_sweep_never_despawns_a_dungeon_monster() {
     let game_state = make_test_game_state("handoff_dungeon_keep");
-    let owner = pid("delver");
-    game_state.add_player(make_player("delver", 0.0, 0.0)).await;
-    set_player_on_floor(&game_state, &owner, 0.0, 0.0, -1).await;
-    let monster = game_state
-        .spawn_monster(
-            "goblin".to_string(),
-            Position {
-                x: 10.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            0.0,
-            Some(owner),
-            -1,
-            None,
-            false,
-        )
-        .await
-        .expect("spawn succeeds under the caps");
+    let owner = add_player_on_floor(&game_state, "delver", -1).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, -1).await;
     // Nobody anywhere near it.
     set_player_on_floor(&game_state, &owner, 1000.0, 1000.0, -1).await;
     game_state.tick_monster_ownership().await;
 
     assert!(
-        game_state.monsters.read().await.get(&monster.id).is_some(),
+        game_state.monsters.read().await.get(&monster_id).is_some(),
         "the dungeon floor lifecycle owns this monster, not the abandonment sweep"
     );
 }
@@ -432,32 +425,14 @@ async fn the_sweep_never_despawns_a_dungeon_monster() {
 #[tokio::test]
 async fn a_monster_whose_owner_is_present_is_left_alone() {
     let game_state = make_test_game_state("handoff_noop");
-    let owner = pid("present");
-    game_state
-        .add_player(make_player("present", 0.0, 0.0))
-        .await;
-    let monster = game_state
-        .spawn_monster(
-            "goblin".to_string(),
-            Position {
-                x: 10.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            0.0,
-            Some(owner),
-            0,
-            None,
-            false,
-        )
-        .await
-        .expect("spawn succeeds under the caps");
+    let owner = add_player_on_floor(&game_state, "present", 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, 0).await;
     let mut rx = game_state.register_direct_channel(&owner).await;
     drain(&mut rx);
 
     game_state.tick_monster_ownership().await;
 
-    assert_eq!(owner_of(&game_state, &monster.id).await, Some(owner));
+    assert_eq!(owner_of(&game_state, &monster_id).await, Some(owner));
     assert!(
         drain(&mut rx).is_empty(),
         "an untouched monster should generate no ownership traffic"
