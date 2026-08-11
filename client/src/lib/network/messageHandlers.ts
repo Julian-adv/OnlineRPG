@@ -265,12 +265,14 @@ function actorName(playerId: number): string {
 function announceGroundItem(
   actorId: number | null | undefined,
   itemDefId: string | undefined,
-  verb: string
+  verb: string,
+  quantity = 1
 ) {
   if (actorId == null || !itemDefId) return
   const name = getItemDef(itemDefId)?.name ?? itemDefId
+  const amount = quantity > 1 ? ` x${quantity}` : ''
   addChatMessage({
-    text: `${actorName(actorId)} ${verb} ${name}.`,
+    text: `${actorName(actorId)} ${verb} ${name}${amount}.`,
     sender: 'system',
   })
 }
@@ -1137,7 +1139,12 @@ export function handleServerMessage(
       const item = data.item as ServerGroundItem
       groundItemManager.spawn(item, { animateSpawn: true })
       // Only what a hand put down: loot announces itself by landing.
-      announceGroundItem(item.dropped_by, item.item_def_id, 'dropped')
+      announceGroundItem(
+        item.dropped_by,
+        item.item_def_id,
+        'dropped',
+        item.quantity
+      )
       break
     }
 
@@ -1146,21 +1153,38 @@ export function handleServerMessage(
       break
 
     case 'GroundItemRemoved': {
-      // Read the def before the removal drops it — who looted what matters
+      // Read the pile before the removal drops it — who looted what matters
       // in a party, where one bag takes the drop everybody fought for.
-      const defId =
+      const taken =
         data.picked_up_by != null
-          ? groundItemManager.items.get(data.instance_id)?.itemDefId
+          ? groundItemManager.items.get(data.instance_id)
           : undefined
       groundItemManager.remove(data.instance_id)
       // Self currency pickups: the server's system line reports the payout.
       const selfCurrency =
-        defId != null &&
-        getItemDef(defId)?.category === 'currency' &&
+        taken != null &&
+        getItemDef(taken.itemDefId)?.category === 'currency' &&
         isSelfPlayer(data.picked_up_by)
       if (!selfCurrency) {
-        announceGroundItem(data.picked_up_by, defId, 'picked up')
+        announceGroundItem(
+          data.picked_up_by,
+          taken?.itemDefId,
+          'picked up',
+          taken?.quantity
+        )
       }
+      break
+    }
+
+    case 'GroundItemQuantityChanged': {
+      const pile = groundItemManager.items.get(data.instance_id)
+      groundItemManager.setQuantity(data.instance_id, data.quantity)
+      announceGroundItem(
+        data.picked_up_by,
+        pile?.itemDefId,
+        'picked up',
+        data.taken
+      )
       break
     }
 

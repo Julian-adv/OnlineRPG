@@ -1556,6 +1556,7 @@ impl SharedState {
             | ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
             | ServerMessage::GroundItemRemoved { .. }
+            | ServerMessage::GroundItemQuantityChanged { .. }
             | ServerMessage::TradeBusy { .. } => EventUrgency::Noise,
 
             // Urgent: another player attacks a monster (so we can join in)
@@ -1990,6 +1991,15 @@ impl SharedState {
                     }
                 }
             }
+            ServerMessage::GroundItemQuantityChanged {
+                instance_id,
+                quantity,
+                ..
+            } => {
+                if let Some(item) = self.ground_items.get_mut(instance_id) {
+                    item.quantity = *quantity;
+                }
+            }
             ServerMessage::CharacterCreated { ref character } => {
                 self.characters.push(character.clone());
             }
@@ -2274,7 +2284,8 @@ impl SharedState {
             // the world state lists what is nearby each turn instead.
             ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
-            | ServerMessage::GroundItemRemoved { .. } => return urgency,
+            | ServerMessage::GroundItemRemoved { .. }
+            | ServerMessage::GroundItemQuantityChanged { .. } => return urgency,
             // Campfires likewise live in the world state, and the grill start
             // is answered by GrillEnded a few seconds later.
             ServerMessage::CampfireSpawned { .. }
@@ -3219,8 +3230,13 @@ impl SharedState {
                 Some(id) => format!(", dropped by {}", self.visible_name(id)),
                 None => String::new(),
             };
+            let amount = if i.quantity > 1 {
+                format!(" x{}", i.quantity)
+            } else {
+                String::new()
+            };
             lines.push(format!(
-                "Item on ground: {} ({:.1}m away) [id {}]{dropped_by}",
+                "Item on ground: {}{amount} ({:.1}m away) [id {}]{dropped_by}",
                 i.item_def_id,
                 d_sq.sqrt(),
                 i.instance_id
@@ -3300,6 +3316,7 @@ pub(crate) mod tests {
             item_def_id: def.to_string(),
             position: p(x, 0.0, z),
             floor_level: floor,
+            quantity: 1,
             enchant: 0,
             dropped_by: None,
         }

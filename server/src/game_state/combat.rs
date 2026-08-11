@@ -408,6 +408,7 @@ impl super::GameState {
                         item_def_id,
                         position: drop_position,
                         floor_level: monster_floor_level,
+                        quantity: 1,
                         enchant: 0,
                         dropped_by: None,
                     })

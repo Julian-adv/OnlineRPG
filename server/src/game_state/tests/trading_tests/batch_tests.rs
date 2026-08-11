@@ -681,7 +681,7 @@ async fn buy_items_batch_notifies_the_merchant_once_per_unit() {
 }
 
 #[tokio::test]
-async fn drop_items_batch_drops_partial_quantity_and_spawns_one_ground_item_per_unit() {
+async fn drop_items_batch_drops_partial_quantity_as_one_pile_per_stack() {
     let game_state = make_test_game_state("batch_drop_partial");
     game_state.add_player(make_player("owner", 1.0, 0.0)).await;
     game_state.inventories.write().await.insert(
@@ -713,19 +713,19 @@ async fn drop_items_batch_drops_partial_quantity_and_spawns_one_ground_item_per_
     assert_eq!(bag.len(), 1, "the torch stack is fully consumed");
     assert_eq!(bag[0].item_def_id, "healing_potion");
     assert_eq!(bag[0].quantity, 2);
-    drop(inventories);
 
     let ground_items = game_state.ground_items.read().await;
     assert_eq!(
         ground_items.len(),
-        4,
-        "3 potions + 1 torch land as 4 separate ground items"
+        2,
+        "the 3 potions land as one pile, the torch as its own"
     );
-    let potions = ground_items
+    let potions: Vec<_> = ground_items
         .values()
         .filter(|gi| gi.item.item_def_id == "healing_potion")
-        .count();
-    assert_eq!(potions, 3);
+        .collect();
+    assert_eq!(potions.len(), 1);
+    assert_eq!(potions[0].item.quantity, 3);
 }
 
 #[tokio::test]
