@@ -15,6 +15,11 @@ const MONSTER_MOVE_SPEED_SLACK: f32 = 1.2;
 /// leg (`DEFAULT_MAX_MOVE_DIST`) — while still absorbing a burst of frames that
 /// the network delivered bunched together.
 const MONSTER_MOVE_BUDGET_CAP_METERS: f32 = 12.0;
+/// How far a reported monster Y may sit from the server's own ground sample
+/// before the move is refused. Absorbs the mismatch between the client's
+/// terrain snap and the server's sample without leaving enough room to clear
+/// the furniture the passability sweep guards.
+const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
 /// Run speed assumed for a monster whose type has no definition (only test /
 /// misconfigured types). Kept just above the player's own speed so an unknown
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
@@ -164,6 +169,47 @@ impl super::GameState {
         }
     }
 
+    /// The Y a move to `to` should land on: the ground delta applied to the
+    /// stored Y, so an off-ground offset is carried rather than snapped away.
+    /// Ambient spawns are grounded by `validate_spawn_request`, but `/spawnmob`
+    /// seeds Y from the admin's pose, and such a monster stays off-ground for
+    /// life. `None` means refuse the move, not "no opinion".
+    async fn expected_monster_move_y(
+        &self,
+        floor_level: i8,
+        from: Position,
+        to: Position,
+    ) -> Option<f32> {
+        // Attack cadence reports plenty of unchanged positions.
+        if from.x == to.x && from.z == to.z {
+            return Some(from.y);
+        }
+        let (from_ground, to_ground) = if floor_level < 0 {
+            let from_entrance = self.dungeon_defs.entrance_at(from.x, from.z)?;
+            let to_entrance = self.dungeon_defs.entrance_at(to.x, to.z)?;
+            if from_entrance.id != to_entrance.id {
+                return None;
+            }
+            self.ensure_dungeon_runtime(&from_entrance.id).await;
+            let dungeons = self.dungeons.read().await;
+            let layouts = &dungeons.get(&from_entrance.id)?.layouts;
+            let origin = from_entrance.position();
+            let depth = floor_level.unsigned_abs();
+            let height_at =
+                |x, z| onlinerpg_shared::dungeon::floor_height_at(&origin, layouts, depth, x, z);
+            (height_at(from.x, from.z)?, height_at(to.x, to.z)?)
+        } else {
+            (
+                self.height_sampler
+                    .sample_height(from.x, from.z)
+                    .await
+                    .ok()?,
+                self.height_sampler.sample_height(to.x, to.z).await.ok()?,
+            )
+        };
+        Some(from.y + to_ground - from_ground)
+    }
+
     pub async fn update_monster_position(
         &self,
         mover_id: &PlayerId,
@@ -173,6 +219,43 @@ impl super::GameState {
         state: MonsterState,
         mut target_position: Position,
     ) {
+        // Dead is rejected like malformed input: only server combat may kill a
+        // monster.
+        let input_valid = new_position.is_finite()
+            && rotation.is_finite()
+            && target_position.is_finite()
+            && state != MonsterState::Dead;
+        let Some((sample_from, floor_level)) = ({
+            let monsters = self.monsters.read().await;
+            monsters.get(&monster_id).and_then(|monster| {
+                monster
+                    .is_controllable_by(mover_id)
+                    .then_some((monster.position, monster.floor_level))
+            })
+        }) else {
+            return;
+        };
+        if input_valid {
+            // Store canonical X like player moves do; see
+            // client_monster_move_stores_canonical_world_x.
+            new_position = new_position.wrapped_x();
+            target_position = target_position.wrapped_x();
+        }
+        // Run speed is ground-projected, so charge horizontal travel once and
+        // cap height changes independently. Euclidean distance would
+        // double-charge ordinary slopes that the terrain snap adds.
+        let dx = onlinerpg_shared::shortest_world_delta_x(sample_from.x, new_position.x);
+        let dz = new_position.z - sample_from.z;
+        let horizontal = (dx * dx + dz * dz).sqrt();
+        let raw_dist = horizontal.max((new_position.y - sample_from.y).abs());
+        // `f32::max` swallows NaN, so `input_valid` — not `raw_dist` — is what
+        // keeps malformed input out of the height sample.
+        let expected_y = if input_valid && raw_dist <= MONSTER_MOVE_BUDGET_CAP_METERS {
+            self.expected_monster_move_y(floor_level, sample_from, new_position)
+                .await
+        } else {
+            None
+        };
         let now = Self::now_ms();
         let (old_position, owner_id, monster) = {
             let mut monsters = self.monsters.write().await;
@@ -183,89 +266,94 @@ impl super::GameState {
             if !monster.is_controllable_by(mover_id) {
                 return;
             }
-            // Dead is rejected like malformed input: only server combat may
-            // kill a monster.
-            if !new_position.is_finite()
-                || !rotation.is_finite()
-                || !target_position.is_finite()
-                || state == MonsterState::Dead
-            {
-                let correction = Self::move_correction(monster_id, monster);
-                drop(monsters);
-                self.send_direct_message(mover_id, correction).await;
-                return;
-            }
-            // Store canonical X like player moves do; the budget and sweep
-            // below are already periodic. See the regression test for what a
-            // non-canonical stored X costs.
-            new_position = new_position.wrapped_x();
-            target_position = target_position.wrapped_x();
-            // Rate-limit client-reported movement with a token bucket that
-            // refills at the monster's run speed. Movement is simulated by the
-            // owning client, so without this an owner could teleport the monster
-            // onto any player and use it as an unlimited-range weapon
-            // (broadcast_monster_attack's reach check only sees the post-move
-            // position). The bucket lets a legit burst of frames the network
-            // delivered bunched together spend banked allowance, while its cap
-            // bounds the jump an idle monster can bank, and its refill rate the
-            // sustained speed.
-            let run_speed = self
-                .monster_defs
-                .get(&monster.monster_type)
-                .map(|d| d.run_speed)
-                .unwrap_or(DEFAULT_MONSTER_RUN_SPEED);
-            let elapsed_s = now.saturating_sub(monster.last_move_at) as f32 / 1000.0;
-            let budget = (monster.move_budget + run_speed * MONSTER_MOVE_SPEED_SLACK * elapsed_s)
-                .min(MONSTER_MOVE_BUDGET_CAP_METERS);
-            monster.last_move_at = now;
-            let dx = onlinerpg_shared::shortest_world_delta_x(monster.position.x, new_position.x);
-            let dy = new_position.y - monster.position.y;
-            let dz = new_position.z - monster.position.z;
-            // Run speed is ground-projected, so charge horizontal travel once
-            // and cap height changes independently. Euclidean distance would
-            // double-charge ordinary slopes that the terrain snap adds.
-            let dist = (dx * dx + dz * dz).sqrt().max(dy.abs());
-            if dist > budget {
-                // Bank the refill so the budget keeps recovering, but don't
-                // spend it: the move stays where it was and isn't fanned out.
+            let accepted = 'check: {
+                if !input_valid {
+                    break 'check false;
+                }
+                // The height sample released the lock, so a concurrent move
+                // would have left `expected_y` stale.
+                if monster.position != sample_from {
+                    break 'check false;
+                }
+                // Rate-limit client-reported movement with a token bucket that
+                // refills at the monster's run speed. Movement is simulated by the
+                // owning client, so without this an owner could teleport the monster
+                // onto any player and use it as an unlimited-range weapon
+                // (broadcast_monster_attack's reach check only sees the post-move
+                // position). The bucket lets a legit burst of frames the network
+                // delivered bunched together spend banked allowance, while its cap
+                // bounds the jump an idle monster can bank, and its refill rate the
+                // sustained speed.
+                let run_speed = self
+                    .monster_defs
+                    .get(&monster.monster_type)
+                    .map(|d| d.run_speed)
+                    .unwrap_or(DEFAULT_MONSTER_RUN_SPEED);
+                let elapsed_s = now.saturating_sub(monster.last_move_at) as f32 / 1000.0;
+                let budget = (monster.move_budget
+                    + run_speed * MONSTER_MOVE_SPEED_SLACK * elapsed_s)
+                    .min(MONSTER_MOVE_BUDGET_CAP_METERS);
+                monster.last_move_at = now;
+                // Bank the refill up front so a refused move keeps recovering;
+                // only an accepted one spends it.
                 monster.move_budget = budget;
-                debug!(
-                    "Rejected monster move {:.0}m (budget {:.1}m): monster {} by {}",
-                    dist, budget, monster_id, mover_id
-                );
-                let correction = Self::move_correction(monster_id, monster);
-                drop(monsters);
-                self.send_direct_message(mover_id, correction).await;
-                return;
-            }
-            // A move that reports an unchanged position can't cross anything,
-            // and attack cadence reports plenty of them.
-            let blocked = dist > 0.0 && {
-                let cache = self.passability_read();
-                let floor = super::passability::authoritative_floor(&cache, &monster.position);
-                // Sweep in unwrapped X so a seam-crossing move stays the short
-                // local segment `dist` measured.
-                let to_x = monster.position.x + dx;
-                super::passability::wrapped_block_info(
-                    &cache,
-                    monster.position.x,
-                    monster.position.z,
-                    to_x,
-                    new_position.z,
-                    floor,
-                    monster.position.y,
-                )
-                .is_some()
+                if raw_dist > budget {
+                    debug!(
+                        "Rejected monster move {:.0}m (budget {:.1}m): monster {} by {}",
+                        raw_dist, budget, monster_id, mover_id
+                    );
+                    break 'check false;
+                }
+                let Some(expected_y) = expected_y else {
+                    debug!("No ground height for monster {monster_id} move by {mover_id}");
+                    break 'check false;
+                };
+                if (new_position.y - expected_y).abs() > MONSTER_GROUND_Y_TOLERANCE_METERS {
+                    debug!(
+                        "Rejected monster Y {:.1} (expected {:.1}): monster {} by {}",
+                        new_position.y, expected_y, monster_id, mover_id
+                    );
+                    break 'check false;
+                }
+                new_position.y = expected_y;
+                let dist = horizontal.max((expected_y - monster.position.y).abs());
+                if dist > budget {
+                    break 'check false;
+                }
+                // A move that reports an unchanged position can't cross anything,
+                // and attack cadence reports plenty of them.
+                let blocked = dist > 0.0 && {
+                    let cache = self.passability_read();
+                    let floor = super::passability::authoritative_floor(&cache, &monster.position);
+                    // Sweep in unwrapped X so a seam-crossing move stays the short
+                    // local segment `dist` measured.
+                    let to_x = monster.position.x + dx;
+                    super::passability::wrapped_block_info(
+                        &cache,
+                        monster.position.x,
+                        monster.position.z,
+                        to_x,
+                        new_position.z,
+                        floor,
+                        monster.position.y,
+                    )
+                    .is_some()
+                };
+                if blocked {
+                    debug!(
+                        "Rejected monster move through blocked terrain: {monster_id} by {mover_id}"
+                    );
+                    break 'check false;
+                }
+                monster.move_budget = budget - dist;
+                true
             };
-            if blocked {
-                monster.move_budget = budget;
-                debug!("Rejected monster move through blocked terrain: {monster_id} by {mover_id}");
+            if !accepted {
                 let correction = Self::move_correction(monster_id, monster);
                 drop(monsters);
                 self.send_direct_message(mover_id, correction).await;
                 return;
             }
-            monster.move_budget = budget - dist;
             let old_position = monster.position;
             monster.position = new_position;
             monster.rotation = rotation;
@@ -480,12 +568,12 @@ impl super::GameState {
 
     /// Validate a client-requested spawn: it must carry finite values, be a
     /// configured ambient type, sit outside every no-spawn zone, and be within
-    /// range of the requesting player. Terrain checks (grassland, water) are
-    /// the client's responsibility — the server has no terrain data.
+    /// range of the requesting player. The server supplies the authoritative
+    /// terrain Y. Placement stays client-selected: grassland has no
+    /// server-side source at all, and water is simply not wired up yet
+    /// (`water_depth_at` could check it, as `inventory.rs` already does).
     ///
-    /// Returns the position to store: the request with X wrapped into the
-    /// canonical range, so validation and authoritative state share one
-    /// representation.
+    /// Returns the position to store with canonical X and server-sampled Y.
     pub async fn validate_spawn_request(
         &self,
         player_id: &PlayerId,
@@ -520,10 +608,16 @@ impl super::GameState {
                 None => return None,
             }
         };
-        let dx = onlinerpg_shared::shortest_world_delta_x(player_pos.x, position.x);
-        let dz = position.z - player_pos.z;
         let max = rule.max_distance + 10.0; // tolerance
-        (dx * dx + dz * dz <= max * max).then_some(position)
+        if player_pos.dist_xz_sq(&position) > max * max {
+            return None;
+        }
+        position.y = self
+            .height_sampler
+            .sample_height(position.x, position.z)
+            .await
+            .ok()?;
+        Some(position)
     }
 
     /// Consume the player's unexpired allowance for this type, if any. Each

@@ -1,5 +1,15 @@
 use super::*;
 
+/// Ground height equals the tile X index, so crossing a tile seam is a 1m step.
+struct SteppedHeightTiles;
+
+#[async_trait::async_trait]
+impl onlinerpg_terrain::height::HeightTiles for SteppedHeightTiles {
+    async fn read_heightmap(&self, tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
+        Ok(uniform_heightmap(tx as f32))
+    }
+}
+
 /// The next direct message must be the rejection ack for `expected_id`.
 fn expect_attack_rejected(
     rx: &mut DirectRx,
@@ -459,7 +469,7 @@ async fn wrapped_spawn_cannot_bypass_no_spawn_zone() {
 }
 
 #[tokio::test]
-async fn ambient_spawn_stores_canonical_world_x() {
+async fn ambient_spawn_stores_authoritative_world_position() {
     let game_state = make_test_game_state("canonical_spawn_position");
     let player_id = pid("spawner");
     game_state
@@ -476,6 +486,7 @@ async fn ambient_spawn_stores_canonical_world_x() {
         .await
         .expect("the periodic position is in range");
     assert_eq!(position.x, 1.0);
+    assert_eq!(position.y, 5.0);
 
     let monster = game_state
         .spawn_monster(
@@ -490,6 +501,7 @@ async fn ambient_spawn_stores_canonical_world_x() {
         .await
         .expect("spawn should fit the test cap");
     assert_eq!(monster.position.x, 1.0);
+    assert_eq!(monster.position.y, 5.0);
     assert_eq!(
         game_state.monsters.read().await[&monster.id].position.x,
         1.0
@@ -557,18 +569,24 @@ async fn client_monster_move_stores_canonical_world_x() {
 
 #[tokio::test]
 async fn client_monster_move_charges_vertical_displacement() {
-    let game_state = make_test_game_state("monster_move_vertical_budget");
+    let game_state = make_game_state_with(
+        "monster_move_vertical_budget",
+        SteppedHeightTiles,
+        SeaOnlyWater,
+    );
     let owner_id = pid("owner");
     let observer_id = pid("observer");
     let start = Position {
-        x: 1.0,
+        x: 31.9,
         y: 0.0,
         z: 1.0,
     };
 
-    game_state.add_player(make_player("owner", 1.0, 1.0)).await;
     game_state
-        .add_player(make_player("observer", 1.0, 1.0))
+        .add_player(make_player("owner", start.x, start.z))
+        .await;
+    game_state
+        .add_player(make_player("observer", start.x, start.z))
         .await;
     let mut owner_rx = game_state.register_direct_channel(&owner_id).await;
     let mut observer_rx = game_state.register_direct_channel(&observer_id).await;
@@ -609,14 +627,15 @@ async fn client_monster_move_charges_vertical_displacement() {
     {
         let mut monsters = game_state.monsters.write().await;
         let monster = monsters.get_mut("vertical_monster").unwrap();
-        monster.move_budget = 1.0;
+        monster.move_budget = 12.0;
         monster.last_move_at = GameState::now_ms();
     }
     let legal = Position {
-        x: 1.25,
-        y: 0.9,
+        x: 32.1,
+        y: 1.0,
         z: 1.0,
     };
+    let expected = legal.wrapped_x();
     game_state
         .update_monster_position(
             &owner_id,
@@ -629,14 +648,14 @@ async fn client_monster_move_charges_vertical_displacement() {
         .await;
 
     let after = game_state.monsters.read().await["vertical_monster"].clone();
-    assert_eq!(after.position, legal);
+    assert_eq!(after.position, expected);
     assert!(
-        after.move_budget < 0.5,
+        after.move_budget < 11.5,
         "a vertical-dominant move must spend its vertical displacement, got {}",
         after.move_budget
     );
     match observer_rx.try_recv() {
-        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, legal),
+        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, expected),
         other => panic!("a bounded vertical move must fan out, got {other:?}"),
     }
 }
@@ -710,6 +729,35 @@ async fn client_owned_monster_cannot_cross_solid_furniture() {
         Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, start),
         other => panic!("a blocked monster move must correct its owner, got {other:?}"),
     }
+
+    let forged_height = Position {
+        x: start.x + 0.25,
+        y: 2.0,
+        ..start
+    };
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "wall_walking_monster".to_string(),
+            forged_height,
+            0.0,
+            MonsterState::Run,
+            forged_height,
+        )
+        .await;
+    assert_eq!(
+        game_state.monsters.read().await["wall_walking_monster"].position,
+        start,
+        "a client-selected height must not clear the furniture"
+    );
+    match owner_rx.try_recv() {
+        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, start),
+        other => panic!("a forged height must correct its owner, got {other:?}"),
+    }
+    assert!(matches!(
+        observer_rx.try_recv(),
+        Err(MpscTryRecvError::Empty)
+    ));
 
     // The sweep's other side. An owner reports whole path legs at once, so a
     // sweep that over-refuses would freeze legitimate monsters at every corner:
