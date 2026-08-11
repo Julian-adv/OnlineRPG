@@ -25,6 +25,7 @@ use onlinerpg_shared::serialize_server_msg;
 use onlinerpg_shared::NoSpawnZone;
 use onlinerpg_shared::Position;
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
@@ -138,6 +139,31 @@ pub(crate) const OUT_OF_COMBAT_MS: u64 = 10_000;
 /// prop. It never enters a bag — picking it up credits a few copper straight
 /// to the player's wallet (see `pickup_item`).
 pub(crate) const COIN_PILE_ITEM_ID: &str = "coin_pile";
+
+struct CheckedBatchQuantities<K> {
+    by_key: HashMap<K, u32>,
+    total: u64,
+}
+
+/// Accumulate client batch lines once before mutation. Per-key totals stay
+/// `u32` because item quantities use that type; the whole request stays `u64`
+/// to match the existing instance-id reservation range.
+fn checked_batch_quantities<K: Eq + Hash>(
+    lines: impl IntoIterator<Item = (K, u32)>,
+) -> Option<CheckedBatchQuantities<K>> {
+    let mut by_key: HashMap<K, u32> = HashMap::new();
+    let mut total = 0u64;
+    for (key, qty) in lines {
+        total = total.checked_add(u64::from(qty))?;
+        let quantity = by_key
+            .get(&key)
+            .copied()
+            .unwrap_or_default()
+            .checked_add(qty)?;
+        by_key.insert(key, quantity);
+    }
+    Some(CheckedBatchQuantities { by_key, total })
+}
 
 #[derive(Default)]
 struct IdState {

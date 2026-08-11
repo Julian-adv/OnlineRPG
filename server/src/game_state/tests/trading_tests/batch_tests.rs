@@ -1,6 +1,56 @@
 use super::*;
 use onlinerpg_shared::messages::{BagLineItem, TradeLineItem};
 
+#[test]
+fn checked_batch_quantity_accumulation_overflow_boundaries() {
+    let quantities = checked_batch_quantities([("first", u32::MAX), ("second", 1)]).unwrap();
+    assert_eq!(quantities.total, u64::from(u32::MAX) + 1);
+    assert_eq!(quantities.by_key["first"], u32::MAX);
+    assert_eq!(quantities.by_key["second"], 1);
+    assert!(checked_batch_quantities([("same", u32::MAX), ("same", 1)]).is_none());
+}
+
+#[tokio::test]
+async fn zero_quantity_trade_batches_still_validate_the_trader() {
+    let game_state = make_test_game_state("zero_quantity_trade_validation");
+    game_state.add_player(make_player("buyer", 1.0, 0.0)).await;
+    let mut buyer_rx = game_state.register_direct_channel(&pid("buyer")).await;
+
+    game_state
+        .buy_items(
+            &pid("buyer"),
+            &pid("missing_trader"),
+            vec![TradeLineItem {
+                item_def_id: "spear".to_string(),
+                qty: 0,
+            }],
+        )
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("Trader not found"));
+        }
+        other => panic!("Expected TradeError, got {other:?}"),
+    }
+
+    game_state
+        .sell_items(
+            &pid("buyer"),
+            &pid("missing_trader"),
+            vec![BagLineItem {
+                instance_id: 1,
+                qty: 0,
+            }],
+        )
+        .await;
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("Trader not found"));
+        }
+        other => panic!("Expected TradeError, got {other:?}"),
+    }
+}
+
 // --- Batched sell/buy/drop (bag-cleanup UX: quantity popups + one
 // all-or-nothing round trip instead of N single-unit calls) ---
 
@@ -92,6 +142,57 @@ async fn sell_items_batch_is_all_or_nothing_when_a_line_is_invalid() {
     match seller_rx.try_recv() {
         Ok(ServerMessage::TradeError { .. }) => {}
         other => panic!("Expected TradeError, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn sell_items_batch_rejects_quantity_accumulation_overflow() {
+    let game_state = make_test_game_state("batch_sell_quantity_overflow");
+    game_state
+        .add_player(make_npc("npc_rica", "Rica", 0.0, 0.0))
+        .await;
+    game_state.add_player(make_player("seller", 1.0, 0.0)).await;
+    game_state
+        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 0, None)
+        .await;
+    game_state.inventories.write().await.insert(
+        pid("seller"),
+        PlayerInventory {
+            bag: vec![bag_item(7, "healing_potion", 5)],
+            ..Default::default()
+        },
+    );
+    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
+    let next_item_id = game_state.reserve_instance_ids(0).await;
+
+    game_state
+        .sell_items(
+            &pid("seller"),
+            &pid("npc_rica"),
+            vec![
+                BagLineItem {
+                    instance_id: 7,
+                    qty: 1,
+                },
+                BagLineItem {
+                    instance_id: 7,
+                    qty: u32::MAX,
+                },
+            ],
+        )
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 0);
+    assert_eq!(
+        game_state.inventories.read().await[&pid("seller")].bag[0].quantity,
+        5
+    );
+    assert_eq!(game_state.reserve_instance_ids(0).await, next_item_id);
+    match seller_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("Invalid batch quantity"));
+        }
+        other => panic!("Expected TradeError, got {other:?}"),
     }
 }
 
@@ -386,6 +487,49 @@ async fn buy_items_batch_totals_repeated_lines_against_resident_stock() {
     let inventories = game_state.inventories.read().await;
     assert!(inventories[&pid("seller")].bag.is_empty());
     assert_eq!(inventories[&pid("npc_karl")].bag.len(), 3);
+}
+
+#[tokio::test]
+async fn buy_items_batch_rejects_quantity_accumulation_overflow() {
+    let game_state = make_test_game_state("batch_buy_quantity_overflow");
+    setup_resident_trade(&game_state, 0, vec![bag_item(11, "spear", 1)], vec![]).await;
+    game_state
+        .player_gold
+        .write()
+        .await
+        .insert(pid("seller"), 20_000);
+    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
+    let next_item_id = game_state.reserve_instance_ids(0).await;
+
+    game_state
+        .buy_items(
+            &pid("seller"),
+            &pid("npc_karl"),
+            vec![
+                TradeLineItem {
+                    item_def_id: "spear".to_string(),
+                    qty: 1,
+                },
+                TradeLineItem {
+                    item_def_id: "spear".to_string(),
+                    qty: u32::MAX,
+                },
+            ],
+        )
+        .await;
+
+    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 20_000);
+    let inventories = game_state.inventories.read().await;
+    assert!(inventories[&pid("seller")].bag.is_empty());
+    assert_eq!(inventories[&pid("npc_karl")].bag.len(), 1);
+    drop(inventories);
+    assert_eq!(game_state.reserve_instance_ids(0).await, next_item_id);
+    match seller_rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains("Invalid batch quantity"));
+        }
+        other => panic!("Expected TradeError, got {other:?}"),
+    }
 }
 
 /// The resident's receipt draws from a range reserved before the locks, so
@@ -762,5 +906,49 @@ async fn drop_items_batch_is_all_or_nothing_when_quantity_exceeds_the_stack() {
     match owner_rx.try_recv() {
         Ok(ServerMessage::SystemMessage { .. }) => {}
         other => panic!("Expected SystemMessage, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn drop_items_batch_rejects_quantity_accumulation_overflow() {
+    let game_state = make_test_game_state("batch_drop_quantity_overflow");
+    game_state.add_player(make_player("owner", 1.0, 0.0)).await;
+    game_state.inventories.write().await.insert(
+        pid("owner"),
+        PlayerInventory {
+            bag: vec![bag_item(30, "healing_potion", 2)],
+            ..Default::default()
+        },
+    );
+    let mut owner_rx = game_state.register_direct_channel(&pid("owner")).await;
+    let next_item_id = game_state.reserve_instance_ids(0).await;
+
+    game_state
+        .drop_items(
+            &pid("owner"),
+            vec![
+                BagLineItem {
+                    instance_id: 30,
+                    qty: 1,
+                },
+                BagLineItem {
+                    instance_id: 30,
+                    qty: u32::MAX,
+                },
+            ],
+        )
+        .await;
+
+    assert_eq!(
+        game_state.inventories.read().await[&pid("owner")].bag[0].quantity,
+        2
+    );
+    assert!(game_state.ground_items.read().await.is_empty());
+    assert_eq!(game_state.reserve_instance_ids(0).await, next_item_id);
+    match owner_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("Invalid batch quantity"));
+        }
+        other => panic!("Expected SystemMessage, got {other:?}"),
     }
 }
