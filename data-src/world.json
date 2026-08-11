@@ -5,31 +5,26 @@
     "z": 4741.6,
     "rotation": 158.8
   },
-  "maxMonstersTotal": 135000,
+  "maxMonstersPerPlayer": 30,
   "ambientSpawns": [
     {
       "monsterType": "scp939",
-      "maxPerPlayer": 8,
       "maxDistance": 60
     },
     {
       "monsterType": "kobold",
-      "maxPerPlayer": 6,
       "maxDistance": 60
     },
     {
       "monsterType": "goblin",
-      "maxPerPlayer": 5,
       "maxDistance": 60
     },
     {
       "monsterType": "orc",
-      "maxPerPlayer": 4,
       "maxDistance": 60
     },
     {
       "monsterType": "orc_female",
-      "maxPerPlayer": 4,
       "maxDistance": 60
     }
   ]

@@ -52,83 +52,67 @@ struct Handoff {
     old_owner: Option<PlayerId>,
 }
 
-/// Alive-monster tallies, kept current by spawn/kill rather than recounted.
-/// Its own struct so `MonsterRegistry` can update it while holding a
-/// `&mut Monster` — separate fields, so the borrows stay disjoint.
-#[derive(Default)]
-struct AliveCounts {
-    total: usize,
-    /// owner → type → count. Nested so the per-player cap looks up by `&str`
-    /// rather than allocating an owned key on each of its ~25k calls a tick.
-    by_owner: std::collections::HashMap<PlayerId, std::collections::HashMap<String, u32>>,
+/// owner → the ids it owns, so the spawn cap is O(1) and a disconnect finds
+/// its handful of monsters without walking the whole map. Its own struct so
+/// `MonsterRegistry` can update it while holding a `&mut Monster` — separate
+/// fields, so the borrows stay disjoint. State plays no part: a corpse stays
+/// filed under its owner until it is removed, because a disconnect has to
+/// clear corpses too.
+#[derive(Default, PartialEq)]
+struct OwnedIds {
+    by_owner: std::collections::HashMap<PlayerId, HashSet<String>>,
 }
 
-impl AliveCounts {
-    fn credit(&mut self, owner: Option<PlayerId>, monster_type: &str) {
-        self.total += 1;
+impl OwnedIds {
+    fn add(&mut self, owner: Option<PlayerId>, id: &str) {
         let Some(owner) = owner else {
             return;
         };
-        let by_type = self.by_owner.entry(owner).or_default();
-        match by_type.get_mut(monster_type) {
-            Some(count) => *count += 1,
-            None => {
-                by_type.insert(monster_type.to_string(), 1);
-            }
-        }
+        self.by_owner
+            .entry(owner)
+            .or_default()
+            .insert(id.to_string());
     }
 
-    fn debit(&mut self, owner: Option<PlayerId>, monster_type: &str) {
-        self.total = self.total.saturating_sub(1);
+    fn remove(&mut self, owner: Option<PlayerId>, id: &str) {
         let Some(owner) = owner else {
             return;
         };
-        let Some(by_type) = self.by_owner.get_mut(&owner) else {
+        // Empty sets are dropped, so a disconnected player's key does not
+        // linger.
+        let Entry::Occupied(mut entry) = self.by_owner.entry(owner) else {
             return;
         };
-        // Zero counts are dropped: a stale entry would pin a disconnected
-        // player's key forever.
-        if let Some(count) = by_type.get_mut(monster_type) {
-            *count -= 1;
-            if *count == 0 {
-                by_type.remove(monster_type);
-            }
-        }
-        if by_type.is_empty() {
-            self.by_owner.remove(&owner);
+        entry.get_mut().remove(id);
+        if entry.get().is_empty() {
+            entry.remove();
         }
     }
 
-    fn for_owner(&self, owner: &PlayerId, monster_type: &str) -> u32 {
-        self.by_owner
-            .get(owner)
-            .and_then(|by_type| by_type.get(monster_type))
-            .copied()
-            .unwrap_or(0)
+    fn len_for(&self, owner: &PlayerId) -> usize {
+        self.by_owner.get(owner).map(|ids| ids.len()).unwrap_or(0)
     }
 
-    fn total_for_owner(&self, owner: &PlayerId) -> usize {
+    fn for_owner(&self, owner: &PlayerId) -> impl Iterator<Item = &str> {
         self.by_owner
             .get(owner)
-            .map(|by_type| by_type.values().map(|n| *n as usize).sum())
-            .unwrap_or(0)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
     }
 }
 
-/// The monster map plus alive counts and a cell index, so the spawn caps are
+/// The monster map plus an owner index and a cell index, so the spawn cap is
 /// O(1) instead of a scan and an AOI query visits only nearby monsters instead
-/// of all 135k. Corpses linger 30s (combat.rs) and must not hold a spawn slot,
-/// so the counts track alive monsters only; the cell index carries corpses too,
-/// since clients still see them.
+/// of the whole map. Both indexes carry corpses, since clients still see them.
 ///
 /// `get_mut` hands out a plain `&mut Monster` for health and timestamp edits.
-/// Changing `state` to Dead or `owner_id` through it would desync the counts and
-/// `position` the cell index — route those through `mark_dead` /
-/// `reassign_owner` / `set_position`.
+/// Changing `owner_id` through it would desync the owner index and `position`
+/// the cell index — route those through `reassign_owner` / `set_position`.
 #[derive(Default)]
 pub(crate) struct MonsterRegistry {
     monsters: std::collections::HashMap<String, crate::types::Monster>,
-    alive: AliveCounts,
+    ids_by_owner: OwnedIds,
     /// Stored positions are canonical in X
     /// (`client_monster_move_stores_canonical_world_x`), which is what lets the
     /// index find them across the world seam.
@@ -149,30 +133,18 @@ impl MonsterRegistry {
             .filter_map(|id| self.monsters.get(id.as_str()))
     }
 
-    fn credit(&mut self, monster: &crate::types::Monster) {
-        if monster.state != MonsterState::Dead {
-            self.alive.credit(monster.owner_id, &monster.monster_type);
-        }
-    }
-
-    fn debit(&mut self, monster: &crate::types::Monster) {
-        if monster.state != MonsterState::Dead {
-            self.alive.debit(monster.owner_id, &monster.monster_type);
-        }
-    }
-
     pub(crate) fn insert(
         &mut self,
         id: String,
         monster: crate::types::Monster,
     ) -> Option<crate::types::Monster> {
-        self.credit(&monster);
+        // Unfile whatever this key held first, so a replacement cannot leave
+        // the old monster's entries behind — or drop its own.
+        let replaced = self.remove(&id);
         let position = monster.position;
-        let replaced = self.monsters.insert(id.clone(), monster);
-        if let Some(old) = &replaced {
-            self.debit(old);
-            self.cells.remove(id.as_str(), &old.position);
-        }
+        let owner = monster.owner_id;
+        self.monsters.insert(id.clone(), monster);
+        self.ids_by_owner.add(owner, id.as_str());
         self.cells.insert(id, &position);
         replaced
     }
@@ -180,8 +152,8 @@ impl MonsterRegistry {
     pub(crate) fn remove(&mut self, id: &str) -> Option<crate::types::Monster> {
         let removed = self.monsters.remove(id);
         if let Some(monster) = &removed {
-            self.debit(monster);
             self.cells.remove(id, &monster.position);
+            self.ids_by_owner.remove(monster.owner_id, id);
         }
         removed
     }
@@ -200,7 +172,7 @@ impl MonsterRegistry {
         self.monsters.values()
     }
 
-    #[cfg(test)]
+    /// Monsters on the server, corpses included.
     pub(crate) fn len(&self) -> usize {
         self.monsters.len()
     }
@@ -210,44 +182,24 @@ impl MonsterRegistry {
         self.monsters.is_empty()
     }
 
-    /// Alive monsters server-wide, for the global cap.
-    pub(crate) fn alive_total(&self) -> usize {
-        self.alive.total
+    /// Monsters a player owns — how much its client is simulating, which is
+    /// what an ownership handoff balances on. Broader than the ambient spawn
+    /// cap it also gates: dungeon and admin-spawned monsters are exempt from
+    /// that cap but still counted here.
+    pub(crate) fn owned_by(&self, owner: &PlayerId) -> usize {
+        self.ids_by_owner.len_for(owner)
     }
 
-    /// Alive monsters of one type owned by one player, for the per-player cap.
-    pub(crate) fn alive_for(&self, owner: &PlayerId, monster_type: &str) -> u32 {
-        self.alive.for_owner(owner, monster_type)
+    /// Every monster id a player owns — what a disconnect has to clear,
+    /// without scanning the map.
+    pub(crate) fn ids_owned_by(&self, owner: &PlayerId) -> impl Iterator<Item = &str> {
+        self.ids_by_owner.for_owner(owner)
     }
 
-    /// Alive monsters a player owns across every type — how much its client is
-    /// simulating, which is what an ownership handoff balances on.
-    pub(crate) fn alive_total_for(&self, owner: &PlayerId) -> usize {
-        self.alive.total_for_owner(owner)
-    }
-
-    /// Kill a monster, freeing its spawn slot while the corpse lingers.
     pub(crate) fn mark_dead(&mut self, id: &str) {
-        let Some(monster) = self.monsters.get_mut(id) else {
-            return;
-        };
-        if monster.state == MonsterState::Dead {
-            return;
+        if let Some(monster) = self.monsters.get_mut(id) {
+            monster.state = MonsterState::Dead;
         }
-        monster.state = MonsterState::Dead;
-        self.alive.debit(monster.owner_id, &monster.monster_type);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn alive_by_owner_type_len(&self) -> usize {
-        self.alive.by_owner.values().map(|by| by.len()).sum()
-    }
-
-    /// Owners with at least one alive monster. Pins that an owner whose last
-    /// monster went away leaves no empty map behind.
-    #[cfg(test)]
-    pub(crate) fn alive_owner_count(&self) -> usize {
-        self.alive.by_owner.len()
     }
 
     /// Returns the updated monster, so callers can announce the handoff
@@ -258,10 +210,8 @@ impl MonsterRegistry {
         new_owner: PlayerId,
     ) -> Option<&crate::types::Monster> {
         let monster = self.monsters.get_mut(id)?;
-        if monster.state != MonsterState::Dead {
-            self.alive.debit(monster.owner_id, &monster.monster_type);
-            self.alive.credit(Some(new_owner), &monster.monster_type);
-        }
+        self.ids_by_owner.remove(monster.owner_id, id);
+        self.ids_by_owner.add(Some(new_owner), id);
         monster.owner_id = Some(new_owner);
         Some(monster)
     }
@@ -283,7 +233,18 @@ impl MonsterRegistry {
         Some(monster)
     }
 
-    /// Whether the index holds exactly the buckets the map implies — the
+    /// Whether the owner index files exactly what the map says — the invariant
+    /// the spawn cap and the disconnect cleanup depend on.
+    #[cfg(test)]
+    pub(crate) fn owner_index_matches_map(&self) -> bool {
+        let mut expected = OwnedIds::default();
+        for (id, monster) in &self.monsters {
+            expected.add(monster.owner_id, id);
+        }
+        self.ids_by_owner == expected
+    }
+
+    /// Whether the cell index holds exactly the buckets the map implies — the
     /// invariant every AOI query depends on.
     #[cfg(test)]
     pub(crate) fn cell_index_matches_map(&self) -> bool {
@@ -328,34 +289,20 @@ impl super::GameState {
         level_override: Option<u8>,
         aggressive: bool,
     ) -> Option<crate::types::Monster> {
-        let max_total = crate::world_config::world_config().max_monsters_total as usize;
-        let max_per_player = if floor_level < 0 {
-            None
-        } else {
-            Self::find_ambient_rule(&monster_type).map(|r| r.max_per_player as usize)
-        };
+        // Ambient types only: a dungeon monster's cap is its floor's slots, and
+        // an admin-spawned type with no ambient rule has none.
+        let capped_owner = owner_id
+            .filter(|_| floor_level >= 0 && Self::find_ambient_rule(&monster_type).is_some());
 
-        // O(1) against the registry's maintained counts: this runs on every
-        // spawn, tens of thousands of times per tick at target population.
-        {
-            let monsters = self.monsters.read().await;
-            let alive_count = monsters.alive_total();
-            let owned_alive = owner_id
-                .as_ref()
-                .map(|owner| monsters.alive_for(owner, &monster_type) as usize)
-                .unwrap_or(0);
-            if alive_count >= max_total {
-                warn!("Monster spawn rejected: limit reached ({})", alive_count);
+        // O(1) against the owner index: this runs on every spawn, tens of
+        // thousands of times per tick at target population.
+        if let Some(owner) = capped_owner {
+            let max_per_player =
+                crate::world_config::world_config().max_monsters_per_player as usize;
+            let owned = self.monsters.read().await.owned_by(&owner);
+            if owned >= max_per_player {
+                warn!("Monster spawn rejected: player {owner} already owns {owned} monsters");
                 return None;
-            }
-            if let Some(max) = max_per_player {
-                if owned_alive >= max {
-                    warn!(
-                        "Monster spawn rejected: player {:?} already owns {} alive {}",
-                        owner_id, owned_alive, monster_type
-                    );
-                    return None;
-                }
             }
         }
 
@@ -404,10 +351,10 @@ impl super::GameState {
 
         let mut monsters = self.monsters.write().await;
         monsters.insert(id.clone(), monster.clone());
-        let alive = monsters.alive_total();
+        let total = monsters.len();
         debug!(
-            "Spawned monster {} [owner #{}, spawn #{}] (Alive: {})",
-            id, owner_number, spawn_count, alive
+            "Spawned monster {} [owner #{}, spawn #{}] (Total: {})",
+            id, owner_number, spawn_count, total
         );
 
         self.send_direct_message_to_players_within_position(
@@ -711,8 +658,8 @@ impl super::GameState {
         let owned: Vec<(String, Position, i8)> = {
             let monsters = self.monsters.read().await;
             monsters
-                .values()
-                .filter(|m| m.owner_id.as_ref() == Some(owner_id))
+                .ids_owned_by(owner_id)
+                .filter_map(|id| monsters.get(id))
                 .map(|m| (m.id.clone(), m.position, m.floor_level))
                 .collect()
         };
@@ -742,7 +689,7 @@ impl super::GameState {
             }
             for (candidate, _) in &candidates {
                 if let std::collections::hash_map::Entry::Vacant(entry) = load.entry(*candidate) {
-                    entry.insert(self.monsters.read().await.alive_total_for(candidate));
+                    entry.insert(self.monsters.read().await.owned_by(candidate));
                 }
             }
             let Some((new_owner, _)) =
@@ -785,7 +732,7 @@ impl super::GameState {
             return;
         }
 
-        let max_total = crate::world_config::world_config().max_monsters_total as usize;
+        let max_per_player = crate::world_config::world_config().max_monsters_per_player as usize;
 
         // Players eligible for ambient spawns this tick. NPC players only
         // qualify when a human is within sight range (no point spawning monsters
@@ -818,47 +765,34 @@ impl super::GameState {
             return;
         }
 
-        // One row per rule, indexed like `player_ids`: the registry answers each
-        // cap in O(1), so this reads only the pairs the tick asks about instead
-        // of walking every monster on the server.
-        let (owned_per_rule, total_alive) = {
+        // Indexed like `player_ids`: the owner index answers each cap in O(1),
+        // so this reads only the players the tick asks about instead of walking
+        // every monster on the server.
+        let mut budget: Vec<usize> = {
             let monsters = self.monsters.read().await;
-            let counts: Vec<Vec<u32>> = ambient_spawns
+            player_ids
                 .iter()
-                .map(|rule| {
-                    player_ids
-                        .iter()
-                        .map(|player_id| monsters.alive_for(player_id, &rule.monster_type))
-                        .collect()
-                })
-                .collect();
-            (counts, monsters.alive_total())
+                .map(|id| max_per_player.saturating_sub(monsters.owned_by(id)))
+                .collect()
         };
 
-        // Unconsumed allowances reserve slots against the global cap.
         let now = Self::now_ms();
         let requests = {
             let mut allowances = self.ambient_spawn_allowances.write().await;
             allowances.retain(|_, expires_at| *expires_at > now);
             let mut requests: Vec<(String, Vec<PlayerId>)> = Vec::new();
 
-            for (rule, owned) in ambient_spawns.iter().zip(&owned_per_rule) {
-                if total_alive + allowances.len() >= max_total {
-                    break;
-                }
-
+            for rule in ambient_spawns {
                 let mut recipients = Vec::new();
-                for (player_id, owned) in player_ids.iter().zip(owned) {
-                    if total_alive + allowances.len() >= max_total {
-                        break;
-                    }
-                    if *owned >= rule.max_per_player {
+                for (i, player_id) in player_ids.iter().enumerate() {
+                    if budget[i] == 0 {
                         continue;
                     }
                     // The owned key is only built once the cap check passes.
                     let key = (*player_id, rule.monster_type.clone());
                     if let Entry::Vacant(entry) = allowances.entry(key) {
                         entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
+                        budget[i] -= 1;
                         recipients.push(*player_id);
                     }
                 }
@@ -922,8 +856,8 @@ impl super::GameState {
     /// but never chasing or retaliating. Where someone else is standing there,
     /// hand the monster over. Where nobody is, no client holds it and no client
     /// can see it, so it is deleted on the spot — keeping it would only hold a
-    /// slot in `max_per_player` and `max_monsters_total` against a monster that
-    /// does not exist for any player. Roaming clients abandon monsters faster
+    /// slot in its owner's cap against a monster that does not exist for any
+    /// player. Roaming clients abandon monsters faster
     /// than they kill them, and without this the caps fill with unreachable
     /// monsters and ambient spawning stops server-wide.
     ///
@@ -992,7 +926,7 @@ impl super::GameState {
         }
     }
 
-    /// Deliberately ignores `max_per_player`: the monster already exists, and
+    /// Deliberately ignores the per-player cap: the monster already exists, and
     /// refusing would strand it. The adopter simply gets no new ambient spawns
     /// until back under the cap.
     async fn hand_off_monsters(&self, handoffs: Vec<Handoff>) {

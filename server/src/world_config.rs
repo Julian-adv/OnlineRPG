@@ -8,19 +8,23 @@ use tracing::info;
 pub struct WorldConfig {
     #[serde(rename = "spawnPosition")]
     pub spawn_position: SpawnPosition,
-    #[serde(rename = "maxMonstersTotal", default = "default_max_monsters_total")]
-    pub max_monsters_total: u32,
+    #[serde(
+        rename = "maxMonstersPerPlayer",
+        default = "default_max_monsters_per_player"
+    )]
+    pub max_monsters_per_player: u32,
     /// Monster types that spawn dynamically around players (no fixed zones).
     #[serde(rename = "ambientSpawns", default)]
     pub ambient_spawns: Vec<AmbientSpawnRule>,
 }
 
-/// Sized for the 5,000-user target: a player can hold the sum of every
-/// `maxPerPlayer` (27) at once, so anything below users x 27 starves whoever
-/// logs in last. Raising it is only safe because the spawn caps are O(1)
-/// against `MonsterRegistry`'s maintained counts rather than a map scan.
-fn default_max_monsters_total() -> u32 {
-    135_000
+/// Ambient monsters one player may own at once, across every type. The only
+/// server-wide bound there is: no global ceiling is tracked, because this cap
+/// times the player count already is one. Loosely enforced on purpose —
+/// corpses hold a slot until they fade, and the count is read before the
+/// requests it gates go out.
+fn default_max_monsters_per_player() -> u32 {
+    30
 }
 
 fn default_max_distance() -> f32 {
@@ -34,9 +38,6 @@ fn default_max_distance() -> f32 {
 pub struct AmbientSpawnRule {
     #[serde(rename = "monsterType")]
     pub monster_type: String,
-    /// Max alive monsters of this type each player may own at once.
-    #[serde(rename = "maxPerPlayer")]
-    pub max_per_player: u32,
     /// Server-side sanity bound: a requested spawn must be within this many
     /// meters of the requesting player.
     #[serde(rename = "maxDistance", default = "default_max_distance")]

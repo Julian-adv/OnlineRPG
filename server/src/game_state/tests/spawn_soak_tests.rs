@@ -160,20 +160,14 @@ async fn ambient_spawns_survive_two_hours_of_roaming_bots() {
 }
 
 /// H2 at scale: monsters roaming bots left behind must not survive as
-/// permanent cap-holders. Enough of them exhausts max_monsters_total and
-/// starves every other player on the server.
+/// permanent cap-holders. Each one holds a slot in its owner's cap, and since
+/// that cap is now the only bound on the server's monster count, abandoned
+/// monsters accumulating is what would let it grow without limit.
 #[tokio::test]
 async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     let game_state = make_test_game_state("spawn_soak_global");
-    let max_total = world_config().max_monsters_total as usize;
-    let per_player: u32 = world_config()
-        .ambient_spawns
-        .iter()
-        .map(|r| r.max_per_player)
-        .sum();
-    // Enough bots that unchecked abandonment would have exhausted the old
-    // 1,000 cap; the current cap is sized for 5,000 users so it won't bind.
-    let bots = 40.min(max_total / per_player as usize + 1);
+    let per_player = world_config().max_monsters_per_player as usize;
+    let bots = 40;
 
     let mut bot_state = Vec::new();
     for i in 0..bots {
@@ -210,8 +204,8 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     let alive = game_state.monsters.read().await.len();
     let unattended = count_unattended(&game_state).await;
     println!(
-        "{bots} bots: peak {peak} alive ({peak_unattended} unattended, global cap \
-         {max_total}) -> after drain {alive} alive ({unattended} unattended)"
+        "{bots} bots x {per_player}/player: peak {peak} alive ({peak_unattended} \
+         unattended) -> after drain {alive} alive ({unattended} unattended)"
     );
 
     assert_eq!(
@@ -265,10 +259,10 @@ async fn stationary_bot_keeps_spawning() {
     assert!(last_30 > 0);
 }
 
-/// Minimal repro of the bug, inverted into its fix: no kills, no roaming loop,
-/// one monster type. Fill the per-player cap and walk 1km away — before the
-/// despawn sweep the abandoned goblins held the cap forever and the server
-/// stopped asking; now the slot comes back.
+/// Minimal repro of the bug, inverted into its fix: no kills, no roaming loop.
+/// Fill the per-player cap and walk 1km away — before the despawn sweep the
+/// abandoned monsters held the cap forever and the server stopped asking; now
+/// the slots come back.
 #[tokio::test]
 async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     let game_state = make_test_game_state("spawn_soak_min");
@@ -276,17 +270,29 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     game_state.add_player(make_player("walker", 0.0, 0.0)).await;
     let mut rx = game_state.register_direct_channel(&player_id).await;
 
-    let cap = world_config()
-        .ambient_spawns
-        .iter()
-        .find(|r| r.monster_type == "goblin")
-        .unwrap()
-        .max_per_player;
+    let cap = world_config().max_monsters_per_player as usize;
     let mut seed = 1;
+    // One request per type a tick, so filling the cap takes a few rounds.
     for _ in 0..cap {
+        if game_state.monsters.read().await.owned_by(&player_id) >= cap {
+            break;
+        }
         game_state.tick_monster_spawns().await;
         answer_spawn_requests(&game_state, &player_id, &mut rx, &mut seed).await;
     }
+    assert_eq!(
+        game_state.monsters.read().await.owned_by(&player_id),
+        cap,
+        "the walker should be at its cap before it walks away"
+    );
+
+    // Full: the server has nothing to offer.
+    game_state.tick_monster_spawns().await;
+    assert_eq!(
+        spawn_requests(&mut rx, "goblin"),
+        0,
+        "a player at its cap must not be asked for another monster"
+    );
 
     set_player_xz(&game_state, &player_id, 1000.0, 1000.0).await;
     game_state.tick_monster_ownership().await;

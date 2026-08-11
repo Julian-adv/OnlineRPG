@@ -64,8 +64,8 @@ async fn add_bots(game_state: &GameState, count: usize) -> Vec<PlayerId> {
 #[tokio::test]
 #[ignore = "measurement, not an assertion; run explicitly with --nocapture"]
 async fn spawn_path_cost_at_scale() {
-    // Kept just under the global cap so the measured spawns actually run the
-    // full insert path instead of returning early on the limit.
+    // Populations spanning the target scale; the measured spawns below run
+    // the full insert path at each.
     for &population in &[1_000usize, 10_000, 50_000, 134_000] {
         let game_state = make_test_game_state(&format!("scale_{population}"));
         let owners = add_bots(&game_state, USERS).await;
@@ -92,7 +92,7 @@ async fn spawn_path_cost_at_scale() {
                     false,
                 )
                 .await
-                .expect("spawn succeeds below the global cap");
+                .expect("dungeon spawns skip the per-player cap");
         }
         let per_spawn = start.elapsed() / SPAWNS as u32;
 
@@ -256,13 +256,57 @@ async fn ownership_tick_writer_stall() {
     );
 }
 
-/// The registry's counts are the spawn caps and its cell index is what every
-/// AOI query walks. If either drifts from the map the server silently over- or
-/// under-spawns, or shows the wrong monsters, so pin both against a full scan
-/// after every kind of mutation.
+/// What a disconnect costs. `remove_monsters_by_owner` runs on every socket
+/// close, heartbeat timeout, duplicate login and /kick, and a network blip
+/// bunches those into one 30s window. Times both branches: handed off to a
+/// neighbour, and despawned with nobody around.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "measurement, not an assertion; run explicitly with --nocapture"]
+async fn disconnect_cleanup_cost_at_scale() {
+    const POPULATION: usize = 134_000;
+    let game_state = make_test_game_state("disconnect_cleanup");
+    let owners = add_bots(&game_state, USERS).await;
+    // Neighbour first, so it stands in the leaver's AOI with monsters of its
+    // own — the load its adoption is weighed against.
+    let leaver = owners[0];
+    let neighbour = owners[1];
+    let spot = game_state.players.read().await[&leaver].position;
+    game_state.teleport_player(&neighbour, spot, 0.0, 0).await;
+    let positions = owner_positions(&game_state, &owners).await;
+    preload_monsters(&game_state, POPULATION, &owners, |_, owner| {
+        positions[owner]
+    })
+    .await;
+
+    let owned = game_state.monsters.read().await.owned_by(&leaver);
+    let start = Instant::now();
+    game_state.remove_monsters_by_owner(&leaver).await;
+    let handoff_call = start.elapsed();
+
+    // owners[2] is 60m from its nearest neighbour, so its monsters find no
+    // adopter and take the despawn branch instead.
+    let start = Instant::now();
+    game_state.remove_monsters_by_owner(&owners[2]).await;
+    let despawn_call = start.elapsed();
+
+    assert_eq!(
+        game_state.monsters.read().await.owned_by(&leaver),
+        0,
+        "the leaver keeps no monsters"
+    );
+    println!(
+        "{POPULATION} monsters / {USERS} users: remove_monsters_by_owner \
+         ({owned} owned) handoff {handoff_call:>10.2?} despawn {despawn_call:>10.2?}"
+    );
+}
+
+/// The registry's owner index is the spawn cap and the disconnect cleanup, and
+/// its cell index is what every AOI query walks. If either drifts from the map
+/// the server silently over- or under-spawns, or shows the wrong monsters, so
+/// pin both against a full scan after every kind of mutation.
 #[tokio::test]
-async fn registry_counts_track_the_map_through_every_mutation() {
-    let game_state = make_test_game_state("registry_counts");
+async fn registry_indexes_track_the_map_through_every_mutation() {
+    let game_state = make_test_game_state("registry_indexes");
     let owners = add_bots(&game_state, 3).await;
 
     let mut spawned = Vec::new();
@@ -296,43 +340,9 @@ async fn registry_counts_track_the_map_through_every_mutation() {
                 monsters.cell_index_matches_map(),
                 "{label}: the cell index drifted from the map"
             );
-            let expected_total = monsters
-                .values()
-                .filter(|m| m.state != MonsterState::Dead)
-                .count();
-            assert_eq!(
-                monsters.alive_total(),
-                expected_total,
-                "{label}: alive_total drifted from the map"
-            );
-            let mut expected_pairs = std::collections::HashMap::new();
-            for m in monsters.values() {
-                if m.state != MonsterState::Dead {
-                    if let Some(owner) = m.owner_id {
-                        *expected_pairs
-                            .entry((owner, m.monster_type.clone()))
-                            .or_insert(0u32) += 1;
-                    }
-                }
-            }
-            for ((owner, monster_type), count) in &expected_pairs {
-                assert_eq!(
-                    monsters.alive_for(owner, monster_type),
-                    *count,
-                    "{label}: per-owner count drifted for {monster_type}"
-                );
-            }
-            assert_eq!(
-                monsters.alive_by_owner_type_len(),
-                expected_pairs.len(),
-                "{label}: stale zero-count entries left behind"
-            );
-            let expected_owners: std::collections::HashSet<_> =
-                expected_pairs.keys().map(|(owner, _)| *owner).collect();
-            assert_eq!(
-                monsters.alive_owner_count(),
-                expected_owners.len(),
-                "{label}: an owner with no alive monsters left an empty map behind"
+            assert!(
+                monsters.owner_index_matches_map(),
+                "{label}: the owner index drifted from the map"
             );
         }
     };
@@ -361,9 +371,41 @@ async fn registry_counts_track_the_map_through_every_mutation() {
     );
     audit("after a move within one cell").await;
 
+    // Inserting over a live key: the old owner has to be unfiled before the new
+    // one is filed, or a same-owner replace drops the id it just re-filed.
+    let mut replacement = game_state
+        .monsters
+        .read()
+        .await
+        .get(&spawned[3])
+        .cloned()
+        .expect("the monster is still in the map");
+    replacement.owner_id = Some(owners[0]);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(spawned[3].clone(), replacement.clone());
+    audit("after a replacing insert under a new owner").await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert(spawned[3].clone(), replacement);
+    audit("after a replacing insert under the same owner").await;
+
     game_state.monsters.write().await.mark_dead(&spawned[0]);
     audit("after mark_dead").await;
-    // Idempotent: a second kill must not double-debit.
+    assert!(
+        game_state
+            .monsters
+            .read()
+            .await
+            .ids_owned_by(&owners[0])
+            .any(|id| id == spawned[0]),
+        "a corpse stays filed under its owner: remove_monsters_by_owner clears it too"
+    );
+    // Idempotent: a second kill leaves the indexes alone.
     game_state.monsters.write().await.mark_dead(&spawned[0]);
     audit("after repeat mark_dead").await;
 
@@ -379,6 +421,16 @@ async fn registry_counts_track_the_map_through_every_mutation() {
         .await
         .reassign_owner(&spawned[2], owners[2]);
     audit("after reassign_owner").await;
+
+    // A corpse handed off, which is the disconnect path itself: `owned` below
+    // carries dead monsters into `hand_off_monsters`.
+    game_state.monsters.write().await.mark_dead(&spawned[4]);
+    game_state
+        .monsters
+        .write()
+        .await
+        .reassign_owner(&spawned[4], owners[0]);
+    audit("after reassigning a corpse").await;
 
     game_state.remove_monsters_by_owner(&owners[2]).await;
     audit("after owner disconnect").await;

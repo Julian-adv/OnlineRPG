@@ -1229,7 +1229,7 @@ async fn spawnmob_refuses_unknown_types_and_bad_counts() {
 }
 
 /// The ring must not land monsters inside walls (a walled-in monster can
-/// neither fight nor be killed, and holds a global cap slot): a blocked spot
+/// neither fight nor be killed, and holds a spawn-cap slot): a blocked spot
 /// retries at half radius, then falls back to the admin's own cell.
 #[tokio::test]
 async fn spawnmob_ring_avoids_blocked_cells() {
