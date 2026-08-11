@@ -769,7 +769,7 @@ impl super::GameState {
         &self,
         player_id: &PlayerId,
         npc_player_id: &PlayerId,
-        items: Vec<TradeLineItem>,
+        mut items: Vec<TradeLineItem>,
     ) {
         if items.is_empty() {
             return;
@@ -778,7 +778,7 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
-        let items: Vec<TradeLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+        items.retain(|i| i.qty > 0);
         if items.is_empty() {
             return;
         }
@@ -1337,7 +1337,7 @@ impl super::GameState {
         &self,
         player_id: &PlayerId,
         npc_player_id: &PlayerId,
-        items: Vec<BagLineItem>,
+        mut items: Vec<BagLineItem>,
     ) {
         if items.is_empty() {
             return;
@@ -1346,10 +1346,9 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
-        // Drop no-op lines before aggregation and mutation. Keeping trader
-        // validation first preserves the existing error response for an
-        // all-zero request sent to an invalid or unreachable trader.
-        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+        // After the trader check, so an all-zero request to a bad trader
+        // still gets that error rather than silence.
+        items.retain(|i| i.qty > 0);
         if items.is_empty() {
             return;
         }
@@ -1412,11 +1411,7 @@ impl super::GameState {
                     .send_trade_error(player_id, "Item not found in bag")
                     .await;
             };
-            let requested_qty = quantities
-                .get(&req.instance_id)
-                .copied()
-                .expect("every retained request was included in batch aggregation");
-            if requested_qty > item.quantity {
+            if quantities[&req.instance_id] > item.quantity {
                 drop(inventories);
                 drop(gold_map);
                 return self

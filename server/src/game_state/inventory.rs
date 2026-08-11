@@ -1189,11 +1189,8 @@ impl super::GameState {
     /// before anything is removed. Bag-only — unlike `drop_item`, there is no
     /// equipped-slot fallback, since batch selection only ever offers bag
     /// items.
-    pub async fn drop_items(&self, player_id: &PlayerId, items: Vec<BagLineItem>) {
-        if items.is_empty() {
-            return;
-        }
-        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
+    pub async fn drop_items(&self, player_id: &PlayerId, mut items: Vec<BagLineItem>) {
+        items.retain(|i| i.qty > 0);
         if items.is_empty() {
             return;
         }
@@ -1234,11 +1231,7 @@ impl super::GameState {
                     self.send_system_message(player_id, "Item not found").await;
                     return;
                 };
-                let requested_qty = quantities
-                    .get(&req.instance_id)
-                    .copied()
-                    .expect("every retained request was included in batch aggregation");
-                if requested_qty > item.quantity {
+                if quantities[&req.instance_id] > item.quantity {
                     drop(inventories);
                     self.send_system_message(player_id, "Not enough of that item")
                         .await;

@@ -140,9 +140,9 @@ pub(crate) const OUT_OF_COMBAT_MS: u64 = 10_000;
 /// to the player's wallet (see `pickup_item`).
 pub(crate) const COIN_PILE_ITEM_ID: &str = "coin_pile";
 
-/// Total a client's batch lines by key once, before any ownership or stock
-/// check reads them. Repeating one key is legal, so the sum must be checked:
-/// a wrapped `u32` would validate as a quantity nobody asked for.
+/// Sum a client's batch lines by key, or `None` on overflow — repeating one
+/// key is legal, and a wrapped total would validate as a quantity nobody
+/// asked for.
 fn checked_batch_quantities<K: Eq + Hash>(
     lines: impl IntoIterator<Item = (K, u32)>,
 ) -> Option<HashMap<K, u32>> {

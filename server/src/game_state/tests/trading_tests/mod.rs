@@ -14,6 +14,16 @@ fn make_npc(id: &str, name: &str, x: f32, z: f32) -> Player {
     p
 }
 
+/// The next direct message must be a `TradeError` mentioning `expected`.
+fn expect_trade_error(rx: &mut DirectRx, expected: &str) {
+    match rx.try_recv() {
+        Ok(ServerMessage::TradeError { message }) => {
+            assert!(message.contains(expected), "got: {message}");
+        }
+        other => panic!("Expected a {expected:?} TradeError, got {other:?}"),
+    }
+}
+
 async fn set_floor(game_state: &GameState, name: &str, floor: i8) {
     game_state
         .players

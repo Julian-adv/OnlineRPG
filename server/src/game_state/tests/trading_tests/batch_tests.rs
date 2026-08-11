@@ -25,12 +25,7 @@ async fn zero_quantity_trade_batches_still_validate_the_trader() {
             }],
         )
         .await;
-    match buyer_rx.try_recv() {
-        Ok(ServerMessage::TradeError { message }) => {
-            assert!(message.contains("Trader not found"));
-        }
-        other => panic!("Expected TradeError, got {other:?}"),
-    }
+    expect_trade_error(&mut buyer_rx, "Trader not found");
 
     game_state
         .sell_items(
@@ -42,12 +37,7 @@ async fn zero_quantity_trade_batches_still_validate_the_trader() {
             }],
         )
         .await;
-    match buyer_rx.try_recv() {
-        Ok(ServerMessage::TradeError { message }) => {
-            assert!(message.contains("Trader not found"));
-        }
-        other => panic!("Expected TradeError, got {other:?}"),
-    }
+    expect_trade_error(&mut buyer_rx, "Trader not found");
 }
 
 // --- Batched sell/buy/drop (bag-cleanup UX: quantity popups + one
@@ -147,26 +137,19 @@ async fn sell_items_batch_is_all_or_nothing_when_a_line_is_invalid() {
 #[tokio::test]
 async fn sell_items_batch_rejects_quantity_accumulation_overflow() {
     let game_state = make_test_game_state("batch_sell_quantity_overflow");
-    game_state
-        .add_player(make_npc("npc_rica", "Rica", 0.0, 0.0))
-        .await;
-    game_state.add_player(make_player("seller", 1.0, 0.0)).await;
-    game_state
-        .register_player_character(&pid("seller"), 1, 0, attrs_with_cha(10), 0, None)
-        .await;
+    let (mut seller_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
     game_state.inventories.write().await.insert(
-        pid("seller"),
+        pid("buyer"),
         PlayerInventory {
             bag: vec![bag_item(7, "healing_potion", 5)],
             ..Default::default()
         },
     );
-    let mut seller_rx = game_state.register_direct_channel(&pid("seller")).await;
     let next_item_id = game_state.reserve_instance_ids(0).await;
 
     game_state
         .sell_items(
-            &pid("seller"),
+            &pid("buyer"),
             &pid("npc_rica"),
             vec![
                 BagLineItem {
@@ -181,18 +164,13 @@ async fn sell_items_batch_rejects_quantity_accumulation_overflow() {
         )
         .await;
 
-    assert_eq!(game_state.get_player_gold(&pid("seller")).await, 0);
+    assert_eq!(game_state.get_player_gold(&pid("buyer")).await, 0);
     assert_eq!(
-        game_state.inventories.read().await[&pid("seller")].bag[0].quantity,
+        game_state.inventories.read().await[&pid("buyer")].bag[0].quantity,
         5
     );
     assert_eq!(game_state.reserve_instance_ids(0).await, next_item_id);
-    match seller_rx.try_recv() {
-        Ok(ServerMessage::TradeError { message }) => {
-            assert!(message.contains("Invalid batch quantity"));
-        }
-        other => panic!("Expected TradeError, got {other:?}"),
-    }
+    expect_trade_error(&mut seller_rx, "Invalid batch quantity");
 }
 
 #[tokio::test]
@@ -523,12 +501,7 @@ async fn buy_items_batch_rejects_quantity_accumulation_overflow() {
     assert_eq!(inventories[&pid("npc_karl")].bag.len(), 1);
     drop(inventories);
     assert_eq!(game_state.reserve_instance_ids(0).await, next_item_id);
-    match seller_rx.try_recv() {
-        Ok(ServerMessage::TradeError { message }) => {
-            assert!(message.contains("Invalid batch quantity"));
-        }
-        other => panic!("Expected TradeError, got {other:?}"),
-    }
+    expect_trade_error(&mut seller_rx, "Invalid batch quantity");
 }
 
 /// The resident's receipt draws from a range reserved before the locks, so
