@@ -3,6 +3,7 @@
   import * as THREE from 'three'
   import { MeshBasicNodeMaterial } from 'three/webgpu'
   import { onDestroy } from 'svelte'
+  import { wrapLines } from '../utils/textWrap'
 
   interface Props {
     text: string
@@ -83,46 +84,16 @@
     maxWidthPx: number | undefined,
     breakWord: boolean
   ): string[] {
-    const paragraphs = inputText.split('\n')
     if (!maxWidthPx || whiteSpace === 'nowrap') {
+      const paragraphs = inputText.split('\n')
       return paragraphs.length ? paragraphs : ['']
     }
-
-    const allLines: string[] = []
-    for (const para of paragraphs) {
-      if (!para) {
-        allLines.push('')
-        continue
-      }
-      if (breakWord) {
-        let cur = ''
-        for (const ch of para) {
-          const test = cur + ch
-          if (ctx.measureText(test).width > maxWidthPx && cur.length > 0) {
-            allLines.push(cur)
-            cur = ch
-          } else {
-            cur = test
-          }
-        }
-        if (cur) allLines.push(cur)
-      } else {
-        const words = para.split(/\s+/)
-        let cur = ''
-        for (const w of words) {
-          if (!w) continue
-          const test = cur ? cur + ' ' + w : w
-          if (ctx.measureText(test).width > maxWidthPx && cur.length > 0) {
-            allLines.push(cur)
-            cur = w
-          } else {
-            cur = test
-          }
-        }
-        if (cur) allLines.push(cur)
-      }
-    }
-    return allLines.length ? allLines : ['']
+    return wrapLines(
+      inputText,
+      maxWidthPx,
+      breakWord,
+      (s) => ctx.measureText(s).width
+    )
   }
 
   function renderCanvas() {
