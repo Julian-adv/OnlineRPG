@@ -10,11 +10,6 @@ const ROAM_PER_TICK: f32 = 30.0;
 /// land at 22m, so a bot that stays put does clear its own spawns.
 const KILL_RADIUS: f32 = onlinerpg_shared::NPC_SIGHT_RADIUS;
 
-/// Wall-clock instant of the nth compressed tick.
-fn sim_at(base: u64, tick: u64) -> u64 {
-    base + tick * TICK_SECONDS * 1000
-}
-
 fn lcg(seed: &mut u64) -> f32 {
     *seed = seed
         .wrapping_mul(6364136223846793005)
@@ -135,11 +130,8 @@ async fn ambient_spawns_survive_two_hours_of_roaming_bots() {
     let mut spawns_by_tick = Vec::new();
     let mut kills_total = 0usize;
 
-    let sim_base = GameState::now_ms();
-    for tick in 0..TWO_HOURS_TICKS {
-        game_state
-            .tick_monster_ownership_at(sim_at(sim_base, tick))
-            .await;
+    for _ in 0..TWO_HOURS_TICKS {
+        game_state.tick_monster_ownership().await;
         heading += (lcg(&mut seed) - 1.0) * 0.4;
         x += heading.cos() * ROAM_PER_TICK;
         z += heading.sin() * ROAM_PER_TICK;
@@ -195,11 +187,8 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     }
 
     let mut seed = 0xB07u64;
-    let sim_base = GameState::now_ms();
-    for tick in 0..TWO_HOURS_TICKS {
-        game_state
-            .tick_monster_ownership_at(sim_at(sim_base, tick))
-            .await;
+    for _ in 0..TWO_HOURS_TICKS {
+        game_state.tick_monster_ownership().await;
         for (id, _, x, z, heading) in bot_state.iter_mut() {
             *heading += (lcg(&mut seed) - 1.0) * 0.4;
             *x += heading.cos() * ROAM_PER_TICK;
@@ -215,13 +204,9 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     let peak = game_state.monsters.read().await.len();
     let peak_unattended = count_unattended(&game_state).await;
 
-    // Bots stop spawning and stand still. Everything they walked away from is
-    // now well past the grace window, so nothing unattended may remain.
-    for tick in TWO_HOURS_TICKS..TWO_HOURS_TICKS + 24 {
-        game_state
-            .tick_monster_ownership_at(sim_at(sim_base, tick))
-            .await;
-    }
+    // Bots stop spawning and stand still. One tick clears everything they
+    // walked away from — nothing unattended may remain.
+    game_state.tick_monster_ownership().await;
     let alive = game_state.monsters.read().await.len();
     let unattended = count_unattended(&game_state).await;
     println!(
@@ -304,13 +289,7 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     }
 
     set_player_xz(&game_state, &player_id, 1000.0, 1000.0).await;
-    // Walk away and stay away past the despawn grace period.
-    let start = GameState::now_ms();
-    for tick in 0..12u64 {
-        game_state
-            .tick_monster_ownership_at(sim_at(start, tick))
-            .await;
-    }
+    game_state.tick_monster_ownership().await;
     game_state.tick_monster_spawns().await;
 
     assert_eq!(
@@ -439,15 +418,9 @@ async fn the_sweep_never_despawns_a_dungeon_monster() {
         )
         .await
         .expect("spawn succeeds under the caps");
-    // Nobody anywhere near it, for well past the grace period.
+    // Nobody anywhere near it.
     set_player_on_floor(&game_state, &owner, 1000.0, 1000.0, -1).await;
-
-    let start = GameState::now_ms();
-    for tick in 0..12u64 {
-        game_state
-            .tick_monster_ownership_at(sim_at(start, tick))
-            .await;
-    }
+    game_state.tick_monster_ownership().await;
 
     assert!(
         game_state.monsters.read().await.get(&monster.id).is_some(),

@@ -225,9 +225,6 @@ pub struct GameState {
     /// cleared with the `MUSIC_EMOTE` interaction.
     music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
     ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
-    /// monster id → when it was first found with no player inside its AOI.
-    /// Drives the despawn half of `tick_monster_ownership`.
-    abandoned_monsters: Arc<RwLock<HashMap<String, u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -486,7 +483,6 @@ impl GameState {
             monsters: Arc::new(RwLock::new(monster::MonsterRegistry::default())),
             music_performances: Arc::new(RwLock::new(HashMap::new())),
             ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
-            abandoned_monsters: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {

@@ -25,9 +25,6 @@ const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
 const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
 const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
-/// How long a surface monster may sit with no player inside its AOI before it
-/// despawns. Long enough that stepping out of range and back doesn't churn.
-const ABANDONED_MONSTER_GRACE_MS: u64 = 60_000;
 
 /// One tick's view of the roster, bucketed by cell, so the ownership sweep
 /// locks it once rather than once per monster.
@@ -805,16 +802,17 @@ impl super::GameState {
     /// A monster's owner is the client simulating it, so an owner that walked
     /// out of its AOI leaves the monster frozen: still visible and attackable,
     /// but never chasing or retaliating. Where someone else is standing there,
-    /// hand the monster over; where nobody is, it is invisible to everyone yet
-    /// still holds a slot in both `max_per_player` and `max_monsters_total`, so
-    /// despawn it after a grace period. Roaming clients abandon monsters faster
-    /// than they kill them, and without the despawn the caps fill with
-    /// unreachable monsters and ambient spawning stops server-wide.
+    /// hand the monster over. Where nobody is, no client holds it and no client
+    /// can see it, so it is deleted on the spot — keeping it would only hold a
+    /// slot in `max_per_player` and `max_monsters_total` against a monster that
+    /// does not exist for any player. Roaming clients abandon monsters faster
+    /// than they kill them, and without this the caps fill with unreachable
+    /// monsters and ambient spawning stops server-wide.
     ///
     /// Handoff applies to dungeon monsters too; the despawn does not, since a
     /// dungeon floor already despawns its own on exit.
     pub async fn tick_monster_ownership(&self) {
-        self.tick_monster_ownership_at(Self::now_ms()).await
+        self.tick_monster_ownership_body().await
     }
 
     fn player_snapshot(
@@ -830,12 +828,11 @@ impl super::GameState {
         roster
     }
 
-    /// Clock-injected body, so soak tests can compress hours into a loop.
-    pub(crate) async fn tick_monster_ownership_at(&self, now: u64) {
+    pub(crate) async fn tick_monster_ownership_body(&self) {
         let roster = Self::player_snapshot(&*self.players.read().await);
 
         // Resolve every monster against the snapshot in one pass, then act.
-        let mut unattended: Vec<String> = Vec::new();
+        let mut expired: Vec<String> = Vec::new();
         let mut handoffs: Vec<(String, PlayerId, Option<PlayerId>)> = Vec::new();
         {
             let monsters = self.monsters.read().await;
@@ -847,7 +844,7 @@ impl super::GameState {
                     }
                     // A dungeon floor despawns its own on exit.
                     Attendance::Nobody if !monster.is_in_dungeon() => {
-                        unattended.push(monster.id.clone())
+                        expired.push(monster.id.clone())
                     }
                     Attendance::Nobody => {}
                 }
@@ -856,32 +853,6 @@ impl super::GameState {
 
         self.hand_off_monsters(handoffs).await;
 
-        let expired: Vec<String> = {
-            let mut tracker = self.abandoned_monsters.write().await;
-            let unattended_set: HashSet<&String> = unattended.iter().collect();
-            // Anything attended again (or already gone) stops accruing.
-            tracker.retain(|id, _| unattended_set.contains(id));
-            drop(unattended_set);
-
-            let mut expired = Vec::new();
-            for id in unattended {
-                // Each id moves into the tracker or into `expired`, never both,
-                // so a monster is never cloned for this.
-                match tracker.get(&id) {
-                    Some(&first_seen)
-                        if now.saturating_sub(first_seen) >= ABANDONED_MONSTER_GRACE_MS =>
-                    {
-                        tracker.remove(&id);
-                        expired.push(id);
-                    }
-                    Some(_) => {}
-                    None => {
-                        tracker.insert(id, now);
-                    }
-                }
-            }
-            expired
-        };
         if expired.is_empty() {
             return;
         }
