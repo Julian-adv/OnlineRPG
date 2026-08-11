@@ -195,6 +195,12 @@ impl Monster {
     pub fn is_controllable_by(&self, player_id: &PlayerId) -> bool {
         self.state != MonsterState::Dead && self.owner_id.as_ref() == Some(player_id)
     }
+
+    /// Names the `floor_level` sign convention. Dungeon monsters have their own
+    /// floor lifecycle, so most upkeep applies only to the rest.
+    pub fn is_in_dungeon(&self) -> bool {
+        self.floor_level < 0
+    }
 }
 
 #[cfg(test)]

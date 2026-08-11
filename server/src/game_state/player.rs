@@ -741,13 +741,13 @@ impl super::GameState {
             .monsters
             .read()
             .await
-            .iter()
-            .filter(|(_, monster)| {
+            .values()
+            .filter(|monster| {
                 monster.floor_level == player_floor
                     && monster.position.dist_xz_sq(&player_position)
                         <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
             })
-            .map(|(id, monster)| (id.clone(), monster.clone()))
+            .map(|monster| (monster.id.clone(), monster.clone()))
             .collect();
         let ground_items: Vec<_> = self
             .ground_items

@@ -174,6 +174,13 @@ async fn registry_counts_track_the_map_through_every_mutation() {
                 expected_pairs.len(),
                 "{label}: stale zero-count entries left behind"
             );
+            let expected_owners: std::collections::HashSet<_> =
+                expected_pairs.keys().map(|(owner, _)| *owner).collect();
+            assert_eq!(
+                monsters.alive_owner_count(),
+                expected_owners.len(),
+                "{label}: an owner with no alive monsters left an empty map behind"
+            );
         }
     };
 

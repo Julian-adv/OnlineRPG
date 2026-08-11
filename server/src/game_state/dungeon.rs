@@ -1141,11 +1141,9 @@ impl GameState {
                     for id in &alive_ids {
                         if monsters
                             .get(id)
-                            .map(|m| m.owner_id.as_ref() == Some(player_id))
-                            == Some(true)
+                            .is_some_and(|m| m.owner_id.as_ref() == Some(player_id))
                         {
-                            monsters.reassign_owner(id, new_owner);
-                            if let Some(m) = monsters.get(id) {
+                            if let Some(m) = monsters.reassign_owner(id, new_owner) {
                                 out.push(m.clone());
                             }
                         }

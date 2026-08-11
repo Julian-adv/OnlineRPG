@@ -10,6 +10,11 @@ const ROAM_PER_TICK: f32 = 30.0;
 /// land at 22m, so a bot that stays put does clear its own spawns.
 const KILL_RADIUS: f32 = onlinerpg_shared::NPC_SIGHT_RADIUS;
 
+/// Wall-clock instant of the nth compressed tick.
+fn sim_at(base: u64, tick: u64) -> u64 {
+    base + tick * TICK_SECONDS * 1000
+}
+
 fn lcg(seed: &mut u64) -> f32 {
     *seed = seed
         .wrapping_mul(6364136223846793005)
@@ -123,7 +128,7 @@ async fn ambient_spawns_survive_two_hours_of_roaming_bots() {
     let sim_base = GameState::now_ms();
     for tick in 0..TWO_HOURS_TICKS {
         game_state
-            .tick_abandoned_monsters_at(sim_base + tick * TICK_SECONDS * 1000)
+            .tick_abandoned_monsters_at(sim_at(sim_base, tick))
             .await;
         heading += (lcg(&mut seed) - 1.0) * 0.4;
         x += heading.cos() * ROAM_PER_TICK;
@@ -181,9 +186,10 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
 
     let mut seed = 0xB07u64;
     let sim_base = GameState::now_ms();
-    let sim_at = |tick: u64| sim_base + tick * TICK_SECONDS * 1000;
     for tick in 0..TWO_HOURS_TICKS {
-        game_state.tick_abandoned_monsters_at(sim_at(tick)).await;
+        game_state
+            .tick_abandoned_monsters_at(sim_at(sim_base, tick))
+            .await;
         for (id, _, x, z, heading) in bot_state.iter_mut() {
             *heading += (lcg(&mut seed) - 1.0) * 0.4;
             *x += heading.cos() * ROAM_PER_TICK;
@@ -202,7 +208,9 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     // Bots stop spawning and stand still. Everything they walked away from is
     // now well past the grace window, so nothing unattended may remain.
     for tick in TWO_HOURS_TICKS..TWO_HOURS_TICKS + 24 {
-        game_state.tick_abandoned_monsters_at(sim_at(tick)).await;
+        game_state
+            .tick_abandoned_monsters_at(sim_at(sim_base, tick))
+            .await;
     }
     let alive = game_state.monsters.read().await.len();
     let unattended = count_unattended(&game_state).await;
@@ -262,10 +270,12 @@ async fn stationary_bot_keeps_spawning() {
     assert!(last_30 > 0);
 }
 
-/// Minimal repro: no kills, no roaming loop, one monster type. Fill the
-/// per-player cap, walk 1km away, and the server stops asking for spawns.
+/// Minimal repro of the bug, inverted into its fix: no kills, no roaming loop,
+/// one monster type. Fill the per-player cap and walk 1km away — before the
+/// despawn sweep the abandoned goblins held the cap forever and the server
+/// stopped asking; now the slot comes back.
 #[tokio::test]
-async fn walking_away_from_owned_monsters_stops_spawn_requests() {
+async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     let game_state = make_test_game_state("spawn_soak_min");
     let player_id = pid("walker");
     game_state.add_player(make_player("walker", 0.0, 0.0)).await;
@@ -288,7 +298,7 @@ async fn walking_away_from_owned_monsters_stops_spawn_requests() {
     let start = GameState::now_ms();
     for tick in 0..12u64 {
         game_state
-            .tick_abandoned_monsters_at(start + tick * TICK_SECONDS * 1000)
+            .tick_abandoned_monsters_at(sim_at(start, tick))
             .await;
     }
     game_state.tick_monster_spawns().await;
@@ -296,6 +306,6 @@ async fn walking_away_from_owned_monsters_stops_spawn_requests() {
     assert_eq!(
         spawn_requests(&mut rx, "goblin"),
         1,
-        "a bot that walked 1km from its owned monsters gets no new goblin spawn request"
+        "the despawn sweep freed the cap, so the walker is owed a goblin request"
     );
 }

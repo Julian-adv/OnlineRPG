@@ -32,50 +32,85 @@ const ABANDONED_MONSTER_GRACE_MS: u64 = 60_000;
 /// Player positions bucketed by spatial cell for one abandonment sweep.
 type PlayerCells = std::collections::HashMap<super::SpatialCell, Vec<(Position, i8)>>;
 
-/// The monster map plus incrementally maintained population counts.
-///
-/// Every spawn checks the global and per-player caps. At 5,000 users that is
-/// tens of thousands of checks per 10s tick, so the caps cannot be answered by
-/// scanning the map. Counts track *alive* monsters only: a corpse lingers 30s
-/// (combat.rs) and must not hold a spawn slot.
+/// Alive-monster tallies, kept current by spawn/kill rather than recounted.
+/// Its own struct so `MonsterRegistry` can update it while holding a
+/// `&mut Monster` — separate fields, so the borrows stay disjoint.
+#[derive(Default)]
+struct AliveCounts {
+    total: usize,
+    /// owner → type → count. Nested so the per-player cap looks up by `&str`
+    /// rather than allocating an owned key on each of its ~25k calls a tick.
+    by_owner: std::collections::HashMap<PlayerId, std::collections::HashMap<String, u32>>,
+}
+
+impl AliveCounts {
+    fn credit(&mut self, owner: Option<PlayerId>, monster_type: &str) {
+        self.total += 1;
+        let Some(owner) = owner else {
+            return;
+        };
+        let by_type = self.by_owner.entry(owner).or_default();
+        match by_type.get_mut(monster_type) {
+            Some(count) => *count += 1,
+            None => {
+                by_type.insert(monster_type.to_string(), 1);
+            }
+        }
+    }
+
+    fn debit(&mut self, owner: Option<PlayerId>, monster_type: &str) {
+        self.total = self.total.saturating_sub(1);
+        let Some(owner) = owner else {
+            return;
+        };
+        let Some(by_type) = self.by_owner.get_mut(&owner) else {
+            return;
+        };
+        // Zero counts are dropped: a stale entry would pin a disconnected
+        // player's key forever.
+        if let Some(count) = by_type.get_mut(monster_type) {
+            *count -= 1;
+            if *count == 0 {
+                by_type.remove(monster_type);
+            }
+        }
+        if by_type.is_empty() {
+            self.by_owner.remove(&owner);
+        }
+    }
+
+    fn for_owner(&self, owner: &PlayerId, monster_type: &str) -> u32 {
+        self.by_owner
+            .get(owner)
+            .and_then(|by_type| by_type.get(monster_type))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// The monster map plus alive counts, so the spawn caps are O(1) instead of a
+/// scan. Corpses linger 30s (combat.rs) and must not hold a spawn slot, so the
+/// counts track alive monsters only.
 ///
 /// `get_mut` hands out a plain `&mut Monster` for position and health edits.
-/// Changing a monster's `state` to Dead or its `owner_id` through it would
-/// desync the counts — route those through `mark_dead` / `reassign_owner`.
+/// Changing `state` to Dead or `owner_id` through it would desync the counts —
+/// route those through `mark_dead` / `reassign_owner`.
 #[derive(Default)]
 pub(crate) struct MonsterRegistry {
     monsters: std::collections::HashMap<String, crate::types::Monster>,
-    alive_total: usize,
-    alive_by_owner_type: std::collections::HashMap<(PlayerId, String), u32>,
+    alive: AliveCounts,
 }
 
 impl MonsterRegistry {
     fn credit(&mut self, monster: &crate::types::Monster) {
-        if monster.state == MonsterState::Dead {
-            return;
-        }
-        self.alive_total += 1;
-        if let Some(owner) = monster.owner_id {
-            *self
-                .alive_by_owner_type
-                .entry((owner, monster.monster_type.clone()))
-                .or_insert(0) += 1;
+        if monster.state != MonsterState::Dead {
+            self.alive.credit(monster.owner_id, &monster.monster_type);
         }
     }
 
     fn debit(&mut self, monster: &crate::types::Monster) {
-        if monster.state == MonsterState::Dead {
-            return;
-        }
-        self.alive_total = self.alive_total.saturating_sub(1);
-        if let Some(owner) = monster.owner_id {
-            let key = (owner, monster.monster_type.clone());
-            if let Entry::Occupied(mut entry) = self.alive_by_owner_type.entry(key) {
-                *entry.get_mut() -= 1;
-                if *entry.get() == 0 {
-                    entry.remove();
-                }
-            }
+        if monster.state != MonsterState::Dead {
+            self.alive.debit(monster.owner_id, &monster.monster_type);
         }
     }
 
@@ -114,12 +149,6 @@ impl MonsterRegistry {
         self.monsters.values()
     }
 
-    pub(crate) fn iter(
-        &self,
-    ) -> std::collections::hash_map::Iter<'_, String, crate::types::Monster> {
-        self.monsters.iter()
-    }
-
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.monsters.len()
@@ -132,56 +161,60 @@ impl MonsterRegistry {
 
     /// Alive monsters server-wide, for the global cap.
     pub(crate) fn alive_total(&self) -> usize {
-        self.alive_total
+        self.alive.total
     }
 
     /// Alive monsters of one type owned by one player, for the per-player cap.
     pub(crate) fn alive_for(&self, owner: &PlayerId, monster_type: &str) -> u32 {
-        self.alive_by_owner_type
-            .get(&(*owner, monster_type.to_string()))
-            .copied()
-            .unwrap_or(0)
+        self.alive.for_owner(owner, monster_type)
     }
 
     /// Kill a monster, freeing its spawn slot while the corpse lingers.
     pub(crate) fn mark_dead(&mut self, id: &str) {
-        let Some(monster) = self.monsters.get(id) else {
+        let Some(monster) = self.monsters.get_mut(id) else {
             return;
         };
         if monster.state == MonsterState::Dead {
             return;
         }
-        let snapshot = monster.clone();
-        self.debit(&snapshot);
-        if let Some(monster) = self.monsters.get_mut(id) {
-            monster.state = MonsterState::Dead;
-        }
+        monster.state = MonsterState::Dead;
+        self.alive.debit(monster.owner_id, &monster.monster_type);
     }
 
     #[cfg(test)]
     pub(crate) fn alive_by_owner_type_len(&self) -> usize {
-        self.alive_by_owner_type.len()
+        self.alive.by_owner.values().map(|by| by.len()).sum()
     }
 
-    pub(crate) fn reassign_owner(&mut self, id: &str, new_owner: PlayerId) {
-        let Some(monster) = self.monsters.get(id) else {
-            return;
-        };
-        let snapshot = monster.clone();
-        self.debit(&snapshot);
-        if let Some(monster) = self.monsters.get_mut(id) {
-            monster.owner_id = Some(new_owner);
+    /// Owners with at least one alive monster. Pins that an owner whose last
+    /// monster went away leaves no empty map behind.
+    #[cfg(test)]
+    pub(crate) fn alive_owner_count(&self) -> usize {
+        self.alive.by_owner.len()
+    }
+
+    /// Returns the updated monster, so callers can announce the handoff
+    /// without looking it up again.
+    pub(crate) fn reassign_owner(
+        &mut self,
+        id: &str,
+        new_owner: PlayerId,
+    ) -> Option<&crate::types::Monster> {
+        let monster = self.monsters.get_mut(id)?;
+        if monster.state != MonsterState::Dead {
+            self.alive.debit(monster.owner_id, &monster.monster_type);
+            self.alive.credit(Some(new_owner), &monster.monster_type);
         }
-        let updated = self.monsters[id].clone();
-        self.credit(&updated);
+        monster.owner_id = Some(new_owner);
+        Some(monster)
     }
 }
 
-impl<Q: AsRef<str>> std::ops::Index<Q> for MonsterRegistry {
+impl std::ops::Index<&str> for MonsterRegistry {
     type Output = crate::types::Monster;
 
-    fn index(&self, id: Q) -> &Self::Output {
-        &self.monsters[id.as_ref()]
+    fn index(&self, id: &str) -> &Self::Output {
+        &self.monsters[id]
     }
 }
 
@@ -584,9 +617,9 @@ impl super::GameState {
         let removed_monsters = {
             let mut monsters = self.monsters.write().await;
             let owned_ids: Vec<String> = monsters
-                .iter()
-                .filter(|(_, m)| m.owner_id.as_ref() == Some(owner_id))
-                .map(|(id, _)| id.clone())
+                .values()
+                .filter(|m| m.owner_id.as_ref() == Some(owner_id))
+                .map(|m| m.id.clone())
                 .collect();
 
             owned_ids
@@ -657,20 +690,20 @@ impl super::GameState {
             return;
         }
 
-        // Single lock, no scan: the registry keeps both counts current, so
-        // this reads only the (player, type) pairs this tick actually asks
-        // about instead of walking every monster on the server.
-        let (owner_type_counts, total_alive) = {
+        // One row per rule, indexed like `player_ids`: the registry answers each
+        // cap in O(1), so this reads only the pairs the tick asks about instead
+        // of walking every monster on the server.
+        let (owned_per_rule, total_alive) = {
             let monsters = self.monsters.read().await;
-            let mut counts = std::collections::HashMap::new();
-            for rule in ambient_spawns {
-                for player_id in &player_ids {
-                    let owned = monsters.alive_for(player_id, &rule.monster_type);
-                    if owned > 0 {
-                        counts.insert((*player_id, rule.monster_type.clone()), owned);
-                    }
-                }
-            }
+            let counts: Vec<Vec<u32>> = ambient_spawns
+                .iter()
+                .map(|rule| {
+                    player_ids
+                        .iter()
+                        .map(|player_id| monsters.alive_for(player_id, &rule.monster_type))
+                        .collect()
+                })
+                .collect();
             (counts, monsters.alive_total())
         };
 
@@ -681,21 +714,21 @@ impl super::GameState {
             allowances.retain(|_, expires_at| *expires_at > now);
             let mut requests: Vec<(String, Vec<PlayerId>)> = Vec::new();
 
-            for rule in ambient_spawns {
+            for (rule, owned) in ambient_spawns.iter().zip(&owned_per_rule) {
                 if total_alive + allowances.len() >= max_total {
                     break;
                 }
 
                 let mut recipients = Vec::new();
-                for player_id in &player_ids {
+                for (player_id, owned) in player_ids.iter().zip(owned) {
                     if total_alive + allowances.len() >= max_total {
                         break;
                     }
-
-                    let key = (*player_id, rule.monster_type.clone());
-                    if owner_type_counts.get(&key).copied().unwrap_or(0) >= rule.max_per_player {
+                    if *owned >= rule.max_per_player {
                         continue;
                     }
+                    // The owned key is only built once the cap check passes.
+                    let key = (*player_id, rule.monster_type.clone());
                     if let Entry::Vacant(entry) = allowances.entry(key) {
                         entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
                         recipients.push(*player_id);
@@ -722,6 +755,9 @@ impl super::GameState {
     /// roster once instead of twice per monster.
     fn any_player_in_aoi(cells: &PlayerCells, position: &Position, floor_level: i8) -> bool {
         let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
+        // Derived: under-scanning here despawns monsters a player stands next to.
+        let cell_radius =
+            (super::EVENT_DELIVERY_RADIUS / super::PLAYER_SPATIAL_CELL_SIZE).ceil() as i32;
         // Mirror player_ids_within_position's seam handling: query translated
         // copies so cells from the opposite world edge participate too.
         [
@@ -736,8 +772,8 @@ impl super::GameState {
                 ..*position
             };
             let center = super::SpatialCell::from_position(&shifted);
-            (center.x - 1..=center.x + 1).any(|x| {
-                (center.z - 1..=center.z + 1).any(|z| {
+            (center.x - cell_radius..=center.x + cell_radius).any(|x| {
+                (center.z - cell_radius..=center.z + cell_radius).any(|z| {
                     cells
                         .get(&super::SpatialCell { x, z })
                         .is_some_and(|nearby| {
@@ -750,15 +786,13 @@ impl super::GameState {
         })
     }
 
-    /// Despawn surface monsters no player has been near for the grace period.
+    /// Despawn monsters no player has been near for the grace period.
     ///
-    /// An ambient monster the owner walked away from is invisible to everyone
-    /// (nobody is inside its AOI) yet still counts against both the owner's
-    /// `max_per_player` and the global `max_monsters_total`. Roaming clients —
-    /// agent bots especially — abandon monsters faster than they kill them, so
-    /// without this the caps fill with unreachable monsters and ambient
-    /// spawning stops server-wide. Dungeon monsters are excluded: their floor
-    /// lifecycle already despawns them.
+    /// A monster its owner walked away from is invisible to everyone yet still
+    /// holds a slot in both `max_per_player` and `max_monsters_total`. Roaming
+    /// clients abandon monsters faster than they kill them, so without this the
+    /// caps fill with unreachable monsters and ambient spawning stops
+    /// server-wide. Dungeon monsters have their own floor lifecycle.
     pub async fn tick_abandoned_monsters(&self) {
         self.tick_abandoned_monsters_at(Self::now_ms()).await
     }
@@ -782,7 +816,7 @@ impl super::GameState {
             monsters
                 .values()
                 .filter(|m| {
-                    m.floor_level >= 0
+                    !m.is_in_dungeon()
                         && !Self::any_player_in_aoi(&player_cells, &m.position, m.floor_level)
                 })
                 .map(|m| m.id.clone())
@@ -797,8 +831,16 @@ impl super::GameState {
             unattended
                 .iter()
                 .filter(|id| {
-                    now.saturating_sub(*tracker.entry((*id).clone()).or_insert(now))
-                        >= ABANDONED_MONSTER_GRACE_MS
+                    // `entry` would clone the id on every tick a monster stays
+                    // unattended; only a first sighting needs an owned key.
+                    let first_seen = match tracker.get(id.as_str()) {
+                        Some(&at) => at,
+                        None => {
+                            tracker.insert((*id).clone(), now);
+                            now
+                        }
+                    };
+                    now.saturating_sub(first_seen) >= ABANDONED_MONSTER_GRACE_MS
                 })
                 .cloned()
                 .collect()
@@ -821,18 +863,26 @@ impl super::GameState {
             }
         }
 
-        // Nobody is inside the AOI by definition, so only the owner needs
-        // telling — its client still holds the monster and runs its AI.
         for monster in removed {
             debug!("Despawned abandoned monster {}", monster.id);
+            let removal = ServerMessage::MonsterRemoved {
+                monster_id: monster.id,
+            };
+            // Empty in the normal case — but a player who walked in between the
+            // scan and this removal would otherwise be left with a ghost.
+            self.send_direct_message_to_players_within_position(
+                &monster.position,
+                monster.floor_level,
+                super::EVENT_DELIVERY_RADIUS,
+                removal.clone(),
+                monster.owner_id.as_ref(),
+            )
+            .await;
+            // An owner that walked away already got MonsterRemoved from the AOI
+            // diff, but one that stood still while the monster wandered off is
+            // skipped by the move fanout and still holds it.
             if let Some(owner_id) = monster.owner_id {
-                self.send_direct_message(
-                    &owner_id,
-                    ServerMessage::MonsterRemoved {
-                        monster_id: monster.id,
-                    },
-                )
-                .await;
+                self.send_direct_message(&owner_id, removal).await;
             }
         }
     }

@@ -367,9 +367,7 @@ impl super::GameState {
                 // Through the registry so the kill frees its spawn slot now,
                 // not when the corpse is swept 30s later.
                 monsters.mark_dead(&monster_id);
-            }
 
-            if is_dead {
                 let dropped_weapon_item_def_id = self
                     .monster_defs
                     .get(&monster_type)
