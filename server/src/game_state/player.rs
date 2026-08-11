@@ -1461,15 +1461,16 @@ impl super::GameState {
         self.open_spot_beside(center, angle, ARRIVAL_RING_RADIUS)
     }
 
-    /// A walkable spot at `angle` from `center`. A blocked spot (dungeon
-    /// walls run 1m from a corridor's center) retries at half radius and
-    /// finally lands on `center` itself — a walkable cell by construction.
+    /// A walkable spot at `angle` from `center`, X wrapped to the canonical
+    /// range (callers store it directly). A blocked spot (dungeon walls run
+    /// 1m from a corridor's center) retries at half radius and finally lands
+    /// on `center` itself — a walkable cell by construction.
     pub(crate) fn open_spot_beside(&self, center: &Position, angle: f32, radius: f32) -> Position {
         let cache = self.passability_read();
         let cell_floor = super::passability::authoritative_floor(&cache, center);
         for radius in [radius, radius * 0.5] {
             let candidate = Position {
-                x: center.x + angle.cos() * radius,
+                x: wrap_world_x(center.x + angle.cos() * radius),
                 y: center.y,
                 z: center.z + angle.sin() * radius,
             };

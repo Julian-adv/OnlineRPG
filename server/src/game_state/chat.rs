@@ -65,12 +65,24 @@ impl OnlineCounts {
     }
 }
 
-/// `<name> [minutes]` tail shared by `/ban` and `/mute`; both leave the
-/// duration unvalidated so a bad one draws a usage reply.
-fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
+/// `<name> [arg]` tail shared by `/ban`, `/mute`, and `/spawnmob`; the arg
+/// is left unvalidated so a bad one draws a usage reply.
+fn split_name_and_arg(rest: &str) -> (&str, Option<&str>) {
     match rest.split_once(' ') {
-        Some((name, minutes)) => (name, Some(minutes.trim())),
+        Some((name, arg)) => (name, Some(arg.trim())),
         None => (rest, None),
+    }
+}
+
+/// Bounded numeric argument shared by `/ban`, `/mute`, and `/spawnmob`;
+/// `what` names the command and argument in the reply ("Ban: minutes").
+fn parse_bounded<T>(raw: &str, range: std::ops::RangeInclusive<T>, what: &str) -> Result<T, String>
+where
+    T: std::str::FromStr + PartialOrd + std::fmt::Display,
+{
+    match raw.parse() {
+        Ok(n) if range.contains(&n) => Ok(n),
+        _ => Err(format!("{what} must be {}–{}.", range.start(), range.end())),
     }
 }
 
@@ -232,18 +244,18 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
         return Some(AdminCommand::Unban(rest));
     }
     if let Some(rest) = strip_command(message, "/ban") {
-        let (name, minutes) = split_name_and_minutes(rest);
+        let (name, minutes) = split_name_and_arg(rest);
         return Some(AdminCommand::Ban { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/mute") {
-        let (name, minutes) = split_name_and_minutes(rest);
+        let (name, minutes) = split_name_and_arg(rest);
         return Some(AdminCommand::Mute { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/summon") {
         return Some(AdminCommand::Summon(rest));
     }
     if let Some(rest) = strip_command(message, "/spawnmob") {
-        let (monster_type, count) = split_name_and_minutes(rest);
+        let (monster_type, count) = split_name_and_arg(rest);
         return Some(AdminCommand::Spawnmob {
             monster_type,
             count,
@@ -976,13 +988,9 @@ impl super::GameState {
         if name.is_empty() {
             return Err("Ban: /ban <name> [minutes]".to_string());
         }
-        let minutes = match raw_minutes {
-            None => None,
-            Some(raw) => match raw.parse::<i64>() {
-                Ok(m) if (1..=BAN_MAX_MINUTES).contains(&m) => Some(m),
-                _ => return Err(format!("Ban: minutes must be 1–{BAN_MAX_MINUTES}.")),
-            },
-        };
+        let minutes = raw_minutes
+            .map(|raw| parse_bounded(raw, 1..=BAN_MAX_MINUTES, "Ban: minutes"))
+            .transpose()?;
 
         let (canonical, account) = {
             let auth = auth.clone();
@@ -1080,10 +1088,7 @@ impl super::GameState {
             .await?;
         let minutes = match raw_minutes {
             None => MUTE_DEFAULT_MINUTES,
-            Some(raw) => match raw.parse() {
-                Ok(m) if (1..=MUTE_MAX_MINUTES).contains(&m) => m,
-                _ => return Err(format!("Mute: minutes must be 1–{MUTE_MAX_MINUTES}.")),
-            },
+            Some(raw) => parse_bounded(raw, 1..=MUTE_MAX_MINUTES, "Mute: minutes")?,
         };
         let canonical = self.player_name_of(&target_id).await;
         let until = Instant::now() + Duration::from_secs(minutes * 60);
@@ -1158,29 +1163,20 @@ impl super::GameState {
         monster_type: &str,
         raw_count: Option<&str>,
     ) -> Result<String, String> {
-        let types = || self.monster_defs.ids().join(", ");
+        let types = self.monster_defs.ids().join(", ");
         if monster_type.is_empty() {
             return Err(format!(
-                "Spawnmob: /spawnmob <type> [count] — types: {}",
-                types()
+                "Spawnmob: /spawnmob <type> [count] — types: {types}"
             ));
         }
         if self.monster_defs.get(monster_type).is_none() {
             return Err(format!(
-                "Spawnmob: unknown type {monster_type} — types: {}",
-                types()
+                "Spawnmob: unknown type {monster_type} — types: {types}"
             ));
         }
         let count = match raw_count {
             None => 1,
-            Some(raw) => match raw.parse::<u32>() {
-                Ok(n) if (1..=SPAWNMOB_MAX_COUNT).contains(&n) => n,
-                _ => {
-                    return Err(format!(
-                        "Spawnmob: count must be 1\u{2013}{SPAWNMOB_MAX_COUNT}."
-                    ))
-                }
-            },
+            Some(raw) => parse_bounded(raw, 1..=SPAWNMOB_MAX_COUNT, "Spawnmob: count")?,
         };
         let Some((center, rotation, floor, _)) = self.player_pose(admin_id).await else {
             warn!("/spawnmob from non-existent player: {admin_id}");

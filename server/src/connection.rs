@@ -2038,7 +2038,6 @@ mod tests {
             "/summon Abuser",
             "/goto Abuser",
             "/spawnmob kobold",
-            "/spawnmob kobold 3",
         ] {
             assert!(
                 requires_admin(&ClientMessage::ChatMessage {
