@@ -15,7 +15,6 @@
     anchorY?: 'top' | 'middle' | 'bottom'
     fillOpacity?: number
     maxWidth?: number
-    overflowWrap?: 'normal' | 'break-word'
     whiteSpace?: 'normal' | 'nowrap'
     depthOffset?: number
     depthTest?: boolean
@@ -35,7 +34,6 @@
     anchorY = 'middle',
     fillOpacity = 1.0,
     maxWidth,
-    overflowWrap = 'normal',
     whiteSpace = 'normal',
     depthOffset,
     depthTest = true,
@@ -79,30 +77,19 @@
   })
   material.side = THREE.DoubleSide
 
-  function wrapText(
-    inputText: string,
-    maxWidthPx: number | undefined,
-    breakWord: boolean
-  ): string[] {
-    if (!maxWidthPx || whiteSpace === 'nowrap') {
-      const paragraphs = inputText.split('\n')
-      return paragraphs.length ? paragraphs : ['']
-    }
-    return wrapLines(
-      inputText,
-      maxWidthPx,
-      breakWord,
-      (s) => ctx.measureText(s).width
-    )
-  }
-
   function renderCanvas() {
     const pxFont = fontSize * PIXELS_PER_UNIT
     const font = `${pxFont}px sans-serif`
     ctx.font = font
 
-    const maxWPx = maxWidth ? maxWidth * PIXELS_PER_UNIT : undefined
-    const lines = wrapText(text, maxWPx, overflowWrap === 'break-word')
+    const lines =
+      maxWidth && whiteSpace !== 'nowrap'
+        ? wrapLines(
+            text,
+            maxWidth * PIXELS_PER_UNIT,
+            (s) => ctx.measureText(s).width
+          )
+        : text.split('\n')
     const lineHeight = pxFont * 1.2
 
     let maxLineWidth = 0

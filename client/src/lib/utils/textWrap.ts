@@ -2,9 +2,8 @@ export type MeasureFn = (text: string) => number
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
-/** Break `word` into max-width chunks; pushes full chunks, returns the tail.
- *  Splits between grapheme clusters, never inside one — a mid-cluster break
- *  would turn ZWJ emoji like 👨‍👩‍👧‍👦 into different visible emoji. */
+/** Break `word` into max-width chunks between graphemes (never inside a ZWJ
+ *  emoji cluster); pushes full chunks, returns the tail. */
 function breakChars(
   word: string,
   maxWidthPx: number,
@@ -34,17 +33,17 @@ function wrapWords(
   for (const w of para.split(/\s+/)) {
     if (!w) continue
     const test = cur ? cur + ' ' + w : w
-    if (measure(test) <= maxWidthPx) {
+    const testW = measure(test)
+    if (testW <= maxWidthPx) {
       cur = test
       continue
     }
-    if (cur) {
-      out.push(cur)
-      cur = ''
-    }
-    // A word wider than the line on its own gets broken mid-word,
-    // so unspaced runs (e.g. Korean without spaces) still wrap.
-    cur = measure(w) > maxWidthPx ? breakChars(w, maxWidthPx, measure, out) : w
+    if (cur) out.push(cur)
+    // Words wider than the line break mid-word, so unspaced runs still wrap.
+    cur =
+      (cur ? measure(w) : testW) > maxWidthPx
+        ? breakChars(w, maxWidthPx, measure, out)
+        : w
   }
   if (cur) out.push(cur)
 }
@@ -52,7 +51,6 @@ function wrapWords(
 export function wrapLines(
   text: string,
   maxWidthPx: number,
-  breakWord: boolean,
   measure: MeasureFn
 ): string[] {
   const lines: string[] = []
@@ -61,12 +59,15 @@ export function wrapLines(
       lines.push('')
       continue
     }
-    if (breakWord) {
-      const tail = breakChars(para, maxWidthPx, measure, lines)
-      if (tail) lines.push(tail)
-    } else {
-      wrapWords(para, maxWidthPx, measure, lines)
-    }
+    wrapWords(para, maxWidthPx, measure, lines)
   }
   return lines.length ? lines : ['']
+}
+
+export function truncateGraphemes(text: string, max: number): string {
+  let count = 0
+  for (const { index } of graphemes.segment(text)) {
+    if (count++ === max) return text.slice(0, index)
+  }
+  return text
 }
