@@ -24,6 +24,7 @@ impl StoredBuyback {
 use onlinerpg_shared::serialize_server_msg;
 use onlinerpg_shared::NoSpawnZone;
 use onlinerpg_shared::Position;
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
@@ -45,13 +46,15 @@ struct SpatialCell {
     z: i32,
 }
 
-const PLAYER_SPATIAL_CELL_SIZE: f32 = EVENT_DELIVERY_RADIUS;
+/// One grid for every spatial index — the player roster and the monster
+/// registry both bucket by these cells and query them with the same radius.
+const SPATIAL_CELL_SIZE: f32 = EVENT_DELIVERY_RADIUS;
 
 impl SpatialCell {
     fn from_position(position: &Position) -> Self {
         Self {
-            x: (position.x / PLAYER_SPATIAL_CELL_SIZE).floor() as i32,
-            z: (position.z / PLAYER_SPATIAL_CELL_SIZE).floor() as i32,
+            x: (position.x / SPATIAL_CELL_SIZE).floor() as i32,
+            z: (position.z / SPATIAL_CELL_SIZE).floor() as i32,
         }
     }
 
@@ -68,7 +71,7 @@ impl SpatialCell {
     fn within_radius(position: &Position, radius: f32) -> impl Iterator<Item = SpatialCell> + '_ {
         // A cell's own width past the radius: the translated query is rounded
         // out to cell boundaries, so reach is radius + one cell.
-        let seam_reach = radius + PLAYER_SPATIAL_CELL_SIZE;
+        let seam_reach = radius + SPATIAL_CELL_SIZE;
         let west = (position.x - onlinerpg_shared::WORLD_MIN_X < seam_reach)
             .then_some(onlinerpg_shared::WORLD_WIDTH_X);
         let east = (onlinerpg_shared::WORLD_MAX_X - position.x < seam_reach)
@@ -96,10 +99,104 @@ impl SpatialCell {
         min_z: f32,
         max_z: f32,
     ) -> impl Iterator<Item = SpatialCell> {
-        let cell = |v: f32| (v / PLAYER_SPATIAL_CELL_SIZE).floor() as i32;
+        let cell = |v: f32| (v / SPATIAL_CELL_SIZE).floor() as i32;
         let (x0, x1) = (cell(min_x), cell(max_x));
         let (z0, z1) = (cell(min_z), cell(max_z));
         (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| SpatialCell { x, z }))
+    }
+}
+
+/// Keys bucketed by the cell they stand in, so a proximity query walks only the
+/// cells around a point instead of every key. The player roster and the monster
+/// registry each keep one; dropping an emptied cell and skipping a move that
+/// stays in one cell live here rather than once per index.
+struct SpatialIndex<K> {
+    cells: HashMap<SpatialCell, HashSet<K>>,
+}
+
+// Hand-written so an index of non-`Default` keys is still `Default`.
+impl<K> Default for SpatialIndex<K> {
+    fn default() -> Self {
+        Self {
+            cells: HashMap::new(),
+        }
+    }
+}
+
+impl<K: Eq + Hash> SpatialIndex<K> {
+    fn insert(&mut self, key: K, position: &Position) {
+        self.cells
+            .entry(SpatialCell::from_position(position))
+            .or_default()
+            .insert(key);
+    }
+
+    fn remove<Q>(&mut self, key: &Q, position: &Position)
+    where
+        K: Borrow<Q>,
+        Q: Eq + Hash + ?Sized,
+    {
+        let cell = SpatialCell::from_position(position);
+        let Some(keys) = self.cells.get_mut(&cell) else {
+            return;
+        };
+        keys.remove(key);
+        // An emptied cell is dropped, or a roaming population would leave a set
+        // behind in every cell it ever crossed.
+        if keys.is_empty() {
+            self.cells.remove(&cell);
+        }
+    }
+
+    fn moved<Q>(&mut self, key: &Q, old_position: &Position, new_position: &Position)
+    where
+        K: Borrow<Q>,
+        Q: Eq + Hash + ToOwned<Owned = K> + ?Sized,
+    {
+        if SpatialCell::from_position(old_position) == SpatialCell::from_position(new_position) {
+            return;
+        }
+        self.remove(key, old_position);
+        self.insert(key.to_owned(), new_position);
+    }
+
+    /// The keys in every cell reachable from `position` — a conservative
+    /// superset of the circle, so callers still test the exact distance.
+    fn keys_near<'a>(
+        &'a self,
+        position: &'a Position,
+        radius: f32,
+    ) -> impl Iterator<Item = &'a K> + 'a {
+        SpatialCell::within_radius(position, radius)
+            .filter_map(|cell| self.cells.get(&cell))
+            .flatten()
+    }
+
+    /// The same for two positions at once, each key yielded once.
+    fn keys_near_either(
+        &self,
+        a: &Position,
+        b: &Position,
+        radius: f32,
+    ) -> impl Iterator<Item = &K> {
+        // Enough for one query's cells even beside the world seam, where they
+        // double; a short step's two queries mostly coincide.
+        let mut cells: Vec<SpatialCell> = Vec::with_capacity(18);
+        cells.extend(SpatialCell::within_radius(a, radius));
+        for cell in SpatialCell::within_radius(b, radius) {
+            if !cells.contains(&cell) {
+                cells.push(cell);
+            }
+        }
+        cells
+            .into_iter()
+            .filter_map(|cell| self.cells.get(&cell))
+            .flatten()
+    }
+
+    #[cfg(test)]
+    fn matches(&self, other: &Self) -> bool {
+        self.cells == other.cells
     }
 }
 
@@ -225,7 +322,7 @@ pub struct GameState {
     player_ids_by_name: Arc<RwLock<HashMap<String, PlayerId>>>,
     movement_intents: Arc<RwLock<HashMap<PlayerId, player::MoveQueue>>>,
     last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
-    player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
+    player_spatial_cells: Arc<RwLock<SpatialIndex<PlayerId>>>,
     monsters: Arc<RwLock<monster::MonsterRegistry>>,
     /// player_id → (resolved track title, performance start). Source of the
     /// `elapsed_secs` sent to players entering earshot mid-performance;
@@ -486,7 +583,7 @@ impl GameState {
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
             last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
-            player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
+            player_spatial_cells: Arc::new(RwLock::new(SpatialIndex::default())),
             monsters: Arc::new(RwLock::new(monster::MonsterRegistry::default())),
             music_performances: Arc::new(RwLock::new(HashMap::new())),
             ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),

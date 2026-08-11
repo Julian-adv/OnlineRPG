@@ -1732,26 +1732,17 @@ impl super::GameState {
     }
 
     async fn insert_player_spatial_cell(&self, player_id: &PlayerId, position: &Position) {
-        let mut cells = self.player_spatial_cells.write().await;
-        cells
-            .entry(super::SpatialCell::from_position(position))
-            .or_default()
-            .insert(*player_id);
+        self.player_spatial_cells
+            .write()
+            .await
+            .insert(*player_id, position);
     }
 
     async fn remove_player_spatial_cell(&self, player_id: &PlayerId, position: &Position) {
-        let cell = super::SpatialCell::from_position(position);
-        let mut cells = self.player_spatial_cells.write().await;
-        let should_remove = if let Some(player_ids) = cells.get_mut(&cell) {
-            player_ids.remove(player_id);
-            player_ids.is_empty()
-        } else {
-            false
-        };
-
-        if should_remove {
-            cells.remove(&cell);
-        }
+        self.player_spatial_cells
+            .write()
+            .await
+            .remove(player_id, position);
     }
 
     async fn move_player_spatial_cell(
@@ -1760,25 +1751,17 @@ impl super::GameState {
         old_position: &Position,
         new_position: &Position,
     ) {
-        let old_cell = super::SpatialCell::from_position(old_position);
-        let new_cell = super::SpatialCell::from_position(new_position);
-        if old_cell == new_cell {
+        // Most moves stay inside one cell. Checking before taking the lock keeps
+        // them off the write guard every mover on the server shares.
+        if super::SpatialCell::from_position(old_position)
+            == super::SpatialCell::from_position(new_position)
+        {
             return;
         }
-
-        let mut cells = self.player_spatial_cells.write().await;
-        let should_remove_old = if let Some(player_ids) = cells.get_mut(&old_cell) {
-            player_ids.remove(player_id);
-            player_ids.is_empty()
-        } else {
-            false
-        };
-
-        if should_remove_old {
-            cells.remove(&old_cell);
-        }
-
-        cells.entry(new_cell).or_default().insert(*player_id);
+        self.player_spatial_cells
+            .write()
+            .await
+            .moved(player_id, old_position, new_position);
     }
 
     async fn fanout_player_position_update(
@@ -1880,7 +1863,9 @@ impl super::GameState {
         let (monsters_left, monsters_entered) = {
             let monsters = self.monsters.read().await;
             let (left, entered) = aoi_diff(
-                monsters.values(),
+                // Not `values()`: this runs on every accepted move packet, and
+                // the registry holds up to 135k.
+                monsters.near_either(old_position, &player.position),
                 |m| (m.position, m.floor_level),
                 (old_position, old_floor),
                 (&player.position, new_floor),
@@ -2000,21 +1985,15 @@ impl super::GameState {
         let cells = self.player_spatial_cells.read().await;
         let mut player_ids = HashSet::new();
 
-        for cell in super::SpatialCell::within_radius(position, radius) {
-            let Some(cell_player_ids) = cells.get(&cell) else {
+        for player_id in cells.keys_near(position, radius) {
+            let Some(player) = players.get(player_id) else {
                 continue;
             };
 
-            for player_id in cell_player_ids {
-                let Some(player) = players.get(player_id) else {
-                    continue;
-                };
-
-                if player.floor_level == floor_level
-                    && position.dist_xz_sq(&player.position) <= radius_sq
-                {
-                    player_ids.insert(*player_id);
-                }
+            if player.floor_level == floor_level
+                && position.dist_xz_sq(&player.position) <= radius_sq
+            {
+                player_ids.insert(*player_id);
             }
         }
 

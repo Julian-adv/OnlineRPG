@@ -104,6 +104,66 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
     }
 }
 
+/// The AOI diff visits only the monsters the cell index reports near the step,
+/// so a monster's index entry has to follow its moves. The arrival point below
+/// is picked to query the monster's new cell but not the one it left: with the
+/// index left behind, the walker never hears about it.
+#[tokio::test]
+async fn movement_into_aoi_sends_a_monster_that_walked_there() {
+    let game_state = make_test_game_state("moved_monster_aoi");
+    let walker_id = pid("walker");
+    let owner_id = pid("monster_owner");
+    let start = Position {
+        x: 87.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    let walked_to = Position {
+        x: 80.0,
+        y: 0.0,
+        z: 0.0,
+    };
+
+    game_state.add_player(make_player("walker", 0.0, 0.0)).await;
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let mut monster = make_monster("wanderer", start, 0);
+        monster.owner_id = Some(owner_id);
+        monster.move_budget = 10.0;
+        monster.last_move_at = GameState::now_ms();
+        monsters.insert(monster.id.clone(), monster);
+    }
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "wanderer".to_string(),
+            walked_to,
+            0.0,
+            MonsterState::Run,
+            walked_to,
+        )
+        .await;
+    assert_eq!(
+        game_state.monsters.read().await["wanderer"].position.x,
+        walked_to.x,
+        "the move must be accepted for this to test anything"
+    );
+
+    let mut direct_rx = game_state.register_direct_channel(&walker_id).await;
+    game_state
+        .update_player_position(&walker_id, move_cmd(pos(40.0), false), false, false)
+        .await;
+    game_state.tick_player_movement(60.0).await;
+
+    let spawned = drain(&mut direct_rx).into_iter().any(
+        |msg| matches!(msg, ServerMessage::MonsterSpawned { monster } if monster.id == "wanderer"),
+    );
+    assert!(
+        spawned,
+        "a monster that walked into range must be announced"
+    );
+}
+
 #[tokio::test]
 async fn player_movement_wraps_across_east_world_edge() {
     let game_state = make_test_game_state("movement_x_wrap");

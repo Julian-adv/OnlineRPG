@@ -35,6 +35,20 @@ fn grid_position(index: usize, _owner: &PlayerId) -> Position {
     }
 }
 
+/// Where each owner currently stands, for the measurements that put every
+/// monster at its owner's feet. Read up front because `preload_monsters`'
+/// placement closure runs under the registry write guard and cannot await.
+async fn owner_positions(
+    game_state: &GameState,
+    owners: &[PlayerId],
+) -> std::collections::HashMap<PlayerId, Position> {
+    let players = game_state.players.read().await;
+    owners
+        .iter()
+        .map(|id| (*id, players[id].position))
+        .collect()
+}
+
 async fn add_bots(game_state: &GameState, count: usize) -> Vec<PlayerId> {
     let mut ids = Vec::with_capacity(count);
     for i in 0..count {
@@ -128,6 +142,70 @@ async fn spawn_path_cost_at_scale() {
     }
 }
 
+/// The hottest read of the registry: every accepted move packet diffs the
+/// mover's monster AOI, so this runs thousands of times a second at target
+/// population — far more often than any background tick.
+///
+/// Three movers, all against the same 134k monsters: one in a crowd sharing its
+/// cell with 200 other players' monsters (the pessimistic case), one standing on
+/// its own ~27 with the nearest neighbours 60m out, and one nowhere near a
+/// monster. Each oscillates in place so AOI membership never actually changes:
+/// the timing covers the whole fanout — the player-side diff included — but no
+/// spawn or removal sends, which would otherwise swamp the crowd figure.
+#[tokio::test]
+#[ignore = "measurement, not an assertion; run explicitly with --nocapture"]
+async fn player_move_fanout_cost_at_scale() {
+    const POPULATION: usize = 134_000;
+    /// Players packed into one spot, monsters and all.
+    const CROWD: usize = 200;
+    let crowd_spot = Position {
+        x: 9_000.0,
+        y: 0.0,
+        z: 9_000.0,
+    };
+
+    let game_state = make_test_game_state("player_move_fanout");
+    let owners = add_bots(&game_state, USERS).await;
+    for owner in owners.iter().take(CROWD) {
+        game_state.teleport_player(owner, crowd_spot, 0.0, 0).await;
+    }
+    // Read after the teleports, so a crowd member's monsters land in the crowd
+    // with it.
+    let positions = owner_positions(&game_state, &owners).await;
+    preload_monsters(&game_state, POPULATION, &owners, |_, owner| {
+        positions[owner]
+    })
+    .await;
+
+    let sparse = pid("sparse_mover");
+    game_state
+        .add_player(make_player("sparse_mover", 12_000.0, 12_000.0))
+        .await;
+
+    for (label, mover) in [
+        ("crowd", owners[0]),
+        ("own monsters", owners[CROWD]),
+        ("no monsters", sparse),
+    ] {
+        let origin = game_state.players.read().await[&mover].position;
+        const MOVES: usize = 200;
+        let start = Instant::now();
+        for i in 0..MOVES {
+            let position = Position {
+                x: origin.x + if i % 2 == 0 { 0.25 } else { -0.25 },
+                ..origin
+            };
+            game_state
+                .update_player_position(&mover, move_cmd(position, false), true, false)
+                .await;
+        }
+        let per_move = start.elapsed() / MOVES as u32;
+        println!(
+            "{POPULATION} monsters / {USERS} users: player move ({label:>12}) {per_move:>10.2?}"
+        );
+    }
+}
+
 /// The ownership tick's own runtime is fine on a 10s timer; what matters is how
 /// long it keeps the registry from the writers — every kill and every monster
 /// move takes `monsters.write()`. Every monster sits on its owner here, so the
@@ -139,15 +217,9 @@ async fn ownership_tick_writer_stall() {
     const POPULATION: usize = 134_000;
     let game_state = make_test_game_state("ownership_stall");
     let owners = add_bots(&game_state, USERS).await;
-    let owner_positions = {
-        let players = game_state.players.read().await;
-        owners
-            .iter()
-            .map(|id| (*id, players[id].position))
-            .collect::<std::collections::HashMap<_, _>>()
-    };
+    let positions = owner_positions(&game_state, &owners).await;
     preload_monsters(&game_state, POPULATION, &owners, |_, owner| {
-        owner_positions[owner]
+        positions[owner]
     })
     .await;
 
@@ -184,8 +256,9 @@ async fn ownership_tick_writer_stall() {
     );
 }
 
-/// The registry's counts are the spawn caps. If they drift from the map the
-/// server silently over- or under-spawns, so pin them against a full scan
+/// The registry's counts are the spawn caps and its cell index is what every
+/// AOI query walks. If either drifts from the map the server silently over- or
+/// under-spawns, or shows the wrong monsters, so pin both against a full scan
 /// after every kind of mutation.
 #[tokio::test]
 async fn registry_counts_track_the_map_through_every_mutation() {
@@ -219,6 +292,10 @@ async fn registry_counts_track_the_map_through_every_mutation() {
         let game_state = game_state.clone();
         async move {
             let monsters = game_state.monsters.read().await;
+            assert!(
+                monsters.cell_index_matches_map(),
+                "{label}: the cell index drifted from the map"
+            );
             let expected_total = monsters
                 .values()
                 .filter(|m| m.state != MonsterState::Dead)
@@ -261,6 +338,28 @@ async fn registry_counts_track_the_map_through_every_mutation() {
     };
 
     audit("after spawns").await;
+
+    // A move that changes cells, then one that does not — the second covers the
+    // same-cell skip.
+    let moved_to = Position {
+        x: 900.0,
+        y: 0.0,
+        z: 900.0,
+    };
+    game_state
+        .monsters
+        .write()
+        .await
+        .set_position(&spawned[3], moved_to);
+    audit("after a move across cells").await;
+    game_state.monsters.write().await.set_position(
+        &spawned[3],
+        Position {
+            x: 901.0,
+            ..moved_to
+        },
+    );
+    audit("after a move within one cell").await;
 
     game_state.monsters.write().await.mark_dead(&spawned[0]);
     audit("after mark_dead").await;

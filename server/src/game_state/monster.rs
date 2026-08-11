@@ -108,20 +108,40 @@ impl AliveCounts {
     }
 }
 
-/// The monster map plus alive counts, so the spawn caps are O(1) instead of a
-/// scan. Corpses linger 30s (combat.rs) and must not hold a spawn slot, so the
-/// counts track alive monsters only.
+/// The monster map plus alive counts and a cell index, so the spawn caps are
+/// O(1) instead of a scan and an AOI query visits only nearby monsters instead
+/// of all 135k. Corpses linger 30s (combat.rs) and must not hold a spawn slot,
+/// so the counts track alive monsters only; the cell index carries corpses too,
+/// since clients still see them.
 ///
-/// `get_mut` hands out a plain `&mut Monster` for position and health edits.
-/// Changing `state` to Dead or `owner_id` through it would desync the counts —
-/// route those through `mark_dead` / `reassign_owner`.
+/// `get_mut` hands out a plain `&mut Monster` for health and timestamp edits.
+/// Changing `state` to Dead or `owner_id` through it would desync the counts and
+/// `position` the cell index — route those through `mark_dead` /
+/// `reassign_owner` / `set_position`.
 #[derive(Default)]
 pub(crate) struct MonsterRegistry {
     monsters: std::collections::HashMap<String, crate::types::Monster>,
     alive: AliveCounts,
+    /// Stored positions are canonical in X
+    /// (`client_monster_move_stores_canonical_world_x`), which is what lets the
+    /// index find them across the world seam.
+    cells: super::SpatialIndex<String>,
 }
 
 impl MonsterRegistry {
+    /// Monsters within AOI range of either position — a superset of the two
+    /// AOIs, so the only monsters a move between them can bring into or out of
+    /// view. Callers still test the exact distance.
+    pub(crate) fn near_either(
+        &self,
+        a: &Position,
+        b: &Position,
+    ) -> impl Iterator<Item = &crate::types::Monster> {
+        self.cells
+            .keys_near_either(a, b, super::EVENT_DELIVERY_RADIUS)
+            .filter_map(|id| self.monsters.get(id.as_str()))
+    }
+
     fn credit(&mut self, monster: &crate::types::Monster) {
         if monster.state != MonsterState::Dead {
             self.alive.credit(monster.owner_id, &monster.monster_type);
@@ -140,10 +160,13 @@ impl MonsterRegistry {
         monster: crate::types::Monster,
     ) -> Option<crate::types::Monster> {
         self.credit(&monster);
-        let replaced = self.monsters.insert(id, monster);
+        let position = monster.position;
+        let replaced = self.monsters.insert(id.clone(), monster);
         if let Some(old) = &replaced {
             self.debit(old);
+            self.cells.remove(id.as_str(), &old.position);
         }
+        self.cells.insert(id, &position);
         replaced
     }
 
@@ -151,6 +174,7 @@ impl MonsterRegistry {
         let removed = self.monsters.remove(id);
         if let Some(monster) = &removed {
             self.debit(monster);
+            self.cells.remove(id, &monster.position);
         }
         removed
     }
@@ -227,6 +251,34 @@ impl MonsterRegistry {
         }
         monster.owner_id = Some(new_owner);
         Some(monster)
+    }
+
+    /// Move a monster, keeping its index entry in step, and return it so callers
+    /// can fan the move out without a second lookup. A position written through
+    /// `get_mut` instead would leave the monster indexed where it used to stand:
+    /// invisible to arriving players, and announced as departed to the ones it
+    /// walked toward.
+    pub(crate) fn set_position(
+        &mut self,
+        id: &str,
+        position: Position,
+    ) -> Option<&crate::types::Monster> {
+        let monster = self.monsters.get_mut(id)?;
+        let old_position = monster.position;
+        monster.position = position;
+        self.cells.moved(id, &old_position, &position);
+        Some(monster)
+    }
+
+    /// Whether the index holds exactly the buckets the map implies — the
+    /// invariant every AOI query depends on.
+    #[cfg(test)]
+    pub(crate) fn cell_index_matches_map(&self) -> bool {
+        let mut expected = super::SpatialIndex::default();
+        for (id, monster) in &self.monsters {
+            expected.insert(id.clone(), &monster.position);
+        }
+        self.cells.matches(&expected)
     }
 }
 
@@ -558,9 +610,12 @@ impl super::GameState {
                 return;
             }
             let old_position = monster.position;
-            monster.position = new_position;
             monster.rotation = rotation;
             monster.state = state;
+            // Through the registry so the cell index follows the monster.
+            let Some(monster) = monsters.set_position(&monster_id, new_position) else {
+                return;
+            };
             (old_position, monster.owner_id, monster.clone())
         };
 
