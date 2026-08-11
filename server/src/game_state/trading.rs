@@ -851,7 +851,9 @@ impl super::GameState {
         }
         // One id per unit, reserved before the locks rather than one counter
         // acquisition per unit under them. An aborted batch skips the range.
-        let mut next_id = self.reserve_instance_ids(quantities.total).await;
+        let mut next_id = self
+            .reserve_instance_ids(plans.iter().map(|p| p.qty as u64).sum())
+            .await;
         let max_weight = self.max_carry_weight(player_id).await;
 
         let mut gold_map = self.player_gold.write().await;
@@ -871,7 +873,7 @@ impl super::GameState {
                     .send_trade_error(player_id, "They have nothing to sell")
                     .await;
             };
-            for (item_def_id, qty) in quantities.by_key {
+            for (item_def_id, qty) in quantities {
                 let available: u32 = npc_inv
                     .bag
                     .iter()
@@ -1379,7 +1381,9 @@ impl super::GameState {
 
         // One id per unit, reserved before the locks: a resident's received
         // units draw from it, a merchant's buyback entries do.
-        let mut next_unit_id = self.reserve_instance_ids(quantities.total).await;
+        let mut next_unit_id = self
+            .reserve_instance_ids(items.iter().map(|i| i.qty as u64).sum())
+            .await;
         // Only a resident carries what it buys.
         let npc_max_weight = if is_resident {
             Some(self.max_carry_weight(npc_player_id).await)
@@ -1409,7 +1413,6 @@ impl super::GameState {
                     .await;
             };
             let requested_qty = quantities
-                .by_key
                 .get(&req.instance_id)
                 .copied()
                 .expect("every retained request was included in batch aggregation");

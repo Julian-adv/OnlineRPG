@@ -1235,7 +1235,6 @@ impl super::GameState {
                     return;
                 };
                 let requested_qty = quantities
-                    .by_key
                     .get(&req.instance_id)
                     .copied()
                     .expect("every retained request was included in batch aggregation");

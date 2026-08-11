@@ -4,9 +4,8 @@ use onlinerpg_shared::messages::{BagLineItem, TradeLineItem};
 #[test]
 fn checked_batch_quantity_accumulation_overflow_boundaries() {
     let quantities = checked_batch_quantities([("first", u32::MAX), ("second", 1)]).unwrap();
-    assert_eq!(quantities.total, u64::from(u32::MAX) + 1);
-    assert_eq!(quantities.by_key["first"], u32::MAX);
-    assert_eq!(quantities.by_key["second"], 1);
+    assert_eq!(quantities["first"], u32::MAX);
+    assert_eq!(quantities["second"], 1);
     assert!(checked_batch_quantities([("same", u32::MAX), ("same", 1)]).is_none());
 }
 

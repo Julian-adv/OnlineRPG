@@ -140,29 +140,18 @@ pub(crate) const OUT_OF_COMBAT_MS: u64 = 10_000;
 /// to the player's wallet (see `pickup_item`).
 pub(crate) const COIN_PILE_ITEM_ID: &str = "coin_pile";
 
-struct CheckedBatchQuantities<K> {
-    by_key: HashMap<K, u32>,
-    total: u64,
-}
-
-/// Accumulate client batch lines once before mutation. Per-key totals stay
-/// `u32` because item quantities use that type; the whole request stays `u64`
-/// to match the existing instance-id reservation range.
+/// Total a client's batch lines by key once, before any ownership or stock
+/// check reads them. Repeating one key is legal, so the sum must be checked:
+/// a wrapped `u32` would validate as a quantity nobody asked for.
 fn checked_batch_quantities<K: Eq + Hash>(
     lines: impl IntoIterator<Item = (K, u32)>,
-) -> Option<CheckedBatchQuantities<K>> {
+) -> Option<HashMap<K, u32>> {
     let mut by_key: HashMap<K, u32> = HashMap::new();
-    let mut total = 0u64;
     for (key, qty) in lines {
-        total = total.checked_add(u64::from(qty))?;
-        let quantity = by_key
-            .get(&key)
-            .copied()
-            .unwrap_or_default()
-            .checked_add(qty)?;
-        by_key.insert(key, quantity);
+        let total = by_key.entry(key).or_default();
+        *total = total.checked_add(qty)?;
     }
-    Some(CheckedBatchQuantities { by_key, total })
+    Some(by_key)
 }
 
 #[derive(Default)]
