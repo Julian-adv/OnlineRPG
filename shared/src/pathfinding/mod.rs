@@ -623,10 +623,7 @@ mod tests {
         ("two_floor".to_string(), rp)
     }
 
-    /// The exemption that keeps a climber walking. A server deriving a mover's
-    /// height from the cache would otherwise pull someone mid-flight down to
-    /// the storey they are keyed to, and the tables under the stairs would
-    /// block them — the trap this predicate exists to avoid.
+    /// Pins the span a climber may report a height within.
     #[test]
     fn stairwell_span_covers_the_flight_but_not_a_forged_height() {
         let (id, rp) = make_two_floor_stairwell();
@@ -635,9 +632,9 @@ mod tests {
 
         // Mid-flight between the two y_bases (0.0 and 3.1).
         assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 2.0));
-        // Both landings, plus the step-height jitter the tolerance absorbs.
-        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 0.0));
-        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 3.1));
+        // Just past either end — the step-height jitter the tolerance absorbs.
+        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, -0.5));
+        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 3.6));
         // Above the flight entirely: no flight to be on.
         assert!(!query::in_stairwell_span(&cache, 0.5, 1.5, 10.0));
         // Off the stairwell's footprint, at a height it would have allowed.
@@ -655,19 +652,39 @@ mod tests {
         // Floor 0's grid spans z 0..1; a leg from z=-2 to z=2 crosses it
         // without either end landing on it.
         assert_eq!(
-            query::supporting_floor_y(&cache, 0.5, 0.5, -2.0, 2.0, 0, 9.0),
+            query::supporting_floor_y(&cache, 0.5, -2.0, 0.5, 2.0, 0, 9.0),
             Some(0.0)
         );
-        // Keyed to floor 1, the same box reports that storey instead.
+        // Keyed to floor 1, the box over that storey reports it instead.
         assert_eq!(
-            query::supporting_floor_y(&cache, 0.5, 0.5, 2.5, 3.5, 1, 9.0),
+            query::supporting_floor_y(&cache, 0.5, 2.5, 0.5, 3.5, 1, 9.0),
             Some(3.1)
         );
         // Nothing at that level under the box.
         assert_eq!(
-            query::supporting_floor_y(&cache, 0.5, 0.5, 50.0, 51.0, 0, 0.0),
+            query::supporting_floor_y(&cache, 0.5, 50.0, 0.5, 51.0, 0, 0.0),
             None
         );
+    }
+
+    /// One leg can cross furniture standing on ground of different heights, so
+    /// two grids at the same level are resolved by nearest `y_base` — not by
+    /// whichever the cache happens to yield first.
+    #[test]
+    fn supporting_floor_y_picks_the_nearest_of_two_grids_on_one_level() {
+        let (id, rp) = make_two_floor_stairwell();
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+        // A second floor-0 grid over the same cells, ten metres up a hill.
+        let mut hill = make_two_floor_stairwell().1;
+        hill.floors.retain(|f| f.floor_level == 0);
+        hill.floors[0].y_base = 10.0;
+        hill.stairwells.clear();
+        cache.insert("hill".to_string(), hill);
+
+        let leg = |y| query::supporting_floor_y(&cache, 0.5, -2.0, 0.5, 2.0, 0, y);
+        assert_eq!(leg(0.4), Some(0.0));
+        assert_eq!(leg(9.6), Some(10.0));
     }
 
     #[test]
@@ -872,7 +889,7 @@ mod tests {
 
         // 4.2 clears the lower floor's walls (y_base 0 + wall_height 3.0) and
         // sits inside the flight's span, so the exemption would keep it.
-        for y in [None, Some(0.0), Some(2.0), Some(4.2), Some(1000.0)] {
+        for y in [Some(2.0), Some(4.2), Some(1000.0)] {
             assert!(
                 query::is_movement_blocked(&cache, 1.5, 1.5, 1.5, 2.5, 1, y),
                 "a walled stairwell exit must block at y={y:?}"

@@ -42,9 +42,15 @@ handful of monsters. The "up to 8,000 cache scans per path query" cost of A\*
 (2,000 nodes × 4 neighbours) lands on individual tabs, never on the server.
 
 **Server cost is small.** `tick_player_movement` runs at 5 Hz
-(`server/src/main.rs`), skips non-moving players, and costs ~2–4 scans of 9
-entries per moving player per tick. 5,000 simultaneous movers ≈ under 1M float
+(`server/src/main.rs`), skips non-moving players, and costs ~3–6 scans of 9
+entries per moving player per tick. 5,000 simultaneous movers ≈ under 2M float
 comparisons/sec total.
+
+`collision_y` (`server/src/game_state/passability.rs`) accounts for one of
+those scans — it derives the Y to collide against rather than trusting the
+client's. It costs a second scan only for a leg that crosses a floor grid,
+i.e. one near a building or solid furniture; anyone walking open ground
+returns early before the stairwell check.
 
 ### Revisit when any of these becomes true
 

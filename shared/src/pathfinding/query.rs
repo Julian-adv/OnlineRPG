@@ -678,13 +678,15 @@ const STAIR_SPAN_Y_TOLERANCE: f32 = 1.0;
 /// whose bases differ by the height of the hill.
 pub fn supporting_floor_y(
     cache: &PassabilityCache,
-    min_x: f32,
-    max_x: f32,
-    min_z: f32,
-    max_z: f32,
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
     floor_level: u8,
     y: f32,
 ) -> Option<f32> {
+    let (min_x, max_x) = (from_x.min(to_x), from_x.max(to_x));
+    let (min_z, max_z) = (from_z.min(to_z), from_z.max(to_z));
     let mut best: Option<(f32, f32)> = None;
     for rp in cache.values() {
         if max_x < rp.min_x || min_x > rp.max_x || max_z < rp.min_z || min_z > rp.max_z {
@@ -711,6 +713,19 @@ pub fn supporting_floor_y(
     best.map(|(_, y_base)| y_base)
 }
 
+/// The flight's two floor heights, if `y` lies within its span.
+fn stair_span_containing(
+    rp: &super::RuntimePassability,
+    stair: &super::StairwellInfo,
+    y: f32,
+) -> Option<(f32, f32)> {
+    let lower_y = floor_y_base_of(rp, stair.lower_floor)?;
+    let upper_y = floor_y_base_of(rp, stair.upper_floor)?;
+    (y >= lower_y.min(upper_y) - STAIR_SPAN_Y_TOLERANCE
+        && y <= lower_y.max(upper_y) + STAIR_SPAN_Y_TOLERANCE)
+        .then_some((lower_y, upper_y))
+}
+
 /// Whether `(x, z, y)` sits inside some stairwell's vertical span — a mover
 /// mid-flight, interpolating between two floor heights rather than standing on
 /// either.
@@ -729,17 +744,8 @@ pub fn in_stairwell_span(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> bo
         let ox = rp.house_origin_x.floor() as i32;
         let oz = rp.house_origin_z.floor() as i32;
         rp.stairwells.iter().any(|stair| {
-            if stair_step(stair, cx - ox, cz - oz).is_none() {
-                return false;
-            }
-            let (Some(lower_y), Some(upper_y)) = (
-                floor_y_base_of(rp, stair.lower_floor),
-                floor_y_base_of(rp, stair.upper_floor),
-            ) else {
-                return false;
-            };
-            y >= lower_y.min(upper_y) - STAIR_SPAN_Y_TOLERANCE
-                && y <= lower_y.max(upper_y) + STAIR_SPAN_Y_TOLERANCE
+            stair_step(stair, cx - ox, cz - oz).is_some()
+                && stair_span_containing(rp, stair, y).is_some()
         })
     })
 }
@@ -780,17 +786,9 @@ pub fn start_floor_at(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> u8 {
             if step == 0 || step == n - 1 {
                 continue;
             }
-            let (Some(lower_y), Some(upper_y)) = (
-                floor_y_base_of(rp, stair.lower_floor),
-                floor_y_base_of(rp, stair.upper_floor),
-            ) else {
+            let Some((lower_y, upper_y)) = stair_span_containing(rp, stair, y) else {
                 continue;
             };
-            if y < lower_y.min(upper_y) - STAIR_SPAN_Y_TOLERANCE
-                || y > lower_y.max(upper_y) + STAIR_SPAN_Y_TOLERANCE
-            {
-                continue;
-            }
             let f = step as f32 / (n - 1) as f32;
             let dist = (y - (lower_y + (upper_y - lower_y) * f)).abs();
             if best.is_none_or(|(best_dist, _)| dist < best_dist) {

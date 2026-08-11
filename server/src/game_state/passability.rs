@@ -42,7 +42,7 @@ pub(super) fn wrapped_block_info<'a>(
     y: f32,
 ) -> Option<pathfinding::BlockInfo<'a>> {
     let y = collision_y(cache, from_x, from_z, to_x, to_z, floor_level, y);
-    block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y)
+    wrapped_block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y)
 }
 
 /// The Y to test obstacles against, derived from the cache rather than taken
@@ -54,10 +54,12 @@ pub(super) fn wrapped_block_info<'a>(
 /// table on the floor, and no amount of X/Z simulation catches it. A storey has
 /// one real floor height: take it from the storey the swept leg crosses.
 ///
-/// Two cases keep the reported Y. A climber mid-flight is legitimately metres
-/// above the floor it is keyed to (`in_stairwell_span`). And where the leg
-/// crosses no floor at all — open terrain, a bridge deck — there is nothing to
-/// derive from, and nothing there to collide with either.
+/// Two cases keep the reported Y: a leg crossing no floor at all — open
+/// terrain, a bridge deck, where there is nothing to derive from and nothing to
+/// collide with — and a climber mid-flight (`in_stairwell_span`).
+///
+/// The no-floor case is tested first because it is the common one, and it
+/// settles the answer on its own.
 fn collision_y(
     cache: &pathfinding::PassabilityCache,
     from_x: f32,
@@ -67,24 +69,20 @@ fn collision_y(
     floor_level: u8,
     reported: f32,
 ) -> f32 {
+    let Some(floor_y) =
+        pathfinding::supporting_floor_y(cache, from_x, from_z, to_x, to_z, floor_level, reported)
+    else {
+        return reported;
+    };
     if pathfinding::in_stairwell_span(cache, from_x, from_z, reported) {
         return reported;
     }
-    pathfinding::supporting_floor_y(
-        cache,
-        from_x.min(to_x),
-        from_x.max(to_x),
-        from_z.min(to_z),
-        from_z.max(to_z),
-        floor_level,
-        reported,
-    )
-    .unwrap_or(reported)
+    floor_y
 }
 
 /// The seam sweep itself, at a Y the caller has already derived — so a step and
 /// the slide candidates it falls back to are judged at one height.
-fn block_info_at<'a>(
+fn wrapped_block_info_at<'a>(
     cache: &'a pathfinding::PassabilityCache,
     from_x: f32,
     from_z: f32,
@@ -147,13 +145,13 @@ pub(super) fn resolve_step<'a>(
     y: f32,
 ) -> StepOutcome<'a> {
     const EPS: f32 = 1e-6;
-    // Derived once: the slide candidates are the same step, so they have to be
-    // judged at the same height as the diagonal that provoked them.
     let y = collision_y(cache, from_x, from_z, to_x, to_z, floor_level, y);
-    let Some(info) = block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y) else {
+    let Some(info) = wrapped_block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y)
+    else {
         return StepOutcome::Clear;
     };
-    let clear = |tx, tz| block_info_at(cache, from_x, from_z, tx, tz, floor_level, y).is_none();
+    let clear =
+        |tx, tz| wrapped_block_info_at(cache, from_x, from_z, tx, tz, floor_level, y).is_none();
     let (dx, dz) = ((to_x - from_x).abs(), (to_z - from_z).abs());
     let x_ok = dx > EPS && clear(to_x, from_z);
     // Both axes open means only the exact diagonal grazed a corner tip; keep the
@@ -178,9 +176,7 @@ pub(super) fn resolve_step<'a>(
 /// claiming floor 0 from three storeys underground would otherwise pick which
 /// walls apply to it and walk straight through the dungeon. Position is
 /// server-simulated in X/Z; the Y that picks the storey is not, so a mover can
-/// still claim the wrong storey of a building it is standing in — but
-/// `collision_y` then holds it to that storey's floor height, which is what
-/// keeps the walls applying.
+/// still claim the wrong storey of a building it is standing in.
 pub(super) fn authoritative_floor(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,
@@ -321,5 +317,83 @@ impl super::GameState {
             return;
         };
         set_floor_cells(&mut self.passability_write(), entrance_id, depth, cells);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collision_y;
+    use onlinerpg_shared::pathfinding::{
+        PassabilityCache, RuntimeFloorGrid, RuntimePassability, StairwellInfo,
+    };
+
+    /// One storey at y_base 0 over cells x 0..2, z 0..4, with a stairwell up to
+    /// a second storey at 3.1 occupying x 0..1.
+    fn two_storey_cache() -> PassabilityCache {
+        let grid = |floor_level, y_base| RuntimeFloorGrid {
+            floor_level,
+            origin_x: 0,
+            origin_z: 0,
+            width: 2,
+            depth: 4,
+            y_base,
+            wall_height: 3.0,
+            cells: vec![0u8; 8],
+        };
+        let mut cache = PassabilityCache::new();
+        cache.insert(
+            "house".to_string(),
+            RuntimePassability {
+                house_origin_x: 0.0,
+                house_origin_z: 0.0,
+                min_x: 0.0,
+                max_x: 2.0,
+                min_z: 0.0,
+                max_z: 4.0,
+                floors: vec![grid(0, 0.0), grid(1, 3.1)],
+                stairwells: vec![StairwellInfo {
+                    local_min_x: 0,
+                    local_min_z: 0,
+                    local_max_x: 1,
+                    local_max_z: 4,
+                    lower_floor: 0,
+                    upper_floor: 1,
+                    along_z: true,
+                    reversed: false,
+                }],
+                yields_to_trapped_mover: false,
+            },
+        );
+        cache
+    }
+
+    #[test]
+    fn a_forged_height_is_pulled_down_to_the_storey_it_claims() {
+        let cache = two_storey_cache();
+        // Off the stairwell (x 1.5), so nothing holds the mover up: both a
+        // hand's breadth over the wall tops and an absurd claim collapse to
+        // the storey's own floor height.
+        assert_eq!(collision_y(&cache, 1.5, 0.5, 1.5, 1.5, 0, 3.5), 0.0);
+        assert_eq!(collision_y(&cache, 1.5, 0.5, 1.5, 1.5, 0, 1000.0), 0.0);
+        // Keyed to the upper storey, it is held to that one instead.
+        assert_eq!(collision_y(&cache, 1.5, 0.5, 1.5, 1.5, 1, 1000.0), 3.1);
+        // An honest Y survives unchanged.
+        assert_eq!(collision_y(&cache, 1.5, 0.5, 1.5, 1.5, 0, 0.0), 0.0);
+    }
+
+    /// The exemption. Without it a climber is pulled down to the storey it is
+    /// keyed to and the tables under the stairs block it.
+    #[test]
+    fn a_climber_mid_flight_keeps_its_reported_height() {
+        let cache = two_storey_cache();
+        assert_eq!(collision_y(&cache, 0.5, 0.5, 0.5, 1.5, 0, 2.0), 2.0);
+        // Above the flight entirely: no flight to be on.
+        assert_eq!(collision_y(&cache, 0.5, 0.5, 0.5, 1.5, 0, 1000.0), 0.0);
+    }
+
+    #[test]
+    fn a_leg_crossing_no_floor_keeps_its_reported_height() {
+        let cache = two_storey_cache();
+        assert_eq!(collision_y(&cache, 50.0, 50.0, 51.0, 50.0, 0, 7.0), 7.0);
     }
 }
