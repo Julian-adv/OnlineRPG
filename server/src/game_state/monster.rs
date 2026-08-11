@@ -218,7 +218,13 @@ impl super::GameState {
             let budget = (monster.move_budget + run_speed * MONSTER_MOVE_SPEED_SLACK * elapsed_s)
                 .min(MONSTER_MOVE_BUDGET_CAP_METERS);
             monster.last_move_at = now;
-            let dist = monster.position.dist_xz_sq(&new_position).sqrt();
+            let dx = onlinerpg_shared::shortest_world_delta_x(monster.position.x, new_position.x);
+            let dy = new_position.y - monster.position.y;
+            let dz = new_position.z - monster.position.z;
+            // Run speed is ground-projected, so charge horizontal travel once
+            // and cap height changes independently. Euclidean distance would
+            // double-charge ordinary slopes that the terrain snap adds.
+            let dist = (dx * dx + dz * dz).sqrt().max(dy.abs());
             if dist > budget {
                 // Bank the refill so the budget keeps recovering, but don't
                 // spend it: the move stays where it was and isn't fanned out.
@@ -239,8 +245,7 @@ impl super::GameState {
                 let floor = super::passability::authoritative_floor(&cache, &monster.position);
                 // Sweep in unwrapped X so a seam-crossing move stays the short
                 // local segment `dist` measured.
-                let to_x = monster.position.x
-                    + onlinerpg_shared::shortest_world_delta_x(monster.position.x, new_position.x);
+                let to_x = monster.position.x + dx;
                 super::passability::wrapped_block_info(
                     &cache,
                     monster.position.x,

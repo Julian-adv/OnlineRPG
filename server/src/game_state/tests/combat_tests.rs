@@ -555,6 +555,92 @@ async fn client_monster_move_stores_canonical_world_x() {
     }
 }
 
+#[tokio::test]
+async fn client_monster_move_charges_vertical_displacement() {
+    let game_state = make_test_game_state("monster_move_vertical_budget");
+    let owner_id = pid("owner");
+    let observer_id = pid("observer");
+    let start = Position {
+        x: 1.0,
+        y: 0.0,
+        z: 1.0,
+    };
+
+    game_state.add_player(make_player("owner", 1.0, 1.0)).await;
+    game_state
+        .add_player(make_player("observer", 1.0, 1.0))
+        .await;
+    let mut owner_rx = game_state.register_direct_channel(&owner_id).await;
+    let mut observer_rx = game_state.register_direct_channel(&observer_id).await;
+
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let mut monster = make_monster("vertical_monster", start, 0);
+        monster.owner_id = Some(owner_id);
+        monster.move_budget = 1.0;
+        monster.last_move_at = GameState::now_ms();
+        monsters.insert(monster.id.clone(), monster);
+    }
+
+    let forged = Position { y: -40.0, ..start };
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "vertical_monster".to_string(),
+            forged,
+            0.0,
+            MonsterState::Run,
+            forged,
+        )
+        .await;
+
+    let after = game_state.monsters.read().await["vertical_monster"].clone();
+    assert_eq!(after.position, start);
+    assert!(after.move_budget >= 1.0, "a rejected move keeps its refill");
+    match owner_rx.try_recv() {
+        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, start),
+        other => panic!("a vertical teleport must correct its owner, got {other:?}"),
+    }
+    assert!(matches!(
+        observer_rx.try_recv(),
+        Err(MpscTryRecvError::Empty)
+    ));
+
+    {
+        let mut monsters = game_state.monsters.write().await;
+        let monster = monsters.get_mut("vertical_monster").unwrap();
+        monster.move_budget = 1.0;
+        monster.last_move_at = GameState::now_ms();
+    }
+    let legal = Position {
+        x: 1.25,
+        y: 0.9,
+        z: 1.0,
+    };
+    game_state
+        .update_monster_position(
+            &owner_id,
+            "vertical_monster".to_string(),
+            legal,
+            0.0,
+            MonsterState::Walk,
+            legal,
+        )
+        .await;
+
+    let after = game_state.monsters.read().await["vertical_monster"].clone();
+    assert_eq!(after.position, legal);
+    assert!(
+        after.move_budget < 0.5,
+        "a vertical-dominant move must spend its vertical displacement, got {}",
+        after.move_budget
+    );
+    match observer_rx.try_recv() {
+        Ok(ServerMessage::MonsterMoved { position, .. }) => assert_eq!(position, legal),
+        other => panic!("a bounded vertical move must fan out, got {other:?}"),
+    }
+}
+
 /// A client-owned monster is still untrusted movement. Staying within the
 /// speed bucket must not let its owner walk it through the same solid cell that
 /// blocks server-simulated player movement — while an equally long move that
