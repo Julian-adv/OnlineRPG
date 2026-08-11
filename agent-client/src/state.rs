@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
 use onlinerpg_shared::dungeon::{
-    dungeon_cache_key, floor_cells, floor_level_for_passability, passability_floor_for_level,
-    path_max_nodes, set_floor_cells,
+    cell_center, dungeon_cache_key, floor_cells, floor_level_for_passability,
+    passability_floor_for_level, path_max_nodes, set_floor_cells, world_to_cell,
 };
 use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
@@ -19,7 +19,44 @@ use rand::Rng;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 
+pub(crate) use onlinerpg_shared::messages::MUSIC_EMOTE;
+
 const MAX_EVENTS: usize = 200;
+/// Rolling window of conversation lines kept as prompt context. Stateless
+/// backends (one `codex exec` per prompt) see only this window, so it is
+/// the NPC's entire short-term memory of who said what.
+const MAX_CHAT_HISTORY: usize = 30;
+/// How many of our own recent song titles the world state lists, so a bard
+/// can favor tunes it has not played lately.
+const MAX_RECENT_SONGS: usize = 8;
+/// Accumulated favor a player can hold with this NPC, in either direction.
+const FAVOR_MIN: i32 = -5;
+const FAVOR_MAX: i32 = 5;
+/// Favor at which a player counts as a regular: resident traders bring up
+/// their wishlist, and keepsake offers, only around such players —
+/// strangers get small talk, not personal business.
+const TRADE_FAVOR_THRESHOLD: i32 = 3;
+
+/// Push onto a capped ring: the oldest entry falls off past `cap`.
+fn push_capped(q: &mut VecDeque<String>, item: String, cap: usize) {
+    q.push_back(item);
+    if q.len() > cap {
+        q.pop_front();
+    }
+}
+/// How far we may drift before our own performance counts as abandoned.
+const MUSIC_STAY_PUT_RADIUS: f32 = 1.5;
+/// Quiet spell between our own songs, so a busker is not one unbroken stream.
+/// The web client's playlist rests 0-60s between tracks; this is the same
+/// idea with a floor under it, since a performance is something people watch.
+const MUSIC_REST_MIN_SECS: u64 = 15;
+const MUSIC_REST_MAX_SECS: u64 = 45;
+/// How close to us an item has to land to be a tip for the music — forgiving,
+/// since a shy listener tosses their coins from the edge of the crowd.
+const TIP_RADIUS: f32 = 6.0;
+/// Cap on tips noticed per song, so a floor strewn with junk — dropped by
+/// someone bored or malicious — can't grow the prompt without bound.
+const MAX_TIPS_PER_SONG: usize = 5;
 /// Distance threshold for "player appeared nearby" agent events (in game units).
 const NEARBY_PLAYER_RADIUS: f32 = 10.0;
 /// How many ground items the world state lists before summarising the rest.
@@ -27,6 +64,9 @@ const MAX_LISTED_GROUND_ITEMS: usize = 10;
 /// Real-time cooldown on the wishlist prompt section after the NPC buys
 /// a wishlist item (see `trade_satiated_until`).
 const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// How long trade pushes (open_trade/offer_deal) at a player stay blocked
+/// after they wave off our trade window (`TradeDeclined`).
+const TRADE_DECLINE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// Cap on remembered party invites, matching the web client's toast queue.
 const MAX_PENDING_PARTY_INVITES: usize = 3;
 /// From the shared crate so the server's invite TTL and the agent's pruning
@@ -36,6 +76,61 @@ use onlinerpg_shared::messages::{PARTY_INVITE_TTL, PARTY_SUMMON_TTL};
 /// matters. Re-exported from the shared crate so the server's event-delivery
 /// radius and the agent's perception radius are guaranteed equal.
 pub(crate) use onlinerpg_shared::NPC_SIGHT_RADIUS;
+
+/// Eight-way compass word for an offset from the player. North is -z, east
+/// is +x; the diagonal band covers ±22.5° around each diagonal.
+fn compass(dx: f32, dz: f32) -> &'static str {
+    let ns = if dz < 0.0 { "north" } else { "south" };
+    let ew = if dx < 0.0 { "west" } else { "east" };
+    let (adx, adz) = (dx.abs(), dz.abs());
+    // tan(67.5°) ≈ 2.414: beyond that the offset reads as a straight
+    // cardinal, inside it as a diagonal.
+    if adz > 2.414 * adx {
+        ns
+    } else if adx > 2.414 * adz {
+        ew
+    } else {
+        match (dz < 0.0, dx < 0.0) {
+            (true, false) => "northeast",
+            (true, true) => "northwest",
+            (false, false) => "southeast",
+            (false, true) => "southwest",
+        }
+    }
+}
+
+/// Terrain-grid glyph for a cell's surface. Sea reads from the heightmap
+/// (below sea level 0), rivers from the splat's river-bed palette entry.
+fn ground_char(surface: Option<u8>, height: Option<f32>) -> char {
+    if height.is_some_and(|h| h < 0.0) {
+        return '~';
+    }
+    match surface {
+        Some(crate::splat::PAL_RIVER_BED) => '~',
+        Some(crate::splat::PAL_CLIFF) => '^',
+        Some(crate::splat::PAL_ROAD | crate::splat::PAL_STONE_PATH | crate::splat::PAL_PAVING) => {
+            'R'
+        }
+        Some(crate::splat::PAL_SAND) => 's',
+        Some(crate::splat::PAL_SNOW) => '*',
+        _ => '.',
+    }
+}
+
+/// Surface-map geometry, derived from the sight radius so the grid always
+/// spans exactly what the agent can perceive.
+const GRID_CELL_M: f32 = 3.0;
+const GRID_CELLS: i32 = (NPC_SIGHT_RADIUS / GRID_CELL_M) as i32 * 2 + 1;
+const GRID_HALF: i32 = GRID_CELLS / 2;
+
+/// Stamp an entity glyph on the terrain grid if its position falls inside.
+fn overlay(grid: &mut [Vec<char>], px: f32, pz: f32, x: f32, z: f32, glyph: char) {
+    let c = ((x - px) / GRID_CELL_M).round() as i32 + GRID_HALF;
+    let r = ((z - pz) / GRID_CELL_M).round() as i32 + GRID_HALF;
+    if (0..GRID_CELLS).contains(&r) && (0..GRID_CELLS).contains(&c) {
+        grid[r as usize][c as usize] = glyph;
+    }
+}
 
 /// A party invite the agent hasn't answered yet.
 pub struct PendingPartyInvite {
@@ -73,8 +168,9 @@ pub enum CarriedBagCopies {
     WornOnly { def_id: String },
 }
 
-/// How urgently an event needs LLM attention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How urgently an event needs LLM attention. Ordered most urgent first, so
+/// `min` picks the one that decides a batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EventUrgency {
     /// Must be processed immediately (combat damage to self, death, direct chat, kicked)
     Urgent,
@@ -147,6 +243,11 @@ impl WorldCache {
 
     pub fn dungeon_by_id(&self, id: &str) -> Option<Arc<Dungeon>> {
         self.dungeons.iter().find(|d| d.id == id).map(Arc::clone)
+    }
+
+    /// Every registered dungeon — the watch panel draws their entrances.
+    pub fn all_dungeons(&self) -> &[Arc<Dungeon>] {
+        &self.dungeons
     }
 
     pub fn open_dungeon_doors(&self, id: &str, depth: u8) -> HashSet<u32> {
@@ -316,22 +417,35 @@ impl WorldCache {
         segment_index: usize,
         is_open: bool,
     ) {
-        if let Some(house) = self.houses.get(house_id) {
-            if let Some(room) = house.rooms.get(room_index as usize) {
-                pathfinding::update_door_edge(
-                    &mut self.passability_cache,
-                    house_id,
-                    room,
-                    wall_dir,
-                    segment_index,
-                    is_open,
-                );
+        if let Some(house) = self.houses.get_mut(house_id) {
+            if let Some(room) = house.rooms.get_mut(room_index as usize) {
+                // The wall is the source of truth (door hunting reads
+                // `is_open` off it); the edge is derived from it.
+                if let Some(wall) = room.wall_mut(wall_dir).get_mut(segment_index) {
+                    wall.is_open = is_open;
+                    pathfinding::update_door_edge(
+                        &mut self.passability_cache,
+                        house_id,
+                        room,
+                        wall_dir,
+                        segment_index,
+                        is_open,
+                    );
+                }
             }
         }
     }
 }
 
 /// Shared state between WebSocket reader and Claude driver tasks.
+/// Our own `/play_music` performance in flight. We have no audio to end it
+/// for us, so the track's length from the registry is the clock, and walking
+/// off the starting spot abandons it — as it does for a human player.
+struct SelfPerformance {
+    ends_at: std::time::Instant,
+    from: Position,
+}
+
 pub struct SharedState {
     pub characters: Vec<Character>,
     pub in_game: bool,
@@ -347,6 +461,8 @@ pub struct SharedState {
     pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState, bool)>,
     /// Burning campfires in our AOI, for the grill-your-catch decision.
     pub campfires: HashMap<u64, onlinerpg_shared::hunger::Campfire>,
+    /// Laid-out stalls in our AOI, so a merchant knows its own is out.
+    pub stalls: HashMap<u64, onlinerpg_shared::stall::Stall>,
     /// Our own bag (from InventoryState/InventoryUpdated), so a trading
     /// NPC knows what it carries.
     pub self_bag: Vec<onlinerpg_shared::inventory::ItemInstance>,
@@ -361,6 +477,9 @@ pub struct SharedState {
     /// `TradeBusy`). We stay put and keep serving them — the LLM's movement
     /// actions are suppressed — until the trade ends.
     pub trade_busy: bool,
+    /// Until when trade pushes at each player stay blocked after they waved
+    /// off our trade window (`TradeDeclined` → `TRADE_DECLINE_COOLDOWN`).
+    trade_declined_until: HashMap<PlayerId, std::time::Instant>,
     /// True between our own FishingCasted and FishingEnded. Suppresses LLM
     /// movement (like `trade_busy`) and adds a stay-put prompt line;
     /// `stop_fishing` stays the deliberate exit.
@@ -388,7 +507,24 @@ pub struct SharedState {
     /// Items lying on the ground, keyed by instance id (from the join
     /// snapshot plus GroundItemSpawned/Appeared/Removed).
     ground_items: HashMap<u64, GroundItem>,
+    /// Whether this agent busks, from `NpcConfig::plays_music` — the same
+    /// gate that put the songbook and tip rules into its prompt, so it is
+    /// never instructed about tips it will not receive.
+    pub plays_music: bool,
+    /// Def ids this NPC could offer as keepsakes (`NpcRow::
+    /// offerable_keepsake_ids`) — what `take_up_instrument` keeps out of
+    /// its hands, since an offer only reaches items in the bag.
+    pub keepsake_ids: Vec<String>,
     events: Vec<ServerMessage>,
+    /// Conversation lines already shown to (or heard while asleep by) the
+    /// LLM, kept as the RECENT CONVERSATION prompt section (`MAX_CHAT_HISTORY`).
+    chat_history: VecDeque<String>,
+    /// Titles of our own recent performances, oldest first (`MAX_RECENT_SONGS`).
+    recent_songs: VecDeque<String>,
+    /// Accumulated per-player favor, keyed by canonical display name. Fed by
+    /// the LLM's `favor` response field, clamped to FAVOR_MIN..=FAVOR_MAX,
+    /// persisted to the NPC's favor file. Gates keepsake offers structurally.
+    pub favor: BTreeMap<String, i32>,
     /// Latest position per monster -- deduplicates high-frequency MonsterMoved events
     latest_monster_moves: HashMap<String, ServerMessage>,
     /// Latest position per player -- deduplicates high-frequency PlayerMoved events
@@ -397,10 +533,30 @@ pub struct SharedState {
     latest_time: Option<ServerMessage>,
     /// Players we've already seen within NEARBY_PLAYER_RADIUS -- prevents duplicate events
     seen_nearby_players: HashSet<PlayerId>,
+    /// Who is playing what right now, so the end of a tune is an event too.
+    music_performers: HashMap<PlayerId, String>,
+    /// Our own running performance (`check_music_finished` is its clock).
+    self_performance: Option<SelfPerformance>,
+    /// Until when the square stays quiet after our own song (`MUSIC_REST_*`).
+    self_music_rest_until: Option<std::time::Instant>,
+    /// Tips left while we were still playing, as (instance id, event line).
+    /// Held until the song ends: the thanks belong in the quiet spell, and
+    /// walking over mid-song would abandon the performance.
+    pending_tips: Vec<(u64, String)>,
+    /// Tips noticed since the current song started (`MAX_TIPS_PER_SONG`).
+    tips_noticed: usize,
+    /// An invented song title already woke the driver; the next one waits for
+    /// the ordinary prompt, so a model that keeps guessing cannot spin.
+    bad_song_title_refused: bool,
+    /// POIs currently inside NPC_SIGHT_RADIUS (monsters, loot, dungeon
+    /// entrances), keyed by a typed id. Entry fires a [Sighted] event so the
+    /// LLM reacts mid-walk instead of at the next scheduled turn.
+    sighted_pois: HashSet<String>,
     /// Synthetic agent-side events (e.g. "player appeared nearby")
     agent_events: Vec<String>,
     /// Terrain height sampler (shared across NPC connections)
     pub height_sampler: Arc<HeightSampler>,
+    pub splat_sampler: Arc<crate::splat::SplatSampler>,
     /// Shared world cache: passability + houses (shared across NPC connections)
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     /// Current game time: is_night flag from server
@@ -438,6 +594,11 @@ pub struct SharedState {
     no_spawn_zones: Vec<NoSpawnZone>,
     /// Spectator panel handle; feeds it chat/combat/system lines
     watch: Option<Arc<crate::watch::NpcWatch>>,
+    /// Running follow loop: (target name, task handle). Anything that takes
+    /// the body over aborts it; losing the target ends it with an event.
+    pub follow_task: Option<(String, tokio::task::JoinHandle<()>)>,
+    /// Most urgent reason the driver has been woken for since it last looked.
+    wake_urgency: EventUrgency,
 }
 
 impl SharedState {
@@ -445,6 +606,7 @@ impl SharedState {
         characters: Vec<Character>,
         cmd_tx: mpsc::Sender<ClientMessage>,
         height_sampler: Arc<HeightSampler>,
+        splat_sampler: Arc<crate::splat::SplatSampler>,
         world_cache: Arc<std::sync::RwLock<WorldCache>>,
         watch: Option<Arc<crate::watch::NpcWatch>>,
     ) -> Self {
@@ -456,10 +618,12 @@ impl SharedState {
             self_gold: None,
             self_hunger: None,
             campfires: HashMap::new(),
+            stalls: HashMap::new(),
             self_bag: Vec::new(),
             self_equipped: HashMap::new(),
             trade_satiated_until: None,
             trade_busy: false,
+            trade_declined_until: HashMap::new(),
             self_fishing: false,
             fishing_stance: None,
             pending_party_invites: Vec::new(),
@@ -470,13 +634,26 @@ impl SharedState {
             merchant_buyback: HashMap::new(),
             nearby_monsters: HashMap::new(),
             ground_items: HashMap::new(),
+            plays_music: false,
+            keepsake_ids: Vec::new(),
             events: Vec::new(),
+            chat_history: VecDeque::new(),
+            recent_songs: VecDeque::new(),
+            favor: BTreeMap::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
             latest_time: None,
             seen_nearby_players: HashSet::new(),
+            music_performers: HashMap::new(),
+            self_performance: None,
+            self_music_rest_until: None,
+            pending_tips: Vec::new(),
+            tips_noticed: 0,
+            bad_song_title_refused: false,
+            sighted_pois: HashSet::new(),
             agent_events: Vec::new(),
             height_sampler,
+            splat_sampler,
             world_cache,
             is_night: None,
             game_hour: None,
@@ -491,27 +668,59 @@ impl SharedState {
             pending_commands: Vec::new(),
             no_spawn_zones: Vec::new(),
             watch,
+            follow_task: None,
+            wake_urgency: EventUrgency::Noise,
         }
+    }
+
+    /// Abort a running follow loop, if any. Returns the name that was being
+    /// followed. A loop that already ended left its own note, so it does not
+    /// count as cancelled.
+    pub fn cancel_follow(&mut self) -> Option<String> {
+        let (name, handle) = self.follow_task.take()?;
+        if handle.is_finished() {
+            return None;
+        }
+        handle.abort();
+        Some(name)
+    }
+
+    /// Characters on our own floor. Someone a floor above is a dot straight
+    /// overhead, not a neighbour, so nothing the LLM sees or names should
+    /// reach them.
+    fn players_on_my_floor(&self) -> impl Iterator<Item = (&PlayerId, &Player)> {
+        self.nearby_players
+            .iter()
+            .filter(|(_, p)| p.floor_level == self.self_floor_level)
+    }
+
+    /// Monsters on our own floor — cross-floor ones read to the LLM as
+    /// phantom respawns.
+    fn monsters_on_my_floor(&self) -> impl Iterator<Item = &Monster> {
+        self.nearby_monsters
+            .values()
+            .filter(|m| m.floor_level == self.self_floor_level)
     }
 
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
     pub fn has_nearby_human_players(&self) -> bool {
-        let Some(self_player) = self.self_player.as_ref() else {
-            return false;
-        };
+        self.nearby_human_players().next().is_some()
+    }
+
+    /// Human players on our floor, within sight, excluding ourselves.
+    fn nearby_human_players(&self) -> impl Iterator<Item = (&PlayerId, &Player)> {
+        let self_pos = self.self_player.as_ref().map(|p| p.position);
         let self_id = self.self_player_id.as_ref();
         let radius_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
-
-        self.nearby_players.iter().any(|(id, p)| {
-            if self_id == Some(id) || p.is_official_npc {
-                return false;
-            }
-            p.position.dist_xz_sq(&self_player.position) <= radius_sq
+        self.players_on_my_floor().filter(move |(id, p)| {
+            self_id != Some(*id)
+                && !p.is_official_npc
+                && self_pos.is_some_and(|sp| p.position.dist_xz_sq(&sp) <= radius_sq)
         })
     }
 
-    /// Check all nearby players and emit an agent event for any player
-    /// that just entered NEARBY_PLAYER_RADIUS for the first time.
+    /// Emit an agent event for any player on our floor that just entered
+    /// NEARBY_PLAYER_RADIUS for the first time.
     fn check_nearby_player_proximity(&mut self) {
         let self_pos = match self.self_player.as_ref() {
             Some(p) => &p.position,
@@ -522,28 +731,340 @@ impl SharedState {
             None => return,
         };
 
-        for (pid, player) in &self.nearby_players {
-            if pid == self_id {
+        let arrived: Vec<(PlayerId, String)> = self
+            .players_on_my_floor()
+            .filter(|(pid, _)| *pid != self_id && !self.seen_nearby_players.contains(pid))
+            .filter_map(|(pid, player)| {
+                let dist = crate::geom::PlanarDelta::between(&player.position, self_pos).dist;
+                (dist <= NEARBY_PLAYER_RADIUS).then(|| {
+                    (
+                        *pid,
+                        format!(
+                            "[PlayerNearby] {} Lv.{} appeared {:.1}m away at ({:.1}, {:.1}, {:.1})",
+                            player.name,
+                            player.level,
+                            dist,
+                            player.position.x,
+                            player.position.y,
+                            player.position.z
+                        ),
+                    )
+                })
+            })
+            .collect();
+
+        for (pid, event) in arrived {
+            self.seen_nearby_players.insert(pid);
+            self.agent_events.push(event);
+            // A person arriving, not our own bookkeeping — urgent lane.
+            self.wake(EventUrgency::Urgent);
+        }
+    }
+
+    /// A tune ended: say so, since the agent heard it start. Silent for
+    /// anyone who was not playing.
+    fn finish_music(&mut self, player_id: &PlayerId) {
+        let Some(track) = self.music_performers.remove(player_id) else {
+            return;
+        };
+        let is_self = self.self_player_id.as_ref() == Some(player_id);
+        let who = if is_self {
+            self.self_performance = None;
+            let rest = rand::thread_rng().gen_range(MUSIC_REST_MIN_SECS..=MUSIC_REST_MAX_SECS);
+            self.self_music_rest_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_secs(rest));
+            // The break gets its own allowance: the last song of the evening
+            // must not leave the counter stuck with no next song to reset it.
+            self.tips_noticed = 0;
+            "You".to_string()
+        } else {
+            self.player_display_name(player_id)
+        };
+        let line = format!("[PlayMusic] {who} finished \"{track}\".");
+        if is_self {
+            // No wake yet: the rest ending is what invites the next song, and
+            // waking now would only draw a command we would have to refuse.
+            self.agent_events.push(line);
+            // Tips are the exception — the quiet spell is when they get
+            // thanked and picked up, and nothing else wakes us before it ends.
+            for (_, tip) in std::mem::take(&mut self.pending_tips) {
+                self.push_agent_event(tip);
+            }
+        } else {
+            self.push_agent_event(line);
+        }
+    }
+
+    /// A name the agent can say out loud, never a raw id: someone who acted
+    /// and then walked out of sight is just "Someone".
+    fn visible_name(&self, player_id: &PlayerId) -> String {
+        self.nearby_players
+            .get(player_id)
+            .map_or_else(|| "Someone".to_string(), |p| p.name.clone())
+    }
+
+    /// Someone took an item a player had put down — a tip snatched, or a
+    /// gift collected again. Ordinary loot churn stays silent: the world
+    /// state already lists what lies about, and a hunting ground would file
+    /// a line for every corpse otherwise.
+    fn note_pickup(&mut self, item: &GroundItem, picker: &PlayerId) {
+        let line = format!(
+            "[GroundItem] {} picked up {} [id {}].",
+            self.visible_name(picker),
+            item.item_def_id,
+            item.instance_id
+        );
+        // Mid-song this is not worth an LLM turn; it rides along with the
+        // next prompt, which the end of the song brings soon enough.
+        if self.self_performance.is_some() {
+            self.agent_events.push(line);
+        } else {
+            self.push_agent_event(line);
+        }
+    }
+
+    /// Someone left something at the busker's feet. Announced at once when we
+    /// are between songs; held for the end of the song while we are playing.
+    /// Only a busker is tipped — a guard's kill drops and a merchant's
+    /// neighbours stay ordinary loot — and not while the schedule holds us
+    /// in a pose: walking over from a bed would drop it with nothing to
+    /// restore it until morning.
+    fn note_tip(&mut self, item: &GroundItem) {
+        let Some(dropper) = item
+            .dropped_by
+            .filter(|id| self.self_player_id != Some(*id))
+        else {
+            return;
+        };
+        let Some(me) = self.self_player.as_ref() else {
+            return;
+        };
+        let posing = me
+            .object_type
+            .as_deref()
+            .is_some_and(|held| held != MUSIC_EMOTE);
+        if !self.plays_music
+            || posing
+            || item.floor_level != self.self_floor_level
+            || self.tips_noticed >= MAX_TIPS_PER_SONG
+            || item.position.dist_xz_sq(&me.position) > TIP_RADIUS * TIP_RADIUS
+        {
+            return;
+        }
+        let note = format!(
+            "[Tip] {} left {} at your feet [id {}].",
+            self.visible_name(&dropper),
+            item.item_def_id,
+            item.instance_id
+        );
+        self.tips_noticed += 1;
+        if self.self_performance.is_some() {
+            self.pending_tips.push((item.instance_id, note));
+        } else {
+            self.push_agent_event(note);
+        }
+    }
+
+    /// Drop a `/play_music` the agent typed for a song that does not exist, or
+    /// while its own tune is still running, or during the quiet spell after it:
+    /// a second command restarts the music for every listener, and the LLM is
+    /// not patient enough to wait on its own. A timing refusal does not wake the
+    /// driver — the end of the rest does that, and waking here would only invite
+    /// another attempt. A made-up title does wake it, once: the bard has already
+    /// announced the song to the square, and nothing else would prompt it to
+    /// take that back before the idle interval, an hour later.
+    pub fn refuses_play_command(&mut self, message: &str) -> bool {
+        // The same parser the server runs on the other end of this command.
+        let Some(query) = onlinerpg_shared::messages::strip_command(message, "/play_music") else {
+            return false;
+        };
+        // An empty query is the server's random pick, and always resolves.
+        let query = query.trim();
+        if !query.is_empty() && !crate::bgm_defs::knows(query) {
+            self.push_agent_event(format!(
+                "[PlayMusic] Ignored — there is no song called \"{query}\" in your songbook. \
+                 Use a title exactly as the songbook writes it. If you already announced this \
+                 one, tell them you had the name wrong and offer a song you do know."
+            ));
+            if !self.bad_song_title_refused {
+                self.bad_song_title_refused = true;
+                self.wake(EventUrgency::Urgent);
+            }
+            return true;
+        }
+        let now = std::time::Instant::now();
+        let resting = self
+            .self_player
+            .as_ref()
+            .and_then(|me| me.object_type.as_deref())
+            .filter(|held| *held != MUSIC_EMOTE);
+        let why = if let Some(held) = resting {
+            // Playing would replace the pose the schedule put us in, and
+            // nothing would put us back until the next schedule entry.
+            format!("you are using the {held} and would have to get up first")
+        } else if let Some(perf) = &self.self_performance {
+            format!(
+                "you are still playing, with about {}s to go",
+                perf.ends_at.saturating_duration_since(now).as_secs()
+            )
+        } else if let Some(rest_until) = self.self_music_rest_until {
+            format!(
+                "the square is quiet between songs for another {}s",
+                rest_until.saturating_duration_since(now).as_secs()
+            )
+        } else {
+            return false;
+        };
+        self.agent_events.push(format!(
+            "[PlayMusic] Ignored — {why}. One song at a time; wait for the note \
+             that says you can start another. If you already announced the \
+             title, tell them it is coming rather than leaving the promise \
+             hanging."
+        ));
+        true
+    }
+
+    /// Stop strumming once the track we started has run its length, and invite
+    /// the next song when the quiet spell after it is over. The web client
+    /// ends a performance when its audio ends and rests before the next track;
+    /// we have no audio, so this tick is our equivalent — without it an NPC
+    /// bard plays one tune forever, or one unbroken stream of them.
+    pub fn check_music_finished(&mut self) {
+        if let Some(rest_until) = self.self_music_rest_until {
+            if std::time::Instant::now() >= rest_until {
+                self.self_music_rest_until = None;
+                self.push_agent_event(
+                    "[PlayMusic] The square is quiet again — time for another song.".to_string(),
+                );
+            }
+        }
+
+        let Some(perf) = &self.self_performance else {
+            return;
+        };
+        let walked_off = self.self_player.as_ref().is_some_and(|me| {
+            perf.from.dist_xz_sq(&me.position) > MUSIC_STAY_PUT_RADIUS * MUSIC_STAY_PUT_RADIUS
+        });
+        if !walked_off && std::time::Instant::now() < perf.ends_at {
+            return;
+        }
+        self.self_performance = None;
+        self.pending_commands.push(ClientMessage::StopInteraction);
+    }
+
+    /// Emit a [Sighted] event when any point of interest — a monster, dropped
+    /// loot, a dungeon entrance — enters NPC_SIGHT_RADIUS on our floor, and
+    /// forget it once it drifts well past the edge so a re-entry announces
+    /// again. Without this the agent walks straight past everything between
+    /// scheduled turns. Only an aggressive monster wakes the driver; the rest
+    /// ride to the next prompt so a long walk isn't cut every few metres.
+    fn check_sightings(&mut self) {
+        let (self_pos, self_floor) = match self.self_player.as_ref() {
+            Some(p) => (p.position, self.self_floor_level),
+            None => return,
+        };
+
+        // (typed key, description, wakes_driver)
+        let mut newly: Vec<(String, String, bool)> = Vec::new();
+        // Keys still close enough to stay "seen" — a wider ring than the entry
+        // radius so a POI hovering at the edge doesn't announce every tick.
+        let mut nearby: HashSet<String> = HashSet::new();
+        let forget_radius = NPC_SIGHT_RADIUS + 5.0;
+        let sighted = &self.sighted_pois;
+        // Ring bookkeeping shared by every POI kind; hands the key back only
+        // when the POI just entered sight.
+        let mut track = |key: String, dist: f32| -> Option<String> {
+            let new = dist <= NPC_SIGHT_RADIUS && !sighted.contains(&key);
+            if dist <= forget_radius {
+                nearby.insert(key.clone());
+            }
+            new.then_some(key)
+        };
+
+        // Only aggressive monsters get a sighting event: they are the ones
+        // worth waking the driver for, and CURRENT STATE already lists every
+        // monster in sight — one event line per grazing mob would flood the
+        // prompt in a dense spawn field.
+        for (id, m) in &self.nearby_monsters {
+            if m.floor_level != self_floor || m.state == MonsterState::Dead || !m.aggressive {
                 continue;
             }
-            if self.seen_nearby_players.contains(pid) {
-                continue;
-            }
-            let dx = player.position.x - self_pos.x;
-            let dz = player.position.z - self_pos.z;
-            let dist = (dx * dx + dz * dz).sqrt();
-            if dist <= NEARBY_PLAYER_RADIUS {
-                self.seen_nearby_players.insert(*pid);
-                self.agent_events.push(format!(
-                    "[PlayerNearby] {} Lv.{} appeared {:.1}m away at ({:.1}, {:.1}, {:.1})",
-                    player.name,
-                    player.level,
-                    dist,
-                    player.position.x,
-                    player.position.y,
-                    player.position.z
+            let d = crate::geom::PlanarDelta::to_xz(&self_pos, m.position.x, m.position.z);
+            if let Some(key) = track(format!("m:{id}"), d.dist) {
+                newly.push((
+                    key,
+                    format!(
+                        "[Sighted] {} [{id}] HP {}/{} — at ({:.0}, {:.0}), {:.0}m {}.",
+                        m.monster_type,
+                        m.health,
+                        m.max_health,
+                        m.position.x,
+                        m.position.z,
+                        d.dist,
+                        compass(d.dx, d.dz),
+                    ),
+                    true,
                 ));
-                self.urgent_notify.notify_one();
+            }
+        }
+
+        for (iid, item) in &self.ground_items {
+            if item.floor_level != self_floor {
+                continue;
+            }
+            // Our own drop: we put it there, announcing it is pure noise.
+            if self.self_player_id.is_some() && item.dropped_by == self.self_player_id {
+                continue;
+            }
+            let d = crate::geom::PlanarDelta::to_xz(&self_pos, item.position.x, item.position.z);
+            if let Some(key) = track(format!("i:{iid}"), d.dist) {
+                newly.push((
+                    key,
+                    format!(
+                        "[Sighted] loot on the ground: {} [id {iid}] — at ({:.0}, {:.0}), {:.0}m {}.",
+                        item.item_def_id,
+                        item.position.x,
+                        item.position.z,
+                        d.dist,
+                        compass(d.dx, d.dz),
+                    ),
+                    false,
+                ));
+            }
+        }
+
+        // Dungeon entrances only matter above ground.
+        if self_floor >= 0 {
+            let wc = self.world_cache.read().unwrap();
+            for dg in wc.all_dungeons() {
+                let d = crate::geom::PlanarDelta::to_xz(&self_pos, dg.entrance.x, dg.entrance.z);
+                if let Some(key) = track(format!("d:{}", dg.name), d.dist) {
+                    newly.push((
+                        key,
+                        format!(
+                            "[Sighted] {} entrance ({} floors) — at ({:.0}, {:.0}), {:.0}m {}.",
+                            dg.name,
+                            dg.max_depth(),
+                            dg.entrance.x,
+                            dg.entrance.z,
+                            d.dist,
+                            compass(d.dx, d.dz)
+                        ),
+                        false,
+                    ));
+                }
+            }
+        }
+
+        // Drop anything now well outside sight, so a re-entry announces again.
+        self.sighted_pois.retain(|k| nearby.contains(k));
+
+        for (key, note, wake) in newly {
+            self.sighted_pois.insert(key);
+            if wake {
+                self.push_agent_event(note);
+            } else {
+                self.push_agent_event_quiet(note);
             }
         }
     }
@@ -582,6 +1103,46 @@ impl SharedState {
             .push(ClientMessage::RequestDungeonDoors {
                 entrance_id: dungeon.id.clone(),
             });
+    }
+
+    /// A busker plays on a workhorse instrument — never the starter sword,
+    /// and never an offerable keepsake: those stay in the bag, the only
+    /// place `shop_info::keepsake_section` offers from. On the join
+    /// snapshot, anything else in the main hand is swapped for the cheapest
+    /// workhorse. Snapshot-only: what to hold mid-session (a fishing rod,
+    /// say) stays the agent's own choice.
+    fn take_up_instrument(&mut self) {
+        if !self.plays_music {
+            return;
+        }
+        let keepsakes = &self.keepsake_ids;
+        let workhorse_instr = |i: &onlinerpg_shared::inventory::ItemInstance| {
+            crate::item_defs::get(&i.item_def_id).is_some_and(|d| d.is_instrument())
+                && !keepsakes.contains(&i.item_def_id)
+        };
+        let price = |i: &onlinerpg_shared::inventory::ItemInstance| {
+            crate::item_defs::get(&i.item_def_id)
+                .and_then(|d| d.base_price)
+                .unwrap_or(0)
+        };
+        let Some(workhorse) = self
+            .self_bag
+            .iter()
+            .filter(|i| workhorse_instr(i))
+            .min_by_key(|i| price(i))
+        else {
+            return;
+        };
+        let held_is_workhorse = self
+            .self_equipped
+            .get(&onlinerpg_shared::inventory::EquipSlot::MainHand)
+            .is_some_and(|i| workhorse_instr(i) && price(i) <= price(workhorse));
+        if held_is_workhorse {
+            return;
+        }
+        let instance_id = workhorse.instance_id;
+        self.pending_commands
+            .push(ClientMessage::EquipItem { instance_id });
     }
 
     /// Dungeon whose footprint covers our position, if any.
@@ -639,7 +1200,7 @@ impl SharedState {
             .map(|p| p.position.y)
             .unwrap_or(0.0);
         let (position, floor_level) = self.step_pose(x, z, floor, current_y);
-        self.self_floor_level = floor_level;
+        self.adopt_floor_level(floor_level);
         self.send_command(ClientMessage::player_move(position, rotation, floor_level))
             .await
     }
@@ -818,6 +1379,37 @@ impl SharedState {
         self.latest_player_moves.remove(player_id);
     }
 
+    /// Adopt a floor change. Leaving a floor purges the monsters collected
+    /// there — the same rule as the web client's removeMonstersNotOnFloor():
+    /// the server delivers MonsterDead/MonsterRemoved filtered to the
+    /// monster's floor, so entries from a floor we left can only go stale
+    /// ("ghost" monsters whose ids no longer exist server-side).
+    pub(crate) fn adopt_floor_level(&mut self, floor_level: i8) {
+        if floor_level != self.self_floor_level {
+            let stale: Vec<String> = self
+                .nearby_monsters
+                .values()
+                .filter(|m| m.floor_level != floor_level)
+                .map(|m| m.id.clone())
+                .collect();
+            for id in &stale {
+                self.forget_monster(id);
+            }
+        }
+        self.self_floor_level = floor_level;
+    }
+
+    /// Drop every trace of a monster: the entry itself, its AI mirror, its
+    /// move-dedup slot, and its sighting so a reappearance announces again.
+    /// The single recipe for all removal paths — a new shadow collection
+    /// belongs here, not in each caller.
+    fn forget_monster(&mut self, id: &str) {
+        self.nearby_monsters.remove(id);
+        self.monster_ai.remove_monster(id);
+        self.latest_monster_moves.remove(id);
+        self.sighted_pois.remove(&format!("m:{id}"));
+    }
+
     /// The server put us somewhere we did not walk to — a refused step, a
     /// return scroll, a respawn. Adopting the pose is not enough: the mover
     /// watches `position_corrections` to drop the path it was walking.
@@ -827,7 +1419,7 @@ impl SharedState {
             p.rotation = rotation;
             p.floor_level = floor_level;
         }
-        self.self_floor_level = floor_level;
+        self.adopt_floor_level(floor_level);
         self.position_corrections = self.position_corrections.wrapping_add(1);
         if let Some(id) = self.self_player_id {
             self.latest_player_moves.remove(&id);
@@ -964,6 +1556,7 @@ impl SharedState {
             | ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
             | ServerMessage::GroundItemRemoved { .. }
+            | ServerMessage::GroundItemQuantityChanged { .. }
             | ServerMessage::TradeBusy { .. } => EventUrgency::Noise,
 
             // Urgent: another player attacks a monster (so we can join in)
@@ -1047,6 +1640,9 @@ impl SharedState {
             ServerMessage::CampfireSpawned { .. }
             | ServerMessage::CampfireAppeared { .. }
             | ServerMessage::CampfireRemoved { .. }
+            | ServerMessage::StallPlaced { .. }
+            | ServerMessage::StallAppeared { .. }
+            | ServerMessage::StallRemoved { .. }
             | ServerMessage::GrillStarted => EventUrgency::Noise,
 
             // Auth/character events: routine (handled before game entry)
@@ -1099,7 +1695,7 @@ impl SharedState {
                 self.self_fishing = false;
                 // A character saved underground rejoins there (the server
                 // rehydrates it), so adopt the floor instead of assuming 0.
-                self.self_floor_level = player.floor_level;
+                self.adopt_floor_level(player.floor_level);
                 self.request_dungeon_doors_here();
             }
             ServerMessage::PositionCorrected {
@@ -1237,6 +1833,7 @@ impl SharedState {
                 monsters,
                 ground_items,
                 campfires,
+                stalls,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
@@ -1247,6 +1844,10 @@ impl SharedState {
                 self.campfires.clear();
                 for campfire in campfires {
                     self.campfires.insert(campfire.id, campfire.clone());
+                }
+                self.stalls.clear();
+                for stall in stalls {
+                    self.stalls.insert(stall.id, stall.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -1287,6 +1888,44 @@ impl SharedState {
             | ServerMessage::PlayerDisappeared { player_id } => {
                 self.nearby_players.remove(player_id);
                 self.seen_nearby_players.remove(player_id);
+                // Out of earshot: the tune is gone, and [PlayerLeft] already
+                // says why — no second line about it.
+                self.music_performers.remove(player_id);
+            }
+            ServerMessage::PlayerMusicStarted {
+                player_id, track, ..
+            } => {
+                self.music_performers.insert(*player_id, track.clone());
+                if self.self_player_id.as_ref() == Some(player_id) {
+                    self.bad_song_title_refused = false;
+                    self.tips_noticed = 0;
+                    push_capped(&mut self.recent_songs, track.clone(), MAX_RECENT_SONGS);
+                    self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
+                        ends_at: std::time::Instant::now() + crate::bgm_defs::duration(track),
+                        from: me.position,
+                    });
+                }
+            }
+            ServerMessage::TradeDeclined { player_id, .. } => {
+                // Prune on insert so the map cannot grow one dead entry per
+                // decliner over a long session.
+                let now = std::time::Instant::now();
+                self.trade_declined_until.retain(|_, until| now < *until);
+                self.trade_declined_until
+                    .insert(*player_id, now + TRADE_DECLINE_COOLDOWN);
+            }
+            ServerMessage::PlayerInteractionChanged {
+                player_id,
+                object_type,
+            } => {
+                if self.self_player_id.as_ref() == Some(player_id) {
+                    if let Some(me) = self.self_player.as_mut() {
+                        me.object_type = object_type.clone();
+                    }
+                }
+                if object_type.as_deref() != Some(MUSIC_EMOTE) {
+                    self.finish_music(player_id);
+                }
             }
             ServerMessage::MonsterSpawned { monster } => {
                 self.nearby_monsters
@@ -1317,15 +1956,49 @@ impl SharedState {
                 self.monster_ai.handle_monster_dead(monster_id);
             }
             ServerMessage::MonsterRemoved { monster_id } => {
-                self.nearby_monsters.remove(monster_id);
-                self.monster_ai.remove_monster(monster_id);
+                self.forget_monster(monster_id);
             }
-            ServerMessage::GroundItemSpawned { item }
-            | ServerMessage::GroundItemAppeared { item } => {
+            // The server just said this monster does not exist: its
+            // MonsterDead/MonsterRemoved never reached us. Silently drop the
+            // ghost — the [AttackRejected] event already tells the agent the
+            // swing failed, and the next CURRENT STATE no longer lists it.
+            ServerMessage::PlayerAttackRejected {
+                monster_id,
+                reason: onlinerpg_shared::AttackRejectReason::InvalidTarget,
+            } => {
+                self.forget_monster(monster_id);
+            }
+
+            ServerMessage::GroundItemSpawned { item } => {
+                self.note_tip(item);
                 self.remember_ground_item(item.clone());
             }
-            ServerMessage::GroundItemRemoved { instance_id } => {
-                self.ground_items.remove(instance_id);
+            // Not a fresh drop, just an item coming into view — never a tip.
+            ServerMessage::GroundItemAppeared { item } => {
+                self.remember_ground_item(item.clone());
+            }
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by,
+            } => {
+                let removed = self.ground_items.remove(instance_id);
+                self.pending_tips.retain(|(id, _)| id != instance_id);
+                // Only player-dropped items are worth a line — see note_pickup.
+                if let Some(item) = removed.filter(|item| item.dropped_by.is_some()) {
+                    if let Some(picker) = picked_up_by.filter(|id| self.self_player_id != Some(*id))
+                    {
+                        self.note_pickup(&item, &picker);
+                    }
+                }
+            }
+            ServerMessage::GroundItemQuantityChanged {
+                instance_id,
+                quantity,
+                ..
+            } => {
+                if let Some(item) = self.ground_items.get_mut(instance_id) {
+                    item.quantity = *quantity;
+                }
             }
             ServerMessage::CharacterCreated { ref character } => {
                 self.characters.push(character.clone());
@@ -1347,6 +2020,13 @@ impl SharedState {
             }
             ServerMessage::CampfireRemoved { campfire_id } => {
                 self.campfires.remove(campfire_id);
+            }
+            ServerMessage::StallPlaced { ref stall }
+            | ServerMessage::StallAppeared { ref stall } => {
+                self.stalls.insert(stall.id, stall.clone());
+            }
+            ServerMessage::StallRemoved { stall_id } => {
+                self.stalls.remove(stall_id);
             }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;
@@ -1401,6 +2081,10 @@ impl SharedState {
             | ServerMessage::InventoryUpdated { ref inventory } => {
                 self.self_bag = inventory.bag.clone();
                 self.self_equipped = inventory.equipped.clone();
+                // The join snapshot only — mid-session hands are the agent's.
+                if matches!(msg, ServerMessage::InventoryState { .. }) {
+                    self.take_up_instrument();
+                }
             }
             // A player sold to us = we bought a wishlist item (the server
             // only lets residents buy their wishlist): shopping mood
@@ -1535,6 +2219,29 @@ impl SharedState {
             _ => {}
         }
 
+        // Check if any POI just entered sight. Only our own relocations
+        // matter on the player side — walking (echoed as PlayerMoved),
+        // teleports, server corrections; other players never affect what
+        // we can see.
+        match &msg {
+            ServerMessage::GameState { .. }
+            | ServerMessage::MonsterSpawned { .. }
+            | ServerMessage::MonsterAssigned { .. }
+            | ServerMessage::MonsterMoved { .. }
+            | ServerMessage::GroundItemSpawned { .. }
+            | ServerMessage::GroundItemAppeared { .. }
+            | ServerMessage::PositionCorrected { .. } => {
+                self.check_sightings();
+            }
+            ServerMessage::PlayerMoved { player_id, .. }
+            | ServerMessage::PlayerTeleported { player_id, .. }
+                if self.self_player_id.as_ref() == Some(player_id) =>
+            {
+                self.check_sightings();
+            }
+            _ => {}
+        }
+
         let urgency = self.classify_event(&msg);
 
         // Deduplicate high-frequency movement events: keep only latest per entity
@@ -1577,7 +2284,8 @@ impl SharedState {
             // the world state lists what is nearby each turn instead.
             ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
-            | ServerMessage::GroundItemRemoved { .. } => return urgency,
+            | ServerMessage::GroundItemRemoved { .. }
+            | ServerMessage::GroundItemQuantityChanged { .. } => return urgency,
             // Campfires likewise live in the world state, and the grill start
             // is answered by GrillEnded a few seconds later.
             ServerMessage::CampfireSpawned { .. }
@@ -1602,7 +2310,7 @@ impl SharedState {
                         "[TimeChange] It is now {hour:02}:{minute:02} ({}).",
                         if night { "night" } else { "day" }
                     ));
-                    self.urgent_notify.notify_one();
+                    self.wake(EventUrgency::Routine);
                 }
                 return urgency;
             }
@@ -1619,7 +2327,7 @@ impl SharedState {
 
         // Notify Claude driver if urgent
         if urgency == EventUrgency::Urgent {
-            self.urgent_notify.notify_one();
+            self.wake(EventUrgency::Urgent);
         }
 
         urgency
@@ -1643,9 +2351,86 @@ impl SharedState {
         std::mem::take(&mut self.pending_commands)
     }
 
+    /// Display name for a player id, falling back to the raw id for someone
+    /// out of sight. The one statement of that contract — prompt rendering
+    /// and synthetic events both go through here.
+    pub fn player_display_name(&self, player_id: &PlayerId) -> String {
+        if self.self_player_id.as_ref() == Some(player_id) {
+            if let Some(p) = &self.self_player {
+                return p.name.clone();
+            }
+        }
+        if let Some(p) = self.nearby_players.get(player_id) {
+            return p.name.clone();
+        }
+        player_id.to_string()
+    }
+
     /// Drain synthetic agent-side events (e.g. player proximity alerts).
     pub fn drain_agent_events(&mut self) -> Vec<String> {
         std::mem::take(&mut self.agent_events)
+    }
+
+    /// Remember a conversation line for the RECENT CONVERSATION prompt
+    /// section, stamped with the game clock so the LLM can judge staleness.
+    pub fn push_chat_history(&mut self, line: &str) {
+        let stamped = match (self.game_hour, self.game_minute) {
+            (Some(h), Some(m)) => format!("[{h:02}:{m:02}] {line}"),
+            _ => line.to_string(),
+        };
+        push_capped(&mut self.chat_history, stamped, MAX_CHAT_HISTORY);
+    }
+
+    /// Conversation lines already handled, oldest first.
+    pub fn chat_history(&self) -> &VecDeque<String> {
+        &self.chat_history
+    }
+
+    /// Apply one favor delta from the LLM. Only a nearby human player
+    /// counts — unknown names and NPCs are dropped — and both the step
+    /// (±1) and the running total are clamped. Returns whether anything
+    /// changed, so the caller knows to persist.
+    pub fn apply_favor(&mut self, name: &str, delta: i32) -> bool {
+        let delta = delta.clamp(-1, 1);
+        if delta == 0 {
+            return false;
+        }
+        let Some((id, is_npc)) = self.resolve_nearby_player(name) else {
+            return false;
+        };
+        if is_npc {
+            return false;
+        }
+        let canonical = self.player_display_name(&id);
+        let entry = self.favor.entry(canonical).or_insert(0);
+        let next = (*entry + delta).clamp(FAVOR_MIN, FAVOR_MAX);
+        let changed = next != *entry;
+        *entry = next;
+        changed
+    }
+
+    /// Whether this player waved off our trade window recently, so
+    /// open_trade/offer_deal at them are structurally suppressed until the
+    /// cooldown runs out.
+    pub fn trade_offer_blocked(&self, player_id: &PlayerId) -> bool {
+        self.trade_declined_until
+            .get(player_id)
+            .is_some_and(|until| std::time::Instant::now() < *until)
+    }
+
+    /// Nearby human players whose favor has crossed the trade threshold —
+    /// the audience the whole Personal Trading section (wishlist pitches
+    /// and keepsake offers alike) is written for. A regular inside the
+    /// decline cooldown drops out: they just said not now, so not even
+    /// the section should court them.
+    pub fn trade_worthy_players(&self) -> Vec<String> {
+        self.nearby_human_players()
+            .filter(|(id, p)| {
+                !self.trade_offer_blocked(id)
+                    && self.favor.get(&p.name).copied().unwrap_or(0) >= TRADE_FAVOR_THRESHOLD
+            })
+            .map(|(_, p)| p.name.clone())
+            .collect()
     }
 
     /// Record an open we are about to send. A clutter prop is marked opened
@@ -1735,6 +2520,50 @@ impl SharedState {
                 ));
             }
             line.push_str(&self.format_room_props(p));
+            // Floor map in world coordinates: without it the LLM aims moves
+            // into solid rock and collects [MoveFailed] walls. Cell centres
+            // sit on .5 — rounding them to whole metres names the next cell.
+            if let Some(d) = dungeon.as_ref() {
+                if let Some(layout) = d.layouts().get(depth as usize - 1) {
+                    let me = world_to_cell(&d.entrance, p.position.x, p.position.z);
+                    let rooms = layout
+                        .rooms
+                        .iter()
+                        .enumerate()
+                        .map(|(i, room)| {
+                            let c = cell_center(&d.entrance, depth, room.center());
+                            format!(
+                                "room {} center ({:.1}, {:.1}) {}x{}m{}",
+                                i + 1,
+                                c.x,
+                                c.z,
+                                room.w,
+                                room.d,
+                                if room.contains(me.0, me.1) {
+                                    " (you are here)"
+                                } else {
+                                    ""
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                    line.push_str(&format!("\nRooms on this floor: {rooms}"));
+                    // Only the up shaft's exit row and the down shaft's entry
+                    // row are landings on this floor; the rest of a shaft is
+                    // blocked here, so its min corner is not a reachable goal.
+                    let up = cell_center(&d.entrance, depth, layout.up_shaft.exit_cell());
+                    line.push_str(&format!("\nStairs up at ({:.1}, {:.1})", up.x, up.z));
+                    if let Some(down) = &layout.down_shaft {
+                        let dn = cell_center(&d.entrance, depth, down.entry_cell());
+                        line.push_str(&format!("; stairs down at ({:.1}, {:.1})", dn.x, dn.z));
+                    }
+                    line.push_str(
+                        "\nEverything outside rooms and corridors is solid rock — aim \
+                         moves at room centers or stairs.",
+                    );
+                }
+            }
             return Some(line);
         }
         let dungeon = self
@@ -1903,26 +2732,81 @@ impl SharedState {
         None
     }
 
-    /// Push a synthetic agent event visible to the LLM.
+    /// Push a synthetic agent event visible to the LLM. Synthetic events are
+    /// feedback on the agent's own actions (arrival, a failed move, a kill),
+    /// so they wake the LLM driver instead of waiting out the idle interval.
+    /// They wake it at `Routine` though: an agent's own arrival note must
+    /// never outrank a human talking to some other NPC in the LLM queue.
     pub fn push_agent_event(&mut self, event: String) {
+        self.push_agent_event_inner(event, true);
+    }
+
+    /// Same, but without waking the driver: the event rides along with
+    /// whatever prompt happens next (scenery noted in passing, not danger).
+    pub fn push_agent_event_quiet(&mut self, event: String) {
+        self.push_agent_event_inner(event, false);
+    }
+
+    fn push_agent_event_inner(&mut self, event: String, wake: bool) {
         if let Some(watch) = &self.watch {
             watch.push("agent", event.clone());
         }
         self.agent_events.push(event);
+        if wake {
+            self.wake(EventUrgency::Routine);
+        }
+    }
+
+    /// Wake the LLM driver, remembering how urgent the reason was. The driver
+    /// takes the urgency at wake-up to pick its rate-limit floor and the
+    /// prompt's scheduler priority.
+    fn wake(&mut self, urgency: EventUrgency) {
+        self.wake_urgency = self.wake_urgency.min(urgency);
+        self.urgent_notify.notify_one();
+    }
+
+    /// Take the urgency accumulated since the last wake-up, resetting it.
+    pub fn take_wake_urgency(&mut self) -> EventUrgency {
+        std::mem::replace(&mut self.wake_urgency, EventUrgency::Noise)
     }
 
     /// Resolve a player name (or raw id) among nearby players, as used by
     /// player-targeting LLM actions. Returns `(player_id, is_official_npc)`.
     /// `name_or_id` stays `&str` because it comes straight from LLM output and
     /// may be either form; the resolved handle is what gets typed.
+    /// Only same-floor characters resolve: the world state the LLM saw lists
+    /// no one else, and a cross-floor chase would burn its A* budget to reach
+    /// a name it never should have been offered.
     pub fn resolve_nearby_player(&self, name_or_id: &str) -> Option<(PlayerId, bool)> {
-        self.nearby_players
-            .iter()
+        self.players_on_my_floor()
             .find(|(id, p)| {
                 p.name.eq_ignore_ascii_case(name_or_id)
                     || name_or_id.parse::<u64>().is_ok_and(|n| id.get() == n)
             })
             .map(|(id, p)| (*id, p.is_official_npc))
+    }
+
+    /// The nearest NPC merchant on our floor, for trade actions that omit a
+    /// merchant name. Usually there is exactly one in range, so guessing is
+    /// safe and spares the LLM from naming it.
+    pub fn nearest_merchant(&self) -> Option<PlayerId> {
+        let self_pos = self.self_player.as_ref().map(|p| p.position)?;
+        self.players_on_my_floor()
+            .filter(|(_, p)| {
+                p.is_official_npc && crate::shop_info::shop_line_for(&p.name).is_some()
+            })
+            // Only merchants the agent can actually see — the server
+            // broadcasts players well beyond that, and "nearest" must not
+            // start a long blind walk to one outside the CURRENT STATE list.
+            .filter(|(_, p)| {
+                p.position.dist_xz_sq(&self_pos) <= NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS
+            })
+            .min_by(|(_, a), (_, b)| {
+                let da = a.position.dist_xz_sq(&self_pos);
+                let db = b.position.dist_xz_sq(&self_pos);
+                da.total_cmp(&db)
+            })
+            .map(|(id, _)| *id)
     }
 
     /// Every bag copy of the resolved item still available this turn.
@@ -2017,6 +2901,151 @@ impl SharedState {
             .filter(move |s| s.expires_at > now)
     }
 
+    /// Snapshot everything the surface-terrain grid render needs, so the
+    /// expensive tile sampling can run without the state lock. None
+    /// underground — the floor layout lines already cover the map.
+    pub fn terrain_grid_job(&self) -> Option<TerrainGridJob> {
+        let p = self.self_player.as_ref()?;
+        if self.self_floor_level != 0 {
+            return None;
+        }
+        Some(TerrainGridJob {
+            px: p.position.x,
+            pz: p.position.z,
+            py: p.position.y,
+            height_sampler: Arc::clone(&self.height_sampler),
+            splat_sampler: Arc::clone(&self.splat_sampler),
+            world_cache: Arc::clone(&self.world_cache),
+        })
+    }
+}
+
+/// A detached surface-terrain grid render: position and shared samplers
+/// snapshotted from `SharedState` so the tile loads (HTTP on a cache miss)
+/// never run under the state lock.
+pub struct TerrainGridJob {
+    px: f32,
+    pz: f32,
+    py: f32,
+    height_sampler: Arc<HeightSampler>,
+    splat_sampler: Arc<crate::splat::SplatSampler>,
+    world_cache: Arc<std::sync::RwLock<WorldCache>>,
+}
+
+impl TerrainGridJob {
+    pub async fn render(&self) -> String {
+        const CELLS: i32 = GRID_CELLS;
+        const CELL_M: f32 = GRID_CELL_M;
+        const HALF: i32 = GRID_HALF;
+
+        let (px, pz, py) = (self.px, self.pz, self.py);
+        // Height and surface type per cell center (async tile loads).
+        let mut heights = vec![None; (CELLS * CELLS) as usize];
+        let mut surfaces = vec![None; (CELLS * CELLS) as usize];
+        for r in 0..CELLS {
+            let cz = pz + (r - HALF) as f32 * CELL_M;
+            for c in 0..CELLS {
+                let cx = px + (c - HALF) as f32 * CELL_M;
+                let i = (r * CELLS + c) as usize;
+                heights[i] = self.height_sampler.sample_height(cx, cz).await.ok();
+                surfaces[i] = self.splat_sampler.primary_at(cx, cz).await.ok();
+            }
+        }
+
+        let mut grid: Vec<Vec<char>> = (0..CELLS)
+            .map(|r| {
+                (0..CELLS)
+                    .map(|c| {
+                        let i = (r * CELLS + c) as usize;
+                        ground_char(surfaces[i], heights[i])
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Buildings and furniture from the passability cache (sync).
+        {
+            let world = self.world_cache.read().unwrap();
+            let cache = world.passability_cache();
+            for r in 0..CELLS {
+                let cz = pz + (r - HALF) as f32 * CELL_M;
+                for c in 0..CELLS {
+                    let cx = px + (c - HALF) as f32 * CELL_M;
+                    if pathfinding::is_circle_blocked_on_floor(cache, cx, cz, 1.0, 0, None) {
+                        grid[r as usize][c as usize] = '#';
+                    }
+                }
+            }
+            // Dungeon entrances.
+            for d in world.all_dungeons() {
+                overlay(&mut grid, px, pz, d.entrance.x, d.entrance.z, 'D');
+            }
+        }
+
+        // Terrain and fixed map objects only — players, monsters and NPCs
+        // live in the entity lists and [Sighted] events, with exact
+        // coordinates there. Mixing them in would go stale within a turn.
+        grid[HALF as usize][HALF as usize] = '@';
+
+        // Row labels carry exact z, the header carries the x span, so the
+        // agent can map any cell to world coordinates without arithmetic
+        // guesswork.
+        let west_x = px - HALF as f32 * CELL_M;
+        let east_x = px + HALF as f32 * CELL_M;
+        let mut out = format!(
+            "Map: surface, you at ({px:.0}, {pz:.0}) — {size}x{size}m, {cell:.0}m per cell, \
+             north up. Columns left to right: x={west:.0} to x={east:.0} (+{cell:.0} per \
+             column). Row labels are that row's z.\n",
+            size = CELLS * CELL_M as i32,
+            cell = CELL_M,
+            west = west_x,
+            east = east_x,
+            px = px,
+            pz = pz,
+        );
+        for (r, row) in grid.iter().enumerate() {
+            let cz = pz + (r as i32 - HALF) as f32 * CELL_M;
+            out.push_str(&format!("z={:<6.0}", cz));
+            for ch in row {
+                out.push(' ');
+                out.push(*ch);
+            }
+            out.push('\n');
+        }
+        out.push_str(
+            "(. ground  R road  s sand  ~ water  ^ cliff  * snow  # building  \
+             D dungeon entrance  @ you; characters and items are in the lists \
+             above, not on this map)\n",
+        );
+
+        // Gentle slopes don't show in the glyphs; summarize them so climbs
+        // are not a surprise. Cliff cells already read as ^.
+        let h_at = |r: i32, c: i32| heights[(r * CELLS + c) as usize];
+        let mut slopes = Vec::new();
+        for (label, r, c) in [
+            ("north", 0, HALF),
+            ("south", CELLS - 1, HALF),
+            ("east", HALF, CELLS - 1),
+            ("west", HALF, 0),
+        ] {
+            if let Some(h) = h_at(r, c) {
+                let dh = h - py;
+                if dh.abs() >= 2.0 {
+                    slopes.push(format!("{label} {dh:+.0}m"));
+                }
+            }
+        }
+        if !slopes.is_empty() {
+            out.push_str(&format!(
+                "Ground height at the map edge vs you: {}.\n",
+                slopes.join(", ")
+            ));
+        }
+        out
+    }
+}
+
+impl SharedState {
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -2032,6 +3061,15 @@ impl SharedState {
                 p.position.y,
                 p.position.z
             ));
+            if p.health == 0 {
+                lines.push(
+                    "You are DEFEATED (HP 0). You do NOT recover on your own and most \
+                     actions stay blocked. Respawn now with {\"type\": \"respawn\"} — \
+                     the death penalty was already paid when you fell; respawning \
+                     costs nothing more."
+                        .to_string(),
+                );
+            }
         }
         if let Some(line) = self.format_dungeon_state() {
             lines.push(line);
@@ -2054,6 +3092,15 @@ impl SharedState {
                 lines.push(format!(
                     "Campfire nearby: {:.1}m away (use a raw fish within 3m to grill it)",
                     d2.sqrt()
+                ));
+            }
+            if let Some(own_stall) = self
+                .self_player_id
+                .and_then(|id| self.stalls.values().find(|s| s.owner == id))
+            {
+                lines.push(format!(
+                    "Your stall is laid out {:.1}m away",
+                    own_stall.position.dist_xz_sq(&p.position).sqrt()
                 ));
             }
         }
@@ -2086,6 +3133,15 @@ impl SharedState {
             worn.sort();
             lines.push(format!("You are wearing: {}", worn.join(", ")));
         }
+        // Data only — what to do with the list is the role template's call
+        // (bard.txt: prefer something fresh, unless a listener asks again).
+        if self.plays_music && !self.recent_songs.is_empty() {
+            let list: Vec<&str> = self.recent_songs.iter().map(String::as_str).collect();
+            lines.push(format!(
+                "Songs you played recently, oldest first: {}",
+                list.join(", ")
+            ));
+        }
 
         if !self.party_members.is_empty() {
             let names: Vec<String> = self
@@ -2117,7 +3173,7 @@ impl SharedState {
         // Nearby players (exclude self and humans beyond the sight radius)
         let sp = self.self_player.as_ref();
         let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
-        for p in self.nearby_players.values() {
+        for (_, p) in self.players_on_my_floor() {
             if self.self_player_id.as_ref() == Some(&p.id) {
                 continue;
             }
@@ -2126,8 +3182,13 @@ impl SharedState {
                     continue;
                 }
             }
+            let npc_tag = if p.is_official_npc { " (NPC)" } else { "" };
+            let favor_tag = match self.favor.get(&p.name) {
+                Some(v) if !p.is_official_npc && *v != 0 => format!(" (favor {v:+})"),
+                _ => String::new(),
+            };
             lines.push(format!(
-                "Player: {} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
+                "Player: {}{npc_tag}{favor_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
             if p.is_official_npc {
@@ -2138,7 +3199,7 @@ impl SharedState {
         }
 
         // Exclude monsters beyond LLM sight radius
-        for m in self.nearby_monsters.values() {
+        for m in self.monsters_on_my_floor() {
             if let Some(sp) = sp {
                 if m.position.dist_xz_sq(&sp.position) > sight_sq {
                     continue;
@@ -2162,8 +3223,20 @@ impl SharedState {
         let ground = self.ground_items_in_sight();
         let hidden = ground.len().saturating_sub(MAX_LISTED_GROUND_ITEMS);
         for (d_sq, i) in ground.into_iter().take(MAX_LISTED_GROUND_ITEMS) {
+            let dropped_by = match i.dropped_by.as_ref() {
+                Some(id) if self.self_player_id.as_ref() == Some(id) => {
+                    ", dropped by you".to_string()
+                }
+                Some(id) => format!(", dropped by {}", self.visible_name(id)),
+                None => String::new(),
+            };
+            let amount = if i.quantity > 1 {
+                format!(" x{}", i.quantity)
+            } else {
+                String::new()
+            };
             lines.push(format!(
-                "Item on ground: {} ({:.1}m away) [id {}]",
+                "Item on ground: {}{amount} ({:.1}m away) [id {}]{dropped_by}",
                 i.item_def_id,
                 d_sq.sqrt(),
                 i.instance_id
@@ -2194,12 +3267,20 @@ pub(crate) mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl crate::splat::SplatTiles for NoTiles {
+        async fn read_splat(&self, _tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
+            Err(std::io::Error::other("no terrain in tests"))
+        }
+    }
+
     pub(crate) fn test_state() -> (SharedState, mpsc::Receiver<ClientMessage>) {
         let (tx, rx) = mpsc::channel(8);
         let state = SharedState::new(
             Vec::new(),
             tx,
             Arc::new(HeightSampler::new(NoTiles)),
+            Arc::new(crate::splat::SplatSampler::new(NoTiles)),
             Arc::new(std::sync::RwLock::new(WorldCache::new())),
             None,
         );
@@ -2235,7 +3316,17 @@ pub(crate) mod tests {
             item_def_id: def.to_string(),
             position: p(x, 0.0, z),
             floor_level: floor,
+            quantity: 1,
             enchant: 0,
+            dropped_by: None,
+        }
+    }
+
+    /// A `ground_item` a player put down, as a tip test sees it.
+    fn dropped_item(id: u64, def: &str, x: f32, z: f32, by: PlayerId) -> GroundItem {
+        GroundItem {
+            dropped_by: Some(by),
+            ..ground_item(id, def, x, z, 0)
         }
     }
 
@@ -2259,6 +3350,160 @@ pub(crate) mod tests {
             last_combat_at: 0,
             client_kind: Default::default(),
         }
+    }
+
+    /// Chat history is a capped ring stamped with the game clock — the
+    /// short-term memory a stateless backend gets replayed each prompt.
+    #[test]
+    fn chat_history_stamps_and_caps() {
+        let (mut s, _rx) = test_state();
+        s.push_chat_history("[Chat] jake1: hello");
+        assert_eq!(s.chat_history()[0], "[Chat] jake1: hello");
+
+        s.game_hour = Some(20);
+        s.game_minute = Some(26);
+        for i in 0..40 {
+            s.push_chat_history(&format!("[Chat] jake1: line {i}"));
+        }
+        assert_eq!(s.chat_history().len(), 30, "capped at MAX_CHAT_HISTORY");
+        assert_eq!(s.chat_history()[0], "[20:26] [Chat] jake1: line 10");
+        assert_eq!(s.chat_history()[29], "[20:26] [Chat] jake1: line 39");
+    }
+
+    /// Our own performances land in the recent-song list, oldest first and
+    /// capped; the world state shows the list only to an agent that busks,
+    /// and never counts someone else's tune as ours.
+    #[test]
+    fn recent_songs_render_for_the_busker_only() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.plays_music = true;
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(2),
+            track: "Someone Else's Tune".to_string(),
+            elapsed_secs: 0.0,
+        });
+        for i in 0..10 {
+            s.push_event(ServerMessage::PlayerMusicStarted {
+                player_id: PlayerId::from(1),
+                track: format!("Song {i}"),
+                elapsed_secs: 0.0,
+            });
+        }
+
+        let world = s.format_world_state();
+        assert!(
+            world.contains("Songs you played recently, oldest first: Song 2,"),
+            "capped at MAX_RECENT_SONGS, oldest dropped: {world}"
+        );
+        assert!(world.contains("Song 9"), "{world}");
+        assert!(!world.contains("Someone Else's Tune"), "{world}");
+
+        s.plays_music = false;
+        assert!(!s.format_world_state().contains("Songs you played recently"));
+    }
+
+    /// Favor: nearby human players only, one step per call, clamped in
+    /// total. Crossing the threshold makes a player keepsake-worthy and
+    /// the world state shows the standing next to their name.
+    #[test]
+    fn favor_accumulates_and_gates_keepsakes() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        let mut jake = test_player(3.0, 0.0);
+        jake.id = PlayerId::from(2);
+        jake.name = "jake1".to_string();
+        s.nearby_players.insert(jake.id, jake);
+
+        let mut wick = test_player(4.0, 0.0);
+        wick.id = PlayerId::from(3);
+        wick.name = "Wick".to_string();
+        wick.is_official_npc = true;
+        s.nearby_players.insert(wick.id, wick);
+
+        assert!(!s.apply_favor("Wick", 1), "NPCs never earn favor");
+        assert!(!s.apply_favor("stranger", 1), "unknown names are dropped");
+        assert!(
+            s.apply_favor("jake1", 5),
+            "an oversized delta still steps once"
+        );
+        assert_eq!(s.favor.get("jake1"), Some(&1));
+        assert!(s.trade_worthy_players().is_empty());
+
+        for _ in 0..10 {
+            s.apply_favor("jake1", 1);
+        }
+        assert_eq!(s.favor.get("jake1"), Some(&FAVOR_MAX));
+        assert_eq!(s.trade_worthy_players(), ["jake1"]);
+        assert!(
+            s.format_world_state().contains("jake1 (favor +5)"),
+            "{}",
+            s.format_world_state()
+        );
+
+        // Even a favored regular is not courted while their decline
+        // cooldown runs — the keepsake section drops them too.
+        s.push_event(ServerMessage::TradeDeclined {
+            player_id: PlayerId::from(2),
+            player_name: "jake1".to_string(),
+        });
+        assert!(s.trade_worthy_players().is_empty());
+    }
+
+    /// The wishlist pitch needs an audience with any favor at all, and a
+    /// waved-off trade window blocks pushes at that player for the
+    /// cooldown — dropping them from the audience despite their favor.
+    #[test]
+    fn a_declined_trade_offer_blocks_further_pushes() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        let mut jake = test_player(3.0, 0.0);
+        jake.id = PlayerId::from(2);
+        jake.name = "jake1".to_string();
+        s.nearby_players.insert(jake.id, jake);
+
+        assert!(!s.trade_offer_blocked(&PlayerId::from(2)));
+        assert!(
+            s.trade_worthy_players().is_empty(),
+            "a stranger does not earn the shopping list"
+        );
+        s.apply_favor("jake1", 1);
+        assert!(
+            s.trade_worthy_players().is_empty(),
+            "one kindness does not yet make a regular"
+        );
+        for _ in 0..2 {
+            s.apply_favor("jake1", 1);
+        }
+        assert_eq!(
+            s.trade_worthy_players(),
+            ["jake1"],
+            "favor at the trade threshold earns the pitch"
+        );
+
+        s.push_event(ServerMessage::TradeDeclined {
+            player_id: PlayerId::from(2),
+            player_name: "jake1".to_string(),
+        });
+
+        assert!(s.trade_offer_blocked(&PlayerId::from(2)));
+        assert!(
+            !s.trade_offer_blocked(&PlayerId::from(3)),
+            "the block is per player, not global"
+        );
+        assert!(
+            s.trade_worthy_players().is_empty(),
+            "the only regular declined: the section vanishes"
+        );
     }
 
     /// The world state lists reachable ground items closest first, and
@@ -2385,6 +3630,7 @@ pub(crate) mod tests {
             Vec::new(),
             tx,
             Arc::new(HeightSampler::new(NoTiles)),
+            Arc::new(crate::splat::SplatSampler::new(NoTiles)),
             world,
             None,
         );
@@ -2460,6 +3706,100 @@ pub(crate) mod tests {
                 chest.kind
             );
         }
+    }
+
+    /// Every coordinate the underground state line hands the LLM has to be a
+    /// cell it can actually stand on. A shaft is walkable on this floor only
+    /// along one row — its min corner and the cell half a metre over are both
+    /// rock — so a wrong end or a rounded centre reads as a wall.
+    #[test]
+    fn the_floor_map_only_names_cells_the_agent_can_stand_on() {
+        let (mut s, _crypt, _rx) = dungeon_state();
+        let mut orientations = std::collections::HashSet::new();
+
+        for def in onlinerpg_shared::dungeon::entrances() {
+            let dungeon = s
+                .world_cache
+                .read()
+                .unwrap()
+                .dungeon_by_id(&def.id)
+                .expect("registered dungeon");
+
+            // Every door open: a shut one is a detour the mover handles, so it
+            // must not be confused with a cell walled off for good.
+            let doors: Vec<(u8, u32)> = (1..=dungeon.max_depth())
+                .flat_map(|d| {
+                    dungeon
+                        .closed_doors(d, &HashSet::new())
+                        .into_iter()
+                        .map(move |door| (d, door.door_id))
+                })
+                .collect();
+            s.world_cache
+                .write()
+                .unwrap()
+                .set_dungeon_doors(&dungeon.id, &doors);
+
+            for depth in 1..=dungeon.max_depth() {
+                let layout = &dungeon.layouts()[depth as usize - 1];
+                orientations.insert(layout.up_shaft.reversed);
+                let floor = dungeon.passability_floor(depth);
+                stand_at(&mut s, &dungeon, depth, layout.rooms[0].center());
+
+                let line = s.format_dungeon_state().expect("underground state line");
+                let where_ = format!("{} floor {depth}", dungeon.id);
+                let named = coordinates_in(&line);
+                assert!(
+                    named.len() > layout.rooms.len(),
+                    "{where_} should name every room plus the stairs, got {named:?}"
+                );
+                for (x, z) in named {
+                    let p = Position { x, y: 0.0, z };
+                    // Printed coordinates must survive the round trip back to
+                    // the cell they name. Cell centres sit on .5, so rounding
+                    // them to whole metres silently names the cell next door.
+                    let cell = world_to_cell(&dungeon.entrance, x, z);
+                    let centre = cell_center(&dungeon.entrance, depth, cell);
+                    assert_eq!(
+                        (centre.x, centre.z),
+                        (x, z),
+                        "{where_} prints ({x}, {z}), which reads back as the cell \
+                         centred on ({}, {})\n{line}",
+                        centre.x,
+                        centre.z
+                    );
+                    assert!(
+                        s.world_cache.read().unwrap().is_walkable(&p, floor),
+                        "{where_} points the agent at ({x}, {z}), which is solid rock\n{line}"
+                    );
+                    // A shaft's interior is carved but walled off from this
+                    // floor, so walkable is not enough — the goal has to be
+                    // routable too.
+                    assert!(
+                        s.find_path_to(x, z, floor).found,
+                        "{where_} points the agent at ({x}, {z}), which no route \
+                         reaches\n{line}"
+                    );
+                }
+            }
+        }
+
+        assert_eq!(
+            orientations.len(),
+            2,
+            "sample covers only one shaft orientation, so it cannot catch an \
+             entry/exit mix-up"
+        );
+    }
+
+    /// Pull every "(x, z)" pair out of a state line.
+    fn coordinates_in(line: &str) -> Vec<(f32, f32)> {
+        line.split('(')
+            .skip(1)
+            .filter_map(|rest| rest.split_once(')'))
+            .filter_map(|(inner, _)| inner.split_once(','))
+            .filter_map(|(x, z)| Some((x.trim().parse().ok()?, z.trim().parse().ok()?)))
+            .collect()
     }
 
     /// Breakables are offered off the live passability the same way chests
@@ -2579,19 +3919,30 @@ pub(crate) mod tests {
         assert_eq!(def_id, "iron_sword");
     }
 
-    /// Standing where the chest room is, on the deepest floor.
-    fn in_the_chest_room(s: &mut SharedState, dungeon: &crate::dungeon::Dungeon) -> u8 {
-        let depth = dungeon.max_depth();
-        let layout = dungeon.layouts().last().unwrap();
-        let cell = layout.chest.unwrap();
-        let room = layout.room_at(cell.0, cell.1).unwrap();
-        let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, room.center());
+    /// Put the agent on `depth`, standing on `cell`.
+    fn stand_at(
+        s: &mut SharedState,
+        dungeon: &crate::dungeon::Dungeon,
+        depth: u8,
+        cell: (i32, i32),
+    ) -> Position {
+        let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, cell);
         s.self_floor_level = -(depth as i8);
         s.self_player = Some(Player {
             position: stand,
             floor_level: -(depth as i8),
             ..test_player(stand.x, stand.z)
         });
+        stand
+    }
+
+    /// Standing where the chest room is, on the deepest floor.
+    fn in_the_chest_room(s: &mut SharedState, dungeon: &crate::dungeon::Dungeon) -> u8 {
+        let depth = dungeon.max_depth();
+        let layout = dungeon.layouts().last().unwrap();
+        let cell = layout.chest.unwrap();
+        let room = layout.room_at(cell.0, cell.1).unwrap();
+        stand_at(s, dungeon, depth, room.center());
         depth
     }
 
@@ -2941,5 +4292,672 @@ pub(crate) mod tests {
         assert_eq!(s.classify_event(&positions), EventUrgency::Noise);
         s.push_event(positions);
         assert!(s.events.is_empty());
+    }
+
+    /// The LLM will happily call for a new song halfway through the last one,
+    /// which restarts the music for everyone listening. The command is dropped
+    /// and the model is told why — on its next prompt, not by waking it here.
+    #[test]
+    fn a_second_tune_is_refused_while_the_first_still_plays() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        assert!(
+            !s.refuses_play_command("/play_music"),
+            "nothing playing yet"
+        );
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+
+        assert!(s.refuses_play_command("/play_music creekside"));
+        assert!(s.refuses_play_command("/play_music"));
+        assert!(
+            !s.refuses_play_command("Any requests?"),
+            "ordinary talk goes through"
+        );
+        assert!(
+            !s.refuses_play_command("/play_musical chairs"),
+            "only the whole command word counts"
+        );
+
+        let events = s.drain_agent_events();
+        assert_eq!(events.len(), 2, "one note per dropped command: {events:?}");
+        assert!(events[0].contains("still playing"), "{events:?}");
+    }
+
+    /// A title the LLM invented never reaches the server: it would answer
+    /// "No such song" an hour before the idle prompt showed it, with the
+    /// square still waiting on a song the bard announced.
+    #[test]
+    fn a_song_the_bard_does_not_know_is_refused_before_it_is_sent() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        assert!(s.refuses_play_command("/play_music Ballad of the Missing Track"));
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Urgent);
+        let events = s.drain_agent_events();
+        assert!(
+            events[0].contains("Ballad of the Missing Track") && events[0].contains("songbook"),
+            "{events:?}"
+        );
+
+        // A second guess is still refused, but only at the routine cadence.
+        assert!(s.refuses_play_command("/play_music Another Invention"));
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
+
+        // Songbook titles pass, including one folded from a "(1)" variant.
+        assert!(!s.refuses_play_command("/play_music Twilight Fields"));
+        assert!(!s.refuses_play_command("/play_music Wanderer of the Old Fields"));
+        assert!(!s.refuses_play_command("/play_music creekside"));
+        assert!(!s.refuses_play_command("/play_music"), "the random pick");
+    }
+
+    /// A busker pauses between songs. The agent gets no invitation to play
+    /// until the quiet spell is over, and asking early is refused with what
+    /// is left of it.
+    #[test]
+    fn a_song_is_followed_by_a_quiet_spell_before_the_next() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+
+        let rest_until = s.self_music_rest_until.expect("a rest was scheduled");
+        let rest = rest_until.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            rest.as_secs() >= MUSIC_REST_MIN_SECS - 1 && rest.as_secs() <= MUSIC_REST_MAX_SECS,
+            "{rest:?}"
+        );
+
+        assert!(
+            s.refuses_play_command("/play_music"),
+            "no encore during the rest"
+        );
+        s.check_music_finished();
+        assert!(
+            s.self_music_rest_until.is_some(),
+            "the square is still resting"
+        );
+
+        s.self_music_rest_until =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        s.check_music_finished();
+        let events = s.drain_agent_events();
+        assert!(
+            events.last().is_some_and(|e| e.contains("another song")),
+            "{events:?}"
+        );
+        assert!(!s.refuses_play_command("/play_music"), "the rest is over");
+
+        // In bed on the night schedule: playing would drop the sleeping pose
+        // and nothing would put it back until morning.
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: Some("bed".to_string()),
+        });
+        assert!(s.refuses_play_command("/play_music"));
+        let events = s.drain_agent_events();
+        assert!(
+            events.last().is_some_and(|e| e.contains("bed")),
+            "{events:?}"
+        );
+    }
+
+    /// The agent hears a tune start and end. Its own performance has no audio
+    /// to end it, so the registry's length is the clock — without that an NPC
+    /// bard would strum the same song forever.
+    #[test]
+    fn a_tune_is_announced_at_both_ends_and_our_own_stops_itself() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+
+        s.check_music_finished();
+        assert!(
+            s.drain_pending_commands().is_empty(),
+            "the song is still playing"
+        );
+
+        if let Some(p) = s.self_performance.as_mut() {
+            p.ends_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        }
+        s.check_music_finished();
+        assert!(matches!(
+            s.drain_pending_commands().as_slice(),
+            [ClientMessage::StopInteraction]
+        ));
+
+        // The server clears the interaction; that is what the LLM reads.
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("You finished \"Twilight Fields\"")),
+            "{events:?}"
+        );
+    }
+
+    /// Coins thrown at a busker's feet wait for the end of the song — walking
+    /// over mid-tune would abandon the performance — and then name who to
+    /// thank. Loot that no player dropped is not a tip.
+    #[test]
+    fn tips_left_during_a_song_are_announced_when_it_ends() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.plays_music = true;
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let mut listener = test_player(1.0, 0.0);
+        listener.id = PlayerId::from(2);
+        listener.name = "Mira".to_string();
+        s.nearby_players.insert(listener.id, listener);
+        let tipper = PlayerId::from(2);
+
+        // A tip before the first note of the day counts too: a busker is a
+        // busker whether or not it happens to be playing right then.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(1, "old_boot", 1.0, 0.0, tipper),
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("[Tip] Mira left old_boot")),
+            "{events:?}"
+        );
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(2, "coin_pile", 1.0, 0.0, tipper),
+        });
+        // A tip thrown from too far off, a monster's loot, and our own drop.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(3, "small_sword", TIP_RADIUS + 2.0, 0.0, tipper),
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: ground_item(4, "goblin_sword", 1.0, 0.0, 0),
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(5, "mandolin", 1.0, 0.0, PlayerId::from(1)),
+        });
+        assert_eq!(s.pending_tips.len(), 1, "{:?}", s.pending_tips);
+        // Drops still get their [Sighted] line mid-song; only the [Tip]
+        // thanks waits for the music to end.
+        let mid_song = s.drain_agent_events();
+        assert!(
+            mid_song.iter().all(|e| !e.contains("[Tip]")),
+            "the song comes before the thanks: {mid_song:?}"
+        );
+        assert!(
+            mid_song.iter().all(|e| !e.contains("mandolin")),
+            "our own drop must not be sighted: {mid_song:?}"
+        );
+
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events
+                .last()
+                .is_some_and(|e| e.contains("[Tip] Mira left coin_pile") && e.contains("[id 2]")),
+            "{events:?}"
+        );
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
+        // Still on the ground, and still remembered as Mira's.
+        assert!(
+            s.format_world_state()
+                .contains("Item on ground: coin_pile (1.0m away) [id 2], dropped by Mira"),
+            "{}",
+            s.format_world_state()
+        );
+
+        // Tipped again during the quiet spell: nothing to wait for now.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(6, "gold_ring", 1.0, 0.0, tipper),
+        });
+        let events = s.drain_agent_events();
+        assert!(
+            events.last().is_some_and(|e| e.contains("gold_ring")),
+            "{events:?}"
+        );
+
+        // Once the schedule has put it to bed, a tip is not worth getting up.
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: Some("bed".to_string()),
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(7, "gold_ring", 1.0, 0.0, tipper),
+        });
+        let events = s.drain_agent_events();
+        assert!(!events.iter().any(|e| e.contains("[Tip]")), "{events:?}");
+    }
+
+    /// Nobody tips a guard for standing there: a drop in front of an agent
+    /// that does not busk is ordinary loot, and stays out of its events.
+    #[test]
+    fn only_a_busker_reads_a_drop_as_a_tip() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let mut passer_by = test_player(1.0, 0.0);
+        passer_by.id = PlayerId::from(2);
+        s.nearby_players.insert(passer_by.id, passer_by);
+
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(1, "coin_pile", 1.0, 0.0, PlayerId::from(2)),
+        });
+
+        let events = s.drain_agent_events();
+        assert!(!events.iter().any(|e| e.contains("[Tip]")), "{events:?}");
+    }
+
+    /// A tip someone else grabs first is not thanked for at the end of the
+    /// song — the bard would be pointing at bare ground. It hears who took
+    /// it instead, and only once the song is over.
+    #[test]
+    fn a_tip_taken_before_the_song_ends_is_forgotten() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        s.plays_music = true;
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        s.in_game = true;
+        let mut listener = test_player(1.0, 0.0);
+        listener.id = PlayerId::from(2);
+        s.nearby_players.insert(listener.id, listener);
+        let mut thief = test_player(1.0, 1.0);
+        thief.id = PlayerId::from(3);
+        thief.name = "Bran".to_string();
+        s.nearby_players.insert(thief.id, thief);
+
+        s.push_event(ServerMessage::PlayerMusicStarted {
+            player_id: PlayerId::from(1),
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        });
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(1, "coin_pile", 1.0, 0.0, PlayerId::from(2)),
+        });
+        s.push_event(ServerMessage::GroundItemRemoved {
+            instance_id: 1,
+            picked_up_by: Some(PlayerId::from(3)),
+        });
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Noise, "not mid-song");
+        s.push_event(ServerMessage::PlayerInteractionChanged {
+            player_id: PlayerId::from(1),
+            object_type: None,
+        });
+
+        let events = s.drain_agent_events();
+        assert!(!events.iter().any(|e| e.contains("[Tip]")), "{events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|e| e.contains("[GroundItem] Bran picked up coin_pile")),
+            "{events:?}"
+        );
+
+        // Between songs there is nothing to hold it back.
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: dropped_item(2, "gold_ring", 1.0, 0.0, PlayerId::from(2)),
+        });
+        s.take_wake_urgency();
+        s.push_event(ServerMessage::GroundItemRemoved {
+            instance_id: 2,
+            picked_up_by: Some(PlayerId::from(3)),
+        });
+        assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
+        assert!(s
+            .drain_agent_events()
+            .iter()
+            .any(|e| e.contains("Bran picked up gold_ring")));
+    }
+
+    /// A bard joining with the starter sword in hand swaps to its workhorse
+    /// — the cheapest instrument that is not an offerable keepsake — so the
+    /// good mandolin stays in the bag where the keepsake offer can reach
+    /// it. A bard already holding the workhorse (or a non-bard) is left
+    /// alone.
+    #[test]
+    fn a_joining_bard_takes_up_the_worn_mandolin() {
+        use onlinerpg_shared::inventory::{EquipSlot, ItemInstance, PlayerInventory};
+
+        let item = |instance_id: u64, def: &str| ItemInstance {
+            instance_id,
+            item_def_id: def.to_string(),
+            quantity: 1,
+            enchant: 0,
+        };
+        let mut inventory = PlayerInventory {
+            bag: vec![item(1, "worn_mandolin"), item(2, "mandolin")],
+            equipped: HashMap::from([(EquipSlot::MainHand, item(3, "worn_iron_sword"))]),
+        };
+
+        let (mut s, _rx) = test_state();
+        s.plays_music = true;
+        s.keepsake_ids = vec!["mandolin".to_string()];
+        s.push_event(ServerMessage::InventoryState {
+            inventory: inventory.clone(),
+        });
+        let equips: Vec<_> = s
+            .drain_pending_commands()
+            .into_iter()
+            .filter(|c| matches!(c, ClientMessage::EquipItem { instance_id: 1 }))
+            .collect();
+        assert_eq!(equips.len(), 1, "swap to the worn workhorse, once");
+
+        // With an instrument in hand, the next snapshot changes nothing.
+        inventory.bag = vec![item(2, "mandolin"), item(4, "worn_iron_sword")];
+        inventory.equipped = HashMap::from([(EquipSlot::MainHand, item(1, "worn_mandolin"))]);
+        s.push_event(ServerMessage::InventoryState {
+            inventory: inventory.clone(),
+        });
+        assert!(
+            !s.drain_pending_commands()
+                .iter()
+                .any(|c| matches!(c, ClientMessage::EquipItem { .. })),
+            "the workhorse in hand is left alone"
+        );
+
+        // Holding the good mandolin steps down to the worn one, freeing the
+        // keepsake back into the bag.
+        inventory.bag = vec![item(1, "worn_mandolin"), item(4, "worn_iron_sword")];
+        inventory.equipped = HashMap::from([(EquipSlot::MainHand, item(2, "mandolin"))]);
+        s.push_event(ServerMessage::InventoryState {
+            inventory: inventory.clone(),
+        });
+        assert!(
+            s.drain_pending_commands()
+                .iter()
+                .any(|c| matches!(c, ClientMessage::EquipItem { instance_id: 1 })),
+            "the good mandolin in hand gives way to the workhorse"
+        );
+
+        // A non-bard keeps whatever it holds.
+        let (mut guard, _rx2) = test_state();
+        inventory.equipped = HashMap::from([(EquipSlot::MainHand, item(3, "worn_iron_sword"))]);
+        guard.push_event(ServerMessage::InventoryState { inventory });
+        assert!(
+            !guard
+                .drain_pending_commands()
+                .iter()
+                .any(|c| matches!(c, ClientMessage::EquipItem { .. })),
+            "only buskers reach for an instrument"
+        );
+    }
+
+    /// A `DoorToggled` must land on both faces of the door: the passability
+    /// edge A* walks and the `HouseData` wall the door hunt reads. With only
+    /// the edge updated, `closed_doors_on_our_floor` kept re-listing a door
+    /// that was already open and the agent toggled it shut again.
+    #[test]
+    fn door_toggle_keeps_house_walls_in_step_with_the_edges() {
+        use onlinerpg_shared::housing::{
+            HouseData, PassabilityGrid, RoomData, WallConfig, WallDirection, WallVariant,
+        };
+
+        let wall = |variant| WallConfig {
+            variant,
+            texture: 0,
+            is_open: false,
+        };
+        let room = RoomData {
+            room_type: Default::default(),
+            roof_type: Default::default(),
+            roof_ridge_dir: Default::default(),
+            stair_reversed: false,
+            local_x: 0,
+            local_z: 0,
+            size_x: 1,
+            size_z: 1,
+            floor_level: 0,
+            floor_texture: 0,
+            roof_texture: 0,
+            wall_height: 3.0,
+            wall_north: vec![wall(WallVariant::WithDoor)],
+            wall_south: vec![wall(WallVariant::Solid)],
+            wall_east: vec![wall(WallVariant::Solid)],
+            wall_west: vec![wall(WallVariant::Solid)],
+        };
+
+        let house = HouseData {
+            id: "h".to_string(),
+            owner_id: "test".to_string(),
+            origin: onlinerpg_shared::Position {
+                x: 10.0,
+                y: 0.0,
+                z: 10.0,
+            },
+            rooms: vec![room],
+            passability: vec![PassabilityGrid {
+                floor_level: 0,
+                origin_x: 0,
+                origin_z: 0,
+                width: 1,
+                depth: 1,
+                // All four edges walled (N=1, E=2, S=4, W=8), door shut.
+                cells: vec![1 | 2 | 4 | 8],
+            }],
+        };
+
+        let mut world = WorldCache::new();
+        world.add_house(house);
+
+        let door_blocked = |world: &WorldCache| {
+            pathfinding::is_movement_blocked(
+                world.passability_cache(),
+                10.5,
+                10.5,
+                10.5,
+                9.5,
+                0,
+                None,
+            )
+        };
+        assert!(door_blocked(&world), "the north door starts shut");
+
+        world.update_door("h", 0, WallDirection::North, 0, true);
+        assert!(
+            world.houses()["h"].rooms[0].wall_north[0].is_open,
+            "HouseData must track the open"
+        );
+        assert!(!door_blocked(&world), "the edge must open with the door");
+
+        world.update_door("h", 0, WallDirection::North, 0, false);
+        assert!(!world.houses()["h"].rooms[0].wall_north[0].is_open);
+        assert!(door_blocked(&world), "the edge must seal again");
+    }
+
+    /// Splat tiles that paint one road cell and one river cell near origin,
+    /// so the grid test can assert glyph placement against known world
+    /// coordinates.
+    struct PaintedSplat;
+
+    #[async_trait::async_trait]
+    impl crate::splat::SplatTiles for PaintedSplat {
+        async fn read_splat(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>> {
+            let mut data = vec![0u8; onlinerpg_terrain::defaults::SPLATMAP_SIZE];
+            if (tx, tz) == (0, 0) {
+                let mut paint = |wx: f32, wz: f32, pal: u8| {
+                    let cx = (wx + 32.0).floor() as usize;
+                    let cz = (wz + 32.0).floor() as usize;
+                    data[(cz * 64 + cx) * 4] = pal << 4;
+                };
+                paint(6.0, 0.0, crate::splat::PAL_ROAD);
+                paint(-6.0, -6.0, crate::splat::PAL_RIVER_BED);
+            }
+            Ok(data)
+        }
+    }
+
+    #[tokio::test]
+    async fn terrain_grid_labels_world_coordinates_and_paints_surfaces() {
+        let (mut s, _rx) = test_state();
+        s.splat_sampler = Arc::new(crate::splat::SplatSampler::new(PaintedSplat));
+        s.self_player = Some(test_player(0.0, 0.0));
+        let grid = s.terrain_grid_job().expect("on the surface").render().await;
+
+        assert!(
+            grid.contains("x=-27 to x=27"),
+            "header must carry the exact west/east span:\n{grid}"
+        );
+        assert!(grid.contains("Map: surface, you at (0, 0)"));
+
+        let cells_of = |prefix: &str| -> Vec<String> {
+            grid.lines()
+                .find(|l| l.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no row {prefix} in:\n{grid}"))
+                .split_whitespace()
+                .skip(1)
+                .map(str::to_string)
+                .collect()
+        };
+        // Row z=0: self at column 9, the road cell (6, 0) at column 11.
+        let mid = cells_of("z=0 ");
+        assert_eq!(mid[9], "@");
+        assert_eq!(mid[11], "R");
+        // Row z=-6: the river cell (-6, -6) at column 7.
+        let north = cells_of("z=-6 ");
+        assert_eq!(north[7], "~");
+    }
+
+    #[test]
+    fn terrain_grid_is_absent_underground() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        s.self_floor_level = -1;
+        assert!(s.terrain_grid_job().is_none());
+    }
+
+    /// Crossing floors drops monsters collected on the floor we left — the
+    /// web client's removeMonstersNotOnFloor() rule. Their death events are
+    /// delivered filtered to their floor, so keeping them only breeds ghosts.
+    #[test]
+    fn crossing_floors_purges_the_left_floors_monsters() {
+        let (mut s, _rx) = test_state();
+        let mut deep = monster("m_deep");
+        deep.floor_level = -1;
+        s.nearby_monsters
+            .insert("m_surface".into(), monster("m_surface"));
+        s.nearby_monsters.insert("m_deep".into(), deep);
+        s.sighted_pois.insert("m:m_surface".into());
+
+        s.adopt_floor_level(-1);
+
+        assert!(!s.nearby_monsters.contains_key("m_surface"));
+        assert!(s.nearby_monsters.contains_key("m_deep"));
+        assert!(!s.sighted_pois.contains("m:m_surface"));
+    }
+
+    /// An invalid_target rejection is the server saying the monster does not
+    /// exist; the stale entry must leave the list instead of being offered
+    /// to the LLM again next turn.
+    #[test]
+    fn invalid_target_rejection_drops_the_ghost_monster() {
+        let (mut s, _rx) = test_state();
+        s.nearby_monsters
+            .insert("m_ghost".into(), monster("m_ghost"));
+        s.push_event(ServerMessage::PlayerAttackRejected {
+            monster_id: "m_ghost".into(),
+            reason: onlinerpg_shared::AttackRejectReason::InvalidTarget,
+        });
+        assert!(!s.nearby_monsters.contains_key("m_ghost"));
+        // Out-of-range rejections say nothing about existence.
+        s.nearby_monsters.insert("m_far".into(), monster("m_far"));
+        s.push_event(ServerMessage::PlayerAttackRejected {
+            monster_id: "m_far".into(),
+            reason: onlinerpg_shared::AttackRejectReason::OutOfRange,
+        });
+        assert!(s.nearby_monsters.contains_key("m_far"));
+    }
+
+    #[test]
+    fn quiet_grazers_get_no_sighting_event_but_hunters_do() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        let mut wolf = monster("m_wolf");
+        wolf.aggressive = true;
+        wolf.position = p(10.0, 0.0, 0.0);
+        let mut slime = monster("m_slime");
+        slime.position = p(-10.0, 0.0, 0.0);
+        s.nearby_monsters.insert("m_wolf".into(), wolf);
+        s.nearby_monsters.insert("m_slime".into(), slime);
+
+        s.check_sightings();
+
+        let sighted: Vec<&String> = s
+            .agent_events
+            .iter()
+            .filter(|e| e.starts_with("[Sighted]"))
+            .collect();
+        assert_eq!(sighted.len(), 1, "only the aggressive monster: {sighted:?}");
+        assert!(sighted[0].contains("m_wolf"));
+        assert!(
+            sighted[0].contains("at (10, 0), 10m east"),
+            "sighting must carry coordinates and bearing: {}",
+            sighted[0]
+        );
+    }
+
+    /// A fresh drop (monster loot, chest ejection) arrives as
+    /// GroundItemSpawned; it must fire its sighting right away, not wait for
+    /// the next move to trigger a re-check.
+    #[test]
+    fn a_fresh_drop_is_sighted_immediately() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: ground_item(77, "goblin_sword", 8.0, 0.0, 0),
+        });
+        assert!(
+            s.agent_events
+                .iter()
+                .any(|e| e.starts_with("[Sighted]") && e.contains("goblin_sword")),
+            "events: {:?}",
+            s.agent_events
+        );
     }
 }

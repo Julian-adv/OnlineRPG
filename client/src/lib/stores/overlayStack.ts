@@ -1,11 +1,13 @@
 import { get, writable, type Readable } from 'svelte/store'
 import { characterPanelVisible, inventoryVisible } from './debugStore'
+import { friendPanelVisible } from './friendStore'
 import { shopSession } from './tradeStore'
 
 /** HUD overlays Escape interacts with. */
 export type OverlayId =
   | 'worldMap'
   | 'character'
+  | 'friends'
   | 'inventory'
   | 'trade'
   | 'settings'
@@ -21,6 +23,7 @@ export type OverlayId =
 const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   character: { layer: 0, close: () => characterPanelVisible.set(false) },
   inventory: { layer: 0, close: () => inventoryVisible.set(false) },
+  friends: { layer: 0, close: () => friendPanelVisible.set(false) },
   trade: { layer: 1, close: () => shopSession.set(null) },
   loading: { layer: 2 },
   respawn: { layer: 3 },
@@ -48,6 +51,7 @@ function track(id: OverlayId, open: boolean) {
 // Every open/close path writes these stores, so no call site can forget to report.
 characterPanelVisible.subscribe((open) => track('character', open))
 inventoryVisible.subscribe((open) => track('inventory', open))
+friendPanelVisible.subscribe((open) => track('friends', open))
 shopSession.subscribe((session) => track('trade', session !== null))
 
 const overlayClosers: Partial<Record<OverlayId, () => void>> = {}

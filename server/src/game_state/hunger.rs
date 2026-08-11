@@ -7,9 +7,9 @@
 //! `HungerUpdate`, which is sent on transitions and eating, never per tick.
 
 use onlinerpg_shared::hunger::{
-    effective_multipliers, hunger_state, Campfire, CAMPFIRE_DURATION_MS, CAMPFIRE_GRILL_RADIUS,
-    FOOD_POISONING_MS, FOOD_POISONING_PCT, FOOD_REGEN_DURATION_SECS, GRILL_CAST_MS,
-    MOVEMENT_DRAIN_INTERVAL_SECS, NORMAL_MIN, POISON_DRAIN_MULT, SPRINT_DRAIN_INTERVAL_SECS,
+    effective_multipliers, hunger_state, Campfire, CAMPFIRE_GRILL_RADIUS, FOOD_POISONING_MS,
+    FOOD_POISONING_PCT, FOOD_REGEN_DURATION_SECS, GRILL_CAST_MS, MOVEMENT_DRAIN_INTERVAL_SECS,
+    NORMAL_MIN, POISON_DRAIN_MULT, SPRINT_DRAIN_INTERVAL_SECS,
 };
 use onlinerpg_shared::{PlayerId, Position, ServerMessage};
 use rand::Rng;
@@ -390,7 +390,8 @@ impl super::GameState {
         }
         let healed: Vec<PlayerId> = messages.iter().map(|(pid, ..)| *pid).collect();
         if !healed.is_empty() {
-            self.dirty_players.write().await.extend(healed);
+            self.dirty_players.write().await.extend(healed.iter());
+            self.party_vitals_dirty.write().await.extend(healed);
         }
         for (pid, position, floor, health, max_health) in messages {
             self.send_direct_message_to_players_within_position(
@@ -410,20 +411,30 @@ impl super::GameState {
 
     // ---- Campfires ----
 
-    /// The nearest campfire within grilling range, if any.
-    async fn nearby_campfire(&self, position: &Position, floor_level: i8) -> Option<u64> {
+    /// The nearest campfire within `radius`, if any.
+    pub(super) async fn nearby_campfire(
+        &self,
+        position: &Position,
+        floor_level: i8,
+        radius: f32,
+    ) -> Option<u64> {
         let campfires = self.campfires.read().await;
         campfires
             .values()
             .filter(|e| e.campfire.floor_level == floor_level)
             .map(|e| (e.campfire.id, e.campfire.position.dist_xz_sq(position)))
-            .filter(|(_, d2)| *d2 <= CAMPFIRE_GRILL_RADIUS * CAMPFIRE_GRILL_RADIUS)
+            .filter(|(_, d2)| *d2 <= radius * radius)
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(id, _)| id)
     }
 
-    /// Light a campfire and announce it to the area.
-    pub(super) async fn spawn_campfire(&self, position: Position, floor_level: i8) -> Campfire {
+    /// Light a campfire for `duration_ms` and announce it to the area.
+    pub(super) async fn spawn_campfire(
+        &self,
+        position: Position,
+        floor_level: i8,
+        duration_ms: u64,
+    ) -> Campfire {
         let id = self.next_instance_id().await;
         let campfire = Campfire {
             id,
@@ -436,7 +447,7 @@ impl super::GameState {
                 id,
                 CampfireEntry {
                     campfire: campfire.clone(),
-                    expires_at: Instant::now() + Duration::from_millis(CAMPFIRE_DURATION_MS),
+                    expires_at: Instant::now() + Duration::from_millis(duration_ms),
                 },
             );
         }
@@ -504,7 +515,10 @@ impl super::GameState {
         else {
             return false;
         };
-        let Some(campfire_id) = self.nearby_campfire(position, floor_level).await else {
+        let Some(campfire_id) = self
+            .nearby_campfire(position, floor_level, CAMPFIRE_GRILL_RADIUS)
+            .await
+        else {
             return false;
         };
 

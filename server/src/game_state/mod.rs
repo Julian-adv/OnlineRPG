@@ -6,6 +6,7 @@ use bytes::Bytes;
 use onlinerpg_shared::housing::{HouseData, RoomData, WallDirection};
 use onlinerpg_shared::inventory::PlayerInventory;
 use onlinerpg_shared::messages::BuybackEntry;
+use onlinerpg_shared::schedule::{parse_conditions, resolve_active_schedule, ScheduleEntry};
 
 /// A buyback entry plus the wall-clock deadline after which it is dropped.
 /// The expiry is server-side only — `BuybackEntry` is the wire type.
@@ -24,6 +25,7 @@ use onlinerpg_shared::serialize_server_msg;
 use onlinerpg_shared::NoSpawnZone;
 use onlinerpg_shared::Position;
 use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
@@ -101,10 +103,12 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
 mod chat;
 pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
+mod consent;
 mod deals;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
+mod friends;
 pub(crate) mod hunger;
 mod inventory;
 mod monster;
@@ -115,6 +119,7 @@ pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
 pub(crate) use skills::skills_from_rows;
+mod stall;
 mod time;
 mod trading;
 pub use trading::BUYBACK_SWEEP_PERIOD;
@@ -134,6 +139,20 @@ pub(crate) const OUT_OF_COMBAT_MS: u64 = 10_000;
 /// prop. It never enters a bag — picking it up credits a few copper straight
 /// to the player's wallet (see `pickup_item`).
 pub(crate) const COIN_PILE_ITEM_ID: &str = "coin_pile";
+
+/// Sum a client's batch lines by key, or `None` on overflow — repeating one
+/// key is legal, and a wrapped total would validate as a quantity nobody
+/// asked for.
+fn checked_batch_quantities<K: Eq + Hash>(
+    lines: impl IntoIterator<Item = (K, u32)>,
+) -> Option<HashMap<K, u32>> {
+    let mut by_key: HashMap<K, u32> = HashMap::new();
+    for (key, qty) in lines {
+        let total = by_key.entry(key).or_default();
+        *total = total.checked_add(qty)?;
+    }
+    Some(by_key)
+}
 
 #[derive(Default)]
 struct IdState {
@@ -176,10 +195,16 @@ pub struct GameState {
     last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<HashMap<SpatialCell, HashSet<PlayerId>>>>,
     monsters: Arc<RwLock<HashMap<String, crate::types::Monster>>>,
+    /// player_id → (resolved track title, performance start). Source of the
+    /// `elapsed_secs` sent to players entering earshot mid-performance;
+    /// cleared with the `MUSIC_EMOTE` interaction.
+    music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
     ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
+    /// NPC name → schedule.json copy; sleep resolves against this + game clock.
+    npc_schedules: Arc<std::sync::RwLock<HashMap<String, Vec<ScheduleEntry>>>>,
     monster_defs: MonsterDefs,
     item_defs: ItemDefs,
     /// Global rare bonus-drop table shared by every loot source.
@@ -223,6 +248,9 @@ pub struct GameState {
     /// party-position push; the tick maps them to parties, so entries from
     /// partyless players just drop out there.
     party_position_dirty: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Players whose health changed since the last party-vitals push;
+    /// `party_position_dirty`'s twin.
+    party_vitals_dirty: Arc<RwLock<HashSet<PlayerId>>>,
     /// Serializes periodic and shutdown flushes against per-player logout saves.
     persistence_lock: Arc<Mutex<()>>,
     /// Serializes account replacement and character deletion with game entry.
@@ -278,6 +306,9 @@ pub struct GameState {
     /// player_id → character names whose chat/whispers this player never
     /// receives (`/block`). Loaded from the DB at login, dropped on logout.
     blocked_names: Arc<RwLock<HashMap<PlayerId, HashSet<String>>>>,
+    /// Per-session friend snapshots (DB-backed) and pending friend requests
+    /// (in-memory, both sides online). Seeded at login, dropped on logout.
+    friends: Arc<RwLock<friends::Friends>>,
     /// player_id → the character name `/r` replies to (last whisper sent or
     /// received). In-memory only, dropped on logout.
     whisper_partners: Arc<RwLock<HashMap<PlayerId, String>>>,
@@ -318,6 +349,8 @@ pub struct GameState {
     campfires: Arc<RwLock<HashMap<u64, hunger::CampfireEntry>>>,
     /// One grill cast per player, resolved by `tick_grills`.
     grill_sessions: Arc<RwLock<HashMap<PlayerId, hunger::GrillSession>>>,
+    /// Laid-out merchant stalls keyed by id, at most one per owner.
+    stalls: Arc<RwLock<HashMap<u64, onlinerpg_shared::stall::Stall>>>,
 }
 
 impl GameState {
@@ -331,6 +364,74 @@ impl GameState {
     pub(crate) async fn cancel_concentration_if_active(&self, player_id: &PlayerId) {
         self.cancel_fishing_if_active(player_id).await;
         self.cancel_grill_if_active(player_id).await;
+    }
+
+    /// Replace `npc_name`'s schedule, parsing each entry's `at` condition.
+    /// Entries with an invalid condition never activate.
+    pub fn set_npc_schedule(&self, npc_name: &str, mut entries: Vec<ScheduleEntry>) {
+        for e in parse_conditions(&mut entries) {
+            warn!("Schedule entry for {npc_name}: {e}");
+        }
+        self.npc_schedules
+            .write()
+            .expect("npc schedules lock poisoned")
+            .insert(npc_name.to_string(), entries);
+    }
+
+    /// Store a schedule under the character name its directory id maps to.
+    /// Ids outside the registry are ignored: such NPCs have no server-side
+    /// rules keyed on schedules.
+    pub fn set_npc_schedule_for_id(&self, npc_id: &str, entries: Vec<ScheduleEntry>) {
+        match crate::npc_defs::npc_defs().npc_name_by_id(npc_id) {
+            Some(npc_name) => self.set_npc_schedule(npc_name, entries),
+            None => warn!("Schedule for unknown NPC id {npc_id} not tracked"),
+        }
+    }
+
+    pub async fn load_npc_schedules(&self, npc_io: &crate::npc_schedule::NpcIO) {
+        let names = match npc_io.list_npcs().await {
+            Ok(names) => names,
+            Err(e) => return warn!("Failed to list NPC schedules: {e}"),
+        };
+        for name in names {
+            match npc_io.read_schedule(&name).await {
+                Ok(file) => self.set_npc_schedule_for_id(&name, file.schedule),
+                Err(e) => warn!("Failed to read schedule for {name}: {e}"),
+            }
+        }
+    }
+
+    /// Write `name`'s schedule file and refresh the in-memory copy, so sleep
+    /// decisions never go stale against what's on disk.
+    pub async fn update_npc_schedule(
+        &self,
+        npc_io: &crate::npc_schedule::NpcIO,
+        name: &str,
+        file: crate::npc_schedule::ScheduleFile,
+    ) -> std::io::Result<()> {
+        npc_io.write_schedule(name, &file).await?;
+        self.set_npc_schedule_for_id(name, file.schedule);
+        Ok(())
+    }
+
+    /// Whether the NPC's active schedule entry keeps it in bed right now,
+    /// resolved from the server's clock and schedule copy.
+    pub fn is_npc_asleep(&self, npc_name: &str) -> bool {
+        let datetime = self.current_game_datetime();
+        let schedules = self
+            .npc_schedules
+            .read()
+            .expect("npc schedules lock poisoned");
+        let Some(schedule) = schedules.get(npc_name) else {
+            return false;
+        };
+        let (active, _) = resolve_active_schedule(
+            schedule,
+            Some(Self::is_night(&datetime)),
+            Some(u32::from(datetime.hour)),
+            Some(u32::from(datetime.minute)),
+        );
+        active.is_some_and(|i| schedule[i].is_sleeping())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -355,6 +456,7 @@ impl GameState {
             last_player_attacks: Arc::new(RwLock::new(HashMap::new())),
             player_spatial_cells: Arc::new(RwLock::new(HashMap::new())),
             monsters: Arc::new(RwLock::new(HashMap::new())),
+            music_performances: Arc::new(RwLock::new(HashMap::new())),
             ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
@@ -362,6 +464,7 @@ impl GameState {
                 start_real: Instant::now(),
                 start_game_seconds: Self::datetime_to_total_game_seconds(&initial_datetime),
             })),
+            npc_schedules: Arc::new(std::sync::RwLock::new(HashMap::new())),
             monster_defs,
             item_defs,
             world_drop_defs,
@@ -382,6 +485,7 @@ impl GameState {
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
             party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
+            party_vitals_dirty: Arc::new(RwLock::new(HashSet::new())),
             persistence_lock: Arc::new(Mutex::new(())),
             character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),
@@ -403,6 +507,7 @@ impl GameState {
             parties: Arc::new(RwLock::new(party::Parties::default())),
             buybacks: Arc::new(RwLock::new(HashMap::new())),
             blocked_names: Arc::new(RwLock::new(HashMap::new())),
+            friends: Arc::new(RwLock::new(friends::Friends::default())),
             whisper_partners: Arc::new(RwLock::new(HashMap::new())),
             muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
@@ -414,6 +519,7 @@ impl GameState {
             regen_ticks: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             campfires: Arc::new(RwLock::new(HashMap::new())),
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
+            stalls: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

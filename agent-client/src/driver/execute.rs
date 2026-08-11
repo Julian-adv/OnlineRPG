@@ -14,7 +14,7 @@ use crate::state::{Carried, CarriedBagCopies, SharedState};
 use onlinerpg_shared::messages::BagLineItem;
 
 use super::action::{
-    action_to_command, asks_for_great_chest, parse_agent_response, resolve_move_goal, AgentAction,
+    action_to_command, asks_for_great_chest, parse_turn_tolerant, resolve_move_goal, AgentAction,
     PickupRef, Qty,
 };
 use super::combat::{
@@ -22,10 +22,44 @@ use super::combat::{
     ChaseResult, LostReason,
 };
 use super::movement::{execute_move, MoveResult};
+use super::MEMORY_LINES;
 
 /// Pause between the crouch broadcast and the actual pickup, approximating
 /// the web client's grab moment partway into its pickup animation.
 const PICKUP_GRAB_DELAY_MS: u64 = 700;
+
+/// How long a follow rests once it has caught up before checking again.
+const FOLLOW_RECHECK: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// How far the followed character must have travelled during a timed-out
+/// chase for that chase to count as "they are still walking" rather than
+/// "we are stuck".
+const FOLLOW_PROGRESS_M: f32 = 1.0;
+
+/// Where a character stands right now, if we can still see them.
+async fn target_pos(
+    state: &Arc<Mutex<SharedState>>,
+    id: &onlinerpg_shared::PlayerId,
+) -> Option<onlinerpg_shared::Position> {
+    state
+        .lock()
+        .await
+        .nearby_players
+        .get(id)
+        .map(|p| p.position)
+}
+
+/// Whether the character moved appreciably since `before`.
+async fn target_moved(
+    state: &Arc<Mutex<SharedState>>,
+    id: &onlinerpg_shared::PlayerId,
+    before: Option<onlinerpg_shared::Position>,
+) -> bool {
+    let (Some(was), Some(now)) = (before, target_pos(state, id).await) else {
+        return false;
+    };
+    was.dist_xz_sq(&now) > FOLLOW_PROGRESS_M * FOLLOW_PROGRESS_M
+}
 
 /// Feedback for an attack whose chase never reached the monster, so the agent
 /// stops re-issuing it. The reason comes from the chase itself, not a guess.
@@ -101,40 +135,94 @@ fn pick_pending<T>(items: &[T], name: Option<&str>, name_of: impl Fn(&T) -> &str
     }
 }
 
+/// Append a memory update, dropping lines already in the file (and repeats
+/// within the update itself), then rewrite the file keeping only the newest
+/// `MEMORY_LINES` lines.
+pub(super) fn append_memory(path: &str, update: &str) {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let mut lines: Vec<&str> = existing
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let before = lines.len();
+    for line in update.lines().map(str::trim) {
+        if !line.is_empty() && !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    if lines.len() == before {
+        debug!("Memory update skipped, all lines duplicate: {path}");
+        return;
+    }
+    let added = lines.len() - before;
+    let start = lines.len().saturating_sub(MEMORY_LINES);
+    match std::fs::write(path, lines[start..].join("\n") + "\n") {
+        Ok(()) => info!(
+            "Memory updated: {path} (+{added} lines, {} kept)",
+            lines.len() - start
+        ),
+        Err(e) => warn!("Failed to write memory file {path}: {e}"),
+    }
+}
+
 pub(super) async fn handle_response(
     state: &Arc<Mutex<SharedState>>,
     response: &str,
     memory_file: &Option<String>,
+    favor_file: &Option<String>,
     skip_movement: bool,
 ) -> Option<String> {
-    let agent_resp = match parse_agent_response(response) {
+    let agent_resp = match parse_turn_tolerant(response) {
         Ok(r) => r,
         Err(e) => {
             warn!("Failed to parse agent response: {e}");
             warn!("Raw response: {response}");
+            // Whole response was not valid JSON — tell the agent so, instead of
+            // leaving it to guess why nothing happened.
+            let mut s = state.lock().await;
+            s.push_agent_event(
+                "[BadResponse] Your last message was not valid JSON and nothing ran. \
+                 Reply with only the JSON object — no prose, no code fences."
+                    .to_string(),
+            );
             return None;
         }
     };
 
-    // Process memory update if present
+    // Report any actions that failed to parse, naming the offending field, so
+    // the agent fixes that action instead of thinking the whole class of action
+    // is broken. The valid actions below still run.
+    if !agent_resp.errors.is_empty() {
+        let mut s = state.lock().await;
+        for err in &agent_resp.errors {
+            s.push_agent_event(format!("[BadAction] {err}."));
+        }
+    }
+
     if let (Some(ref update), Some(ref path)) = (&agent_resp.memory_update, memory_file) {
-        let update = update.trim();
-        if !update.is_empty() {
-            use std::io::Write;
-            match std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
-                Ok(mut f) => {
-                    if let Err(e) = writeln!(f, "\n{update}") {
-                        warn!("Failed to write memory update to {path}: {e}");
-                    } else {
-                        info!("Memory updated: {path} (+{} bytes)", update.len());
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to open memory file {path}: {e}");
+        append_memory(path, update);
+    }
+
+    // Favor deltas: fold into the per-player map (state clamps and drops
+    // NPCs/strangers) and persist the whole map when anything moved. The
+    // write happens after the lock is released — disk must not stall the
+    // event ingest sharing this mutex.
+    let deltas = agent_resp.favor_deltas();
+    if !deltas.is_empty() {
+        let mut s = state.lock().await;
+        let mut changed = false;
+        for (name, delta) in &deltas {
+            changed |= s.apply_favor(name, *delta);
+        }
+        if changed {
+            if let Some(path) = favor_file {
+                let json = serde_json::to_string_pretty(&s.favor).expect("favor map serializes");
+                drop(s);
+                if let Err(e) = std::fs::write(path, json) {
+                    warn!("Failed to write favor file {path}: {e}");
+                } else {
+                    info!("Favor updated: {path}");
                 }
             }
         }
@@ -146,23 +234,87 @@ pub(super) async fn handle_response(
     // sell would resend an instance the server has already emptied.
     let mut spent_units: HashMap<u64, u32> = HashMap::new();
 
+    // Holding position means holding it: a follow started before the trade
+    // window opened would keep walking us away from the customer.
+    if skip_movement {
+        let mut s = state.lock().await;
+        if let Some(name) = s.cancel_follow() {
+            info!("Follow of {name} cancelled — NPC is holding position");
+        }
+    }
+
     for action in &agent_resp.actions {
         // Skip movement/attack when the NPC must stay put — resting on a
         // scheduled object, or serving a customer with an open trade window.
-        if skip_movement
-            && matches!(
-                action,
-                AgentAction::Move { .. }
-                    | AgentAction::Attack { .. }
-                    | AgentAction::Pickup { .. }
-                    | AgentAction::OpenChest { .. }
-                    | AgentAction::Sell { .. }
-                    | AgentAction::Buy { .. }
-                    | AgentAction::Buyback { .. }
-                    | AgentAction::BreakProp { .. }
-            )
-        {
+        if skip_movement && action.blocked_while_holding_position() {
             debug!("Skipping {:?} action — NPC is holding position", action);
+            continue;
+        }
+
+        // A running follow yields, or the two tasks fight over the same body.
+        if action.takes_over_movement() {
+            let mut s = state.lock().await;
+            if let Some(name) = s.cancel_follow() {
+                info!("Follow of {name} cancelled by a new movement action");
+            }
+        }
+
+        // Keep following a character until something else takes over.
+        if let AgentAction::Follow { target } = action {
+            let name = target.trim();
+            let target_id = {
+                let mut s = state.lock().await;
+                match s.resolve_nearby_player(name) {
+                    Some((id, _)) => id,
+                    None => {
+                        warn!("follow: no nearby character named '{name}'");
+                        s.push_agent_event(format!(
+                            "[MoveFailed] No character named '{name}' is nearby to follow."
+                        ));
+                        continue;
+                    }
+                }
+            };
+            let name = name.to_string();
+            let task_state = Arc::clone(state);
+            let task_name = name.clone();
+            let handle = tokio::spawn(async move {
+                loop {
+                    let before = target_pos(&task_state, &target_id).await;
+                    let ended = match approach_player(&task_state, &target_id).await {
+                        ChaseResult::InRange => {
+                            tokio::time::sleep(FOLLOW_RECHECK).await;
+                            None
+                        }
+                        // A chase that runs out of time while the target keeps
+                        // walking is following working, not failing — only a
+                        // deadline against a target that never moved is stuck.
+                        ChaseResult::Lost(LostReason::Timeout)
+                            if target_moved(&task_state, &target_id, before).await =>
+                        {
+                            None
+                        }
+                        ChaseResult::Lost(loss) => Some(format!(
+                            "[FollowEnded] You are no longer following {task_name} — {}.",
+                            loss.clause()
+                        )),
+                        ChaseResult::Error => Some(format!(
+                            "[FollowEnded] Something went wrong while following {task_name}."
+                        )),
+                    };
+                    if let Some(note) = ended {
+                        task_state.lock().await.push_agent_event(note);
+                        break;
+                    }
+                }
+            });
+            let mut s = state.lock().await;
+            s.follow_task = Some((name.clone(), handle));
+            s.push_agent_event(format!(
+                "[Following] You are now following {name}. Any other action that \
+                 takes your body over — a move, attack, pickup, chest, trade or \
+                 fishing — stops the follow."
+            ));
             continue;
         }
 
@@ -209,22 +361,9 @@ pub(super) async fn handle_response(
         } = action
         {
             let mut s = state.lock().await;
-            let Some((target_id, target_is_official_npc)) = s.resolve_nearby_player(player) else {
-                warn!("offer_deal: no nearby player named '{player}'");
-                s.push_agent_event(format!(
-                    "[DealFailed] No player named '{player}' is nearby; the offer was not sent."
-                ));
+            let Some(target_id) = resolve_trade_push_target(&mut s, player, "DealFailed") else {
                 continue;
             };
-            // The server rejects NPC targets anyway; refusing here keeps a
-            // false "[DealResult]" exchange out of the LLM's context.
-            if target_is_official_npc {
-                s.push_agent_event(format!(
-                    "[DealFailed] {player} is an NPC — deals can only be offered to player \
-                     travelers. Drop the subject."
-                ));
-                continue;
-            }
             let kind = match kind.as_deref() {
                 Some("sell") => onlinerpg_shared::messages::DealKind::Sell,
                 _ => onlinerpg_shared::messages::DealKind::Buy,
@@ -248,22 +387,9 @@ pub(super) async fn handle_response(
         // TradeError event.
         if let AgentAction::OpenTrade { player } = action {
             let mut s = state.lock().await;
-            let Some((target_id, target_is_official_npc)) = s.resolve_nearby_player(player) else {
-                warn!("open_trade: no nearby player named '{player}'");
-                s.push_agent_event(format!(
-                    "[TradeFailed] No player named '{player}' is nearby; no trade window was opened."
-                ));
+            let Some(target_id) = resolve_trade_push_target(&mut s, player, "TradeFailed") else {
                 continue;
             };
-            // The server rejects NPC targets anyway; refusing here avoids
-            // pairing its TradeError with a false success event below.
-            if target_is_official_npc {
-                s.push_agent_event(format!(
-                    "[TradeFailed] {player} is an NPC — trade windows can only be opened for \
-                     player travelers. Drop the subject."
-                ));
-                continue;
-            }
             let cmd = onlinerpg_shared::ClientMessage::OpenTrade {
                 target_player_id: target_id,
             };
@@ -377,7 +503,9 @@ pub(super) async fn handle_response(
             qty,
         } = action
         {
-            let Some((merchant_id, _)) = reach_merchant(state, "SellFailed", merchant).await else {
+            let Some((merchant_id, merchant_name)) =
+                reach_merchant(state, "SellFailed", merchant.as_deref()).await
+            else {
                 continue;
             };
             let mut s = state.lock().await;
@@ -415,7 +543,7 @@ pub(super) async fn handle_response(
                     *spent_units.entry(line.instance_id).or_default() += line.qty;
                 }
                 info!(
-                    "Agent selling {total}x {def_id} [{} instance(s)] to {merchant}",
+                    "Agent selling {total}x {def_id} [{} instance(s)] to {merchant_name}",
                     lines.len()
                 );
             }
@@ -472,7 +600,7 @@ pub(super) async fn handle_response(
         // checks and answers with GoldUpdate/InventoryUpdated or TradeError.
         if let AgentAction::Buy { item, merchant } = action {
             let Some((merchant_id, merchant_name)) =
-                reach_merchant(state, "BuyFailed", merchant).await
+                reach_merchant(state, "BuyFailed", merchant.as_deref()).await
             else {
                 continue;
             };
@@ -492,7 +620,7 @@ pub(super) async fn handle_response(
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send buy: {e}");
             } else {
-                info!("Agent buying {item} from {merchant}");
+                info!("Agent buying {item} from {merchant_name}");
             }
             continue;
         }
@@ -500,7 +628,8 @@ pub(super) async fn handle_response(
         // Buy back a unit sold to this merchant this session, at the exact
         // payout recorded server-side. Entry list arrives via BuybackUpdated.
         if let AgentAction::Buyback { item, merchant } = action {
-            let Some((merchant_id, _)) = reach_merchant(state, "BuybackFailed", merchant).await
+            let Some((merchant_id, merchant_name)) =
+                reach_merchant(state, "BuybackFailed", merchant.as_deref()).await
             else {
                 continue;
             };
@@ -512,7 +641,7 @@ pub(super) async fn handle_response(
                 .unwrap_or_default();
             if entries.is_empty() {
                 s.push_agent_event(format!(
-                    "[BuybackFailed] Nothing of yours is waiting with {merchant} — the \
+                    "[BuybackFailed] Nothing of yours is waiting with {merchant_name} — the \
                      [Buyback] event after a sale lists what they still hold."
                 ));
                 continue;
@@ -531,7 +660,7 @@ pub(super) async fn handle_response(
                 .max_by_key(|e| e.enchant)
             else {
                 s.push_agent_event(format!(
-                    "[BuybackFailed] {merchant}'s buyback list has no '{item}' — it holds: {}.",
+                    "[BuybackFailed] {merchant_name}'s buyback list has no '{item}' — it holds: {}.",
                     held.join(", ")
                 ));
                 continue;
@@ -544,7 +673,7 @@ pub(super) async fn handle_response(
                 error!("Failed to send buyback: {e}");
             } else {
                 info!(
-                    "Agent buying back {want} [entry {}] from {merchant}",
+                    "Agent buying back {want} [entry {}] from {merchant_name}",
                     entry.entry_id
                 );
             }
@@ -838,6 +967,11 @@ pub(super) async fn handle_response(
                 match execute_move(state, gx, gz, floor).await {
                     MoveResult::Arrived => {
                         info!("Agent arrived at ({gx:.1}, {gz:.1})");
+                        let mut s = state.lock().await;
+                        s.push_agent_event(format!(
+                            "[Arrived] You reached ({gx:.1}, {gz:.1}). Look around and \
+                             decide your next move."
+                        ));
                     }
                     MoveResult::Blocked => {
                         warn!("Path blocked to ({gx:.1}, {gz:.1})");
@@ -867,6 +1001,11 @@ pub(super) async fn handle_response(
 
         {
             let mut s = state.lock().await;
+            if let AgentAction::Say { message } = action {
+                if s.refuses_play_command(message) {
+                    continue;
+                }
+            }
             let player_pos = s.self_player.as_ref().map(|p| &p.position).cloned();
             if let Some(cmd) = action_to_command(action, player_pos.as_ref()) {
                 if let Err(e) = s.send_command(cmd).await {
@@ -879,6 +1018,40 @@ pub(super) async fn handle_response(
     last_attack_target
 }
 
+/// Resolve the player a trade push (offer_deal / open_trade) names,
+/// applying the shared gates: they must be nearby, human (the server
+/// rejects NPC targets anyway; refusing here keeps a false exchange out of
+/// the LLM's context), and outside the decline cooldown. Pushes the
+/// failure event under `tag`; `None` means the action is done.
+fn resolve_trade_push_target(
+    s: &mut SharedState,
+    player: &str,
+    tag: &str,
+) -> Option<onlinerpg_shared::PlayerId> {
+    let Some((target_id, target_is_official_npc)) = s.resolve_nearby_player(player) else {
+        warn!("{tag}: no nearby player named '{player}'");
+        s.push_agent_event(format!(
+            "[{tag}] No player named '{player}' is nearby; nothing was sent."
+        ));
+        return None;
+    };
+    if target_is_official_npc {
+        s.push_agent_event(format!(
+            "[{tag}] {player} is an NPC — trade offers and windows are for player \
+             travelers only. Drop the subject."
+        ));
+        return None;
+    }
+    if s.trade_offer_blocked(&target_id) {
+        s.push_agent_event(format!(
+            "[{tag}] {player} waved off your trade window not long ago — no trade \
+             pushes at them for now; just talk."
+        ));
+        return None;
+    }
+    Some(target_id)
+}
+
 /// Resolve the trader an LLM action named and walk up to them, answering with
 /// their id and registry name. Trading is NPC-only server-side ("That
 /// character is not a trader"), so a fellow traveler is refused here instead
@@ -887,24 +1060,38 @@ pub(super) async fn handle_response(
 async fn reach_merchant(
     state: &Arc<Mutex<SharedState>>,
     tag: &str,
-    merchant: &str,
+    merchant: Option<&str>,
 ) -> Option<(onlinerpg_shared::PlayerId, String)> {
     let resolved = {
         let mut s = state.lock().await;
-        match s.resolve_nearby_player(merchant) {
-            Some((id, true)) => Some((id, super::prompt::player_name(&s, &id))),
-            Some((_, false)) => {
-                s.push_agent_event(format!(
-                    "[{tag}] {merchant} is a fellow traveler, not a shopkeeper — trading is \
-                     with NPC merchants only."
-                ));
-                None
-            }
+        let id = match merchant {
+            // Named merchant: resolve by name.
+            Some(name) => match s.resolve_nearby_player(name) {
+                Some((id, true)) => Some(id),
+                Some((_, false)) => {
+                    s.push_agent_event(format!(
+                        "[{tag}] {name} is a fellow traveler, not a shopkeeper — trading is \
+                         with NPC merchants only."
+                    ));
+                    None
+                }
+                None => {
+                    s.push_agent_event(format!("[{tag}] No one named '{name}' is nearby."));
+                    None
+                }
+            },
+            // No merchant given: aim at the nearest NPC merchant in range.
             None => {
-                s.push_agent_event(format!("[{tag}] No one named '{merchant}' is nearby."));
-                None
+                let nearest = s.nearest_merchant();
+                if nearest.is_none() {
+                    s.push_agent_event(format!(
+                        "[{tag}] No merchant is nearby — walk to one first."
+                    ));
+                }
+                nearest
             }
-        }
+        };
+        id.map(|id| (id, super::prompt::player_name(&s, &id)))
     };
     let (id, name) = resolved?;
     match approach_player(state, &id).await {
@@ -912,14 +1099,14 @@ async fn reach_merchant(
         ChaseResult::Lost(loss) => {
             let mut s = state.lock().await;
             s.push_agent_event(format!(
-                "[{tag}] You could not reach {merchant} — {}.",
+                "[{tag}] You could not reach {name} — {}.",
                 loss.clause()
             ));
             None
         }
         ChaseResult::Error => {
             let mut s = state.lock().await;
-            s.push_agent_event(format!("[{tag}] You could not reach {merchant}."));
+            s.push_agent_event(format!("[{tag}] You could not reach {name}."));
             None
         }
     }
@@ -1056,6 +1243,53 @@ mod tests {
             s.remember_ground_item(item);
         }
         s
+    }
+
+    /// Keep the returned `RunDir` alive — dropping it deletes the file.
+    fn temp_memory_file() -> (crate::driver::RunDir, String) {
+        let dir = crate::driver::RunDir::create().unwrap();
+        let path = dir.path().join("memory.txt").to_str().unwrap().to_string();
+        (dir, path)
+    }
+
+    #[test]
+    fn append_memory_skips_lines_already_in_the_file() {
+        let (_dir, path) = temp_memory_file();
+        append_memory(&path, "jake1 speaks Korean.\nRica is a trader.");
+        append_memory(&path, "jake1 speaks Korean.\njake1 sold me a torch.");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content.lines().collect::<Vec<_>>(),
+            vec![
+                "jake1 speaks Korean.",
+                "Rica is a trader.",
+                "jake1 sold me a torch."
+            ]
+        );
+    }
+
+    #[test]
+    fn append_memory_dedups_within_one_update_and_skips_all_duplicate_updates() {
+        let (_dir, path) = temp_memory_file();
+        append_memory(&path, "a\na\nb");
+        let after_first = std::fs::read_to_string(&path).unwrap();
+        append_memory(&path, "  a  \nb");
+        let after_second = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(after_first, after_second);
+        assert_eq!(after_second.lines().collect::<Vec<_>>(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn append_memory_caps_the_file_at_the_newest_lines() {
+        let (_dir, path) = temp_memory_file();
+        let bulk: Vec<String> = (0..MEMORY_LINES).map(|i| format!("note {i}")).collect();
+        append_memory(&path, &bulk.join("\n"));
+        append_memory(&path, "the newest note");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), MEMORY_LINES);
+        assert_eq!(lines.first(), Some(&"note 1"));
+        assert_eq!(lines.last(), Some(&"the newest note"));
     }
 
     #[test]

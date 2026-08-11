@@ -44,6 +44,8 @@ pub enum CharacterClass {
     Wizard,
     #[serde(rename = "tourist")]
     Tourist,
+    #[serde(rename = "bard")]
+    Bard,
     #[serde(rename = "merchant")]
     Merchant,
     #[serde(rename = "guard")]
@@ -66,6 +68,7 @@ impl CharacterClass {
             CharacterClass::Rogue => "rogue",
             CharacterClass::Wizard => "wizard",
             CharacterClass::Tourist => "tourist",
+            CharacterClass::Bard => "bard",
             CharacterClass::Merchant => "merchant",
             CharacterClass::Guard => "guard",
         }
@@ -93,7 +96,8 @@ impl CharacterClass {
             CharacterClass::Archaeologist
             | CharacterClass::Healer
             | CharacterClass::Rogue
-            | CharacterClass::Wizard => 6,
+            | CharacterClass::Wizard
+            | CharacterClass::Bard => 6,
             CharacterClass::Tourist | CharacterClass::Merchant => 4,
             CharacterClass::Guard => 10,
         }
@@ -120,6 +124,7 @@ impl CharacterClass {
             (CharacterClass::Healer, _) => [-2, -1, 1, 1, 2, -1],
             (CharacterClass::Wizard, _) => [-2, 0, -1, 3, 2, -2],
             (CharacterClass::Tourist, _) => [-1, 0, -1, 1, -1, 2],
+            (CharacterClass::Bard, _) => [-2, 2, -1, 0, -1, 2],
             (CharacterClass::Merchant, _) => [-2, 0, -1, 1, -1, 3],
             (CharacterClass::Guard, _) => [2, 0, 2, -2, -1, -1],
         }
@@ -144,6 +149,7 @@ impl std::str::FromStr for CharacterClass {
             "rogue" => Ok(CharacterClass::Rogue),
             "wizard" => Ok(CharacterClass::Wizard),
             "tourist" => Ok(CharacterClass::Tourist),
+            "bard" => Ok(CharacterClass::Bard),
             "merchant" => Ok(CharacterClass::Merchant),
             "guard" => Ok(CharacterClass::Guard),
             _ => Err(()),

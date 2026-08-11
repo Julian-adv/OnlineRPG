@@ -1,6 +1,7 @@
 mod announcements;
 mod api_auth;
 mod auth;
+mod bgm_defs;
 mod celestial;
 mod conn_limit;
 mod connection;
@@ -290,7 +291,7 @@ async fn main() -> ExitCode {
     let args = Args::parse();
     world_config::log_world_config();
     let monster_defs = monster_defs::MonsterDefs::load();
-    let item_defs = item_defs::ItemDefs::load();
+    let item_defs = item_defs::item_defs().clone();
     let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);
     let paths = state_paths(&args.state_dir);
@@ -397,6 +398,7 @@ async fn main() -> ExitCode {
         height_sampler,
         water_sampler,
     ));
+    game_state.load_npc_schedules(&npc_io).await;
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.
     if let Err(err) = game_state.init_passability(&terrain_io).await {
@@ -439,6 +441,18 @@ async fn main() -> ExitCode {
         move || {
             let game_state = Arc::clone(&game_state_for_party_positions);
             async move { game_state.tick_party_positions().await }
+        },
+    ));
+
+    // Faster than positions: a party HP bar lagging mid-fight reads as wrong.
+    let game_state_for_party_vitals = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "party vitals",
+        Duration::from_secs(1),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_party_vitals);
+            async move { game_state.tick_party_vitals().await }
         },
     ));
 
@@ -580,7 +594,7 @@ async fn main() -> ExitCode {
             terrain_io,
             Arc::clone(&game_state),
         ))
-        .merge(npc_router(npc_io))
+        .merge(npc_router(npc_io, Arc::clone(&game_state)))
         .merge(announcements_router(announcement_store))
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&auth_ctx),

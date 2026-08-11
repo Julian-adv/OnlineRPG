@@ -1,3 +1,4 @@
+mod bgm_defs;
 mod claude;
 mod codex;
 mod driver;
@@ -11,6 +12,7 @@ mod openai;
 mod openrouter;
 mod orchestrator;
 mod shop_info;
+mod splat;
 mod state;
 mod terrain_http;
 mod watch;
@@ -66,7 +68,7 @@ struct Config {
     #[serde(default)]
     npcs: Vec<NpcConfig>,
 
-    /// Maximum number of concurrent LLM calls across all NPCs (default: 2)
+    /// Maximum number of concurrent LLM calls across all NPCs (min 1, default 2)
     #[serde(default = "default_max_concurrent")]
     max_concurrent: usize,
 
@@ -193,6 +195,9 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = toml::from_str(&config_text)
         .map_err(|e| anyhow::anyhow!("Failed to parse {CONFIG_PATH}: {e}"))?;
 
+    if config.max_concurrent == 0 {
+        anyhow::bail!("max_concurrent in {CONFIG_PATH} must be at least 1");
+    }
     if config.npcs.is_empty() {
         anyhow::bail!("No [[npcs]] configured in {CONFIG_PATH}");
     }
@@ -229,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
         &config.terrain,
         &config.terrain_cache,
     ));
+    let splat_sampler = Arc::new(create_splat_sampler(&config.terrain, &config.terrain_cache));
 
     // NPC patrols keep loading tiles; sweep idle ones like the server does.
     let height_sampler_for_sweep = Arc::clone(&height_sampler);
@@ -261,6 +267,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shared = Arc::new(SharedResources {
         height_sampler,
+        splat_sampler,
         world_cache,
         behavior_trees: Arc::new(behavior_trees),
         type_mapping: Arc::new(type_mapping),
@@ -326,6 +333,16 @@ fn create_height_sampler(terrain: &str, cache_dir: &str) -> HeightSampler {
     HeightSampler::new(TerrainIO::new(std::path::PathBuf::from(terrain)))
 }
 
+fn create_splat_sampler(terrain: &str, cache_dir: &str) -> splat::SplatSampler {
+    if is_http_source(terrain) {
+        return splat::SplatSampler::new(splat::HttpSplatTiles::new(
+            terrain,
+            std::path::PathBuf::from(cache_dir),
+        ));
+    }
+    splat::SplatSampler::new(TerrainIO::new(std::path::PathBuf::from(terrain)))
+}
+
 /// Fill an `[[npcs]]` entry from the game-data registry (`data-src/npcs.csv`,
 /// the single source of truth for who an NPC is). `id` selects the registry
 /// row; the character name and class come from it, and the prompt/schedule
@@ -358,6 +375,8 @@ fn resolve_from_registry(npc: &mut NpcConfig) -> anyhow::Result<()> {
         .get_or_insert_with(|| format!("data/npcs/{id}/instance.txt"));
     npc.memory_file
         .get_or_insert_with(|| format!("data/npcs/{id}/memory.txt"));
+    npc.favor_file
+        .get_or_insert_with(|| format!("data/npcs/{id}/favor.json"));
     if npc.schedule_file.is_none() {
         // Schedules are optional, and a missing path is logged as an error
         // downstream — only derive it when the conventional file exists.
@@ -432,12 +451,14 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::SpawnMonsterRequest { .. } => "SpawnMonsterRequest",
         ServerMessage::NoSpawnZones { .. } => "NoSpawnZones",
         ServerMessage::PlayerInteractionChanged { .. } => "PlayerInteractionChanged",
+        ServerMessage::PlayerMusicStarted { .. } => "PlayerMusicStarted",
         ServerMessage::InteractionRejected { .. } => "InteractionRejected",
         ServerMessage::InventoryState { .. } => "InventoryState",
         ServerMessage::InventoryUpdated { .. } => "InventoryUpdated",
         ServerMessage::GroundItemSpawned { .. } => "GroundItemSpawned",
         ServerMessage::GroundItemAppeared { .. } => "GroundItemAppeared",
         ServerMessage::GroundItemRemoved { .. } => "GroundItemRemoved",
+        ServerMessage::GroundItemQuantityChanged { .. } => "GroundItemQuantityChanged",
         ServerMessage::ShopState { .. } => "ShopState",
         ServerMessage::GoldUpdate { .. } => "GoldUpdate",
         ServerMessage::GuardUpdated { .. } => "GuardUpdated",
@@ -447,16 +468,24 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::BuybackUpdated { .. } => "BuybackUpdated",
         ServerMessage::DealResult { .. } => "DealResult",
         ServerMessage::TradeNotice { .. } => "TradeNotice",
+        ServerMessage::TradeDeclined { .. } => "TradeDeclined",
         ServerMessage::TradeBusy { .. } => "TradeBusy",
         ServerMessage::PartyInviteReceived { .. } => "PartyInviteReceived",
         ServerMessage::PartyInviteResult { .. } => "PartyInviteResult",
         ServerMessage::PartySummonReceived { .. } => "PartySummonReceived",
         ServerMessage::PartyState { .. } => "PartyState",
         ServerMessage::PartyPositions { .. } => "PartyPositions",
+        ServerMessage::PartyVitals { .. } => "PartyVitals",
+        ServerMessage::FriendList { .. } => "FriendList",
+        ServerMessage::FriendsOnline { .. } => "FriendsOnline",
+        ServerMessage::FriendRequestReceived { .. } => "FriendRequestReceived",
         ServerMessage::HungerUpdate { .. } => "HungerUpdate",
         ServerMessage::CampfireSpawned { .. } => "CampfireSpawned",
         ServerMessage::CampfireAppeared { .. } => "CampfireAppeared",
         ServerMessage::CampfireRemoved { .. } => "CampfireRemoved",
+        ServerMessage::StallPlaced { .. } => "StallPlaced",
+        ServerMessage::StallAppeared { .. } => "StallAppeared",
+        ServerMessage::StallRemoved { .. } => "StallRemoved",
         ServerMessage::GrillStarted => "GrillStarted",
         ServerMessage::GrillEnded { .. } => "GrillEnded",
     }
@@ -475,6 +504,14 @@ server = "wss://example.test/ws"
 [auth]
 mode = "google"
 "#;
+
+    #[test]
+    fn max_concurrent_defaults_to_two() {
+        assert_eq!(
+            parse("server = \"ws://127.0.0.1:10006\"\n").max_concurrent,
+            2
+        );
+    }
 
     /// Who pays decides the default: an agent someone runs for themselves
     /// spends their own LLM quota, so it keeps thinking with nobody watching.
@@ -502,6 +539,28 @@ always_active = true
         assert!(!config.npcs[0].always_active(), "registry NPC");
         assert!(config.npcs[1].always_active(), "player-run agent");
         assert!(config.npcs[2].always_active(), "explicit override wins");
+    }
+
+    /// Every registry NPC must find the prompt files the directory convention
+    /// promises. A missing one is a startup crash on the server, in the dark.
+    #[test]
+    fn registry_npcs_resolve_to_prompt_files_that_exist() {
+        for id in ["karl", "rica", "signe"] {
+            let config = parse(&format!(
+                "server = \"ws://127.0.0.1:10006\"\n\n[[npcs]]\nid = \"{id}\"\n"
+            ));
+            let mut npc = config.npcs.into_iter().next().expect("one npc");
+            resolve_from_registry(&mut npc).expect("registry row");
+            for path in [
+                npc.template_prompt.expect("class template"),
+                npc.instance_prompt.expect("instance prompt"),
+            ] {
+                assert!(
+                    std::path::Path::new(&path).exists(),
+                    "{id}: {path} is missing"
+                );
+            }
+        }
     }
 
     #[test]

@@ -28,19 +28,20 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::llm_scheduler::{LlmPriority, LlmScheduler};
-use crate::orchestrator::ScheduleEntry;
 use crate::state::SharedState;
+use onlinerpg_shared::schedule::ScheduleEntry;
+use onlinerpg_shared::ClientMessage;
 
 pub(crate) use action::wants_reroll;
 use combat::{load_attack_cooldown, tick_combat};
-use execute::handle_response;
+use execute::{append_memory, handle_response};
 use movement::{
     check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
 };
-use prompt::build_prompt;
+use prompt::{build_prompt, record_conversation};
 
 /// Trait for LLM backends that can send a prompt and return a text response.
 #[async_trait]
@@ -48,10 +49,25 @@ pub trait LlmBackend: Send + Sync {
     async fn send_message(&self, content: &str) -> anyhow::Result<String>;
 }
 
-/// Load system prompt from file.
+/// Load a system prompt layer from file. A `{{ACTIONS}}` slot is filled with
+/// the action reference rendered from the parser's own spec table
+/// (`action::ACTION_SPECS`), so the documented actions cannot drift from what
+/// the parser accepts.
 pub fn load_system_prompt(path: &str) -> anyhow::Result<String> {
-    std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("Failed to read system prompt from {path}: {e}"))
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read system prompt from {path}: {e}"))?;
+    Ok(text.replace("{{ACTIONS}}", &action::action_reference()))
+}
+
+/// Render the surface-terrain grid without holding the state lock: a tile
+/// cache miss hits disk or HTTP, and the lock also gates the NPC's
+/// message-processing loop. The brief relock only snapshots the inputs.
+async fn rendered_terrain_grid(state: &Arc<Mutex<SharedState>>) -> Option<String> {
+    let job = state.lock().await.terrain_grid_job();
+    match job {
+        Some(job) => Some(job.render().await),
+        None => None,
+    }
 }
 
 /// Empty working directory for CLI backends — prompts are untrusted, so the
@@ -85,6 +101,9 @@ impl Drop for RunDir {
 pub struct DriverConfig {
     pub label: String,
     pub memory_file: Option<String>,
+    /// JSON map of player name -> accumulated favor, loaded at startup and
+    /// rewritten whenever the LLM's `favor` deltas change it.
+    pub favor_file: Option<String>,
     pub min_interval: Duration,
     /// Floor between prompts once an urgent event is pending — a player
     /// talking to us shouldn't wait out the routine cadence.
@@ -114,6 +133,7 @@ pub async fn llm_driver(
     let DriverConfig {
         label,
         memory_file,
+        favor_file,
         min_interval,
         urgent_min_interval,
         debounce,
@@ -141,6 +161,18 @@ pub async fn llm_driver(
 
     info!("[{label}] LLM driver: in game, ready.");
 
+    // Favor persists across sessions; the map feeds prompt rendering and
+    // the keepsake gate from the first turn.
+    if let Some(path) = &favor_file {
+        match std::fs::read_to_string(path) {
+            Ok(txt) if !txt.trim().is_empty() => match serde_json::from_str(&txt) {
+                Ok(map) => state.lock().await.favor = map,
+                Err(e) => warn!("[{label}] Ignoring unreadable favor file {path}: {e}"),
+            },
+            _ => {}
+        }
+    }
+
     let attack_cooldown = load_attack_cooldown();
 
     // Stagger idle polls: random offset so NPCs don't all poll at the same time
@@ -159,6 +191,7 @@ pub async fn llm_driver(
     // Track the highest urgency since the last prompt
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
+    let mut dead_since: Option<Instant> = None;
 
     // Fetch housing + furniture data so pathfinding avoids buildings and solid
     // props the same way the browser client does. An agent without a schedule
@@ -203,12 +236,24 @@ pub async fn llm_driver(
     {
         let mut s = state.lock().await;
         if is_sleeping {
-            s.drain_events();
-            s.drain_agent_events();
+            discard_turn(&mut s);
             info!("[{label}] LLM driver: NPC is sleeping, skipping initial prompt");
         } else if always_active || s.has_nearby_human_players() {
+            drop(s);
+            // File I/O and tile sampling outside the state lock.
+            let grid = rendered_terrain_grid(&state).await;
+            let memory = load_memory_tail(&memory_file);
+            let mut s = state.lock().await;
             let agent_events = s.drain_agent_events();
-            let initial_prompt = build_prompt(&s, &[], &agent_events, &schedule, active_schedule.0);
+            let initial_prompt = build_prompt(
+                &s,
+                &[],
+                &agent_events,
+                &schedule,
+                active_schedule.0,
+                memory.as_deref(),
+                grid.as_deref(),
+            );
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
             match scheduler
@@ -228,8 +273,14 @@ pub async fn llm_driver(
                         let s = state.lock().await;
                         has_action || s.trade_busy || s.self_fishing
                     };
-                    attack_target =
-                        handle_response(&state, &response, &memory_file, skip_movement).await;
+                    attack_target = handle_response(
+                        &state,
+                        &response,
+                        &memory_file,
+                        &favor_file,
+                        skip_movement,
+                    )
+                    .await;
                     last_prompt_at = Instant::now();
                 }
                 Err(e) => {
@@ -237,8 +288,7 @@ pub async fn llm_driver(
                 }
             }
         } else {
-            s.drain_events();
-            s.drain_agent_events();
+            discard_turn(&mut s);
             info!("[{label}] LLM driver: no human players nearby, skipping initial prompt");
         }
     }
@@ -253,9 +303,11 @@ pub async fn llm_driver(
 
         tokio::select! {
             _ = urgent_notify.notified() => {
-                debug!("[{label}] LLM driver: urgent event received");
+                // Sets both the rate-limit floor below and the queue priority.
+                let woken_by = LlmPriority::from(state.lock().await.take_wake_urgency());
+                debug!("[{label}] LLM driver: woken by a {woken_by:?} event");
                 last_activity_at = Instant::now();
-                pending_urgency = LlmPriority::Urgent;
+                pending_urgency = pending_urgency.min(woken_by);
                 // Start the debounce window now, even mid-call: it then runs
                 // alongside the in-flight prompt instead of only starting once
                 // that one lands. Double-submission is already ruled out below.
@@ -264,6 +316,28 @@ pub async fn llm_driver(
                 }
             }
             _ = tokio::time::sleep(tick_duration) => {}
+        }
+
+        // === Auto-respawn ===
+        // Respawn as an LLM action needs a turn, and turns are skipped with
+        // no audience — a dead NPC would otherwise stay dead forever. The
+        // driver revives itself after a short delay.
+        let self_dead = {
+            let s = state.lock().await;
+            s.in_game && s.self_player.as_ref().is_some_and(|p| p.health == 0)
+        };
+        if self_dead && dead_since.is_none() {
+            info!(
+                "[{label}] LLM driver: agent is dead, auto-respawn in {}s",
+                RESPAWN_DELAY.as_secs()
+            );
+        }
+        if respawn_due(self_dead, &mut dead_since, Instant::now()) {
+            request_respawn(&state, &memory_file, &label).await;
+        }
+        if self_dead {
+            attack_target = None;
+            continue;
         }
 
         // === Combat tick ===
@@ -292,7 +366,8 @@ pub async fn llm_driver(
                     has_scheduled_action || s.trade_busy || s.self_fishing
                 };
                 let new_target =
-                    handle_response(&state, &response, &memory_file, skip_movement).await;
+                    handle_response(&state, &response, &memory_file, &favor_file, skip_movement)
+                        .await;
                 if new_target.is_some() {
                     attack_target = new_target;
                 }
@@ -334,38 +409,56 @@ pub async fn llm_driver(
         }
         prompt_pending_since = None;
 
-        // Drain events and build prompt, determine priority from events
-        let (prompt, has_events, priority) = {
+        // Drain first; the prompt build (and its memory-file read) only
+        // happens when something actually needs answering.
+        let (events, agent_events, priority) = {
             let mut s = state.lock().await;
 
             // Skip the LLM while asleep, and — for an operator-run NPC — while
             // nobody is around to see it. Events still drain so they can't pile
-            // up unbounded.
+            // up unbounded; what was said still lands in the conversation
+            // history, so a waking NPC knows what it heard.
             if is_sleeping || !(always_active || s.has_nearby_human_players()) {
-                s.drain_events();
-                s.drain_agent_events();
+                discard_turn(&mut s);
                 pending_urgency = LlmPriority::Idle;
                 continue;
             }
 
             let events = s.drain_events();
             let agent_events = s.drain_agent_events();
-            let has_events = !events.is_empty() || !agent_events.is_empty();
 
             // Determine priority from the most urgent event (lower = more urgent)
             let max_urgency = events
                 .iter()
                 .map(|e| LlmPriority::from(s.classify_event(e)))
                 .fold(pending_urgency, std::cmp::min);
-
-            let prompt = build_prompt(&s, &events, &agent_events, &schedule, active_schedule.0);
-            (prompt, has_events, max_urgency)
+            (events, agent_events, max_urgency)
         };
         pending_urgency = LlmPriority::Idle; // reset for next cycle
 
-        if !has_events {
+        if events.is_empty() && agent_events.is_empty() {
             continue;
         }
+
+        // File I/O and tile sampling outside the state lock.
+        let memory = load_memory_tail(&memory_file);
+        let grid = rendered_terrain_grid(&state).await;
+        let prompt = {
+            let mut s = state.lock().await;
+            // History is recorded after the build: this prompt shows the
+            // batch under EVENTS, the next one under RECENT CONVERSATION.
+            let prompt = build_prompt(
+                &s,
+                &events,
+                &agent_events,
+                &schedule,
+                active_schedule.0,
+                memory.as_deref(),
+                grid.as_deref(),
+            );
+            record_conversation(&mut s, &events);
+            prompt
+        };
 
         // Submit to scheduler as background task (doesn't block combat ticks)
         info!(
@@ -380,6 +473,74 @@ pub async fn llm_driver(
             sched.submit(&lbl, priority, prompt, inv).await
         }));
     }
+}
+
+/// Grace period between noticing our own death and requesting respawn.
+const RESPAWN_DELAY: Duration = Duration::from_secs(5);
+
+/// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
+/// so a lost request is retried after another delay. Revival clears it.
+fn respawn_due(dead: bool, dead_since: &mut Option<Instant>, now: Instant) -> bool {
+    if !dead {
+        *dead_since = None;
+        return false;
+    }
+    match *dead_since {
+        None => {
+            *dead_since = Some(now);
+            false
+        }
+        Some(t) if now.duration_since(t) >= RESPAWN_DELAY => {
+            *dead_since = None;
+            true
+        }
+        Some(_) => false,
+    }
+}
+
+/// Ask the server to revive us (heal + teleport to spawn + hunger reset)
+/// and note the death in memory so the LLM learns it died even though it
+/// never got a turn while dead.
+async fn request_respawn(
+    state: &Arc<Mutex<SharedState>>,
+    memory_file: &Option<String>,
+    label: &str,
+) {
+    info!("[{label}] LLM driver: requesting respawn");
+    if let Some(path) = memory_file {
+        append_memory(path, "I was killed and woke up back at the spawn point.");
+    }
+    let mut s = state.lock().await;
+    if let Err(e) = s.send_command(ClientMessage::RequestRespawn).await {
+        error!("[{label}] Respawn request failed: {e}");
+    }
+}
+
+/// Drop a turn without prompting: events drain (so they cannot pile up)
+/// but what was said still lands in the conversation history.
+fn discard_turn(s: &mut SharedState) {
+    let events = s.drain_events();
+    record_conversation(s, &events);
+    s.drain_agent_events();
+}
+
+/// Cap on memory.txt and on the per-prompt MEMORIES tail: `append_memory`
+/// rewrites the file to its newest lines, and `load_memory_tail` guards
+/// against legacy files still longer than the cap.
+const MEMORY_LINES: usize = 50;
+
+/// Tail of the NPC's memory file. Re-read per prompt — the file is tiny —
+/// so notes written this session reach a stateless backend without a
+/// restart (the file used to be baked into the system prompt at startup).
+fn load_memory_tail(memory_file: &Option<String>) -> Option<String> {
+    let path = memory_file.as_ref()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let start = lines.len().saturating_sub(MEMORY_LINES);
+    Some(lines[start..].join("\n"))
 }
 
 /// Await a finished LLM submission and unwrap the join/scheduler result.
@@ -399,5 +560,42 @@ async fn await_llm_response(
             error!("[{label}] LLM task panicked: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::tests::{test_player, test_state};
+
+    #[test]
+    fn respawn_fires_only_after_the_delay_and_rearms_while_still_dead() {
+        let mut since = None;
+        let t0 = Instant::now();
+        assert!(!respawn_due(true, &mut since, t0));
+        assert!(!respawn_due(true, &mut since, t0 + RESPAWN_DELAY / 2));
+        assert!(respawn_due(true, &mut since, t0 + RESPAWN_DELAY));
+        assert!(!respawn_due(true, &mut since, t0 + RESPAWN_DELAY));
+        assert!(respawn_due(true, &mut since, t0 + RESPAWN_DELAY * 2));
+        assert!(!respawn_due(false, &mut since, t0 + RESPAWN_DELAY * 2));
+        assert!(since.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_respawn_sends_the_request_and_notes_the_death() {
+        let (mut s, mut rx) = test_state();
+        let mut me = test_player(0.0, 0.0);
+        me.health = 0;
+        s.self_player = Some(me);
+        let state = Arc::new(Mutex::new(s));
+        let dir = RunDir::create().unwrap();
+        let memory = dir.path().join("memory.txt").to_str().unwrap().to_string();
+
+        request_respawn(&state, &Some(memory.clone()), "test").await;
+
+        assert!(matches!(rx.try_recv(), Ok(ClientMessage::RequestRespawn)));
+        assert!(std::fs::read_to_string(&memory)
+            .unwrap()
+            .contains("I was killed"));
     }
 }

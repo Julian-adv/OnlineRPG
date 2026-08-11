@@ -140,6 +140,11 @@ const _: () = assert!(EVENT_DELIVERY_RADIUS >= NPC_SIGHT_RADIUS);
 /// the server's authoritative movement simulation must all agree on this.
 pub const PLAYER_MOVE_SPEED: f32 = 3.0;
 
+/// Longest move target (or appended leg) the server accepts; the farthest
+/// in-view click is ~42m. Farther targets are refused and snapped back, so
+/// clients sending long forced moves must split them into shorter legs.
+pub const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
+
 /// Axis-aligned rectangular zone where monsters must not spawn (e.g. towns).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

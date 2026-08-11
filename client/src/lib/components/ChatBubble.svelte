@@ -1,6 +1,7 @@
 <script lang="ts">
   import { T } from '@threlte/core'
   import TextLabel from './TextLabel.svelte'
+  import { truncateGraphemes } from '../utils/textWrap'
   import type { Vector3 } from 'three'
   import * as THREE from 'three'
 
@@ -124,11 +125,10 @@
   )
   const bubbleBorderGeometry = $derived(createBorderGeometry(bubbleShape))
   const bubbleCenterY = $derived(cornerRadius + bubbleHeight / 2)
-  const displayText = $derived(
-    message.length > MAX_DISPLAY_CHARS
-      ? message.slice(0, MAX_DISPLAY_CHARS) + '...'
-      : message
-  )
+  const displayText = $derived.by(() => {
+    const truncated = truncateGraphemes(message, MAX_DISPLAY_CHARS)
+    return truncated.length < message.length ? truncated + '...' : message
+  })
 </script>
 
 <!-- Chat bubble background -->
@@ -163,8 +163,6 @@
     anchorY="middle"
     maxWidth={MAX_TEXT_WIDTH}
     onsync={handleTextSync}
-    overflowWrap="normal"
-    whiteSpace="normal"
     depthTest={false}
     renderOrder={OVERLAY_RENDER_ORDER}
   />

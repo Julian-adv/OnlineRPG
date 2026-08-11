@@ -1,16 +1,18 @@
+use super::consent::{answer_consent, PendingConsent};
 use crate::types::{Player, PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
-    PartyMember, PartyMemberPosition, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
+    PartyMember, PartyMemberPosition, PartyMemberVitals, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
+pub(crate) const PARTY_MAX_MEMBERS: usize = 5;
 
 /// Mirrors auth's character-name cap; anything longer cannot be a real name,
 /// and rejecting it early keeps oversized input out of the echoed failure.
-const MAX_TARGET_NAME_CHARS: usize = 32;
+pub(super) const MAX_TARGET_NAME_CHARS: usize = 32;
 
 /// Outstanding invites one player may have pending at once (spam brake).
 const PARTY_PENDING_INVITE_CAP: usize = 5;
@@ -31,17 +33,10 @@ pub(crate) struct Parties {
     member_of: HashMap<PlayerId, u64>,
     /// (inviter, invitee) → pending invite. Swept lazily on the invite paths
     /// and purged with the player, so it stays tiny without its own tick.
-    invites: HashMap<(PlayerId, PlayerId), PendingInvite>,
+    invites: HashMap<(PlayerId, PlayerId), PendingConsent>,
     /// (caster, member) → summon expiry, same lifecycle as `invites`. No
     /// pending cap: the consumed scroll is the spam brake.
     summons: HashMap<(PlayerId, PlayerId), Instant>,
-}
-
-pub(crate) struct PendingInvite {
-    expires_at: Instant,
-    /// A declined invite stays here (answered) until it expires: removing it
-    /// would hand the spam brake back to the inviter on every decline.
-    answered: bool,
 }
 
 impl Parties {
@@ -91,6 +86,24 @@ fn member_positions(
                 x: p.position.x,
                 z: p.position.z,
                 floor_level: p.floor_level,
+            })
+        })
+        .collect()
+}
+
+/// Every member's health; one payload serves the whole party, like
+/// `member_positions`.
+fn member_vitals(
+    players: &HashMap<PlayerId, Player>,
+    member_ids: &[PlayerId],
+) -> Vec<PartyMemberVitals> {
+    member_ids
+        .iter()
+        .filter_map(|id| {
+            players.get(id).map(|p| PartyMemberVitals {
+                id: *id,
+                hp: p.health,
+                max_hp: p.max_health,
             })
         })
         .collect()
@@ -220,10 +233,7 @@ impl super::GameState {
                     None => {
                         parties.invites.insert(
                             (*inviter_id, target_id),
-                            PendingInvite {
-                                expires_at: now + PARTY_INVITE_TTL,
-                                answered: false,
-                            },
+                            PendingConsent::new(PARTY_INVITE_TTL),
                         );
                         Outcome::Deliver
                     }
@@ -276,22 +286,7 @@ impl super::GameState {
     ) {
         let valid = {
             let mut parties = self.parties.write().await;
-            let key = (*inviter_id, *invitee_id);
-            let now = Instant::now();
-            let usable = parties
-                .invites
-                .get(&key)
-                .is_some_and(|invite| !invite.answered && invite.expires_at > now);
-            if usable {
-                if accept {
-                    parties.invites.remove(&key);
-                } else if let Some(invite) = parties.invites.get_mut(&key) {
-                    // Keep the declined entry until it expires: the spam
-                    // brake must not reset on the victim's own click.
-                    invite.answered = true;
-                }
-            }
-            usable
+            answer_consent(&mut parties.invites, (*inviter_id, *invitee_id), accept)
         };
         if !valid {
             self.send_system_message(invitee_id, "Party: that invite has expired.")
@@ -766,13 +761,26 @@ impl super::GameState {
         self.party_position_dirty.write().await.insert(*player_id);
     }
 
-    /// Push fresh positions to every party a queued player belongs to: one
-    /// message per party, serialized once for all members. Parties with no
-    /// queued relocation send nothing, and lock traffic is per tick, not per
-    /// client (one dirty drain, one `parties` read, one `players` read).
+    /// Push fresh positions to every party a queued player belongs to.
     pub async fn tick_party_positions(&self) {
-        let moved: Vec<PlayerId> = {
-            let mut dirty = self.party_position_dirty.write().await;
+        self.tick_party_push(&self.party_position_dirty, member_positions, |members| {
+            ServerMessage::PartyPositions { members }
+        })
+        .await;
+    }
+
+    /// Drain a dirty set and push one freshly-built payload per affected
+    /// party: one message per party, serialized once for all members. Parties
+    /// with no queued change send nothing, and lock traffic is per tick, not
+    /// per client (one dirty drain, one `parties` read, one `players` read).
+    async fn tick_party_push<T>(
+        &self,
+        dirty: &RwLock<HashSet<PlayerId>>,
+        build: impl Fn(&HashMap<PlayerId, Player>, &[PlayerId]) -> Vec<T>,
+        msg: impl Fn(Vec<T>) -> ServerMessage,
+    ) {
+        let changed: Vec<PlayerId> = {
+            let mut dirty = dirty.write().await;
             if dirty.is_empty() {
                 return;
             }
@@ -780,7 +788,7 @@ impl super::GameState {
         };
         let rosters: Vec<Vec<PlayerId>> = {
             let parties = self.parties.read().await;
-            let party_ids: HashSet<u64> = moved
+            let party_ids: HashSet<u64> = changed
                 .iter()
                 .filter_map(|id| parties.member_of.get(id).copied())
                 .collect();
@@ -792,22 +800,137 @@ impl super::GameState {
         if rosters.is_empty() {
             return;
         }
-        let payloads: Vec<(Vec<PlayerId>, Vec<PartyMemberPosition>)> = {
+        let payloads: Vec<(Vec<PlayerId>, Vec<T>)> = {
             let players = self.players.read().await;
             rosters
                 .into_iter()
                 .map(|ids| {
-                    let members = member_positions(&players, &ids);
+                    let members = build(&players, &ids);
                     (ids, members)
                 })
                 .collect()
         };
         for (member_ids, members) in payloads {
-            self.send_direct_message_to_players(
-                &member_ids,
-                ServerMessage::PartyPositions { members },
+            self.send_direct_message_to_players(&member_ids, msg(members))
+                .await;
+        }
+    }
+
+    /// Queue `player_id` for the next party-vitals push. Called on every
+    /// health change; partyless entries are dropped by the tick.
+    pub(crate) async fn mark_party_vitals_dirty(&self, player_id: &PlayerId) {
+        self.party_vitals_dirty.write().await.insert(*player_id);
+    }
+
+    /// Push fresh health to every party a queued player belongs to.
+    pub async fn tick_party_vitals(&self) {
+        self.tick_party_push(&self.party_vitals_dirty, member_vitals, |members| {
+            ServerMessage::PartyVitals { members }
+        })
+        .await;
+    }
+
+    /// Leader-only removal of another member. The removal itself is
+    /// `remove_party_member`, so succession and disband behave exactly like a
+    /// voluntary leave; only the messaging differs.
+    pub async fn kick_from_party(&self, kicker_id: &PlayerId, target_id: &PlayerId) {
+        let verdict = {
+            let parties = self.parties.read().await;
+            match parties.party_of(kicker_id) {
+                None => Err("you are not in a party."),
+                Some(party) if party.leader != *kicker_id => Err("only the party leader can kick."),
+                Some(_) if target_id == kicker_id => Err("that's you — /party leave to step out."),
+                Some(party) if !party.members.contains(target_id) => {
+                    Err("they are not in your party.")
+                }
+                Some(_) => Ok(()),
+            }
+        };
+        if let Err(reason) = verdict {
+            self.send_system_message(kicker_id, format!("Party: {reason}"))
+                .await;
+            return;
+        }
+        let target_name = self.player_name_of(target_id).await;
+        // The verdict was read-locked, so the target may have left in the
+        // gap; the removal returning false is that race, not a bug.
+        if !self.remove_party_member(target_id).await {
+            self.send_system_message(
+                kicker_id,
+                format!("Party: {target_name} is no longer in your party."),
             )
             .await;
+            return;
+        }
+        info!(target = %target_name, "party kick");
+        self.send_system_message(target_id, "Party: you were removed from the party.")
+            .await;
+        // After the removal the kicker's roster is the remaining party;
+        // disbanded means the kicker is partyless and still gets the line.
+        let mut remaining = self.other_party_members(kicker_id).await;
+        remaining.push(*kicker_id);
+        self.send_direct_message_to_players(
+            &remaining,
+            ServerMessage::SystemMessage {
+                message: format!("Party: {target_name} was removed."),
+            },
+        )
+        .await;
+    }
+
+    /// Leader-only leadership handover. The roster is untouched, so no
+    /// removal path applies; the new leader is announced to the whole party.
+    pub async fn promote_party_leader(&self, leader_id: &PlayerId, target_id: &PlayerId) {
+        let result = {
+            let mut parties = self.parties.write().await;
+            let party_id = parties.member_of.get(leader_id).copied();
+            match party_id.and_then(|id| parties.parties.get_mut(&id)) {
+                None => Err("you are not in a party."),
+                Some(party) if party.leader != *leader_id => {
+                    Err("only the party leader can hand over the lead.")
+                }
+                Some(_) if target_id == leader_id => Err("you already lead this party."),
+                Some(party) if !party.members.contains(target_id) => {
+                    Err("they are not in your party.")
+                }
+                Some(party) => {
+                    party.leader = *target_id;
+                    Ok((party.leader, party.members.clone()))
+                }
+            }
+        };
+        match result {
+            Err(reason) => {
+                self.send_system_message(leader_id, format!("Party: {reason}"))
+                    .await;
+            }
+            Ok((leader, members)) => {
+                let target_name = self.player_name_of(target_id).await;
+                info!(target = %target_name, "party promote");
+                self.broadcast_party_state(leader, &members).await;
+                self.send_direct_message_to_players(
+                    &members,
+                    ServerMessage::SystemMessage {
+                        message: format!("Party: {target_name} is now the party leader."),
+                    },
+                )
+                .await;
+            }
+        }
+    }
+
+    /// Resolve a `/party kick|leader <name>` target among online players.
+    pub async fn party_target_by_name(&self, sender_id: &PlayerId, name: &str) -> Option<PlayerId> {
+        match self.player_id_by_name(name).await {
+            Some(id) => Some(id),
+            None => {
+                self.send_system_message(
+                    sender_id,
+                    format!("Party: no one called {name} is online."),
+                )
+                .await;
+                None
+            }
         }
     }
 
@@ -820,6 +943,9 @@ impl super::GameState {
                     players.get(id).map(|p| PartyMember {
                         id: *id,
                         name: p.name.clone(),
+                        hp: p.health,
+                        max_hp: p.max_health,
+                        class: p.class.clone(),
                     })
                 })
                 .collect()

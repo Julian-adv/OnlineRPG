@@ -5,6 +5,7 @@ import type { ServerGroundItem } from '../network/networkTypes'
 export interface GroundItemData {
   instanceId: number
   itemDefId: string
+  quantity: number
   position: { x: number; y: number; z: number }
   floorLevel: number
   inHand?: boolean
@@ -101,6 +102,7 @@ class GroundItemManager {
     this.items.set(item.instance_id, {
       instanceId: item.instance_id,
       itemDefId: item.item_def_id,
+      quantity: item.quantity,
       position: { ...item.position },
       floorLevel: item.floor_level,
       restingRotationY,
@@ -155,6 +157,13 @@ class GroundItemManager {
       return
     }
     this.items.delete(instanceId)
+  }
+
+  // A pile someone took only part of: it stays, holding fewer units.
+  setQuantity(instanceId: number, quantity: number) {
+    const item = this.items.get(instanceId)
+    if (!item) return
+    this.items.set(instanceId, { ...item, quantity })
   }
 
   reset() {

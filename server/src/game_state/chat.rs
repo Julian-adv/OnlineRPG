@@ -2,6 +2,7 @@ use super::auth_db;
 use crate::auth::{ban_message, unix_now, AuthService, DEFAULT_BAN_REASON};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
 use crate::world_config::world_config;
+use onlinerpg_shared::messages::strip_command;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
@@ -9,12 +10,20 @@ use tracing::{error, info, warn};
 /// Upper bound on one character's `/block` list, so the per-recipient chat
 /// filter and the DB rows stay bounded at 5,000 concurrent users.
 const MAX_BLOCKS: usize = 100;
+/// How close an NPC's new fire may be to one already burning.
+const NPC_CAMPFIRE_MIN_GAP: f32 = 6.0;
 
 /// `/mute` duration (minutes): default when unstated, and the cap (one day).
 const MUTE_DEFAULT_MINUTES: u64 = 10;
 const MUTE_MAX_MINUTES: u64 = 1440;
 /// A year of minutes: longer than that, use a permanent ban (no minutes).
 const BAN_MAX_MINUTES: i64 = 525_600;
+
+/// `/spawnmob` per-command cap; the global and ambient per-player monster
+/// limits in `spawn_monster` still apply on top.
+const SPAWNMOB_MAX_COUNT: u32 = 10;
+/// Meters from the admin to each spawned monster.
+const SPAWNMOB_RING_RADIUS: f32 = 3.0;
 
 /// `/who` breakdown. Splits by client program rather than by "human vs bot":
 /// the server cannot tell whether a person or an LLM is driving a web client,
@@ -56,20 +65,25 @@ impl OnlineCounts {
     }
 }
 
-/// `message` is `prefix` as a whole slash-command word; returns the trimmed
-/// remainder.
-/// `<name> [minutes]` tail shared by `/ban` and `/mute`; both leave the
-/// duration unvalidated so a bad one draws a usage reply.
-fn split_name_and_minutes(rest: &str) -> (&str, Option<&str>) {
+/// `<name> [arg]` tail shared by `/ban`, `/mute`, and `/spawnmob`; the arg
+/// is left unvalidated so a bad one draws a usage reply.
+fn split_name_and_arg(rest: &str) -> (&str, Option<&str>) {
     match rest.split_once(' ') {
-        Some((name, minutes)) => (name, Some(minutes.trim())),
+        Some((name, arg)) => (name, Some(arg.trim())),
         None => (rest, None),
     }
 }
 
-fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
-    let rest = message.trim().strip_prefix(prefix)?;
-    (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
+/// Bounded numeric argument shared by `/ban`, `/mute`, and `/spawnmob`;
+/// `what` names the command and argument in the reply ("Ban: minutes").
+fn parse_bounded<T>(raw: &str, range: std::ops::RangeInclusive<T>, what: &str) -> Result<T, String>
+where
+    T: std::str::FromStr + PartialOrd + std::fmt::Display,
+{
+    match raw.parse() {
+        Ok(n) if range.contains(&n) => Ok(n),
+        _ => Err(format!("{what} must be {}–{}.", range.start(), range.end())),
+    }
 }
 
 /// `/w <name> <message>` (or `/whisper`). Returns the parts unvalidated so a
@@ -112,6 +126,36 @@ pub(crate) fn parse_block_command(message: &str) -> Option<BlockCommand<'_>> {
     })
 }
 
+/// `/friend add <name>` asks, `/friend remove <name>` drops, bare `/friend`
+/// lists. `/f` is the short form, like `/w` for `/whisper`.
+#[derive(Debug, PartialEq)]
+pub(crate) enum FriendCommand<'a> {
+    List,
+    Add(&'a str),
+    Remove(&'a str),
+    /// A subcommand that is none of the above, so it draws usage instead of
+    /// being read as a name.
+    Usage,
+}
+
+pub(crate) fn parse_friend_command(message: &str) -> Option<FriendCommand<'_>> {
+    let rest = ["/friend", "/f"]
+        .iter()
+        .find_map(|prefix| strip_command(message, prefix))?;
+    if rest.is_empty() {
+        return Some(FriendCommand::List);
+    }
+    let (subcommand, name) = match rest.split_once(' ') {
+        Some((subcommand, name)) => (subcommand, name.trim()),
+        None => (rest, ""),
+    };
+    Some(match subcommand {
+        "add" => FriendCommand::Add(name),
+        "remove" | "delete" => FriendCommand::Remove(name),
+        _ => FriendCommand::Usage,
+    })
+}
+
 /// `/notice <message>` sets the server banner, bare `/notice` clears it.
 /// `requires_admin` gates the command through this same parser, so the syntax
 /// is defined once.
@@ -120,10 +164,33 @@ pub(crate) fn parse_notice_command(message: &str) -> Option<Option<&str>> {
     Some(Some(rest).filter(|rest| !rest.is_empty()))
 }
 
-/// `/party <name>` invites; bare `/party` reports the roster.
-pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
+/// `/party <name>` invites; bare `/party` reports the roster; `kick`,
+/// `leader` and `leave` are subcommands (reserved as invite names).
+#[derive(Debug, PartialEq)]
+pub(crate) enum PartyCommand<'a> {
+    Status,
+    Invite(&'a str),
+    Kick(&'a str),
+    Leader(&'a str),
+    Leave,
+}
+
+pub(crate) fn parse_party_command(message: &str) -> Option<PartyCommand<'_>> {
     let rest = strip_command(message, "/party")?;
-    Some((!rest.is_empty()).then_some(rest))
+    Some(match rest.split_once(' ') {
+        None => match rest {
+            "" => PartyCommand::Status,
+            "leave" => PartyCommand::Leave,
+            // Bare subcommands still parse, so they draw a usage reply
+            // instead of inviting someone named "kick".
+            "kick" => PartyCommand::Kick(""),
+            "leader" => PartyCommand::Leader(""),
+            name => PartyCommand::Invite(name),
+        },
+        Some(("kick", name)) => PartyCommand::Kick(name.trim()),
+        Some(("leader", name)) => PartyCommand::Leader(name.trim()),
+        _ => PartyCommand::Invite(rest),
+    })
 }
 
 /// `/p <message>` speaks on the party channel. Parsed here and not only in the
@@ -159,6 +226,10 @@ pub(crate) enum AdminCommand<'a> {
     Unmute(&'a str),
     Summon(&'a str),
     Goto(&'a str),
+    Spawnmob {
+        monster_type: &'a str,
+        count: Option<&'a str>,
+    },
 }
 
 pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
@@ -173,15 +244,22 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
         return Some(AdminCommand::Unban(rest));
     }
     if let Some(rest) = strip_command(message, "/ban") {
-        let (name, minutes) = split_name_and_minutes(rest);
+        let (name, minutes) = split_name_and_arg(rest);
         return Some(AdminCommand::Ban { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/mute") {
-        let (name, minutes) = split_name_and_minutes(rest);
+        let (name, minutes) = split_name_and_arg(rest);
         return Some(AdminCommand::Mute { name, minutes });
     }
     if let Some(rest) = strip_command(message, "/summon") {
         return Some(AdminCommand::Summon(rest));
+    }
+    if let Some(rest) = strip_command(message, "/spawnmob") {
+        let (monster_type, count) = split_name_and_arg(rest);
+        return Some(AdminCommand::Spawnmob {
+            monster_type,
+            count,
+        });
     }
     strip_command(message, "/goto").map(AdminCommand::Goto)
 }
@@ -190,7 +268,7 @@ pub(crate) fn parse_admin_command(message: &str) -> Option<AdminCommand<'_>> {
 /// ASCII case (the characters table enforces it), so the first match is the
 /// match. Used by `/unblock` against the stored block list; online-player
 /// lookups go through the `player_ids_by_name` index instead, and `/block`
-/// applies the same rule in SQL (`AuthService::resolve_character_name`).
+/// applies the same rule in SQL (`AuthService::resolve_character_brief`).
 fn match_name<T, I>(mut candidates: I, name_of: impl Fn(&T) -> &str, query: &str) -> Option<T>
 where
     I: Iterator<Item = T>,
@@ -202,6 +280,17 @@ where
 fn prune_expired_mutes(muted: &mut HashMap<String, (String, Instant)>) {
     let now = Instant::now();
     muted.retain(|_, (_, expiry)| *expiry > now);
+}
+
+/// The one builder of a mid-performance `PlayerMusicStarted`, so the elapsed
+/// clock and message shape cannot drift between the AOI-entry and join paths.
+pub(super) fn music_started_msg(performer: PlayerId, entry: &(String, Instant)) -> ServerMessage {
+    let (track, started) = entry;
+    ServerMessage::PlayerMusicStarted {
+        player_id: performer,
+        track: track.clone(),
+        elapsed_secs: started.elapsed().as_secs_f32(),
+    }
 }
 
 impl super::GameState {
@@ -229,6 +318,31 @@ impl super::GameState {
 
         if message.trim() == "/escape" {
             self.escape_to_spawn(player_id).await;
+            return;
+        }
+
+        if let Some(track) = strip_command(&message, "/play_music") {
+            self.play_music(player_id, track).await;
+            return;
+        }
+
+        if message.trim() == "/light_campfire" {
+            self.light_npc_campfire(player_id).await;
+            return;
+        }
+
+        if message.trim() == "/lay_stall" {
+            self.lay_stall(player_id).await;
+            return;
+        }
+
+        if message.trim() == "/pack_stall" {
+            self.pack_stall(player_id).await;
+            return;
+        }
+
+        if let Some(name) = strip_command(&message, "/emote") {
+            self.play_emote(player_id, name).await;
             return;
         }
 
@@ -260,6 +374,27 @@ impl super::GameState {
             return;
         }
 
+        if let Some(command) = parse_friend_command(&message) {
+            match command {
+                FriendCommand::List => {
+                    let list = self.describe_friends(player_id).await;
+                    self.send_system_message(player_id, list).await;
+                }
+                FriendCommand::Add(name) => self.request_friend(player_id, name, auth).await,
+                FriendCommand::Remove(name) => {
+                    self.remove_friend_by_name(player_id, name, auth).await
+                }
+                FriendCommand::Usage => {
+                    self.send_system_message(
+                        player_id,
+                        "Friend: /friend add <name>, /friend remove <name>, or /friend to list.",
+                    )
+                    .await
+                }
+            }
+            return;
+        }
+
         if let Some((target_name, whisper)) = parse_whisper_command(&message) {
             self.send_whisper(player_id, target_name, whisper).await;
             return;
@@ -270,12 +405,31 @@ impl super::GameState {
             return;
         }
 
-        if let Some(target) = parse_party_command(&message) {
-            match target {
-                Some(name) => self.invite_to_party(player_id, name).await,
-                None => {
+        if let Some(command) = parse_party_command(&message) {
+            match command {
+                PartyCommand::Invite(name) => self.invite_to_party(player_id, name).await,
+                PartyCommand::Status => {
                     let status = self.describe_party(player_id).await;
                     self.send_system_message(player_id, status).await;
+                }
+                PartyCommand::Leave => self.leave_party(player_id).await,
+                PartyCommand::Kick("") => {
+                    self.send_system_message(player_id, "Party: /party kick <name>")
+                        .await;
+                }
+                PartyCommand::Kick(name) => {
+                    if let Some(target_id) = self.party_target_by_name(player_id, name).await {
+                        self.kick_from_party(player_id, &target_id).await;
+                    }
+                }
+                PartyCommand::Leader("") => {
+                    self.send_system_message(player_id, "Party: /party leader <name>")
+                        .await;
+                }
+                PartyCommand::Leader(name) => {
+                    if let Some(target_id) = self.party_target_by_name(player_id, name).await {
+                        self.promote_party_leader(player_id, &target_id).await;
+                    }
                 }
             }
             return;
@@ -303,6 +457,119 @@ impl super::GameState {
         }
 
         self.speak_locally(player_id, message).await;
+    }
+
+    /// `/play_music [title]` — an emote with no object to claim, so object_id
+    /// is None and the occupancy check is skipped: several players can play at
+    /// once. The pose is stored on the player so late joiners see it, and
+    /// StopInteraction clears it — the performer's client sends one when the
+    /// track ends. The title is resolved here, nowhere else, so every client
+    /// picks tracks the same way — including one with no audio at all
+    /// (agent-client): a bare `/play_music` gets a random tune. Nearby clients
+    /// play it along and name it in the chat log, the way they announce a
+    /// chest being opened — the performer says nothing. Playing takes an
+    /// instrument in the inventory (bards start with a worn mandolin); the
+    /// same rule binds NPCs, who carry theirs as a keepsake.
+    async fn play_music(&self, player_id: &PlayerId, query: &str) {
+        if !self.holds_instrument(player_id).await {
+            self.send_system_message(player_id, "You need an instrument to play music.")
+                .await;
+            return;
+        }
+        let Some(track) = crate::bgm_defs::bgm_defs().resolve(query) else {
+            self.send_system_message(player_id, "No such song.").await;
+            return;
+        };
+
+        self.set_player_interaction(
+            player_id,
+            Some(onlinerpg_shared::messages::MUSIC_EMOTE.to_string()),
+            None,
+        )
+        .await;
+        self.music_performances
+            .write()
+            .await
+            .insert(*player_id, (track.to_string(), Instant::now()));
+
+        let listeners = self
+            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
+            .await;
+        self.send_direct_message_to_players(
+            &listeners,
+            ServerMessage::PlayerMusicStarted {
+                player_id: *player_id,
+                track: track.to_string(),
+                elapsed_secs: 0.0,
+            },
+        )
+        .await;
+    }
+
+    /// `/emote <name>` — like `/play_music` with nothing attached: no object
+    /// to claim, no item requirement. A typo or a bare `/emote` gets the list
+    /// back; the client-side flow is documented on `ONE_SHOT_EMOTES`.
+    async fn play_emote(&self, player_id: &PlayerId, name: &str) {
+        let emotes = onlinerpg_shared::messages::ONE_SHOT_EMOTES;
+        if !emotes.contains(&name) {
+            self.send_system_message(player_id, format!("Emotes: {}", emotes.join(", ")))
+                .await;
+            return;
+        }
+        self.set_player_interaction(player_id, Some(name.to_string()), None)
+            .await;
+    }
+
+    /// An instrument anywhere in the inventory — bag or hands — is what
+    /// turns the strum emote into a performance.
+    async fn holds_instrument(&self, player_id: &PlayerId) -> bool {
+        let inventories = self.inventories.read().await;
+        inventories.get(player_id).is_some_and(|inv| {
+            inv.items().any(|item| {
+                self.item_defs
+                    .get(&item.item_def_id)
+                    .is_some_and(|def| def.is_instrument())
+            })
+        })
+    }
+
+    /// `/light_campfire` — an NPC lights a fire in front of itself with no kit
+    /// to spend; players still need one. Why NPCs get it free, and why a fire
+    /// lit after dark burns to sunrise, is in doc/HUNGER.md.
+    async fn light_npc_campfire(&self, player_id: &PlayerId) {
+        let is_npc = {
+            let players = self.players.read().await;
+            players.get(player_id).is_some_and(|p| p.is_official_npc)
+        };
+        if !is_npc {
+            self.send_system_message(player_id, "Use a campfire kit to light a fire.")
+                .await;
+            return;
+        }
+        let Some((placement, floor_level)) = self.campfire_placement(player_id).await else {
+            return;
+        };
+        // One fire per pitch: an NPC that lights another every turn would spawn
+        // a particle system and a light for every client in range.
+        if self
+            .nearby_campfire(&placement, floor_level, NPC_CAMPFIRE_MIN_GAP)
+            .await
+            .is_some()
+        {
+            self.send_system_message(player_id, "A fire is already burning here.")
+                .await;
+            return;
+        }
+        let datetime = self.current_game_datetime();
+        let duration_ms = if Self::is_night(&datetime) {
+            self.real_ms_until_sunrise()
+        } else {
+            onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS
+        };
+        self.spawn_campfire(placement, floor_level, duration_ms)
+            .await;
+        self.send_system_message(player_id, "You light a campfire.")
+            .await;
     }
 
     /// Fan a spoken line out to everyone in range, minus anyone who blocked the
@@ -456,6 +723,15 @@ impl super::GameState {
         self.blocked_names.write().await.remove(player_id);
     }
 
+    /// Whether `player_id` has `name` blocked. The name must already be the
+    /// canonical spelling — the stored list holds nothing else.
+    pub(crate) async fn has_blocked(&self, player_id: &PlayerId, name: &str) -> bool {
+        let blocked = self.blocked_names.read().await;
+        blocked
+            .get(player_id)
+            .is_some_and(|names| names.contains(name))
+    }
+
     async fn handle_block_command(
         &self,
         player_id: &PlayerId,
@@ -488,11 +764,12 @@ impl super::GameState {
     ) -> String {
         // Resolve against the DB, not online players: blocking someone who
         // just logged off must work, and every online character is in the DB.
-        let canonical = {
+        // The id comes along because a block also breaks any friendship.
+        let (blocked_character_id, canonical) = {
             let auth = auth.clone();
             let query = name.to_string();
-            match auth_db(move || auth.resolve_character_name(&query)).await {
-                Ok(Some(canonical)) => canonical,
+            match auth_db(move || auth.resolve_character_brief(&query)).await {
+                Ok(Some((id, canonical))) => (id, canonical),
                 Ok(None) => return format!("Block: no character named {name}."),
                 Err(err) => {
                     error!("Block lookup failed: {err}");
@@ -535,7 +812,21 @@ impl super::GameState {
             .entry(*player_id)
             .or_default()
             .insert(canonical.clone());
-        format!("Block: {canonical} is blocked; their chat and whispers are hidden. /unblock {canonical} undoes this.")
+
+        // Blocking and friendship are mutually exclusive: a friend you cannot
+        // hear is a state no other path knows how to explain.
+        let unfriended = self
+            .is_friend_character(player_id, blocked_character_id)
+            .await
+            && self
+                .drop_friendship(player_id, blocked_character_id, auth)
+                .await;
+        let note = if unfriended {
+            " They are no longer your friend."
+        } else {
+            ""
+        };
+        format!("Block: {canonical} is blocked; their chat and whispers are hidden.{note} /unblock {canonical} undoes this.")
     }
 
     async fn unblock_character(
@@ -638,6 +929,10 @@ impl super::GameState {
             AdminCommand::Unban(name) => self.unban_command(name, auth).await,
             AdminCommand::Summon(name) => self.summon_command(admin_id, name).await,
             AdminCommand::Goto(name) => self.goto_command(admin_id, name).await,
+            AdminCommand::Spawnmob {
+                monster_type,
+                count,
+            } => self.spawnmob_command(admin_id, monster_type, count).await,
         }
         .unwrap_or_else(std::convert::identity);
         self.send_system_message(admin_id, reply).await;
@@ -693,13 +988,9 @@ impl super::GameState {
         if name.is_empty() {
             return Err("Ban: /ban <name> [minutes]".to_string());
         }
-        let minutes = match raw_minutes {
-            None => None,
-            Some(raw) => match raw.parse::<i64>() {
-                Ok(m) if (1..=BAN_MAX_MINUTES).contains(&m) => Some(m),
-                _ => return Err(format!("Ban: minutes must be 1–{BAN_MAX_MINUTES}.")),
-            },
-        };
+        let minutes = raw_minutes
+            .map(|raw| parse_bounded(raw, 1..=BAN_MAX_MINUTES, "Ban: minutes"))
+            .transpose()?;
 
         let (canonical, account) = {
             let auth = auth.clone();
@@ -797,10 +1088,7 @@ impl super::GameState {
             .await?;
         let minutes = match raw_minutes {
             None => MUTE_DEFAULT_MINUTES,
-            Some(raw) => match raw.parse() {
-                Ok(m) if (1..=MUTE_MAX_MINUTES).contains(&m) => m,
-                _ => return Err(format!("Mute: minutes must be 1–{MUTE_MAX_MINUTES}.")),
-            },
+            Some(raw) => parse_bounded(raw, 1..=MUTE_MAX_MINUTES, "Mute: minutes")?,
         };
         let canonical = self.player_name_of(&target_id).await;
         let until = Instant::now() + Duration::from_secs(minutes * 60);
@@ -863,6 +1151,69 @@ impl super::GameState {
             .await;
         info!(admin = ?admin_id, target = %canonical, "admin goto");
         Ok(format!("Goto: you are at {canonical}'s side."))
+    }
+
+    /// Spawn monsters in a ring around the admin for combat testing. The
+    /// admin's own client owns them (`MonsterAssigned`), so their AI runs
+    /// like an ambient spawn's — ownerless monsters would neither fight back
+    /// nor despawn their corpses.
+    async fn spawnmob_command(
+        &self,
+        admin_id: &PlayerId,
+        monster_type: &str,
+        raw_count: Option<&str>,
+    ) -> Result<String, String> {
+        let types = self.monster_defs.ids().join(", ");
+        if monster_type.is_empty() {
+            return Err(format!(
+                "Spawnmob: /spawnmob <type> [count] — types: {types}"
+            ));
+        }
+        if self.monster_defs.get(monster_type).is_none() {
+            return Err(format!(
+                "Spawnmob: unknown type {monster_type} — types: {types}"
+            ));
+        }
+        let count = match raw_count {
+            None => 1,
+            Some(raw) => parse_bounded(raw, 1..=SPAWNMOB_MAX_COUNT, "Spawnmob: count")?,
+        };
+        let Some((center, rotation, floor, _)) = self.player_pose(admin_id).await else {
+            warn!("/spawnmob from non-existent player: {admin_id}");
+            return Err("Spawnmob: server error, try again.".to_string());
+        };
+
+        let mut spawned = 0u32;
+        for i in 0..count {
+            let angle = i as f32 / count as f32 * std::f32::consts::TAU;
+            let position = self.open_spot_beside(&center, angle, SPAWNMOB_RING_RADIUS);
+            let Some(monster) = self
+                .spawn_monster(
+                    monster_type.to_string(),
+                    position,
+                    rotation,
+                    Some(*admin_id),
+                    floor,
+                    None,
+                    true,
+                )
+                .await
+            else {
+                break;
+            };
+            self.send_direct_message(admin_id, ServerMessage::MonsterAssigned { monster })
+                .await;
+            spawned += 1;
+        }
+        info!(admin = ?admin_id, monster_type, spawned, "admin spawnmob");
+        if spawned == 0 {
+            return Err(format!("Spawnmob: {monster_type} is at its spawn limit."));
+        }
+        Ok(if spawned == count {
+            format!("Spawnmob: {spawned} {monster_type} spawned.")
+        } else {
+            format!("Spawnmob: {spawned} of {count} {monster_type} spawned (limit reached).")
+        })
     }
 
     /// Last resort for a player wedged somewhere movement can't undo: return

@@ -20,10 +20,19 @@
     networkManager.sendOpenShop(offer.session.merchantPlayerId)
   }
 
+  function decline(offer: PendingTradeOffer) {
+    declineTradeOffer()
+    // Tell the NPC, so it lets trading rest instead of offering again.
+    networkManager.sendDeclineTrade(offer.session.merchantPlayerId)
+  }
+
   $effect(() => {
     if (!offer) return
+    // Letting the offer expire is a decline too — an unanswered toast means
+    // the player is not interested (or not there); either way the NPC
+    // should stop pushing.
     const timer = setTimeout(
-      declineTradeOffer,
+      () => decline(offer),
       Math.max(0, offer.offeredAt + OFFER_TTL_MS - Date.now())
     )
     return () => clearTimeout(timer)
@@ -38,7 +47,7 @@
     acceptLabel="Open"
     declineLabel="Not now"
     onaccept={() => accept(offer)}
-    ondecline={declineTradeOffer}
+    ondecline={() => decline(offer)}
   >
     <strong>{offer.session.merchantName}</strong> wants to trade with you
   </ConsentToast>

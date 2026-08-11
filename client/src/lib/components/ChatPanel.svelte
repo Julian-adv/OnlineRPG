@@ -18,7 +18,7 @@
     shouldFocusChatOnEnter,
   } from '../chat-input-keys'
   import { mountOverlay } from '../stores/overlayStack'
-  import { chatFocusRequest } from '../stores/npcMenuStore'
+  import { chatFocusRequest, chatDraftRequest } from '../stores/npcMenuStore'
   import {
     translationEnabled,
     translationTargetLanguage,
@@ -316,6 +316,21 @@
       seenFocusRequest = $chatFocusRequest
       untrack(focusForLocalInput)
     }
+  })
+
+  // The friend panel's Whisper button prefills `/w <name> ` rather than
+  // sending: a slash line ignores the channel, so the draft is safe to leave
+  // sitting there, and the player still gets to type the message.
+  let seenDraftRequest = $chatDraftRequest.seq
+  $effect(() => {
+    const request = $chatDraftRequest
+    if (request.seq <= seenDraftRequest) return
+    seenDraftRequest = request.seq
+    untrack(() => {
+      activeTab = 'all'
+      messageInput = request.text
+      chatInput?.focus()
+    })
   })
 </script>
 

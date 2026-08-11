@@ -5,11 +5,14 @@ import type { CharacterClass, Gender } from '../network/networkTypes'
 import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
+import { resetFriendStores } from './friendStore'
 import { resetFishingStore } from './fishingStore'
 import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
+import { stallManager } from '../managers/stallManager'
+import { refreshBardZone } from '../managers/bardZone'
 
 export interface PlayerDamageInfo {
   damage: number
@@ -114,15 +117,18 @@ export const resetGameStore = () => {
     otherPlayers: new SvelteMap(),
     chatBubbles: new Map(),
   })
+  refreshBardZone(new Map())
   isAdminUser.set(false)
   resetInventoryStore()
   resetSkillsStore()
   resetFishingStore()
   resetPartyStores()
+  resetFriendStores()
   resetDiscoveredDungeons()
   resetHungerStore()
   groundItemManager.reset()
   campfireManager.reset()
+  stallManager.reset()
 }
 
 const MAX_MESSAGES = 100

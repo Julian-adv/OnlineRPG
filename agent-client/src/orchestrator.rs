@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use onlinerpg_shared::monster_ai::BehaviorTree;
-use onlinerpg_shared::{Character, CharacterClass, ClientMessage, Gender, ServerMessage};
+use onlinerpg_shared::{
+    Character, CharacterAttributes, CharacterClass, ClientMessage, Gender, ServerMessage,
+};
 use onlinerpg_terrain::height::HeightSampler;
 use serde::Deserialize;
 use tokio::sync::{mpsc, Mutex};
@@ -26,91 +28,7 @@ use crate::state::{SharedState, WorldCache};
 use crate::ws;
 use crate::LlmType;
 
-/// Parsed schedule condition (validated at load time).
-#[derive(Debug, Clone, PartialEq)]
-pub enum ScheduleCondition {
-    Day,
-    Night,
-    Time {
-        hour: u32,
-        minute: u32,
-    },
-    /// Recurring: fires every hour at the given minute (e.g. `"*:00"`).
-    Recurring {
-        minute: u32,
-    },
-}
-
-/// A single schedule entry: go to a position at a specific time condition.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ScheduleEntry {
-    /// When to activate: "day", "night", or "H:MM" / "HH:MM" (game time).
-    pub at: String,
-    /// Target position [x, y, z] (final/rest position).
-    pub pos: [f32; 3],
-    /// Facing rotation in degrees.
-    #[serde(default)]
-    pub rotation: f32,
-    /// Floor level (0 = ground, 1 = 2nd floor, etc.).
-    #[serde(default)]
-    pub floor_level: u8,
-    /// Human-readable label for LLM prompt context.
-    pub label: Option<String>,
-    /// Object type to interact with after arriving (e.g. "bed").
-    pub action: Option<String>,
-    /// Object placement ID to interact with.
-    pub object_id: Option<u32>,
-    /// Optional patrol route: list of [x, y, z] waypoints to visit before going to `pos`.
-    #[serde(default)]
-    pub waypoints: Vec<[f32; 3]>,
-    /// Parsed condition (set after deserialization).
-    #[serde(skip)]
-    pub condition: Option<ScheduleCondition>,
-}
-
-impl ScheduleEntry {
-    pub fn is_sleeping(&self) -> bool {
-        self.action.as_deref() == Some("bed")
-    }
-
-    pub fn display_label(&self) -> &str {
-        self.label.as_deref().unwrap_or("schedule position")
-    }
-
-    /// Parse the `at` field into a `ScheduleCondition`. Returns error for invalid formats.
-    /// Supports: `"day"`, `"night"`, `"H:MM"` / `"HH:MM"`, or `"*:MM"` (recurring every hour).
-    pub fn parse_condition(&mut self) -> Result<(), String> {
-        self.condition = Some(match self.at.as_str() {
-            "day" => ScheduleCondition::Day,
-            "night" => ScheduleCondition::Night,
-            time_str => {
-                let (h, m) = time_str
-                    .split_once(':')
-                    .ok_or_else(|| format!("invalid schedule condition: {time_str}"))?;
-                let minute = m
-                    .trim()
-                    .parse::<u32>()
-                    .map_err(|_| format!("invalid minute in: {time_str}"))?;
-                if minute >= 60 {
-                    return Err(format!("minute out of range in: {time_str}"));
-                }
-                if h.trim() == "*" {
-                    ScheduleCondition::Recurring { minute }
-                } else {
-                    let hour = h
-                        .trim()
-                        .parse::<u32>()
-                        .map_err(|_| format!("invalid hour in: {time_str}"))?;
-                    if hour >= 24 {
-                        return Err(format!("hour out of range in: {time_str}"));
-                    }
-                    ScheduleCondition::Time { hour, minute }
-                }
-            }
-        });
-        Ok(())
-    }
-}
+use onlinerpg_shared::schedule::{parse_conditions, ScheduleEntry};
 
 /// Wrapper for deserializing a schedule file.
 #[derive(Debug, Deserialize)]
@@ -178,6 +96,8 @@ pub struct NpcConfig {
     pub instance_prompt: Option<String>,
     /// Path to memory file (accumulated experiences, auto-updated by LLM).
     pub memory_file: Option<String>,
+    /// Path to favor file (per-player accumulated favor, auto-updated by LLM).
+    pub favor_file: Option<String>,
     /// Path to schedule file (time-based positioning).
     pub schedule_file: Option<String>,
 }
@@ -196,11 +116,23 @@ impl NpcConfig {
             .or(self.character_name.as_deref())
             .unwrap_or("agent")
     }
+
+    /// Whether this agent busks. The one gate for everything bard: the
+    /// songbook and tip prompt sections, and the `[Tip]` events in state —
+    /// so an agent is never instructed about tips it will not receive.
+    pub fn plays_music(&self) -> bool {
+        self.character_class.as_deref() == Some("bard")
+            || self
+                .template_prompt
+                .as_deref()
+                .is_some_and(|path| path.ends_with("bard.txt"))
+    }
 }
 
 /// Resources shared across all NPC connections.
 pub struct SharedResources {
     pub height_sampler: Arc<HeightSampler>,
+    pub splat_sampler: Arc<crate::splat::SplatSampler>,
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     pub behavior_trees: Arc<HashMap<String, BehaviorTree>>,
     pub type_mapping: Arc<HashMap<String, String>>,
@@ -442,9 +374,10 @@ async fn run_npc_session(
                 label, char_name, class, gender
             );
 
-            // Registry NPCs are fixtures of the town with a fixed post; they
-            // take the roll they are given. Only a user's own character
-            // shops around for a better one.
+            // Registry NPCs reroll by a fixed class heuristic instead of
+            // asking their LLM; only a user's own character shops around
+            // by taste. Either way it is the same reroll button a player
+            // gets — the server never hands out custom numbers.
             let agent = npc
                 .id
                 .is_none()
@@ -517,9 +450,20 @@ async fn run_npc_session(
         characters,
         cmd_tx,
         Arc::clone(&shared.height_sampler),
+        Arc::clone(&shared.splat_sampler),
         Arc::clone(&shared.world_cache),
         watch.clone(),
     )));
+    {
+        let mut s = state.lock().await;
+        s.plays_music = npc.plays_music();
+        s.keepsake_ids = npc
+            .id
+            .as_deref()
+            .and_then(crate::shop_info::npc_by_id)
+            .map(|row| row.offerable_keepsake_ids().map(String::from).collect())
+            .unwrap_or_default();
+    }
     if let Some(w) = &watch {
         w.set_state(Arc::clone(&state));
         w.push("system", "Session connected".to_string());
@@ -608,6 +552,7 @@ async fn run_npc_session(
             if !s.in_game {
                 continue;
             }
+            s.check_music_finished();
 
             // Clone Arc to avoid borrow conflict: world_cache (immutable) vs monster_ai (mutable).
             // Must drop the RwLockReadGuard before any .await (not Send).
@@ -676,7 +621,7 @@ const MAX_STAT_ROLLS: u32 = 20;
 /// Roll starting stats, letting the agent accept or reroll each result the
 /// way a human works the web client's reroll button. Whatever is on the table
 /// when it accepts — or when the rolls run out — is what it plays. Without an
-/// LLM the first roll stands, as before.
+/// LLM a fixed class heuristic does the accepting instead.
 ///
 /// The decisions go through the scheduler like any other call, so a fleet
 /// starting up with fresh accounts still honours `max_concurrent`.
@@ -715,8 +660,12 @@ async fn roll_stats_with_agent(
             a.r#str, a.dex, a.con, a.int, a.wis, a.cha, a.guard
         );
 
+        // Agentless: the loop bound keeps the last roll if none ever fits.
         let Some(agent) = agent else {
-            return Ok(());
+            if roll_fits_class(&a, class, gender) {
+                return Ok(());
+            }
+            continue;
         };
         let left = MAX_STAT_ROLLS - attempt;
         if left == 0 {
@@ -750,10 +699,36 @@ async fn roll_stats_with_agent(
     Ok(())
 }
 
+/// The agentless acceptance bar: every attribute the class favours (positive
+/// stat adjustment) reached 14. A guard rerolls until STR and CON can carry
+/// a fight; a class with no favourites takes the first roll.
+fn roll_fits_class(a: &CharacterAttributes, class: &CharacterClass, gender: Gender) -> bool {
+    const KEY_STAT_MIN: u8 = 14;
+    let values = [a.r#str, a.dex, a.con, a.int, a.wis, a.cha];
+    class
+        .stat_adjustments(gender)
+        .iter()
+        .zip(values)
+        .filter(|(adj, _)| **adj > 0)
+        .all(|(_, value)| value >= KEY_STAT_MIN)
+}
+
 /// Role prompt for agents with no class template — the plain player agent's
 /// own layer, mirroring `data/templates/{class}.txt` for registry NPCs.
 /// Optional: agents run fine on the shared prompt alone.
 const USER_PROMPT_FILE: &str = "data/user_prompt.txt";
+
+/// The songs a bard may call up, straight from the registry so the prompt
+/// cannot drift from what `/play_music` will resolve.
+fn songbook_prompt() -> String {
+    let mut section = String::from(
+        "## Your Songbook\nEvery tune you know. Use a title exactly as written here:\n",
+    );
+    for title in crate::bgm_defs::songbook() {
+        section.push_str(&format!("- {title}\n"));
+    }
+    section
+}
 
 /// Build the system prompt for an NPC by layering, outermost first.
 ///
@@ -789,17 +764,14 @@ fn build_system_prompt(npc: &NpcConfig) -> anyhow::Result<String> {
     {
         parts.push(shop);
     }
-    if let Some(ref memory_path) = npc.memory_file {
-        match std::fs::read_to_string(memory_path) {
-            Ok(content) if !content.trim().is_empty() => {
-                parts.push(format!("=== YOUR MEMORIES ===\n{content}"));
-            }
-            Ok(_) => {}
-            Err(_) => {
-                let _ = std::fs::write(memory_path, "");
-            }
-        }
+    // A bard announces the song before playing it, so it needs the titles in
+    // front of it — both to pick one and to match a listener's request.
+    if npc.plays_music() {
+        parts.push(songbook_prompt());
     }
+    // Memories are deliberately NOT baked in here: the driver re-reads the
+    // memory file into every prompt (load_memory_tail), so notes written
+    // mid-session reach even a stateless backend.
 
     info!("[{}] Prompt layers: {}", npc.label(), files.join(" + "));
     Ok(parts.join("\n\n"))
@@ -905,15 +877,11 @@ fn spawn_llm_task(
         match std::fs::read_to_string(path) {
             Ok(content) => match serde_json::from_str::<ScheduleFile>(&content) {
                 Ok(mut f) => {
-                    // Validate all conditions at load time
-                    let mut valid = true;
-                    for entry in &mut f.schedule {
-                        if let Err(e) = entry.parse_condition() {
-                            error!("[{}] Schedule entry error: {e}", label);
-                            valid = false;
-                        }
+                    let errors = parse_conditions(&mut f.schedule);
+                    for e in &errors {
+                        error!("[{}] Schedule entry error: {e}", label);
                     }
-                    if valid {
+                    if errors.is_empty() {
                         info!(
                             "[{}] Loaded {} schedule entries from {path}",
                             label,
@@ -943,6 +911,7 @@ fn spawn_llm_task(
     let driver_config = driver::DriverConfig {
         label: label.to_string(),
         memory_file: npc.memory_file.clone(),
+        favor_file: npc.favor_file.clone(),
         min_interval,
         urgent_min_interval,
         debounce,
@@ -1022,6 +991,23 @@ mod tests {
             class: Some(class),
             gender: None,
         }
+    }
+
+    #[test]
+    fn a_guard_rerolls_until_str_and_con_carry_a_fight() {
+        let attrs = |str_: u8, con: u8| CharacterAttributes {
+            r#str: str_,
+            dex: 10,
+            con,
+            int: 10,
+            wis: 10,
+            cha: 10,
+            guard: 10,
+        };
+        let class = CharacterClass::Guard;
+        assert!(roll_fits_class(&attrs(14, 14), &class, Gender::Male));
+        assert!(!roll_fits_class(&attrs(15, 13), &class, Gender::Male));
+        assert!(!roll_fits_class(&attrs(11, 16), &class, Gender::Male));
     }
 
     #[test]

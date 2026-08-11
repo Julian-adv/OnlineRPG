@@ -170,6 +170,32 @@ function regionImage(rx, rz) {
   return img;
 }
 
+function drawDungeon(dg, px) {
+  // Rock everywhere, carved floor cells on top, stairs marked.
+  ctx.fillStyle = "#171310";
+  ctx.fillRect(0, 0, mapC.width, mapC.height);
+  const [sx0, sy0] = w2s(dg.origin.x, dg.origin.z);
+  ctx.fillStyle = "#4d443b";
+  for (let z = 0; z < dg.grid; z++) {
+    const row = dg.rows[z];
+    for (let x = 0; x < dg.grid; x++) {
+      if (row[x] === ".") ctx.fillRect(sx0 + x * px, sy0 + z * px, px + 0.6, px + 0.6);
+    }
+  }
+  const stair = (pt, color, text) => {
+    if (!pt) return;
+    const [sx, sy] = w2s(pt.x, pt.z);
+    const r = 4 * devicePixelRatio;
+    ctx.fillStyle = color;
+    ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+    ctx.font = `${10 * devicePixelRatio}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(text, sx, sy - 7 * devicePixelRatio);
+  };
+  stair(dg.stairs_up, "#8fd18f", "▲");
+  stair(dg.stairs_down, "#e0b45f", "▼");
+}
+
 function drawTerrain() {
   const px = scale * devicePixelRatio;
   const halfW = mapC.width / (2 * px), halfH = mapC.height / (2 * px);
@@ -226,9 +252,12 @@ function draw() {
   }
 
   const px = scale * devicePixelRatio;
-  if (cam.ready) drawTerrain();
+  if (cam.ready) {
+    if (snap.dungeon) drawDungeon(snap.dungeon, px);
+    else drawTerrain();
+  }
 
-  for (const h of snap.houses || []) {
+  if (!snap.dungeon) for (const h of snap.houses || []) {
     for (const r of h.rooms) {
       if (r.floor > 0) continue;
       const [sx, sy] = w2s(r.x, r.z);
@@ -257,18 +286,52 @@ function draw() {
     ctx.fillRect(sx - w / 2, sy - 10 * devicePixelRatio, w * Math.max(0, frac), 3 * devicePixelRatio);
   };
 
+  const flr = snap.floor || 0;
+  // Zoomed out, labels and hp bars pile into an unreadable smear — dots only.
+  const detail = scale >= 2.2;
+
+  // Dungeon entrances (surface only — underground you are inside one).
+  if (!snap.dungeon) {
+    for (const dg of snap.dungeon_entrances || []) {
+      const [sx, sy] = w2s(dg.x, dg.z);
+      const r = 6 * devicePixelRatio;
+      ctx.fillStyle = "#111";
+      ctx.strokeStyle = "#e0b45f";
+      ctx.lineWidth = 1.5 * devicePixelRatio;
+      ctx.fillRect(sx - r, sy - r, r * 2, r * 2);
+      ctx.strokeRect(sx - r, sy - r, r * 2, r * 2);
+      if (detail) label(sx, sy, `${dg.name} (${dg.floors}층)`, "#e8cf9a");
+    }
+  }
+
+  // Dropped loot on this floor.
+  for (const g of snap.ground_items || []) {
+    if ((g.floor || 0) !== flr) continue;
+    const [sx, sy] = w2s(g.x, g.z);
+    const r = 3 * devicePixelRatio;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - r); ctx.lineTo(sx + r, sy); ctx.lineTo(sx, sy + r); ctx.lineTo(sx - r, sy);
+    ctx.closePath();
+    ctx.fillStyle = "#ffd76a";
+    ctx.fill();
+    if (detail && scale >= 4) label(sx, sy, g.item, "#f2e2ae");
+  }
+
   for (const m of snap.monsters || []) {
+    if ((m.floor_level || 0) !== flr) continue;
     const [sx, sy] = w2s(m.position.x, m.position.z);
     const dead = m.state === "dead";
+    // Radius tracks toughness: kobold (5 HP) small, bosses big.
+    const mr = (3.5 + Math.min(4, m.max_health / 8)) * devicePixelRatio;
     ctx.beginPath();
-    ctx.arc(sx, sy, 4.5 * devicePixelRatio, 0, 7);
+    ctx.arc(sx, sy, mr, 0, 7);
     ctx.fillStyle = dead ? "#555" : (m.aggressive ? "#e05252" : "#d98a8a");
     ctx.fill();
     if (m.state === "attack" && !dead) {
       ctx.strokeStyle = "#ff9d4f"; ctx.lineWidth = 2 * devicePixelRatio;
-      ctx.beginPath(); ctx.arc(sx, sy, 7.5 * devicePixelRatio, 0, 7); ctx.stroke();
+      ctx.beginPath(); ctx.arc(sx, sy, mr + 3 * devicePixelRatio, 0, 7); ctx.stroke();
     }
-    if (!dead) {
+    if (!dead && detail) {
       hpbar(sx, sy, m.health / m.max_health);
       label(sx, sy, m.monster_type, "#f0b9b9");
     }
@@ -277,6 +340,7 @@ function draw() {
   const selfId = self ? self.id : null;
   for (const p of snap.players || []) {
     if (selfId !== null && p.id === selfId) continue;
+    if ((p.floor_level || 0) !== flr) continue;
     const [sx, sy] = w2s(p.position.x, p.position.z);
     ctx.beginPath();
     ctx.arc(sx, sy, 5 * devicePixelRatio, 0, 7);
@@ -288,6 +352,17 @@ function draw() {
 
   if (self) {
     const [sx, sy] = w2s(self.position.x, self.position.z);
+    // What the agent can actually perceive: entities beyond this ring are on
+    // the map (server broadcast) but absent from its CURRENT STATE.
+    if (snap.sight) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, snap.sight * px, 0, 7);
+      ctx.strokeStyle = "rgba(255,215,106,.25)";
+      ctx.setLineDash([6 * devicePixelRatio, 6 * devicePixelRatio]);
+      ctx.lineWidth = 1.5 * devicePixelRatio;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     ctx.beginPath();
     ctx.arc(sx, sy, 9 * devicePixelRatio, 0, 7);
     ctx.strokeStyle = "rgba(255,215,106,.5)"; ctx.lineWidth = 2 * devicePixelRatio;
@@ -420,6 +495,11 @@ async function poll() {
     const r = await fetch(`/api/state?${q}`);
     if (!r.ok) throw new Error(`state ${r.status}`);
     snap = await r.json();
+    // The binary restarted with (possibly) new page code — reload to match.
+    if (snap.boot) {
+      if (window.__boot && window.__boot !== snap.boot) location.reload();
+      window.__boot = snap.boot;
+    }
     dirty = true;
     renderHeader();
     renderFeed();

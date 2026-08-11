@@ -39,7 +39,7 @@
   import {
     CHARACTER_ANIMATION_PACK_PATHS,
     getCharacterModelPath,
-    getDefaultWeaponModel,
+    getNpcModelPath,
     getWeaponModelPath,
   } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
@@ -58,6 +58,7 @@
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
+  import { MUSIC_EMOTE_ANIM, ONE_SHOT_EMOTE_ANIMS } from '../stores/emoteStore'
 
   interface Props {
     position: Vector3
@@ -172,12 +173,11 @@
   let activeGltfData = $state<GLTF | null>(null)
   let locomotionGltfData = $state<GLTF | null>(null)
   let combatMeleeGltfData = $state<GLTF | null>(null)
-  let weaponGltfData = $state<GLTF | null>(null)
 
   // svelte-ignore state_referenced_locally
-  const defaultWeaponModel = getDefaultWeaponModel(characterClass)
-  // svelte-ignore state_referenced_locally
-  const modelPath = getCharacterModelPath(characterClass, gender)
+  const modelPath =
+    (npcPlayerId !== undefined ? getNpcModelPath(name) : undefined) ??
+    getCharacterModelPath(characterClass, gender)
   const modelPromise = loadGLB(modelPath).then((g) => {
     activeGltfData = g
   })
@@ -191,16 +191,10 @@
   ).then((g) => {
     combatMeleeGltfData = g
   })
-  const weaponPromise = defaultWeaponModel
-    ? loadGLB(getWeaponModelPath(defaultWeaponModel)).then((g) => {
-        weaponGltfData = g
-      })
-    : Promise.resolve()
   const glbReady = Promise.all([
     modelPromise,
     locomotionPromise,
     combatMeleePromise,
-    weaponPromise,
   ])
 
   // Animation system - following gpt-all-in-one.html approach
@@ -220,7 +214,6 @@
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
   let lastMovementMode: MovementMode | undefined
-  let weaponAttached = $state(false)
   let weaponObject: THREE.Object3D | null = null
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
   const _nametagPos = new THREE.Vector3()
@@ -255,6 +248,21 @@
   // points it forward and ~25° up (about 60° bent off the forearm).
   const FISHING_ROD_ROTATION = new THREE.Euler(0, -Math.PI / 6, -Math.PI / 3)
 
+  const MANDOLIN_ITEM_DEF_ID = 'mandolin'
+
+  // The mandolin's origin sits on the strum point with the neck along +X and
+  // the soundboard facing +Z. Fitted to the guitar_playing clip by
+  // `tools/fit-hand-prop.mjs --tilt 15 --push 0.06 --lift 0.04`: 15° hangs the
+  // body down off the chest to the waist, the lift carries the neck up onto the
+  // fretting fingers instead of through the fist, and the push trades the sound
+  // box's depth in the torso against clearance for the strumming wrist, which
+  // the clip otherwise buries in it — 0.06 leaves the wrist 1 cm proud of the
+  // face. All three pivot on the fretting hand, so none of them costs the neck
+  // that grip. The position is no longer the plain palm offset because of them:
+  // it puts the origin back where the hand can hold it.
+  const MANDOLIN_ROTATION = new THREE.Euler(-2.413, -0.409, -0.353)
+  const MANDOLIN_POSITION = new THREE.Vector3(-0.03, 0.103, 0.126)
+
   // The source cast clip keeps rod-jerking flourishes after the swing; cut
   // where the pose meets the idle stance.
   const FISHING_CAST_TRIM_S = 2.5
@@ -262,12 +270,12 @@
   function attachWeaponModel(
     gltfScene: THREE.Object3D,
     characterRoot: THREE.Object3D,
-    itemDefId?: string | null
-  ): boolean {
+    itemDefId: string
+  ): void {
     const rightHandBone = findBoneByName(characterRoot, 'RightHand')
     if (!rightHandBone) {
       console.warn('Could not find right hand bone for weapon attachment')
-      return false
+      return
     }
 
     weaponObject = gltfScene.clone()
@@ -280,10 +288,11 @@
         'rod_tip',
         FALLBACK_ROD_TIP_LOCAL_OFFSET
       )
+    } else if (itemDefId === MANDOLIN_ITEM_DEF_ID) {
+      weaponObject.position.copy(MANDOLIN_POSITION)
+      weaponObject.rotation.copy(MANDOLIN_ROTATION)
     }
     rightHandBone.add(weaponObject)
-    weaponAttached = true
-    return true
   }
 
   let rodTipNode: THREE.Object3D | null = null
@@ -311,18 +320,12 @@
     return rodTipNode?.getWorldPosition(rodTipScratch) ?? null
   }
 
-  function tryAttachWeapon(characterRoot: THREE.Object3D): boolean {
-    if (!defaultWeaponModel || weaponAttached || !weaponGltfData) return false
-    return attachWeaponModel(weaponGltfData.scene, characterRoot)
-  }
-
   function detachWeapon() {
     if (weaponObject && weaponObject.parent) {
       weaponObject.parent.remove(weaponObject)
     }
     weaponObject = null
     rodTipNode = null
-    weaponAttached = false
   }
 
   let offhandObject: THREE.Object3D | null = null
@@ -365,9 +368,7 @@
       : mainHand
   )
 
-  // undefined = nothing applied yet; null = "no equipped item" applied
-  // (bare hands locally, class default weapon for remotes).
-  let attachedWeaponItemId: string | null | undefined = undefined
+  let attachedWeaponItemId: string | null = null
   let weaponAttachGeneration = 0
 
   $effect(() => {
@@ -379,14 +380,9 @@
     if (itemDefId === attachedWeaponItemId) return
 
     detachWeapon()
-    attachedWeaponItemId = undefined
+    attachedWeaponItemId = null
 
-    if (!itemDefId) {
-      if (isCurrentPlayer || tryAttachWeapon(clonedScene)) {
-        attachedWeaponItemId = null
-      }
-      return
-    }
+    if (!itemDefId) return
 
     const itemDef = getItemDef(itemDefId)
     if (!itemDef?.worldModel) return
@@ -447,6 +443,49 @@
         if (gen !== offhandAttachGeneration) return
         if (mixer) playAnimationForState()
       }
+    })
+  })
+
+  // ── Music emote prop ────────────────────────────────────
+  // The server requires an instrument in the performer's inventory, but the
+  // prop rides the emote rather than the equip slot and is deliberately one
+  // fixed model. It keys off `interactionAnim`, which the server broadcasts
+  // for /play_music — remote players see the instrument too, and the equipped
+  // weapon is already hidden for the duration by `playAnimationForState`.
+  let musicPropObject: THREE.Object3D | null = null
+  let musicPropAttached = false
+  let musicPropGeneration = 0
+
+  function detachMusicProp() {
+    musicPropObject?.parent?.remove(musicPropObject)
+    musicPropObject = null
+  }
+
+  $effect(() => {
+    const wanted =
+      playerState === 'interact' && interactionAnim === MUSIC_EMOTE_ANIM
+    // Read modelRoot so the effect re-runs once the model finishes loading
+    const root = modelRoot
+    if (!root || !clonedScene) return
+    if (wanted === musicPropAttached) return
+
+    const gen = ++musicPropGeneration
+    musicPropAttached = wanted
+    if (!wanted) {
+      detachMusicProp()
+      return
+    }
+
+    const itemDef = getItemDef(MANDOLIN_ITEM_DEF_ID)
+    if (!itemDef?.worldModel) return
+    loadGLB(getWeaponModelPath(itemDef.worldModel)).then((gltf) => {
+      if (gen !== musicPropGeneration || !clonedScene) return
+      const rightHandBone = findBoneByName(clonedScene, 'RightHand')
+      if (!rightHandBone) return
+      musicPropObject = gltf.scene.clone()
+      musicPropObject.position.copy(MANDOLIN_POSITION)
+      musicPropObject.rotation.copy(MANDOLIN_ROTATION)
+      rightHandBone.add(musicPropObject)
     })
   })
 
@@ -589,10 +628,13 @@
 
     const newAction = mixer.clipAction(clip)
 
-    // The fishing idle is a stance held for the whole wait, not a one-shot
-    // gesture like pickup — it loops until the fishing session ends.
+    // The fishing idle and the music emote are stances held for the whole
+    // state, not one-shot gestures like pickup — they loop until it ends.
+    // Clamping instead would freeze the performance mid-strum.
     const playOnce =
-      playerState !== 'moving' && interactionAnim !== FishingAnimationName.IDLE
+      playerState !== 'moving' &&
+      interactionAnim !== FishingAnimationName.IDLE &&
+      interactionAnim !== MUSIC_EMOTE_ANIM
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce
@@ -762,9 +804,10 @@
         modelRoot = null
       }
       clonedScene = null
-      weaponAttached = false
       attachedWeaponItemId = null
       attachedOffhandItemId = null
+      musicPropObject = null
+      musicPropAttached = false
       detachTorchFire()
       if (isCurrentPlayer) localPlayerRightHand.set(null)
     }
@@ -898,13 +941,14 @@
     } else if (
       currentAction &&
       interactionAnim &&
-      // Pickup and the fishing cast are interactions remote players end on
-      // their own (no StopInteraction follows the clip), so the finish
-      // callback must fire for remotes too. Held poses (bench, forge) keep
-      // waiting for their StopInteraction.
+      // Pickup, the fishing cast, and one-shot emotes are interactions
+      // remote players end on their own rather than waiting a round-trip for
+      // StopInteraction, so the finish callback must fire for remotes too.
+      // Held poses (bench, forge) keep waiting for their StopInteraction.
       (isCurrentPlayer ||
         interactionAnim === 'pickup' ||
-        interactionAnim === FishingAnimationName.CAST)
+        interactionAnim === FishingAnimationName.CAST ||
+        ONE_SHOT_EMOTE_ANIMS.has(interactionAnim))
     ) {
       const clip = currentAction.getClip()
       if (clip.name === interactionAnim) {

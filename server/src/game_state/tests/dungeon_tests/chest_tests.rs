@@ -65,6 +65,20 @@ fn assert_chest_rejected(rx: &mut DirectRx, expected: &str) {
     }
 }
 
+/// Assert the next direct message is the item-less, gold-less chest open —
+/// the "already claimed tonight" lid swing on an empty box.
+fn assert_chest_empty_opened(rx: &mut DirectRx) {
+    match rx.try_recv() {
+        Ok(ServerMessage::DungeonChestOpened {
+            item_def_ids, gold, ..
+        }) => {
+            assert!(item_def_ids.is_empty(), "empty open must carry no items");
+            assert_eq!(gold, 0, "empty open must carry no gold");
+        }
+        other => panic!("Expected an empty chest open, got {:?}", other),
+    }
+}
+
 /// A relog mints a fresh PlayerId, so the refill gate has to be keyed by
 /// character and reloaded from the DB — otherwise the chest is farmable by
 /// logging out and back in.
@@ -102,7 +116,7 @@ async fn dungeon_chest_stays_empty_across_a_relog() {
         .open_dungeon_chest(&rejoined_id, CRYPT_ID, &auth)
         .await;
 
-    assert_chest_rejected(&mut rejoined_rx, "nightfall");
+    assert_chest_empty_opened(&mut rejoined_rx);
     assert_eq!(
         game_state.get_player_gold(&rejoined_id).await,
         0,
@@ -200,7 +214,7 @@ async fn dungeon_chest_stays_shut_until_the_guardian_dies() {
 /// The nightly claim is the durable anti-duplication boundary. A failed DB
 /// write must reject the open without rewards and release only this attempt's
 /// in-memory claim so a repaired storage layer can retry.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry() {
     let (auth, db_path) = make_test_auth_with_path("chest_persist_fail");
     let account = auth.login_npc("npc_chest_persist_fail").unwrap();
@@ -208,11 +222,6 @@ async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry(
 
     let game_state = make_test_game_state("chest_persist_fail");
     let player_id = stage_chest_opener(&game_state, "CarefulDelver", character.id).await;
-    game_state
-        .inventories
-        .write()
-        .await
-        .insert(player_id, PlayerInventory::default());
     let mut direct_rx = game_state.register_direct_channel(&player_id).await;
 
     rusqlite::Connection::open(&db_path)
@@ -230,14 +239,11 @@ async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry(
         0,
         "failed persistence must not pay gold"
     );
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    tokio::time::sleep(*super::combat::CHEST_LOOT_EJECT_DELAY).await;
     assert!(
-        game_state
-            .get_player_inventory(&player_id)
-            .await
-            .expect("staged inventory")
-            .bag
-            .is_empty(),
-        "failed persistence must not grant chest items"
+        game_state.ground_items.read().await.is_empty(),
+        "failed persistence must not eject chest loot"
     );
 
     let repaired_auth = crate::auth::AuthService::new(db_path).unwrap();
@@ -251,14 +257,17 @@ async fn dungeon_chest_persistence_failure_rejects_without_reward_and_can_retry(
         game_state.get_player_gold(&player_id).await > 0,
         "retry after schema repair should pay out"
     );
+    // Poll the eject task onto its timer, then cross the lid-swing delay
+    // (virtual time; same idiom as pickup_tests).
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     assert!(
-        !game_state
-            .get_player_inventory(&player_id)
-            .await
-            .expect("staged inventory")
-            .bag
-            .is_empty(),
-        "retry after schema repair should grant chest items"
+        game_state.ground_items.read().await.is_empty(),
+        "chest loot must stay withheld while the lid swings open"
+    );
+    tokio::time::sleep(*super::combat::CHEST_LOOT_EJECT_DELAY).await;
+    assert!(
+        !game_state.ground_items.read().await.is_empty(),
+        "retry after schema repair should eject chest loot onto the floor"
     );
     assert_eq!(
         repaired_auth
@@ -347,6 +356,6 @@ async fn session_replacement_keeps_the_live_session_chest_claim() {
         .open_dungeon_chest(&second_id, CRYPT_ID, &auth)
         .await;
 
-    assert_chest_rejected(&mut second_rx, "nightfall");
+    assert_chest_empty_opened(&mut second_rx);
     assert_eq!(game_state.get_player_gold(&second_id).await, 0);
 }

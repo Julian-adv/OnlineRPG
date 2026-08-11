@@ -387,7 +387,9 @@ async fn a_raw_fish_near_a_campfire_grills_instead_of_being_eaten() {
     let (id, mut rx) = make_eater(&game_state, "cook", 500).await;
     put_in_bag(&game_state, &id, 1, "raw_trout").await;
     let pos = game_state.get_player_position(&id).await.unwrap().0;
-    game_state.spawn_campfire(pos, 0).await;
+    game_state
+        .spawn_campfire(pos, 0, onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS)
+        .await;
     drain(&mut rx);
 
     game_state.use_item(&id, 1).await;
@@ -419,7 +421,9 @@ async fn moving_cancels_the_grill_and_keeps_the_raw_fish() {
     let (id, mut rx) = make_eater(&game_state, "fidget", 500).await;
     put_in_bag(&game_state, &id, 1, "raw_trout").await;
     let pos = game_state.get_player_position(&id).await.unwrap().0;
-    game_state.spawn_campfire(pos, 0).await;
+    game_state
+        .spawn_campfire(pos, 0, onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS)
+        .await;
     game_state.use_item(&id, 1).await;
     drain(&mut rx);
 
@@ -461,7 +465,9 @@ async fn campfires_burn_out_after_ten_minutes() {
     let game_state = make_test_game_state("burnout");
     let (id, mut rx) = make_eater(&game_state, "bystander", 500).await;
     let pos = game_state.get_player_position(&id).await.unwrap().0;
-    let campfire = game_state.spawn_campfire(pos, 0).await;
+    let campfire = game_state
+        .spawn_campfire(pos, 0, onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS)
+        .await;
     drain(&mut rx);
 
     advance(Duration::from_millis(CAMPFIRE_DURATION_MS + 1)).await;
@@ -526,6 +532,56 @@ async fn campfire_placement_falls_back_to_the_player_when_blocked() {
             y: 0.0,
             z: 50.0,
         }
+    );
+}
+
+/// An NPC lights its own fire — a bard busking through the night cannot run
+/// to the merchant for a kit every ten minutes, and earns nothing to pay with.
+#[tokio::test]
+async fn only_an_npc_lights_a_campfire_without_a_kit_and_only_one_of_them() {
+    let game_state = make_test_game_state("npc_fire");
+    let auth = make_test_auth("npc_fire");
+    let (player_id, _prx) = make_eater(&game_state, "busker_fan", 500).await;
+    let npc_id = pid("npc_signe");
+    let mut npc = make_player("npc_signe", 100.0, 50.0);
+    npc.is_official_npc = true;
+    game_state.add_player(npc).await;
+
+    game_state
+        .send_chat_message(&player_id, "/light_campfire".to_string(), &auth)
+        .await;
+    assert!(
+        game_state.campfires.read().await.is_empty(),
+        "players still need a kit"
+    );
+
+    game_state
+        .send_chat_message(&npc_id, "/light_campfire".to_string(), &auth)
+        .await;
+    assert_eq!(game_state.campfires.read().await.len(), 1);
+
+    // The world starts at midnight, so this one burns until sunrise: hours of
+    // game time, well under the three real hours a whole game day takes.
+    let burn = {
+        let campfires = game_state.campfires.read().await;
+        let entry = campfires.values().next().unwrap();
+        entry
+            .expires_at
+            .saturating_duration_since(tokio::time::Instant::now())
+    };
+    assert!(
+        burn.as_millis() as u64 > CAMPFIRE_DURATION_MS * 2
+            && burn.as_secs_f64() < super::super::time::REAL_DAY_DURATION_SECONDS / 2.0,
+        "night fire burns to sunrise, not on the kit's timer: {burn:?}"
+    );
+
+    game_state
+        .send_chat_message(&npc_id, "/light_campfire".to_string(), &auth)
+        .await;
+    assert_eq!(
+        game_state.campfires.read().await.len(),
+        1,
+        "a second fire on the same pitch is refused"
     );
 }
 

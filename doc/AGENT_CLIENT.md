@@ -258,7 +258,7 @@ openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`
 
 NPC가 *누구인지*는 git 추적되는 게임 데이터가 단일 진실 소스다 (2026-06-12 통일):
 
-- **`data-src/npcs.csv`** — 전체 NPC 레지스트리. `id`, `npcName`, `class`(역할 = 프롬프트 템플릿 + 캐릭터 클래스), 선택적 거래 필드(`wishlist`, `wishlistRatePercent`, `salaryPerDay`, `walletCap`). 서버(`npc_defs.rs`), agent-client(`shop_info.rs`), 웹 클라이언트(`traderDefs.ts`)가 같은 생성물 `data/npcs.json`을 읽는다.
+- **`data-src/npcs.csv`** — 전체 NPC 레지스트리. `id`, `npcName`, `class`(역할 = 프롬프트 템플릿 + 캐릭터 클래스), 선택적 거래 필드(`wishlist`, `wishlistRatePercent`, `salaryPerDay`, `walletCap`, `keepsakes`), 선택적 `loadout`(접속 시마다 부족분을 지급·장착하는 지급 장비 — 스타터 킷 대체, 어느 방향으로도 판매 불가). 스탯은 플레이어와 같은 롤 프로토콜을 쓴다: 레지스트리 NPC는 클래스 휴리스틱으로 만족할 때까지 리롤(`orchestrator.rs::roll_fits_class`), 서버가 별도 수치를 주지 않는다. 서버(`npc_defs.rs`), agent-client(`shop_info.rs`), 웹 클라이언트(`traderDefs.ts`)가 같은 생성물 `data/npcs.json`을 읽는다.
 - **`agent-client/data/npcs/{id}/`** — 개체 디렉터리 컨벤션: `instance.txt`(개성), `memory.txt`(런타임 누적, gitignore), `schedule.json`(선택).
 - **`agent-client/data/templates/{class}.txt`** — 역할별 행동 규칙.
 

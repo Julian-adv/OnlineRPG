@@ -1,6 +1,6 @@
-//! Heightmap tiles over HTTP, for agent-clients that do not sit on the game
-//! server's filesystem. Uses the same public endpoint the web client reads
-//! (`GET /api/terrain/height/{tx}/{tz}`), backed by a disk cache so a restart
+//! Terrain tiles over HTTP, for agent-clients that do not sit on the game
+//! server's filesystem. Uses the same public endpoints the web client reads
+//! (`GET /api/terrain/{kind}/{tx}/{tz}`), backed by a disk cache so a restart
 //! does not re-download what it already has.
 
 use std::path::{Path, PathBuf};
@@ -9,32 +9,50 @@ use onlinerpg_terrain::defaults::{self, HEIGHTMAP_SIZE};
 use onlinerpg_terrain::height::HeightTiles;
 use tracing::{debug, warn};
 
-pub struct HttpHeightTiles {
+/// Disk-cached HTTP tile source, shared by the height and splat twins:
+/// size-checked cache reads, temp-file + rename writes, 404 surfaced as
+/// `None` so each kind can decide what a missing tile means.
+pub struct HttpTiles {
     /// Server origin, e.g. `https://openmmo.to.nexus` (no trailing slash).
     base_url: String,
     cache_dir: PathBuf,
     http: reqwest::Client,
+    /// Endpoint segment: `/api/terrain/{kind}/{tx}/{tz}`.
+    kind: &'static str,
+    /// Cache filename prefix — height tiles predate the prefix and use "".
+    prefix: &'static str,
+    expected_size: usize,
 }
 
-impl HttpHeightTiles {
-    pub fn new(base_url: &str, cache_dir: PathBuf) -> Self {
+impl HttpTiles {
+    pub fn new(
+        base_url: &str,
+        cache_dir: PathBuf,
+        kind: &'static str,
+        prefix: &'static str,
+        expected_size: usize,
+    ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             cache_dir,
             http: reqwest::Client::new(),
+            kind,
+            prefix,
+            expected_size,
         }
     }
 
     fn cache_path(&self, tx: i32, tz: i32) -> PathBuf {
-        self.cache_dir.join(format!("{tx}_{tz}.bin"))
+        self.cache_dir.join(format!("{}{tx}_{tz}.bin", self.prefix))
     }
 
-    async fn read_cached(path: &Path) -> Option<Vec<u8>> {
+    async fn read_cached(&self, path: &Path) -> Option<Vec<u8>> {
         match tokio::fs::read(path).await {
-            Ok(data) if data.len() == HEIGHTMAP_SIZE => Some(data),
+            Ok(data) if data.len() == self.expected_size => Some(data),
             Ok(data) => {
                 warn!(
-                    "Cached heightmap {:?} has wrong size {} — refetching",
+                    "Cached {} tile {:?} has wrong size {} — refetching",
+                    self.kind,
                     path,
                     data.len()
                 );
@@ -56,46 +74,69 @@ impl HttpHeightTiles {
     }
 
     async fn fetch(&self, tx: i32, tz: i32) -> anyhow::Result<Option<Vec<u8>>> {
-        let url = format!("{}/api/terrain/height/{tx}/{tz}", self.base_url);
+        let url = format!("{}/api/terrain/{}/{tx}/{tz}", self.base_url, self.kind);
         let response = self.http.get(&url).send().await?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Ok(None);
         }
         let response = response.error_for_status()?;
         let bytes = response.bytes().await?.to_vec();
-        if bytes.len() != HEIGHTMAP_SIZE {
+        if bytes.len() != self.expected_size {
             anyhow::bail!(
-                "{url} returned {} bytes, expected {HEIGHTMAP_SIZE}",
-                bytes.len()
+                "{url} returned {} bytes, expected {}",
+                bytes.len(),
+                self.expected_size
             );
         }
         Ok(Some(bytes))
+    }
+
+    /// Read-through: disk cache, else fetch and cache. `Ok(None)` is a 404 —
+    /// an answer, not a tile, so nothing is cached for it. A network error is
+    /// surfaced so the caller retries later instead of trusting a stand-in.
+    pub async fn read(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
+        let path = self.cache_path(tx, tz);
+        if let Some(cached) = self.read_cached(&path).await {
+            return Ok(Some(cached));
+        }
+        match self.fetch(tx, tz).await {
+            Ok(Some(data)) => {
+                if let Err(e) = Self::write_cached(&path, &data).await {
+                    warn!("Failed to cache {} tile {tx},{tz}: {e}", self.kind);
+                }
+                debug!("Fetched {} tile {tx},{tz}", self.kind);
+                Ok(Some(data))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(std::io::Error::other(format!(
+                "{} tile {tx},{tz} fetch failed: {e}",
+                self.kind
+            ))),
+        }
+    }
+}
+
+pub struct HttpHeightTiles(HttpTiles);
+
+impl HttpHeightTiles {
+    pub fn new(base_url: &str, cache_dir: PathBuf) -> Self {
+        Self(HttpTiles::new(
+            base_url,
+            cache_dir,
+            "height",
+            "",
+            HEIGHTMAP_SIZE,
+        ))
     }
 }
 
 #[async_trait::async_trait]
 impl HeightTiles for HttpHeightTiles {
     async fn read_heightmap(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>> {
-        let path = self.cache_path(tx, tz);
-        if let Some(cached) = Self::read_cached(&path).await {
-            return Ok(cached);
-        }
-
-        match self.fetch(tx, tz).await {
-            Ok(Some(data)) => {
-                if let Err(e) = Self::write_cached(&path, &data).await {
-                    warn!("Failed to cache heightmap {tx},{tz}: {e}");
-                }
-                debug!("Fetched heightmap tile {tx},{tz}");
-                Ok(data)
-            }
+        match self.0.read(tx, tz).await? {
+            Some(data) => Ok(data),
             // Outside the baked area: the local source answers the same way.
-            Ok(None) => Ok(defaults::default_heightmap()),
-            // Surfaced as an error so the caller retries later instead of
-            // walking on a flat plane it believes in.
-            Err(e) => Err(std::io::Error::other(format!(
-                "heightmap {tx},{tz} fetch failed: {e}"
-            ))),
+            None => Ok(defaults::default_heightmap()),
         }
     }
 }
@@ -156,7 +197,7 @@ mod tests {
             defaults::default_heightmap()
         );
         // A 404 is an answer, not a tile: nothing should be cached for it.
-        assert!(!tiles.cache_path(9, 9).exists());
+        assert!(!tiles.0.cache_path(9, 9).exists());
 
         server.abort();
         let _ = tokio::fs::remove_dir_all(&cache).await;

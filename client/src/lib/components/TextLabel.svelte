@@ -3,6 +3,7 @@
   import * as THREE from 'three'
   import { MeshBasicNodeMaterial } from 'three/webgpu'
   import { onDestroy } from 'svelte'
+  import { wrapLines } from '../utils/textWrap'
 
   interface Props {
     text: string
@@ -14,7 +15,6 @@
     anchorY?: 'top' | 'middle' | 'bottom'
     fillOpacity?: number
     maxWidth?: number
-    overflowWrap?: 'normal' | 'break-word'
     whiteSpace?: 'normal' | 'nowrap'
     depthOffset?: number
     depthTest?: boolean
@@ -34,7 +34,6 @@
     anchorY = 'middle',
     fillOpacity = 1.0,
     maxWidth,
-    overflowWrap = 'normal',
     whiteSpace = 'normal',
     depthOffset,
     depthTest = true,
@@ -78,60 +77,19 @@
   })
   material.side = THREE.DoubleSide
 
-  function wrapText(
-    inputText: string,
-    maxWidthPx: number | undefined,
-    breakWord: boolean
-  ): string[] {
-    const paragraphs = inputText.split('\n')
-    if (!maxWidthPx || whiteSpace === 'nowrap') {
-      return paragraphs.length ? paragraphs : ['']
-    }
-
-    const allLines: string[] = []
-    for (const para of paragraphs) {
-      if (!para) {
-        allLines.push('')
-        continue
-      }
-      if (breakWord) {
-        let cur = ''
-        for (const ch of para) {
-          const test = cur + ch
-          if (ctx.measureText(test).width > maxWidthPx && cur.length > 0) {
-            allLines.push(cur)
-            cur = ch
-          } else {
-            cur = test
-          }
-        }
-        if (cur) allLines.push(cur)
-      } else {
-        const words = para.split(/\s+/)
-        let cur = ''
-        for (const w of words) {
-          if (!w) continue
-          const test = cur ? cur + ' ' + w : w
-          if (ctx.measureText(test).width > maxWidthPx && cur.length > 0) {
-            allLines.push(cur)
-            cur = w
-          } else {
-            cur = test
-          }
-        }
-        if (cur) allLines.push(cur)
-      }
-    }
-    return allLines.length ? allLines : ['']
-  }
-
   function renderCanvas() {
     const pxFont = fontSize * PIXELS_PER_UNIT
     const font = `${pxFont}px sans-serif`
     ctx.font = font
 
-    const maxWPx = maxWidth ? maxWidth * PIXELS_PER_UNIT : undefined
-    const lines = wrapText(text, maxWPx, overflowWrap === 'break-word')
+    const lines =
+      maxWidth && whiteSpace !== 'nowrap'
+        ? wrapLines(
+            text,
+            maxWidth * PIXELS_PER_UNIT,
+            (s) => ctx.measureText(s).width
+          )
+        : text.split('\n')
     const lineHeight = pxFont * 1.2
 
     let maxLineWidth = 0

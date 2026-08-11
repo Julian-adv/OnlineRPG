@@ -47,12 +47,39 @@
 - valkyrie — 단일 성별; 원화 `character_concepts/valkyrie.jpg`
 - rogue (남) — 남성 rogue 모델; 원화 `character_concepts/rogue.png` (Gemini/Nano Banana); female_rogue는 [Thief → Rogue](#thief--rogue) 참고
 
+## Bard
+
+`female_bard.glb` — 단일 성별(female). Meshy.ai Premium 등급, 생성 2026-08-05 (프롬프트명 "Crimson Vanguard").
+
+- 원화 ![원화](../../client/public/character_concepts/female_bard.png)
+
+기존 워크플로우와 다른 점: Meshy 출력이 63개 분리 셸에 뒤집힌 면 403개, 열린 경계 1,093개라 Mixamo 업로드가 실패했다. Blender에서 커스텀 스플릿 노멀 제거 → Recalculate Outside → 8변 이하 구멍만 메움으로 정리 후 업로드 성공. 큰 개구부는 다른 조각에 가려 보이지 않아 남겼다(머티리얼 `doubleSided`).
+
+- Mixamo 업로드용 FBX는 머티리얼 제거 + 텍스처 임베드 해제 필요 — metallic/roughness/emissive가 물려 있으면 "unable to map your existing skeleton"으로 실패
+- 텍스처: baseColor 2048² JPEG + normal 1024² JPEG (Meshy 원본 2048² PNG에서 축소)
+- emissive 미연결 (Meshy 기본 `EmissiveColor [1,1,1]` 방치 시 백색 발광)
+
 ## NPC Models
 
 플레이어 클래스 아님.
 
 - guard — 경비병 NPC Karl (`guard.glb`, CharacterClass::Guard); 원화 `../images/karl-concept.png`, 3D는 Meshy.ai (라이센스는 위 License 표 참조)
 - npc_woman — 상인 NPC Rica (`npc_woman.glb`); 원화 `../images/rica-concept.png` (Gemini) (커밋 fb299e7)
+- night_merchant — 야간 상인 NPC Wick (`night_merchant.glb`); Meshy.ai Premium 등급, 생성 2026-08-08 (프롬프트명 "The Jolly Buccaneer"). OBJ로 받아 Mixamo 리깅(Excited) — Mixamo에서 텍스처가 하얗게 깨져 Blender에서 baseColor 재연결. 손가락 본 없는 33본 스켈레톤(기존 65본과 달리 손가락 애니 안 먹음, 런타임 리타게팅이 없는 본 트랙은 무시). baseColor 2048² JPEG, 노멀맵 없음. .blend 소스 `~/assets_original/night_merchant.blend` (텍스처 팩 포함)
+
+## 텍스처 재패킹 (2026-08-06)
+
+Meshy/Tripo 내보내기가 노멀·metallicRoughness 맵을 2048² RGBA PNG로 임베드해
+캐릭터당 12~15MB였다. `tools/repack-glb-textures.py`로 전체 재패킹:
+노멀·MR은 JPEG 4:4:4 1024²(q92/q90), 베이스컬러는 해상도 유지한 채 JPEG q92
+(female_knight만 PNG였음), 플랫 노멀맵(knight, npc_woman)과 알파가 상수라
+무의미했던 specularTexture(female_knight)는 제거.
+합계 168.5MB → 33.9MB, 텍스처 VRAM 900MB → 464MB.
+스크립트는 멱등이라 재실행해도 재인코딩하지 않는다.
+
+베이스컬러 축소는 보류. `--base-max 1024`면 23.5MB/VRAM 229MB까지 내려가지만
+선택 화면 크기에서 사슬갑옷·문장 같은 패턴 면이 뭉갠다(guard 45dB가 최악).
+1536은 NPOT 리샘플 탓에 1024보다도 나쁘니 중간값은 없다.
 
 ## License (AI 제작 캐릭터)
 

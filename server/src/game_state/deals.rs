@@ -238,6 +238,9 @@ impl super::GameState {
             )
         };
 
+        if self.is_npc_asleep(&merchant_name) {
+            return reject("you cannot haggle while asleep").await;
+        }
         let Some(def) = trader_def_by_name(&merchant_name) else {
             return reject("you have nothing to trade with").await;
         };

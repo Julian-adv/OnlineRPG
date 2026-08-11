@@ -41,6 +41,12 @@ pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> =
 pub(super) static PLAYER_ATTACK_INTERVAL_MS: LazyLock<u64> =
     LazyLock::new(|| anim_delay_ms("player_attack_interval"));
 
+// Hand-measured length of the ChestOpen clip in chest_animated.glb (re-measure
+// if the GLB is re-exported): how long treasure-chest loot is withheld before
+// bursting out, so the lid is open by the time the drops exist.
+pub(super) static CHEST_LOOT_EJECT_DELAY: LazyLock<Duration> =
+    LazyLock::new(|| Duration::from_millis(anim_delay_ms("chest_loot_eject")));
+
 fn dropped_weapon_position(monster_position: Position) -> Position {
     let angle = rand::thread_rng().gen_range(0.0..TAU);
     offset_position_at_angle(monster_position, angle, WEAPON_DROP_OFFSET_METERS)
@@ -402,7 +408,9 @@ impl super::GameState {
                         item_def_id,
                         position: drop_position,
                         floor_level: monster_floor_level,
+                        quantity: 1,
                         enchant: 0,
+                        dropped_by: None,
                     })
                 } else {
                     None
@@ -485,6 +493,9 @@ impl super::GameState {
 
                         // Mark dirty for periodic batch save
                         self.mark_dirty(player_id).await;
+                        if leveled_up {
+                            self.mark_party_vitals_dirty(player_id).await;
+                        }
 
                         // Notify the player directly
                         let max_hp_for_msg = if let Some(max_hp) = new_max_hp {
@@ -708,6 +719,7 @@ impl super::GameState {
         if result.hit {
             self.cancel_food_regeneration(target_player_id).await;
             self.mark_dirty(target_player_id).await;
+            self.mark_party_vitals_dirty(target_player_id).await;
         }
 
         // Send attack result after server-side HP update.
@@ -831,8 +843,9 @@ impl super::GameState {
             )
             .await;
         }
-        for pid in regen_dirty {
-            self.mark_dirty(&pid).await;
+        if !regen_dirty.is_empty() {
+            self.dirty_players.write().await.extend(regen_dirty.iter());
+            self.party_vitals_dirty.write().await.extend(regen_dirty);
         }
     }
 
@@ -930,6 +943,7 @@ impl super::GameState {
 
         // Mark dirty for periodic batch save
         self.mark_dirty(player_id).await;
+        self.mark_party_vitals_dirty(player_id).await;
 
         self.send_direct_message(
             player_id,

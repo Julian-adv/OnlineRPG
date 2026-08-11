@@ -10,7 +10,7 @@ import {
   serverNotice,
 } from '../stores/gameStore'
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
-import { Vector3 } from 'three'
+import { MathUtils, Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { FishingAnimationName } from '../types/animations'
 import {
@@ -27,6 +27,7 @@ import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
 import { campfireManager } from '../managers/campfireManager'
+import { stallManager } from '../managers/stallManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -54,6 +55,7 @@ import {
 import {
   partyRoster,
   applyPartyPositions,
+  applyPartyVitals,
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
@@ -62,13 +64,36 @@ import {
   MAX_PENDING_PARTY_INVITES,
   type PartyMemberEntry,
   type PartyMemberPositionEntry,
+  type PartyMemberVitalsEntry,
 } from '../stores/partyStore'
+import {
+  applyFriendList,
+  applyFriendsOnline,
+  friendList,
+  friendOnlineNoticeEnabled,
+  pendingFriendRequests,
+  resetFriendStores,
+  MAX_PENDING_FRIEND_REQUESTS,
+} from '../stores/friendStore'
+import { enqueueConsent } from '../stores/consentQueue'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
 import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
+import {
+  startMusicPerformance,
+  stopMusicPerformance,
+  fadeOutMusicPerformance,
+  applyInteractionChange,
+} from '../managers/musicPerformance'
+import { refreshBardZone } from '../managers/bardZone'
+import {
+  emoteRequest,
+  MUSIC_EMOTE_ANIM,
+  ONE_SHOT_EMOTE_ANIMS,
+} from '../stores/emoteStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
@@ -184,7 +209,10 @@ async function applyObjectInteraction(
   const pos = placement
     ? { x: placement.x, y: placement.y, z: placement.z }
     : undefined
-  const rot = placement ? placement.rotation : undefined
+  // Placements store degrees (the mesh converts on the way in); a player's
+  // rotation is radians everywhere else, so a bed at 270° laid the sleeper
+  // out crosswise.
+  const rot = placement ? MathUtils.degToRad(placement.rotation) : undefined
   remotePlayerManager.handleInteraction(playerId, anim, offsetY, pos, rot)
 }
 
@@ -195,12 +223,14 @@ function addRemotePlayerToState(state: GameState, sp: ServerPlayer) {
     applyObjectInteraction(sp.id, sp.object_type, sp.position.x, sp.position.z)
   }
   state.otherPlayers.set(sp.id, toRemotePlayer(sp))
+  refreshBardZone(state.otherPlayers)
 }
 
 /** Remove a remote player's visual and store entry. */
 function removeRemotePlayerFromState(state: GameState, playerId: number) {
   remotePlayerManager.removePlayer(playerId)
   state.otherPlayers.delete(playerId)
+  refreshBardZone(state.otherPlayers)
   // A leaving player's FishingEnded may never arrive; drop their bobber.
   removeBobber(playerId)
 }
@@ -221,6 +251,30 @@ export type MessageEvents = {
 
 function isSelfPlayer(playerId: number): boolean {
   return get(gameStore).currentPlayer?.id === playerId
+}
+
+/// Who did it, for a chat line: "You" for us, their name for anyone else.
+function actorName(playerId: number): string {
+  const state = get(gameStore)
+  if (state.currentPlayer?.id === playerId) return 'You'
+  return state.otherPlayers.get(playerId)?.name ?? 'Someone'
+}
+
+/// One chat line for a ground item changing hands. Silent unless a player
+/// did it (actorId set) and the item is known.
+function announceGroundItem(
+  actorId: number | null | undefined,
+  itemDefId: string | undefined,
+  verb: string,
+  quantity = 1
+) {
+  if (actorId == null || !itemDefId) return
+  const name = getItemDef(itemDefId)?.name ?? itemDefId
+  const amount = quantity > 1 ? ` x${quantity}` : ''
+  addChatMessage({
+    text: `${actorName(actorId)} ${verb} ${name}${amount}.`,
+    sender: 'system',
+  })
 }
 
 export function handleServerMessage(
@@ -331,6 +385,7 @@ export function handleServerMessage(
     }
 
     case 'PlayerLeft': {
+      stopMusicPerformance(data.player_id)
       let leftName: string | null = null
       gameStore.update((state) => {
         const player = state.otherPlayers.get(data.player_id)
@@ -347,6 +402,8 @@ export function handleServerMessage(
     }
 
     case 'PlayerDisappeared': {
+      // Out of earshot by distance: their tune fades rather than cuts.
+      fadeOutMusicPerformance(data.player_id)
       gameStore.update((state) => {
         removeRemotePlayerFromState(state, data.player_id)
         return state
@@ -461,18 +518,15 @@ export function handleServerMessage(
       break
 
     case 'PartyInviteReceived':
-      pendingPartyInvites.update((queue) =>
-        queue.length >= MAX_PENDING_PARTY_INVITES ||
-        queue.some((invite) => invite.inviterId === data.inviter_id)
-          ? queue
-          : [
-              ...queue,
-              {
-                inviterId: data.inviter_id,
-                inviterName: data.inviter_name,
-                offeredAt: Date.now(),
-              },
-            ]
+      enqueueConsent(
+        pendingPartyInvites,
+        MAX_PENDING_PARTY_INVITES,
+        (invite) => invite.inviterId === data.inviter_id,
+        {
+          inviterId: data.inviter_id,
+          inviterName: data.inviter_name,
+          offeredAt: Date.now(),
+        }
       )
       break
 
@@ -517,6 +571,55 @@ export function handleServerMessage(
       break
     }
 
+    case 'PartyVitals':
+      applyPartyVitals(data.members as PartyMemberVitalsEntry[])
+      break
+
+    case 'FriendList':
+      applyFriendList(
+        (
+          data.friends as {
+            character_id: number
+            name: string
+            level: number
+          }[]
+        ).map((f) => ({
+          characterId: f.character_id,
+          name: f.name,
+          level: f.level,
+        }))
+      )
+      break
+
+    case 'FriendsOnline': {
+      const announced = applyFriendsOnline(
+        data.friends as { character_id: number; level: number }[],
+        get(friendList)
+      )
+      if (get(friendOnlineNoticeEnabled)) {
+        for (const name of announced) {
+          addChatMessage({
+            text: `Friend: ${name} is online.`,
+            sender: 'system',
+          })
+        }
+      }
+      break
+    }
+
+    case 'FriendRequestReceived':
+      enqueueConsent(
+        pendingFriendRequests,
+        MAX_PENDING_FRIEND_REQUESTS,
+        (request) => request.requesterId === data.requester_id,
+        {
+          requesterId: data.requester_id,
+          requesterName: data.requester_name,
+          offeredAt: Date.now(),
+        }
+      )
+      break
+
     case 'PartyPositions':
       applyPartyPositions(
         data.members as PartyMemberPositionEntry[],
@@ -530,6 +633,9 @@ export function handleServerMessage(
       // with the old one (in-memory, disconnect = leave), and the server
       // cannot re-send what no longer exists.
       resetPartyStores()
+      // Friendships persist, but this session's roster arrives as its own
+      // FriendList; anything held from the old one is stale.
+      resetFriendStores()
       gameStore.update((state) => {
         state.otherPlayers.clear()
         remotePlayerManager.reset()
@@ -555,6 +661,7 @@ export function handleServerMessage(
             state.otherPlayers.set(serverPlayer.id, player)
           }
         })
+        refreshBardZone(state.otherPlayers)
         return state
       })
 
@@ -586,6 +693,10 @@ export function handleServerMessage(
       campfireManager.reset()
       if (data.campfires) {
         for (const campfire of data.campfires) campfireManager.spawn(campfire)
+      }
+      stallManager.reset()
+      if (data.stalls) {
+        for (const stall of data.stalls) stallManager.spawn(stall)
       }
       break
 
@@ -882,9 +993,34 @@ export function handleServerMessage(
       break
     }
 
+    case 'PlayerMusicStarted': {
+      const isMe = isSelfPlayer(data.player_id)
+      startMusicPerformance(data.player_id, data.track, isMe, data.elapsed_secs)
+      // Our own /play_music went to the server unresolved; its reply names
+      // the track and is what strikes up our emote.
+      if (isMe) emoteRequest.set(MUSIC_EMOTE_ANIM)
+      const who = isMe
+        ? null
+        : (get(gameStore).otherPlayers.get(data.player_id)?.name ?? 'Someone')
+      addChatMessage({
+        text: who
+          ? `${who} plays "${data.track}".`
+          : `You play "${data.track}".`,
+        sender: 'system',
+      })
+      break
+    }
+
     case 'PlayerInteractionChanged': {
+      // Leaving the strum ends the tune, for the performer too.
+      applyInteractionChange(data.player_id, data.object_type ?? null)
       const state = get(gameStore)
       if (state.currentPlayer?.id === data.player_id) {
+        // Our own /emote went to the server unresolved; this broadcast is
+        // its reply, the way PlayerMusicStarted starts /play_music.
+        if (data.object_type && ONE_SHOT_EMOTE_ANIMS.has(data.object_type)) {
+          emoteRequest.set(data.object_type)
+        }
         break
       }
       const ft: string | null = data.object_type ?? null
@@ -899,19 +1035,30 @@ export function handleServerMessage(
       break
     }
 
-    case 'InteractionRejected':
+    case 'InteractionRejected': {
+      // The event only cancels an in-flight interaction animation, so the
+      // refusal would otherwise be silent. Reasons are sentences except the
+      // machine codes mapped here (same pattern as PlayerAttackRejected).
+      const reasonText: Record<string, string> = {
+        occupied: 'Someone is already using it.',
+      }
+      addChatMessage({
+        text: reasonText[data.reason] ?? data.reason,
+        sender: 'system',
+      })
       events.interactionRejected.emit(data.reason)
       break
+    }
 
     case 'DungeonChestOpened': {
-      const state = get(gameStore)
-      const isMe = state.currentPlayer?.id === data.player_id
-      const who = isMe
-        ? 'You'
-        : (state.otherPlayers.get(data.player_id)?.name ?? 'Someone')
-      const items = (data.item_def_ids as string[]).join(', ')
+      // No items + no gold = re-open of a chest already claimed tonight;
+      // the lid still swings, showing an empty box.
+      dungeonManager.markTreasureChestOpened(data.entrance_id)
+      const empty = (data.item_def_ids as string[]).length === 0 && !data.gold
       addChatMessage({
-        text: `${who} opened the treasure chest: ${items} + ${data.gold} gold!`,
+        text: empty
+          ? 'The treasure chest is empty.'
+          : `${actorName(data.player_id)} opened the treasure chest! (+${data.gold} gold)`,
         sender: 'system',
       })
       break
@@ -988,19 +1135,61 @@ export function handleServerMessage(
       setInventory(data.inventory)
       break
 
-    case 'GroundItemSpawned':
-      groundItemManager.spawn(data.item as ServerGroundItem, {
-        animateSpawn: true,
-      })
+    case 'GroundItemSpawned': {
+      const item = data.item as ServerGroundItem
+      groundItemManager.spawn(item, { animateSpawn: true })
+      // Only what a hand put down: loot announces itself by landing.
+      announceGroundItem(
+        item.dropped_by,
+        item.item_def_id,
+        'dropped',
+        item.quantity
+      )
       break
+    }
 
     case 'GroundItemAppeared':
       groundItemManager.spawn(data.item as ServerGroundItem)
       break
 
-    case 'GroundItemRemoved':
+    case 'GroundItemRemoved': {
+      // Read the pile before the removal drops it — who looted what matters
+      // in a party, where one bag takes the drop everybody fought for.
+      const taken =
+        data.picked_up_by != null
+          ? groundItemManager.items.get(data.instance_id)
+          : undefined
       groundItemManager.remove(data.instance_id)
+      // Self currency pickups: the server's system line reports the payout.
+      const selfCurrency =
+        taken != null &&
+        getItemDef(taken.itemDefId)?.category === 'currency' &&
+        isSelfPlayer(data.picked_up_by)
+      if (!selfCurrency) {
+        announceGroundItem(
+          data.picked_up_by,
+          taken?.itemDefId,
+          'picked up',
+          taken?.quantity
+        )
+      }
       break
+    }
+
+    case 'GroundItemQuantityChanged': {
+      const pile = groundItemManager.items.get(data.instance_id)
+      groundItemManager.setQuantity(data.instance_id, data.quantity)
+      // The picker already got the server's took-X-left-Y system line.
+      if (pile && !isSelfPlayer(data.picked_up_by)) {
+        announceGroundItem(
+          data.picked_up_by,
+          pile.itemDefId,
+          'picked up',
+          pile.quantity - data.quantity
+        )
+      }
+      break
+    }
 
     case 'ShopState': {
       const session = {
@@ -1205,8 +1394,7 @@ export function handleServerMessage(
       // Bystander celebration: everyone in radius hears about a trophy.
       if (!isSelf && data.outcome?.Caught?.trophy) {
         const { item_def_id, size_cm } = data.outcome.Caught
-        const who =
-          get(gameStore).otherPlayers.get(data.player_id)?.name ?? 'Someone'
+        const who = actorName(data.player_id)
         const fishName = getItemDef(item_def_id)?.name ?? item_def_id
         addCombatMessage({
           text: `${who} landed a trophy ${fishName} — ${size_cm} cm!`,
@@ -1299,6 +1487,15 @@ export function handleServerMessage(
 
     case 'CampfireRemoved':
       campfireManager.remove(data.campfire_id)
+      break
+
+    case 'StallPlaced':
+    case 'StallAppeared':
+      stallManager.spawn(data.stall)
+      break
+
+    case 'StallRemoved':
+      stallManager.remove(data.stall_id)
       break
 
     case 'GrillStarted':

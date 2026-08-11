@@ -1,7 +1,7 @@
 /**
  * dungeon-geo-floor.ts — the renderable group for one underground dungeon floor:
- * the floor slab (minus the down-shaft hole), the treasure chest, the up/down
- * stair shafts, the per-run fade walls, and the interior room doors. Follows the
+ * the floor slab (minus the down-shaft hole), the up/down stair shafts, the
+ * per-run fade walls, and the interior room doors. Follows the
  * housing pattern: collect GeoEntry quads per texture, merge into one mesh per
  * texture, reuse the shared housing materials.
  */
@@ -23,7 +23,6 @@ import {
 import { buildInteriorDoor, type InteriorDoor } from './dungeon-geo-doors'
 import {
   DUNGEON_FLOOR_TEXTURE_IDX,
-  DUNGEON_CHEST_TEXTURE_IDX,
   DUNGEON_WALL_TEXTURE_IDX,
   DUNGEON_CORRIDOR_WALL_TEXTURE_IDX,
   DUNGEON_DOOR_TEXTURE_IDX,
@@ -115,17 +114,6 @@ export function buildDungeonFloorGroup(
 
   // Walls on all four sides are built lower down as per-run fade meshes (the
   // dungeon layer ghosts any run that occludes the player), not merged here.
-
-  // --- Treasure chest (final floor): a squat dark-wood box with a lid
-  // ridge, sitting on the chest cell.
-  if (layout.chest) {
-    const [cx, cz] = layout.chest
-    const x = cx + 0.5
-    const z = cz + 0.5
-    addBox(entries, DUNGEON_CHEST_TEXTURE_IDX, 0.9, 0.5, 0.6, x, 0.25, z)
-    addBox(entries, DUNGEON_CHEST_TEXTURE_IDX, 0.96, 0.14, 0.66, x, 0.55, z)
-    addBox(entries, DUNGEON_FLOOR_TEXTURE_IDX, 0.98, 0.04, 0.1, x, 0.45, z)
-  }
 
   // --- Down shaft (0 → -floorHeight) merges with the floor geometry, so it
   // shares the slab's y=0 and isn't lifted for shadow contact like the up-shaft;

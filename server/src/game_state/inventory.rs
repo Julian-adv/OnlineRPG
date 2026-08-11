@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::auth::{AuthService, ItemRow};
 use crate::item_defs::UseEffect;
 use crate::types::{PlayerId, ServerMessage};
@@ -12,12 +10,14 @@ use tracing::{info, warn};
 use super::party::SummonCast;
 use super::ServerGroundItem;
 
-/// Ground items despawn after 5 minutes.
-const GROUND_ITEM_LIFETIME_MS: u64 = 5 * 60 * 1000;
+/// Ground items despawn after 30 minutes — long enough that a tip dropped at
+/// the start of the longest song (~5 min) still lies there through the rest
+/// and the thanks after it.
+const GROUND_ITEM_LIFETIME_MS: u64 = 30 * 60 * 1000;
 
 const MAX_PICKUP_DISTANCE: f32 = 2.5;
 
-const CAMPFIRE_PLACEMENT_DISTANCE_M: f32 = 1.0;
+const PLACEMENT_DISTANCE_M: f32 = 1.0;
 
 /// Enchant odds are expressed in basis points (1/100 of a percent) out of
 /// this scale; the handler's roll must use the same bound.
@@ -463,7 +463,9 @@ impl super::GameState {
                     item_def_id: item_def_id.to_string(),
                     position,
                     floor_level,
+                    quantity: 1,
                     enchant: 0,
+                    dropped_by: Some(*player_id),
                 })
                 .await;
             }
@@ -725,22 +727,54 @@ impl super::GameState {
         {
             return;
         }
+        let Some((placement, floor_level)) = self.campfire_placement(player_id).await else {
+            return;
+        };
+        self.consume_one_and_sync(player_id, instance_id).await;
+        self.spawn_campfire(
+            placement,
+            floor_level,
+            onlinerpg_shared::hunger::CAMPFIRE_DURATION_MS,
+        )
+        .await;
+        self.send_system_message(player_id, "You light a campfire.")
+            .await;
+    }
+
+    pub(super) async fn campfire_placement(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<(crate::types::Position, i8)> {
+        self.outdoor_placement(
+            player_id,
+            "You can only build a campfire outdoors",
+            "You can't light a fire in water",
+        )
+        .await
+    }
+
+    /// Where something placed by `player_id` would land: a step in front of
+    /// them, or their own feet when something blocks the way. `None` once the
+    /// refusal (indoors, in water) has been sent to them.
+    pub(super) async fn outdoor_placement(
+        &self,
+        player_id: &PlayerId,
+        indoors_refusal: &str,
+        water_refusal: &str,
+    ) -> Option<(crate::types::Position, i8)> {
         let (position, rotation, floor_level) = {
             let players = self.players.read().await;
-            let Some(p) = players.get(player_id) else {
-                return;
-            };
+            let p = players.get(player_id)?;
             (p.position, p.rotation, p.floor_level)
         };
         if floor_level != super::fishing::OVERWORLD_FLOOR {
-            self.send_system_message(player_id, "You can only build a campfire outdoors")
-                .await;
-            return;
+            self.send_system_message(player_id, indoors_refusal).await;
+            return None;
         }
         let forward = crate::types::Position {
-            x: position.x + rotation.sin() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+            x: position.x + rotation.sin() * PLACEMENT_DISTANCE_M,
             y: position.y,
-            z: position.z + rotation.cos() * CAMPFIRE_PLACEMENT_DISTANCE_M,
+            z: position.z + rotation.cos() * PLACEMENT_DISTANCE_M,
         };
         let placement = {
             let cache = self.passability_read();
@@ -761,15 +795,10 @@ impl super::GameState {
             .await
             .is_some_and(|depth| depth > onlinerpg_shared::fishing::MIN_FISHABLE_DEPTH_M);
         if in_water {
-            self.send_system_message(player_id, "You can't light a fire in water")
-                .await;
-            return;
+            self.send_system_message(player_id, water_refusal).await;
+            return None;
         }
-
-        self.consume_one_and_sync(player_id, instance_id).await;
-        self.spawn_campfire(placement, floor_level).await;
-        self.send_system_message(player_id, "You light a campfire.")
-            .await;
+        Some((placement, floor_level))
     }
 
     /// Roll `dice` and heal an alive, wounded player, broadcasting the new HP.
@@ -790,6 +819,7 @@ impl super::GameState {
             })
         };
         if let Some((health, max_health, position, floor_level)) = healed {
+            self.mark_party_vitals_dirty(player_id).await;
             self.send_direct_message_to_players_within_position(
                 &position,
                 floor_level,
@@ -1006,13 +1036,10 @@ impl super::GameState {
     /// Roll the global world-drop table for a loot event at `origin` and spawn
     /// any rare bonus items that hit as ground items scattered nearby. Shared
     /// by every loot source (monster kills, dungeon chests, broken props) so a
-    /// rare drop can spill from anything that yields loot. Each drop is
-    /// clamped onto walkable floor inside dungeons so it never lands in a wall.
-    /// Table entries are validated against `ItemDefs` at load time, so every
-    /// rolled id is guaranteed to have a definition here.
+    /// rare drop can spill from anything that yields loot. Table entries are
+    /// validated against `ItemDefs` at load time, so every rolled id is
+    /// guaranteed to have a definition here.
     pub(super) async fn spawn_world_drops(&self, origin: crate::types::Position, floor_level: i8) {
-        use std::f32::consts::TAU;
-
         /// How far from the loot origin a world drop scatters.
         const WORLD_DROP_OFFSET_METERS: f32 = 1.5;
 
@@ -1020,11 +1047,34 @@ impl super::GameState {
             let mut rng = rand::thread_rng();
             self.world_drop_defs.roll(&mut rng)
         };
+        self.spawn_scattered_items(
+            item_def_ids,
+            origin,
+            floor_level,
+            WORLD_DROP_OFFSET_METERS,
+            WORLD_DROP_OFFSET_METERS,
+        )
+        .await;
+    }
+
+    /// Spawn items as ground drops scattered around `origin`, each at a random
+    /// angle and a radius in `min_r..=max_r`. Each drop is clamped onto
+    /// walkable floor inside dungeons so it never lands in a wall; anyone may
+    /// pick them up.
+    pub(super) async fn spawn_scattered_items(
+        &self,
+        item_def_ids: Vec<String>,
+        origin: crate::types::Position,
+        floor_level: i8,
+        min_r: f32,
+        max_r: f32,
+    ) {
+        use std::f32::consts::TAU;
 
         for item_def_id in item_def_ids {
             let angle = rand::thread_rng().gen_range(0.0..TAU);
-            let preferred =
-                super::combat::offset_position_at_angle(origin, angle, WORLD_DROP_OFFSET_METERS);
+            let radius = rand::thread_rng().gen_range(min_r..=max_r);
+            let preferred = super::combat::offset_position_at_angle(origin, angle, radius);
             let position = self
                 .loot_drop_position(origin, floor_level, preferred)
                 .await;
@@ -1035,7 +1085,9 @@ impl super::GameState {
                 item_def_id,
                 position,
                 floor_level,
+                quantity: 1,
                 enchant: 0,
+                dropped_by: None,
             })
             .await;
         }
@@ -1057,6 +1109,7 @@ impl super::GameState {
         // For the unit that splits off a stack — the stack keeps its own id.
         // Reserved outside the lock like award_item; unused otherwise.
         let split_instance_id = self.next_instance_id().await;
+        let npc_def = self.official_npc_def(player_id).await;
 
         let (snapshot, dropped, dropped_from_off_hand) = {
             let mut inventories = self.inventories.write().await;
@@ -1064,6 +1117,18 @@ impl super::GameState {
                 Some(inv) => inv,
                 None => return,
             };
+
+            // Dropped loadout gear would be lootable and re-seeded on the
+            // NPC's next join — an item faucet, like selling it.
+            if npc_def.is_some_and(|def| {
+                inv.items()
+                    .any(|i| i.instance_id == instance_id && def.in_loadout(&i.item_def_id))
+            }) {
+                drop(inventories);
+                self.send_system_message(player_id, "You never drop your issued gear")
+                    .await;
+                return;
+            }
 
             let (dropped, dropped_from_off_hand) =
                 if let Some(idx) = inv.bag.iter().position(|i| i.instance_id == instance_id) {
@@ -1103,7 +1168,9 @@ impl super::GameState {
             item_def_id: dropped.item_def_id,
             position,
             floor_level,
+            quantity: 1,
             enchant: dropped.enchant,
+            dropped_by: Some(*player_id),
         };
 
         self.mark_inventory_dirty(player_id).await;
@@ -1121,12 +1188,19 @@ impl super::GameState {
     /// all-or-nothing transaction: every line is validated against the bag
     /// before anything is removed. Bag-only — unlike `drop_item`, there is no
     /// equipped-slot fallback, since batch selection only ever offers bag
-    /// items. `GroundItem` has no quantity field, so each unit lands as its
-    /// own scattered ground item rather than one N-quantity entity.
-    pub async fn drop_items(&self, player_id: &PlayerId, items: Vec<BagLineItem>) {
+    /// items.
+    pub async fn drop_items(&self, player_id: &PlayerId, mut items: Vec<BagLineItem>) {
+        items.retain(|i| i.qty > 0);
         if items.is_empty() {
             return;
         }
+        let Some(quantities) =
+            super::checked_batch_quantities(items.iter().map(|item| (item.instance_id, item.qty)))
+        else {
+            self.send_system_message(player_id, "Invalid batch quantity")
+                .await;
+            return;
+        };
         let (player_position, rotation, floor_level) = {
             let players = self.players.read().await;
             match players.get(player_id) {
@@ -1142,7 +1216,7 @@ impl super::GameState {
             enchant: i32,
         }
 
-        let mut reserved: HashMap<u64, u32> = HashMap::new();
+        let npc_def = self.official_npc_def(player_id).await;
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
 
         let snapshot = {
@@ -1152,22 +1226,23 @@ impl super::GameState {
             };
 
             for req in &items {
-                if req.qty == 0 {
-                    continue;
-                }
                 let Some(item) = inv.bag.iter().find(|i| i.instance_id == req.instance_id) else {
                     drop(inventories);
                     self.send_system_message(player_id, "Item not found").await;
                     return;
                 };
-                let already = *reserved.get(&req.instance_id).unwrap_or(&0);
-                if already + req.qty > item.quantity {
+                if quantities[&req.instance_id] > item.quantity {
                     drop(inventories);
                     self.send_system_message(player_id, "Not enough of that item")
                         .await;
                     return;
                 }
-                reserved.insert(req.instance_id, already + req.qty);
+                if npc_def.is_some_and(|def| def.in_loadout(&item.item_def_id)) {
+                    drop(inventories);
+                    self.send_system_message(player_id, "You never drop your issued gear")
+                        .await;
+                    return;
+                }
                 plans.push(Plan {
                     instance_id: req.instance_id,
                     qty: req.qty,
@@ -1175,11 +1250,6 @@ impl super::GameState {
                     enchant: item.enchant,
                 });
             }
-            if plans.is_empty() {
-                drop(inventories);
-                return;
-            }
-
             // Every line is now guaranteed to apply cleanly — mutate.
             for plan in &plans {
                 let idx = inv
@@ -1199,10 +1269,25 @@ impl super::GameState {
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
 
-        let total_units: u32 = plans.iter().map(|p| p.qty).sum();
-        let mut next_ground_id = self.reserve_instance_ids(total_units as u64).await;
-        for plan in &plans {
-            for _ in 0..plan.qty {
+        // A stackable line lands as a single N-unit pile, a non-stackable one
+        // scatters unit by unit since those units are distinct objects. One
+        // (piles, per-pile) shape per plan keeps the id reservation and the
+        // spawn loop counting the same way.
+        let shapes: Vec<(u32, u32)> = plans
+            .iter()
+            .map(|plan| {
+                if self.item_defs.stackable(&plan.item_def_id) {
+                    (1, plan.qty)
+                } else {
+                    (plan.qty, 1)
+                }
+            })
+            .collect();
+        let total: u64 = shapes.iter().map(|(piles, _)| *piles as u64).sum();
+        let mut next_ground_id = self.reserve_instance_ids(total).await;
+
+        for (plan, &(piles, quantity)) in plans.iter().zip(&shapes) {
+            for _ in 0..piles {
                 let preferred = drop_landing_position(player_position, rotation);
                 let position = self
                     .loot_drop_position(player_position, floor_level, preferred)
@@ -1212,7 +1297,9 @@ impl super::GameState {
                     item_def_id: plan.item_def_id.clone(),
                     position,
                     floor_level,
+                    quantity,
                     enchant: plan.enchant,
+                    dropped_by: Some(*player_id),
                 })
                 .await;
                 next_ground_id += 1;
@@ -1242,7 +1329,9 @@ impl super::GameState {
             item_def_id: item_def_id.to_string(),
             position,
             floor_level,
+            quantity: 1,
             enchant: 0,
+            dropped_by: Some(*player_id),
         })
         .await;
     }
@@ -1295,60 +1384,97 @@ impl super::GameState {
         let item_weight = self.item_defs.weight(&ground_item.item_def_id);
         let stackable = self.item_defs.stackable(&ground_item.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
+        // For the bag entry — the pile that stays behind keeps its own id.
+        // Reserved outside the locks like `drop_item`'s split id; unused when
+        // the insert merges into an existing bag stack.
+        let bag_instance_id = self.next_instance_id().await;
 
         // Acquire write lock for both weight check and mutation atomically
         let item_position = ground_item.position;
-        let snapshot = {
+        let (take, remaining, snapshot) = {
             let mut ground_items = self.ground_items.write().await;
-            if ground_items.remove(&instance_id).is_none() {
+            let Some(entry) = ground_items.get_mut(&instance_id) else {
                 self.send_system_message(player_id, "Item no longer exists")
+                    .await;
+                return;
+            };
+            // Re-read under the lock: another picker may have thinned the pile
+            // since the distance check above read it. A non-stackable ground
+            // item is always a single object, and taking more would outrun the
+            // one bag id reserved above.
+            let available = if stackable { entry.item.quantity } else { 1 };
+
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            // Carry what fits and leave the rest, so a heavy pile is never
+            // stranded on the ground with no way to take any of it.
+            let headroom = max_weight - self.calc_total_weight(inv);
+            let take = if item_weight <= 0.0 {
+                available
+            } else {
+                // The epsilon keeps an exact fit from flooring one unit short
+                // of what f32 rounding owes it (0.3-weight defs and friends).
+                available.min(((headroom / item_weight) + 1e-3).floor().max(0.0) as u32)
+            };
+            if take == 0 {
+                drop(inventories);
+                drop(ground_items);
+                self.send_system_message(player_id, "Too heavy to carry")
                     .await;
                 return;
             }
 
-            let mut inventories = self.inventories.write().await;
-            if let Some(inv) = inventories.get_mut(player_id) {
-                let current_weight = self.calc_total_weight(inv);
-                if current_weight + item_weight > max_weight {
-                    // Put it back on the ground
-                    ground_items.insert(
-                        instance_id,
-                        ServerGroundItem {
-                            item: ground_item,
-                            dropped_at_ms: Self::now_ms(),
-                        },
-                    );
-                    drop(inventories);
-                    drop(ground_items);
-                    self.send_system_message(player_id, "Too heavy to carry")
-                        .await;
-                    return;
-                }
-                stack_into_bag(
-                    &mut inv.bag,
-                    BagInsert::one(
-                        stackable,
-                        &ground_item.item_def_id,
-                        ground_item.enchant,
-                        instance_id,
-                    ),
-                );
-                inv.clone()
+            if take < available {
+                entry.item.quantity = available - take;
             } else {
-                return;
+                ground_items.remove(&instance_id);
             }
+            // Ids are never reused, so the pre-lock `ground_item` clone still
+            // matches `entry` — no need to copy out of it under the locks.
+            stack_into_bag(
+                &mut inv.bag,
+                BagInsert {
+                    stackable,
+                    item_def_id: &ground_item.item_def_id,
+                    enchant: ground_item.enchant,
+                    first_instance_id: bag_instance_id,
+                    quantity: take,
+                },
+            );
+            (take, available - take, inv.clone())
         };
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
+        let update = if remaining == 0 {
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by: Some(*player_id),
+            }
+        } else {
+            ServerMessage::GroundItemQuantityChanged {
+                instance_id,
+                quantity: remaining,
+                picked_up_by: Some(*player_id),
+            }
+        };
         self.send_direct_message_to_players_within_position(
             &item_position,
             player_floor,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemRemoved { instance_id },
+            update,
             None,
         )
         .await;
+        if remaining > 0 {
+            self.send_system_message(
+                player_id,
+                &format!("Too heavy to carry it all — took {take}, left {remaining}."),
+            )
+            .await;
+        }
     }
 
     /// Show the pickup crouch on nearby clients. Driven by `PickupStarted` at
@@ -1420,6 +1546,8 @@ impl super::GameState {
 
         let copper: i64 = rand::thread_rng().gen_range(1..=10);
         self.award_copper(player_id, copper).await;
+        self.send_system_message(player_id, format!("You picked up {copper} copper."))
+            .await;
         info!(
             "Player {} picked up a coin pile: +{} copper",
             self.player_name_of(player_id).await,
@@ -1430,7 +1558,10 @@ impl super::GameState {
             &ground_item.position,
             player_floor,
             super::EVENT_DELIVERY_RADIUS,
-            ServerMessage::GroundItemRemoved { instance_id },
+            ServerMessage::GroundItemRemoved {
+                instance_id,
+                picked_up_by: Some(*player_id),
+            },
             None,
         )
         .await;
@@ -1471,7 +1602,10 @@ impl super::GameState {
                 &position,
                 floor_level,
                 super::EVENT_DELIVERY_RADIUS,
-                ServerMessage::GroundItemRemoved { instance_id: id },
+                ServerMessage::GroundItemRemoved {
+                    instance_id: id,
+                    picked_up_by: None,
+                },
                 None,
             )
             .await;

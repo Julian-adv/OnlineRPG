@@ -2,15 +2,15 @@ use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
-use onlinerpg_shared::{shortest_world_delta_x, wrap_world_x, PLAYER_MOVE_SPEED};
+use onlinerpg_shared::{
+    shortest_world_delta_x, wrap_world_x, MAX_MOVE_TARGET_DISTANCE, PLAYER_MOVE_SPEED,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 /// Headroom over walk speed so the sim absorbs network jitter and catches up.
 pub(super) const MOVE_SPEED_SLACK: f32 = 1.15;
-/// Longest accepted move target; the farthest in-view click is ~42m.
-const MAX_MOVE_TARGET_DISTANCE: f32 = 60.0;
 
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
@@ -309,6 +309,7 @@ impl super::GameState {
             gold_map.remove(player_id);
         }
         self.remove_player_blocks(player_id).await;
+        self.remove_player_friends(player_id).await;
         self.forget_whisper_partner(player_id).await;
         self.forget_player_skills(player_id).await;
         self.remove_dungeon_discoveries(player_id).await;
@@ -686,7 +687,10 @@ impl super::GameState {
         }
     }
 
-    pub async fn add_player(&self, mut player: Player) -> Option<ServerMessage> {
+    /// Registers the player and returns the messages that materialize the
+    /// surroundings for them: the visible-state snapshot, plus any
+    /// performances already underway in earshot (delivered mid-track).
+    pub async fn add_player(&self, mut player: Player) -> Vec<ServerMessage> {
         // Normalize persisted legacy positions before they enter the spatial
         // index or are sent to clients.
         player.position.x = onlinerpg_shared::wrap_world_x(player.position.x);
@@ -769,25 +773,53 @@ impl super::GameState {
             })
             .map(|e| e.campfire.clone())
             .collect();
+        let stalls: Vec<_> = self
+            .stalls
+            .read()
+            .await
+            .values()
+            .filter(|s| {
+                s.floor_level == player_floor
+                    && s.position.dist_xz_sq(&player_position)
+                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
+            })
+            .cloned()
+            .collect();
 
+        let mut msgs = Vec::new();
         if !other_players.is_empty()
             || !monsters.is_empty()
             || !ground_items.is_empty()
             || !campfires.is_empty()
+            || !stalls.is_empty()
         {
-            return Some(ServerMessage::GameState {
+            msgs.push(ServerMessage::GameState {
                 players: other_players,
                 monsters,
                 ground_items,
                 campfires,
+                stalls,
             });
         }
 
-        None
+        let performances = self.music_performances.read().await;
+        if !performances.is_empty() {
+            for id in &nearby_player_ids {
+                if *id != player_id {
+                    if let Some(entry) = performances.get(id) {
+                        msgs.push(super::chat::music_started_msg(*id, entry));
+                    }
+                }
+            }
+        }
+
+        msgs
     }
 
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
+        self.music_performances.write().await.remove(player_id);
+        self.remove_player_stall(player_id).await;
         self.ambient_spawn_allowances
             .write()
             .await
@@ -892,28 +924,31 @@ impl super::GameState {
             return;
         }
         if !(new_position.is_finite() && new_rotation.is_finite()) {
-            warn!(
-                "Rejected non-finite move from player {}",
-                self.player_name_of(player_id).await
-            );
+            if self.snap_refused_move_back(player_id).await {
+                warn!(
+                    "Rejected non-finite move from player {}",
+                    self.player_name_of(player_id).await
+                );
+            }
             return;
         }
         new_position.x = wrap_world_x(new_position.x);
         // Dungeon floors (negative) are validated against the entrance
         // registry and the floor's expected world Y before being stored.
         // Deliberately does not carry the name out: this runs for every move
-        // packet, and the only consumers are the two rejection logs below,
-        // which can afford their own lookup.
-        let (current_floor, current_position) = {
+        // packet, and the only consumers are the rejection logs below, which
+        // can afford their own lookup.
+        let (current_floor, current_position, health) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.floor_level, p.position),
+                Some(p) => (p.floor_level, p.position, p.health),
                 None => {
                     warn!("Attempted to move non-existent player: {}", player_id);
                     return;
                 }
             }
         };
+        let declared_floor = floor_level;
         let floor_level = if floor_level < 0 || current_floor < 0 {
             self.validated_dungeon_floor(player_id, current_floor, floor_level, &new_position)
                 .await
@@ -940,6 +975,23 @@ impl super::GameState {
             return;
         }
 
+        // A coerced floor means the declared (position, floor) pair failed
+        // dungeon validation (which already warned why), and the mover never
+        // sees its own PlayerMoved — snap so its floor resyncs instead of
+        // diverging silently.
+        if floor_level != declared_floor {
+            self.snap_refused_move_back(player_id).await;
+            return;
+        }
+
+        // The tick's health backstop would only drop the queue silently; the
+        // client predicts every move it sends, so refuse here with a snap or
+        // its phantom walks off without the body.
+        if health == 0 {
+            self.snap_refused_move_back(player_id).await;
+            return;
+        }
+
         let mut queues = self.movement_intents.write().await;
         // Appended legs chain off the queue tail, so the distance guard must
         // measure the new leg, not the whole path from the current position.
@@ -954,11 +1006,15 @@ impl super::GameState {
         };
         let dist_sq = leg_start.dist_xz_sq(&new_position);
         if dist_sq > MAX_MOVE_TARGET_DISTANCE * MAX_MOVE_TARGET_DISTANCE {
-            warn!(
-                "Rejected move target {:.0}m away from player {}",
-                dist_sq.sqrt(),
-                self.player_name_of(player_id).await
-            );
+            // The snap takes other locks; don't hold every mover's queue meanwhile.
+            drop(queues);
+            if self.snap_refused_move_back(player_id).await {
+                warn!(
+                    "Rejected move target {:.0}m away from player {}",
+                    dist_sq.sqrt(),
+                    self.player_name_of(player_id).await
+                );
+            }
             return;
         }
         let queue = queues.entry(*player_id).or_default();
@@ -1212,37 +1268,48 @@ impl super::GameState {
         }
     }
 
-    /// Refuse a client-reported floor above the housing limit and snap the
-    /// client back. It reads its own floor from local geometry and so keeps
-    /// resending the rejected value: without a snap every later move packet is
-    /// dropped too and the player is stranded with no signal. Rides the
-    /// refused-move throttle, warn included.
-    async fn reject_out_of_range_floor(&self, player_id: &PlayerId, floor_level: i8, source: &str) {
+    /// Snap a client whose move was refused outright (too far, dead) back to
+    /// the authoritative pose. Nothing else reconciles the two sims — the
+    /// mover never receives its own `PlayerMoved` — so a silent drop leaves
+    /// the client's prediction walking a path the server never accepted.
+    /// Rides the shared correction throttle; returns whether a snap was sent.
+    async fn snap_refused_move_back(&self, player_id: &PlayerId) -> bool {
         let now = std::time::Instant::now();
         let due = {
             let mut last = self.last_position_correction.write().await;
             correction_due(&mut last, player_id, now)
         };
         if !due {
-            return;
+            return false;
         }
-        let Some((position, rotation, current_floor)) = self.get_player_position(player_id).await
+        let Some((position, rotation, floor_level)) = self.get_player_position(player_id).await
         else {
-            return;
+            return false;
         };
-        warn!(
-            "Rejected {} with out-of-range floor {} from player {}",
-            source, floor_level, player_id
-        );
         self.send_direct_message(
             player_id,
             ServerMessage::PositionCorrected {
                 position,
                 rotation,
-                floor_level: current_floor,
+                floor_level,
             },
         )
         .await;
+        true
+    }
+
+    /// Refuse a client-reported floor above the housing limit and snap the
+    /// client back. It reads its own floor from local geometry and so keeps
+    /// resending the rejected value: without a snap every later move packet is
+    /// dropped too and the player is stranded with no signal. Rides the
+    /// refused-move throttle, warn included.
+    async fn reject_out_of_range_floor(&self, player_id: &PlayerId, floor_level: i8, source: &str) {
+        if self.snap_refused_move_back(player_id).await {
+            warn!(
+                "Rejected {} with out-of-range floor {} from player {}",
+                source, floor_level, player_id
+            );
+        }
     }
 
     /// Store a position immediately (trusted server-side path) and run the
@@ -1388,16 +1455,22 @@ impl super::GameState {
 
     /// A walkable spot on a small ring beside `center` for a teleport
     /// arrival, golden-angle-seeded by the mover's id so simultaneous
-    /// arrivals don't stack. A blocked spot (dungeon walls run 1m from a
-    /// corridor's center) retries at half radius and finally lands on
-    /// `center` itself — a walkable cell by construction.
+    /// arrivals don't stack.
     pub(crate) fn arrival_beside(&self, mover: &PlayerId, center: &Position) -> Position {
         let angle = (mover.get() % 360) as f32 * GOLDEN_ANGLE_RAD;
+        self.open_spot_beside(center, angle, ARRIVAL_RING_RADIUS)
+    }
+
+    /// A walkable spot at `angle` from `center`, X wrapped to the canonical
+    /// range (callers store it directly). A blocked spot (dungeon walls run
+    /// 1m from a corridor's center) retries at half radius and finally lands
+    /// on `center` itself — a walkable cell by construction.
+    pub(crate) fn open_spot_beside(&self, center: &Position, angle: f32, radius: f32) -> Position {
         let cache = self.passability_read();
         let cell_floor = super::passability::authoritative_floor(&cache, center);
-        for radius in [ARRIVAL_RING_RADIUS, ARRIVAL_RING_RADIUS * 0.5] {
+        for radius in [radius, radius * 0.5] {
             let candidate = Position {
-                x: center.x + angle.cos() * radius,
+                x: wrap_world_x(center.x + angle.cos() * radius),
                 y: center.y,
                 z: center.z + angle.sin() * radius,
             };
@@ -1477,6 +1550,7 @@ impl super::GameState {
             self.finish_position_update(player_id, old_position, old_floor, player, update_msg)
                 .await;
             self.reset_hunger_on_respawn(player_id).await;
+            self.mark_party_vitals_dirty(player_id).await;
         } else {
             warn!("Attempted to respawn non-existent player: {}", player_id);
         }
@@ -1581,6 +1655,9 @@ impl super::GameState {
             )
             .await;
         } else if let Ok(Some((position, floor_level))) = rejected_or_position {
+            if object_type.as_deref() != Some(onlinerpg_shared::messages::MUSIC_EMOTE) {
+                self.music_performances.write().await.remove(player_id);
+            }
             self.send_direct_message_to_players_within_position(
                 &position,
                 floor_level,
@@ -1760,6 +1837,26 @@ impl super::GameState {
                 .collect::<Vec<_>>()
         };
 
+        // Coming into earshot of a running performance delivers it mid-track,
+        // in either direction. Collected here, sent after the appearances so
+        // the receiver already knows the performer.
+        let music_msgs: Vec<(PlayerId, ServerMessage)> = if entered_players.is_empty() {
+            Vec::new()
+        } else {
+            let performances = self.music_performances.read().await;
+            let mut msgs = Vec::new();
+            let mut push = |to: PlayerId, performer: PlayerId| {
+                if let Some(entry) = performances.get(&performer) {
+                    msgs.push((to, super::chat::music_started_msg(performer, entry)));
+                }
+            };
+            for other in &entered_players {
+                push(*player_id, other.id);
+                push(other.id, *player_id);
+            }
+            msgs
+        };
+
         for other in entered_players {
             self.send_direct_message(
                 player_id,
@@ -1775,6 +1872,9 @@ impl super::GameState {
                 },
             )
             .await;
+        }
+        for (to, msg) in music_msgs {
+            self.send_direct_message(&to, msg).await;
         }
 
         let (monsters_left, monsters_entered) = {
@@ -1820,8 +1920,14 @@ impl super::GameState {
         };
 
         for instance_id in items_left {
-            self.send_direct_message(player_id, ServerMessage::GroundItemRemoved { instance_id })
-                .await;
+            self.send_direct_message(
+                player_id,
+                ServerMessage::GroundItemRemoved {
+                    instance_id,
+                    picked_up_by: None,
+                },
+            )
+            .await;
         }
         for item in items_entered {
             self.send_direct_message(player_id, ServerMessage::GroundItemAppeared { item })
@@ -1850,6 +1956,28 @@ impl super::GameState {
         }
         for campfire in fires_entered {
             self.send_direct_message(player_id, ServerMessage::CampfireAppeared { campfire })
+                .await;
+        }
+
+        let (stalls_left, stalls_entered) = {
+            let stalls = self.stalls.read().await;
+            let (left, entered) = aoi_diff(
+                stalls.values(),
+                |s| (s.position, s.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter().map(|s| s.id).collect::<Vec<_>>(),
+                entered.into_iter().cloned().collect::<Vec<_>>(),
+            )
+        };
+        for stall_id in stalls_left {
+            self.send_direct_message(player_id, ServerMessage::StallRemoved { stall_id })
+                .await;
+        }
+        for stall in stalls_entered {
+            self.send_direct_message(player_id, ServerMessage::StallAppeared { stall })
                 .await;
         }
 

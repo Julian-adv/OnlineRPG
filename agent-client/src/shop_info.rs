@@ -36,6 +36,18 @@ pub struct NpcRow {
     salary_per_day: i64,
     #[serde(rename = "walletCap", default)]
     wallet_cap: i64,
+    #[serde(default)]
+    keepsakes: String,
+}
+
+impl NpcRow {
+    /// Keepsakes this NPC could actually offer: the listed ids that carry a
+    /// base price. `keepsake_section` never offers an unpriced one, so an
+    /// unpriced entry (a worn instrument, say) is fair game to wear out.
+    pub fn offerable_keepsake_ids(&self) -> impl Iterator<Item = &str> {
+        id_list(&self.keepsakes)
+            .filter(|id| crate::item_defs::get(id).is_some_and(|d| d.base_price.is_some()))
+    }
 }
 
 /// Registry lookup by NPC id, for resolving `[[npcs]]` config entries that
@@ -144,58 +156,118 @@ pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
     Some(section)
 }
 
-/// Build the per-turn "Your Personal Trading" section for a non-merchant
-/// trader. Prompt steering alone cannot stop an LLM from chasing its
-/// wishlist forever, so satiation is structural: items already in the
-/// NPC's bag are omitted, and once every wish is satisfied the section —
-/// the temptation itself — vanishes from the prompt entirely. The bag is
-/// server-persisted, so the desire only returns if the item leaves it.
+/// Build the per-turn "## Personal Trading" section for a non-merchant
+/// trader: what it wants to buy (its wishlist) and what it might part
+/// with (its keepsakes), as one personal-business section for the same
+/// trusted audience. Both halves are structural, not prompt steering:
+/// wishlist items already in the bag drop out (and `include_wishlist`
+/// carries the post-purchase satiation), keepsakes are offered only while
+/// still in the bag, and an empty `audience` — the nearby regulars past
+/// the trade favor threshold — omits the whole section. The server hides
+/// keepsakes from walk-in stock and only sells to a player holding the
+/// NPC's own `offer_deal`; unpriced ones (a bard's worn instrument) can
+/// never sell and are left out.
 pub fn resident_trade_prompt_for(
     npc_name: &str,
     bag: &[onlinerpg_shared::inventory::ItemInstance],
+    include_wishlist: bool,
+    audience: &[String],
 ) -> Option<String> {
+    if audience.is_empty() {
+        return None;
+    }
     let trader = npcs()
         .values()
         .find(|t| t.npc_name.eq_ignore_ascii_case(npc_name))?;
 
-    let wanted: Vec<&str> = id_list(&trader.wishlist)
-        .filter(|id| !bag.iter().any(|item| item.item_def_id == *id))
+    let wanted: Vec<&str> = if include_wishlist {
+        id_list(&trader.wishlist)
+            .filter(|id| !bag.iter().any(|item| item.item_def_id == *id))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let held: Vec<(&str, &str, i64)> = trader
+        .offerable_keepsake_ids()
+        .filter(|id| bag.iter().any(|item| item.item_def_id == *id))
+        .filter_map(|id| {
+            let item = crate::item_defs::get(id)?;
+            Some((id, item.name.as_str(), item.base_price?))
+        })
         .collect();
-    if wanted.is_empty() {
+    if wanted.is_empty() && held.is_empty() {
         return None;
     }
 
-    let mut section = String::from(
-        "## Your Personal Trading\n\
-         You are not a shopkeeper, but you personally want to buy a few things \
-         you need — from passing players only; other NPCs are not your suppliers:\n",
+    let mut section = format!(
+        "## Personal Trading\n\
+         You are not a shopkeeper; this is personal business, and only \
+         these travelers have earned your trust for it: {}. Never \
+         advertise it, never trade personally with anyone not named here, \
+         and never with another NPC. When talk turns that way, put your \
+         trade window on their screen:\n\
+         {{\"type\": \"open_trade\", \"player\": \"PlayerName\"}}\n",
+        audience.join(", "),
     );
-    for item_id in wanted {
-        let Some(item) = crate::item_defs::get(item_id) else {
-            continue;
-        };
-        let base = item.base_price.unwrap_or(0);
+
+    if !wanted.is_empty() {
         section.push_str(&format!(
-            "- {item_id} ({}): you pay {} ({}% of the {} base price)\n",
-            item.name,
-            format_price(base * i64::from(trader.wishlist_rate_percent) / 100),
-            trader.wishlist_rate_percent,
-            format_price(base),
+            "Things you want to buy — your wallet is your own money \
+             (salary {} per game day, capped at {}); check \"Your gold\" \
+             first and say so in character if you cannot afford it. You \
+             keep what you buy, never reselling it:\n",
+            format_price(trader.salary_per_day),
+            format_price(trader.wallet_cap),
+        ));
+        for item_id in &wanted {
+            let Some(item) = crate::item_defs::get(item_id) else {
+                continue;
+            };
+            let base = item.base_price.unwrap_or(0);
+            section.push_str(&format!(
+                "- {item_id} ({}): you pay {} ({}% of the {} base price)\n",
+                item.name,
+                format_price(base * i64::from(trader.wishlist_rate_percent) / 100),
+                trader.wishlist_rate_percent,
+                format_price(base),
+            ));
+        }
+        section.push_str(&format!(
+            "To pay a bonus for something you need right now:\n\
+             {{\"type\": \"offer_deal\", \"player\": \"PlayerName\", \"item\": \
+             \"{}\", \"kind\": \"sell\", \"modifier_pct\": 10, \"reason\": \
+             \"I need it today\"}}\n",
+            wanted[0],
         ));
     }
-    section.push_str(&format!(
-        "Your wallet is your own money — salary {} per game day, and it stops \
-         accumulating at {}. Check \"Your gold\" in the world state before promising \
-         to buy anything; if you can't afford it, say so in character.\n\
-         You keep what you buy (you need it; you never resell wishlist items), but \
-         players may buy other items out of your bag at base price.\n\
-         When a conversation turns to trading, use the \"open_trade\" action to put \
-         your trade window on the player's screen. Use \"offer_deal\" with kind \
-         \"sell\" and a positive modifier_pct to pay a bonus for something you \
-         really need right now.\n",
-        format_price(trader.salary_per_day),
-        format_price(trader.wallet_cap),
-    ));
+
+    if let Some((first, ..)) = held.first().copied() {
+        section.push_str(
+            "Things you might part with — personal belongings in your bag, \
+             not stock; nobody can buy one unless you offer it first, and \
+             offering is a choice, not a duty — only when the moment feels \
+             right, each person asked at most once. Keep them in your bag, \
+             not worn:\n",
+        );
+        for (item_id, name, price) in &held {
+            section.push_str(&format!(
+                "- {item_id} ({name}): base price {}\n",
+                format_price(*price)
+            ));
+        }
+        section.push_str(&format!(
+            "To offer one, pair a \"say\" naming the thing and its price \
+             with an unlock (modifier_pct 0 sells at base price, negative \
+             is a friend's discount; it lasts a few minutes), then the \
+             trade window:\n\
+             {{\"type\": \"offer_deal\", \"player\": \"PlayerName\", \"item\": \
+             \"{first}\", \"kind\": \"buy\", \"modifier_pct\": 0, \"reason\": \
+             \"a regular who has earned it\"}}\n\
+             {{\"type\": \"open_trade\", \"player\": \"PlayerName\"}}\n",
+        ));
+    }
+
+    section.push_str("Players may also buy other items out of your bag at base price.\n");
     Some(section)
 }
 
@@ -264,10 +336,16 @@ mod tests {
         );
     }
 
+    fn regulars(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
     #[test]
     fn karl_wishlist_satiates_per_owned_item() {
-        let section =
-            resident_trade_prompt_for("Karl", &bag(&[])).expect("Karl wants torch and dagger");
+        let section = resident_trade_prompt_for("Karl", &bag(&[]), true, &regulars(&["jake1"]))
+            .expect("Karl wants torch and dagger");
+        assert!(section.contains("Personal Trading"));
+        assert!(section.contains("jake1"), "the section names its audience");
         assert!(section.contains("torch"));
         assert!(section.contains("dagger"));
         assert!(section.contains("120%"));
@@ -277,12 +355,81 @@ mod tests {
         // Owning a torch removes it from the wants; owning both removes the
         // whole section — the temptation disappears from the prompt.
         let section =
-            resident_trade_prompt_for("Karl", &bag(&["torch"])).expect("Karl still wants a dagger");
+            resident_trade_prompt_for("Karl", &bag(&["torch"]), true, &regulars(&["jake1"]))
+                .expect("Karl still wants a dagger");
         assert!(!section.contains("torch ("));
         assert!(section.contains("dagger"));
-        assert!(resident_trade_prompt_for("Karl", &bag(&["torch", "dagger"])).is_none());
+        assert!(resident_trade_prompt_for(
+            "Karl",
+            &bag(&["torch", "dagger"]),
+            true,
+            &regulars(&["jake1"])
+        )
+        .is_none());
 
-        assert!(resident_trade_prompt_for("Nobody", &bag(&[])).is_none());
-        assert!(resident_trade_prompt_for("Rica", &bag(&[])).is_none());
+        // Post-purchase satiation empties Karl's buy half, and he has no
+        // keepsakes — nothing is emitted. Nor without a regular in sight.
+        assert!(
+            resident_trade_prompt_for("Karl", &bag(&[]), false, &regulars(&["jake1"])).is_none()
+        );
+        assert!(resident_trade_prompt_for("Karl", &bag(&[]), true, &[]).is_none());
+
+        assert!(
+            resident_trade_prompt_for("Nobody", &bag(&[]), true, &regulars(&["jake1"])).is_none()
+        );
+        assert!(
+            resident_trade_prompt_for("Rica", &bag(&[]), true, &regulars(&["jake1"])).is_none()
+        );
+    }
+
+    /// Signe's keepsake mandolin: the offer exists only while it is in her
+    /// bag — the inverse of wishlist satiation — and only while a player
+    /// who has earned it stands nearby. Her own worn mandolin has no
+    /// price, so it never shows up as something to offer.
+    #[test]
+    fn signe_offers_her_spare_mandolin_only_while_she_still_has_it() {
+        let section = resident_trade_prompt_for(
+            "Signe",
+            &bag(&["mandolin", "worn_mandolin"]),
+            true,
+            &regulars(&["jake1"]),
+        )
+        .expect("mandolin in bag and a regular nearby");
+        assert!(section.contains("Personal Trading"));
+        assert!(section.contains("- mandolin"));
+        assert!(section.contains("40s"), "base 4000 formats as 40s");
+        assert!(section.contains("jake1"), "the offer names who earned it");
+        assert!(section.contains("offer_deal"));
+        assert!(section.contains("open_trade"));
+        assert!(
+            !section.contains("worn_mandolin"),
+            "her own instrument is not for sale"
+        );
+        assert!(
+            !section.contains("want to buy"),
+            "no wishlist, no buying urge"
+        );
+
+        assert!(
+            resident_trade_prompt_for(
+                "Signe",
+                &bag(&["worn_mandolin", "clump_of_kelp"]),
+                true,
+                &regulars(&["jake1"])
+            )
+            .is_none(),
+            "spare sold: only the unsellable worn instrument is left"
+        );
+    }
+
+    /// The whole keepsake temptation stays out of the prompt until someone
+    /// nearby has actually earned it — favor is the gate, not LLM judgement.
+    #[test]
+    fn keepsakes_stay_hidden_from_strangers() {
+        assert!(
+            resident_trade_prompt_for("Signe", &bag(&["mandolin", "worn_mandolin"]), true, &[])
+                .is_none(),
+            "no favored player nearby: no keepsake section at all"
+        );
     }
 }

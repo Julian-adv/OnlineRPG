@@ -15,7 +15,9 @@ pub mod inventory;
 pub mod messages;
 pub mod monster_ai;
 pub mod pathfinding;
+pub mod schedule;
 pub mod skills;
+pub mod stall;
 pub mod tree_format;
 pub mod world;
 pub mod worldgen;
@@ -49,7 +51,25 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v17: PartyPositions pushed server-side on relocation (was a poll answer)
 ///      and now includes the recipient; clients filter themselves.
 /// v18: party chat (PartyChat → PartyChatMessage).
-pub const PROTOCOL_VERSION: u32 = 19;
+/// v20: `/play_music` picks a BGM track and nearby clients play it along
+///      (PlayerMusicStarted).
+/// v21: PlayerMusicStarted carries `elapsed_secs` and is re-sent to players
+///      entering earshot of a running performance.
+/// v22: GroundItem carries `dropped_by` and GroundItemRemoved
+///      `picked_up_by`, so a busker knows who left the coins at its feet —
+///      and who took them.
+/// v23: friends (FriendRespond/FriendRemove/RequestFriendsOnline →
+///      FriendList/FriendsOnline/FriendRequestReceived); FriendList is
+///      pushed at login, so older builds must not connect.
+/// v24: merchant stalls (`/lay_stall`/`/pack_stall` →
+///      StallPlaced/StallAppeared/StallRemoved); GameState carries `stalls`.
+/// v25: declined trade offers (DeclineTrade → TradeDeclined), so an NPC
+///      stops pushing trade windows at a player who waved one off.
+/// v26: PartyMember carries hp/max_hp/class, PartyVitals pushes member
+///      health, and PartyKick/PartyPromote (leader kick + handover).
+/// v27: GroundItem carries `quantity`, so a dropped stack lands as one pile,
+///      and GroundItemQuantityChanged reports a pile someone took part of.
+pub const PROTOCOL_VERSION: u32 = 27;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -81,8 +101,8 @@ pub use messages::{
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,
-    EVENT_DELIVERY_RADIUS, NPC_SIGHT_RADIUS, PLAYER_MOVE_SPEED, WORLD_MAX_X, WORLD_MIN_X,
-    WORLD_WIDTH_X,
+    EVENT_DELIVERY_RADIUS, MAX_MOVE_TARGET_DISTANCE, NPC_SIGHT_RADIUS, PLAYER_MOVE_SPEED,
+    WORLD_MAX_X, WORLD_MIN_X, WORLD_WIDTH_X,
 };
 
 #[cfg(test)]
@@ -188,6 +208,7 @@ mod tests {
             monsters,
             ground_items: Vec::new(),
             campfires: Vec::new(),
+            stalls: Vec::new(),
         };
         let bytes = serialize_server_msg(&msg).unwrap();
         let decoded = deserialize_server_msg(&bytes).unwrap();
@@ -219,6 +240,7 @@ mod tests {
         CharacterClass::Rogue,
         CharacterClass::Wizard,
         CharacterClass::Tourist,
+        CharacterClass::Bard,
         CharacterClass::Merchant,
         CharacterClass::Guard,
     ];

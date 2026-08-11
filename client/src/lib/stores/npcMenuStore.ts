@@ -29,3 +29,12 @@ export const chatFocusRequest = writable(0)
 export function requestChatFocus() {
   chatFocusRequest.update((n) => n + 1)
 }
+
+/** Ask the chat panel to put `text` in its input and focus it (the friend
+ *  panel's Whisper button). `seq` rather than the text alone, so whispering
+ *  the same friend twice in a row still applies. */
+export const chatDraftRequest = writable({ text: '', seq: 0 })
+
+export function requestChatDraft(text: string) {
+  chatDraftRequest.update((request) => ({ text, seq: request.seq + 1 }))
+}

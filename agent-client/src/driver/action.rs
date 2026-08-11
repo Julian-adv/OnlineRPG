@@ -1,23 +1,13 @@
 //! Agent action model and conversion to game-server commands.
 //!
-//! Splits responsibility into three layers: the JSON-shaped `AgentResponse`
-//! the LLM is expected to emit, parsing helpers that tolerate the various
-//! markdown wrappers an LLM might add, and `action_to_command` which lifts
-//! a parsed `AgentAction` into a `ClientMessage` for the server.
+//! Splits responsibility into three layers: the `AgentAction` enum the LLM
+//! is expected to emit, parsing helpers that tolerate the various markdown
+//! wrappers an LLM might add, and `action_to_command` which lifts a parsed
+//! `AgentAction` into a `ClientMessage` for the server.
 
 use onlinerpg_shared::ClientMessage;
 use serde::Deserialize;
 use tracing::warn;
-
-/// Parsed agent response.
-#[derive(Debug, Deserialize)]
-pub(super) struct AgentResponse {
-    #[allow(dead_code)]
-    pub thought: Option<String>,
-    pub actions: Vec<AgentAction>,
-    /// Optional memory update: appended to the NPC's memory file for future sessions.
-    pub memory_update: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -53,6 +43,13 @@ pub(super) enum AgentAction {
         // which is how the agent enters and descends a dungeon.
         #[serde(alias = "dungeon_depth", alias = "floor", alias = "floor_level")]
         depth: Option<i32>,
+    },
+    /// Keep following a character: re-approach whenever they move, until the
+    /// LLM issues anything else that walks us somewhere, or the target is lost.
+    #[serde(rename = "follow", alias = "follow_player")]
+    Follow {
+        #[serde(alias = "player", alias = "name", alias = "character")]
+        target: String,
     },
     #[serde(rename = "respawn")]
     Respawn,
@@ -159,8 +156,14 @@ pub(super) enum AgentAction {
     Sell {
         #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
         item: String,
-        #[serde(alias = "npc", alias = "to", alias = "merchant_name", alias = "target")]
-        merchant: String,
+        #[serde(
+            default,
+            alias = "npc",
+            alias = "to",
+            alias = "merchant_name",
+            alias = "target"
+        )]
+        merchant: Option<String>,
         /// How many units to sell: a positive count, or "all". Defaults to 1
         /// when omitted.
         #[serde(default, alias = "amount", alias = "count")]
@@ -173,12 +176,13 @@ pub(super) enum AgentAction {
         #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
         item: String,
         #[serde(
+            default,
             alias = "npc",
             alias = "from",
             alias = "merchant_name",
             alias = "target"
         )]
-        merchant: String,
+        merchant: Option<String>,
     },
     /// Drop one or more units of a bag item on the ground where you stand.
     /// Stricter than the web client: worn gear must be taken off first.
@@ -198,12 +202,13 @@ pub(super) enum AgentAction {
         #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
         item: String,
         #[serde(
+            default,
             alias = "npc",
             alias = "from",
             alias = "merchant_name",
             alias = "target"
         )]
-        merchant: String,
+        merchant: Option<String>,
     },
     /// Smash a breakable dungeon prop (barrel/crate) on the current floor,
     /// walking up to it first. The server validates floor and proximity.
@@ -227,6 +232,310 @@ pub(super) enum AgentAction {
     Reroll,
     #[serde(rename = "wait", alias = "idle", alias = "observe", alias = "none")]
     Wait,
+}
+
+/// One block of the action reference: the prompt text agents read, tied to
+/// the serde tag(s) it documents. `action_reference()` renders the table into
+/// the `{{ACTIONS}}` slot of the system prompt, so this table IS the format
+/// documentation — there is no hand-maintained copy anywhere else.
+///
+/// Tests lock the table to the enum: every action the parser accepts must be
+/// documented here (and nothing extra), and every example line must parse.
+/// Adding an `AgentAction` variant without a spec entry fails `cargo test`.
+pub(super) struct ActionSpec {
+    /// serde tag(s) this block documents — the enum `rename` values.
+    /// Read by the lock tests below.
+    #[allow(dead_code)]
+    pub(super) names: &'static [&'static str],
+    /// The enum's `alias` values for these tags. Never rendered — the docs
+    /// teach only canonical names — but registered so the enum/table
+    /// equality test covers every spelling the parser accepts.
+    #[allow(dead_code)]
+    pub(super) aliases: &'static [&'static str],
+    /// Verbatim prompt text: usage prose with example JSON lines.
+    pub(super) doc: &'static str,
+}
+
+pub(super) const ACTION_SPECS: &[ActionSpec] = &[
+    ActionSpec {
+        names: &["say"],
+        aliases: &["chat"],
+        doc: r#"- Say in chat:
+  {"type": "say", "message": "hello"}
+  Nearby characters hear it. To whisper privately to one player at any
+  distance, prefix "/w " and their name (a [Whisper] event means someone
+  whispered to you; answer the same way):
+  {"type": "say", "message": "/w PlayerName hello"}
+  Players speak many languages; answer each message in the language it
+  was written in. Remember each player's language (a memory_update
+  note), and use it when speaking to them first."#,
+    },
+    ActionSpec {
+        names: &["attack"],
+        aliases: &[],
+        doc: r#"- Attack a monster (use the monster's ID from the world state, field name MUST be "monster_id"):
+  {"type": "attack", "monster_id": "m2_1"}"#,
+    },
+    ActionSpec {
+        names: &["follow"],
+        aliases: &["follow_player"],
+        doc: r#"- Follow a character and keep up as they move (use this when someone says
+  "follow me" — a plain move stops once you arrive, follow keeps tracking):
+  {"type": "follow", "target": "PlayerName"}
+  Any other action that takes your body over — a move, attack, pickup, chest,
+  trade or fishing — stops the follow. Losing them ends it with a
+  [FollowEnded] event."#,
+    },
+    ActionSpec {
+        names: &["move"],
+        aliases: &[],
+        doc: r#"- Move. To walk up to a character (player or NPC), give their name — you
+  approach them and automatically stop at a comfortable talking distance:
+  {"type": "move", "target": "PlayerName"}
+  To go to a place, use exact coordinates from world state:
+  {"type": "move", "x": 10.0, "y": 0.0, "z": -5.0}
+  Or move by direction and distance:
+  {"type": "move", "direction": "north", "distance": 10.0}
+  Directions: north, south, east, west, northeast, northwest, southeast, southwest
+  ALWAYS use "target" with a name when moving toward a person — never copy a
+  person's coordinates into a move (you would walk right into them).
+  To go into a dungeon, name the floor you want with "depth" — 1 is the first
+  floor below ground, and you walk to the entrance and down the stairs on your
+  own, opening any doors in the way:
+  {"type": "move", "depth": 1}
+  Deeper floors hold stronger monsters, so descend one floor at a time and only
+  while you can still win your fights. To come back up to the surface:
+  {"type": "move", "depth": 0}"#,
+    },
+    ActionSpec {
+        names: &["respawn"],
+        aliases: &[],
+        doc: r#"- Respawn when dead:
+  {"type": "respawn"}"#,
+    },
+    ActionSpec {
+        names: &["wait"],
+        aliases: &["idle", "observe", "none"],
+        doc: r#"- Do nothing (idle/observe/skip turn):
+  {"type": "wait"}"#,
+    },
+    ActionSpec {
+        names: &["fish"],
+        aliases: &[],
+        doc: r#"- Fish (needs a fishing rod worn in your main hand — use it from your bag
+  first). Cast at water coordinates from the world state, or omit x/z to
+  cast at the water just south of you. Hooking and fighting the fish is
+  automatic; you will get a [Fishing] event with the outcome. Moving or
+  attacking cancels fishing:
+  {"type": "fish", "x": 10.0, "z": -5.0}
+  {"type": "fish"}"#,
+    },
+    ActionSpec {
+        names: &["stop_fishing"],
+        aliases: &[],
+        doc: r#"- Stop fishing (reel in without waiting for a catch):
+  {"type": "stop_fishing"}"#,
+    },
+    ActionSpec {
+        names: &["use"],
+        aliases: &["use_item", "equip", "eat"],
+        doc: r#"- Use an item you are carrying — wear a piece of gear, drink a potion, read
+  a scroll, eat food. Name it as it appears in your bag. Using gear you
+  already wear takes it off; wearing a torch is how you light your way at
+  night:
+  {"type": "use", "item": "worn_torch"}"#,
+    },
+    ActionSpec {
+        names: &["pickup"],
+        aliases: &["pick_up", "loot", "take"],
+        doc: r#"- Pick up an item lying on the ground into your bag. You walk over to it
+  first, like a web player clicking it. Give the id shown in the world
+  state ("Item on ground: ... [id 6043]"), or its name:
+  {"type": "pickup", "item": 6043}
+  The world state marks who put an item down ("dropped by Mira"); a
+  [GroundItem] event tells you when someone collects such an item, and an
+  item that is no longer listed is gone — don't reach for bare ground."#,
+    },
+    ActionSpec {
+        names: &["open_chest"],
+        aliases: &["open_dungeon_chest"],
+        doc: r#"- Open a chest in a dungeon. You have to be in the room it stands in — the
+  world state names the chests there and what each looks like. You walk over
+  first, then the server decides; a rejection tells you why it stayed shut.
+  Plain form opens the nearest one:
+  {"type": "open_chest"}
+  To cross the room to the great chest instead of the small one at your feet:
+  {"type": "open_chest", "chest": "great"}"#,
+    },
+    ActionSpec {
+        names: &["sell"],
+        aliases: &["sell_item"],
+        doc: r#"- Sell one or more units of a bag item to a nearby merchant. You walk to
+  them first; the merchant pays their rate and your gold updates. Naming
+  the merchant is optional — without one you sell to the nearest merchant.
+  Defaults to 1 unit; add "qty" for more, or "qty": "all" to sell every
+  unit you have. Selling more than you actually own fails outright —
+  nothing is sold. Equipped gear must be taken off before selling:
+  {"type": "sell", "item": "goblin_sword"}
+  {"type": "sell", "item": "healing_potion", "merchant": "Rica", "qty": 5}
+  {"type": "sell", "item": "healing_potion", "merchant": "Rica", "qty": "all"}"#,
+    },
+    ActionSpec {
+        names: &["buy"],
+        aliases: &["buy_item", "purchase"],
+        doc: r#"- Buy one item from a merchant's catalog at base price. You walk to them
+  first; the item lands in your bag if your gold covers it. What each
+  nearby merchant sells is listed under their name in the world state.
+  Naming the merchant is optional — without one you buy from the nearest.
+  One unit per action — repeat for more:
+  {"type": "buy", "item": "healing_potion", "merchant": "Rica"}"#,
+    },
+    ActionSpec {
+        names: &["drop"],
+        aliases: &["drop_item", "discard"],
+        doc: r#"- Drop one or more units of a bag item on the ground where you stand (e.g.
+  to shed weight for better loot), and anyone can pick it up afterwards.
+  Defaults to 1 unit; add "qty" for more, or "qty": "all" to drop every
+  unit you have. Dropping more than you actually own fails outright —
+  nothing is dropped:
+  {"type": "drop", "item": "goblin_sword"}
+  {"type": "drop", "item": "old_boot", "qty": 2}
+  {"type": "drop", "item": "old_boot", "qty": "all"}"#,
+    },
+    ActionSpec {
+        names: &["buyback"],
+        aliases: &["buy_back", "repurchase"],
+        doc: r#"- Buy back one item you sold to that merchant this session, for exactly
+  what they paid you (undo a mis-sell). The [Buyback] event after each
+  sale lists what they still hold:
+  {"type": "buyback", "item": "iron_sword", "merchant": "Rica"}"#,
+    },
+    ActionSpec {
+        names: &["offer_deal"],
+        aliases: &[],
+        doc: r#"- (merchants only) Offer a nearby player a private price on one item — a
+  haggle. "kind" is "buy" (they buy from you, the default) or "sell" (they
+  sell to you); "modifier_pct" moves the price by that many percent, so a
+  negative number is a discount. The server clamps and validates the offer:
+  {"type": "offer_deal", "player": "darkcocoa", "item": "healing_potion", "kind": "buy", "modifier_pct": -10}"#,
+    },
+    ActionSpec {
+        names: &["open_trade"],
+        aliases: &["trade"],
+        doc: r#"- (merchants only) Open your trade window on a nearby player's screen —
+  how you move from talk to an actual trade:
+  {"type": "open_trade", "player": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["break_prop"],
+        aliases: &["smash", "break"],
+        doc: r#"- Smash a breakable dungeon prop (barrel or crate). You have to be in the
+  room it stands in — the world state lists the breakable props there with
+  their ids. You walk to it first, and smashing opens its cell for movement:
+  {"type": "break_prop", "prop_id": 3}"#,
+    },
+    ActionSpec {
+        names: &["party_invite"],
+        aliases: &["invite_party", "invite"],
+        doc: r#"- Invite a player to your party by name. Works at any distance, like a
+  whisper; they get 30 seconds to answer. Your roster shows in the world
+  state ("Your party: ..."):
+  {"type": "party_invite", "player": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["party_accept", "party_decline"],
+        aliases: &["accept_party", "join_party", "decline_party"],
+        doc: r#"- Answer a party invite (the [PartyInvite] event). Accepting puts you in
+  their party; a party hunts and travels together. With several invites
+  pending, name the inviter — bare answers the oldest:
+  {"type": "party_accept"}
+  {"type": "party_decline", "player": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["summon_accept", "summon_decline"],
+        aliases: &["accept_summon", "decline_summon"],
+        doc: r#"- Answer a party summon (the [PartySummon] event): a party member read a
+  summoning scroll asking everyone to teleport to their side. Accepting
+  moves you there instantly; you cannot accept mid-combat. With several
+  pending, name the caster — bare answers the oldest:
+  {"type": "summon_accept"}
+  {"type": "summon_decline", "player": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["party_say"],
+        aliases: &["party_chat"],
+        doc: r#"- Say something to your whole party (arrives as [Party] lines). Reaches
+  every member at any distance, unlike local say:
+  {"type": "party_say", "message": "On my way."}"#,
+    },
+    ActionSpec {
+        names: &["party_leave"],
+        aliases: &["leave_party"],
+        doc: r#"- Leave your current party:
+  {"type": "party_leave"}"#,
+    },
+    ActionSpec {
+        names: &["reroll"],
+        aliases: &["reroll_stats", "roll_again"],
+        doc: r#"- Reroll your starting stats (character creation only — does nothing once
+  you are in the world):
+  {"type": "reroll"}"#,
+    },
+];
+
+/// The "Available action types" section of the system prompt, rendered from
+/// `ACTION_SPECS`. Fills the `{{ACTIONS}}` slot in `load_system_prompt`.
+pub(super) fn action_reference() -> String {
+    let mut out = String::from("Available action types (use EXACTLY these field names):\n");
+    for spec in ACTION_SPECS {
+        out.push('\n');
+        out.push_str(spec.doc.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+impl AgentAction {
+    /// Whether this action takes the body over: it walks the agent somewhere,
+    /// or plants it (fishing, respawning). A running follow yields to it, and
+    /// an NPC holding position skips it. Exhaustive on purpose — a new variant
+    /// must not be able to slip past this.
+    pub(super) fn takes_over_movement(&self) -> bool {
+        match self {
+            Self::Move { .. }
+            | Self::Attack { .. }
+            | Self::Follow { .. }
+            | Self::Pickup { .. }
+            | Self::OpenChest { .. }
+            | Self::BreakProp { .. }
+            | Self::Sell { .. }
+            | Self::Buy { .. }
+            | Self::Buyback { .. }
+            | Self::Fish { .. }
+            | Self::Respawn => true,
+            Self::Say { .. }
+            | Self::StopFishing
+            | Self::OfferDeal { .. }
+            | Self::OpenTrade { .. }
+            | Self::PartyInvite { .. }
+            | Self::PartyAccept { .. }
+            | Self::PartyDecline { .. }
+            | Self::SummonAccept { .. }
+            | Self::SummonDecline { .. }
+            | Self::PartyLeave
+            | Self::PartySay { .. }
+            | Self::Use { .. }
+            | Self::Drop { .. }
+            | Self::Reroll
+            | Self::Wait => false,
+        }
+    }
+
+    /// Of those, the ones an NPC pinned in place must not run at all. Fishing
+    /// and respawning keep it where it is, so they stay allowed.
+    pub(super) fn blocked_while_holding_position(&self) -> bool {
+        self.takes_over_movement() && !matches!(self, Self::Fish { .. } | Self::Respawn)
+    }
 }
 
 /// Whether an `open_chest` selector asks for the great chest rather than the
@@ -296,11 +605,19 @@ impl std::fmt::Display for PickupRef {
 /// ordinary action envelope; a reply we cannot parse counts as acceptance, so
 /// a confused agent cannot spin the roll loop.
 pub(crate) fn wants_reroll(reply: &str) -> bool {
-    if let Ok(parsed) = parse_agent_response(reply) {
-        return parsed
+    if let Ok(turn) = parse_turn_tolerant(reply) {
+        if turn
             .actions
             .iter()
-            .any(|a| matches!(a, AgentAction::Reroll));
+            .any(|a| matches!(a, AgentAction::Reroll))
+        {
+            return true;
+        }
+        // Any action that did parse is an answer in itself; only when every
+        // action failed does the text heuristic below get a say.
+        if !turn.actions.is_empty() || turn.errors.is_empty() {
+            return false;
+        }
     }
     let reply = reply.to_lowercase();
     match (reply.rfind("reroll"), reply.rfind("accept")) {
@@ -310,11 +627,135 @@ pub(crate) fn wants_reroll(reply: &str) -> bool {
     }
 }
 
-/// Parse a raw text response from an LLM into structured actions.
-pub(super) fn parse_agent_response(text: &str) -> anyhow::Result<AgentResponse> {
+/// What a tolerant parse yields: the actions that parsed, plus a human-readable
+/// complaint for each one that didn't. The complaints are fed back to the LLM
+/// so a mistyped action reports its own error instead of vanishing.
+pub(super) struct ParsedTurn {
+    pub actions: Vec<AgentAction>,
+    pub memory_update: Option<String>,
+    /// Per-player favor deltas as raw JSON so a malformed shape can never
+    /// sink the actions; `favor_deltas` coerces.
+    pub favor: Option<serde_json::Value>,
+    pub errors: Vec<String>,
+}
+
+impl ParsedTurn {
+    /// Favor deltas in whatever shape the LLM sent them — an integer, a
+    /// float, or a numeric string ("+1"). Unusable entries are dropped.
+    /// Pure shape coercion: policy (step size, bounds, who qualifies)
+    /// belongs to `SharedState::apply_favor`.
+    pub(super) fn favor_deltas(&self) -> Vec<(String, i32)> {
+        let Some(map) = self.favor.as_ref().and_then(|v| v.as_object()) else {
+            return Vec::new();
+        };
+        map.iter()
+            .filter_map(|(name, v)| {
+                let n = v
+                    .as_i64()
+                    .or_else(|| v.as_f64().map(|f| f.round() as i64))
+                    .or_else(|| {
+                        v.as_str()
+                            .and_then(|s| s.trim().trim_start_matches('+').parse().ok())
+                    })?;
+                let n = n.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                Some((name.clone(), n))
+            })
+            .collect()
+    }
+}
+
+/// Parse each action independently so one malformed action does not discard
+/// the whole turn (the say that rode along with it, the memory_update). Every
+/// rejected action becomes an error string naming what was wrong.
+pub(super) fn parse_turn_tolerant(text: &str) -> anyhow::Result<ParsedTurn> {
     let json_str = extract_json(text);
-    serde_json::from_str(json_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))
+    let mut value: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))?;
+    normalize_move_targets(&mut value);
+
+    let memory_update = value
+        .get("memory_update")
+        .and_then(|t| t.as_str())
+        .map(str::to_string);
+    let favor = value.get("favor").filter(|v| !v.is_null()).cloned();
+
+    let mut actions = Vec::new();
+    let mut errors = Vec::new();
+    match value.get("actions") {
+        Some(serde_json::Value::Array(arr)) => {
+            for elem in arr {
+                match serde_json::from_value::<AgentAction>(elem.clone()) {
+                    Ok(action) => actions.push(action),
+                    Err(e) => {
+                        let kind = elem
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("(no type)");
+                        errors.push(format!("action \"{kind}\": {e} — that action was skipped"));
+                    }
+                }
+            }
+        }
+        // A missing or non-array "actions" used to yield a silent empty turn —
+        // the exact "agent quietly does nothing" failure this parser exists
+        // to eliminate. Complain instead.
+        Some(_) => errors
+            .push("\"actions\" must be a JSON array of action objects — nothing ran".to_string()),
+        None => errors.push(
+            "your reply has no \"actions\" array — nothing ran. Send \
+             [{\"type\": \"wait\"}] to deliberately do nothing"
+                .to_string(),
+        ),
+    }
+    Ok(ParsedTurn {
+        actions,
+        memory_update,
+        favor,
+        errors,
+    })
+}
+
+/// LLMs keep writing `{"type":"move","target":[x,z]}` or `"target":{"x":..}`
+/// despite the schema saying `target` is a name. Rewrite those into the x/z
+/// fields instead of discarding the whole response.
+fn normalize_move_targets(value: &mut serde_json::Value) {
+    let Some(actions) = value.get_mut("actions").and_then(|a| a.as_array_mut()) else {
+        return;
+    };
+    for action in actions {
+        if action.get("type").and_then(|t| t.as_str()) != Some("move") {
+            continue;
+        }
+        let coords: Option<(f64, Option<f64>, f64)> = match action.get("target") {
+            Some(serde_json::Value::Array(arr)) => {
+                let nums: Vec<f64> = arr.iter().filter_map(|n| n.as_f64()).collect();
+                match nums.len() {
+                    2 => Some((nums[0], None, nums[1])),
+                    3 => Some((nums[0], Some(nums[1]), nums[2])),
+                    _ => None,
+                }
+            }
+            Some(serde_json::Value::Object(obj)) => {
+                match (
+                    obj.get("x").and_then(|n| n.as_f64()),
+                    obj.get("z").and_then(|n| n.as_f64()),
+                ) {
+                    (Some(x), Some(z)) => Some((x, obj.get("y").and_then(|n| n.as_f64()), z)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some((x, y, z)) = coords {
+            let obj = action.as_object_mut().unwrap();
+            obj.remove("target");
+            obj.entry("x").or_insert_with(|| x.into());
+            if let Some(y) = y {
+                obj.entry("y").or_insert_with(|| y.into());
+            }
+            obj.entry("z").or_insert_with(|| z.into());
+        }
+    }
 }
 
 /// Extract JSON object from text that might contain markdown code blocks.
@@ -374,6 +815,9 @@ pub(super) fn action_to_command(
     player_pos: Option<&onlinerpg_shared::Position>,
 ) -> Option<ClientMessage> {
     match action {
+        // Handled in `execute::handle_response` (needs name resolution and a
+        // background chase task).
+        AgentAction::Follow { .. } => None,
         AgentAction::Say { message } => Some(ClientMessage::ChatMessage {
             message: message.clone(),
         }),
@@ -485,8 +929,9 @@ mod tests {
     use super::*;
 
     fn parse_single_action(json: &str) -> AgentAction {
-        let resp = parse_agent_response(json).unwrap();
-        resp.actions.into_iter().next().unwrap()
+        let turn = parse_turn_tolerant(json).unwrap();
+        assert!(turn.errors.is_empty(), "{:?}", turn.errors);
+        turn.actions.into_iter().next().unwrap()
     }
 
     #[test]
@@ -518,6 +963,148 @@ mod tests {
         assert_eq!(target, None);
         assert_eq!(x, Some(10.0));
         assert_eq!(z, Some(-5.0));
+    }
+
+    #[test]
+    fn move_target_coordinate_array_becomes_xz() {
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "move", "target": [-1460, 4730]}]}"#);
+        let AgentAction::Move { target, x, z, .. } = action else {
+            panic!("expected Move");
+        };
+        assert_eq!(target, None);
+        assert_eq!(x, Some(-1460.0));
+        assert_eq!(z, Some(4730.0));
+    }
+
+    #[test]
+    fn move_target_xyz_array_becomes_xyz() {
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "move", "target": [-1460, 1.1, 4730]}]}"#);
+        let AgentAction::Move {
+            target, x, y, z, ..
+        } = action
+        else {
+            panic!("expected Move");
+        };
+        assert_eq!(target, None);
+        assert_eq!(x, Some(-1460.0));
+        assert_eq!(y, Some(1.1));
+        assert_eq!(z, Some(4730.0));
+    }
+
+    #[test]
+    fn move_target_coordinate_object_becomes_xz() {
+        let action = parse_single_action(
+            r#"{"actions": [{"type": "move", "target": {"x": 10.0, "z": -5.0}}]}"#,
+        );
+        let AgentAction::Move { target, x, z, .. } = action else {
+            panic!("expected Move");
+        };
+        assert_eq!(target, None);
+        assert_eq!(x, Some(10.0));
+        assert_eq!(z, Some(-5.0));
+    }
+
+    #[test]
+    fn move_ignores_extra_reason_field() {
+        let action = parse_single_action(
+            r#"{"actions": [{"type": "move", "x": -1485.0, "z": 4720.0,
+                "reason": "남서쪽 슬라임 탐색"}]}"#,
+        );
+        let AgentAction::Move { x, z, .. } = action else {
+            panic!("expected Move");
+        };
+        assert_eq!(x, Some(-1485.0));
+        assert_eq!(z, Some(4720.0));
+    }
+
+    #[test]
+    fn bad_action_is_reported_but_others_survive() {
+        // An invented action type and a valid say in the same turn: the say
+        // and the memory_update survive, and the bad one becomes an error
+        // that names the offending type.
+        let turn = parse_turn_tolerant(
+            r#"{"actions": [{"type": "look", "reason": "scan"}, {"type": "say", "message": "hi"}],
+                "memory_update": "kept"}"#,
+        )
+        .unwrap();
+        assert_eq!(turn.actions.len(), 1);
+        let AgentAction::Say { ref message } = turn.actions[0] else {
+            panic!("expected Say to survive");
+        };
+        assert_eq!(message, "hi");
+        assert_eq!(turn.memory_update.as_deref(), Some("kept"));
+        assert_eq!(turn.errors.len(), 1);
+        assert!(turn.errors[0].contains("look"));
+    }
+
+    #[test]
+    fn missing_required_field_is_reported_not_silent() {
+        // attack with no monster_id: the whole turn used to die. Now the say
+        // survives and the attack becomes a named error.
+        let turn = parse_turn_tolerant(
+            r#"{"actions": [{"type": "attack"}, {"type": "say", "message": "hi"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(turn.actions.len(), 1);
+        assert!(matches!(turn.actions[0], AgentAction::Say { .. }));
+        assert_eq!(turn.errors.len(), 1);
+        assert!(turn.errors[0].contains("attack"));
+    }
+
+    #[test]
+    fn missing_or_malformed_actions_array_is_reported_not_silent() {
+        // No "actions" key at all: an empty turn with no complaint would leave
+        // the agent guessing why nothing happened.
+        let turn = parse_turn_tolerant(r#"{"thought": "hmm"}"#).unwrap();
+        assert!(turn.actions.is_empty());
+        assert_eq!(turn.errors.len(), 1);
+        assert!(turn.errors[0].contains("\"actions\""));
+
+        // "actions" present but not an array.
+        let turn = parse_turn_tolerant(r#"{"actions": "wait"}"#).unwrap();
+        assert!(turn.actions.is_empty());
+        assert_eq!(turn.errors.len(), 1);
+        assert!(turn.errors[0].contains("array"));
+
+        // An explicitly empty array stays a legal deliberate no-op.
+        let turn = parse_turn_tolerant(r#"{"actions": []}"#).unwrap();
+        assert!(turn.actions.is_empty());
+        assert!(turn.errors.is_empty());
+    }
+
+    /// Favor arrives in whatever shape the LLM chose — int, string, float —
+    /// and a garbage entry (or a garbage favor field altogether) drops out
+    /// without sinking the actions. Values pass through unclamped: the
+    /// step-size policy lives in `apply_favor` alone.
+    #[test]
+    fn favor_deltas_tolerate_llm_spellings() {
+        let turn = parse_turn_tolerant(
+            r#"{"actions": [{"type": "wait"}],
+                "favor": {"jake1": 1, "mira": "+1", "tom": 3.7, "bad": "warm"}}"#,
+        )
+        .unwrap();
+        let mut deltas = turn.favor_deltas();
+        deltas.sort();
+        assert_eq!(
+            deltas,
+            [
+                ("jake1".to_string(), 1),
+                ("mira".to_string(), 1),
+                ("tom".to_string(), 4)
+            ],
+            "floats round, strings parse, the unparseable entry is dropped"
+        );
+
+        let turn =
+            parse_turn_tolerant(r#"{"actions": [{"type": "wait"}], "favor": "jake1 is nice"}"#)
+                .unwrap();
+        assert!(turn.favor_deltas().is_empty());
+        assert_eq!(turn.actions.len(), 1, "actions survive a malformed favor");
+
+        let turn = parse_turn_tolerant(r#"{"actions": [{"type": "wait"}]}"#).unwrap();
+        assert!(turn.favor_deltas().is_empty());
     }
 
     #[test]
@@ -673,7 +1260,10 @@ mod tests {
             let AgentAction::Sell { item, merchant, .. } = parse_single_action(json) else {
                 panic!("expected Sell for {json}");
             };
-            assert_eq!((item.as_str(), merchant.as_str()), ("goblin_sword", "Rica"));
+            assert_eq!(
+                (item.as_str(), merchant.as_deref()),
+                ("goblin_sword", Some("Rica"))
+            );
         }
     }
 
@@ -688,8 +1278,8 @@ mod tests {
                 panic!("expected Buy for {json}");
             };
             assert_eq!(
-                (item.as_str(), merchant.as_str()),
-                ("healing_potion", "Rica")
+                (item.as_str(), merchant.as_deref()),
+                ("healing_potion", Some("Rica"))
             );
         }
     }
@@ -704,8 +1294,29 @@ mod tests {
             let AgentAction::Buyback { item, merchant } = parse_single_action(json) else {
                 panic!("expected Buyback for {json}");
             };
-            assert_eq!((item.as_str(), merchant.as_str()), ("iron_sword", "Rica"));
+            assert_eq!(
+                (item.as_str(), merchant.as_deref()),
+                ("iron_sword", Some("Rica"))
+            );
         }
+    }
+
+    #[test]
+    fn trade_actions_parse_without_a_merchant() {
+        let AgentAction::Sell { item, merchant, .. } =
+            parse_single_action(r#"{"actions": [{"type": "sell", "item": "worn_iron_sword"}]}"#)
+        else {
+            panic!("expected Sell");
+        };
+        assert_eq!(item.as_str(), "worn_iron_sword");
+        assert_eq!(merchant, None);
+
+        let AgentAction::Buy { merchant, .. } =
+            parse_single_action(r#"{"actions": [{"type": "buy", "item": "healing_potion"}]}"#)
+        else {
+            panic!("expected Buy");
+        };
+        assert_eq!(merchant, None);
     }
 
     #[test]
@@ -801,10 +1412,9 @@ mod tests {
 
     #[test]
     fn fish_action_parses_and_casts() {
-        let response =
-            parse_agent_response(r#"{"actions": [{"type": "fish", "x": 10.0, "z": -5.0}]}"#)
-                .unwrap();
-        let cmd = action_to_command(&response.actions[0], None);
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "fish", "x": 10.0, "z": -5.0}]}"#);
+        let cmd = action_to_command(&action, None);
         match cmd {
             Some(ClientMessage::FishingCast { position }) => {
                 assert_eq!(position.x, 10.0);
@@ -816,13 +1426,13 @@ mod tests {
 
     #[test]
     fn fish_without_coords_casts_ahead_of_the_agent() {
-        let response = parse_agent_response(r#"{"actions": [{"type": "fish"}]}"#).unwrap();
+        let action = parse_single_action(r#"{"actions": [{"type": "fish"}]}"#);
         let pos = onlinerpg_shared::Position {
             x: 1.0,
             y: 0.0,
             z: 2.0,
         };
-        match action_to_command(&response.actions[0], Some(&pos)) {
+        match action_to_command(&action, Some(&pos)) {
             Some(ClientMessage::FishingCast { position }) => {
                 assert_eq!(position.x, 1.0);
                 assert_eq!(position.z, 6.0);
@@ -830,14 +1440,14 @@ mod tests {
             other => panic!("expected FishingCast, got {other:?}"),
         }
         // No coordinates and no known position: nothing to send.
-        assert!(action_to_command(&response.actions[0], None).is_none());
+        assert!(action_to_command(&action, None).is_none());
     }
 
     #[test]
     fn stop_fishing_parses() {
-        let response = parse_agent_response(r#"{"actions": [{"type": "stop_fishing"}]}"#).unwrap();
+        let action = parse_single_action(r#"{"actions": [{"type": "stop_fishing"}]}"#);
         assert!(matches!(
-            action_to_command(&response.actions[0], None),
+            action_to_command(&action, None),
             Some(ClientMessage::FishingStop)
         ));
     }
@@ -869,7 +1479,9 @@ mod tests {
             .replace(": N}", ": 1}")
     }
 
-    /// Action hints in `text`: balanced JSON objects starting at `{"`.
+    /// Action hints in `text`: balanced JSON objects starting at `{"` that
+    /// carry a "type" key. Objects without one (the favor examples)
+    /// document response fields, not actions.
     fn extract_hints(text: &str) -> Vec<&str> {
         let bytes = text.as_bytes();
         let (mut out, mut i) = (Vec::new(), 0);
@@ -879,7 +1491,10 @@ mod tests {
                     serde_json::Deserializer::from_str(&text[i..]).into_iter::<serde_json::Value>();
                 if let Some(Ok(_)) = stream.next() {
                     let len = stream.byte_offset();
-                    out.push(&text[i..i + len]);
+                    let hint = &text[i..i + len];
+                    if hint.contains("\"type\"") {
+                        out.push(hint);
+                    }
                     i += len;
                     continue;
                 }
@@ -930,7 +1545,11 @@ mod tests {
         ];
         for path in files {
             let name = path.strip_prefix(root).unwrap().display().to_string();
-            let raw = std::fs::read_to_string(&path).unwrap();
+            let raw = std::fs::read_to_string(&path)
+                .unwrap()
+                // Check what the model reads: the {{ACTIONS}} slot filled,
+                // exactly as load_system_prompt fills it.
+                .replace("{{ACTIONS}}", &action_reference());
             let text = if name.ends_with(".rs") {
                 unescape_rust_literals(&raw)
             } else {
@@ -949,10 +1568,86 @@ mod tests {
             );
             for hint in hints {
                 let wrapped = format!(r#"{{"actions": [{hint}]}}"#);
-                if let Err(e) = parse_agent_response(&wrapped) {
-                    panic!("{name}: embedded action hint does not parse: {hint}\n{e}");
-                }
+                let turn = parse_turn_tolerant(&wrapped)
+                    .unwrap_or_else(|e| panic!("{name}: hint is not JSON: {hint}\n{e}"));
+                assert!(
+                    turn.errors.is_empty(),
+                    "{name}: embedded action hint does not parse: {hint}\n{:?}",
+                    turn.errors
+                );
             }
         }
+    }
+
+    // ACTION_SPECS is the single source of the action documentation; these
+    // tests weld it to the enum so neither can drift from the other.
+
+    /// Every action the parser accepts is documented, and nothing that no
+    /// longer exists stays documented. The parser side comes from serde's own
+    /// unknown-variant error, which lists the enum's variant names — so this
+    /// needs no hand-maintained second list.
+    #[test]
+    fn action_docs_cover_exactly_the_parser_actions() {
+        let msg = serde_json::from_value::<AgentAction>(serde_json::json!({"type": "__nope__"}))
+            .unwrap_err()
+            .to_string();
+        let listed = msg
+            .split("expected one of ")
+            .nth(1)
+            .expect("serde unknown-variant error should list the variants");
+        let parser: std::collections::BTreeSet<&str> = listed
+            .split('`')
+            .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+            .collect();
+        let documented: std::collections::BTreeSet<&str> = ACTION_SPECS
+            .iter()
+            .flat_map(|s| s.names.iter().chain(s.aliases).copied())
+            .collect();
+        assert_eq!(
+            parser, documented,
+            "ACTION_SPECS drifted from the AgentAction enum"
+        );
+    }
+
+    /// Every example line in the docs parses with the real parser and sits
+    /// under the block that documents its action type.
+    #[test]
+    fn every_documented_example_parses() {
+        for spec in ACTION_SPECS {
+            let examples: Vec<&str> = spec
+                .doc
+                .lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with(r#"{"type""#))
+                .collect();
+            assert!(
+                !examples.is_empty(),
+                "doc block {:?} shows no example",
+                spec.names
+            );
+            for line in examples {
+                let value: serde_json::Value = serde_json::from_str(line)
+                    .unwrap_or_else(|e| panic!("doc example is not JSON: {line}\n{e}"));
+                let tag = value["type"].as_str().unwrap();
+                assert!(
+                    spec.names.contains(&tag),
+                    "example sits under the wrong doc block: {line}"
+                );
+                serde_json::from_value::<AgentAction>(value)
+                    .unwrap_or_else(|e| panic!("doc example no longer parses: {line}\n{e}"));
+            }
+        }
+    }
+
+    /// The shared prompt keeps its `{{ACTIONS}}` slot — without it the
+    /// generated reference silently stops reaching the model.
+    #[test]
+    fn system_prompt_file_carries_the_actions_slot() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/system_prompt.txt");
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(
+            text.contains("{{ACTIONS}}"),
+            "data/system_prompt.txt lost its {{{{ACTIONS}}}} slot"
+        );
     }
 }

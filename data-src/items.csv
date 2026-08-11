@@ -33,6 +33,8 @@ scroll_of_enchant_weapon,Scroll of Enchant Weapon,Arcane runes that hone your wi
 scroll_of_party_summon,Scroll of Party Summon,Reading the runes calls your whole party to your side — each may answer or ignore the summons.,0.2,,true,scroll_of_party_summon.png,objects/scroll.glb,party_summon_scroll,,,1000,,,,,,,,,true,,
 table,Table,A sturdy wooden table.,20,,false,table_icon.png,objects/table.glb,furniture,,wood,3000,,,,,,,,,,,
 leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2,,,,,,2,,,,
+mandolin,Mandolin,A round-backed mandolin with gilded fretwork. Strum up a tune with /play_music.,2,main_hand,false,mandolin.png,weapons/mandolin.glb,instrument,,wood,4000,,,,,,,,,,,
+worn_mandolin,Worn Mandolin,A road-worn mandolin that still sings true. Strum up a tune with /play_music. Merchants won't pay for it.,2,main_hand,false,mandolin.png,weapons/mandolin.glb,instrument,,wood,,,,,,,,,,,,
 fishing_rod,Fishing Rod,A supple wooden rod with a horsehair line. Cast at water to fish.,2,main_hand,false,fishing_rod.png,weapons/fishing_rod.glb,fishing_rod,,wood,300,,,,,,,,,,,
 raw_minnow,Raw Minnow,A tiny silver fish. Barely a mouthful.,0.2,,false,raw_minnow.png,,fish,1d3,,10,,1,50,3d4,12,,,,true,40,grilled_minnow
 raw_perch,Raw Perch,A striped river perch. Decent eating.,0.5,,false,raw_perch.png,,fish,1d6,,25,,2,30,4d6,22,,,,true,40,grilled_perch

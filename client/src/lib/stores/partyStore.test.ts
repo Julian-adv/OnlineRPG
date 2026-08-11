@@ -2,7 +2,10 @@ import { describe, expect, it, beforeEach } from 'vitest'
 import { get } from 'svelte/store'
 import {
   partyPositions,
+  partyRoster,
   applyPartyPositions,
+  applyPartyVitals,
+  classIconPath,
   resetPartyPositions,
 } from './partyStore'
 
@@ -34,5 +37,60 @@ describe('applyPartyPositions', () => {
   it('filters nothing when self is unknown', () => {
     applyPartyPositions(push, undefined, true)
     expect(get(partyPositions)).toEqual(push)
+  })
+})
+
+describe('applyPartyVitals', () => {
+  const member = (id: number, hp: number) => ({
+    id,
+    name: `p${id}`,
+    hp,
+    max_hp: 10,
+    class: 'knight' as const,
+  })
+
+  beforeEach(() =>
+    partyRoster.set({ leaderId: 1, members: [member(1, 10), member(2, 10)] })
+  )
+
+  it('updates matching members and keeps the rest', () => {
+    applyPartyVitals([{ id: 2, hp: 3, max_hp: 12 }])
+    const members = get(partyRoster)!.members
+    expect(members[0]).toEqual(member(1, 10))
+    expect(members[1]).toEqual({ ...member(2, 3), max_hp: 12 })
+  })
+
+  it('drops ids that left the roster', () => {
+    applyPartyVitals([{ id: 99, hp: 1, max_hp: 10 }])
+    expect(get(partyRoster)!.members).toEqual([member(1, 10), member(2, 10)])
+  })
+
+  it('is a no-op across a disband', () => {
+    partyRoster.set(null)
+    applyPartyVitals([{ id: 1, hp: 5, max_hp: 10 }])
+    expect(get(partyRoster)).toBeNull()
+  })
+})
+
+describe('classIconPath', () => {
+  it('maps the eight web-creatable classes to their icons', () => {
+    for (const cls of [
+      'knight',
+      'barbarian',
+      'caveman',
+      'valkyrie',
+      'ranger',
+      'priest',
+      'rogue',
+      'bard',
+    ]) {
+      expect(classIconPath(cls)).toBe(`/icons/party/class-${cls}.svg`)
+    }
+  })
+
+  it('returns null for agent-only classes so the panel falls back', () => {
+    for (const cls of ['samurai', 'wizard', 'tourist', 'merchant', 'guard']) {
+      expect(classIconPath(cls)).toBeNull()
+    }
   })
 })

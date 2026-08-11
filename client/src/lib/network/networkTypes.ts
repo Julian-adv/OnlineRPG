@@ -16,6 +16,7 @@ export type CharacterClass =
   | 'valkyrie'
   | 'ranger'
   | 'priest'
+  | 'bard'
   | 'merchant'
   | 'guard'
 
@@ -150,11 +151,17 @@ export type ClientMessage =
   | { FishingCast: { position: Position } }
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
+  | { PartyInvite: { target_name: string } }
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | { PartySummonRespond: { caster_id: number; accept: boolean } }
   | 'PartyLeave'
+  | { PartyKick: { target_id: number } }
+  | { PartyPromote: { target_id: number } }
   | { PartyChat: { message: string } }
   | 'RequestPartyPositions'
+  | { FriendRespond: { requester_id: number; accept: boolean } }
+  | { FriendRemove: { name: string } }
+  | 'RequestFriendsOnline'
   | { OpenDungeonChest: { entrance_id: string } }
   | {
       BreakDungeonProp: { entrance_id: string; depth: number; prop_id: number }
@@ -195,6 +202,7 @@ export type ClientMessage =
   | { UseItem: { instance_id: number } }
   | { OpenShop: { merchant_player_id: number } }
   | { CloseShop: { merchant_player_id: number } }
+  | { DeclineTrade: { merchant_player_id: number } }
   | { BuyItem: { merchant_player_id: number; item_def_id: string } }
   | { SellItem: { merchant_player_id: number; instance_id: number } }
   | { BuybackItem: { merchant_player_id: number; entry_id: number } }
@@ -280,13 +288,25 @@ export type ServerGroundItem = {
   item_def_id: string
   position: Position
   floor_level: number
+  /** Units in the pile; only stackable defs ever exceed 1. */
+  quantity: number
   /** Carries a dropped weapon's enchantment across the drop/pickup cycle. */
   enchant: number
+  /** The player who put it there, if one did; null for loot and world drops. */
+  dropped_by: number | null
 }
 
 export type ServerCampfire = {
   id: number
   position: Position
+  floor_level: number
+}
+
+export type ServerStall = {
+  id: number
+  owner: number
+  position: Position
+  rotation: number
   floor_level: number
 }
 

@@ -47,6 +47,7 @@
   import GameSceneMonstersLayer from './game-scene/GameSceneMonstersLayer.svelte'
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
   import GameSceneCampfiresLayer from './game-scene/GameSceneCampfiresLayer.svelte'
+  import GameSceneStallsLayer from './game-scene/GameSceneStallsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
@@ -362,6 +363,8 @@
     if (treeGroup) treeGroup.visible = !underground
     const housingGroup = housingLayerRef?.getGroup()
     if (housingGroup) housingGroup.visible = !underground
+    const objectGroup = objectOverlayRef?.getGroup()
+    if (objectGroup) objectGroup.visible = !underground
     const windGroup = windParticlesRef?.getGroup?.()
     if (windGroup) windGroup.visible = !underground
     const riverRocksGroup = riverRocksRef?.getGroup?.()
@@ -1233,6 +1236,7 @@
   />
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
+  <GameSceneStallsLayer />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
     <!-- Both position objects are mutated in place upstream, so the line

@@ -17,6 +17,8 @@
   import PartyInviteToast from './PartyInviteToast.svelte'
   import PartySummonToast from './PartySummonToast.svelte'
   import PartyPanel from './PartyPanel.svelte'
+  import FriendRequestToast from './FriendRequestToast.svelte'
+  import FriendPanel from './FriendPanel.svelte'
   import NpcContextMenu from './NpcContextMenu.svelte'
   import DragGhost from './DragGhost.svelte'
   import LoadingDialog from './LoadingDialog.svelte'
@@ -32,6 +34,7 @@
     housingEditorMode,
   } from '../stores/debugStore'
   import { minimapEnabled } from '../stores/minimapStore'
+  import { friendPanelVisible } from '../stores/friendStore'
   import type { AccountCharacter } from '../network/socket'
 
   interface Props {
@@ -113,6 +116,10 @@
     <PartyInviteToast />
     <PartySummonToast />
     <PartyPanel />
+    <FriendRequestToast />
+    <!-- Always mounted: it drives the presence poll, whose answers feed the
+         online notice whether or not the list is on screen. -->
+    <FriendPanel />
     <NpcContextMenu />
     <FishingPrompt />
   {/if}
@@ -199,6 +206,22 @@
             ><path
               fill="currentColor"
               d="M384 476.1L192 421.2V35.9L384 90.8zM416 88.4V456l138.5-69.3c11.9-5.9 21.5-17.4 21.5-30.7V32c0-22-21.5-37.5-42.7-30.7L416 88.4zM160 421.2l-25.5-8.5C94 400.3 64 363.6 64 321.4V280h32c17.7 0 32-14.3 32-32s-14.3-32-32-32H64V192c0-17.7-14.3-32-32-32S0 174.3 0 192v129.4C0 383.5 38.3 439 91.3 457.2l68.7 22.9V88.4L21.2 33.7C9.3 39.6 0 51.1 0 64.4v1.6h32c17.7 0 32 14.3 32 32s-14.3 32-32 32H0v24h64c17.7 0 32 14.3 32 32s-14.3 32-32 32H0v105.4c0 62.1 38.3 117.6 91.3 135.8l68.7 22.9z"
+            /></svg
+          >
+        </button>
+        <button
+          class="corner-btn"
+          onclick={() => friendPanelVisible.update((v) => !v)}
+          title="Friends (F)"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="640"
+            height="512"
+            viewBox="0 0 640 512"
+            ><path
+              fill="currentColor"
+              d="M144 0a80 80 0 1 1 0 160A80 80 0 1 1 144 0M512 0a80 80 0 1 1 0 160a80 80 0 1 1 0-160M0 298.7C0 239.8 47.8 192 106.7 192h42.7c15.9 0 31 3.5 44.6 9.7c-1.3 7.2-1.9 14.7-1.9 22.3c0 38.2 16.8 72.5 43.3 96c-.2 0-.4 0-.7 0H21.3C9.6 320 0 310.4 0 298.7zM405.3 320c-.2 0-.4 0-.7 0c26.6-23.5 43.3-57.8 43.3-96c0-7.6-.7-15-1.9-22.3c13.6-6.3 28.7-9.7 44.6-9.7h42.7C592.2 192 640 239.8 640 298.7c0 11.8-9.6 21.3-21.3 21.3H405.3zM224 224a96 96 0 1 1 192 0a96 96 0 1 1-192 0M128 485.3C128 411.7 187.7 352 261.3 352H378.7C452.3 352 512 411.7 512 485.3c0 14.7-11.9 26.7-26.7 26.7H154.7c-14.7 0-26.7-11.9-26.7-26.7z"
             /></svg
           >
         </button>

@@ -8,7 +8,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use super::query::is_cardinal_move_blocked;
+use super::query::{is_cardinal_move_blocked, is_movement_blocked_for_mover};
 use super::stair::{build_stair_cells, floor_to_key, is_regular_key, key_to_floor, AStarKey};
 use super::{PassabilityCache, PathResult, PathWaypoint, DIRS};
 
@@ -160,6 +160,24 @@ pub fn find_path(
         }
     }
 
+    // A mover parked on furniture (a bed seals its own footprint) gets the same
+    // one-step waiver the movement validator grants: out of a fully sealed start
+    // cell across a `yields_to_trapped_mover` obstacle. Walls never yield, so a
+    // sealed start opens only its furniture sides — never a route through a wall.
+    // Consulted lazily, only for start-cell edges the cheap check refused.
+    let (scx, scz) = (sx as f32 + 0.5, sz as f32 + 0.5);
+    let start_escapes = |dx: i32, dz: i32| {
+        !is_movement_blocked_for_mover(
+            cache,
+            scx,
+            scz,
+            scx + dx as f32,
+            scz + dz as f32,
+            start_floor,
+            None,
+        )
+    };
+
     let mut best_h = start_h;
     let mut best_key = start_key;
     let mut expanded = 0;
@@ -201,7 +219,9 @@ pub fn find_path(
                 let nz = cur.z + dz;
                 let new_g = cur.g + 1;
 
-                if is_cardinal_move_blocked(cache, cur.x, cur.z, dx, dz, cur_floor) {
+                if is_cardinal_move_blocked(cache, cur.x, cur.z, dx, dz, cur_floor)
+                    && !(cur_key == start_key && start_escapes(dx, dz))
+                {
                     continue;
                 }
 

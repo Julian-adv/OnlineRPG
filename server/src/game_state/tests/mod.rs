@@ -18,6 +18,7 @@ mod combat_tests;
 mod dungeon_tests;
 mod enchant_tests;
 mod fishing_tests;
+mod friend_tests;
 mod hunger_tests;
 mod inventory_tests;
 mod movement_tests;
@@ -26,6 +27,7 @@ mod persistence_tests;
 mod pickup_tests;
 mod player_tests;
 mod skills_tests;
+mod stall_tests;
 mod trading_tests;
 
 /// Stable numeric id derived from a fixture's name, so tests keep naming
@@ -158,6 +160,15 @@ fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
         .count()
 }
 
+fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntranceDef {
+    game_state
+        .dungeon_defs
+        .all()
+        .next()
+        .expect("a dungeon def")
+        .clone()
+}
+
 fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {
     std::iter::from_fn(|| rx.try_recv().ok()).find_map(|msg| match msg {
         ServerMessage::PositionCorrected {
@@ -248,7 +259,7 @@ fn make_game_state_with_zones(
         uuid::Uuid::new_v4()
     ));
     let housing_io = Arc::new(HousingIO::new(housing_dir));
-    let item_defs = ItemDefs::load();
+    let item_defs = crate::item_defs::item_defs().clone();
     let world_drop_defs = crate::world_drop_defs::WorldDropDefs::load(&item_defs);
     let monster_defs = MonsterDefs::load();
     let dungeon_defs = crate::dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);

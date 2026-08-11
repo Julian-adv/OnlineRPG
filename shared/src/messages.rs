@@ -97,11 +97,24 @@ pub struct BagLineItem {
     pub qty: u32,
 }
 
-/// One party member as listed in `PartyState`.
+/// One party member as listed in `PartyState`. `hp`/`max_hp` are the
+/// roster-time snapshot; steady-state updates ride `PartyVitals`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartyMember {
     pub id: PlayerId,
     pub name: String,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub class: crate::character::CharacterClass,
+}
+
+/// One member's health as listed in `PartyVitals`. No name or class: the
+/// roster from `PartyState` already carries them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PartyMemberVitals {
+    pub id: PlayerId,
+    pub hp: u32,
+    pub max_hp: u32,
 }
 
 /// How long a party invite stays acceptable. Shared so the server's
@@ -122,6 +135,31 @@ pub struct PartyMemberPosition {
     pub z: f32,
     pub floor_level: i8,
 }
+
+/// One friend as listed in `FriendList`. Keyed by character id, not the
+/// per-session `PlayerId`: a friendship outlives both sessions, and offline
+/// friends have no player id at all.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendEntry {
+    pub character_id: i64,
+    pub name: String,
+    pub level: u32,
+}
+
+/// One online friend as listed in `FriendsOnline`. No name — `FriendList`
+/// already carries it — but the level rides along, so a friend's level-ups
+/// show without re-sending the whole roster.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineFriend {
+    pub character_id: i64,
+    pub level: u32,
+}
+
+/// How long a friend request stays answerable. Four times
+/// `PARTY_INVITE_TTL`: a party invite is an offer to play *now*, a friend
+/// request can wait out the fight the target is in. The web client mirrors it
+/// (`FRIEND_REQUEST_TTL_MS` in `friendStore.ts`).
+pub const FRIEND_REQUEST_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Web client's rendering environment, so performance complaints can be
 /// matched against actual hardware. The client sends it after entering the
@@ -144,6 +182,44 @@ pub struct ClientEnvReport {
     pub gpu_device: String,
     pub gpu_description: String,
     pub user_agent: String,
+}
+
+/// Interaction the server stores for a `/play_music` performance. A wire
+/// contract, not a private constant: the server sets it, and both clients
+/// compare `PlayerInteractionChanged` against it to know a tune is over.
+pub const MUSIC_EMOTE: &str = "guitar_playing";
+
+/// One-shot clips `/emote <name>` may store as the interaction. Same wire
+/// contract as [`MUSIC_EMOTE`]: the server validates against this list, and
+/// clients start the clip off the broadcast and send `StopInteraction` when
+/// it ends. Clip names live in `social.glb`.
+pub const ONE_SHOT_EMOTES: &[&str] = &["excited", "clap"];
+
+/// `message` is `prefix` as a whole slash-command word; returns the trimmed
+/// remainder. Shared because the agent-client types the commands this parses —
+/// the two sides must agree on what counts as the command word.
+pub fn strip_command<'a>(message: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = message.trim().strip_prefix(prefix)?;
+    (rest.is_empty() || rest.starts_with(' ')).then(|| rest.trim())
+}
+
+/// The title a `/play_music` argument names: a whole title first, then a
+/// fragment of one, ignoring case. Shared for the same reason as
+/// `strip_command` — the server resolves the query and the agent-client
+/// decides beforehand whether it would resolve at all. An empty query is the
+/// server's random pick, which is the caller's business, not this rule's.
+pub fn resolve_title<'a>(
+    mut titles: impl Iterator<Item = &'a str> + Clone,
+    query: &str,
+) -> Option<&'a str> {
+    let wanted = query.trim().to_lowercase();
+    if wanted.is_empty() {
+        return None;
+    }
+    titles
+        .clone()
+        .find(|t| t.to_lowercase() == wanted)
+        .or_else(|| titles.find(|t| t.to_lowercase().contains(&wanted)))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -399,6 +475,12 @@ pub enum ClientMessage {
     OpenTrade {
         target_player_id: PlayerId,
     },
+    /// Wave off an NPC-pushed trade offer ("Not now" on the toast, or the
+    /// toast timing out unanswered). Relayed to the NPC as `TradeDeclined`
+    /// so its agent stops pushing trade windows at that player for a while.
+    DeclineTrade {
+        merchant_player_id: PlayerId,
+    },
     /// Invite a named player to the sender's party. Name-based like whisper:
     /// the target may be outside the sender's AOI.
     PartyInvite {
@@ -417,11 +499,33 @@ pub enum ClientMessage {
     /// Leave the current party. The leader leaving promotes the earliest
     /// remaining member; a party reduced to one member disbands.
     PartyLeave,
+    /// Leader-only: remove `target_id` from the sender's party. A party
+    /// reduced to one member disbands, like `PartyLeave`.
+    PartyKick {
+        target_id: PlayerId,
+    },
+    /// Leader-only: hand party leadership to `target_id`.
+    PartyPromote {
+        target_id: PlayerId,
+    },
     /// Say something to the sender's party. Delivered to every online member
     /// wherever they are (no AOI cut), echoed to the sender included.
     PartyChat {
         message: String,
     },
+    /// Accept or decline a pending friend request from `requester_id`.
+    FriendRespond {
+        requester_id: PlayerId,
+        accept: bool,
+    },
+    /// Drop a friendship, both directions. Name-based like `PartyInvite`: the
+    /// friend may be offline, so no player id exists to name them by.
+    FriendRemove {
+        name: String,
+    },
+    /// Ask which of the sender's friends are online right now. Polled by the
+    /// client (faster while the panel is open); there is no presence push.
+    RequestFriendsOnline,
     /// Ask where the sender's party members are right now (map open). A
     /// one-shot snapshot: steady-state updates are pushed by the server's
     /// party-position tick whenever a member relocates.
@@ -512,8 +616,12 @@ pub enum ServerMessage {
         #[serde(default)]
         floor_level: i8,
     },
-    /// A dungeon treasure chest was opened (loot already delivered to the
-    /// opener's inventory/wallet; broadcast nearby for the celebration).
+    /// A dungeon treasure chest was opened. The rolled items burst out of
+    /// the chest as ground drops moments later; the gold goes straight to
+    /// the opener's wallet. Broadcast nearby — except when `item_def_ids`
+    /// is empty and `gold` is 0: that is a re-open of a chest the opener
+    /// already claimed tonight (real opens always pay gold), sent to the
+    /// opener alone so their lid swings on an empty box.
     DungeonChestOpened {
         entrance_id: String,
         player_id: PlayerId,
@@ -622,6 +730,23 @@ pub enum ServerMessage {
         leader_id: PlayerId,
         members: Vec<PartyMember>,
     },
+    /// The whole friend roster, offline friends included. Sent at login and
+    /// re-sent after any change, to both sides of it.
+    FriendList {
+        friends: Vec<FriendEntry>,
+    },
+    /// Answer to `RequestFriendsOnline`: which friends are online right now.
+    /// Absence from the list is the offline signal, so a shrinking list needs
+    /// no separate message.
+    FriendsOnline {
+        friends: Vec<OnlineFriend>,
+    },
+    /// Direct to the target: a friend request to answer with `FriendRespond`
+    /// before it expires server-side.
+    FriendRequestReceived {
+        requester_id: PlayerId,
+        requester_name: String,
+    },
     /// Party member locations with no AOI cut — the point is members beyond
     /// it. Pushed to the whole party when a member relocates, and sent
     /// directly as the answer to `RequestPartyPositions`. Includes the
@@ -629,6 +754,12 @@ pub enum ServerMessage {
     /// themselves); empty when the requester is not in a party.
     PartyPositions {
         members: Vec<PartyMemberPosition>,
+    },
+    /// Party member health with no AOI cut, `PartyPositions`' twin: pushed to
+    /// the whole party when a member's health changes. The roster snapshot in
+    /// `PartyState` seeds the panel; this keeps it current.
+    PartyVitals {
+        members: Vec<PartyMemberVitals>,
     },
     GameState {
         /// A list, not a map keyed by id: `PlayerId` is numeric and
@@ -641,6 +772,8 @@ pub enum ServerMessage {
         ground_items: Vec<inventory::GroundItem>,
         #[serde(default)]
         campfires: Vec<crate::hunger::Campfire>,
+        #[serde(default)]
+        stalls: Vec<crate::stall::Stall>,
     },
     GameTimeSync {
         datetime: GameDateTime,
@@ -797,6 +930,19 @@ pub enum ServerMessage {
         player_id: PlayerId,
         object_type: Option<String>,
     },
+    /// A player started a `/play_music` performance; nearby clients play the
+    /// named BGM track. `track` is the title the server resolved from its
+    /// registry — receivers play it only if their own BGM list has it.
+    /// The performance ends with the emote (`PlayerInteractionChanged` /
+    /// [`MUSIC_EMOTE`] giving way to anything else). Also sent to a player
+    /// who comes into earshot mid-performance, with `elapsed_secs` saying
+    /// how far in the tune already is.
+    PlayerMusicStarted {
+        player_id: PlayerId,
+        track: String,
+        #[serde(default)]
+        elapsed_secs: f32,
+    },
     InteractionRejected {
         reason: String,
     },
@@ -844,9 +990,21 @@ pub enum ServerMessage {
     GroundItemAppeared {
         item: inventory::GroundItem,
     },
-    /// A ground item was picked up or despawned.
+    /// A ground item was picked up, despawned, or left the client's view.
     GroundItemRemoved {
         instance_id: u64,
+        /// Who picked it up, when someone did — `None` for a despawn or an
+        /// item that merely dropped out of range.
+        picked_up_by: Option<PlayerId>,
+    },
+    /// A pile shrank without emptying: someone took part of it, having been
+    /// able to carry only some of the units.
+    GroundItemQuantityChanged {
+        instance_id: u64,
+        quantity: u32,
+        /// Who took the units, for the loot line in chat; clients derive the
+        /// taken count from the quantity they had cached.
+        picked_up_by: Option<PlayerId>,
     },
     /// Response to OpenShop (or pushed by an NPC's OpenTrade): the trader's
     /// goods. Display prices come from item definitions; the server
@@ -932,6 +1090,13 @@ pub enum ServerMessage {
         /// The NPC's wallet after the trade.
         npc_gold: i64,
     },
+    /// Direct to a merchant NPC: the named player waved off its pushed
+    /// trade window ("Not now", or the offer toast expired). The agent
+    /// suppresses trade pushes at them for a cooldown.
+    TradeDeclined {
+        player_id: PlayerId,
+        player_name: String,
+    },
     /// Direct to the offering NPC: the server's verdict on its `OfferDeal`.
     DealResult {
         target_player_id: PlayerId,
@@ -980,6 +1145,18 @@ pub enum ServerMessage {
     /// Burned out or left the receiver's AOI.
     CampfireRemoved {
         campfire_id: u64,
+    },
+    /// A merchant just laid out a stall nearby.
+    StallPlaced {
+        stall: crate::stall::Stall,
+    },
+    /// An already-laid stall entered the receiver's AOI.
+    StallAppeared {
+        stall: crate::stall::Stall,
+    },
+    /// Packed up or left the receiver's AOI.
+    StallRemoved {
+        stall_id: u64,
     },
     /// Direct to the griller: the 3s grill cast began.
     GrillStarted,

@@ -104,8 +104,33 @@ pub(super) async fn tick_combat(
     // Chase until in range (handles monster movement during chase)
     match chase_monster(state, &monster_id).await {
         ChaseResult::InRange => {}
-        ChaseResult::Lost(_) | ChaseResult::Error => {
-            info!("Combat ended: monster {monster_id} lost or error during chase");
+        ChaseResult::Lost(reason) => {
+            info!("Combat ended: monster {monster_id} lost during chase ({reason:?})");
+            let mut s = state.lock().await;
+            let note = match reason {
+                // Gone from the world state right after we were trading
+                // blows — usually our kill, but it may also have simply
+                // walked out of sight, so don't assert a corpse.
+                LostReason::TargetGone => format!(
+                    "[CombatEnded] {monster_id} is no longer there — you may have killed it, \
+                     or it left your sight. Check the ground for loot, then decide your \
+                     next move."
+                ),
+                other => format!(
+                    "[CombatEnded] You broke off from {monster_id} — {}.",
+                    other.clause()
+                ),
+            };
+            s.push_agent_event(note);
+            return None;
+        }
+        ChaseResult::Error => {
+            info!("Combat ended: error during chase of {monster_id}");
+            let mut s = state.lock().await;
+            s.push_agent_event(format!(
+                "[CombatEnded] You lost {monster_id} — something went wrong on the way. \
+                 Decide your next move."
+            ));
             return None;
         }
     }

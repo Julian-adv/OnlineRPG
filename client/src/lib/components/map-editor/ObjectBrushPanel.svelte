@@ -23,11 +23,6 @@
     rotatedRectAabb,
     type FootprintRect,
   } from '../../utils/objectFootprint'
-  import { removeGrassInRect } from '../../utils/grass-data'
-  import {
-    worldToTileCoord,
-    tileKey,
-  } from '../../managers/terrain-height-types'
   import {
     playerVisualFloorLevel,
     playerInsideHouseId,
@@ -286,48 +281,7 @@
         }
       })
 
-      const gm = grassManager
-      if (!gm) return
-
-      // eslint-disable-next-line svelte/prefer-svelte-reactivity
-      const tileBuckets = new Map<
-        string,
-        { tx: number; tz: number; rects: FootprintRect[] }
-      >()
-      for (const wr of worldRects) {
-        const txMin = worldToTileCoord(wr.minX)
-        const txMax = worldToTileCoord(wr.maxX)
-        const tzMin = worldToTileCoord(wr.minZ)
-        const tzMax = worldToTileCoord(wr.maxZ)
-        for (let tx = txMin; tx <= txMax; tx++) {
-          for (let tz = tzMin; tz <= tzMax; tz++) {
-            const key = tileKey(tx, tz)
-            let bucket = tileBuckets.get(key)
-            if (!bucket) {
-              bucket = { tx, tz, rects: [] }
-              tileBuckets.set(key, bucket)
-            }
-            bucket.rects.push(wr)
-          }
-        }
-      }
-
-      await Promise.all(
-        [...tileBuckets.values()].map(async ({ tx, tz, rects }) => {
-          let data =
-            gm.getCachedGrassData(tx, tz) ?? (await gm.loadGrassData(tx, tz))
-          if (!data) return
-          let changed = false
-          for (const r of rects) {
-            const next = removeGrassInRect(data, r.minX, r.minZ, r.maxX, r.maxZ)
-            if (next) {
-              data = next
-              changed = true
-            }
-          }
-          if (changed) await gm.saveGrassData(tx, tz, data)
-        })
-      )
+      await grassManager?.removeGrassInRects(worldRects)
     } finally {
       flattening = false
     }

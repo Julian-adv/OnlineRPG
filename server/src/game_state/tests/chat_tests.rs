@@ -762,6 +762,20 @@ fn admin_command_parses_actions() {
         parse_admin_command("/unban Abuser"),
         Some(AdminCommand::Unban("Abuser"))
     );
+    assert_eq!(
+        parse_admin_command("/spawnmob kobold"),
+        Some(AdminCommand::Spawnmob {
+            monster_type: "kobold",
+            count: None
+        })
+    );
+    assert_eq!(
+        parse_admin_command("/spawnmob kobold 3"),
+        Some(AdminCommand::Spawnmob {
+            monster_type: "kobold",
+            count: Some("3")
+        })
+    );
     // Whole-word rule: /kickstart is not /kick.
     assert_eq!(parse_admin_command("/kickstart party"), None);
     assert_eq!(parse_admin_command("/banish Abuser"), None);
@@ -1129,6 +1143,138 @@ async fn summon_and_goto_teleport_beside_the_target() {
 }
 
 #[tokio::test]
+async fn spawnmob_spawns_owned_aggressive_monsters_beside_the_admin() {
+    let game_state = make_test_game_state("admin_spawnmob");
+    let auth = make_test_auth("admin_spawnmob");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold 3".to_string(), &auth)
+        .await;
+
+    let messages = drain(&mut admin_rx);
+    let assigned: Vec<_> = messages
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::MonsterAssigned { monster } => Some(monster),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(assigned.len(), 3, "the admin's client must own all three");
+    let admin_pos = Position {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
+    for monster in &assigned {
+        assert_eq!(monster.monster_type, "kobold");
+        assert_eq!(monster.owner_id, Some(admin_id));
+        assert!(monster.aggressive, "spawned monsters must fight back");
+        let distance = monster.position.dist_xz_sq(&admin_pos).sqrt();
+        assert!(
+            (2.5..=3.5).contains(&distance),
+            "must land in the ring around the admin, got {:?}",
+            monster.position
+        );
+    }
+    assert!(messages.iter().any(|m| matches!(
+        m,
+        ServerMessage::SystemMessage { message } if message == "Spawnmob: 3 kobold spawned."
+    )));
+}
+
+#[tokio::test]
+async fn spawnmob_refuses_unknown_types_and_bad_counts() {
+    let game_state = make_test_game_state("admin_spawnmob_refusals");
+    let auth = make_test_auth("admin_spawnmob_refusals");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    let reply_to = |messages: Vec<ServerMessage>| match messages.into_iter().next() {
+        Some(ServerMessage::SystemMessage { message }) => message,
+        other => panic!("Expected a system reply, got {:?}", other),
+    };
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob dragon".to_string(), &auth)
+        .await;
+    let reply = reply_to(drain(&mut admin_rx));
+    assert!(
+        reply.starts_with("Spawnmob: unknown type dragon") && reply.contains("kobold"),
+        "unknown type must list the valid ones, got {reply}"
+    );
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob".to_string(), &auth)
+        .await;
+    let reply = reply_to(drain(&mut admin_rx));
+    assert!(
+        reply.starts_with("Spawnmob: /spawnmob <type> [count]"),
+        "bare command must draw usage, got {reply}"
+    );
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold 99".to_string(), &auth)
+        .await;
+    assert_eq!(
+        reply_to(drain(&mut admin_rx)),
+        "Spawnmob: count must be 1\u{2013}10."
+    );
+
+    let monsters = game_state.monsters.read().await;
+    assert!(monsters.is_empty(), "no refusal may spawn anything");
+}
+
+/// The ring must not land monsters inside walls (a walled-in monster can
+/// neither fight nor be killed, and holds a global cap slot): a blocked spot
+/// retries at half radius, then falls back to the admin's own cell.
+#[tokio::test]
+async fn spawnmob_ring_avoids_blocked_cells() {
+    let game_state = make_test_game_state("admin_spawnmob_blocked");
+    let auth = make_test_auth("admin_spawnmob_blocked");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.5, 0.5)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    let assigned_position = |messages: Vec<ServerMessage>| {
+        messages
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMessage::MonsterAssigned { monster } => Some(monster.position),
+                _ => None,
+            })
+            .expect("a monster must still spawn")
+    };
+
+    // Count 1 puts the only ring point due east at (3.5, 0.5); seal that cell.
+    game_state.sync_region_furniture(0, 0, &[table_placement(3.5, 0.5)]);
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold".to_string(), &auth)
+        .await;
+    let position = assigned_position(drain(&mut admin_rx));
+    assert_eq!(
+        (position.x, position.z),
+        (2.0, 0.5),
+        "a blocked full radius must retry at half"
+    );
+
+    // Seal the half-radius cell too: the spawn lands on the admin's cell.
+    game_state.sync_region_furniture(
+        0,
+        0,
+        &[table_placement(3.5, 0.5), table_placement(2.5, 0.5)],
+    );
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold".to_string(), &auth)
+        .await;
+    let position = assigned_position(drain(&mut admin_rx));
+    assert_eq!((position.x, position.z), (0.5, 0.5));
+}
+
+#[tokio::test]
 async fn escape_command_refused_while_in_combat() {
     let game_state = make_test_game_state("escape_in_combat");
     let auth = make_test_auth("escape_in_combat");
@@ -1154,4 +1300,229 @@ async fn escape_command_refused_while_in_combat() {
         (20.0, 30.0),
         "/escape must not double as a combat disengage"
     );
+}
+
+/// Playing takes an instrument; the test bards carry the starter mandolin.
+async fn hand_a_mandolin(game_state: &GameState, player: &str) {
+    game_state.inventories.write().await.insert(
+        pid(player),
+        PlayerInventory {
+            bag: vec![bag_item(1, "worn_mandolin", 1)],
+            ..Default::default()
+        },
+    );
+}
+
+#[tokio::test]
+async fn play_music_hands_the_track_to_neighbours() {
+    let game_state = make_test_game_state("play_music");
+    let auth = make_test_auth("play_music");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    hand_a_mandolin(&game_state, "bard").await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    // A fragment is enough — the server resolves it to the whole title.
+    game_state
+        .send_chat_message(&bard_id, "/play_music twilight".to_string(), &auth)
+        .await;
+
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::PlayerInteractionChanged {
+            player_id,
+            object_type,
+        }) => {
+            assert_eq!(player_id, bard_id);
+            assert_eq!(object_type.as_deref(), Some("guitar_playing"));
+        }
+        other => panic!("Expected the strum pose, got {other:?}"),
+    }
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::PlayerMusicStarted {
+            player_id,
+            track,
+            elapsed_secs,
+        }) => {
+            assert_eq!(player_id, bard_id);
+            assert_eq!(track, "Twilight Fields");
+            assert_eq!(elapsed_secs, 0.0);
+        }
+        other => panic!("Expected the track, got {other:?}"),
+    }
+    // The title is a chat-log line each client writes for itself, like a
+    // chest being opened — the bard does not speak it.
+    assert!(listener_rx.try_recv().is_err());
+}
+
+/// A client with no track list of its own — the agent-client — just types
+/// `/play_music`, and the tune has to come from somewhere.
+#[tokio::test]
+async fn bare_play_music_picks_a_track_for_the_performer() {
+    let game_state = make_test_game_state("play_music_bare");
+    let auth = make_test_auth("play_music_bare");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    hand_a_mandolin(&game_state, "bard").await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&bard_id, "/play_music".to_string(), &auth)
+        .await;
+
+    assert!(matches!(
+        listener_rx.try_recv(),
+        Ok(ServerMessage::PlayerInteractionChanged { .. })
+    ));
+    match listener_rx.try_recv() {
+        Ok(ServerMessage::PlayerMusicStarted { track, .. }) => {
+            assert!(!track.is_empty(), "a random tune, not silence");
+        }
+        other => panic!("Expected a randomly picked track, got {other:?}"),
+    }
+}
+
+/// `/emote excited` needs no instrument and claims no object: the pose goes
+/// out to neighbours and to the performer, whose client starts the clip on it.
+#[tokio::test]
+async fn emote_shows_the_pose_to_neighbours_and_performer() {
+    let game_state = make_test_game_state("emote");
+    let auth = make_test_auth("emote");
+    let cheerer_id = pid("cheerer");
+    let listener_id = pid("listener");
+    game_state
+        .add_player(make_player("cheerer", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut cheerer_rx = game_state.register_direct_channel(&cheerer_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&cheerer_id, "/emote excited".to_string(), &auth)
+        .await;
+
+    for rx in [&mut cheerer_rx, &mut listener_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PlayerInteractionChanged {
+                player_id,
+                object_type,
+            }) => {
+                assert_eq!(player_id, cheerer_id);
+                assert_eq!(object_type.as_deref(), Some("excited"));
+            }
+            other => panic!("Expected the cheer pose, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+}
+
+/// A typo or a bare `/emote` sets no pose; the sender alone gets the list of
+/// emotes back.
+#[tokio::test]
+async fn an_unknown_emote_lists_the_available_ones() {
+    let game_state = make_test_game_state("emote_unknown");
+    let auth = make_test_auth("emote_unknown");
+    let cheerer_id = pid("cheerer");
+    let listener_id = pid("listener");
+    game_state
+        .add_player(make_player("cheerer", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut cheerer_rx = game_state.register_direct_channel(&cheerer_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&cheerer_id, "/emote moonwalk".to_string(), &auth)
+        .await;
+
+    match cheerer_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("excited"), "the list names each emote");
+        }
+        other => panic!("Expected the emote list, got {other:?}"),
+    }
+    assert!(cheerer_rx.try_recv().is_err());
+    assert!(listener_rx.try_recv().is_err());
+}
+
+/// An unknown title is a typo, not a performance: no pose, no tune, and the
+/// only word about it goes back to whoever typed it.
+#[tokio::test]
+async fn an_unknown_song_title_refuses_the_performance() {
+    let game_state = make_test_game_state("play_music_unknown");
+    let auth = make_test_auth("play_music_unknown");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    hand_a_mandolin(&game_state, "bard").await;
+    let mut bard_rx = game_state.register_direct_channel(&bard_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&bard_id, "/play_music nonesuch".to_string(), &auth)
+        .await;
+
+    assert!(matches!(
+        bard_rx.try_recv(),
+        Ok(ServerMessage::SystemMessage { .. })
+    ));
+    assert!(listener_rx.try_recv().is_err(), "nobody else hears a thing");
+}
+
+/// No instrument, no performance: the empty-handed strummer gets told why,
+/// and nobody else sees a pose or hears a note.
+#[tokio::test]
+async fn play_music_without_an_instrument_is_refused() {
+    let game_state = make_test_game_state("play_music_no_instrument");
+    let auth = make_test_auth("play_music_no_instrument");
+    let bard_id = pid("bard");
+    let listener_id = pid("listener");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("listener", 10.0, 0.0))
+        .await;
+    let mut bard_rx = game_state.register_direct_channel(&bard_id).await;
+    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+
+    game_state
+        .send_chat_message(&bard_id, "/play_music twilight".to_string(), &auth)
+        .await;
+
+    match bard_rx.try_recv() {
+        Ok(ServerMessage::SystemMessage { message }) => {
+            assert!(message.contains("instrument"), "got: {message}")
+        }
+        other => panic!("Expected the refusal, got {other:?}"),
+    }
+    assert!(listener_rx.try_recv().is_err(), "no pose, no tune");
+
+    // An equipped instrument counts too.
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let mut inv = PlayerInventory::default();
+        inv.equipped
+            .insert(EquipSlot::MainHand, bag_item(1, "worn_mandolin", 1));
+        inventories.insert(bard_id, inv);
+    }
+    game_state
+        .send_chat_message(&bard_id, "/play_music twilight".to_string(), &auth)
+        .await;
+    assert!(matches!(
+        listener_rx.try_recv(),
+        Ok(ServerMessage::PlayerInteractionChanged { .. })
+    ));
 }

@@ -18,6 +18,10 @@ export const RANGER_CHARACTER_MODEL_PATH = '/models/characters/ranger.glb'
 export const PRIEST_CHARACTER_MODEL_PATH = '/models/characters/priest.glb'
 export const FEMALE_PRIEST_CHARACTER_MODEL_PATH =
   '/models/characters/female_priest.glb'
+export const FEMALE_BARD_CHARACTER_MODEL_PATH =
+  '/models/characters/female_bard.glb'
+export const NIGHT_MERCHANT_CHARACTER_MODEL_PATH =
+  '/models/characters/night_merchant.glb'
 
 export const CHARACTER_ANIMATION_PACK_PATHS = {
   locomotion: '/models/animations/locomotion.glb',
@@ -64,8 +68,19 @@ const CLASS_GENDER_MODELS: Partial<
     male: PRIEST_CHARACTER_MODEL_PATH,
     female: FEMALE_PRIEST_CHARACTER_MODEL_PATH,
   },
+  bard: { female: FEMALE_BARD_CHARACTER_MODEL_PATH },
   merchant: { female: MERCHANT_CHARACTER_MODEL_PATH },
   guard: { male: GUARD_CHARACTER_MODEL_PATH },
+}
+
+/** Dedicated looks for named official NPCs, overriding the class model.
+ *  Keyed by NPC character name, same as getMerchantByNpcName. */
+const NPC_MODEL_OVERRIDES: Record<string, string> = {
+  Wick: NIGHT_MERCHANT_CHARACTER_MODEL_PATH,
+}
+
+export function getNpcModelPath(npcName: string): string | undefined {
+  return NPC_MODEL_OVERRIDES[npcName]
 }
 
 export function getAvailableGenders(characterClass: CharacterClass): Gender[] {
@@ -84,17 +99,4 @@ export function getCharacterModelPath(
     return Object.values(genders)[0]
   }
   return KNIGHT_CHARACTER_MODEL_PATH
-}
-
-export function getDefaultWeaponModel(
-  characterClass: CharacterClass
-): string | null {
-  switch (characterClass) {
-    case 'merchant':
-      return null
-    case 'guard':
-      return 'weapons/spear.glb'
-    default:
-      return 'weapons/sword.glb'
-  }
 }

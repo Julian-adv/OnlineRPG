@@ -16,6 +16,16 @@ const STARTER_ITEMS: &[(&str, u32, Option<&str>)] = &[
     ("worn_torch", 1, None),
 ];
 
+/// Class additions to the starter kit, under the same no-basePrice rule.
+fn class_starter_items(
+    class: &CharacterClass,
+) -> &'static [(&'static str, u32, Option<&'static str>)] {
+    match class {
+        CharacterClass::Bard => &[("worn_mandolin", 1, None)],
+        _ => &[],
+    }
+}
+
 /// Item defs renamed after release, applied to stored inventories at startup.
 /// (old_id, new_id) — new_id must exist in items.csv.
 const RENAMED_ITEM_IDS: &[(&str, &str)] = &[
@@ -381,6 +391,7 @@ impl AuthService {
         Self::ensure_characters_schema(&conn)?;
         Self::migrate_item_definition_ids(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
+        Self::ensure_friends_schema(&conn)?;
         Self::ensure_bans_schema(&conn)?;
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
@@ -457,6 +468,31 @@ impl AuthService {
             [],
         )?;
 
+        Ok(())
+    }
+
+    /// Friendships, one row per direction. Ids rather than names (unlike
+    /// `character_blocks`): deleting a character must take its friendships
+    /// with it, which both cascades give for free, and a name would leave a
+    /// permanently-offline ghost on every friend's list.
+    fn ensure_friends_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_friends (
+                character_id INTEGER NOT NULL,
+                friend_id INTEGER NOT NULL,
+                PRIMARY KEY (character_id, friend_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+                FOREIGN KEY (friend_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        // The reverse-direction cascade needs it, and so does nothing else:
+        // every read is by `character_id`, which the primary key covers.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_character_friends_friend_id \
+             ON character_friends(friend_id)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -778,20 +814,65 @@ impl AuthService {
         Ok(characters)
     }
 
-    /// Canonical spelling of an existing character name, matched ignoring
+    /// Id and canonical name of an existing character, matched ignoring
     /// ASCII case (the in-memory `match_name` rule in SQL — SQLite NOCASE is
     /// ASCII-only, like `eq_ignore_ascii_case`).
-    pub fn resolve_character_name(&self, name: &str) -> Result<Option<String>, AuthError> {
+    pub fn resolve_character_brief(&self, name: &str) -> Result<Option<(i64, String)>, AuthError> {
         let conn = self.open_connection()?;
         let found = conn
             .query_row(
-                "SELECT character_name FROM characters
+                "SELECT id, character_name FROM characters
                  WHERE character_name = ?1 COLLATE NOCASE",
                 params![name],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
         Ok(found)
+    }
+
+    /// One character's friends as (id, name, level). The join is what makes
+    /// storing ids affordable: offline friends still have a name to show.
+    pub fn load_friends(&self, character_id: i64) -> Result<Vec<(i64, String, u32)>, AuthError> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.character_name, c.level
+             FROM character_friends f
+             JOIN characters c ON c.id = f.friend_id
+             WHERE f.character_id = ?1",
+        )?;
+        let friends = stmt
+            .query_map(params![character_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(friends)
+    }
+
+    /// Both directions in one transaction, so no crash can leave a one-sided
+    /// friendship the callers never expect to see.
+    pub fn add_friend(&self, character_id: i64, friend_id: i64) -> Result<(), AuthError> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        for (a, b) in [(character_id, friend_id), (friend_id, character_id)] {
+            tx.execute(
+                "INSERT OR IGNORE INTO character_friends (character_id, friend_id) \
+                 VALUES (?1, ?2)",
+                params![a, b],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn remove_friend(&self, character_id: i64, friend_id: i64) -> Result<(), AuthError> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "DELETE FROM character_friends \
+             WHERE (character_id = ?1 AND friend_id = ?2) \
+                OR (character_id = ?2 AND friend_id = ?1)",
+            params![character_id, friend_id],
+        )?;
+        Ok(())
     }
 
     pub fn load_blocked_names(&self, character_id: i64) -> Result<Vec<String>, AuthError> {
@@ -1081,12 +1162,21 @@ impl AuthService {
 
         let id = conn.last_insert_rowid();
 
-        {
+        // A registry NPC with an issued loadout skips the starter kit —
+        // otherwise the worn starter sword would occupy main_hand. The gear
+        // itself is granted and worn by `seed_npc_loadout` on every join.
+        let issued = account_name.starts_with(NPC_ACCOUNT_PREFIX)
+            && crate::npc_defs::npc_defs()
+                .get_by_npc_name(character_name)
+                .is_some_and(|def| !def.loadout.is_empty());
+        if !issued {
             let mut stmt = conn.prepare(
                 "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot) \
                  VALUES (?1, ?2, ?3, ?4)",
             )?;
-            for (item_def_id, quantity, equip_slot) in STARTER_ITEMS {
+            for (item_def_id, quantity, equip_slot) in
+                STARTER_ITEMS.iter().chain(class_starter_items(&class))
+            {
                 stmt.execute(params![id, item_def_id, quantity, equip_slot])?;
             }
         }
@@ -1272,6 +1362,90 @@ impl AuthService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bard_starts_with_a_worn_mandolin_on_top_of_the_common_kit() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_bard_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_google("sub-bard").unwrap();
+        let attributes = CharacterAttributes {
+            r#str: 10,
+            dex: 12,
+            con: 10,
+            int: 10,
+            wis: 10,
+            cha: 14,
+            guard: 0,
+        };
+
+        let bard = auth
+            .create_character(
+                &account,
+                "Lark",
+                &attributes,
+                12,
+                CharacterClass::Bard,
+                Gender::Female,
+            )
+            .unwrap();
+        let items = auth.load_inventory(bard.id).unwrap();
+        assert!(items.iter().any(|r| r.item_def_id == "worn_mandolin"));
+        assert!(items.iter().any(|r| r.item_def_id == "worn_iron_sword"));
+
+        let knight = auth
+            .create_character(
+                &account,
+                "Tass",
+                &attributes,
+                16,
+                CharacterClass::Knight,
+                Gender::Male,
+            )
+            .unwrap();
+        let items = auth.load_inventory(knight.id).unwrap();
+        assert!(items.iter().all(|r| r.item_def_id != "worn_mandolin"));
+    }
+
+    #[test]
+    fn a_registry_npc_with_a_loadout_skips_the_starter_kit() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_loadout_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_loadout_test").unwrap();
+        let def = crate::npc_defs::npc_defs().get_by_npc_name("Karl").unwrap();
+        assert!(
+            !def.loadout.is_empty(),
+            "Karl's registry row carries a loadout"
+        );
+        let attributes = CharacterAttributes {
+            r#str: 15,
+            dex: 13,
+            con: 14,
+            int: 9,
+            wis: 11,
+            cha: 10,
+            guard: 11,
+        };
+
+        let karl = auth
+            .create_character(
+                &account,
+                "Karl",
+                &attributes,
+                20,
+                CharacterClass::Guard,
+                Gender::Male,
+            )
+            .unwrap();
+        let items = auth.load_inventory(karl.id).unwrap();
+        assert!(
+            items.is_empty(),
+            "issued gear comes from join-time seeding, not creation: {items:?}"
+        );
+    }
 
     #[test]
     fn npc_login_enforces_prefix_and_google_separation() {

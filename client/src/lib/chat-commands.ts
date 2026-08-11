@@ -60,6 +60,10 @@ const COMMANDS: Record<string, Command> = {
   '/reply': { desc: 'Reply to the last whisper: /reply <message>' },
   '/block': { desc: 'Block whispers from a player: /block <player>' },
   '/unblock': { desc: 'Unblock a player: /unblock <player>' },
+  '/friend': {
+    desc: 'Friends: /friend add <player>, /friend remove <player>, or /friend',
+  },
+  '/f': { desc: 'Short form of /friend: /f add <player>' },
   '/party': { desc: 'Invite a player to your party: /party <player>' },
   '/p': {
     desc: 'Talk to your party and stay in party chat: /p [message]',
@@ -84,7 +88,20 @@ const COMMANDS: Record<string, Command> = {
       if (message) networkManager.sendChatMessage(message)
     },
   },
+  // No client-side handler: the server is the one resolver of song titles
+  // (a fragment or nothing both work), and its PlayerMusicStarted reply is
+  // what starts our emote and music together.
+  '/play_music': {
+    desc: 'Play a tune where you stand (needs an instrument): /play_music [song]',
+  },
+  '/emote': {
+    desc: 'Play an emote where you stand: /emote excited',
+  },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
+  '/spawnmob': {
+    desc: 'Spawn monsters beside you: /spawnmob <type> [count]',
+    admin: true,
+  },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',
     admin: true,

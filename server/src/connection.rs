@@ -163,6 +163,8 @@ struct ConnectionState {
     is_admin: bool,
     /// Last answered positions poll (spam clamp); dies with the connection.
     last_party_positions_poll: Option<Instant>,
+    /// Last answered friend-presence poll (spam clamp).
+    last_friends_online_poll: Option<Instant>,
     /// An `EnvReport` was already logged; later ones are dropped (spam clamp).
     env_reported: bool,
 }
@@ -171,6 +173,22 @@ struct ConnectionState {
 /// data rides the push tick; a client only asks on map open, so this is
 /// purely a spam brake.
 const PARTY_POSITIONS_MIN_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Friend-presence polls inside this window are dropped. The web client polls
+/// every 15s with its panel open and every 60s without; this only bounds what
+/// a rewritten client can ask for.
+const FRIENDS_ONLINE_MIN_INTERVAL: Duration = Duration::from_secs(5);
+
+/// True at most once per clamp window; a clamped poll does not refresh the
+/// window, so spam cannot starve refreshes.
+fn poll_due(last_poll: &mut Option<Instant>, min_interval: Duration) -> bool {
+    let now = Instant::now();
+    if last_poll.is_some_and(|last| now.duration_since(last) < min_interval) {
+        return false;
+    }
+    *last_poll = Some(now);
+    true
+}
 
 impl ConnectionState {
     fn new(client_ip: IpAddr) -> Self {
@@ -191,22 +209,23 @@ impl ConnectionState {
             admin_eligible: false,
             is_admin: false,
             last_party_positions_poll: None,
+            last_friends_online_poll: None,
             env_reported: false,
         }
     }
 
-    /// True at most once per clamp window; a clamped poll does not refresh
-    /// the window, so spam cannot starve refreshes.
     fn party_positions_poll_due(&mut self) -> bool {
-        let now = Instant::now();
-        if self
-            .last_party_positions_poll
-            .is_some_and(|last| now.duration_since(last) < PARTY_POSITIONS_MIN_INTERVAL)
-        {
-            return false;
-        }
-        self.last_party_positions_poll = Some(now);
-        true
+        poll_due(
+            &mut self.last_party_positions_poll,
+            PARTY_POSITIONS_MIN_INTERVAL,
+        )
+    }
+
+    fn friends_online_poll_due(&mut self) -> bool {
+        poll_due(
+            &mut self.last_friends_online_poll,
+            FRIENDS_ONLINE_MIN_INTERVAL,
+        )
     }
 
     fn require_auth(&self, action: &str) -> Result<String, Vec<ServerMessage>> {
@@ -1066,10 +1085,21 @@ async fn handle_client_message(
                 );
                 return Ok(vec![]);
             }
-            match auth_service.load_blocked_names(character_id) {
-                Ok(blocked) => game_state.set_player_blocks(&id, blocked).await,
+            let auth = Arc::clone(auth_service);
+            match crate::game_state::auth_db(move || {
+                Ok((
+                    auth.load_blocked_names(character_id)?,
+                    auth.load_friends(character_id)?,
+                ))
+            })
+            .await
+            {
+                Ok((blocked, friends)) => {
+                    game_state.set_player_blocks(&id, blocked).await;
+                    game_state.set_player_friends(&id, friends).await;
+                }
                 Err(err) => warn!(
-                    "Failed to load block list for character {}: {}",
+                    "Failed to load block/friend lists for character {}: {}",
                     character_id, err
                 ),
             }
@@ -1083,6 +1113,10 @@ async fn handle_client_message(
             game_state
                 .load_player_inventory(&id, character_id, auth_service)
                 .await;
+            if state.is_official_npc {
+                game_state.seed_npc_loadout(&id, &player.name).await;
+                game_state.seed_npc_keepsakes(&id, &player.name).await;
+            }
 
             // Missing rows = never trained.
             let skills = crate::game_state::skills_from_rows(&skill_rows);
@@ -1143,9 +1177,11 @@ async fn handle_client_message(
 
             let rejoin_floor = player.floor_level;
             let rejoin_pos = player.position;
-            if let Some(game_state_msg) = game_state.add_player(player).await {
-                responses.push(game_state_msg);
-            }
+            responses.extend(game_state.add_player(player).await);
+
+            // After the snapshot on purpose: the client treats `GameState` as
+            // the start of a session and clears its friend stores there.
+            responses.push(game_state.friend_list_message(&id).await);
             if rejoin_floor < 0 {
                 // Rejoining inside a dungeon: enter its floor (occupancy
                 // + lazy monster spawn with this player as AI owner).
@@ -1625,9 +1661,48 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PartyKick { target_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.kick_from_party(id, &target_id).await;
+            }
+        }
+
+        ClientMessage::PartyPromote { target_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.promote_party_leader(id, &target_id).await;
+            }
+        }
+
         ClientMessage::PartyChat { message } => {
             if let Some(id) = &state.player_id {
                 game_state.send_party_chat(id, message).await;
+            }
+        }
+
+        ClientMessage::FriendRespond {
+            requester_id,
+            accept,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .respond_to_friend_request(id, &requester_id, accept, auth_service)
+                    .await;
+            }
+        }
+
+        ClientMessage::FriendRemove { name } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .remove_friend_by_name(id, &name, auth_service)
+                    .await;
+            }
+        }
+
+        ClientMessage::RequestFriendsOnline => {
+            if let Some(id) = state.player_id {
+                if state.friends_online_poll_due() {
+                    game_state.send_friends_online(&id).await;
+                }
             }
         }
 
@@ -1725,6 +1800,12 @@ async fn handle_client_message(
         ClientMessage::OpenTrade { target_player_id } => {
             if let Some(id) = &state.player_id {
                 game_state.open_trade(id, &target_player_id).await;
+            }
+        }
+
+        ClientMessage::DeclineTrade { merchant_player_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.decline_trade(id, &merchant_player_id).await;
             }
         }
 
@@ -1956,6 +2037,7 @@ mod tests {
             "/unmute Abuser",
             "/summon Abuser",
             "/goto Abuser",
+            "/spawnmob kobold",
         ] {
             assert!(
                 requires_admin(&ClientMessage::ChatMessage {

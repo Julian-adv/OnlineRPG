@@ -85,6 +85,8 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 1. `glb-editor`에서 `본 이름 표준화` 버튼을 눌러 본 이름을 정리한다.
 2. `애니메이션 추출` 버튼을 눌러 애니메이션을 추출한다.
 3. 추출한 클립을 애니메이션 팩 중 하나(`locomotion`, `combat_melee`, `social`, `offhand`)에 넣는다.
+   - `export_animations.py`로 팩을 통째로 다시 뽑지 말 것. `all_animation.blend`에는 이미 배포된 클립 일부(`pickup`, `slash*`, `attack*`, `torch_walk` 등)가 없어서 그대로 export하면 사라진다.
+   - 스크립트로 넣으려면 `python tools/graft-glb-clip.py 팩.glb 도너.glb 클립이름 출력.glb`. 기존 클립과 스켈레톤을 바이트 단위로 보존한다. 팩을 Blender로 열었다 다시 내보내는 방식은 클립당 1프레임이 깎이고, 씬 fps가 다르면(팩은 24fps로 임포트되는데 Mixamo FBX가 30fps로 바꿔놓는다) 기존 클립 길이가 전부 어긋난다.
 4. 클립 이름을 `AnimationName`에 추가
 5. `AnimationIndex` 동기화
 6. 필요한 경우 `selectOrderedCharacterAnimations` 우선순위 반영

@@ -1,0 +1,18 @@
+{
+  "schedule": [
+    {
+      "at": "night",
+      "pos": [-1472.0, 0.9, 4746.0],
+      "rotation": -41.9,
+      "floor_level": 0,
+      "label": "night stall on the Aldermark road"
+    },
+    {
+      "at": "day",
+      "pos": [-1527.0, 0.7, 4756.0],
+      "rotation": 0.0,
+      "floor_level": 0,
+      "label": "off duty at the west edge of town"
+    }
+  ]
+}

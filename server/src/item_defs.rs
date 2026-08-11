@@ -1,7 +1,7 @@
 use onlinerpg_shared::inventory::EquipSlot;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::info;
 
 /// Chest roll chance for items whose home tier is below the dungeon's
@@ -111,6 +111,11 @@ impl ItemDefinition {
         self.category.as_deref() == Some("fish")
     }
 
+    /// What `/play_music` requires the performer to carry.
+    pub fn is_instrument(&self) -> bool {
+        self.category.as_deref() == Some("instrument")
+    }
+
     /// A catch that lands in the bag sealed and pays out coins when opened
     /// (`use_item`). Its `dice` column is the copper roll (the
     /// category-decides-meaning pattern: weapon → damage, potion → heal,
@@ -173,6 +178,12 @@ pub struct ItemDefs {
     /// Precomputed at load — defs are immutable, and bites roll every ~5-12 s
     /// per angler.
     catch_table: Arc<Vec<crate::game_state::fishing::CatchCandidate>>,
+}
+
+/// Process-wide shared instance; `load()` remains for isolated tests.
+pub fn item_defs() -> &'static ItemDefs {
+    static DEFS: OnceLock<ItemDefs> = OnceLock::new();
+    DEFS.get_or_init(ItemDefs::load)
 }
 
 impl ItemDefs {

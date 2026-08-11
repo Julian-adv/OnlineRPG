@@ -1,9 +1,10 @@
-use std::collections::HashMap;
-
 use crate::merchant_defs::{merchant_defs, MerchantDefinition};
 use crate::npc_defs::{npc_defs, NpcDefinition};
 use crate::types::{PlayerId, ServerMessage};
-use onlinerpg_shared::messages::{BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem};
+use onlinerpg_shared::inventory::ItemInstance;
+use onlinerpg_shared::messages::{
+    ActiveDeal, BagLineItem, BuybackEntry, DealKind, StockEntry, TradeLineItem,
+};
 use tracing::info;
 
 use super::combat::reachable_dist_sq;
@@ -38,10 +39,10 @@ const SHOP_HOLD_TICKS: u8 = 4;
 /// catalog with unlimited stock and an effectively unlimited wallet;
 /// residents (non-merchants) buy only their wishlist from a finite,
 /// salary-funded wallet and sell from their real inventory.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub(crate) enum TraderDef {
-    Merchant(MerchantDefinition),
-    Resident(NpcDefinition),
+    Merchant(&'static MerchantDefinition),
+    Resident(&'static NpcDefinition),
 }
 
 impl TraderDef {
@@ -78,6 +79,9 @@ impl TraderDef {
                     DealKind::Buy if r.wants(item_def_id) => {
                         Err("you do not resell your wishlist items")
                     }
+                    DealKind::Buy if r.in_loadout(item_def_id) => {
+                        Err("you never sell your issued gear")
+                    }
                     _ => Ok((r.wishlist_rate_percent, resident_half_band_pct(cha))),
                 }
             }
@@ -97,11 +101,11 @@ fn live_entries(list: &[StoredBuyback], now_ms: u64) -> Vec<BuybackEntry> {
 /// Look up how an NPC (by character name) trades, if at all.
 pub(crate) fn trader_def_by_name(npc_name: &str) -> Option<TraderDef> {
     if let Some(def) = merchant_defs().get_by_npc_name(npc_name) {
-        return Some(TraderDef::Merchant(def.clone()));
+        return Some(TraderDef::Merchant(def));
     }
     npc_defs()
         .get_trader_by_npc_name(npc_name)
-        .map(|def| TraderDef::Resident(def.clone()))
+        .map(TraderDef::Resident)
 }
 
 impl super::GameState {
@@ -192,7 +196,24 @@ impl super::GameState {
             return Err("Too far away to trade");
         }
 
+        // Checked after range so sleep state can't be probed from afar.
+        if self.is_npc_asleep(&npc.name) {
+            return Err("The trader is asleep");
+        }
+
         Ok(def)
+    }
+
+    /// The registry definition behind an official-NPC player, or None for a
+    /// player. Selling or dropping issued loadout gear is refused for NPCs —
+    /// join-time seeding would mint a fresh copy, making it an item faucet.
+    pub(super) async fn official_npc_def(
+        &self,
+        player_id: &PlayerId,
+    ) -> Option<&'static NpcDefinition> {
+        let players = self.players.read().await;
+        let npc = players.get(player_id).filter(|p| p.is_official_npc)?;
+        npc_defs().get_by_npc_name(&npc.name)
     }
 
     /// `register` records this player as actively shopping with the NPC so it
@@ -220,14 +241,16 @@ impl super::GameState {
                 stock: Vec::new(),
                 buyback: self.buyback_list(player_id, &def.npc_name).await,
             },
+            // `stock` is written first: it borrows `active_deals`, which the
+            // literal then moves.
             TraderDef::Resident(def) => ServerMessage::ShopState {
+                stock: self.resident_stock(npc_player_id, def, &active_deals).await,
                 merchant_player_id: *npc_player_id,
                 merchant_name: def.npc_name.clone(),
                 catalog: Vec::new(),
                 sell_rate_percent: def.wishlist_rate_percent,
                 active_deals,
                 wishlist: def.wishlist.clone(),
-                stock: self.resident_stock(npc_player_id, &def).await,
                 buyback: Vec::new(),
             },
         };
@@ -260,20 +283,51 @@ impl super::GameState {
                         Some(d) if d > MAX_TRADE_DISTANCE * MAX_TRADE_DISTANCE => {
                             Err("the player is too far away to trade — ask them to come closer")
                         }
-                        Some(_) => Ok(()),
+                        Some(_) => Ok(npc.name.clone()),
                     }
                 }
                 (None, _) => return,
             }
         };
-        if let Err(reason) = valid {
-            return self.send_trade_error(npc_player_id, reason).await;
+        let npc_name = match valid {
+            Ok(name) => name,
+            Err(reason) => return self.send_trade_error(npc_player_id, reason).await,
+        };
+        // open_shop's re-validation reports to the *target*; check sleep here
+        // so the refusal reaches the NPC that pushed the window.
+        if self.is_npc_asleep(&npc_name) {
+            return self
+                .send_trade_error(npc_player_id, "you cannot trade while asleep")
+                .await;
         }
         // open_shop re-validates with the roles in their normal order and
         // sends ShopState + GoldUpdate to the target player. Don't register
         // the NPC as busy yet: the player only sees an offer toast and the
         // real window (with its own OpenShop) registers it on accept.
         self.open_shop(target_player_id, npc_player_id, false).await;
+    }
+
+    /// The player waved off an NPC-pushed trade window ("Not now", or the
+    /// offer toast expired). Relay to the NPC so its agent lets trading
+    /// rest with them. Light validation only: a spurious decline merely
+    /// quiets the NPC toward that player, which is the player's
+    /// prerogative anyway.
+    pub async fn decline_trade(&self, player_id: &PlayerId, merchant_player_id: &PlayerId) {
+        let player_name = {
+            let players = self.players.read().await;
+            match (players.get(player_id), players.get(merchant_player_id)) {
+                (Some(p), Some(m)) if m.is_official_npc && !p.is_official_npc => p.name.clone(),
+                _ => return,
+            }
+        };
+        self.send_direct_message(
+            merchant_player_id,
+            ServerMessage::TradeDeclined {
+                player_id: *player_id,
+                player_name,
+            },
+        )
+        .await;
     }
 
     /// Record that `player_id` opened `merchant_id`'s trade window. When this
@@ -374,19 +428,29 @@ impl super::GameState {
     /// A resident's purchasable stock: priced bag items that are not on its
     /// wishlist. Wishlist purchases are kept (never resold) so the
     /// buy/sell item sets stay disjoint — no money pump is possible even
-    /// though the wishlist rate exceeds the sale price.
+    /// though the wishlist rate exceeds the sale price. Keepsakes appear
+    /// only to a player holding a live buy deal the NPC offered on them.
     async fn resident_stock(
         &self,
         npc_player_id: &PlayerId,
         def: &NpcDefinition,
+        active_deals: &[ActiveDeal],
     ) -> Vec<StockEntry> {
         let inventories = self.inventories.read().await;
         let Some(inv) = inventories.get(npc_player_id) else {
             return Vec::new();
         };
+        let offered = |item_def_id: &str| {
+            active_deals
+                .iter()
+                .any(|d| d.kind == DealKind::Buy && d.item_def_id == item_def_id)
+        };
         let mut stock: Vec<StockEntry> = Vec::new();
         for item in &inv.bag {
-            if def.wants(&item.item_def_id) {
+            if def.refuses_to_sell(&item.item_def_id) {
+                continue;
+            }
+            if def.keeps(&item.item_def_id) && !offered(&item.item_def_id) {
                 continue;
             }
             if self
@@ -409,6 +473,83 @@ impl super::GameState {
             }
         }
         stock
+    }
+
+    /// Refill an official NPC's keepsakes on join. Idempotent per session —
+    /// an item already in the bag (or worn) is not granted again — so a sold
+    /// keepsake only returns with the next join, and the NPC has one to
+    /// offer again.
+    pub async fn seed_npc_keepsakes(&self, npc_player_id: &PlayerId, npc_name: &str) {
+        let Some(def) = npc_defs().get_trader_by_npc_name(npc_name) else {
+            return;
+        };
+        self.seed_npc_items(npc_player_id, &def.keepsakes, false)
+            .await;
+    }
+
+    /// Grant an official NPC's registry loadout on join: missing items are
+    /// created and worn (free slots first, bag otherwise). Also covers a
+    /// fresh character's first join — creation writes no loadout rows.
+    pub async fn seed_npc_loadout(&self, npc_player_id: &PlayerId, npc_name: &str) {
+        let Some(def) = npc_defs().get_by_npc_name(npc_name) else {
+            return;
+        };
+        self.seed_npc_items(npc_player_id, &def.loadout, true).await;
+    }
+
+    /// Grant whichever of `wanted` the NPC no longer carries, worn or
+    /// bagged. `wear` puts an item into its free equip slot (loadout);
+    /// otherwise everything lands in the bag (keepsakes).
+    async fn seed_npc_items(&self, npc_player_id: &PlayerId, wanted: &[String], wear: bool) {
+        let missing: Vec<&String> = {
+            let inventories = self.inventories.read().await;
+            let Some(inv) = inventories.get(npc_player_id) else {
+                return;
+            };
+            wanted.iter().filter(|id| !inv.has_item(id)).collect()
+        };
+        if missing.is_empty() {
+            return;
+        }
+        let mut next_id = self.reserve_instance_ids(missing.len() as u64).await;
+        {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(npc_player_id) else {
+                return;
+            };
+            for item_def_id in missing {
+                let free_slot = if wear {
+                    self.item_defs
+                        .get(item_def_id)
+                        .and_then(|d| d.equip_slot)
+                        .filter(|slot| !inv.equipped.contains_key(slot))
+                } else {
+                    None
+                };
+                match free_slot {
+                    Some(slot) => {
+                        inv.equipped.insert(
+                            slot,
+                            ItemInstance {
+                                instance_id: next_id,
+                                item_def_id: item_def_id.clone(),
+                                quantity: 1,
+                                enchant: 0,
+                            },
+                        );
+                        next_id += 1;
+                    }
+                    None => {
+                        let stackable = self.item_defs.stackable(item_def_id);
+                        next_id += stack_into_bag(
+                            &mut inv.bag,
+                            BagInsert::one(stackable, item_def_id, 0, next_id),
+                        );
+                    }
+                }
+            }
+        }
+        self.mark_inventory_dirty(npc_player_id).await;
     }
 
     /// Buy one unit of `item_def_id` from a trading NPC. Merchants create
@@ -434,8 +575,7 @@ impl super::GameState {
                 }
             }
             TraderDef::Resident(r) => {
-                if r.wants(item_def_id) {
-                    // Wishlist purchases are kept; see `resident_stock`.
+                if r.refuses_to_sell(item_def_id) {
                     return self
                         .send_trade_error(player_id, "They won't part with that")
                         .await;
@@ -455,11 +595,18 @@ impl super::GameState {
 
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
+        let is_keepsake = matches!(&def, TraderDef::Resident(r) if r.keeps(item_def_id));
 
         // Single-use haggled modifier; must be restored if the buy fails.
         let deal = self
             .take_deal(player_id, &npc_name, item_def_id, DealKind::Buy)
             .await;
+        // A keepsake sells only through the deal the NPC personally offered.
+        if is_keepsake && deal.is_none() {
+            return self
+                .send_trade_error(player_id, "They won't part with that")
+                .await;
+        }
         let price = buy_price(base_price, deal.as_ref().map_or(0, |d| d.modifier_pct));
 
         let item_weight = self.item_defs.weight(item_def_id);
@@ -622,7 +769,7 @@ impl super::GameState {
         &self,
         player_id: &PlayerId,
         npc_player_id: &PlayerId,
-        items: Vec<TradeLineItem>,
+        mut items: Vec<TradeLineItem>,
     ) {
         if items.is_empty() {
             return;
@@ -630,6 +777,19 @@ impl super::GameState {
         let def = match self.validate_trader(player_id, npc_player_id).await {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
+        };
+        items.retain(|i| i.qty > 0);
+        if items.is_empty() {
+            return;
+        }
+        let Some(quantities) = super::checked_batch_quantities(
+            items
+                .iter()
+                .map(|item| (item.item_def_id.as_str(), item.qty)),
+        ) else {
+            return self
+                .send_trade_error(player_id, "Invalid batch quantity")
+                .await;
         };
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
@@ -650,9 +810,6 @@ impl super::GameState {
 
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
         for req in &items {
-            if req.qty == 0 {
-                continue;
-            }
             match &def {
                 TraderDef::Merchant(m) => {
                     if !m.sells(&req.item_def_id) {
@@ -662,9 +819,15 @@ impl super::GameState {
                     }
                 }
                 TraderDef::Resident(r) => {
-                    if r.wants(&req.item_def_id) {
+                    if r.refuses_to_sell(&req.item_def_id) {
                         return self
                             .send_trade_error(player_id, "They won't part with that")
+                            .await;
+                    }
+                    // One personal offer covers one unit.
+                    if r.keeps(&req.item_def_id) && req.qty > 1 {
+                        return self
+                            .send_trade_error(player_id, "They will only part with one")
                             .await;
                     }
                 }
@@ -686,10 +849,6 @@ impl super::GameState {
                 price: 0,
             });
         }
-        if plans.is_empty() {
-            return;
-        }
-
         // One id per unit, reserved before the locks rather than one counter
         // acquisition per unit under them. An aborted batch skips the range.
         let mut next_id = self
@@ -714,11 +873,7 @@ impl super::GameState {
                     .send_trade_error(player_id, "They have nothing to sell")
                     .await;
             };
-            let mut requested: HashMap<&str, u32> = HashMap::new();
-            for plan in &plans {
-                *requested.entry(plan.item_def_id.as_str()).or_default() += plan.qty;
-            }
-            for (item_def_id, qty) in requested {
+            for (item_def_id, qty) in quantities {
                 let available: u32 = npc_inv
                     .bag
                     .iter()
@@ -762,8 +917,20 @@ impl super::GameState {
             total_price += price;
         }
 
+        // Post-pricing refusals share one restore-the-taken-deals bail-out.
+        // A keepsake sells only through the deal the NPC personally offered.
         let gold = gold_map.get(player_id).copied().unwrap_or(0);
-        if gold < total_price {
+        let refusal = if matches!(&def, TraderDef::Resident(r) if plans
+            .iter()
+            .any(|p| r.keeps(&p.item_def_id) && p.deal_taken.is_none()))
+        {
+            Some("They won't part with that")
+        } else if gold < total_price {
+            Some("Not enough gold")
+        } else {
+            None
+        };
+        if let Some(message) = refusal {
             let restore: Vec<(&str, DealEntry)> = plans
                 .iter()
                 .filter_map(|p| Some((p.item_def_id.as_str(), p.deal_taken.clone()?)))
@@ -772,7 +939,7 @@ impl super::GameState {
                 .await;
             drop(inventories);
             drop(gold_map);
-            return self.send_trade_error(player_id, "Not enough gold").await;
+            return self.send_trade_error(player_id, message).await;
         }
 
         // Every line is now guaranteed to apply cleanly — mutate. Resident
@@ -928,6 +1095,13 @@ impl super::GameState {
             };
             item.item_def_id.clone()
         };
+        if let Some(seller) = self.official_npc_def(player_id).await {
+            if seller.in_loadout(&item_def_id) {
+                return self
+                    .send_trade_error(player_id, "You never sell your issued gear")
+                    .await;
+            }
+        }
         let Some(base_price) = self
             .item_defs
             .get(&item_def_id)
@@ -1163,7 +1337,7 @@ impl super::GameState {
         &self,
         player_id: &PlayerId,
         npc_player_id: &PlayerId,
-        items: Vec<BagLineItem>,
+        mut items: Vec<BagLineItem>,
     ) {
         if items.is_empty() {
             return;
@@ -1171,6 +1345,19 @@ impl super::GameState {
         let def = match self.validate_trader(player_id, npc_player_id).await {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
+        };
+        // After the trader check, so an all-zero request to a bad trader
+        // still gets that error rather than silence.
+        items.retain(|i| i.qty > 0);
+        if items.is_empty() {
+            return;
+        }
+        let Some(quantities) =
+            super::checked_batch_quantities(items.iter().map(|item| (item.instance_id, item.qty)))
+        else {
+            return self
+                .send_trade_error(player_id, "Invalid batch quantity")
+                .await;
         };
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
@@ -1189,12 +1376,7 @@ impl super::GameState {
             payout: i64,
         }
 
-        // Drop no-op lines before the locks: the plan loop below runs under
-        // both write locks, so a client's padding must not reach it.
-        let items: Vec<BagLineItem> = items.into_iter().filter(|i| i.qty > 0).collect();
-        if items.is_empty() {
-            return;
-        }
+        let seller_def = self.official_npc_def(player_id).await;
 
         // One id per unit, reserved before the locks: a resident's received
         // units draw from it, a merchant's buyback entries do.
@@ -1217,7 +1399,6 @@ impl super::GameState {
             return self.send_trade_error(player_id, "Player not found").await;
         }
 
-        let mut reserved: HashMap<u64, u32> = HashMap::new();
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
         for req in &items {
             let Some(item) = inventories
@@ -1230,18 +1411,22 @@ impl super::GameState {
                     .send_trade_error(player_id, "Item not found in bag")
                     .await;
             };
-            let already_reserved = *reserved.get(&req.instance_id).unwrap_or(&0);
-            if already_reserved + req.qty > item.quantity {
+            if quantities[&req.instance_id] > item.quantity {
                 drop(inventories);
                 drop(gold_map);
                 return self
                     .send_trade_error(player_id, "Not enough of that item")
                     .await;
             }
-            reserved.insert(req.instance_id, already_reserved + req.qty);
-
             let item_def_id = item.item_def_id.clone();
             let enchant = item.enchant;
+            if seller_def.is_some_and(|seller| seller.in_loadout(&item_def_id)) {
+                drop(inventories);
+                drop(gold_map);
+                return self
+                    .send_trade_error(player_id, "You never sell your issued gear")
+                    .await;
+            }
             let Some(base_price) = self.item_defs.get(&item_def_id).and_then(|d| d.base_price)
             else {
                 drop(inventories);

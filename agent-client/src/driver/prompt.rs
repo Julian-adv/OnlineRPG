@@ -5,8 +5,8 @@
 
 use onlinerpg_shared::{PlayerId, ServerMessage};
 
-use crate::orchestrator::ScheduleEntry;
 use crate::state::{SharedState, NPC_SIGHT_RADIUS};
+use onlinerpg_shared::schedule::ScheduleEntry;
 
 fn within_event_range(state: &SharedState, x: f32, z: f32) -> bool {
     let Some(self_p) = state.self_player.as_ref() else {
@@ -33,19 +33,34 @@ fn monster_within_event_range(state: &SharedState, monster_id: &str) -> bool {
     within_event_range(state, m.position.x, m.position.z)
 }
 
-/// Build a prompt string from current state and events.
+/// Build a prompt string from current state and events. `memory` is the
+/// tail of the NPC's memory file, re-read per prompt so notes written this
+/// session reach a stateless backend without a restart; `terrain_grid` is
+/// the surface map a `TerrainGridJob` rendered outside the state lock.
 pub(super) fn build_prompt(
     state: &SharedState,
     events: &[ServerMessage],
     agent_events: &[String],
     schedule: &[ScheduleEntry],
     active_schedule_idx: Option<usize>,
+    memory: Option<&str>,
+    terrain_grid: Option<&str>,
 ) -> String {
     let mut prompt = String::new();
 
     prompt.push_str("=== CURRENT STATE ===\n");
     prompt.push_str(&state.format_world_state());
     prompt.push('\n');
+    if let Some(grid) = terrain_grid {
+        prompt.push_str(grid.trim_end());
+        prompt.push('\n');
+    }
+
+    if let Some(memory) = memory {
+        prompt.push_str("\n=== YOUR MEMORIES (notes you wrote in past turns) ===\n");
+        prompt.push_str(memory);
+        prompt.push('\n');
+    }
 
     // A customer is mid-trade: stay put and keep helping them. Movement is
     // suppressed server-side regardless, but telling the LLM keeps its
@@ -65,30 +80,41 @@ pub(super) fn build_prompt(
         );
     }
 
-    // Resident-trader wishlist, rebuilt every turn from the live bag:
-    // owned items drop out, and a fully satisfied wishlist removes the
-    // section (and with it the urge to trade) entirely. It is also
-    // suppressed for a cooldown after each successful purchase, and
-    // whenever no human player is in sight — only players can sell to the
-    // NPC, so without one around the desire would only produce futile
-    // NPC-to-NPC pestering.
+    // Resident-trader Personal Trading section, rebuilt every turn from
+    // the live bag and the favor ledger. It needs a regular in sight —
+    // favor past the trade threshold, outside the decline cooldown — and
+    // its buy-list half additionally sits out the post-purchase
+    // satiation. Strangers hear small talk and cost no section tokens.
     let satiated = state
         .trade_satiated_until
         .is_some_and(|until| std::time::Instant::now() < until);
-    if !satiated && state.has_nearby_human_players() {
-        if let Some(p) = state.self_player.as_ref() {
-            if let Some(section) =
-                crate::shop_info::resident_trade_prompt_for(&p.name, &state.self_bag)
-            {
-                prompt.push('\n');
-                prompt.push_str(&section);
-            }
+    if let Some(p) = state.self_player.as_ref() {
+        let audience = state.trade_worthy_players();
+        if let Some(section) = crate::shop_info::resident_trade_prompt_for(
+            &p.name,
+            &state.self_bag,
+            !satiated,
+            &audience,
+        ) {
+            prompt.push('\n');
+            prompt.push_str(&section);
         }
     }
 
     if let Some(ctx) = format_schedule_context(schedule, active_schedule_idx) {
         prompt.push_str(&ctx);
         prompt.push('\n');
+    }
+
+    if !state.chat_history().is_empty() {
+        prompt.push_str(
+            "\n=== RECENT CONVERSATION (context only — you already handled \
+             these lines; never answer them again) ===\n",
+        );
+        for line in state.chat_history() {
+            prompt.push_str(line);
+            prompt.push('\n');
+        }
     }
 
     let has_server_events = events.iter().any(|e| format_event(state, e).is_some());
@@ -108,6 +134,29 @@ pub(super) fn build_prompt(
 
     prompt.push_str("\nWhat do you do?");
     prompt
+}
+
+/// Fold a drained event batch into the rolling conversation history:
+/// what people said and what music started, nothing transient. Runs on
+/// every drain — including the ones whose prompt is skipped — so a waking
+/// NPC still knows what it heard.
+pub(super) fn record_conversation(state: &mut SharedState, events: &[ServerMessage]) {
+    let lines: Vec<String> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                ServerMessage::ChatMessage { .. }
+                    | ServerMessage::WhisperMessage { .. }
+                    | ServerMessage::PartyChatMessage { .. }
+                    | ServerMessage::PlayerMusicStarted { .. }
+            )
+        })
+        .filter_map(|e| format_event(state, e))
+        .collect();
+    for line in lines {
+        state.push_chat_history(&line);
+    }
 }
 
 /// Format a server event as a human-readable line for LLM prompts.
@@ -155,8 +204,13 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             if !player_within_event_range(state, player_id) {
                 return None;
             }
+            let is_npc = state
+                .nearby_players
+                .get(player_id)
+                .is_some_and(|p| p.is_official_npc);
+            let tag = if is_npc { "[NpcChat]" } else { "[Chat]" };
             Some(format!(
-                "[Chat] {}: {message}",
+                "{tag} {}: {message}",
                 player_name(state, player_id)
             ))
         }
@@ -191,10 +245,15 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             } else {
                 player_name(state, player_id)
             };
-            Some(format!(
-                "[Chest] {who} opened the treasure chest: {} + {gold} gold.",
-                item_def_ids.join(", ")
-            ))
+            let tail = if item_def_ids.is_empty() && *gold == 0 {
+                "it was empty (it refills at nightfall).".to_string()
+            } else {
+                format!(
+                    "{} burst out onto the ground nearby; the gold ({gold}) went to the opener.",
+                    item_def_ids.join(", ")
+                )
+            };
+            Some(format!("[Chest] {who} opened the treasure chest — {tail}"))
         }
         ServerMessage::DungeonPropBroken { depth, prop_id, .. } => Some(format!(
             "[Prop] Prop {prop_id} on floor {depth} was smashed — its cell is now walkable."
@@ -231,6 +290,21 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                  \"merchant\": \"{who}\"}}.",
                 list.join(", ")
             ))
+        }
+        ServerMessage::PlayerMusicStarted {
+            player_id, track, ..
+        } => {
+            if !player_within_event_range(state, player_id) {
+                return None;
+            }
+            let who = if state.self_player_id.as_ref() == Some(player_id) {
+                "You".to_string()
+            } else {
+                player_name(state, player_id)
+            };
+            // Everyone in earshot hears the same tune; it plays until the
+            // performer moves or the track runs out.
+            Some(format!("[PlayMusic] {who} started playing \"{track}\"."))
         }
         ServerMessage::PlayerJoined { player } => {
             if !within_event_range(state, player.position.x, player.position.z) {
@@ -430,6 +504,11 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             crate::shop_info::format_price(*npc_gold),
         )),
         ServerMessage::TradeError { message } => Some(format!("[TradeError] {message}")),
+        ServerMessage::TradeDeclined { player_name, .. } => Some(format!(
+            "[TradeDeclined] {player_name} waved off your trade window — let \
+             trading rest with them for a good while and just talk. Trade \
+             pushes at them are blocked meanwhile."
+        )),
         ServerMessage::PartyInviteReceived { inviter_name, .. } => Some(format!(
             "[PartyInvite] {inviter_name} invited you to their party. Accept with \
              {{\"type\":\"party_accept\"}} or decline with party_decline."
@@ -531,68 +610,7 @@ fn caught_line(item_def_id: &str, size_cm: u16, trophy: bool) -> String {
 /// Resolve a player_id to a display name using SharedState.
 /// Falls back to the raw ID if the player is not found.
 pub(super) fn player_name(state: &SharedState, player_id: &PlayerId) -> String {
-    if state.self_player_id.as_ref() == Some(player_id) {
-        if let Some(ref p) = state.self_player {
-            return p.name.clone();
-        }
-    }
-    if let Some(p) = state.nearby_players.get(player_id) {
-        return p.name.clone();
-    }
-    player_id.to_string()
-}
-
-/// Resolve which schedule entry is currently active based on game time.
-/// Returns `(entry_index, game_hour)` — the hour component ensures recurring
-/// entries re-trigger each hour even though the index stays the same.
-/// Conditions are pre-validated at load time via `ScheduleEntry::parse_condition`.
-pub(super) fn resolve_active_schedule(
-    schedule: &[ScheduleEntry],
-    is_night: Option<bool>,
-    game_hour: Option<u32>,
-    game_minute: Option<u32>,
-) -> (Option<usize>, Option<u32>) {
-    use crate::orchestrator::ScheduleCondition;
-
-    let mut best: Option<usize> = None;
-
-    for (i, entry) in schedule.iter().enumerate() {
-        let condition = match entry.condition.as_ref() {
-            Some(c) => c,
-            None => continue,
-        };
-        let matched = match condition {
-            ScheduleCondition::Day => is_night == Some(false),
-            ScheduleCondition::Night => is_night == Some(true),
-            ScheduleCondition::Time {
-                hour: eh,
-                minute: em,
-            } => match (game_hour, game_minute) {
-                (Some(gh), Some(gm)) => gh * 60 + gm >= eh * 60 + em,
-                _ => false,
-            },
-            ScheduleCondition::Recurring { minute: em } => match (game_hour, game_minute) {
-                (Some(_), Some(gm)) => gm >= *em,
-                _ => false,
-            },
-        };
-
-        if matched {
-            best = Some(i);
-        }
-    }
-
-    let hour_for_recurring = best.and_then(|i| {
-        if matches!(
-            schedule[i].condition,
-            Some(ScheduleCondition::Recurring { .. })
-        ) {
-            game_hour
-        } else {
-            None
-        }
-    });
-    (best, hour_for_recurring)
+    state.player_display_name(player_id)
 }
 
 /// Format current schedule context for inclusion in LLM prompts.
@@ -616,7 +634,90 @@ fn format_schedule_context(
 
 #[cfg(test)]
 mod tests {
-    use super::caught_line;
+    use super::{build_prompt, caught_line, format_event, record_conversation};
+    use crate::state::tests::{test_player, test_state};
+    use crate::state::NPC_SIGHT_RADIUS;
+    use onlinerpg_shared::{PlayerId, ServerMessage};
+
+    /// Drained conversation returns as RECENT CONVERSATION in the next
+    /// prompt — replayed as context, while transient events (a death, a
+    /// move) stay out of it. Memory notes render under YOUR MEMORIES.
+    #[test]
+    fn drained_chat_returns_as_history() {
+        let (mut state, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        state.self_player_id = Some(me.id);
+        state.self_player = Some(me);
+
+        let mut jake = test_player(2.0, 0.0);
+        jake.id = PlayerId::from(2);
+        jake.name = "jake1".to_string();
+        state.nearby_players.insert(jake.id, jake);
+
+        let heard = vec![
+            ServerMessage::ChatMessage {
+                player_id: PlayerId::from(2),
+                message: "first song please".to_string(),
+            },
+            ServerMessage::PlayerDead {
+                player_id: PlayerId::from(2),
+            },
+        ];
+        record_conversation(&mut state, &heard);
+
+        let prompt = build_prompt(&state, &[], &[], &[], None, None, None);
+        assert!(prompt.contains("RECENT CONVERSATION"), "{prompt}");
+        assert!(
+            prompt.contains("[Chat] jake1: first song please"),
+            "{prompt}"
+        );
+        assert!(
+            !prompt.contains("[PlayerDead]"),
+            "combat noise is not conversation: {prompt}"
+        );
+        assert!(
+            !prompt.contains("=== YOUR MEMORIES"),
+            "no memories, no section: {prompt}"
+        );
+
+        let prompt = build_prompt(&state, &[], &[], &[], None, Some("jake1 tips well"), None);
+        assert!(prompt.contains("=== YOUR MEMORIES"), "{prompt}");
+        assert!(prompt.contains("jake1 tips well"), "{prompt}");
+    }
+
+    /// A tune someone strikes up nearby is worth a prompt line — the title is
+    /// what makes it something an NPC can talk about. Out of earshot it is
+    /// not our business.
+    #[test]
+    fn music_reaches_the_llm_only_within_earshot() {
+        let (mut state, _rx) = test_state();
+        let me = test_player(0.0, 0.0);
+        state.self_player_id = Some(me.id);
+        state.self_player = Some(me);
+
+        let mut bard = test_player(5.0, 0.0);
+        bard.id = PlayerId::from(2);
+        bard.name = "Rica".to_string();
+        state.nearby_players.insert(bard.id, bard);
+
+        let music = |player_id| ServerMessage::PlayerMusicStarted {
+            player_id,
+            track: "Twilight Fields".to_string(),
+            elapsed_secs: 0.0,
+        };
+
+        let line = format_event(&state, &music(PlayerId::from(2))).expect("bard is in earshot");
+        assert!(line.contains("Rica"), "{line}");
+        assert!(line.contains("Twilight Fields"), "{line}");
+
+        state
+            .nearby_players
+            .get_mut(&PlayerId::from(2))
+            .unwrap()
+            .position
+            .x = NPC_SIGHT_RADIUS + 10.0;
+        assert_eq!(format_event(&state, &music(PlayerId::from(2))), None);
+    }
 
     // The wording contract with the LLM: each catch category tells the model
     // what it can actually do next (against the real embedded item defs).

@@ -20,6 +20,7 @@
     dungeonManager,
     ENTRANCE_DOOR_DEPTH,
     ENTRANCE_DOOR_ID,
+    TREASURE_CHEST_PROP_ID,
     type DungeonFloorLayout,
   } from '../../managers/dungeonManager'
   import { objectManager } from '../../managers/objectManager'
@@ -35,6 +36,7 @@
     UP_SHAFT_GROUP_NAME,
     type WallRun,
   } from '../../utils/dungeon-geometry'
+  import { INITIAL_YAW } from './camera-utils'
   import { getGhostHousingMaterial } from '../../utils/housing-textures'
   import { isoCameraOccludesPlayer } from '../../utils/iso-occlusion'
   import { passabilityDebugVisible } from '../../stores/debugStore'
@@ -52,10 +54,6 @@
     ) => void
   }
   let { onPropReady }: Props = $props()
-
-  /** Walk-up-to-open range for the treasure chest (matches the server). */
-  const CHEST_OPEN_RANGE = 1.8
-  let chestRequested = false
 
   /** Once the player walking up to a clicked prop is within this range, the
    *  break/open is requested. Kept inside the server's 2.5m so a borderline
@@ -257,6 +255,48 @@
     })
   }
 
+  /** Tag a clone clickable for the prop raycast pass (break/open on walk-up).
+   *  Read by inputHandler's prop pass via the userData keys. */
+  function tagInteractiveProp(
+    clone: THREE.Object3D,
+    propId: number,
+    kind: string,
+    depth: number,
+    opts: { breakable?: boolean; openable?: boolean }
+  ) {
+    clone.userData.dungeonProp = true
+    clone.userData.propId = propId
+    clone.userData.propKind = kind
+    clone.userData.propDepth = depth
+    clone.userData.propEntranceId = dungeonManager.dungeonId
+    if (opts.breakable) clone.userData.propBreakable = true
+    if (opts.openable) clone.userData.propOpenable = true
+  }
+
+  /** Resolve a catalog id to its loaded GLB template, or null on any failure.
+   *  Latches the shared lid-open clip the first time the animated chest loads. */
+  async function loadPropTemplate(
+    catalogId: string
+  ): Promise<THREE.Object3D | null> {
+    const def = objectManager.getCatalogEntry(catalogId)
+    if (!def?.model) return null
+    try {
+      const gltf = await loadGLB(getObjectModelPath(def.model))
+      if (
+        catalogId === CHEST_ANIMATED_ID &&
+        !chestOpenClip &&
+        gltf.animations.length
+      ) {
+        chestOpenClip =
+          gltf.animations.find((a) => a.name === CHEST_OPEN_CLIP) ??
+          gltf.animations[0]
+      }
+      return gltf.scene
+    } catch {
+      return null
+    }
+  }
+
   /**
    * Build one normal (un-broken) prop into `group`/`entries`. Barrels and crates
    * are tagged interactive (clickable to break); chests stay decorative. The
@@ -274,23 +314,10 @@
   ) {
     // Chests render from the animated GLB (lid rigged for the open clip); the
     // other props use their own catalog model.
-    const def =
-      prop.kind === 'chest'
-        ? objectManager.getCatalogEntry(CHEST_ANIMATED_ID)
-        : objectManager.getCatalogEntry(prop.kind)
-    if (!def?.model) return
-    let template: THREE.Object3D
-    try {
-      const gltf = await loadGLB(getObjectModelPath(def.model))
-      template = gltf.scene
-      if (prop.kind === 'chest' && !chestOpenClip && gltf.animations.length) {
-        chestOpenClip =
-          gltf.animations.find((a) => a.name === CHEST_OPEN_CLIP) ??
-          gltf.animations[0]
-      }
-    } catch {
-      return
-    }
+    const template = await loadPropTemplate(
+      prop.kind === 'chest' ? CHEST_ANIMATED_ID : prop.kind
+    )
+    if (!template) return
     if (key !== builtKey) return // floor changed mid-load — abandon
     const m = measureProp(prop.kind, template)
 
@@ -427,18 +454,15 @@
 
       clone.position.set(px, m.seatY + i * m.height * PROP_STACK_NEST, pz)
       clone.rotation.y = (yawDeg * Math.PI) / 180
-      // Interactive props (clicked → walk up → break/open). Read by
-      // inputHandler's prop raycast pass. Barrels/crates break; chests open.
+      // Interactive props (clicked → walk up → break/open). Barrels/crates
+      // break; chests open.
       const openable = prop.kind === 'chest'
       const interactive = breakable || openable
       if (interactive) {
-        clone.userData.dungeonProp = true
-        clone.userData.propId = index
-        clone.userData.propKind = prop.kind
-        clone.userData.propDepth = depth
-        clone.userData.propEntranceId = dungeonManager.dungeonId
-        if (breakable) clone.userData.propBreakable = true
-        if (openable) clone.userData.propOpenable = true
+        tagInteractiveProp(clone, index, prop.kind, depth, {
+          breakable,
+          openable,
+        })
       }
       clone.traverse((o) => {
         if (o instanceof THREE.Mesh) {
@@ -462,6 +486,47 @@
     })
   }
 
+  /** Place the final floor's treasure chest into `group`/`entries` under its
+   *  sentinel id: the same animated chest GLB as the clutter chests, seated on
+   *  the chest cell, facing the iso camera so the open lid shows the inside,
+   *  and clickable to open. The lid plays on the DungeonChestOpened broadcast;
+   *  the loot the server ejects lands as pickable ground items around it. */
+  async function addTreasureChest(
+    group: THREE.Group,
+    entries: Map<number, PropEntry>,
+    chest: [number, number],
+    key: string,
+    depth: number
+  ) {
+    const template = await loadPropTemplate(CHEST_ANIMATED_ID)
+    if (!template) return
+    if (key !== builtKey) return
+    const m = measureProp('chest', template)
+    const clone = template.clone()
+    clone.position.set(chest[0] + 0.5, m.seatY, chest[1] + 0.5)
+    clone.rotation.y = INITIAL_YAW
+    tagInteractiveProp(clone, TREASURE_CHEST_PROP_ID, 'chest', depth, {
+      openable: true,
+    })
+    clone.traverse((o) => {
+      if (o instanceof THREE.Mesh) {
+        o.castShadow = true
+        o.receiveShadow = true
+      }
+    })
+    group.add(clone)
+    entries.set(TREASURE_CHEST_PROP_ID, {
+      clones: [clone],
+      kind: 'chest',
+      propId: TREASURE_CHEST_PROP_ID,
+      cellX: chest[0],
+      cellZ: chest[1],
+      rotationDeg: (INITIAL_YAW * 180) / Math.PI,
+      broken: false,
+      opened: false,
+    })
+  }
+
   /** Load + seat a kind's broken-debris variant (single, cell-centered) clone.
    *  Returns null if the variant is missing, the GLB fails to load, or the floor
    *  changed mid-load. Shared by the initial build and the live swap. */
@@ -473,14 +538,8 @@
     key: string
   ): Promise<THREE.Object3D | null> {
     const variantId = BROKEN_VARIANT[kind]
-    const def = variantId ? objectManager.getCatalogEntry(variantId) : null
-    if (!def?.model) return null
-    let template: THREE.Object3D
-    try {
-      template = (await loadGLB(getObjectModelPath(def.model))).scene
-    } catch {
-      return null
-    }
+    const template = variantId ? await loadPropTemplate(variantId) : null
+    if (!template) return null
     if (key !== builtKey) return null
     const m = measureProp(variantId, template)
     const clone = template.clone()
@@ -532,7 +591,7 @@
     depth: number
   ) {
     const specs = layout.props ?? []
-    if (specs.length === 0) return
+    if (specs.length === 0 && !layout.chest) return
     await objectManager.fetchCatalog()
     if (key !== builtKey) return
 
@@ -569,6 +628,10 @@
       if (key !== builtKey) return // floor changed mid-load — abandon
     }
 
+    if (layout.chest) {
+      await addTreasureChest(group, entries, layout.chest, key, depth)
+    }
+
     if (key !== builtKey) return
     clearProps()
     // Move the freshly built clones into the stable props group, matching its
@@ -581,6 +644,7 @@
     // already open at build time snap to the open pose (no entrance swing).
     reconcileBrokenProps(depth, key)
     reconcileOpenedProps(depth, key, true)
+    reconcileTreasureChest(true)
   }
 
   /** Swap every prop the server says is broken but that's still rendered whole. */
@@ -623,6 +687,13 @@
         openChest(entry, instant)
       }
     }
+  }
+
+  /** Play (or snap) the treasure chest's lid-open pose once this session has
+   *  seen its DungeonChestOpened broadcast. */
+  function reconcileTreasureChest(instant: boolean) {
+    const entry = propEntries.get(TREASURE_CHEST_PROP_ID)
+    if (entry && dungeonManager.treasureChestOpened) openChest(entry, instant)
   }
 
   /** Start (or snap to the end of) a chest's lid-open animation. Each chest gets
@@ -860,6 +931,7 @@
     void $dungeonPropsRevision
     reconcileBrokenProps($currentDungeonDepth, builtKey)
     reconcileOpenedProps($currentDungeonDepth, builtKey, false)
+    reconcileTreasureChest(false)
   })
 
   // Debug reset (or any backwards authoritative snapshot): rebuild the current
@@ -900,8 +972,8 @@
     )
   }
 
-  /** Per-frame: stair-shaft floor transitions + chest proximity. `deltaMs`
-   *  advances the chest lid-open animation. */
+  /** Per-frame: stair-shaft floor transitions + pending prop walk-ups.
+   *  `deltaMs` advances the chest lid-open animation. */
   export function update(
     playerX: number,
     playerY: number,
@@ -979,8 +1051,6 @@
           leaf.closedAngle + (leaf.openAngle - leaf.closedAngle) * door.open
     }
 
-    // Final-floor treasure chest: walking up to it requests an open once
-    // per approach (the server validates boss state and the cooldown).
     if (!dungeonManager.active) return
     const depth = $currentDungeonDepth
 
@@ -999,7 +1069,8 @@
 
     // Pending chest open: the player walked up to a chest they clicked — request
     // the open once within range. The server validates and broadcasts; the lid
-    // animation plays on receipt (handles other players' opens too).
+    // animation plays on receipt (handles other players' opens too). The
+    // final-floor treasure chest shares this walk-up under its sentinel id.
     const pendingOpen = dungeonManager.pendingOpen
     if (
       pendingOpen &&
@@ -1008,25 +1079,11 @@
       const id = dungeonManager.dungeonId!
       const { depth: d, propId } = pendingOpen
       dungeonManager.clearPendingOpen()
-      networkManager.sendOpenDungeonProp(id, d, propId)
-    }
-
-    const layout = depth >= 1 ? dungeonManager.layoutAt(depth) : null
-    const chest = layout?.chest ?? null
-    if (!chest) {
-      chestRequested = false
-      return
-    }
-    const cx = dungeonManager.originX + chest[0] + 0.5
-    const cz = dungeonManager.originZ + chest[1] + 0.5
-    const dx = playerX - cx
-    const dz = playerZ - cz
-    const near = dx * dx + dz * dz < CHEST_OPEN_RANGE * CHEST_OPEN_RANGE
-    if (near && !chestRequested) {
-      chestRequested = true
-      networkManager.sendOpenDungeonChest(dungeonManager.dungeonId!)
-    } else if (!near) {
-      chestRequested = false
+      if (propId === TREASURE_CHEST_PROP_ID) {
+        networkManager.sendOpenDungeonChest(id)
+      } else {
+        networkManager.sendOpenDungeonProp(id, d, propId)
+      }
     }
   }
 
