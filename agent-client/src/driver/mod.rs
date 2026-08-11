@@ -56,11 +56,18 @@ pub trait LlmBackend: Send + Sync {
 pub fn load_system_prompt(path: &str) -> anyhow::Result<String> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read system prompt from {path}: {e}"))?;
-    Ok(if text.contains("{{ACTIONS}}") {
-        text.replace("{{ACTIONS}}", &action::action_reference())
-    } else {
-        text
-    })
+    Ok(text.replace("{{ACTIONS}}", &action::action_reference()))
+}
+
+/// Render the surface-terrain grid without holding the state lock: a tile
+/// cache miss hits disk or HTTP, and the lock also gates the NPC's
+/// message-processing loop. The brief relock only snapshots the inputs.
+async fn rendered_terrain_grid(state: &Arc<Mutex<SharedState>>) -> Option<String> {
+    let job = state.lock().await.terrain_grid_job();
+    match job {
+        Some(job) => Some(job.render().await),
+        None => None,
+    }
 }
 
 /// Empty working directory for CLI backends — prompts are untrusted, so the
@@ -232,9 +239,12 @@ pub async fn llm_driver(
             discard_turn(&mut s);
             info!("[{label}] LLM driver: NPC is sleeping, skipping initial prompt");
         } else if always_active || s.has_nearby_human_players() {
-            let agent_events = s.drain_agent_events();
+            drop(s);
+            // File I/O and tile sampling outside the state lock.
+            let grid = rendered_terrain_grid(&state).await;
             let memory = load_memory_tail(&memory_file);
-            s.refresh_terrain_grid().await;
+            let mut s = state.lock().await;
+            let agent_events = s.drain_agent_events();
             let initial_prompt = build_prompt(
                 &s,
                 &[],
@@ -242,6 +252,7 @@ pub async fn llm_driver(
                 &schedule,
                 active_schedule.0,
                 memory.as_deref(),
+                grid.as_deref(),
             );
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
@@ -429,11 +440,11 @@ pub async fn llm_driver(
             continue;
         }
 
-        // File I/O outside the state lock.
+        // File I/O and tile sampling outside the state lock.
         let memory = load_memory_tail(&memory_file);
+        let grid = rendered_terrain_grid(&state).await;
         let prompt = {
             let mut s = state.lock().await;
-            s.refresh_terrain_grid().await;
             // History is recorded after the build: this prompt shows the
             // batch under EVENTS, the next one under RECENT CONVERSATION.
             let prompt = build_prompt(
@@ -443,6 +454,7 @@ pub async fn llm_driver(
                 &schedule,
                 active_schedule.0,
                 memory.as_deref(),
+                grid.as_deref(),
             );
             record_conversation(&mut s, &events);
             prompt

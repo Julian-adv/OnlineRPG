@@ -1,24 +1,13 @@
 //! Agent action model and conversion to game-server commands.
 //!
-//! Splits responsibility into three layers: the JSON-shaped `AgentResponse`
-//! the LLM is expected to emit, parsing helpers that tolerate the various
-//! markdown wrappers an LLM might add, and `action_to_command` which lifts
-//! a parsed `AgentAction` into a `ClientMessage` for the server.
+//! Splits responsibility into three layers: the `AgentAction` enum the LLM
+//! is expected to emit, parsing helpers that tolerate the various markdown
+//! wrappers an LLM might add, and `action_to_command` which lifts a parsed
+//! `AgentAction` into a `ClientMessage` for the server.
 
 use onlinerpg_shared::ClientMessage;
 use serde::Deserialize;
 use tracing::warn;
-
-/// Parsed agent response.
-#[derive(Debug, Deserialize)]
-pub(super) struct AgentResponse {
-    #[allow(dead_code)]
-    pub thought: Option<String>,
-    pub actions: Vec<AgentAction>,
-    /// Optional memory update: appended to the NPC's memory file for future sessions.
-    #[allow(dead_code)]
-    pub memory_update: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -616,11 +605,19 @@ impl std::fmt::Display for PickupRef {
 /// ordinary action envelope; a reply we cannot parse counts as acceptance, so
 /// a confused agent cannot spin the roll loop.
 pub(crate) fn wants_reroll(reply: &str) -> bool {
-    if let Ok(parsed) = parse_agent_response(reply) {
-        return parsed
+    if let Ok(turn) = parse_turn_tolerant(reply) {
+        if turn
             .actions
             .iter()
-            .any(|a| matches!(a, AgentAction::Reroll));
+            .any(|a| matches!(a, AgentAction::Reroll))
+        {
+            return true;
+        }
+        // Any action that did parse is an answer in itself; only when every
+        // action failed does the text heuristic below get a say.
+        if !turn.actions.is_empty() || turn.errors.is_empty() {
+            return false;
+        }
     }
     let reply = reply.to_lowercase();
     match (reply.rfind("reroll"), reply.rfind("accept")) {
@@ -630,22 +627,10 @@ pub(crate) fn wants_reroll(reply: &str) -> bool {
     }
 }
 
-/// Parse a raw text response from an LLM into structured actions.
-pub(super) fn parse_agent_response(text: &str) -> anyhow::Result<AgentResponse> {
-    let json_str = extract_json(text);
-    let mut value: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))?;
-    normalize_move_targets(&mut value);
-    serde_json::from_value(value)
-        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))
-}
-
 /// What a tolerant parse yields: the actions that parsed, plus a human-readable
 /// complaint for each one that didn't. The complaints are fed back to the LLM
 /// so a mistyped action reports its own error instead of vanishing.
 pub(super) struct ParsedTurn {
-    #[allow(dead_code)]
-    pub thought: Option<String>,
     pub actions: Vec<AgentAction>,
     pub memory_update: Option<String>,
     /// Per-player favor deltas as raw JSON so a malformed shape can never
@@ -688,10 +673,6 @@ pub(super) fn parse_turn_tolerant(text: &str) -> anyhow::Result<ParsedTurn> {
         .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))?;
     normalize_move_targets(&mut value);
 
-    let thought = value
-        .get("thought")
-        .and_then(|t| t.as_str())
-        .map(str::to_string);
     let memory_update = value
         .get("memory_update")
         .and_then(|t| t.as_str())
@@ -700,22 +681,33 @@ pub(super) fn parse_turn_tolerant(text: &str) -> anyhow::Result<ParsedTurn> {
 
     let mut actions = Vec::new();
     let mut errors = Vec::new();
-    if let Some(arr) = value.get("actions").and_then(|a| a.as_array()) {
-        for elem in arr {
-            match serde_json::from_value::<AgentAction>(elem.clone()) {
-                Ok(action) => actions.push(action),
-                Err(e) => {
-                    let kind = elem
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("(no type)");
-                    errors.push(format!("action \"{kind}\": {e}"));
+    match value.get("actions") {
+        Some(serde_json::Value::Array(arr)) => {
+            for elem in arr {
+                match serde_json::from_value::<AgentAction>(elem.clone()) {
+                    Ok(action) => actions.push(action),
+                    Err(e) => {
+                        let kind = elem
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("(no type)");
+                        errors.push(format!("action \"{kind}\": {e} — that action was skipped"));
+                    }
                 }
             }
         }
+        // A missing or non-array "actions" used to yield a silent empty turn —
+        // the exact "agent quietly does nothing" failure this parser exists
+        // to eliminate. Complain instead.
+        Some(_) => errors
+            .push("\"actions\" must be a JSON array of action objects — nothing ran".to_string()),
+        None => errors.push(
+            "your reply has no \"actions\" array — nothing ran. Send \
+             [{\"type\": \"wait\"}] to deliberately do nothing"
+                .to_string(),
+        ),
     }
     Ok(ParsedTurn {
-        thought,
         actions,
         memory_update,
         favor,
@@ -937,8 +929,9 @@ mod tests {
     use super::*;
 
     fn parse_single_action(json: &str) -> AgentAction {
-        let resp = parse_agent_response(json).unwrap();
-        resp.actions.into_iter().next().unwrap()
+        let turn = parse_turn_tolerant(json).unwrap();
+        assert!(turn.errors.is_empty(), "{:?}", turn.errors);
+        turn.actions.into_iter().next().unwrap()
     }
 
     #[test]
@@ -1058,6 +1051,27 @@ mod tests {
         assert!(matches!(turn.actions[0], AgentAction::Say { .. }));
         assert_eq!(turn.errors.len(), 1);
         assert!(turn.errors[0].contains("attack"));
+    }
+
+    #[test]
+    fn missing_or_malformed_actions_array_is_reported_not_silent() {
+        // No "actions" key at all: an empty turn with no complaint would leave
+        // the agent guessing why nothing happened.
+        let turn = parse_turn_tolerant(r#"{"thought": "hmm"}"#).unwrap();
+        assert!(turn.actions.is_empty());
+        assert_eq!(turn.errors.len(), 1);
+        assert!(turn.errors[0].contains("\"actions\""));
+
+        // "actions" present but not an array.
+        let turn = parse_turn_tolerant(r#"{"actions": "wait"}"#).unwrap();
+        assert!(turn.actions.is_empty());
+        assert_eq!(turn.errors.len(), 1);
+        assert!(turn.errors[0].contains("array"));
+
+        // An explicitly empty array stays a legal deliberate no-op.
+        let turn = parse_turn_tolerant(r#"{"actions": []}"#).unwrap();
+        assert!(turn.actions.is_empty());
+        assert!(turn.errors.is_empty());
     }
 
     /// Favor arrives in whatever shape the LLM chose — int, string, float —
@@ -1398,10 +1412,9 @@ mod tests {
 
     #[test]
     fn fish_action_parses_and_casts() {
-        let response =
-            parse_agent_response(r#"{"actions": [{"type": "fish", "x": 10.0, "z": -5.0}]}"#)
-                .unwrap();
-        let cmd = action_to_command(&response.actions[0], None);
+        let action =
+            parse_single_action(r#"{"actions": [{"type": "fish", "x": 10.0, "z": -5.0}]}"#);
+        let cmd = action_to_command(&action, None);
         match cmd {
             Some(ClientMessage::FishingCast { position }) => {
                 assert_eq!(position.x, 10.0);
@@ -1413,13 +1426,13 @@ mod tests {
 
     #[test]
     fn fish_without_coords_casts_ahead_of_the_agent() {
-        let response = parse_agent_response(r#"{"actions": [{"type": "fish"}]}"#).unwrap();
+        let action = parse_single_action(r#"{"actions": [{"type": "fish"}]}"#);
         let pos = onlinerpg_shared::Position {
             x: 1.0,
             y: 0.0,
             z: 2.0,
         };
-        match action_to_command(&response.actions[0], Some(&pos)) {
+        match action_to_command(&action, Some(&pos)) {
             Some(ClientMessage::FishingCast { position }) => {
                 assert_eq!(position.x, 1.0);
                 assert_eq!(position.z, 6.0);
@@ -1427,14 +1440,14 @@ mod tests {
             other => panic!("expected FishingCast, got {other:?}"),
         }
         // No coordinates and no known position: nothing to send.
-        assert!(action_to_command(&response.actions[0], None).is_none());
+        assert!(action_to_command(&action, None).is_none());
     }
 
     #[test]
     fn stop_fishing_parses() {
-        let response = parse_agent_response(r#"{"actions": [{"type": "stop_fishing"}]}"#).unwrap();
+        let action = parse_single_action(r#"{"actions": [{"type": "stop_fishing"}]}"#);
         assert!(matches!(
-            action_to_command(&response.actions[0], None),
+            action_to_command(&action, None),
             Some(ClientMessage::FishingStop)
         ));
     }
@@ -1555,9 +1568,13 @@ mod tests {
             );
             for hint in hints {
                 let wrapped = format!(r#"{{"actions": [{hint}]}}"#);
-                if let Err(e) = parse_agent_response(&wrapped) {
-                    panic!("{name}: embedded action hint does not parse: {hint}\n{e}");
-                }
+                let turn = parse_turn_tolerant(&wrapped)
+                    .unwrap_or_else(|e| panic!("{name}: hint is not JSON: {hint}\n{e}"));
+                assert!(
+                    turn.errors.is_empty(),
+                    "{name}: embedded action hint does not parse: {hint}\n{:?}",
+                    turn.errors
+                );
             }
         }
     }

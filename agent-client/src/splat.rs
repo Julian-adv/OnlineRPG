@@ -5,22 +5,17 @@
 //! agent runs on the game server.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use onlinerpg_terrain::coords::world_to_tile;
 use onlinerpg_terrain::defaults::{SPLATMAP_SIZE, TILE_DIM};
 use onlinerpg_terrain::io::TerrainIO;
-use tracing::{debug, warn};
 
-/// Splat palette indices (`shared/src/worldgen/tile_bake/constants.rs`).
-pub const PAL_SAND: u8 = 1;
-pub const PAL_SNOW: u8 = 3;
-pub const PAL_ROAD: u8 = 4;
-pub const PAL_CLIFF: u8 = 5;
-pub const PAL_RIVER_BED: u8 = 6;
-pub const PAL_STONE_PATH: u8 = 7;
-pub const PAL_PAVING: u8 = 8;
+/// Splat palette indices, from the baker that writes them.
+pub use onlinerpg_shared::worldgen::tile_bake::{
+    PAL_CLIFF, PAL_PAVING, PAL_RIVER_BED, PAL_ROAD, PAL_SAND, PAL_SNOW, PAL_STONE_PATH,
+};
 
 /// Where raw splat tiles come from: the terrain directory or HTTP.
 #[async_trait::async_trait]
@@ -35,80 +30,32 @@ impl SplatTiles for TerrainIO {
     }
 }
 
-/// Splat tiles over HTTP with a disk cache, the twin of `HttpHeightTiles`.
-pub struct HttpSplatTiles {
-    base_url: String,
-    cache_dir: PathBuf,
-    http: reqwest::Client,
-}
+/// Splat tiles over HTTP with a disk cache — the same plumbing as the
+/// heightmap twin, via the shared `HttpTiles` source.
+pub struct HttpSplatTiles(crate::terrain_http::HttpTiles);
 
 impl HttpSplatTiles {
     pub fn new(base_url: &str, cache_dir: PathBuf) -> Self {
-        Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
+        Self(crate::terrain_http::HttpTiles::new(
+            base_url,
             cache_dir,
-            http: reqwest::Client::new(),
-        }
-    }
-
-    fn cache_path(&self, tx: i32, tz: i32) -> PathBuf {
-        self.cache_dir.join(format!("s_{tx}_{tz}.bin"))
-    }
-
-    async fn read_cached(path: &Path) -> Option<Vec<u8>> {
-        match tokio::fs::read(path).await {
-            Ok(data) if data.len() == SPLATMAP_SIZE => Some(data),
-            Ok(data) => {
-                warn!(
-                    "Cached splatmap {:?} has wrong size {} — refetching",
-                    path,
-                    data.len()
-                );
-                None
-            }
-            Err(_) => None,
-        }
-    }
-
-    async fn write_cached(path: &Path, data: &[u8]) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let tmp = path.with_extension("part");
-        tokio::fs::write(&tmp, data).await?;
-        tokio::fs::rename(&tmp, path).await
-    }
-
-    async fn fetch(&self, tx: i32, tz: i32) -> anyhow::Result<Vec<u8>> {
-        let url = format!("{}/api/terrain/splat/{tx}/{tz}", self.base_url);
-        let response = self.http.get(&url).send().await?.error_for_status()?;
-        let bytes = response.bytes().await?.to_vec();
-        if bytes.len() != SPLATMAP_SIZE {
-            anyhow::bail!(
-                "{url} returned {} bytes, expected {SPLATMAP_SIZE}",
-                bytes.len()
-            );
-        }
-        Ok(bytes)
+            "splat",
+            "s_",
+            SPLATMAP_SIZE,
+        ))
     }
 }
 
 #[async_trait::async_trait]
 impl SplatTiles for HttpSplatTiles {
     async fn read_splat(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>> {
-        let path = self.cache_path(tx, tz);
-        if let Some(cached) = Self::read_cached(&path).await {
-            return Ok(cached);
-        }
-        match self.fetch(tx, tz).await {
-            Ok(data) => {
-                if let Err(e) = Self::write_cached(&path, &data).await {
-                    warn!("Failed to cache splatmap {tx},{tz}: {e}");
-                }
-                debug!("Fetched splatmap tile ({tx}, {tz})");
-                Ok(data)
-            }
-            Err(e) => Err(std::io::Error::other(e)),
+        match self.0.read(tx, tz).await? {
+            Some(data) => Ok(data),
+            // The splat endpoint answers unbaked tiles with a default 200,
+            // so a 404 means the URL is wrong — surface it.
+            None => Err(std::io::Error::other(format!(
+                "splat tile {tx},{tz}: unexpected 404"
+            ))),
         }
     }
 }
@@ -147,13 +94,15 @@ impl SplatSampler {
     }
 
     /// Primary surface palette index at a world position (high nibble of the
-    /// cell's first byte). Tiles span [t*64-32, t*64+32) at 1m per cell.
+    /// cell's first byte). Tiles span [t*DIM - DIM/2, t*DIM + DIM/2) at 1m
+    /// per cell.
     pub async fn primary_at(&self, world_x: f32, world_z: f32) -> std::io::Result<u8> {
         let (tx, tz) = (world_to_tile(world_x), world_to_tile(world_z));
         let tile = self.tile(tx, tz).await?;
         let dim = TILE_DIM as i32;
-        let cell_x = ((world_x - (tx as f32 * 64.0 - 32.0)).floor() as i32).clamp(0, dim - 1);
-        let cell_z = ((world_z - (tz as f32 * 64.0 - 32.0)).floor() as i32).clamp(0, dim - 1);
+        let size = TILE_DIM as f32;
+        let cell_x = ((world_x - (tx as f32 * size - size / 2.0)).floor() as i32).clamp(0, dim - 1);
+        let cell_z = ((world_z - (tz as f32 * size - size / 2.0)).floor() as i32).clamp(0, dim - 1);
         let idx = (cell_z * dim + cell_x) as usize * 4;
         Ok(tile.get(idx).map_or(0, |b| b >> 4))
     }

@@ -79,7 +79,7 @@ pub(crate) use onlinerpg_shared::NPC_SIGHT_RADIUS;
 
 /// Eight-way compass word for an offset from the player. North is -z, east
 /// is +x; the diagonal band covers ±22.5° around each diagonal.
-pub(crate) fn compass(dx: f32, dz: f32) -> &'static str {
+fn compass(dx: f32, dz: f32) -> &'static str {
     let ns = if dz < 0.0 { "north" } else { "south" };
     let ew = if dx < 0.0 { "west" } else { "east" };
     let (adx, adz) = (dx.abs(), dz.abs());
@@ -117,12 +117,17 @@ fn ground_char(surface: Option<u8>, height: Option<f32>) -> char {
     }
 }
 
+/// Surface-map geometry, derived from the sight radius so the grid always
+/// spans exactly what the agent can perceive.
+const GRID_CELL_M: f32 = 3.0;
+const GRID_CELLS: i32 = (NPC_SIGHT_RADIUS / GRID_CELL_M) as i32 * 2 + 1;
+const GRID_HALF: i32 = GRID_CELLS / 2;
+
 /// Stamp an entity glyph on the terrain grid if its position falls inside.
 fn overlay(grid: &mut [Vec<char>], px: f32, pz: f32, x: f32, z: f32, glyph: char) {
-    let half = (grid.len() / 2) as i32;
-    let c = ((x - px) / 3.0).round() as i32 + half;
-    let r = ((z - pz) / 3.0).round() as i32 + half;
-    if (0..grid.len() as i32).contains(&r) && (0..grid.len() as i32).contains(&c) {
+    let c = ((x - px) / GRID_CELL_M).round() as i32 + GRID_HALF;
+    let r = ((z - pz) / GRID_CELL_M).round() as i32 + GRID_HALF;
+    if (0..GRID_CELLS).contains(&r) && (0..GRID_CELLS).contains(&c) {
         grid[r as usize][c as usize] = glyph;
     }
 }
@@ -552,10 +557,6 @@ pub struct SharedState {
     /// Terrain height sampler (shared across NPC connections)
     pub height_sampler: Arc<HeightSampler>,
     pub splat_sampler: Arc<crate::splat::SplatSampler>,
-    /// Rendered surface-terrain grid, refreshed by the driver just before
-    /// each prompt (the render needs async tile loads; the state formatter
-    /// is sync). None underground or before the first refresh.
-    terrain_grid: Option<String>,
     /// Shared world cache: passability + houses (shared across NPC connections)
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     /// Current game time: is_night flag from server
@@ -653,7 +654,6 @@ impl SharedState {
             agent_events: Vec::new(),
             height_sampler,
             splat_sampler,
-            terrain_grid: None,
             world_cache,
             is_night: None,
             game_hour: None,
@@ -963,12 +963,6 @@ impl SharedState {
             Some(p) => (p.position, self.self_floor_level),
             None => return,
         };
-        let dist_to = |x: f32, z: f32| {
-            let dx = x - self_pos.x;
-            let dz = z - self_pos.z;
-            (dx * dx + dz * dz).sqrt()
-        };
-        let dir_to = |x: f32, z: f32| compass(x - self_pos.x, z - self_pos.z);
 
         // (typed key, description, wakes_driver)
         let mut newly: Vec<(String, String, bool)> = Vec::new();
@@ -976,6 +970,16 @@ impl SharedState {
         // radius so a POI hovering at the edge doesn't announce every tick.
         let mut nearby: HashSet<String> = HashSet::new();
         let forget_radius = NPC_SIGHT_RADIUS + 5.0;
+        let sighted = &self.sighted_pois;
+        // Ring bookkeeping shared by every POI kind; hands the key back only
+        // when the POI just entered sight.
+        let mut track = |key: String, dist: f32| -> Option<String> {
+            let new = dist <= NPC_SIGHT_RADIUS && !sighted.contains(&key);
+            if dist <= forget_radius {
+                nearby.insert(key.clone());
+            }
+            new.then_some(key)
+        };
 
         // Only aggressive monsters get a sighting event: they are the ones
         // worth waking the driver for, and CURRENT STATE already lists every
@@ -985,12 +989,8 @@ impl SharedState {
             if m.floor_level != self_floor || m.state == MonsterState::Dead || !m.aggressive {
                 continue;
             }
-            let dist = dist_to(m.position.x, m.position.z);
-            let key = format!("m:{id}");
-            if dist <= forget_radius {
-                nearby.insert(key.clone());
-            }
-            if dist <= NPC_SIGHT_RADIUS && !self.sighted_pois.contains(&key) {
+            let d = crate::geom::PlanarDelta::to_xz(&self_pos, m.position.x, m.position.z);
+            if let Some(key) = track(format!("m:{id}"), d.dist) {
                 newly.push((
                     key,
                     format!(
@@ -1000,8 +1000,8 @@ impl SharedState {
                         m.max_health,
                         m.position.x,
                         m.position.z,
-                        dist,
-                        dir_to(m.position.x, m.position.z),
+                        d.dist,
+                        compass(d.dx, d.dz),
                     ),
                     true,
                 ));
@@ -1012,12 +1012,12 @@ impl SharedState {
             if item.floor_level != self_floor {
                 continue;
             }
-            let dist = dist_to(item.position.x, item.position.z);
-            let key = format!("i:{iid}");
-            if dist <= forget_radius {
-                nearby.insert(key.clone());
+            // Our own drop: we put it there, announcing it is pure noise.
+            if self.self_player_id.is_some() && item.dropped_by == self.self_player_id {
+                continue;
             }
-            if dist <= NPC_SIGHT_RADIUS && !self.sighted_pois.contains(&key) {
+            let d = crate::geom::PlanarDelta::to_xz(&self_pos, item.position.x, item.position.z);
+            if let Some(key) = track(format!("i:{iid}"), d.dist) {
                 newly.push((
                     key,
                     format!(
@@ -1025,8 +1025,8 @@ impl SharedState {
                         item.item_def_id,
                         item.position.x,
                         item.position.z,
-                        dist,
-                        dir_to(item.position.x, item.position.z),
+                        d.dist,
+                        compass(d.dx, d.dz),
                     ),
                     false,
                 ));
@@ -1035,25 +1035,20 @@ impl SharedState {
 
         // Dungeon entrances only matter above ground.
         if self_floor >= 0 {
-            let entrances: Vec<(String, f32, f32, u8)> = {
-                let wc = self.world_cache.read().unwrap();
-                wc.all_dungeons()
-                    .iter()
-                    .map(|d| (d.name.clone(), d.entrance.x, d.entrance.z, d.max_depth()))
-                    .collect()
-            };
-            for (name, ex, ez, floors) in entrances {
-                let dist = dist_to(ex, ez);
-                let key = format!("d:{name}");
-                if dist <= forget_radius {
-                    nearby.insert(key.clone());
-                }
-                if dist <= NPC_SIGHT_RADIUS && !self.sighted_pois.contains(&key) {
+            let wc = self.world_cache.read().unwrap();
+            for dg in wc.all_dungeons() {
+                let d = crate::geom::PlanarDelta::to_xz(&self_pos, dg.entrance.x, dg.entrance.z);
+                if let Some(key) = track(format!("d:{}", dg.name), d.dist) {
                     newly.push((
                         key,
                         format!(
-                            "[Sighted] {name} entrance ({floors} floors) — at ({ex:.0}, {ez:.0}), {dist:.0}m {}.",
-                            dir_to(ex, ez)
+                            "[Sighted] {} entrance ({} floors) — at ({:.0}, {:.0}), {:.0}m {}.",
+                            dg.name,
+                            dg.max_depth(),
+                            dg.entrance.x,
+                            dg.entrance.z,
+                            d.dist,
+                            compass(d.dx, d.dz)
                         ),
                         false,
                     ));
@@ -1389,7 +1384,7 @@ impl SharedState {
     /// the server delivers MonsterDead/MonsterRemoved filtered to the
     /// monster's floor, so entries from a floor we left can only go stale
     /// ("ghost" monsters whose ids no longer exist server-side).
-    fn adopt_floor_level(&mut self, floor_level: i8) {
+    pub(crate) fn adopt_floor_level(&mut self, floor_level: i8) {
         if floor_level != self.self_floor_level {
             let stale: Vec<String> = self
                 .nearby_monsters
@@ -1398,13 +1393,21 @@ impl SharedState {
                 .map(|m| m.id.clone())
                 .collect();
             for id in &stale {
-                self.nearby_monsters.remove(id);
-                self.monster_ai.remove_monster(id);
-                self.latest_monster_moves.remove(id);
-                self.sighted_pois.remove(&format!("m:{id}"));
+                self.forget_monster(id);
             }
         }
         self.self_floor_level = floor_level;
+    }
+
+    /// Drop every trace of a monster: the entry itself, its AI mirror, its
+    /// move-dedup slot, and its sighting so a reappearance announces again.
+    /// The single recipe for all removal paths — a new shadow collection
+    /// belongs here, not in each caller.
+    fn forget_monster(&mut self, id: &str) {
+        self.nearby_monsters.remove(id);
+        self.monster_ai.remove_monster(id);
+        self.latest_monster_moves.remove(id);
+        self.sighted_pois.remove(&format!("m:{id}"));
     }
 
     /// The server put us somewhere we did not walk to — a refused step, a
@@ -1952,8 +1955,7 @@ impl SharedState {
                 self.monster_ai.handle_monster_dead(monster_id);
             }
             ServerMessage::MonsterRemoved { monster_id } => {
-                self.nearby_monsters.remove(monster_id);
-                self.monster_ai.remove_monster(monster_id);
+                self.forget_monster(monster_id);
             }
             // The server just said this monster does not exist: its
             // MonsterDead/MonsterRemoved never reached us. Silently drop the
@@ -1963,10 +1965,7 @@ impl SharedState {
                 monster_id,
                 reason: onlinerpg_shared::AttackRejectReason::InvalidTarget,
             } => {
-                if self.nearby_monsters.remove(monster_id).is_some() {
-                    self.monster_ai.remove_monster(monster_id);
-                    self.sighted_pois.remove(&format!("m:{monster_id}"));
-                }
+                self.forget_monster(monster_id);
             }
 
             ServerMessage::GroundItemSpawned { item } => {
@@ -2210,15 +2209,24 @@ impl SharedState {
             _ => {}
         }
 
-        // Check if any POI just entered sight — our own moves come back as
-        // PlayerMoved, so walking into one is covered too.
+        // Check if any POI just entered sight. Only our own relocations
+        // matter on the player side — walking (echoed as PlayerMoved),
+        // teleports, server corrections; other players never affect what
+        // we can see.
         match &msg {
             ServerMessage::GameState { .. }
             | ServerMessage::MonsterSpawned { .. }
             | ServerMessage::MonsterAssigned { .. }
             | ServerMessage::MonsterMoved { .. }
+            | ServerMessage::GroundItemSpawned { .. }
             | ServerMessage::GroundItemAppeared { .. }
-            | ServerMessage::PlayerMoved { .. } => {
+            | ServerMessage::PositionCorrected { .. } => {
+                self.check_sightings();
+            }
+            ServerMessage::PlayerMoved { player_id, .. }
+            | ServerMessage::PlayerTeleported { player_id, .. }
+                if self.self_player_id.as_ref() == Some(player_id) =>
+            {
                 self.check_sightings();
             }
             _ => {}
@@ -2776,6 +2784,12 @@ impl SharedState {
             .filter(|(_, p)| {
                 p.is_official_npc && crate::shop_info::shop_line_for(&p.name).is_some()
             })
+            // Only merchants the agent can actually see — the server
+            // broadcasts players well beyond that, and "nearest" must not
+            // start a long blind walk to one outside the CURRENT STATE list.
+            .filter(|(_, p)| {
+                p.position.dist_xz_sq(&self_pos) <= NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS
+            })
             .min_by(|(_, a), (_, b)| {
                 let da = a.position.dist_xz_sq(&self_pos);
                 let db = b.position.dist_xz_sq(&self_pos);
@@ -2876,22 +2890,44 @@ impl SharedState {
             .filter(move |s| s.expires_at > now)
     }
 
-    /// Rebuild the surface-terrain grid for the next prompt. Underground the
-    /// floor layout lines already cover the map, so the grid goes away.
-    pub async fn refresh_terrain_grid(&mut self) {
-        self.terrain_grid = self.render_terrain_grid().await;
-    }
-
-    async fn render_terrain_grid(&self) -> Option<String> {
-        const CELLS: i32 = 19; // 19x19 cells, 3m each: ±27m = the sight radius
-        const CELL_M: f32 = 3.0;
-        const HALF: i32 = CELLS / 2;
-
+    /// Snapshot everything the surface-terrain grid render needs, so the
+    /// expensive tile sampling can run without the state lock. None
+    /// underground — the floor layout lines already cover the map.
+    pub fn terrain_grid_job(&self) -> Option<TerrainGridJob> {
         let p = self.self_player.as_ref()?;
         if self.self_floor_level != 0 {
             return None;
         }
-        let (px, pz, py) = (p.position.x, p.position.z, p.position.y);
+        Some(TerrainGridJob {
+            px: p.position.x,
+            pz: p.position.z,
+            py: p.position.y,
+            height_sampler: Arc::clone(&self.height_sampler),
+            splat_sampler: Arc::clone(&self.splat_sampler),
+            world_cache: Arc::clone(&self.world_cache),
+        })
+    }
+}
+
+/// A detached surface-terrain grid render: position and shared samplers
+/// snapshotted from `SharedState` so the tile loads (HTTP on a cache miss)
+/// never run under the state lock.
+pub struct TerrainGridJob {
+    px: f32,
+    pz: f32,
+    py: f32,
+    height_sampler: Arc<HeightSampler>,
+    splat_sampler: Arc<crate::splat::SplatSampler>,
+    world_cache: Arc<std::sync::RwLock<WorldCache>>,
+}
+
+impl TerrainGridJob {
+    pub async fn render(&self) -> String {
+        const CELLS: i32 = GRID_CELLS;
+        const CELL_M: f32 = GRID_CELL_M;
+        const HALF: i32 = GRID_HALF;
+
+        let (px, pz, py) = (self.px, self.pz, self.py);
         // Height and surface type per cell center (async tile loads).
         let mut heights = vec![None; (CELLS * CELLS) as usize];
         let mut surfaces = vec![None; (CELLS * CELLS) as usize];
@@ -2994,9 +3030,11 @@ impl SharedState {
                 slopes.join(", ")
             ));
         }
-        Some(out)
+        out
     }
+}
 
+impl SharedState {
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -3190,10 +3228,6 @@ impl SharedState {
         }
         if hidden > 0 {
             lines.push(format!("(and {hidden} more items further away)"));
-        }
-
-        if let Some(grid) = &self.terrain_grid {
-            lines.push(grid.trim_end().to_string());
         }
 
         if lines.is_empty() {
@@ -4468,9 +4502,16 @@ pub(crate) mod tests {
             item: dropped_item(5, "mandolin", 1.0, 0.0, PlayerId::from(1)),
         });
         assert_eq!(s.pending_tips.len(), 1, "{:?}", s.pending_tips);
+        // Drops still get their [Sighted] line mid-song; only the [Tip]
+        // thanks waits for the music to end.
+        let mid_song = s.drain_agent_events();
         assert!(
-            s.drain_agent_events().is_empty(),
-            "the song comes before the thanks"
+            mid_song.iter().all(|e| !e.contains("[Tip]")),
+            "the song comes before the thanks: {mid_song:?}"
+        );
+        assert!(
+            mid_song.iter().all(|e| !e.contains("mandolin")),
+            "our own drop must not be sighted: {mid_song:?}"
         );
 
         s.push_event(ServerMessage::PlayerInteractionChanged {
@@ -4780,20 +4821,18 @@ pub(crate) mod tests {
         let (mut s, _rx) = test_state();
         s.splat_sampler = Arc::new(crate::splat::SplatSampler::new(PaintedSplat));
         s.self_player = Some(test_player(0.0, 0.0));
-        s.refresh_terrain_grid().await;
-        let state = s.format_world_state();
+        let grid = s.terrain_grid_job().expect("on the surface").render().await;
 
         assert!(
-            state.contains("x=-27 to x=27"),
-            "header must carry the exact west/east span:\n{state}"
+            grid.contains("x=-27 to x=27"),
+            "header must carry the exact west/east span:\n{grid}"
         );
-        assert!(state.contains("Map: surface, you at (0, 0)"));
+        assert!(grid.contains("Map: surface, you at (0, 0)"));
 
         let cells_of = |prefix: &str| -> Vec<String> {
-            state
-                .lines()
+            grid.lines()
                 .find(|l| l.starts_with(prefix))
-                .unwrap_or_else(|| panic!("no row {prefix} in:\n{state}"))
+                .unwrap_or_else(|| panic!("no row {prefix} in:\n{grid}"))
                 .split_whitespace()
                 .skip(1)
                 .map(str::to_string)
@@ -4813,11 +4852,7 @@ pub(crate) mod tests {
         let (mut s, _rx) = test_state();
         s.self_player = Some(test_player(0.0, 0.0));
         s.self_floor_level = -1;
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        rt.block_on(s.refresh_terrain_grid());
-        assert!(!s.format_world_state().contains("Terrain map"));
+        assert!(s.terrain_grid_job().is_none());
     }
 
     /// Crossing floors drops monsters collected on the floor we left — the
@@ -4887,6 +4922,25 @@ pub(crate) mod tests {
             sighted[0].contains("at (10, 0), 10m east"),
             "sighting must carry coordinates and bearing: {}",
             sighted[0]
+        );
+    }
+
+    /// A fresh drop (monster loot, chest ejection) arrives as
+    /// GroundItemSpawned; it must fire its sighting right away, not wait for
+    /// the next move to trigger a re-check.
+    #[test]
+    fn a_fresh_drop_is_sighted_immediately() {
+        let (mut s, _rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        s.push_event(ServerMessage::GroundItemSpawned {
+            item: ground_item(77, "goblin_sword", 8.0, 0.0, 0),
+        });
+        assert!(
+            s.agent_events
+                .iter()
+                .any(|e| e.starts_with("[Sighted]") && e.contains("goblin_sword")),
+            "events: {:?}",
+            s.agent_events
         );
     }
 }

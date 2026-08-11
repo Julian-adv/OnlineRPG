@@ -35,7 +35,8 @@ fn monster_within_event_range(state: &SharedState, monster_id: &str) -> bool {
 
 /// Build a prompt string from current state and events. `memory` is the
 /// tail of the NPC's memory file, re-read per prompt so notes written this
-/// session reach a stateless backend without a restart.
+/// session reach a stateless backend without a restart; `terrain_grid` is
+/// the surface map a `TerrainGridJob` rendered outside the state lock.
 pub(super) fn build_prompt(
     state: &SharedState,
     events: &[ServerMessage],
@@ -43,12 +44,17 @@ pub(super) fn build_prompt(
     schedule: &[ScheduleEntry],
     active_schedule_idx: Option<usize>,
     memory: Option<&str>,
+    terrain_grid: Option<&str>,
 ) -> String {
     let mut prompt = String::new();
 
     prompt.push_str("=== CURRENT STATE ===\n");
     prompt.push_str(&state.format_world_state());
     prompt.push('\n');
+    if let Some(grid) = terrain_grid {
+        prompt.push_str(grid.trim_end());
+        prompt.push('\n');
+    }
 
     if let Some(memory) = memory {
         prompt.push_str("\n=== YOUR MEMORIES (notes you wrote in past turns) ===\n");
@@ -659,7 +665,7 @@ mod tests {
         ];
         record_conversation(&mut state, &heard);
 
-        let prompt = build_prompt(&state, &[], &[], &[], None, None);
+        let prompt = build_prompt(&state, &[], &[], &[], None, None, None);
         assert!(prompt.contains("RECENT CONVERSATION"), "{prompt}");
         assert!(
             prompt.contains("[Chat] jake1: first song please"),
@@ -674,7 +680,7 @@ mod tests {
             "no memories, no section: {prompt}"
         );
 
-        let prompt = build_prompt(&state, &[], &[], &[], None, Some("jake1 tips well"));
+        let prompt = build_prompt(&state, &[], &[], &[], None, Some("jake1 tips well"), None);
         assert!(prompt.contains("=== YOUR MEMORIES"), "{prompt}");
         assert!(prompt.contains("jake1 tips well"), "{prompt}");
     }

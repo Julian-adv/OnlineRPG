@@ -196,7 +196,7 @@ pub(super) async fn handle_response(
     if !agent_resp.errors.is_empty() {
         let mut s = state.lock().await;
         for err in &agent_resp.errors {
-            s.push_agent_event(format!("[BadAction] {err} — that action was skipped."));
+            s.push_agent_event(format!("[BadAction] {err}."));
         }
     }
 
@@ -1064,10 +1064,10 @@ async fn reach_merchant(
 ) -> Option<(onlinerpg_shared::PlayerId, String)> {
     let resolved = {
         let mut s = state.lock().await;
-        match merchant {
+        let id = match merchant {
             // Named merchant: resolve by name.
             Some(name) => match s.resolve_nearby_player(name) {
-                Some((id, true)) => Some((id, super::prompt::player_name(&s, &id))),
+                Some((id, true)) => Some(id),
                 Some((_, false)) => {
                     s.push_agent_event(format!(
                         "[{tag}] {name} is a fellow traveler, not a shopkeeper — trading is \
@@ -1081,16 +1081,17 @@ async fn reach_merchant(
                 }
             },
             // No merchant given: aim at the nearest NPC merchant in range.
-            None => match s.nearest_merchant() {
-                Some(id) => Some((id, super::prompt::player_name(&s, &id))),
-                None => {
+            None => {
+                let nearest = s.nearest_merchant();
+                if nearest.is_none() {
                     s.push_agent_event(format!(
                         "[{tag}] No merchant is nearby — walk to one first."
                     ));
-                    None
                 }
-            },
-        }
+                nearest
+            }
+        };
+        id.map(|id| (id, super::prompt::player_name(&s, &id)))
     };
     let (id, name) = resolved?;
     match approach_player(state, &id).await {

@@ -257,7 +257,7 @@ function draw() {
     else drawTerrain();
   }
 
-  for (const h of (snap.dungeon ? [] : snap.houses || [])) {
+  if (!snap.dungeon) for (const h of snap.houses || []) {
     for (const r of h.rooms) {
       if (r.floor > 0) continue;
       const [sx, sy] = w2s(r.x, r.z);

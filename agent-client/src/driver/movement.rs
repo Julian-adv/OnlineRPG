@@ -177,8 +177,9 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         let rot_rad = entry.rotation.to_radians();
         let mut s = state.lock().await;
         // Schedules are authored in housing floors, which the wire and the
-        // passability cache number the same way.
-        s.self_floor_level = entry.floor_level as i8;
+        // passability cache number the same way. adopt_floor_level so a
+        // cross-floor force-move still purges the left floor's monsters.
+        s.adopt_floor_level(entry.floor_level as i8);
         let target = Position { x, y, z };
         // A forced move can span the whole map; legs keep every target under
         // the server's distance cap so none is silently refused.
