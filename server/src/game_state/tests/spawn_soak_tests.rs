@@ -25,13 +25,23 @@ fn lcg(seed: &mut u64) -> f32 {
 /// Moves through the real API so `player_spatial_cells` stays in sync —
 /// writing the roster directly leaves the proximity index stale.
 async fn set_player_xz(game_state: &GameState, player_id: &PlayerId, x: f32, z: f32) {
+    set_player_on_floor(game_state, player_id, x, z, 0).await;
+}
+
+async fn set_player_on_floor(
+    game_state: &GameState,
+    player_id: &PlayerId,
+    x: f32,
+    z: f32,
+    floor: i8,
+) {
     let position = Position {
         x: onlinerpg_shared::wrap_world_x(x),
         y: 0.0,
         z,
     };
     game_state
-        .teleport_player(player_id, position, 0.0, 0)
+        .teleport_player(player_id, position, 0.0, floor)
         .await;
 }
 
@@ -128,7 +138,7 @@ async fn ambient_spawns_survive_two_hours_of_roaming_bots() {
     let sim_base = GameState::now_ms();
     for tick in 0..TWO_HOURS_TICKS {
         game_state
-            .tick_abandoned_monsters_at(sim_at(sim_base, tick))
+            .tick_monster_ownership_at(sim_at(sim_base, tick))
             .await;
         heading += (lcg(&mut seed) - 1.0) * 0.4;
         x += heading.cos() * ROAM_PER_TICK;
@@ -188,7 +198,7 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     let sim_base = GameState::now_ms();
     for tick in 0..TWO_HOURS_TICKS {
         game_state
-            .tick_abandoned_monsters_at(sim_at(sim_base, tick))
+            .tick_monster_ownership_at(sim_at(sim_base, tick))
             .await;
         for (id, _, x, z, heading) in bot_state.iter_mut() {
             *heading += (lcg(&mut seed) - 1.0) * 0.4;
@@ -209,7 +219,7 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
     // now well past the grace window, so nothing unattended may remain.
     for tick in TWO_HOURS_TICKS..TWO_HOURS_TICKS + 24 {
         game_state
-            .tick_abandoned_monsters_at(sim_at(sim_base, tick))
+            .tick_monster_ownership_at(sim_at(sim_base, tick))
             .await;
     }
     let alive = game_state.monsters.read().await.len();
@@ -298,7 +308,7 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     let start = GameState::now_ms();
     for tick in 0..12u64 {
         game_state
-            .tick_abandoned_monsters_at(sim_at(start, tick))
+            .tick_monster_ownership_at(sim_at(start, tick))
             .await;
     }
     game_state.tick_monster_spawns().await;
@@ -307,5 +317,176 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
         spawn_requests(&mut rx, "goblin"),
         1,
         "the despawn sweep freed the cap, so the walker is owed a goblin request"
+    );
+}
+
+/// Sets up one monster on `floor`, its owner far away, and a second player
+/// standing next to it. Returns (monster id, owner, owner rx, adopter, adopter rx).
+async fn abandoned_next_to_a_bystander(
+    game_state: &GameState,
+    floor: i8,
+) -> (String, PlayerId, DirectRx, PlayerId, DirectRx) {
+    let (owner, adopter) = (pid("leaver"), pid("stayer"));
+    game_state.add_player(make_player("leaver", 0.0, 0.0)).await;
+    game_state.add_player(make_player("stayer", 0.0, 0.0)).await;
+    set_player_on_floor(game_state, &owner, 0.0, 0.0, floor).await;
+    set_player_on_floor(game_state, &adopter, 0.0, 0.0, floor).await;
+
+    let monster = game_state
+        .spawn_monster(
+            "goblin".to_string(),
+            Position {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            0.0,
+            Some(owner),
+            floor,
+            None,
+            false,
+        )
+        .await
+        .expect("spawn succeeds under the caps");
+
+    // The owner walks out of the monster's AOI; the bystander stays put.
+    set_player_on_floor(game_state, &owner, 1000.0, 1000.0, floor).await;
+
+    let mut owner_rx = game_state.register_direct_channel(&owner).await;
+    let mut adopter_rx = game_state.register_direct_channel(&adopter).await;
+    drain(&mut owner_rx);
+    drain(&mut adopter_rx);
+    (monster.id, owner, owner_rx, adopter, adopter_rx)
+}
+
+async fn owner_of(game_state: &GameState, monster_id: &str) -> Option<PlayerId> {
+    game_state
+        .monsters
+        .read()
+        .await
+        .get(monster_id)
+        .and_then(|m| m.owner_id)
+}
+
+/// The owner's client is what simulates a monster, and it drops the brain the
+/// moment the monster leaves its AOI. Left alone, the monster stays visible and
+/// attackable to the bystander while nothing drives it.
+#[tokio::test]
+async fn a_monster_its_owner_left_is_handed_to_a_player_still_beside_it() {
+    let game_state = make_test_game_state("handoff_surface");
+    let (monster_id, _, mut owner_rx, adopter, mut adopter_rx) =
+        abandoned_next_to_a_bystander(&game_state, 0).await;
+
+    game_state.tick_monster_ownership().await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(adopter),
+        "the bystander should have been given the monster"
+    );
+    assert!(
+        drain(&mut adopter_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterAssigned { monster } if monster.id == monster_id)
+        ),
+        "the new owner needs MonsterAssigned to start running its AI"
+    );
+    assert!(
+        drain(&mut owner_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+        ),
+        "the old owner must be told it no longer holds the monster"
+    );
+}
+
+/// A dungeon floor is 80m across but the AOI is 43m, so an owner can leave its
+/// monster's AOI without leaving the floor — and the floor-exit handoff never
+/// fires. This is the case that made dungeon monsters into punching bags.
+#[tokio::test]
+async fn handoff_also_covers_a_dungeon_floor() {
+    let game_state = make_test_game_state("handoff_dungeon");
+    let (monster_id, _, _, adopter, _) = abandoned_next_to_a_bystander(&game_state, -1).await;
+
+    game_state.tick_monster_ownership().await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(adopter),
+        "a dungeon monster whose owner walked to the far side of the floor should change hands"
+    );
+}
+
+/// Handoff and despawn are separate halves: the dungeon's own floor lifecycle
+/// owns removal, so the sweep must never delete a dungeon monster.
+#[tokio::test]
+async fn the_sweep_never_despawns_a_dungeon_monster() {
+    let game_state = make_test_game_state("handoff_dungeon_keep");
+    let owner = pid("delver");
+    game_state.add_player(make_player("delver", 0.0, 0.0)).await;
+    set_player_on_floor(&game_state, &owner, 0.0, 0.0, -1).await;
+    let monster = game_state
+        .spawn_monster(
+            "goblin".to_string(),
+            Position {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            0.0,
+            Some(owner),
+            -1,
+            None,
+            false,
+        )
+        .await
+        .expect("spawn succeeds under the caps");
+    // Nobody anywhere near it, for well past the grace period.
+    set_player_on_floor(&game_state, &owner, 1000.0, 1000.0, -1).await;
+
+    let start = GameState::now_ms();
+    for tick in 0..12u64 {
+        game_state
+            .tick_monster_ownership_at(sim_at(start, tick))
+            .await;
+    }
+
+    assert!(
+        game_state.monsters.read().await.get(&monster.id).is_some(),
+        "the dungeon floor lifecycle owns this monster, not the abandonment sweep"
+    );
+}
+
+/// The owner is still standing there: nothing to reconcile.
+#[tokio::test]
+async fn a_monster_whose_owner_is_present_is_left_alone() {
+    let game_state = make_test_game_state("handoff_noop");
+    let owner = pid("present");
+    game_state
+        .add_player(make_player("present", 0.0, 0.0))
+        .await;
+    let monster = game_state
+        .spawn_monster(
+            "goblin".to_string(),
+            Position {
+                x: 10.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            0.0,
+            Some(owner),
+            0,
+            None,
+            false,
+        )
+        .await
+        .expect("spawn succeeds under the caps");
+    let mut rx = game_state.register_direct_channel(&owner).await;
+    drain(&mut rx);
+
+    game_state.tick_monster_ownership().await;
+
+    assert_eq!(owner_of(&game_state, &monster.id).await, Some(owner));
+    assert!(
+        drain(&mut rx).is_empty(),
+        "an untouched monster should generate no ownership traffic"
     );
 }

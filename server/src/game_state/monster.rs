@@ -29,8 +29,19 @@ const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
 /// despawns. Long enough that stepping out of range and back doesn't churn.
 const ABANDONED_MONSTER_GRACE_MS: u64 = 60_000;
 
-/// Player positions bucketed by spatial cell for one abandonment sweep.
-type PlayerCells = std::collections::HashMap<super::SpatialCell, Vec<(Position, i8)>>;
+/// One tick's view of the roster, bucketed by cell, so the ownership sweep
+/// locks it once rather than once per monster.
+type PlayerSnapshot = std::collections::HashMap<super::SpatialCell, Vec<(PlayerId, Position, i8)>>;
+
+/// Who, if anyone, is inside a monster's AOI.
+enum Attendance {
+    /// Nobody — invisible to every client.
+    Nobody,
+    /// The owner is there, so its client is simulating the monster.
+    Owner,
+    /// Someone else is, but the owner is not: the nearest candidate to adopt it.
+    Bystander(PlayerId),
+}
 
 /// Alive-monster tallies, kept current by spawn/kill rather than recounted.
 /// Its own struct so `MonsterRegistry` can update it while holding a
@@ -753,97 +764,123 @@ impl super::GameState {
     /// Same predicate as `player_ids_within_position(.., EVENT_DELIVERY_RADIUS)`
     /// but against a per-tick snapshot, so a sweep over every monster locks the
     /// roster once instead of twice per monster.
-    fn any_player_in_aoi(cells: &PlayerCells, position: &Position, floor_level: i8) -> bool {
+    ///
+    /// Runs once per monster per tick, so it allocates nothing and stops early:
+    /// finding the owner settles the question, and only the nearest bystander
+    /// is worth tracking.
+    fn attendance(roster: &PlayerSnapshot, monster: &crate::types::Monster) -> Attendance {
         let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-        // Derived: under-scanning here despawns monsters a player stands next to.
-        let cell_radius =
-            (super::EVENT_DELIVERY_RADIUS / super::PLAYER_SPATIAL_CELL_SIZE).ceil() as i32;
-        // Mirror player_ids_within_position's seam handling: query translated
-        // copies so cells from the opposite world edge participate too.
-        [
-            -onlinerpg_shared::WORLD_WIDTH_X,
-            0.0,
-            onlinerpg_shared::WORLD_WIDTH_X,
-        ]
-        .iter()
-        .any(|shift_x| {
-            let shifted = Position {
-                x: position.x + shift_x,
-                ..*position
+        let mut nearest: Option<(PlayerId, f32)> = None;
+        for cell in
+            super::SpatialCell::within_radius(&monster.position, super::EVENT_DELIVERY_RADIUS)
+        {
+            let Some(nearby) = roster.get(&cell) else {
+                continue;
             };
-            let center = super::SpatialCell::from_position(&shifted);
-            (center.x - cell_radius..=center.x + cell_radius).any(|x| {
-                (center.z - cell_radius..=center.z + cell_radius).any(|z| {
-                    cells
-                        .get(&super::SpatialCell { x, z })
-                        .is_some_and(|nearby| {
-                            nearby.iter().any(|(pos, floor)| {
-                                *floor == floor_level && position.dist_xz_sq(pos) <= radius_sq
-                            })
-                        })
-                })
-            })
-        })
+            for (id, position, floor) in nearby {
+                if *floor != monster.floor_level {
+                    continue;
+                }
+                let dist_sq = monster.position.dist_xz_sq(position);
+                if dist_sq > radius_sq {
+                    continue;
+                }
+                if monster.owner_id == Some(*id) {
+                    return Attendance::Owner;
+                }
+                match nearest {
+                    Some((_, best)) if best <= dist_sq => {}
+                    _ => nearest = Some((*id, dist_sq)),
+                }
+            }
+        }
+        match nearest {
+            Some((id, _)) => Attendance::Bystander(id),
+            None => Attendance::Nobody,
+        }
     }
 
-    /// Despawn monsters no player has been near for the grace period.
+    /// Reconcile every monster against who is actually near it.
     ///
-    /// A monster its owner walked away from is invisible to everyone yet still
-    /// holds a slot in both `max_per_player` and `max_monsters_total`. Roaming
-    /// clients abandon monsters faster than they kill them, so without this the
-    /// caps fill with unreachable monsters and ambient spawning stops
-    /// server-wide. Dungeon monsters have their own floor lifecycle.
-    pub async fn tick_abandoned_monsters(&self) {
-        self.tick_abandoned_monsters_at(Self::now_ms()).await
+    /// A monster's owner is the client simulating it, so an owner that walked
+    /// out of its AOI leaves the monster frozen: still visible and attackable,
+    /// but never chasing or retaliating. Where someone else is standing there,
+    /// hand the monster over; where nobody is, it is invisible to everyone yet
+    /// still holds a slot in both `max_per_player` and `max_monsters_total`, so
+    /// despawn it after a grace period. Roaming clients abandon monsters faster
+    /// than they kill them, and without the despawn the caps fill with
+    /// unreachable monsters and ambient spawning stops server-wide.
+    ///
+    /// Handoff applies to dungeon monsters too; the despawn does not, since a
+    /// dungeon floor already despawns its own on exit.
+    pub async fn tick_monster_ownership(&self) {
+        self.tick_monster_ownership_at(Self::now_ms()).await
+    }
+
+    fn player_snapshot(
+        players: &std::collections::HashMap<PlayerId, crate::types::Player>,
+    ) -> PlayerSnapshot {
+        let mut roster = PlayerSnapshot::default();
+        for (id, player) in players {
+            roster
+                .entry(super::SpatialCell::from_position(&player.position))
+                .or_default()
+                .push((*id, player.position, player.floor_level));
+        }
+        roster
     }
 
     /// Clock-injected body, so soak tests can compress hours into a loop.
-    pub(crate) async fn tick_abandoned_monsters_at(&self, now: u64) {
-        let player_cells: PlayerCells = {
-            let players = self.players.read().await;
-            let mut cells = PlayerCells::new();
-            for player in players.values() {
-                cells
-                    .entry(super::SpatialCell::from_position(&player.position))
-                    .or_default()
-                    .push((player.position, player.floor_level));
-            }
-            cells
-        };
+    pub(crate) async fn tick_monster_ownership_at(&self, now: u64) {
+        let roster = Self::player_snapshot(&*self.players.read().await);
 
-        let unattended: Vec<String> = {
+        // Resolve every monster against the snapshot in one pass, then act.
+        let mut unattended: Vec<String> = Vec::new();
+        let mut handoffs: Vec<(String, PlayerId, Option<PlayerId>)> = Vec::new();
+        {
             let monsters = self.monsters.read().await;
-            monsters
-                .values()
-                .filter(|m| {
-                    !m.is_in_dungeon()
-                        && !Self::any_player_in_aoi(&player_cells, &m.position, m.floor_level)
-                })
-                .map(|m| m.id.clone())
-                .collect()
-        };
+            for monster in monsters.values() {
+                match Self::attendance(&roster, monster) {
+                    Attendance::Owner => {}
+                    Attendance::Bystander(nearest) => {
+                        handoffs.push((monster.id.clone(), nearest, monster.owner_id));
+                    }
+                    // A dungeon floor despawns its own on exit.
+                    Attendance::Nobody if !monster.is_in_dungeon() => {
+                        unattended.push(monster.id.clone())
+                    }
+                    Attendance::Nobody => {}
+                }
+            }
+        }
+
+        self.hand_off_monsters(handoffs).await;
 
         let expired: Vec<String> = {
             let mut tracker = self.abandoned_monsters.write().await;
             let unattended_set: HashSet<&String> = unattended.iter().collect();
-            // Anything seen again (or already gone) stops accruing.
+            // Anything attended again (or already gone) stops accruing.
             tracker.retain(|id, _| unattended_set.contains(id));
-            unattended
-                .iter()
-                .filter(|id| {
-                    // `entry` would clone the id on every tick a monster stays
-                    // unattended; only a first sighting needs an owned key.
-                    let first_seen = match tracker.get(id.as_str()) {
-                        Some(&at) => at,
-                        None => {
-                            tracker.insert((*id).clone(), now);
-                            now
-                        }
-                    };
-                    now.saturating_sub(first_seen) >= ABANDONED_MONSTER_GRACE_MS
-                })
-                .cloned()
-                .collect()
+            drop(unattended_set);
+
+            let mut expired = Vec::new();
+            for id in unattended {
+                // Each id moves into the tracker or into `expired`, never both,
+                // so a monster is never cloned for this.
+                match tracker.get(&id) {
+                    Some(&first_seen)
+                        if now.saturating_sub(first_seen) >= ABANDONED_MONSTER_GRACE_MS =>
+                    {
+                        tracker.remove(&id);
+                        expired.push(id);
+                    }
+                    Some(_) => {}
+                    None => {
+                        tracker.insert(id, now);
+                    }
+                }
+            }
+            expired
         };
         if expired.is_empty() {
             return;
@@ -856,34 +893,75 @@ impl super::GameState {
                 .filter_map(|id| monsters.remove(id))
                 .collect()
         };
-        {
-            let mut tracker = self.abandoned_monsters.write().await;
-            for id in &expired {
-                tracker.remove(id);
-            }
-        }
 
         for monster in removed {
             debug!("Despawned abandoned monster {}", monster.id);
-            let removal = ServerMessage::MonsterRemoved {
-                monster_id: monster.id,
-            };
-            // Empty in the normal case — but a player who walked in between the
-            // scan and this removal would otherwise be left with a ghost.
-            self.send_direct_message_to_players_within_position(
-                &monster.position,
-                monster.floor_level,
-                super::EVENT_DELIVERY_RADIUS,
-                removal.clone(),
-                monster.owner_id.as_ref(),
-            )
-            .await;
-            // An owner that walked away already got MonsterRemoved from the AOI
-            // diff, but one that stood still while the monster wandered off is
-            // skipped by the move fanout and still holds it.
-            if let Some(owner_id) = monster.owner_id {
-                self.send_direct_message(&owner_id, removal).await;
+            self.announce_monster_removed(&monster).await;
+        }
+    }
+
+    /// Give a monster whose owner left its AOI to a player still inside it.
+    ///
+    /// The owner's client is what runs the monster's AI, and it tears the brain
+    /// down the moment the monster leaves its own AOI. Without this the monster
+    /// stays visible and attackable to whoever is standing there while nobody
+    /// simulates it — it never chases, never retaliates. Applies in dungeons
+    /// too: a floor is 80m across, wider than the 43m AOI, and the existing
+    /// handoff only fires when a player leaves the floor entirely.
+    ///
+    /// Deliberately ignores `max_per_player`: the monster already exists, and
+    /// refusing would strand it. The adopter simply gets no new ambient spawns
+    /// until back under the cap.
+    async fn hand_off_monsters(&self, handoffs: Vec<(String, PlayerId, Option<PlayerId>)>) {
+        if handoffs.is_empty() {
+            return;
+        }
+        let reassigned: Vec<(crate::types::Monster, PlayerId, Option<PlayerId>)> = {
+            let mut monsters = self.monsters.write().await;
+            handoffs
+                .into_iter()
+                .filter_map(|(id, new_owner, old_owner)| {
+                    let monster = monsters.reassign_owner(&id, new_owner)?;
+                    Some((monster.clone(), new_owner, old_owner))
+                })
+                .collect()
+        };
+        for (monster, new_owner, old_owner) in reassigned {
+            debug!(
+                "Monster {} handed to {} (owner left its AOI)",
+                monster.id, new_owner
+            );
+            if let Some(old_owner) = old_owner {
+                self.send_direct_message(
+                    &old_owner,
+                    ServerMessage::MonsterRemoved {
+                        monster_id: monster.id.clone(),
+                    },
+                )
+                .await;
             }
+            self.send_direct_message(&new_owner, ServerMessage::MonsterAssigned { monster })
+                .await;
+        }
+    }
+
+    /// Tell everyone who can see a removed monster, and its owner, that it is
+    /// gone. The owner is messaged separately: it may be outside the AOI and
+    /// still holding the monster's AI.
+    async fn announce_monster_removed(&self, monster: &crate::types::Monster) {
+        let removal = ServerMessage::MonsterRemoved {
+            monster_id: monster.id.clone(),
+        };
+        self.send_direct_message_to_players_within_position(
+            &monster.position,
+            monster.floor_level,
+            super::EVENT_DELIVERY_RADIUS,
+            removal.clone(),
+            monster.owner_id.as_ref(),
+        )
+        .await;
+        if let Some(owner_id) = monster.owner_id {
+            self.send_direct_message(&owner_id, removal).await;
         }
     }
 

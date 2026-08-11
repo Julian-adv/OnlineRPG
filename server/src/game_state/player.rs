@@ -1995,47 +1995,25 @@ impl super::GameState {
         floor_level: i8,
         radius: f32,
     ) -> Vec<PlayerId> {
-        let cell_radius = (radius / super::PLAYER_SPATIAL_CELL_SIZE).ceil() as i32;
         let radius_sq = radius * radius;
         let players = self.players.read().await;
         let cells = self.player_spatial_cells.read().await;
         let mut player_ids = HashSet::new();
 
-        // The spatial hash itself stores canonical positions. Near either X
-        // edge, query translated copies one circumference away so cells from
-        // the opposite edge participate in the same periodic neighborhood.
-        for shift_x in [
-            -onlinerpg_shared::WORLD_WIDTH_X,
-            0.0,
-            onlinerpg_shared::WORLD_WIDTH_X,
-        ] {
-            let shifted = Position {
-                x: position.x + shift_x,
-                ..*position
+        for cell in super::SpatialCell::within_radius(position, radius) {
+            let Some(cell_player_ids) = cells.get(&cell) else {
+                continue;
             };
-            let shifted_center = super::SpatialCell::from_position(&shifted);
-            for cell_x in (shifted_center.x - cell_radius)..=(shifted_center.x + cell_radius) {
-                for cell_z in (shifted_center.z - cell_radius)..=(shifted_center.z + cell_radius) {
-                    let cell = super::SpatialCell {
-                        x: cell_x,
-                        z: cell_z,
-                    };
 
-                    let Some(cell_player_ids) = cells.get(&cell) else {
-                        continue;
-                    };
+            for player_id in cell_player_ids {
+                let Some(player) = players.get(player_id) else {
+                    continue;
+                };
 
-                    for player_id in cell_player_ids {
-                        let Some(player) = players.get(player_id) else {
-                            continue;
-                        };
-
-                        if player.floor_level == floor_level
-                            && position.dist_xz_sq(&player.position) <= radius_sq
-                        {
-                            player_ids.insert(*player_id);
-                        }
-                    }
+                if player.floor_level == floor_level
+                    && position.dist_xz_sq(&player.position) <= radius_sq
+                {
+                    player_ids.insert(*player_id);
                 }
             }
         }

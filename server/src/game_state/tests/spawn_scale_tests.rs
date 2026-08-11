@@ -73,9 +73,15 @@ async fn spawn_path_cost_at_scale() {
         game_state.tick_monster_spawns().await;
         let spawn_tick = start.elapsed();
 
+        // First tick reconciles every stale owner at once — a cold-start
+        // transient. The second is the steady state: owners already correct,
+        // so each monster settles as soon as its own owner turns up.
         let start = Instant::now();
-        game_state.tick_abandoned_monsters().await;
-        let abandon_tick = start.elapsed();
+        game_state.tick_monster_ownership().await;
+        let cold_tick = start.elapsed();
+        let start = Instant::now();
+        game_state.tick_monster_ownership().await;
+        let warm_tick = start.elapsed();
 
         // The per-move fanout is the steady-state cost: every alive monster
         // reports movement roughly once a second.
@@ -102,7 +108,8 @@ async fn spawn_path_cost_at_scale() {
 
         println!(
             "{population:>7} monsters / {USERS} users: spawn_monster {per_spawn:>10.2?}  \
-             tick_monster_spawns {spawn_tick:>10.2?}  tick_abandoned {abandon_tick:>10.2?}  \
+             tick_monster_spawns {spawn_tick:>10.2?}  ownership cold {cold_tick:>10.2?} \
+             warm {warm_tick:>10.2?}  \
              move {per_move:>10.2?}"
         );
     }

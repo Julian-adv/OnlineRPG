@@ -55,6 +55,31 @@ impl SpatialCell {
         }
     }
 
+    /// Every cell that can hold a point within `radius` of `position`, as a
+    /// conservative superset — callers still test the exact distance.
+    ///
+    /// The spatial hash stores canonical positions, so near either X edge the
+    /// neighborhood is queried from translated copies one circumference away;
+    /// that is what lets cells from the opposite edge participate.
+    fn within_radius(position: &Position, radius: f32) -> impl Iterator<Item = SpatialCell> + '_ {
+        let cell_radius = (radius / PLAYER_SPATIAL_CELL_SIZE).ceil() as i32;
+        [
+            -onlinerpg_shared::WORLD_WIDTH_X,
+            0.0,
+            onlinerpg_shared::WORLD_WIDTH_X,
+        ]
+        .into_iter()
+        .flat_map(move |shift_x| {
+            let center = Self::from_position(&Position {
+                x: position.x + shift_x,
+                ..*position
+            });
+            (center.x - cell_radius..=center.x + cell_radius).flat_map(move |x| {
+                (center.z - cell_radius..=center.z + cell_radius).map(move |z| SpatialCell { x, z })
+            })
+        })
+    }
+
     /// Every cell overlapping the given XZ box, by integer cell range —
     /// exact, unlike sampling. Callers split a seam-crossing X range into
     /// canonical segments first; the range itself does not wrap.
@@ -201,7 +226,7 @@ pub struct GameState {
     music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
     ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     /// monster id → when it was first found with no player inside its AOI.
-    /// Drives the abandoned-monster despawn in `tick_abandoned_monsters`.
+    /// Drives the despawn half of `tick_monster_ownership`.
     abandoned_monsters: Arc<RwLock<HashMap<String, u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
