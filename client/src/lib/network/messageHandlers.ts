@@ -55,6 +55,7 @@ import {
 import {
   partyRoster,
   applyPartyPositions,
+  applyPartyVitals,
   resetPartyPositions,
   resetPartyStores,
   pendingPartyInvites,
@@ -63,6 +64,7 @@ import {
   MAX_PENDING_PARTY_INVITES,
   type PartyMemberEntry,
   type PartyMemberPositionEntry,
+  type PartyMemberVitalsEntry,
 } from '../stores/partyStore'
 import {
   applyFriendList,
@@ -566,6 +568,10 @@ export function handleServerMessage(
       )
       break
     }
+
+    case 'PartyVitals':
+      applyPartyVitals(data.members as PartyMemberVitalsEntry[])
+      break
 
     case 'FriendList':
       applyFriendList(

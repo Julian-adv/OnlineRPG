@@ -146,10 +146,35 @@ pub(crate) fn parse_notice_command(message: &str) -> Option<Option<&str>> {
     Some(Some(rest).filter(|rest| !rest.is_empty()))
 }
 
-/// `/party <name>` invites; bare `/party` reports the roster.
-pub(crate) fn parse_party_command(message: &str) -> Option<Option<&str>> {
+/// `/party <name>` invites; bare `/party` reports the roster; `kick`,
+/// `leader` and `leave` are leader/member subcommands. The subcommand words
+/// are reserved as invite targets — a player named "kick" can still be
+/// invited from another client's UI, just not by this command.
+#[derive(Debug, PartialEq)]
+pub(crate) enum PartyCommand<'a> {
+    Status,
+    Invite(&'a str),
+    Kick(&'a str),
+    Leader(&'a str),
+    Leave,
+}
+
+pub(crate) fn parse_party_command(message: &str) -> Option<PartyCommand<'_>> {
     let rest = strip_command(message, "/party")?;
-    Some((!rest.is_empty()).then_some(rest))
+    Some(match rest.split_once(' ') {
+        None => match rest {
+            "" => PartyCommand::Status,
+            "leave" => PartyCommand::Leave,
+            // Bare subcommands still parse, so they draw a usage reply
+            // instead of inviting someone named "kick".
+            "kick" => PartyCommand::Kick(""),
+            "leader" => PartyCommand::Leader(""),
+            name => PartyCommand::Invite(name),
+        },
+        Some(("kick", name)) => PartyCommand::Kick(name.trim()),
+        Some(("leader", name)) => PartyCommand::Leader(name.trim()),
+        _ => PartyCommand::Invite(rest),
+    })
 }
 
 /// `/p <message>` speaks on the party channel. Parsed here and not only in the
@@ -353,12 +378,31 @@ impl super::GameState {
             return;
         }
 
-        if let Some(target) = parse_party_command(&message) {
-            match target {
-                Some(name) => self.invite_to_party(player_id, name).await,
-                None => {
+        if let Some(command) = parse_party_command(&message) {
+            match command {
+                PartyCommand::Invite(name) => self.invite_to_party(player_id, name).await,
+                PartyCommand::Status => {
                     let status = self.describe_party(player_id).await;
                     self.send_system_message(player_id, status).await;
+                }
+                PartyCommand::Leave => self.leave_party(player_id).await,
+                PartyCommand::Kick("") => {
+                    self.send_system_message(player_id, "Party: /party kick <name>")
+                        .await;
+                }
+                PartyCommand::Kick(name) => {
+                    if let Some(target_id) = self.party_target_by_name(player_id, name).await {
+                        self.kick_from_party(player_id, &target_id).await;
+                    }
+                }
+                PartyCommand::Leader("") => {
+                    self.send_system_message(player_id, "Party: /party leader <name>")
+                        .await;
+                }
+                PartyCommand::Leader(name) => {
+                    if let Some(target_id) = self.party_target_by_name(player_id, name).await {
+                        self.promote_party_leader(player_id, &target_id).await;
+                    }
                 }
             }
             return;

@@ -390,7 +390,8 @@ impl super::GameState {
         }
         let healed: Vec<PlayerId> = messages.iter().map(|(pid, ..)| *pid).collect();
         if !healed.is_empty() {
-            self.dirty_players.write().await.extend(healed);
+            self.dirty_players.write().await.extend(healed.iter());
+            self.party_vitals_dirty.write().await.extend(healed);
         }
         for (pid, position, floor, health, max_health) in messages {
             self.send_direct_message_to_players_within_position(

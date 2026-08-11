@@ -492,6 +492,9 @@ impl super::GameState {
 
                         // Mark dirty for periodic batch save
                         self.mark_dirty(player_id).await;
+                        if leveled_up {
+                            self.mark_party_vitals_dirty(player_id).await;
+                        }
 
                         // Notify the player directly
                         let max_hp_for_msg = if let Some(max_hp) = new_max_hp {
@@ -715,6 +718,7 @@ impl super::GameState {
         if result.hit {
             self.cancel_food_regeneration(target_player_id).await;
             self.mark_dirty(target_player_id).await;
+            self.mark_party_vitals_dirty(target_player_id).await;
         }
 
         // Send attack result after server-side HP update.
@@ -840,6 +844,7 @@ impl super::GameState {
         }
         for pid in regen_dirty {
             self.mark_dirty(&pid).await;
+            self.mark_party_vitals_dirty(&pid).await;
         }
     }
 
@@ -937,6 +942,7 @@ impl super::GameState {
 
         // Mark dirty for periodic batch save
         self.mark_dirty(player_id).await;
+        self.mark_party_vitals_dirty(player_id).await;
 
         self.send_direct_message(
             player_id,

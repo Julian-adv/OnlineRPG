@@ -1544,6 +1544,7 @@ impl super::GameState {
             self.finish_position_update(player_id, old_position, old_floor, player, update_msg)
                 .await;
             self.reset_hunger_on_respawn(player_id).await;
+            self.mark_party_vitals_dirty(player_id).await;
         } else {
             warn!("Attempted to respawn non-existent player: {}", player_id);
         }

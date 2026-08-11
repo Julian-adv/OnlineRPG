@@ -663,6 +663,16 @@ class NetworkManager {
     this.sendMessage('PartyLeave')
   }
 
+  /** Leader-only: remove a member from the party. */
+  sendPartyKick(targetId: number) {
+    this.sendMessage({ PartyKick: { target_id: targetId } })
+  }
+
+  /** Leader-only: hand the lead to another member. */
+  sendPartyPromote(targetId: number) {
+    this.sendMessage({ PartyPromote: { target_id: targetId } })
+  }
+
   /** Say something to the whole party, wherever its members are. */
   sendPartyChat(message: string) {
     this.sendMessage({ PartyChat: { message } })

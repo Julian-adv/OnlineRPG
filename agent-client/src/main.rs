@@ -471,6 +471,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PartySummonReceived { .. } => "PartySummonReceived",
         ServerMessage::PartyState { .. } => "PartyState",
         ServerMessage::PartyPositions { .. } => "PartyPositions",
+        ServerMessage::PartyVitals { .. } => "PartyVitals",
         ServerMessage::FriendList { .. } => "FriendList",
         ServerMessage::FriendsOnline { .. } => "FriendsOnline",
         ServerMessage::FriendRequestReceived { .. } => "FriendRequestReceived",

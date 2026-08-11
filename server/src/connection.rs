@@ -1661,6 +1661,18 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PartyKick { target_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.kick_from_party(id, &target_id).await;
+            }
+        }
+
+        ClientMessage::PartyPromote { target_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.promote_party_leader(id, &target_id).await;
+            }
+        }
+
         ClientMessage::PartyChat { message } => {
             if let Some(id) = &state.player_id {
                 game_state.send_party_chat(id, message).await;

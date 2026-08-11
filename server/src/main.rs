@@ -444,6 +444,18 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Faster than positions: a party HP bar lagging mid-fight reads as wrong.
+    let game_state_for_party_vitals = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "party vitals",
+        Duration::from_secs(1),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_party_vitals);
+            async move { game_state.tick_party_vitals().await }
+        },
+    ));
+
     // Every 10s, top up each player's ambient monsters toward their caps.
     let game_state_for_spawns = Arc::clone(&game_state);
     background.spawn(run_ticks(

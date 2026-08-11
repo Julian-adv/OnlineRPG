@@ -1,7 +1,7 @@
 use super::consent::{answer_consent, PendingConsent};
 use crate::types::{Player, PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
-    PartyMember, PartyMemberPosition, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
+    PartyMember, PartyMemberPosition, PartyMemberVitals, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -85,6 +85,24 @@ fn member_positions(
                 x: p.position.x,
                 z: p.position.z,
                 floor_level: p.floor_level,
+            })
+        })
+        .collect()
+}
+
+/// Every member's health; one payload serves the whole party, like
+/// `member_positions`.
+fn member_vitals(
+    players: &HashMap<PlayerId, Player>,
+    member_ids: &[PlayerId],
+) -> Vec<PartyMemberVitals> {
+    member_ids
+        .iter()
+        .filter_map(|id| {
+            players.get(id).map(|p| PartyMemberVitals {
+                id: *id,
+                hp: p.health,
+                max_hp: p.max_health,
             })
         })
         .collect()
@@ -787,6 +805,158 @@ impl super::GameState {
         }
     }
 
+    /// Queue `player_id` for the next party-vitals push. Called on every
+    /// health change; partyless entries are dropped by the tick.
+    pub(crate) async fn mark_party_vitals_dirty(&self, player_id: &PlayerId) {
+        self.party_vitals_dirty.write().await.insert(*player_id);
+    }
+
+    /// Push fresh health to every party a queued player belongs to;
+    /// `tick_party_positions`' twin.
+    pub async fn tick_party_vitals(&self) {
+        let changed: Vec<PlayerId> = {
+            let mut dirty = self.party_vitals_dirty.write().await;
+            if dirty.is_empty() {
+                return;
+            }
+            dirty.drain().collect()
+        };
+        let rosters: Vec<Vec<PlayerId>> = {
+            let parties = self.parties.read().await;
+            let party_ids: HashSet<u64> = changed
+                .iter()
+                .filter_map(|id| parties.member_of.get(id).copied())
+                .collect();
+            party_ids
+                .iter()
+                .filter_map(|id| parties.parties.get(id).map(|p| p.members.clone()))
+                .collect()
+        };
+        if rosters.is_empty() {
+            return;
+        }
+        let payloads: Vec<(Vec<PlayerId>, Vec<PartyMemberVitals>)> = {
+            let players = self.players.read().await;
+            rosters
+                .into_iter()
+                .map(|ids| {
+                    let members = member_vitals(&players, &ids);
+                    (ids, members)
+                })
+                .collect()
+        };
+        for (member_ids, members) in payloads {
+            self.send_direct_message_to_players(
+                &member_ids,
+                ServerMessage::PartyVitals { members },
+            )
+            .await;
+        }
+    }
+
+    /// Leader-only removal of another member. The removal itself is
+    /// `remove_party_member`, so succession and disband behave exactly like a
+    /// voluntary leave; only the messaging differs.
+    pub async fn kick_from_party(&self, kicker_id: &PlayerId, target_id: &PlayerId) {
+        let verdict = {
+            let parties = self.parties.read().await;
+            match parties.party_of(kicker_id) {
+                None => Err("you are not in a party."),
+                Some(party) if party.leader != *kicker_id => Err("only the party leader can kick."),
+                Some(_) if target_id == kicker_id => Err("that's you — /party leave to step out."),
+                Some(party) if !party.members.contains(target_id) => {
+                    Err("they are not in your party.")
+                }
+                Some(_) => Ok(()),
+            }
+        };
+        if let Err(reason) = verdict {
+            self.send_system_message(kicker_id, format!("Party: {reason}"))
+                .await;
+            return;
+        }
+        let target_name = self.player_name_of(target_id).await;
+        // The verdict was read-locked, so the target may have left in the
+        // gap; the removal returning false is that race, not a bug.
+        if !self.remove_party_member(target_id).await {
+            self.send_system_message(
+                kicker_id,
+                format!("Party: {target_name} is no longer in your party."),
+            )
+            .await;
+            return;
+        }
+        info!(target = %target_name, "party kick");
+        self.send_system_message(target_id, "Party: you were removed from the party.")
+            .await;
+        // After the removal the kicker's roster is the remaining party;
+        // disbanded means the kicker is partyless and still gets the line.
+        let mut remaining = self.other_party_members(kicker_id).await;
+        remaining.push(*kicker_id);
+        for member in remaining {
+            self.send_system_message(&member, format!("Party: {target_name} was removed."))
+                .await;
+        }
+    }
+
+    /// Leader-only leadership handover. The roster is untouched, so no
+    /// removal path applies; the new leader is announced to the whole party.
+    pub async fn promote_party_leader(&self, leader_id: &PlayerId, target_id: &PlayerId) {
+        let result = {
+            let mut parties = self.parties.write().await;
+            let party_id = parties.member_of.get(leader_id).copied();
+            match party_id.and_then(|id| parties.parties.get_mut(&id)) {
+                None => Err("you are not in a party."),
+                Some(party) if party.leader != *leader_id => {
+                    Err("only the party leader can hand over the lead.")
+                }
+                Some(_) if target_id == leader_id => Err("you already lead this party."),
+                Some(party) if !party.members.contains(target_id) => {
+                    Err("they are not in your party.")
+                }
+                Some(party) => {
+                    party.leader = *target_id;
+                    Ok((party.leader, party.members.clone()))
+                }
+            }
+        };
+        match result {
+            Err(reason) => {
+                self.send_system_message(leader_id, format!("Party: {reason}"))
+                    .await;
+            }
+            Ok((leader, members)) => {
+                let target_name = self.player_name_of(target_id).await;
+                info!(target = %target_name, "party promote");
+                self.broadcast_party_state(leader, &members).await;
+                for member in members {
+                    self.send_system_message(
+                        &member,
+                        format!("Party: {target_name} is now the party leader."),
+                    )
+                    .await;
+                }
+            }
+        }
+    }
+
+    /// `/party kick|leader <name>` — resolve the name online-only (the roster
+    /// prunes disconnects, so an offline member cannot be targeted anyway)
+    /// and hand off to the id-based handler.
+    pub async fn party_target_by_name(&self, sender_id: &PlayerId, name: &str) -> Option<PlayerId> {
+        match self.player_id_by_name(name).await {
+            Some(id) => Some(id),
+            None => {
+                self.send_system_message(
+                    sender_id,
+                    format!("Party: no one called {name} is online."),
+                )
+                .await;
+                None
+            }
+        }
+    }
+
     async fn broadcast_party_state(&self, leader_id: PlayerId, member_ids: &[PlayerId]) {
         let members: Vec<PartyMember> = {
             let players = self.players.read().await;
@@ -796,6 +966,9 @@ impl super::GameState {
                     players.get(id).map(|p| PartyMember {
                         id: *id,
                         name: p.name.clone(),
+                        hp: p.health,
+                        max_hp: p.max_health,
+                        class: p.class.clone(),
                     })
                 })
                 .collect()
