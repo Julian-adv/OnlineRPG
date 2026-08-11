@@ -1139,9 +1139,13 @@ impl GameState {
                     let mut monsters = self.monsters.write().await;
                     let mut out = Vec::new();
                     for id in &alive_ids {
-                        if let Some(m) = monsters.get_mut(id) {
-                            if m.owner_id.as_ref() == Some(player_id) {
-                                m.owner_id = Some(new_owner);
+                        if monsters
+                            .get(id)
+                            .map(|m| m.owner_id.as_ref() == Some(player_id))
+                            == Some(true)
+                        {
+                            monsters.reassign_owner(id, new_owner);
+                            if let Some(m) = monsters.get(id) {
                                 out.push(m.clone());
                             }
                         }

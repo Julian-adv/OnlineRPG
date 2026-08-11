@@ -468,6 +468,19 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Every 10s, free monsters their owner roamed away from. Without this the
+    // spawn caps fill with monsters nobody can see and ambient spawning stops.
+    let game_state_for_abandoned = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "abandoned monster despawn",
+        Duration::from_secs(10),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_abandoned);
+            async move { game_state.tick_abandoned_monsters().await }
+        },
+    ));
+
     // Dungeon spawn-slot refill tick (respawns on occupied floors)
     let game_state_for_dungeons = Arc::clone(&game_state);
     background.spawn(run_ticks(

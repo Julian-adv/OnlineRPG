@@ -27,6 +27,8 @@ mod persistence_tests;
 mod pickup_tests;
 mod player_tests;
 mod skills_tests;
+mod spawn_scale_tests;
+mod spawn_soak_tests;
 mod stall_tests;
 mod trading_tests;
 
