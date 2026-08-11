@@ -5,6 +5,7 @@ use onlinerpg_shared::messages::{
 };
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
+use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
@@ -760,62 +761,26 @@ impl super::GameState {
         self.party_position_dirty.write().await.insert(*player_id);
     }
 
-    /// Push fresh positions to every party a queued player belongs to: one
-    /// message per party, serialized once for all members. Parties with no
-    /// queued relocation send nothing, and lock traffic is per tick, not per
-    /// client (one dirty drain, one `parties` read, one `players` read).
+    /// Push fresh positions to every party a queued player belongs to.
     pub async fn tick_party_positions(&self) {
-        let moved: Vec<PlayerId> = {
-            let mut dirty = self.party_position_dirty.write().await;
-            if dirty.is_empty() {
-                return;
-            }
-            dirty.drain().collect()
-        };
-        let rosters: Vec<Vec<PlayerId>> = {
-            let parties = self.parties.read().await;
-            let party_ids: HashSet<u64> = moved
-                .iter()
-                .filter_map(|id| parties.member_of.get(id).copied())
-                .collect();
-            party_ids
-                .iter()
-                .filter_map(|id| parties.parties.get(id).map(|p| p.members.clone()))
-                .collect()
-        };
-        if rosters.is_empty() {
-            return;
-        }
-        let payloads: Vec<(Vec<PlayerId>, Vec<PartyMemberPosition>)> = {
-            let players = self.players.read().await;
-            rosters
-                .into_iter()
-                .map(|ids| {
-                    let members = member_positions(&players, &ids);
-                    (ids, members)
-                })
-                .collect()
-        };
-        for (member_ids, members) in payloads {
-            self.send_direct_message_to_players(
-                &member_ids,
-                ServerMessage::PartyPositions { members },
-            )
-            .await;
-        }
+        self.tick_party_push(&self.party_position_dirty, member_positions, |members| {
+            ServerMessage::PartyPositions { members }
+        })
+        .await;
     }
 
-    /// Queue `player_id` for the next party-vitals push. Called on every
-    /// health change; partyless entries are dropped by the tick.
-    pub(crate) async fn mark_party_vitals_dirty(&self, player_id: &PlayerId) {
-        self.party_vitals_dirty.write().await.insert(*player_id);
-    }
-
-    /// Push fresh health to every party a queued player belongs to;
-    /// `tick_party_positions`' twin.
-    pub async fn tick_party_vitals(&self) {
+    /// Drain a dirty set and push one freshly-built payload per affected
+    /// party: one message per party, serialized once for all members. Parties
+    /// with no queued change send nothing, and lock traffic is per tick, not
+    /// per client (one dirty drain, one `parties` read, one `players` read).
+    async fn tick_party_push<T>(
+        &self,
+        dirty: &RwLock<HashSet<PlayerId>>,
+        build: impl Fn(&HashMap<PlayerId, Player>, &[PlayerId]) -> Vec<T>,
+        msg: impl Fn(Vec<T>) -> ServerMessage,
+    ) {
         let changed: Vec<PlayerId> = {
-            let mut dirty = self.party_vitals_dirty.write().await;
+            let mut dirty = dirty.write().await;
             if dirty.is_empty() {
                 return;
             }
@@ -835,23 +800,34 @@ impl super::GameState {
         if rosters.is_empty() {
             return;
         }
-        let payloads: Vec<(Vec<PlayerId>, Vec<PartyMemberVitals>)> = {
+        let payloads: Vec<(Vec<PlayerId>, Vec<T>)> = {
             let players = self.players.read().await;
             rosters
                 .into_iter()
                 .map(|ids| {
-                    let members = member_vitals(&players, &ids);
+                    let members = build(&players, &ids);
                     (ids, members)
                 })
                 .collect()
         };
         for (member_ids, members) in payloads {
-            self.send_direct_message_to_players(
-                &member_ids,
-                ServerMessage::PartyVitals { members },
-            )
-            .await;
+            self.send_direct_message_to_players(&member_ids, msg(members))
+                .await;
         }
+    }
+
+    /// Queue `player_id` for the next party-vitals push. Called on every
+    /// health change; partyless entries are dropped by the tick.
+    pub(crate) async fn mark_party_vitals_dirty(&self, player_id: &PlayerId) {
+        self.party_vitals_dirty.write().await.insert(*player_id);
+    }
+
+    /// Push fresh health to every party a queued player belongs to.
+    pub async fn tick_party_vitals(&self) {
+        self.tick_party_push(&self.party_vitals_dirty, member_vitals, |members| {
+            ServerMessage::PartyVitals { members }
+        })
+        .await;
     }
 
     /// Leader-only removal of another member. The removal itself is
@@ -893,10 +869,13 @@ impl super::GameState {
         // disbanded means the kicker is partyless and still gets the line.
         let mut remaining = self.other_party_members(kicker_id).await;
         remaining.push(*kicker_id);
-        for member in remaining {
-            self.send_system_message(&member, format!("Party: {target_name} was removed."))
-                .await;
-        }
+        self.send_direct_message_to_players(
+            &remaining,
+            ServerMessage::SystemMessage {
+                message: format!("Party: {target_name} was removed."),
+            },
+        )
+        .await;
     }
 
     /// Leader-only leadership handover. The roster is untouched, so no
@@ -929,20 +908,18 @@ impl super::GameState {
                 let target_name = self.player_name_of(target_id).await;
                 info!(target = %target_name, "party promote");
                 self.broadcast_party_state(leader, &members).await;
-                for member in members {
-                    self.send_system_message(
-                        &member,
-                        format!("Party: {target_name} is now the party leader."),
-                    )
-                    .await;
-                }
+                self.send_direct_message_to_players(
+                    &members,
+                    ServerMessage::SystemMessage {
+                        message: format!("Party: {target_name} is now the party leader."),
+                    },
+                )
+                .await;
             }
         }
     }
 
-    /// `/party kick|leader <name>` — resolve the name online-only (the roster
-    /// prunes disconnects, so an offline member cannot be targeted anyway)
-    /// and hand off to the id-based handler.
+    /// Resolve a `/party kick|leader <name>` target among online players.
     pub async fn party_target_by_name(&self, sender_id: &PlayerId, name: &str) -> Option<PlayerId> {
         match self.player_id_by_name(name).await {
             Some(id) => Some(id),

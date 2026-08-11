@@ -147,9 +147,7 @@ pub(crate) fn parse_notice_command(message: &str) -> Option<Option<&str>> {
 }
 
 /// `/party <name>` invites; bare `/party` reports the roster; `kick`,
-/// `leader` and `leave` are leader/member subcommands. The subcommand words
-/// are reserved as invite targets — a player named "kick" can still be
-/// invited from another client's UI, just not by this command.
+/// `leader` and `leave` are subcommands (reserved as invite names).
 #[derive(Debug, PartialEq)]
 pub(crate) enum PartyCommand<'a> {
     Status,

@@ -461,7 +461,7 @@ async fn leaving_no_party_keeps_received_invites() {
 async fn full_party_rejects_further_invites() {
     let game_state = make_test_game_state("party_full");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;
-    for i in 2..=8 {
+    for i in 2..=crate::game_state::party::PARTY_MAX_MEMBERS {
         let name = format!("member{i}");
         add(&game_state, &name, i as f32).await;
         form_party(&game_state, "alice", &name).await;

@@ -1,14 +1,14 @@
 import { writable } from 'svelte/store'
+import type { CharacterClass } from '../network/networkTypes'
 
-/** One member as listed in ServerMessage::PartyState. `class` is the
- *  CharacterClass serde string ("knight"); hp is roster-time and kept
- *  current by PartyVitals pushes. */
+/** One member as listed in ServerMessage::PartyState; hp is kept current
+ *  by PartyVitals pushes. */
 export interface PartyMemberEntry {
   id: number
   name: string
   hp: number
   max_hp: number
-  class: string
+  class: CharacterClass
 }
 
 /** The player's party roster, driven by PartyState snapshots; null when not
@@ -99,22 +99,21 @@ export const MAX_PENDING_PARTY_INVITES = 3
 /** Mirrors the server-side cap (`PARTY_MAX_MEMBERS` in party.rs). */
 export const PARTY_MAX_MEMBERS = 8
 
-/** Classes with an icon in /icons/party/ — the web-creatable eight. The
- *  agent client can legally create more (samurai, wizard, ...), so unknown
- *  classes fall back to a letter badge instead of a broken image. */
-const CLASS_ICONS = new Set([
-  'knight',
-  'barbarian',
-  'caveman',
-  'valkyrie',
-  'ranger',
-  'priest',
-  'rogue',
-  'bard',
-])
+/** Classes with an icon in /icons/party/; others (agent-created classes,
+ *  e.g. samurai) fall back to a letter badge. */
+const CLASS_ICONS: Partial<Record<CharacterClass, string>> = {
+  knight: '/icons/party/class-knight.svg',
+  barbarian: '/icons/party/class-barbarian.svg',
+  caveman: '/icons/party/class-caveman.svg',
+  valkyrie: '/icons/party/class-valkyrie.svg',
+  ranger: '/icons/party/class-ranger.svg',
+  priest: '/icons/party/class-priest.svg',
+  rogue: '/icons/party/class-rogue.svg',
+  bard: '/icons/party/class-bard.svg',
+}
 
 export function classIconPath(cls: string): string | null {
-  return CLASS_ICONS.has(cls) ? `/icons/party/class-${cls}.svg` : null
+  return CLASS_ICONS[cls as CharacterClass] ?? null
 }
 
 /** Mirrors the server-side invite TTL (`PARTY_INVITE_TTL`). */

@@ -46,7 +46,7 @@ describe('applyPartyVitals', () => {
     name: `p${id}`,
     hp,
     max_hp: 10,
-    class: 'knight',
+    class: 'knight' as const,
   })
 
   beforeEach(() =>

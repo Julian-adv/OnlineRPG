@@ -842,9 +842,9 @@ impl super::GameState {
             )
             .await;
         }
-        for pid in regen_dirty {
-            self.mark_dirty(&pid).await;
-            self.mark_party_vitals_dirty(&pid).await;
+        if !regen_dirty.is_empty() {
+            self.dirty_players.write().await.extend(regen_dirty.iter());
+            self.party_vitals_dirty.write().await.extend(regen_dirty);
         }
     }
 

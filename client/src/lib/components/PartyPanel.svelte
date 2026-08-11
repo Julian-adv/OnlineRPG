@@ -6,7 +6,7 @@
     classIconPath,
   } from '../stores/partyStore'
   import { gameStore } from '../stores/gameStore'
-  import { npcContextMenu } from '../stores/npcMenuStore'
+  import { npcContextMenu, type NpcMenuEntry } from '../stores/npcMenuStore'
   import { networkManager } from '../network/socket'
 
   const roster = $derived($partyRoster)
@@ -14,16 +14,17 @@
   const isLeader = $derived(roster !== null && roster.leaderId === selfId)
 
   let collapsed = $state(false)
-  let kickTarget = $state<{ id: number; name: string } | null>(null)
+  let kickTargetId = $state<number | null>(null)
   // Classes whose icon failed to load; they fall back to the letter badge.
   const failedIcons = new SvelteSet<string>()
 
-  // The confirm must not outlive its subject: the target may leave (or kick
-  // us) while it is open.
+  // Derived, so the confirm cannot outlive its subject (kicked, left,
+  // disband); the stale id is cleared so a rejoin does not resurrect it.
+  const kickTarget = $derived(
+    roster?.members.find((m) => m.id === kickTargetId) ?? null
+  )
   $effect(() => {
-    if (kickTarget && !roster?.members.some((m) => m.id === kickTarget?.id)) {
-      kickTarget = null
-    }
+    if (kickTargetId !== null && !kickTarget) kickTargetId = null
   })
 
   function hpPercent(hp: number, maxHp: number): number {
@@ -32,28 +33,26 @@
   }
 
   function openMemberMenu(e: MouseEvent, member: { id: number; name: string }) {
-    const entries =
-      member.id === selfId
-        ? [
-            {
-              label: 'Leave party',
-              action: () => networkManager.sendPartyLeave(),
-            },
-          ]
-        : isLeader
-          ? [
-              {
-                label: 'Promote to leader',
-                action: () => networkManager.sendPartyPromote(member.id),
-              },
-              {
-                label: 'Kick from party',
-                action: () => {
-                  kickTarget = { id: member.id, name: member.name }
-                },
-              },
-            ]
-          : []
+    const entries: NpcMenuEntry[] = []
+    if (member.id === selfId) {
+      entries.push({
+        label: 'Leave party',
+        action: () => networkManager.sendPartyLeave(),
+      })
+    } else if (isLeader) {
+      entries.push(
+        {
+          label: 'Promote to leader',
+          action: () => networkManager.sendPartyPromote(member.id),
+        },
+        {
+          label: 'Kick from party',
+          action: () => {
+            kickTargetId = member.id
+          },
+        }
+      )
+    }
     if (entries.length === 0) return
     e.preventDefault()
     npcContextMenu.set({
@@ -66,7 +65,7 @@
 
   function confirmKick() {
     if (kickTarget) networkManager.sendPartyKick(kickTarget.id)
-    kickTarget = null
+    kickTargetId = null
   }
 </script>
 
@@ -90,16 +89,17 @@
     </div>
     {#if !collapsed}
       {#each roster.members as member (member.id)}
+        {@const iconPath = classIconPath(member.class)}
         <div
           class="member"
           class:dead={member.hp === 0}
           role="listitem"
           oncontextmenu={(e) => openMemberMenu(e, member)}
         >
-          {#if classIconPath(member.class) && !failedIcons.has(member.class)}
+          {#if iconPath && !failedIcons.has(member.class)}
             <img
               class="class-icon"
-              src={classIconPath(member.class)}
+              src={iconPath}
               alt={member.class}
               width="18"
               height="18"
@@ -152,7 +152,7 @@
         <p class="confirm-text">Kick {kickTarget.name} from the party?</p>
         <div class="confirm-actions">
           <button class="confirm-kick" onclick={confirmKick}>Kick</button>
-          <button class="confirm-cancel" onclick={() => (kickTarget = null)}>
+          <button class="confirm-cancel" onclick={() => (kickTargetId = null)}>
             Cancel
           </button>
         </div>
@@ -197,7 +197,6 @@
 
   .party-count {
     color: #e6edf3;
-    font-weight: 700;
   }
 
   .collapse-btn {
