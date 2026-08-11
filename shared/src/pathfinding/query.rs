@@ -667,6 +667,83 @@ fn floor_y_base_of(rp: &RuntimePassability, floor_level: u8) -> Option<f32> {
 /// could recapture movers standing on the storey above or below it.
 const STAIR_SPAN_Y_TOLERANCE: f32 = 1.0;
 
+/// Floor height supporting a mover at `y` anywhere in the swept box, on the
+/// floor it is keyed to: of the grids the box crosses, the `y_base` nearest
+/// `y`. `None` when the box crosses no floor at that level.
+///
+/// The box, not the endpoints: an obstacle sits mid-leg as often as at either
+/// end, and a caller deriving a mover's height needs the height of the storey
+/// the obstacle stands on. Nearest rather than highest or lowest, mirroring
+/// [`get_floor_at_position`] — one leg can cross terrain-following furniture
+/// whose bases differ by the height of the hill.
+pub fn supporting_floor_y(
+    cache: &PassabilityCache,
+    min_x: f32,
+    max_x: f32,
+    min_z: f32,
+    max_z: f32,
+    floor_level: u8,
+    y: f32,
+) -> Option<f32> {
+    let mut best: Option<(f32, f32)> = None;
+    for rp in cache.values() {
+        if max_x < rp.min_x || min_x > rp.max_x || max_z < rp.min_z || min_z > rp.max_z {
+            continue;
+        }
+        let ox = rp.house_origin_x.floor() as i32;
+        let oz = rp.house_origin_z.floor() as i32;
+        for floor in rp.floors.iter().filter(|f| f.floor_level == floor_level) {
+            let cell_min_x = (ox + floor.origin_x) as f32;
+            let cell_min_z = (oz + floor.origin_z) as f32;
+            if max_x < cell_min_x
+                || min_x > cell_min_x + floor.width as f32
+                || max_z < cell_min_z
+                || min_z > cell_min_z + floor.depth as f32
+            {
+                continue;
+            }
+            let dist = (y - floor.y_base).abs();
+            if best.is_none_or(|(best_dist, _)| dist < best_dist) {
+                best = Some((dist, floor.y_base));
+            }
+        }
+    }
+    best.map(|(_, y_base)| y_base)
+}
+
+/// Whether `(x, z, y)` sits inside some stairwell's vertical span — a mover
+/// mid-flight, interpolating between two floor heights rather than standing on
+/// either.
+///
+/// A caller deriving a mover's height from the cache (rather than trusting the
+/// one it reported) must leave these alone: a climber is legitimately metres
+/// above the floor it is keyed to, and pulling it down to that floor is what
+/// makes the tables underneath the stairs block it.
+pub fn in_stairwell_span(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> bool {
+    let cx = x.floor() as i32;
+    let cz = z.floor() as i32;
+    cache.values().any(|rp| {
+        if x < rp.min_x || x > rp.max_x || z < rp.min_z || z > rp.max_z {
+            return false;
+        }
+        let ox = rp.house_origin_x.floor() as i32;
+        let oz = rp.house_origin_z.floor() as i32;
+        rp.stairwells.iter().any(|stair| {
+            if stair_step(stair, cx - ox, cz - oz).is_none() {
+                return false;
+            }
+            let (Some(lower_y), Some(upper_y)) = (
+                floor_y_base_of(rp, stair.lower_floor),
+                floor_y_base_of(rp, stair.upper_floor),
+            ) else {
+                return false;
+            };
+            y >= lower_y.min(upper_y) - STAIR_SPAN_Y_TOLERANCE
+                && y <= lower_y.max(upper_y) + STAIR_SPAN_Y_TOLERANCE
+        })
+    })
+}
+
 /// Passability floor an A* endpoint at (x, z, y) must be keyed to.
 ///
 /// [`get_floor_at_position`] answers "which floor is this standing on", which

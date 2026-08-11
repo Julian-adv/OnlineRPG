@@ -28,9 +28,9 @@ pub use cache::{
     update_door_edge, FurniturePiece,
 };
 pub use query::{
-    blocking_entry_for_mover, get_floor_at_position, get_floor_y_base, is_cardinal_move_blocked,
-    is_cell_sealed, is_circle_blocked_on_floor, is_movement_blocked, is_movement_blocked_for_mover,
-    start_floor_at, BlockInfo,
+    blocking_entry_for_mover, get_floor_at_position, get_floor_y_base, in_stairwell_span,
+    is_cardinal_move_blocked, is_cell_sealed, is_circle_blocked_on_floor, is_movement_blocked,
+    is_movement_blocked_for_mover, start_floor_at, supporting_floor_y, BlockInfo,
 };
 pub use smooth::find_and_smooth_path;
 
@@ -621,6 +621,53 @@ mod tests {
             yields_to_trapped_mover: false,
         };
         ("two_floor".to_string(), rp)
+    }
+
+    /// The exemption that keeps a climber walking. A server deriving a mover's
+    /// height from the cache would otherwise pull someone mid-flight down to
+    /// the storey they are keyed to, and the tables under the stairs would
+    /// block them — the trap this predicate exists to avoid.
+    #[test]
+    fn stairwell_span_covers_the_flight_but_not_a_forged_height() {
+        let (id, rp) = make_two_floor_stairwell();
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+
+        // Mid-flight between the two y_bases (0.0 and 3.1).
+        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 2.0));
+        // Both landings, plus the step-height jitter the tolerance absorbs.
+        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 0.0));
+        assert!(query::in_stairwell_span(&cache, 0.5, 1.5, 3.1));
+        // Above the flight entirely: no flight to be on.
+        assert!(!query::in_stairwell_span(&cache, 0.5, 1.5, 10.0));
+        // Off the stairwell's footprint, at a height it would have allowed.
+        assert!(!query::in_stairwell_span(&cache, 2.5, 1.5, 2.0));
+    }
+
+    /// A leg crosses obstacles mid-span as often as at its ends, so the
+    /// supporting height is looked up over the whole swept box.
+    #[test]
+    fn supporting_floor_y_reads_the_storey_the_leg_crosses() {
+        let (id, rp) = make_two_floor_stairwell();
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+
+        // Floor 0's grid spans z 0..1; a leg from z=-2 to z=2 crosses it
+        // without either end landing on it.
+        assert_eq!(
+            query::supporting_floor_y(&cache, 0.5, 0.5, -2.0, 2.0, 0, 9.0),
+            Some(0.0)
+        );
+        // Keyed to floor 1, the same box reports that storey instead.
+        assert_eq!(
+            query::supporting_floor_y(&cache, 0.5, 0.5, 2.5, 3.5, 1, 9.0),
+            Some(3.1)
+        );
+        // Nothing at that level under the box.
+        assert_eq!(
+            query::supporting_floor_y(&cache, 0.5, 0.5, 50.0, 51.0, 0, 0.0),
+            None
+        );
     }
 
     #[test]

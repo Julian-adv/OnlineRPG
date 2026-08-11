@@ -49,6 +49,54 @@ async fn simulated_movement_is_blocked_by_solid_furniture() {
     assert_eq!(player_xz(&game_state, &player_id).await, (3.5, 4.5));
 }
 
+/// A client picks its own Y and the server only ever infers the storey back
+/// from it, so a Y over the table tops used to clear every piece of furniture
+/// on the floor. The forged height has to be banked by a legal step first —
+/// collision reads the Y the mover is standing at, not the one it reports.
+#[tokio::test]
+async fn a_forged_height_cannot_clear_solid_furniture() {
+    let game_state = make_test_game_state("movement_forged_height");
+    let player_id = pid("flyer");
+    game_state.add_player(make_player("flyer", 0.5, 4.5)).await;
+    game_state.sync_region_furniture(0, 0, &[table_placement(0.5, 5.5)]);
+
+    // Away from the table, so the step itself is legal. Nothing validates Y,
+    // so the server stores the 1.5m the client claims (tables are 1m tall).
+    let perch = Position {
+        x: 0.5,
+        y: 1.5,
+        z: 3.5,
+    };
+    game_state
+        .update_player_position(&player_id, move_cmd(perch, false), false, false)
+        .await;
+    game_state.tick_player_movement(60.0).await;
+    assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 3.5));
+
+    // Straight through the sealed cell from the perch.
+    game_state
+        .update_player_position(
+            &player_id,
+            move_cmd(
+                Position {
+                    x: 0.5,
+                    y: 1.5,
+                    z: 6.5,
+                },
+                false,
+            ),
+            false,
+            false,
+        )
+        .await;
+    game_state.tick_player_movement(60.0).await;
+    assert_eq!(
+        player_xz(&game_state, &player_id).await,
+        (0.5, 3.5),
+        "a forged height must not walk the player over the table"
+    );
+}
+
 #[tokio::test]
 async fn queued_waypoints_route_around_furniture() {
     let game_state = make_test_game_state("movement_queue_around");

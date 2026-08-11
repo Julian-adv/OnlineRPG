@@ -41,6 +41,58 @@ pub(super) fn wrapped_block_info<'a>(
     floor_level: u8,
     y: f32,
 ) -> Option<pathfinding::BlockInfo<'a>> {
+    let y = collision_y(cache, from_x, from_z, to_x, to_z, floor_level, y);
+    block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y)
+}
+
+/// The Y to test obstacles against, derived from the cache rather than taken
+/// from the client.
+///
+/// `obstacle_reaches_y` stops applying an obstacle once the mover is above it,
+/// and the storey is only ever inferred back from that same Y — so a client
+/// reporting a hand's breadth over the wall tops walks through every wall and
+/// table on the floor, and no amount of X/Z simulation catches it. A storey has
+/// one real floor height: take it from the storey the swept leg crosses.
+///
+/// Two cases keep the reported Y. A climber mid-flight is legitimately metres
+/// above the floor it is keyed to (`in_stairwell_span`). And where the leg
+/// crosses no floor at all — open terrain, a bridge deck — there is nothing to
+/// derive from, and nothing there to collide with either.
+fn collision_y(
+    cache: &pathfinding::PassabilityCache,
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
+    floor_level: u8,
+    reported: f32,
+) -> f32 {
+    if pathfinding::in_stairwell_span(cache, from_x, from_z, reported) {
+        return reported;
+    }
+    pathfinding::supporting_floor_y(
+        cache,
+        from_x.min(to_x),
+        from_x.max(to_x),
+        from_z.min(to_z),
+        from_z.max(to_z),
+        floor_level,
+        reported,
+    )
+    .unwrap_or(reported)
+}
+
+/// The seam sweep itself, at a Y the caller has already derived — so a step and
+/// the slide candidates it falls back to are judged at one height.
+fn block_info_at<'a>(
+    cache: &'a pathfinding::PassabilityCache,
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
+    floor_level: u8,
+    y: f32,
+) -> Option<pathfinding::BlockInfo<'a>> {
     if let Some(info) = pathfinding::blocking_entry_for_mover(
         cache,
         from_x,
@@ -95,11 +147,13 @@ pub(super) fn resolve_step<'a>(
     y: f32,
 ) -> StepOutcome<'a> {
     const EPS: f32 = 1e-6;
-    let Some(info) = wrapped_block_info(cache, from_x, from_z, to_x, to_z, floor_level, y) else {
+    // Derived once: the slide candidates are the same step, so they have to be
+    // judged at the same height as the diagonal that provoked them.
+    let y = collision_y(cache, from_x, from_z, to_x, to_z, floor_level, y);
+    let Some(info) = block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y) else {
         return StepOutcome::Clear;
     };
-    let clear =
-        |tx, tz| wrapped_block_info(cache, from_x, from_z, tx, tz, floor_level, y).is_none();
+    let clear = |tx, tz| block_info_at(cache, from_x, from_z, tx, tz, floor_level, y).is_none();
     let (dx, dz) = ((to_x - from_x).abs(), (to_z - from_z).abs());
     let x_ok = dx > EPS && clear(to_x, from_z);
     // Both axes open means only the exact diagonal grazed a corner tip; keep the
@@ -123,7 +177,10 @@ pub(super) fn resolve_step<'a>(
 /// `validated_dungeon_floor` waves through any non-negative floor, so a client
 /// claiming floor 0 from three storeys underground would otherwise pick which
 /// walls apply to it and walk straight through the dungeon. Position is
-/// server-simulated, so deriving from it keeps collision authoritative.
+/// server-simulated in X/Z; the Y that picks the storey is not, so a mover can
+/// still claim the wrong storey of a building it is standing in — but
+/// `collision_y` then holds it to that storey's floor height, which is what
+/// keeps the walls applying.
 pub(super) fn authoritative_floor(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,
