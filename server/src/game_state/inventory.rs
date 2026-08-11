@@ -1275,23 +1275,23 @@ impl super::GameState {
         self.send_inventory_snapshot(player_id, snapshot).await;
 
         // A stackable line lands as a single N-unit pile, a non-stackable one
-        // scatters unit by unit since those units are distinct objects.
-        let total: u64 = plans
+        // scatters unit by unit since those units are distinct objects. One
+        // (piles, per-pile) shape per plan keeps the id reservation and the
+        // spawn loop counting the same way.
+        let shapes: Vec<(u32, u32)> = plans
             .iter()
             .map(|plan| {
                 if self.item_defs.stackable(&plan.item_def_id) {
-                    1
+                    (1, plan.qty)
                 } else {
-                    plan.qty as u64
+                    (plan.qty, 1)
                 }
             })
-            .sum();
+            .collect();
+        let total: u64 = shapes.iter().map(|(piles, _)| *piles as u64).sum();
         let mut next_ground_id = self.reserve_instance_ids(total).await;
 
-        for plan in &plans {
-            let stackable = self.item_defs.stackable(&plan.item_def_id);
-            let piles = if stackable { 1 } else { plan.qty };
-            let quantity = if stackable { plan.qty } else { 1 };
+        for (plan, &(piles, quantity)) in plans.iter().zip(&shapes) {
             for _ in 0..piles {
                 let preferred = drop_landing_position(player_position, rotation);
                 let position = self
@@ -1389,9 +1389,9 @@ impl super::GameState {
         let item_weight = self.item_defs.weight(&ground_item.item_def_id);
         let stackable = self.item_defs.stackable(&ground_item.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
-        // For the bag entry when only part of the pile comes along — the pile
-        // that stays behind keeps its own id. Reserved outside the locks like
-        // `drop_item`'s split id; unused when the pile empties.
+        // For the bag entry — the pile that stays behind keeps its own id.
+        // Reserved outside the locks like `drop_item`'s split id; unused when
+        // the insert merges into an existing bag stack.
         let bag_instance_id = self.next_instance_id().await;
 
         // Acquire write lock for both weight check and mutation atomically
@@ -1404,8 +1404,10 @@ impl super::GameState {
                 return;
             };
             // Re-read under the lock: another picker may have thinned the pile
-            // since the distance check above read it.
-            let available = entry.item.quantity.max(1);
+            // since the distance check above read it. A non-stackable ground
+            // item is always a single object, and taking more would outrun the
+            // one bag id reserved above.
+            let available = if stackable { entry.item.quantity } else { 1 };
 
             let mut inventories = self.inventories.write().await;
             let Some(inv) = inventories.get_mut(player_id) else {
@@ -1417,7 +1419,9 @@ impl super::GameState {
             let take = if item_weight <= 0.0 {
                 available
             } else {
-                available.min((headroom / item_weight).floor().max(0.0) as u32)
+                // The epsilon keeps an exact fit from flooring one unit short
+                // of what f32 rounding owes it (0.3-weight defs and friends).
+                available.min(((headroom / item_weight) + 1e-3).floor().max(0.0) as u32)
             };
             if take == 0 {
                 drop(inventories);
@@ -1427,19 +1431,19 @@ impl super::GameState {
                 return;
             }
 
-            let item_def_id = entry.item.item_def_id.clone();
-            let enchant = entry.item.enchant;
             if take < available {
                 entry.item.quantity = available - take;
             } else {
                 ground_items.remove(&instance_id);
             }
+            // Ids are never reused, so the pre-lock `ground_item` clone still
+            // matches `entry` — no need to copy out of it under the locks.
             stack_into_bag(
                 &mut inv.bag,
                 BagInsert {
                     stackable,
-                    item_def_id: &item_def_id,
-                    enchant,
+                    item_def_id: &ground_item.item_def_id,
+                    enchant: ground_item.enchant,
                     first_instance_id: bag_instance_id,
                     quantity: take,
                 },
@@ -1459,7 +1463,6 @@ impl super::GameState {
                 instance_id,
                 quantity: remaining,
                 picked_up_by: Some(*player_id),
-                taken: take,
             }
         };
         self.send_direct_message_to_players_within_position(

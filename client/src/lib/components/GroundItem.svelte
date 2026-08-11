@@ -265,11 +265,8 @@
     def?.worldModel || def?.icon ? null : makeNameTexture(label)
   )
 
-  // Unit count for a pile of stackables — one model is drawn either way, so the
-  // badge is the only thing saying twelve potions lie here rather than one.
-  // Outlined text on a canvas cut to fit the glyphs, the way TextLabel does it:
-  // a fixed-size canvas would waste most of its pixels on a string this short
-  // and leave the badge blurry once scaled down to item size.
+  // Pile badge ("x12"): outlined text on a canvas cut to fit the glyphs, so
+  // it stays sharp once scaled down to item size.
   const QTY_FONT_PX = 64
   const QTY_PIXELS_PER_UNIT = 320
   const QTY_BADGE_LIFT = 0.12
@@ -282,13 +279,12 @@
     const font = `bold ${QTY_FONT_PX}px sans-serif`
     const outline = QTY_FONT_PX * 0.16
     const pad = Math.ceil(outline)
-    const measureCtx = document.createElement('canvas').getContext('2d')!
-    measureCtx.font = font
-
     const c = document.createElement('canvas')
-    c.width = Math.ceil(measureCtx.measureText(text).width) + pad * 2
-    c.height = Math.ceil(QTY_FONT_PX * 1.25) + pad * 2
     const ctx = c.getContext('2d')!
+    ctx.font = font
+    c.width = Math.ceil(ctx.measureText(text).width) + pad * 2
+    c.height = Math.ceil(QTY_FONT_PX * 1.25) + pad * 2
+    // Resizing the canvas reset the context state, font included.
     ctx.font = font
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -310,9 +306,10 @@
     }
   }
 
-  const qtyBadge = $derived(
-    data.quantity > 1 ? makeQuantityTexture(`x${data.quantity}`) : null
-  )
+  // Keyed on the text, not `data`, so the manager's copy-on-write item
+  // replacements (in-hand, spawn-animation clear) don't rebuild the texture.
+  const qtyText = $derived(data.quantity > 1 ? `x${data.quantity}` : null)
+  const qtyBadge = $derived(qtyText ? makeQuantityTexture(qtyText) : null)
   // Sits above the model's top, so a spear's badge clears the spear.
   const qtyBadgeY = $derived(
     (worldModelBox ? worldModelBox.max.y : 0.3) + QTY_BADGE_LIFT

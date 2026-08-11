@@ -1179,12 +1179,15 @@ export function handleServerMessage(
     case 'GroundItemQuantityChanged': {
       const pile = groundItemManager.items.get(data.instance_id)
       groundItemManager.setQuantity(data.instance_id, data.quantity)
-      announceGroundItem(
-        data.picked_up_by,
-        pile?.itemDefId,
-        'picked up',
-        data.taken
-      )
+      // The picker already got the server's took-X-left-Y system line.
+      if (pile && !isSelfPlayer(data.picked_up_by)) {
+        announceGroundItem(
+          data.picked_up_by,
+          pile.itemDefId,
+          'picked up',
+          pile.quantity - data.quantity
+        )
+      }
       break
     }
 

@@ -129,21 +129,13 @@ impl PlayerInventory {
 /// Item defs that act as a carried light source.
 pub const TORCH_ITEM_IDS: &[&str] = &["torch", "worn_torch"];
 
-/// A ground item's default unit count, for payloads written before stacks
-/// could land on the ground.
-fn one_unit() -> u32 {
-    1
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroundItem {
     pub instance_id: u64,
     pub item_def_id: String,
     pub position: Position,
     pub floor_level: i8,
-    /// Units in this pile. Only a stackable def ever exceeds 1: dropping a
-    /// stack lands one pile of N rather than N scattered items.
-    #[serde(default = "one_unit")]
+    /// Units in this pile; only a stackable def ever exceeds 1.
     pub quantity: u32,
     /// Carries a dropped weapon's enchantment so picking it back up
     /// doesn't wipe it.

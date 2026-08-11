@@ -323,8 +323,8 @@ async fn pickup_takes_only_what_fits_and_leaves_the_rest() {
 
     assert!(
         drain(&mut picker_rx).iter().any(|msg| {
-            matches!(msg, ServerMessage::GroundItemQuantityChanged { instance_id, quantity, taken, .. }
-                if *instance_id == 42 && *quantity == 7 && *taken == 5)
+            matches!(msg, ServerMessage::GroundItemQuantityChanged { instance_id, quantity, .. }
+                if *instance_id == 42 && *quantity == 7)
         }),
         "nearby clients must learn the pile shrank rather than vanished"
     );

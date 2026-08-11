@@ -102,7 +102,7 @@ class GroundItemManager {
     this.items.set(item.instance_id, {
       instanceId: item.instance_id,
       itemDefId: item.item_def_id,
-      quantity: item.quantity ?? 1,
+      quantity: item.quantity,
       position: { ...item.position },
       floorLevel: item.floor_level,
       restingRotationY,
@@ -159,7 +159,7 @@ class GroundItemManager {
     this.items.delete(instanceId)
   }
 
-  /// A pile someone took only part of: it stays, holding fewer units.
+  // A pile someone took only part of: it stays, holding fewer units.
   setQuantity(instanceId: number, quantity: number) {
     const item = this.items.get(instanceId)
     if (!item) return
