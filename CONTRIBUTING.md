@@ -20,20 +20,21 @@ Rust, from the repo root:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 ```
 
 Client, from `client/`:
 
 ```bash
+npm run build:wasm    # WASM bindings + generated data
 npm test              # vitest
 npm run check         # svelte-check + tsc
 npm run lint          # eslint
 npm run format:check  # prettier (npm run format to fix)
 ```
 
-If you touched Rust code in `shared/`, run `npm run build:wasm` first so the client checks see the current WASM bindings — CI builds it before everything else.
+The WASM output is not stored in git, so `npm run build:wasm` is required on a fresh checkout and after changes to `shared/`. CI always builds it before running the client checks.
 
 ## Pull requests
 
