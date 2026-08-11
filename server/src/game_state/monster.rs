@@ -106,6 +106,13 @@ impl AliveCounts {
             .copied()
             .unwrap_or(0)
     }
+
+    fn total_for_owner(&self, owner: &PlayerId) -> usize {
+        self.by_owner
+            .get(owner)
+            .map(|by_type| by_type.values().map(|n| *n as usize).sum())
+            .unwrap_or(0)
+    }
 }
 
 /// The monster map plus alive counts and a cell index, so the spawn caps are
@@ -211,6 +218,12 @@ impl MonsterRegistry {
     /// Alive monsters of one type owned by one player, for the per-player cap.
     pub(crate) fn alive_for(&self, owner: &PlayerId, monster_type: &str) -> u32 {
         self.alive.for_owner(owner, monster_type)
+    }
+
+    /// Alive monsters a player owns across every type — how much its client is
+    /// simulating, which is what an ownership handoff balances on.
+    pub(crate) fn alive_total_for(&self, owner: &PlayerId) -> usize {
+        self.alive.total_for_owner(owner)
     }
 
     /// Kill a monster, freeing its spawn slot while the corpse lingers.
@@ -688,28 +701,77 @@ impl super::GameState {
             .await;
     }
 
+    /// Hand a departing player's monsters to players still inside their AOI,
+    /// least loaded first, and despawn the rest. Same rule as
+    /// `tick_monster_ownership`, except the owner is not coming back, so a
+    /// dungeon monster that gets this far is despawned rather than left for the
+    /// floor. (In practice `remove_player` walks a dungeon player off its floor
+    /// first, so those are already reassigned by the time this runs.)
     pub async fn remove_monsters_by_owner(&self, owner_id: &PlayerId) {
-        let removed_monsters = {
-            let mut monsters = self.monsters.write().await;
-            let owned_ids: Vec<String> = monsters
+        let owned: Vec<(String, Position, i8)> = {
+            let monsters = self.monsters.read().await;
+            monsters
                 .values()
                 .filter(|m| m.owner_id.as_ref() == Some(owner_id))
-                .map(|m| m.id.clone())
-                .collect();
-
-            owned_ids
-                .into_iter()
-                .filter_map(|monster_id| monsters.remove(&monster_id))
-                .collect::<Vec<_>>()
+                .map(|m| (m.id.clone(), m.position, m.floor_level))
+                .collect()
         };
-
-        for monster in removed_monsters {
-            debug!(
-                "Removed monster {} (owner {} disconnected)",
-                monster.id, owner_id
-            );
-            self.announce_monster_removed(&monster).await;
+        if owned.is_empty() {
+            return;
         }
+
+        // Seeded from what each candidate already simulates, so "least loaded"
+        // means least loaded, not merely least inherited from this disconnect.
+        let mut load: std::collections::HashMap<PlayerId, usize> = std::collections::HashMap::new();
+        let mut handoffs = Vec::new();
+        let mut orphans = Vec::new();
+        for (monster_id, position, floor_level) in owned {
+            // `remove_player` drops the leaver from the roster further down, so
+            // skip it here or it would adopt its own monsters.
+            let candidates = self
+                .players_within_position(
+                    &position,
+                    floor_level,
+                    super::EVENT_DELIVERY_RADIUS,
+                    Some(owner_id),
+                )
+                .await;
+            if candidates.is_empty() {
+                orphans.push(monster_id);
+                continue;
+            }
+            for (candidate, _) in &candidates {
+                if let std::collections::hash_map::Entry::Vacant(entry) = load.entry(*candidate) {
+                    entry.insert(self.monsters.read().await.alive_total_for(candidate));
+                }
+            }
+            let Some((new_owner, _)) =
+                candidates
+                    .into_iter()
+                    .min_by(|(a_id, a_dist), (b_id, b_dist)| {
+                        load[a_id]
+                            .cmp(&load[b_id])
+                            .then_with(|| a_dist.total_cmp(b_dist))
+                    })
+            else {
+                continue;
+            };
+            *load.entry(new_owner).or_default() += 1;
+            handoffs.push(Handoff {
+                monster_id,
+                new_owner,
+                old_owner: Some(*owner_id),
+            });
+        }
+
+        debug!(
+            "Owner {} left: {} monsters handed off, {} despawned",
+            owner_id,
+            handoffs.len(),
+            orphans.len()
+        );
+        self.hand_off_monsters(handoffs).await;
+        self.despawn_monsters(orphans).await;
     }
 
     /// Server-driven monster spawn tick. For each ambient spawn type and each
@@ -820,34 +882,37 @@ impl super::GameState {
     /// but against a per-tick snapshot, so a sweep over every monster locks the
     /// roster once instead of twice per monster.
     fn attendance(roster: &PlayerSnapshot, monster: &crate::types::Monster) -> Attendance {
-        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
         let mut nearest: Option<(PlayerId, f32)> = None;
-        for cell in
-            super::SpatialCell::within_radius(&monster.position, super::EVENT_DELIVERY_RADIUS)
-        {
-            let Some(nearby) = roster.get(&cell) else {
-                continue;
-            };
-            for (id, position, floor) in nearby {
-                if *floor != monster.floor_level {
-                    continue;
-                }
-                let dist_sq = monster.position.dist_xz_sq(position);
-                if dist_sq > radius_sq {
-                    continue;
-                }
-                if monster.owner_id == Some(*id) {
-                    return Attendance::Owner;
-                }
-                if nearest.is_none_or(|(_, best)| dist_sq < best) {
-                    nearest = Some((*id, dist_sq));
-                }
+        for (id, dist_sq) in Self::players_in_aoi(roster, &monster.position, monster.floor_level) {
+            if monster.owner_id == Some(id) {
+                return Attendance::Owner;
+            }
+            if nearest.is_none_or(|(_, best)| dist_sq < best) {
+                nearest = Some((id, dist_sq));
             }
         }
         match nearest {
             Some((id, _)) => Attendance::Bystander(id),
             None => Attendance::Nobody,
         }
+    }
+
+    /// Every player inside the AOI around `position` on `floor_level`, with the
+    /// squared distance. Lazy so `attendance` can stop at the owner; the seam
+    /// can yield a player twice, which neither caller minds.
+    fn players_in_aoi<'a>(
+        roster: &'a PlayerSnapshot,
+        position: &'a Position,
+        floor_level: i8,
+    ) -> impl Iterator<Item = (PlayerId, f32)> + 'a {
+        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
+        super::SpatialCell::within_radius(position, super::EVENT_DELIVERY_RADIUS)
+            .filter_map(move |cell| roster.get(&cell))
+            .flatten()
+            .filter_map(move |(id, player_position, floor)| {
+                let dist_sq = position.dist_xz_sq(player_position);
+                (*floor == floor_level && dist_sq <= radius_sq).then_some((*id, dist_sq))
+            })
     }
 
     /// Reconcile every monster against who is actually near it.
@@ -945,10 +1010,7 @@ impl super::GameState {
                 .collect()
         };
         for (monster, new_owner, old_owner) in reassigned {
-            debug!(
-                "Monster {} handed to {} (owner left its AOI)",
-                monster.id, new_owner
-            );
+            debug!("Monster {} handed to {}", monster.id, new_owner);
             if let Some(old_owner) = old_owner {
                 self.send_direct_message(
                     &old_owner,

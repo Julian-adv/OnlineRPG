@@ -438,3 +438,107 @@ async fn a_monster_whose_owner_is_present_is_left_alone() {
         "an untouched monster should generate no ownership traffic"
     );
 }
+
+/// Disconnecting is not different from walking away, as far as the people
+/// standing next to the monster are concerned.
+#[tokio::test]
+async fn disconnecting_hands_monsters_to_players_still_beside_them() {
+    let game_state = make_test_game_state("disconnect_handoff");
+    let leaver = add_player_on_floor(&game_state, "leaver", 0).await;
+    let stayer = add_player_on_floor(&game_state, "stayer", 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, leaver, 0).await;
+    let mut stayer_rx = game_state.register_direct_channel(&stayer).await;
+    drain(&mut stayer_rx);
+
+    game_state.remove_player(&leaver).await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(stayer),
+        "the monster should have changed hands, not vanished from under the stayer"
+    );
+    assert!(
+        drain(&mut stayer_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterAssigned { monster } if monster.id == monster_id)
+        ),
+        "the adopter needs MonsterAssigned to start running its AI"
+    );
+}
+
+/// Nobody to adopt it, and the owner is not coming back.
+#[tokio::test]
+async fn disconnecting_alone_despawns_the_monsters() {
+    let game_state = make_test_game_state("disconnect_alone");
+    let leaver = add_player_on_floor(&game_state, "loner", 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, leaver, 0).await;
+
+    game_state.remove_player(&leaver).await;
+
+    assert!(
+        game_state.monsters.read().await.get(&monster_id).is_none(),
+        "no client can ever simulate this monster again"
+    );
+}
+
+/// One adopter should not inherit a whole cap's worth while others idle.
+#[tokio::test]
+async fn a_disconnected_players_monsters_are_spread_across_adopters() {
+    let game_state = make_test_game_state("disconnect_spread");
+    let leaver = add_player_on_floor(&game_state, "leaver", 0).await;
+    let adopters = [
+        add_player_on_floor(&game_state, "a", 0).await,
+        add_player_on_floor(&game_state, "b", 0).await,
+        add_player_on_floor(&game_state, "c", 0).await,
+    ];
+    // Distinct distances from the monsters at (10, 0, 0), all inside the AOI:
+    // picking by distance alone would put every monster on `a`.
+    for (adopter, x) in adopters.iter().zip([10.0, 25.0, 40.0]) {
+        set_player_xz(&game_state, adopter, x, 0.0).await;
+    }
+    // Three, one per adopter: goblin's per-player cap is 5.
+    for _ in 0..3 {
+        spawn_owned_goblin(&game_state, leaver, 0).await;
+    }
+
+    game_state.remove_player(&leaver).await;
+
+    let owners: std::collections::HashSet<Option<PlayerId>> = game_state
+        .monsters
+        .read()
+        .await
+        .values()
+        .map(|m| m.owner_id)
+        .collect();
+    let expected: std::collections::HashSet<Option<PlayerId>> =
+        adopters.iter().map(|a| Some(*a)).collect();
+    assert_eq!(
+        owners, expected,
+        "3 monsters over 3 adopters standing together should be one each"
+    );
+}
+
+/// "Least loaded" has to mean least loaded overall, not merely least inherited
+/// from this disconnect — otherwise a player already simulating a crowd looks
+/// identical to an idle one and gets handed more.
+#[tokio::test]
+async fn a_busy_adopter_loses_to_an_idle_one_even_when_nearer() {
+    let game_state = make_test_game_state("disconnect_load");
+    let leaver = add_player_on_floor(&game_state, "leaver", 0).await;
+    let busy = add_player_on_floor(&game_state, "busy", 0).await;
+    let idle = add_player_on_floor(&game_state, "idle", 0).await;
+    // Both inside the monster's AOI, but `busy` is sitting right on top of it.
+    set_player_xz(&game_state, &busy, 10.0, 0.0).await;
+    set_player_xz(&game_state, &idle, 30.0, 0.0).await;
+    for _ in 0..3 {
+        spawn_owned_goblin(&game_state, busy, 0).await;
+    }
+    let monster_id = spawn_owned_goblin(&game_state, leaver, 0).await;
+
+    game_state.remove_player(&leaver).await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(idle),
+        "the idle player should adopt it despite being farther away"
+    );
+}

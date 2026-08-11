@@ -1980,24 +1980,43 @@ impl super::GameState {
         floor_level: i8,
         radius: f32,
     ) -> Vec<PlayerId> {
+        self.players_within_position(position, floor_level, radius, None)
+            .await
+            .into_iter()
+            .map(|(player_id, _)| player_id)
+            .collect()
+    }
+
+    /// As `player_ids_within_position`, but keeping the squared distance and
+    /// skipping one player — what an ownership handoff needs to pick the
+    /// nearest candidate that is not the one leaving.
+    pub(super) async fn players_within_position(
+        &self,
+        position: &Position,
+        floor_level: i8,
+        radius: f32,
+        skip: Option<&PlayerId>,
+    ) -> Vec<(PlayerId, f32)> {
         let radius_sq = radius * radius;
         let players = self.players.read().await;
         let cells = self.player_spatial_cells.read().await;
-        let mut player_ids = HashSet::new();
+        let mut found: HashMap<PlayerId, f32> = HashMap::new();
 
         for player_id in cells.keys_near(position, radius) {
+            if skip == Some(player_id) {
+                continue;
+            }
             let Some(player) = players.get(player_id) else {
                 continue;
             };
 
-            if player.floor_level == floor_level
-                && position.dist_xz_sq(&player.position) <= radius_sq
-            {
-                player_ids.insert(*player_id);
+            let dist_sq = position.dist_xz_sq(&player.position);
+            if player.floor_level == floor_level && dist_sq <= radius_sq {
+                found.insert(*player_id, dist_sq);
             }
         }
 
-        player_ids.into_iter().collect()
+        found.into_iter().collect()
     }
 
     pub async fn player_ids_within(&self, player_id: &PlayerId, radius: f32) -> Vec<PlayerId> {
