@@ -859,6 +859,27 @@ mod tests {
         );
     }
 
+    /// Bounds the `in_stairwell_span` exemption. A caller that trusts a mover's
+    /// reported Y inside a stairwell is not handing it the house: the two-floor
+    /// consult is deliberately Y-blind, so no claimed height unseals a walled
+    /// exit. The exemption reaches only the low obstacles under the stairs,
+    /// which is what it is for.
+    #[test]
+    fn no_claimed_height_unseals_a_walled_stairwell_exit() {
+        let (id, rp) = make_stairwell_house(true, true);
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+
+        // 4.2 clears the lower floor's walls (y_base 0 + wall_height 3.0) and
+        // sits inside the flight's span, so the exemption would keep it.
+        for y in [None, Some(0.0), Some(2.0), Some(4.2), Some(1000.0)] {
+            assert!(
+                query::is_movement_blocked(&cache, 1.5, 1.5, 1.5, 2.5, 1, y),
+                "a walled stairwell exit must block at y={y:?}"
+            );
+        }
+    }
+
     /// The relaxation is scoped to stairwell footprints: an ordinary wall one
     /// column over is keyed to the mover's floor alone and still blocks.
     #[test]
