@@ -97,7 +97,7 @@ export const pendingPartyInvites = writable<PendingPartyInvite[]>([])
 export const MAX_PENDING_PARTY_INVITES = 3
 
 /** Mirrors the server-side cap (`PARTY_MAX_MEMBERS` in party.rs). */
-export const PARTY_MAX_MEMBERS = 8
+export const PARTY_MAX_MEMBERS = 5
 
 /** Classes with an icon in /icons/party/; others (agent-created classes,
  *  e.g. samurai) fall back to a letter badge. */

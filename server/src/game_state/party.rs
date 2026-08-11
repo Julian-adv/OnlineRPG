@@ -8,7 +8,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-pub(crate) const PARTY_MAX_MEMBERS: usize = 8;
+pub(crate) const PARTY_MAX_MEMBERS: usize = 5;
 
 /// Mirrors auth's character-name cap; anything longer cannot be a real name,
 /// and rejecting it early keeps oversized input out of the echoed failure.
