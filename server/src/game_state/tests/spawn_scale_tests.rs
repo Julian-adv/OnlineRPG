@@ -1,24 +1,37 @@
 //! Scale measurements for the ambient spawn path, sized against the 5,000
 //! concurrent-user target. Run with --nocapture to read the timings.
 use super::*;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const USERS: usize = 5_000;
 
 /// Fill the monster map directly — spawn_monster itself is what we measure.
-async fn preload_monsters(game_state: &GameState, count: usize, owners: &[PlayerId]) {
+/// `place` picks each monster's position from its index and its owner.
+async fn preload_monsters(
+    game_state: &GameState,
+    count: usize,
+    owners: &[PlayerId],
+    place: impl Fn(usize, &PlayerId) -> Position,
+) {
     let mut monsters = game_state.monsters.write().await;
     for i in 0..count {
         let owner = owners[i % owners.len()];
-        let position = Position {
-            x: (i % 2000) as f32 * 3.0,
-            y: 0.0,
-            z: (i / 2000) as f32 * 3.0,
-        };
-        let mut monster = make_monster(&format!("pre{i}"), position, 0);
+        let mut monster = make_monster(&format!("pre{i}"), place(i, &owner), 0);
         monster.owner_id = Some(owner);
         monster.monster_type = "goblin".to_string();
         monsters.insert(monster.id.clone(), monster);
+    }
+}
+
+/// The grid the spawn measurements use: monsters spread across the world,
+/// unrelated to where their owners stand.
+fn grid_position(index: usize, _owner: &PlayerId) -> Position {
+    Position {
+        x: (index % 2000) as f32 * 3.0,
+        y: 0.0,
+        z: (index / 2000) as f32 * 3.0,
     }
 }
 
@@ -42,7 +55,7 @@ async fn spawn_path_cost_at_scale() {
     for &population in &[1_000usize, 10_000, 50_000, 134_000] {
         let game_state = make_test_game_state(&format!("scale_{population}"));
         let owners = add_bots(&game_state, USERS).await;
-        preload_monsters(&game_state, population, &owners).await;
+        preload_monsters(&game_state, population, &owners, grid_position).await;
 
         let spawner = owners[0];
         let start = Instant::now();
@@ -113,6 +126,62 @@ async fn spawn_path_cost_at_scale() {
              move {per_move:>10.2?}"
         );
     }
+}
+
+/// The ownership tick's own runtime is fine on a 10s timer; what matters is how
+/// long it keeps the registry from the writers — every kill and every monster
+/// move takes `monsters.write()`. Every monster sits on its owner here, so the
+/// tick is pure scan with no handoff or despawn writes of its own, and the
+/// reported wait is the scan's alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "measurement, not an assertion; run explicitly with --nocapture"]
+async fn ownership_tick_writer_stall() {
+    const POPULATION: usize = 134_000;
+    let game_state = make_test_game_state("ownership_stall");
+    let owners = add_bots(&game_state, USERS).await;
+    let owner_positions = {
+        let players = game_state.players.read().await;
+        owners
+            .iter()
+            .map(|id| (*id, players[id].position))
+            .collect::<std::collections::HashMap<_, _>>()
+    };
+    preload_monsters(&game_state, POPULATION, &owners, |_, owner| {
+        owner_positions[owner]
+    })
+    .await;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer_state = game_state.clone();
+    let writer_stop = Arc::clone(&stop);
+    let writer = tokio::spawn(async move {
+        let mut worst = Duration::ZERO;
+        while !writer_stop.load(Ordering::Relaxed) {
+            let start = Instant::now();
+            let mut monsters = writer_state.monsters.write().await;
+            worst = worst.max(start.elapsed());
+            monsters.mark_dead("no_such_monster");
+            drop(monsters);
+            tokio::task::yield_now().await;
+        }
+        worst
+    });
+
+    let start = Instant::now();
+    game_state.tick_monster_ownership().await;
+    let tick = start.elapsed();
+    stop.store(true, Ordering::Relaxed);
+    let worst = writer.await.expect("writer task finishes");
+
+    assert_eq!(
+        game_state.monsters.read().await.len(),
+        POPULATION,
+        "every monster is attended by its owner, so none should be despawned"
+    );
+    println!(
+        "{POPULATION} monsters / {USERS} users: ownership tick {tick:>10.2?}  \
+         worst writer wait {worst:>10.2?}"
+    );
 }
 
 /// The registry's counts are the spawn caps. If they drift from the map the

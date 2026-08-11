@@ -347,27 +347,33 @@ impl super::GameState {
         .await;
 
         if result_hit {
-            let mut monsters = self.monsters.write().await;
-            let mut is_dead = false;
+            // Damage and the kill claim share one guard, so a second attacker
+            // landing at the same instant sees Dead and stops.
+            let is_dead = {
+                let mut monsters = self.monsters.write().await;
+                let mut died = false;
 
-            if let Some(monster) = monsters.get_mut(&monster_id) {
-                if monster.state == MonsterState::Dead {
-                    return; // Already dead
+                if let Some(monster) = monsters.get_mut(&monster_id) {
+                    if monster.state == MonsterState::Dead {
+                        return; // Already dead
+                    }
+
+                    monster.health = monster.health.saturating_sub(result_damage);
+                    debug!(
+                        "Monster {} HP: {}/{}",
+                        monster_id, monster.health, monster.max_health
+                    );
+
+                    died = monster.health == 0;
                 }
-
-                monster.health = monster.health.saturating_sub(result_damage);
-                debug!(
-                    "Monster {} HP: {}/{}",
-                    monster_id, monster.health, monster.max_health
-                );
-
-                is_dead = monster.health == 0;
-            }
+                if died {
+                    // Through the registry so the kill frees its spawn slot now,
+                    // not when the corpse is swept 30s later.
+                    monsters.mark_dead(&monster_id);
+                }
+                died
+            };
             if is_dead {
-                // Through the registry so the kill frees its spawn slot now,
-                // not when the corpse is swept 30s later.
-                monsters.mark_dead(&monster_id);
-
                 let dropped_weapon_item_def_id = self
                     .monster_defs
                     .get(&monster_type)

@@ -25,6 +25,12 @@ const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
 const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
 const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
+/// Monsters the ownership sweep visits per lock acquisition, so it never holds
+/// the registry — written by every kill and every move — for all 135k. A write
+/// between chunks can reorder the map and hide monsters from that sweep; the
+/// next tick restarts from zero over a fresh order, so a reconcile is at worst
+/// delayed a few ticks, never skipped.
+const OWNERSHIP_SCAN_CHUNK: usize = 4_000;
 
 /// One tick's view of the roster, bucketed by cell, so the ownership sweep
 /// locks it once rather than once per monster.
@@ -818,9 +824,12 @@ impl super::GameState {
 
         let mut expired: Vec<String> = Vec::new();
         let mut handoffs: Vec<Handoff> = Vec::new();
-        {
+        let mut scanned = 0usize;
+        loop {
+            let mut chunk = 0usize;
             let monsters = self.monsters.read().await;
-            for monster in monsters.values() {
+            for monster in monsters.values().skip(scanned).take(OWNERSHIP_SCAN_CHUNK) {
+                chunk += 1;
                 match Self::attendance(&roster, monster) {
                     Attendance::Owner => {}
                     Attendance::Bystander(new_owner) => handoffs.push(Handoff {
@@ -835,6 +844,10 @@ impl super::GameState {
                         }
                     }
                 }
+            }
+            scanned += chunk;
+            if chunk < OWNERSHIP_SCAN_CHUNK {
+                break;
             }
         }
 
