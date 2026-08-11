@@ -68,7 +68,7 @@ struct Config {
     #[serde(default)]
     npcs: Vec<NpcConfig>,
 
-    /// Maximum number of concurrent LLM calls across all NPCs (default: 2)
+    /// Maximum number of concurrent LLM calls across all NPCs (min 1, default 2)
     #[serde(default = "default_max_concurrent")]
     max_concurrent: usize,
 
@@ -153,13 +153,6 @@ fn default_max_concurrent() -> usize {
     2
 }
 
-fn check_max_concurrent(max_concurrent: usize) -> anyhow::Result<()> {
-    if max_concurrent == 0 {
-        anyhow::bail!("max_concurrent must be at least 1");
-    }
-    Ok(())
-}
-
 fn default_request_timeout_secs() -> u64 {
     120
 }
@@ -202,7 +195,9 @@ async fn main() -> anyhow::Result<()> {
     let config: Config = toml::from_str(&config_text)
         .map_err(|e| anyhow::anyhow!("Failed to parse {CONFIG_PATH}: {e}"))?;
 
-    check_max_concurrent(config.max_concurrent)?;
+    if config.max_concurrent == 0 {
+        anyhow::bail!("max_concurrent in {CONFIG_PATH} must be at least 1");
+    }
     if config.npcs.is_empty() {
         anyhow::bail!("No [[npcs]] configured in {CONFIG_PATH}");
     }
@@ -511,22 +506,11 @@ mode = "google"
 "#;
 
     #[test]
-    fn max_concurrent_must_leave_at_least_one_scheduler_slot() {
-        let zero = parse(
-            r#"
-server = "ws://127.0.0.1:10006"
-max_concurrent = 0
-"#,
+    fn max_concurrent_defaults_to_two() {
+        assert_eq!(
+            parse("server = \"ws://127.0.0.1:10006\"\n").max_concurrent,
+            2
         );
-        let defaulted = parse("server = \"ws://127.0.0.1:10006\"\n");
-
-        let err = check_max_concurrent(zero.max_concurrent)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("at least 1"), "{err}");
-        assert_eq!(defaulted.max_concurrent, 2);
-        assert!(check_max_concurrent(defaulted.max_concurrent).is_ok());
-        assert!(check_max_concurrent(1).is_ok());
     }
 
     /// Who pays decides the default: an agent someone runs for themselves

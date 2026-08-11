@@ -49,7 +49,7 @@ activity_window_secs = 30                   # How long after last activity to st
 # always_active = true
 
 # LLM Scheduler: controls concurrent LLM calls across all NPCs
-max_concurrent = 2                          # Max simultaneous LLM calls (default: 2)
+max_concurrent = 2                          # Max simultaneous LLM calls (min 1, default 2)
 request_timeout_secs = 120                  # Give up on one call (0 = never); applies to every
                                             # backend, so a hung CLI or endpoint cannot hold a slot
 
