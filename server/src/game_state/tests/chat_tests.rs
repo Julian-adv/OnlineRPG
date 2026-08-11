@@ -762,6 +762,20 @@ fn admin_command_parses_actions() {
         parse_admin_command("/unban Abuser"),
         Some(AdminCommand::Unban("Abuser"))
     );
+    assert_eq!(
+        parse_admin_command("/spawnmob kobold"),
+        Some(AdminCommand::Spawnmob {
+            monster_type: "kobold",
+            count: None
+        })
+    );
+    assert_eq!(
+        parse_admin_command("/spawnmob kobold 3"),
+        Some(AdminCommand::Spawnmob {
+            monster_type: "kobold",
+            count: Some("3")
+        })
+    );
     // Whole-word rule: /kickstart is not /kick.
     assert_eq!(parse_admin_command("/kickstart party"), None);
     assert_eq!(parse_admin_command("/banish Abuser"), None);
@@ -1126,6 +1140,136 @@ async fn summon_and_goto_teleport_beside_the_target() {
         m,
         ServerMessage::SystemMessage { message } if message == "Goto: you are at wanderer's side."
     )));
+}
+
+#[tokio::test]
+async fn spawnmob_spawns_owned_aggressive_monsters_beside_the_admin() {
+    let game_state = make_test_game_state("admin_spawnmob");
+    let auth = make_test_auth("admin_spawnmob");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold 3".to_string(), &auth)
+        .await;
+
+    let messages = drain(&mut admin_rx);
+    let assigned: Vec<_> = messages
+        .iter()
+        .filter_map(|m| match m {
+            ServerMessage::MonsterAssigned { monster } => Some(monster),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(assigned.len(), 3, "the admin's client must own all three");
+    for monster in &assigned {
+        assert_eq!(monster.monster_type, "kobold");
+        assert_eq!(monster.owner_id, Some(admin_id));
+        assert!(monster.aggressive, "spawned monsters must fight back");
+        let distance = (monster.position.x.powi(2) + monster.position.z.powi(2)).sqrt();
+        assert!(
+            (2.5..=3.5).contains(&distance),
+            "must land in the ring around the admin, got {:?}",
+            monster.position
+        );
+    }
+    assert!(messages.iter().any(|m| matches!(
+        m,
+        ServerMessage::SystemMessage { message } if message == "Spawnmob: 3 kobold spawned."
+    )));
+}
+
+#[tokio::test]
+async fn spawnmob_refuses_unknown_types_and_bad_counts() {
+    let game_state = make_test_game_state("admin_spawnmob_refusals");
+    let auth = make_test_auth("admin_spawnmob_refusals");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.0, 0.0)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    let reply_to = |messages: Vec<ServerMessage>| match messages.into_iter().next() {
+        Some(ServerMessage::SystemMessage { message }) => message,
+        other => panic!("Expected a system reply, got {:?}", other),
+    };
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob dragon".to_string(), &auth)
+        .await;
+    let reply = reply_to(drain(&mut admin_rx));
+    assert!(
+        reply.starts_with("Spawnmob: unknown type dragon") && reply.contains("kobold"),
+        "unknown type must list the valid ones, got {reply}"
+    );
+    // One "Label:" per reply, like every sibling admin command.
+    assert_eq!(reply.matches("Spawnmob:").count(), 1, "got {reply}");
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob".to_string(), &auth)
+        .await;
+    let reply = reply_to(drain(&mut admin_rx));
+    assert!(
+        reply.starts_with("Spawnmob: /spawnmob <type> [count]"),
+        "bare command must draw usage, got {reply}"
+    );
+    assert_eq!(reply.matches("Spawnmob:").count(), 1, "got {reply}");
+
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold 99".to_string(), &auth)
+        .await;
+    assert_eq!(
+        reply_to(drain(&mut admin_rx)),
+        "Spawnmob: count must be 1\u{2013}10."
+    );
+
+    let monsters = game_state.monsters.read().await;
+    assert!(monsters.is_empty(), "no refusal may spawn anything");
+}
+
+/// The ring must not land monsters inside walls (a walled-in monster can
+/// neither fight nor be killed, and holds a global cap slot): a blocked spot
+/// retries at half radius, then falls back to the admin's own cell.
+#[tokio::test]
+async fn spawnmob_ring_avoids_blocked_cells() {
+    let game_state = make_test_game_state("admin_spawnmob_blocked");
+    let auth = make_test_auth("admin_spawnmob_blocked");
+    let admin_id = pid("admin");
+    game_state.add_player(make_player("admin", 0.5, 0.5)).await;
+    let mut admin_rx = game_state.register_direct_channel(&admin_id).await;
+
+    let assigned_position = |messages: Vec<ServerMessage>| {
+        messages
+            .into_iter()
+            .find_map(|m| match m {
+                ServerMessage::MonsterAssigned { monster } => Some(monster.position),
+                _ => None,
+            })
+            .expect("a monster must still spawn")
+    };
+
+    // Count 1 puts the only ring point due east at (3.5, 0.5); seal that cell.
+    game_state.sync_region_furniture(0, 0, &[table_placement(3.5, 0.5)]);
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold".to_string(), &auth)
+        .await;
+    let position = assigned_position(drain(&mut admin_rx));
+    assert_eq!(
+        (position.x, position.z),
+        (2.0, 0.5),
+        "a blocked full radius must retry at half"
+    );
+
+    // Seal the half-radius cell too: the spawn lands on the admin's cell.
+    game_state.sync_region_furniture(
+        0,
+        0,
+        &[table_placement(3.5, 0.5), table_placement(2.5, 0.5)],
+    );
+    game_state
+        .send_chat_message(&admin_id, "/spawnmob kobold".to_string(), &auth)
+        .await;
+    let position = assigned_position(drain(&mut admin_rx));
+    assert_eq!((position.x, position.z), (0.5, 0.5));
 }
 
 #[tokio::test]

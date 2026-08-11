@@ -98,6 +98,10 @@ const COMMANDS: Record<string, Command> = {
     desc: 'Play an emote where you stand: /emote excited',
   },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
+  '/spawnmob': {
+    desc: 'Spawn monsters beside you: /spawnmob <type> [count]',
+    admin: true,
+  },
   '/notice': {
     desc: 'Set the server banner, or clear it with a bare /notice',
     admin: true,

@@ -98,6 +98,7 @@
   - [x] summon
   - [x] goto
   - [x] mute
+  - [x] spawnmob (`/spawnmob <타입> [마릿수]`, 전투 테스트용 몬스터 소환)
 - party, guild 기능
   - party는 만듦
   - party원 수 조정 (4명? 5명?)

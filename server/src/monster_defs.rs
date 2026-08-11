@@ -111,4 +111,10 @@ impl MonsterDefs {
     pub fn get(&self, monster_type: &str) -> Option<&MonsterDefinition> {
         self.defs.get(monster_type)
     }
+
+    pub fn ids(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = self.defs.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        ids
+    }
 }
