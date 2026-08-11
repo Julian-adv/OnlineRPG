@@ -49,10 +49,18 @@ pub trait LlmBackend: Send + Sync {
     async fn send_message(&self, content: &str) -> anyhow::Result<String>;
 }
 
-/// Load system prompt from file.
+/// Load a system prompt layer from file. A `{{ACTIONS}}` slot is filled with
+/// the action reference rendered from the parser's own spec table
+/// (`action::ACTION_SPECS`), so the documented actions cannot drift from what
+/// the parser accepts.
 pub fn load_system_prompt(path: &str) -> anyhow::Result<String> {
-    std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("Failed to read system prompt from {path}: {e}"))
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read system prompt from {path}: {e}"))?;
+    Ok(if text.contains("{{ACTIONS}}") {
+        text.replace("{{ACTIONS}}", &action::action_reference())
+    } else {
+        text
+    })
 }
 
 /// Empty working directory for CLI backends — prompts are untrusted, so the
@@ -226,6 +234,7 @@ pub async fn llm_driver(
         } else if always_active || s.has_nearby_human_players() {
             let agent_events = s.drain_agent_events();
             let memory = load_memory_tail(&memory_file);
+            s.refresh_terrain_grid().await;
             let initial_prompt = build_prompt(
                 &s,
                 &[],
@@ -424,6 +433,7 @@ pub async fn llm_driver(
         let memory = load_memory_tail(&memory_file);
         let prompt = {
             let mut s = state.lock().await;
+            s.refresh_terrain_grid().await;
             // History is recorded after the build: this prompt shows the
             // batch under EVENTS, the next one under RECENT CONVERSATION.
             let prompt = build_prompt(

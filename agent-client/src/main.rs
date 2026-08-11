@@ -12,6 +12,7 @@ mod openai;
 mod openrouter;
 mod orchestrator;
 mod shop_info;
+mod splat;
 mod state;
 mod terrain_http;
 mod watch;
@@ -230,6 +231,7 @@ async fn main() -> anyhow::Result<()> {
         &config.terrain,
         &config.terrain_cache,
     ));
+    let splat_sampler = Arc::new(create_splat_sampler(&config.terrain, &config.terrain_cache));
 
     // NPC patrols keep loading tiles; sweep idle ones like the server does.
     let height_sampler_for_sweep = Arc::clone(&height_sampler);
@@ -262,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shared = Arc::new(SharedResources {
         height_sampler,
+        splat_sampler,
         world_cache,
         behavior_trees: Arc::new(behavior_trees),
         type_mapping: Arc::new(type_mapping),
@@ -325,6 +328,16 @@ fn create_height_sampler(terrain: &str, cache_dir: &str) -> HeightSampler {
         ));
     }
     HeightSampler::new(TerrainIO::new(std::path::PathBuf::from(terrain)))
+}
+
+fn create_splat_sampler(terrain: &str, cache_dir: &str) -> splat::SplatSampler {
+    if is_http_source(terrain) {
+        return splat::SplatSampler::new(splat::HttpSplatTiles::new(
+            terrain,
+            std::path::PathBuf::from(cache_dir),
+        ));
+    }
+    splat::SplatSampler::new(TerrainIO::new(std::path::PathBuf::from(terrain)))
 }
 
 /// Fill an `[[npcs]]` entry from the game-data registry (`data-src/npcs.csv`,

@@ -14,7 +14,7 @@ use crate::state::{Carried, CarriedBagCopies, SharedState};
 use onlinerpg_shared::messages::BagLineItem;
 
 use super::action::{
-    action_to_command, asks_for_great_chest, parse_agent_response, resolve_move_goal, AgentAction,
+    action_to_command, asks_for_great_chest, parse_turn_tolerant, resolve_move_goal, AgentAction,
     PickupRef, Qty,
 };
 use super::combat::{
@@ -173,23 +173,30 @@ pub(super) async fn handle_response(
     favor_file: &Option<String>,
     skip_movement: bool,
 ) -> Option<String> {
-    let agent_resp = match parse_agent_response(response) {
+    let agent_resp = match parse_turn_tolerant(response) {
         Ok(r) => r,
         Err(e) => {
             warn!("Failed to parse agent response: {e}");
             warn!("Raw response: {response}");
+            // Whole response was not valid JSON — tell the agent so, instead of
+            // leaving it to guess why nothing happened.
+            let mut s = state.lock().await;
+            s.push_agent_event(
+                "[BadResponse] Your last message was not valid JSON and nothing ran. \
+                 Reply with only the JSON object — no prose, no code fences."
+                    .to_string(),
+            );
             return None;
         }
     };
 
-    if !agent_resp.unknown_types.is_empty() {
+    // Report any actions that failed to parse, naming the offending field, so
+    // the agent fixes that action instead of thinking the whole class of action
+    // is broken. The valid actions below still run.
+    if !agent_resp.errors.is_empty() {
         let mut s = state.lock().await;
-        for unknown in &agent_resp.unknown_types {
-            warn!("Unknown action type '{unknown}' skipped");
-            s.push_agent_event(format!(
-                "[ActionFailed] '{unknown}' is not an action type — it did nothing. \
-                 Use one of the types listed in your instructions."
-            ));
+        for err in &agent_resp.errors {
+            s.push_agent_event(format!("[BadAction] {err} — that action was skipped."));
         }
     }
 
@@ -496,7 +503,9 @@ pub(super) async fn handle_response(
             qty,
         } = action
         {
-            let Some((merchant_id, _)) = reach_merchant(state, "SellFailed", merchant).await else {
+            let Some((merchant_id, merchant_name)) =
+                reach_merchant(state, "SellFailed", merchant.as_deref()).await
+            else {
                 continue;
             };
             let mut s = state.lock().await;
@@ -534,7 +543,7 @@ pub(super) async fn handle_response(
                     *spent_units.entry(line.instance_id).or_default() += line.qty;
                 }
                 info!(
-                    "Agent selling {total}x {def_id} [{} instance(s)] to {merchant}",
+                    "Agent selling {total}x {def_id} [{} instance(s)] to {merchant_name}",
                     lines.len()
                 );
             }
@@ -591,7 +600,7 @@ pub(super) async fn handle_response(
         // checks and answers with GoldUpdate/InventoryUpdated or TradeError.
         if let AgentAction::Buy { item, merchant } = action {
             let Some((merchant_id, merchant_name)) =
-                reach_merchant(state, "BuyFailed", merchant).await
+                reach_merchant(state, "BuyFailed", merchant.as_deref()).await
             else {
                 continue;
             };
@@ -611,7 +620,7 @@ pub(super) async fn handle_response(
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send buy: {e}");
             } else {
-                info!("Agent buying {item} from {merchant}");
+                info!("Agent buying {item} from {merchant_name}");
             }
             continue;
         }
@@ -619,7 +628,8 @@ pub(super) async fn handle_response(
         // Buy back a unit sold to this merchant this session, at the exact
         // payout recorded server-side. Entry list arrives via BuybackUpdated.
         if let AgentAction::Buyback { item, merchant } = action {
-            let Some((merchant_id, _)) = reach_merchant(state, "BuybackFailed", merchant).await
+            let Some((merchant_id, merchant_name)) =
+                reach_merchant(state, "BuybackFailed", merchant.as_deref()).await
             else {
                 continue;
             };
@@ -631,7 +641,7 @@ pub(super) async fn handle_response(
                 .unwrap_or_default();
             if entries.is_empty() {
                 s.push_agent_event(format!(
-                    "[BuybackFailed] Nothing of yours is waiting with {merchant} — the \
+                    "[BuybackFailed] Nothing of yours is waiting with {merchant_name} — the \
                      [Buyback] event after a sale lists what they still hold."
                 ));
                 continue;
@@ -650,7 +660,7 @@ pub(super) async fn handle_response(
                 .max_by_key(|e| e.enchant)
             else {
                 s.push_agent_event(format!(
-                    "[BuybackFailed] {merchant}'s buyback list has no '{item}' — it holds: {}.",
+                    "[BuybackFailed] {merchant_name}'s buyback list has no '{item}' — it holds: {}.",
                     held.join(", ")
                 ));
                 continue;
@@ -663,7 +673,7 @@ pub(super) async fn handle_response(
                 error!("Failed to send buyback: {e}");
             } else {
                 info!(
-                    "Agent buying back {want} [entry {}] from {merchant}",
+                    "Agent buying back {want} [entry {}] from {merchant_name}",
                     entry.entry_id
                 );
             }
@@ -1050,23 +1060,36 @@ fn resolve_trade_push_target(
 async fn reach_merchant(
     state: &Arc<Mutex<SharedState>>,
     tag: &str,
-    merchant: &str,
+    merchant: Option<&str>,
 ) -> Option<(onlinerpg_shared::PlayerId, String)> {
     let resolved = {
         let mut s = state.lock().await;
-        match s.resolve_nearby_player(merchant) {
-            Some((id, true)) => Some((id, super::prompt::player_name(&s, &id))),
-            Some((_, false)) => {
-                s.push_agent_event(format!(
-                    "[{tag}] {merchant} is a fellow traveler, not a shopkeeper — trading is \
-                     with NPC merchants only."
-                ));
-                None
-            }
-            None => {
-                s.push_agent_event(format!("[{tag}] No one named '{merchant}' is nearby."));
-                None
-            }
+        match merchant {
+            // Named merchant: resolve by name.
+            Some(name) => match s.resolve_nearby_player(name) {
+                Some((id, true)) => Some((id, super::prompt::player_name(&s, &id))),
+                Some((_, false)) => {
+                    s.push_agent_event(format!(
+                        "[{tag}] {name} is a fellow traveler, not a shopkeeper — trading is \
+                         with NPC merchants only."
+                    ));
+                    None
+                }
+                None => {
+                    s.push_agent_event(format!("[{tag}] No one named '{name}' is nearby."));
+                    None
+                }
+            },
+            // No merchant given: aim at the nearest NPC merchant in range.
+            None => match s.nearest_merchant() {
+                Some(id) => Some((id, super::prompt::player_name(&s, &id))),
+                None => {
+                    s.push_agent_event(format!(
+                        "[{tag}] No merchant is nearby — walk to one first."
+                    ));
+                    None
+                }
+            },
         }
     };
     let (id, name) = resolved?;
@@ -1075,14 +1098,14 @@ async fn reach_merchant(
         ChaseResult::Lost(loss) => {
             let mut s = state.lock().await;
             s.push_agent_event(format!(
-                "[{tag}] You could not reach {merchant} — {}.",
+                "[{tag}] You could not reach {name} — {}.",
                 loss.clause()
             ));
             None
         }
         ChaseResult::Error => {
             let mut s = state.lock().await;
-            s.push_agent_event(format!("[{tag}] You could not reach {merchant}."));
+            s.push_agent_event(format!("[{tag}] You could not reach {name}."));
             None
         }
     }
