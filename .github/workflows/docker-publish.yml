@@ -75,7 +75,7 @@ jobs:
         if: matrix.image == 'client'
         run: |
           git checkout -- client/public
-          bash tools/fetch-assets.sh
+          bash tools/fetch-assets.sh client/public/
 
       # Tags live only in the merge job; this build pushes by digest, so meta
       # here supplies just the OCI labels.

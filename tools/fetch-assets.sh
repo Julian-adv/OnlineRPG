@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Download binary assets pinned in assets.lock from Hugging Face.
 # Idempotent: files whose sha256 already matches are skipped.
+# Optional arg: path prefix to limit which entries are fetched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+prefix=${1:-}
 lock=assets.lock
 repo=$(awk '$1 == "repo" {print $2; exit}' "$lock")
 rev=$(awk '$1 == "revision" {print $2; exit}' "$lock")
@@ -24,6 +26,7 @@ checked=0 fetched=0
 while IFS= read -r line; do
     [[ $line == "file "* ]] || continue
     read -r _ hash path <<<"$line"
+    [[ -z $prefix || $path == "$prefix"* ]] || continue
     checked=$((checked + 1))
     if [[ -f $path && $(sha256sum "$path" | awk '{print $1}') == "$hash" ]]; then
         continue
