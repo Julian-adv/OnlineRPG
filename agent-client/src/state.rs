@@ -1380,8 +1380,7 @@ impl SharedState {
     }
 
     /// Adopt a floor change. Leaving a floor purges the monsters collected
-    /// there — the same rule as the web client's removeMonstersNotOnFloor():
-    /// the server delivers MonsterDead/MonsterRemoved filtered to the
+    /// there: the corpse-cleanup MonsterRemoved is delivered filtered to the
     /// monster's floor, so entries from a floor we left can only go stale
     /// ("ghost" monsters whose ids no longer exist server-side).
     pub(crate) fn adopt_floor_level(&mut self, floor_level: i8) {
@@ -4872,9 +4871,9 @@ pub(crate) mod tests {
         assert!(s.terrain_grid_job().is_none());
     }
 
-    /// Crossing floors drops monsters collected on the floor we left — the
-    /// web client's removeMonstersNotOnFloor() rule. Their death events are
-    /// delivered filtered to their floor, so keeping them only breeds ghosts.
+    /// Crossing floors drops monsters collected on the floor we left. Their
+    /// corpse cleanup is delivered filtered to their floor, so keeping them
+    /// only breeds ghosts.
     #[test]
     fn crossing_floors_purges_the_left_floors_monsters() {
         let (mut s, _rx) = test_state();

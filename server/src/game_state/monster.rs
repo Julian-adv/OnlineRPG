@@ -46,10 +46,12 @@ enum Attendance {
     Bystander(PlayerId),
 }
 
-struct Handoff {
-    monster_id: String,
-    new_owner: PlayerId,
-    old_owner: Option<PlayerId>,
+/// One reassignment for `hand_off_monsters` to apply. Picking the candidate is
+/// the caller's job; this is just the request.
+pub(super) struct Handoff {
+    pub monster_id: String,
+    pub new_owner: PlayerId,
+    pub old_owner: Option<PlayerId>,
 }
 
 /// owner → the ids it owns, so the spawn cap is O(1) and a disconnect finds
@@ -909,7 +911,7 @@ impl super::GameState {
         self.despawn_monsters(expired).await;
     }
 
-    async fn despawn_monsters(&self, expired: Vec<String>) {
+    pub(super) async fn despawn_monsters(&self, expired: Vec<String>) {
         if expired.is_empty() {
             return;
         }
@@ -929,7 +931,7 @@ impl super::GameState {
     /// Deliberately ignores the per-player cap: the monster already exists, and
     /// refusing would strand it. The adopter simply gets no new ambient spawns
     /// until back under the cap.
-    async fn hand_off_monsters(&self, handoffs: Vec<Handoff>) {
+    pub(super) async fn hand_off_monsters(&self, handoffs: Vec<Handoff>) {
         if handoffs.is_empty() {
             return;
         }

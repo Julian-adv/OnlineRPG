@@ -473,20 +473,6 @@ class MonsterManager {
     this.monsters.clear()
   }
 
-  // Drop every monster that isn't on `floor`. Used on respawn: the server
-  // despawns/hands off the dungeon's monsters but delivers MonsterRemoved
-  // filtered to the dungeon floor, which the now-surfaced player never
-  // receives — leaving "ghost" monsters that exchange no damage (their ids
-  // no longer exist server-side). Purging by floor clears both the solo
-  // (despawned) and multiplayer (reassigned) leftovers in one shot.
-  removeMonstersNotOnFloor(floor: number) {
-    for (const [id, monster] of this.monsters) {
-      if ((monster.floorLevel ?? 0) !== floor) {
-        this.remove(id)
-      }
-    }
-  }
-
   update(deltaTime: number) {
     // FSM & Movement Logic
     const gameState = get(gameStore)

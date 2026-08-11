@@ -354,15 +354,6 @@ async fn abandoned_next_to_a_bystander(
     (monster_id, owner_rx, adopter, adopter_rx)
 }
 
-async fn owner_of(game_state: &GameState, monster_id: &str) -> Option<PlayerId> {
-    game_state
-        .monsters
-        .read()
-        .await
-        .get(monster_id)
-        .and_then(|m| m.owner_id)
-}
-
 /// The owner's client is what simulates a monster, and it drops the brain the
 /// moment the monster leaves its AOI. Left alone, the monster stays visible and
 /// attackable to the bystander while nothing drives it.

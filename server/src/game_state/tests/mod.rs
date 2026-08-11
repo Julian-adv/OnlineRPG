@@ -171,6 +171,16 @@ fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntrance
         .clone()
 }
 
+/// Which player's client is simulating a monster.
+async fn owner_of(game_state: &GameState, monster_id: &str) -> Option<PlayerId> {
+    game_state
+        .monsters
+        .read()
+        .await
+        .get(monster_id)
+        .and_then(|m| m.owner_id)
+}
+
 fn first_correction(rx: &mut DirectRx) -> Option<(Position, f32, i8)> {
     std::iter::from_fn(|| rx.try_recv().ok()).find_map(|msg| match msg {
         ServerMessage::PositionCorrected {

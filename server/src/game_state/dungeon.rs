@@ -20,6 +20,7 @@ use tracing::{info, warn};
 
 use crate::types::PlayerId;
 
+use super::monster::Handoff;
 use super::GameState;
 
 const MONSTER_RESPAWN_MS: u64 = 5 * 60 * 1000;
@@ -1103,7 +1104,7 @@ impl GameState {
 
     async fn leave_dungeon_floor(&self, player_id: &PlayerId, entrance_id: &str, depth: u8) {
         // Occupancy + alive-monster snapshot under one lock.
-        let (remaining_owner, alive_ids, floor_emptied) = {
+        let (remaining_owner, alive_ids) = {
             let mut dungeons = self.dungeons.write().await;
             let Some(fr) = dungeons
                 .get_mut(entrance_id)
@@ -1128,65 +1129,44 @@ impl GameState {
                 // The boss comes back with them, so its kill no longer counts.
                 fr.boss_defeated = false;
             }
-            (remaining, alive, false)
+            (remaining, alive)
         };
-        let _ = floor_emptied;
 
         match remaining_owner {
             Some(new_owner) => {
-                // Hand the leaver's monsters to a player still on the floor.
-                let reassigned: Vec<crate::types::Monster> = {
-                    let mut monsters = self.monsters.write().await;
-                    let mut out = Vec::new();
-                    for id in &alive_ids {
-                        if monsters
-                            .get(id)
-                            .is_some_and(|m| m.owner_id.as_ref() == Some(player_id))
-                        {
-                            if let Some(m) = monsters.reassign_owner(id, new_owner) {
-                                out.push(m.clone());
-                            }
-                        }
-                    }
-                    out
+                // Any remaining occupant will do, rather than one inside the
+                // monster's AOI as `tick_monster_ownership` picks: a floor is
+                // wider than the AOI, so that rule would despawn monsters on a
+                // floor someone is still standing on.
+                let handoffs: Vec<Handoff> = {
+                    let monsters = self.monsters.read().await;
+                    alive_ids
+                        .iter()
+                        .filter(|id| {
+                            monsters
+                                .get(id)
+                                .is_some_and(|m| m.owner_id.as_ref() == Some(player_id))
+                        })
+                        .map(|id| Handoff {
+                            monster_id: id.clone(),
+                            new_owner,
+                            old_owner: Some(*player_id),
+                        })
+                        .collect()
                 };
-                for monster in reassigned {
-                    info!("Dungeon monster {} reassigned to {}", monster.id, new_owner);
-                    self.send_direct_message(
-                        &new_owner,
-                        ServerMessage::MonsterAssigned { monster },
-                    )
-                    .await;
-                }
+                self.hand_off_monsters(handoffs).await;
             }
             None => {
                 // Floor emptied: despawn everything (only monsters respawn
                 // in a shared dungeon — and this bounds live monster count).
-                let removed: Vec<crate::types::Monster> = {
-                    let mut monsters = self.monsters.write().await;
-                    alive_ids
-                        .iter()
-                        .filter_map(|id| monsters.remove(id))
-                        .collect()
-                };
+                // The slot index goes first; `despawn_monsters` consumes the ids.
                 {
                     let mut index = self.dungeon_monsters.write().await;
                     for id in &alive_ids {
                         index.remove(id);
                     }
                 }
-                for monster in removed {
-                    self.send_direct_message_to_players_within_position(
-                        &monster.position,
-                        monster.floor_level,
-                        super::EVENT_DELIVERY_RADIUS,
-                        ServerMessage::MonsterRemoved {
-                            monster_id: monster.id,
-                        },
-                        None,
-                    )
-                    .await;
-                }
+                self.despawn_monsters(alive_ids).await;
             }
         }
     }
