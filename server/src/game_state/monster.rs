@@ -183,13 +183,13 @@ impl super::GameState {
             if !monster.is_controllable_by(mover_id) {
                 return;
             }
-            if !new_position.is_finite() || !rotation.is_finite() || !target_position.is_finite() {
-                let correction = Self::move_correction(monster_id, monster);
-                drop(monsters);
-                self.send_direct_message(mover_id, correction).await;
-                return;
-            }
-            if state == MonsterState::Dead {
+            // Dead is rejected like malformed input: only server combat may
+            // kill a monster.
+            if !new_position.is_finite()
+                || !rotation.is_finite()
+                || !target_position.is_finite()
+                || state == MonsterState::Dead
+            {
                 let correction = Self::move_correction(monster_id, monster);
                 drop(monsters);
                 self.send_direct_message(mover_id, correction).await;
