@@ -39,6 +39,10 @@ pub struct ItemDefinition {
     /// equipped items and added to the wearer's base guard when attacked.
     #[serde(default)]
     pub guard: Option<i32>,
+    /// CHA bonus while equipped. Summed like `guard` and added to the base
+    /// attribute wherever CHA is read (haggling bands, doc/ITEM_TIERS.md).
+    #[serde(rename = "chaBonus", default)]
+    pub cha_bonus: Option<i32>,
     /// Fish only — rarity tier 1 (common) … 5 (legendary). Drives catch
     /// weighting and skill XP (doc/FISHING.md).
     #[serde(rename = "rarityTier", default)]
@@ -384,8 +388,9 @@ mod tests {
         assert_eq!(debut("chain_mail"), Some(3));
         assert_eq!(debut("breastplate"), Some(4));
         assert_eq!(debut("ring_of_protection"), Some(5));
+        assert_eq!(debut("gold_ring"), Some(3));
         // Weapons and cash valuables stay out of chests entirely.
-        for id in ["iron_sword", "gold_ring", "healing_potion"] {
+        for id in ["iron_sword", "silver_necklace", "healing_potion"] {
             assert_eq!(debut(id), None, "{id} must stay out of chest pools");
         }
     }

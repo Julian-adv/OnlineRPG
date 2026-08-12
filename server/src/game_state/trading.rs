@@ -61,7 +61,7 @@ impl TraderDef {
         &self,
         kind: DealKind,
         item_def_id: &str,
-        cha: u8,
+        cha: i32,
     ) -> Result<(u32, i32), &'static str> {
         match self {
             TraderDef::Merchant(m) => {

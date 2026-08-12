@@ -53,15 +53,14 @@ pub(crate) fn band_invariant_holds(sell_rate_percent: u32) -> bool {
 /// Half-width of the price band for a player with the given CHA. Higher
 /// CHA lets the LLM swing prices further in either direction (NetHack's
 /// charisma pricing, band edition).
-pub(crate) fn deal_half_band_pct(cha: u8) -> i32 {
-    (DEAL_BASE_HALF_BAND_PCT + 2 * (i32::from(cha) - 10))
-        .clamp(DEAL_MIN_HALF_BAND_PCT, DEAL_MAX_HALF_BAND_PCT)
+pub(crate) fn deal_half_band_pct(cha: i32) -> i32 {
+    (DEAL_BASE_HALF_BAND_PCT + 2 * (cha - 10)).clamp(DEAL_MIN_HALF_BAND_PCT, DEAL_MAX_HALF_BAND_PCT)
 }
 
 /// Resident band half-width: twice the merchant width before clamping, so
 /// "정말 필요한 물건엔 프리미엄 허용" while CHA still matters.
-pub(crate) fn resident_half_band_pct(cha: u8) -> i32 {
-    (2 * (DEAL_BASE_HALF_BAND_PCT + 2 * (i32::from(cha) - 10)))
+pub(crate) fn resident_half_band_pct(cha: i32) -> i32 {
+    (2 * (DEAL_BASE_HALF_BAND_PCT + 2 * (cha - 10)))
         .clamp(RESIDENT_MIN_HALF_BAND_PCT, RESIDENT_MAX_HALF_BAND_PCT)
 }
 
@@ -139,6 +138,26 @@ impl DealLedgers {
 }
 
 impl super::GameState {
+    /// A player's effective CHA for haggling: base attribute plus equipped
+    /// chaBonus items, mirroring `effective_guard`.
+    async fn effective_cha(&self, player_id: &PlayerId) -> i32 {
+        let base = {
+            let chars = self.player_characters.read().await;
+            chars
+                .get(player_id)
+                .map(|(_, _, attrs)| i32::from(attrs.cha))
+                .unwrap_or(10)
+        };
+        let bonus = {
+            let inventories = self.inventories.read().await;
+            inventories
+                .get(player_id)
+                .map(|inv| self.equipped_bonus(inv, |def| def.cha_bonus))
+                .unwrap_or(0)
+        };
+        base + bonus
+    }
+
     /// Handle an NPC's `OfferDeal`: validate, clamp to the band, charge
     /// budgets, store the deal, and notify both sides. Every decision is
     /// logged under the `deal` target with the LLM's reason.
@@ -253,13 +272,7 @@ impl super::GameState {
         };
 
         // Clamp the requested modifier to the target's CHA-derived band.
-        let cha = {
-            let chars = self.player_characters.read().await;
-            chars
-                .get(target_player_id)
-                .map(|(_, _, attrs)| attrs.cha)
-                .unwrap_or(10)
-        };
+        let cha = self.effective_cha(target_player_id).await;
         let (rate, half_band) = match def.haggle_params(kind, item_def_id, cha) {
             Ok(params) => params,
             Err(why) => return reject(why).await,

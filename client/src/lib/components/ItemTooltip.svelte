@@ -45,6 +45,9 @@
     {#if def.guard}
       <span>Guard: +{def.guard}</span>
     {/if}
+    {#if def.chaBonus}
+      <span>CHA: +{def.chaBonus}</span>
+    {/if}
   </div>
 </div>
 

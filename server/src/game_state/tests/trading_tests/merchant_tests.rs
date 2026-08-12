@@ -61,6 +61,36 @@ async fn offer_deal_clamps_modifier_to_cha_band() {
 }
 
 #[tokio::test]
+async fn equipped_gold_ring_widens_the_haggle_band() {
+    let game_state = make_test_game_state("offer_clamp_cha_ring");
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 0).await;
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let inv = inventories.entry(pid("buyer")).or_default();
+        inv.equipped
+            .insert(EquipSlot::Ring, bag_item(1, "gold_ring", 1));
+    }
+
+    game_state
+        .offer_deal(
+            &pid("npc_rica"),
+            &pid("buyer"),
+            "wooden_shield",
+            DealKind::Buy,
+            -50,
+            "loyal customer",
+        )
+        .await;
+
+    match buyer_rx.try_recv() {
+        Ok(ServerMessage::DealUpdated { modifier_pct, .. }) => {
+            assert_eq!(modifier_pct, -12, "CHA 10 plus the ring's +1 is a ±12 band");
+        }
+        other => panic!("Expected DealUpdated for buyer, got {:?}", other),
+    }
+}
+
+#[tokio::test]
 async fn a_sleeping_merchant_refuses_to_open_shop() {
     let game_state = make_test_game_state("sleeping_merchant_shop");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 100).await;

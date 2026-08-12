@@ -20,6 +20,8 @@ export interface ItemDefinition {
   basePrice?: number
   /** Guard (AC) bonus granted while equipped. Summed across equipped items. */
   guard?: number
+  /** CHA bonus while equipped — widens haggling bands (doc/ITEM_TIERS.md). */
+  chaBonus?: number
   /** Usable from the bag — the items.csv flag, which the server validates
    * against its `use_effect` dispatch at boot. */
   consumable?: boolean

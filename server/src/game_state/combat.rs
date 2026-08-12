@@ -129,14 +129,18 @@ impl super::GameState {
         true
     }
 
-    /// Sum of the guard bonuses from every equipped item — the single place
-    /// that maps equipped gear to a guard number. Pure over the loaded item
-    /// definitions; `effective_guard` adds it to the base attribute.
-    fn equipped_guard_bonus(&self, inv: &PlayerInventory) -> i32 {
+    /// Sum of one def stat over every equipped item — the single place that
+    /// maps equipped gear to a stat bonus. `effective_guard` and
+    /// `effective_cha` add it to their base attribute.
+    pub(super) fn equipped_bonus(
+        &self,
+        inv: &PlayerInventory,
+        stat: fn(&crate::item_defs::ItemDefinition) -> Option<i32>,
+    ) -> i32 {
         inv.equipped
             .values()
             .filter_map(|item| self.item_defs.get(&item.item_def_id))
-            .filter_map(|def| def.guard)
+            .filter_map(stat)
             .sum()
     }
 
@@ -156,7 +160,7 @@ impl super::GameState {
             let inventories = self.inventories.read().await;
             inventories
                 .get(player_id)
-                .map(|inv| self.equipped_guard_bonus(inv))
+                .map(|inv| self.equipped_bonus(inv, |def| def.guard))
                 .unwrap_or(0)
         };
         base + bonus
