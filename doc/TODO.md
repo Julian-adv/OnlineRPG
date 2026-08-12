@@ -152,7 +152,6 @@
 
 ## 낚시 후속 (PR #53 리뷰)
 
-- doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
 - Mixamo GLB 재배포 정책 판단
 - claimedKeys 범용 입력 클레임 메커니즘 (다음 모달 UI 때 낚시 카브아웃과 함께 일반화)
