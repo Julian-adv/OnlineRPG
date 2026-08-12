@@ -94,6 +94,14 @@
    - `client/src/lib/types/animations.ts`의 `OffhandAnimationName`에 상수 추가
    - `client/src/lib/components/PlayerModel.svelte`에서 해당 상태에 클립 선택 로직 추가
 
+## 팩에는 메쉬가 없다
+
+배포되는 팩 GLB는 클립과 스켈레톤만 담는다. 런타임은 팩의 메쉬를 그리지 않고
+클립(`PlayerModel.svelte`)과 리타게팅용 rest 포즈(`characterAnimationUtils.ts`)만 읽기
+때문에, `tools/strip-animation-pack-mesh.py`가 export 직후 지오메트리·머티리얼·텍스처를
+걷어낸다 (36.5MB → 2.4MB). 스킨 자체는 남긴다 — three의 GLTFLoader는 skinned mesh가
+참조하는 노드만 `Bone`으로 만들기 때문에, 스킨을 지우면 리타게팅이 조용히 실패한다.
+
 ## all_animation.blend
 
 모든 팩의 소스. 2026-08-13에 배포본에서 13개 클립을 역임포트해 5팩 전부를 재현할 수

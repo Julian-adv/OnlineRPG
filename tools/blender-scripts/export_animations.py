@@ -9,6 +9,7 @@ Or run from Blender's Text Editor for interactive use.
 """
 
 import bpy
+import importlib.util
 import os
 import re
 
@@ -202,6 +203,15 @@ def select_export_objects(armature):
             print(f"  Including mesh: {obj.name}")
 
 
+def load_mesh_stripper():
+    """`tools/strip-animation-pack-mesh.py`, imported despite the hyphens."""
+    path = os.path.join(os.path.dirname(__file__), "..", "strip-animation-pack-mesh.py")
+    spec = importlib.util.spec_from_file_location("strip_animation_pack_mesh", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.strip
+
+
 def export_glb(filepath):
     """Export selected objects as GLB with skeleton data."""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -215,6 +225,11 @@ def export_glb(filepath):
         export_nla_strips_merged_animation_name="",
         export_animation_mode="NLA_TRACKS",
     )
+    # The character mesh is never rendered from a pack — drop it so the shipped
+    # file stays small and carries no Mixamo geometry.
+    strip = load_mesh_stripper()
+    strip(filepath, filepath + ".tmp")
+    os.replace(filepath + ".tmp", filepath)
 
 
 # ---------------------------------------------------------------------------
