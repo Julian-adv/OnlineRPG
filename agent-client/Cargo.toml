@@ -22,5 +22,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 async-trait = "0.1"
 axum = "0.8"
 
+[dev-dependencies]
+# test-util: paused clock in tests.
+tokio = { version = "1.0", features = ["test-util"] }
+
 [build-dependencies]
 serde_json = "1.0"

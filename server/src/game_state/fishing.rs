@@ -1117,6 +1117,62 @@ mod tests {
         assert!(common_ticks < ticks, "commons tire before legends");
     }
 
+    /// The agent-client answers the gauge on a human reaction delay
+    /// (`STANCE_REACTION_MS`, redrawn per answer) with one answer in flight,
+    /// so its stance is always a beat or two stale. Commons and mid fish must
+    /// still land always, a legend nearly always. Widening that range puts a
+    /// third tick between gauge and hand, and legends stop landing at all.
+    #[test]
+    fn the_stance_policy_survives_a_human_reaction_delay() {
+        const FIGHTS: u32 = 200;
+        for rarity in [1u32, 3, 5] {
+            for rtt_ms in [0u64, 50, 120] {
+                let landed = (0..FIGHTS)
+                    .filter(|i| lagged_fight_lands(rarity, rtt_ms, u64::from(*i)))
+                    .count() as u32;
+                let floor = if rarity == 5 { FIGHTS * 9 / 10 } else { FIGHTS };
+                assert!(
+                    landed >= floor,
+                    "rarity {rarity} at {rtt_ms}ms rtt landed {landed}/{FIGHTS}, wanted {floor}"
+                );
+            }
+        }
+    }
+
+    /// One fight played by `auto_stance` reacting `STANCE_REACTION_MS + rtt`
+    /// late, one answer in flight at a time. Seeded per fight so the whole
+    /// sweep is deterministic.
+    fn lagged_fight_lands(rarity: u32, rtt_ms: u64, seed: u64) -> bool {
+        use onlinerpg_shared::fishing::STANCE_REACTION_MS;
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut lag_rng = rand::rngs::StdRng::seed_from_u64(seed + 1_000);
+        let mut f = fresh_fight(rarity);
+        let mut in_flight: Option<(u32, FishingAction)> = None;
+        for tick in 0..1_000u32 {
+            match in_flight {
+                Some((at, action)) if tick >= at => {
+                    f.stance = action;
+                    in_flight = None;
+                }
+                Some(_) => {}
+                None => {
+                    let want = auto_stance(f.fish_state, f.tension.round() as u32);
+                    if want != f.stance {
+                        let late = lag_rng.gen_range(STANCE_REACTION_MS) + rtt_ms;
+                        in_flight = Some((tick + late.div_ceil(250) as u32, want));
+                    }
+                }
+            }
+            if let Some(o) = step_fight(&mut f, 0.25, rarity, 0, &mut || {
+                roll_fight(rarity, &mut rng)
+            }) {
+                return o == FightOutcome::Landed;
+            }
+        }
+        panic!("fight never ended");
+    }
+
     #[test]
     fn a_lively_fish_panics_out_of_landing_range() {
         let mut f = fresh_fight(2);

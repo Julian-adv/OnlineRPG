@@ -4,6 +4,7 @@
 //! The server owns every timer and roll — clients only render and respond.
 
 use serde::{Deserialize, Serialize};
+use std::ops::RangeInclusive;
 
 /// A response to the fish, sent via `ClientMessage::FishingRespond`.
 /// `Hook` answers a bite; the other three set the angler's *stance* during
@@ -25,7 +26,7 @@ pub enum FishingAction {
 /// Broadcast to everyone near the bobber — the "skill" is managing tension
 /// against a visible state, not guessing hidden information, which keeps
 /// humans (reading gauge and splash) and agent-clients (running
-/// `auto_stance`) on equal footing.
+/// `auto_stance` on a human reaction delay) on equal footing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FishState {
@@ -72,8 +73,17 @@ pub const WAIT_MIN_MS: u32 = 4_000;
 pub const WAIT_MAX_MS: u32 = 12_000;
 
 /// How long the bite window stays open. Generous by design: it must fit both
-/// human reflexes and an agent-client's network round trip (agent parity).
+/// human reflexes and an agent-client's network round trip — and the agent
+/// deliberately spends `HOOK_REACTION_MS` of it (agent parity).
 pub const BITE_WINDOW_MS: u32 = 2_500;
+
+/// How long a person takes to answer the rod, and so how long the
+/// agent-client's reflex waits before responding — no edge over a player at
+/// the same rod. Both ceilings are load-bearing: the hook must still land
+/// inside `BITE_WINDOW_MS + LATENCY_GRACE_MS`, and the stance inside what the
+/// fight absorbs (`the_stance_policy_survives_a_human_reaction_delay`).
+pub const HOOK_REACTION_MS: RangeInclusive<u64> = 300..=800;
+pub const STANCE_REACTION_MS: RangeInclusive<u64> = 250..=350;
 
 /// Slack added server-side to every response deadline so a laggy but
 /// in-time click is never punished. Timers live on the server; this is the
@@ -223,9 +233,13 @@ pub fn reel_speed_mps(state: FishState, skill_level: u32) -> f32 {
 /// The sound tension-management policy, shared so the agent-client's reflex
 /// and the server tests play the same game a practiced human does: reel an
 /// exhausted fish, shed tension when it's high, take line when it's safe.
+/// A run is never cranked against: `TENSION_REEL_PS` stacks on the pull, and
+/// a human-speed hand cannot back off in time.
 pub fn auto_stance(state: FishState, tension_pct: u32) -> FishingAction {
     match state {
         FishState::Exhausted => FishingAction::Reel,
+        FishState::Running if tension_pct >= 45 => FishingAction::GiveLine,
+        FishState::Running => FishingAction::Hold,
         _ if tension_pct >= 75 => FishingAction::GiveLine,
         _ if tension_pct <= 45 => FishingAction::Reel,
         _ => FishingAction::Hold,
@@ -265,7 +279,21 @@ mod tests {
         );
         assert_eq!(auto_stance(FishState::Running, 80), FishingAction::GiveLine);
         assert_eq!(auto_stance(FishState::Resting, 10), FishingAction::Reel);
-        assert_eq!(auto_stance(FishState::Running, 50), FishingAction::Hold);
+        assert_eq!(
+            auto_stance(FishState::Running, 50),
+            FishingAction::GiveLine,
+            "a run is answered with line, not held to the top of the band"
+        );
+        assert_eq!(
+            auto_stance(FishState::Running, 20),
+            FishingAction::Hold,
+            "a slack line during a run needs nothing"
+        );
+        assert_eq!(
+            auto_stance(FishState::Resting, 60),
+            FishingAction::Hold,
+            "a resting fish sheds tension on its own"
+        );
     }
 
     // Constant on purpose: this test locks the tuning invariant.

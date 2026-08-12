@@ -167,16 +167,21 @@ respond, and the windows (2.5 s + grace) are sized for an agent-client's
 network round trip as much as for human reflexes — no mechanic requiring
 reactions only software can deliver, none too fast for software either.
 
-The agent-client implements this as a reflex layer (`src/state.rs`): it
-auto-hooks its own bites and plays each `FishingFight` beat through the
-shared `auto_stance` policy (resending only on change) — mechanically, like
+The agent-client implements this as a reflex layer (`src/state/events.rs`):
+it auto-hooks its own bites and plays each `FishingFight` beat through the
+shared `auto_stance` policy (answering only on change) — mechanically, like
 its A* movement layer, while the LLM makes the decisions via two actions:
 `{"type": "fish", "x": …, "z": …}` (coordinates optional — omitted means
 "just ahead") and `{"type": "stop_fishing"}`. Outcomes come back to the
 model as `[Fishing]` events; in-flight messages are classified as noise so
-they cost no LLM calls. Reflex speed confers no real advantage: the
-simulation advances 4 times a second regardless, and one beat of stance lag
-is well inside what the tuning absorbs.
+they cost no LLM calls.
+
+Answers wait out a human reaction delay (`HOOK_REACTION_MS`,
+`STANCE_REACTION_MS`) with one answer in flight, so a beat arriving
+mid-reaction is missed exactly as a person misses it. Both ceilings are
+load-bearing: the hook must still fit `BITE_WINDOW_MS`, the stance what the
+fight absorbs (`the_stance_policy_survives_a_human_reaction_delay`).
+Shortening a window means re-checking the pair.
 
 ## The fight
 
@@ -221,9 +226,9 @@ the angler holds one of three stances, changed any time via
 Every beat is broadcast as `FishingFight { bobber, fish_state, tension_pct,
 stamina_pct }` — public information by design, which is what keeps humans
 (reading gauge and splash) and agent-clients (running the shared
-`auto_stance` policy) on equal footing. Trophy catches are celebrated to
-everyone in delivery radius via the `FishingEnded` broadcast they already
-receive.
+`auto_stance` policy on a human reaction delay, below) on equal footing.
+Trophy catches are celebrated to everyone in delivery radius via the
+`FishingEnded` broadcast they already receive.
 
 ## Deliberate limits
 

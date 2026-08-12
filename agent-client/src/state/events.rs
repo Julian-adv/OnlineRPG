@@ -12,6 +12,10 @@ pub enum EventUrgency {
     Noise,
 }
 
+use onlinerpg_shared::fishing::{auto_stance, FishingAction, HOOK_REACTION_MS, STANCE_REACTION_MS};
+use std::ops::RangeInclusive;
+use std::time::Duration;
+
 impl SharedState {
     /// Classify how urgent a server event is for LLM processing.
     pub fn classify_event(&self, msg: &ServerMessage) -> EventUrgency {
@@ -214,6 +218,38 @@ impl SharedState {
         );
         drop(world);
         self.pending_commands.extend(commands);
+    }
+
+    /// Answer a fishing beat the way a person would: after a reaction delay,
+    /// and only one answer in flight. A beat that lands mid-reaction is
+    /// missed; the next beat corrects it. Returns whether it was taken.
+    /// Sends on `cmd_tx` rather than `send_command` — a spawned task cannot
+    /// hold `&mut self`, and `FishingRespond` needs no send-time rewriting.
+    fn react_fishing(&mut self, action: FishingAction, delay_ms: RangeInclusive<u64>) -> bool {
+        if self
+            .fishing_reaction
+            .as_ref()
+            .is_some_and(|h| !h.is_finished())
+        {
+            return false;
+        }
+        let delay = Duration::from_millis(rand::thread_rng().gen_range(delay_ms));
+        let tx = self.cmd_tx.clone();
+        self.fishing_reaction = Some(tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = tx.send(ClientMessage::FishingRespond { action }).await;
+        }));
+        true
+    }
+
+    /// Start or end our own session: any in-flight answer is dropped, since a
+    /// stale one landing in the next cast scares the fish off.
+    fn set_self_fishing(&mut self, fishing: bool) {
+        self.self_fishing = fishing;
+        self.fishing_stance = None;
+        if let Some(h) = self.fishing_reaction.take() {
+            h.abort();
+        }
     }
 
     /// Push an event and update tracked state. Returns the urgency of the event.
@@ -712,27 +748,23 @@ impl SharedState {
             } => {
                 self.handle_managed_monster_hit(monster_id, player_id, false, 0);
             }
-            // Fishing reflexes: answer bites/rounds mechanically; the LLM only
-            // decides whether to fish. Speed inside the window confers no
-            // advantage.
+            // Fishing reflexes: answer bites/beats mechanically; the LLM only
+            // decides whether to fish. Answers carry a human reaction delay
+            // so the agent has no edge over a player at the same rod.
             ServerMessage::FishingCasted { player_id, .. }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
-                self.self_fishing = true;
-                self.fishing_stance = None;
+                self.set_self_fishing(true);
             }
             ServerMessage::FishingEnded { player_id, .. }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
-                self.self_fishing = false;
-                self.fishing_stance = None;
+                self.set_self_fishing(false);
             }
             ServerMessage::FishingBite { player_id }
                 if self.self_player_id.as_ref() == Some(player_id) =>
             {
-                self.pending_commands.push(ClientMessage::FishingRespond {
-                    action: onlinerpg_shared::fishing::FishingAction::Hook,
-                });
+                self.react_fishing(FishingAction::Hook, HOOK_REACTION_MS);
             }
             ServerMessage::FishingFight {
                 player_id,
@@ -740,13 +772,13 @@ impl SharedState {
                 tension_pct,
                 ..
             } if self.self_player_id.as_ref() == Some(player_id) => {
-                // Same policy a practiced human plays from the gauge; sent
+                // Same policy a practiced human plays from the gauge; answered
                 // only on change — a stance holds until replaced.
-                let stance = onlinerpg_shared::fishing::auto_stance(*fish_state, *tension_pct);
-                if self.fishing_stance != Some(stance) {
+                let stance = auto_stance(*fish_state, *tension_pct);
+                if self.fishing_stance != Some(stance)
+                    && self.react_fishing(stance, STANCE_REACTION_MS)
+                {
                     self.fishing_stance = Some(stance);
-                    self.pending_commands
-                        .push(ClientMessage::FishingRespond { action: stance });
                 }
             }
             _ => {}

@@ -198,9 +198,12 @@ pub struct SharedState {
     /// movement (like `trade_busy`) and adds a stay-put prompt line;
     /// `stop_fishing` stays the deliberate exit.
     pub self_fishing: bool,
-    /// Last stance the fight reflex sent, so each `FishingFight` beat only
-    /// resends on change.
-    pub fishing_stance: Option<onlinerpg_shared::fishing::FishingAction>,
+    /// Last stance the fight reflex committed to, so each `FishingFight` beat
+    /// only reacts on change.
+    fishing_stance: Option<onlinerpg_shared::fishing::FishingAction>,
+    /// The in-flight reaction; one answer at a time, so beats arriving while
+    /// it runs are missed exactly as a person misses them.
+    fishing_reaction: Option<tokio::task::JoinHandle<()>>,
     /// Unanswered party invites, oldest first (capped; a flood can't swap
     /// the invite out from under an in-flight `party_accept`). Expired
     /// invites are pruned on mutation and skipped on read, so a dead invite
@@ -340,6 +343,7 @@ impl SharedState {
             trade_declined_until: HashMap::new(),
             self_fishing: false,
             fishing_stance: None,
+            fishing_reaction: None,
             pending_party_invites: Vec::new(),
             pending_party_summons: Vec::new(),
             party_members: Vec::new(),

@@ -152,7 +152,6 @@
 
 ## 낚시 후속 (PR #53 리뷰)
 
-- agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
 - Mixamo GLB 재배포 정책 판단

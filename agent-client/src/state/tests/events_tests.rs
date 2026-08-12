@@ -155,6 +155,87 @@ fn fishing_ended_wakes_llm_only_for_own_outcome() {
     assert_eq!(s.classify_event(&ended(2)), EventUrgency::Noise);
 }
 
+/// The agent must not out-reflex a player at the same rod: the hook goes out
+/// a human reaction later, not on the packet that carried the bite.
+#[tokio::test(start_paused = true)]
+async fn a_bite_is_hooked_after_a_human_delay() {
+    use onlinerpg_shared::fishing::HOOK_REACTION_MS;
+    let (mut s, mut rx) = test_state();
+    s.self_player_id = Some(PlayerId::from(1));
+
+    let t0 = tokio::time::Instant::now();
+    s.push_event(ServerMessage::FishingBite {
+        player_id: PlayerId::from(1),
+    });
+    assert!(rx.try_recv().is_err(), "the hook must not go out instantly");
+
+    match rx.recv().await {
+        Some(ClientMessage::FishingRespond { action }) => {
+            assert_eq!(action, onlinerpg_shared::fishing::FishingAction::Hook)
+        }
+        other => panic!("expected a delayed hook, got {other:?}"),
+    }
+    let waited = t0.elapsed().as_millis() as u64;
+    assert!(
+        HOOK_REACTION_MS.contains(&waited),
+        "hooked after {waited}ms, outside human range"
+    );
+}
+
+/// A reaction still in the air when the session ends must never reach the
+/// wire: the server reads a stray response during the next cast as the angler
+/// yanking the rod, and the fish is gone.
+#[tokio::test(start_paused = true)]
+async fn the_session_ending_cancels_a_reaction_in_flight() {
+    let (mut s, mut rx) = test_state();
+    s.self_player_id = Some(PlayerId::from(1));
+
+    s.push_event(ServerMessage::FishingBite {
+        player_id: PlayerId::from(1),
+    });
+    s.push_event(ServerMessage::FishingEnded {
+        player_id: PlayerId::from(1),
+        outcome: onlinerpg_shared::fishing::FishingOutcome::Escaped,
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(
+        onlinerpg_shared::fishing::HOOK_REACTION_MS.end() + 1,
+    ))
+    .await;
+    assert!(rx.try_recv().is_err(), "the stale hook must be cancelled");
+}
+
+/// One hand, one answer: a beat that lands mid-reaction is missed, and the
+/// stance it would have taken is not recorded as if it had been sent.
+#[tokio::test(start_paused = true)]
+async fn a_beat_during_the_reaction_is_missed() {
+    use onlinerpg_shared::fishing::{FishState, FishingAction};
+    let (mut s, mut rx) = test_state();
+    s.self_player_id = Some(PlayerId::from(1));
+    let beat = |tension_pct| ServerMessage::FishingFight {
+        player_id: PlayerId::from(1),
+        bobber: p(0.0, 0.0, 0.0),
+        fish_state: FishState::Resting,
+        tension_pct,
+        stamina_pct: 50,
+    };
+
+    s.push_event(beat(20));
+    assert_eq!(s.fishing_stance, Some(FishingAction::Reel));
+    s.push_event(beat(90));
+    assert_eq!(
+        s.fishing_stance,
+        Some(FishingAction::Reel),
+        "the gauge went red mid-reaction; the next beat answers it, not this one"
+    );
+
+    match rx.recv().await {
+        Some(ClientMessage::FishingRespond { action }) => assert_eq!(action, FishingAction::Reel),
+        other => panic!("expected the first stance, got {other:?}"),
+    }
+    assert!(rx.try_recv().is_err(), "only one answer may be in flight");
+}
+
 /// The driver submits a prompt whenever the event buffer is non-empty, so
 /// a spectator ending must skip the buffer entirely, not just rank low.
 #[test]

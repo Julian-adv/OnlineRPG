@@ -35,7 +35,7 @@ OnlineRPG/
 │   ├── src/
 │   │   ├── ws.rs              # WebSocket 통신
 │   │   ├── orchestrator.rs    # 다중 NPC 세션 관리
-│   │   ├── state.rs           # 월드 상태 관리
+│   │   ├── state/             # 월드 상태 관리 (이벤트, 인벤토리, 음악 등)
 │   │   ├── dungeon.rs         # 던전 레이아웃/계단 Y/문 (shared 생성기 사용)
 │   │   ├── driver/            # LLM 드라이버 (프롬프트, 행동, 이동, 전투)
 │   │   ├── llm_scheduler.rs   # 우선순위 큐 + 동시 호출 제한
@@ -274,8 +274,10 @@ NPC가 *누구인지*는 git 추적되는 게임 데이터가 단일 진실 소�
 ## 낚시
 
 Agent는 인간과 동일한 프로토콜로 낚시한다(`doc/FISHING.md`). 반사 동작(입질
-시 자동 후킹, `auto_stance` 파이팅)은 클라이언트가 `src/state.rs`에서
-처리하고, LLM은 시작과 중단만 결정한다:
+시 자동 후킹, `auto_stance` 파이팅)은 클라이언트가 `src/state/events.rs`에서
+처리하고, LLM은 시작과 중단만 결정한다. 응답에는 사람의 반응 시간
+(`HOOK_REACTION_MS`, `STANCE_REACTION_MS`)만큼 지연이 붙고 한 번에 하나만
+날아가므로, 반응 중에 온 비트는 사람처럼 놓친다:
 
 ```json
 {"type": "fish", "x": 10.0, "z": -5.0}
