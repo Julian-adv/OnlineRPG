@@ -83,6 +83,24 @@ impl SharedState {
                     target_position,
                 }
             }
+            ClientMessage::InteractObject {
+                object_type,
+                object_id,
+            } => {
+                // Mirror the pose on send, not on the server echo: a stale
+                // LLM response can run this same tick, and
+                // refuses_play_command must already see the bed under us or
+                // its /play_music replaces the pose.
+                self.set_self_pose(Some(object_type.clone()));
+                ClientMessage::InteractObject {
+                    object_type,
+                    object_id,
+                }
+            }
+            ClientMessage::StopInteraction => {
+                self.set_self_pose(None);
+                ClientMessage::StopInteraction
+            }
             other => other,
         };
         self.cmd_tx

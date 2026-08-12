@@ -175,6 +175,36 @@ fn a_tune_is_announced_at_both_ends_and_our_own_stops_itself() {
     );
 }
 
+/// The 2:00 schedule replaces the strum with the bed pose before the song's
+/// clock runs out. The stale performance must expire without a
+/// StopInteraction — that would stand the sleeper up for the night.
+#[test]
+fn a_song_expiring_in_bed_does_not_stand_the_sleeper_up() {
+    let (mut s, _rx) = test_state();
+    let me = test_player(0.0, 0.0);
+    s.self_player_id = Some(me.id);
+    s.self_player = Some(me);
+    s.in_game = true;
+
+    s.push_event(ServerMessage::PlayerMusicStarted {
+        player_id: PlayerId::from(1),
+        track: "Twilight Fields".to_string(),
+        elapsed_secs: 0.0,
+    });
+    // The schedule sent InteractObject(bed) and adopted the pose on send.
+    s.self_player.as_mut().unwrap().object_type = Some("bed".to_string());
+    if let Some(p) = s.self_performance.as_mut() {
+        p.ends_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    }
+
+    s.check_music_finished();
+    assert!(
+        s.drain_pending_commands().is_empty(),
+        "the bed pose must survive the stale song"
+    );
+    assert!(s.self_performance.is_none());
+}
+
 /// Coins thrown at a busker's feet wait for the end of the song — walking
 /// over mid-tune would abandon the performance — and then name who to
 /// thank. Loot that no player dropped is not a tip.

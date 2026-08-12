@@ -1,5 +1,38 @@
 use super::*;
 
+/// A schedule pose authored on the bed itself must not reach A* as the
+/// goal — the bed seals its own cells and the search could never enter
+/// them. The walk goal steps to the nearest open neighbour; open ground
+/// passes through untouched.
+#[test]
+fn walkable_near_steps_off_sealed_furniture() {
+    let (s, _rx) = test_state();
+    let bed = onlinerpg_shared::furniture::FurniturePlacement {
+        type_id: "bed".to_string(),
+        x: 10.5,
+        y: 0.0,
+        z: 10.5,
+        rotation_deg: 0.0,
+        floor_level: 0,
+    };
+    s.world_cache.write().unwrap().sync_furniture(0, 0, &[bed]);
+
+    let (x, z) = s.walkable_near(10.5, 10.5, 0);
+    assert_ne!((x, z), (10.5, 10.5), "the on-bed goal must be nudged");
+    assert!((x - 10.5).abs() <= 1.5 && (z - 10.5).abs() <= 1.5);
+    let world = s.world_cache.read().unwrap();
+    assert!(!pathfinding::is_cell_sealed(
+        world.passability_cache(),
+        x,
+        z,
+        0,
+        None
+    ));
+    drop(world);
+
+    assert_eq!(s.walkable_near(0.5, 0.5, 0), (0.5, 0.5));
+}
+
 /// Our own performances land in the recent-song list, oldest first and
 /// capped; the world state shows the list only to an agent that busks,
 /// and never counts someone else's tune as ours.

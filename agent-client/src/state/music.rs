@@ -1,6 +1,16 @@
 use super::*;
 
 impl SharedState {
+    /// The pose an interaction holds us in — anything but the music emote
+    /// (a bed, a chair). `None` while free or strumming.
+    pub(super) fn held_pose(&self) -> Option<&str> {
+        self.self_player
+            .as_ref()?
+            .object_type
+            .as_deref()
+            .filter(|held| *held != MUSIC_EMOTE)
+    }
+
     /// A tune ended: say so, since the agent heard it start. Silent for
     /// anyone who was not playing.
     pub(super) fn finish_music(&mut self, player_id: &PlayerId) {
@@ -71,10 +81,7 @@ impl SharedState {
         let Some(me) = self.self_player.as_ref() else {
             return;
         };
-        let posing = me
-            .object_type
-            .as_deref()
-            .is_some_and(|held| held != MUSIC_EMOTE);
+        let posing = self.held_pose().is_some();
         if !self.plays_music
             || posing
             || item.floor_level != self.self_floor_level
@@ -125,12 +132,7 @@ impl SharedState {
             return true;
         }
         let now = std::time::Instant::now();
-        let resting = self
-            .self_player
-            .as_ref()
-            .and_then(|me| me.object_type.as_deref())
-            .filter(|held| *held != MUSIC_EMOTE);
-        let why = if let Some(held) = resting {
+        let why = if let Some(held) = self.held_pose() {
             // Playing would replace the pose the schedule put us in, and
             // nothing would put us back until the next schedule entry.
             format!("you are using the {held} and would have to get up first")
@@ -181,7 +183,11 @@ impl SharedState {
             return;
         }
         self.self_performance = None;
-        self.pending_commands.push(ClientMessage::StopInteraction);
+        // A schedule pose (a bed at 2:00) may have replaced the strum before
+        // the song's clock ran out; a StopInteraction would only stand us up.
+        if self.held_pose().is_none() {
+            self.pending_commands.push(ClientMessage::StopInteraction);
+        }
     }
 
     /// A busker plays on a workhorse instrument — never the starter sword,

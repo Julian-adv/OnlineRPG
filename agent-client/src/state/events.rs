@@ -324,8 +324,9 @@ impl SharedState {
                 self.treasure_chests_spent.insert(entrance_id.clone());
                 self.pending_chest_open = None;
             }
-            // A rejection means the open we recorded never happened. The agent
-            // sends no other interaction, so a pending open owns this reason.
+            // A rejection means the interaction we recorded never happened:
+            // a pending chest open, or a schedule pose adopted on send
+            // (occupied bed) that must revert to standing.
             ServerMessage::InteractionRejected { ref reason } => {
                 if let Some((entrance_id, depth, kind)) = self.pending_chest_open.take() {
                     match kind {
@@ -342,6 +343,8 @@ impl SharedState {
                         }
                         crate::dungeon::ChestKind::Treasure => {}
                     }
+                } else if self.held_pose().is_some() {
+                    self.set_self_pose(None);
                 }
             }
             ServerMessage::DungeonPropBroken {
@@ -462,9 +465,7 @@ impl SharedState {
                 object_type,
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
-                    if let Some(me) = self.self_player.as_mut() {
-                        me.object_type = object_type.clone();
-                    }
+                    self.set_self_pose(object_type.clone());
                 }
                 if object_type.as_deref() != Some(MUSIC_EMOTE) {
                     self.finish_music(player_id);

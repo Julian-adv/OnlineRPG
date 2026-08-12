@@ -142,7 +142,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
     let (x, y, z) = (entry.pos[0], entry.pos[1], entry.pos[2]);
 
     // Check if we're already near the target (including floor level)
-    {
+    let (walk_x, walk_z) = {
         let mut s = state.lock().await;
         if let Some(ref p) = s.self_player {
             let to_target = PlanarDelta::to_xz(&p.position, x, z);
@@ -153,9 +153,13 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
                 return;
             }
         }
-    }
+        // A pose position may sit on the furniture itself (a bed swallows its
+        // own cells); walk beside it and let the exact-position send below
+        // cross the last metre.
+        s.walkable_near(x, z, entry.floor_level)
+    };
 
-    let arrived = match execute_move(state, x, z, entry.floor_level).await {
+    let arrived = match execute_move(state, walk_x, walk_z, entry.floor_level).await {
         MoveResult::Arrived => true,
         MoveResult::Blocked => {
             // Force-move to schedule position (e.g. cross-floor moves through
@@ -648,6 +652,34 @@ pub(super) async fn fetch_houses_around(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::tests::{test_player, test_state};
+
+    /// The pose is adopted when the InteractObject is sent, not on the
+    /// server's echo — a stale LLM response handled in the same tick must
+    /// already find the bed under us, or its /play_music replaces the pose
+    /// and the NPC sleeps standing.
+    #[tokio::test]
+    async fn a_scheduled_pose_is_adopted_on_send_and_refuses_play_music() {
+        let (mut s, mut rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        let entry = ScheduleEntry {
+            action: Some("bed".to_string()),
+            object_id: Some(23),
+            ..Default::default()
+        };
+
+        send_interact_if_needed(&mut s, &entry).await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMessage::InteractObject { .. })
+        ));
+        assert_eq!(
+            s.self_player.as_ref().unwrap().object_type.as_deref(),
+            Some("bed")
+        );
+        assert!(s.refuses_play_command("/play_music"));
+    }
 
     #[test]
     fn force_move_legs_stay_under_cap_and_end_exactly() {
