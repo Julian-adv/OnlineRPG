@@ -468,12 +468,14 @@ async fn main() -> ExitCode {
         },
     ));
 
-    // Every 10s, hand monsters whose owner roamed off to a player still near
-    // them, and free the ones nobody is near at all.
+    // Safety net behind the event-driven ownership handoff (AOI diff, monster
+    // move fanout, adoption on sight): repairs what a race strands and frees
+    // monsters nobody can see. The events do the real-time work, so this only
+    // needs to be frequent enough that a stranded monster is not one for long.
     let game_state_for_abandoned = Arc::clone(&game_state);
     background.spawn(run_ticks(
         "monster ownership reconcile",
-        Duration::from_secs(10),
+        Duration::from_secs(60),
         drain_shutdown.clone(),
         move || {
             let game_state = Arc::clone(&game_state_for_abandoned);

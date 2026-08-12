@@ -615,7 +615,6 @@ impl super::GameState {
             )
             .await
             .into_iter()
-            .filter(|id| skip_player_id != Some(id))
             .collect();
         let new_visible: HashSet<_> = self
             .player_ids_within_position(
@@ -625,12 +624,31 @@ impl super::GameState {
             )
             .await
             .into_iter()
-            .filter(|id| skip_player_id != Some(id))
             .collect();
+        // The owner simulates from wherever it stands and player moves are the
+        // other ownership event, so a monster wandering out of a stationary
+        // owner's AOI is visible only here. Read off the sets before they are
+        // trimmed for messaging.
+        let departed_owner = monster
+            .owner_id
+            .filter(|owner| old_visible.contains(owner) && !new_visible.contains(owner));
 
-        let left: Vec<_> = old_visible.difference(&new_visible).cloned().collect();
-        let entered: Vec<_> = new_visible.difference(&old_visible).cloned().collect();
-        let stayed: Vec<_> = new_visible.intersection(&old_visible).cloned().collect();
+        let excluded = |id: &&PlayerId| skip_player_id == Some(*id);
+        let left: Vec<_> = old_visible
+            .difference(&new_visible)
+            .filter(|id| !excluded(id))
+            .cloned()
+            .collect();
+        let entered: Vec<_> = new_visible
+            .difference(&old_visible)
+            .filter(|id| !excluded(id))
+            .cloned()
+            .collect();
+        let stayed: Vec<_> = new_visible
+            .intersection(&old_visible)
+            .filter(|id| !excluded(id))
+            .cloned()
+            .collect();
 
         self.send_direct_message_to_players(
             &left,
@@ -648,45 +666,44 @@ impl super::GameState {
         .await;
         self.send_direct_message_to_players(&stayed, update_msg)
             .await;
+
+        if let Some(owner) = departed_owner {
+            self.release_monsters_left_behind(
+                &owner,
+                vec![(monster.id.clone(), monster.position, monster.floor_level)],
+            )
+            .await;
+        }
     }
 
-    /// Hand a departing player's monsters to players still inside their AOI,
-    /// least loaded first, and despawn the rest. Same rule as
-    /// `tick_monster_ownership`, except the owner is not coming back, so a
-    /// dungeon monster that gets this far is despawned rather than left for the
-    /// floor. (In practice `remove_player` walks a dungeon player off its floor
-    /// first, so those are already reassigned by the time this runs.)
-    pub async fn remove_monsters_by_owner(&self, owner_id: &PlayerId) {
-        let owned: Vec<(String, Position, i8)> = {
-            let monsters = self.monsters.read().await;
-            monsters
-                .ids_owned_by(owner_id)
-                .filter_map(|id| monsters.get(id))
-                .map(|m| (m.id.clone(), m.position, m.floor_level))
-                .collect()
-        };
-        if owned.is_empty() {
-            return;
-        }
-
-        // Seeded from what each candidate already simulates, so "least loaded"
-        // means least loaded, not merely least inherited from this disconnect.
+    /// Pick an adopter inside each monster's AOI: least loaded first, nearest
+    /// on ties. The load is seeded from what each candidate already simulates
+    /// and carries this batch's not-yet-applied picks, so a scattering party's
+    /// monsters spread instead of piling on whoever is nearest. Monsters with
+    /// nobody in range come back as orphans, with their floor, for the
+    /// caller's policy — despawn or park.
+    async fn plan_handoffs(
+        &self,
+        abandoned: Vec<(String, Position, i8)>,
+        old_owner: &PlayerId,
+    ) -> (Vec<Handoff>, Vec<(String, i8)>) {
         let mut load: std::collections::HashMap<PlayerId, usize> = std::collections::HashMap::new();
         let mut handoffs = Vec::new();
         let mut orphans = Vec::new();
-        for (monster_id, position, floor_level) in owned {
-            // `remove_player` drops the leaver from the roster further down, so
-            // skip it here or it would adopt its own monsters.
+        for (monster_id, position, floor_level) in abandoned {
+            // The old owner may still be in the roster (a disconnect removes it
+            // later; a walk-out has merely moved), so never let it adopt its
+            // own monsters.
             let candidates = self
                 .players_within_position(
                     &position,
                     floor_level,
                     super::EVENT_DELIVERY_RADIUS,
-                    Some(owner_id),
+                    Some(old_owner),
                 )
                 .await;
             if candidates.is_empty() {
-                orphans.push(monster_id);
+                orphans.push((monster_id, floor_level));
                 continue;
             }
             for (candidate, _) in &candidates {
@@ -709,10 +726,32 @@ impl super::GameState {
             handoffs.push(Handoff {
                 monster_id,
                 new_owner,
-                old_owner: Some(*owner_id),
+                old_owner: Some(*old_owner),
             });
         }
+        (handoffs, orphans)
+    }
 
+    /// Hand a departing player's monsters to players still inside their AOI,
+    /// least loaded first, and despawn the rest. Same rule as the walk-out
+    /// release, except the owner is not coming back, so a dungeon monster that
+    /// gets this far is despawned rather than left for the floor. (In practice
+    /// `remove_player` walks a dungeon player off its floor first, so those are
+    /// already reassigned by the time this runs.)
+    pub async fn remove_monsters_by_owner(&self, owner_id: &PlayerId) {
+        let owned: Vec<(String, Position, i8)> = {
+            let monsters = self.monsters.read().await;
+            monsters
+                .ids_owned_by(owner_id)
+                .filter_map(|id| monsters.get(id))
+                .map(|m| (m.id.clone(), m.position, m.floor_level))
+                .collect()
+        };
+        if owned.is_empty() {
+            return;
+        }
+
+        let (handoffs, orphans) = self.plan_handoffs(owned, owner_id).await;
         debug!(
             "Owner {} left: {} monsters handed off, {} despawned",
             owner_id,
@@ -720,7 +759,71 @@ impl super::GameState {
             orphans.len()
         );
         self.hand_off_monsters(handoffs).await;
-        self.despawn_monsters(orphans).await;
+        self.despawn_monsters(orphans.into_iter().map(|(id, _)| id).collect())
+            .await;
+    }
+
+    /// The owner can no longer see these monsters and its client is dropping
+    /// their brains, so ownership is settled by the same event instead of by a
+    /// later sweep. Each monster goes to a player still inside its AOI when
+    /// there is one. With nobody in range, a surface orphan is despawned on
+    /// the spot — nobody can see it, and keeping it would only hold a cap
+    /// slot — while a dungeon orphan is parked: its floor lifecycle owns
+    /// removal, and `adopt_unattended_monsters` re-arms it when someone walks
+    /// back in. Every branch tells the old owner `MonsterRemoved` exactly
+    /// once, which is both its release and its AOI removal.
+    pub(super) async fn release_monsters_left_behind(
+        &self,
+        owner_id: &PlayerId,
+        abandoned: Vec<(String, Position, i8)>,
+    ) {
+        let (handoffs, orphans) = self.plan_handoffs(abandoned, owner_id).await;
+        self.hand_off_monsters(handoffs).await;
+        let (expired, parked): (Vec<_>, Vec<_>) =
+            orphans.into_iter().partition(|(_, floor)| *floor >= 0);
+        self.despawn_monsters(expired.into_iter().map(|(id, _)| id).collect())
+            .await;
+        for (monster_id, _) in parked {
+            debug!("Monster {} parked: owner {} left", monster_id, owner_id);
+            self.send_direct_message(owner_id, ServerMessage::MonsterRemoved { monster_id })
+                .await;
+        }
+    }
+
+    /// Monsters that just entered `player_id`'s view with no owner inside
+    /// their own AOI — parked dungeon monsters, or strays a race left behind.
+    /// Nobody is simulating them, so the viewer adopts them on sight.
+    pub(super) async fn adopt_unattended_monsters(
+        &self,
+        player_id: &PlayerId,
+        entered: &[crate::types::Monster],
+    ) {
+        if entered.is_empty() {
+            return;
+        }
+        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
+        let adoptions: Vec<Handoff> = {
+            let players = self.players.read().await;
+            entered
+                .iter()
+                .filter(|monster| {
+                    let attended = monster
+                        .owner_id
+                        .and_then(|id| players.get(&id))
+                        .is_some_and(|owner| {
+                            owner.floor_level == monster.floor_level
+                                && monster.position.dist_xz_sq(&owner.position) <= radius_sq
+                        });
+                    !attended
+                })
+                .map(|monster| Handoff {
+                    monster_id: monster.id.clone(),
+                    new_owner: *player_id,
+                    old_owner: monster.owner_id,
+                })
+                .collect()
+        };
+        self.hand_off_monsters(adoptions).await;
     }
 
     /// Server-driven monster spawn tick. For each ambient spawn type and each
@@ -863,17 +966,17 @@ impl super::GameState {
             })
     }
 
-    /// Reconcile every monster against who is actually near it.
+    /// Safety-net reconcile of every monster against who is actually near it.
     ///
-    /// A monster's owner is the client simulating it, so an owner that walked
-    /// out of its AOI leaves the monster frozen: still visible and attackable,
-    /// but never chasing or retaliating. Where someone else is standing there,
-    /// hand the monster over. Where nobody is, no client holds it and no client
-    /// can see it, so it is deleted on the spot — keeping it would only hold a
-    /// slot in its owner's cap against a monster that does not exist for any
-    /// player. Roaming clients abandon monsters faster
-    /// than they kill them, and without this the caps fill with unreachable
-    /// monsters and ambient spawning stops server-wide.
+    /// Ownership is settled event-side — the player-move AOI diff releases
+    /// what a mover leaves behind, the move fanout catches a monster wandering
+    /// off, and entering AOI adopts unattended monsters — so on a healthy
+    /// server this sweep finds nothing. What it repairs is the race those
+    /// events can lose (two players crossing a monster's AOI boundary at the
+    /// same instant, each seeing the other as still inside) and whatever a bug
+    /// strands: a bystander adopts, and a monster nobody can see is deleted,
+    /// since keeping it would only hold a cap slot against a monster that
+    /// exists for no player.
     ///
     /// Handoff applies to dungeon monsters too; the despawn does not, since a
     /// dungeon floor already despawns its own on exit.
@@ -940,7 +1043,7 @@ impl super::GameState {
                 .collect()
         };
         for monster in removed {
-            debug!("Despawned abandoned monster {}", monster.id);
+            debug!("Despawned monster {}", monster.id);
             self.announce_monster_removed(&monster).await;
         }
     }

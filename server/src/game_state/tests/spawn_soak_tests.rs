@@ -259,10 +259,10 @@ async fn stationary_bot_keeps_spawning() {
     assert!(last_30 > 0);
 }
 
-/// Minimal repro of the bug, inverted into its fix: no kills, no roaming loop.
-/// Fill the per-player cap and walk 1km away — before the despawn sweep the
-/// abandoned monsters held the cap forever and the server stopped asking; now
-/// the slots come back.
+/// Minimal repro of the original bug, inverted into its fix: no kills, no
+/// roaming loop. Fill the per-player cap and walk 1km away — abandoned
+/// monsters once held the cap forever and the server stopped asking; now the
+/// walk itself frees the slots, no sweep needed.
 #[tokio::test]
 async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     let game_state = make_test_game_state("spawn_soak_min");
@@ -295,13 +295,12 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     );
 
     set_player_xz(&game_state, &player_id, 1000.0, 1000.0).await;
-    game_state.tick_monster_ownership().await;
     game_state.tick_monster_spawns().await;
 
     assert_eq!(
         spawn_requests(&mut rx, "goblin"),
         1,
-        "the despawn sweep freed the cap, so the walker is owed a goblin request"
+        "the walk released the abandoned monsters, so the walker is owed a goblin request"
     );
 }
 
@@ -334,8 +333,8 @@ async fn add_player_on_floor(game_state: &GameState, name: &str, floor: i8) -> P
     id
 }
 
-/// Sets up one monster on `floor`, its owner walked far away, and a second
-/// player standing next to it.
+/// Sets up one monster on `floor` next to a second player, then walks the
+/// owner out of its AOI — which, event-driven, is itself the handoff trigger.
 async fn abandoned_next_to_a_bystander(
     game_state: &GameState,
     floor: i8,
@@ -344,31 +343,30 @@ async fn abandoned_next_to_a_bystander(
     let adopter = add_player_on_floor(game_state, "stayer", floor).await;
     let monster_id = spawn_owned_goblin(game_state, owner, floor).await;
 
-    // The owner walks out of the monster's AOI; the bystander stays put.
-    set_player_on_floor(game_state, &owner, 1000.0, 1000.0, floor).await;
-
     let mut owner_rx = game_state.register_direct_channel(&owner).await;
     let mut adopter_rx = game_state.register_direct_channel(&adopter).await;
     drain(&mut owner_rx);
     drain(&mut adopter_rx);
+
+    // The owner walks out of the monster's AOI; the bystander stays put.
+    set_player_on_floor(game_state, &owner, 1000.0, 1000.0, floor).await;
     (monster_id, owner_rx, adopter, adopter_rx)
 }
 
 /// The owner's client is what simulates a monster, and it drops the brain the
-/// moment the monster leaves its AOI. Left alone, the monster stays visible and
-/// attackable to the bystander while nothing drives it.
+/// moment the monster leaves its AOI. The move that takes the owner out must
+/// therefore also move the ownership — a sweep arriving seconds later would
+/// leave the monster visible and attackable with nothing driving it.
 #[tokio::test]
-async fn a_monster_its_owner_left_is_handed_to_a_player_still_beside_it() {
+async fn walking_out_of_a_monsters_aoi_hands_it_off_on_the_spot() {
     let game_state = make_test_game_state("handoff_surface");
     let (monster_id, mut owner_rx, adopter, mut adopter_rx) =
         abandoned_next_to_a_bystander(&game_state, 0).await;
 
-    game_state.tick_monster_ownership().await;
-
     assert_eq!(
         owner_of(&game_state, &monster_id).await,
         Some(adopter),
-        "the bystander should have been given the monster"
+        "the walk itself should have handed the monster over — no sweep ran"
     );
     assert!(
         drain(&mut adopter_rx).iter().any(
@@ -392,8 +390,6 @@ async fn handoff_also_covers_a_dungeon_floor() {
     let game_state = make_test_game_state("handoff_dungeon");
     let (monster_id, _, adopter, _) = abandoned_next_to_a_bystander(&game_state, -1).await;
 
-    game_state.tick_monster_ownership().await;
-
     assert_eq!(
         owner_of(&game_state, &monster_id).await,
         Some(adopter),
@@ -401,20 +397,266 @@ async fn handoff_also_covers_a_dungeon_floor() {
     );
 }
 
-/// Handoff and despawn are separate halves: the dungeon's own floor lifecycle
-/// owns removal, so the sweep must never delete a dungeon monster.
+/// With nobody inside the monster's AOI there is no client to hand it to and
+/// none that can see it: the same move that abandoned it despawns it, and the
+/// owner is told so its brain dies with it.
 #[tokio::test]
-async fn the_sweep_never_despawns_a_dungeon_monster() {
+async fn walking_out_with_nobody_near_despawns_on_the_spot() {
+    let game_state = make_test_game_state("event_despawn");
+    let owner = add_player_on_floor(&game_state, "loner", 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, 0).await;
+    let mut owner_rx = game_state.register_direct_channel(&owner).await;
+    drain(&mut owner_rx);
+
+    set_player_xz(&game_state, &owner, 1000.0, 1000.0).await;
+
+    assert!(
+        game_state.monsters.read().await.get(&monster_id).is_none(),
+        "no player can see or simulate it: it should be gone without any sweep"
+    );
+    assert!(
+        drain(&mut owner_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+        ),
+        "the owner must be told to stop simulating it"
+    );
+}
+
+/// A dungeon orphan is parked, not despawned — the floor lifecycle owns its
+/// removal — and un-parked by the next player to walk into its AOI.
+#[tokio::test]
+async fn a_dungeon_orphan_parks_until_someone_walks_back_in() {
     let game_state = make_test_game_state("handoff_dungeon_keep");
     let owner = add_player_on_floor(&game_state, "delver", -1).await;
     let monster_id = spawn_owned_goblin(&game_state, owner, -1).await;
+    let mut owner_rx = game_state.register_direct_channel(&owner).await;
+    drain(&mut owner_rx);
+
     // Nobody anywhere near it.
     set_player_on_floor(&game_state, &owner, 1000.0, 1000.0, -1).await;
-    game_state.tick_monster_ownership().await;
 
     assert!(
         game_state.monsters.read().await.get(&monster_id).is_some(),
-        "the dungeon floor lifecycle owns this monster, not the abandonment sweep"
+        "the dungeon floor lifecycle owns this monster, not the abandonment path"
+    );
+    assert!(
+        drain(&mut owner_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+        ),
+        "parked still means the owner stops simulating it"
+    );
+    // The sweep must leave a parked dungeon monster alone too.
+    game_state.tick_monster_ownership().await;
+    assert!(
+        game_state.monsters.read().await.get(&monster_id).is_some(),
+        "the sweep must not despawn a dungeon monster either"
+    );
+
+    // A visitor walking into its AOI adopts it on sight.
+    let visitor = pid("visitor");
+    game_state
+        .add_player(make_player("visitor", 1000.0, 0.0))
+        .await;
+    set_player_on_floor(&game_state, &visitor, 1000.0, 0.0, -1).await;
+    let mut visitor_rx = game_state.register_direct_channel(&visitor).await;
+    drain(&mut visitor_rx);
+    set_player_on_floor(&game_state, &visitor, 10.0, 0.0, -1).await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(visitor),
+        "walking into a parked monster's AOI should adopt it on sight"
+    );
+    assert!(
+        drain(&mut visitor_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterAssigned { monster } if monster.id == monster_id)
+        ),
+        "the adopter needs MonsterAssigned to start running its AI"
+    );
+}
+
+/// Ownership only moves when the owner actually leaves, and the adopter is
+/// inside the AOI by construction, so pacing across the boundary transfers
+/// once and then goes quiet — the reason the event path needs no hysteresis.
+#[tokio::test]
+async fn pacing_across_the_boundary_does_not_bounce_ownership() {
+    let game_state = make_test_game_state("boundary_pacing");
+    let (monster_id, _owner_rx, adopter, mut adopter_rx) =
+        abandoned_next_to_a_bystander(&game_state, 0).await;
+    assert_eq!(owner_of(&game_state, &monster_id).await, Some(adopter));
+    drain(&mut adopter_rx);
+
+    // The old owner paces back into the monster's AOI and out again.
+    set_player_xz(&game_state, &pid("leaver"), 20.0, 0.0).await;
+    set_player_xz(&game_state, &pid("leaver"), 1000.0, 1000.0).await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(adopter),
+        "the adopter is still inside the AOI, so ownership must not move again"
+    );
+    let churn = drain(&mut adopter_rx)
+        .into_iter()
+        .filter(|m| {
+            matches!(
+                m,
+                ServerMessage::MonsterAssigned { .. } | ServerMessage::MonsterRemoved { .. }
+            )
+        })
+        .count();
+    assert_eq!(
+        churn, 0,
+        "re-crossing the boundary must not re-negotiate ownership"
+    );
+}
+
+/// Spawns a goblin at (40, 0, 0) — inside its owner's AOI — and banks enough
+/// move budget that one update can carry it across the 43m boundary.
+async fn goblin_near_the_edge(game_state: &GameState, owner: PlayerId) -> String {
+    let monster_id = game_state
+        .spawn_monster(
+            "goblin".to_string(),
+            Position {
+                x: 40.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            0.0,
+            Some(owner),
+            0,
+            None,
+            false,
+        )
+        .await
+        .expect("spawn succeeds under the caps")
+        .id;
+    let mut monsters = game_state.monsters.write().await;
+    let monster = monsters.get_mut(&monster_id).expect("just spawned");
+    monster.move_budget = 10.0;
+    monster.last_move_at = GameState::now_ms();
+    monster_id
+}
+
+/// Walks the monster from (40, 0) to (44.5, 0) as its owner's client and
+/// asserts the move was accepted, so the ownership assertions that follow
+/// actually saw a boundary crossing.
+async fn wander_out(game_state: &GameState, owner: &PlayerId, monster_id: &str) {
+    let walked_to = Position {
+        x: 44.5,
+        y: 0.0,
+        z: 0.0,
+    };
+    game_state
+        .update_monster_position(
+            owner,
+            monster_id.to_string(),
+            walked_to,
+            0.0,
+            MonsterState::Run,
+            walked_to,
+        )
+        .await;
+    if let Some(monster) = game_state.monsters.read().await.get(monster_id) {
+        assert_eq!(
+            monster.position.x, walked_to.x,
+            "the move must be accepted for this to test anything"
+        );
+    }
+}
+
+/// No player moved: the monster itself wandered out of its stationary owner's
+/// AOI. The monster-move fanout is the only event that sees this, and it must
+/// settle ownership the same way a player move does.
+#[tokio::test]
+async fn a_monster_that_wanders_off_is_handed_to_whoever_is_near_it() {
+    let game_state = make_test_game_state("wander_handoff");
+    let owner = add_player_on_floor(&game_state, "shepherd", 0).await;
+    let stranger = add_player_on_floor(&game_state, "stranger", 0).await;
+    set_player_xz(&game_state, &stranger, 80.0, 0.0).await;
+    let monster_id = goblin_near_the_edge(&game_state, owner).await;
+
+    wander_out(&game_state, &owner, &monster_id).await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(stranger),
+        "44.5m is outside the shepherd's AOI and inside the stranger's"
+    );
+}
+
+/// Same wander with nobody else in range: nobody can see it anymore, so it is
+/// retired on the spot and the owner told to drop the brain that just
+/// reported the move.
+#[tokio::test]
+async fn a_monster_that_wanders_out_of_everyones_sight_is_despawned() {
+    let game_state = make_test_game_state("wander_despawn");
+    let owner = add_player_on_floor(&game_state, "shepherd", 0).await;
+    let monster_id = goblin_near_the_edge(&game_state, owner).await;
+    let mut owner_rx = game_state.register_direct_channel(&owner).await;
+    drain(&mut owner_rx);
+
+    wander_out(&game_state, &owner, &monster_id).await;
+
+    assert!(
+        game_state.monsters.read().await.get(&monster_id).is_none(),
+        "out of everyone's sight, the wanderer should be despawned"
+    );
+    assert!(
+        drain(&mut owner_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+        ),
+        "the owner must be told to stop simulating it"
+    );
+}
+
+/// A monster stranded without its owner (spawned that way here, standing in
+/// for the races the events can lose) is adopted by the first player whose
+/// AOI it enters.
+#[tokio::test]
+async fn walking_up_to_a_stranded_monster_adopts_it_on_sight() {
+    let game_state = make_test_game_state("adopt_on_sight");
+    let absent = add_player_on_floor(&game_state, "absent", 0).await;
+    set_player_xz(&game_state, &absent, 2000.0, 2000.0).await;
+    let monster_id = spawn_owned_goblin(&game_state, absent, 0).await;
+
+    let walker = pid("walker");
+    game_state
+        .add_player(make_player("walker", 200.0, 0.0))
+        .await;
+    let mut walker_rx = game_state.register_direct_channel(&walker).await;
+    set_player_xz(&game_state, &walker, 5.0, 0.0).await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(walker),
+        "the walker found a monster nobody was simulating and should adopt it"
+    );
+    assert!(
+        drain(&mut walker_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterAssigned { monster } if monster.id == monster_id)
+        ),
+        "the adopter needs MonsterAssigned to start running its AI"
+    );
+}
+
+/// The sweep has no routine work left — events settle ownership as it changes
+/// — but it must still repair a stranding they lost to a race. Forged here by
+/// spawning the monster under an owner who is already far away, next to a
+/// bystander who never moves (so no event ever fires).
+#[tokio::test]
+async fn the_sweep_still_repairs_a_stranding_the_events_missed() {
+    let game_state = make_test_game_state("sweep_safety_net");
+    let absent = add_player_on_floor(&game_state, "absent", 0).await;
+    set_player_xz(&game_state, &absent, 2000.0, 2000.0).await;
+    let bystander = add_player_on_floor(&game_state, "bystander", 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, absent, 0).await;
+
+    game_state.tick_monster_ownership().await;
+
+    assert_eq!(
+        owner_of(&game_state, &monster_id).await,
+        Some(bystander),
+        "the sweep should hand the stranded monster to the bystander"
     );
 }
 
@@ -540,11 +782,11 @@ async fn a_busy_adopter_loses_to_an_idle_one_even_when_nearer() {
     );
 }
 
-/// The sweep balances the same way a disconnect does: a scattering party's
-/// monsters must not all land on whoever happens to be nearest.
+/// The walk-out release balances the same way a disconnect does: a scattering
+/// party's monsters must not all land on whoever happens to be nearest.
 #[tokio::test]
-async fn the_sweep_spreads_a_leavers_monsters_across_bystanders() {
-    let game_state = make_test_game_state("sweep_spread");
+async fn abandoning_a_pair_spreads_them_across_bystanders() {
+    let game_state = make_test_game_state("release_spread");
     let leaver = add_player_on_floor(&game_state, "leaver", 0).await;
     let near = add_player_on_floor(&game_state, "near", 0).await;
     let far = add_player_on_floor(&game_state, "far", 0).await;
@@ -554,9 +796,8 @@ async fn the_sweep_spreads_a_leavers_monsters_across_bystanders() {
     let a = spawn_owned_goblin(&game_state, leaver, 0).await;
     let b = spawn_owned_goblin(&game_state, leaver, 0).await;
 
-    // The leaver walks away without disconnecting; the sweep reconciles.
+    // The leaver walks away without disconnecting; the walk itself releases.
     set_player_xz(&game_state, &leaver, 1000.0, 1000.0).await;
-    game_state.tick_monster_ownership().await;
 
     let owners: std::collections::HashSet<Option<PlayerId>> = [
         owner_of(&game_state, &a).await,

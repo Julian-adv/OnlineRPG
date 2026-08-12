@@ -1871,19 +1871,41 @@ impl super::GameState {
                 (&player.position, new_floor),
             );
             (
-                left.into_iter().map(|m| m.id.clone()).collect::<Vec<_>>(),
+                left.into_iter()
+                    .map(|m| (m.id.clone(), m.position, m.floor_level, m.owner_id))
+                    .collect::<Vec<_>>(),
                 entered.into_iter().cloned().collect::<Vec<_>>(),
             )
         };
 
-        for monster_id in monsters_left {
-            self.send_direct_message(player_id, ServerMessage::MonsterRemoved { monster_id })
+        // Leaving AOI is mere visibility for a watcher, but for the owner it
+        // ends the simulation — its client reads MonsterRemoved as "drop the
+        // brain". Owned monsters are released instead: transferred, despawned
+        // or parked on the spot, each branch delivering the owner's removal.
+        let mut abandoned = Vec::new();
+        for (monster_id, position, floor_level, owner_id) in monsters_left {
+            if owner_id == Some(*player_id) {
+                abandoned.push((monster_id, position, floor_level));
+            } else {
+                self.send_direct_message(player_id, ServerMessage::MonsterRemoved { monster_id })
+                    .await;
+            }
+        }
+        if !abandoned.is_empty() {
+            self.release_monsters_left_behind(player_id, abandoned)
                 .await;
         }
-        for monster in monsters_entered {
-            self.send_direct_message(player_id, ServerMessage::MonsterSpawned { monster })
-                .await;
+        for monster in &monsters_entered {
+            self.send_direct_message(
+                player_id,
+                ServerMessage::MonsterSpawned {
+                    monster: monster.clone(),
+                },
+            )
+            .await;
         }
+        self.adopt_unattended_monsters(player_id, &monsters_entered)
+            .await;
 
         let (items_left, items_entered) = {
             let ground_items = self.ground_items.read().await;

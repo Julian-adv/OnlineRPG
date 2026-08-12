@@ -80,6 +80,17 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
         other => panic!("Expected MonsterSpawned when entering AOI, got {:?}", other),
     }
 
+    // The monster has no owner, so walking up to it adopts it on sight.
+    match direct_rx.try_recv() {
+        Ok(ServerMessage::MonsterAssigned { monster }) => {
+            assert_eq!(monster.id, "monster_a");
+        }
+        other => panic!(
+            "Expected MonsterAssigned for the ownerless monster, got {:?}",
+            other
+        ),
+    }
+
     match direct_rx.try_recv() {
         Ok(ServerMessage::GroundItemAppeared { item }) => {
             assert_eq!(item.instance_id, 42);
