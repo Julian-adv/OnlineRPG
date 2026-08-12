@@ -34,16 +34,14 @@ EXPORT_PACKS = {
         "slash2",
         "slash3",
         "slash4",
-        "slash5",
-        "attack1",
-        "attack2",
-        "attack3",
-        "attack4",
         "dying",
     ],
     "social": [
         "sleep",
         "pickup",
+        "guitar_playing",
+        "excited",
+        "clap",
     ],
     "offhand": [
         "torch_idle1",
@@ -61,21 +59,24 @@ EXPORT_PACKS = {
 # Other armatures (e.g. "Armature.001") will be excluded.
 EXPORT_ARMATURE_NAME = "Armature"
 
+# combat_melee was authored on a 69-bone rig (fingers, eyes, sleeve bones) that
+# does not match the 33-bone `Armature`; exporting it from the wrong one silently
+# drops half the channels and moves the rest pose.
+PACK_ARMATURE = {
+    "combat_melee": "Armature_combat",
+}
+
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "client", "public", "models", "animations")
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def get_armature():
-    """Find the armature to export by EXPORT_ARMATURE_NAME."""
-    arm = bpy.data.objects.get(EXPORT_ARMATURE_NAME)
+def get_armature(name=EXPORT_ARMATURE_NAME):
+    """Find the armature to export by name."""
+    arm = bpy.data.objects.get(name)
     if arm and arm.type == "ARMATURE":
         return arm
-    # Fallback: first armature in the scene
-    for obj in bpy.data.objects:
-        if obj.type == "ARMATURE":
-            return obj
     return None
 
 
@@ -221,37 +222,39 @@ def export_glb(filepath):
 # ---------------------------------------------------------------------------
 
 def main():
-    armature = get_armature()
-    if armature is None:
-        print("ERROR: No armature found in the scene.")
-        return
-
-    print(f"Using armature: '{armature.name}'")
-
-    # Standardize bone names before export
-    strip_bone_name_prefixes(armature)
-    # Ensure every layered-action slot targets the export armature; actions
-    # authored on sibling armatures (e.g. Armature.001) would otherwise bind
-    # to nothing and export as T-pose.
-    rebind_action_slots_to_target(armature)
-
     all_actions = collect_all_actions()
     print(f"Found {len(all_actions)} actions: {list(all_actions.keys())}")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    failed = []
 
     for pack_name, action_names in EXPORT_PACKS.items():
         print(f"\n--- Exporting pack: {pack_name} ---")
 
-        # Validate that all requested actions exist
+        # A partial export overwrites the shipped pack with fewer clips, so
+        # anything missing aborts this pack and leaves the existing file alone.
         missing = [name for name in action_names if name not in all_actions]
         if missing:
-            print(f"WARNING: Missing actions for {pack_name}: {missing}")
-
-        actions_to_export = [all_actions[name] for name in action_names if name in all_actions]
-        if not actions_to_export:
-            print(f"SKIPPED: No actions found for {pack_name}")
+            print(f"ABORTED: {pack_name} is missing {missing} — existing GLB left untouched")
+            failed.append(pack_name)
             continue
+
+        armature_name = PACK_ARMATURE.get(pack_name, EXPORT_ARMATURE_NAME)
+        armature = get_armature(armature_name)
+        if armature is None:
+            print(f"ABORTED: {pack_name} needs armature '{armature_name}', which is not in this file")
+            failed.append(pack_name)
+            continue
+        print(f"Using armature: '{armature.name}' ({len(armature.data.bones)} bones)")
+
+        # Standardize bone names before export
+        strip_bone_name_prefixes(armature)
+        # Ensure every layered-action slot targets the export armature; actions
+        # authored on sibling armatures (e.g. Armature.001) would otherwise bind
+        # to nothing and export as T-pose.
+        rebind_action_slots_to_target(armature)
+
+        actions_to_export = [all_actions[name] for name in action_names]
 
         # Set up NLA tracks with only the desired actions
         clear_nla_tracks(armature)
@@ -269,11 +272,13 @@ def main():
             print(f"  - {action.name} ({int(action.frame_range[1] - action.frame_range[0])} frames)")
 
         export_glb(output_path)
+        clear_nla_tracks(armature)
         print(f"Done: {output_path}")
 
-    # Clean up
-    clear_nla_tracks(armature)
-    print("\nAll packs exported successfully.")
+    if failed:
+        print(f"\nExported all packs except: {failed}")
+    else:
+        print("\nAll packs exported successfully.")
 
 
 if __name__ == "__main__":

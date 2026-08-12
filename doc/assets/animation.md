@@ -42,7 +42,7 @@
   - 예외적으로 Without Skin이 아니라 night_merchant(버커니어) 스킨째 받은 FBX(`assets/Excited.fbx`,
     손가락 본 없는 33본)에서 리타겟했다 — social 팩 스킨 조인트도 33개라 손실 없음.
     social.glb를 타겟 armature로 임포트해 retarget bake 후 `graft-glb-clip.py`로 이식.
-    작업 blend: `~/assets_original/excited_social_work.blend` (all_animation.blend에는 아직 없음).
+    작업 blend: `~/assets_original/excited_social_work.blend`.
 
 ## Mixamo Animation Export Workflow
 
@@ -69,9 +69,9 @@
    )
    ```
 
-   기존 팩에 클립 하나만 넣을 때는 아래 3~4단계 대신
+   배포 중인 팩에 클립 하나만 넣을 때는 아래 3~4단계 대신
    `python tools/graft-glb-clip.py 팩.glb 도너.glb 클립이름 출력.glb`를 쓴다
-   ([ANIMATION.md](../ANIMATION.md) 참고 — 팩 전체 재-export는 기존 클립을 잃는다).
+   ([ANIMATION.md](../ANIMATION.md) 참고).
 
 3. **`export_animations.py`의 `EXPORT_PACKS`에 액션 이름 추가** (예: `offhand` pack에 `"torch_walk"`)
 
@@ -93,6 +93,17 @@
 5. **클라이언트 코드 연결** (새 애니메이션 타입인 경우)
    - `client/src/lib/types/animations.ts`의 `OffhandAnimationName`에 상수 추가
    - `client/src/lib/components/PlayerModel.svelte`에서 해당 상태에 클립 선택 로직 추가
+
+## all_animation.blend
+
+모든 팩의 소스. 2026-08-13에 배포본에서 13개 클립을 역임포트해 5팩 전부를 재현할 수
+있게 복구했다 (`pickup`, `guitar_playing`, `excited`, `clap`, `torch_idle1/2`,
+`torch_walk`, `torch_run`, `dying`, `slash1`–`slash4`).
+
+- 아마추어가 둘이다: 33본 `Armature`(locomotion/social/offhand/fishing)와 69본
+  `Armature_combat`(combat_melee 전용, 손가락·눈·`mixamorigSleeve*` 포함, scale 0.1).
+- 어느 팩도 참조하지 않는 잔재 액션: `torch_idle`(= `torch_idle1`),
+  `run_down`, `run_sword`, `walk_cat`, `walk_female`, `walk_tough`, `mixamo.com*`.
 
 ## Known Pitfalls
 

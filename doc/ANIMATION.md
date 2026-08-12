@@ -85,8 +85,9 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 1. `glb-editor`에서 `본 이름 표준화` 버튼을 눌러 본 이름을 정리한다.
 2. `애니메이션 추출` 버튼을 눌러 애니메이션을 추출한다.
 3. 추출한 클립을 애니메이션 팩 중 하나(`locomotion`, `combat_melee`, `social`, `offhand`)에 넣는다.
-   - `export_animations.py`로 팩을 통째로 다시 뽑지 말 것. `all_animation.blend`에는 이미 배포된 클립 일부(`pickup`, `slash*`, `attack*`, `torch_walk` 등)가 없어서 그대로 export하면 사라진다.
-   - 스크립트로 넣으려면 `python tools/graft-glb-clip.py 팩.glb 도너.glb 클립이름 출력.glb`. 기존 클립과 스켈레톤을 바이트 단위로 보존한다. 팩을 Blender로 열었다 다시 내보내는 방식은 클립당 1프레임이 깎이고, 씬 fps가 다르면(팩은 24fps로 임포트되는데 Mixamo FBX가 30fps로 바꿔놓는다) 기존 클립 길이가 전부 어긋난다.
+   - 배포 중인 팩에 넣을 때는 `python tools/graft-glb-clip.py 팩.glb 도너.glb 클립이름 출력.glb`. 기존 클립과 스켈레톤을 바이트 단위로 보존한다.
+   - `export_animations.py`로 팩을 통째로 다시 뽑아도 된다(2026-08-13 검증: 5팩 전부 배포본과 채널 단위 일치, 최대 오차 1.4e-5). 단 새 클립을 `all_animation.blend`에 먼저 넣어야 하고, glTF를 임포트해 넣었다면 키를 정수 프레임으로 스냅할 것 — 마지막 키가 `125.99999`로 들어오면 export에서 1프레임이 깎인다.
+   - `combat_melee`만 69본 `Armature_combat`(손가락·눈·소매 본)에서 뽑는다. 33본 `Armature`로 뽑으면 채널 절반이 사라지고 rest 포즈가 어긋난다. 요청한 액션이 하나라도 없으면 스크립트가 해당 팩을 abort하고 기존 GLB를 건드리지 않는다.
 4. 클립 이름을 `AnimationName`에 추가
 5. `AnimationIndex` 동기화
 6. 필요한 경우 `selectOrderedCharacterAnimations` 우선순위 반영
