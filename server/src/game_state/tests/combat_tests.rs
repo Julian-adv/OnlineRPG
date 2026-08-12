@@ -495,6 +495,7 @@ async fn ambient_spawn_stores_authoritative_world_position() {
             0.0,
             Some(player_id),
             0,
+            MonsterLifecycle::Ambient,
             None,
             false,
         )

@@ -1194,6 +1194,7 @@ impl super::GameState {
                     rotation,
                     Some(*admin_id),
                     floor,
+                    crate::types::MonsterLifecycle::Ambient,
                     None,
                     true,
                 )

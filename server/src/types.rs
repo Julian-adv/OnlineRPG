@@ -1,7 +1,8 @@
 pub use onlinerpg_shared::entity::ClientKind;
 pub use onlinerpg_shared::{
     AttackRejectReason, Character, CharacterAttributes, CharacterClass, ClientMessage,
-    GameDateTime, Gender, Monster, MonsterState, Player, PlayerId, Position, ServerMessage,
+    GameDateTime, Gender, Monster, MonsterLifecycle, MonsterState, Player, PlayerId, Position,
+    ServerMessage,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 

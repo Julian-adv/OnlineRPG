@@ -3291,6 +3291,7 @@ pub(crate) mod tests {
             floor_level: 0,
             level_override: None,
             aggressive: false,
+            lifecycle: Default::default(),
             last_attack_at: 0,
             last_move_at: 0,
             move_budget: 0.0,

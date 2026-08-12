@@ -1872,7 +1872,15 @@ impl super::GameState {
             );
             (
                 left.into_iter()
-                    .map(|m| (m.id.clone(), m.position, m.floor_level, m.owner_id))
+                    .map(|m| {
+                        (
+                            m.id.clone(),
+                            m.position,
+                            m.floor_level,
+                            m.lifecycle,
+                            m.owner_id,
+                        )
+                    })
                     .collect::<Vec<_>>(),
                 entered.into_iter().cloned().collect::<Vec<_>>(),
             )
@@ -1883,9 +1891,9 @@ impl super::GameState {
         // brain". Owned monsters are released instead: transferred, despawned
         // or parked on the spot, each branch delivering the owner's removal.
         let mut abandoned = Vec::new();
-        for (monster_id, position, floor_level, owner_id) in monsters_left {
+        for (monster_id, position, floor_level, lifecycle, owner_id) in monsters_left {
             if owner_id == Some(*player_id) {
-                abandoned.push((monster_id, position, floor_level));
+                abandoned.push((monster_id, position, floor_level, lifecycle));
             } else {
                 self.send_direct_message(player_id, ServerMessage::MonsterRemoved { monster_id })
                     .await;

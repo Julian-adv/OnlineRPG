@@ -85,14 +85,15 @@ async fn spawn_path_cost_at_scale() {
                     },
                     0.0,
                     Some(spawner),
-                    // Dungeon floor: skips the per-player cap, so all 50
-                    // spawns succeed and we time the real work.
                     -1,
+                    // Slot lifecycle skips the per-player cap, so all 50
+                    // spawns succeed and we time the real work.
+                    MonsterLifecycle::DungeonSlot,
                     None,
                     false,
                 )
                 .await
-                .expect("dungeon spawns skip the per-player cap");
+                .expect("dungeon-slot spawns skip the per-player cap");
         }
         let per_spawn = start.elapsed() / SPAWNS as u32;
 
@@ -323,6 +324,7 @@ async fn registry_indexes_track_the_map_through_every_mutation() {
                     0.0,
                     Some(*owner),
                     0,
+                    MonsterLifecycle::Ambient,
                     None,
                     false,
                 )

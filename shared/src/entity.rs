@@ -152,6 +152,26 @@ impl fmt::Display for MonsterState {
     }
 }
 
+/// Who owns a monster's removal, decided at spawn time. New spawn kinds
+/// (events, bosses, quests) add variants here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MonsterLifecycle {
+    /// Ambient spawn: the ownership system (AOI events + sweep) despawns it
+    /// once no player is near.
+    #[default]
+    Ambient,
+    /// A dungeon floor slot owns its removal (floor exit, slot respawn).
+    DungeonSlot,
+}
+
+impl MonsterLifecycle {
+    /// Whether abandonment despawns this monster when nobody is inside its
+    /// AOI, or leaves it for its own lifecycle to remove.
+    pub fn despawns_when_unattended(self) -> bool {
+        matches!(self, Self::Ambient)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Monster {
     pub id: String,
@@ -177,6 +197,9 @@ pub struct Monster {
     /// retaliating when hit. Drives behavior-tree selection on the agent-client.
     #[serde(default)]
     pub aggressive: bool,
+    /// Server-only; never on the wire.
+    #[serde(skip)]
+    pub lifecycle: MonsterLifecycle,
     #[serde(skip)]
     pub last_attack_at: u64,
     /// Server timestamp (ms) the movement budget was last refilled. Paired with
@@ -194,12 +217,6 @@ impl Monster {
     /// Gate for client-driven mutations (move/attack): alive and owned by the requester.
     pub fn is_controllable_by(&self, player_id: &PlayerId) -> bool {
         self.state != MonsterState::Dead && self.owner_id.as_ref() == Some(player_id)
-    }
-
-    /// Names the `floor_level` sign convention. Dungeon monsters have their own
-    /// floor lifecycle, so most upkeep applies only to the rest.
-    pub fn is_in_dungeon(&self) -> bool {
-        self.floor_level < 0
     }
 }
 
@@ -230,6 +247,7 @@ mod tests {
             floor_level: 0,
             level_override: None,
             aggressive: true,
+            lifecycle: MonsterLifecycle::Ambient,
             last_attack_at: 0,
             last_move_at: 0,
             move_budget: 0.0,

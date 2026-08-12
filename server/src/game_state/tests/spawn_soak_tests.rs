@@ -84,6 +84,7 @@ async fn answer_spawn_requests(
                 0.0,
                 Some(*player_id),
                 0,
+                MonsterLifecycle::Ambient,
                 None,
                 false,
             )
@@ -305,7 +306,12 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
 }
 
 /// One goblin at (10, 0, 0) on `floor`, owned by `owner`.
-async fn spawn_owned_goblin(game_state: &GameState, owner: PlayerId, floor: i8) -> String {
+async fn spawn_owned_goblin(
+    game_state: &GameState,
+    owner: PlayerId,
+    floor: i8,
+    lifecycle: MonsterLifecycle,
+) -> String {
     game_state
         .spawn_monster(
             "goblin".to_string(),
@@ -317,6 +323,7 @@ async fn spawn_owned_goblin(game_state: &GameState, owner: PlayerId, floor: i8) 
             0.0,
             Some(owner),
             floor,
+            lifecycle,
             None,
             false,
         )
@@ -338,10 +345,11 @@ async fn add_player_on_floor(game_state: &GameState, name: &str, floor: i8) -> P
 async fn abandoned_next_to_a_bystander(
     game_state: &GameState,
     floor: i8,
+    lifecycle: MonsterLifecycle,
 ) -> (String, DirectRx, PlayerId, DirectRx) {
     let owner = add_player_on_floor(game_state, "leaver", floor).await;
     let adopter = add_player_on_floor(game_state, "stayer", floor).await;
-    let monster_id = spawn_owned_goblin(game_state, owner, floor).await;
+    let monster_id = spawn_owned_goblin(game_state, owner, floor, lifecycle).await;
 
     let mut owner_rx = game_state.register_direct_channel(&owner).await;
     let mut adopter_rx = game_state.register_direct_channel(&adopter).await;
@@ -361,7 +369,7 @@ async fn abandoned_next_to_a_bystander(
 async fn walking_out_of_a_monsters_aoi_hands_it_off_on_the_spot() {
     let game_state = make_test_game_state("handoff_surface");
     let (monster_id, mut owner_rx, adopter, mut adopter_rx) =
-        abandoned_next_to_a_bystander(&game_state, 0).await;
+        abandoned_next_to_a_bystander(&game_state, 0, MonsterLifecycle::Ambient).await;
 
     assert_eq!(
         owner_of(&game_state, &monster_id).await,
@@ -388,7 +396,8 @@ async fn walking_out_of_a_monsters_aoi_hands_it_off_on_the_spot() {
 #[tokio::test]
 async fn handoff_also_covers_a_dungeon_floor() {
     let game_state = make_test_game_state("handoff_dungeon");
-    let (monster_id, _, adopter, _) = abandoned_next_to_a_bystander(&game_state, -1).await;
+    let (monster_id, _, adopter, _) =
+        abandoned_next_to_a_bystander(&game_state, -1, MonsterLifecycle::DungeonSlot).await;
 
     assert_eq!(
         owner_of(&game_state, &monster_id).await,
@@ -404,7 +413,7 @@ async fn handoff_also_covers_a_dungeon_floor() {
 async fn walking_out_with_nobody_near_despawns_on_the_spot() {
     let game_state = make_test_game_state("event_despawn");
     let owner = add_player_on_floor(&game_state, "loner", 0).await;
-    let monster_id = spawn_owned_goblin(&game_state, owner, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, 0, MonsterLifecycle::Ambient).await;
     let mut owner_rx = game_state.register_direct_channel(&owner).await;
     drain(&mut owner_rx);
 
@@ -428,7 +437,8 @@ async fn walking_out_with_nobody_near_despawns_on_the_spot() {
 async fn a_dungeon_orphan_parks_until_someone_walks_back_in() {
     let game_state = make_test_game_state("handoff_dungeon_keep");
     let owner = add_player_on_floor(&game_state, "delver", -1).await;
-    let monster_id = spawn_owned_goblin(&game_state, owner, -1).await;
+    let monster_id =
+        spawn_owned_goblin(&game_state, owner, -1, MonsterLifecycle::DungeonSlot).await;
     let mut owner_rx = game_state.register_direct_channel(&owner).await;
     drain(&mut owner_rx);
 
@@ -475,6 +485,41 @@ async fn a_dungeon_orphan_parks_until_someone_walks_back_in() {
     );
 }
 
+/// Lifecycle, not floor sign, decides the orphan policy: an ambient monster
+/// on a dungeon floor (`/spawnmob` inside a dungeon) despawns when abandoned
+/// with nobody near, instead of parking forever on a floor whose slots never
+/// knew it.
+#[tokio::test]
+async fn an_ambient_monster_abandoned_in_a_dungeon_despawns_instead_of_parking() {
+    let game_state = make_test_game_state("dungeon_ambient_despawn");
+    let owner = add_player_on_floor(&game_state, "admin", -1).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, -1, MonsterLifecycle::Ambient).await;
+
+    set_player_on_floor(&game_state, &owner, 1000.0, 1000.0, -1).await;
+
+    assert!(
+        game_state.monsters.read().await.get(&monster_id).is_none(),
+        "no slot owns it and nobody can see it — parking it would leak forever"
+    );
+}
+
+/// The sweep keys the same policy off the tag: an unattended ambient monster
+/// on a dungeon floor is despawned, not mistaken for a slot spawn.
+#[tokio::test]
+async fn the_sweep_despawns_an_unattended_ambient_monster_on_a_dungeon_floor() {
+    let game_state = make_test_game_state("dungeon_ambient_sweep");
+    let absent = add_player_on_floor(&game_state, "absent", -1).await;
+    set_player_on_floor(&game_state, &absent, 2000.0, 2000.0, -1).await;
+    let monster_id = spawn_owned_goblin(&game_state, absent, -1, MonsterLifecycle::Ambient).await;
+
+    game_state.tick_monster_ownership().await;
+
+    assert!(
+        game_state.monsters.read().await.get(&monster_id).is_none(),
+        "unattended and ambient: the sweep must despawn it despite the floor"
+    );
+}
+
 /// Ownership only moves when the owner actually leaves, and the adopter is
 /// inside the AOI by construction, so pacing across the boundary transfers
 /// once and then goes quiet — the reason the event path needs no hysteresis.
@@ -482,7 +527,7 @@ async fn a_dungeon_orphan_parks_until_someone_walks_back_in() {
 async fn pacing_across_the_boundary_does_not_bounce_ownership() {
     let game_state = make_test_game_state("boundary_pacing");
     let (monster_id, _owner_rx, adopter, mut adopter_rx) =
-        abandoned_next_to_a_bystander(&game_state, 0).await;
+        abandoned_next_to_a_bystander(&game_state, 0, MonsterLifecycle::Ambient).await;
     assert_eq!(owner_of(&game_state, &monster_id).await, Some(adopter));
     drain(&mut adopter_rx);
 
@@ -524,6 +569,7 @@ async fn goblin_near_the_edge(game_state: &GameState, owner: PlayerId) -> String
             0.0,
             Some(owner),
             0,
+            MonsterLifecycle::Ambient,
             None,
             false,
         )
@@ -617,7 +663,7 @@ async fn walking_up_to_a_stranded_monster_adopts_it_on_sight() {
     let game_state = make_test_game_state("adopt_on_sight");
     let absent = add_player_on_floor(&game_state, "absent", 0).await;
     set_player_xz(&game_state, &absent, 2000.0, 2000.0).await;
-    let monster_id = spawn_owned_goblin(&game_state, absent, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, absent, 0, MonsterLifecycle::Ambient).await;
 
     let walker = pid("walker");
     game_state
@@ -647,7 +693,7 @@ async fn despawning_tells_a_faraway_owner_directly() {
     let game_state = make_test_game_state("despawn_far_owner");
     let owner = add_player_on_floor(&game_state, "owner", 0).await;
     set_player_xz(&game_state, &owner, 2000.0, 2000.0).await;
-    let monster_id = spawn_owned_goblin(&game_state, owner, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, 0, MonsterLifecycle::Ambient).await;
     let mut owner_rx = game_state.register_direct_channel(&owner).await;
     drain(&mut owner_rx);
 
@@ -671,7 +717,7 @@ async fn the_sweep_still_repairs_a_stranding_the_events_missed() {
     let absent = add_player_on_floor(&game_state, "absent", 0).await;
     set_player_xz(&game_state, &absent, 2000.0, 2000.0).await;
     let bystander = add_player_on_floor(&game_state, "bystander", 0).await;
-    let monster_id = spawn_owned_goblin(&game_state, absent, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, absent, 0, MonsterLifecycle::Ambient).await;
 
     game_state.tick_monster_ownership().await;
 
@@ -687,7 +733,7 @@ async fn the_sweep_still_repairs_a_stranding_the_events_missed() {
 async fn a_monster_whose_owner_is_present_is_left_alone() {
     let game_state = make_test_game_state("handoff_noop");
     let owner = add_player_on_floor(&game_state, "present", 0).await;
-    let monster_id = spawn_owned_goblin(&game_state, owner, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, 0, MonsterLifecycle::Ambient).await;
     let mut rx = game_state.register_direct_channel(&owner).await;
     drain(&mut rx);
 
@@ -707,7 +753,7 @@ async fn disconnecting_hands_monsters_to_players_still_beside_them() {
     let game_state = make_test_game_state("disconnect_handoff");
     let leaver = add_player_on_floor(&game_state, "leaver", 0).await;
     let stayer = add_player_on_floor(&game_state, "stayer", 0).await;
-    let monster_id = spawn_owned_goblin(&game_state, leaver, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, leaver, 0, MonsterLifecycle::Ambient).await;
     let mut stayer_rx = game_state.register_direct_channel(&stayer).await;
     drain(&mut stayer_rx);
 
@@ -731,7 +777,7 @@ async fn disconnecting_hands_monsters_to_players_still_beside_them() {
 async fn disconnecting_alone_despawns_the_monsters() {
     let game_state = make_test_game_state("disconnect_alone");
     let leaver = add_player_on_floor(&game_state, "loner", 0).await;
-    let monster_id = spawn_owned_goblin(&game_state, leaver, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, leaver, 0, MonsterLifecycle::Ambient).await;
 
     game_state.remove_player(&leaver).await;
 
@@ -758,7 +804,7 @@ async fn a_disconnected_players_monsters_are_spread_across_adopters() {
     }
     // Three, one per adopter: goblin's per-player cap is 5.
     for _ in 0..3 {
-        spawn_owned_goblin(&game_state, leaver, 0).await;
+        spawn_owned_goblin(&game_state, leaver, 0, MonsterLifecycle::Ambient).await;
     }
 
     game_state.remove_player(&leaver).await;
@@ -791,9 +837,9 @@ async fn a_busy_adopter_loses_to_an_idle_one_even_when_nearer() {
     set_player_xz(&game_state, &busy, 10.0, 0.0).await;
     set_player_xz(&game_state, &idle, 30.0, 0.0).await;
     for _ in 0..3 {
-        spawn_owned_goblin(&game_state, busy, 0).await;
+        spawn_owned_goblin(&game_state, busy, 0, MonsterLifecycle::Ambient).await;
     }
-    let monster_id = spawn_owned_goblin(&game_state, leaver, 0).await;
+    let monster_id = spawn_owned_goblin(&game_state, leaver, 0, MonsterLifecycle::Ambient).await;
 
     game_state.remove_player(&leaver).await;
 
@@ -815,8 +861,8 @@ async fn abandoning_a_pair_spreads_them_across_bystanders() {
     // Both bystanders inside the monsters' AOI, `near` closer to both.
     set_player_xz(&game_state, &near, 12.0, 0.0).await;
     set_player_xz(&game_state, &far, 30.0, 0.0).await;
-    let a = spawn_owned_goblin(&game_state, leaver, 0).await;
-    let b = spawn_owned_goblin(&game_state, leaver, 0).await;
+    let a = spawn_owned_goblin(&game_state, leaver, 0, MonsterLifecycle::Ambient).await;
+    let b = spawn_owned_goblin(&game_state, leaver, 0, MonsterLifecycle::Ambient).await;
 
     // The leaver walks away without disconnecting; the walk itself releases.
     set_player_xz(&game_state, &leaver, 1000.0, 1000.0).await;

@@ -1058,6 +1058,7 @@ impl GameState {
                     0.0,
                     Some(*owner),
                     -(depth as i8),
+                    crate::types::MonsterLifecycle::DungeonSlot,
                     Some(level),
                     aggressive,
                 )

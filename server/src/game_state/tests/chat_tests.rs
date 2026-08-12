@@ -1168,10 +1168,16 @@ async fn spawnmob_spawns_owned_aggressive_monsters_beside_the_admin() {
         y: 0.0,
         z: 0.0,
     };
+    let monsters = game_state.monsters.read().await;
     for monster in &assigned {
         assert_eq!(monster.monster_type, "kobold");
         assert_eq!(monster.owner_id, Some(admin_id));
         assert!(monster.aggressive, "spawned monsters must fight back");
+        assert_eq!(
+            monsters.get(&monster.id).map(|m| m.lifecycle),
+            Some(MonsterLifecycle::Ambient),
+            "admin spawns have no slot: the ownership system must own removal"
+        );
         let distance = monster.position.dist_xz_sq(&admin_pos).sqrt();
         assert!(
             (2.5..=3.5).contains(&distance),

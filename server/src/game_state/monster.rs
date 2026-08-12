@@ -1,4 +1,4 @@
-use crate::types::{MonsterState, PlayerId, Position, ServerMessage};
+use crate::types::{MonsterLifecycle, MonsterState, PlayerId, Position, ServerMessage};
 use std::collections::hash_map::Entry;
 use std::collections::HashSet;
 use tracing::{debug, warn};
@@ -277,9 +277,10 @@ impl super::GameState {
     }
 
     /// Create a monster, notify nearby players, and return it (or None if limit reached).
-    /// `floor_level` < 0 marks dungeon monsters; `level_override` applies
-    /// depth scaling (health here, combat stats in combat.rs). Dungeon
-    /// spawns skip the ambient per-player cap — their spawn slots are the cap.
+    /// `lifecycle` names who owns the monster's removal; `level_override`
+    /// applies depth scaling (health here, combat stats in combat.rs).
+    /// Dungeon-slot spawns skip the ambient per-player cap — their spawn
+    /// slots are the cap.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn_monster(
         &self,
@@ -288,13 +289,16 @@ impl super::GameState {
         rotation: f32,
         owner_id: Option<PlayerId>,
         floor_level: i8,
+        lifecycle: MonsterLifecycle,
         level_override: Option<u8>,
         aggressive: bool,
     ) -> Option<crate::types::Monster> {
-        // Ambient types only: a dungeon monster's cap is its floor's slots, and
-        // an admin-spawned type with no ambient rule has none.
-        let capped_owner = owner_id
-            .filter(|_| floor_level >= 0 && Self::find_ambient_rule(&monster_type).is_some());
+        // Ambient lifecycle only: a slot monster's cap is its floor's slots,
+        // and an admin-spawned type with no ambient rule has none.
+        let capped_owner = owner_id.filter(|_| {
+            lifecycle == MonsterLifecycle::Ambient
+                && Self::find_ambient_rule(&monster_type).is_some()
+        });
 
         // O(1) against the owner index: this runs on every spawn, tens of
         // thousands of times per tick at target population.
@@ -343,6 +347,7 @@ impl super::GameState {
             floor_level,
             level_override,
             aggressive,
+            lifecycle,
             last_attack_at: 0,
             last_move_at: Self::now_ms(),
             // Starts empty: the monster spawns beside its owner and its first
@@ -670,7 +675,12 @@ impl super::GameState {
         if let Some(owner) = departed_owner {
             self.release_monsters_left_behind(
                 &owner,
-                vec![(monster.id.clone(), monster.position, monster.floor_level)],
+                vec![(
+                    monster.id.clone(),
+                    monster.position,
+                    monster.floor_level,
+                    monster.lifecycle,
+                )],
             )
             .await;
         }
@@ -680,17 +690,17 @@ impl super::GameState {
     /// on ties. The load is seeded from what each candidate already simulates
     /// and carries this batch's not-yet-applied picks, so a scattering party's
     /// monsters spread instead of piling on whoever is nearest. Monsters with
-    /// nobody in range come back as orphans, with their floor, for the
+    /// nobody in range come back as orphans, with their lifecycle, for the
     /// caller's policy — despawn or park.
     async fn plan_handoffs(
         &self,
-        abandoned: Vec<(String, Position, i8)>,
+        abandoned: Vec<(String, Position, i8, MonsterLifecycle)>,
         old_owner: &PlayerId,
-    ) -> (Vec<Handoff>, Vec<(String, i8)>) {
+    ) -> (Vec<Handoff>, Vec<(String, MonsterLifecycle)>) {
         let mut load: std::collections::HashMap<PlayerId, usize> = std::collections::HashMap::new();
         let mut handoffs = Vec::new();
         let mut orphans = Vec::new();
-        for (monster_id, position, floor_level) in abandoned {
+        for (monster_id, position, floor_level, lifecycle) in abandoned {
             // The old owner may still be in the roster (a disconnect removes it
             // later; a walk-out has merely moved), so never let it adopt its
             // own monsters.
@@ -703,7 +713,7 @@ impl super::GameState {
                 )
                 .await;
             if candidates.is_empty() {
-                orphans.push((monster_id, floor_level));
+                orphans.push((monster_id, lifecycle));
                 continue;
             }
             for (candidate, _) in &candidates {
@@ -739,12 +749,12 @@ impl super::GameState {
     /// `remove_player` walks a dungeon player off its floor first, so those are
     /// already reassigned by the time this runs.)
     pub async fn remove_monsters_by_owner(&self, owner_id: &PlayerId) {
-        let owned: Vec<(String, Position, i8)> = {
+        let owned: Vec<(String, Position, i8, MonsterLifecycle)> = {
             let monsters = self.monsters.read().await;
             monsters
                 .ids_owned_by(owner_id)
                 .filter_map(|id| monsters.get(id))
-                .map(|m| (m.id.clone(), m.position, m.floor_level))
+                .map(|m| (m.id.clone(), m.position, m.floor_level, m.lifecycle))
                 .collect()
         };
         if owned.is_empty() {
@@ -766,21 +776,22 @@ impl super::GameState {
     /// The owner can no longer see these monsters and its client is dropping
     /// their brains, so ownership is settled by the same event instead of by a
     /// later sweep. Each monster goes to a player still inside its AOI when
-    /// there is one. With nobody in range, a surface orphan is despawned on
+    /// there is one. With nobody in range, an ambient orphan is despawned on
     /// the spot — nobody can see it, and keeping it would only hold a cap
-    /// slot — while a dungeon orphan is parked: its floor lifecycle owns
-    /// removal, and `adopt_unattended_monsters` re-arms it when someone walks
-    /// back in. Every branch tells the old owner `MonsterRemoved` exactly
-    /// once, which is both its release and its AOI removal.
+    /// slot — while a dungeon-slot orphan is parked: its floor owns removal,
+    /// and `adopt_unattended_monsters` re-arms it when someone walks back in.
+    /// Every branch tells the old owner `MonsterRemoved` exactly once, which
+    /// is both its release and its AOI removal.
     pub(super) async fn release_monsters_left_behind(
         &self,
         owner_id: &PlayerId,
-        abandoned: Vec<(String, Position, i8)>,
+        abandoned: Vec<(String, Position, i8, MonsterLifecycle)>,
     ) {
         let (handoffs, orphans) = self.plan_handoffs(abandoned, owner_id).await;
         self.hand_off_monsters(handoffs).await;
-        let (expired, parked): (Vec<_>, Vec<_>) =
-            orphans.into_iter().partition(|(_, floor)| *floor >= 0);
+        let (expired, parked): (Vec<_>, Vec<_>) = orphans
+            .into_iter()
+            .partition(|(_, lifecycle)| lifecycle.despawns_when_unattended());
         self.despawn_monsters(expired.into_iter().map(|(id, _)| id).collect())
             .await;
         for (monster_id, _) in parked {
@@ -978,8 +989,9 @@ impl super::GameState {
     /// since keeping it would only hold a cap slot against a monster that
     /// exists for no player.
     ///
-    /// Handoff applies to dungeon monsters too; the despawn does not, since a
-    /// dungeon floor already despawns its own on exit.
+    /// Handoff applies to every lifecycle; the despawn only to monsters whose
+    /// lifecycle leaves removal here — a dungeon floor despawns its own slot
+    /// spawns on exit.
     pub async fn tick_monster_ownership(&self) {
         let roster = {
             let players = self.players.read().await;
@@ -1014,8 +1026,7 @@ impl super::GameState {
                         })
                     }
                     Attendance::Nobody => {
-                        // A dungeon floor despawns its own on exit.
-                        if !monster.is_in_dungeon() {
+                        if monster.lifecycle.despawns_when_unattended() {
                             expired.push(monster.id.clone());
                         }
                     }

@@ -94,7 +94,7 @@ pub const CLOSE_CODE_IDLE_TIMEOUT: u16 = 4003;
 mod wasm_api;
 
 pub use character::{Character, CharacterAttributes, CharacterClass, Gender};
-pub use entity::{Monster, MonsterState, Player, PlayerId};
+pub use entity::{Monster, MonsterLifecycle, MonsterState, Player, PlayerId};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
     ActiveDeal, AttackRejectReason, ClientMessage, DealKind, ServerMessage,
@@ -198,6 +198,7 @@ mod tests {
                 floor_level: 0,
                 level_override: None,
                 aggressive: true,
+                lifecycle: MonsterLifecycle::Ambient,
                 last_attack_at: 0,
                 last_move_at: 0,
                 move_budget: 0.0,

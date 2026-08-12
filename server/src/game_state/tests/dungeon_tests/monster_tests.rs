@@ -96,6 +96,26 @@ fn assert_removed_exactly(msgs: &[ServerMessage], ids: &[String], context: &str)
     assert_eq!(removed, expected, "{context}");
 }
 
+/// The slot spawn path must tag its monsters `DungeonSlot`: that tag is what
+/// exempts them from the ownership sweep's despawn and the abandonment
+/// despawn — the floor owns their removal.
+#[tokio::test]
+async fn floor_slots_spawn_dungeon_slot_lifecycle_monsters() {
+    let game_state = make_test_game_state("dungeon_slot_lifecycle");
+    let entrance = first_dungeon(&game_state);
+    add_occupant(&game_state, "delver", &entrance).await;
+    let ids = floor_monster_ids(&game_state, &entrance).await;
+
+    let monsters = game_state.monsters.read().await;
+    for id in &ids {
+        assert_eq!(
+            monsters.get(id).map(|m| m.lifecycle),
+            Some(MonsterLifecycle::DungeonSlot),
+            "slot-spawned monster {id} must carry the DungeonSlot lifecycle"
+        );
+    }
+}
+
 /// The leaver's client is what simulates its monsters, and it keeps rendering
 /// them until told otherwise. Handing them to whoever stayed behind without
 /// telling the leaver leaves it holding monsters it no longer owns.

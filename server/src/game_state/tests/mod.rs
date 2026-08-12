@@ -3,8 +3,8 @@ use crate::housing::HousingIO;
 use crate::item_defs::ItemDefs;
 use crate::monster_defs::MonsterDefs;
 use crate::types::{
-    AttackRejectReason, CharacterClass, ClientKind, Gender, MonsterState, PlayerId, Position,
-    ServerMessage,
+    AttackRejectReason, CharacterClass, ClientKind, Gender, MonsterLifecycle, MonsterState,
+    PlayerId, Position, ServerMessage,
 };
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
@@ -205,6 +205,7 @@ fn make_monster(id: &str, position: Position, floor_level: i8) -> crate::types::
         floor_level,
         level_override: None,
         aggressive: false,
+        lifecycle: MonsterLifecycle::Ambient,
         last_attack_at: 0,
         last_move_at: 0,
         move_budget: 0.0,
