@@ -639,6 +639,28 @@ async fn walking_up_to_a_stranded_monster_adopts_it_on_sight() {
     );
 }
 
+/// Every despawn — the 30s corpse sweep included — rides `despawn_monsters`,
+/// whose announce reaches the owner directly: a monster whose owner is out of
+/// range must not survive as a ghost on that owner's client.
+#[tokio::test]
+async fn despawning_tells_a_faraway_owner_directly() {
+    let game_state = make_test_game_state("despawn_far_owner");
+    let owner = add_player_on_floor(&game_state, "owner", 0).await;
+    set_player_xz(&game_state, &owner, 2000.0, 2000.0).await;
+    let monster_id = spawn_owned_goblin(&game_state, owner, 0).await;
+    let mut owner_rx = game_state.register_direct_channel(&owner).await;
+    drain(&mut owner_rx);
+
+    game_state.despawn_monsters(vec![monster_id.clone()]).await;
+
+    assert!(
+        drain(&mut owner_rx).iter().any(
+            |m| matches!(m, ServerMessage::MonsterRemoved { monster_id: id } if *id == monster_id)
+        ),
+        "the owner is 2km away yet must still hear the removal"
+    );
+}
+
 /// The sweep has no routine work left — events settle ownership as it changes
 /// — but it must still repair a stranding they lost to a race. Forged here by
 /// spawning the monster under an owner who is already far away, next to a

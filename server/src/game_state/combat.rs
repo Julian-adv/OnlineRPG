@@ -550,31 +550,23 @@ impl super::GameState {
                     }
                 }
 
-                // Schedule removal after 30 seconds
+                // Schedule removal after 30 seconds. Through despawn_monsters
+                // so the removal reaches the corpse's owner directly even when
+                // it has wandered out of range — the radius fanout alone left
+                // a ghost corpse on the owner's client.
                 let game_state = self.clone();
                 let id_to_remove = monster_id.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-                    let mut monsters = game_state.monsters.write().await;
-                    if let Some(monster) = monsters.get(&id_to_remove) {
-                        if monster.state == MonsterState::Dead {
-                            let monster_position = monster.position;
-                            let monster_floor = monster.floor_level;
-                            monsters.remove(&id_to_remove);
-                            drop(monsters);
-                            debug!("Monster {} removed after 30s corpse time", id_to_remove);
-                            game_state
-                                .send_direct_message_to_players_within_position(
-                                    &monster_position,
-                                    monster_floor,
-                                    super::EVENT_DELIVERY_RADIUS,
-                                    ServerMessage::MonsterRemoved {
-                                        monster_id: id_to_remove,
-                                    },
-                                    None,
-                                )
-                                .await;
-                        }
+                    let still_dead = game_state
+                        .monsters
+                        .read()
+                        .await
+                        .get(&id_to_remove)
+                        .is_some_and(|monster| monster.state == MonsterState::Dead);
+                    if still_dead {
+                        debug!("Monster {} removed after 30s corpse time", id_to_remove);
+                        game_state.despawn_monsters(vec![id_to_remove]).await;
                     }
                 });
             }

@@ -1379,22 +1379,10 @@ impl SharedState {
         self.latest_player_moves.remove(player_id);
     }
 
-    /// Adopt a floor change. Leaving a floor purges the monsters collected
-    /// there: the corpse-cleanup MonsterRemoved is delivered filtered to the
-    /// monster's floor, so entries from a floor we left can only go stale
-    /// ("ghost" monsters whose ids no longer exist server-side).
+    /// Adopt a floor change. No local purge: every server-side removal now
+    /// reaches this client — watched monsters via the floor-aware AOI diff,
+    /// owned ones (the corpse sweep included) via owner-directed messages.
     pub(crate) fn adopt_floor_level(&mut self, floor_level: i8) {
-        if floor_level != self.self_floor_level {
-            let stale: Vec<String> = self
-                .nearby_monsters
-                .values()
-                .filter(|m| m.floor_level != floor_level)
-                .map(|m| m.id.clone())
-                .collect();
-            for id in &stale {
-                self.forget_monster(id);
-            }
-        }
         self.self_floor_level = floor_level;
     }
 
@@ -4869,26 +4857,6 @@ pub(crate) mod tests {
         s.self_player = Some(test_player(0.0, 0.0));
         s.self_floor_level = -1;
         assert!(s.terrain_grid_job().is_none());
-    }
-
-    /// Crossing floors drops monsters collected on the floor we left. Their
-    /// corpse cleanup is delivered filtered to their floor, so keeping them
-    /// only breeds ghosts.
-    #[test]
-    fn crossing_floors_purges_the_left_floors_monsters() {
-        let (mut s, _rx) = test_state();
-        let mut deep = monster("m_deep");
-        deep.floor_level = -1;
-        s.nearby_monsters
-            .insert("m_surface".into(), monster("m_surface"));
-        s.nearby_monsters.insert("m_deep".into(), deep);
-        s.sighted_pois.insert("m:m_surface".into());
-
-        s.adopt_floor_level(-1);
-
-        assert!(!s.nearby_monsters.contains_key("m_surface"));
-        assert!(s.nearby_monsters.contains_key("m_deep"));
-        assert!(!s.sighted_pois.contains("m:m_surface"));
     }
 
     /// An invalid_target rejection is the server saying the monster does not
