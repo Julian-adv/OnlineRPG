@@ -250,6 +250,7 @@ impl super::GameState {
     async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
         self.set_player_main_hand(player_id, inventory.main_hand_def_id())
             .await;
+        self.refresh_hunger_gear_drain(player_id, &inventory).await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
             .await;
         self.send_guard_update(player_id).await;
@@ -336,8 +337,8 @@ impl super::GameState {
             }
         }
 
-        let mut inventories = self.inventories.write().await;
-        inventories.insert(*player_id, inventory);
+        self.refresh_hunger_gear_drain(player_id, &inventory).await;
+        self.inventories.write().await.insert(*player_id, inventory);
     }
 
     /// Detach a player's inventory from memory and hand back the snapshot to

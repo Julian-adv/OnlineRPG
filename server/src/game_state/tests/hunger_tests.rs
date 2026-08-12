@@ -153,6 +153,23 @@ async fn an_unpoisoned_raw_fish_still_feeds_a_little() {
 }
 
 #[tokio::test]
+async fn sustenance_gear_slows_the_activity_drain() {
+    let game_state = make_test_game_state("sustenance");
+    let (id, _rx) = make_eater(&game_state, "wearer", 500).await;
+    put_in_bag(&game_state, &id, 1, "silver_necklace").await;
+    game_state.equip_item(&id, 1).await;
+
+    for _ in 0..4 {
+        game_state
+            .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+            .await;
+    }
+
+    // 0.75× drain: four intervals' walking costs three points, not four.
+    assert_eq!(game_state.hunger_satiation(&id).await, Some(497));
+}
+
+#[tokio::test]
 async fn activity_drain_announces_only_band_transitions() {
     let game_state = make_test_game_state("decay_bands");
     let (id, mut rx) = make_eater(&game_state, "walker", 300).await;

@@ -1,4 +1,4 @@
-id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier,chestChance,consumable,nutrition,grillsInto,chaBonus
+id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier,chestChance,consumable,nutrition,grillsInto,effects
 iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,,,,,,,,,,,,
 worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,iron_sword.png,weapons/sword.glb,weapon,1d6,metal,,,,,,,,,,,,,
 wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,shield_wooden.png,armor/shield_wooden.glb,armor,,wood,2500,1,,,,,,,,,,,
@@ -16,8 +16,8 @@ plate_boots,Plate Boots,Overlapping steel plates that guard the feet and shins.,
 plate_helmet,Plate Helmet,A visored steel close helm that encases the whole head.,5,head,false,plate_helmet.png,armor/plate_helmet.glb,armor,,metal,15000,3,,,,,,4,0.3,,,,
 plate_gauntlets,Plate Gauntlets,Articulated steel gauntlets that encase the hands and wrists.,3,hands,false,plate_gauntlets.png,armor/plate_gauntlets.glb,armor,,metal,10000,3,,,,,,4,0.3,,,,
 ring_of_protection,Ring of Protection,A silver ring bearing a cross-emblazoned shield that wards off blows.,0.1,ring,false,cross_shield_ring.png,accessory/cross_shield_ring.glb,accessory,,metal,20000,1,,,,,,5,0.2,,,,
-gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,gold_ring.png,accessory/gold_ring.glb,accessory,,metal,12000,,,,,,,3,0.1,,,,1
-silver_necklace,Silver Necklace,A delicate silver chain.,0.3,neck,false,sword.png,,accessory,,metal,8000,,,,,,,,,,,,
+gold_ring,Gold Ring,A plain gold ring.,0.1,ring,false,gold_ring.png,accessory/gold_ring.glb,accessory,,metal,12000,,,,,,,3,0.1,,,,cha+1
+silver_necklace,Silver Necklace,A delicate silver chain with a harvest medallion.,0.3,neck,false,silver_necklace.png,accessory/silver_necklace.glb,accessory,,metal,8000,,,,,,,2,0.1,,,,sustenance
 leather_belt,Leather Belt,A wide leather belt.,1,belt,false,ornate_cross_belt.png,accessory/ornate_cross_belt.glb,accessory,,leather,800,,,,,,,1,0.3,,,,
 dagger,Dagger,A small but sharp dagger.,1,main_hand,false,dagger.png,weapons/dagger.glb,weapon,1d4,metal,2500,,,,,,,,,,,,
 goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,main_hand,false,goblin_sword.png,weapons/goblin_sword.glb,weapon,1d4,metal,2000,,,,,,,,,,,,

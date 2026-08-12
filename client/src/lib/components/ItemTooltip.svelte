@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ItemDefinition } from '../data/itemDefs'
+  import { statLabels, type ItemDefinition } from '../data/itemDefs'
 
   interface Props {
     def: ItemDefinition
@@ -42,12 +42,9 @@
     {:else if def.category === 'healing_potion' && def.dice}
       <span>Heals: {def.dice}</span>
     {/if}
-    {#if def.guard}
-      <span>Guard: +{def.guard}</span>
-    {/if}
-    {#if def.chaBonus}
-      <span>CHA: +{def.chaBonus}</span>
-    {/if}
+    {#each statLabels(def) as label (label)}
+      <span>{label}</span>
+    {/each}
   </div>
 </div>
 

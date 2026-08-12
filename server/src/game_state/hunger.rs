@@ -9,8 +9,9 @@
 use onlinerpg_shared::hunger::{
     effective_multipliers, hunger_state, Campfire, CAMPFIRE_GRILL_RADIUS, FOOD_POISONING_MS,
     FOOD_POISONING_PCT, FOOD_REGEN_DURATION_SECS, GRILL_CAST_MS, MOVEMENT_DRAIN_INTERVAL_SECS,
-    NORMAL_MIN, POISON_DRAIN_MULT, SPRINT_DRAIN_INTERVAL_SECS,
+    NORMAL_MIN, POISON_DRAIN_MULT, SPRINT_DRAIN_INTERVAL_SECS, SUSTENANCE_DRAIN_MULT,
 };
+use onlinerpg_shared::inventory::PlayerInventory;
 use onlinerpg_shared::{PlayerId, Position, ServerMessage};
 use rand::Rng;
 use std::time::Duration;
@@ -21,6 +22,9 @@ pub(crate) struct HungerData {
     pub poisoned_until: Option<Instant>,
     movement_seconds: f32,
     sprint_seconds: f32,
+    /// Equipment's drain factor, cached so the movement tick never has to
+    /// reach into `inventories` (`refresh_hunger_gear_drain`).
+    gear_drain_mult: f32,
 }
 
 pub(crate) struct FoodRegeneration {
@@ -81,8 +85,36 @@ impl super::GameState {
                 poisoned_until: None,
                 movement_seconds: 0.0,
                 sprint_seconds: 0.0,
+                gear_drain_mult: 1.0,
             },
         );
+    }
+
+    /// Recache the equipment drain factor from the caller's own snapshot.
+    /// Every item move lands here while almost none changes the factor, so
+    /// it write-locks only on a real change.
+    pub(crate) async fn refresh_hunger_gear_drain(
+        &self,
+        player_id: &PlayerId,
+        inv: &PlayerInventory,
+    ) {
+        let mult = if self.equipped_defs(inv).any(|def| def.has_sustenance()) {
+            SUSTENANCE_DRAIN_MULT
+        } else {
+            1.0
+        };
+        if self
+            .hunger
+            .read()
+            .await
+            .get(player_id)
+            .is_none_or(|data| data.gear_drain_mult == mult)
+        {
+            return;
+        }
+        if let Some(data) = self.hunger.write().await.get_mut(player_id) {
+            data.gear_drain_mult = mult;
+        }
     }
 
     pub(crate) async fn forget_hunger(&self, player_id: &PlayerId) {
@@ -249,7 +281,8 @@ impl super::GameState {
                 let poisoned = data.poisoned_until.is_some_and(|u| u > now);
                 let drain_mult = if poisoned { POISON_DRAIN_MULT } else { 1 };
                 let old_state = hunger_state(data.satiation);
-                let drained_seconds = active_seconds.max(0.0) * drain_mult as f32;
+                let drained_seconds =
+                    active_seconds.max(0.0) * drain_mult as f32 * data.gear_drain_mult;
 
                 data.movement_seconds += drained_seconds;
                 let movement_points =

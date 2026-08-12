@@ -12,6 +12,8 @@ pub const SPRINT_MOVE_MULT: f32 = 1.5;
 pub const FOOD_REGEN_DURATION_SECS: u8 = 10;
 /// Food poisoning drains satiation this many times faster.
 pub const POISON_DRAIN_MULT: u32 = 4;
+/// Satiation drain while wearing a `sustenance` item (items.csv `effects`).
+pub const SUSTENANCE_DRAIN_MULT: f32 = 0.75;
 
 pub const NORMAL_MIN: u32 = 300;
 pub const HUNGRY_MIN: u32 = 100;

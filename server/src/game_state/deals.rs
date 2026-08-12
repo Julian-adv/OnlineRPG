@@ -139,7 +139,7 @@ impl DealLedgers {
 
 impl super::GameState {
     /// A player's effective CHA for haggling: base attribute plus equipped
-    /// chaBonus items, mirroring `effective_guard`.
+    /// `cha+N` effect items, mirroring `effective_guard`.
     async fn effective_cha(&self, player_id: &PlayerId) -> i32 {
         let base = {
             let chars = self.player_characters.read().await;
@@ -152,7 +152,7 @@ impl super::GameState {
             let inventories = self.inventories.read().await;
             inventories
                 .get(player_id)
-                .map(|inv| self.equipped_bonus(inv, |def| def.cha_bonus))
+                .map(|inv| self.equipped_bonus(inv, |def| def.cha_bonus()))
                 .unwrap_or(0)
         };
         base + bonus

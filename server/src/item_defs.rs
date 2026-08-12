@@ -8,6 +8,29 @@ use tracing::info;
 /// (doc/ITEM_TIERS.md "하위 티어 이월템").
 const CHEST_CARRYOVER_CHANCE: f32 = 0.10;
 
+/// One token of the items.csv `effects` column. Special effects live here
+/// rather than in a column apiece; dense core stats (`guard`) keep theirs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemEffect {
+    /// CHA bonus, added to the base attribute wherever CHA is read
+    /// (haggling bands, doc/ITEM_TIERS.md).
+    Cha(i32),
+    /// Slows satiation drain while equipped (doc/HUNGER.md).
+    Sustenance,
+}
+
+impl ItemEffect {
+    fn parse(token: &str) -> Option<Self> {
+        if let Some(amount) = token.strip_prefix("cha") {
+            return amount.parse().ok().map(ItemEffect::Cha);
+        }
+        match token {
+            "sustenance" => Some(ItemEffect::Sustenance),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct ItemDefinition {
@@ -39,10 +62,16 @@ pub struct ItemDefinition {
     /// equipped items and added to the wearer's base guard when attacked.
     #[serde(default)]
     pub guard: Option<i32>,
-    /// CHA bonus while equipped. Summed like `guard` and added to the base
-    /// attribute wherever CHA is read (haggling bands, doc/ITEM_TIERS.md).
-    #[serde(rename = "chaBonus", default)]
-    pub cha_bonus: Option<i32>,
+    /// Special effects granted while equipped. Resolved into `effects` at
+    /// load; an unknown token fails the boot.
+    #[serde(
+        rename = "effects",
+        default,
+        deserialize_with = "crate::semicolon_list::deserialize"
+    )]
+    effect_tokens: Vec<String>,
+    #[serde(skip)]
+    effects: Vec<ItemEffect>,
     /// Fish only — rarity tier 1 (common) … 5 (legendary). Drives catch
     /// weighting and skill XP (doc/FISHING.md).
     #[serde(rename = "rarityTier", default)]
@@ -100,6 +129,22 @@ pub enum UseEffect {
 }
 
 impl ItemDefinition {
+    pub fn cha_bonus(&self) -> Option<i32> {
+        Some(
+            self.effects
+                .iter()
+                .filter_map(|e| match e {
+                    ItemEffect::Cha(amount) => Some(*amount),
+                    _ => None,
+                })
+                .sum(),
+        )
+    }
+
+    pub fn has_sustenance(&self) -> bool {
+        self.effects.contains(&ItemEffect::Sustenance)
+    }
+
     pub fn is_weapon(&self) -> bool {
         self.category.as_deref() == Some("weapon")
     }
@@ -193,8 +238,22 @@ pub fn item_defs() -> &'static ItemDefs {
 impl ItemDefs {
     pub fn load() -> Self {
         let data = include_str!("../../data/items.json");
-        let defs: HashMap<String, ItemDefinition> =
+        let mut defs: HashMap<String, ItemDefinition> =
             serde_json::from_str(data).expect("Failed to parse items.json");
+
+        // A typo in `effects` would silently strip an item's whole point, so
+        // resolve the tokens up front and fail the boot on an unknown one.
+        for def in defs.values_mut() {
+            let effects: Vec<_> = def
+                .effect_tokens
+                .iter()
+                .map(|token| {
+                    ItemEffect::parse(token)
+                        .unwrap_or_else(|| panic!("item '{}': unknown effect '{token}'", def.id))
+                })
+                .collect();
+            def.effects = effects;
+        }
 
         // A chestTier opt-in on a non-equippable or a fishing rod (bought
         // tool, doc/FISHING.md) is a data error — fail the boot, don't
@@ -389,8 +448,10 @@ mod tests {
         assert_eq!(debut("breastplate"), Some(4));
         assert_eq!(debut("ring_of_protection"), Some(5));
         assert_eq!(debut("gold_ring"), Some(3));
-        // Weapons and cash valuables stay out of chests entirely.
-        for id in ["iron_sword", "silver_necklace", "healing_potion"] {
+        // Accessories fill the low tiers' empty neck/ring lanes.
+        assert_eq!(debut("silver_necklace"), Some(2));
+        // Weapons and consumables stay out of chests entirely.
+        for id in ["iron_sword", "healing_potion"] {
             assert_eq!(debut(id), None, "{id} must stay out of chest pools");
         }
     }

@@ -20,8 +20,8 @@ export interface ItemDefinition {
   basePrice?: number
   /** Guard (AC) bonus granted while equipped. Summed across equipped items. */
   guard?: number
-  /** CHA bonus while equipped — widens haggling bands (doc/ITEM_TIERS.md). */
-  chaBonus?: number
+  /** Special effects while equipped: `;`-separated tokens (`cha+1`, `sustenance`). */
+  effects?: string
   /** Usable from the bag — the items.csv flag, which the server validates
    * against its `use_effect` dispatch at boot. */
   consumable?: boolean
@@ -33,6 +33,20 @@ const itemDefs = itemsJson as Record<string, ItemDefinition>
 
 export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
+}
+
+/** Tooltip lines for what an item does: the `guard` column then `effects`. */
+export function statLabels(def: ItemDefinition): string[] {
+  const lines = def.guard ? [`Guard: +${def.guard}`] : []
+  for (const raw of def.effects?.split(';') ?? []) {
+    const token = raw.trim()
+    if (!token) continue
+    const cha = token.match(/^cha([+-]\d+)$/)
+    if (cha) lines.push(`CHA: ${cha[1]}`)
+    else if (token === 'sustenance') lines.push('Slows hunger')
+    else lines.push(token)
+  }
+  return lines
 }
 
 export function isConsumable(def: ItemDefinition): boolean {

@@ -37,6 +37,8 @@
     - 원화는 chatgpt ![원화](../images/cross_shield_ring.png)
 - gold_ring.glb — Meshy.ai (유료 생성, 2026-08-12, "Sapphire Crusader Bra…" — 다운로드 파일명 기준, 제목 잘림). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 외경 0.15m로 스케일 적용(0.15×0.15×0.05m, cross_shield_ring 실측과 동일 외경), 원점=바닥 중심, 텍스처 512²로 축소, emissive 텍스처 없음 확인. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-12)
     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-08-12) ![원화](../images/gold_ring.png)
+- silver_necklace.glb — Meshy.ai (유료 생성, 2026-08-13, "Harvest Medallion Nec…" — 다운로드 파일명 기준, 제목 잘림). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 최장축 0.35m로 스케일 적용(0.237×0.35×0.104m, gold_ring 0.15m와 ornate_cross_belt 0.40m 사이), 주성분 분석으로 목걸이 평면을 눕히고 펜던트를 -Y로 돌림, 원점=바닥 중심, 텍스처 512²로 축소, emissive 텍스처는 없으나 Emission Color가 화이트로 남아 있어 0으로 (export 후 emissiveFactor 없음 확인). 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-13)
+    - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-08-13) ![원화](../images/silver_necklace.png)
 - dagger.glb — Meshy.ai (유료 생성, 2026-08-02, "Crusader's Dagger"). 완전 소유권·상업 OK (characters.md License 참조). FBX를 Blender로 임포트해 0.42배 스케일 적용(전장 0.42m, small_sword 0.54m보다 작게), sword.glb 규약에 맞춰 칼날 +X·칼날 평면 XZ·원점=그립, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더(대각선 구도) 512²→128² (2026-08-02)
     - 원화는 chatgpt ![원화](../images/dagger.png)
 - ornate_cross_belt.glb — Meshy.ai (유료 생성, 2026-08-02, "Ornate Cross Belt"). 완전 소유권·상업 OK (characters.md License 참조). FBX를 Blender로 임포트해 0.4배 스케일 적용(직경 0.4m, 높이 0.15m), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-02)

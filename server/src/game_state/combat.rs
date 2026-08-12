@@ -129,19 +129,25 @@ impl super::GameState {
         true
     }
 
-    /// Sum of one def stat over every equipped item — the single place that
-    /// maps equipped gear to a stat bonus. `effective_guard` and
+    /// The defs behind a player's worn gear — the single place that resolves
+    /// equipped items to their definitions.
+    pub(super) fn equipped_defs<'a>(
+        &'a self,
+        inv: &'a PlayerInventory,
+    ) -> impl Iterator<Item = &'a crate::item_defs::ItemDefinition> {
+        inv.equipped
+            .values()
+            .filter_map(|item| self.item_defs.get(&item.item_def_id))
+    }
+
+    /// Sum of one def stat over every equipped item. `effective_guard` and
     /// `effective_cha` add it to their base attribute.
     pub(super) fn equipped_bonus(
         &self,
         inv: &PlayerInventory,
         stat: fn(&crate::item_defs::ItemDefinition) -> Option<i32>,
     ) -> i32 {
-        inv.equipped
-            .values()
-            .filter_map(|item| self.item_defs.get(&item.item_def_id))
-            .filter_map(stat)
-            .sum()
+        self.equipped_defs(inv).filter_map(stat).sum()
     }
 
     /// A player's effective guard: base attribute plus equipped-gear bonuses.
