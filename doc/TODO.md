@@ -148,10 +148,10 @@
 - 캐릭터 시트에 장비 보정 CHA 표시 (gold_ring CHA +1이 서버 흥정에만 반영되고 시트는 base만 보여줌 — GuardUpdated를 effective-stats 메시지로 일반화)
 - 타겟 몬스터에 표시 (바닥에 동그라미 혹은 캐릭터 외곽선)
 - 마우스 클릭으로 달리기 (우클릭? 더블클릭?)
+- 아이템 툴팁에 이미 장착한 아이템과 비교 툴팁
 
 ## 낚시 후속 (PR #53 리뷰)
 
-- 월드모델 없는 기존 아이템(coin_pile)이 sword.png 아이콘으로 보이는 회귀 → 실제 아이콘 부여 (gold_ring은 2026-08-12, silver_necklace는 2026-08-13 해결)
 - agent-client: 리플렉스 지연이 1초 orchestrator tick에 편승 (struggle 윈도 더 줄이면 위험)
 - doc/assets/items.md 아이콘 provenance에 ChatGPT tier 누락
 - all_animation.blend 검증 (Auto Run Python Scripts 끄고 열기, 기존 팩 재export로 손실 확인)
