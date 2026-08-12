@@ -3,7 +3,7 @@ Blender script to selectively export animations from all_animation.blend
 into separate GLB files by category.
 
 Usage (from project root):
-  blender ~/assets_original/all_animation.blend --background --python tools/blender-scripts/export_animations.py
+  blender assets/all_animation.blend --background --python tools/blender-scripts/export_animations.py
 
 Or run from Blender's Text Editor for interactive use.
 """

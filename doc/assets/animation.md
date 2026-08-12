@@ -78,7 +78,7 @@
 4. **Export 실행**
 
    ```bash
-   blender ~/assets_original/all_animation.blend --background --python tools/blender-scripts/export_animations.py
+   blender assets/all_animation.blend --background --python tools/blender-scripts/export_animations.py
    ```
 
    또는 Blender 내부에서:
