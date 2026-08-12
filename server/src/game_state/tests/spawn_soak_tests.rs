@@ -539,3 +539,33 @@ async fn a_busy_adopter_loses_to_an_idle_one_even_when_nearer() {
         "the idle player should adopt it despite being farther away"
     );
 }
+
+/// The sweep balances the same way a disconnect does: a scattering party's
+/// monsters must not all land on whoever happens to be nearest.
+#[tokio::test]
+async fn the_sweep_spreads_a_leavers_monsters_across_bystanders() {
+    let game_state = make_test_game_state("sweep_spread");
+    let leaver = add_player_on_floor(&game_state, "leaver", 0).await;
+    let near = add_player_on_floor(&game_state, "near", 0).await;
+    let far = add_player_on_floor(&game_state, "far", 0).await;
+    // Both bystanders inside the monsters' AOI, `near` closer to both.
+    set_player_xz(&game_state, &near, 12.0, 0.0).await;
+    set_player_xz(&game_state, &far, 30.0, 0.0).await;
+    let a = spawn_owned_goblin(&game_state, leaver, 0).await;
+    let b = spawn_owned_goblin(&game_state, leaver, 0).await;
+
+    // The leaver walks away without disconnecting; the sweep reconciles.
+    set_player_xz(&game_state, &leaver, 1000.0, 1000.0).await;
+    game_state.tick_monster_ownership().await;
+
+    let owners: std::collections::HashSet<Option<PlayerId>> = [
+        owner_of(&game_state, &a).await,
+        owner_of(&game_state, &b).await,
+    ]
+    .into();
+    assert_eq!(
+        owners,
+        [Some(near), Some(far)].into(),
+        "two monsters over two bystanders should be one each, not both on the nearest"
+    );
+}

@@ -817,18 +817,30 @@ impl super::GameState {
     /// Same predicate as `player_ids_within_position(.., EVENT_DELIVERY_RADIUS)`
     /// but against a per-tick snapshot, so a sweep over every monster locks the
     /// roster once instead of twice per monster.
-    fn attendance(roster: &PlayerSnapshot, monster: &crate::types::Monster) -> Attendance {
-        let mut nearest: Option<(PlayerId, f32)> = None;
+    /// The adopter is the least-loaded candidate, nearest on ties — one player
+    /// must not inherit a scattering party's whole population while others
+    /// stand idle. `inflight` counts this tick's not-yet-applied handoffs on
+    /// top of what `owned_by` already answers.
+    fn attendance(
+        monsters: &MonsterRegistry,
+        inflight: &std::collections::HashMap<PlayerId, usize>,
+        roster: &PlayerSnapshot,
+        monster: &crate::types::Monster,
+    ) -> Attendance {
+        let mut best: Option<(PlayerId, usize, f32)> = None;
         for (id, dist_sq) in Self::players_in_aoi(roster, &monster.position, monster.floor_level) {
             if monster.owner_id == Some(id) {
                 return Attendance::Owner;
             }
-            if nearest.is_none_or(|(_, best)| dist_sq < best) {
-                nearest = Some((id, dist_sq));
+            let load = monsters.owned_by(&id) + inflight.get(&id).copied().unwrap_or(0);
+            if best.is_none_or(|(_, best_load, best_dist)| {
+                load < best_load || (load == best_load && dist_sq < best_dist)
+            }) {
+                best = Some((id, load, dist_sq));
             }
         }
-        match nearest {
-            Some((id, _)) => Attendance::Bystander(id),
+        match best {
+            Some((id, ..)) => Attendance::Bystander(id),
             None => Attendance::Nobody,
         }
     }
@@ -880,19 +892,24 @@ impl super::GameState {
 
         let mut expired: Vec<String> = Vec::new();
         let mut handoffs: Vec<Handoff> = Vec::new();
+        let mut inflight: std::collections::HashMap<PlayerId, usize> =
+            std::collections::HashMap::new();
         let mut scanned = 0usize;
         loop {
             let mut chunk = 0usize;
             let monsters = self.monsters.read().await;
             for monster in monsters.values().skip(scanned).take(OWNERSHIP_SCAN_CHUNK) {
                 chunk += 1;
-                match Self::attendance(&roster, monster) {
+                match Self::attendance(&monsters, &inflight, &roster, monster) {
                     Attendance::Owner => {}
-                    Attendance::Bystander(new_owner) => handoffs.push(Handoff {
-                        monster_id: monster.id.clone(),
-                        new_owner,
-                        old_owner: monster.owner_id,
-                    }),
+                    Attendance::Bystander(new_owner) => {
+                        *inflight.entry(new_owner).or_default() += 1;
+                        handoffs.push(Handoff {
+                            monster_id: monster.id.clone(),
+                            new_owner,
+                            old_owner: monster.owner_id,
+                        })
+                    }
                     Attendance::Nobody => {
                         // A dungeon floor despawns its own on exit.
                         if !monster.is_in_dungeon() {
@@ -935,29 +952,35 @@ impl super::GameState {
         if handoffs.is_empty() {
             return;
         }
-        let reassigned: Vec<(crate::types::Monster, PlayerId, Option<PlayerId>)> = {
-            let mut monsters = self.monsters.write().await;
-            handoffs
-                .into_iter()
-                .filter_map(|h| {
-                    let monster = monsters.reassign_owner(&h.monster_id, h.new_owner)?;
-                    Some((monster.clone(), h.new_owner, h.old_owner))
-                })
-                .collect()
-        };
-        for (monster, new_owner, old_owner) in reassigned {
-            debug!("Monster {} handed to {}", monster.id, new_owner);
-            if let Some(old_owner) = old_owner {
-                self.send_direct_message(
-                    &old_owner,
-                    ServerMessage::MonsterRemoved {
+        // Chunked like the ownership scan: a mass handoff (server-wide
+        // reconcile after a burst of disconnects) must not hold the registry
+        // write lock, or the channel map, across all of it at once.
+        for batch in handoffs.chunks(OWNERSHIP_SCAN_CHUNK) {
+            let reassigned: Vec<(crate::types::Monster, PlayerId, Option<PlayerId>)> = {
+                let mut monsters = self.monsters.write().await;
+                batch
+                    .iter()
+                    .filter_map(|h| {
+                        let monster = monsters.reassign_owner(&h.monster_id, h.new_owner)?;
+                        Some((monster.clone(), h.new_owner, h.old_owner))
+                    })
+                    .collect()
+            };
+            // One channel-map guard per batch; `tx.send` is synchronous.
+            let channels = self.direct_channels.read().await;
+            for (monster, new_owner, old_owner) in reassigned {
+                debug!("Monster {} handed to {}", monster.id, new_owner);
+                if let Some(tx) = old_owner.and_then(|id| channels.get(&id)) {
+                    let _ = tx.send(super::DirectMessage::Typed(ServerMessage::MonsterRemoved {
                         monster_id: monster.id.clone(),
-                    },
-                )
-                .await;
+                    }));
+                }
+                if let Some(tx) = channels.get(&new_owner) {
+                    let _ = tx.send(super::DirectMessage::Typed(
+                        ServerMessage::MonsterAssigned { monster },
+                    ));
+                }
             }
-            self.send_direct_message(&new_owner, ServerMessage::MonsterAssigned { monster })
-                .await;
         }
     }
 
