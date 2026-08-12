@@ -54,7 +54,7 @@ pub(super) enum AgentAction {
     #[serde(rename = "respawn")]
     Respawn,
     /// Cast the rod at (x, z), or 4 m south when omitted; server validates.
-    /// Reflexes (state.rs) fight the fish — this is only the decision to fish.
+    /// Reflexes (the state module) fight the fish — this is only the decision to fish.
     #[serde(rename = "fish")]
     Fish { x: Option<f32>, z: Option<f32> },
     /// Reel in and stop fishing.
@@ -1521,14 +1521,16 @@ mod tests {
     #[test]
     fn embedded_prompt_hints_match_the_action_schema() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let mut files: Vec<_> = [
-            "src/driver/prompt.rs",
-            "src/state.rs",
-            "data/system_prompt.txt",
-        ]
-        .iter()
-        .map(|f| root.join(f))
-        .collect();
+        let mut files: Vec<_> = ["src/driver/prompt.rs", "data/system_prompt.txt"]
+            .iter()
+            .map(|f| root.join(f))
+            .collect();
+        for entry in std::fs::read_dir(root.join("src/state")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension() == Some("rs".as_ref()) {
+                files.push(path);
+            }
+        }
         for dir in ["data/templates", "data/user_prompts", "data/npcs"] {
             prompt_files_under(&root.join(dir), &mut files);
         }
@@ -1536,7 +1538,8 @@ mod tests {
         // silently drops out of extraction); unlisted files default to 0.
         let floors = [
             ("src/driver/prompt.rs", 2),
-            ("src/state.rs", 1),
+            ("src/state/dungeon.rs", 1),
+            ("src/state/world_state.rs", 1),
             ("data/system_prompt.txt", 26),
             ("guard.txt", 2),
             ("merchant.txt", 2),
