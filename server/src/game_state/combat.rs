@@ -442,121 +442,25 @@ impl super::GameState {
                 // Dungeon monsters: free their spawn slot for respawn.
                 self.on_dungeon_monster_dead(&monster_id).await;
 
-                // Award XP to the player who killed the monster.
-                self.drain_hunger_for_kill(player_id).await;
-                // Depth-scaled dungeon monsters yield XP for their
+                // Award XP to everyone sharing the kill: the killer plus
+                // party members alive on the same floor within the share
+                // radius. Depth-scaled dungeon monsters yield XP for their
                 // effective level, not the base definition level.
-                let xp_def = self.monster_defs.get(&monster_type);
-                if let Some(def) = xp_def {
+                self.drain_hunger_for_kill(player_id).await;
+                if let Some(def) = self.monster_defs.get(&monster_type) {
                     let effective_level = monster_level_override.unwrap_or(def.level);
-                    let xp_amount = xp::monster_xp(effective_level, def.guard);
-                    let player_char = {
-                        let map = self.player_characters.read().await;
-                        map.get(player_id).cloned()
-                    };
-                    if let Some((_, old_xp, attributes)) = player_char {
-                        let new_xp = old_xp + xp_amount as u64;
-                        let old_level = xp::level_from_xp(old_xp);
-                        let new_level = xp::level_from_xp(new_xp);
-                        let leveled_up = new_level > old_level;
-                        let levels_gained = new_level.saturating_sub(old_level);
-
-                        // Update in-memory XP
-                        {
-                            let mut map = self.player_characters.write().await;
-                            if let Some(entry) = map.get_mut(player_id) {
-                                entry.1 = new_xp;
-                            }
-                        }
-
-                        // Update level/max HP in player map if leveled up
-                        let mut new_max_hp = None;
-                        let mut new_current_hp = None;
-                        if leveled_up {
-                            let mut players_write = self.players.write().await;
-                            if let Some(p) = players_write.get_mut(player_id) {
-                                p.level = new_level;
-                                let mut updated_max_hp = p.max_health;
-                                for _ in 0..levels_gained {
-                                    match character_hp::level_up_max_hp(
-                                        updated_max_hp,
-                                        &p.class,
-                                        attributes.con,
-                                    ) {
-                                        Ok(next_max_hp) => {
-                                            updated_max_hp = next_max_hp;
-                                        }
-                                        Err(err) => {
-                                            warn!(
-                                                "Failed to roll level-up HP for player {}: {}",
-                                                player_name, err
-                                            );
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                if updated_max_hp != p.max_health {
-                                    p.max_health = updated_max_hp;
-                                    new_max_hp = Some(updated_max_hp);
-                                }
-
-                                // Level-up always fully restores current HP to max HP.
-                                p.health = p.max_health;
-                                new_current_hp = Some(p.health);
-                            }
-                        }
-
-                        // Mark dirty for periodic batch save
-                        self.mark_dirty(player_id).await;
-                        if leveled_up {
-                            self.mark_party_vitals_dirty(player_id).await;
-                        }
-
-                        // Notify the player directly
-                        let max_hp_for_msg = if let Some(max_hp) = new_max_hp {
-                            max_hp
-                        } else {
-                            self.players
-                                .read()
-                                .await
-                                .get(player_id)
-                                .map(|p| p.max_health)
-                                .unwrap_or(0)
-                        };
-                        let current_hp_for_msg = if let Some(current_hp) = new_current_hp {
-                            current_hp
-                        } else {
-                            self.players
-                                .read()
-                                .await
-                                .get(player_id)
-                                .map(|p| p.health)
-                                .unwrap_or(0)
-                        };
-                        self.send_direct_message(
+                    let base_xp = xp::monster_xp(effective_level, def.guard);
+                    let sharers = self
+                        .party_members_sharing_kill(
                             player_id,
-                            ServerMessage::XpGained {
-                                player_id: *player_id,
-                                xp_amount,
-                                xp_lost: 0,
-                                total_xp: new_xp,
-                                new_level,
-                                leveled_up,
-                                max_hp: max_hp_for_msg,
-                                current_hp: current_hp_for_msg,
-                            },
+                            monster_position,
+                            monster_floor_level,
                         )
                         .await;
-
-                        debug!(
-                            "Player {} gained {} XP (total: {}, level: {}{})",
-                            player_name,
-                            xp_amount,
-                            new_xp,
-                            new_level,
-                            if leveled_up { " LEVEL UP!" } else { "" }
-                        );
+                    let share = xp::party_xp_share(base_xp, sharers.len() as u32 + 1);
+                    self.grant_monster_kill_xp(player_id, share).await;
+                    for member in &sharers {
+                        self.grant_monster_kill_xp(member, share).await;
                     }
                 }
 
@@ -581,6 +485,120 @@ impl super::GameState {
                 });
             }
         }
+    }
+
+    /// Credit one player's share of a monster kill: cumulative XP, any
+    /// level-ups (HP rolls plus the full heal), dirty marks, and the direct
+    /// XpGained notice. A zero share (tiny monster split) sends nothing.
+    async fn grant_monster_kill_xp(&self, player_id: &PlayerId, xp_amount: u32) {
+        if xp_amount == 0 {
+            return;
+        }
+        let player_name = self.player_name_of(player_id).await;
+        // Read-modify-write under one lock: a shared member can receive two
+        // kills' shares concurrently, and a split read/write would lose one.
+        let updated = {
+            let mut map = self.player_characters.write().await;
+            map.get_mut(player_id).map(|entry| {
+                let old_xp = entry.1;
+                entry.1 += u64::from(xp_amount);
+                (old_xp, entry.1, entry.2.clone())
+            })
+        };
+        let Some((old_xp, new_xp, attributes)) = updated else {
+            return;
+        };
+        let old_level = xp::level_from_xp(old_xp);
+        let new_level = xp::level_from_xp(new_xp);
+        let leveled_up = new_level > old_level;
+        let levels_gained = new_level.saturating_sub(old_level);
+
+        let mut new_max_hp = None;
+        let mut new_current_hp = None;
+        if leveled_up {
+            let mut players_write = self.players.write().await;
+            if let Some(p) = players_write.get_mut(player_id) {
+                // Concurrent grants may reach this lock out of XP order; the
+                // HP rolls cover disjoint level spans either way, but the
+                // level itself must never move backwards.
+                if new_level > p.level {
+                    p.level = new_level;
+                }
+                let mut updated_max_hp = p.max_health;
+                for _ in 0..levels_gained {
+                    match character_hp::level_up_max_hp(updated_max_hp, &p.class, attributes.con) {
+                        Ok(next_max_hp) => {
+                            updated_max_hp = next_max_hp;
+                        }
+                        Err(err) => {
+                            warn!(
+                                "Failed to roll level-up HP for player {}: {}",
+                                player_name, err
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                if updated_max_hp != p.max_health {
+                    p.max_health = updated_max_hp;
+                    new_max_hp = Some(updated_max_hp);
+                }
+
+                // Level-up always fully restores current HP to max HP.
+                p.health = p.max_health;
+                new_current_hp = Some(p.health);
+            }
+        }
+
+        self.mark_dirty(player_id).await;
+        if leveled_up {
+            self.mark_party_vitals_dirty(player_id).await;
+        }
+
+        let max_hp_for_msg = if let Some(max_hp) = new_max_hp {
+            max_hp
+        } else {
+            self.players
+                .read()
+                .await
+                .get(player_id)
+                .map(|p| p.max_health)
+                .unwrap_or(0)
+        };
+        let current_hp_for_msg = if let Some(current_hp) = new_current_hp {
+            current_hp
+        } else {
+            self.players
+                .read()
+                .await
+                .get(player_id)
+                .map(|p| p.health)
+                .unwrap_or(0)
+        };
+        self.send_direct_message(
+            player_id,
+            ServerMessage::XpGained {
+                player_id: *player_id,
+                xp_amount,
+                xp_lost: 0,
+                total_xp: new_xp,
+                new_level,
+                leveled_up,
+                max_hp: max_hp_for_msg,
+                current_hp: current_hp_for_msg,
+            },
+        )
+        .await;
+
+        debug!(
+            "Player {} gained {} XP (total: {}, level: {}{})",
+            player_name,
+            xp_amount,
+            new_xp,
+            new_level,
+            if leveled_up { " LEVEL UP!" } else { "" }
+        );
     }
 
     pub async fn broadcast_monster_attack(

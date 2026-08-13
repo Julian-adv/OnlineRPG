@@ -3,6 +3,7 @@ use crate::types::{Player, PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
     PartyMember, PartyMemberPosition, PartyMemberVitals, PARTY_INVITE_TTL, PARTY_SUMMON_TTL,
 };
+use onlinerpg_shared::xp;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -411,6 +412,37 @@ impl super::GameState {
         let players = self.players.read().await;
         ids.into_iter()
             .filter(|id| id != player_id && players.contains_key(id))
+            .collect()
+    }
+
+    /// Party members who share a kill at `position`/`floor_level`: online,
+    /// alive, same floor, within the XP share radius. Killer excluded; empty
+    /// when the killer is partyless.
+    pub(crate) async fn party_members_sharing_kill(
+        &self,
+        killer_id: &PlayerId,
+        position: onlinerpg_shared::Position,
+        floor_level: i8,
+    ) -> Vec<PlayerId> {
+        let ids = self.other_party_members(killer_id).await;
+        if ids.is_empty() {
+            return ids;
+        }
+        let radius_sq = xp::PARTY_XP_SHARE_RADIUS * xp::PARTY_XP_SHARE_RADIUS;
+        let players = self.players.read().await;
+        ids.into_iter()
+            .filter(|id| {
+                players.get(id).is_some_and(|p| {
+                    p.health > 0
+                        && super::combat::reachable_dist_sq(
+                            position,
+                            floor_level,
+                            p.position,
+                            p.floor_level,
+                        )
+                        .is_some_and(|dist_sq| dist_sq <= radius_sq)
+                })
+            })
             .collect()
     }
 

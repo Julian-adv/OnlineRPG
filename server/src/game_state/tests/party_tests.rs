@@ -1754,3 +1754,203 @@ async fn vitals_tick_pushes_only_dirty_parties() {
     assert!(matches!(dave_rx.try_recv(), Err(MpscTryRecvError::Empty)));
     assert!(matches!(alice_rx.try_recv(), Err(MpscTryRecvError::Empty)));
 }
+
+// ---- Party XP sharing ----
+
+/// scp939 (level 3, guard 10) is worth monster_xp(3, 10) = 10 XP.
+const SHARED_KILL_XP: u32 = 10;
+
+fn make_xp_monster(id: &str, position: Position) -> crate::types::Monster {
+    crate::types::Monster {
+        monster_type: "scp939".to_string(),
+        health: 1,
+        max_health: 1,
+        ..make_monster(id, position, 0)
+    }
+}
+
+async fn register_character(game_state: &GameState, name: &str) {
+    game_state
+        .register_player_character(&pid(name), 1, 0, attrs_with_cha(10), 0, Some(1000))
+        .await;
+}
+
+/// Swing until the kill lands; hits are dice rolls, so retry with the
+/// server-side attack interval reset between swings.
+async fn kill_monster(game_state: &GameState, killer: &str, monster_id: &str) {
+    for _ in 0..200 {
+        game_state.last_player_attacks.write().await.insert(
+            pid(killer),
+            GameState::now_ms().saturating_sub(*super::combat::PLAYER_ATTACK_INTERVAL_MS),
+        );
+        game_state
+            .broadcast_player_attack(&pid(killer), monster_id.to_string())
+            .await;
+        let dead = game_state
+            .monsters
+            .read()
+            .await
+            .get(monster_id)
+            .is_some_and(|m| m.state == MonsterState::Dead);
+        if dead {
+            return;
+        }
+    }
+    panic!("monster {monster_id} survived 200 swings");
+}
+
+fn xp_gains(rx: &mut DirectRx) -> Vec<u32> {
+    let mut gains = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        if let ServerMessage::XpGained { xp_amount, .. } = msg {
+            gains.push(xp_amount);
+        }
+    }
+    gains
+}
+
+#[tokio::test]
+async fn kill_xp_splits_with_nearby_member() {
+    let game_state = make_test_game_state("party_xp_split");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 2.0).await;
+    register_character(&game_state, "alice").await;
+    register_character(&game_state, "bob").await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    kill_monster(&game_state, "alice", "prey").await;
+
+    // 10 * 1.25 = 12 total, floored equal split: 6 each, killer included.
+    assert_eq!(xp_gains(&mut alice_rx), [6]);
+    assert_eq!(xp_gains(&mut bob_rx), [6]);
+}
+
+#[tokio::test]
+async fn kill_xp_three_way_split() {
+    let game_state = make_test_game_state("party_xp_three_way");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 2.0).await;
+    let mut carol_rx = add(&game_state, "carol", 100.0).await;
+    for name in ["alice", "bob", "carol"] {
+        register_character(&game_state, name).await;
+    }
+    form_party(&game_state, "alice", "bob").await;
+    game_state.invite_to_party(&pid("alice"), "carol").await;
+    game_state
+        .respond_to_party_invite(&pid("carol"), &pid("alice"), true)
+        .await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+    drain(&mut carol_rx);
+
+    kill_monster(&game_state, "alice", "prey").await;
+
+    // 10 * 1.50 = 15 total, floored equal split: 5 each, killer included.
+    assert_eq!(xp_gains(&mut alice_rx), [5]);
+    assert_eq!(xp_gains(&mut bob_rx), [5]);
+    assert_eq!(xp_gains(&mut carol_rx), [5]);
+}
+
+#[tokio::test]
+async fn distant_member_shares_no_kill_xp() {
+    let game_state = make_test_game_state("party_xp_distant");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 500.0).await;
+    register_character(&game_state, "alice").await;
+    register_character(&game_state, "bob").await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    kill_monster(&game_state, "alice", "prey").await;
+
+    // Bob is beyond the 150m share radius: alice keeps the full solo XP.
+    assert_eq!(xp_gains(&mut alice_rx), [SHARED_KILL_XP]);
+    assert!(xp_gains(&mut bob_rx).is_empty());
+}
+
+#[tokio::test]
+async fn dead_member_shares_no_kill_xp() {
+    let game_state = make_test_game_state("party_xp_dead_member");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 2.0).await;
+    register_character(&game_state, "alice").await;
+    register_character(&game_state, "bob").await;
+    form_party(&game_state, "alice", "bob").await;
+    set_health(&game_state, "bob", 0).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    kill_monster(&game_state, "alice", "prey").await;
+
+    assert_eq!(xp_gains(&mut alice_rx), [SHARED_KILL_XP]);
+    assert!(xp_gains(&mut bob_rx).is_empty());
+}
+
+#[tokio::test]
+async fn other_floor_member_shares_no_kill_xp() {
+    let game_state = make_test_game_state("party_xp_other_floor");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", 2.0).await;
+    register_character(&game_state, "alice").await;
+    register_character(&game_state, "bob").await;
+    form_party(&game_state, "alice", "bob").await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&pid("bob"))
+        .unwrap()
+        .floor_level = -1;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    drain(&mut alice_rx);
+    drain(&mut bob_rx);
+
+    kill_monster(&game_state, "alice", "prey").await;
+
+    assert_eq!(xp_gains(&mut alice_rx), [SHARED_KILL_XP]);
+    assert!(xp_gains(&mut bob_rx).is_empty());
+}
+
+#[tokio::test]
+async fn partyless_kill_xp_is_unchanged() {
+    let game_state = make_test_game_state("party_xp_solo");
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    register_character(&game_state, "alice").await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    drain(&mut alice_rx);
+
+    kill_monster(&game_state, "alice", "prey").await;
+
+    assert_eq!(xp_gains(&mut alice_rx), [SHARED_KILL_XP]);
+}
