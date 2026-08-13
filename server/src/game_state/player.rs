@@ -1498,6 +1498,11 @@ impl super::GameState {
         new_rotation: f32,
         new_floor_level: i8,
     ) {
+        // A NaN position would poison the SQLite save batch for everyone.
+        if !(new_position.is_finite() && new_rotation.is_finite()) {
+            warn!("Rejected non-finite teleport for player {player_id}");
+            return;
+        }
         new_position.x = wrap_world_x(new_position.x);
         self.apply_player_position(
             player_id,

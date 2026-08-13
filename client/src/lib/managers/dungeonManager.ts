@@ -927,16 +927,16 @@ class DungeonManager {
       }
       return
     }
-    if (!this.active) {
-      const grid = constants().grid
-      const covering = DUNGEON_ENTRANCES.find((e) => {
-        const ox = Math.floor(e.x) - grid / 2
-        const oz = Math.floor(e.z) - grid / 2
-        return x >= ox && x < ox + grid && z >= oz && z < oz + grid
-      })
-      if (!covering) return
-      this.enter(covering.id, { x: covering.x, y: covering.y, z: covering.z })
-    }
+    const grid = constants().grid
+    const covering = DUNGEON_ENTRANCES.find((e) => {
+      const ox = Math.floor(e.x) - grid / 2
+      const oz = Math.floor(e.z) - grid / 2
+      return x >= ox && x < ox + grid && z >= oz && z < oz + grid
+    })
+    if (!covering) return
+    // A teleport can land in a different dungeon than the registered one;
+    // enter() no-ops for the same id and switches otherwise.
+    this.enter(covering.id, { x: covering.x, y: covering.y, z: covering.z })
     currentDungeonDepth.set(-floorLevel)
   }
 
