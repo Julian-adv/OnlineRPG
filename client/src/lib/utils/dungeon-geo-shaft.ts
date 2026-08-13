@@ -269,13 +269,15 @@ export function collectShaftStairs(
 
   // Shaft side walls (back-facing side only, camera rule as for walls):
   // along-Z shafts keep the east side (faces west), along-X the north
-  // side (faces south). Vertical span runs from this floor's slab (topY)
-  // straight down to the floor below (bottomY) — it does NOT rise to the
-  // current floor's wall/ceiling height. Skipped for the surface entrance,
-  // which supplies its own non-protruding pit walls.
+  // side (faces south). Vertical span runs from the slab underside
+  // (topY − SLAB_THICKNESS; the wall sits inside the flanking cell's slab
+  // footprint, so reaching topY would z-fight the slab) down to the floor
+  // below (bottomY) — it does NOT rise to the current floor's wall/ceiling
+  // height. Skipped for the surface entrance, which supplies its own
+  // non-protruding pit walls.
   if (includeWall) {
     const wallTex = DUNGEON_WALL_TEXTURE_IDX
-    const wallH = topY - bottomY
+    const wallH = topY - SLAB_THICKNESS - bottomY
     const wallCy = bottomY + wallH / 2
     if (shaft.alongZ) {
       addBox(
