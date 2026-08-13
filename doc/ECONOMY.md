@@ -136,6 +136,12 @@ NPC 종류에 따라 클릭의 기본 액션을 다르게 한다. 경비병을 �
 - 좌판은 서버 메모리에만 존재한다 — 1인 1개, 야외 전용, 로그아웃 시 자동 철수. StallPlaced/StallAppeared/StallRemoved와 GameState의 `stalls`로 동기화 (프로토콜 v24).
 - 순수 소품이다. 거래는 기존 open_trade 그대로이고, 좌판은 상인이 장사 자리를 잡았다는 시각적 신호다.
 
+### 팁 모자 (2026-08-13)
+
+- `tip_hat`(Busker's Hat) 아이템(클래스 제한 없음)을 쓰면 2셀 앞에 모자가 놓이고, 다시 쓰면 회수한다. 아이템은 소모되지 않는다.
+- 좌판과 같이 서버 메모리에만 존재한다 — 1인 1개, 야외 전용, 주인이 5m(`TIP_HAT_LEASH_M`) 밖으로 나가거나 층이 바뀌거나 로그아웃하면 자동 회수. TipHatPlaced/TipHatAppeared/TipHatRemoved와 GameState의 `tip_hats`로 동기화 (프로토콜 v28).
+- 모자를 클릭하면 팁 금액 대화상자가 뜨고, `ClientMessage::TipHat`가 지갑·거리(서버 5m)·자기 모자인지를 검증한 뒤 구리를 주인 지갑으로 옮긴다. 땅에 아이템을 떨구는 기존 팁 방식([GATHERING.md](GATHERING.md)의 `dropped_by`)을 대체하지 않고 나란히 쓴다.
+
 ## 미감정 아이템 (Unidentified Items)
 
 ### 문제: MMO에서 NetHack식 미감정은 깨진다

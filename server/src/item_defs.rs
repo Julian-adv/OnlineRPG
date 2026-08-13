@@ -126,6 +126,8 @@ pub enum UseEffect {
     SummonParty,
     /// Open a fished-up coin pouch: roll the given dice for its copper.
     OpenCoinPouch(String),
+    /// Set a tip hat down in front of the user, or pick theirs back up.
+    ToggleTipHat,
 }
 
 impl ItemDefinition {
@@ -216,6 +218,7 @@ impl ItemDefinition {
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
             "party_summon_scroll" => Some(UseEffect::SummonParty),
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
+            "tip_hat" => Some(UseEffect::ToggleTipHat),
             _ => None,
         }
     }

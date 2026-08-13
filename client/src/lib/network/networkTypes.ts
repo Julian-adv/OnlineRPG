@@ -200,6 +200,7 @@ export type ClientMessage =
   | 'PickupStarted'
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
+  | { TipHat: { hat_id: number; amount: number } }
   | { OpenShop: { merchant_player_id: number } }
   | { CloseShop: { merchant_player_id: number } }
   | { DeclineTrade: { merchant_player_id: number } }
@@ -305,6 +306,15 @@ export type ServerCampfire = {
 export type ServerStall = {
   id: number
   owner: number
+  position: Position
+  rotation: number
+  floor_level: number
+}
+
+export type ServerTipHat = {
+  id: number
+  owner: number
+  owner_name: string
   position: Position
   rotation: number
   floor_level: number

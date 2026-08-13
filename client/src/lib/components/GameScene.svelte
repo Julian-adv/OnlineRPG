@@ -48,6 +48,7 @@
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
   import GameSceneCampfiresLayer from './game-scene/GameSceneCampfiresLayer.svelte'
   import GameSceneStallsLayer from './game-scene/GameSceneStallsLayer.svelte'
+  import GameSceneTipHatsLayer from './game-scene/GameSceneTipHatsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
@@ -204,6 +205,7 @@
     undefined
   )
   let campfiresLayerRef = $state<GameSceneCampfiresLayer | undefined>(undefined)
+  let tipHatsLayerRef = $state<GameSceneTipHatsLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
   let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
   let signpostBubblePos = $derived(
@@ -1206,6 +1208,9 @@
     groundItemMeshes={groundItemsLayerRef?.getGroup()
       ? [groundItemsLayerRef.getGroup()!]
       : []}
+    tipHatMeshes={tipHatsLayerRef?.getGroup()
+      ? [tipHatsLayerRef.getGroup()!]
+      : []}
     {monsterModels}
     {playerAttackDuration}
     torchEffectsDisabled={!graphicsPreset.enableTorchEffects}
@@ -1237,6 +1242,7 @@
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
   <GameSceneStallsLayer />
+  <GameSceneTipHatsLayer bind:this={tipHatsLayerRef} />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
     <!-- Both position objects are mutated in place upstream, so the line

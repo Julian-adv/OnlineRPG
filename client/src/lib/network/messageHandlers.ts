@@ -28,6 +28,7 @@ import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
 import { campfireManager } from '../managers/campfireManager'
 import { stallManager } from '../managers/stallManager'
+import { tipHatManager } from '../managers/tipHatManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import {
@@ -697,6 +698,10 @@ export function handleServerMessage(
       stallManager.reset()
       if (data.stalls) {
         for (const stall of data.stalls) stallManager.spawn(stall)
+      }
+      tipHatManager.reset()
+      if (data.tip_hats) {
+        for (const hat of data.tip_hats) tipHatManager.spawn(hat)
       }
       break
 
@@ -1491,6 +1496,15 @@ export function handleServerMessage(
 
     case 'StallRemoved':
       stallManager.remove(data.stall_id)
+      break
+
+    case 'TipHatPlaced':
+    case 'TipHatAppeared':
+      tipHatManager.spawn(data.tip_hat)
+      break
+
+    case 'TipHatRemoved':
+      tipHatManager.remove(data.tip_hat_id)
       break
 
     case 'GrillStarted':

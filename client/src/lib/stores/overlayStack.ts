@@ -13,6 +13,7 @@ export type OverlayId =
   | 'settings'
   | 'loading'
   | 'respawn'
+  | 'tipHat'
   | 'chatChannelMenu'
 
 /** `layer` is paint order, not raw z-index: `.game-hud`'s z-index:1 stacking
@@ -27,6 +28,7 @@ const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   trade: { layer: 1, close: () => shopSession.set(null) },
   loading: { layer: 2 },
   respawn: { layer: 3 },
+  tipHat: { layer: 3 },
   worldMap: { layer: 4 },
   settings: { layer: 5 },
   // A transient popup: whenever it is open, Escape must hit it first.

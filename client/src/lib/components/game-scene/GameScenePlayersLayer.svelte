@@ -66,6 +66,7 @@
     objectMeshes: THREE.Object3D[]
     propMeshes: THREE.Object3D[]
     groundItemMeshes: THREE.Object3D[]
+    tipHatMeshes: THREE.Object3D[]
     monsterModels: (Monster | undefined)[]
     playerAttackDuration: number
     heightManager: TerrainHeightManager
@@ -103,6 +104,7 @@
     objectMeshes,
     propMeshes,
     groundItemMeshes,
+    tipHatMeshes,
     monsterModels,
     playerAttackDuration,
     heightManager,
@@ -470,6 +472,7 @@
     {objectMeshes}
     {propMeshes}
     {groundItemMeshes}
+    {tipHatMeshes}
     attackCooldown={playerAttackDuration}
   />
 {/if}

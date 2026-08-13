@@ -93,6 +93,13 @@ export type ClickIntent =
       distance: number
     }
   | {
+      /** Clicked someone's tip hat: opens the tip dialog once in range. */
+      type: 'tip_hat'
+      hatId: number
+      position: Position
+      distance: number
+    }
+  | {
       type: 'interact_npc'
       playerId: number
       position: Position
@@ -130,6 +137,7 @@ export interface RaycastContext {
    *  player walks up before the break fires. */
   propMeshes: THREE.Object3D[]
   groundItemMeshes: THREE.Object3D[]
+  tipHatMeshes: THREE.Object3D[]
   groundMeshes: THREE.Object3D[]
   playerPosition: Position
   /** Gates house door clicks to the door's own floor (0 = ground/outdoors). */
@@ -463,6 +471,28 @@ class InputHandler {
             }
           }
           obj = obj.parent
+        }
+      }
+    }
+
+    // Check intersection with tip hats. No distance gate: the player walks
+    // into range and the tip dialog opens there.
+    if (context.tipHatMeshes.length > 0) {
+      const hatHits = raycaster.intersectObjects(context.tipHatMeshes, true)
+      const owner = hatHits.length
+        ? findAncestorWithUserData(hatHits[0].object, 'tipHatId')
+        : null
+      if (owner) {
+        const hatPosition = new THREE.Vector3()
+        owner.getWorldPosition(hatPosition)
+        const pp = context.playerPosition
+        const dx = hatPosition.x - pp.x
+        const dz = hatPosition.z - pp.z
+        return {
+          type: 'tip_hat',
+          hatId: owner.userData.tipHatId as number,
+          position: { x: hatPosition.x, y: hatPosition.y, z: hatPosition.z },
+          distance: Math.sqrt(dx * dx + dz * dz),
         }
       }
     }

@@ -626,6 +626,11 @@ class NetworkManager {
     this.sendMessage({ UseItem: { instance_id: instanceId } })
   }
 
+  /** Drop copper into a nearby performer's tip hat. */
+  sendTipHat(hatId: number, amount: number) {
+    this.sendMessage({ TipHat: { hat_id: hatId, amount } })
+  }
+
   sendOpenShop(merchantPlayerId: number) {
     markShopRequested(merchantPlayerId)
     this.sendMessage({ OpenShop: { merchant_player_id: merchantPlayerId } })

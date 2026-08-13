@@ -17,7 +17,7 @@ const GROUND_ITEM_LIFETIME_MS: u64 = 30 * 60 * 1000;
 
 const MAX_PICKUP_DISTANCE: f32 = 2.5;
 
-const PLACEMENT_DISTANCE_M: f32 = 1.0;
+pub(super) const PLACEMENT_DISTANCE_M: f32 = 1.0;
 
 /// Enchant odds are expressed in basis points (1/100 of a percent) out of
 /// this scale; the handler's roll must use the same bound.
@@ -609,6 +609,7 @@ impl super::GameState {
             UseEffect::OpenCoinPouch(dice) => {
                 self.use_coin_pouch(player_id, instance_id, &dice).await
             }
+            UseEffect::ToggleTipHat => self.toggle_tip_hat(player_id).await,
         }
     }
 
@@ -748,18 +749,20 @@ impl super::GameState {
     ) -> Option<(crate::types::Position, i8)> {
         self.outdoor_placement(
             player_id,
+            PLACEMENT_DISTANCE_M,
             "You can only build a campfire outdoors",
             "You can't light a fire in water",
         )
         .await
     }
 
-    /// Where something placed by `player_id` would land: a step in front of
-    /// them, or their own feet when something blocks the way. `None` once the
-    /// refusal (indoors, in water) has been sent to them.
+    /// Where something placed by `player_id` would land: `distance_m` in front
+    /// of them, or their own feet when something blocks the way. `None` once
+    /// the refusal (indoors, in water) has been sent to them.
     pub(super) async fn outdoor_placement(
         &self,
         player_id: &PlayerId,
+        distance_m: f32,
         indoors_refusal: &str,
         water_refusal: &str,
     ) -> Option<(crate::types::Position, i8)> {
@@ -773,9 +776,9 @@ impl super::GameState {
             return None;
         }
         let forward = crate::types::Position {
-            x: position.x + rotation.sin() * PLACEMENT_DISTANCE_M,
+            x: position.x + rotation.sin() * distance_m,
             y: position.y,
-            z: position.z + rotation.cos() * PLACEMENT_DISTANCE_M,
+            z: position.z + rotation.cos() * distance_m,
         };
         let placement = {
             let cache = self.passability_read();
@@ -838,7 +841,7 @@ impl super::GameState {
 
     /// If the player is defeated (or gone), message them and return true so
     /// the caller can bail. Shared guard for read-a-scroll style consumables.
-    async fn reject_if_defeated(&self, player_id: &PlayerId, message: &str) -> bool {
+    pub(super) async fn reject_if_defeated(&self, player_id: &PlayerId, message: &str) -> bool {
         let defeated = match self.players.read().await.get(player_id) {
             Some(player) => player.health == 0,
             None => return true,
@@ -1522,6 +1525,24 @@ impl super::GameState {
             .await;
         self.send_direct_message(player_id, ServerMessage::GoldGained { amount: copper })
             .await;
+    }
+
+    /// `award_copper`'s debit twin: take `copper` if the wallet covers it and
+    /// push the new balance. False (and nothing spent) when it doesn't.
+    pub(super) async fn spend_copper(&self, player_id: &PlayerId, copper: i64) -> bool {
+        let remaining = {
+            let mut gold_map = self.player_gold.write().await;
+            let wallet = gold_map.entry(*player_id).or_insert(0);
+            if *wallet < copper {
+                return false;
+            }
+            *wallet -= copper;
+            *wallet
+        };
+        self.mark_dirty(player_id).await;
+        self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold: remaining })
+            .await;
+        true
     }
 
     /// Pick up a dungeon coin pile: claim it (first picker wins), credit a

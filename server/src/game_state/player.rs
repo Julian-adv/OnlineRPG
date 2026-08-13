@@ -785,6 +785,18 @@ impl super::GameState {
             })
             .cloned()
             .collect();
+        let tip_hats: Vec<_> = self
+            .tip_hats
+            .read()
+            .await
+            .values()
+            .filter(|h| {
+                h.floor_level == player_floor
+                    && h.position.dist_xz_sq(&player_position)
+                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
+            })
+            .cloned()
+            .collect();
 
         let mut msgs = Vec::new();
         if !other_players.is_empty()
@@ -792,6 +804,7 @@ impl super::GameState {
             || !ground_items.is_empty()
             || !campfires.is_empty()
             || !stalls.is_empty()
+            || !tip_hats.is_empty()
         {
             msgs.push(ServerMessage::GameState {
                 players: other_players,
@@ -799,6 +812,7 @@ impl super::GameState {
                 ground_items,
                 campfires,
                 stalls,
+                tip_hats,
             });
         }
 
@@ -820,6 +834,7 @@ impl super::GameState {
         self.movement_intents.write().await.remove(player_id);
         self.music_performances.write().await.remove(player_id);
         self.remove_player_stall(player_id).await;
+        self.remove_player_tip_hat(player_id).await;
         self.ambient_spawn_allowances
             .write()
             .await
@@ -1994,6 +2009,36 @@ impl super::GameState {
         for stall in stalls_entered {
             self.send_direct_message(player_id, ServerMessage::StallAppeared { stall })
                 .await;
+        }
+
+        // The mover's own leash is read here too, off the one lock this pass
+        // already takes.
+        let (hats_left, hats_entered, strayed) = {
+            let tip_hats = self.tip_hats.read().await;
+            let (left, entered) = aoi_diff(
+                tip_hats.values(),
+                |h| (h.position, h.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter().map(|h| h.id).collect::<Vec<_>>(),
+                entered.into_iter().cloned().collect::<Vec<_>>(),
+                tip_hats
+                    .get(player_id)
+                    .is_some_and(|h| h.strayed_from(&player.position, new_floor)),
+            )
+        };
+        for tip_hat_id in hats_left {
+            self.send_direct_message(player_id, ServerMessage::TipHatRemoved { tip_hat_id })
+                .await;
+        }
+        for tip_hat in hats_entered {
+            self.send_direct_message(player_id, ServerMessage::TipHatAppeared { tip_hat })
+                .await;
+        }
+        if strayed {
+            self.pack_up_strayed_tip_hat(player_id).await;
         }
 
         // The mover hears its own update through the same fanout, so the

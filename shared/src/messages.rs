@@ -413,6 +413,12 @@ pub enum ClientMessage {
     UseItem {
         instance_id: u64,
     },
+    /// Drop `amount` copper into a nearby tip hat. The server checks the
+    /// wallet, the distance and that the hat isn't the sender's own.
+    TipHat {
+        hat_id: u64,
+        amount: i64,
+    },
     /// Ask a merchant NPC to open its shop.
     OpenShop {
         merchant_player_id: PlayerId,
@@ -774,6 +780,8 @@ pub enum ServerMessage {
         campfires: Vec<crate::hunger::Campfire>,
         #[serde(default)]
         stalls: Vec<crate::stall::Stall>,
+        #[serde(default)]
+        tip_hats: Vec<crate::tip_hat::TipHat>,
     },
     GameTimeSync {
         datetime: GameDateTime,
@@ -1157,6 +1165,18 @@ pub enum ServerMessage {
     /// Packed up or left the receiver's AOI.
     StallRemoved {
         stall_id: u64,
+    },
+    /// A performer just set a tip hat down nearby.
+    TipHatPlaced {
+        tip_hat: crate::tip_hat::TipHat,
+    },
+    /// An already-placed tip hat entered the receiver's AOI.
+    TipHatAppeared {
+        tip_hat: crate::tip_hat::TipHat,
+    },
+    /// Picked up, left behind by its owner, or left the receiver's AOI.
+    TipHatRemoved {
+        tip_hat_id: u64,
     },
     /// Direct to the griller: the 3s grill cast began.
     GrillStarted,

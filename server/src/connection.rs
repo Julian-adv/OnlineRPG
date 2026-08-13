@@ -1630,6 +1630,12 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::TipHat { hat_id, amount } => {
+            if let Some(id) = &state.player_id {
+                game_state.tip_hat_tip(id, hat_id, amount).await;
+            }
+        }
+
         ClientMessage::OpenShop { merchant_player_id } => {
             if let Some(id) = &state.player_id {
                 game_state.open_shop(id, &merchant_player_id, true).await;

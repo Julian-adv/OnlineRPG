@@ -20,8 +20,25 @@ function makeActions() {
     openProp: vi.fn(),
     moveToGround: vi.fn(),
     castFishing: vi.fn(),
+    approachAndTip: vi.fn(),
   } satisfies CanvasClickActions
 }
+
+describe('dispatchCanvasClickIntent tip hats', () => {
+  it('routes a tip_hat intent to approachAndTip', () => {
+    const actions = makeActions()
+    const intent: ClickIntent = {
+      type: 'tip_hat',
+      hatId: 7,
+      position: { x: 1, y: 0, z: 2 },
+      distance: 4,
+    }
+
+    dispatchCanvasClickIntent(intent, false, actions)
+
+    expect(actions.approachAndTip).toHaveBeenCalledWith(intent)
+  })
+})
 
 describe('dispatchCanvasClickIntent prop handling', () => {
   it('routes a break_prop intent to breakProp', () => {

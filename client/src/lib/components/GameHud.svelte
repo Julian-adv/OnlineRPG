@@ -23,6 +23,7 @@
   import DragGhost from './DragGhost.svelte'
   import LoadingDialog from './LoadingDialog.svelte'
   import RespawnDialog from './RespawnDialog.svelte'
+  import TipHatDialog from './TipHatDialog.svelte'
   import WorldMapDialog from './WorldMapDialog.svelte'
   import ServerNotice from './ServerNotice.svelte'
   import {
@@ -35,7 +36,8 @@
   } from '../stores/debugStore'
   import { minimapEnabled } from '../stores/minimapStore'
   import { friendPanelVisible } from '../stores/friendStore'
-  import type { AccountCharacter } from '../network/socket'
+  import { networkManager, type AccountCharacter } from '../network/socket'
+  import { tipHatDialog } from '../stores/tipHatStore'
 
   interface Props {
     selectedCharacter: AccountCharacter | null
@@ -270,6 +272,17 @@
 
 {#if $worldMapVisible}
   <WorldMapDialog />
+{/if}
+
+{#if $tipHatDialog}
+  <TipHatDialog
+    ownerName={$tipHatDialog.ownerName}
+    onConfirm={(copper) => {
+      networkManager.sendTipHat($tipHatDialog!.hatId, copper)
+      tipHatDialog.set(null)
+    }}
+    onCancel={() => tipHatDialog.set(null)}
+  />
 {/if}
 
 <style>

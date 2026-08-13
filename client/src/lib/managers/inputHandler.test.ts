@@ -53,6 +53,7 @@ function contextWith(overrides: Partial<RaycastContext> = {}): RaycastContext {
     objectMeshes: [],
     propMeshes: [],
     groundItemMeshes: [],
+    tipHatMeshes: [],
     groundMeshes: [ground],
     playerPosition: { x: 0, y: 0, z: 0 },
     playerVisualFloorLevel: 0,

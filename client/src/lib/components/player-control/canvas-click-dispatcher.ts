@@ -12,6 +12,7 @@ type NpcIntent = Extract<ClickIntent, { type: 'interact_npc' }>
 type BreakPropIntent = Extract<ClickIntent, { type: 'break_prop' }>
 type OpenPropIntent = Extract<ClickIntent, { type: 'open_prop' }>
 type CastFishingIntent = Extract<ClickIntent, { type: 'cast_fishing' }>
+type TipHatIntent = Extract<ClickIntent, { type: 'tip_hat' }>
 
 export interface CanvasClickActions {
   /** Player is at melee range — start the attack swing immediately. */
@@ -38,6 +39,8 @@ export interface CanvasClickActions {
   moveToGround(position: Position, sprinting: boolean): void
   /** Stop, face the water, and cast the equipped rod (server validates). */
   castFishing(intent: CastFishingIntent): void
+  /** Open the tip dialog for a clicked hat, walking into range first. */
+  approachAndTip(intent: TipHatIntent): void
 }
 
 export function dispatchCanvasClickIntent(
@@ -90,6 +93,9 @@ export function dispatchCanvasClickIntent(
       return
     case 'cast_fishing':
       actions.castFishing(intent)
+      return
+    case 'tip_hat':
+      actions.approachAndTip(intent)
       return
     case 'none':
       return

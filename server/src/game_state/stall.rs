@@ -36,6 +36,7 @@ impl GameState {
         let Some((placement, floor_level)) = self
             .outdoor_placement(
                 player_id,
+                super::inventory::PLACEMENT_DISTANCE_M,
                 "You can only lay out a stall outdoors",
                 "You can't lay out a stall in water",
             )

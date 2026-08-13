@@ -19,7 +19,12 @@
   } from '../managers/sfxManager'
   import { inputHandler, type ClickIntent } from '../managers/inputHandler'
   import { getNpcCapabilities } from '../data/traderDefs'
-  import { NPC_TRADE_RANGE_METERS } from '../data/tradeConstants'
+  import {
+    NPC_TRADE_RANGE_METERS,
+    TIP_HAT_RANGE_METERS,
+  } from '../data/tradeConstants'
+  import { tipHatManager } from '../managers/tipHatManager'
+  import { tipHatDialog } from '../stores/tipHatStore'
   import { npcContextMenu, requestChatFocus } from '../stores/npcMenuStore'
   import {
     mapEditorMode,
@@ -123,6 +128,7 @@
     heightManager: TerrainHeightManager
     groundMeshes: THREE.Object3D[]
     groundItemMeshes: THREE.Object3D[]
+    tipHatMeshes: THREE.Object3D[]
     monsterMeshes: THREE.Group[]
     npcMeshes?: THREE.Object3D[]
     doorMeshes: THREE.Object3D[]
@@ -139,6 +145,7 @@
     heightManager,
     groundMeshes,
     groundItemMeshes,
+    tipHatMeshes,
     monsterMeshes,
     npcMeshes = [],
     doorMeshes,
@@ -1142,26 +1149,45 @@
     })
   }
 
-  /** Open a trading NPC's window, walking into range first if needed. */
-  function approachAndTrade(
-    intent: Extract<ClickIntent, { type: 'interact_npc' }>
+  /** Act on a clicked target now if it's within `range`, else walk toward it
+   *  and stop a metre short. The walk-up alone is the whole action when out of
+   *  range — the player clicks again on arrival. */
+  function approachWithin(
+    intent: { position: Position; distance: number },
+    range: number,
+    actInRange: () => void
   ) {
-    if (intent.distance <= NPC_TRADE_RANGE_METERS) {
-      networkManager.sendOpenShop(intent.playerId)
+    if (intent.distance <= range) {
+      actInRange()
       return
     }
-
-    // Too far: walk toward the trader, stopping just short.
     if (!currentPlayer) return
     combatController.cancelCombat()
     const dx = currentPlayer.position.x - intent.position.x
     const dz = currentPlayer.position.z - intent.position.z
     const dist = Math.sqrt(dx * dx + dz * dz) || 1
-    const stopShort = Math.min(NPC_TRADE_RANGE_METERS - 1, dist)
+    const stopShort = Math.min(range - 1, dist)
     handleClickToMove({
       x: intent.position.x + (dx / dist) * stopShort,
       y: intent.position.y,
       z: intent.position.z + (dz / dist) * stopShort,
+    })
+  }
+
+  /** Open a trading NPC's window, walking into range first if needed. */
+  function approachAndTrade(
+    intent: Extract<ClickIntent, { type: 'interact_npc' }>
+  ) {
+    approachWithin(intent, NPC_TRADE_RANGE_METERS, () =>
+      networkManager.sendOpenShop(intent.playerId)
+    )
+  }
+
+  /** Open a tip hat's dialog, walking into range first if needed. */
+  function approachAndTip(intent: Extract<ClickIntent, { type: 'tip_hat' }>) {
+    approachWithin(intent, TIP_HAT_RANGE_METERS, () => {
+      const hat = tipHatManager.hats.get(intent.hatId)
+      if (hat) tipHatDialog.set({ hatId: hat.id, ownerName: hat.owner_name })
     })
   }
 
@@ -1264,6 +1290,7 @@
       objectMeshes,
       propMeshes,
       groundItemMeshes,
+      tipHatMeshes,
       groundMeshes,
       playerPosition: {
         x: currentPlayer!.position.x,
@@ -1369,6 +1396,7 @@
           requestChatFocus()
         }
       },
+      approachAndTip,
       breakProp,
       openProp,
       moveToGround: (position, sprinting) => {

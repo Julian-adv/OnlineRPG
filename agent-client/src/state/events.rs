@@ -416,6 +416,7 @@ impl SharedState {
                 ground_items,
                 campfires,
                 stalls,
+                tip_hats: _,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();

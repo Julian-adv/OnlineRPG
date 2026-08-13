@@ -18,6 +18,7 @@ pub mod pathfinding;
 pub mod schedule;
 pub mod skills;
 pub mod stall;
+pub mod tip_hat;
 pub mod tree_format;
 pub mod world;
 pub mod worldgen;
@@ -69,7 +70,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      health, and PartyKick/PartyPromote (leader kick + handover).
 /// v27: GroundItem carries `quantity`, so a dropped stack lands as one pile,
 ///      and GroundItemQuantityChanged reports a pile someone took part of.
-pub const PROTOCOL_VERSION: u32 = 27;
+/// v28: tip hats (the `tip_hat` item → TipHatPlaced/TipHatAppeared/
+///      TipHatRemoved, ClientMessage::TipHat); GameState carries `tip_hats`.
+pub const PROTOCOL_VERSION: u32 = 28;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -210,6 +213,7 @@ mod tests {
             ground_items: Vec::new(),
             campfires: Vec::new(),
             stalls: Vec::new(),
+            tip_hats: Vec::new(),
         };
         let bytes = serialize_server_msg(&msg).unwrap();
         let decoded = deserialize_server_msg(&bytes).unwrap();
