@@ -400,19 +400,30 @@ describe('runCombatFrame', () => {
 })
 
 describe('beginAttack', () => {
-  it('ignores dead targets', () => {
-    const beginCombat = vi.fn()
-
-    const result = beginAttack({
-      monsterId: 'm1',
-      monsterInfo: { state: 'dead' },
-      currentPosition: { x: 1, y: 0, z: 2 },
-      playerRotation: 0,
-      previousPlayerState: playerState,
-      lastSentPosition: null,
-      beginCombat,
+  function runBeginAttack(
+    overrides: Partial<Parameters<typeof beginAttack>[0]>
+  ) {
+    const calls = {
+      beginCombat: vi.fn(),
       sendPlayerMove: vi.fn(),
       sendPlayerAttack: vi.fn(),
+    }
+    const result = beginAttack({
+      monsterId: 'm1',
+      monsterInfo: { state: 'idle' },
+      currentPosition: { x: 1, y: 0, z: 2 },
+      playerRotation: 0.5,
+      previousPlayerState: playerState,
+      lastSentPosition: null,
+      ...calls,
+      ...overrides,
+    })
+    return { ...calls, result }
+  }
+
+  it('ignores dead targets', () => {
+    const { beginCombat, result } = runBeginAttack({
+      monsterInfo: { state: 'dead' },
     })
 
     expect(result.kind).toBe('ignored_dead_target')
@@ -420,50 +431,39 @@ describe('beginAttack', () => {
   })
 
   it('starts combat, syncs position, sends attack, and returns attack state', () => {
-    const beginCombat = vi.fn()
-    const sendPlayerMove = vi.fn()
-    const sendPlayerAttack = vi.fn()
     const currentPosition = { x: 1, y: 0, z: 2 }
-
-    const result = beginAttack({
-      monsterId: 'm1',
-      monsterInfo: { state: 'idle' },
-      currentPosition,
-      playerRotation: 0.5,
-      previousPlayerState: playerState,
-      lastSentPosition: null,
-      beginCombat,
-      sendPlayerMove,
-      sendPlayerAttack,
-    })
+    const { beginCombat, sendPlayerMove, sendPlayerAttack, result } =
+      runBeginAttack({ currentPosition })
 
     expect(beginCombat).toHaveBeenCalledWith('m1', true)
     expect(sendPlayerMove).toHaveBeenCalledWith(currentPosition, 0.5)
     expect(sendPlayerAttack).toHaveBeenCalledWith('m1')
     expect(result).toEqual({
       kind: 'started',
-      nextPlayerState: { ...playerState, state: 'attack' },
+      nextPlayerState: { ...playerState, state: 'attack', rotation: 0.5 },
       pendingPickupAfterMoveInstanceId: null,
     })
   })
 
-  it('skips position sync when the last sent x/z position matches', () => {
-    const sendPlayerMove = vi.fn()
-    const currentPosition = { x: 1, y: 10, z: 2 }
-
-    beginAttack({
-      monsterId: 'm1',
-      monsterInfo: { state: 'idle' },
-      currentPosition,
-      playerRotation: 0.5,
-      previousPlayerState: playerState,
+  it('skips position sync when position and facing are unchanged', () => {
+    const { sendPlayerMove } = runBeginAttack({
+      currentPosition: { x: 1, y: 10, z: 2 },
+      playerRotation: playerState.rotation,
       lastSentPosition: { x: 1, y: 0, z: 2 },
-      beginCombat: vi.fn(),
-      sendPlayerMove,
-      sendPlayerAttack: vi.fn(),
     })
 
     expect(sendPlayerMove).not.toHaveBeenCalled()
+  })
+
+  it('syncs the new facing even when the position is unchanged', () => {
+    const currentPosition = { x: 1, y: 10, z: 2 }
+    const { sendPlayerMove } = runBeginAttack({
+      currentPosition,
+      playerRotation: 1.5,
+      lastSentPosition: { x: 1, y: 0, z: 2 },
+    })
+
+    expect(sendPlayerMove).toHaveBeenCalledWith(currentPosition, 1.5)
   })
 })
 

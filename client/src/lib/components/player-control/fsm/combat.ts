@@ -379,7 +379,8 @@ export function beginAttack({
     const shouldSendMove =
       !lastSentPosition ||
       Math.abs(currentPosition.x - lastSentPosition.x) > 0.01 ||
-      Math.abs(currentPosition.z - lastSentPosition.z) > 0.01
+      Math.abs(currentPosition.z - lastSentPosition.z) > 0.01 ||
+      Math.abs(playerRotation - previousPlayerState.rotation) > 0.01
 
     if (shouldSendMove) {
       sendPlayerMove(currentPosition, playerRotation)
@@ -390,7 +391,7 @@ export function beginAttack({
 
   return {
     kind: 'started',
-    nextPlayerState: buildAttackState(previousPlayerState),
+    nextPlayerState: buildAttackState(previousPlayerState, playerRotation),
     pendingPickupAfterMoveInstanceId: null,
   }
 }

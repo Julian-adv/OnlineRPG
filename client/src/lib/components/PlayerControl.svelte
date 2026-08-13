@@ -114,7 +114,7 @@
     PlayerControlStateName,
   } from './player-control/fsm/control-state'
   import { createLocalPlayerControlMachine } from './player-control/fsm/state-definitions'
-  import { wrapWorldX } from '../terrain/world-wrap'
+  import { shortestWrappedDeltaX, wrapWorldX } from '../terrain/world-wrap'
   import {
     emoteRequest,
     emoteStopRequest,
@@ -491,6 +491,14 @@
     position: { x: 0, y: 0, z: 0 },
   })
 
+  /** Turn to face a world point (rotation only; nothing is emitted). */
+  function faceTowards(x: number, z: number) {
+    if (!currentPlayer) return
+    const dx = shortestWrappedDeltaX(currentPlayer.position.x, x)
+    const dz = z - currentPlayer.position.z
+    if (dx !== 0 || dz !== 0) playerRotation = Math.atan2(dx, dz)
+  }
+
   function setPlayerState(next: PlayerState) {
     playerState = next
     onStateChange(next)
@@ -557,6 +565,12 @@
     }
 
     const monsterInfo = monsterManager.monsters.get(monsterId)
+
+    // Without this the first swing keeps the old facing until the next cycle.
+    if (monsterInfo) {
+      faceTowards(monsterInfo.position.x, monsterInfo.position.z)
+    }
+
     const result = beginAttack({
       monsterId,
       monsterInfo,
@@ -1259,9 +1273,7 @@
     // clip; a changed attackCounter re-triggers it (our own counter since this
     // swing isn't combat-driven). currentSpeed 0 keeps the movement tick from
     // projecting the state back to idle while we hold the swing.
-    const dx = x - currentPlayer.position.x
-    const dz = z - currentPlayer.position.z
-    if (dx !== 0 || dz !== 0) playerRotation = Math.atan2(dx, dz)
+    faceTowards(x, z)
     currentSpeed = 0
     propSwingCounter += 1
     setPlayerState({
@@ -1410,14 +1422,10 @@
         // itself on the next waypoint send.
         combatController.cancelCombat()
         stopMovement()
-        const dx = intent.position.x - currentPlayer.position.x
-        const dz = intent.position.z - currentPlayer.position.z
-        if (dx !== 0 || dz !== 0) {
-          playerRotation = Math.atan2(dx, dz)
-          // Commit the facing to the rendered state too, or the model keeps
-          // its old rotation and casts over its shoulder.
-          setPlayerState({ ...playerState, rotation: playerRotation })
-        }
+        faceTowards(intent.position.x, intent.position.z)
+        // Commit the facing to the rendered state too, or the model keeps its
+        // old rotation and casts over its shoulder.
+        setPlayerState({ ...playerState, rotation: playerRotation })
         // Updates the server-stored rotation (late joiners); live bystanders
         // get the facing from FishingCasted itself.
         sendPlayerMove(currentPlayer.position, playerRotation)
