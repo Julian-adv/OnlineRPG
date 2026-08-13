@@ -8,8 +8,6 @@
   interface Props {
     text: string
     fontSize?: number
-    /** Optional icon drawn left of the first line, sized to the font. */
-    iconSrc?: string
     color?: string
     outlineColor?: string
     outlineWidth?: number
@@ -29,7 +27,6 @@
   let {
     text,
     fontSize = 0.3,
-    iconSrc,
     color = '#ffffff',
     outlineColor,
     outlineWidth = 0,
@@ -51,13 +48,18 @@
   // Exported for ChatBubble compatibility (bind:this → ref.textRenderInfo.blockBounds)
   export const textRenderInfo = { blockBounds: [0, 0, 0, 0] as number[] }
 
+  function createTexture(source: HTMLCanvasElement) {
+    const t = new THREE.CanvasTexture(source)
+    t.colorSpace = THREE.SRGBColorSpace
+    t.minFilter = THREE.LinearFilter
+    t.magFilter = THREE.LinearFilter
+    return t
+  }
+
   let canvas = document.createElement('canvas')
   let ctx = canvas.getContext('2d')!
 
-  let texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
+  let texture = createTexture(canvas)
 
   // Track previous canvas dimensions. When they change we must create a
   // new canvas + CanvasTexture so the WebGPU backend allocates a GPUTexture
@@ -66,17 +68,6 @@
   // canvas — resizing a shared canvas would corrupt the old GPUTexture.
   let prevCanvasW = 0
   let prevCanvasH = 0
-
-  let iconImage = $state<HTMLImageElement | undefined>(undefined)
-  $effect(() => {
-    if (!iconSrc) {
-      iconImage = undefined
-      return
-    }
-    const img = new Image()
-    img.onload = () => (iconImage = img)
-    img.src = iconSrc
-  })
 
   let worldWidth = $state(0.01)
   let worldHeight = $state(0.01)
@@ -107,15 +98,9 @@
         : text.split('\n')
     const lineHeight = pxFont * 1.2
 
-    const iconSize = iconImage ? pxFont * 1.1 : 0
-    const iconSpan = iconImage ? iconSize + pxFont * 0.18 : 0
-
     let maxLineWidth = 0
-    for (let i = 0; i < lines.length; i++) {
-      maxLineWidth = Math.max(
-        maxLineWidth,
-        ctx.measureText(lines[i]).width + (i === 0 ? iconSpan : 0)
-      )
+    for (const line of lines) {
+      maxLineWidth = Math.max(maxLineWidth, ctx.measureText(line).width)
     }
 
     const totalTextHeight = lines.length * lineHeight
@@ -138,10 +123,7 @@
       ctx = canvas.getContext('2d')!
 
       // Do NOT dispose the old texture (see onDestroy comment).
-      texture = new THREE.CanvasTexture(canvas)
-      texture.colorSpace = THREE.SRGBColorSpace
-      texture.minFilter = THREE.LinearFilter
-      texture.magFilter = THREE.LinearFilter
+      texture = createTexture(canvas)
       material.map = texture
     }
 
@@ -152,30 +134,19 @@
     ctx.textBaseline = 'top'
 
     for (let i = 0; i < lines.length; i++) {
-      const span = i === 0 ? iconSpan : 0
-      const lineWidth = ctx.measureText(lines[i]).width + span
       let x = pad
       if (anchorX === 'center') {
-        x = (cw - lineWidth) / 2
+        x = (cw - ctx.measureText(lines[i]).width) / 2
       } else if (anchorX === 'right') {
-        x = cw - lineWidth - pad
-      }
-      if (i === 0 && iconImage) {
-        ctx.drawImage(
-          iconImage,
-          x,
-          pad + (lineHeight - iconSize) / 2,
-          iconSize,
-          iconSize
-        )
+        x = cw - ctx.measureText(lines[i]).width - pad
       }
       if (outlineColor && outlineWidth > 0) {
         ctx.strokeStyle = outlineColor
         ctx.lineWidth = outlineWidth
-        ctx.strokeText(lines[i], x + span, pad + i * lineHeight)
+        ctx.strokeText(lines[i], x, pad + i * lineHeight)
       }
       ctx.fillStyle = color
-      ctx.fillText(lines[i], x + span, pad + i * lineHeight)
+      ctx.fillText(lines[i], x, pad + i * lineHeight)
     }
 
     texture.needsUpdate = true

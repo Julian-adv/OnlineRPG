@@ -26,9 +26,10 @@ export interface MonsterDefinition {
   animDie: string
   animDead: string
   /**
-   * Extra metres applied after the corpse is auto-grounded on its lowest
-   * vertex; negative sinks it. Only needed when a dangling appendage pegs the
-   * offset and leaves the body hovering, as the kobold's tail does.
+   * Extra world metres (independent of `scale`) applied after the corpse is
+   * auto-grounded on its lowest vertex; negative sinks it. Only needed when a
+   * dangling appendage pegs the offset and leaves the body hovering, as the
+   * kobold's tail does.
    */
   corpseGroundOffset?: number
   material?: string
@@ -47,7 +48,7 @@ export interface MonsterDefinition {
   /** Visual scale multiplier (default 1). Purely cosmetic — server-side
    * ranges and collision are unaffected. */
   scale?: number
-  /** Dungeon boss: shows a nameplate and elite ground ring on the client. */
+  /** Dungeon boss: shows a nameplate on the client. */
   boss?: boolean
   /** Optional weapon item id, or legacy model path relative to /models/. */
   weapon?: string

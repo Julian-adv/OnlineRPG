@@ -2,6 +2,7 @@
   import { T } from '@threlte/core'
   import TextLabel from './TextLabel.svelte'
   import { truncateGraphemes } from '../utils/textWrap'
+  import { billboardScale, billboardZoomT } from '../utils/billboardScale'
   import type { Vector3 } from 'three'
   import * as THREE from 'three'
 
@@ -44,24 +45,12 @@
     _scratchVec.set(position.x, position.y + 2.0, position.z)
     const dist = camera.position.distanceTo(_scratchVec)
 
-    // Min distance (zoom in) = 5
-    // Max distance (zoom out) = 20
-    const minDist = 5
-    const maxDist = 20
-
-    // Scale: 0.5 to 1.0
-    const minScale = 0.5
-    const maxScale = 1.0
-
-    // Height: 2.4 to 3.7 (Nametag is 1.8 to 2.2)
     const minHeight = 1.9
     const maxHeight = 2.6
 
-    let t = (dist - minDist) / (maxDist - minDist)
-    t = Math.max(0, Math.min(1, t)) // Clamp between 0 and 1
-
-    const currentScale = minScale + t * (maxScale - minScale)
-    const heightOffset = minHeight + t * (maxHeight - minHeight)
+    const currentScale = billboardScale(dist)
+    const heightOffset =
+      minHeight + billboardZoomT(dist) * (maxHeight - minHeight)
 
     bubbleGroup.scale.set(currentScale, currentScale, currentScale)
     bubbleGroup.position.set(position.x, position.y + heightOffset, position.z)

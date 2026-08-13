@@ -13,6 +13,7 @@
   import { getMonsterDef } from '../data/monsterDefs'
   import { getItemDef } from '../data/itemDefs'
   import { computeCorpseGroundOffset } from '../utils/characterAnimationUtils'
+  import { billboardScale } from '../utils/billboardScale'
 
   interface Props {
     position: { x: number; y: number; z: number }
@@ -267,17 +268,16 @@
       }
     }
 
-    // Update nametag to face camera, with the same distance-based scale as
-    // player nametags (PlayerModel.update).
+    // Update nametag to face camera
     if (camera && nametagGroup) {
       nametagGroup.position.set(
         position.x,
         position.y + nametagHeight,
         position.z
       )
-      const dist = camera.position.distanceTo(nametagGroup.position)
-      const t = Math.max(0, Math.min(1, (dist - 5) / 15))
-      const s = 0.5 + t * 0.5
+      const s = billboardScale(
+        camera.position.distanceTo(nametagGroup.position)
+      )
       nametagGroup.scale.set(s, s, s)
       nametagGroup.quaternion.copy(camera.quaternion)
     }
@@ -417,7 +417,6 @@
     <TextLabel
       text={initialDef?.name ?? type}
       fontSize={0.3}
-      iconSrc="/icons/horned-monster-02-oni-mask.svg"
       color="#ffd166"
       outlineColor="#422d00"
       outlineWidth={5}

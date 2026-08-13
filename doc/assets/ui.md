@@ -1,9 +1,5 @@
 # UI Assets
 
-## Boss marker
-
-- `client/public/icons/horned-monster-02-oni-mask.svg` — original OpenMMO vector asset provided by the project owner, 2026-08-13; project-owned. Drawn left of boss nameplates (TextLabel `iconSrc`).
-
 ## Icon
 
 - https://icon-sets.iconify.design/fa6-solid/people-group/

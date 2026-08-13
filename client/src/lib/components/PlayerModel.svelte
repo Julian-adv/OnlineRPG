@@ -59,6 +59,7 @@
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
   import { MUSIC_EMOTE_ANIM, ONE_SHOT_EMOTE_ANIMS } from '../stores/emoteStore'
+  import { billboardScale, billboardZoomT } from '../utils/billboardScale'
 
   interface Props {
     position: Vector3
@@ -843,24 +844,11 @@
       _nametagPos.set(position.x, position.y + 2.2, position.z)
       const dist = camera.position.distanceTo(_nametagPos)
 
-      // Min distance (zoom in) = 5
-      // Max distance (zoom out) = 20
-      const minDist = 5
-      const maxDist = 20
-
-      // Scale: 0.5 to 1.0
-      const minScale = 0.5
-      const maxScale = 1.0
-
-      // Height: 2.3 to 2.7
       const minHeight = 2.0
       const maxHeight = 2.5
 
-      let t = (dist - minDist) / (maxDist - minDist)
-      t = Math.max(0, Math.min(1, t)) // Clamp between 0 and 1
-
-      nametagScale = minScale + t * (maxScale - minScale)
-      nametagHeight = minHeight + t * (maxHeight - minHeight)
+      nametagScale = billboardScale(dist)
+      nametagHeight = minHeight + billboardZoomT(dist) * (maxHeight - minHeight)
 
       // Update nametag group transform
       nametagGroup.position.set(
