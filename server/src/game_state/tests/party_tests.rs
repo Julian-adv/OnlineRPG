@@ -1827,9 +1827,9 @@ async fn kill_xp_splits_with_nearby_member() {
 
     kill_monster(&game_state, "alice", "prey").await;
 
-    // 10 * 1.15 = 11 total, floored equal split: 5 each, killer included.
-    assert_eq!(xp_gains(&mut alice_rx), [5]);
-    assert_eq!(xp_gains(&mut bob_rx), [5]);
+    // 10 * 1.25 = 12 total, floored equal split: 6 each, killer included.
+    assert_eq!(xp_gains(&mut alice_rx), [6]);
+    assert_eq!(xp_gains(&mut bob_rx), [6]);
 }
 
 #[tokio::test]
@@ -1857,10 +1857,10 @@ async fn kill_xp_three_way_split() {
 
     kill_monster(&game_state, "alice", "prey").await;
 
-    // 10 * 1.30 = 13 total, floored equal split: 4 each, killer included.
-    assert_eq!(xp_gains(&mut alice_rx), [4]);
-    assert_eq!(xp_gains(&mut bob_rx), [4]);
-    assert_eq!(xp_gains(&mut carol_rx), [4]);
+    // 10 * 1.50 = 15 total, floored equal split: 5 each, killer included.
+    assert_eq!(xp_gains(&mut alice_rx), [5]);
+    assert_eq!(xp_gains(&mut bob_rx), [5]);
+    assert_eq!(xp_gains(&mut carol_rx), [5]);
 }
 
 #[tokio::test]

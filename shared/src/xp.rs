@@ -7,9 +7,10 @@ pub fn monster_xp(level: u8, guard: u8) -> u32 {
     base + guard_bonus
 }
 
-/// Party XP bonus: +15% of the monster's XP per eligible member beyond
-/// the first, applied to the pooled total before the split.
-pub const PARTY_XP_BONUS_PER_EXTRA_PERCENT: u64 = 15;
+/// Party XP bonus: +25% of the monster's XP per eligible member beyond
+/// the first, applied to the pooled total before the split. A full
+/// 5-member party pools exactly double the solo award.
+pub const PARTY_XP_BONUS_PER_EXTRA_PERCENT: u64 = 25;
 
 /// XZ distance from the dying monster within which a living, same-floor
 /// party member shares the kill XP. Sized to cover one hunting ground
@@ -182,14 +183,14 @@ mod tests {
 
     #[test]
     fn party_share_three_members_orc() {
-        // 17 * 1.30 = 22 -> 7 each, remainder dropped.
-        assert_eq!(party_xp_share(17, 3), 7);
+        // 17 * 1.50 = 25 -> 8 each, remainder dropped.
+        assert_eq!(party_xp_share(17, 3), 8);
     }
 
     #[test]
     fn party_share_full_party_boss() {
-        // 107 * 1.60 = 171 -> 34 each.
-        assert_eq!(party_xp_share(107, 5), 34);
+        // 107 * 2.00 = 214 -> 42 each.
+        assert_eq!(party_xp_share(107, 5), 42);
     }
 
     #[test]
