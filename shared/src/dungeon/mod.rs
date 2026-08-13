@@ -43,8 +43,8 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::pathfinding::{
-    PassabilityCache, RuntimeFloorGrid, RuntimePassability, StairwellInfo, EDGE_E, EDGE_N, EDGE_S,
-    EDGE_W,
+    PassabilityCache, RuntimeFloorGrid, RuntimePassability, StairwellInfo, DIRS, EDGE_E, EDGE_N,
+    EDGE_S, EDGE_W,
 };
 use crate::world::Position;
 
@@ -208,8 +208,8 @@ pub struct SpawnSpec {
 /// Clutter prop dropped into a room. Every kind but [`PropKind::TorchWall`]
 /// becomes a 1×1 collision pillar in the passability grid (see
 /// [`floor_passability_cells_full`]), so a mover routes around it and a path
-/// can never end on its cell — unlike the treasure chest, which carries no
-/// collision. Breaking a barrel or crate opens its cell again. The string
+/// can never end on its cell (the treasure chest is sealed the same way).
+/// Breaking a barrel or crate opens its cell again. The string
 /// variants match the object-catalog ids (`barrel`/`crate`/`chest`/`torch_wall`)
 /// the client loads the GLB for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -221,6 +221,14 @@ pub enum PropKind {
     /// Wall-mounted torch: hangs on a room's north or east wall (one per room).
     /// Never spawned by [`PropKind`] clutter rolls — placed by its own pass.
     TorchWall,
+}
+
+impl PropKind {
+    /// Wall torches hang high on the wall, not on the floor; every other kind
+    /// seals its cell.
+    pub fn is_solid(self) -> bool {
+        !matches!(self, PropKind::TorchWall)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -250,11 +258,11 @@ pub struct FloorLayout {
     pub up_shaft: StairShaft,
     /// Shaft descending to the next floor; `None` on the final floor.
     pub down_shaft: Option<StairShaft>,
-    /// Treasure chest cell, only on the final floor.
+    /// Treasure chest cell, only on the final floor. A 1×1 collision pillar
+    /// like the clutter props, so players walk up to it instead of through it.
     pub chest: Option<(i32, i32)>,
     pub spawns: Vec<SpawnSpec>,
-    /// Decorative barrels/crates/chests clustered in room corners. Cosmetic
-    /// only (no collision) — see [`PropSpec`].
+    /// Barrels/crates/chests clustered in room corners — see [`PropSpec`].
     pub props: Vec<PropSpec>,
 }
 
@@ -267,6 +275,29 @@ impl FloorLayout {
     /// that no room's rect reaches.
     pub fn room_at(&self, x: i32, z: i32) -> Option<&Room> {
         self.rooms.iter().find(|r| r.contains(x, z))
+    }
+
+    /// Cells a mover can stand in beside `cell` — carved, no solid prop on
+    /// them. Where you wait to open or smash whatever seals `cell`.
+    pub fn approach_cells(&self, cell: (i32, i32)) -> impl Iterator<Item = (i32, i32)> + '_ {
+        DIRS.into_iter()
+            .map(move |(dx, dz)| (cell.0 + dx, cell.1 + dz))
+            .filter(|&(x, z)| {
+                self.is_carved(x, z)
+                    && !self
+                        .props
+                        .iter()
+                        .any(|p| (p.x, p.z) == (x, z) && p.kind.is_solid())
+            })
+    }
+
+    /// Where a mover stands to reach `cell`: the cell itself, unless the chest
+    /// seals it for good — then a neighbour.
+    pub fn stand_cell(&self, cell: (i32, i32)) -> (i32, i32) {
+        if self.chest != Some(cell) {
+            return cell;
+        }
+        self.approach_cells(cell).next().unwrap_or(cell)
     }
 
     /// Pick a walkable world position to drop loot near a monster's death
@@ -556,7 +587,7 @@ pub fn floor_passability_cells(layout: &FloorLayout) -> Vec<u8> {
 }
 
 /// OR an edge bit into a floor cell, ignoring out-of-grid coordinates. Shared by
-/// the shaft-walling and door-sealing passes, both of which seal grid boundaries.
+/// every sealing pass below (shafts, props, chest, doors).
 fn or_edge_bit(cells: &mut [u8], x: i32, z: i32, bit: u8) {
     if (0..GRID).contains(&x) && (0..GRID).contains(&z) {
         cells[(x + z * GRID) as usize] |= bit;
@@ -695,17 +726,14 @@ fn floor_passability_cells_inner(
     // their own, so `roll_props` runs a reachability backstop (with each prop's
     // seal applied here) and rejects any prop that would close a route.
     for (i, p) in layout.props.iter().enumerate() {
-        if broken.contains(&(i as u32)) {
-            continue;
+        if p.kind.is_solid() && !broken.contains(&(i as u32)) {
+            or_edge_bit(&mut cells, p.x, p.z, EDGE_ALL);
         }
-        // Wall torches hang high on the wall, not on the floor — they're purely
-        // cosmetic and never block a player or monster.
-        if matches!(p.kind, PropKind::TorchWall) {
-            continue;
-        }
-        if p.x >= 0 && p.x < GRID && p.z >= 0 && p.z < GRID {
-            cells[(p.x + p.z * GRID) as usize] |= EDGE_ALL;
-        }
+    }
+
+    // The chest never breaks open, so its cell stays sealed for good.
+    if let Some((cx, cz)) = layout.chest {
+        or_edge_bit(&mut cells, cx, cz, EDGE_ALL);
     }
 
     // Seal shut interior doors at corridor mouths. The carve pass above leaves a

@@ -36,7 +36,6 @@
     UP_SHAFT_GROUP_NAME,
     type WallRun,
   } from '../../utils/dungeon-geometry'
-  import { INITIAL_YAW } from './camera-utils'
   import { getGhostHousingMaterial } from '../../utils/housing-textures'
   import { isoCameraOccludesPlayer } from '../../utils/iso-occlusion'
   import { passabilityDebugVisible } from '../../stores/debugStore'
@@ -488,7 +487,7 @@
 
   /** Place the final floor's treasure chest into `group`/`entries` under its
    *  sentinel id: the same animated chest GLB as the clutter chests, seated on
-   *  the chest cell, facing the iso camera so the open lid shows the inside,
+   *  the chest cell, facing south (+Z) so the open lid shows the inside,
    *  and clickable to open. The lid plays on the DungeonChestOpened broadcast;
    *  the loot the server ejects lands as pickable ground items around it. */
   async function addTreasureChest(
@@ -504,7 +503,7 @@
     const m = measureProp('chest', template)
     const clone = template.clone()
     clone.position.set(chest[0] + 0.5, m.seatY, chest[1] + 0.5)
-    clone.rotation.y = INITIAL_YAW
+    clone.rotation.y = 0
     tagInteractiveProp(clone, TREASURE_CHEST_PROP_ID, 'chest', depth, {
       openable: true,
     })
@@ -521,7 +520,7 @@
       propId: TREASURE_CHEST_PROP_ID,
       cellX: chest[0],
       cellZ: chest[1],
-      rotationDeg: (INITIAL_YAW * 180) / Math.PI,
+      rotationDeg: 0,
       broken: false,
       opened: false,
     })

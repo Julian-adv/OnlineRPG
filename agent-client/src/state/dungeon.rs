@@ -130,7 +130,10 @@ impl SharedState {
                         .iter()
                         .enumerate()
                         .map(|(i, room)| {
-                            let c = cell_center(&d.entrance, depth, room.center());
+                            // The final room's center holds the sealed chest;
+                            // name a cell the agent can walk onto.
+                            let c =
+                                cell_center(&d.entrance, depth, layout.stand_cell(room.center()));
                             format!(
                                 "room {} center ({:.1}, {:.1}) {}x{}m{}",
                                 i + 1,

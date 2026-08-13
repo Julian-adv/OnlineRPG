@@ -55,8 +55,9 @@ export interface DungeonSpawn {
   isBoss: boolean
 }
 
-/** Decorative room clutter (matches shared PropSpec). Cosmetic only — no
- *  collision, like the treasure chest. `kind` is an object-catalog id. */
+/** Room clutter (matches shared PropSpec). Every kind but `torch_wall` is a
+ *  1×1 collision pillar, as is the treasure chest. `kind` is an object-catalog
+ *  id. */
 export interface DungeonProp {
   x: number
   z: number

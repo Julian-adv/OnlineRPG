@@ -27,19 +27,8 @@ fn declared_floor_tracks_height() {
 #[test]
 fn a_sighted_chest_is_approached_from_a_cell_a_path_can_reach() {
     let (mut s, dungeon, _rx) = dungeon_state();
-    let depth = dungeon.max_depth();
-    let layout = dungeon.layouts().last().unwrap();
-    let cell = layout.chest.unwrap();
-    let room = layout.room_at(cell.0, cell.1).unwrap();
-    let stand = onlinerpg_shared::dungeon::cell_center(&dungeon.entrance, depth, room.center());
+    let depth = in_the_chest_room(&mut s, &dungeon);
     let floor = dungeon.passability_floor(depth);
-
-    s.self_floor_level = -(depth as i8);
-    s.self_player = Some(Player {
-        position: stand,
-        floor_level: -(depth as i8),
-        ..test_player(stand.x, stand.z)
-    });
 
     let chests = s.chests_in_sight();
     assert!(

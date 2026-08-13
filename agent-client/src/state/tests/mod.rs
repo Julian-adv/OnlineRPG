@@ -161,7 +161,7 @@ fn in_the_chest_room(s: &mut SharedState, dungeon: &crate::dungeon::Dungeon) -> 
     let layout = dungeon.layouts().last().unwrap();
     let cell = layout.chest.unwrap();
     let room = layout.room_at(cell.0, cell.1).unwrap();
-    stand_at(s, dungeon, depth, room.center());
+    stand_at(s, dungeon, depth, layout.stand_cell(room.center()));
     depth
 }
 

@@ -382,9 +382,19 @@ fn floor_reachable(
 }
 
 /// Whether every room center, the down-shaft entry, and the chest are in a
-/// reachable set produced by [`floor_reachable`].
+/// reachable set produced by [`floor_reachable`]. The chest cell is sealed for
+/// good, so it counts as reached when a neighbour is — that's where the player
+/// stands to open it.
 fn floor_targets_reachable(layout: &FloorLayout, visited: &[bool]) -> bool {
-    let reachable = |cell: (i32, i32)| visited[(cell.0 + cell.1 * GRID) as usize];
+    let visited_at =
+        |(x, z): (i32, i32)| layout.is_carved(x, z) && visited[(x + z * GRID) as usize];
+    let reachable = |cell: (i32, i32)| {
+        if layout.chest == Some(cell) {
+            layout.approach_cells(cell).any(visited_at)
+        } else {
+            visited_at(cell)
+        }
+    };
 
     for room in &layout.rooms {
         if !reachable(room.center()) {

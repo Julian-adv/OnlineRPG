@@ -164,12 +164,7 @@ impl Dungeon {
             )
             .filter_map(|(kind, cell)| {
                 let position = cell_center(&self.entrance, depth, cell);
-                let approach = match kind {
-                    ChestKind::Treasure => position,
-                    ChestKind::Prop(_) => {
-                        self.approach_cell(layout, depth, cell, pos, &walkable)?
-                    }
-                };
+                let approach = self.approach_cell(layout, depth, cell, pos, &walkable)?;
                 Some(ChestSighting {
                     kind,
                     position,
@@ -229,8 +224,8 @@ impl Dungeon {
         Some((layout, layout.room_at(px, pz)?))
     }
 
-    /// Props are 1×1 collision pillars, so A* can never route onto one: stand
-    /// in the open cell beside it, the one nearest `pos`.
+    /// Chests and props are 1×1 collision pillars, so A* can never route onto
+    /// one: stand in the open cell beside it, the one nearest `pos`.
     fn approach_cell(
         &self,
         layout: &FloorLayout,
@@ -239,10 +234,8 @@ impl Dungeon {
         pos: &Position,
         walkable: &impl Fn(&Position) -> bool,
     ) -> Option<Position> {
-        [(-1, 0), (1, 0), (0, -1), (0, 1)]
-            .into_iter()
-            .map(|(dx, dz)| (cell.0 + dx, cell.1 + dz))
-            .filter(|c| layout.is_carved(c.0, c.1))
+        layout
+            .approach_cells(cell)
             .map(|c| cell_center(&self.entrance, depth, c))
             .filter(|p| walkable(p))
             .min_by(|a, b| {
@@ -455,11 +448,10 @@ mod tests {
             .any(|c| c.kind == ChestKind::Prop(prop)));
     }
 
-    /// Every prop is a 1×1 collision pillar, so a clutter chest is opened from
-    /// a cell beside it — pathing at the chest's own cell never arrives. The
-    /// treasure chest carries no collision and is walked onto directly.
+    /// Every chest is a 1×1 collision pillar, so it is opened from a cell
+    /// beside it — pathing at the chest's own cell never arrives.
     #[test]
-    fn clutter_chests_are_approached_from_a_walkable_neighbour() {
+    fn chests_are_approached_from_a_walkable_neighbour() {
         let d = crypt();
         let (depth, _, _, stand) = chest_room(&d);
         let walkable = carved_only(&d, depth);
@@ -471,15 +463,13 @@ mod tests {
                 "{:?} is approached from an unwalkable cell",
                 sighting.kind
             );
-            match sighting.kind {
-                ChestKind::Treasure => assert_eq!(sighting.approach, sighting.position),
-                ChestKind::Prop(_) => {
-                    let gap =
-                        crate::geom::PlanarDelta::between(&sighting.approach, &sighting.position)
-                            .dist;
-                    assert!(gap > 0.0 && gap <= 1.5, "approach cell is {gap}m from it");
-                }
-            }
+            let gap =
+                crate::geom::PlanarDelta::between(&sighting.approach, &sighting.position).dist;
+            assert!(
+                gap > 0.0 && gap <= 1.5,
+                "{:?} is approached from {gap}m away",
+                sighting.kind
+            );
         }
     }
 }

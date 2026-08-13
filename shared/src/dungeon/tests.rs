@@ -256,7 +256,7 @@ fn full_descent_path_through_passability() {
             let floor = passability_floor_for_depth(f.depth);
             let goal_cell = match f.down_shaft {
                 Some(ref d) => d.entry_cell(),
-                None => f.chest.unwrap(),
+                None => f.stand_cell(f.chest.unwrap()),
             };
             let goal = cell_center(&entrance, f.depth, goal_cell);
             let res = find_and_smooth_path(
@@ -689,7 +689,7 @@ fn props_keep_rooms_reachable() {
             let floor = passability_floor_for_depth(f.depth);
             let from = cell_center(&entrance, f.depth, f.up_shaft.exit_cell());
             for room in &f.rooms {
-                let goal = cell_center(&entrance, f.depth, room.center());
+                let goal = cell_center(&entrance, f.depth, f.stand_cell(room.center()));
                 let res = find_and_smooth_path(
                     from.x,
                     from.z,
@@ -710,6 +710,22 @@ fn props_keep_rooms_reachable() {
         }
     }
     assert!(total_props > 0, "test never exercised a sealed prop");
+}
+
+/// The chest cell is sealed on every edge, like a clutter prop.
+#[test]
+fn chest_cell_is_sealed() {
+    for seed in 0..40u64 {
+        let floors = generate_dungeon(seed);
+        let last = floors.last().unwrap();
+        let (cx, cz) = last.chest.expect("final floor has a chest");
+        let cells = floor_passability_cells(last);
+        assert_eq!(
+            cells[(cx + cz * GRID) as usize] & EDGE_ALL,
+            EDGE_ALL,
+            "seed {seed}: chest cell not sealed"
+        );
+    }
 }
 
 #[test]
