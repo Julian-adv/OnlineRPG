@@ -1,5 +1,14 @@
 use super::*;
 
+/// Fold a place name for comparison: case and inner spacing carry no meaning
+/// ("orc warrens", "Orc Warrens" and "orc_warrens" are one place).
+fn normalize_place(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 impl SharedState {
     /// Ask for the door state of the dungeon we stand in. Doors default shut
     /// locally, so without this we would path around one another player left
@@ -156,19 +165,50 @@ impl SharedState {
             }
             return Some(line);
         }
-        let dungeon = self
-            .world_cache
+        // Every entrance, nearest first, whatever the distance: a dungeon the
+        // agent never sees named is one it can never ask to move to.
+        let world = self.world_cache.read().unwrap();
+        let mut named: Vec<(f32, String)> = world
+            .all_dungeons()
+            .iter()
+            .map(|d| {
+                let dist = crate::geom::PlanarDelta::between(&p.position, &d.entrance).dist;
+                (
+                    dist,
+                    format!(
+                        "Dungeon: {} entrance at ({:.0}, {:.0}), {dist:.0}m away, {} floors deep",
+                        d.name,
+                        d.entrance.x,
+                        d.entrance.z,
+                        d.max_depth()
+                    ),
+                )
+            })
+            .collect();
+        if named.is_empty() {
+            return None;
+        }
+        named.sort_by(|a, b| a.0.total_cmp(&b.0));
+        Some(
+            named
+                .into_iter()
+                .map(|(_, line)| line)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
+
+    /// Registered dungeon matching a name (or its registry id), however the
+    /// LLM cased and spaced it.
+    pub fn dungeon_named(&self, asked: &str) -> Option<Arc<Dungeon>> {
+        let key = normalize_place(asked);
+        self.world_cache
             .read()
             .unwrap()
-            .nearest_dungeon(p.position.x, p.position.z)?;
-        let dist = crate::geom::PlanarDelta::between(&p.position, &dungeon.entrance).dist;
-        Some(format!(
-            "Dungeon: {} entrance at ({:.0}, {:.0}), {dist:.0}m away, {} floors deep",
-            dungeon.name,
-            dungeon.entrance.x,
-            dungeon.entrance.z,
-            dungeon.max_depth()
-        ))
+            .all_dungeons()
+            .iter()
+            .find(|d| normalize_place(&d.name) == key || normalize_place(&d.id) == key)
+            .map(Arc::clone)
     }
 
     /// Whether a dungeon prop has already been smashed.

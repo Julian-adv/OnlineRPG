@@ -19,6 +19,7 @@ mod action;
 mod combat;
 mod execute;
 mod movement;
+mod outcome;
 mod prompt;
 
 pub(crate) use prompt::format_event;

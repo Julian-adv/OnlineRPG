@@ -928,6 +928,11 @@ impl SharedState {
         std::mem::take(&mut self.agent_events)
     }
 
+    /// Agent events pushed since a mark taken from [`Self::action_progress`].
+    pub fn agent_events_from(&self, from: usize) -> &[String] {
+        self.agent_events.get(from..).unwrap_or(&[])
+    }
+
     /// Push a synthetic agent event visible to the LLM. Synthetic events are
     /// feedback on the agent's own actions (arrival, a failed move, a kill),
     /// so they wake the LLM driver instead of waiting out the idle interval.

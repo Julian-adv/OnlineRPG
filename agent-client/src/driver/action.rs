@@ -7,7 +7,6 @@
 
 use onlinerpg_shared::ClientMessage;
 use serde::Deserialize;
-use tracing::warn;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -188,7 +187,12 @@ pub(super) enum AgentAction {
     /// Stricter than the web client: worn gear must be taken off first.
     #[serde(rename = "drop", alias = "drop_item", alias = "discard")]
     Drop {
-        #[serde(alias = "item_def_id", alias = "item_id", alias = "name")]
+        #[serde(
+            alias = "item_def_id",
+            alias = "item_id",
+            alias = "name",
+            alias = "target"
+        )]
         item: String,
         /// How many units to drop: a positive count, or "all". Defaults to 1
         /// when omitted.
@@ -273,8 +277,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ActionSpec {
         names: &["attack"],
         aliases: &[],
-        doc: r#"- Attack a monster (use the monster's ID from the world state, field name MUST be "monster_id"):
-  {"type": "attack", "monster_id": "m2_1"}"#,
+        doc: r#"- Attack a monster:
+  {"type": "attack", "target": "m2_1"}
+  You walk into range first, then strike."#,
     },
     ActionSpec {
         names: &["follow"],
@@ -289,22 +294,34 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     ActionSpec {
         names: &["move"],
         aliases: &[],
-        doc: r#"- Move. To walk up to a character (player or NPC), give their name — you
-  approach them and automatically stop at a comfortable talking distance:
+        doc: r#"- Move. To a character or a monster, giving their name or id — you approach
+  and stop at the right distance, talking distance for a person and striking
+  distance for a monster:
   {"type": "move", "target": "PlayerName"}
-  To go to a place, use exact coordinates from world state:
+  {"type": "move", "target": "m2_1"}
+  To an item lying on the ground, so you can pick it up:
+  {"type": "move", "target": 6043}
+  To a place, using exact coordinates from the world state:
   {"type": "move", "x": 10.0, "y": 0.0, "z": -5.0}
-  Or move by direction and distance:
+  Or by direction and distance:
   {"type": "move", "direction": "north", "distance": 10.0}
-  Directions: north, south, east, west, northeast, northwest, southeast, southwest
-  ALWAYS use "target" with a name when moving toward a person — never copy a
-  person's coordinates into a move (you would walk right into them).
-  To go into a dungeon, name the floor you want with "depth" — 1 is the first
-  floor below ground, and you walk to the entrance and down the stairs on your
-  own, opening any doors in the way:
+  Directions are exactly these eight words: north, south, east, west,
+  northeast, northwest, southeast, southwest. Any other word fails and you
+  stay where you are.
+  Never copy a character's coordinates into a move — use their name, or you
+  walk right into them.
+
+- Go into a dungeon. The world state names each entrance and how far away it
+  is. Name the dungeon and the floor you want with "depth" — 1 is the first
+  floor below ground — and you walk to the entrance and down the stairs on
+  your own, opening any doors in the way:
+  {"type": "move", "target": "Old Crypt", "depth": 1}
+  Without a depth you walk to the entrance and stop outside:
+  {"type": "move", "target": "Old Crypt"}
+  Without a name the nearest dungeon is used:
   {"type": "move", "depth": 1}
-  Deeper floors hold stronger monsters, so descend one floor at a time and only
-  while you can still win your fights. To come back up to the surface:
+  Deeper floors hold stronger monsters, so descend one floor at a time and
+  only while you can still win your fights. To come back up to the surface:
   {"type": "move", "depth": 0}"#,
     },
     ActionSpec {
@@ -343,7 +360,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   a scroll, eat food. Name it as it appears in your bag. Using gear you
   already wear takes it off; wearing a torch is how you light your way at
   night:
-  {"type": "use", "item": "worn_torch"}"#,
+  {"type": "use", "target": "worn_torch"}"#,
     },
     ActionSpec {
         names: &["pickup"],
@@ -351,7 +368,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         doc: r#"- Pick up an item lying on the ground into your bag. You walk over to it
   first, like a web player clicking it. Give the id shown in the world
   state ("Item on ground: ... [id 6043]"), or its name:
-  {"type": "pickup", "item": 6043}
+  {"type": "pickup", "target": 6043}
   The world state marks who put an item down ("dropped by Mira"); a
   [GroundItem] event tells you when someone collects such an item, and an
   item that is no longer listed is gone — don't reach for bare ground."#,
@@ -365,7 +382,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   Plain form opens the nearest one:
   {"type": "open_chest"}
   To cross the room to the great chest instead of the small one at your feet:
-  {"type": "open_chest", "chest": "great"}"#,
+  {"type": "open_chest", "target": "great"}"#,
     },
     ActionSpec {
         names: &["sell"],
@@ -377,8 +394,8 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   unit you have. Selling more than you actually own fails outright —
   nothing is sold. Equipped gear must be taken off before selling:
   {"type": "sell", "item": "goblin_sword"}
-  {"type": "sell", "item": "healing_potion", "merchant": "Rica", "qty": 5}
-  {"type": "sell", "item": "healing_potion", "merchant": "Rica", "qty": "all"}"#,
+  {"type": "sell", "item": "healing_potion", "target": "Rica", "qty": 5}
+  {"type": "sell", "item": "healing_potion", "target": "Rica", "qty": "all"}"#,
     },
     ActionSpec {
         names: &["buy"],
@@ -388,7 +405,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   nearby merchant sells is listed under their name in the world state.
   Naming the merchant is optional — without one you buy from the nearest.
   One unit per action — repeat for more:
-  {"type": "buy", "item": "healing_potion", "merchant": "Rica"}"#,
+  {"type": "buy", "item": "healing_potion", "target": "Rica"}"#,
     },
     ActionSpec {
         names: &["drop"],
@@ -398,9 +415,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   Defaults to 1 unit; add "qty" for more, or "qty": "all" to drop every
   unit you have. Dropping more than you actually own fails outright —
   nothing is dropped:
-  {"type": "drop", "item": "goblin_sword"}
-  {"type": "drop", "item": "old_boot", "qty": 2}
-  {"type": "drop", "item": "old_boot", "qty": "all"}"#,
+  {"type": "drop", "target": "goblin_sword"}
+  {"type": "drop", "target": "old_boot", "qty": 2}
+  {"type": "drop", "target": "old_boot", "qty": "all"}"#,
     },
     ActionSpec {
         names: &["buyback"],
@@ -408,7 +425,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         doc: r#"- Buy back one item you sold to that merchant this session, for exactly
   what they paid you (undo a mis-sell). The [Buyback] event after each
   sale lists what they still hold:
-  {"type": "buyback", "item": "iron_sword", "merchant": "Rica"}"#,
+  {"type": "buyback", "item": "iron_sword", "target": "Rica"}"#,
     },
     ActionSpec {
         names: &["offer_deal"],
@@ -417,14 +434,14 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   haggle. "kind" is "buy" (they buy from you, the default) or "sell" (they
   sell to you); "modifier_pct" moves the price by that many percent, so a
   negative number is a discount. The server clamps and validates the offer:
-  {"type": "offer_deal", "player": "darkcocoa", "item": "healing_potion", "kind": "buy", "modifier_pct": -10}"#,
+  {"type": "offer_deal", "target": "darkcocoa", "item": "healing_potion", "kind": "buy", "modifier_pct": -10}"#,
     },
     ActionSpec {
         names: &["open_trade"],
         aliases: &["trade"],
         doc: r#"- (merchants only) Open your trade window on a nearby player's screen —
   how you move from talk to an actual trade:
-  {"type": "open_trade", "player": "darkcocoa"}"#,
+  {"type": "open_trade", "target": "darkcocoa"}"#,
     },
     ActionSpec {
         names: &["break_prop"],
@@ -432,7 +449,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         doc: r#"- Smash a breakable dungeon prop (barrel or crate). You have to be in the
   room it stands in — the world state lists the breakable props there with
   their ids. You walk to it first, and smashing opens its cell for movement:
-  {"type": "break_prop", "prop_id": 3}"#,
+  {"type": "break_prop", "target": 3}"#,
     },
     ActionSpec {
         names: &["party_invite"],
@@ -440,7 +457,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         doc: r#"- Invite a player to your party by name. Works at any distance, like a
   whisper; they get 30 seconds to answer. Your roster shows in the world
   state ("Your party: ..."):
-  {"type": "party_invite", "player": "darkcocoa"}"#,
+  {"type": "party_invite", "target": "darkcocoa"}"#,
     },
     ActionSpec {
         names: &["party_accept", "party_decline"],
@@ -449,7 +466,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   their party; a party hunts and travels together. With several invites
   pending, name the inviter — bare answers the oldest:
   {"type": "party_accept"}
-  {"type": "party_decline", "player": "darkcocoa"}"#,
+  {"type": "party_decline", "target": "darkcocoa"}"#,
     },
     ActionSpec {
         names: &["summon_accept", "summon_decline"],
@@ -459,7 +476,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   moves you there instantly; you cannot accept mid-combat. With several
   pending, name the caster — bare answers the oldest:
   {"type": "summon_accept"}
-  {"type": "summon_decline", "player": "darkcocoa"}"#,
+  {"type": "summon_decline", "target": "darkcocoa"}"#,
     },
     ActionSpec {
         names: &["party_say"],
@@ -483,10 +500,10 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
     },
 ];
 
-/// The "Available action types" section of the system prompt, rendered from
+/// The "=== ACTIONS ===" section of the system prompt, rendered from
 /// `ACTION_SPECS`. Fills the `{{ACTIONS}}` slot in `load_system_prompt`.
 pub(super) fn action_reference() -> String {
-    let mut out = String::from("Available action types (use EXACTLY these field names):\n");
+    let mut out = String::from("=== ACTIONS ===\n");
     for spec in ACTION_SPECS {
         out.push('\n');
         out.push_str(spec.doc.trim_end());
@@ -535,6 +552,68 @@ impl AgentAction {
     /// and respawning keep it where it is, so they stay allowed.
     pub(super) fn blocked_while_holding_position(&self) -> bool {
         self.takes_over_movement() && !matches!(self, Self::Fish { .. } | Self::Respawn)
+    }
+
+    /// Whether the action needs no additional outcome event.
+    pub(super) fn outcome_speaks_for_itself(&self) -> bool {
+        match self {
+            Self::Say { .. } | Self::PartySay { .. } | Self::Wait => true,
+            Self::Move { .. }
+            | Self::Attack { .. }
+            | Self::Follow { .. }
+            | Self::Pickup { .. }
+            | Self::OpenChest { .. }
+            | Self::BreakProp { .. }
+            | Self::Sell { .. }
+            | Self::Buy { .. }
+            | Self::Buyback { .. }
+            | Self::Fish { .. }
+            | Self::StopFishing
+            | Self::Respawn
+            | Self::OfferDeal { .. }
+            | Self::OpenTrade { .. }
+            | Self::PartyInvite { .. }
+            | Self::PartyAccept { .. }
+            | Self::PartyDecline { .. }
+            | Self::SummonAccept { .. }
+            | Self::SummonDecline { .. }
+            | Self::PartyLeave
+            | Self::Use { .. }
+            | Self::Drop { .. }
+            | Self::Reroll => false,
+        }
+    }
+
+    /// The action name used in feedback.
+    pub(super) fn label(&self) -> &'static str {
+        match self {
+            Self::Say { .. } => "say",
+            Self::Attack { .. } => "attack",
+            Self::Move { .. } => "move",
+            Self::Follow { .. } => "follow",
+            Self::Respawn => "respawn",
+            Self::Fish { .. } => "fish",
+            Self::StopFishing => "stop_fishing",
+            Self::OfferDeal { .. } => "offer_deal",
+            Self::OpenTrade { .. } => "open_trade",
+            Self::PartyInvite { .. } => "party_invite",
+            Self::PartyAccept { .. } => "party_accept",
+            Self::PartyDecline { .. } => "party_decline",
+            Self::SummonAccept { .. } => "summon_accept",
+            Self::SummonDecline { .. } => "summon_decline",
+            Self::PartyLeave => "party_leave",
+            Self::PartySay { .. } => "party_say",
+            Self::Use { .. } => "use",
+            Self::Pickup { .. } => "pickup",
+            Self::Sell { .. } => "sell",
+            Self::Buy { .. } => "buy",
+            Self::Drop { .. } => "drop",
+            Self::Buyback { .. } => "buyback",
+            Self::BreakProp { .. } => "break_prop",
+            Self::OpenChest { .. } => "open_chest",
+            Self::Reroll => "reroll",
+            Self::Wait => "wait",
+        }
     }
 }
 
@@ -754,8 +833,24 @@ fn normalize_move_targets(value: &mut serde_json::Value) {
                 obj.entry("y").or_insert_with(|| y.into());
             }
             obj.entry("z").or_insert_with(|| z.into());
+            continue;
+        }
+        // Ids print as numbers, so LLMs write them as numbers (6043.0 after
+        // arithmetic); the resolver reads shapes off the string.
+        if let Some(n) = action.get("target").and_then(as_integer) {
+            action.as_object_mut().unwrap()["target"] = n.to_string().into();
         }
     }
+}
+
+/// A JSON number that names an id, whether the model wrote it whole or as a
+/// float. Anything with a fractional part is a coordinate, not an id.
+fn as_integer(value: &serde_json::Value) -> Option<u64> {
+    if let Some(n) = value.as_u64() {
+        return Some(n);
+    }
+    let f = value.as_f64()?;
+    (f.fract() == 0.0 && f >= 0.0 && f <= u64::MAX as f64).then_some(f as u64)
 }
 
 /// Extract JSON object from text that might contain markdown code blocks.
@@ -797,15 +892,26 @@ pub(super) fn resolve_move_goal(
     direction: &Option<String>,
     distance: &Option<f32>,
     player_pos: Option<&onlinerpg_shared::Position>,
-) -> Option<(f32, f32)> {
+) -> Result<(f32, f32), GoalError> {
     if let (Some(x), Some(z)) = (x, z) {
-        Some((*x, *z))
+        Ok((*x, *z))
     } else if let (Some(dir), Some(dist), Some(pp)) = (direction.as_deref(), distance, player_pos) {
-        let (dx, dz) = direction_to_offset(dir);
-        Some((pp.x + dx * dist, pp.z + dz * dist))
+        let (dx, dz) =
+            direction_to_offset(dir).ok_or_else(|| GoalError::BadDirection(dir.into()))?;
+        Ok((pp.x + dx * dist, pp.z + dz * dist))
     } else {
-        None
+        Err(GoalError::NoGoal)
     }
+}
+
+/// Why a move carried no usable destination.
+#[derive(Debug, PartialEq)]
+pub(super) enum GoalError {
+    /// A direction word that names no direction. Not guessed at — see
+    /// [`direction_to_offset`].
+    BadDirection(String),
+    /// Nothing to go on: no coordinate pair, no direction with a distance.
+    NoGoal,
 }
 
 /// Convert an AgentAction into a ClientMessage for the game server.
@@ -838,7 +944,7 @@ pub(super) fn action_to_command(
             if target.is_some() || depth.is_some() {
                 return None;
             }
-            let (gx, gz) = resolve_move_goal(x, z, direction, distance, player_pos)?;
+            let (gx, gz) = resolve_move_goal(x, z, direction, distance, player_pos).ok()?;
             let rotation = if let Some(pp) = player_pos {
                 (gx - pp.x).atan2(gz - pp.z)
             } else {
@@ -907,8 +1013,10 @@ pub(super) fn action_to_command(
 }
 
 /// Convert a cardinal/ordinal direction string to a (dx, dz) unit offset.
-fn direction_to_offset(dir: &str) -> (f32, f32) {
-    match dir.to_lowercase().as_str() {
+/// `None` for anything else: guessing north sent the agent walking the wrong
+/// way with nothing in the transcript to explain it.
+pub(super) fn direction_to_offset(dir: &str) -> Option<(f32, f32)> {
+    Some(match dir.trim().to_lowercase().as_str() {
         "north" | "n" => (0.0, -1.0),
         "south" | "s" => (0.0, 1.0),
         "east" | "e" => (1.0, 0.0),
@@ -917,11 +1025,8 @@ fn direction_to_offset(dir: &str) -> (f32, f32) {
         "northwest" | "nw" => (-0.707, -0.707),
         "southeast" | "se" => (0.707, 0.707),
         "southwest" | "sw" => (-0.707, 0.707),
-        _ => {
-            warn!("Unknown direction '{dir}', defaulting to north");
-            (0.0, -1.0)
-        }
-    }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -1325,6 +1430,7 @@ mod tests {
             r#"{"actions": [{"type": "drop", "item": "torch"}]}"#,
             r#"{"actions": [{"type": "drop_item", "item_def_id": "torch"}]}"#,
             r#"{"actions": [{"type": "discard", "name": "torch"}]}"#,
+            r#"{"actions": [{"type": "drop", "target": "torch"}]}"#,
         ] {
             let AgentAction::Drop { item, .. } = parse_single_action(json) else {
                 panic!("expected Drop for {json}");
@@ -1636,8 +1742,14 @@ mod tests {
                     spec.names.contains(&tag),
                     "example sits under the wrong doc block: {line}"
                 );
-                serde_json::from_value::<AgentAction>(value)
-                    .unwrap_or_else(|e| panic!("doc example no longer parses: {line}\n{e}"));
+                // The whole turn parser, not bare serde: normalising numeric
+                // ids is part of reading a turn.
+                let turn = parse_turn_tolerant(&format!(r#"{{"actions": [{line}]}}"#)).unwrap();
+                assert!(
+                    turn.errors.is_empty(),
+                    "doc example no longer parses: {line}\n{:?}",
+                    turn.errors
+                );
             }
         }
     }
@@ -1652,5 +1764,93 @@ mod tests {
             text.contains("{{ACTIONS}}"),
             "data/system_prompt.txt lost its {{{{ACTIONS}}}} slot"
         );
+    }
+
+    /// Ground item ids print as numbers, so LLMs write them as numbers. They
+    /// reach the resolver as the string it reads shapes off.
+    #[test]
+    fn a_numeric_move_target_survives_as_a_string() {
+        // A model that did arithmetic writes 6043.0, and a number left where a
+        // string belongs loses the whole response, not just this action.
+        for json in [
+            r#"{"actions": [{"type": "move", "target": 6043}]}"#,
+            r#"{"actions": [{"type": "move", "target": 6043.0}]}"#,
+        ] {
+            let AgentAction::Move { target, x, z, .. } = parse_single_action(json) else {
+                panic!("expected Move for {json}");
+            };
+            assert_eq!(target.as_deref(), Some("6043"));
+            assert_eq!((x, z), (None, None));
+        }
+    }
+
+    /// The eight compass words, however the LLM abbreviates or pads them.
+    #[test]
+    fn the_compass_words_resolve() {
+        assert_eq!(direction_to_offset("north"), Some((0.0, -1.0)));
+        assert_eq!(direction_to_offset(" EAST "), Some((1.0, 0.0)));
+        assert_eq!(direction_to_offset("sw"), Some((-0.707, 0.707)));
+    }
+
+    /// Anything else stops the move. Guessing north walked the agent the
+    /// wrong way with nothing in the transcript to explain it.
+    #[test]
+    fn a_word_that_is_not_a_direction_is_not_guessed_at() {
+        for junk in ["forward", "up", "left", "왼쪽", ""] {
+            assert_eq!(direction_to_offset(junk), None, "{junk}");
+        }
+
+        let pos = onlinerpg_shared::Position {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        assert_eq!(
+            resolve_move_goal(
+                &None,
+                &None,
+                &Some("forward".to_string()),
+                &Some(10.0),
+                Some(&pos)
+            ),
+            Err(GoalError::BadDirection("forward".to_string()))
+        );
+    }
+
+    /// Only speech and waiting report themselves; everything else owes the
+    /// LLM an outcome. A miscategorised action silently loses its feedback.
+    #[test]
+    fn only_speech_and_waiting_report_themselves() {
+        for quiet in [
+            AgentAction::Say {
+                message: "hi".to_string(),
+            },
+            AgentAction::PartySay {
+                message: "hi".to_string(),
+            },
+            AgentAction::Wait,
+        ] {
+            assert!(quiet.outcome_speaks_for_itself(), "{quiet:?}");
+        }
+        for owes in [
+            AgentAction::Move {
+                target: None,
+                x: Some(1.0),
+                y: None,
+                z: Some(2.0),
+                direction: None,
+                distance: None,
+                depth: None,
+            },
+            AgentAction::Attack {
+                monster_id: "m2_1".to_string(),
+            },
+            AgentAction::Use {
+                item: "torch".to_string(),
+            },
+            AgentAction::PartyLeave,
+        ] {
+            assert!(!owes.outcome_speaks_for_itself(), "{owes:?}");
+        }
     }
 }

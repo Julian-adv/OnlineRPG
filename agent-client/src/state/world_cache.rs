@@ -65,7 +65,8 @@ impl WorldCache {
         self.dungeons.iter().find(|d| d.id == id).map(Arc::clone)
     }
 
-    /// Every registered dungeon — the watch panel draws their entrances.
+    /// Every registered dungeon: the watch panel draws their entrances, and
+    /// name resolution and the world-state listing read it.
     pub fn all_dungeons(&self) -> &[Arc<Dungeon>] {
         &self.dungeons
     }
