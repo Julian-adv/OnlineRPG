@@ -626,6 +626,30 @@ async fn teleport_clears_pending_move_intent() {
     assert_eq!(player_x(&game_state, &player_id).await, 5.0);
 }
 
+/// A NaN position would poison the SQLite save batch for every player.
+#[tokio::test]
+async fn teleport_rejects_non_finite_position() {
+    let game_state = make_test_game_state("movement_teleport_non_finite");
+    let player_id = pid("gm");
+    game_state.add_player(make_player("gm", 3.0, 4.0)).await;
+
+    for bad_x in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        game_state
+            .teleport_player(
+                &player_id,
+                Position {
+                    x: bad_x,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                0.0,
+                0,
+            )
+            .await;
+        assert_eq!(player_x(&game_state, &player_id).await, 3.0);
+    }
+}
+
 #[tokio::test]
 async fn rejected_far_move_snaps_client_back() {
     let game_state = make_test_game_state("movement_far_reject_snap");

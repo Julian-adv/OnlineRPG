@@ -12,11 +12,30 @@ import {
   riverWireframeVisible,
   shoreWaveDebugVisible,
   passabilityDebugVisible,
+  teleportLoading,
 } from './stores/debugStore'
+import { wrapWorldX } from './terrain/world-wrap'
 import { computeGrassPlacement, regenerateVegMeta } from './utils/grass-data'
+import { parseTpArgs, resolveTpDestination } from './utils/tp-args'
+import { tpDestinations } from './utils/tp-destinations'
+
 import { dungeonManager } from './managers/dungeonManager'
 import { chatChannel } from './stores/chatChannelStore'
 import { partyRoster } from './stores/partyStore'
+
+function teleportTo(x: number, y: number, z: number) {
+  const wrappedX = wrapWorldX(x)
+  gameStore.update((state) => {
+    state.currentPlayer?.position.set(wrappedX, y, z)
+    return state
+  })
+  networkManager.sendDebugTeleport({ x: wrappedX, y, z })
+  teleportLoading.set(true)
+  addChatMessage({
+    text: `Teleport: moving to (${wrappedX.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`,
+    sender: 'system',
+  })
+}
 
 /** Every command lives here once: its `/help` line, whether it is admin-only,
  *  and who executes it. */
@@ -141,6 +160,51 @@ const COMMANDS: Record<string, Command> = {
       } else {
         addChatMessage({ text: 'Position: unknown', sender: 'system' })
       }
+    },
+  },
+
+  '/tp': {
+    desc: 'Teleport: /tp <x> <z> [y] or /tp <name|number>; bare /tp lists destinations',
+    admin: true,
+    run: (args) => {
+      const trimmed = args.trim()
+      if (!trimmed) {
+        addChatMessage({
+          text: 'Teleport destinations — /tp <name|number>, or /tp <x> <z> [y]:',
+          sender: 'system',
+        })
+        for (const [i, d] of tpDestinations().entries()) {
+          addChatMessage({
+            text: `${i + 1}. ${d.name} — ${d.label}`,
+            sender: 'system',
+          })
+        }
+        return
+      }
+
+      const parts = trimmed.split(/\s+/)
+      if (parts.length === 1) {
+        const dest = resolveTpDestination(parts[0], tpDestinations())
+        if (!dest) {
+          addChatMessage({
+            text: `Teleport: unknown destination '${parts[0]}' — bare /tp lists them`,
+            sender: 'system',
+          })
+          return
+        }
+        teleportTo(dest.x, dest.y, dest.z)
+        return
+      }
+
+      const parsed = parseTpArgs(trimmed)
+      if (!parsed) {
+        addChatMessage({
+          text: 'Usage: /tp <x> <z> [y] — teleport to world coordinates (e.g. /tp -1450 4720)',
+          sender: 'system',
+        })
+        return
+      }
+      teleportTo(parsed.x, parsed.y, parsed.z)
     },
   },
 
