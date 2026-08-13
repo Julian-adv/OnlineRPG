@@ -44,6 +44,8 @@
   // hand weapon are resolved once at init from the initial type, not reactively.
   const initialDef = untrack(() => getMonsterDef(type))
   const initialModel = initialDef?.model ?? 'monsters/scp939.glb'
+  const initialScale = initialDef?.scale ?? 1
+  const isBoss = initialDef?.boss === true
   const gltf = useLoader(GLTFLoader).load(`/models/${initialModel}`)
 
   // Optional hand weapon, attached to a skeleton bone.
@@ -68,6 +70,7 @@
   let model: THREE.Group | undefined = $state(undefined)
   let group = $state<THREE.Group>()
   let nametagGroup = $state<THREE.Group | undefined>(undefined)
+  let nametagHeight = $state(2.5)
   let animDebugInfo = $state('')
   let isDeadAnimationFinished = $state(false)
   let isAttackAnimationFinished = $state(true)
@@ -264,9 +267,18 @@
       }
     }
 
-    // Update nametag to face camera
+    // Update nametag to face camera, with the same distance-based scale as
+    // player nametags (PlayerModel.update).
     if (camera && nametagGroup) {
-      nametagGroup.position.set(position.x, position.y + 2.5, position.z)
+      nametagGroup.position.set(
+        position.x,
+        position.y + nametagHeight,
+        position.z
+      )
+      const dist = camera.position.distanceTo(nametagGroup.position)
+      const t = Math.max(0, Math.min(1, (dist - 5) / 15))
+      const s = 0.5 + t * 0.5
+      nametagGroup.scale.set(s, s, s)
       nametagGroup.quaternion.copy(camera.quaternion)
     }
   }
@@ -287,6 +299,12 @@
           }
         })
 
+        if (isBoss) {
+          // Hang the nameplate just above the scaled bind-pose head.
+          const modelTop = new THREE.Box3().setFromObject(clonedScene).max.y
+          nametagHeight = modelTop * initialScale + 0.4
+        }
+
         model = clonedScene
         // Setup mixer on the cloned scene
         mixer = new THREE.AnimationMixer(clonedScene)
@@ -305,9 +323,11 @@
             // corpse onto the ground.
             if (model && !deadGroundApplied) {
               deadGroundApplied = true
+              // corpseGroundOffset is authored in world metres; de-scale it
+              // since model.position lives inside the scaled group.
               model.position.y +=
                 computeCorpseGroundOffset(model) +
-                (def?.corpseGroundOffset ?? 0)
+                (def?.corpseGroundOffset ?? 0) / initialScale
             }
           }
         })
@@ -385,7 +405,7 @@
     bind:ref={group}
     position={[position.x, position.y, position.z]}
     rotation={[0, rotation, 0]}
-    scale={[1, 1, 1]}
+    scale={[initialScale, initialScale, initialScale]}
   >
     <T is={model} castShadow receiveShadow />
   </T.Group>
@@ -393,6 +413,19 @@
 
 <!-- Name tag / Debug info -->
 <T.Group bind:ref={nametagGroup}>
+  {#if isBoss && monsterState !== 'dead'}
+    <TextLabel
+      text={initialDef?.name ?? type}
+      fontSize={0.3}
+      iconSrc="/icons/horned-monster-02-oni-mask.svg"
+      color="#ffd166"
+      outlineColor="#422d00"
+      outlineWidth={5}
+      position={[0, 0, 0]}
+      anchorX="center"
+      anchorY="bottom"
+    />
+  {/if}
   {#if animDebugInfo}
     <TextLabel
       text={id}
@@ -413,5 +446,10 @@
   {/if}
 </T.Group>
 
-<!-- Floating Damage Text -->
-<DamageText bind:this={damageTextRef} {lastDamageInfo} />
+<!-- Floating Damage Text; bosses spawn it above the nameplate so the number
+     isn't drawn behind the name (both are transparent billboards). -->
+<DamageText
+  bind:this={damageTextRef}
+  {lastDamageInfo}
+  startYOffset={isBoss ? nametagHeight + 0.3 : 1.8 * initialScale}
+/>

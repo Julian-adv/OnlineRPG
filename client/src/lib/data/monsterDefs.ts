@@ -44,6 +44,11 @@ export interface MonsterDefinition {
    * (e.g. scp939's 939_Sleeping).
    */
   deathFadeSeconds?: number
+  /** Visual scale multiplier (default 1). Purely cosmetic — server-side
+   * ranges and collision are unaffected. */
+  scale?: number
+  /** Dungeon boss: shows a nameplate and elite ground ring on the client. */
+  boss?: boolean
   /** Optional weapon item id, or legacy model path relative to /models/. */
   weapon?: string
   /** Chance from 0-1 that the weapon is dropped on death. */
