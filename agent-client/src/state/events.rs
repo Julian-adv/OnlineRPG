@@ -883,11 +883,10 @@ impl SharedState {
                 if (prev_night.is_some() && prev_night != self.is_night)
                     || (prev_hour.is_some() && prev_hour != self.game_hour)
                 {
-                    self.agent_events.push(format!(
+                    self.push_ambient_event(format!(
                         "[TimeChange] It is now {hour:02}:{minute:02} ({}).",
                         if night { "night" } else { "day" }
                     ));
-                    self.wake(EventUrgency::Routine);
                 }
                 return urgency;
             }
@@ -938,21 +937,38 @@ impl SharedState {
     /// so they wake the LLM driver instead of waiting out the idle interval.
     /// They wake it at `Routine` though: an agent's own arrival note must
     /// never outrank a human talking to some other NPC in the LLM queue.
+    /// Counts as the running action's result — anything no action caused
+    /// belongs in [`Self::push_ambient_event`] instead.
     pub fn push_agent_event(&mut self, event: String) {
-        self.push_agent_event_inner(event, true);
+        self.push_agent_event_inner(event, true, false);
     }
 
     /// Same, but without waking the driver: the event rides along with
     /// whatever prompt happens next (scenery noted in passing, not danger).
     pub fn push_agent_event_quiet(&mut self, event: String) {
-        self.push_agent_event_inner(event, false);
+        self.push_agent_event_inner(event, false, false);
     }
 
-    fn push_agent_event_inner(&mut self, event: String, wake: bool) {
+    /// An event no action of the agent caused — a clock tick, a sighting, a
+    /// tip. Kept out of `action_events_pushed`, or `settle_action` would read
+    /// it as the concurrent action's result and rob a dud of its [NoResult].
+    pub fn push_ambient_event(&mut self, event: String) {
+        self.push_agent_event_inner(event, true, true);
+    }
+
+    /// Ambient and quiet: rides along with the next prompt.
+    pub fn push_ambient_event_quiet(&mut self, event: String) {
+        self.push_agent_event_inner(event, false, true);
+    }
+
+    fn push_agent_event_inner(&mut self, event: String, wake: bool, ambient: bool) {
         if let Some(watch) = &self.watch {
             watch.push("agent", event.clone());
         }
         self.agent_events.push(event);
+        if !ambient {
+            self.action_events_pushed += 1;
+        }
         if wake {
             self.wake(EventUrgency::Routine);
         }

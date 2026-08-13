@@ -68,7 +68,7 @@ impl SharedState {
 
         for (pid, event) in arrived {
             self.seen_nearby_players.insert(pid);
-            self.agent_events.push(event);
+            self.push_ambient_event_quiet(event);
             // A person arriving, not our own bookkeeping — urgent lane.
             self.wake(EventUrgency::Urgent);
         }

@@ -250,7 +250,7 @@ pub(super) async fn execute_move(
                     info!("Re-pathing after a server position correction ({repaths}/{MAX_CORRECTION_REPATHS})");
                     continue;
                 }
-                if !open_blocking_door(state).await {
+                if !open_blocking_door(state, false).await {
                     return MoveResult::Blocked;
                 }
                 doors_opened += 1;
@@ -306,7 +306,7 @@ async fn walk_path(
         &path_result.waypoints[..keep]
     };
 
-    match walk_waypoints(state, walked).await {
+    match walk_waypoints(state, walked, false).await {
         MoveResult::Arrived if !path_result.found => MoveResult::Blocked,
         other => other,
     }
@@ -315,7 +315,11 @@ async fn walk_path(
 /// Walk an already-found route, subdividing long legs so the NPC moves at
 /// `MOVE_SPEED` instead of teleporting. Split out so a caller that has just
 /// proved a route (the door probe) can walk it without searching again.
-async fn walk_waypoints(state: &Arc<Mutex<SharedState>>, waypoints: &[PathWaypoint]) -> MoveResult {
+async fn walk_waypoints(
+    state: &Arc<Mutex<SharedState>>,
+    waypoints: &[PathWaypoint],
+    background: bool,
+) -> MoveResult {
     let corrections = state.lock().await.position_corrections;
 
     for wp in waypoints {
@@ -350,7 +354,7 @@ async fn walk_waypoints(state: &Arc<Mutex<SharedState>>, waypoints: &[PathWaypoi
                 };
 
                 if let Err(e) = s
-                    .send_step(step_x, step_z, wp.floor, to_wp.rotation())
+                    .send_step(step_x, step_z, wp.floor, to_wp.rotation(), background)
                     .await
                 {
                     error!("Failed to send move waypoint: {e}");
@@ -379,20 +383,23 @@ struct DoorCandidate {
 /// unreachable. Covers dungeon corridor doors and house doors alike: a shut
 /// front door leaves a resident NPC with no route out of their own house just
 /// as surely as a shut crypt door hides the stairs down.
-pub(super) async fn open_blocking_door(state: &Arc<Mutex<SharedState>>) -> bool {
+pub(super) async fn open_blocking_door(state: &Arc<Mutex<SharedState>>, background: bool) -> bool {
     let Some((door, route)) = pick_reachable_door(state).await else {
         return false;
     };
 
     // The probe already proved this route; walk the waypoints it found rather
     // than paying for the same search again.
-    if matches!(walk_waypoints(state, &route).await, MoveResult::Error) {
+    if matches!(
+        walk_waypoints(state, &route, background).await,
+        MoveResult::Error
+    ) {
         return false;
     }
 
     info!("Opening {} to get through", door.label);
     let mut s = state.lock().await;
-    if let Err(e) = s.send_command(door.toggle).await {
+    if let Err(e) = s.send_flagged_command(door.toggle, background).await {
         error!("Failed to send door toggle: {e}");
         return false;
     }

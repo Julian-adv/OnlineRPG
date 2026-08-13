@@ -128,9 +128,9 @@ impl SharedState {
         for (key, note, wake) in newly {
             self.sighted_pois.insert(key);
             if wake {
-                self.push_agent_event(note);
+                self.push_ambient_event(note);
             } else {
-                self.push_agent_event_quiet(note);
+                self.push_ambient_event_quiet(note);
             }
         }
     }
@@ -165,5 +165,19 @@ impl SharedState {
             .collect();
         in_sight.sort_by(|a, b| a.0.total_cmp(&b.0));
         in_sight
+    }
+
+    /// The ground item in sight that `asked` names: exact def id or display
+    /// name, then substring, nearest first. The one matcher for pickup and
+    /// move-by-name, so what pickup would take, move walks to.
+    pub fn ground_item_named(&self, asked: &str) -> Option<(u64, String)> {
+        let in_sight = self.ground_items_in_sight();
+        let ids: Vec<&str> = in_sight
+            .iter()
+            .map(|(_, i)| i.item_def_id.as_str())
+            .collect();
+        let def_id = crate::item_defs::resolve_named(&ids, asked)?;
+        let (_, item) = in_sight.iter().find(|(_, i)| i.item_def_id == def_id)?;
+        Some((item.instance_id, item.item_def_id.clone()))
     }
 }

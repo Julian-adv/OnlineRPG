@@ -307,7 +307,7 @@ pub(super) async fn chase_monster(
     state: &Arc<Mutex<SharedState>>,
     monster_id: &str,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Monster(monster_id)).await
+    chase_target(state, &ChaseTarget::Monster(monster_id), false).await
 }
 
 /// Walk up to another character and stop APPROACH_RANGE short of them,
@@ -316,7 +316,17 @@ pub(super) async fn approach_player(
     state: &Arc<Mutex<SharedState>>,
     player_id: &PlayerId,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Player(player_id)).await
+    chase_target(state, &ChaseTarget::Player(player_id), false).await
+}
+
+/// The follow task's approach: the same walk, but its steps are background —
+/// the task outlives the turn, and steps landing mid-settle must not pass
+/// for the running action's result.
+pub(super) async fn follow_player(
+    state: &Arc<Mutex<SharedState>>,
+    player_id: &PlayerId,
+) -> ChaseResult {
+    chase_target(state, &ChaseTarget::Player(player_id), true).await
 }
 
 /// Walk to a ground item and stop inside pickup range. Same loop as the
@@ -326,7 +336,7 @@ pub(super) async fn walk_to_ground_item(
     state: &Arc<Mutex<SharedState>>,
     instance_id: u64,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::GroundItem(instance_id)).await
+    chase_target(state, &ChaseTarget::GroundItem(instance_id), false).await
 }
 
 /// Walk to a fixed position on a floor, stopping within `arrive_range` of it.
@@ -343,6 +353,7 @@ pub(super) async fn walk_to_point(
             floor_level,
             arrive_range,
         },
+        false,
     )
     .await
 }
@@ -350,7 +361,11 @@ pub(super) async fn walk_to_point(
 /// Chase the target until we're within its arrive range, using A*
 /// pathfinding. Polls the target position every tick and re-routes when
 /// it moves.
-async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>) -> ChaseResult {
+async fn chase_target(
+    state: &Arc<Mutex<SharedState>>,
+    target: &ChaseTarget<'_>,
+    background: bool,
+) -> ChaseResult {
     let chase_start = Instant::now();
     let mut path_waypoints: Vec<onlinerpg_shared::pathfinding::PathWaypoint> = Vec::new();
     let mut path_index = 0usize;
@@ -425,7 +440,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
             // fallback below assumes. Unlatch what we can, and give up rather
             // than walk a line through the geometry.
             if underground && !result.found {
-                if doors_opened < MAX_CHASE_DOORS && open_blocking_door(state).await {
+                if doors_opened < MAX_CHASE_DOORS && open_blocking_door(state, background).await {
                     doors_opened += 1;
                     continue;
                 }
@@ -470,7 +485,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
                     )
                 };
                 if let Err(e) = s
-                    .send_step(step_x, step_z, wp.floor, to_wp.rotation())
+                    .send_step(step_x, step_z, wp.floor, to_wp.rotation(), background)
                     .await
                 {
                     error!("Failed to send chase move: {e}");
@@ -482,7 +497,7 @@ async fn chase_target(state: &Arc<Mutex<SharedState>>, target: &ChaseTarget<'_>)
             let mut s = state.lock().await;
             match compute_step_toward(&s, target) {
                 Some((cmd, sd)) => {
-                    if let Err(e) = s.send_command(cmd).await {
+                    if let Err(e) = s.send_flagged_command(cmd, background).await {
                         error!("Failed to send chase move: {e}");
                         return ChaseResult::Error;
                     }

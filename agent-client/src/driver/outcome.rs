@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::state::SharedState;
+use crate::state::{ActionProgress, SharedState};
 
 use super::action::AgentAction;
 
@@ -16,21 +16,21 @@ pub(super) enum ActionOutcome {
 pub(super) async fn settle_action(
     state: &Arc<Mutex<SharedState>>,
     action: &AgentAction,
-    (events_before, commands_before): (usize, u64),
+    mark: ActionProgress,
 ) -> ActionOutcome {
     let mut state = state.lock().await;
     let failed = state
-        .agent_events_from(events_before)
+        .agent_events_from(mark.events_start)
         .iter()
         .any(|event| reports_failure(event));
     if failed {
         return ActionOutcome::Failed;
     }
 
-    let (events_now, commands_now) = state.action_progress();
+    let now = state.action_progress();
     if action.outcome_speaks_for_itself()
-        || events_now > events_before
-        || commands_now > commands_before
+        || now.action_events > mark.action_events
+        || now.commands_sent > mark.commands_sent
     {
         return ActionOutcome::Ran;
     }

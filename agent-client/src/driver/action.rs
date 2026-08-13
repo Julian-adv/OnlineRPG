@@ -248,13 +248,12 @@ pub(super) enum AgentAction {
 /// Adding an `AgentAction` variant without a spec entry fails `cargo test`.
 pub(super) struct ActionSpec {
     /// serde tag(s) this block documents — the enum `rename` values.
-    /// Read by the lock tests below.
-    #[allow(dead_code)]
+    /// Read by the lock tests below and by `action_is`.
     pub(super) names: &'static [&'static str],
     /// The enum's `alias` values for these tags. Never rendered — the docs
     /// teach only canonical names — but registered so the enum/table
-    /// equality test covers every spelling the parser accepts.
-    #[allow(dead_code)]
+    /// equality test covers every spelling the parser accepts, and
+    /// `action_is` normalizes it.
     pub(super) aliases: &'static [&'static str],
     /// Verbatim prompt text: usage prose with example JSON lines.
     pub(super) doc: &'static str,
@@ -554,6 +553,22 @@ impl AgentAction {
         self.takes_over_movement() && !matches!(self, Self::Fish { .. } | Self::Respawn)
     }
 
+    /// Whether the action assumes the agent stands where the turn's plan put
+    /// it: everything that moves the body, plus the acts gated on proximity
+    /// (trade pushes) or on the spot underfoot (use near a campfire, drop).
+    /// A failed move cancels these, as the system prompt promises; speech
+    /// and party admin still run.
+    pub(super) fn needs_position(&self) -> bool {
+        self.takes_over_movement()
+            || matches!(
+                self,
+                Self::OpenTrade { .. }
+                    | Self::OfferDeal { .. }
+                    | Self::Use { .. }
+                    | Self::Drop { .. }
+            )
+    }
+
     /// Whether the action needs no additional outcome event.
     pub(super) fn outcome_speaks_for_itself(&self) -> bool {
         match self {
@@ -747,10 +762,13 @@ impl ParsedTurn {
 /// the whole turn (the say that rode along with it, the memory_update). Every
 /// rejected action becomes an error string naming what was wrong.
 pub(super) fn parse_turn_tolerant(text: &str) -> anyhow::Result<ParsedTurn> {
+    // The error reaches the [BadResponse] prompt event, so it must carry the
+    // parser's complaint only, never the reply itself — a model fed its own
+    // malformed output continues in that shape.
     let json_str = extract_json(text);
-    let mut value: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|e| anyhow::anyhow!("Failed to parse agent response: {e}\nRaw: {text}"))?;
-    normalize_move_targets(&mut value);
+    let mut value: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("{e}"))?;
+    normalize_targets(&mut value);
 
     let memory_update = value
         .get("memory_update")
@@ -794,51 +812,108 @@ pub(super) fn parse_turn_tolerant(text: &str) -> anyhow::Result<ParsedTurn> {
     })
 }
 
-/// LLMs keep writing `{"type":"move","target":[x,z]}` or `"target":{"x":..}`
-/// despite the schema saying `target` is a name. Rewrite those into the x/z
-/// fields instead of discarding the whole response.
-fn normalize_move_targets(value: &mut serde_json::Value) {
+/// Rewrite the target spellings LLMs keep reaching for into the shapes serde
+/// takes: coordinate targets into x/z, float ids into integers, a lone sell/buy
+/// "target" into the item it names.
+fn normalize_targets(value: &mut serde_json::Value) {
     let Some(actions) = value.get_mut("actions").and_then(|a| a.as_array_mut()) else {
         return;
     };
     for action in actions {
-        if action.get("type").and_then(|t| t.as_str()) != Some("move") {
-            continue;
+        let tag = action.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if action_is(tag, "move") {
+            normalize_move_target(action);
+        } else if action_is(tag, "pickup") {
+            // Ids the docs teach as numbers come back as floats after
+            // arithmetic (6043.0), which serde's integer fields refuse.
+            coerce_id_fields(
+                action,
+                &["target", "item", "id", "instance_id", "item_id", "name"],
+            );
+        } else if action_is(tag, "break_prop") {
+            coerce_id_fields(action, &["target", "id", "prop", "prop_id"]);
+        } else if ["sell", "buy", "buyback"].iter().any(|c| action_is(tag, c)) {
+            // "target" aliases the merchant, but a sell/buy naming only one
+            // thing means the goods — give the value to the item field the
+            // parser requires instead of failing with "missing field item".
+            let Some(obj) = action.as_object_mut() else {
+                continue;
+            };
+            let has_item = ["item", "item_def_id", "item_id", "name"]
+                .iter()
+                .any(|k| obj.contains_key(*k));
+            if !has_item {
+                if let Some(v) = obj.remove("target") {
+                    obj.insert("item".to_string(), v);
+                }
+            }
         }
-        let coords: Option<(f64, Option<f64>, f64)> = match action.get("target") {
-            Some(serde_json::Value::Array(arr)) => {
-                let nums: Vec<f64> = arr.iter().filter_map(|n| n.as_f64()).collect();
-                match nums.len() {
-                    2 => Some((nums[0], None, nums[1])),
-                    3 => Some((nums[0], Some(nums[1]), nums[2])),
-                    _ => None,
-                }
+    }
+}
+
+/// Whether `tag` spells the action canonically named `canon`, in any alias
+/// the parser accepts. Read off `ACTION_SPECS`, which the lock tests tie to
+/// the enum — so a new alias is normalized without another list to update.
+fn action_is(tag: &str, canon: &str) -> bool {
+    ACTION_SPECS.iter().any(|spec| {
+        spec.names.contains(&canon) && (spec.names.contains(&tag) || spec.aliases.contains(&tag))
+    })
+}
+
+/// LLMs keep writing `{"type":"move","target":[x,z]}` or `"target":{"x":..}`
+/// despite the schema saying `target` is a name. Rewrite those into the x/z
+/// fields instead of discarding the whole response.
+fn normalize_move_target(action: &mut serde_json::Value) {
+    let coords: Option<(f64, Option<f64>, f64)> = match action.get("target") {
+        Some(serde_json::Value::Array(arr)) => {
+            let nums: Vec<f64> = arr.iter().filter_map(|n| n.as_f64()).collect();
+            match nums.len() {
+                2 => Some((nums[0], None, nums[1])),
+                3 => Some((nums[0], Some(nums[1]), nums[2])),
+                _ => None,
             }
-            Some(serde_json::Value::Object(obj)) => {
-                match (
-                    obj.get("x").and_then(|n| n.as_f64()),
-                    obj.get("z").and_then(|n| n.as_f64()),
-                ) {
-                    (Some(x), Some(z)) => Some((x, obj.get("y").and_then(|n| n.as_f64()), z)),
-                    _ => None,
-                }
+        }
+        Some(serde_json::Value::Object(obj)) => {
+            match (
+                obj.get("x").and_then(|n| n.as_f64()),
+                obj.get("z").and_then(|n| n.as_f64()),
+            ) {
+                (Some(x), Some(z)) => Some((x, obj.get("y").and_then(|n| n.as_f64()), z)),
+                _ => None,
             }
-            _ => None,
+        }
+        _ => None,
+    };
+    if let Some((x, y, z)) = coords {
+        let obj = action.as_object_mut().unwrap();
+        obj.remove("target");
+        obj.entry("x").or_insert_with(|| x.into());
+        if let Some(y) = y {
+            obj.entry("y").or_insert_with(|| y.into());
+        }
+        obj.entry("z").or_insert_with(|| z.into());
+        return;
+    }
+    // Ids print as numbers, so LLMs write them as numbers (6043.0 after
+    // arithmetic); the resolver reads shapes off the string.
+    if let Some(n) = action.get("target").and_then(as_integer) {
+        action.as_object_mut().unwrap()["target"] = n.to_string().into();
+    }
+}
+
+/// Put the named fields back into integer shape: a float that is really an
+/// id (3.0), or an id quoted as a string ("3").
+fn coerce_id_fields(action: &mut serde_json::Value, fields: &[&str]) {
+    let Some(obj) = action.as_object_mut() else {
+        return;
+    };
+    for field in fields {
+        let Some(v) = obj.get(*field) else {
+            continue;
         };
-        if let Some((x, y, z)) = coords {
-            let obj = action.as_object_mut().unwrap();
-            obj.remove("target");
-            obj.entry("x").or_insert_with(|| x.into());
-            if let Some(y) = y {
-                obj.entry("y").or_insert_with(|| y.into());
-            }
-            obj.entry("z").or_insert_with(|| z.into());
-            continue;
-        }
-        // Ids print as numbers, so LLMs write them as numbers (6043.0 after
-        // arithmetic); the resolver reads shapes off the string.
-        if let Some(n) = action.get("target").and_then(as_integer) {
-            action.as_object_mut().unwrap()["target"] = n.to_string().into();
+        let n = as_integer(v).or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()));
+        if let Some(n) = n {
+            obj[*field] = n.into();
         }
     }
 }
@@ -1451,6 +1526,71 @@ mod tests {
             };
             assert_eq!(prop_id, 3, "for {json}");
         }
+    }
+
+    /// Ids the docs teach as numbers come back as floats after arithmetic,
+    /// or quoted — the same tolerance move targets already had.
+    #[test]
+    fn pickup_and_break_prop_tolerate_float_and_quoted_ids() {
+        let AgentAction::Pickup { item } =
+            parse_single_action(r#"{"actions": [{"type": "pickup", "target": 6043.0}]}"#)
+        else {
+            panic!("expected Pickup");
+        };
+        assert!(matches!(item, PickupRef::Id(6043)));
+
+        for json in [
+            r#"{"actions": [{"type": "break_prop", "target": 3.0}]}"#,
+            r#"{"actions": [{"type": "break_prop", "target": "3"}]}"#,
+        ] {
+            let AgentAction::BreakProp { prop_id } = parse_single_action(json) else {
+                panic!("expected BreakProp for {json}");
+            };
+            assert_eq!(prop_id, 3, "for {json}");
+        }
+    }
+
+    /// A sell/buy that names only one thing means the goods: its "target"
+    /// binds to the item, not to the merchant field the alias would pick.
+    #[test]
+    fn a_lone_trade_target_names_the_goods() {
+        let AgentAction::Sell { item, merchant, .. } =
+            parse_single_action(r#"{"actions": [{"type": "sell", "target": "healing_potion"}]}"#)
+        else {
+            panic!("expected Sell");
+        };
+        assert_eq!((item.as_str(), merchant), ("healing_potion", None));
+
+        let AgentAction::Buy { item, merchant } =
+            parse_single_action(r#"{"actions": [{"type": "buy", "target": "healing_potion"}]}"#)
+        else {
+            panic!("expected Buy");
+        };
+        assert_eq!((item.as_str(), merchant), ("healing_potion", None));
+
+        // With the goods named, "target" keeps meaning the merchant.
+        let AgentAction::Sell { item, merchant, .. } = parse_single_action(
+            r#"{"actions": [{"type": "sell", "item": "healing_potion", "target": "Rica"}]}"#,
+        ) else {
+            panic!("expected Sell");
+        };
+        assert_eq!(
+            (item.as_str(), merchant.as_deref()),
+            ("healing_potion", Some("Rica"))
+        );
+    }
+
+    /// The parse error the [BadResponse] event carries must not quote the
+    /// reply: a model fed its own malformed output continues in that shape.
+    #[test]
+    fn a_parse_error_never_echoes_the_reply() {
+        let reply = "Sure! I will move to Karl now and greet him warmly.";
+        let Err(err) = parse_turn_tolerant(reply) else {
+            panic!("expected a parse error");
+        };
+        let err = err.to_string();
+        assert!(!err.contains("Karl"), "{err}");
+        assert!(!err.contains("Sure"), "{err}");
     }
 
     /// The wording the prompts teach picks the great chest; anything else

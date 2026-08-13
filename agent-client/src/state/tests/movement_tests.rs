@@ -27,6 +27,10 @@ fn targetable_state() -> (SharedState, mpsc::Receiver<ClientMessage>) {
     }
 
     s.remember_ground_item(ground_item(6043, "torch", 2.0, 0.0, 0));
+    // Named after a species on purpose: "goblin" must still resolve to the
+    // monsters, not to this sword.
+    s.remember_ground_item(ground_item(6044, "goblin_sword", 2.5, 0.0, 0));
+    s.remember_ground_item(ground_item(6045, "iron_sword", 3.0, 0.0, 0));
     (s, rx)
 }
 
@@ -61,6 +65,34 @@ fn a_move_target_resolves_by_shape_then_by_name() {
         Ok(MoveTarget::GroundItem {
             instance_id: 6043,
             name: "torch".to_string()
+        })
+    );
+}
+
+/// A bare number reaches the players rung: arrival events teach numeric
+/// character ids, and a prop id must never shadow a person.
+#[test]
+fn a_numeric_target_resolves_to_a_character() {
+    let (s, _rx) = targetable_state();
+    assert_eq!(
+        s.resolve_move_target("2"),
+        Ok(MoveTarget::Character {
+            id: PlayerId::from(2),
+            name: "Karl".to_string()
+        })
+    );
+}
+
+/// Move-by-name matches the way pickup matches: the display name from
+/// items.json and loose spellings work, not just the exact def id.
+#[test]
+fn a_ground_item_display_name_resolves_like_pickup() {
+    let (s, _rx) = targetable_state();
+    assert_eq!(
+        s.resolve_move_target("Iron Sword"),
+        Ok(MoveTarget::GroundItem {
+            instance_id: 6045,
+            name: "iron_sword".to_string()
         })
     );
 }

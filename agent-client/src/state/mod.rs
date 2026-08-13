@@ -146,6 +146,7 @@ pub(crate) mod tests;
 mod world_cache;
 mod world_state;
 
+pub use commands::ActionProgress;
 pub use events::EventUrgency;
 pub use inventory::{Carried, CarriedBagCopies};
 pub use movement::{MoveTarget, MoveTargetError};
@@ -276,6 +277,10 @@ pub struct SharedState {
     /// difference, so background traffic must stay out of it — see
     /// [`Self::send_background_command`].
     action_commands_sent: u64,
+    /// Agent events an action's own handler pushed, ever. Read only as a
+    /// difference; ambient pushes (clock ticks, sightings, tips) stay out —
+    /// see [`Self::push_ambient_event`].
+    action_events_pushed: u64,
     /// Terrain height sampler (shared across NPC connections)
     pub height_sampler: Arc<HeightSampler>,
     pub splat_sampler: Arc<crate::splat::SplatSampler>,
@@ -376,6 +381,7 @@ impl SharedState {
             sighted_pois: HashSet::new(),
             agent_events: Vec::new(),
             action_commands_sent: 0,
+            action_events_pushed: 0,
             height_sampler,
             splat_sampler,
             world_cache,

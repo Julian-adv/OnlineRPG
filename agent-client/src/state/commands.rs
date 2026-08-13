@@ -1,15 +1,35 @@
 use super::*;
 
+/// A mark of an action's paper trail, taken before it runs and compared
+/// after: where its event window starts, and the action-attributed event and
+/// command counts.
+#[derive(Clone, Copy)]
+pub struct ActionProgress {
+    pub events_start: usize,
+    pub action_events: u64,
+    pub commands_sent: u64,
+}
+
 impl SharedState {
     pub async fn send_command(&mut self, msg: ClientMessage) -> anyhow::Result<()> {
         self.dispatch_command(msg, true).await
     }
 
-    /// Send something the agent did not ask for. The heartbeat and monster-AI
-    /// tick fire mid-action, and counting their traffic would rob a dropped
-    /// action of its `[NoResult]`.
+    /// Send something the agent did not ask for. The heartbeat, monster-AI
+    /// tick, follow steps and height syncs fire mid-action, and counting
+    /// their traffic would rob a dropped action of its `[NoResult]`.
     pub async fn send_background_command(&mut self, msg: ClientMessage) -> anyhow::Result<()> {
         self.dispatch_command(msg, false).await
+    }
+
+    /// Send on whichever lane the caller's flag names — for the movers that
+    /// walk both for actions and for background tasks like the follow.
+    pub async fn send_flagged_command(
+        &mut self,
+        msg: ClientMessage,
+        background: bool,
+    ) -> anyhow::Result<()> {
+        self.dispatch_command(msg, !background).await
     }
 
     async fn dispatch_command(
@@ -128,11 +148,16 @@ impl SharedState {
         Ok(())
     }
 
-    /// How much an action has done: events pushed and commands that reached
-    /// the wire. Neither moving means it left no trace — see the `[NoResult]`
-    /// backstop in `handle_response`.
-    pub fn action_progress(&self) -> (usize, u64) {
-        (self.agent_events.len(), self.action_commands_sent)
+    /// How much an action has done so far. Neither counter moving between two
+    /// marks means it left no trace — see the `[NoResult]` backstop in
+    /// `handle_response`. Ambient events and background commands stay out of
+    /// the counters so concurrent traffic cannot pass for a result.
+    pub fn action_progress(&self) -> ActionProgress {
+        ActionProgress {
+            events_start: self.agent_events.len(),
+            action_events: self.action_events_pushed,
+            commands_sent: self.action_commands_sent,
+        }
     }
 
     /// Drain pending commands (from monster AI reactions, spawn requests, etc.)

@@ -34,14 +34,14 @@ impl SharedState {
         if is_self {
             // No wake yet: the rest ending is what invites the next song, and
             // waking now would only draw a command we would have to refuse.
-            self.agent_events.push(line);
+            self.push_ambient_event_quiet(line);
             // Tips are the exception — the quiet spell is when they get
             // thanked and picked up, and nothing else wakes us before it ends.
             for (_, tip) in std::mem::take(&mut self.pending_tips) {
-                self.push_agent_event(tip);
+                self.push_ambient_event(tip);
             }
         } else {
-            self.push_agent_event(line);
+            self.push_ambient_event(line);
         }
     }
 
@@ -59,9 +59,9 @@ impl SharedState {
         // Mid-song this is not worth an LLM turn; it rides along with the
         // next prompt, which the end of the song brings soon enough.
         if self.self_performance.is_some() {
-            self.agent_events.push(line);
+            self.push_ambient_event_quiet(line);
         } else {
-            self.push_agent_event(line);
+            self.push_ambient_event(line);
         }
     }
 
@@ -100,7 +100,7 @@ impl SharedState {
         if self.self_performance.is_some() {
             self.pending_tips.push((item.instance_id, note));
         } else {
-            self.push_agent_event(note);
+            self.push_ambient_event(note);
         }
     }
 
@@ -149,7 +149,7 @@ impl SharedState {
         } else {
             return false;
         };
-        self.agent_events.push(format!(
+        self.push_agent_event_quiet(format!(
             "[PlayMusic] Ignored — {why}. One song at a time; wait for the note \
              that says you can start another. If you already announced the \
              title, tell them it is coming rather than leaving the promise \
@@ -167,7 +167,7 @@ impl SharedState {
         if let Some(rest_until) = self.self_music_rest_until {
             if std::time::Instant::now() >= rest_until {
                 self.self_music_rest_until = None;
-                self.push_agent_event(
+                self.push_ambient_event(
                     "[PlayMusic] The square is quiet again — time for another song.".to_string(),
                 );
             }

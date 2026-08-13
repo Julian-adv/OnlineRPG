@@ -18,8 +18,8 @@ use super::action::{
     GoalError, PickupRef, Qty,
 };
 use super::combat::{
-    approach_player, chase_monster, chest_arrive_range, walk_to_ground_item, walk_to_point,
-    ChaseResult, LostReason,
+    approach_player, chase_monster, chest_arrive_range, follow_player, walk_to_ground_item,
+    walk_to_point, ChaseResult, LostReason,
 };
 use super::movement::{execute_move, MoveResult};
 #[cfg(test)]
@@ -116,14 +116,45 @@ fn describe_target(t: &MoveTarget) -> &'static str {
 
 type Approach = (onlinerpg_shared::Position, i8, f32);
 
+/// Walk goal beside a sighted prop or chest: its stand cell, floor, and
+/// arrive range. The server measures interact range from the thing itself,
+/// so the metre between it and the cell we stand on comes out of ours.
+fn approach_beside(
+    position: &onlinerpg_shared::Position,
+    approach: onlinerpg_shared::Position,
+    floor: i8,
+) -> Approach {
+    let gap = crate::geom::PlanarDelta::between(&approach, position).dist;
+    (approach, floor, chest_arrive_range(gap))
+}
+
+/// The chest a selector picks from the sighted list: the great chest when
+/// asked for (falling back to the nearest), else the nearest.
+fn pick_chest<'a>(
+    sighted: &'a [crate::dungeon::ChestSighting],
+    want: Option<&str>,
+) -> Option<&'a crate::dungeon::ChestSighting> {
+    if asks_for_great_chest(want) {
+        sighted
+            .iter()
+            .find(|c| c.kind == ChestKind::Treasure)
+            .or(sighted.first())
+    } else {
+        sighted.first()
+    }
+}
+
 async fn prop_approach(state: &Arc<Mutex<SharedState>>, prop_id: u32) -> Option<Approach> {
     let s = state.lock().await;
     let prop = s
         .breakables_in_sight()
         .into_iter()
         .find(|b| b.prop_id == prop_id)?;
-    let gap = crate::geom::PlanarDelta::between(&prop.approach, &prop.position).dist;
-    Some((prop.approach, s.self_floor_level, chest_arrive_range(gap)))
+    Some(approach_beside(
+        &prop.position,
+        prop.approach,
+        s.self_floor_level,
+    ))
 }
 
 async fn chest_approach(
@@ -132,21 +163,13 @@ async fn chest_approach(
 ) -> Option<(Approach, &'static str)> {
     let s = state.lock().await;
     let sighted = s.chests_in_sight();
-    let chest = if asks_for_great_chest(Some(selector)) {
-        sighted
-            .iter()
-            .find(|c| c.kind == ChestKind::Treasure)
-            .or(sighted.first())
-    } else {
-        sighted.first()
-    }?;
-    let gap = crate::geom::PlanarDelta::between(&chest.approach, &chest.position).dist;
+    let chest = pick_chest(&sighted, Some(selector))?;
     let label = match chest.kind {
         ChestKind::Treasure => "the great chest",
         ChestKind::Prop(_) => "a small chest",
     };
     Some((
-        (chest.approach, s.self_floor_level, chest_arrive_range(gap)),
+        approach_beside(&chest.position, chest.approach, s.self_floor_level),
         label,
     ))
 }
@@ -353,7 +376,7 @@ pub(super) async fn handle_response(
         }
     }
 
-    let mut pending: Option<(&AgentAction, (usize, u64))> = None;
+    let mut pending: Option<(&AgentAction, crate::state::ActionProgress)> = None;
     let mut lost_position: Option<&str> = None;
     let mut skipped: Vec<&str> = Vec::new();
 
@@ -367,7 +390,7 @@ pub(super) async fn handle_response(
             }
         }
 
-        if lost_position.is_some() && action.takes_over_movement() {
+        if lost_position.is_some() && action.needs_position() {
             skipped.push(action.label());
             continue;
         }
@@ -417,7 +440,7 @@ pub(super) async fn handle_response(
             let handle = tokio::spawn(async move {
                 loop {
                     let before = target_pos(&task_state, &target_id).await;
-                    let ended = match approach_player(&task_state, &target_id).await {
+                    let ended = match follow_player(&task_state, &target_id).await {
                         ChaseResult::InRange => {
                             tokio::time::sleep(FOLLOW_RECHECK).await;
                             None
@@ -439,7 +462,9 @@ pub(super) async fn handle_response(
                         )),
                     };
                     if let Some(note) = ended {
-                        task_state.lock().await.push_agent_event(note);
+                        // Ambient: this task outlives the turn, and its note
+                        // must not settle whatever action is running by then.
+                        task_state.lock().await.push_ambient_event(note);
                         break;
                     }
                 }
@@ -847,10 +872,8 @@ pub(super) async fn handle_response(
                 });
                 continue;
             };
-            // The server measures its range from the prop itself, so the metre
-            // between it and the cell we can stand on comes out of ours.
-            let gap = crate::geom::PlanarDelta::between(&prop.approach, &prop.position).dist;
-            match walk_to_point(state, prop.approach, floor_level, chest_arrive_range(gap)).await {
+            let (pos, floor, range) = approach_beside(&prop.position, prop.approach, floor_level);
+            match walk_to_point(state, pos, floor, range).await {
                 ChaseResult::InRange => {
                     let mut s = state.lock().await;
                     let cmd = onlinerpg_shared::ClientMessage::BreakDungeonProp {
@@ -888,15 +911,8 @@ pub(super) async fn handle_response(
             let target = {
                 let s = state.lock().await;
                 let sighted = s.chests_in_sight();
-                let pick = if asks_for_great_chest(want.as_deref()) {
-                    sighted
-                        .iter()
-                        .find(|c| c.kind == ChestKind::Treasure)
-                        .or(sighted.first())
-                } else {
-                    sighted.first()
-                };
-                pick.copied()
+                pick_chest(&sighted, want.as_deref())
+                    .copied()
                     .zip(s.dungeon_here())
                     .map(|(c, d)| (c, d.id.clone(), s.self_floor_level))
             };
@@ -907,10 +923,8 @@ pub(super) async fn handle_response(
                 );
                 continue;
             };
-            // The server measures its range from the chest, so the metre
-            // between a prop and the cell we can stand on comes out of ours.
-            let gap = crate::geom::PlanarDelta::between(&chest.approach, &chest.position).dist;
-            match walk_to_point(state, chest.approach, chest_floor, chest_arrive_range(gap)).await {
+            let (pos, floor, range) = approach_beside(&chest.position, chest.approach, chest_floor);
+            match walk_to_point(state, pos, floor, range).await {
                 ChaseResult::InRange => {
                     let depth = chest_floor.unsigned_abs();
                     let mut s = state.lock().await;
@@ -1531,20 +1545,14 @@ async fn move_to_dungeon_floor(
 /// see counts: an id it read several turns ago may have fallen out of sight
 /// since, and a pickup it cannot perceive is one it never learns about.
 fn resolve_ground_item(s: &SharedState, r: &PickupRef) -> Option<(u64, String)> {
-    let in_sight = s.ground_items_in_sight();
-    let (_, item) = match r.as_id() {
-        Some(id) => in_sight.iter().find(|(_, i)| i.instance_id == id)?,
-        None => {
-            let ids: Vec<&str> = in_sight
-                .iter()
-                .map(|(_, i)| i.item_def_id.as_str())
-                .collect();
-            // Nearest first, so the resolver's first match is the closest.
-            let def_id = crate::item_defs::resolve_named(&ids, &r.to_string())?;
-            in_sight.iter().find(|(_, i)| i.item_def_id == def_id)?
+    match r.as_id() {
+        Some(id) => {
+            let in_sight = s.ground_items_in_sight();
+            let (_, item) = in_sight.iter().find(|(_, i)| i.instance_id == id)?;
+            Some((item.instance_id, item.item_def_id.clone()))
         }
-    };
-    Some((item.instance_id, item.item_def_id.clone()))
+        None => s.ground_item_named(&r.to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -1841,6 +1849,33 @@ mod tests {
 
         assert_eq!(outcome, ActionOutcome::Ran);
         assert!(state.lock().await.drain_agent_events().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_ambient_event_is_not_an_actions_result() {
+        let (s, _rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        let mark = state.lock().await.action_progress();
+        state
+            .lock()
+            .await
+            .push_ambient_event("[TimeChange] It is now 21:00 (night).".to_string());
+
+        let outcome = settle_action(
+            &state,
+            &AgentAction::Use {
+                item: "torch".to_string(),
+            },
+            mark,
+        )
+        .await;
+
+        assert_eq!(outcome, ActionOutcome::Failed);
+        let events = state.lock().await.drain_agent_events();
+        assert!(
+            events.iter().any(|e| e.starts_with("[NoResult]")),
+            "{events:?}"
+        );
     }
 
     #[tokio::test]

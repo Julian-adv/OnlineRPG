@@ -71,18 +71,21 @@ impl SharedState {
                     name: item.item_def_id.clone(),
                 });
             }
+            // Players before props: their id ranges overlap (prop ids are
+            // room indexes from 0, player ids count from 1), and arrival
+            // events teach the model numeric character ids.
+            if let Some((id, p)) = self.players_on_my_floor().find(|(id, _)| id.get() == n) {
+                return Ok(MoveTarget::Character {
+                    id: *id,
+                    name: p.name.clone(),
+                });
+            }
             if let Some(b) = self
                 .breakables_in_sight()
                 .iter()
                 .find(|b| u64::from(b.prop_id) == n)
             {
                 return Ok(MoveTarget::Prop { prop_id: b.prop_id });
-            }
-            if let Some((id, p)) = self.players_on_my_floor().find(|(id, _)| id.get() == n) {
-                return Ok(MoveTarget::Character {
-                    id: *id,
-                    name: p.name.clone(),
-                });
             }
             return Err(self.unknown_target(asked));
         }
@@ -110,25 +113,20 @@ impl SharedState {
             });
         }
 
-        if let Some((_, item)) = self
-            .ground_items_in_sight()
-            .iter()
-            .find(|(_, i)| i.item_def_id.eq_ignore_ascii_case(asked))
-        {
-            return Ok(MoveTarget::GroundItem {
-                instance_id: item.instance_id,
-                name: item.item_def_id.clone(),
-            });
-        }
-
         // A species name, not an id. Monsters are only ever addressed by id,
         // so hand back the ids that match instead of guessing which one.
+        // Checked before ground items, whose loose matcher below would
+        // otherwise swallow "goblin" for a goblin_sword lying nearby.
         let candidates = self.monster_ids_of_species(asked);
         if !candidates.is_empty() {
             return Err(MoveTargetError::SpeciesNotId {
                 species: asked.to_string(),
                 candidates,
             });
+        }
+
+        if let Some((instance_id, name)) = self.ground_item_named(asked) {
+            return Ok(MoveTarget::GroundItem { instance_id, name });
         }
 
         Err(self.unknown_target(asked))
@@ -249,13 +247,16 @@ impl SharedState {
     /// Send one movement step toward (x, z) on passability floor `floor`,
     /// posed and floor-stamped by `step_pose`. The single way a mover puts a
     /// step on the wire, so none of them can forget to update the floor we
-    /// declare — which the server checks our height against.
+    /// declare — which the server checks our height against. `background` is
+    /// for steps no current action asked for (the follow task), which must
+    /// stay out of the action-progress count.
     pub async fn send_step(
         &mut self,
         x: f32,
         z: f32,
         floor: u8,
         rotation: f32,
+        background: bool,
     ) -> anyhow::Result<()> {
         let current_y = self
             .self_player
@@ -264,8 +265,8 @@ impl SharedState {
             .unwrap_or(0.0);
         let (position, floor_level) = self.step_pose(x, z, floor, current_y);
         self.adopt_floor_level(floor_level);
-        self.send_command(ClientMessage::player_move(position, rotation, floor_level))
-            .await
+        let cmd = ClientMessage::player_move(position, rotation, floor_level);
+        self.send_flagged_command(cmd, background).await
     }
 
     /// Put an entity on the ground of dungeon floor `floor`, leaving it where
@@ -391,14 +392,15 @@ impl SharedState {
     }
 
     /// Send a position sync to correct Y to terrain height.
-    /// Should be called after JoinSuccess or PlayerRespawned to snap to ground.
+    /// Should be called after JoinSuccess or PlayerRespawned to snap to
+    /// ground. Background: the rx task fires it, not an agent action.
     pub async fn sync_height(&mut self) -> anyhow::Result<()> {
         let Some(ref p) = self.self_player else {
             return Ok(());
         };
         let pos = p.position;
         let rotation = p.rotation;
-        self.send_command(ClientMessage::player_move(pos, rotation, 0))
+        self.send_background_command(ClientMessage::player_move(pos, rotation, 0))
             .await
     }
 
