@@ -209,8 +209,8 @@
   let offhandClips = new SvelteMap<string, THREE.AnimationClip>()
   let socialClipsByName = new SvelteMap<string, THREE.AnimationClip>()
   let socialLoading = false
-  let lastPlayerState = $state<PlayerStateName | undefined>(undefined)
-  let lastAttackCounter = $state(0)
+  let lastPlayerState: PlayerStateName | undefined
+  let lastAttackCounter: number | undefined
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
@@ -962,16 +962,16 @@
 
     // Update animation state
     if (validAnimations.length > 0) {
-      const movementModeChanged =
-        playerState === 'moving' && lastMovementMode !== movementMode
       if (
         lastPlayerState !== playerState ||
-        movementModeChanged ||
+        (playerState === 'moving' && lastMovementMode !== movementMode) ||
         (playerState === 'attack' && lastAttackCounter !== attackCounter)
       ) {
         lastPlayerState = playerState
         lastMovementMode = movementMode
-        if (attackCounter !== undefined) lastAttackCounter = attackCounter
+        // Assign even when undefined, or the check stays true every frame and
+        // the re-trigger pins the clip to frame 0.
+        lastAttackCounter = attackCounter
         playAnimationForState()
       }
     }

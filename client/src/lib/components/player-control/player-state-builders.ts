@@ -21,11 +21,14 @@ export function buildIdleAfterInteract(prev: PlayerState): PlayerState {
   }
 }
 
+/** Every swing is keyed by its counter — the renderer re-triggers the slash
+ *  clip on a counter change, so an attack state without one cannot be built. */
 export function buildAttackState(
   prev: PlayerState,
-  rotation?: number
+  rotation: number,
+  attackCounter: number
 ): PlayerState {
-  return { ...prev, state: 'attack', rotation: rotation ?? prev.rotation }
+  return { ...prev, state: 'attack', rotation, attackCounter }
 }
 
 export function buildIdleAfterAttack(prev: PlayerState): PlayerState {

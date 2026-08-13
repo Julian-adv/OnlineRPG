@@ -345,7 +345,8 @@ interface BeginAttackInput {
   playerRotation: number
   previousPlayerState: PlayerState
   lastSentPosition: Position | null
-  beginCombat: (monsterId: string, inRange: boolean) => void
+  /** Starts combat and returns the counter for this swing. */
+  beginCombat: (monsterId: string, inRange: boolean) => number
   sendPlayerMove: (position: Position, rotation: number) => void
   sendPlayerAttack: (monsterId: string) => void
 }
@@ -373,7 +374,7 @@ export function beginAttack({
     return { kind: 'ignored_dead_target' }
   }
 
-  beginCombat(monsterId, true)
+  const attackCounter = beginCombat(monsterId, true)
 
   if (currentPosition) {
     const shouldSendMove =
@@ -391,7 +392,11 @@ export function beginAttack({
 
   return {
     kind: 'started',
-    nextPlayerState: buildAttackState(previousPlayerState, playerRotation),
+    nextPlayerState: buildAttackState(
+      previousPlayerState,
+      playerRotation,
+      attackCounter
+    ),
     pendingPickupAfterMoveInstanceId: null,
   }
 }
@@ -416,11 +421,16 @@ export type EnsureAttackStateOutcome =
 
 export function ensureAttackState(
   previousPlayerState: PlayerState,
-  playerRotation: number
+  playerRotation: number,
+  attackCounter: number
 ): EnsureAttackStateOutcome {
   if (previousPlayerState.state === 'attack') return { kind: 'ignored' }
   return {
     kind: 'attack',
-    nextPlayerState: buildAttackState(previousPlayerState, playerRotation),
+    nextPlayerState: buildAttackState(
+      previousPlayerState,
+      playerRotation,
+      attackCounter
+    ),
   }
 }

@@ -404,7 +404,7 @@ describe('beginAttack', () => {
     overrides: Partial<Parameters<typeof beginAttack>[0]>
   ) {
     const calls = {
-      beginCombat: vi.fn(),
+      beginCombat: vi.fn(() => 1),
       sendPlayerMove: vi.fn(),
       sendPlayerAttack: vi.fn(),
     }
@@ -440,7 +440,12 @@ describe('beginAttack', () => {
     expect(sendPlayerAttack).toHaveBeenCalledWith('m1')
     expect(result).toEqual({
       kind: 'started',
-      nextPlayerState: { ...playerState, state: 'attack', rotation: 0.5 },
+      nextPlayerState: {
+        ...playerState,
+        state: 'attack',
+        rotation: 0.5,
+        attackCounter: 1,
+      },
       pendingPickupAfterMoveInstanceId: null,
     })
   })
@@ -495,18 +500,21 @@ describe('transitionAttackToIdle', () => {
 
 describe('ensureAttackState', () => {
   it('ignores already attacking states', () => {
-    expect(ensureAttackState({ ...playerState, state: 'attack' }, 1)).toEqual({
+    expect(
+      ensureAttackState({ ...playerState, state: 'attack' }, 1, 3)
+    ).toEqual({
       kind: 'ignored',
     })
   })
 
   it('builds attack state when not already attacking', () => {
-    expect(ensureAttackState(playerState, 1.25)).toEqual({
+    expect(ensureAttackState(playerState, 1.25, 3)).toEqual({
       kind: 'attack',
       nextPlayerState: {
         ...playerState,
         state: 'attack',
         rotation: 1.25,
+        attackCounter: 3,
       },
     })
   })

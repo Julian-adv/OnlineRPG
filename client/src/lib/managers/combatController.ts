@@ -33,7 +33,8 @@ export class CombatController {
     return this._targetMonsterId !== null
   }
 
-  beginCombat(monsterId: string, inRange: boolean) {
+  /** Returns the counter the opening swing carries. */
+  beginCombat(monsterId: string, inRange: boolean): number {
     const wasInCombat = this._targetMonsterId !== null
     this._targetMonsterId = monsterId
     this._attackTimer = 0
@@ -44,6 +45,7 @@ export class CombatController {
       this._lastChaseUpdate = Date.now()
     }
     if (!wasInCombat) startBattleMusic()
+    return this._attackCounter
   }
 
   cancelCombat() {

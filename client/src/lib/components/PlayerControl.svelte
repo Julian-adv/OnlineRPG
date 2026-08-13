@@ -709,7 +709,11 @@
     },
     showAttackState: (nextRotation: number) => {
       playerRotation = nextRotation
-      const transition = ensureAttackState(playerState, nextRotation)
+      const transition = ensureAttackState(
+        playerState,
+        nextRotation,
+        combatController.attackCounter
+      )
       if (transition.kind === 'ignored') return
       setPlayerState(transition.nextPlayerState)
       transitionTo('attacking')
@@ -717,7 +721,15 @@
     sendAttackCycle: (monsterId: string, nextRotation: number) => {
       playerRotation = nextRotation
       networkManager.sendPlayerAttack(monsterId)
-      updatePlayerState()
+      // Emit the attack state directly: the projection only knows idle/moving,
+      // so it reported idle between swings.
+      setPlayerState(
+        buildAttackState(
+          playerState,
+          nextRotation,
+          combatController.attackCounter
+        )
+      )
       transitionTo('attacking')
     },
   }
@@ -1276,10 +1288,9 @@
     faceTowards(x, z)
     currentSpeed = 0
     propSwingCounter += 1
-    setPlayerState({
-      ...buildAttackState(playerState, playerRotation),
-      attackCounter: propSwingCounter,
-    })
+    setPlayerState(
+      buildAttackState(playerState, playerRotation, propSwingCounter)
+    )
     transitionTo('attacking')
     sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
 
