@@ -29,8 +29,6 @@ describe('parseTpArgs', () => {
     expect(parseTpArgs('5 5.5.5')).toBeNull()
   })
 
-  // isNaN() admits Infinity; these poisoned the position with NaN after
-  // world-wrap and stalled the server's whole save batch.
   it('rejects non-finite values', () => {
     expect(parseTpArgs('Infinity 0')).toBeNull()
     expect(parseTpArgs('0 -Infinity')).toBeNull()

@@ -30,7 +30,7 @@ import {
   dungeonPropsResetRevision,
   dungeonPropsRevision,
 } from '../stores/dungeonStore'
-import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
+import { DUNGEON_ENTRANCES, type DungeonEntranceDef } from '../data/dungeonDefs'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { DungeonWall } from '../utils/dungeon-geo-constants'
 
@@ -168,6 +168,47 @@ let consts: DungeonConstants | null = null
 function constants(): DungeonConstants {
   if (!consts) consts = dungeon_constants() as DungeonConstants
   return consts
+}
+
+/** World min-corner of an entrance's cell grid (matches shared dungeon_origin). */
+export function dungeonOriginX(e: { x: number }): number {
+  return Math.floor(e.x) - constants().grid / 2
+}
+
+export function dungeonOriginZ(e: { z: number }): number {
+  return Math.floor(e.z) - constants().grid / 2
+}
+
+/** World Y of an entrance's floor at `depth` (matches shared floor_world_y). */
+export function dungeonFloorY(e: { y: number }, depth: number): number {
+  return e.y - depth * constants().floorHeight
+}
+
+/** World-space center of a grid cell on one of an entrance's floors. */
+export function dungeonCellCenter(
+  e: { x: number; y: number; z: number },
+  depth: number,
+  cell: { x: number; z: number }
+) {
+  return {
+    x: dungeonOriginX(e) + cell.x + 0.5,
+    y: dungeonFloorY(e, depth),
+    z: dungeonOriginZ(e) + cell.z + 0.5,
+  }
+}
+
+/** Registry entrance whose grid footprint covers the position (shared
+ *  `footprint_contains`: the server decides underground-ness by this test). */
+export function entranceCovering(
+  x: number,
+  z: number
+): DungeonEntranceDef | undefined {
+  const grid = constants().grid
+  return DUNGEON_ENTRANCES.find((e) => {
+    const ox = dungeonOriginX(e)
+    const oz = dungeonOriginZ(e)
+    return x >= ox && x < ox + grid && z >= oz && z < oz + grid
+  })
 }
 
 export interface DungeonRect {
@@ -377,15 +418,15 @@ class DungeonManager {
 
   /** World min-corner of the cell grid (matches shared dungeon_origin). */
   get originX(): number {
-    return Math.floor(this.entrance!.x) - constants().grid / 2
+    return dungeonOriginX(this.entrance!)
   }
 
   get originZ(): number {
-    return Math.floor(this.entrance!.z) - constants().grid / 2
+    return dungeonOriginZ(this.entrance!)
   }
 
   floorY(depth: number): number {
-    return this.entrance!.y - depth * constants().floorHeight
+    return dungeonFloorY(this.entrance!, depth)
   }
 
   /** Passability floor index for path queries at a given depth. */
@@ -644,11 +685,7 @@ class DungeonManager {
 
   /** World-space center of a grid cell at a given depth's floor Y. */
   cellCenter(depth: number, cell: { x: number; z: number }) {
-    return {
-      x: this.originX + cell.x + 0.5,
-      y: this.floorY(depth),
-      z: this.originZ + cell.z + 0.5,
-    }
+    return dungeonCellCenter(this.entrance!, depth, cell)
   }
 
   /**
@@ -809,13 +846,17 @@ class DungeonManager {
         // caching so a later call retries (rather than throwing and aborting
         // the grass tile load).
         try {
-          const { grid, shaftW, shaftLen } = constants()
+          const { shaftW, shaftLen } = constants()
           const layouts = dungeon_layout(e.id) as DungeonFloorLayout[]
           const first = layouts[0]
           if (!first) continue
-          const ox = Math.floor(e.x) - grid / 2
-          const oz = Math.floor(e.z) - grid / 2
-          rect = shaftHoleRect(first.upShaft, ox, oz, shaftW, shaftLen)
+          rect = shaftHoleRect(
+            first.upShaft,
+            dungeonOriginX(e),
+            dungeonOriginZ(e),
+            shaftW,
+            shaftLen
+          )
           this.entranceRectCache.set(e.id, rect)
         } catch {
           continue
@@ -927,15 +968,9 @@ class DungeonManager {
       }
       return
     }
-    const grid = constants().grid
-    const covering = DUNGEON_ENTRANCES.find((e) => {
-      const ox = Math.floor(e.x) - grid / 2
-      const oz = Math.floor(e.z) - grid / 2
-      return x >= ox && x < ox + grid && z >= oz && z < oz + grid
-    })
+    const covering = entranceCovering(x, z)
     if (!covering) return
-    // A teleport can land in a different dungeon than the registered one;
-    // enter() no-ops for the same id and switches otherwise.
+    // Teleports can land in a different dungeon; enter() no-ops on the same id.
     this.enter(covering.id, { x: covering.x, y: covering.y, z: covering.z })
     currentDungeonDepth.set(-floorLevel)
   }

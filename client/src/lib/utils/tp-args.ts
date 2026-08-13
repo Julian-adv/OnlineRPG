@@ -1,10 +1,9 @@
-/** Parse `/tp <x> <z> [y]` arguments; null when malformed. Values must stay
- *  finite after f32 rounding — the wire format is f32, so e.g. 1e39 would
- *  arrive server-side as Infinity. */
+/** Parse `/tp <x> <z> [y]`; null when malformed. The wire format is f32, so
+ *  values must stay finite after rounding (1e39 would arrive as Infinity). */
 export function parseTpArgs(
   args: string
 ): { x: number; z: number; y: number } | null {
-  const parts = args.trim().split(/\s+/).filter(Boolean)
+  const parts = args.trim().split(/\s+/)
   if (parts.length < 2 || parts.length > 3) return null
   const [x, z, y = 0] = parts.map(Number)
   if (![x, z, y].every((v) => Number.isFinite(Math.fround(v)))) return null

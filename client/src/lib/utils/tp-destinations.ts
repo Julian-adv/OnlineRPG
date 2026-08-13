@@ -1,16 +1,17 @@
 /**
- * Named /tp destinations for admins. Static landmarks plus entries derived
- * from data: dungeon entrances and final-floor boss rooms come from the
- * registry + shared wasm layout generator, cities from the world-map labels —
- * so the list tracks content changes without hand-kept coordinates.
+ * Named /tp destinations for admins: hand-curated landmarks plus entries
+ * derived from data (dungeon entrances and boss rooms from the registry +
+ * shared layout generator, cities from the world-map labels), so the list
+ * tracks content changes without hand-kept coordinates.
  */
-import { dungeon_constants, dungeon_layout } from '../wasm/onlinerpg_shared'
-import type {
-  DungeonConstants,
-  DungeonFloorLayout,
+import { dungeon_layout } from '../wasm/onlinerpg_shared'
+import {
+  dungeonCellCenter,
+  type DungeonFloorLayout,
 } from '../managers/dungeonManager'
 import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
-import mapLabelsJson from '../../../../data/map_labels.json'
+import { MAP_LABELS, type MapLabelKind } from '../data/mapLabels'
+import worldJson from '../../../../data-src/world.json'
 
 export interface TpDestination {
   name: string
@@ -20,22 +21,14 @@ export interface TpDestination {
   z: number
 }
 
-interface MapLabel {
-  id: string
-  name: string
-  kind: string
-  x: number
-  z: number
-}
-
 /** Surface entries use y=0: the client snaps to terrain height on arrival. */
 const STATIC_DESTINATIONS: TpDestination[] = [
   {
     name: 'spawn',
     label: 'Aldermark village (start)',
-    x: -1475.2,
+    x: worldJson.spawnPosition.x,
     y: 0,
-    z: 4741.6,
+    z: worldJson.spawnPosition.z,
   },
   {
     name: 'snowpeak',
@@ -46,7 +39,7 @@ const STATIC_DESTINATIONS: TpDestination[] = [
   },
 ]
 
-const CITY_KINDS = new Set(['capital', 'city', 'town'])
+const CITY_KINDS = new Set<MapLabelKind>(['capital', 'city', 'town'])
 
 let cached: TpDestination[] | null = null
 
@@ -54,7 +47,6 @@ export function tpDestinations(): TpDestination[] {
   if (cached) return cached
 
   const out = [...STATIC_DESTINATIONS]
-  const consts = dungeon_constants() as DungeonConstants
 
   for (const e of DUNGEON_ENTRANCES) {
     const short = e.id.split('_').pop() ?? e.id
@@ -73,15 +65,11 @@ export function tpDestinations(): TpDestination[] {
     out.push({
       name: `${short}-boss`,
       label: `${e.name} floor ${last.depth} boss room`,
-      x: Math.floor(e.x) - consts.grid / 2 + boss.x + 0.5,
-      y: e.y - last.depth * consts.floorHeight,
-      z: Math.floor(e.z) - consts.grid / 2 + boss.z + 0.5,
+      ...dungeonCellCenter(e, last.depth, boss),
     })
   }
 
-  for (const label of Object.values(
-    mapLabelsJson as unknown as Record<string, MapLabel>
-  )) {
+  for (const label of MAP_LABELS) {
     // Aldermark duplicates the spawn entry.
     if (!CITY_KINDS.has(label.kind) || label.id === 'aldermark') continue
     out.push({

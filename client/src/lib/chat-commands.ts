@@ -12,10 +12,9 @@ import {
   riverWireframeVisible,
   shoreWaveDebugVisible,
   passabilityDebugVisible,
-  teleportLoading,
 } from './stores/debugStore'
-import { wrapWorldX } from './terrain/world-wrap'
 import { computeGrassPlacement, regenerateVegMeta } from './utils/grass-data'
+import { teleportLocalPlayer } from './utils/teleport'
 import { parseTpArgs, resolveTpDestination } from './utils/tp-args'
 import { tpDestinations } from './utils/tp-destinations'
 
@@ -24,13 +23,7 @@ import { chatChannel } from './stores/chatChannelStore'
 import { partyRoster } from './stores/partyStore'
 
 function teleportTo(x: number, y: number, z: number) {
-  const wrappedX = wrapWorldX(x)
-  gameStore.update((state) => {
-    state.currentPlayer?.position.set(wrappedX, y, z)
-    return state
-  })
-  networkManager.sendDebugTeleport({ x: wrappedX, y, z })
-  teleportLoading.set(true)
+  const wrappedX = teleportLocalPlayer(x, y, z)
   addChatMessage({
     text: `Teleport: moving to (${wrappedX.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})`,
     sender: 'system',
@@ -182,12 +175,11 @@ const COMMANDS: Record<string, Command> = {
         return
       }
 
-      const parts = trimmed.split(/\s+/)
-      if (parts.length === 1) {
-        const dest = resolveTpDestination(parts[0], tpDestinations())
+      if (!/\s/.test(trimmed)) {
+        const dest = resolveTpDestination(trimmed, tpDestinations())
         if (!dest) {
           addChatMessage({
-            text: `Teleport: unknown destination '${parts[0]}' — bare /tp lists them`,
+            text: `Teleport: unknown destination '${trimmed}' — bare /tp lists them`,
             sender: 'system',
           })
           return

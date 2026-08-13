@@ -1,5 +1,8 @@
 <script module lang="ts">
-  import mapLabelsJson from '../../../../data/map_labels.json'
+  import {
+    MAP_LABELS as MAP_LABEL_DEFS,
+    type MapLabelKind,
+  } from '../data/mapLabels'
   import { RegionImageCache } from '../terrain/regionImageCache'
 
   const REGION_SIZE = 16
@@ -9,16 +12,8 @@
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 8
 
-  // --- Shared place-name labels (generated from data-src/map_labels.csv,
-  // plus the player's discovered dungeon entrances) ---
-  type LabelKind =
-    | 'continent'
-    | 'capital'
-    | 'city'
-    | 'town'
-    | 'sea'
-    | 'island'
-    | 'dungeon'
+  // --- Place-name labels, plus the player's discovered dungeon entrances ---
+  type LabelKind = MapLabelKind
   interface MapLabel {
     /** Stable each-key, unique across kinds (names may repeat between them). */
     key: string
@@ -27,9 +22,13 @@
     x: number // world meters
     z: number
   }
-  const MAP_LABELS: MapLabel[] = Object.values(
-    mapLabelsJson as unknown as Record<string, Omit<MapLabel, 'key'>>
-  ).map((label) => ({ ...label, key: `${label.kind}:${label.name}` }))
+  const MAP_LABELS: MapLabel[] = MAP_LABEL_DEFS.map(({ name, kind, x, z }) => ({
+    key: `${kind}:${name}`,
+    name,
+    kind,
+    x,
+    z,
+  }))
 
   // Per-kind zoom visibility: shown when min <= zoomSpan <= max (zoomSpan = regions
   // across; larger = zoomed out). Continents/seas appear when zoomed out, settlements
@@ -63,7 +62,7 @@
 <script lang="ts">
   import { gameStore, isAdminUser } from '../stores/gameStore'
   import { partyRoster, partyPositions } from '../stores/partyStore'
-  import { worldMapVisible, teleportLoading } from '../stores/debugStore'
+  import { worldMapVisible } from '../stores/debugStore'
   import { discoveredDungeonIds } from '../stores/dungeonStore'
   import { houseMapFootprints } from '../stores/housingMapStore'
   import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
@@ -76,6 +75,7 @@
   import { wrapWorldX, unwrapWorldXNear } from '../terrain/world-wrap'
   import { mountOverlay } from '../stores/overlayStack'
   import { drawHouseMapFootprints } from '../utils/map-structures'
+  import { teleportLocalPlayer } from '../utils/teleport'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
   const mobileMapBudget = $derived(graphicsPreset.renderBudget === 'mobile')
@@ -542,19 +542,10 @@
     const angle = Math.PI / 4
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
-    const worldX = wrapWorldX(camX + (sx * cosA - sz * sinA))
+    const worldX = camX + (sx * cosA - sz * sinA)
     const worldZ = camZ + (sx * sinA + sz * cosA)
 
-    const position = { x: worldX, y: 0, z: worldZ }
-
-    gameStore.update((state) => {
-      if (!state.currentPlayer) return state
-      state.currentPlayer.position.set(worldX, 0, worldZ)
-      return state
-    })
-
-    networkManager.sendDebugTeleport(position)
-    teleportLoading.set(true)
+    teleportLocalPlayer(worldX, 0, worldZ)
     close()
   }
 
