@@ -115,15 +115,21 @@ export function buildDungeonFloorGroup(
   // Walls on all four sides are built lower down as per-run fade meshes (the
   // dungeon layer ghosts any run that occludes the player), not merged here.
 
-  // --- Down shaft (0 → -floorHeight) merges with the floor geometry, so it
-  // shares the slab's y=0 and isn't lifted for shadow contact like the up-shaft;
-  // any peter-panning at the hole's top edge is deferred (split it out to fix).
-  if (down) {
-    collectShaftStairs(entries, down, ctx, 0, -ctx.floorHeight, false, true)
-  }
-
   const group = new THREE.Group()
+  // Slab casts no shadow: the row-run boxes' seam faces reach the top surface
+  // (zero depth margin under BackSide shadow depth) and flicker as acne past
+  // ~5m of the torch; walls don't cast either.
   addMergedMeshes(group, entries)
+  for (const m of group.children) m.castShadow = false
+
+  // --- Down shaft (0 → -floorHeight) shares the slab's y=0 and isn't lifted
+  // for shadow contact like the up-shaft; any peter-panning at the hole's top
+  // edge is deferred. Own mesh so it keeps casting while the slab doesn't.
+  if (down) {
+    const downEntries: GeoEntry[] = []
+    collectShaftStairs(downEntries, down, ctx, 0, -ctx.floorHeight, false, true)
+    addMergedMeshes(group, downEntries)
+  }
 
   // --- Up shaft (descends from the floor above, +floorHeight → 0): the
   // staircase you arrive by. Built into its own sub-group so the dungeon layer
