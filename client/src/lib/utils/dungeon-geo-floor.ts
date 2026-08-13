@@ -12,7 +12,7 @@ import type {
   DungeonFloorLayout,
   InteriorDoorSpec,
 } from '../managers/dungeonManager'
-import { addBox } from './dungeon-geo-primitives'
+import { addBox, quadMeshBuilder } from './dungeon-geo-primitives'
 import {
   shaftRect,
   rectContains,
@@ -88,48 +88,79 @@ export function buildDungeonFloorGroup(
     shaftContains(layout.upShaft, ctx, x, z) ||
     (down != null && shaftContains(down, ctx, x, z))
 
-  // --- Floor slab: row-run boxes over carved cells minus the down hole.
+  // --- Floor slab: seamless top/bottom run quads with skirts only at true
+  // edges. Full boxes' interior seam faces reach y=0 with zero depth margin
+  // under BackSide shadow rendering and flicker as acne past ~5m of the torch;
+  // seamless, SLAB_THICKNESS is the self-bias and the slab can keep casting.
+  // A run also breaks where a side's openness flips, so every skirt shares its
+  // corners with the top face (no T-junction cracks).
+  const solidAt = (x: number, z: number) => carvedAt(x, z) && !inDownHole(x, z)
+  const slab = quadMeshBuilder(DUNGEON_FLOOR_UV_SCALE)
+  const v = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
+  const yB = -SLAB_THICKNESS
   for (let z = 0; z < grid; z++) {
     let runStart = -1
+    let runN = false
+    let runS = false
     for (let x = 0; x <= grid; x++) {
-      const solidFloor = x < grid && carvedAt(x, z) && !inDownHole(x, z)
-      if (solidFloor && runStart < 0) runStart = x
-      if (!solidFloor && runStart >= 0) {
-        const len = x - runStart
-        addBox(
-          entries,
-          DUNGEON_FLOOR_TEXTURE_IDX,
-          len,
-          SLAB_THICKNESS,
-          1,
-          runStart + len / 2,
-          -SLAB_THICKNESS / 2,
-          z + 0.5,
-          DUNGEON_FLOOR_UV_SCALE
-        )
+      const solid = x < grid && solidAt(x, z)
+      const nOpen = solid && !solidAt(x, z - 1)
+      const sOpen = solid && !solidAt(x, z + 1)
+      if (runStart >= 0 && (!solid || nOpen !== runN || sOpen !== runS)) {
+        const x0 = runStart
+        const cap = (y: number, n: THREE.Vector3) =>
+          slab.addQuad(
+            v(x0, y, z),
+            v(x, y, z),
+            v(x, y, z + 1),
+            v(x0, y, z + 1),
+            n
+          )
+        const skirtZ = (za: number, n: THREE.Vector3) =>
+          slab.addQuad(
+            v(x0, yB, za),
+            v(x, yB, za),
+            v(x, 0, za),
+            v(x0, 0, za),
+            n
+          )
+        const skirtX = (xa: number, n: THREE.Vector3) =>
+          slab.addQuad(
+            v(xa, yB, z),
+            v(xa, yB, z + 1),
+            v(xa, 0, z + 1),
+            v(xa, 0, z),
+            n
+          )
+        cap(0, v(0, 1, 0))
+        cap(yB, v(0, -1, 0))
+        if (runN) skirtZ(z, v(0, 0, -1))
+        if (runS) skirtZ(z + 1, v(0, 0, 1))
+        if (!solidAt(x0 - 1, z)) skirtX(x0, v(-1, 0, 0))
+        if (!solidAt(x, z)) skirtX(x, v(1, 0, 0))
         runStart = -1
+      }
+      if (solid && runStart < 0) {
+        runStart = x
+        runN = nOpen
+        runS = sOpen
       }
     }
   }
+  slab.finish(entries, DUNGEON_FLOOR_TEXTURE_IDX)
 
   // Walls on all four sides are built lower down as per-run fade meshes (the
   // dungeon layer ghosts any run that occludes the player), not merged here.
 
-  const group = new THREE.Group()
-  // Slab casts no shadow: the row-run boxes' seam faces reach the top surface
-  // (zero depth margin under BackSide shadow depth) and flicker as acne past
-  // ~5m of the torch; walls don't cast either.
-  addMergedMeshes(group, entries)
-  for (const m of group.children) m.castShadow = false
-
-  // --- Down shaft (0 → -floorHeight) shares the slab's y=0 and isn't lifted
-  // for shadow contact like the up-shaft; any peter-panning at the hole's top
-  // edge is deferred. Own mesh so it keeps casting while the slab doesn't.
+  // --- Down shaft (0 → -floorHeight) merges with the floor geometry, so it
+  // shares the slab's y=0 and isn't lifted for shadow contact like the up-shaft;
+  // any peter-panning at the hole's top edge is deferred (split it out to fix).
   if (down) {
-    const downEntries: GeoEntry[] = []
-    collectShaftStairs(downEntries, down, ctx, 0, -ctx.floorHeight, false, true)
-    addMergedMeshes(group, downEntries)
+    collectShaftStairs(entries, down, ctx, 0, -ctx.floorHeight, false, true)
   }
+
+  const group = new THREE.Group()
+  addMergedMeshes(group, entries)
 
   // --- Up shaft (descends from the floor above, +floorHeight → 0): the
   // staircase you arrive by. Built into its own sub-group so the dungeon layer

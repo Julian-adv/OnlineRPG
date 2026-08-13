@@ -1,7 +1,8 @@
 /**
  * dungeon-geo-primitives.ts — generic mesh primitives for the dungeon builders:
- * a UV-baked box and a gabled roof. Both push GeoEntry slabs for the caller to
- * merge; neither knows about dungeon textures (callers pass the texture index).
+ * a UV-baked box, a quad-mesh accumulator and a gabled roof. All push GeoEntry
+ * slabs for the caller to merge; none knows about dungeon textures (callers
+ * pass the texture index).
  */
 import * as THREE from 'three'
 import { bakedGeo, type GeoEntry } from './house-geo-utils'
@@ -41,6 +42,57 @@ export function addBox(
     geo: bakedGeo(geo, cx, cy, cz, 0, uvScale, uvScale),
     textureIndex,
   })
+}
+
+/** Incremental quad-mesh accumulator: pass each rectangle in any corner order
+ *  with its outward normal — winding is corrected against the normal, and UVs
+ *  use the same axis-projection as addBox (scaled by uvScale). `finish` pushes
+ *  everything accumulated as one GeoEntry. */
+export function quadMeshBuilder(uvScale: number = 1) {
+  const positions: number[] = []
+  const normals: number[] = []
+  const uvs: number[] = []
+  const indices: number[] = []
+  const addQuad = (
+    c0: THREE.Vector3,
+    c1: THREE.Vector3,
+    c2: THREE.Vector3,
+    c3: THREE.Vector3,
+    n: THREE.Vector3
+  ) => {
+    const base = positions.length / 3
+    const gn = c1.clone().sub(c0).cross(c2.clone().sub(c0))
+    const verts = gn.dot(n) < 0 ? [c0, c3, c2, c1] : [c0, c1, c2, c3]
+    const ax = Math.abs(n.x)
+    const ay = Math.abs(n.y)
+    const az = Math.abs(n.z)
+    for (const c of verts) {
+      positions.push(c.x, c.y, c.z)
+      normals.push(n.x, n.y, n.z)
+      let u: number, v: number
+      if (ax >= ay && ax >= az) {
+        u = c.z
+        v = c.y
+      } else if (ay >= ax && ay >= az) {
+        u = c.x
+        v = c.z
+      } else {
+        u = c.x
+        v = c.y
+      }
+      uvs.push(u * uvScale, v * uvScale)
+    }
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+  }
+  const finish = (entries: GeoEntry[], textureIndex: number) => {
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+    geo.setIndex(indices)
+    entries.push({ geo, textureIndex })
+  }
+  return { addQuad, finish }
 }
 
 const _roofMat = new THREE.Matrix4()
