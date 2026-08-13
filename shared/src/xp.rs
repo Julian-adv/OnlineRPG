@@ -7,9 +7,8 @@ pub fn monster_xp(level: u8, guard: u8) -> u32 {
     base + guard_bonus
 }
 
-/// Party XP bonus: +25% of the monster's XP per eligible member beyond
-/// the first, applied to the pooled total before the split. A full
-/// 5-member party pools exactly double the solo award.
+/// Party XP bonus per eligible member beyond the first. A full 5-member
+/// party pools exactly double the solo award.
 pub const PARTY_XP_BONUS_PER_EXTRA_PERCENT: u64 = 25;
 
 /// XZ distance from the dying monster within which a living, same-floor
@@ -19,12 +18,11 @@ pub const PARTY_XP_BONUS_PER_EXTRA_PERCENT: u64 = 25;
 pub const PARTY_XP_SHARE_RADIUS: f32 = 150.0;
 
 /// Equal per-member share of a monster's XP among `eligible_members` party
-/// members. Whoever lands the killing blow gets no special cut — it only
-/// triggers the split. The pooled total gains the party bonus, the split is
-/// floored, and every member is guaranteed 1 XP so trash kills never read
-/// as nothing. For n >= 2 a share can never exceed the solo award (total is
-/// at most 1.6x base and n >= 2), so padding a party with idle members
-/// cannot beat soloing.
+/// members. The killing blow gets no special cut — it only triggers the
+/// split. The pool gains the party bonus, the split is floored, and each
+/// member is guaranteed 1 XP (0 stays 0). Padding a party with idle members
+/// cannot beat soloing, which holds only while the bonus stays at or below
+/// 100% per extra member — see `party_share_never_beats_soloing`.
 pub fn party_xp_share(base_xp: u32, eligible_members: u32) -> u32 {
     let n = eligible_members.max(1);
     if n == 1 {

@@ -400,18 +400,31 @@ impl super::GameState {
         }
     }
 
+    /// Party members other than `player_id`, online or not.
+    async fn other_party_member_ids(&self, player_id: &PlayerId) -> Vec<PlayerId> {
+        let parties = self.parties.read().await;
+        parties
+            .party_of(player_id)
+            .map(|party| {
+                party
+                    .members
+                    .iter()
+                    .filter(|id| *id != player_id)
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Other party members who are still online.
     pub(crate) async fn other_party_members(&self, player_id: &PlayerId) -> Vec<PlayerId> {
-        let ids = {
-            let parties = self.parties.read().await;
-            parties
-                .party_of(player_id)
-                .map(|party| party.members.clone())
-                .unwrap_or_default()
-        };
+        let ids = self.other_party_member_ids(player_id).await;
+        if ids.is_empty() {
+            return ids;
+        }
         let players = self.players.read().await;
         ids.into_iter()
-            .filter(|id| id != player_id && players.contains_key(id))
+            .filter(|id| players.contains_key(id))
             .collect()
     }
 
@@ -424,10 +437,11 @@ impl super::GameState {
         position: onlinerpg_shared::Position,
         floor_level: i8,
     ) -> Vec<PlayerId> {
-        let ids = self.other_party_members(killer_id).await;
+        let ids = self.other_party_member_ids(killer_id).await;
         if ids.is_empty() {
             return ids;
         }
+        // One `players` guard covers online, alive, floor and distance.
         let radius_sq = xp::PARTY_XP_SHARE_RADIUS * xp::PARTY_XP_SHARE_RADIUS;
         let players = self.players.read().await;
         ids.into_iter()

@@ -1277,6 +1277,13 @@ export function handleServerMessage(
       const isCurrentPlayer = previousPlayer?.id === data.player_id
       const newTotalXp = Number(data.total_xp)
       const xpLost = Number(data.xp_lost ?? 0)
+      // Concurrent kill shares can leave the server out of XP order, so a late
+      // notice may carry an older total. Keep the gain message, but never roll
+      // the displayed XP or level backwards on it.
+      const isStaleGain =
+        xpLost === 0 &&
+        isCurrentPlayer &&
+        newTotalXp < (previousPlayer?.totalXp ?? 0)
 
       let regenInfo = undefined
       if (isCurrentPlayer && previousPlayer) {
@@ -1292,8 +1299,7 @@ export function handleServerMessage(
       }
 
       updatePlayer(data.player_id, {
-        level: data.new_level,
-        totalXp: newTotalXp,
+        ...(isStaleGain ? {} : { level: data.new_level, totalXp: newTotalXp }),
         health: data.current_hp,
         maxHealth: data.max_hp,
         ...(isCurrentPlayer ? { lastRegenInfo: regenInfo } : {}),
@@ -1312,6 +1318,9 @@ export function handleServerMessage(
         } else {
           addCombatMessage({ text: 'Death penalty applied.', sender: 'local' })
         }
+      }
+      if (isStaleGain) {
+        break
       }
       if (data.leveled_up) {
         addCombatMessage({

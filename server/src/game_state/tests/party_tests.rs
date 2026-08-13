@@ -1809,21 +1809,32 @@ fn xp_gains(rx: &mut DirectRx) -> Vec<u32> {
     gains
 }
 
-#[tokio::test]
-async fn kill_xp_splits_with_nearby_member() {
-    let game_state = make_test_game_state("party_xp_split");
-    let mut alice_rx = add(&game_state, "alice", 0.0).await;
-    let mut bob_rx = add(&game_state, "bob", 2.0).await;
-    register_character(&game_state, "alice").await;
-    register_character(&game_state, "bob").await;
-    form_party(&game_state, "alice", "bob").await;
+async fn spawn_prey(game_state: &GameState) {
     game_state
         .monsters
         .write()
         .await
         .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+}
+
+/// Registered alice at x 0 and bob at `bob_x`, partied, 1-HP prey at x 1,
+/// both channels drained.
+async fn xp_pair(tag: &str, bob_x: f32) -> (GameState, DirectRx, DirectRx) {
+    let game_state = make_test_game_state(tag);
+    let mut alice_rx = add(&game_state, "alice", 0.0).await;
+    let mut bob_rx = add(&game_state, "bob", bob_x).await;
+    register_character(&game_state, "alice").await;
+    register_character(&game_state, "bob").await;
+    form_party(&game_state, "alice", "bob").await;
+    spawn_prey(&game_state).await;
     drain(&mut alice_rx);
     drain(&mut bob_rx);
+    (game_state, alice_rx, bob_rx)
+}
+
+#[tokio::test]
+async fn kill_xp_splits_with_nearby_member() {
+    let (game_state, mut alice_rx, mut bob_rx) = xp_pair("party_xp_split", 2.0).await;
 
     kill_monster(&game_state, "alice", "prey").await;
 
@@ -1846,11 +1857,7 @@ async fn kill_xp_three_way_split() {
     game_state
         .respond_to_party_invite(&pid("carol"), &pid("alice"), true)
         .await;
-    game_state
-        .monsters
-        .write()
-        .await
-        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    spawn_prey(&game_state).await;
     drain(&mut alice_rx);
     drain(&mut bob_rx);
     drain(&mut carol_rx);
@@ -1865,19 +1872,7 @@ async fn kill_xp_three_way_split() {
 
 #[tokio::test]
 async fn distant_member_shares_no_kill_xp() {
-    let game_state = make_test_game_state("party_xp_distant");
-    let mut alice_rx = add(&game_state, "alice", 0.0).await;
-    let mut bob_rx = add(&game_state, "bob", 500.0).await;
-    register_character(&game_state, "alice").await;
-    register_character(&game_state, "bob").await;
-    form_party(&game_state, "alice", "bob").await;
-    game_state
-        .monsters
-        .write()
-        .await
-        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
-    drain(&mut alice_rx);
-    drain(&mut bob_rx);
+    let (game_state, mut alice_rx, mut bob_rx) = xp_pair("party_xp_distant", 500.0).await;
 
     kill_monster(&game_state, "alice", "prey").await;
 
@@ -1888,20 +1883,8 @@ async fn distant_member_shares_no_kill_xp() {
 
 #[tokio::test]
 async fn dead_member_shares_no_kill_xp() {
-    let game_state = make_test_game_state("party_xp_dead_member");
-    let mut alice_rx = add(&game_state, "alice", 0.0).await;
-    let mut bob_rx = add(&game_state, "bob", 2.0).await;
-    register_character(&game_state, "alice").await;
-    register_character(&game_state, "bob").await;
-    form_party(&game_state, "alice", "bob").await;
+    let (game_state, mut alice_rx, mut bob_rx) = xp_pair("party_xp_dead_member", 2.0).await;
     set_health(&game_state, "bob", 0).await;
-    game_state
-        .monsters
-        .write()
-        .await
-        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
-    drain(&mut alice_rx);
-    drain(&mut bob_rx);
 
     kill_monster(&game_state, "alice", "prey").await;
 
@@ -1911,12 +1894,7 @@ async fn dead_member_shares_no_kill_xp() {
 
 #[tokio::test]
 async fn other_floor_member_shares_no_kill_xp() {
-    let game_state = make_test_game_state("party_xp_other_floor");
-    let mut alice_rx = add(&game_state, "alice", 0.0).await;
-    let mut bob_rx = add(&game_state, "bob", 2.0).await;
-    register_character(&game_state, "alice").await;
-    register_character(&game_state, "bob").await;
-    form_party(&game_state, "alice", "bob").await;
+    let (game_state, mut alice_rx, mut bob_rx) = xp_pair("party_xp_other_floor", 2.0).await;
     game_state
         .players
         .write()
@@ -1924,13 +1902,6 @@ async fn other_floor_member_shares_no_kill_xp() {
         .get_mut(&pid("bob"))
         .unwrap()
         .floor_level = -1;
-    game_state
-        .monsters
-        .write()
-        .await
-        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
-    drain(&mut alice_rx);
-    drain(&mut bob_rx);
 
     kill_monster(&game_state, "alice", "prey").await;
 
@@ -1943,11 +1914,7 @@ async fn partyless_kill_xp_is_unchanged() {
     let game_state = make_test_game_state("party_xp_solo");
     let mut alice_rx = add(&game_state, "alice", 0.0).await;
     register_character(&game_state, "alice").await;
-    game_state
-        .monsters
-        .write()
-        .await
-        .insert("prey".to_string(), make_xp_monster("prey", pos(1.0)));
+    spawn_prey(&game_state).await;
     drain(&mut alice_rx);
 
     kill_monster(&game_state, "alice", "prey").await;
