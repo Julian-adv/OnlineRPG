@@ -21,6 +21,21 @@ pub struct PendingFriendRequest {
     pub expires_at: std::time::Instant,
 }
 
+/// An NPC-pushed trade window the agent hasn't answered yet — the web
+/// client's offer toast, which also lapses unanswered.
+pub struct PushedTrade {
+    pub merchant_id: PlayerId,
+    pub merchant_name: String,
+    pub expires_at: std::time::Instant,
+}
+
+impl PushedTrade {
+    /// Whether the offer is still answerable.
+    pub fn is_live(&self) -> bool {
+        self.expires_at > std::time::Instant::now()
+    }
+}
+
 impl SharedState {
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
     pub fn has_nearby_human_players(&self) -> bool {
@@ -238,6 +253,12 @@ impl SharedState {
         self.pending_friend_requests
             .iter()
             .filter(move |r| r.expires_at > now)
+    }
+
+    /// Trading with a merchant answers its pushed window, the web client's
+    /// "Open" path — no decline goes out, the sale itself tells the NPC.
+    pub fn clear_pushed_trade(&mut self, merchant_id: &PlayerId) {
+        self.pushed_trade.take_if(|t| t.merchant_id == *merchant_id);
     }
 
     /// Summons still answerable right now, `live_party_invites`'s twin.

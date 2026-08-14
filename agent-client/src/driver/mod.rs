@@ -311,11 +311,14 @@ pub async fn llm_driver(
     }
 
     loop {
+        decline_lapsed_trade(&state, &label).await;
+
         // Housing data was fetched around the start position; the initial
         // prefetch covers ±96m (the chunk and its neighbors). An exploring
         // agent walks out of that in minutes, after which buildings vanish
         // from pathfinding, the terrain map and the watch page — so refetch
-        // around the new position whenever we've moved a chunk away.
+        // around the new position whenever we've moved a chunk away. Moving is
+        // only the trigger; the world cache decides what is actually asked for.
         {
             let (world_cache, pos) = {
                 let s = state.lock().await;
@@ -559,6 +562,20 @@ async fn request_respawn(
     let mut s = state.lock().await;
     if let Err(e) = s.send_command(ClientMessage::RequestRespawn).await {
         error!("[{label}] Respawn request failed: {e}");
+    }
+}
+
+/// Wave off a trade offer nobody answered, like the web client's toast timing
+/// out, so the merchant stops pushing windows at us.
+async fn decline_lapsed_trade(state: &Arc<Mutex<SharedState>>, label: &str) {
+    let mut s = state.lock().await;
+    if let Some(offer) = s.pushed_trade.take_if(|t| !t.is_live()) {
+        let cmd = ClientMessage::DeclineTrade {
+            merchant_player_id: offer.merchant_id,
+        };
+        if let Err(e) = s.send_command(cmd).await {
+            error!("[{label}] Failed to decline a lapsed trade offer: {e}");
+        }
     }
 }
 

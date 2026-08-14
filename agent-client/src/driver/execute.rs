@@ -701,14 +701,12 @@ pub(super) async fn handle_response(
                 requester_id: request.requester_id,
                 accept,
             };
+            // Only the decline is ours to report; an accept can still be
+            // refused, so its verdict comes from the server (party_accept
+            // precedent).
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send friend response: {e}");
-            } else if accept {
-                s.push_agent_event(format!(
-                    "[Friend] You and {} are friends now.",
-                    request.requester_name
-                ));
-            } else {
+            } else if !accept {
                 s.push_agent_event(format!(
                     "[Friend] You declined {}'s friend request.",
                     request.requester_name
@@ -795,20 +793,21 @@ pub(super) async fn handle_response(
         // arrives; the server relays the decline to the merchant's agent.
         if matches!(action, AgentAction::DeclineTrade) {
             let mut s = state.lock().await;
-            let Some((merchant_id, merchant_name)) = s.pushed_trade.take() else {
+            let Some(offer) = s.pushed_trade.take().filter(|t| t.is_live()) else {
                 s.push_agent_event(
                     "[TradeFailed] No trade window is open on your screen to decline.".to_string(),
                 );
                 continue;
             };
             let cmd = onlinerpg_shared::ClientMessage::DeclineTrade {
-                merchant_player_id: merchant_id,
+                merchant_player_id: offer.merchant_id,
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send trade decline: {e}");
             } else {
                 s.push_agent_event(format!(
-                    "[Trade] You waved off {merchant_name}'s trade window."
+                    "[Trade] You waved off {}'s trade window.",
+                    offer.merchant_name
                 ));
             }
             continue;
@@ -825,15 +824,8 @@ pub(super) async fn handle_response(
                 ));
                 continue;
             };
-            // A torch changes hands → tell the server so the light other
-            // players see follows it. The web client's torch button sends the
-            // same message; there the light is a toggle beside the gear, here
-            // equipping IS the toggle.
-            let torch_now_lit = match (is_torch(&def_id), &placed) {
-                (true, Carried::InBag(_)) => Some(true),
-                (true, Carried::Worn(_)) => Some(false),
-                (false, _) => None,
-            };
+            // No TorchToggle: the server derives the light from the off-hand
+            // slot, and a refused equip would light us anyway.
             let cmd = match placed {
                 Carried::Worn(slot) => onlinerpg_shared::ClientMessage::UnequipItem { slot },
                 Carried::InBag(instance_id) => {
@@ -850,11 +842,6 @@ pub(super) async fn handle_response(
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send use action: {e}");
-            } else if let Some(enabled) = torch_now_lit {
-                let toggle = onlinerpg_shared::ClientMessage::TorchToggle { enabled };
-                if let Err(e) = s.send_command(toggle).await {
-                    error!("Failed to send torch toggle: {e}");
-                }
             }
             continue;
         }
@@ -908,6 +895,7 @@ pub(super) async fn handle_response(
                 for line in &lines {
                     *spent_units.entry(line.instance_id).or_default() += line.qty;
                 }
+                s.clear_pushed_trade(&merchant_id);
                 info!(
                     "Agent selling {total}x {def_id} [{} instance(s)] to {merchant_name}",
                     lines.len()
@@ -986,6 +974,7 @@ pub(super) async fn handle_response(
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send buy: {e}");
             } else {
+                s.clear_pushed_trade(&merchant_id);
                 info!("Agent buying {item} from {merchant_name}");
             }
             continue;
@@ -1038,6 +1027,7 @@ pub(super) async fn handle_response(
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send buyback: {e}");
             } else {
+                s.clear_pushed_trade(&merchant_id);
                 info!(
                     "Agent buying back {want} [entry {}] from {merchant_name}",
                     entry.entry_id
@@ -1474,6 +1464,14 @@ pub(super) async fn handle_response(
                     continue;
                 }
             }
+            // The server answers a friendless player with nothing at all, so
+            // asking would leave the LLM waiting on an event that never comes.
+            if matches!(action, AgentAction::FriendsOnline) && s.friends.is_empty() {
+                s.push_agent_event(
+                    "[FriendsOnline] Your friend list is empty — nobody to check on.".to_string(),
+                );
+                continue;
+            }
             let player_pos = s.self_player.as_ref().map(|p| &p.position).cloned();
             if let Some(cmd) = action_to_command(action, player_pos.as_ref()) {
                 if let Err(e) = s.send_command(cmd).await {
@@ -1531,12 +1529,6 @@ fn resolve_trade_push_target(
         return None;
     }
     Some(target_id)
-}
-
-/// The item ids that are torches — the same list the web client's
-/// `isTorchItemDefId` keeps.
-fn is_torch(def_id: &str) -> bool {
-    matches!(def_id, "torch" | "worn_torch")
 }
 
 /// Resolve the trader an LLM action named and walk up to them, answering with
@@ -2116,5 +2108,51 @@ mod tests {
             events.iter().any(|e| e.starts_with("[NoResult]")),
             "{events:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn friends_online_answers_an_empty_roster_without_asking() {
+        let (s, mut rx) = test_state();
+        let state = Arc::new(Mutex::new(s));
+        handle_response(
+            &state,
+            r#"{"actions": [{"type": "friends_online"}]}"#,
+            &None,
+            &None,
+            true,
+        )
+        .await;
+
+        assert!(rx.try_recv().is_err(), "nothing goes to the server");
+        let events = state.lock().await.drain_agent_events();
+        assert!(
+            events.iter().any(|e| e.starts_with("[FriendsOnline]")),
+            "{events:?}"
+        );
+    }
+
+    /// With someone on the roster the ask goes out as it always did.
+    #[tokio::test]
+    async fn friends_online_asks_the_server_when_the_roster_has_someone() {
+        let (mut s, mut rx) = test_state();
+        s.friends = vec![onlinerpg_shared::messages::FriendEntry {
+            character_id: 7,
+            name: "jake1".to_string(),
+            level: 3,
+        }];
+        let state = Arc::new(Mutex::new(s));
+        handle_response(
+            &state,
+            r#"{"actions": [{"type": "friends_online"}]}"#,
+            &None,
+            &None,
+            true,
+        )
+        .await;
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(onlinerpg_shared::ClientMessage::RequestFriendsOnline)
+        ));
     }
 }

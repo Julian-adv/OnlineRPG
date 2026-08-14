@@ -523,6 +523,13 @@ struct RegionObjects {
     placements: Vec<FurniturePlacement>,
 }
 
+/// One pooled client for the world-data fetches, so refetches reuse the
+/// connection instead of handshaking again.
+fn http_client() -> reqwest::Client {
+    static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    HTTP.get_or_init(reqwest::Client::new).clone()
+}
+
 /// Insert the region (16×16 tiles) containing a world position into the set.
 fn insert_region(regions: &mut HashSet<(i32, i32)>, x: f32, z: f32) {
     regions.insert((
@@ -562,8 +569,15 @@ pub(super) async fn fetch_furniture_around(
     for (x, z) in positions {
         insert_region(&mut regions, *x, *z);
     }
+    world_cache
+        .read()
+        .unwrap()
+        .unfetched_furniture_regions(&mut regions);
+    if regions.is_empty() {
+        return;
+    }
 
-    let client = reqwest::Client::new();
+    let client = http_client();
     let fetches = regions.iter().map(|&(rx, rz)| {
         let client = &client;
         let url = format!("{api_base_url}/api/terrain/objects/{rx}/{rz}");
@@ -582,6 +596,7 @@ pub(super) async fn fetch_furniture_around(
     for (rx, rz, resp) in results {
         let Some(resp) = resp else { continue };
         world.sync_furniture(rx, rz, &resp.placements);
+        world.mark_furniture_fetched((rx, rz));
         synced_regions += 1;
     }
     if synced_regions > 0 {
@@ -612,46 +627,58 @@ pub(super) async fn fetch_houses_around(
     for (x, z) in positions {
         insert_chunk_neighbors(&mut chunks, *x, *z);
     }
+    world_cache
+        .read()
+        .unwrap()
+        .unfetched_house_chunks(&mut chunks);
+    if chunks.is_empty() {
+        return;
+    }
 
     debug!(
         "[{label}] Fetching houses for {} chunk(s): {:?}",
         chunks.len(),
         chunks
     );
-    let client = reqwest::Client::new();
+    let client = http_client();
     let fetches = chunks.iter().map(|&(cx, cz)| {
         let client = &client;
         let url = format!("{api_base_url}/api/housing/area/{cx}/{cz}");
         async move {
-            match client.get(&url).send().await {
-                Ok(resp) if resp.status().is_success() => {
-                    resp.json::<Vec<HouseData>>().await.unwrap_or_default()
-                }
+            let houses = match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => resp.json::<Vec<HouseData>>().await.ok(),
                 Ok(resp) => {
                     warn!(
                         "[{label}] Housing API returned {} for chunk ({cx},{cz})",
                         resp.status()
                     );
-                    Vec::new()
+                    None
                 }
                 Err(e) => {
                     warn!("[{label}] Failed to fetch houses for chunk ({cx},{cz}): {e}");
-                    Vec::new()
+                    None
                 }
-            }
+            };
+            (cx, cz, houses)
         }
     });
     let results = futures_util::future::join_all(fetches).await;
 
-    let all_houses: Vec<HouseData> = results.into_iter().flatten().collect();
-    if all_houses.is_empty() {
+    let mut count = 0usize;
+    {
+        let mut world = world_cache.write().unwrap();
+        for (cx, cz, houses) in results {
+            let Some(houses) = houses else { continue };
+            world.mark_houses_fetched((cx, cz));
+            count += houses.len();
+            for house in houses {
+                world.add_house(house);
+            }
+        }
+    }
+    if count == 0 {
         info!("[{label}] No houses found in any chunk");
     } else {
-        let count = all_houses.len();
-        let mut world = world_cache.write().unwrap();
-        for house in all_houses {
-            world.add_house(house);
-        }
         info!("[{label}] Loaded {count} house(s) for pathfinding");
     }
 }

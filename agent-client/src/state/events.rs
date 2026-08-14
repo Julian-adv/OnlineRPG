@@ -421,12 +421,17 @@ impl SharedState {
                 // The agent never sends OpenShop, so a ShopState is always a
                 // trade window pushed at us by an NPC's OpenTrade — the offer
                 // toast a web player would see. A re-send from the same
-                // merchant (a deal changed mid-trade) is not a new offer.
+                // merchant (a deal changed mid-trade) is not a new offer, but
+                // one arriving after the last offer lapsed is.
                 let repeat = self
                     .pushed_trade
                     .as_ref()
-                    .is_some_and(|(id, _)| id == merchant_player_id);
-                self.pushed_trade = Some((*merchant_player_id, merchant_name.clone()));
+                    .is_some_and(|t| t.merchant_id == *merchant_player_id && t.is_live());
+                self.pushed_trade = Some(PushedTrade {
+                    merchant_id: *merchant_player_id,
+                    merchant_name: merchant_name.clone(),
+                    expires_at: std::time::Instant::now() + TRADE_OFFER_TTL,
+                });
                 if !repeat {
                     self.push_agent_event(format!(
                         "[TradeOffer] {merchant_name} opened their trade window on you — buy or \
@@ -678,7 +683,9 @@ impl SharedState {
             } => {
                 self.prune_expired_friend_requests();
                 let queue = &mut self.pending_friend_requests;
-                if !queue.iter().any(|r| r.requester_id == *requester_id) {
+                if queue.len() < MAX_PENDING_FRIEND_REQUESTS
+                    && !queue.iter().any(|r| r.requester_id == *requester_id)
+                {
                     queue.push(PendingFriendRequest {
                         requester_id: *requester_id,
                         requester_name: requester_name.clone(),

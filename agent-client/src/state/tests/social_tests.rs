@@ -117,3 +117,71 @@ fn a_declined_trade_offer_blocks_further_pushes() {
         "the only regular declined: the section vanishes"
     );
 }
+
+/// Friend requests queue like party invites, cap included. The server caps
+/// them per requester, not per target, so without this cap a crowd of
+/// strangers grows the prompt one line each.
+#[test]
+fn friend_requests_are_capped_like_party_invites() {
+    let (mut s, _rx) = test_state();
+    for i in 2..8u64 {
+        s.push_event(ServerMessage::FriendRequestReceived {
+            requester_id: PlayerId::from(i),
+            requester_name: format!("stranger{i}"),
+        });
+    }
+    assert_eq!(s.pending_friend_requests.len(), MAX_PENDING_FRIEND_REQUESTS);
+
+    // A repeat from someone already queued is not a second entry.
+    s.push_event(ServerMessage::FriendRequestReceived {
+        requester_id: PlayerId::from(2),
+        requester_name: "stranger2".to_string(),
+    });
+    assert_eq!(s.pending_friend_requests.len(), MAX_PENDING_FRIEND_REQUESTS);
+}
+
+/// A pushed trade window lapses like the web client's offer toast: it stops
+/// prompting, and a later push from the same merchant reads as a new offer
+/// rather than being suppressed as a repeat.
+#[test]
+fn a_pushed_trade_window_lapses_and_the_next_one_is_new() {
+    let (mut s, _rx) = test_state();
+    let merchant = PlayerId::from(9);
+    let offer = || ServerMessage::ShopState {
+        merchant_player_id: merchant,
+        merchant_name: "Rica".to_string(),
+        catalog: Vec::new(),
+        sell_rate_percent: 50,
+        active_deals: Vec::new(),
+        wishlist: Vec::new(),
+        stock: Vec::new(),
+        buyback: Vec::new(),
+    };
+
+    s.push_event(offer());
+    assert_eq!(s.drain_agent_events().len(), 1, "the offer reaches the LLM");
+    assert!(s
+        .format_world_state()
+        .contains("Rica's trade window is open"));
+
+    // A re-send while the offer stands is the same window, not a new one.
+    s.push_event(offer());
+    assert!(s.drain_agent_events().is_empty());
+
+    s.pushed_trade.as_mut().unwrap().expires_at =
+        std::time::Instant::now() - std::time::Duration::from_secs(1);
+    assert!(
+        !s.format_world_state().contains("trade window is open"),
+        "a lapsed offer stops prompting"
+    );
+    s.push_event(offer());
+    assert_eq!(
+        s.drain_agent_events().len(),
+        1,
+        "an offer after the last one lapsed is a new offer"
+    );
+
+    // Trading with them answers the window: the web client's "Open" path.
+    s.clear_pushed_trade(&merchant);
+    assert!(!s.format_world_state().contains("trade window is open"));
+}

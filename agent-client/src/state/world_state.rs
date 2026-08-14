@@ -139,7 +139,8 @@ impl SharedState {
             let names: Vec<&str> = self.friends.iter().map(|f| f.name.as_str()).collect();
             lines.push(format!("Your friends: {}", names.join(", ")));
         }
-        if let Some((_, name)) = &self.pushed_trade {
+        if let Some(offer) = self.pushed_trade.as_ref().filter(|t| t.is_live()) {
+            let name = &offer.merchant_name;
             lines.push(format!(
                 "{name}'s trade window is open on your screen — buy, sell, or decline_trade"
             ));

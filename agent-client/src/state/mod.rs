@@ -69,6 +69,13 @@ const WISHLIST_TRADE_COOLDOWN: std::time::Duration = std::time::Duration::from_s
 const TRADE_DECLINE_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 /// Cap on remembered party invites, matching the web client's toast queue.
 const MAX_PENDING_PARTY_INVITES: usize = 3;
+/// Same cap for friend requests. The server caps them per requester, not per
+/// target, so without this any number of strangers can grow the prompt.
+const MAX_PENDING_FRIEND_REQUESTS: usize = 3;
+/// How long an NPC-pushed trade window stays answerable, mirroring the web
+/// client's offer toast (`OFFER_TTL_MS` in `TradeOfferToast.svelte`). Both
+/// wave the offer off once it lapses.
+const TRADE_OFFER_TTL: std::time::Duration = std::time::Duration::from_secs(30);
 /// From the shared crate so the server's invite TTL and the agent's pruning
 /// are guaranteed equal.
 use onlinerpg_shared::messages::{PARTY_INVITE_TTL, PARTY_SUMMON_TTL};
@@ -150,7 +157,7 @@ pub use commands::ActionProgress;
 pub use events::EventUrgency;
 pub use inventory::{Carried, CarriedBagCopies};
 pub use movement::{MoveTarget, MoveTargetError};
-pub use social::{PendingFriendRequest, PendingPartyInvite, PendingPartySummon};
+pub use social::{PendingFriendRequest, PendingPartyInvite, PendingPartySummon, PushedTrade};
 pub use world_cache::WorldCache;
 
 /// Shared state between WebSocket reader and Claude driver tasks.
@@ -222,8 +229,9 @@ pub struct SharedState {
     pub tip_hats: HashMap<u64, onlinerpg_shared::tip_hat::TipHat>,
     /// An NPC-pushed trade window not yet acted on (`ShopState` arrives
     /// unrequested — the agent never sends `OpenShop`). `decline_trade`
-    /// answers and clears it.
-    pub pushed_trade: Option<(PlayerId, String)>,
+    /// answers it, buying or selling clears it, and an untouched one lapses
+    /// after `TRADE_OFFER_TTL` so a new offer still reads as new.
+    pub pushed_trade: Option<PushedTrade>,
     /// Current party roster from `PartyState`; empty = not in a party.
     pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
     pub party_leader: Option<PlayerId>,

@@ -15,6 +15,12 @@ pub struct WorldCache {
     /// bearing — an open chest stays solid — but an opened chest is one the
     /// agent should stop seeing, the way its lid stays up for a web player.
     dungeon_opened_props: HashMap<(String, u8), HashSet<u32>>,
+    /// Housing chunks and furniture regions already fetched. A chunk that
+    /// answered with no houses is indistinguishable from an unfetched one, so
+    /// this cannot be derived from `houses`. Shared like the rest of the
+    /// cache: what one agent fetched, none of the others ask for again.
+    fetched_house_chunks: HashSet<(i32, i32)>,
+    fetched_furniture_regions: HashSet<(i32, i32)>,
 }
 
 impl WorldCache {
@@ -26,6 +32,8 @@ impl WorldCache {
             dungeon_doors: HashMap::new(),
             dungeon_broken_props: HashMap::new(),
             dungeon_opened_props: HashMap::new(),
+            fetched_house_chunks: HashSet::new(),
+            fetched_furniture_regions: HashSet::new(),
         }
     }
 
@@ -212,6 +220,24 @@ impl WorldCache {
     pub fn remove_house(&mut self, house_id: &str) {
         self.houses.remove(house_id);
         self.passability_cache.remove(house_id);
+    }
+
+    /// Chunks/regions of `wanted` nobody has fetched yet. Only chunks that
+    /// answered are marked, so a failed one comes back on the next ask.
+    pub fn unfetched_house_chunks(&self, wanted: &mut HashSet<(i32, i32)>) {
+        wanted.retain(|c| !self.fetched_house_chunks.contains(c));
+    }
+
+    pub fn mark_houses_fetched(&mut self, chunk: (i32, i32)) {
+        self.fetched_house_chunks.insert(chunk);
+    }
+
+    pub fn unfetched_furniture_regions(&self, wanted: &mut HashSet<(i32, i32)>) {
+        wanted.retain(|r| !self.fetched_furniture_regions.contains(r));
+    }
+
+    pub fn mark_furniture_fetched(&mut self, region: (i32, i32)) {
+        self.fetched_furniture_regions.insert(region);
     }
 
     /// Register (or replace) a region's solid furniture in the passability cache
