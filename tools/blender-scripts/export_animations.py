@@ -43,6 +43,9 @@ EXPORT_PACKS = {
         "guitar_playing",
         "excited",
         "clap",
+        "twist",
+        "macarena",
+        "chicken",
     ],
     "offhand": [
         "torch_idle1",

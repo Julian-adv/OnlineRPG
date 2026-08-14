@@ -508,9 +508,14 @@ impl super::GameState {
 
     /// `/emote <name>` — like `/play_music` with nothing attached: no object
     /// to claim, no item requirement. A typo or a bare `/emote` gets the list
-    /// back; the client-side flow is documented on `ONE_SHOT_EMOTES`.
+    /// back; the client-side flow is documented on `ONE_SHOT_EMOTES` and
+    /// `LOOPING_EMOTES`.
     async fn play_emote(&self, player_id: &PlayerId, name: &str) {
-        let emotes = onlinerpg_shared::messages::ONE_SHOT_EMOTES;
+        let emotes: Vec<&str> = onlinerpg_shared::messages::ONE_SHOT_EMOTES
+            .iter()
+            .chain(onlinerpg_shared::messages::LOOPING_EMOTES)
+            .copied()
+            .collect();
         if !emotes.contains(&name) {
             self.send_system_message(player_id, format!("Emotes: {}", emotes.join(", ")))
                 .await;

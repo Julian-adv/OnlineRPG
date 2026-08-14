@@ -58,7 +58,11 @@
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
-  import { MUSIC_EMOTE_ANIM, ONE_SHOT_EMOTE_ANIMS } from '../stores/emoteStore'
+  import {
+    LOOPING_EMOTE_ANIMS,
+    MUSIC_EMOTE_ANIM,
+    ONE_SHOT_EMOTE_ANIMS,
+  } from '../stores/emoteStore'
   import { billboardScale, billboardZoomT } from '../utils/billboardScale'
 
   interface Props {
@@ -629,13 +633,14 @@
 
     const newAction = mixer.clipAction(clip)
 
-    // The fishing idle and the music emote are stances held for the whole
-    // state, not one-shot gestures like pickup — they loop until it ends.
-    // Clamping instead would freeze the performance mid-strum.
+    // The fishing idle, the music emote and the dances are stances held for
+    // the whole state, not one-shot gestures like pickup — they loop until it
+    // ends. Clamping instead would freeze the performance mid-strum.
     const playOnce =
       playerState !== 'moving' &&
       interactionAnim !== FishingAnimationName.IDLE &&
-      interactionAnim !== MUSIC_EMOTE_ANIM
+      interactionAnim !== MUSIC_EMOTE_ANIM &&
+      !LOOPING_EMOTE_ANIMS.has(interactionAnim ?? '')
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce
@@ -932,7 +937,9 @@
       // Pickup, the fishing cast, and one-shot emotes are interactions
       // remote players end on their own rather than waiting a round-trip for
       // StopInteraction, so the finish callback must fire for remotes too.
-      // Held poses (bench, forge) keep waiting for their StopInteraction.
+      // Held poses (bench, forge) and looping emotes keep waiting for their
+      // StopInteraction — a looping clip never "finishes".
+      !LOOPING_EMOTE_ANIMS.has(interactionAnim) &&
       (isCurrentPlayer ||
         interactionAnim === 'pickup' ||
         interactionAnim === FishingAnimationName.CAST ||

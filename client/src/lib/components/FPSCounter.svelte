@@ -64,6 +64,7 @@
   import { isAdminUser } from '../stores/gameStore'
   import { closeTopOverlay } from '../stores/overlayStack'
   import { friendPanelVisible } from '../stores/friendStore'
+  import { emoteStopRequest } from '../stores/emoteStore'
 
   function toDegrees(radians: number) {
     const degrees = (radians * 180) / Math.PI
@@ -87,9 +88,15 @@
       event.preventDefault()
       mapEditorMode.update((v) => !v)
     }
-    // Claim Escape only when it actually closed an overlay.
-    if (event.key === 'Escape' && isGameKey(event) && closeTopOverlay()) {
-      event.preventDefault()
+    // Claim Escape only when it actually closed an overlay. With nothing
+    // open, Escape ends a running emote performance instead (dance, tune);
+    // PlayerControl ignores the request unless one is playing.
+    if (event.key === 'Escape' && isGameKey(event)) {
+      if (closeTopOverlay()) {
+        event.preventDefault()
+      } else {
+        emoteStopRequest.set(true)
+      }
     }
     if ((event.key === 'm' || event.key === 'M') && isGameKey(event)) {
       event.preventDefault()

@@ -118,6 +118,7 @@
   import {
     emoteRequest,
     emoteStopRequest,
+    LOOPING_EMOTE_ANIMS,
     MUSIC_EMOTE_ANIM,
     ONE_SHOT_EMOTE_ANIMS,
   } from '../stores/emoteStore'
@@ -359,7 +360,11 @@
     })
   }
 
-  const EMOTE_ANIMS = new Set([MUSIC_EMOTE_ANIM, ...ONE_SHOT_EMOTE_ANIMS])
+  const EMOTE_ANIMS = new Set([
+    MUSIC_EMOTE_ANIM,
+    ...ONE_SHOT_EMOTE_ANIMS,
+    ...LOOPING_EMOTE_ANIMS,
+  ])
 
   function exitObjectInteraction(notify = true) {
     // Stepping out walks the player off the seat they were using. An emote
@@ -1115,11 +1120,13 @@
   $effect(() => {
     if (!$emoteStopRequest) return
     emoteStopRequest.set(false)
-    // Only the performance ends here: by now the player may have sat down on
-    // something, and that pose is not ours to cancel.
+    // Only a performance ends here — the tune running out or Escape. By now
+    // the player may have sat down on something, and that pose is not ours
+    // to cancel.
     if (
       playerState.state === 'interact' &&
-      playerState.interactionAnim === MUSIC_EMOTE_ANIM
+      (playerState.interactionAnim === MUSIC_EMOTE_ANIM ||
+        LOOPING_EMOTE_ANIMS.has(playerState.interactionAnim ?? ''))
     ) {
       exitObjectInteraction()
     }

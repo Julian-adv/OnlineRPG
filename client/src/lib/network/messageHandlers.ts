@@ -92,6 +92,7 @@ import {
 import { refreshBardZone } from '../managers/bardZone'
 import {
   emoteRequest,
+  LOOPING_EMOTE_ANIMS,
   MUSIC_EMOTE_ANIM,
   ONE_SHOT_EMOTE_ANIMS,
 } from '../stores/emoteStore'
@@ -1018,7 +1019,11 @@ export function handleServerMessage(
       if (state.currentPlayer?.id === data.player_id) {
         // Our own /emote went to the server unresolved; this broadcast is
         // its reply, the way PlayerMusicStarted starts /play_music.
-        if (data.object_type && ONE_SHOT_EMOTE_ANIMS.has(data.object_type)) {
+        if (
+          data.object_type &&
+          (ONE_SHOT_EMOTE_ANIMS.has(data.object_type) ||
+            LOOPING_EMOTE_ANIMS.has(data.object_type))
+        ) {
           emoteRequest.set(data.object_type)
         }
         break
