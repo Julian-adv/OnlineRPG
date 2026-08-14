@@ -129,6 +129,21 @@ impl SharedState {
                 summon.caster_name
             ));
         }
+        for request in self.live_friend_requests() {
+            lines.push(format!(
+                "Pending friend request from {} — answer with friend_accept or friend_decline",
+                request.requester_name
+            ));
+        }
+        if !self.friends.is_empty() {
+            let names: Vec<&str> = self.friends.iter().map(|f| f.name.as_str()).collect();
+            lines.push(format!("Your friends: {}", names.join(", ")));
+        }
+        if let Some((_, name)) = &self.pushed_trade {
+            lines.push(format!(
+                "{name}'s trade window is open on your screen — buy, sell, or decline_trade"
+            ));
+        }
 
         // Nearby players (exclude self and humans beyond the sight radius)
         let sp = self.self_player.as_ref();
@@ -204,6 +219,30 @@ impl SharedState {
         }
         if hidden > 0 {
             lines.push(format!("(and {hidden} more items further away)"));
+        }
+
+        // Tip hats within sight on our floor: where to drop coins after a
+        // performance. Our own hat is listed too (it shows as yours).
+        if let Some(sp) = sp {
+            for hat in self.tip_hats.values() {
+                if hat.floor_level != sp.floor_level {
+                    continue;
+                }
+                let d_sq = hat.position.dist_xz_sq(&sp.position);
+                if d_sq > sight_sq {
+                    continue;
+                }
+                let whose = if Some(hat.owner) == self.self_player_id {
+                    "yours".to_string()
+                } else {
+                    format!("{}'s — drop coins in it with tip_hat", hat.owner_name)
+                };
+                lines.push(format!(
+                    "Tip hat [id {}] {:.1}m away: {whose}",
+                    hat.id,
+                    d_sq.sqrt()
+                ));
+            }
         }
 
         if lines.is_empty() {

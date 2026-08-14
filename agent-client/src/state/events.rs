@@ -81,6 +81,14 @@ impl SharedState {
             ServerMessage::PartyInviteReceived { .. }
             | ServerMessage::PartyInviteResult { .. }
             | ServerMessage::PartySummonReceived { .. } => EventUrgency::Urgent,
+            // Urgent: a friend request to answer while it is live, and the
+            // answer to our own friends_online ask.
+            ServerMessage::FriendRequestReceived { .. } | ServerMessage::FriendsOnline { .. } => {
+                EventUrgency::Urgent
+            }
+            // Urgent: someone opened their trade window on us — a person is
+            // standing there waiting for an answer.
+            ServerMessage::ShopState { .. } => EventUrgency::Urgent,
             ServerMessage::PartyState { .. } => EventUrgency::Routine,
             // Urgent: kicked
             ServerMessage::Kicked { .. } => EventUrgency::Urgent,
@@ -404,11 +412,27 @@ impl SharedState {
             }
             ServerMessage::ShopState {
                 merchant_player_id,
+                ref merchant_name,
                 ref buyback,
                 ..
             } => {
                 self.merchant_buyback
                     .insert(*merchant_player_id, buyback.clone());
+                // The agent never sends OpenShop, so a ShopState is always a
+                // trade window pushed at us by an NPC's OpenTrade — the offer
+                // toast a web player would see. A re-send from the same
+                // merchant (a deal changed mid-trade) is not a new offer.
+                let repeat = self
+                    .pushed_trade
+                    .as_ref()
+                    .is_some_and(|(id, _)| id == merchant_player_id);
+                self.pushed_trade = Some((*merchant_player_id, merchant_name.clone()));
+                if !repeat {
+                    self.push_agent_event(format!(
+                        "[TradeOffer] {merchant_name} opened their trade window on you — buy or \
+                         sell with them, or wave it off with decline_trade."
+                    ));
+                }
             }
             ServerMessage::GameState {
                 players,
@@ -416,7 +440,7 @@ impl SharedState {
                 ground_items,
                 campfires,
                 stalls,
-                tip_hats: _,
+                tip_hats,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
@@ -431,6 +455,10 @@ impl SharedState {
                 self.stalls.clear();
                 for stall in stalls {
                     self.stalls.insert(stall.id, stall.clone());
+                }
+                self.tip_hats.clear();
+                for hat in tip_hats {
+                    self.tip_hats.insert(hat.id, hat.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -643,6 +671,60 @@ impl SharedState {
                     caster_name: caster_name.clone(),
                     expires_at: std::time::Instant::now() + PARTY_SUMMON_TTL,
                 });
+            }
+            ServerMessage::FriendRequestReceived {
+                requester_id,
+                ref requester_name,
+            } => {
+                self.prune_expired_friend_requests();
+                let queue = &mut self.pending_friend_requests;
+                if !queue.iter().any(|r| r.requester_id == *requester_id) {
+                    queue.push(PendingFriendRequest {
+                        requester_id: *requester_id,
+                        requester_name: requester_name.clone(),
+                        expires_at: std::time::Instant::now()
+                            + onlinerpg_shared::messages::FRIEND_REQUEST_TTL,
+                    });
+                }
+            }
+            ServerMessage::FriendList { ref friends } => {
+                // Answering a request settles it; the roster names the verdict.
+                self.pending_friend_requests
+                    .retain(|r| !friends.iter().any(|f| f.name == r.requester_name));
+                self.friends = friends.clone();
+            }
+            ServerMessage::FriendsOnline { ref friends } => {
+                // The answer to our own friends_online ask. Ids map to names
+                // through the roster; an id off the roster shows as is.
+                if friends.is_empty() {
+                    self.push_agent_event(
+                        "[FriendsOnline] None of your friends are online right now.".to_string(),
+                    );
+                } else {
+                    let names: Vec<String> = friends
+                        .iter()
+                        .map(|f| {
+                            let name = self
+                                .friends
+                                .iter()
+                                .find(|e| e.character_id == f.character_id)
+                                .map(|e| e.name.as_str())
+                                .unwrap_or("(unknown)");
+                            format!("{name} (Lv.{})", f.level)
+                        })
+                        .collect();
+                    self.push_agent_event(format!(
+                        "[FriendsOnline] Online now: {}.",
+                        names.join(", ")
+                    ));
+                }
+            }
+            ServerMessage::TipHatPlaced { ref tip_hat }
+            | ServerMessage::TipHatAppeared { ref tip_hat } => {
+                self.tip_hats.insert(tip_hat.id, tip_hat.clone());
+            }
+            ServerMessage::TipHatRemoved { tip_hat_id } => {
+                self.tip_hats.remove(tip_hat_id);
             }
             ServerMessage::PartyState {
                 leader_id,

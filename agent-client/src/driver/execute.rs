@@ -623,6 +623,197 @@ pub(super) async fn handle_response(
             continue;
         }
 
+        // Kick and promote need the party roster: resolve the named member
+        // and check we actually lead before bothering the server.
+        if let AgentAction::PartyKick { player } | AgentAction::PartyPromote { player } = action {
+            let kick = matches!(action, AgentAction::PartyKick { .. });
+            let verb = if kick { "remove" } else { "promote" };
+            let mut s = state.lock().await;
+            if s.party_members.is_empty() {
+                s.push_agent_event(format!(
+                    "[PartyFailed] You are not in a party — nobody to {verb}."
+                ));
+                continue;
+            }
+            if s.party_leader != s.self_player_id {
+                s.push_agent_event(format!(
+                    "[PartyFailed] Only the party leader can {verb} members."
+                ));
+                continue;
+            }
+            let member = s
+                .party_members
+                .iter()
+                .find(|m| m.name.eq_ignore_ascii_case(player.trim()));
+            let Some(member) = member else {
+                let roster = s
+                    .party_members
+                    .iter()
+                    .map(|m| m.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                s.push_agent_event(format!(
+                    "[PartyFailed] '{player}' is not in your party. Members: {roster}."
+                ));
+                continue;
+            };
+            let (target_id, target_name) = (member.id, member.name.clone());
+            if Some(target_id) == s.self_player_id {
+                s.push_agent_event(format!(
+                    "[PartyFailed] That names yourself — party_leave quits, and you \
+                     already lead. Name another member to {verb}."
+                ));
+                continue;
+            }
+            let cmd = if kick {
+                onlinerpg_shared::ClientMessage::PartyKick { target_id }
+            } else {
+                onlinerpg_shared::ClientMessage::PartyPromote { target_id }
+            };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send party {verb}: {e}");
+            } else if kick {
+                s.push_agent_event(format!("[Party] You removed {target_name} from the party."));
+            } else {
+                s.push_agent_event(format!("[Party] {target_name} now leads the party."));
+            }
+            continue;
+        }
+
+        // Friend answers need the stored request: the requester may be
+        // outside the AOI, like a party inviter.
+        if let AgentAction::FriendAccept { player } | AgentAction::FriendDecline { player } = action
+        {
+            let accept = matches!(action, AgentAction::FriendAccept { .. });
+            let mut s = state.lock().await;
+            s.prune_expired_friend_requests();
+            let idx = pick_pending(&s.pending_friend_requests, player.as_deref(), |r| {
+                &r.requester_name
+            });
+            let Some(idx) = idx else {
+                s.push_agent_event(
+                    "[FriendFailed] No pending friend request to answer.".to_string(),
+                );
+                continue;
+            };
+            let request = s.pending_friend_requests.remove(idx);
+            let cmd = onlinerpg_shared::ClientMessage::FriendRespond {
+                requester_id: request.requester_id,
+                accept,
+            };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send friend response: {e}");
+            } else if accept {
+                s.push_agent_event(format!(
+                    "[Friend] You and {} are friends now.",
+                    request.requester_name
+                ));
+            } else {
+                s.push_agent_event(format!(
+                    "[Friend] You declined {}'s friend request.",
+                    request.requester_name
+                ));
+            }
+            continue;
+        }
+
+        // Dropping a friend is name-based — the friend may be offline — so
+        // check the roster rather than nearby players.
+        if let AgentAction::FriendRemove { player } = action {
+            let mut s = state.lock().await;
+            let name = s
+                .friends
+                .iter()
+                .find(|f| f.name.eq_ignore_ascii_case(player.trim()))
+                .map(|f| f.name.clone());
+            let Some(name) = name else {
+                s.push_agent_event(format!(
+                    "[FriendFailed] '{player}' is not on your friend list."
+                ));
+                continue;
+            };
+            let cmd = onlinerpg_shared::ClientMessage::FriendRemove { name: name.clone() };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send friend removal: {e}");
+            } else {
+                s.push_agent_event(format!("[Friend] You dropped {name} as a friend."));
+            }
+            continue;
+        }
+
+        // Tip a performer's hat: resolve the named hat (or the nearest one
+        // that is not ours) and let the server judge wallet and distance —
+        // its system messages report the outcome either way.
+        if let AgentAction::TipHat { hat, amount } = action {
+            let mut s = state.lock().await;
+            if *amount <= 0 {
+                s.push_agent_event(
+                    "[TipFailed] \"amount\" must be a positive number of copper.".to_string(),
+                );
+                continue;
+            }
+            let hat_id = match hat {
+                Some(id) if s.tip_hats.contains_key(id) => Some(*id),
+                Some(id) => {
+                    s.push_agent_event(format!(
+                        "[TipFailed] No tip hat with id {id} is around — the world state \
+                         lists the hats you can see."
+                    ));
+                    continue;
+                }
+                None => {
+                    let me = s.self_player_id;
+                    let my_pos = s.self_player.as_ref().map(|p| p.position);
+                    s.tip_hats
+                        .values()
+                        .filter(|h| Some(h.owner) != me)
+                        .min_by(|a, b| match my_pos {
+                            Some(p) => a
+                                .position
+                                .dist_xz_sq(&p)
+                                .total_cmp(&b.position.dist_xz_sq(&p)),
+                            None => std::cmp::Ordering::Equal,
+                        })
+                        .map(|h| h.id)
+                }
+            };
+            let Some(hat_id) = hat_id else {
+                s.push_agent_event("[TipFailed] No tip hat is laid out near you.".to_string());
+                continue;
+            };
+            let cmd = onlinerpg_shared::ClientMessage::TipHat {
+                hat_id,
+                amount: *amount,
+            };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send tip: {e}");
+            }
+            continue;
+        }
+
+        // Wave off a pushed trade window. The offer is stored when ShopState
+        // arrives; the server relays the decline to the merchant's agent.
+        if matches!(action, AgentAction::DeclineTrade) {
+            let mut s = state.lock().await;
+            let Some((merchant_id, merchant_name)) = s.pushed_trade.take() else {
+                s.push_agent_event(
+                    "[TradeFailed] No trade window is open on your screen to decline.".to_string(),
+                );
+                continue;
+            };
+            let cmd = onlinerpg_shared::ClientMessage::DeclineTrade {
+                merchant_player_id: merchant_id,
+            };
+            if let Err(e) = s.send_command(cmd).await {
+                error!("Failed to send trade decline: {e}");
+            } else {
+                s.push_agent_event(format!(
+                    "[Trade] You waved off {merchant_name}'s trade window."
+                ));
+            }
+            continue;
+        }
+
         // Use an item: worn gear comes off, anything else is equipped or
         // consumed out of the bag. Lighting a torch is equipping one.
         if let AgentAction::Use { item } = action {
@@ -633,6 +824,15 @@ pub(super) async fn handle_response(
                     "[UseFailed] You are not carrying anything called '{item}'."
                 ));
                 continue;
+            };
+            // A torch changes hands → tell the server so the light other
+            // players see follows it. The web client's torch button sends the
+            // same message; there the light is a toggle beside the gear, here
+            // equipping IS the toggle.
+            let torch_now_lit = match (is_torch(&def_id), &placed) {
+                (true, Carried::InBag(_)) => Some(true),
+                (true, Carried::Worn(_)) => Some(false),
+                (false, _) => None,
             };
             let cmd = match placed {
                 Carried::Worn(slot) => onlinerpg_shared::ClientMessage::UnequipItem { slot },
@@ -650,6 +850,11 @@ pub(super) async fn handle_response(
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send use action: {e}");
+            } else if let Some(enabled) = torch_now_lit {
+                let toggle = onlinerpg_shared::ClientMessage::TorchToggle { enabled };
+                if let Err(e) = s.send_command(toggle).await {
+                    error!("Failed to send torch toggle: {e}");
+                }
             }
             continue;
         }
@@ -1326,6 +1531,12 @@ fn resolve_trade_push_target(
         return None;
     }
     Some(target_id)
+}
+
+/// The item ids that are torches — the same list the web client's
+/// `isTorchItemDefId` keeps.
+fn is_torch(def_id: &str) -> bool {
+    matches!(def_id, "torch" | "worn_torch")
 }
 
 /// Resolve the trader an LLM action named and walk up to them, answering with

@@ -162,6 +162,21 @@ pub async fn llm_driver(
 
     info!("[{label}] LLM driver: in game, ready.");
 
+    // Operator announcements — what a web player reads once on the login
+    // screen. Delivered as one-shot events for the same reason: the next
+    // prompt carries them, then they drain away instead of riding every
+    // world state.
+    {
+        let notices = fetch_announcements(&api_base_url).await;
+        if !notices.is_empty() {
+            info!("[{label}] {} server announcement(s) loaded", notices.len());
+            let mut s = state.lock().await;
+            for notice in notices {
+                s.push_agent_event_quiet(format!("[Notice] {notice}"));
+            }
+        }
+    }
+
     // Favor persists across sessions; the map feeds prompt rendering and
     // the keepsake gate from the first turn.
     if let Some(path) = &favor_file {
@@ -199,7 +214,7 @@ pub async fn llm_driver(
     // (a plain player agent) has no route to prefetch along, so cover where it
     // stands — otherwise its A* knows of no buildings at all and it walks
     // straight through the town it spawned in.
-    {
+    let mut world_data_at: Option<(f32, f32)> = {
         let (world_cache, around) = {
             let s = state.lock().await;
             (
@@ -214,7 +229,8 @@ pub async fn llm_driver(
             fetch_houses_around(&world_cache, &area, &api_base_url, &label),
             fetch_furniture_around(&world_cache, &area, &api_base_url, &label),
         );
-    }
+        around.map(|p| (p.x, p.z))
+    };
 
     // Execute initial schedule move (go to correct position for current time)
     if !schedule.is_empty() {
@@ -295,6 +311,35 @@ pub async fn llm_driver(
     }
 
     loop {
+        // Housing data was fetched around the start position; the initial
+        // prefetch covers ±96m (the chunk and its neighbors). An exploring
+        // agent walks out of that in minutes, after which buildings vanish
+        // from pathfinding, the terrain map and the watch page — so refetch
+        // around the new position whenever we've moved a chunk away.
+        {
+            let (world_cache, pos) = {
+                let s = state.lock().await;
+                (
+                    Arc::clone(&s.world_cache),
+                    s.self_player.as_ref().map(|p| p.position),
+                )
+            };
+            if let Some(p) = pos {
+                let moved_a_chunk = world_data_at.is_none_or(|(x, z)| {
+                    let (dx, dz) = (p.x - x, p.z - z);
+                    dx * dx + dz * dz > 64.0 * 64.0
+                });
+                if moved_a_chunk {
+                    let area = [(p.x, p.z)];
+                    tokio::join!(
+                        fetch_houses_around(&world_cache, &area, &api_base_url, &label),
+                        fetch_furniture_around(&world_cache, &area, &api_base_url, &label),
+                    );
+                    world_data_at = Some((p.x, p.z));
+                }
+            }
+        }
+
         // Tick interval: ATTACK_COOLDOWN when in combat, otherwise 1s (responsive to events)
         let tick_duration = if attack_target.is_some() {
             attack_cooldown.saturating_sub(last_attack_at.elapsed())
@@ -562,6 +607,51 @@ async fn await_llm_response(
             None
         }
     }
+}
+
+/// Fetch the operator announcements a web player reads on the login screen.
+/// Best-effort: served notices are login-screen content, so a failure means
+/// an empty list, not an error the driver should stall on.
+async fn fetch_announcements(api_base_url: &str) -> Vec<String> {
+    let url = format!("{api_base_url}/api/announcements");
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return Vec::new(),
+    };
+    let resp = match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => resp,
+        _ => return Vec::new(),
+    };
+    let Ok(list) = resp.json::<Vec<serde_json::Value>>().await else {
+        return Vec::new();
+    };
+    list.iter()
+        .take(3)
+        .filter_map(|a| {
+            let date = a.get("date").and_then(|d| d.as_str()).unwrap_or("");
+            let translations = a.get("translations")?;
+            // Prefer Korean (the server's default locale), fall back to any.
+            let t = translations
+                .get("ko")
+                .or_else(|| translations.as_object()?.values().next())?;
+            let title = t.get("title").and_then(|s| s.as_str())?;
+            let body = t.get("body").and_then(|s| s.as_str()).unwrap_or("");
+            let mut line = format!("[{date}] {title}");
+            let body = body.trim();
+            if !body.is_empty() {
+                let short: String = body.chars().take(200).collect();
+                line.push_str(" — ");
+                line.push_str(&short);
+                if body.chars().count() > 200 {
+                    line.push('…');
+                }
+            }
+            Some(line)
+        })
+        .collect()
 }
 
 #[cfg(test)]
