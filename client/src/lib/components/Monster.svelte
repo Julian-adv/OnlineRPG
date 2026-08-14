@@ -347,8 +347,9 @@
           if (finishedClipName === (def?.animDie ?? 'Die')) {
             isDeadAnimationFinished = true
             // The death clip clamps with the body still raised, so settle the
-            // corpse onto the ground.
-            if (model && !deadGroundApplied) {
+            // corpse onto the ground — unless its clip was already grounded on
+            // load, where settling again would just show as a jump.
+            if (model && !deadGroundApplied && !initialDef?.sharedAnims) {
               deadGroundApplied = true
               // corpseGroundOffset is authored in world metres; de-scale it
               // since model.position lives inside the scaled group.
@@ -363,7 +364,11 @@
           loadSharedPackClipsForModel(
             initialModel,
             $gltf.scene,
-            usedClipNames
+            usedClipNames,
+            {
+              restClip: initialDef.animDie,
+              restOffset: (initialDef.corpseGroundOffset ?? 0) / initialScale,
+            }
           ).then((clips) => {
             sharedClips = clips
             playAnimation()

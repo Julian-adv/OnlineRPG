@@ -615,14 +615,53 @@ const GROUND_SAMPLE_POSES = 24
 const GROUND_SAMPLE_STRIDE = 8
 
 /**
+ * Ease the hip track from a flush start to `restOffset` at the last key, then
+ * lift any key still below the floor. The ease keeps the standing frames where
+ * they are; the clamp stops the body passing through the floor as it falls.
+ *
+ * The floor eases along with the body — held at 0 it would push every key but
+ * the last back up, leaving the whole rest offset to drop in the final key.
+ */
+function groundClipToRest(
+  hipTrack: THREE.KeyframeTrack,
+  lowestAt: (time: number) => number,
+  restOffset: number
+): void {
+  const times = hipTrack.times
+  const last = times.length - 1
+  const startLift = -lowestAt(times[0])
+  const endLift = -lowestAt(times[last]) + restOffset
+  const smoothstep = (x: number) => x * x * (3 - 2 * x)
+
+  for (let i = 0; i <= last; i++) {
+    const weight = smoothstep(times[i] / times[last])
+    hipTrack.values[i * 3 + 1] += startLift + weight * (endLift - startLift)
+  }
+  for (let i = 0; i <= last; i++) {
+    const floor = smoothstep(times[i] / times[last]) * restOffset
+    hipTrack.values[i * 3 + 1] += Math.max(0, floor - lowestAt(times[i]))
+  }
+}
+
+export interface GroundClipsOptions {
+  /** Clip that ends with the body at rest — grounded key by key so it lands on
+   *  the floor instead of being corrected after it clamps. */
+  restClip?: string
+  /** Where that clip's last pose belongs, relative to its lowest vertex. A body
+   *  lying on an outstretched limb has to sink for its torso to touch. */
+  restOffset?: number
+}
+
+/**
  * Retargeting anchors the hips from the source rig, so a model built to other
- * proportions plays buried in the floor — the death clip ends underground and
- * the corpse then pops up when it is settled. Lift each clip's hip track by its
- * deepest sink, which grounds the whole clip without touching its motion.
+ * proportions plays buried in the floor — the death clip ended underground and
+ * the corpse popped up once it was settled. Shift each clip's hip track so it
+ * plays on the floor, leaving the motion itself alone.
  */
 export async function groundRetargetedClips(
   targetScene: THREE.Object3D,
-  clips: THREE.AnimationClip[]
+  clips: THREE.AnimationClip[],
+  options: GroundClipsOptions = {}
 ): Promise<THREE.AnimationClip[]> {
   const scene = SkeletonUtils.clone(targetScene) as THREE.Object3D
   const mixer = new THREE.AnimationMixer(scene)
@@ -640,22 +679,31 @@ export async function groundRetargetedClips(
 
     const action = mixer.clipAction(shifted)
     action.play()
-    let lift = 0
-    for (let i = 0; i <= GROUND_SAMPLE_POSES; i++) {
-      const time = (i * shifted.duration) / GROUND_SAMPLE_POSES
+    const lowestAt = (time: number) => {
       mixer.setTime(Math.min(time, shifted.duration - 1e-4))
-      lift = Math.max(
-        lift,
-        computeCorpseGroundOffset(scene, GROUND_SAMPLE_STRIDE) -
-          CORPSE_GROUND_CLEARANCE
+      return (
+        CORPSE_GROUND_CLEARANCE -
+        computeCorpseGroundOffset(scene, GROUND_SAMPLE_STRIDE)
       )
+    }
+
+    if (clip.name === options.restClip) {
+      groundClipToRest(hipTrack, lowestAt, options.restOffset ?? 0)
+    } else {
+      let lift = 0
+      for (let i = 0; i <= GROUND_SAMPLE_POSES; i++) {
+        lift = Math.max(
+          lift,
+          -lowestAt((i * shifted.duration) / GROUND_SAMPLE_POSES)
+        )
+      }
+      for (let i = 1; i < hipTrack.values.length; i += 3) {
+        hipTrack.values[i] += lift
+      }
     }
     action.stop()
     mixer.uncacheClip(shifted)
 
-    for (let i = 1; i < hipTrack.values.length; i += 3) {
-      hipTrack.values[i] += lift
-    }
     grounded.push(shifted)
     await new Promise((r) => setTimeout(r, 0))
   }
@@ -674,10 +722,11 @@ const sharedPackClipsByModel = new Map<string, Promise<THREE.AnimationClip[]>>()
 export function loadSharedPackClipsForModel(
   modelPath: string,
   targetScene: THREE.Object3D,
-  clipNames: string[]
+  clipNames: string[],
+  grounding: GroundClipsOptions = {}
 ): Promise<THREE.AnimationClip[]> {
   const wanted = new Set(clipNames)
-  const cacheKey = `${modelPath}::${[...wanted].sort().join(',')}`
+  const cacheKey = `${modelPath}::${[...wanted].sort().join(',')}::${grounding.restClip ?? ''}:${grounding.restOffset ?? 0}`
   const cached = sharedPackClipsByModel.get(cacheKey)
   if (cached) return cached
 
@@ -696,7 +745,9 @@ export function loadSharedPackClipsForModel(
         )
       )
     )
-    .then((packs) => groundRetargetedClips(targetScene, packs.flat()))
+    .then((packs) =>
+      groundRetargetedClips(targetScene, packs.flat(), grounding)
+    )
   sharedPackClipsByModel.set(cacheKey, clips)
   return clips
 }

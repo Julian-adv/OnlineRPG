@@ -209,3 +209,49 @@ describe('groundRetargetedClips', () => {
     expect(hipsTwice.values[1]).toBeCloseTo(hipsOnce.values[1], 5)
   })
 })
+
+describe('groundRetargetedClips rest clip', () => {
+  const fallingClip = () =>
+    new THREE.AnimationClip('dying', 1, [
+      new THREE.VectorKeyframeTrack(
+        'Hips.position',
+        [0, 0.5, 1],
+        [0, 1, 0, 0, 0.2, 0, 0, -0.4, 0]
+      ),
+    ])
+
+  async function lowestAtEnd(clip: THREE.AnimationClip, rig: THREE.Group) {
+    const mesh = rig.children[0] as THREE.SkinnedMesh
+    const mixer = new THREE.AnimationMixer(rig)
+    mixer.clipAction(clip).play()
+    mixer.setTime(clip.duration - 1e-4)
+    rig.updateMatrixWorld(true)
+    const v = new THREE.Vector3()
+    let lowest = Infinity
+    const position = mesh.geometry.getAttribute('position')
+    for (let i = 0; i < position.count; i++) {
+      v.fromBufferAttribute(position, i)
+      mesh.applyBoneTransform(i, v)
+      mesh.localToWorld(v)
+      lowest = Math.min(lowest, v.y)
+    }
+    return lowest
+  }
+
+  it('lands the last pose on the floor', async () => {
+    const rig = makeRig(1)
+    const [grounded] = await groundRetargetedClips(rig, [fallingClip()], {
+      restClip: 'dying',
+    })
+    expect(await lowestAtEnd(grounded, makeRig(1))).toBeCloseTo(0, 2)
+  })
+
+  it('sinks the last pose by the rest offset', async () => {
+    const rig = makeRig(1)
+    const [grounded] = await groundRetargetedClips(rig, [fallingClip()], {
+      restClip: 'dying',
+      restOffset: -0.05,
+    })
+    expect(await lowestAtEnd(grounded, makeRig(1))).toBeCloseTo(-0.05, 2)
+  })
+})
