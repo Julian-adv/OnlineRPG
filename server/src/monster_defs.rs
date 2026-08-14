@@ -73,7 +73,14 @@ impl MonsterDefinition {
 
     pub fn attack_bonus(&self) -> i32 {
         self.attack_bonus
-            .unwrap_or_else(|| combat::level_attack_bonus(u32::from(self.level)))
+            .unwrap_or_else(|| combat::monster_attack_bonus(self.level))
+    }
+
+    /// Depth-scaled copy: carries any csv override up by the levels depth
+    /// added, instead of discarding it.
+    pub fn attack_bonus_at(&self, level: u8) -> i32 {
+        self.attack_bonus() + combat::monster_attack_bonus(level)
+            - combat::monster_attack_bonus(self.level)
     }
 
     pub fn damage_roll(&self) -> String {
@@ -117,5 +124,30 @@ impl MonsterDefs {
         let mut ids: Vec<&str> = self.defs.keys().map(String::as_str).collect();
         ids.sort_unstable();
         ids
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn depth_scaling_carries_a_hand_tuned_attack_bonus() {
+        let defs = MonsterDefs::load();
+        let hobgoblin = defs.get("hobgoblin").expect("hobgoblin def");
+        let depth_gain = i32::from(8 - hobgoblin.level);
+        assert_eq!(
+            hobgoblin.attack_bonus_at(8) - hobgoblin.attack_bonus(),
+            depth_gain,
+            "depth adds its levels on top of whatever the row says"
+        );
+
+        let mut tuned = hobgoblin.clone();
+        tuned.attack_bonus = Some(hobgoblin.attack_bonus() + 2);
+        assert_eq!(
+            tuned.attack_bonus_at(8),
+            hobgoblin.attack_bonus_at(8) + 2,
+            "the override survives the scaling"
+        );
     }
 }

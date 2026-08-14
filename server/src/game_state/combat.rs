@@ -676,12 +676,15 @@ impl super::GameState {
                         // effective level (bonus + damage dice).
                         let (attack_bonus, damage_roll) = match monster.level_override {
                             Some(level) => (
-                                combat::level_attack_bonus(u32::from(level)),
+                                def.map_or_else(
+                                    || combat::monster_attack_bonus(level),
+                                    |d| d.attack_bonus_at(level),
+                                ),
                                 combat::monster_damage_roll_for_level(level).to_string(),
                             ),
                             None => (
                                 def.map(|d| d.attack_bonus())
-                                    .unwrap_or_else(|| combat::level_attack_bonus(1)),
+                                    .unwrap_or_else(|| combat::monster_attack_bonus(1)),
                                 def.map(|d| d.damage_roll())
                                     .unwrap_or_else(|| "1d6".to_string()),
                             ),

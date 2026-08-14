@@ -38,6 +38,12 @@ pub fn level_attack_bonus(level: u32) -> i32 {
     (level / 2) as i32
 }
 
+/// Monsters scale on level, not the player's `level / 2`: guard climbs with
+/// gear far faster than with levels (doc/COMBAT.md).
+pub fn monster_attack_bonus(level: u8) -> i32 {
+    i32::from(level)
+}
+
 pub fn monster_max_health_for_level(level: u8) -> u32 {
     // Average of level d8, rounded up: Lv3 -> 14, Lv4 -> 18.
     (u32::from(level).max(1) * 9).div_ceil(2)
@@ -52,6 +58,32 @@ pub fn monster_damage_roll_for_level(level: u8) -> &'static str {
         9..=12 => "2d8",
         _ => "3d6",
     }
+}
+
+/// Only bounds the loop — five extra rolls already reach a total of 120.
+const MAX_EXPLOSIONS: u32 = 5;
+
+/// Roll the attack die: an exploding d20 — a natural 20 rolls again and adds,
+/// repeating while 20s come up. Returns the first die (what the client shows)
+/// and the total. Keeps every guard reachable without flooring each attack at
+/// the flat 5% a nat-20 auto-hit would impose (doc/COMBAT.md).
+fn roll_exploding_d20<R: Rng>(rng: &mut R) -> (u8, i32) {
+    let first = rng.gen_range(1..=20);
+    let mut total = i32::from(first);
+    let mut last = first;
+    for _ in 0..MAX_EXPLOSIONS {
+        if last != 20 {
+            break;
+        }
+        last = rng.gen_range(1..=20);
+        total += i32::from(last);
+    }
+    (first, total)
+}
+
+/// Whether an attack total lands.
+fn resolves_as_hit(roll_total: i32, attack_bonus: i32, target_guard: i32) -> bool {
+    roll_total + attack_bonus > target_guard
 }
 
 pub fn roll_attack(
@@ -72,8 +104,8 @@ pub fn roll_attack_with_extra_damage_roll(
 ) -> AttackResult {
     let mut rng = rand::thread_rng();
 
-    let roll = rng.gen_range(1..=20);
-    let hit = i32::from(roll) + attack_bonus > target_guard;
+    let (roll, roll_total) = roll_exploding_d20(&mut rng);
+    let hit = resolves_as_hit(roll_total, attack_bonus, target_guard);
     let mut damage = 0;
 
     if hit {
@@ -105,10 +137,75 @@ mod tests {
 
     #[test]
     fn extra_damage_roll_is_ignored_on_miss() {
-        let result = roll_attack_with_extra_damage_roll(-20, 20, "1d1", Some("2d1"), 0);
+        // Explosions can still land, so scan for a miss.
+        let miss = (0..200)
+            .map(|_| roll_attack_with_extra_damage_roll(-20, 20, "1d1", Some("2d1"), 0))
+            .find(|result| !result.hit)
+            .expect("a miss within 200 rolls");
 
-        assert!(!result.hit);
-        assert_eq!(result.damage, 0);
+        assert_eq!(miss.damage, 0);
+    }
+
+    /// Exact hit probability under the exploding die, by enumeration.
+    fn hit_probability(attack_bonus: i32, target_guard: i32) -> f64 {
+        // P(total ≥ t) for an exploding d20, walking the 20-point bands.
+        fn at_least(t: i32) -> f64 {
+            if t <= 1 {
+                return 1.0;
+            }
+            if t <= 20 {
+                return f64::from(21 - t) / 20.0;
+            }
+            at_least(t - 20) / 20.0
+        }
+        at_least(target_guard - attack_bonus + 1)
+    }
+
+    #[test]
+    fn a_short_attacker_keeps_a_chance_that_shrinks_with_the_gap() {
+        // Below a natural 20 the die never explodes, so the plain comparison
+        // still decides.
+        assert!(resolves_as_hit(19, 2, 20));
+        assert!(!resolves_as_hit(18, 2, 20));
+
+        // The design anchors (doc/COMBAT.md): a kobold (+1) lands on guard 40
+        // once in 400 swings, and no gap ever closes the door entirely.
+        assert!((hit_probability(1, 40) - 0.0025).abs() < 1e-9);
+        assert!(hit_probability(1, 50) < 0.0015);
+        assert!(hit_probability(0, 200) > 0.0);
+
+        // The implementation matches those odds. Guard 24 vs +2 is 4.5%: 20
+        // falls two short, so the explosion has to roll a 3 or better.
+        let mut rng = rand::thread_rng();
+        let mut hits = 0;
+        const TRIALS: u32 = 200_000;
+        for _ in 0..TRIALS {
+            let (first, total) = roll_exploding_d20(&mut rng);
+            assert!((1..=20).contains(&first), "the reported die stays a d20");
+            assert!(total >= i32::from(first));
+            if resolves_as_hit(total, 2, 24) {
+                hits += 1;
+            }
+        }
+        // A 1%-wide window around 4.5% is ~20 sigma at this sample size.
+        let rate = f64::from(hits) / f64::from(TRIALS);
+        assert!(
+            (rate - hit_probability(2, 24)).abs() < 0.01,
+            "hit rate {rate} off the exact odds"
+        );
+    }
+
+    #[test]
+    fn monsters_attack_a_level_ahead_of_players() {
+        // Players stay on level/2; monsters track the level itself so gear
+        // growth doesn't outrun them.
+        assert_eq!(level_attack_bonus(10), 5);
+        assert_eq!(monster_attack_bonus(10), 10);
+        // The Warrens boss vs a leather-set graduate (guard 21): 45%.
+        let landed = (1..=20)
+            .filter(|roll| resolves_as_hit(*roll, monster_attack_bonus(10), 21))
+            .count();
+        assert_eq!(landed, 9);
     }
 
     #[test]
