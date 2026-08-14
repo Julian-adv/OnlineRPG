@@ -107,8 +107,10 @@ min_interval_secs = 5
 ### Phase 1: Monster AI Module ✅ 구현 완료
 
 **서버 측:**
-- 스폰 규칙 시스템: `world.json`의 `monsterSpawns` 배열로 규칙 정의 (타입, 플레이어당 상한, 스폰 반경 등)
+- 스폰 규칙 시스템: `world.json`의 `ambientSpawns` 배열로 규칙 정의 (타입, 최대 거리)
 - `tick_monster_spawns()`: 10초 주기로 스폰 필요성 판단, `SpawnMonsterRequest`를 클라이언트에 전송
+  - 지상 스폰은 플레이어 레벨이 몬스터 레벨 -1 이상일 때만 요청한다 (`min_ambient_player_level`).
+    레벨은 `monsters.csv`에서 오므로 규칙마다 따로 적지 않는다
 - 클라이언트가 위치를 선정하여 `RequestSpawnMonster`로 응답하면, 서버가 위치 검증 후 생성
 - `MonsterAssigned` → 소유자에게 직접 전송, `MonsterSpawned` → 전체 브로드캐스트
 - 전투 검증: 서버가 공격 판정(hit/miss, 데미지 roll), 쿨다운 체크, HP 관리, 사망 처리

@@ -22,7 +22,8 @@ export interface MonsterDefinition {
   animRun: string
   animAttack: string
   animAttackIdle?: string
-  animHit: string
+  /** Empty for monsters on the shared packs — those have no hit reaction. */
+  animHit?: string
   animDie: string
   animDead: string
   /**
@@ -56,6 +57,9 @@ export interface MonsterDefinition {
   weaponDropChance?: number
   /** Skeleton bone name the weapon is parented to (e.g. 'RightHand'). */
   weaponBone?: string
+  /** Play the shared character packs; only for models rigged on the character
+   * skeleton, which then ship no clips of their own. */
+  sharedAnims?: boolean
 }
 
 const monsterDefs = monstersJson as Record<string, MonsterDefinition>

@@ -1,6 +1,8 @@
 import * as THREE from 'three'
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { AnimationName } from '../types/animations'
+import { loadGLB } from './gltfCache'
+import { CHARACTER_ANIMATION_PACK_PATHS } from './modelPaths'
 
 type AnimationSource = 'base' | 'locomotion' | 'combat_melee'
 
@@ -354,9 +356,14 @@ export async function retargetAnimationsForCharacterModel(
   if (!ENABLE_RUNTIME_BONE_RETARGETING) return clips
   if (clips.length === 0 || !retargetSourceScene) return clips
 
-  // Fast path: check batch cache using clip names (avoids expensive cloning).
-  // The same character class retargeted in character select can be reused in game.
-  const batchKey = clips.map((c) => c.name).join(',')
+  // Fast path: check the batch cache before the expensive cloning. Clones share
+  // their source's geometry, so the two uuids identify the skeleton pair across
+  // every clone of the same GLB — another model gets its own entry.
+  const batchKey = [
+    findPrimarySkinnedMesh(targetScene)?.geometry.uuid,
+    findPrimarySkinnedMesh(retargetSourceScene)?.geometry.uuid,
+    clips.map((c) => c.name).join(','),
+  ].join('::')
   const cachedBatch = retargetBatchCache.get(batchKey)
   if (cachedBatch) return cachedBatch
 
@@ -585,4 +592,42 @@ export function selectOrderedCharacterAnimations(
   }
 
   return orderedSelections
+}
+
+const sharedPackClipsByModel = new Map<string, Promise<THREE.AnimationClip[]>>()
+
+/**
+ * The named locomotion + melee clips retargeted onto a model rigged on the
+ * character bone names but with its own bone offsets (monsters with
+ * `sharedAnims`) — played unretargeted, combat_melee's clips stretch it.
+ * Cached per model, so a crowd of one monster type retargets once.
+ */
+export function loadSharedPackClipsForModel(
+  modelPath: string,
+  targetScene: THREE.Object3D,
+  clipNames: string[]
+): Promise<THREE.AnimationClip[]> {
+  const wanted = new Set(clipNames)
+  const cacheKey = `${modelPath}::${[...wanted].sort().join(',')}`
+  const cached = sharedPackClipsByModel.get(cacheKey)
+  if (cached) return cached
+
+  const clips = Promise.all([
+    loadGLB(CHARACTER_ANIMATION_PACK_PATHS.locomotion),
+    loadGLB(CHARACTER_ANIMATION_PACK_PATHS.combatMelee),
+  ])
+    .then((packs) =>
+      Promise.all(
+        packs.map((pack) =>
+          retargetAnimationsForCharacterModel(
+            targetScene,
+            pack.scene,
+            pack.animations.filter((clip) => wanted.has(clip.name))
+          )
+        )
+      )
+    )
+    .then((packs) => packs.flat())
+  sharedPackClipsByModel.set(cacheKey, clips)
+  return clips
 }

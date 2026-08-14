@@ -40,6 +40,16 @@ async fn set_player_on_floor(
         .await;
 }
 
+fn requested_types(rx: &mut DirectRx) -> Vec<String> {
+    drain(rx)
+        .into_iter()
+        .filter_map(|message| match message {
+            ServerMessage::SpawnMonsterRequest { monster_type } => Some(monster_type),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Mirrors connection.rs:1211 + agent-client's find_valid_spawn_position:
 /// answer every SpawnMonsterRequest with a point 22m from the bot.
 async fn answer_spawn_requests(
@@ -48,13 +58,7 @@ async fn answer_spawn_requests(
     rx: &mut DirectRx,
     seed: &mut u64,
 ) -> usize {
-    let requested: Vec<String> = drain(rx)
-        .into_iter()
-        .filter_map(|msg| match msg {
-            ServerMessage::SpawnMonsterRequest { monster_type } => Some(monster_type),
-            _ => None,
-        })
-        .collect();
+    let requested = requested_types(rx);
 
     let center = game_state.get_all_players().await[player_id].position;
     let mut spawned = 0;
@@ -877,4 +881,52 @@ async fn abandoning_a_pair_spreads_them_across_bystanders() {
         [Some(near), Some(far)].into(),
         "two monsters over two bystanders should be one each, not both on the nearest"
     );
+}
+
+/// An ambient type only reaches players who have caught up to within one level
+/// of it, so a beginner's surface stays at the monsters they can fight.
+#[tokio::test]
+async fn ambient_spawns_skip_players_below_the_monsters_level() {
+    let game_state = make_test_game_state("ambient_level_gate");
+    let gates: Vec<(String, u32)> = world_config()
+        .ambient_spawns
+        .iter()
+        .map(|rule| {
+            (
+                rule.monster_type.clone(),
+                game_state.min_ambient_player_level(&rule.monster_type),
+            )
+        })
+        .collect();
+    let highest = gates.iter().map(|(_, level)| *level).max().unwrap_or(0);
+    assert!(
+        highest > 1,
+        "no ambient type outlevels a beginner, so this covers nothing"
+    );
+
+    let mut beginner = make_player("beginner", 0.0, 0.0);
+    beginner.level = 1;
+    let mut veteran = make_player("veteran", 200.0, 0.0);
+    veteran.level = highest;
+    game_state.add_player(beginner).await;
+    game_state.add_player(veteran).await;
+    let mut beginner_rx = game_state.register_direct_channel(&pid("beginner")).await;
+    let mut veteran_rx = game_state.register_direct_channel(&pid("veteran")).await;
+
+    game_state.tick_monster_spawns().await;
+
+    let for_beginner = requested_types(&mut beginner_rx);
+    let for_veteran = requested_types(&mut veteran_rx);
+    for (monster_type, min_level) in &gates {
+        assert_eq!(
+            for_beginner.contains(monster_type),
+            *min_level <= 1,
+            "{monster_type} (needs level {min_level}) reached a level 1 player, or the types they \
+             can fight did not"
+        );
+        assert!(
+            for_veteran.contains(monster_type),
+            "{monster_type} (needs level {min_level}) never reached a level {highest} player"
+        );
+    }
 }

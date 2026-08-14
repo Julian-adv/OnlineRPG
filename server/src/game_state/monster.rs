@@ -837,6 +837,15 @@ impl super::GameState {
         self.hand_off_monsters(adoptions).await;
     }
 
+    /// Lowest player level an ambient type spawns around — one below the
+    /// monster's own level, so the gate follows `monsters.csv` instead of being
+    /// authored per rule. Unknown types gate nothing.
+    pub(crate) fn min_ambient_player_level(&self, monster_type: &str) -> u32 {
+        self.monster_defs
+            .get(monster_type)
+            .map_or(0, |def| u32::from(def.level).saturating_sub(1))
+    }
+
     /// Server-driven monster spawn tick. For each ambient spawn type and each
     /// player below their cap, sends a SpawnMonsterRequest so the client can
     /// pick a valid position near itself (grassland, not water, away from towns).
@@ -854,7 +863,7 @@ impl super::GameState {
         // qualify when a human is within sight range (no point spawning monsters
         // around an agent nobody is watching); humans always qualify. Computed
         // once under a single read lock so the per-rule loop below needs none.
-        let player_ids: Vec<PlayerId> = {
+        let candidates: Vec<(PlayerId, u32)> = {
             let players = self.players.read().await;
             let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
             let human_positions: Vec<_> = players
@@ -874,21 +883,21 @@ impl super::GameState {
                                 .iter()
                                 .any(|hp| player.position.dist_xz_sq(hp) <= radius_sq))
                 })
-                .map(|(id, _)| *id)
+                .map(|(id, player)| (*id, player.level))
                 .collect()
         };
-        if player_ids.is_empty() {
+        if candidates.is_empty() {
             return;
         }
 
-        // Indexed like `player_ids`: the owner index answers each cap in O(1),
+        // Indexed like `candidates`: the owner index answers each cap in O(1),
         // so this reads only the players the tick asks about instead of walking
         // every monster on the server.
         let mut budget: Vec<usize> = {
             let monsters = self.monsters.read().await;
-            player_ids
+            candidates
                 .iter()
-                .map(|id| max_per_player.saturating_sub(monsters.owned_by(id)))
+                .map(|(id, _)| max_per_player.saturating_sub(monsters.owned_by(id)))
                 .collect()
         };
 
@@ -899,9 +908,10 @@ impl super::GameState {
             let mut requests: Vec<(String, Vec<PlayerId>)> = Vec::new();
 
             for rule in ambient_spawns {
+                let min_player_level = self.min_ambient_player_level(&rule.monster_type);
                 let mut recipients = Vec::new();
-                for (i, player_id) in player_ids.iter().enumerate() {
-                    if budget[i] == 0 {
+                for (i, (player_id, level)) in candidates.iter().enumerate() {
+                    if budget[i] == 0 || *level < min_player_level {
                         continue;
                     }
                     // The owned key is only built once the cap check passes.

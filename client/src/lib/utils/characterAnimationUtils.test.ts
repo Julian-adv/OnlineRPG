@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
-import { computeCorpseGroundOffset } from './characterAnimationUtils'
+import {
+  computeCorpseGroundOffset,
+  retargetAnimationsForCharacterModel,
+} from './characterAnimationUtils'
 
 // A one-bone skinned mesh whose vertices sit at the given local Ys, all fully
 // weighted to the bone. `posedBoneY` moves the bone AFTER bind, standing in for
@@ -61,5 +64,115 @@ describe('computeCorpseGroundOffset', () => {
       new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial())
     )
     expect(computeCorpseGroundOffset(root)).toBe(0)
+  })
+})
+
+// A rig whose bone offsets are all `scale` times the 1 m reference. The
+// animation packs are authored on a 10x rig under an Armature scaled 0.1, so
+// their raw bone positions are 10x anything rigged at 1:1 — playing them
+// unretargeted stretches the limbs to that size.
+function makeRig(scale: number, hipY = 1.0): THREE.Group {
+  const hips = new THREE.Bone()
+  hips.name = 'Hips'
+  hips.position.set(0, hipY * scale, 0)
+  const arm = new THREE.Bone()
+  arm.name = 'LeftArm'
+  arm.position.set(0, 0.25 * scale, 0)
+  const hand = new THREE.Bone()
+  hand.name = 'LeftHand'
+  hand.position.set(0, 0.3 * scale, 0)
+  hips.add(arm)
+  arm.add(hand)
+
+  const bones = [hips, arm, hand]
+  const positions = new Float32Array(bones.length * 3)
+  const skinIndex = new Uint16Array(bones.length * 4)
+  const skinWeight = new Float32Array(bones.length * 4)
+  for (let i = 0; i < bones.length; i++) {
+    positions[i * 3 + 1] = i * 0.25 * scale
+    skinIndex[i * 4] = i
+    skinWeight[i * 4] = 1
+  }
+  const geom = new THREE.BufferGeometry()
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geom.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndex, 4))
+  geom.setAttribute(
+    'skinWeight',
+    new THREE.Float32BufferAttribute(skinWeight, 4)
+  )
+
+  const mesh = new THREE.SkinnedMesh(geom, new THREE.MeshBasicMaterial())
+  mesh.add(hips)
+  mesh.bind(new THREE.Skeleton(bones))
+
+  const root = new THREE.Group()
+  root.add(mesh)
+  root.updateMatrixWorld(true)
+  return root
+}
+
+function packLikeSource(): THREE.Group {
+  const root = makeRig(10)
+  root.scale.setScalar(0.1)
+  root.updateMatrixWorld(true)
+  return root
+}
+
+function packClip(name: string): THREE.AnimationClip {
+  return new THREE.AnimationClip(name, 1, [
+    new THREE.VectorKeyframeTrack(
+      'Hips.position',
+      [0, 1],
+      [0, 10, 0, 0, 11, 0]
+    ),
+    new THREE.VectorKeyframeTrack(
+      'LeftArm.position',
+      [0, 1],
+      [0, 2.5, 0, 0, 2.5, 0]
+    ),
+    new THREE.VectorKeyframeTrack(
+      'LeftHand.position',
+      [0, 1],
+      [0, 3, 0, 0, 3, 0]
+    ),
+    new THREE.QuaternionKeyframeTrack(
+      'LeftArm.quaternion',
+      [0, 1],
+      [0, 0, 0, 1, 0, 0, 0, 1]
+    ),
+  ])
+}
+
+describe('retargetAnimationsForCharacterModel', () => {
+  it('drops the source rig bone positions that stretch the limbs', async () => {
+    const [clip] = await retargetAnimationsForCharacterModel(
+      makeRig(1),
+      packLikeSource(),
+      [packClip('slash1')]
+    )
+
+    const positionTracks = clip.tracks
+      .filter((track) => track.name.endsWith('.position'))
+      .map((track) => track.name)
+    expect(positionTracks).toEqual(['Hips.position'])
+    expect(clip.tracks.length).toBeGreaterThan(1)
+  })
+
+  it('keeps each target model on its own retarget', async () => {
+    const source = packLikeSource()
+    const [tall] = await retargetAnimationsForCharacterModel(
+      makeRig(1, 1.2),
+      source,
+      [packClip('slash2')]
+    )
+    const [short] = await retargetAnimationsForCharacterModel(
+      makeRig(1, 0.8),
+      source,
+      [packClip('slash2')]
+    )
+
+    const hipY = (clip: THREE.AnimationClip) =>
+      clip.tracks.find((track) => track.name === 'Hips.position')?.values[1]
+    expect(hipY(tall)).not.toBeCloseTo(hipY(short) as number, 3)
   })
 })

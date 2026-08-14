@@ -38,12 +38,25 @@ if (!existsSync(MONSTERS_PATH)) {
   process.exit(1)
 }
 
+// Monsters rigged on the character skeleton swing a clip from the shared packs,
+// not one of their own, so those packs are measured alongside the models.
+const SHARED_PACKS = ['animations/locomotion.glb', 'animations/combat_melee.glb']
+
 const modelPath = (m) => resolve(MODELS_DIR, m.model)
 const monsters = Object.values(
   JSON.parse(readFileSync(MONSTERS_PATH, 'utf8'))
 ).filter((m) => m.id && m.model)
+const sharedPackPaths = monsters.some((m) => m.sharedAnims)
+  ? SHARED_PACKS.map((p) => resolve(MODELS_DIR, p))
+  : []
 
-if (upToDate(OUT_PATH, [MONSTERS_PATH, ...monsters.map(modelPath)])) {
+if (
+  upToDate(OUT_PATH, [
+    MONSTERS_PATH,
+    ...monsters.map(modelPath),
+    ...sharedPackPaths,
+  ])
+) {
   console.log(
     'monster attack clips up to date — skipping (use --force to regenerate)'
   )
@@ -63,7 +76,7 @@ const isGlb = (p) => {
 // checkout to stay off the LFS bandwidth quota) has pointer text files instead
 // of GLBs, and one that never ran fetch-assets.sh has no monster models at all.
 // Mirrors how measure-furniture-footprints.mjs handles missing tool deps.
-const models = [...new Set(monsters.map(modelPath))]
+const models = [...new Set([...monsters.map(modelPath), ...sharedPackPaths])]
 if (!models.every((p) => existsSync(p) && isGlb(p))) {
   if (existsSync(OUT_PATH)) {
     console.warn(
@@ -81,6 +94,11 @@ if (!models.every((p) => existsSync(p) && isGlb(p))) {
 const durationsByModel = new Map()
 const clips = {}
 
+const sharedDurations = Object.assign(
+  {},
+  ...sharedPackPaths.map((p) => extractDurations(p))
+)
+
 for (const m of monsters) {
   if (!existsSync(modelPath(m))) {
     console.warn(`⚠ ${m.id}: no model at ${m.model}`)
@@ -90,7 +108,9 @@ for (const m of monsters) {
     durationsByModel.set(m.model, extractDurations(modelPath(m)))
   }
   const clipName = m.animAttack ?? 'Attack'
-  const seconds = durationsByModel.get(m.model)[clipName]
+  const seconds =
+    durationsByModel.get(m.model)[clipName] ??
+    (m.sharedAnims ? sharedDurations[clipName] : undefined)
   if (seconds == null) {
     console.warn(`⚠ ${m.id}: ${m.model} has no clip "${clipName}"`)
     continue

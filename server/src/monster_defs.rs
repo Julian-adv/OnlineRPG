@@ -54,7 +54,8 @@ pub struct MonsterDefinition {
     pub anim_attack: String,
     #[serde(rename = "animAttackIdle", default)]
     pub anim_attack_idle: Option<String>,
-    #[serde(rename = "animHit")]
+    // Empty for monsters on the shared character packs — those have no hit clip.
+    #[serde(rename = "animHit", default)]
     pub anim_hit: String,
     #[serde(rename = "animDie")]
     pub anim_die: String,

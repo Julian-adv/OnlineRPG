@@ -12,7 +12,10 @@
   import type { MonsterData } from '../types/Monster'
   import { getMonsterDef } from '../data/monsterDefs'
   import { getItemDef } from '../data/itemDefs'
-  import { computeCorpseGroundOffset } from '../utils/characterAnimationUtils'
+  import {
+    computeCorpseGroundOffset,
+    loadSharedPackClipsForModel,
+  } from '../utils/characterAnimationUtils'
   import { billboardScale } from '../utils/billboardScale'
 
   interface Props {
@@ -48,6 +51,23 @@
   const initialScale = initialDef?.scale ?? 1
   const isBoss = initialDef?.boss === true
   const gltf = useLoader(GLTFLoader).load(`/models/${initialModel}`)
+
+  // Monsters rigged on the character skeleton borrow the player's animation
+  // packs, which every client already has cached, instead of shipping clips.
+  let sharedClips: THREE.AnimationClip[] = []
+
+  // Every anim* field of the def, so only the clips this monster plays are
+  // retargeted — the packs carry three times as many.
+  const usedClipNames = Object.entries(initialDef ?? {})
+    .filter(([key, value]) => key.startsWith('anim') && !!value)
+    .map(([, value]) => value as string)
+
+  function findClip(name: string): THREE.AnimationClip | undefined {
+    return (
+      $gltf?.animations.find((c) => c.name === name) ??
+      sharedClips.find((c) => c.name === name)
+    )
+  }
 
   // Optional hand weapon, attached to a skeleton bone.
   const initialWeapon = initialDef?.weapon
@@ -124,6 +144,13 @@
   function playAnimation(forceRestart = false) {
     if (!mixer || !$gltf) return
 
+    // Monsters on the shared packs have no hit reaction: keep what is playing
+    // and end the flinch right away.
+    if (monsterState === 'hit' && !def?.animHit) {
+      onHitFinished?.()
+      return
+    }
+
     let clipName = def?.animIdle ?? 'Idle'
     if (monsterState === 'walk') clipName = def?.animWalk ?? 'Walk'
     if (monsterState === 'run') clipName = def?.animRun ?? 'Run'
@@ -139,7 +166,7 @@
         : (def?.animDie ?? 'Die')
     }
 
-    const clip = $gltf.animations.find((c) => c.name === clipName)
+    const clip = findClip(clipName)
 
     if (clip) {
       const newAction = mixer.clipAction(clip)
@@ -190,8 +217,8 @@
       if (monsterState === 'hit') {
         onHitFinished?.()
       }
-      if (!currentAction && $gltf.animations.length > 0) {
-        const firstClip = $gltf.animations[0]
+      const firstClip = $gltf.animations[0] ?? sharedClips[0]
+      if (!currentAction && firstClip) {
         const newAction = mixer.clipAction(firstClip)
         newAction.play()
         currentAction = newAction
@@ -331,7 +358,19 @@
             }
           }
         })
-        playAnimation()
+
+        if (initialDef?.sharedAnims) {
+          loadSharedPackClipsForModel(
+            initialModel,
+            $gltf.scene,
+            usedClipNames
+          ).then((clips) => {
+            sharedClips = clips
+            playAnimation()
+          })
+        } else {
+          playAnimation()
+        }
       }
     }
   })

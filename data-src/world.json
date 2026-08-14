@@ -26,6 +26,10 @@
     {
       "monsterType": "orc_female",
       "maxDistance": 60
+    },
+    {
+      "monsterType": "hobgoblin",
+      "maxDistance": 60
     }
   ]
 }
