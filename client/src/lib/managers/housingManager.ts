@@ -20,6 +20,7 @@ import {
   passability_remove_house,
   passability_update_door,
   passability_is_movement_blocked,
+  passability_attack_line_blocked,
   passability_is_circle_blocked,
 } from '../wasm/onlinerpg_shared'
 import {
@@ -332,6 +333,20 @@ export class HousingManager {
       floorLevel,
       y
     )
+  }
+
+  /**
+   * Whether a wall stands between attacker and target — the gate the server
+   * applies to every blow. `floorLevel` is the passability floor index, as above.
+   */
+  attackLineBlocked(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floorLevel: number
+  ): boolean {
+    return passability_attack_line_blocked(fromX, fromZ, toX, toZ, floorLevel)
   }
 
   /** Check if a circle of radius r at (x, z) overlaps any blocking wall. */

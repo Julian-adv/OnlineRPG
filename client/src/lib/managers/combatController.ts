@@ -71,6 +71,8 @@ export class CombatController {
     }
   }
 
+  /** A `lineBlocked` target counts as out of range: the server refuses a blow
+   *  through a wall, so keep chasing rather than swing into rejections. */
   update(
     deltaTime: number,
     playerPos: Position,
@@ -78,7 +80,8 @@ export class CombatController {
     monsterObjPos: Position | undefined,
     isMoving: boolean,
     cooldownMs: number,
-    currentPlayerState: string
+    currentPlayerState: string,
+    lineBlocked: boolean
   ): CombatUpdateResult {
     if (!this._targetMonsterId) return { action: 'none' }
 
@@ -100,10 +103,11 @@ export class CombatController {
     const dx = monsterObjPos.x - playerPos.x
     const dz = monsterObjPos.z - playerPos.z
     const dist = Math.sqrt(dx * dx + dz * dz)
+    const inRange = dist <= PLAYER_ATTACK_RANGE_METERS && !lineBlocked
 
     if (isMoving) {
       // CHASING phase
-      if (dist <= PLAYER_ATTACK_RANGE_METERS) {
+      if (inRange) {
         return { action: 'reached_attack_range' }
       }
 
@@ -116,7 +120,7 @@ export class CombatController {
     }
 
     // COMBAT phase (in range)
-    if (dist > PLAYER_ATTACK_RANGE_METERS && !isFinishingAttack) {
+    if (!inRange && !isFinishingAttack) {
       return this.startChase(monsterObjPos)
     }
 
@@ -131,7 +135,7 @@ export class CombatController {
       // A new attack cycle is about to fire: unlike the break check above this
       // applies even mid-finish, so a target that fled during the swing ends
       // the current swing and re-approaches instead of attacking out of range.
-      if (dist > PLAYER_ATTACK_RANGE_METERS) {
+      if (!inRange) {
         return this.startChase(monsterObjPos)
       }
 

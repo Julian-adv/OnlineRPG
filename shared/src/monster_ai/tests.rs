@@ -5,7 +5,7 @@ use crate::{MonsterState, PlayerId, Position};
 use rand::rngs::SmallRng;
 use rand::SeedableRng;
 
-/// PathProvider that returns a straight-line path to the goal.
+/// PathProvider that returns a straight-line path to the goal, over open ground.
 struct DirectPath;
 impl PathProvider for DirectPath {
     fn find_path(&self, _sx: f32, _sz: f32, _sf: u8, gx: f32, gz: f32, gf: u8) -> PathResult {
@@ -17,6 +17,10 @@ impl PathProvider for DirectPath {
             }],
             found: true,
         }
+    }
+
+    fn attack_line_blocked(&self, _fx: f32, _fz: f32, _tx: f32, _tz: f32, _floor: u8) -> bool {
+        false
     }
 }
 
@@ -167,6 +171,78 @@ fn behavior_tree_attacks_target_in_range() {
         .iter()
         .any(|c| matches!(c, AiCommand::Attack { .. })));
     assert_eq!(brain.state(), AiState::Attack);
+}
+
+/// A wall between the two — a shut door, a stair wall. The server refuses such
+/// a blow, so the brain must not throw it either.
+#[test]
+fn behavior_tree_holds_its_swing_through_a_wall() {
+    struct WalledOff;
+    impl PathProvider for WalledOff {
+        fn find_path(
+            &self,
+            _sx: f32,
+            _sz: f32,
+            _sf: u8,
+            _gx: f32,
+            _gz: f32,
+            _gf: u8,
+        ) -> PathResult {
+            PathResult {
+                waypoints: Vec::new(),
+                found: false,
+            }
+        }
+
+        fn attack_line_blocked(&self, _fx: f32, _fz: f32, _tx: f32, _tz: f32, _floor: u8) -> bool {
+            true
+        }
+    }
+
+    let mut brain = make_brain();
+    brain.attack_cooldown_ms = 1000.0;
+    let tree = BehaviorTree {
+        description: None,
+        root: BehaviorNode::Selector {
+            children: vec![
+                BehaviorNode::Sequence {
+                    children: vec![
+                        BehaviorNode::Condition {
+                            name: "target_in_range".into(),
+                            params: HashMap::from([("range".into(), 2.0)]),
+                        },
+                        BehaviorNode::Action {
+                            name: "attack_target".into(),
+                            params: HashMap::new(),
+                        },
+                    ],
+                },
+                BehaviorNode::Action {
+                    name: "idle".into(),
+                    params: HashMap::new(),
+                },
+            ],
+        },
+    };
+    let mut rng = SmallRng::seed_from_u64(42);
+
+    let players = vec![NearbyPlayer {
+        id: 1.into(),
+        position: Position {
+            x: 11.0,
+            y: 0.0,
+            z: 10.0,
+        },
+        health: 10,
+    }];
+
+    let result = brain.tick_with_behavior_tree(16.0, &players, &tree, &WalledOff, &mut rng);
+
+    assert!(!result
+        .commands
+        .iter()
+        .any(|c| matches!(c, AiCommand::Attack { .. })));
+    assert_ne!(brain.state(), AiState::Attack);
 }
 
 #[test]
@@ -827,6 +903,10 @@ impl PathProvider for BentPath {
             ],
             found: true,
         }
+    }
+
+    fn attack_line_blocked(&self, _fx: f32, _fz: f32, _tx: f32, _tz: f32, _floor: u8) -> bool {
+        false
     }
 }
 

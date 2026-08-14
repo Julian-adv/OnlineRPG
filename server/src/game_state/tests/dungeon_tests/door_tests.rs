@@ -514,6 +514,91 @@ async fn floor_entry_pushes_open_door_snapshot() {
     );
 }
 
+/// Blows obey the same seal movement does: neither side of a shut door can
+/// reach the other, and opening it restores both directions. One monster per
+/// half — a monster's swing consumes its cooldown whether or not it lands.
+#[tokio::test]
+async fn dungeon_door_blocks_attacks_until_opened() {
+    let game_state = make_test_game_state("dungeon_door_block_attacks");
+    let (entrance, depth, door) = first_dungeon_door(&game_state);
+    game_state
+        .init_passability(&crate::terrain::io::TerrainIO::new(
+            "nonexistent_terrain_dir".into(),
+        ))
+        .await
+        .expect("init passability");
+
+    let (from, to) = door_side_positions(&entrance, depth, &door, false);
+    let player_id = add_delver(&game_state, "delver", from, depth).await;
+    let mut delver_rx = game_state.register_direct_channel(&player_id).await;
+    {
+        let mut monsters = game_state.monsters.write().await;
+        for id in ["shut_door_monster", "open_door_monster"] {
+            let mut monster = make_monster(id, to, -(depth as i8));
+            monster.owner_id = Some(player_id);
+            monsters.insert(id.to_string(), monster);
+        }
+    }
+
+    game_state
+        .broadcast_player_attack(&player_id, "shut_door_monster".to_string())
+        .await;
+    assert_eq!(
+        game_state.monsters.read().await["shut_door_monster"].health,
+        10,
+        "a swing through a shut door must not damage the monster"
+    );
+    match delver_rx.try_recv() {
+        Ok(ServerMessage::PlayerAttackRejected { reason, .. }) => {
+            assert_eq!(reason, AttackRejectReason::OutOfRange)
+        }
+        other => panic!("a walled-off swing must be rejected, got {other:?}"),
+    }
+
+    game_state
+        .broadcast_monster_attack(&player_id, "shut_door_monster", &player_id)
+        .await;
+    assert_eq!(
+        game_state.players.read().await[&player_id].last_combat_at,
+        0,
+        "a monster behind a shut door must not reach the player"
+    );
+
+    assert_eq!(
+        game_state
+            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
+            .await,
+        Some(true)
+    );
+
+    game_state
+        .broadcast_monster_attack(&player_id, "open_door_monster", &player_id)
+        .await;
+    assert_ne!(
+        game_state.players.read().await[&player_id].last_combat_at,
+        0,
+        "an open doorway must let the monster strike back"
+    );
+
+    // Both attack paths stamp `last_combat_at`; clear it so the player's own
+    // swing is what the next assertion reads.
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&player_id)
+        .expect("the delver is on the floor")
+        .last_combat_at = 0;
+    game_state
+        .broadcast_player_attack(&player_id, "open_door_monster".to_string())
+        .await;
+    assert_ne!(
+        game_state.players.read().await[&player_id].last_combat_at,
+        0,
+        "an open doorway must let the swing through"
+    );
+}
+
 #[tokio::test]
 async fn furniture_removal_reopens_blocked_cells() {
     let game_state = make_test_game_state("movement_furniture_removed");

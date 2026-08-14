@@ -246,6 +246,7 @@ impl ChaseTarget<'_> {
                 step_stop_dist: APPROACH_RANGE,
                 max_distance: crate::state::NPC_SIGHT_RADIUS,
                 max_secs: MAX_APPROACH_SECS,
+                needs_clear_line: false,
             },
             Self::Monster(_) => ChaseTuning {
                 arrive_range: ATTACK_RANGE,
@@ -253,6 +254,7 @@ impl ChaseTarget<'_> {
                 step_stop_dist: ATTACK_RANGE - 0.5,
                 max_distance: MAX_CHASE_DISTANCE,
                 max_secs: MAX_CHASE_SECS,
+                needs_clear_line: true,
             },
             Self::GroundItem(_) => ChaseTuning {
                 arrive_range: PICKUP_ARRIVE_RANGE,
@@ -260,6 +262,7 @@ impl ChaseTarget<'_> {
                 step_stop_dist: PICKUP_ARRIVE_RANGE - 0.5,
                 max_distance: crate::state::NPC_SIGHT_RADIUS,
                 max_secs: MAX_PICKUP_WALK_SECS,
+                needs_clear_line: false,
             },
             // A fixed point is only ever offered once we share its room, so
             // the sight radius is slack, not a leash.
@@ -269,6 +272,7 @@ impl ChaseTarget<'_> {
                 step_stop_dist: (arrive_range - 0.5).max(0.5),
                 max_distance: crate::state::NPC_SIGHT_RADIUS,
                 max_secs: MAX_POINT_WALK_SECS,
+                needs_clear_line: false,
             },
         }
     }
@@ -287,6 +291,9 @@ struct ChaseTuning {
     /// Give up once the target is further away than this.
     max_distance: f32,
     max_secs: f32,
+    /// Arriving also needs a clear attack line — stopping at range through a
+    /// shut door is no arrival at all.
+    needs_clear_line: bool,
 }
 
 /// Log label. `Display` rather than a `-> String` helper so the monster arm
@@ -392,7 +399,8 @@ async fn chase_target(
 
             let player = s.self_player.as_ref().unwrap();
             let to_target = PlanarDelta::between(&player.position, &target_pos);
-            let in_range = to_target.dist <= tuning.arrive_range;
+            let in_range = to_target.dist <= tuning.arrive_range
+                && !(tuning.needs_clear_line && s.attack_line_blocked(target_pos.x, target_pos.z));
             if to_target.dist > tuning.max_distance {
                 info!(
                     "Giving up chase: target {} is {:.1}m away (>{:.1}m)",

@@ -7,6 +7,7 @@ import type {
 } from '../../../utils/movementUtils'
 import {
   runCombatFrame,
+  type AttackLineBlocked,
   type CombatControllerLike,
   type CombatOutcomeActions,
 } from './combat'
@@ -188,6 +189,7 @@ interface RunPlayerMovementTickInput {
   chasePathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
+  attackLineBlocked: AttackLineBlocked
   sampleHeight: (x: number, z: number) => number
   waypointHeight: (floor: number, x: number, z: number) => number
   hasHeightData: (x: number, z: number) => boolean
@@ -235,6 +237,7 @@ export function runPlayerMovementTick({
   chasePathing,
   getMonsterInfo,
   findMonsterPosition,
+  attackLineBlocked,
   sampleHeight,
   waypointHeight,
   hasHeightData,
@@ -275,6 +278,7 @@ export function runPlayerMovementTick({
     pathing: chasePathing,
     getMonsterInfo,
     findMonsterPosition,
+    attackLineBlocked,
     sendPlayerMove,
     actions: actions.combat,
   })

@@ -200,6 +200,27 @@ pub fn is_cell_sealed(
     })
 }
 
+/// Whether a wall stands between two combatants on `floor_level`: a shut door,
+/// a stair wall, any sealed cell edge.
+///
+/// Deliberately not the mover variant: furniture sealed in a monster may walk
+/// out, not swing out. No `y` either — a reported height is forgeable (see
+/// `passability::collision_y`), and honouring one would sell attacks over every
+/// wall.
+pub fn attack_line_blocked(
+    cache: &PassabilityCache,
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
+    floor_level: u8,
+) -> bool {
+    // Measured the way `dist_xz_sq` measures it: a pair straddling the world
+    // seam is a short leg, not a sweep across every wall in the world.
+    let to_x = from_x + crate::world::shortest_world_delta_x(from_x, to_x);
+    is_movement_blocked(cache, from_x, from_z, to_x, to_z, floor_level, None)
+}
+
 /// [`is_movement_blocked`], minus refusals that would trap a mover for good,
 /// reporting what refused the move.
 ///

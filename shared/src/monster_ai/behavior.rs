@@ -132,7 +132,9 @@ impl MonsterBrain {
             "flee_from_target" => {
                 self.bt_flee_from_target(params, delta_ms, nearby_players, commands, path_provider)
             }
-            "attack_target" => self.bt_attack_target(params, nearby_players, commands),
+            "attack_target" => {
+                self.bt_attack_target(params, nearby_players, commands, path_provider)
+            }
             "chase_target" => {
                 self.bt_chase_target(params, delta_ms, nearby_players, commands, path_provider)
             }
@@ -276,6 +278,7 @@ impl MonsterBrain {
         params: &HashMap<String, f32>,
         nearby_players: &[NearbyPlayer],
         commands: &mut Vec<AiCommand>,
+        path_provider: &dyn PathProvider,
     ) -> BehaviorStatus {
         let target = match self.current_target(nearby_players) {
             Some(target) => target,
@@ -289,8 +292,19 @@ impl MonsterBrain {
         } else {
             range
         };
-        // A swing already under way finishes; see `swing_left_ms`.
-        if self.swing_left_ms <= 0.0 && self.position.dist_xz_sq(&target.position) > limit * limit {
+        // A swing already under way finishes; see `swing_left_ms`. A wall
+        // between the two refuses the blow the way distance does, so the chase
+        // is the only way left to reach the target.
+        if self.swing_left_ms <= 0.0
+            && (self.position.dist_xz_sq(&target.position) > limit * limit
+                || path_provider.attack_line_blocked(
+                    self.position.x,
+                    self.position.z,
+                    target.position.x,
+                    target.position.z,
+                    self.path_floor,
+                ))
+        {
             return BehaviorStatus::Failure;
         }
 

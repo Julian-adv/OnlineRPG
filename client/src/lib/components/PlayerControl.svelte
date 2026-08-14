@@ -558,6 +558,18 @@
     }
   }
 
+  /** Whether a wall stands between two points — the server's own gate on every
+   *  blow. Also the movement tick's `attackLineBlocked`. */
+  function attackLineBlocked(from: Position, to: Position, floor: number) {
+    return housingManager.attackLineBlocked(from.x, from.z, to.x, to.z, floor)
+  }
+
+  /** Take the monster as a target and walk at it, attacking on arrival. */
+  function chaseAndAttack(monsterId: string, goal: Position) {
+    combatController.beginCombat(monsterId, false)
+    handleClickToMove(goal)
+  }
+
   // Initiate attack on a monster
   function initiateAttack(monsterId: string) {
     if (getInteractionExitKind(playerState) === 'pickup') {
@@ -565,6 +577,21 @@
     }
 
     const monsterInfo = monsterManager.monsters.get(monsterId)
+
+    // A wall between us refuses the blow server-side, so walk at the monster
+    // instead of swinging into a rejection.
+    if (
+      monsterInfo &&
+      currentPlayer &&
+      attackLineBlocked(
+        currentPlayer.position,
+        monsterInfo.position,
+        currentPassabilityFloor()
+      )
+    ) {
+      chaseAndAttack(monsterId, monsterInfo.position)
+      return
+    }
 
     // Without this the first swing keeps the old facing until the next cycle.
     if (monsterInfo) {
@@ -855,6 +882,7 @@
       },
       findMonsterPosition: (monsterId) =>
         monsterManager.findMeshPosition(monsterId, monsterMeshes),
+      attackLineBlocked,
       sampleHeight,
       waypointHeight,
       hasHeightData: (x, z) => heightManager.hasHeightData(x, z),
@@ -1378,10 +1406,7 @@
         // (no separate runtime reset needed).
         initiateAttack(monsterId)
       },
-      chaseAndAttack: (monsterId, hitPoint) => {
-        combatController.beginCombat(monsterId, false)
-        handleClickToMove(hitPoint)
-      },
+      chaseAndAttack,
       toggleDoor: (houseId, roomIndex, wallDir, segmentIndex) => {
         const m = movingState()
         if (m) m.pendingPickupAfterMove = null

@@ -65,6 +65,23 @@ pub(super) fn reachable_dist_sq(a: Position, a_floor: i8, b: Position, b_floor: 
     dist_sq.is_finite().then_some(dist_sq)
 }
 
+/// [`pathfinding::attack_line_blocked`] against a wire floor level.
+fn wall_between(
+    cache: &onlinerpg_shared::pathfinding::PassabilityCache,
+    from: Position,
+    to: Position,
+    floor_level: i8,
+) -> bool {
+    onlinerpg_shared::pathfinding::attack_line_blocked(
+        cache,
+        from.x,
+        from.z,
+        to.x,
+        to.z,
+        onlinerpg_shared::dungeon::passability_floor_for_level(floor_level),
+    )
+}
+
 pub(super) fn offset_position_at_angle(origin: Position, angle: f32, distance: f32) -> Position {
     Position {
         x: origin.x + angle.cos() * distance,
@@ -238,8 +255,18 @@ impl super::GameState {
         ) else {
             return Err(AttackRejectReason::InvalidTarget);
         };
+        let walled_off = || {
+            wall_between(
+                &self.passability_read(),
+                player_position,
+                monster_position,
+                player_floor,
+            )
+        };
         if distance_sq > PLAYER_MELEE_ATTACK_RANGE_METERS.powi(2) {
-            if distance_sq <= PLAYER_ATTACK_PROVOKE_RANGE_METERS.powi(2) {
+            // A swing at a monster behind a shut door must not reach it as
+            // aggro either.
+            if distance_sq <= PLAYER_ATTACK_PROVOKE_RANGE_METERS.powi(2) && !walled_off() {
                 if let Some(owner_id) = monster_owner_id {
                     self.send_direct_message(
                         &owner_id,
@@ -251,6 +278,9 @@ impl super::GameState {
                     .await;
                 }
             }
+            return Err(AttackRejectReason::OutOfRange);
+        }
+        if walled_off() {
             return Err(AttackRejectReason::OutOfRange);
         }
 
@@ -697,6 +727,18 @@ impl super::GameState {
                 distance_sq.sqrt(),
                 monster_id,
                 target_player_name
+            );
+            return;
+        }
+        if wall_between(
+            &self.passability_read(),
+            monster_position,
+            target_position,
+            monster_floor_level,
+        ) {
+            debug!(
+                "Rejected monster attack through a wall: monster {} -> player {}",
+                monster_id, target_player_name
             );
             return;
         }

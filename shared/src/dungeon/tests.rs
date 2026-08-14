@@ -368,6 +368,52 @@ fn shaft_opens_to_room_only_at_its_landing() {
     }
 }
 
+/// A blow must not cross a stair shaft's side wall either. Shaft cells belong
+/// to both adjacent floors, so the query's stairwell consult ("block only when
+/// every connected floor refuses") is what has to hold here — a plain wall test
+/// would not prove it.
+#[test]
+fn attacks_refuse_to_cross_a_shaft_side_wall() {
+    use crate::pathfinding::attack_line_blocked;
+    let entrance = test_entrance();
+    for seed in 0..20u64 {
+        let floors = generate_dungeon(seed);
+        let mut cache = PassabilityCache::new();
+        cache.insert(
+            "dungeon".to_string(),
+            dungeon_passability(&entrance, &floors),
+        );
+
+        for layout in &floors {
+            let shaft = &layout.up_shaft;
+            // Midway along the run: never a landing, so both flanks are walled.
+            let step = shaft.step_cell(SHAFT_LEN / 2, 0);
+            let (dx, dz) = if shaft.along_z { (-1, 0) } else { (0, -1) };
+            let beside = (step.0 + dx, step.1 + dz);
+            if !(0..GRID).contains(&beside.0) || !(0..GRID).contains(&beside.1) {
+                continue;
+            }
+            let inside = cell_center(&entrance, layout.depth, step);
+            let outside = cell_center(&entrance, layout.depth, beside);
+            let floor = passability_floor_for_depth(layout.depth);
+            assert!(
+                attack_line_blocked(&cache, inside.x, inside.z, outside.x, outside.z, floor),
+                "seed {seed} depth {}: a blow crossed the shaft side wall at {step:?}",
+                layout.depth
+            );
+            // The same reach along the run stays open, so the assert above is
+            // the wall talking and not the shaft as a whole.
+            let along = shaft.step_cell(SHAFT_LEN / 2 + 1, 0);
+            let along_pos = cell_center(&entrance, layout.depth, along);
+            assert!(
+                !attack_line_blocked(&cache, inside.x, inside.z, along_pos.x, along_pos.z, floor),
+                "seed {seed} depth {}: the shaft run itself must stay clear",
+                layout.depth
+            );
+        }
+    }
+}
+
 /// Every interior door must sit on a genuine corridor mouth (room cell on one
 /// side, corridor cell on the other), be sealed while shut — both in the
 /// per-floor rebuild and in the default `dungeon_passability` grids (doors

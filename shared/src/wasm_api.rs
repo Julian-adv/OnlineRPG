@@ -280,6 +280,19 @@ pub fn passability_is_movement_blocked(
     })
 }
 
+/// The gate the server applies to every landed blow, so the client stops
+/// swinging through shut doors instead of collecting rejections.
+#[wasm_bindgen]
+pub fn passability_attack_line_blocked(
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
+    floor_level: u8,
+) -> bool {
+    with_cache(|c| pathfinding::attack_line_blocked(c, from_x, from_z, to_x, to_z, floor_level))
+}
+
 #[wasm_bindgen]
 pub fn passability_is_circle_blocked(x: f32, z: f32, r: f32, floor_level: u8, y: f32) -> bool {
     with_cache(|c| pathfinding::is_circle_blocked_on_floor(c, x, z, r, floor_level, Some(y)))
@@ -629,6 +642,17 @@ impl monster_ai::PathProvider for WasmPathProvider {
                 pathfinding::DEFAULT_MAX_NODES,
             )
         })
+    }
+
+    fn attack_line_blocked(
+        &self,
+        from_x: f32,
+        from_z: f32,
+        to_x: f32,
+        to_z: f32,
+        floor: u8,
+    ) -> bool {
+        with_cache(|c| pathfinding::attack_line_blocked(c, from_x, from_z, to_x, to_z, floor))
     }
 }
 

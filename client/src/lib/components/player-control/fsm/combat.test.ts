@@ -183,6 +183,7 @@ describe('tickCombat', () => {
       cooldownMs: 1500,
       pathing: directPathing(),
       getMonsterInfo: vi.fn(),
+      attackLineBlocked: () => false,
       findMonsterPosition: vi.fn(),
       sendPlayerMove: vi.fn(),
     })
@@ -210,6 +211,7 @@ describe('tickCombat', () => {
       cooldownMs: 1500,
       pathing: directPathing(),
       getMonsterInfo: vi.fn(() => ({ state: 'idle' })),
+      attackLineBlocked: () => false,
       findMonsterPosition: vi.fn(() => ({ x: 1, y: 0, z: 0 })),
       sendPlayerMove: vi.fn(),
     })
@@ -240,6 +242,7 @@ describe('tickCombat', () => {
       cooldownMs: 1500,
       pathing: directPathing(),
       getMonsterInfo: vi.fn(() => ({ state: 'idle' })),
+      attackLineBlocked: () => false,
       findMonsterPosition: vi.fn(() => ({ x: 3, y: 0, z: 4 })),
       sendPlayerMove,
     })
@@ -363,6 +366,7 @@ describe('runCombatFrame', () => {
         cooldownMs: 1500,
         pathing: directPathing(),
         getMonsterInfo: vi.fn(),
+        attackLineBlocked: () => false,
         findMonsterPosition: vi.fn(),
         sendPlayerMove: vi.fn(),
         actions: a,
@@ -389,6 +393,7 @@ describe('runCombatFrame', () => {
         cooldownMs: 1500,
         pathing: directPathing(),
         getMonsterInfo: vi.fn(),
+        attackLineBlocked: () => false,
         findMonsterPosition: vi.fn(),
         sendPlayerMove: vi.fn(),
         actions: a,

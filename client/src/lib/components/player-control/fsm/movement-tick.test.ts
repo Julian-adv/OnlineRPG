@@ -207,6 +207,7 @@ function baseInput() {
     chaseGoal: null,
     chasePathing: directPathing(),
     getMonsterInfo: vi.fn(),
+    attackLineBlocked: () => false,
     findMonsterPosition: vi.fn(),
     sampleHeight: () => 0,
     waypointHeight: () => 0,

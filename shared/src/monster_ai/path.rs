@@ -13,6 +13,19 @@ pub trait PathProvider {
         goal_z: f32,
         goal_floor: u8,
     ) -> PathResult;
+
+    /// Whether a blow from `(from_x, from_z)` to `(to_x, to_z)` on `floor`
+    /// crosses a wall — a shut door, a stair wall. No default: a provider that
+    /// forgot to answer would let its monsters swing through walls, which is
+    /// the one thing this gate exists to stop.
+    fn attack_line_blocked(
+        &self,
+        from_x: f32,
+        from_z: f32,
+        to_x: f32,
+        to_z: f32,
+        floor: u8,
+    ) -> bool;
 }
 
 /// PathProvider backed by a reference to PassabilityCache (for native Rust).
@@ -40,5 +53,16 @@ impl<'a> PathProvider for CachePathProvider<'a> {
             self.cache,
             crate::dungeon::path_max_nodes(start_floor, goal_floor),
         )
+    }
+
+    fn attack_line_blocked(
+        &self,
+        from_x: f32,
+        from_z: f32,
+        to_x: f32,
+        to_z: f32,
+        floor: u8,
+    ) -> bool {
+        pathfinding::attack_line_blocked(self.cache, from_x, from_z, to_x, to_z, floor)
     }
 }

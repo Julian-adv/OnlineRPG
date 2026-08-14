@@ -10,6 +10,7 @@ import {
   type Position,
 } from '../../../utils/movementUtils'
 import { shortestWrappedDeltaX } from '../../../terrain/world-wrap'
+import { PLAYER_ATTACK_RANGE_METERS } from '../../../data/combatTiming'
 import {
   buildAttackState,
   buildIdleAfterAttack,
@@ -106,9 +107,23 @@ export interface CombatControllerLike {
     monsterObjPos: Position | undefined,
     isMoving: boolean,
     cooldownMs: number,
-    currentPlayerState: string
+    currentPlayerState: string,
+    lineBlocked: boolean
   ): CombatUpdateResult
 }
+
+function withinAttackRange(from: Position, to: Position): boolean {
+  const dx = shortestWrappedDeltaX(from.x, to.x)
+  const dz = to.z - from.z
+  return dx * dx + dz * dz <= PLAYER_ATTACK_RANGE_METERS ** 2
+}
+
+/** Whether a wall stands between the two points on `floor`. */
+export type AttackLineBlocked = (
+  from: Position,
+  to: Position,
+  floor: number
+) => boolean
 
 export interface TickCombatInput {
   combatController: CombatControllerLike
@@ -123,6 +138,7 @@ export interface TickCombatInput {
   pathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
+  attackLineBlocked: AttackLineBlocked
   sendPlayerMove: SendPlayerMove
 }
 
@@ -152,19 +168,28 @@ export function tickCombat({
   pathing,
   getMonsterInfo,
   findMonsterPosition,
+  attackLineBlocked,
   sendPlayerMove,
 }: TickCombatInput): CombatTickOutcome {
   const targetId = combatController.targetMonsterId
   if (!targetId) return { kind: 'none' }
 
+  // Only a target already within reach can be walled off in a way the swing
+  // decision reads — the wasm-side wall scan stays off the approach frames.
+  const monsterPos = findMonsterPosition(targetId)
+  const lineBlocked =
+    !!monsterPos &&
+    withinAttackRange(playerPos, monsterPos) &&
+    attackLineBlocked(playerPos, monsterPos, pathing.currentFloor)
   const result = combatController.update(
     deltaTime,
     playerPos,
     getMonsterInfo(targetId),
-    findMonsterPosition(targetId),
+    monsterPos,
     isMoving,
     cooldownMs,
-    playerStateName
+    playerStateName,
+    lineBlocked
   )
 
   switch (result.action) {
@@ -283,6 +308,7 @@ interface RunCombatFrameInput {
   pathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
+  attackLineBlocked: AttackLineBlocked
   sendPlayerMove: SendPlayerMove
   actions: CombatOutcomeActions
 }
@@ -301,6 +327,7 @@ export function runCombatFrame({
   pathing,
   getMonsterInfo,
   findMonsterPosition,
+  attackLineBlocked,
   sendPlayerMove,
   actions,
 }: RunCombatFrameInput): CombatOutcomeApplication {
@@ -323,6 +350,7 @@ export function runCombatFrame({
     pathing,
     getMonsterInfo,
     findMonsterPosition,
+    attackLineBlocked,
     sendPlayerMove,
   })
 

@@ -433,6 +433,24 @@ impl SharedState {
             .unwrap_or((x, z))
     }
 
+    /// Whether a wall stands between us and a point, as the server judges
+    /// every blow.
+    pub fn attack_line_blocked(&self, to_x: f32, to_z: f32) -> bool {
+        let Some(from) = self.self_player.as_ref().map(|p| p.position) else {
+            return false;
+        };
+        let floor = self.passability_floor();
+        let world = self.world_cache.read().unwrap();
+        pathfinding::attack_line_blocked(
+            world.passability_cache(),
+            from.x,
+            from.z,
+            to_x,
+            to_z,
+            floor,
+        )
+    }
+
     /// Find a smoothed path from current position to the goal.
     pub fn find_path_to(&self, goal_x: f32, goal_z: f32, goal_floor: u8) -> PathResult {
         let (start_x, start_z) = match &self.self_player {
