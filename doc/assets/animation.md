@@ -114,11 +114,11 @@
   `Armature_combat`(combat_melee 전용, 손가락·눈·`mixamorigSleeve*` 포함, scale 0.1).
 - 어느 팩도 참조하지 않는 잔재 액션: `torch_idle`(= `torch_idle1`),
   `run_down`, `run_sword`, `walk_cat`, `walk_female`, `walk_tough`, `mixamo.com*`.
-- **blend에 없는 수정**: 배포본 `combat_melee.glb`의 `dying`은 2026-08-14에
-  `tools/shift-glb-clip-hips.py`로 힙을 4cm 내렸다 (시체가 지면에서 떠 있었다).
-  blend에서 재export하면 이 보정이 사라지므로 다시 적용할 것.
-  이 오프셋은 캐릭터에만 듣는다 — 몬스터는 로드할 때 클립을 다시 접지시키므로
-  (`groundRetargetedClips`) 상수 이동이 상쇄된다.
+- `dying`은 2026-08-14에 힙을 4cm 내렸다 (시체가 지면에서 떠 있었다). blend와
+  배포본 `combat_melee.glb` 양쪽에 반영돼 있으므로 재export해도 유지된다
+  (blend는 `Armature_combat`의 `Hips` location[2]에 +0.4, 배포본은
+  `tools/shift-glb-clip-hips.py`). 이 오프셋은 캐릭터에만 듣는다 — 몬스터는
+  로드할 때 클립을 다시 접지시키므로 (`groundRetargetedClips`) 상수 이동이 상쇄된다.
 
 ## Known Pitfalls
 
