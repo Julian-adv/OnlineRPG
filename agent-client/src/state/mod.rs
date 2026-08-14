@@ -150,7 +150,7 @@ pub use commands::ActionProgress;
 pub use events::EventUrgency;
 pub use inventory::{Carried, CarriedBagCopies};
 pub use movement::{MoveTarget, MoveTargetError};
-pub use social::{PendingPartyInvite, PendingPartySummon};
+pub use social::{PendingFriendRequest, PendingPartyInvite, PendingPartySummon};
 pub use world_cache::WorldCache;
 
 /// Shared state between WebSocket reader and Claude driver tasks.
@@ -213,6 +213,17 @@ pub struct SharedState {
     pub pending_party_invites: Vec<PendingPartyInvite>,
     /// Unanswered summons, same queue discipline as invites.
     pub pending_party_summons: Vec<PendingPartySummon>,
+    /// Unanswered friend requests, same queue discipline as invites.
+    pub pending_friend_requests: Vec<PendingFriendRequest>,
+    /// Friend roster from `FriendList`, re-sent by the server on any change.
+    /// Maps the character ids in `FriendsOnline` back to names.
+    pub friends: Vec<onlinerpg_shared::messages::FriendEntry>,
+    /// Tip hats in our AOI, so the agent can drop coins in one.
+    pub tip_hats: HashMap<u64, onlinerpg_shared::tip_hat::TipHat>,
+    /// An NPC-pushed trade window not yet acted on (`ShopState` arrives
+    /// unrequested — the agent never sends `OpenShop`). `decline_trade`
+    /// answers and clears it.
+    pub pushed_trade: Option<(PlayerId, String)>,
     /// Current party roster from `PartyState`; empty = not in a party.
     pub party_members: Vec<onlinerpg_shared::messages::PartyMember>,
     pub party_leader: Option<PlayerId>,
@@ -356,6 +367,10 @@ impl SharedState {
             fishing_reaction: None,
             pending_party_invites: Vec::new(),
             pending_party_summons: Vec::new(),
+            pending_friend_requests: Vec::new(),
+            friends: Vec::new(),
+            tip_hats: HashMap::new(),
+            pushed_trade: None,
             party_members: Vec::new(),
             party_leader: None,
             nearby_players: HashMap::new(),

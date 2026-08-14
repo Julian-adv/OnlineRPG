@@ -14,6 +14,13 @@ pub struct PendingPartySummon {
     pub expires_at: std::time::Instant,
 }
 
+/// A friend request the agent hasn't answered yet.
+pub struct PendingFriendRequest {
+    pub requester_id: PlayerId,
+    pub requester_name: String,
+    pub expires_at: std::time::Instant,
+}
+
 impl SharedState {
     /// Returns true if any non-NPC (human) player is in `nearby_players`.
     pub fn has_nearby_human_players(&self) -> bool {
@@ -218,6 +225,19 @@ impl SharedState {
     pub fn prune_expired_party_summons(&mut self) {
         let now = std::time::Instant::now();
         self.pending_party_summons.retain(|s| s.expires_at > now);
+    }
+
+    pub fn prune_expired_friend_requests(&mut self) {
+        let now = std::time::Instant::now();
+        self.pending_friend_requests.retain(|r| r.expires_at > now);
+    }
+
+    /// Friend requests still answerable right now, `live_party_invites`'s twin.
+    pub fn live_friend_requests(&self) -> impl Iterator<Item = &PendingFriendRequest> {
+        let now = std::time::Instant::now();
+        self.pending_friend_requests
+            .iter()
+            .filter(move |r| r.expires_at > now)
     }
 
     /// Summons still answerable right now, `live_party_invites`'s twin.

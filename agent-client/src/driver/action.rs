@@ -116,6 +116,66 @@ pub(super) enum AgentAction {
     /// Leave your current party.
     #[serde(rename = "party_leave", alias = "leave_party")]
     PartyLeave,
+    /// Leader-only: remove a member from the party.
+    #[serde(rename = "party_kick", alias = "kick", alias = "kick_from_party")]
+    PartyKick {
+        #[serde(alias = "target", alias = "player_name", alias = "target_player")]
+        player: String,
+    },
+    /// Leader-only: hand party leadership to a member.
+    #[serde(rename = "party_promote", alias = "promote", alias = "promote_leader")]
+    PartyPromote {
+        #[serde(alias = "target", alias = "player_name", alias = "target_player")]
+        player: String,
+    },
+    /// Accept a pending friend request — the oldest, or the named requester's.
+    #[serde(rename = "friend_accept", alias = "accept_friend")]
+    FriendAccept {
+        #[serde(default, alias = "target", alias = "player_name", alias = "requester")]
+        player: Option<String>,
+    },
+    /// Decline a pending friend request — the oldest, or the named requester's.
+    #[serde(
+        rename = "friend_decline",
+        alias = "decline_friend",
+        alias = "reject_friend"
+    )]
+    FriendDecline {
+        #[serde(default, alias = "target", alias = "player_name", alias = "requester")]
+        player: Option<String>,
+    },
+    /// Drop a friendship, both directions. Name-based: the friend may be
+    /// offline.
+    #[serde(rename = "friend_remove", alias = "remove_friend", alias = "unfriend")]
+    FriendRemove {
+        #[serde(alias = "target", alias = "player_name", alias = "friend")]
+        player: String,
+    },
+    /// Ask which friends are online right now; the answer arrives as a
+    /// [FriendsOnline] event.
+    #[serde(
+        rename = "friends_online",
+        alias = "check_friends",
+        alias = "list_friends"
+    )]
+    FriendsOnline,
+    /// Drop copper into a performer's tip hat — the nearest one, or the
+    /// named hat id.
+    #[serde(rename = "tip_hat", alias = "tip")]
+    TipHat {
+        #[serde(default, alias = "target", alias = "id", alias = "hat_id")]
+        hat: Option<u64>,
+        #[serde(alias = "gold", alias = "copper", alias = "coins")]
+        amount: i64,
+    },
+    /// Wave off the trade window an NPC pushed onto our screen ("Not now"
+    /// on the web client's offer toast).
+    #[serde(
+        rename = "decline_trade",
+        alias = "wave_off_trade",
+        alias = "refuse_trade"
+    )]
+    DeclineTrade,
     /// Say something to your party, wherever its members are.
     #[serde(rename = "party_say", alias = "party_chat")]
     PartySay {
@@ -358,7 +418,8 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         doc: r#"- Use an item you are carrying — wear a piece of gear, drink a potion, read
   a scroll, eat food. Name it as it appears in your bag. Using gear you
   already wear takes it off; wearing a torch is how you light your way at
-  night:
+  night (it lights on equip, so other players see your light too, and goes
+  out when you take it off):
   {"type": "use", "target": "worn_torch"}"#,
     },
     ActionSpec {
@@ -491,6 +552,54 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   {"type": "party_leave"}"#,
     },
     ActionSpec {
+        names: &["party_kick", "party_promote"],
+        aliases: &["kick", "kick_from_party", "promote", "promote_leader"],
+        doc: r#"- (party leader only) Remove a member from your party, or hand them the
+  lead. Your roster in the world state marks who leads:
+  {"type": "party_kick", "target": "darkcocoa"}
+  {"type": "party_promote", "target": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["friend_accept", "friend_decline"],
+        aliases: &["accept_friend", "decline_friend", "reject_friend"],
+        doc: r#"- Answer a friend request (the world state lists pending ones). Friends
+  see each other in their friend panels and can check who is online. With
+  several requests pending, name the requester — bare answers the oldest:
+  {"type": "friend_accept"}
+  {"type": "friend_decline", "target": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["friend_remove"],
+        aliases: &["remove_friend", "unfriend"],
+        doc: r#"- Drop a friendship, both directions. Works while they are offline:
+  {"type": "friend_remove", "target": "darkcocoa"}"#,
+    },
+    ActionSpec {
+        names: &["friends_online"],
+        aliases: &["check_friends", "list_friends"],
+        doc: r#"- Ask which of your friends are online right now; a [FriendsOnline]
+  event answers:
+  {"type": "friends_online"}"#,
+    },
+    ActionSpec {
+        names: &["tip_hat"],
+        aliases: &["tip"],
+        doc: r#"- Drop copper into a performer's tip hat (the world state lists hats
+  near you with their ids). You must stand within 5m of the hat; "amount"
+  is in copper (100 copper = 1 silver). Bare form tips the nearest hat
+  that is not your own:
+  {"type": "tip_hat", "amount": 20}
+  {"type": "tip_hat", "target": 7, "amount": 20}"#,
+    },
+    ActionSpec {
+        names: &["decline_trade"],
+        aliases: &["wave_off_trade", "refuse_trade"],
+        doc: r#"- Wave off the trade window a merchant pushed onto your screen (the
+  [TradeOffer] event) without buying anything — they will stop offering
+  for a while:
+  {"type": "decline_trade"}"#,
+    },
+    ActionSpec {
         names: &["reroll"],
         aliases: &["reroll_stats", "roll_again"],
         doc: r#"- Reroll your starting stats (character creation only — does nothing once
@@ -539,7 +648,15 @@ impl AgentAction {
             | Self::SummonAccept { .. }
             | Self::SummonDecline { .. }
             | Self::PartyLeave
+            | Self::PartyKick { .. }
+            | Self::PartyPromote { .. }
             | Self::PartySay { .. }
+            | Self::FriendAccept { .. }
+            | Self::FriendDecline { .. }
+            | Self::FriendRemove { .. }
+            | Self::FriendsOnline
+            | Self::TipHat { .. }
+            | Self::DeclineTrade
             | Self::Use { .. }
             | Self::Drop { .. }
             | Self::Reroll
@@ -566,6 +683,8 @@ impl AgentAction {
                     | Self::OfferDeal { .. }
                     | Self::Use { .. }
                     | Self::Drop { .. }
+                    // Tipping is gated on standing within 5m of the hat.
+                    | Self::TipHat { .. }
             )
     }
 
@@ -593,6 +712,14 @@ impl AgentAction {
             | Self::SummonAccept { .. }
             | Self::SummonDecline { .. }
             | Self::PartyLeave
+            | Self::PartyKick { .. }
+            | Self::PartyPromote { .. }
+            | Self::FriendAccept { .. }
+            | Self::FriendDecline { .. }
+            | Self::FriendRemove { .. }
+            | Self::FriendsOnline
+            | Self::TipHat { .. }
+            | Self::DeclineTrade
             | Self::Use { .. }
             | Self::Drop { .. }
             | Self::Reroll => false,
@@ -617,6 +744,14 @@ impl AgentAction {
             Self::SummonAccept { .. } => "summon_accept",
             Self::SummonDecline { .. } => "summon_decline",
             Self::PartyLeave => "party_leave",
+            Self::PartyKick { .. } => "party_kick",
+            Self::PartyPromote { .. } => "party_promote",
+            Self::FriendAccept { .. } => "friend_accept",
+            Self::FriendDecline { .. } => "friend_decline",
+            Self::FriendRemove { .. } => "friend_remove",
+            Self::FriendsOnline => "friends_online",
+            Self::TipHat { .. } => "tip_hat",
+            Self::DeclineTrade => "decline_trade",
             Self::PartySay { .. } => "party_say",
             Self::Use { .. } => "use",
             Self::Pickup { .. } => "pickup",
@@ -832,6 +967,13 @@ fn normalize_targets(value: &mut serde_json::Value) {
             );
         } else if action_is(tag, "break_prop") {
             coerce_id_fields(action, &["target", "id", "prop", "prop_id"]);
+        } else if action_is(tag, "tip_hat") {
+            coerce_id_fields(
+                action,
+                &[
+                    "target", "id", "hat_id", "hat", "amount", "gold", "copper", "coins",
+                ],
+            );
         } else if ["sell", "buy", "buyback"].iter().any(|c| action_is(tag, c)) {
             // "target" aliases the merchant, but a sell/buy naming only one
             // thing means the goods — give the value to the item field the
@@ -1060,12 +1202,22 @@ pub(super) fn action_to_command(
         AgentAction::PartySay { message } => Some(ClientMessage::PartyChat {
             message: message.clone(),
         }),
+        AgentAction::FriendsOnline => Some(ClientMessage::RequestFriendsOnline),
         // Answering needs the stored invite; handled in
         // `execute::handle_response`.
         AgentAction::PartyAccept { .. }
         | AgentAction::PartyDecline { .. }
         | AgentAction::SummonAccept { .. }
         | AgentAction::SummonDecline { .. } => None,
+        // Need pending-request, roster or nearby-hat state from SharedState;
+        // handled in `execute::handle_response`.
+        AgentAction::PartyKick { .. }
+        | AgentAction::PartyPromote { .. }
+        | AgentAction::FriendAccept { .. }
+        | AgentAction::FriendDecline { .. }
+        | AgentAction::FriendRemove { .. }
+        | AgentAction::TipHat { .. }
+        | AgentAction::DeclineTrade => None,
         // Need player-name → id resolution from SharedState; handled in
         // `execute::handle_response`, not here.
         AgentAction::OfferDeal { .. } => None,
@@ -1654,6 +1806,92 @@ mod tests {
         assert!(!wants_reroll(""));
         assert!(!wants_reroll("Hmm, hard to say."));
         assert!(!wants_reroll(r#"{"actions": []}"#));
+    }
+
+    #[test]
+    fn party_kick_and_promote_parse_their_member() {
+        let AgentAction::PartyKick { player } =
+            parse_single_action(r#"{"actions": [{"type": "party_kick", "target": "darkcocoa"}]}"#)
+        else {
+            panic!("expected PartyKick");
+        };
+        assert_eq!(player, "darkcocoa");
+
+        let AgentAction::PartyPromote { player } =
+            parse_single_action(r#"{"actions": [{"type": "promote", "player": "darkcocoa"}]}"#)
+        else {
+            panic!("expected PartyPromote via alias");
+        };
+        assert_eq!(player, "darkcocoa");
+    }
+
+    #[test]
+    fn friend_actions_parse_with_aliases() {
+        let AgentAction::FriendAccept { player } =
+            parse_single_action(r#"{"actions": [{"type": "friend_accept"}]}"#)
+        else {
+            panic!("expected FriendAccept");
+        };
+        assert_eq!(player, None);
+
+        let AgentAction::FriendDecline { player } = parse_single_action(
+            r#"{"actions": [{"type": "decline_friend", "target": "Mallory"}]}"#,
+        ) else {
+            panic!("expected FriendDecline via alias");
+        };
+        assert_eq!(player.as_deref(), Some("Mallory"));
+
+        let AgentAction::FriendRemove { player } =
+            parse_single_action(r#"{"actions": [{"type": "unfriend", "target": "Mallory"}]}"#)
+        else {
+            panic!("expected FriendRemove via alias");
+        };
+        assert_eq!(player, "Mallory");
+
+        assert!(matches!(
+            parse_single_action(r#"{"actions": [{"type": "friends_online"}]}"#),
+            AgentAction::FriendsOnline
+        ));
+    }
+
+    #[test]
+    fn friends_online_sends_the_request_over_the_socket() {
+        let action = parse_single_action(r#"{"actions": [{"type": "friends_online"}]}"#);
+        assert!(matches!(
+            action_to_command(&action, None),
+            Some(ClientMessage::RequestFriendsOnline)
+        ));
+    }
+
+    #[test]
+    fn tip_hat_parses_bare_and_with_a_float_or_string_id() {
+        let AgentAction::TipHat { hat, amount } =
+            parse_single_action(r#"{"actions": [{"type": "tip_hat", "amount": 20}]}"#)
+        else {
+            panic!("expected TipHat");
+        };
+        assert_eq!(hat, None);
+        assert_eq!(amount, 20);
+
+        // Ids print as numbers, so LLMs send floats and quoted numbers.
+        for json in [
+            r#"{"actions": [{"type": "tip_hat", "target": 7.0, "amount": 20}]}"#,
+            r#"{"actions": [{"type": "tip", "hat_id": "7", "copper": 20}]}"#,
+        ] {
+            let AgentAction::TipHat { hat, amount } = parse_single_action(json) else {
+                panic!("expected TipHat for {json}");
+            };
+            assert_eq!(hat, Some(7), "for {json}");
+            assert_eq!(amount, 20, "for {json}");
+        }
+    }
+
+    #[test]
+    fn decline_trade_parses_and_stays_off_the_socket() {
+        let action = parse_single_action(r#"{"actions": [{"type": "decline_trade"}]}"#);
+        assert!(matches!(action, AgentAction::DeclineTrade));
+        assert!(action_to_command(&action, None).is_none());
+        assert!(!action.takes_over_movement());
     }
 
     #[test]
