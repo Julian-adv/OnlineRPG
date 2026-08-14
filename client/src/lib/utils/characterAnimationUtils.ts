@@ -153,8 +153,13 @@ const CORPSE_GROUND_CLEARANCE = 0.01
  * rigs have no foot/toe bones to key off. A monster whose lowest vertex is a
  * dangling appendage ends up hovering on its body — nudge it with
  * corpseGroundOffset in monsters.csv. Returns 0 with no skinned geometry.
+ *
+ * `stride` samples every nth vertex, for callers measuring many poses.
  */
-export function computeCorpseGroundOffset(model: THREE.Object3D): number {
+export function computeCorpseGroundOffset(
+  model: THREE.Object3D,
+  stride = 1
+): number {
   model.updateMatrixWorld(true)
   let lowest = Infinity
   const v = new THREE.Vector3()
@@ -164,7 +169,7 @@ export function computeCorpseGroundOffset(model: THREE.Object3D): number {
     const position = child.geometry.getAttribute('position')
     if (!position) return
 
-    for (let i = 0; i < position.count; i++) {
+    for (let i = 0; i < position.count; i += stride) {
       v.fromBufferAttribute(position, i)
       child.applyBoneTransform(i, v) // skinned position in the current pose
       child.localToWorld(v)
@@ -594,6 +599,59 @@ export function selectOrderedCharacterAnimations(
   return orderedSelections
 }
 
+/** Poses sampled per clip, and the vertex stride each pose is measured at. */
+const GROUND_SAMPLE_POSES = 24
+const GROUND_SAMPLE_STRIDE = 8
+
+/**
+ * Retargeting anchors the hips from the source rig, so a model built to other
+ * proportions plays buried in the floor — the death clip ends underground and
+ * the corpse then pops up when it is settled. Lift each clip's hip track by its
+ * deepest sink, which grounds the whole clip without touching its motion.
+ */
+export async function groundRetargetedClips(
+  targetScene: THREE.Object3D,
+  clips: THREE.AnimationClip[]
+): Promise<THREE.AnimationClip[]> {
+  const scene = SkeletonUtils.clone(targetScene) as THREE.Object3D
+  const mixer = new THREE.AnimationMixer(scene)
+  const grounded: THREE.AnimationClip[] = []
+
+  for (const clip of clips) {
+    const shifted = clip.clone()
+    const hipTrack = shifted.tracks.find((track) =>
+      HIP_BONE_CANDIDATES.some((hip) => track.name === `${hip}.position`)
+    )
+    if (!hipTrack || shifted.duration <= 0) {
+      grounded.push(clip)
+      continue
+    }
+
+    const action = mixer.clipAction(shifted)
+    action.play()
+    let lift = 0
+    for (let i = 0; i <= GROUND_SAMPLE_POSES; i++) {
+      const time = (i * shifted.duration) / GROUND_SAMPLE_POSES
+      mixer.setTime(Math.min(time, shifted.duration - 1e-4))
+      lift = Math.max(
+        lift,
+        computeCorpseGroundOffset(scene, GROUND_SAMPLE_STRIDE) -
+          CORPSE_GROUND_CLEARANCE
+      )
+    }
+    action.stop()
+    mixer.uncacheClip(shifted)
+
+    for (let i = 1; i < hipTrack.values.length; i += 3) {
+      hipTrack.values[i] += lift
+    }
+    grounded.push(shifted)
+    await new Promise((r) => setTimeout(r, 0))
+  }
+
+  return grounded
+}
+
 const sharedPackClipsByModel = new Map<string, Promise<THREE.AnimationClip[]>>()
 
 /**
@@ -627,7 +685,7 @@ export function loadSharedPackClipsForModel(
         )
       )
     )
-    .then((packs) => packs.flat())
+    .then((packs) => groundRetargetedClips(targetScene, packs.flat()))
   sharedPackClipsByModel.set(cacheKey, clips)
   return clips
 }

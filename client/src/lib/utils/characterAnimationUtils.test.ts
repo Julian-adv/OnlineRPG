@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import * as THREE from 'three'
 import {
   computeCorpseGroundOffset,
+  groundRetargetedClips,
   retargetAnimationsForCharacterModel,
 } from './characterAnimationUtils'
 
@@ -174,5 +175,37 @@ describe('retargetAnimationsForCharacterModel', () => {
     const hipY = (clip: THREE.AnimationClip) =>
       clip.tracks.find((track) => track.name === 'Hips.position')?.values[1]
     expect(hipY(tall)).not.toBeCloseTo(hipY(short) as number, 3)
+  })
+})
+
+describe('groundRetargetedClips', () => {
+  const sunkClip = () =>
+    new THREE.AnimationClip('dying', 1, [
+      new THREE.VectorKeyframeTrack(
+        'Hips.position',
+        [0, 1],
+        [0, -0.5, 0, 0, -0.4, 0]
+      ),
+    ])
+
+  it('lifts a clip that plays below the floor', async () => {
+    const rig = makeRig(1)
+    const [grounded] = await groundRetargetedClips(rig, [sunkClip()])
+    const hips = grounded.tracks.find((t) => t.name === 'Hips.position')!
+    const raw = sunkClip().tracks[0].values
+
+    const lift = hips.values[1] - raw[1]
+    expect(lift).toBeGreaterThan(0)
+    // A constant shift: the motion inside the clip is untouched.
+    expect(hips.values[4] - raw[4]).toBeCloseTo(lift, 5)
+  })
+
+  it('leaves an already grounded clip alone', async () => {
+    const rig = makeRig(1)
+    const [once] = await groundRetargetedClips(rig, [sunkClip()])
+    const [twice] = await groundRetargetedClips(rig, [once])
+    const hipsOnce = once.tracks.find((t) => t.name === 'Hips.position')!
+    const hipsTwice = twice.tracks.find((t) => t.name === 'Hips.position')!
+    expect(hipsTwice.values[1]).toBeCloseTo(hipsOnce.values[1], 5)
   })
 })
