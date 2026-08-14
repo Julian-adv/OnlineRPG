@@ -114,6 +114,9 @@
   `Armature_combat`(combat_melee 전용, 손가락·눈·`mixamorigSleeve*` 포함, scale 0.1).
 - 어느 팩도 참조하지 않는 잔재 액션: `torch_idle`(= `torch_idle1`),
   `run_down`, `run_sword`, `walk_cat`, `walk_female`, `walk_tough`, `mixamo.com*`.
+- **blend에 없는 수정**: 배포본 `combat_melee.glb`의 `dying`은 2026-08-14에
+  `tools/shift-glb-clip-hips.py`로 힙을 6cm 올렸다 (시체가 지면에서 떠 있었다).
+  blend에서 재export하면 이 보정이 사라지므로 다시 적용할 것.
 
 ## Known Pitfalls
 

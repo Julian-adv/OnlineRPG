@@ -338,6 +338,14 @@ function getHipBoneRestY(
   return hipBone ? hipBone.position.y : null
 }
 
+/**
+ * The hip correction assumes the clip stands on its legs, so it scales with the
+ * gap between the two rigs' hip heights. A body that ends up lying down is held
+ * off the floor by its own thickness instead, and the correction only floats it
+ * — a tall character's corpse hovered 10cm up while the hobgoblin's sank.
+ */
+const CLIPS_KEEPING_SOURCE_HIP_HEIGHT = new Set<string>([AnimationName.DYING])
+
 function correctHipHeightInClip(
   clip: THREE.AnimationClip,
   hipBoneName: string,
@@ -441,7 +449,10 @@ export async function retargetAnimationsForCharacterModel(
         retargetedClips.push(clip)
         continue
       }
-      if (Math.abs(hipYDelta) > 0.001) {
+      if (
+        Math.abs(hipYDelta) > 0.001 &&
+        !CLIPS_KEEPING_SOURCE_HIP_HEIGHT.has(clip.name)
+      ) {
         correctHipHeightInClip(normalizedClip, hipBoneName, hipYDelta)
       }
       retargetedClipCache.set(cacheKey, normalizedClip)
