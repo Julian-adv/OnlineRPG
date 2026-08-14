@@ -11,7 +11,8 @@ repo=$(awk '$1 == "repo" {print $2; exit}' assets.lock)
 mapfile -d '' files < <({
     find client/public -type f \
         \( -name '*.glb' -o -name '*.mp3' -o -name '*.m4a' -o -name '*.blend' \) -print0
-    if [[ -d assets ]]; then find assets -type f -print0; fi
+    # Blender writes a .blend1 backup on every save — 180MB of nothing.
+    if [[ -d assets ]]; then find assets -type f ! -name '*.blend1' -print0; fi
 } | sort -z)
 
 stage=$(mktemp -d)

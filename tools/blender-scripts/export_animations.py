@@ -12,6 +12,7 @@ import bpy
 import importlib.util
 import os
 import re
+import sys
 
 # ---------------------------------------------------------------------------
 # Configuration: define which actions go into which GLB file.
@@ -236,6 +237,22 @@ def export_glb(filepath):
 # Main
 # ---------------------------------------------------------------------------
 
+def requested_packs():
+    """Pack names after `-- --packs a,b`, or every pack when unrestricted.
+
+    Re-exporting a pack rewrites a shipped GLB, so touching only the pack that
+    changed keeps the others' bytes (and their assets.lock hashes) stable.
+    """
+    argv = sys.argv
+    if "--packs" not in argv:
+        return list(EXPORT_PACKS)
+    names = [n for n in argv[argv.index("--packs") + 1].split(",") if n]
+    unknown = [n for n in names if n not in EXPORT_PACKS]
+    if unknown:
+        raise SystemExit(f"Unknown pack(s): {unknown}. Known: {list(EXPORT_PACKS)}")
+    return names
+
+
 def main():
     all_actions = collect_all_actions()
     print(f"Found {len(all_actions)} actions: {list(all_actions.keys())}")
@@ -243,7 +260,8 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     failed = []
 
-    for pack_name, action_names in EXPORT_PACKS.items():
+    for pack_name in requested_packs():
+        action_names = EXPORT_PACKS[pack_name]
         print(f"\n--- Exporting pack: {pack_name} ---")
 
         # A partial export overwrites the shipped pack with fewer clips, so

@@ -79,6 +79,8 @@
 
    ```bash
    blender assets/all_animation.blend --background --python tools/blender-scripts/export_animations.py
+   # 바뀐 팩만: 나머지 GLB의 바이트(=assets.lock 해시)를 그대로 둔다
+   blender assets/all_animation.blend --background --python tools/blender-scripts/export_animations.py -- --packs offhand
    ```
 
    또는 Blender 내부에서:
@@ -124,3 +126,22 @@
   캐릭터가 수 km 밖으로 날아간다. `import_mixamo_animation.py`는 rest 대비 월드 변위를
   두 리그의 Hips rest 높이 비로 스케일해 bake한다. 제자리 클립에서 드리프트를 없애려면
   `bake_root_location=False`로 rest에 고정한다.
+- **`bake_root_location=False`는 수직 성분까지 죽인다**: Hips가 rest 높이에 못 박히면
+  다리가 땅에 닿지 못해 캐릭터가 공중에 뜬다. 걷기·달리기처럼 상하 바운스가 있는
+  클립에는 절대 쓰지 말 것 (In Place FBX는 어차피 수평 드리프트가 없다).
+  2026-08-14에 offhand 팩(`torch_walk` 5~13cm, `torch_run` 7~17cm, `torch_idle2` 0~6cm
+  부양)이 이 문제로 확인되어 `tools/blender-scripts/ground_hips_curve.py`로 복원했다
+  — 매 프레임 가장 낮은 발뼈를 `walk`의 접지 높이에 맞춰 Hips 수직 커브를 다시 키잉한다
+  (체공 구간이 있는 `torch_run`은 `--shift`로 상수 오프셋만). 적용한 명령:
+
+  ```bash
+  blender assets/all_animation.blend --background \
+      --python tools/blender-scripts/ground_hips_curve.py -- \
+      --ground torch_walk,torch_idle2 --shift torch_idle1,torch_run \
+      --clearance 0.007 --apply
+  ```
+
+  `--clearance 0.007`은 눈으로 맞춘 값이다: 지상 `walk`와 같은 높이로 접지시키면
+  평평한 던전 바닥에서 발이 파묻혀 보인다 (지형은 굴곡·풀이 가려준다).
+  델타는 기존 커브에 더해지므로 같은 명령을 다시 돌려도 결과가 같다.
+  원본 Mixamo 커브가 필요하면 FBX를 다시 받아 `bake_root_location=True`로 재임포트할 것.
