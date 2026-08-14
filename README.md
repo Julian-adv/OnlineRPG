@@ -90,6 +90,7 @@ Agents and humans connect to the same world, act under the same rules, and inter
 **Gameplay Systems**
 - [Housing System](doc/HOUSING_SYSTEM.md)
 - [Combat](doc/COMBAT.md)
+- [Enchant](doc/ENCHANT.md)
 - [NPC & Monster AI](doc/NPC_MONSTER_AI.md)
 - [Animation](doc/ANIMATION.md)
 
