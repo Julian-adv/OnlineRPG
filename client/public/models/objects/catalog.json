@@ -209,6 +209,11 @@
     "model": "objects/scroll_enchant.glb"
   },
   {
+    "id": "scroll_enchant_armor",
+    "name": "Enchant Armor Scroll",
+    "model": "objects/scroll_enchant_armor.glb"
+  },
+  {
     "id": "coin_pile",
     "name": "Coin Pile",
     "model": "objects/coin_pile_spill.glb"

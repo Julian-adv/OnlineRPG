@@ -122,6 +122,8 @@ pub enum UseEffect {
     TeleportTown,
     /// Add +1 enchantment to the wielded weapon (NetHack style).
     EnchantWeapon,
+    /// Add +1 enchantment to one random worn armor piece.
+    EnchantArmor,
     /// Ask every party member to teleport to the reader's side.
     SummonParty,
     /// Open a fished-up coin pouch: roll the given dice for its copper.
@@ -149,6 +151,11 @@ impl ItemDefinition {
 
     pub fn is_weapon(&self) -> bool {
         self.category.as_deref() == Some("weapon")
+    }
+
+    /// Worn protection — what an enchant-armor scroll can target.
+    pub fn is_armor(&self) -> bool {
+        self.category.as_deref() == Some("armor")
     }
 
     /// Main-hand tool that enables casting (`ClientMessage::FishingCast`).
@@ -216,6 +223,7 @@ impl ItemDefinition {
             "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),
             "enchant_scroll" => Some(UseEffect::EnchantWeapon),
+            "enchant_armor_scroll" => Some(UseEffect::EnchantArmor),
             "party_summon_scroll" => Some(UseEffect::SummonParty),
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
             "tip_hat" => Some(UseEffect::ToggleTipHat),

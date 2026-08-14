@@ -1,6 +1,6 @@
 use crate::game::{character_hp, combat};
 use crate::types::{AttackRejectReason, MonsterState, PlayerId, Position, ServerMessage};
-use onlinerpg_shared::inventory::{EquipSlot, GroundItem, PlayerInventory};
+use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
 use onlinerpg_shared::xp;
 use rand::Rng;
 use std::f32::consts::TAU;
@@ -146,25 +146,44 @@ impl super::GameState {
         true
     }
 
-    /// The defs behind a player's worn gear — the single place that resolves
-    /// equipped items to their definitions.
+    /// A player's worn gear paired with its defs — the single place that
+    /// resolves equipped items to their definitions.
+    fn equipped_pairs<'a>(
+        &'a self,
+        inv: &'a PlayerInventory,
+    ) -> impl Iterator<Item = (&'a ItemInstance, &'a crate::item_defs::ItemDefinition)> {
+        inv.equipped
+            .values()
+            .filter_map(|item| Some((item, self.item_defs.get(&item.item_def_id)?)))
+    }
+
+    /// The defs behind a player's worn gear, for callers that don't need the
+    /// instance (and so its enchant).
     pub(super) fn equipped_defs<'a>(
         &'a self,
         inv: &'a PlayerInventory,
     ) -> impl Iterator<Item = &'a crate::item_defs::ItemDefinition> {
-        inv.equipped
-            .values()
-            .filter_map(|item| self.item_defs.get(&item.item_def_id))
+        self.equipped_pairs(inv).map(|(_, def)| def)
     }
 
-    /// Sum of one def stat over every equipped item. `effective_guard` and
-    /// `effective_cha` add it to their base attribute.
+    /// Sum of one def stat over every equipped item. `effective_cha` adds it
+    /// to the base attribute.
     pub(super) fn equipped_bonus(
         &self,
         inv: &PlayerInventory,
         stat: fn(&crate::item_defs::ItemDefinition) -> Option<i32>,
     ) -> i32 {
         self.equipped_defs(inv).filter_map(stat).sum()
+    }
+
+    /// Equipped `guard` plus worn-armor enchant levels. A weapon's enchant
+    /// stays on attack and damage rolls and never protects.
+    pub(super) fn equipped_guard(&self, inv: &PlayerInventory) -> i32 {
+        self.equipped_pairs(inv)
+            .map(|(item, def)| {
+                def.guard.unwrap_or(0) + if def.is_armor() { item.enchant } else { 0 }
+            })
+            .sum()
     }
 
     /// A player's effective guard: base attribute plus equipped-gear bonuses.
@@ -183,7 +202,7 @@ impl super::GameState {
             let inventories = self.inventories.read().await;
             inventories
                 .get(player_id)
-                .map(|inv| self.equipped_bonus(inv, |def| def.guard))
+                .map(|inv| self.equipped_guard(inv))
                 .unwrap_or(0)
         };
         base + bonus

@@ -3,7 +3,7 @@
 
   interface Props {
     def: ItemDefinition
-    /** Weapon enchantment level; prefixes the name (e.g. "+2 Iron Sword"). */
+    /** Enchantment level; prefixes the name (e.g. "+2 Iron Sword"). */
     enchant?: number
     side?: 'left' | 'right'
     anchor: DOMRect
@@ -42,7 +42,7 @@
     {:else if def.category === 'healing_potion' && def.dice}
       <span>Heals: {def.dice}</span>
     {/if}
-    {#each statLabels(def) as label (label)}
+    {#each statLabels(def, enchant) as label (label)}
       <span>{label}</span>
     {/each}
   </div>

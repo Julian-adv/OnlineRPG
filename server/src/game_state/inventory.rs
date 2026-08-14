@@ -23,7 +23,19 @@ pub(super) const PLACEMENT_DISTANCE_M: f32 = 1.0;
 /// this scale; the handler's roll must use the same bound.
 const ENCHANT_BP_SCALE: u32 = 10_000;
 
-/// Success chance, in basis points, of enchanting a weapon currently at
+/// What one enchant scroll does: how it finds its target, its odds ladder,
+/// and the lines it prints. `read_enchant_scroll` owns everything else.
+struct EnchantScroll {
+    /// Picks the slot to enchant, given a pre-rolled `pick` to choose among
+    /// equally valid targets. `None` refuses the read.
+    select: fn(&PlayerInventory, &crate::item_defs::ItemDefs, u64) -> Option<EquipSlot>,
+    ladder: fn(i32) -> u32,
+    no_target: &'static str,
+    destroyed: fn(&str) -> String,
+    honed: fn(&str, i32) -> String,
+}
+
+/// Success chance, in basis points, of enchanting an item currently at
 /// `enchant`. Guaranteed through +4, then the over-enchanting gamble:
 /// 75/50/25% at +5/+6/+7, halving each level from +8 until the 1% floor at
 /// +12 — the ladder never closes entirely, it just gets very expensive.
@@ -39,6 +51,12 @@ fn enchant_success_bp(enchant: i32) -> u32 {
         11 => 156,
         _ => 100, // the 1% floor
     }
+}
+
+/// The ladder shifted two levels down for armor — free only through +2, since
+/// armor fills six slots to a weapon's one (doc/ENCHANT.md).
+fn armor_enchant_success_bp(enchant: i32) -> u32 {
+    enchant_success_bp(enchant.saturating_add(2))
 }
 
 /// One unit-insert request: `quantity` units of one def at one enchant level,
@@ -605,6 +623,7 @@ impl super::GameState {
             UseEffect::EnchantWeapon => {
                 self.use_enchant_weapon_scroll(player_id, instance_id).await
             }
+            UseEffect::EnchantArmor => self.use_enchant_armor_scroll(player_id, instance_id).await,
             UseEffect::SummonParty => self.use_party_summon_scroll(player_id, instance_id).await,
             UseEffect::OpenCoinPouch(dice) => {
                 self.use_coin_pouch(player_id, instance_id, &dice).await
@@ -907,12 +926,76 @@ impl super::GameState {
         }
     }
 
-    /// Read a scroll of enchant weapon: +1 to the wielded weapon's
-    /// enchantment, which is added to attack and damage rolls. NetHack-style
-    /// over-enchanting gamble: past +4 each further reading risks destroying
-    /// the weapon (see `enchant_success_bp` for the odds ladder).
-    /// Refuses — keeping the scroll — while defeated or with nothing wielded.
+    /// Read a scroll of enchant weapon: +1 to the wielded weapon, added to
+    /// attack and damage rolls.
     async fn use_enchant_weapon_scroll(&self, player_id: &PlayerId, instance_id: u64) {
+        self.read_enchant_scroll(
+            player_id,
+            instance_id,
+            EnchantScroll {
+                // Only a wielded weapon bites; an empty or non-weapon main
+                // hand keeps the scroll unread.
+                select: |inv, defs, _| {
+                    inv.equipped
+                        .get(&EquipSlot::MainHand)
+                        .filter(|item| defs.get(&item.item_def_id).is_some_and(|d| d.is_weapon()))
+                        .map(|_| EquipSlot::MainHand)
+                },
+                ladder: enchant_success_bp,
+                no_target: "You have no weapon wielded to enchant",
+                destroyed: |name| {
+                    format!(
+                        "The runes flare out of control — your {name} bursts into glittering dust!"
+                    )
+                },
+                honed: |name, enchant| {
+                    format!("The runes sink into your {name}, honing its edge. (+{enchant})")
+                },
+            },
+        )
+        .await;
+    }
+
+    /// Read a scroll of enchant armor: +1 to one random worn armor piece,
+    /// added to the wearer's guard.
+    async fn use_enchant_armor_scroll(&self, player_id: &PlayerId, instance_id: u64) {
+        self.read_enchant_scroll(
+            player_id,
+            instance_id,
+            EnchantScroll {
+                select: |inv, defs, pick| {
+                    let worn: Vec<EquipSlot> = inv
+                        .equipped
+                        .iter()
+                        .filter(|(_, item)| {
+                            defs.get(&item.item_def_id).is_some_and(|d| d.is_armor())
+                        })
+                        .map(|(slot, _)| *slot)
+                        .collect();
+                    (!worn.is_empty()).then(|| worn[pick as usize % worn.len()])
+                },
+                ladder: armor_enchant_success_bp,
+                no_target: "You have no armor worn to enchant",
+                destroyed: |name| {
+                    format!("The runes flare out of control — your {name} crumbles to dust!")
+                },
+                honed: |name, enchant| {
+                    format!("The runes sink into your {name}, hardening it. (+{enchant})")
+                },
+            },
+        )
+        .await;
+    }
+
+    /// The ceremony both enchant scrolls share: refuse while defeated or with
+    /// nothing to target (keeping the scroll), else spend the scroll and either
+    /// raise the piece by one or destroy it on the odds ladder's roll.
+    async fn read_enchant_scroll(
+        &self,
+        player_id: &PlayerId,
+        instance_id: u64,
+        scroll: EnchantScroll,
+    ) {
         if self
             .reject_if_defeated(player_id, "You can't read while defeated")
             .await
@@ -920,9 +1003,12 @@ impl super::GameState {
             return;
         }
 
-        // Roll before taking the lock; a no-op while the weapon is still in
-        // the guaranteed range.
-        let roll_bp = rand::thread_rng().gen_range(0..ENCHANT_BP_SCALE);
+        // Rolled before the lock is taken; `pick` chooses among the targets
+        // the selector finds.
+        let (roll_bp, pick) = {
+            let mut rng = rand::thread_rng();
+            (rng.gen_range(0..ENCHANT_BP_SCALE), rng.gen::<u64>())
+        };
 
         let (snapshot, message, enchant_log) = {
             let mut inventories = self.inventories.write().await;
@@ -931,48 +1017,29 @@ impl super::GameState {
                 None => return,
             };
 
-            // The scroll only bites on a wielded weapon; an empty (or
-            // non-weapon) main hand keeps it unread.
-            let wielding_weapon = inv.equipped.get(&EquipSlot::MainHand).is_some_and(|item| {
-                self.item_defs
-                    .get(&item.item_def_id)
-                    .is_some_and(|def| def.is_weapon())
-            });
-            if !wielding_weapon {
+            let Some(slot) = (scroll.select)(inv, &self.item_defs, pick) else {
                 drop(inventories);
-                self.send_system_message(player_id, "You have no weapon wielded to enchant")
-                    .await;
+                self.send_system_message(player_id, scroll.no_target).await;
                 return;
-            }
+            };
 
-            // The scroll is spent whether the enchant takes or the weapon breaks.
+            // Spent whether the enchant takes or the piece breaks.
             consume_one(inv, instance_id);
 
-            let weapon = inv
-                .equipped
-                .get_mut(&EquipSlot::MainHand)
-                .expect("checked above");
-            let name = self.item_name(&weapon.item_def_id);
-            let (message, enchant_log) = if roll_bp >= enchant_success_bp(weapon.enchant) {
+            let item = inv.equipped.get_mut(&slot).expect("the selector found it");
+            let name = self.item_name(&item.item_def_id);
+            let (message, enchant_log) = if roll_bp >= (scroll.ladder)(item.enchant) {
                 let log = format!(
                     "destroyed {} enchanting at +{}",
-                    weapon.item_def_id, weapon.enchant
+                    item.item_def_id, item.enchant
                 );
-                inv.equipped.remove(&EquipSlot::MainHand);
-                (
-                    format!(
-                        "The runes flare out of control — your {name} bursts into glittering dust!"
-                    ),
-                    log,
-                )
+                inv.equipped.remove(&slot);
+                ((scroll.destroyed)(&name), log)
             } else {
-                weapon.enchant += 1;
+                item.enchant += 1;
                 (
-                    format!(
-                        "The runes sink into your {name}, honing its edge. (+{})",
-                        weapon.enchant
-                    ),
-                    format!("enchanted {} to +{}", weapon.item_def_id, weapon.enchant),
+                    (scroll.honed)(&name, item.enchant),
+                    format!("enchanted {} to +{}", item.item_def_id, item.enchant),
                 )
             };
             (inv.clone(), message, enchant_log)
@@ -1684,5 +1751,14 @@ mod tests {
         assert_eq!(enchant_success_bp(12), 100);
         assert_eq!(enchant_success_bp(50), 100);
         assert_eq!(enchant_success_bp(i32::MAX), 100);
+    }
+
+    #[test]
+    fn armor_enchant_ladder_is_the_weapon_one_shifted_two_levels_down() {
+        assert_eq!(armor_enchant_success_bp(2), 10_000);
+        assert_eq!(armor_enchant_success_bp(3), 7_500);
+        assert_eq!(armor_enchant_success_bp(5), 2_500);
+        assert_eq!(armor_enchant_success_bp(10), 100);
+        assert_eq!(armor_enchant_success_bp(i32::MAX), 100);
     }
 }

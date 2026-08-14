@@ -35,9 +35,11 @@ export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
 }
 
-/** Tooltip lines for what an item does: the `guard` column then `effects`. */
-export function statLabels(def: ItemDefinition): string[] {
-  const lines = def.guard ? [`Guard: +${def.guard}`] : []
+/** Tooltip lines for what an item does: `guard` (with any armor enchant folded
+ *  in, as combat resolves it) then `effects`. */
+export function statLabels(def: ItemDefinition, enchant = 0): string[] {
+  const guard = (def.guard ?? 0) + (def.category === 'armor' ? enchant : 0)
+  const lines = guard ? [`Guard: +${guard}`] : []
   for (const raw of def.effects?.split(';') ?? []) {
     const token = raw.trim()
     if (!token) continue

@@ -57,9 +57,9 @@
   - [x] A* 길찾기
 - [x] npc 출퇴근
 - [x] npc 상점
-- [x] 아이템 enchant 시스템 (무기 +N, Scroll of Enchant Weapon)
-  - scroll.glb의 봉인 색만 바꾸기 작업
-  - scroll of enchant armor
+- [x] 아이템 enchant 시스템 (무기 +N, Scroll of Enchant Weapon) — [ENCHANT.md](ENCHANT.md)
+  - [x] scroll.glb의 봉인 색만 바꾸기 작업
+  - [x] scroll of enchant armor (착용 방어구 무작위 1개 +guard, 확정 +2까지)
 - 장비한 갑옷에 따른 외형 변화
 - [x] chatting tab for combat log
 - [x] change name of scp939

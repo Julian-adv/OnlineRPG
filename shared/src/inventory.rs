@@ -82,8 +82,8 @@ pub struct ItemInstance {
     pub instance_id: u64,
     pub item_def_id: String,
     pub quantity: u32,
-    /// Weapon enchantment level (+N to attack and damage rolls). Zero for
-    /// everything but enchanted weapons; `default` keeps old payloads valid.
+    /// Enchantment level: +N to attack and damage rolls on a weapon, +N guard
+    /// on armor. Zero elsewhere; `default` keeps old payloads valid.
     #[serde(default)]
     pub enchant: i32,
 }
@@ -137,7 +137,7 @@ pub struct GroundItem {
     pub floor_level: i8,
     /// Units in this pile; only a stackable def ever exceeds 1.
     pub quantity: u32,
-    /// Carries a dropped weapon's enchantment so picking it back up
+    /// Carries a dropped item's enchantment so picking it back up
     /// doesn't wipe it.
     #[serde(default)]
     pub enchant: i32,
