@@ -59,6 +59,7 @@
 - [x] npc 상점
 - [x] 아이템 enchant 시스템 (무기 +N, Scroll of Enchant Weapon)
   - scroll.glb의 봉인 색만 바꾸기 작업
+  - scroll of enchant armor
 - 장비한 갑옷에 따른 외형 변화
 - [x] chatting tab for combat log
 - [x] change name of scp939
