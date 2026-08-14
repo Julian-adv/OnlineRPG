@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Writable } from 'svelte/store'
   import { bgmVolume, bgmMuted } from '../managers/bgmManager'
   import { sfxVolume, sfxMuted } from '../managers/sfxManager'
   import {
@@ -9,6 +10,8 @@
   } from '../stores/graphicsSettings'
   import VolumeControl from './VolumeControl.svelte'
   import { minimapEnabled } from '../stores/minimapStore'
+  import { alwaysRun } from '../stores/movementSettings'
+  import ToggleSwitch from './ToggleSwitch.svelte'
   import { friendOnlineNoticeEnabled } from '../stores/friendStore'
   import { mountOverlay } from '../stores/overlayStack'
 
@@ -28,6 +31,16 @@
   ]
 </script>
 
+{#snippet toggleRow(label: string, checked: Writable<boolean>, hint?: string)}
+  <div class="setting-row">
+    <span class="setting-label">
+      {label}
+      {#if hint}<span class="setting-hint">{hint}</span>{/if}
+    </span>
+    <ToggleSwitch {checked} {label} />
+  </div>
+{/snippet}
+
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="overlay" onclick={onClose}>
@@ -37,45 +50,13 @@
       <button class="close-btn" onclick={onClose}>&times;</button>
     </div>
 
-    <div class="setting-row">
-      <span class="setting-label">Minimap</span>
-      <div class="quality-row">
-        <button
-          class="quality-btn"
-          class:active={$minimapEnabled}
-          onclick={() => minimapEnabled.set(true)}
-        >
-          On
-        </button>
-        <button
-          class="quality-btn"
-          class:active={!$minimapEnabled}
-          onclick={() => minimapEnabled.set(false)}
-        >
-          Off
-        </button>
-      </div>
-    </div>
-
-    <div class="setting-row">
-      <span class="setting-label">Friend Online Notice</span>
-      <div class="quality-row">
-        <button
-          class="quality-btn"
-          class:active={$friendOnlineNoticeEnabled}
-          onclick={() => friendOnlineNoticeEnabled.set(true)}
-        >
-          On
-        </button>
-        <button
-          class="quality-btn"
-          class:active={!$friendOnlineNoticeEnabled}
-          onclick={() => friendOnlineNoticeEnabled.set(false)}
-        >
-          Off
-        </button>
-      </div>
-    </div>
+    {@render toggleRow('Minimap', minimapEnabled)}
+    {@render toggleRow(
+      'Always Run',
+      alwaysRun,
+      $alwaysRun ? 'Hold Shift to walk' : 'Hold Shift to run'
+    )}
+    {@render toggleRow('Friend Online Notice', friendOnlineNoticeEnabled)}
 
     <div class="setting-row">
       <span class="setting-label">Graphics Quality</span>
@@ -90,19 +71,19 @@
           </button>
         {/each}
       </div>
-      {#if $reloadNeeded}
-        <div class="reload-notice">
-          <span>Antialiasing changes require restart</span>
-          <button class="reload-btn" onclick={() => location.reload()}
-            >Restart</button
-          >
-        </div>
-      {/if}
     </div>
+    {#if $reloadNeeded}
+      <div class="reload-notice">
+        <span>Antialiasing changes require restart</span>
+        <button class="reload-btn" onclick={() => location.reload()}
+          >Restart</button
+        >
+      </div>
+    {/if}
 
     <div class="divider"></div>
 
-    <div class="setting-row">
+    <div class="volume-row">
       <VolumeControl
         id="bgm-volume"
         label="BGM Volume"
@@ -111,7 +92,7 @@
       />
     </div>
 
-    <div class="setting-row sfx-row">
+    <div class="volume-row sfx-row">
       <VolumeControl
         id="sfx-volume"
         label="Sound Effects"
@@ -173,6 +154,18 @@
 
   .setting-row {
     display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 30px;
+  }
+
+  .setting-row + .setting-row {
+    margin-top: 12px;
+  }
+
+  .volume-row {
+    display: flex;
     flex-direction: column;
     gap: 8px;
   }
@@ -195,6 +188,14 @@
       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 
+  .setting-hint {
+    display: block;
+    color: #718096;
+    font-size: 11px;
+    font-weight: 400;
+    margin-top: 2px;
+  }
+
   .quality-row {
     display: flex;
     gap: 0;
@@ -204,8 +205,7 @@
   }
 
   .quality-btn {
-    flex: 1;
-    padding: 7px 0;
+    padding: 5px 12px;
     background: #2d3748;
     color: #a0aec0;
     border: none;

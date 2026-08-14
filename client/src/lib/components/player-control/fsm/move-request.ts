@@ -83,6 +83,8 @@ interface StartClickMovementInput extends Pathing {
   clickPosition: Position
   pickupAfterArrival: number | null
   sendPlayerMove: SendPlayerMove
+  /** Carry the current speed so a mid-run redirect doesn't restart at 0. */
+  startSpeed: number
 }
 
 export interface StartedClickMovement {
@@ -99,13 +101,18 @@ export function startClickMovement({
   clickPosition,
   pickupAfterArrival,
   sendPlayerMove,
+  startSpeed,
   ...pathing
 }: StartClickMovementInput): StartedClickMovement {
   const leg = routeFirstLeg(currentPos, clickPosition, pathing, sendPlayerMove)
   return {
     ...leg,
     currentWaypointIndex: 0,
-    movementState: initMovementState(currentPos, leg.movementTarget, 0),
+    movementState: initMovementState(
+      currentPos,
+      leg.movementTarget,
+      startSpeed
+    ),
     pendingPickupAfterMoveInstanceId: pickupAfterArrival,
   }
 }
@@ -134,6 +141,7 @@ interface RunMoveRequestInput extends Pathing {
   isMoving: boolean
   hasKeyboardInput: boolean
   sendPlayerMove: SendPlayerMove
+  startSpeed: number
   actions: MoveRequestActions
 }
 
@@ -149,6 +157,7 @@ export function runMoveRequest({
   findPath,
   waypointHeight,
   sendPlayerMove,
+  startSpeed,
   actions,
 }: RunMoveRequestInput) {
   const decision = decideMoveRequest({
@@ -193,6 +202,7 @@ export function runMoveRequest({
       findPath,
       waypointHeight,
       sendPlayerMove,
+      startSpeed,
     })
   )
 }

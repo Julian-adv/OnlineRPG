@@ -56,6 +56,7 @@
   import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
   import { passability_get_floor_at } from '../wasm/onlinerpg_shared'
   import { get } from 'svelte/store'
+  import { sprintRequested } from '../stores/movementSettings'
   import { createPlayerPhysics } from './player-control/player-physics'
   import { subscribePlayerNetworkEvents } from './player-control/player-network-events'
   import type {
@@ -222,7 +223,7 @@
       (startingClickMovement || playerControlMachine?.stateName === 'moving')
     )
       return true
-    return inputHandler.isSprintPressed && inputHandler.hasKeysPressed
+    return inputHandler.isSprintRequested && inputHandler.hasKeysPressed
   }
 
   // Called per frame — cache the scaled config so steady movement reuses one
@@ -1058,7 +1059,9 @@
     dungeonManager.clearPendingBreak()
     dungeonManager.clearPendingOpen()
     const pickupAfterArrival = options.pickupAfterArrival ?? null
-    clickSprinting = options.sprinting === true && sprintAvailable()
+    // Approach moves (chase, walk-up) carry no modifier: follow the preference.
+    clickSprinting =
+      (options.sprinting ?? sprintRequested(false)) && sprintAvailable()
 
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /
@@ -1077,6 +1080,7 @@
       findPath,
       waypointHeight,
       sendPlayerMove,
+      startSpeed: currentSpeed,
       actions: createMoveRequestActions(
         clickPosition,
         pickupAfterArrival,

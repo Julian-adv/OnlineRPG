@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { get } from 'svelte/store'
 import { myFishing } from '../stores/fishingStore'
 import { pointInRect } from '../stores/dragStore'
+import { sprintRequested } from '../stores/movementSettings'
 import { isTypingTarget } from '../utils/dom'
 import {
   max_cast_distance_m,
@@ -182,8 +183,8 @@ class InputHandler {
     return this.getMovementDirection() !== null
   }
 
-  get isSprintPressed(): boolean {
-    return (
+  get isSprintRequested(): boolean {
+    return sprintRequested(
       this.keysPressed.has('ShiftLeft') || this.keysPressed.has('ShiftRight')
     )
   }
@@ -410,7 +411,7 @@ class InputHandler {
         ) {
           return {
             type: 'move_to_ground',
-            sprinting: event.shiftKey,
+            sprinting: sprintRequested(event.shiftKey),
             position: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
           }
         }
@@ -537,7 +538,7 @@ class InputHandler {
       }
       return {
         type: 'move_to_ground',
-        sprinting: event.shiftKey,
+        sprinting: sprintRequested(event.shiftKey),
         position: {
           x: groundHit.point.x,
           y: groundHit.point.y,
@@ -558,7 +559,7 @@ class InputHandler {
     ) {
       return {
         type: 'move_to_ground',
-        sprinting: event.shiftKey,
+        sprinting: sprintRequested(event.shiftKey),
         position: {
           x: this._fallbackGroundPoint.x,
           y: this._fallbackGroundPoint.y,

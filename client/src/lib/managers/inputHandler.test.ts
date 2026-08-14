@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as THREE from 'three'
 
 const MIN_FISHABLE_DEPTH_M = 0.3
@@ -15,6 +15,7 @@ import {
   type RaycastContext,
 } from './inputHandler'
 import { resetFishingStore } from '../stores/fishingStore'
+import { alwaysRun } from '../stores/movementSettings'
 
 const RECT = { left: 0, top: 0, width: 100, height: 100 }
 
@@ -106,6 +107,35 @@ describe('processCanvasClick cast-vs-walk', () => {
     if (intent.type === 'move_to_ground') {
       expect(intent.sprinting).toBe(true)
     }
+  })
+
+  describe('always-run preference', () => {
+    beforeEach(() => alwaysRun.set(true))
+    afterEach(() => alwaysRun.set(false))
+
+    it('sprints on a plain click', () => {
+      const intent = inputHandler.processCanvasClick(
+        centerClick(),
+        contextWith()
+      )
+
+      expect(intent.type).toBe('move_to_ground')
+      if (intent.type === 'move_to_ground') {
+        expect(intent.sprinting).toBe(true)
+      }
+    })
+
+    it('walks on a Shift-click — the modifier inverts', () => {
+      const intent = inputHandler.processCanvasClick(
+        centerClick(true),
+        contextWith()
+      )
+
+      expect(intent.type).toBe('move_to_ground')
+      if (intent.type === 'move_to_ground') {
+        expect(intent.sprinting).toBe(false)
+      }
+    })
   })
 
   it('walks when the water is too shallow to fish', () => {

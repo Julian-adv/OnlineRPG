@@ -87,6 +87,15 @@ describe('decideMoveRequest', () => {
 const currentPos: Position = { x: 0, y: 0, z: 0 }
 const clickPosition: Position = { x: 4, y: 0, z: 5 }
 
+const deps = {
+  currentFloor: 0,
+  getFloorAt: () => 0,
+  findPath: () => ({ waypoints: [] }),
+  waypointHeight: () => 0,
+  sendPlayerMove: vi.fn(),
+  startSpeed: 0,
+}
+
 describe('startClickMovement', () => {
   it('uses pathfinding waypoints when available', () => {
     const sendPlayerMove = vi.fn()
@@ -102,6 +111,7 @@ describe('startClickMovement', () => {
       })),
       waypointHeight: vi.fn((_f: number, x: number, z: number) => x + z),
       sendPlayerMove,
+      startSpeed: 0,
     })
 
     expect(started.pathWaypoints).toEqual([{ x: 2, z: 3, floor: 1 }])
@@ -130,6 +140,7 @@ describe('startClickMovement', () => {
       findPath: vi.fn(() => ({ waypoints: [{ x: 2, z: 3, floor: 1 }] })),
       waypointHeight,
       sendPlayerMove: vi.fn(),
+      startSpeed: 0,
     })
 
     expect(waypointHeight).toHaveBeenCalledWith(1, 2, 3)
@@ -147,11 +158,24 @@ describe('startClickMovement', () => {
       findPath: vi.fn(() => ({ waypoints: [] })),
       waypointHeight: vi.fn((_f: number, x: number, z: number) => x + z),
       sendPlayerMove,
+      startSpeed: 0,
     })
 
     expect(started.pathWaypoints).toEqual([{ x: 4, z: 5, floor: 2 }])
     expect(started.movementTarget).toEqual({ x: 4, y: 9, z: 5 })
     expect(started.pendingPickupAfterMoveInstanceId).toBe(42)
+  })
+
+  it('carries the running speed into the new leg instead of restarting at 0', () => {
+    const started = startClickMovement({
+      currentPos,
+      clickPosition,
+      pickupAfterArrival: null,
+      ...deps,
+      startSpeed: 4.5,
+    })
+
+    expect(started.movementState.currentSpeed).toBe(4.5)
   })
 })
 
@@ -162,14 +186,6 @@ function actions(): MoveRequestActions {
     exitObjectAndDelay: vi.fn(),
     applyStartedMovement: vi.fn(),
   }
-}
-
-const deps = {
-  currentFloor: 0,
-  getFloorAt: () => 0,
-  findPath: () => ({ waypoints: [] }),
-  waypointHeight: () => 0,
-  sendPlayerMove: vi.fn(),
 }
 
 describe('runMoveRequest', () => {
