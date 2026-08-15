@@ -436,6 +436,15 @@
     height: 100dvh;
     overflow: hidden;
     position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Text entry stays selectable despite the app-wide user-select: none */
+  main :global(input),
+  main :global(textarea) {
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   .canvas-layer {

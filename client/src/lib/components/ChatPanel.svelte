@@ -619,6 +619,8 @@
     gap: 5px;
     width: 100%;
     box-sizing: border-box;
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   .chat-panel.transcript-faded .tabs,

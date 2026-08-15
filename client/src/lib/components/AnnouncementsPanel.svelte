@@ -281,5 +281,7 @@
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;
+    user-select: text;
+    -webkit-user-select: text;
   }
 </style>
