@@ -189,9 +189,12 @@ let battleQuietTimer: ReturnType<typeof setTimeout> | undefined
 export function startBattleMusic() {
   if (mode === 'battle') return
   mode = 'battle'
-  // A recital cannot outrank a fight: end it, and let the performer's client
-  // tell the server so the strum animation stops everywhere.
-  const performanceEnded = releasePerformance()
+  // A recital cannot outrank a fight: a listener's copy waits to rejoin
+  // after; the performer ends it, and their client tells the server so the
+  // strum animation stops everywhere.
+  let endedCallback: (() => void) | null = null
+  if (performanceEnded) endedCallback = dropPerformance()
+  else performanceAudio?.pause()
 
   // Pause normal BGM
   clearTimeout(quietTimer)
@@ -226,7 +229,7 @@ export function startBattleMusic() {
     battleAudio.play().catch(() => {})
   }
 
-  performanceEnded?.()
+  endedCallback?.()
 }
 
 export function stopBattleMusic() {
@@ -295,7 +298,7 @@ function pauseForMute() {
   audio?.pause()
   battleAudio?.pause()
   // The performer's own track keeps running, silenced: its `ended` is what
-  // stops the strum animation. A listener's copy just pauses.
+  // stops the strum animation. A listener's copy waits to rejoin later.
   if (mode === 'performance') mode = 'normal'
   applyPerformanceVolume()
   if (!performanceEnded) performanceAudio?.pause()
@@ -326,11 +329,17 @@ function resumeAfterUnmute() {
 // doubles as the "a performance exists" flag, and a non-null `performanceEnded`
 // marks it as the local player's own. The performer's element is the clock —
 // it runs even while silenced, because its `ended` is what ends the emote for
-// everyone. Listeners never load a track they would not hear.
+// everyone. `currentPerformance` is the tune on right now, loaded or not: a
+// listener never loads a track they would not hear, and rejoins mid-track
+// (by wall clock) once the speakers free up.
 
 let performanceAudio: HTMLAudioElement | null = null
 let performanceEnded: (() => void) | null = null
 let performanceFadeTimer: ReturnType<typeof setInterval> | undefined
+let currentPerformance: { track: string; startedAt: number } | null = null
+
+const performanceElapsedSecs = () =>
+  (performance.now() - (currentPerformance?.startedAt ?? 0)) / 1000
 
 /** Inside a bard NPC's earshot the playlist stays silent — performing or not —
  *  so a performance never has to land on top of the BGM. */
@@ -387,14 +396,28 @@ function applyPerformanceVolume() {
   )
 }
 
-/** Put the running performance back on the speakers — it was silenced by
- *  battle music or by a mute the player has since lifted. */
+/** Put the current performance back on the speakers — it was silenced by
+ *  battle music or by a mute the player has since lifted — at wherever the
+ *  tune is by now. Returns whether it now owns the speakers. */
 function takePerformanceFloor(): boolean {
-  if (!performanceAudio || getTargetVolume() <= 0) return false
+  if (!currentPerformance || getTargetVolume() <= 0) return false
+  if (!performanceAudio) {
+    playPerformance(
+      currentPerformance.track,
+      undefined,
+      performanceElapsedSecs()
+    )
+    return mode === 'performance'
+  }
   mode = 'performance'
   applyPerformanceVolume()
+  // A listener's copy sat paused while the tune went on; the performer's own
+  // kept running.
+  if (!performanceEnded && performanceAudio.paused) {
+    performanceAudio.currentTime = performanceElapsedSecs()
+  }
   performanceAudio.play().catch(() => {})
-  currentBgmTrack.set(performanceAudio.dataset.trackName ?? '')
+  currentBgmTrack.set(currentPerformance.track)
   return true
 }
 
@@ -420,6 +443,12 @@ function releasePerformance(): (() => void) | null {
   return onEnded
 }
 
+/** The tune is over for good: release the element and forget it. */
+function dropPerformance(): (() => void) | null {
+  currentPerformance = null
+  return releasePerformance()
+}
+
 /** Walking into a performance already underway: rise from silence to the set
  *  volume instead of jumping in. */
 function startPerformanceFadeIn(el: HTMLAudioElement) {
@@ -441,7 +470,7 @@ function startPerformanceFadeIn(el: HTMLAudioElement) {
  *  as the performer and fires when the track runs out — that is the cue to
  *  stop the emote. `offsetSecs` > 0 joins a tune mid-track (the listener just
  *  came into earshot) and fades it in. Returns false when the track is
- *  unknown or inaudible here. */
+ *  unknown. */
 export function playPerformance(
   track: string,
   onEnded?: () => void,
@@ -451,11 +480,19 @@ export function playPerformance(
   if (!file) return false
 
   const mine = onEnded !== undefined
-  // Volume at zero counts as BGM off: no point downloading a track to silence.
   const audible = getTargetVolume() > 0 && mode !== 'battle'
-  if (!mine && !audible) return false
-
   const previousEnded = releasePerformance()
+  currentPerformance = {
+    track,
+    startedAt: performance.now() - offsetSecs * 1000,
+  }
+
+  // Volume at zero counts as BGM off: no point downloading a track to
+  // silence. Rejoin when the speakers come back.
+  if (!mine && !audible) {
+    previousEnded?.()
+    return true
+  }
   performanceEnded = onEnded ?? null
 
   clearTimeout(quietTimer)
@@ -467,7 +504,7 @@ export function playPerformance(
   performanceAudio = el
   const finish = () => {
     if (performanceAudio === el) {
-      releasePerformance()?.()
+      dropPerformance()?.()
       resumeNormalBgm()
     }
   }
@@ -503,15 +540,15 @@ export function playPerformance(
 /** The performance is over from the outside (the player moved away, left, or
  *  the server said so) — no end callback, that news already travelled. */
 export function stopPerformance() {
-  releasePerformance()
+  dropPerformance()
   resumeNormalBgm()
 }
 
 /** A listener crossed out of the performance's delivery circle (either side
- *  moved): fade the tune down, then let it go. An inaudible copy just stops. */
+ *  moved): fade the tune down, then let it go. An inaudible or unloaded copy
+ *  just stops. */
 export function fadeOutPerformance() {
-  if (!performanceAudio) return
-  if (mode !== 'performance') {
+  if (!performanceAudio || mode !== 'performance') {
     stopPerformance()
     return
   }
