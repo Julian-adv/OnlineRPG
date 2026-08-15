@@ -52,6 +52,7 @@ pub fn invoker(config: &OpenRouterConfig, system_prompt: String) -> anyhow::Resu
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             reasoning_effort: None,
+            max_messages: crate::openai::DEFAULT_MAX_MESSAGES,
         },
         system_prompt,
     ))
