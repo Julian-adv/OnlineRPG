@@ -61,11 +61,11 @@ pub fn load_system_prompt(path: &str) -> anyhow::Result<String> {
     Ok(text.replace("{{ACTIONS}}", &action::action_reference()))
 }
 
-/// Render the surface-terrain grid without holding the state lock: a tile
+/// Render the surface-terrain summary without holding the state lock: a tile
 /// cache miss hits disk or HTTP, and the lock also gates the NPC's
 /// message-processing loop. The brief relock only snapshots the inputs.
-async fn rendered_terrain_grid(state: &Arc<Mutex<SharedState>>) -> Option<String> {
-    let job = state.lock().await.terrain_grid_job();
+async fn rendered_terrain_summary(state: &Arc<Mutex<SharedState>>) -> Option<String> {
+    let job = state.lock().await.terrain_summary_job();
     match job {
         Some(job) => Some(job.render().await),
         None => None,
@@ -263,7 +263,7 @@ pub async fn llm_driver(
         } else if always_active || s.has_nearby_human_players() {
             drop(s);
             // File I/O and tile sampling outside the state lock.
-            let grid = rendered_terrain_grid(&state).await;
+            let terrain = rendered_terrain_summary(&state).await;
             let memory = load_memory_tail(&memory_file);
             let mut s = state.lock().await;
             let agent_events = s.drain_agent_events();
@@ -274,7 +274,7 @@ pub async fn llm_driver(
                 &schedule,
                 active_schedule.0,
                 memory.as_deref(),
-                grid.as_deref(),
+                terrain.as_deref(),
             );
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
@@ -536,7 +536,7 @@ pub async fn llm_driver(
 
         // File I/O and tile sampling outside the state lock.
         let memory = load_memory_tail(&memory_file);
-        let grid = rendered_terrain_grid(&state).await;
+        let terrain = rendered_terrain_summary(&state).await;
         let prompt = {
             let mut s = state.lock().await;
             // History is recorded after the build: this prompt shows the
@@ -548,7 +548,7 @@ pub async fn llm_driver(
                 &schedule,
                 active_schedule.0,
                 memory.as_deref(),
-                grid.as_deref(),
+                terrain.as_deref(),
             );
             record_conversation(&mut s, &events);
             prompt

@@ -106,39 +106,6 @@ fn compass(dx: f32, dz: f32) -> &'static str {
     }
 }
 
-/// Terrain-grid glyph for a cell's surface. Sea reads from the heightmap
-/// (below sea level 0), rivers from the splat's river-bed palette entry.
-fn ground_char(surface: Option<u8>, height: Option<f32>) -> char {
-    if height.is_some_and(|h| h < 0.0) {
-        return '~';
-    }
-    match surface {
-        Some(crate::splat::PAL_RIVER_BED) => '~',
-        Some(crate::splat::PAL_CLIFF) => '^',
-        Some(crate::splat::PAL_ROAD | crate::splat::PAL_STONE_PATH | crate::splat::PAL_PAVING) => {
-            'R'
-        }
-        Some(crate::splat::PAL_SAND) => 's',
-        Some(crate::splat::PAL_SNOW) => '*',
-        _ => '.',
-    }
-}
-
-/// Surface-map geometry, derived from the sight radius so the grid always
-/// spans exactly what the agent can perceive.
-const GRID_CELL_M: f32 = 3.0;
-const GRID_CELLS: i32 = (NPC_SIGHT_RADIUS / GRID_CELL_M) as i32 * 2 + 1;
-const GRID_HALF: i32 = GRID_CELLS / 2;
-
-/// Stamp an entity glyph on the terrain grid if its position falls inside.
-fn overlay(grid: &mut [Vec<char>], px: f32, pz: f32, x: f32, z: f32, glyph: char) {
-    let c = ((x - px) / GRID_CELL_M).round() as i32 + GRID_HALF;
-    let r = ((z - pz) / GRID_CELL_M).round() as i32 + GRID_HALF;
-    if (0..GRID_CELLS).contains(&r) && (0..GRID_CELLS).contains(&c) {
-        grid[r as usize][c as usize] = glyph;
-    }
-}
-
 mod commands;
 mod dungeon;
 mod events;
@@ -147,7 +114,7 @@ mod movement;
 mod music;
 mod perception;
 mod social;
-mod terrain_grid;
+mod terrain_summary;
 #[cfg(test)]
 pub(crate) mod tests;
 mod world_cache;

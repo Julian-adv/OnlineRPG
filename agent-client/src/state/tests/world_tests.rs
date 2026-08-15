@@ -221,8 +221,8 @@ fn door_toggle_keeps_house_walls_in_step_with_the_edges() {
 }
 
 /// Splat tiles that paint one road cell and one river cell near origin,
-/// so the grid test can assert glyph placement against known world
-/// coordinates.
+/// so the summary test can assert distance and bearing against known
+/// world coordinates.
 struct PaintedSplat;
 
 #[async_trait::async_trait]
@@ -243,42 +243,34 @@ impl crate::splat::SplatTiles for PaintedSplat {
 }
 
 #[tokio::test]
-async fn terrain_grid_labels_world_coordinates_and_paints_surfaces() {
+async fn terrain_summary_names_nearest_features_with_bearing() {
     let (mut s, _rx) = test_state();
     s.splat_sampler = Arc::new(crate::splat::SplatSampler::new(PaintedSplat));
     s.self_player = Some(test_player(0.0, 0.0));
-    let grid = s.terrain_grid_job().expect("on the surface").render().await;
+    let line = s
+        .terrain_summary_job()
+        .expect("on the surface")
+        .render()
+        .await;
 
-    assert!(
-        grid.contains("x=-27 to x=27"),
-        "header must carry the exact west/east span:\n{grid}"
+    assert!(line.starts_with("Terrain within 27m: "), "{line}");
+    // Road cell (6, 0): 6m due east. River cell (-6, -6): 8m northwest.
+    assert!(line.contains("road 6m east"), "{line}");
+    assert!(line.contains("water 8m northwest"), "{line}");
+    assert!(!line.contains("open ground"), "{line}");
+    assert_eq!(
+        line.trim_end().lines().count(),
+        1,
+        "one line, no map rows: {line}"
     );
-    assert!(grid.contains("Map: surface, you at (0, 0)"));
-
-    let cells_of = |prefix: &str| -> Vec<String> {
-        grid.lines()
-            .find(|l| l.starts_with(prefix))
-            .unwrap_or_else(|| panic!("no row {prefix} in:\n{grid}"))
-            .split_whitespace()
-            .skip(1)
-            .map(str::to_string)
-            .collect()
-    };
-    // Row z=0: self at column 9, the road cell (6, 0) at column 11.
-    let mid = cells_of("z=0 ");
-    assert_eq!(mid[9], "@");
-    assert_eq!(mid[11], "R");
-    // Row z=-6: the river cell (-6, -6) at column 7.
-    let north = cells_of("z=-6 ");
-    assert_eq!(north[7], "~");
 }
 
 #[test]
-fn terrain_grid_is_absent_underground() {
+fn terrain_summary_is_absent_underground() {
     let (mut s, _rx) = test_state();
     s.self_player = Some(test_player(0.0, 0.0));
     s.self_floor_level = -1;
-    assert!(s.terrain_grid_job().is_none());
+    assert!(s.terrain_summary_job().is_none());
 }
 
 /// Entrances are listed above ground whatever the distance: a name the

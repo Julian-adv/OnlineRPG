@@ -8,6 +8,7 @@ use onlinerpg_shared::Position;
 
 /// Planar (X-Z) displacement and Euclidean distance from `from` to `to`.
 /// Y is ignored.
+#[derive(Clone, Copy)]
 pub struct PlanarDelta {
     pub dx: f32,
     pub dz: f32,
