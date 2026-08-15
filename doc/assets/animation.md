@@ -20,7 +20,12 @@
 - Happy Idle
 - Dwarf Idle
 - Offensive Idle https://www.mixamo.com/#/?page=2&query=idle&type=Motion%2CMotionPack
-- Sword And Shield Idle
+- Sword And Shield Idle (combat_melee pack, `combat_idle`, 몬스터 `animAttackIdle`)
+  - 2026-08-15에 gnoll 스킨째 받은 FBX(`assets/Sword And Shield Idle.fbx`, 57본, 새끼손가락 없음)를
+    `import_mixamo_animation(..., target_armature_name="Armature_combat")`로 bake하고
+    `export_animations.py -- --packs combat_melee`로 재export. 힙 흔들림 포함(bake_root_location 기본값).
+    액션에 fake user를 켜지 않으면 저장 시 사라진다 (`import_mixamo_animation`은 켜지 않음).
+    아주 잔잔한 숨쉬기 자세(머리 ~1cm)라 긴 쿨다운의 몬스터에는 "Offensive Idle" 같은 클립이 더 맞을 수 있다
 
 - Sword and Shield Slash https://www.mixamo.com/#/?page=1&query=slash&type=Motion%2CMotionPack
 
@@ -117,12 +122,19 @@
 `torch_walk`, `torch_run`, `dying`, `slash1`–`slash4`).
 
 - 아마추어가 둘이다: 33본 `Armature`(locomotion/social/offhand/fishing)와 69본
-  `Armature_combat`(combat_melee 전용, 손가락·눈·`mixamorigSleeve*` 포함, scale 0.1).
+  `Armature_combat`(combat_melee 전용, 손가락·눈·`mixamorigSleeve*` 포함). 둘 다 오브젝트
+  transform은 identity, rest는 T-pose 직립(Hips z≈1.0)이다.
+  - `Armature_combat`은 2026-08-15까지 오브젝트가 X -90°·scale 0.1이고 본이 10배로 구워져 있었고
+    rest도 누워 있었다(배포본은 `Armature` 노드 scale 0.1 + 본 10배). 정규화하면서 transform을
+    본에 굽고(`Armature.transform`), 6개 액션의 location 키를 ×0.1, rest를 세운 뒤 `Hips` 키를
+    `rest_new⁻¹·rest_old·basis`로 재기준했다. 월드 포즈·클립 길이·리타게팅 결과는 정규화 전과 동일함을
+    확인했다(three 리타게팅 하네스로 gnoll/knight 힙·발끝 좌표 비교). 정규화 전 blend 백업은
+    보관하지 않는다 — 필요하면 HF에서 이전 리비전을 받을 것.
 - 어느 팩도 참조하지 않는 잔재 액션: `torch_idle`(= `torch_idle1`),
   `run_down`, `run_sword`, `walk_cat`, `walk_female`, `walk_tough`, `mixamo.com*`.
 - `dying`은 2026-08-14에 힙을 4cm 내렸다 (시체가 지면에서 떠 있었다). blend와
   배포본 `combat_melee.glb` 양쪽에 반영돼 있으므로 재export해도 유지된다
-  (blend는 `Armature_combat`의 `Hips` location[2]에 +0.4, 배포본은
+  (blend는 `Armature_combat`의 `Hips` location[2]에 +0.04 — 정규화 전 단위로 +0.4, 배포본은
   `tools/shift-glb-clip-hips.py`). 이 오프셋은 캐릭터에만 듣는다 — 몬스터는
   로드할 때 클립을 다시 접지시키므로 (`groundRetargetedClips`) 상수 이동이 상쇄된다.
 

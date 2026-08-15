@@ -23,6 +23,7 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 | Attack | `slash1`, `slash2`, `slash3`, `slash4`, `slash5` | `combat_melee` |
 | Attack alt | `attack1`, `attack2`, `attack3`, `attack4` | `combat_melee` |
 | Death | `dying` | `combat_melee` |
+| Attack idle | `combat_idle` | `combat_melee` (몬스터 `animAttackIdle` 전용, 플레이어 미사용) |
 
 순서 기준은 `AnimationName` enum 선언 순서(`client/src/lib/types/animations.ts`)를 따른다.
 

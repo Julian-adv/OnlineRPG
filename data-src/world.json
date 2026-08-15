@@ -30,6 +30,10 @@
     {
       "monsterType": "hobgoblin",
       "maxDistance": 60
+    },
+    {
+      "monsterType": "gnoll",
+      "maxDistance": 60
     }
   ]
 }

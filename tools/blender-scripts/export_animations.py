@@ -37,6 +37,7 @@ EXPORT_PACKS = {
         "slash3",
         "slash4",
         "dying",
+        "combat_idle",
     ],
     "social": [
         "sleep",
