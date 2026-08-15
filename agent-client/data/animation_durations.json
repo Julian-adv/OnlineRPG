@@ -1,10 +1,11 @@
 {
   "combat_melee": {
-    "dying": 2.633,
     "slash1": 1.533,
     "slash2": 1.7,
     "slash3": 2.467,
-    "slash4": 1.3
+    "slash4": 1.3,
+    "dying": 2.633,
+    "combat_idle": 2.567
   },
   "locomotion": {
     "idle1": 8.367,
