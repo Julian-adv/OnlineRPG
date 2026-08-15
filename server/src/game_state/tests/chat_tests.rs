@@ -1455,11 +1455,46 @@ async fn an_unknown_emote_lists_the_available_ones() {
     match cheerer_rx.try_recv() {
         Ok(ServerMessage::SystemMessage { message }) => {
             assert!(message.contains("excited"), "the list names each emote");
+            assert!(message.contains("twist"), "the list names looping emotes");
         }
         other => panic!("Expected the emote list, got {other:?}"),
     }
     assert!(cheerer_rx.try_recv().is_err());
     assert!(listener_rx.try_recv().is_err());
+}
+
+/// A looping emote is stored and broadcast like a one-shot one; only clients
+/// treat it differently (loop until the dancer moves or presses Escape).
+#[tokio::test]
+async fn a_dance_emote_stores_the_pose_like_any_other() {
+    let game_state = make_test_game_state("emote_dance");
+    let auth = make_test_auth("emote_dance");
+    let dancer_id = pid("dancer");
+    let watcher_id = pid("watcher");
+    game_state.add_player(make_player("dancer", 0.0, 0.0)).await;
+    game_state
+        .add_player(make_player("watcher", 10.0, 0.0))
+        .await;
+    let mut dancer_rx = game_state.register_direct_channel(&dancer_id).await;
+    let mut watcher_rx = game_state.register_direct_channel(&watcher_id).await;
+
+    game_state
+        .send_chat_message(&dancer_id, "/emote macarena".to_string(), &auth)
+        .await;
+
+    for rx in [&mut dancer_rx, &mut watcher_rx] {
+        match rx.try_recv() {
+            Ok(ServerMessage::PlayerInteractionChanged {
+                player_id,
+                object_type,
+            }) => {
+                assert_eq!(player_id, dancer_id);
+                assert_eq!(object_type.as_deref(), Some("macarena"));
+            }
+            other => panic!("Expected the dance pose, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
 }
 
 /// An unknown title is a typo, not a performance: no pose, no tune, and the

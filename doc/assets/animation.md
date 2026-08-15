@@ -38,6 +38,12 @@
   - Excited와 같은 방식: `assets/Clapping.fbx`(버커니어 스킨, 33본)에서 리타겟 →
     `graft-glb-clip.py`로 이식.
 
+- Twist Dance https://www.mixamo.com/#/?query=twist+dance&type=Motion%2CMotionPack (social pack, `twist`, `/emote twist`)
+- Macarena Dance https://www.mixamo.com/#/?query=macarena&type=Motion%2CMotionPack (social pack, `macarena`, `/emote macarena`)
+- Chicken Dance https://www.mixamo.com/#/?query=chicken+dance&type=Motion%2CMotionPack (social pack, `chicken`, `/emote chicken`)
+  - 세 댄스 모두 Without Skin/30fps FBX를 social.glb 스켈레톤으로 리타겟 bake 후
+    `graft-glb-clip.py`로 이식 (2026-08-14).
+
 - Excited https://www.mixamo.com/#/?query=excited&type=Motion%2CMotionPack (social pack, `excited`, `/emote excited`)
   - 예외적으로 Without Skin이 아니라 night_merchant(버커니어) 스킨째 받은 FBX(`assets/Excited.fbx`,
     손가락 본 없는 33본)에서 리타겟했다 — social 팩 스킨 조인트도 33개라 손실 없음.
