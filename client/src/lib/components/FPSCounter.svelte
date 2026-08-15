@@ -89,12 +89,14 @@
       mapEditorMode.update((v) => !v)
     }
     // Claim Escape only when it actually closed an overlay. With nothing
-    // open, Escape ends a running emote performance instead (dance, tune);
-    // PlayerControl ignores the request unless one is playing.
+    // open at all, Escape ends a running emote performance instead (dance,
+    // tune); PlayerControl ignores the request unless one is playing. A
+    // blocked overlay (loading) swallows Escape entirely.
     if (event.key === 'Escape' && isGameKey(event)) {
-      if (closeTopOverlay()) {
+      const closed = closeTopOverlay()
+      if (closed === 'closed') {
         event.preventDefault()
-      } else {
+      } else if (closed === 'none') {
         emoteStopRequest.set(true)
       }
     }

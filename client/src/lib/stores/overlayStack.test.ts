@@ -87,11 +87,11 @@ describe('closeTopOverlay', () => {
     inventoryVisible.set(true)
     characterPanelVisible.set(true)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(characterPanelVisible)).toBe(false)
     expect(get(inventoryVisible)).toBe(true)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(inventoryVisible)).toBe(false)
     expect(get(openOverlays)).toEqual([])
   })
@@ -101,12 +101,12 @@ describe('closeTopOverlay', () => {
     let mapCloses = 0
     const unmount = mountOverlay('worldMap', () => mapCloses++)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(mapCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
 
     unmount()
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(inventoryVisible)).toBe(false)
   })
 
@@ -114,7 +114,7 @@ describe('closeTopOverlay', () => {
     const unmount = mountOverlay('worldMap', () => {})
     inventoryVisible.set(true)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(inventoryVisible)).toBe(true)
     unmount()
   })
@@ -124,12 +124,12 @@ describe('closeTopOverlay', () => {
     let settingsCloses = 0
     const unmount = mountOverlay('settings', () => settingsCloses++)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(settingsCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
 
     unmount()
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(inventoryVisible)).toBe(false)
   })
 
@@ -138,7 +138,7 @@ describe('closeTopOverlay', () => {
     const unmount = mountOverlay('settings', () => settingsCloses++)
     inventoryVisible.set(true)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(settingsCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
     unmount()
@@ -148,11 +148,11 @@ describe('closeTopOverlay', () => {
     characterPanelVisible.set(true)
     shopSession.set(SESSION)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(shopSession)).toBeNull()
     expect(get(characterPanelVisible)).toBe(true)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(characterPanelVisible)).toBe(false)
   })
 
@@ -161,12 +161,12 @@ describe('closeTopOverlay', () => {
     let laterCalls = 0
     const unmount = mountOverlay('respawn', () => laterCalls++)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(laterCalls).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
 
     unmount()
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(inventoryVisible)).toBe(false)
   })
 
@@ -174,11 +174,11 @@ describe('closeTopOverlay', () => {
     characterPanelVisible.set(true)
     const unmount = mountOverlay('loading')
 
-    expect(closeTopOverlay()).toBe(false)
+    expect(closeTopOverlay()).toBe('blocked')
     expect(get(characterPanelVisible)).toBe(true)
 
     unmount()
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(characterPanelVisible)).toBe(false)
   })
 
@@ -187,16 +187,16 @@ describe('closeTopOverlay', () => {
     let mapCloses = 0
     const unmountMap = mountOverlay('worldMap', () => mapCloses++)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(mapCloses).toBe(1)
 
     unmountMap()
-    expect(closeTopOverlay()).toBe(false)
+    expect(closeTopOverlay()).toBe('blocked')
     unmountLoading()
   })
 
   it('reports nothing to close when no overlay is open', () => {
-    expect(closeTopOverlay()).toBe(false)
+    expect(closeTopOverlay()).toBe('none')
   })
 
   it('closes the chat channel menu before any panel behind it', () => {
@@ -204,12 +204,12 @@ describe('closeTopOverlay', () => {
     let menuCloses = 0
     const unmount = mountOverlay('chatChannelMenu', () => menuCloses++)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(menuCloses).toBe(1)
     expect(get(inventoryVisible)).toBe(true)
 
     unmount()
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(get(inventoryVisible)).toBe(false)
   })
 
@@ -219,7 +219,7 @@ describe('closeTopOverlay', () => {
     let menuCloses = 0
     const unmountMenu = mountOverlay('chatChannelMenu', () => menuCloses++)
 
-    expect(closeTopOverlay()).toBe(true)
+    expect(closeTopOverlay()).toBe('closed')
     expect(menuCloses).toBe(1)
     expect(settingsCloses).toBe(0)
     unmountMenu()

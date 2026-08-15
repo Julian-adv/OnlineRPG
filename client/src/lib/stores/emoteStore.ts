@@ -23,3 +23,19 @@ export const ONE_SHOT_EMOTE_ANIMS = new Set(['excited', 'clap'])
 /** Clips `/emote <name>` loops until the player moves or presses Escape.
  *  Must match `LOOPING_EMOTES` in `shared/src/messages.rs`. */
 export const LOOPING_EMOTE_ANIMS = new Set(['twist', 'macarena', 'chicken'])
+
+/** Everything `/emote` accepts — the server's validation list. */
+export const SLASH_EMOTE_ANIMS = new Set([
+  ...ONE_SHOT_EMOTE_ANIMS,
+  ...LOOPING_EMOTE_ANIMS,
+])
+
+/** Performances held until the player moves or presses Escape. */
+export const HELD_EMOTE_ANIMS = new Set([
+  MUSIC_EMOTE_ANIM,
+  ...LOOPING_EMOTE_ANIMS,
+])
+
+/** Every emote clip. Unlike placed-object interactions, these play where the
+ *  player stands. */
+export const EMOTE_ANIMS = new Set([MUSIC_EMOTE_ANIM, ...SLASH_EMOTE_ANIMS])

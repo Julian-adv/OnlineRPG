@@ -119,8 +119,8 @@
   import {
     emoteRequest,
     emoteStopRequest,
-    LOOPING_EMOTE_ANIMS,
-    MUSIC_EMOTE_ANIM,
+    EMOTE_ANIMS,
+    HELD_EMOTE_ANIMS,
     ONE_SHOT_EMOTE_ANIMS,
   } from '../stores/emoteStore'
 
@@ -360,12 +360,6 @@
       sendPickupItem: (id) => networkManager.sendPickupItem(id),
     })
   }
-
-  const EMOTE_ANIMS = new Set([
-    MUSIC_EMOTE_ANIM,
-    ...ONE_SHOT_EMOTE_ANIMS,
-    ...LOOPING_EMOTE_ANIMS,
-  ])
 
   function exitObjectInteraction(notify = true) {
     // Stepping out walks the player off the seat they were using. An emote
@@ -1169,8 +1163,7 @@
     // to cancel.
     if (
       playerState.state === 'interact' &&
-      (playerState.interactionAnim === MUSIC_EMOTE_ANIM ||
-        LOOPING_EMOTE_ANIMS.has(playerState.interactionAnim ?? ''))
+      HELD_EMOTE_ANIMS.has(playerState.interactionAnim ?? '')
     ) {
       exitObjectInteraction()
     }

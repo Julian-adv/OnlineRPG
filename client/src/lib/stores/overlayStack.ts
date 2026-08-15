@@ -78,14 +78,14 @@ export function topOverlay(open: OverlayId[]): OverlayId | undefined {
   return top
 }
 
-/** Returns false when nothing was open — leaving Escape free for other uses —
- *  or when the top overlay cannot be closed. */
-export function closeTopOverlay(): boolean {
+/** 'none' leaves Escape free for other uses; 'blocked' means the top overlay
+ *  refuses to close (loading) and Escape must not fall through it. */
+export function closeTopOverlay(): 'closed' | 'blocked' | 'none' {
   const top = topOverlay(get(stack))
-  if (top === undefined) return false
+  if (top === undefined) return 'none'
 
   const close = overlayClosers[top] ?? OVERLAYS[top].close
-  if (!close) return false
+  if (!close) return 'blocked'
   close()
-  return true
+  return 'closed'
 }

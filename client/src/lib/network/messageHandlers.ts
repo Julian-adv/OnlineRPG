@@ -92,9 +92,9 @@ import {
 import { refreshBardZone } from '../managers/bardZone'
 import {
   emoteRequest,
-  LOOPING_EMOTE_ANIMS,
+  EMOTE_ANIMS,
   MUSIC_EMOTE_ANIM,
-  ONE_SHOT_EMOTE_ANIMS,
+  SLASH_EMOTE_ANIMS,
 } from '../stores/emoteStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
@@ -190,11 +190,11 @@ async function applyObjectInteraction(
   wx: number,
   wz: number
 ) {
-  // Pickup is an animation, not a placed object: it happens wherever the
-  // player is standing, so the placement search can only ever find nothing.
-  // Skipping it drops two awaits and a scan of every cached region before
-  // the crouch starts.
-  if (objectType === 'pickup') {
+  // Pickup and the emotes are animations, not placed objects: they happen
+  // wherever the player is standing, so the placement search can only ever
+  // find nothing. Skipping them drops two awaits and a scan of every cached
+  // region before the clip starts.
+  if (objectType === 'pickup' || EMOTE_ANIMS.has(objectType)) {
     remotePlayerManager.handleInteraction(playerId, objectType, 0)
     return
   }
@@ -1019,11 +1019,7 @@ export function handleServerMessage(
       if (state.currentPlayer?.id === data.player_id) {
         // Our own /emote went to the server unresolved; this broadcast is
         // its reply, the way PlayerMusicStarted starts /play_music.
-        if (
-          data.object_type &&
-          (ONE_SHOT_EMOTE_ANIMS.has(data.object_type) ||
-            LOOPING_EMOTE_ANIMS.has(data.object_type))
-        ) {
+        if (data.object_type && SLASH_EMOTE_ANIMS.has(data.object_type)) {
           emoteRequest.set(data.object_type)
         }
         break

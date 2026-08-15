@@ -1395,40 +1395,46 @@ async fn bare_play_music_picks_a_track_for_the_performer() {
     }
 }
 
-/// `/emote excited` needs no instrument and claims no object: the pose goes
-/// out to neighbours and to the performer, whose client starts the clip on it.
-#[tokio::test]
-async fn emote_shows_the_pose_to_neighbours_and_performer() {
-    let game_state = make_test_game_state("emote");
-    let auth = make_test_auth("emote");
-    let cheerer_id = pid("cheerer");
-    let listener_id = pid("listener");
+/// `/emote <name>` posted by one player reaches both channels as the stored
+/// pose, and nothing else follows.
+async fn assert_emote_broadcast(tag: &str, emote: &str) {
+    let game_state = make_test_game_state(tag);
+    let auth = make_test_auth(tag);
+    let performer_id = pid("performer");
+    let watcher_id = pid("watcher");
     game_state
-        .add_player(make_player("cheerer", 0.0, 0.0))
+        .add_player(make_player("performer", 0.0, 0.0))
         .await;
     game_state
-        .add_player(make_player("listener", 10.0, 0.0))
+        .add_player(make_player("watcher", 10.0, 0.0))
         .await;
-    let mut cheerer_rx = game_state.register_direct_channel(&cheerer_id).await;
-    let mut listener_rx = game_state.register_direct_channel(&listener_id).await;
+    let mut performer_rx = game_state.register_direct_channel(&performer_id).await;
+    let mut watcher_rx = game_state.register_direct_channel(&watcher_id).await;
 
     game_state
-        .send_chat_message(&cheerer_id, "/emote excited".to_string(), &auth)
+        .send_chat_message(&performer_id, format!("/emote {emote}"), &auth)
         .await;
 
-    for rx in [&mut cheerer_rx, &mut listener_rx] {
+    for rx in [&mut performer_rx, &mut watcher_rx] {
         match rx.try_recv() {
             Ok(ServerMessage::PlayerInteractionChanged {
                 player_id,
                 object_type,
             }) => {
-                assert_eq!(player_id, cheerer_id);
-                assert_eq!(object_type.as_deref(), Some("excited"));
+                assert_eq!(player_id, performer_id);
+                assert_eq!(object_type.as_deref(), Some(emote));
             }
-            other => panic!("Expected the cheer pose, got {other:?}"),
+            other => panic!("Expected the {emote} pose, got {other:?}"),
         }
         assert!(rx.try_recv().is_err());
     }
+}
+
+/// `/emote excited` needs no instrument and claims no object: the pose goes
+/// out to neighbours and to the performer, whose client starts the clip on it.
+#[tokio::test]
+async fn emote_shows_the_pose_to_neighbours_and_performer() {
+    assert_emote_broadcast("emote", "excited").await;
 }
 
 /// A typo or a bare `/emote` sets no pose; the sender alone gets the list of
@@ -1467,34 +1473,7 @@ async fn an_unknown_emote_lists_the_available_ones() {
 /// treat it differently (loop until the dancer moves or presses Escape).
 #[tokio::test]
 async fn a_dance_emote_stores_the_pose_like_any_other() {
-    let game_state = make_test_game_state("emote_dance");
-    let auth = make_test_auth("emote_dance");
-    let dancer_id = pid("dancer");
-    let watcher_id = pid("watcher");
-    game_state.add_player(make_player("dancer", 0.0, 0.0)).await;
-    game_state
-        .add_player(make_player("watcher", 10.0, 0.0))
-        .await;
-    let mut dancer_rx = game_state.register_direct_channel(&dancer_id).await;
-    let mut watcher_rx = game_state.register_direct_channel(&watcher_id).await;
-
-    game_state
-        .send_chat_message(&dancer_id, "/emote macarena".to_string(), &auth)
-        .await;
-
-    for rx in [&mut dancer_rx, &mut watcher_rx] {
-        match rx.try_recv() {
-            Ok(ServerMessage::PlayerInteractionChanged {
-                player_id,
-                object_type,
-            }) => {
-                assert_eq!(player_id, dancer_id);
-                assert_eq!(object_type.as_deref(), Some("macarena"));
-            }
-            other => panic!("Expected the dance pose, got {other:?}"),
-        }
-        assert!(rx.try_recv().is_err());
-    }
+    assert_emote_broadcast("emote_dance", "macarena").await;
 }
 
 /// An unknown title is a typo, not a performance: no pose, no tune, and the
