@@ -6,6 +6,12 @@ impl SharedState {
         (self.is_night, self.game_hour, self.game_minute)
     }
 
+    /// This agent's own laid-out stall, if one is out.
+    pub fn own_stall(&self) -> Option<&onlinerpg_shared::stall::Stall> {
+        self.self_player_id
+            .and_then(|id| self.stalls.values().find(|s| s.owner == id))
+    }
+
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -54,10 +60,7 @@ impl SharedState {
                     d2.sqrt()
                 ));
             }
-            if let Some(own_stall) = self
-                .self_player_id
-                .and_then(|id| self.stalls.values().find(|s| s.owner == id))
-            {
+            if let Some(own_stall) = self.own_stall() {
                 lines.push(format!(
                     "Your stall is laid out {:.1}m away",
                     own_stall.position.dist_xz_sq(&p.position).sqrt()

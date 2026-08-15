@@ -62,23 +62,42 @@ pub(super) enum MoveResult {
     Error,
 }
 
-/// Check if the active schedule entry changed and execute a move if needed.
-/// Returns the new active schedule index.
+/// Which schedule entry is due at the current game time.
+pub(super) async fn resolve_due_schedule(
+    state: &Arc<Mutex<SharedState>>,
+    schedule: &[ScheduleEntry],
+) -> (Option<usize>, Option<u32>) {
+    let (is_night, game_hour, game_minute) = { state.lock().await.time_context() };
+    resolve_active_schedule(schedule, is_night, game_hour, game_minute)
+}
+
+/// Execute the move to a newly due schedule entry (from
+/// [`resolve_due_schedule`]). Returns the new active schedule index.
 pub(super) async fn check_schedule_transition(
     state: &Arc<Mutex<SharedState>>,
     schedule: &[ScheduleEntry],
     current: (Option<usize>, Option<u32>),
+    new: (Option<usize>, Option<u32>),
     label: &str,
 ) -> (Option<usize>, Option<u32>) {
-    let (is_night, game_hour, game_minute) = { state.lock().await.time_context() };
-    let new = resolve_active_schedule(schedule, is_night, game_hour, game_minute);
     if new != current {
-        // Stop interaction from previous schedule entry if it had an action
-        if let Some(prev_i) = current.0 {
-            if schedule[prev_i].action.is_some() {
-                let mut s = state.lock().await;
+        {
+            let mut s = state.lock().await;
+            // Stop interaction from previous schedule entry if it had an action
+            if current.0.is_some_and(|i| schedule[i].action.is_some()) {
                 if let Err(e) = s.send_command(ClientMessage::StopInteraction).await {
                     error!("[{label}] Failed to send StopInteraction: {e}");
+                }
+            }
+            // A scheduled departure with the stall still laid means the LLM
+            // forgot to pack — fold it rather than walk off with it out.
+            if s.own_stall().is_some() {
+                info!("[{label}] Stall still out at schedule transition — packing it up");
+                let pack = ClientMessage::ChatMessage {
+                    message: "/pack_stall".to_string(),
+                };
+                if let Err(e) = s.send_command(pack).await {
+                    error!("[{label}] Failed to send /pack_stall: {e}");
                 }
             }
         }

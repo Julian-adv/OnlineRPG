@@ -41,6 +41,7 @@ use combat::{load_attack_cooldown, tick_combat};
 use execute::{append_memory, handle_response};
 use movement::{
     check_schedule_transition, coverage_positions, fetch_furniture_around, fetch_houses_around,
+    resolve_due_schedule,
 };
 use prompt::{build_prompt, record_conversation};
 
@@ -207,6 +208,9 @@ pub async fn llm_driver(
     // Track the highest urgency since the last prompt
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
+    // Deadline for the LLM's wrap-up turn before a due schedule move; the
+    // bool marks that a prompt containing the wrap-up notice was submitted.
+    let mut wrapup: Option<(Instant, bool)> = None;
     let mut dead_since: Option<Instant> = None;
 
     // Fetch housing + furniture data so pathfinding avoids buildings and solid
@@ -243,8 +247,9 @@ pub async fn llm_driver(
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
 
+        let due = resolve_due_schedule(&state, &schedule).await;
         active_schedule =
-            check_schedule_transition(&state, &schedule, active_schedule, &label).await;
+            check_schedule_transition(&state, &schedule, active_schedule, due, &label).await;
     }
 
     // Send initial world state unless the NPC is asleep, or it only thinks
@@ -397,8 +402,48 @@ pub async fn llm_driver(
 
         // === Check schedule transitions ===
         if !schedule.is_empty() && attack_target.is_none() {
-            active_schedule =
-                check_schedule_transition(&state, &schedule, active_schedule, &label).await;
+            let due = resolve_due_schedule(&state, &schedule).await;
+            if due == active_schedule {
+                wrapup = None;
+            } else {
+                // The move blocks this loop for the whole walk, so on a real
+                // departure announce it first and hold the move until the LLM
+                // had a turn to wrap up (pack a stall, end a song) or the
+                // grace runs out. A recurring entry re-triggering on the same
+                // spot has nothing to wrap up and moves right away.
+                let transition_now = match (wrapup, due.0) {
+                    _ if due.0 == active_schedule.0 => true,
+                    (_, None) => true,
+                    (Some((deadline, prompted)), _) => {
+                        (prompted && llm_in_flight.is_none()) || Instant::now() >= deadline
+                    }
+                    (None, Some(i)) => {
+                        let sleeping_now =
+                            active_schedule.0.is_some_and(|j| schedule[j].is_sleeping());
+                        let mut start_now = true;
+                        if !sleeping_now {
+                            let mut s = state.lock().await;
+                            if always_active || s.has_nearby_human_players() {
+                                s.push_ambient_event(format!(
+                                    "[Schedule] Time to head to {} — you set off in a moment. \
+                                     Wrap up what you are doing now (pack up, finish your \
+                                     tune, say goodbye).",
+                                    schedule[i].display_label()
+                                ));
+                                wrapup = Some((Instant::now() + SCHEDULE_WRAPUP_GRACE, false));
+                                start_now = false;
+                            }
+                        }
+                        start_now
+                    }
+                };
+                if transition_now {
+                    wrapup = None;
+                    active_schedule =
+                        check_schedule_transition(&state, &schedule, active_schedule, due, &label)
+                            .await;
+                }
+            }
         }
         let is_sleeping = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
         let has_scheduled_action = active_schedule
@@ -521,11 +566,20 @@ pub async fn llm_driver(
         llm_in_flight = Some(tokio::spawn(async move {
             sched.submit(&lbl, priority, prompt, inv).await
         }));
+        if let Some((_, prompted)) = &mut wrapup {
+            *prompted = true;
+        }
     }
 }
 
 /// Grace period between noticing our own death and requesting respawn.
 const RESPAWN_DELAY: Duration = Duration::from_secs(5);
+
+/// How long a due schedule move waits for the LLM's wrap-up turn. Covers the
+/// prompt debounce plus one LLM round trip; the move starts as soon as that
+/// turn lands, so the full grace is only spent when the LLM stays silent.
+/// 30 real seconds ≈ 4 game minutes.
+const SCHEDULE_WRAPUP_GRACE: Duration = Duration::from_secs(30);
 
 /// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
 /// so a lost request is retried after another delay. Revival clears it.

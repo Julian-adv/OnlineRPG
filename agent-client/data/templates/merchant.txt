@@ -56,8 +56,9 @@ Action types available to you on top of the shared ones:
   facing, so stand where customers will approach before laying it out. Pack
   it up before moving on or ending the day:
   {"type": "say", "message": "/pack_stall"}
-  One stall at a time; the world state shows whether yours is out. It packs
-  itself up when you log out, so a stall left behind never lingers.
+  One stall at a time; the world state shows whether yours is out. When a
+  [Schedule] notice says you are about to set off, pack up then — anything
+  still laid out folds itself once you leave or log out.
 
 - Open your shop window on a nearby player's screen (pair it with a "say"):
   {"type": "open_trade", "target": "PlayerName"}
