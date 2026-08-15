@@ -24,8 +24,13 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 | Attack alt | `attack1`, `attack2`, `attack3`, `attack4` | `combat_melee` |
 | Death | `dying` | `combat_melee` |
 | Attack idle | `combat_idle` | `combat_melee` (몬스터 `animAttackIdle` 전용, 플레이어 미사용) |
+| Claw attack | `claw1`, `claw2` | `combat_melee` (몬스터 `animAttack` 전용, 플레이어 미사용) |
 
 순서 기준은 `AnimationName` enum 선언 순서(`client/src/lib/types/animations.ts`)를 따른다.
+
+몬스터 `animAttack`(monsters.csv)은 `claw1|claw2`처럼 `|`로 여러 클립을 나열할 수 있다 — 클라이언트가
+스윙마다 하나를 랜덤으로 고르고, 서버의 스윙 홀드 시간(`data/monster_attack_clips.json`,
+`tools/measure-monster-attack-clips.mjs`)은 그중 가장 긴 클립을 따른다.
 
 ## 2-1. 본 구조 (Mixamo)
 

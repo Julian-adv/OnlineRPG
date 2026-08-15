@@ -28,6 +28,13 @@
     아주 잔잔한 숨쉬기 자세(머리 ~1cm)라 긴 쿨다운의 몬스터에는 "Offensive Idle" 같은 클립이 더 맞을 수 있다
 
 - Sword and Shield Slash https://www.mixamo.com/#/?page=1&query=slash&type=Motion%2CMotionPack
+- Zombie Attack ×2 (combat_melee pack, `claw1`/`claw2`, gnoll `animAttack` — 맨손 발톱 공격, 매 스윙마다 랜덤)
+  - 2026-08-15 Mixamo, Without Skin(57본). `assets/Zombie Attack.fbx`(140f, 양손 내려찍기) → `claw1`,
+    `assets/Zombie Attack (1).fbx`(80f, 오른손 휘두르기) → `claw2`.
+    `import_mixamo_animation(..., target_armature_name="Armature_combat")`로 bake한 뒤 좀비 속도라 잘라내고
+    빨리 감았다: claw1은 원본 12–75f를 ×1.5(43f, 1.43s), claw2는 1–56f를 ×1.4(40f, 1.33s)로 정수 프레임에 재샘플.
+    두 클립 다 타격 시점이 ≈0.75–0.8s라 gnoll `attackImpactDelay` 750 / `attackDamageTextDelay` 850.
+    1700ms 쿨다운보다 짧아 스윙 사이에 `combat_idle`이 잠깐 들어간다.
 
 - Fishing Cast https://www.mixamo.com/#/?query=fishing&type=Motion%2CMotionPack (fishing pack, `fishing_cast`)
 - Fishing Idle https://www.mixamo.com/#/?query=fishing&type=Motion%2CMotionPack (fishing pack, `fishing_idle`)

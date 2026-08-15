@@ -20,6 +20,7 @@ export interface MonsterDefinition {
   animIdle: string
   animWalk: string
   animRun: string
+  /** One clip, or several `|`-separated to pick from at random per swing. */
   animAttack: string
   animAttackIdle?: string
   /** Empty for monsters on the shared packs — those have no hit reaction. */
@@ -66,6 +67,15 @@ const monsterDefs = monstersJson as Record<string, MonsterDefinition>
 
 export function getMonsterDef(type: string): MonsterDefinition | undefined {
   return monsterDefs[type]
+}
+
+export function splitClipNames(value: string | undefined): string[] {
+  return value ? value.split('|').filter(Boolean) : []
+}
+
+export function attackClipNames(def: MonsterDefinition | undefined): string[] {
+  const names = splitClipNames(def?.animAttack)
+  return names.length > 0 ? names : ['Attack']
 }
 
 export default monsterDefs

@@ -38,6 +38,8 @@ EXPORT_PACKS = {
         "slash4",
         "dying",
         "combat_idle",
+        "claw1",
+        "claw2",
     ],
     "social": [
         "sleep",

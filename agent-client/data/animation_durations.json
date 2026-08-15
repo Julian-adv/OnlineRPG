@@ -5,7 +5,9 @@
     "slash3": 2.467,
     "slash4": 1.3,
     "dying": 2.633,
-    "combat_idle": 2.567
+    "combat_idle": 2.567,
+    "claw1": 1.433,
+    "claw2": 1.333
   },
   "locomotion": {
     "idle1": 8.367,

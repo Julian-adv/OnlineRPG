@@ -10,7 +10,11 @@
   import DamageText from './DamageText.svelte'
 
   import type { MonsterData } from '../types/Monster'
-  import { getMonsterDef } from '../data/monsterDefs'
+  import {
+    attackClipNames,
+    getMonsterDef,
+    splitClipNames,
+  } from '../data/monsterDefs'
   import { getItemDef } from '../data/itemDefs'
   import {
     computeCorpseGroundOffset,
@@ -43,6 +47,9 @@
   }: Props = $props()
 
   const def = $derived(getMonsterDef(type))
+  const attackClips = $derived(attackClipNames(def))
+  // Re-rolled from `attackClips` at the start of every swing.
+  let attackClip = attackClips[0]
 
   // Monster type is fixed for the component's lifetime, so the model and any
   // hand weapon are resolved once at init from the initial type, not reactively.
@@ -60,7 +67,7 @@
   // retargeted — the packs carry three times as many.
   const usedClipNames = Object.entries(initialDef ?? {})
     .filter(([key, value]) => key.startsWith('anim') && !!value)
-    .map(([, value]) => value as string)
+    .flatMap(([, value]) => splitClipNames(value as string))
 
   function findClip(name: string): THREE.AnimationClip | undefined {
     return (
@@ -157,7 +164,7 @@
     if (monsterState === 'attack') {
       clipName = isAttackAnimationFinished
         ? (def?.animAttackIdle ?? def?.animIdle ?? 'Idle')
-        : (def?.animAttack ?? 'Attack')
+        : attackClip
     }
     if (monsterState === 'hit') clipName = def?.animHit ?? 'Hit'
     if (monsterState === 'dead') {
@@ -194,10 +201,7 @@
         } else if (monsterState === 'hit') {
           newAction.setLoop(THREE.LoopOnce, 1)
           newAction.clampWhenFinished = true
-        } else if (
-          monsterState === 'attack' &&
-          clipName === (def?.animAttack ?? 'Attack')
-        ) {
+        } else if (monsterState === 'attack' && clipName === attackClip) {
           newAction.setLoop(THREE.LoopOnce, 1)
           newAction.clampWhenFinished = true
         } else {
@@ -248,6 +252,7 @@
       const attackCounterChanged = lastAttackCounter !== attackCounter
       if (attackCounterChanged && monsterState === 'attack') {
         isAttackAnimationFinished = false
+        attackClip = attackClips[Math.floor(Math.random() * attackClips.length)]
       }
       lastAttackCounter = attackCounter
       lastMonsterState = monsterState
@@ -341,7 +346,7 @@
           if (finishedClipName === (def?.animHit ?? 'Hit')) {
             onHitFinished?.()
           }
-          if (finishedClipName === (def?.animAttack ?? 'Attack')) {
+          if (attackClips.includes(finishedClipName)) {
             isAttackAnimationFinished = true
           }
           if (finishedClipName === (def?.animDie ?? 'Die')) {

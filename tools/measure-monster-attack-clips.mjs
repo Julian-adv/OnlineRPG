@@ -107,15 +107,20 @@ for (const m of monsters) {
   if (!durationsByModel.has(m.model)) {
     durationsByModel.set(m.model, extractDurations(modelPath(m)))
   }
-  const clipName = m.animAttack ?? 'Attack'
-  const seconds =
-    durationsByModel.get(m.model)[clipName] ??
-    (m.sharedAnims ? sharedDurations[clipName] : undefined)
-  if (seconds == null) {
-    console.warn(`⚠ ${m.id}: ${m.model} has no clip "${clipName}"`)
+  // `animAttack` may list several `|`-separated clips the client picks from at
+  // random; the swing holds for the longest of them.
+  const clipNames = (m.animAttack ?? 'Attack').split('|').filter(Boolean)
+  const durations = clipNames.map(
+    (clipName) =>
+      durationsByModel.get(m.model)[clipName] ??
+      (m.sharedAnims ? sharedDurations[clipName] : undefined)
+  )
+  const missing = clipNames.filter((_, i) => durations[i] == null)
+  if (missing.length > 0) {
+    console.warn(`⚠ ${m.id}: ${m.model} has no clip "${missing.join('", "')}"`)
     continue
   }
-  clips[m.id] = Math.round(seconds * 1000)
+  clips[m.id] = Math.round(Math.max(...durations) * 1000)
 }
 
 const sorted = Object.fromEntries(
