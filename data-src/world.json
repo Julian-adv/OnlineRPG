@@ -38,6 +38,10 @@
     {
       "monsterType": "bugbear",
       "maxDistance": 60
+    },
+    {
+      "monsterType": "ogre",
+      "maxDistance": 60
     }
   ]
 }
