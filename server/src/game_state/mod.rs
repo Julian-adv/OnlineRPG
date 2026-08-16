@@ -234,6 +234,7 @@ pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
 mod consent;
 mod deals;
+mod debuff;
 pub(crate) mod fishing;
 pub(crate) use deals::band_invariant_holds;
 mod dungeon;
@@ -469,8 +470,8 @@ pub struct GameState {
     #[allow(clippy::type_complexity)]
     dungeon_discovery_cells:
         Arc<HashMap<SpatialCell, Vec<&'static crate::dungeon_defs::DungeonEntranceDef>>>,
-    /// player_id → satiation + food poisoning (doc/HUNGER.md). Owner-private
-    /// like gold; official NPCs have no entry (the exemption).
+    /// player_id → satiation + active debuffs (doc/HUNGER.md, doc/DEBUFF.md).
+    /// Owner-private like gold; official NPCs have no entry (the exemption).
     hunger: Arc<RwLock<HashMap<PlayerId, hunger::HungerData>>>,
     food_regeneration: Arc<RwLock<HashMap<PlayerId, hunger::FoodRegeneration>>>,
     /// Regen sweep counter: Hungry players heal on alternate sweeps (×0.5).

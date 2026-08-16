@@ -40,10 +40,10 @@ impl SharedState {
         if let Some(line) = self.format_dungeon_state() {
             lines.push(line);
         }
-        if let Some((satiation, state, poisoned)) = self.self_hunger {
+        if let Some((satiation, state)) = self.self_hunger {
             let mut line = format!("Hunger: {state:?} ({satiation}/1000)");
-            if poisoned {
-                line.push_str(", food poisoned");
+            if !self.self_debuffs.is_empty() {
+                line.push_str(&format!(", debuffs: {}", self.self_debuffs.join(", ")));
             }
             lines.push(line);
         }

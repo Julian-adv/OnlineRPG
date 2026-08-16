@@ -1165,7 +1165,7 @@ async fn handle_client_message(
             if !state.is_official_npc {
                 responses.push(crate::game_state::hunger::hunger_update_msg(
                     selected_character.satiation,
-                    0,
+                    (1.0, 1.0, 1.0),
                 ));
             }
 

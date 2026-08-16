@@ -107,6 +107,9 @@ pub struct ItemDefinition {
     /// Fish only — the item def this grills into at a campfire.
     #[serde(rename = "grillsInto", default)]
     pub grills_into: Option<String>,
+    /// Debuff id rolled when eaten (raw fish → food poisoning, doc/DEBUFF.md).
+    #[serde(rename = "useDebuff", default)]
+    pub use_debuff: Option<String>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -114,8 +117,13 @@ pub struct ItemDefinition {
 pub enum UseEffect {
     /// Restore HP by rolling the given dice notation.
     Heal(String),
-    /// Restore satiation and regenerate HP from nutrition. Raw fish can poison.
-    Eat { nutrition: u32, raw_fish: bool },
+    /// Restore satiation and regenerate HP from nutrition; `debuff` is
+    /// rolled afterwards. Raw fish grills instead near a campfire.
+    Eat {
+        nutrition: u32,
+        raw_fish: bool,
+        debuff: Option<String>,
+    },
     /// Light a campfire near the user.
     PlaceCampfire,
     /// Teleport the user back to the town spawn point.
@@ -215,10 +223,12 @@ impl ItemDefinition {
                     .nutrition
                     .unwrap_or(onlinerpg_shared::hunger::RAW_FISH_NUTRITION),
                 raw_fish: true,
+                debuff: self.use_debuff.clone(),
             }),
             "food" => self.nutrition.map(|nutrition| UseEffect::Eat {
                 nutrition,
                 raw_fish: false,
+                debuff: self.use_debuff.clone(),
             }),
             "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),
@@ -264,6 +274,12 @@ impl ItemDefs {
                 })
                 .collect();
             def.effects = effects;
+        }
+
+        for def in defs.values() {
+            if let Some(id) = &def.use_debuff {
+                crate::debuff_defs::assert_debuff_exists(id, &format!("item '{}'", def.id));
+            }
         }
 
         // A chestTier opt-in on a non-equippable or a fishing rod (bought

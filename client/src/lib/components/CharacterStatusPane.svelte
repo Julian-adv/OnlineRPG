@@ -1,31 +1,13 @@
 <script lang="ts">
   import { hungerState, grilling } from '../stores/hungerStore'
+  import { visibleDebuffs } from '../stores/debuffStore'
   import {
     HUNGER_BAND_INFO,
     formatHungerModifier,
     hungerModifiers,
   } from '../data/hungerPresentation'
 
-  let now = $state(Date.now())
-  $effect(() => {
-    if ($hungerState?.poisonedUntil == null) return
-    now = Date.now()
-    const timer = setInterval(() => (now = Date.now()), 1_000)
-    return () => clearInterval(timer)
-  })
-
   const satiationPct = $derived(($hungerState?.satiation ?? 0) / 10)
-  const poisonRemainingSeconds = $derived(
-    $hungerState?.poisonedUntil == null
-      ? 0
-      : Math.max(0, Math.ceil(($hungerState.poisonedUntil - now) / 1_000))
-  )
-  const poisonRemainingLabel = $derived.by(() => {
-    if (poisonRemainingSeconds >= 60) {
-      return `${Math.ceil(poisonRemainingSeconds / 60)}m remaining`
-    }
-    return `${poisonRemainingSeconds}s remaining`
-  })
   const modifiers = $derived($hungerState ? hungerModifiers($hungerState) : [])
 </script>
 
@@ -34,7 +16,7 @@
     class="status-content"
     class:hungry={$hungerState.band === 'Hungry'}
     class:weak={$hungerState.band === 'Weak'}
-    class:poisoned={poisonRemainingSeconds > 0}
+    class:debuffed={$visibleDebuffs.length > 0}
   >
     <section class="status-card" aria-label="Hunger status">
       <div class="status-header">
@@ -86,15 +68,17 @@
       {/if}
     </section>
 
-    {#if poisonRemainingSeconds > 0}
-      <section class="effect-card poison-card" aria-label="Food poisoning">
-        <span class="effect-icon">☠️</span>
+    {#each $visibleDebuffs as debuff (debuff.id)}
+      <section class="effect-card debuff-card" aria-label={debuff.label}>
+        <span class="effect-icon">{debuff.icon}</span>
         <div>
-          <strong>Food Poisoning</strong>
-          <small>Heavy penalties · {poisonRemainingLabel}</small>
+          <strong>{debuff.label}</strong>
+          <small
+            >{debuff.note ? `${debuff.note} · ` : ''}{debuff.remaining} remaining</small
+          >
         </div>
       </section>
-    {/if}
+    {/each}
 
     {#if $grilling}
       <section class="effect-card grilling-card" aria-label="Grilling">
@@ -133,7 +117,7 @@
   }
 
   .weak .status-card,
-  .poisoned .status-card {
+  .debuffed .status-card {
     border-color: rgba(240, 120, 90, 0.38);
   }
 
@@ -209,7 +193,7 @@
   }
 
   .weak .satiation-fill,
-  .poisoned .satiation-fill {
+  .debuffed .satiation-fill {
     background: linear-gradient(90deg, #914f43, #d77b67);
     box-shadow: 0 0 8px rgba(215, 123, 103, 0.28);
   }
@@ -286,17 +270,17 @@
     font-size: 16px;
   }
 
-  .poison-card {
-    border: 1px solid rgba(196, 220, 102, 0.2);
-    background: rgba(111, 128, 48, 0.1);
+  .debuff-card {
+    border: 1px solid rgba(240, 120, 90, 0.25);
+    background: rgba(140, 60, 45, 0.12);
   }
 
-  .poison-card strong {
-    color: #cfe87a;
+  .debuff-card strong {
+    color: #f0b8a8;
   }
 
-  .poison-card small {
-    color: #949d72;
+  .debuff-card small {
+    color: #a98a80;
   }
 
   .grilling-card {

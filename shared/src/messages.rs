@@ -1136,17 +1136,20 @@ pub enum ServerMessage {
         floor_level: i8,
     },
     /// Direct to the owner only (exact satiation is private, doc/HUNGER.md).
-    /// Sent on band transitions, eating, poisoning and poison expiry — not on
-    /// every decay tick. Carries the effective multipliers so the client
-    /// never re-derives the bands.
+    /// Sent on band transitions, eating and debuff changes — not on every
+    /// decay tick. Carries the effective multipliers (hunger × debuffs) so
+    /// the client never re-derives them.
     HungerUpdate {
         satiation: u32,
         state: crate::hunger::HungerState,
         move_mult: f32,
         attack_mult: f32,
         carry_mult: f32,
-        /// Remaining food-poisoning duration; 0 when not poisoned.
-        poisoned_ms: u64,
+    },
+    /// Direct to the owner only: the full list of active debuffs, sent when
+    /// one is applied, refreshed or expires (doc/DEBUFF.md).
+    DebuffUpdate {
+        debuffs: Vec<crate::debuff::ActiveDebuffState>,
     },
     /// A campfire was just lit nearby (play the ignition, not just appear).
     CampfireSpawned {

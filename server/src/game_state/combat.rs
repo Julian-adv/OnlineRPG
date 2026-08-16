@@ -697,6 +697,7 @@ impl super::GameState {
                             monster.floor_level,
                             def.map(|d| d.attack_range)
                                 .unwrap_or(onlinerpg_shared::monster_ai::DEFAULT_ATTACK_RANGE),
+                            def.and_then(|d| d.hit_debuff.clone()),
                         ));
                     }
                 }
@@ -710,6 +711,7 @@ impl super::GameState {
             monster_position,
             monster_floor_level,
             monster_attack_range,
+            hit_debuff,
         ) = match monster_data {
             Some(data) => data,
             None => return,
@@ -832,22 +834,41 @@ impl super::GameState {
             self.send_direct_message(target_player_id, attack_msg).await;
         }
 
-        if did_die {
-            let dead_player_id = *target_player_id;
-            self.on_player_died(&dead_player_id).await;
-            if let Some((target_position, target_floor)) = target_loc {
-                self.send_direct_message_to_players_within_position(
-                    &target_position,
-                    target_floor,
-                    super::EVENT_DELIVERY_RADIUS,
-                    ServerMessage::PlayerDead {
-                        player_id: dead_player_id,
-                    },
-                    None,
-                )
-                .await;
+        if result.hit && !did_die {
+            if let Some(debuff_id) = hit_debuff {
+                self.inflict_debuff(target_player_id, &debuff_id, None)
+                    .await;
             }
         }
+
+        if did_die {
+            if let Some((target_position, target_floor)) = target_loc {
+                self.announce_player_death(target_player_id, target_position, target_floor)
+                    .await;
+            } else {
+                self.on_player_died(target_player_id).await;
+            }
+        }
+    }
+
+    /// Run the death chokepoint and tell the area.
+    pub(super) async fn announce_player_death(
+        &self,
+        player_id: &PlayerId,
+        position: Position,
+        floor_level: i8,
+    ) {
+        self.on_player_died(player_id).await;
+        self.send_direct_message_to_players_within_position(
+            &position,
+            floor_level,
+            super::EVENT_DELIVERY_RADIUS,
+            ServerMessage::PlayerDead {
+                player_id: *player_id,
+            },
+            None,
+        )
+        .await;
     }
 
     pub async fn tick_regeneration(&self) {
@@ -945,6 +966,7 @@ impl super::GameState {
         self.movement_intents.write().await.remove(player_id);
         self.cancel_concentration_if_active(player_id).await;
         self.cancel_food_regeneration(player_id).await;
+        self.clear_debuffs(player_id).await;
         self.apply_player_death_penalty(player_id).await;
     }
 

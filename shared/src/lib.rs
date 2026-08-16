@@ -5,6 +5,7 @@
 //! type now lives.
 
 pub mod character;
+pub mod debuff;
 pub mod dungeon;
 pub mod entity;
 pub mod fishing;
@@ -72,7 +73,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      and GroundItemQuantityChanged reports a pile someone took part of.
 /// v28: tip hats (the `tip_hat` item → TipHatPlaced/TipHatAppeared/
 ///      TipHatRemoved, ClientMessage::TipHat); GameState carries `tip_hats`.
-pub const PROTOCOL_VERSION: u32 = 28;
+/// v29: debuffs (DebuffUpdate) replace HungerUpdate's `poisoned_ms` —
+///      doc/DEBUFF.md.
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

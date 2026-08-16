@@ -154,7 +154,7 @@ regeneration_amount = max(1, 1 + floor(Level / 5) + con_mod)
 - 캐릭터가 **살아있는 상태**(`health > 0`)여야 한다.
 - 현재 체력이 **최대 체력보다 낮아야**(`health < max_health`) 한다.
 - **비전투 상태:** 마지막 공격 또는 피격으로부터 **10초 이상** 경과해야 한다.
-- **허기:** 쇠약(Weak) 또는 식중독 상태면 회복이 멈춘다 ([HUNGER.md](HUNGER.md)).
+- **허기·디버프:** 쇠약(Weak) 상태이거나 `blocksRegen` 디버프(식중독, 출혈)에 걸려 있으면 회복이 멈춘다 ([HUNGER.md](HUNGER.md), [DEBUFF.md](DEBUFF.md)).
 
 - 구현: [server/src/game_state/mod.rs](../server/src/game_state/mod.rs) (메서드: `tick_regeneration`)
 

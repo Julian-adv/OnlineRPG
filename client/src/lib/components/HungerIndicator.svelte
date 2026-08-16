@@ -1,5 +1,6 @@
 <script lang="ts">
   import { hungerState, grilling } from '../stores/hungerStore'
+  import { visibleDebuffs } from '../stores/debuffStore'
   import {
     characterPanelTab,
     characterPanelVisible,
@@ -9,21 +10,6 @@
     formatHungerModifier,
     hungerModifiers,
   } from '../data/hungerPresentation'
-
-  let poisonRemainingMin = $state(0)
-  $effect(() => {
-    const until = $hungerState?.poisonedUntil
-    if (until == null) {
-      poisonRemainingMin = 0
-      return
-    }
-    const tick = () => {
-      poisonRemainingMin = Math.max(0, Math.ceil((until - Date.now()) / 60_000))
-    }
-    tick()
-    const timer = setInterval(tick, 5_000)
-    return () => clearInterval(timer)
-  })
 
   const hungry = $derived($hungerState?.band === 'Hungry')
   const weak = $derived($hungerState?.band === 'Weak')
@@ -37,7 +23,7 @@
       lines.push('Sprinting disabled, natural healing takes twice as long')
     if (h.band === 'Weak')
       lines.push('Slowed, weaker carry, no natural healing — eat!')
-    if (h.poisonedUntil != null) lines.push('Food poisoning: heavy penalties')
+    for (const d of $visibleDebuffs) lines.push(`${d.label}: ${d.note}`)
     return lines.join('\n')
   })
 
@@ -58,7 +44,7 @@
     class="hunger"
     class:hungry
     class:weak
-    class:poisoned={$hungerState.poisonedUntil != null}
+    class:debuffed={$visibleDebuffs.length > 0}
     aria-label={accessibleSummary}
     aria-describedby="hunger-tooltip"
     role="button"
@@ -70,9 +56,9 @@
       {HUNGER_BAND_INFO[$hungerState.band].icon}
       {HUNGER_BAND_INFO[$hungerState.band].label}
     </span>
-    {#if $hungerState.poisonedUntil != null && poisonRemainingMin > 0}
-      <span class="badge poisoned">☠️ {poisonRemainingMin}m</span>
-    {/if}
+    {#each $visibleDebuffs as debuff (debuff.id)}
+      <span class="badge debuff">{debuff.icon} {debuff.remaining}</span>
+    {/each}
     {#if $grilling}
       <span class="badge grilling">🐟 Grilling…</span>
     {/if}
@@ -118,19 +104,17 @@
           {HUNGER_BAND_INFO[$hungerState.band].note}
         </div>
       {/if}
-      {#if $hungerState.poisonedUntil != null}
-        <div class="poison-warning">
-          <span>☠️</span>
+      {#each $visibleDebuffs as debuff (debuff.id)}
+        <div class="debuff-warning">
+          <span>{debuff.icon}</span>
           <div>
-            <strong>Food Poisoning</strong>
-            <small>
-              Heavy penalties{poisonRemainingMin > 0
-                ? ` · ${poisonRemainingMin}m remaining`
-                : ''}
-            </small>
+            <strong>{debuff.label}</strong>
+            <small
+              >{debuff.note ? `${debuff.note} · ` : ''}{debuff.remaining} remaining</small
+            >
           </div>
         </div>
-      {/if}
+      {/each}
       {#if $grilling}
         <div class="grilling-note">🐟 Grilling in progress…</div>
       {/if}
@@ -174,10 +158,10 @@
     border-color: rgba(240, 120, 90, 0.45);
   }
 
-  .badge.poisoned,
-  .hunger.poisoned .primary-badge {
-    color: #cfe87a;
-    border-color: rgba(160, 200, 60, 0.5);
+  .badge.debuff,
+  .hunger.debuffed .primary-badge {
+    color: #f0b8a8;
+    border-color: rgba(240, 120, 90, 0.45);
   }
 
   .badge.grilling {
@@ -237,7 +221,7 @@
   }
 
   .hunger.weak .hunger-tooltip,
-  .hunger.poisoned .hunger-tooltip {
+  .hunger.debuffed .hunger-tooltip {
     border-color: rgba(240, 120, 90, 0.38);
   }
 
@@ -312,7 +296,7 @@
   }
 
   .weak .satiation-fill,
-  .poisoned .satiation-fill {
+  .debuffed .satiation-fill {
     background: linear-gradient(90deg, #914f43, #d77b67);
     box-shadow: 0 0 8px rgba(215, 123, 103, 0.28);
   }
@@ -368,34 +352,34 @@
     color: #e5bf78;
   }
 
-  .poison-warning {
+  .debuff-warning {
     display: flex;
     align-items: center;
     gap: 8px;
     margin-top: 10px;
     padding: 8px 9px;
-    border: 1px solid rgba(196, 220, 102, 0.2);
+    border: 1px solid rgba(240, 120, 90, 0.25);
     border-radius: 7px;
-    background: rgba(111, 128, 48, 0.1);
+    background: rgba(140, 60, 45, 0.12);
   }
 
-  .poison-warning > span {
+  .debuff-warning > span {
     font-size: 16px;
   }
 
-  .poison-warning div {
+  .debuff-warning div {
     display: flex;
     flex-direction: column;
   }
 
-  .poison-warning strong {
-    color: #cfe87a;
+  .debuff-warning strong {
+    color: #f0b8a8;
     font-size: 11px;
   }
 
-  .poison-warning small {
+  .debuff-warning small {
     margin-top: 1px;
-    color: #949d72;
+    color: #a98a80;
     font-size: 10px;
   }
 

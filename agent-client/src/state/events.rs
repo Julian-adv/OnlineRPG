@@ -621,12 +621,12 @@ impl SharedState {
                 self.self_gold = Some(*gold);
             }
             ServerMessage::HungerUpdate {
-                satiation,
-                state,
-                poisoned_ms,
-                ..
+                satiation, state, ..
             } => {
-                self.self_hunger = Some((*satiation, *state, *poisoned_ms > 0));
+                self.self_hunger = Some((*satiation, *state));
+            }
+            ServerMessage::DebuffUpdate { ref debuffs } => {
+                self.self_debuffs = debuffs.iter().map(|d| d.id.clone()).collect();
             }
             ServerMessage::CampfireSpawned { ref campfire }
             | ServerMessage::CampfireAppeared { ref campfire } => {

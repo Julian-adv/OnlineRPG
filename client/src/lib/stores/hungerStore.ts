@@ -14,8 +14,6 @@ export interface HungerSnapshot {
   moveMult: number
   attackMult: number
   carryMult: number
-  /** Epoch ms (Date.now clock) when food poisoning ends; null when healthy. */
-  poisonedUntil: number | null
 }
 
 export const hungerState = writable<HungerSnapshot | null>(null)

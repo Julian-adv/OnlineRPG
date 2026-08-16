@@ -9,6 +9,7 @@ import { resetFriendStores } from './friendStore'
 import { resetFishingStore } from './fishingStore'
 import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
+import { resetDebuffStore } from './debuffStore'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
 import { stallManager } from '../managers/stallManager'
@@ -126,6 +127,7 @@ export const resetGameStore = () => {
   resetFriendStores()
   resetDiscoveredDungeons()
   resetHungerStore()
+  resetDebuffStore()
   groundItemManager.reset()
   campfireManager.reset()
   stallManager.reset()

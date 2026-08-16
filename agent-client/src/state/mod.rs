@@ -146,9 +146,11 @@ pub struct SharedState {
     /// Our own gold in the smallest unit (from GoldUpdate). NPC traders'
     /// wallets are real server-side gold (economy phase 3).
     pub self_gold: Option<i64>,
-    /// Our own hunger (satiation, band, poisoned) from `HungerUpdate`;
-    /// stays None for exempt NPCs.
-    pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState, bool)>,
+    /// Our own hunger (satiation, band) from `HungerUpdate`; stays None for
+    /// exempt NPCs.
+    pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState)>,
+    /// Our own active debuff ids from `DebuffUpdate` (doc/DEBUFF.md).
+    pub self_debuffs: Vec<String>,
     /// Burning campfires in our AOI, for the grill-your-catch decision.
     pub campfires: HashMap<u64, onlinerpg_shared::hunger::Campfire>,
     /// Laid-out stalls in our AOI, so a merchant knows its own is out.
@@ -330,6 +332,7 @@ impl SharedState {
             self_player: None,
             self_gold: None,
             self_hunger: None,
+            self_debuffs: Vec::new(),
             campfires: HashMap::new(),
             stalls: HashMap::new(),
             self_bag: Vec::new(),

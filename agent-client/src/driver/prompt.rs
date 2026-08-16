@@ -553,13 +553,10 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
         ServerMessage::FishingError { message } => Some(format!("[FishingError] {message}")),
         // Hunger transitions arrive direct (owner-only), a few per game day.
         ServerMessage::HungerUpdate {
-            satiation,
-            state,
-            poisoned_ms,
-            ..
+            satiation, state, ..
         } => {
             use onlinerpg_shared::hunger::HungerState;
-            let mut line = match state {
+            let line = match state {
                 HungerState::Normal => format!(
                     "[Hunger] You are adequately fed ({satiation}/1000) and can sprint."
                 ),
@@ -570,14 +567,27 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
                     "[Hunger] You are weak from hunger ({satiation}/1000): slower movement and attacks, less carry weight, and no natural healing. Eat something."
                 ),
             };
-            if *poisoned_ms > 0 {
-                line.push_str(&format!(
-                    " Food poisoning for {} more minutes: heavy penalties — cooked food next time.",
-                    poisoned_ms.div_ceil(60_000)
-                ));
-            }
             Some(line)
         }
+        ServerMessage::DebuffUpdate { debuffs } => Some(if debuffs.is_empty() {
+            "[Debuff] You are free of ailments.".to_string()
+        } else {
+            let list: Vec<String> = debuffs
+                .iter()
+                .map(|d| match d.id.as_str() {
+                    "food_poisoning" => format!(
+                        "food poisoning for {} more minutes (heavy penalties — cooked food next time)",
+                        d.remaining_ms.div_ceil(60_000)
+                    ),
+                    "bleed" => format!(
+                        "bleeding for {} more seconds (losing HP each second, no natural healing)",
+                        d.remaining_ms.div_ceil(1_000)
+                    ),
+                    other => format!("{other} for {} more seconds", d.remaining_ms.div_ceil(1_000)),
+                })
+                .collect();
+            format!("[Debuff] Afflicted: {}.", list.join("; "))
+        }),
         ServerMessage::GrillEnded {
             grilled_item_def_id,
         } => Some(match grilled_item_def_id {

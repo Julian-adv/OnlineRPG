@@ -10,8 +10,6 @@ pub const MOVEMENT_DRAIN_INTERVAL_SECS: f32 = 30.0;
 pub const SPRINT_DRAIN_INTERVAL_SECS: f32 = 1.0;
 pub const SPRINT_MOVE_MULT: f32 = 1.5;
 pub const FOOD_REGEN_DURATION_SECS: u8 = 10;
-/// Food poisoning drains satiation this many times faster.
-pub const POISON_DRAIN_MULT: u32 = 4;
 /// Satiation drain while wearing a `sustenance` item (items.csv `effects`).
 pub const SUSTENANCE_DRAIN_MULT: f32 = 0.75;
 
@@ -20,11 +18,6 @@ pub const HUNGRY_MIN: u32 = 100;
 
 /// Raw fish nutrition, species-independent (cooking unlocks the real value).
 pub const RAW_FISH_NUTRITION: u32 = 40;
-/// Chance eating raw fish inflicts food poisoning, in percent.
-pub const FOOD_POISONING_PCT: u32 = 70;
-pub const FOOD_POISONING_MS: u64 = 5 * 60 * 1000;
-/// Food poisoning multiplier on move speed, attack speed and carry weight.
-pub const POISON_MULT: f32 = 0.6;
 
 pub const WEAK_MOVE_MULT: f32 = 0.75;
 pub const WEAK_ATTACK_MULT: f32 = 0.75;
@@ -52,7 +45,7 @@ pub fn hunger_state(satiation: u32) -> HungerState {
     }
 }
 
-/// (move, attack, carry) multipliers for a band, before food poisoning.
+/// (move, attack, carry) multipliers for a band, before debuffs.
 pub fn state_multipliers(state: HungerState) -> (f32, f32, f32) {
     match state {
         HungerState::Weak => (WEAK_MOVE_MULT, WEAK_ATTACK_MULT, WEAK_CARRY_MULT),
@@ -60,14 +53,11 @@ pub fn state_multipliers(state: HungerState) -> (f32, f32, f32) {
     }
 }
 
-/// Effective (move, attack, carry) multipliers, poison stacking multiplicatively.
-pub fn effective_multipliers(satiation: u32, poisoned: bool) -> (f32, f32, f32) {
+/// Effective (move, attack, carry) multipliers: the band's × the active
+/// debuffs' product (doc/DEBUFF.md).
+pub fn effective_multipliers(satiation: u32, debuff: (f32, f32, f32)) -> (f32, f32, f32) {
     let (m, a, c) = state_multipliers(hunger_state(satiation));
-    if poisoned {
-        (m * POISON_MULT, a * POISON_MULT, c * POISON_MULT)
-    } else {
-        (m, a, c)
-    }
+    (m * debuff.0, a * debuff.1, c * debuff.2)
 }
 
 pub fn apply_nutrition(satiation: u32, nutrition: u32) -> u32 {
@@ -110,12 +100,13 @@ mod tests {
     }
 
     #[test]
-    fn multipliers_only_penalize_weakness_and_poisoning() {
-        assert_eq!(effective_multipliers(500, false), (1.0, 1.0, 1.0));
-        assert_eq!(effective_multipliers(200, false), (1.0, 1.0, 1.0));
-        assert_eq!(effective_multipliers(900, false), (1.0, 1.0, 1.0));
-        assert_eq!(effective_multipliers(50, false), (0.75, 0.75, 0.6));
-        let (m, _, _) = effective_multipliers(50, true);
+    fn multipliers_only_penalize_weakness_and_debuffs() {
+        const NONE: (f32, f32, f32) = (1.0, 1.0, 1.0);
+        assert_eq!(effective_multipliers(500, NONE), NONE);
+        assert_eq!(effective_multipliers(200, NONE), NONE);
+        assert_eq!(effective_multipliers(900, NONE), NONE);
+        assert_eq!(effective_multipliers(50, NONE), (0.75, 0.75, 0.6));
+        let (m, _, _) = effective_multipliers(50, (0.6, 0.6, 0.6));
         assert!((m - 0.45).abs() < 1e-6);
     }
 

@@ -480,6 +480,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::FriendsOnline { .. } => "FriendsOnline",
         ServerMessage::FriendRequestReceived { .. } => "FriendRequestReceived",
         ServerMessage::HungerUpdate { .. } => "HungerUpdate",
+        ServerMessage::DebuffUpdate { .. } => "DebuffUpdate",
         ServerMessage::CampfireSpawned { .. } => "CampfireSpawned",
         ServerMessage::CampfireAppeared { .. } => "CampfireAppeared",
         ServerMessage::CampfireRemoved { .. } => "CampfireRemoved",

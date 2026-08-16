@@ -38,6 +38,9 @@ pub struct MonsterDefinition {
     #[serde(rename = "damageRoll")]
     #[serde(default)]
     pub damage_roll: Option<String>,
+    /// Debuff id rolled on every hit (doc/DEBUFF.md).
+    #[serde(rename = "hitDebuff", default)]
+    pub hit_debuff: Option<String>,
     #[serde(default)]
     pub weapon: Option<String>,
     #[serde(rename = "weaponDropChance", default = "default_weapon_drop_chance")]
@@ -103,6 +106,9 @@ impl MonsterDefs {
 
         info!("Loaded {} monster definitions", defs.len());
         for (id, def) in &defs {
+            if let Some(debuff) = &def.hit_debuff {
+                crate::debuff_defs::assert_debuff_exists(debuff, &format!("monster '{id}'"));
+            }
             info!(
                 "  {} - level:{} HP:{} guard:{} attackBonus:{} walkSpeed:{} runSpeed:{} attackRange:{} chaseRange:{} cooldown:{}ms damage:{}",
                 id, def.level, def.max_health(), def.guard, def.attack_bonus(), def.walk_speed, def.run_speed,
@@ -130,6 +136,14 @@ impl MonsterDefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gnoll_claws_inflict_bleeding() {
+        let defs = MonsterDefs::load();
+        let gnoll = defs.get("gnoll").expect("gnoll def");
+        assert_eq!(gnoll.hit_debuff.as_deref(), Some("bleed"));
+        assert_eq!(gnoll.damage_roll(), "2d6");
+    }
 
     #[test]
     fn depth_scaling_carries_a_hand_tuned_attack_bonus() {

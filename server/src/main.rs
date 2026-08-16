@@ -5,6 +5,7 @@ mod bgm_defs;
 mod celestial;
 mod conn_limit;
 mod connection;
+mod debuff_defs;
 mod dungeon_defs;
 mod game;
 mod game_state;
@@ -550,8 +551,8 @@ async fn main() -> ExitCode {
         },
     ));
 
-    // Hunger (doc/HUNGER.md): grills every 250ms; campfires, timed effects,
-    // and food regeneration every second. Activity drain rides movement/kills.
+    // Hunger (doc/HUNGER.md): grills every 250ms; campfires, debuffs and
+    // food regeneration every second. Activity drain rides movement/kills.
     let game_state_for_hunger = Arc::clone(&game_state);
     let mut hunger_tick_count = 0u64;
     background.spawn(run_ticks(
@@ -566,7 +567,7 @@ async fn main() -> ExitCode {
                 game_state.tick_grills().await;
                 if count.is_multiple_of(4) {
                     game_state.tick_campfires().await;
-                    game_state.tick_hunger_effects().await;
+                    game_state.tick_debuffs().await;
                     game_state.tick_food_regeneration().await;
                 }
             }

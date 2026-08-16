@@ -26,6 +26,8 @@ import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
+import { activeDebuffs, type ActiveDebuff } from '../stores/debuffStore'
+import { debuffPresentation } from '../data/debuffPresentation'
 import { campfireManager } from '../managers/campfireManager'
 import { stallManager } from '../managers/stallManager'
 import { tipHatManager } from '../managers/tipHatManager'
@@ -1462,30 +1464,43 @@ export function handleServerMessage(
     case 'HungerUpdate': {
       const prev = get(hungerState)
       const band = data.state as HungerBand
-      const poisonedUntil =
-        data.poisoned_ms > 0 ? Date.now() + Number(data.poisoned_ms) : null
       hungerState.set({
         satiation: data.satiation,
         band,
         moveMult: data.move_mult,
         attackMult: data.attack_mult,
         carryMult: data.carry_mult,
-        poisonedUntil,
       })
       if (prev && prev.band !== band) {
         addCombatMessage({ text: HUNGER_BAND_MESSAGES[band], sender: 'local' })
       }
-      const wasPoisoned = prev?.poisonedUntil != null
-      if (!wasPoisoned && poisonedUntil != null) {
-        addCombatMessage({
-          text: 'Your stomach churns — food poisoning! Cooked food next time.',
-          sender: 'local',
-        })
-      } else if (wasPoisoned && poisonedUntil == null) {
-        addCombatMessage({
-          text: 'The sickness passes. You feel yourself again.',
-          sender: 'local',
-        })
+      break
+    }
+
+    // Direct to the owner only: the full active list (doc/DEBUFF.md).
+    case 'DebuffUpdate': {
+      const now = Date.now()
+      const prevIds = new Set(get(activeDebuffs).map((d) => d.id))
+      const next: ActiveDebuff[] = (
+        data.debuffs as { id: string; remaining_ms: number }[]
+      ).map((d) => ({ id: d.id, until: now + Number(d.remaining_ms) }))
+      activeDebuffs.set(next)
+      const nextIds = new Set(next.map((d) => d.id))
+      for (const id of nextIds) {
+        if (!prevIds.has(id)) {
+          addCombatMessage({
+            text: debuffPresentation(id).applied,
+            sender: 'local',
+          })
+        }
+      }
+      for (const id of prevIds) {
+        if (!nextIds.has(id)) {
+          addCombatMessage({
+            text: debuffPresentation(id).expired,
+            sender: 'local',
+          })
+        }
       }
       break
     }

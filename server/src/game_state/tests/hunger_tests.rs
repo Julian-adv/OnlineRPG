@@ -4,8 +4,8 @@
 
 use super::*;
 use onlinerpg_shared::hunger::{
-    HungerState, CAMPFIRE_DURATION_MS, FOOD_POISONING_MS, GRILL_CAST_MS,
-    MOVEMENT_DRAIN_INTERVAL_SECS, SATIATION_MAX, SATIATION_START, SPRINT_DRAIN_INTERVAL_SECS,
+    HungerState, CAMPFIRE_DURATION_MS, GRILL_CAST_MS, MOVEMENT_DRAIN_INTERVAL_SECS, SATIATION_MAX,
+    SATIATION_START, SPRINT_DRAIN_INTERVAL_SECS,
 };
 use tokio::time::{advance, Duration};
 
@@ -46,14 +46,27 @@ async fn bag_ids(game_state: &GameState, id: &PlayerId) -> Vec<String> {
         .collect()
 }
 
-fn last_hunger_update(msgs: &[ServerMessage]) -> Option<(u32, HungerState, u64)> {
+fn last_hunger_update(msgs: &[ServerMessage]) -> Option<(u32, HungerState, f32)> {
     msgs.iter().rev().find_map(|m| match m {
         ServerMessage::HungerUpdate {
             satiation,
             state,
-            poisoned_ms,
+            move_mult,
             ..
-        } => Some((*satiation, *state, *poisoned_ms)),
+        } => Some((*satiation, *state, *move_mult)),
+        _ => None,
+    })
+}
+
+/// (id, remaining_ms) pairs of the last DebuffUpdate.
+fn last_debuffs(msgs: &[ServerMessage]) -> Option<Vec<(String, u64)>> {
+    msgs.iter().rev().find_map(|m| match m {
+        ServerMessage::DebuffUpdate { debuffs } => Some(
+            debuffs
+                .iter()
+                .map(|d| (d.id.clone(), d.remaining_ms))
+                .collect(),
+        ),
         _ => None,
     })
 }
@@ -82,8 +95,11 @@ async fn eating_feeds_and_consumes_the_food() {
     assert_eq!(game_state.hunger_satiation(&id).await, Some(740));
     assert!(bag_ids(&game_state, &id).await.is_empty(), "bread is eaten");
     let msgs = drain(&mut rx);
-    let (satiation, state, poisoned) = last_hunger_update(&msgs).expect("HungerUpdate sent");
-    assert_eq!((satiation, state, poisoned), (740, HungerState::Normal, 0));
+    let (satiation, state, move_mult) = last_hunger_update(&msgs).expect("HungerUpdate sent");
+    assert_eq!(
+        (satiation, state, move_mult),
+        (740, HungerState::Normal, 1.0)
+    );
 }
 
 #[tokio::test]
@@ -120,24 +136,113 @@ async fn raw_fish_poisoning_drains_four_times_faster_and_expires() {
     put_in_bag(&game_state, &id, 1, "raw_trout").await;
     drain(&mut rx);
 
+    let poison = crate::debuff_defs::debuff_def("food_poisoning").unwrap();
     // Forced poison keeps the 70% roll out of the assertion.
-    game_state.use_eat_item(&id, 1, 40, true, Some(true)).await;
+    game_state
+        .use_eat_item(&id, 1, 40, true, Some("food_poisoning"), Some(true))
+        .await;
     let msgs = drain(&mut rx);
-    let (satiation, _, poisoned_ms) = last_hunger_update(&msgs).unwrap();
+    let (satiation, _, move_mult) = last_hunger_update(&msgs).unwrap();
     assert_eq!(satiation, 540);
-    assert_eq!(poisoned_ms, FOOD_POISONING_MS);
+    assert_eq!(move_mult, poison.move_mult, "debuff multiplier is shipped");
+    assert_eq!(
+        last_debuffs(&msgs).unwrap(),
+        vec![("food_poisoning".to_string(), poison.duration_secs * 1000)]
+    );
 
     game_state
         .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
         .await;
     assert_eq!(game_state.hunger_satiation(&id).await, Some(536));
 
-    advance(Duration::from_millis(FOOD_POISONING_MS + 1)).await;
+    advance(Duration::from_secs(poison.duration_secs + 1)).await;
     drain(&mut rx);
-    game_state.tick_hunger_effects().await;
+    game_state.tick_debuffs().await;
     assert_eq!(game_state.hunger_satiation(&id).await, Some(536));
     let msgs = drain(&mut rx);
-    assert_eq!(last_hunger_update(&msgs).unwrap().2, 0, "expiry is pushed");
+    assert!(last_debuffs(&msgs).unwrap().is_empty(), "expiry is pushed");
+    assert_eq!(last_hunger_update(&msgs).unwrap().2, 1.0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn bleeding_ticks_damage_each_second_and_expires() {
+    let game_state = make_test_game_state("bleed");
+    let (id, mut rx) = make_eater(&game_state, "clawed", 500).await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .health = 20;
+    drain(&mut rx);
+
+    let bleed = crate::debuff_defs::debuff_def("bleed").unwrap();
+    assert!(game_state.inflict_debuff(&id, "bleed", Some(true)).await);
+    assert_eq!(
+        last_debuffs(&drain(&mut rx)).unwrap(),
+        vec![("bleed".to_string(), bleed.duration_secs * 1000)]
+    );
+
+    // One extra sweep past the duration: it must expire, not tick again.
+    for _ in 0..=bleed.duration_secs {
+        advance(Duration::from_secs(1)).await;
+        game_state.tick_debuffs().await;
+    }
+    let health = game_state.players.read().await[&id].health;
+    assert_eq!(
+        health,
+        20 - bleed.duration_secs as u32 * bleed.dps,
+        "one tick per second for the duration"
+    );
+    assert!(last_debuffs(&drain(&mut rx)).unwrap().is_empty(), "expired");
+    assert!(
+        !game_state.inflict_debuff(&id, "bleed", Some(false)).await,
+        "a failed roll applies nothing"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn bleeding_out_kills_and_clears_the_debuff() {
+    let game_state = make_test_game_state("bleed_death");
+    let (id, mut rx) = make_eater(&game_state, "doomed", 500).await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .health = 1;
+    game_state.inflict_debuff(&id, "bleed", Some(true)).await;
+    drain(&mut rx);
+
+    advance(Duration::from_secs(1)).await;
+    game_state.tick_debuffs().await;
+
+    assert_eq!(game_state.players.read().await[&id].health, 0);
+    let msgs = drain(&mut rx);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::PlayerDead { player_id } if *player_id == id)));
+    assert!(
+        last_debuffs(&msgs).unwrap().is_empty(),
+        "death drops the debuff"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn reapplying_a_debuff_refreshes_instead_of_stacking() {
+    let game_state = make_test_game_state("bleed_refresh");
+    let (id, mut rx) = make_eater(&game_state, "scratched", 500).await;
+    let bleed = crate::debuff_defs::debuff_def("bleed").unwrap();
+    game_state.inflict_debuff(&id, "bleed", Some(true)).await;
+    advance(Duration::from_secs(3)).await;
+    game_state.inflict_debuff(&id, "bleed", Some(true)).await;
+    let debuffs = last_debuffs(&drain(&mut rx)).unwrap();
+    assert_eq!(
+        debuffs,
+        vec![("bleed".to_string(), bleed.duration_secs * 1000)]
+    );
 }
 
 #[tokio::test]
@@ -146,7 +251,9 @@ async fn an_unpoisoned_raw_fish_still_feeds_a_little() {
     let (id, _rx) = make_eater(&game_state, "lucky", 500).await;
     put_in_bag(&game_state, &id, 1, "raw_minnow").await;
 
-    game_state.use_eat_item(&id, 1, 40, true, Some(false)).await;
+    game_state
+        .use_eat_item(&id, 1, 40, true, Some("food_poisoning"), Some(false))
+        .await;
 
     assert_eq!(game_state.hunger_satiation(&id).await, Some(540));
     assert!(bag_ids(&game_state, &id).await.is_empty());
@@ -280,23 +387,31 @@ async fn food_restores_hp_over_ten_seconds() {
 }
 
 #[tokio::test]
-async fn weak_and_poisoned_players_do_not_regenerate() {
+async fn weak_and_debuffed_players_do_not_regenerate() {
     let game_state = make_test_game_state("regen_gate");
     let (weak_id, _rx1) = make_eater(&game_state, "starving", 50).await;
-    let (fed_id, _rx2) = make_eater(&game_state, "healthy", 500).await;
+    let (bleeding_id, _rx2) = make_eater(&game_state, "bleeding", 500).await;
+    let (fed_id, _rx3) = make_eater(&game_state, "healthy", 500).await;
     {
         let mut players = game_state.players.write().await;
-        for id in [&weak_id, &fed_id] {
+        for id in [&weak_id, &bleeding_id, &fed_id] {
             let p = players.get_mut(id).unwrap();
             p.health = 5;
             p.last_combat_at = 0;
         }
     }
+    game_state
+        .inflict_debuff(&bleeding_id, "bleed", Some(true))
+        .await;
 
     game_state.tick_regeneration().await;
 
     let players = game_state.players.read().await;
     assert_eq!(players[&weak_id].health, 5, "Weak: no natural healing");
+    assert_eq!(
+        players[&bleeding_id].health, 5,
+        "blocksRegen debuff: no natural healing"
+    );
     assert!(players[&fed_id].health > 5, "normal hunger heals normally");
 }
 
@@ -629,7 +744,11 @@ async fn npcs_are_exempt_from_hunger_but_can_still_eat() {
         last_hunger_update(&drain(&mut rx)).is_none(),
         "no HungerUpdate for the exempt"
     );
-    game_state.tick_hunger_effects().await;
+    assert!(
+        !game_state.inflict_debuff(&id, "bleed", Some(true)).await,
+        "no debuffs for the exempt"
+    );
+    game_state.tick_debuffs().await;
     assert_eq!(game_state.hunger_satiation(&id).await, None);
 }
 

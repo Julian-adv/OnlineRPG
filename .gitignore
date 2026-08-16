@@ -66,6 +66,7 @@ __pycache__/
 data/*.db
 data/npc_token
 data/bgm.json
+data/debuffs.json
 data/dungeons.json
 data/items.json
 data/map_labels.json

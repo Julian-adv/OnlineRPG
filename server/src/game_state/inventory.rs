@@ -614,9 +614,17 @@ impl super::GameState {
             UseEffect::Eat {
                 nutrition,
                 raw_fish,
+                debuff,
             } => {
-                self.use_eat_item(player_id, instance_id, nutrition, raw_fish, None)
-                    .await
+                self.use_eat_item(
+                    player_id,
+                    instance_id,
+                    nutrition,
+                    raw_fish,
+                    debuff.as_deref(),
+                    None,
+                )
+                .await
             }
             UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
             UseEffect::TeleportTown => self.use_return_scroll(player_id, instance_id).await,
@@ -685,13 +693,15 @@ impl super::GameState {
     }
 
     /// Eat food or fish; raw fish near a campfire grills instead.
+    /// `force_debuff` pins the `debuff` roll for tests.
     pub(super) async fn use_eat_item(
         &self,
         player_id: &PlayerId,
         instance_id: u64,
         nutrition: u32,
         raw_fish: bool,
-        force_poison: Option<bool>,
+        debuff: Option<&str>,
+        force_debuff: Option<bool>,
     ) {
         if self
             .reject_if_defeated(player_id, "You can't eat while defeated")
@@ -725,9 +735,7 @@ impl super::GameState {
             return;
         }
 
-        let outcome = self
-            .apply_eat(player_id, nutrition, raw_fish, force_poison)
-            .await;
+        let outcome = self.apply_eat(player_id, nutrition).await;
         self.consume_one_and_sync(player_id, instance_id).await;
         self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(nutrition))
             .await;
@@ -737,6 +745,9 @@ impl super::GameState {
         if let Some(msg) = outcome {
             self.mark_dirty(player_id).await;
             self.send_direct_message(player_id, msg).await;
+        }
+        if let Some(debuff) = debuff {
+            self.inflict_debuff(player_id, debuff, force_debuff).await;
         }
     }
 
