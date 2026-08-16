@@ -10,7 +10,7 @@
 |------|------|------|------|
 | 1 | Old Crypt | 가죽 세트 일부 (투구·바지·벨트) | 운영 중 |
 | 2 | Orc Warrens | 가죽 세트 완성 (몸통·장갑·부츠) + 체인 세트 일부 (철 부츠·철 투구) + iron_sword (보스) | 운영 중 |
-| 3 | (신규 던전) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 던전 미구현 |
+| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 — 기본 망토·steel_longsword 애셋 대기 |
 | 4 | (신규 던전) | 판금 세트 완성 (흉갑·투구·건틀릿) + claymore | 던전 미구현 |
 | 5 | (신규 던전) | ring_of_protection + rune_blade | 던전 미구현 |
 
@@ -63,7 +63,7 @@
 | 아이템 | 효과 (`effects`) | 획득처 | 상태 |
 |--------|------|--------|------|
 | ring_of_protection | guard +1 (guard 열) | 티어 5 던전 (20% 롤) | 있음 |
-| gold_ring | CHA +1 (`cha+1`) | 티어 3 던전 (10% 롤) | 있음 (티어 3 던전 대기) |
+| gold_ring | CHA +1 (`cha+1`) | 티어 3 던전 (10% 롤) | 있음 |
 | silver_necklace | 허기 감소 ×0.75 (`sustenance`) | 티어 2 던전 (10% 롤) | 있음 (아이콘 필요) |
 | amulet_of_life_saving | 사망 1회 방지 후 소모 | **월드 드랍 전용** | **신규 아이콘 필요** |
 | ring_of_regeneration | HP 지속 재생 | **월드 드랍 전용** | **신규 아이콘 필요** |
@@ -100,7 +100,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 |------|----------------|----------------------|-----------|
 | Old Crypt (T1) | leather_helmet | leather_pants·leather_belt 각 30% | ≈4.7회 |
 | Orc Warrens (T2) | leather_armor | leather_gloves·leather_boots·iron_boots·iron_helmet 각 37% | ≈5.0회 |
-| 티어 3 던전 | chain_mail | iron_gauntlets·plate_greaves·plate_boots·기본 망토 각 37% | ≈5.0회 |
+| Ogre Stronghold (T3) | chain_mail | iron_gauntlets·plate_greaves·plate_boots·기본 망토 각 37% | ≈5.0회 (망토 애셋 전까지 3파츠 ≈4.7회) |
 | 티어 4 던전 | breastplate | plate_helmet·plate_gauntlets 각 30% | ≈4.7회 |
 | 티어 5 던전 | (시그니처 없음) | ring_of_protection 20% | ≈5.0회 |
 
@@ -138,7 +138,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 |------|------|------|-----------|--------|------|
 | 1 | goblin_sword·small_sword (1d4), spear (1d6) | 1d4~1d6 | 1,500~3,500 | 몬스터 10% 드랍, 상점 | 있음 |
 | 2 | iron_sword | 1d8 | 10,000 | orc_boss 무장·확정 드랍, 월드 드랍 1% (상점 비판매) | 있음 |
-| 3 | steel_longsword (가칭) | 1d10 | 16,000 | 티어 3 던전 무장 몬스터 + 보스 | **신규 애셋 필요** |
+| 3 | steel_longsword (가칭) | 1d10 | 16,000 | 티어 3 던전 무장 몬스터 + 보스 | **신규 애셋 필요** — 그때까지 ogre_boss는 greatclub(600c) 확정 드랍 |
 | 4 | claymore (가칭) | 2d6 | 28,000 | 티어 4 던전 무장 몬스터 + 보스 | **신규 애셋 필요** |
 | 5 | rune_blade (가칭) | 2d8 | 50,000 | 티어 5 보스 20% 롤 (ring_of_protection과 동일 철학) | **신규 애셋 필요** |
 
@@ -165,5 +165,5 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 3. 특수 망토·장신구 효과 시스템 — 투명은 서버 측 가시성 처리, 사망 방지·재생은 서버 전투 로직.
 4. **유저 간 거래 시스템.** 현재 `trading.rs`는 NPC 상인뿐, P2P 거래 미구현 — 월드 드랍 희소템 컨셉의 전제.
 5. 몬스터 월드 드랍 경로 — 사망 시 무기 드랍(`weapon_drop_chance`, `combat.rs`)을 희소템 롤로 확장.
-6. 신규 던전 3개 — 티어 3 → 4 → 5 순 (드랍 구성은 티어 로드맵 참조). 던전 생성기 변경 시 골든 해시 게이트 준수, chestTier·chestChance 지정 시 `chest_tiers_gate_endgame_loot_by_dungeon` 테스트 갱신.
+6. 신규 던전 2개 — 티어 4 → 5 순 (드랍 구성은 티어 로드맵 참조). 던전 생성기 변경 시 골든 해시 게이트 준수, chestTier·chestChance 지정 시 `chest_tiers_gate_endgame_loot_by_dungeon` 테스트 갱신.
 7. 월드 드랍 희소템 경제(특수 망토·셔츠·상위 장신구 + 유저 간 거래)는 마지막 단계로.

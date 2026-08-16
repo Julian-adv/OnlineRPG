@@ -1,3 +1,4 @@
 id,name,x,y,z,chestDrops,floors,boss,chestTier,entranceDir
 old_crypt,Old Crypt,-1450,0.7,4720,leather_helmet,5,goblin_boss,1,
 orc_warrens,Orc Warrens,-1616,1.05,4918,leather_armor,10,orc_boss,2,s
+ogre_stronghold,Ogre Stronghold,-1785.2,1.4,5072.3,chain_mail,15,ogre_boss,3,s

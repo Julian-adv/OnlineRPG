@@ -5,7 +5,7 @@
 # npc_token) stays untouched — those are authoritative on the remote.
 set -euo pipefail
 
-REMOTE=${REMOTE:-nexus}
+REMOTE=${REMOTE:-prod}
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SRC="$REPO/data/terrain/"
 DST="$REMOTE:work/OnlineRPG/data/terrain/"

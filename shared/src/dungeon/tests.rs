@@ -70,8 +70,8 @@ fn golden_layout_hash() {
 
 /// The registry's per-dungeon `boss`, `floors` and `entranceDir` columns
 /// drive generation: orc_warrens is 10 floors deep, its chest is guarded by
-/// orc_boss and its entrance door opens south (+z), while old_crypt keeps
-/// goblin_boss.
+/// orc_boss and its entrance door opens south (+z), ogre_stronghold reaches
+/// 15 under ogre_boss, while old_crypt keeps goblin_boss.
 #[test]
 fn per_dungeon_boss_floors_and_entrance_dir() {
     fn final_boss(floors: &[FloorLayout]) -> &SpawnSpec {
@@ -91,6 +91,11 @@ fn per_dungeon_boss_floors_and_entrance_dir() {
         "entranceDir=s: entry landing at the +z end, door facing south"
     );
     assert_eq!(final_boss(&floors).monster_type, "orc_boss");
+
+    let floors = generate_dungeon_for("ogre_stronghold");
+    assert_eq!(floors.len(), 15, "a deep dungeon must not dead-end early");
+    assert_eq!(final_boss(&floors).monster_type, "ogre_boss");
+
     assert_eq!(
         final_boss(&generate_dungeon_for("old_crypt")).monster_type,
         BOSS_MONSTER_TYPE

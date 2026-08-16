@@ -288,9 +288,10 @@ fn world_state_names_the_dungeon_entrances() {
         .map(str::to_string)
         .collect();
 
-    // Nearest first, and the far one is listed too — the world state is
-    // the only place its name can be learned.
-    assert_eq!(lines.len(), 2, "{lines:?}");
+    // Nearest first, and the far ones are listed too — the world state is
+    // the only place their names can be learned.
+    assert_eq!(lines.len(), 3, "{lines:?}");
     assert!(lines[0].contains("Old Crypt"), "{lines:?}");
     assert!(lines[1].contains("Orc Warrens"), "{lines:?}");
+    assert!(lines[2].contains("Ogre Stronghold"), "{lines:?}");
 }
