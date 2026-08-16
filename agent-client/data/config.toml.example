@@ -26,12 +26,13 @@ account = "npc_example"
 # the agent's map, event feed and full LLM prompts, so keep it off loopback.
 # watch_port = 8808
 
-# LLM backend to use: "none", "claude", "openrouter", "codex", "openai"
+# LLM backend to use: "none", "claude", "openrouter", "codex", "openai", "minimax"
 # - none: no LLM driver; schedule and monster AI drive the NPC on their own
 # - claude: Claude CLI (stdio subprocess)
 # - openrouter: OpenRouter API (HTTP, any model)
 # - codex: Codex CLI (stdio subprocess)
 # - openai: any OpenAI-compatible chat completions endpoint (HTTP)
+# - minimax: direct MiniMax API using the Anthropic-compatible or OpenAI-compatible protocol
 llm = "none"
 
 # LLM timing (seconds)
@@ -77,6 +78,21 @@ system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
 
+# MiniMax API settings (used when llm = "minimax")
+[minimax]
+# api_key = "..."                              # Or set MINIMAX_API_KEY
+model = "MiniMax-M3"                           # Also supports MiniMax-M2.7
+region = "global_en"                           # "global_en" or "cn_zh"
+protocol = "anthropic"                         # "anthropic" or "openai"
+global_openai_base_url = "https://api.minimax.io/v1"
+global_anthropic_base_url = "https://api.minimax.io/anthropic"
+cn_openai_base_url = "https://api.minimaxi.com/v1"
+cn_anthropic_base_url = "https://api.minimaxi.com/anthropic"
+system_prompt_file = "data/system_prompt.txt"
+max_tokens = 1024
+temperature = 0.7
+# thinking = "adaptive"                        # "adaptive" or "disabled"; omit for the protocol default
+
 # Codex CLI settings (used when llm = "codex")
 # Requires `codex` CLI installed (npm i -g @openai/codex) and OPENAI_API_KEY set.
 [codex]
@@ -89,7 +105,7 @@ system_prompt_file = "data/system_prompt.txt"
 [openai]
 base_url = "https://ollama.com/v1"             # Origin + path prefix; code appends /chat/completions
 # api_key = "..."                              # Or set OPENAI_COMPAT_API_KEY env var; omit if no auth needed
-model = "minimax-m3"                           # Any model ID the endpoint accepts
+model = "some-model"                           # Any model ID the endpoint accepts
 system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
