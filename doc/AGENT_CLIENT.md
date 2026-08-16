@@ -227,6 +227,10 @@ openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`
 - `reasoning_effort` 기본값은 `"none"`이다. 같은 라우터에서도 모델마다 수용 여부가
   달라(opencode.ai Zen의 deepseek-v4-pro는 거절, minimax-m3는 허용) `""`로 두면
   필드 자체를 생략한다.
+- `max_messages`(기본 41 = system + 20쌍)는 매 호출에 실어 보내는 히스토리 길이다.
+  넘치면 system 프롬프트와 최근 턴만 남긴다. 3 미만은 3으로 올려 받는다 — 그 아래면
+  트림이 system이나 지금 보내는 턴을 잘라내고 usize 언더플로로 패닉한다. 이 설정은
+  `openai` 백엔드 전용이고, openrouter는 기본값 고정이다.
 
 ### 호출 타임아웃 (`request_timeout_secs`, 기본 120)
 

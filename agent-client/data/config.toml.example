@@ -94,6 +94,7 @@ system_prompt_file = "data/system_prompt.txt"
 max_tokens = 1024                              # Max response tokens
 temperature = 0.7
 reasoning_effort = "none"                      # "none"/"low"/"medium"/"high"; "" omits it for models that reject it
+max_messages = 41                              # History per call incl. system prompt; values under 3 are raised to 3
 
 # --- Multi-NPC Orchestrator Mode ---
 # When [[npcs]] is present, legacy single-NPC fields above are ignored.
