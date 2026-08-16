@@ -161,6 +161,55 @@ pub struct OnlineFriend {
 /// (`FRIEND_REQUEST_TTL_MS` in `friendStore.ts`).
 pub const FRIEND_REQUEST_TTL: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How long a player-trade request stays answerable. `PARTY_INVITE_TTL`'s
+/// length for the same reason: trading is an offer to meet *now*.
+pub const PLAYER_TRADE_REQUEST_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long an open trade session survives without either side touching it.
+/// Long, because haggling has real pauses — but bounded, because an offered
+/// item is reserved out of its owner's other actions (doc/TRADE.md).
+pub const PLAYER_TRADE_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// One item in a player-trade offer. Carries `enchant` because +0 and +7 are
+/// otherwise indistinguishable, which is the cleanest scam in the system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTradeItem {
+    pub instance_id: u64,
+    pub item_def_id: String,
+    pub quantity: u32,
+    pub enchant: i32,
+}
+
+/// What a client asks to put on the table: whole-offer, never a delta, so a
+/// dropped packet cannot desync the two windows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTradeSlot {
+    pub instance_id: u64,
+    pub quantity: u32,
+}
+
+/// One side of a live trade as the server sees it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTradeSide {
+    pub player_id: PlayerId,
+    pub name: String,
+    pub items: Vec<PlayerTradeItem>,
+    pub copper: i64,
+    pub locked: bool,
+    pub confirmed: bool,
+}
+
+/// The whole session, re-sent on every change. `you` is always the recipient's
+/// own side, so each client gets its own view of the same revision.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerTradeState {
+    /// Bumped on every offer change. A `PlayerTradeConfirm` naming a stale
+    /// revision is refused — this is what defeats the last-second swap.
+    pub revision: u32,
+    pub you: PlayerTradeSide,
+    pub them: PlayerTradeSide,
+}
+
 /// Web client's rendering environment, so performance complaints can be
 /// matched against actual hardware. The client sends it after entering the
 /// game, but only when the environment changed since the last report. Field
@@ -493,6 +542,40 @@ pub enum ClientMessage {
     DeclineTrade {
         merchant_player_id: PlayerId,
     },
+    /// Ask a named online player to trade. Name-based like `PartyInvite`, but
+    /// unlike it the target must also be within `MAX_TRADE_DISTANCE`.
+    PlayerTradeRequest {
+        target_name: String,
+    },
+    /// Open a trade directly against a laid-out stall. Setting a stall out is
+    /// the owner's standing consent, so this skips the request step.
+    PlayerTradeAtStall {
+        stall_id: u64,
+    },
+    /// Accept or decline a pending trade request from `requester_id`.
+    PlayerTradeRespond {
+        requester_id: PlayerId,
+        accept: bool,
+    },
+    /// Replace the sender's whole side of the table. Whole-offer rather than
+    /// add/remove so the server never has to reconcile a partial view.
+    PlayerTradeSetOffer {
+        items: Vec<PlayerTradeSlot>,
+        copper: i64,
+    },
+    /// Freeze the sender's side at `revision`. Refused if the revision moved.
+    PlayerTradeLock {
+        revision: u32,
+    },
+    /// Reopen the sender's side for edits, clearing both confirmations.
+    PlayerTradeUnlock,
+    /// Commit the sender's side. Both sides confirmed at the same revision
+    /// executes the swap; a stale revision is refused.
+    PlayerTradeConfirm {
+        revision: u32,
+    },
+    /// Abandon the session, releasing both sides' reservations.
+    PlayerTradeCancel,
     /// Invite a named player to the sender's party. Name-based like whisper:
     /// the target may be outside the sender's AOI.
     PartyInvite {
@@ -727,6 +810,35 @@ pub enum ServerMessage {
     PartyInviteResult {
         target_name: String,
         accepted: bool,
+        message: String,
+    },
+    /// Direct to the target: a trade request to answer with
+    /// `PlayerTradeRespond` before it expires server-side.
+    PlayerTradeRequested {
+        requester_id: PlayerId,
+        requester_name: String,
+    },
+    /// Direct to the requester: the request's outcome.
+    PlayerTradeRequestResult {
+        target_name: String,
+        accepted: bool,
+        message: String,
+    },
+    /// The full session after any change, to both sides. `you` is the
+    /// recipient's own side; the offered items double as the client's
+    /// authoritative reservation list for greying out bag slots.
+    PlayerTradeUpdate {
+        state: PlayerTradeState,
+    },
+    /// The session is over. `completed` separates a finished swap from a
+    /// cancel, an expiry, or a failed commit.
+    PlayerTradeEnded {
+        completed: bool,
+        message: String,
+    },
+    /// A rejected action inside a live session (stale revision, overweight,
+    /// untradeable item). The session survives; the window shows the reason.
+    PlayerTradeError {
         message: String,
     },
     /// Direct to each other party member when one reads a summoning scroll:

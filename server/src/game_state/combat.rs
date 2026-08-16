@@ -967,6 +967,8 @@ impl super::GameState {
         self.cancel_concentration_if_active(player_id).await;
         self.cancel_food_regeneration(player_id).await;
         self.clear_debuffs(player_id).await;
+        self.drop_player_trade(player_id, "They were defeated.")
+            .await;
         self.apply_player_death_penalty(player_id).await;
     }
 

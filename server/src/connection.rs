@@ -1662,6 +1662,61 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::PlayerTradeRequest { target_name } => {
+            if let Some(id) = &state.player_id {
+                game_state.request_player_trade(id, &target_name).await;
+            }
+        }
+
+        ClientMessage::PlayerTradeAtStall { stall_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.request_player_trade_at_stall(id, stall_id).await;
+            }
+        }
+
+        ClientMessage::PlayerTradeRespond {
+            requester_id,
+            accept,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .respond_player_trade(id, &requester_id, accept)
+                    .await;
+            }
+        }
+
+        ClientMessage::PlayerTradeSetOffer { items, copper } => {
+            if let Some(id) = &state.player_id {
+                game_state.set_player_trade_offer(id, items, copper).await;
+            }
+        }
+
+        ClientMessage::PlayerTradeLock { revision } => {
+            if let Some(id) = &state.player_id {
+                game_state.lock_player_trade(id, revision).await;
+            }
+        }
+
+        ClientMessage::PlayerTradeUnlock => {
+            if let Some(id) = &state.player_id {
+                game_state.unlock_player_trade(id).await;
+            }
+        }
+
+        ClientMessage::PlayerTradeConfirm { revision } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .confirm_player_trade(id, revision, auth_service)
+                    .await;
+            }
+        }
+
+        ClientMessage::PlayerTradeCancel => {
+            if let Some(id) = &state.player_id {
+                game_state.cancel_player_trade(id).await;
+            }
+        }
+
         ClientMessage::PartySummonRespond { caster_id, accept } => {
             if let Some(id) = &state.player_id {
                 game_state

@@ -21,6 +21,7 @@ function makeActions() {
     moveToGround: vi.fn(),
     castFishing: vi.fn(),
     approachAndTip: vi.fn(),
+    approachAndTradeAtStall: vi.fn(),
   } satisfies CanvasClickActions
 }
 

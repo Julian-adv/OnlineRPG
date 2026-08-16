@@ -126,7 +126,7 @@ where
     }
 }
 
-fn build_save_data(
+pub(super) fn build_save_data(
     player: &Player,
     character_id: i64,
     xp: u64,
@@ -835,6 +835,7 @@ impl super::GameState {
         self.music_performances.write().await.remove(player_id);
         self.remove_player_stall(player_id).await;
         self.remove_player_tip_hat(player_id).await;
+        self.drop_player_trade(player_id, "They left.").await;
         self.ambient_spawn_allowances
             .write()
             .await

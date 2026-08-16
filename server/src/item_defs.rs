@@ -110,6 +110,9 @@ pub struct ItemDefinition {
     /// Debuff id rolled when eaten (raw fish → food poisoning, doc/DEBUFF.md).
     #[serde(rename = "useDebuff", default)]
     pub use_debuff: Option<String>,
+    /// Blocks player-to-player trading (doc/TRADE.md).
+    #[serde(default)]
+    pub untradeable: bool,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -400,6 +403,15 @@ impl ItemDefs {
 
     pub fn stackable(&self, item_def_id: &str) -> bool {
         self.defs.get(item_def_id).is_some_and(|d| d.stackable)
+    }
+
+    /// Unknown ids count as untradeable: a def that isn't loaded can't be
+    /// weighed or priced, so it has no business crossing between players.
+    pub fn untradeable(&self, item_def_id: &str) -> bool {
+        self.defs
+            .get(item_def_id)
+            .map(|d| d.untradeable)
+            .unwrap_or(true)
     }
 
     /// The fishing catch table: every item def with a `catchWeight` — fish,

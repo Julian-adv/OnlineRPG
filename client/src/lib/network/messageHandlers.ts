@@ -70,6 +70,12 @@ import {
   type PartyMemberVitalsEntry,
 } from '../stores/partyStore'
 import {
+  dismissTradeRequest,
+  enqueueTradeRequest,
+  playerTrade,
+  playerTradeError,
+} from '../stores/playerTradeStore'
+import {
   applyFriendList,
   applyFriendsOnline,
   friendList,
@@ -536,6 +542,30 @@ export function handleServerMessage(
 
     case 'PartyInviteResult':
       addChatMessage({ text: data.message, sender: 'system' })
+      break
+
+    case 'PlayerTradeRequested':
+      enqueueTradeRequest(data.requester_id, data.requester_name)
+      break
+
+    case 'PlayerTradeRequestResult':
+      addChatMessage({ text: data.message, sender: 'system' })
+      break
+
+    case 'PlayerTradeUpdate':
+      dismissTradeRequest(data.state.them.player_id)
+      playerTradeError.set(null)
+      playerTrade.set(data.state)
+      break
+
+    case 'PlayerTradeEnded':
+      playerTrade.set(null)
+      playerTradeError.set(null)
+      addChatMessage({ text: data.message, sender: 'system' })
+      break
+
+    case 'PlayerTradeError':
+      playerTradeError.set(data.message)
       break
 
     case 'PartySummonReceived': {

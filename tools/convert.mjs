@@ -31,8 +31,8 @@ export function convertCsvFile(csvFileName) {
 
     for (let j = 0; j < headers.length; j++) {
       const key = headers[j].trim()
-      // Tolerate rows shorter than the header (trailing empty columns),
-      // matching the Rust build tool's behavior.
+      // Tolerate short rows. The Rust build tool rejects them instead, so a
+      // field-count mismatch fails the cargo build rather than this one.
       const raw = (values[j] ?? '').trim()
 
       // Parse booleans

@@ -22,6 +22,7 @@
   import {
     NPC_TRADE_RANGE_METERS,
     TIP_HAT_RANGE_METERS,
+    STALL_TRADE_RANGE_METERS,
   } from '../data/tradeConstants'
   import { tipHatManager } from '../managers/tipHatManager'
   import { tipHatDialog } from '../stores/tipHatStore'
@@ -131,6 +132,7 @@
     groundMeshes: THREE.Object3D[]
     groundItemMeshes: THREE.Object3D[]
     tipHatMeshes: THREE.Object3D[]
+    stallMeshes: THREE.Object3D[]
     monsterMeshes: THREE.Group[]
     npcMeshes?: THREE.Object3D[]
     doorMeshes: THREE.Object3D[]
@@ -148,6 +150,7 @@
     groundMeshes,
     groundItemMeshes,
     tipHatMeshes,
+    stallMeshes,
     monsterMeshes,
     npcMeshes = [],
     doorMeshes,
@@ -1249,6 +1252,16 @@
     })
   }
 
+  /** Open a trade at a clicked stall, walking up to the table first. The
+   *  stall standing there is its owner's consent, so there is no request. */
+  function approachAndTradeAtStall(
+    intent: Extract<ClickIntent, { type: 'stall' }>
+  ) {
+    approachWithin(intent, STALL_TRADE_RANGE_METERS, () =>
+      networkManager.sendPlayerTradeAtStall(intent.stallId)
+    )
+  }
+
   /** Shared walk-up for a clicked interactive prop: cancel combat, move to
    *  within reach if needed (it's a solid pillar, so stop just short), then arm
    *  `setPending` so the dungeon layer fires the break/open on arrival. */
@@ -1346,6 +1359,7 @@
       propMeshes,
       groundItemMeshes,
       tipHatMeshes,
+      stallMeshes,
       groundMeshes,
       playerPosition: {
         x: currentPlayer!.position.x,
@@ -1449,6 +1463,7 @@
         }
       },
       approachAndTip,
+      approachAndTradeAtStall,
       breakProp,
       openProp,
       moveToGround: (position, sprinting) => {

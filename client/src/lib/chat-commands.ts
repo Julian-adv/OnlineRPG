@@ -77,6 +77,7 @@ const COMMANDS: Record<string, Command> = {
   },
   '/f': { desc: 'Short form of /friend: /f add <player>' },
   '/party': { desc: 'Invite a player to your party: /party <player>' },
+  '/trade': { desc: 'Ask a nearby player to trade: /trade <player>' },
   '/p': {
     desc: 'Talk to your party and stay in party chat: /p [message]',
     run: (args) => {

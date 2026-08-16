@@ -206,6 +206,7 @@
   )
   let campfiresLayerRef = $state<GameSceneCampfiresLayer | undefined>(undefined)
   let tipHatsLayerRef = $state<GameSceneTipHatsLayer | undefined>(undefined)
+  let stallsLayerRef = $state<GameSceneStallsLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
   let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
   let signpostBubblePos = $derived(
@@ -1211,6 +1212,7 @@
     tipHatMeshes={tipHatsLayerRef?.getGroup()
       ? [tipHatsLayerRef.getGroup()!]
       : []}
+    stallMeshes={stallsLayerRef?.getGroup() ? [stallsLayerRef.getGroup()!] : []}
     {monsterModels}
     {playerAttackDuration}
     torchEffectsDisabled={!graphicsPreset.enableTorchEffects}
@@ -1241,7 +1243,7 @@
   />
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
-  <GameSceneStallsLayer />
+  <GameSceneStallsLayer bind:this={stallsLayerRef} />
   <GameSceneTipHatsLayer bind:this={tipHatsLayerRef} />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}

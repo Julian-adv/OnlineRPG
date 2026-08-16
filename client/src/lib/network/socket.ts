@@ -11,6 +11,7 @@ import type { WallDirection } from '../utils/house-geometry'
 import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
 import { resetPartyStores } from '../stores/partyStore'
 import { resetFriendStores } from '../stores/friendStore'
+import { resetPlayerTrade } from '../stores/playerTradeStore'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { monsterManager } from '../managers/monsterManager'
 import {
@@ -267,6 +268,9 @@ class NetworkManager {
       // Friendships survive, but the roster and presence arrive fresh with
       // the rejoin — until then everything on hand is stale.
       resetFriendStores()
+      // A disconnect drops any open trade server-side, so the window must
+      // not survive the reconnect either.
+      resetPlayerTrade()
       this.connect()
       const googleIdToken = getApiAuthToken()
       if (googleIdToken && this.lastCharacterId) {
@@ -646,6 +650,46 @@ class NetworkManager {
    *  or the toast expired), so its agent stops offering for a while. */
   sendDeclineTrade(merchantPlayerId: number) {
     this.sendMessage({ DeclineTrade: { merchant_player_id: merchantPlayerId } })
+  }
+
+  /** Ask a nearby player to trade (`/trade <name>`). */
+  sendPlayerTradeRequest(targetName: string) {
+    this.sendMessage({ PlayerTradeRequest: { target_name: targetName } })
+  }
+
+  /** Open a trade against a laid-out stall; no request step. */
+  sendPlayerTradeAtStall(stallId: number) {
+    this.sendMessage({ PlayerTradeAtStall: { stall_id: stallId } })
+  }
+
+  sendPlayerTradeRespond(requesterId: number, accept: boolean) {
+    this.sendMessage({
+      PlayerTradeRespond: { requester_id: requesterId, accept },
+    })
+  }
+
+  /** Replace our whole side of the table — never a delta. */
+  sendPlayerTradeSetOffer(
+    items: { instance_id: number; quantity: number }[],
+    copper: number
+  ) {
+    this.sendMessage({ PlayerTradeSetOffer: { items, copper } })
+  }
+
+  sendPlayerTradeLock(revision: number) {
+    this.sendMessage({ PlayerTradeLock: { revision } })
+  }
+
+  sendPlayerTradeUnlock() {
+    this.sendMessage('PlayerTradeUnlock')
+  }
+
+  sendPlayerTradeConfirm(revision: number) {
+    this.sendMessage({ PlayerTradeConfirm: { revision } })
+  }
+
+  sendPlayerTradeCancel() {
+    this.sendMessage('PlayerTradeCancel')
   }
 
   /** Invite a player to the party by name (the friend panel's button; typed
