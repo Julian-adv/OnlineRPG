@@ -42,6 +42,10 @@
     {
       "monsterType": "ogre",
       "maxDistance": 60
+    },
+    {
+      "monsterType": "troll",
+      "maxDistance": 60
     }
   ]
 }
