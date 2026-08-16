@@ -1,5 +1,5 @@
 id,npcName,class,wishlist,wishlistRatePercent,salaryPerDay,walletCap,keepsakes,loadout
 rica,Rica,merchant,,,,,,
 karl,Karl,guard,torch;dagger,120,5000,30000,,spear;leather_armor;leather_helmet;leather_pants;leather_boots
-signe,Signe,bard,,,,,mandolin;worn_mandolin,
+signe,Signe,bard,,,,,mandolin;worn_mandolin,worn_torch;tip_hat
 wick,Wick,merchant,,,,,,

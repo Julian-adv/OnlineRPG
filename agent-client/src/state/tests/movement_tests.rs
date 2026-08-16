@@ -164,3 +164,56 @@ fn a_dungeon_name_resolves_however_it_is_written() {
         );
     }
 }
+
+fn tip_hat(owner: PlayerId) -> onlinerpg_shared::tip_hat::TipHat {
+    onlinerpg_shared::tip_hat::TipHat {
+        id: 900,
+        owner,
+        owner_name: "Me".to_string(),
+        position: p(0.0, 0.0, 2.0),
+        rotation: 0.0,
+        floor_level: 0,
+    }
+}
+
+/// A schedule departure folds our stall and picks our hat up by using the
+/// hat item; someone else's hat is not ours to touch.
+#[tokio::test]
+async fn packing_up_before_leaving_folds_our_stall_and_tip_hat() {
+    let (mut s, mut rx) = test_state();
+    let me = test_player(0.0, 0.0);
+    s.self_player_id = Some(me.id);
+    s.self_player = Some(me);
+    s.self_bag = vec![onlinerpg_shared::inventory::ItemInstance {
+        instance_id: 41,
+        item_def_id: "tip_hat".to_string(),
+        quantity: 1,
+        enchant: 0,
+    }];
+
+    s.tip_hats.insert(900, tip_hat(PlayerId::from(2)));
+    s.pack_up_placeables("test").await;
+    assert!(rx.try_recv().is_err(), "another busker's hat is left alone");
+
+    s.tip_hats.insert(900, tip_hat(PlayerId::from(1)));
+    s.stalls.insert(
+        77,
+        onlinerpg_shared::stall::Stall {
+            id: 77,
+            owner: PlayerId::from(1),
+            position: p(0.0, 0.0, 1.0),
+            rotation: 0.0,
+            floor_level: 0,
+        },
+    );
+    assert!(s.own_tip_hat().is_some());
+    s.pack_up_placeables("test").await;
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(ClientMessage::ChatMessage { message }) if message == "/pack_stall"
+    ));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(ClientMessage::UseItem { instance_id: 41 })
+    ));
+}

@@ -192,6 +192,40 @@ impl SharedState {
         Some(name)
     }
 
+    /// This agent's own tip hat, if one is set down.
+    pub fn own_tip_hat(&self) -> Option<&onlinerpg_shared::tip_hat::TipHat> {
+        self.self_player_id
+            .and_then(|id| self.tip_hats.values().find(|h| h.owner == id))
+    }
+
+    /// Fold our stall and pick up our tip hat before walking off — the net
+    /// for a departure the LLM did not wrap up itself.
+    pub async fn pack_up_placeables(&mut self, label: &str) {
+        if self.own_stall().is_some() {
+            tracing::info!("[{label}] Stall still out — packing it up");
+            let pack = ClientMessage::ChatMessage {
+                message: "/pack_stall".to_string(),
+            };
+            if let Err(e) = self.send_command(pack).await {
+                tracing::error!("[{label}] Failed to send /pack_stall: {e}");
+            }
+        }
+        if self.own_tip_hat().is_some() {
+            let hat = self
+                .self_bag
+                .iter()
+                .find(|i| crate::item_defs::get(&i.item_def_id).is_some_and(|d| d.is_tip_hat()))
+                .map(|i| i.instance_id);
+            if let Some(instance_id) = hat {
+                tracing::info!("[{label}] Tip hat still out — picking it up");
+                let cmd = ClientMessage::UseItem { instance_id };
+                if let Err(e) = self.send_command(cmd).await {
+                    tracing::error!("[{label}] Failed to pick up the tip hat: {e}");
+                }
+            }
+        }
+    }
+
     /// Our floor as a passability cache index, for path queries. Standing on a
     /// stair shaft this is the floor the shaft's cells are keyed to, which is
     /// not always the floor we are nearest — see `pathfinding::start_floor_at`.

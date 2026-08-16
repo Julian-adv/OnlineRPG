@@ -33,6 +33,11 @@ impl ItemDef {
     pub fn is_instrument(&self) -> bool {
         self.category.as_deref() == Some("instrument")
     }
+
+    /// Using it sets a tip hat down or picks it back up (server's toggle).
+    pub fn is_tip_hat(&self) -> bool {
+        self.category.as_deref() == Some("tip_hat")
+    }
 }
 
 fn defs() -> &'static HashMap<String, ItemDef> {

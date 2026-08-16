@@ -89,17 +89,7 @@ pub(super) async fn check_schedule_transition(
                     error!("[{label}] Failed to send StopInteraction: {e}");
                 }
             }
-            // A scheduled departure with the stall still laid means the LLM
-            // forgot to pack — fold it rather than walk off with it out.
-            if s.own_stall().is_some() {
-                info!("[{label}] Stall still out at schedule transition — packing it up");
-                let pack = ClientMessage::ChatMessage {
-                    message: "/pack_stall".to_string(),
-                };
-                if let Err(e) = s.send_command(pack).await {
-                    error!("[{label}] Failed to send /pack_stall: {e}");
-                }
-            }
+            s.pack_up_placeables(label).await;
         }
 
         if let Some(i) = new.0 {
