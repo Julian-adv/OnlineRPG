@@ -58,6 +58,12 @@ export interface MonsterDefinition {
   weaponDropChance?: number
   /** Skeleton bone name the weapon is parented to (e.g. 'RightHand'). */
   weaponBone?: string
+  /** Metres along the weapon bone's local +Y — wrist toward fingers. The hand
+   * bone sits at the wrist, so without it the weapon hangs off the wrist.
+   * Aim for the knuckle line, as the player's own 0.08 does; measure where the
+   * hand's finger bases sit in bone space rather than trusting the finger
+   * joint, which auto-rigs misplace (the ogre's is 0.24). */
+  weaponOffset?: number
   /** Play the shared character packs; only for models rigged on the character
    * skeleton, which then ship no clips of their own. */
   sharedAnims?: boolean
