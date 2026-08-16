@@ -29,7 +29,15 @@ pub struct OpenAiConfig {
     /// budget goes to the reply; "" omits the field for models that reject an
     /// unrecognized value.
     pub reasoning_effort: String,
+    /// Conversation history carried per call, system prompt included.
+    pub max_messages: usize,
 }
+
+/// System prompt plus 20 user/assistant pairs. OpenRouter still uses it.
+pub const DEFAULT_MAX_MESSAGES: usize = 41;
+
+/// Below this the trim would drop the system prompt or the turn being sent.
+const MIN_MAX_MESSAGES: usize = 3;
 
 impl Default for OpenAiConfig {
     fn default() -> Self {
@@ -41,6 +49,7 @@ impl Default for OpenAiConfig {
             max_tokens: 1024,
             temperature: 0.7,
             reasoning_effort: "none".to_string(),
+            max_messages: DEFAULT_MAX_MESSAGES,
         }
     }
 }
@@ -74,6 +83,8 @@ impl OpenAiConfig {
             temperature: self.temperature,
             reasoning_effort: (!self.reasoning_effort.is_empty())
                 .then(|| self.reasoning_effort.clone()),
+            // Clamped, not rejected: a bad value should still start.
+            max_messages: self.max_messages.max(MIN_MAX_MESSAGES),
         })
     }
 }
@@ -88,6 +99,7 @@ pub struct Endpoint {
     pub max_tokens: u32,
     pub temperature: f32,
     pub reasoning_effort: Option<String>,
+    pub max_messages: usize,
 }
 
 #[derive(Serialize)]
@@ -208,11 +220,11 @@ impl LlmBackend for OpenAiInvoker {
             content: content.to_string(),
         });
 
-        // Trim conversation history if it gets too long (keep system + last 20 turns)
-        const MAX_MESSAGES: usize = 41; // system + 20 user/assistant pairs
-        if turn.len() > MAX_MESSAGES {
+        // Keep the system prompt plus the most recent turns, up to the cap.
+        let max_messages = self.endpoint.max_messages.max(MIN_MAX_MESSAGES);
+        if turn.len() > max_messages {
             let system = turn[0].clone();
-            let keep_from = turn.len() - (MAX_MESSAGES - 1);
+            let keep_from = turn.len() - (max_messages - 1);
             turn = std::iter::once(system)
                 .chain(turn[keep_from..].iter().cloned())
                 .collect();
@@ -273,6 +285,20 @@ mod tests {
         }
         .endpoint()
         .is_err());
+    }
+
+    /// The trim subtracts `max_messages - 1` from a Vec length: under 3 that
+    /// underflows a usize and panics mid-turn.
+    #[test]
+    fn max_messages_never_resolves_below_the_trim_floor() {
+        let mut cfg = config("http://host/v1");
+        assert_eq!(cfg.endpoint().unwrap().max_messages, DEFAULT_MAX_MESSAGES);
+        for asked in [0, 1, 2] {
+            cfg.max_messages = asked;
+            assert_eq!(cfg.endpoint().unwrap().max_messages, MIN_MAX_MESSAGES);
+        }
+        cfg.max_messages = 9;
+        assert_eq!(cfg.endpoint().unwrap().max_messages, 9);
     }
 
     #[test]

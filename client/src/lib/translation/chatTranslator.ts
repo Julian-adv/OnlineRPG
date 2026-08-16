@@ -2,6 +2,11 @@
 // is auto-detected per message (chat has many speakers, not one fixed
 // source); instances are cached so repeat language pairs/detection don't each
 // pay model-load cost.
+//
+// Electron has no Translator API, so the agent-client answers from its own
+// LLM endpoint and this stays the browser's path.
+
+import { translateViaHost } from './llmTranslator'
 
 export function isTranslatorApiSupported(): boolean {
   return (
@@ -68,6 +73,8 @@ export async function translateChatText(
   text: string,
   targetLanguage: string
 ): Promise<string> {
+  const viaHost = await translateViaHost(text, targetLanguage)
+  if (viaHost !== null) return viaHost
   try {
     const sourceLanguage = await detectLanguage(text)
     if (!sourceLanguage || sourceLanguage === targetLanguage) return text
