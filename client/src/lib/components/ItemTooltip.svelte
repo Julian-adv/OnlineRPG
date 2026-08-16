@@ -57,6 +57,8 @@
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 6px;
     pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
     z-index: 100;
     font-family: 'Courier New', monospace;
     color: #e6edf3;

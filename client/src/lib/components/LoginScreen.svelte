@@ -273,6 +273,8 @@
     text-align: center;
     font-family:
       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   .error-message {
@@ -285,6 +287,8 @@
     font-size: 13px;
     font-family:
       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   @media (max-width: 600px), (max-height: 700px) {
