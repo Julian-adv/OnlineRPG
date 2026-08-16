@@ -52,7 +52,7 @@
     Meshy 원본이 1cm 크기로 들어와 mesh/armature data를 직접 스케일했다.
     작업 blend는 `assets/ogre.blend`(HF 동기화). 소스는 `assets/ogre.fbx` 하나만 보관
   - 리그가 33본뿐이라(손가락은 검지 체인만) 공용 팩을 리타게팅해도 나머지 손가락은 움직이지 않는다.
-    무기 부착점 `RightHand`는 있다
+    무기는 `RightHand`에 greatclub(1.5m, 오거 키에 맞춰 sword 1.20m보다 길게)
 - kobold https://create.verse8.io/ 에서 2d -> 3d 생성함
   - 원화는 chatgpt.com에서 다음 프롬프트로 생성함
     > d&d 혹은 nethack에 나오는 kobold를 3d로 제작할 수 있게 T자형 포즈로 그려줘
