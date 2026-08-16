@@ -33,7 +33,6 @@ const ANIMATION_SOURCE_BY_NAME: Record<AnimationName, AnimationSource> = {
   [AnimationName.SLASH2]: 'combat_melee',
   [AnimationName.SLASH3]: 'combat_melee',
   [AnimationName.SLASH4]: 'combat_melee',
-  [AnimationName.SLASH5]: 'combat_melee',
   [AnimationName.ATTACK1]: 'combat_melee',
   [AnimationName.ATTACK2]: 'combat_melee',
   [AnimationName.ATTACK3]: 'combat_melee',
