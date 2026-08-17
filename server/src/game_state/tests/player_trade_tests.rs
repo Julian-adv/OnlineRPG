@@ -178,9 +178,10 @@ async fn a_completed_trade_moves_items_and_coin_once() {
     assert!(saved_b.iter().any(|r| r.item_def_id == "healing_potion"));
     let reloaded = pair
         .auth
-        .list_characters(&pair.account)
+        .list_characters_with_equipment(&pair.account)
         .unwrap()
         .into_iter()
+        .map(|(record, _)| record)
         .find(|c| c.id == pair.a_record.id)
         .unwrap();
     assert_eq!(reloaded.gold, 400);

@@ -15,6 +15,7 @@ use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use onlinerpg_shared::deserialize_client_msg;
 use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::VisibleEquipment;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -564,8 +565,8 @@ pub async fn handle_connection(
     }
 }
 
-/// Shared tail of both auth paths: load characters, replace any account
-/// session, and build the AuthSuccess reply.
+/// Shared tail of both auth paths: replace any account session, load
+/// characters, and build the AuthSuccess reply.
 async fn finish_auth(
     game_state: &GameState,
     auth_service: &AuthService,
@@ -573,24 +574,6 @@ async fn finish_auth(
     account_name: String,
     is_official_npc: bool,
 ) -> Vec<ServerMessage> {
-    let character_records = match auth_service.list_characters(&account_name) {
-        Ok(characters) => characters,
-        Err(err) => {
-            warn!(
-                "Failed to load character list for account '{}': {}",
-                account_name, err
-            );
-            return vec![ServerMessage::AuthError {
-                message: err.client_message().to_string(),
-            }];
-        }
-    };
-
-    let characters = character_records
-        .into_iter()
-        .map(character_record_to_shared)
-        .collect::<Vec<Character>>();
-
     let (kick_tx, kick_rx) = mpsc::unbounded_channel();
 
     // The single gate both login paths pass through: a ban stops the session
@@ -630,6 +613,30 @@ async fn finish_auth(
     state.account_rx = Some(kick_rx);
     state.is_official_npc = is_official_npc;
     state.pending_character_attributes = None;
+
+    // Read only after the session gate: replacing an account's previous
+    // session persists that player first, so returning to character select
+    // from the game shows the gear and level the character just had.
+    let listed = {
+        let auth = auth_service.clone();
+        let account = account_name.clone();
+        crate::game_state::auth_db(move || auth.list_characters_with_equipment(&account)).await
+    };
+    let characters = match listed {
+        Ok(records) => records
+            .into_iter()
+            .map(|(record, worn)| character_record_to_shared(record, worn))
+            .collect::<Vec<Character>>(),
+        Err(err) => {
+            warn!(
+                "Failed to load character list for account '{}': {}",
+                account_name, err
+            );
+            return vec![ServerMessage::AuthError {
+                message: err.client_message().to_string(),
+            }];
+        }
+    };
 
     info!(
         "Account '{}' authenticated successfully with {} character(s)",
@@ -867,8 +874,9 @@ async fn handle_client_message(
                         "Character '{}' created for account '{}'",
                         character.name, authed_account_name
                     );
+                    let worn = visible_equipment_of(auth_service, character.id).await;
                     return Ok(vec![ServerMessage::CharacterCreated {
-                        character: character_record_to_shared(character),
+                        character: character_record_to_shared(character, worn),
                     }]);
                 }
                 Err(err) => {
@@ -1892,7 +1900,10 @@ async fn handle_client_message(
     Ok(vec![])
 }
 
-fn character_record_to_shared(record: crate::auth::CharacterRecord) -> Character {
+fn character_record_to_shared(
+    record: crate::auth::CharacterRecord,
+    equipment: VisibleEquipment,
+) -> Character {
     Character {
         id: record.id,
         name: record.name,
@@ -1903,7 +1914,20 @@ fn character_record_to_shared(record: crate::auth::CharacterRecord) -> Character
         attributes: record.attributes,
         class: record.class,
         gender: record.gender,
+        equipment,
     }
+}
+
+/// Preview gear for one character. A failed lookup only costs the select
+/// screen its weapons, so it logs and yields nothing worn.
+async fn visible_equipment_of(auth_service: &AuthService, character_id: i64) -> VisibleEquipment {
+    let auth = auth_service.clone();
+    crate::game_state::auth_db(move || auth.load_character_equipment(character_id))
+        .await
+        .unwrap_or_else(|err| {
+            warn!("Failed to load equipped items for character select: {err}");
+            VisibleEquipment::default()
+        })
 }
 
 fn default_character_max_hp(

@@ -982,6 +982,7 @@ mod tests {
             },
             class,
             gender,
+            equipment: Default::default(),
         }
     }
 

@@ -198,6 +198,15 @@ function findPrimarySkinnedMesh(
   return bestMatch
 }
 
+/** Named bone on the rig a character model is skinned to. */
+export function findBoneByName(
+  root: THREE.Object3D,
+  name: string
+): THREE.Bone | undefined {
+  const skinnedMesh = findPrimarySkinnedMesh(root)
+  return skinnedMesh?.skeleton.bones.find((bone) => bone.name === name)
+}
+
 function quaternionDistance(a: THREE.Quaternion, b: THREE.Quaternion): number {
   const direct = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w)
   const negated = Math.hypot(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w)

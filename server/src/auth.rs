@@ -1,9 +1,10 @@
 use crate::types::{CharacterAttributes, GameDateTime};
 use crate::world_config::world_config;
-use onlinerpg_shared::{CharacterClass, Gender};
+use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::{CharacterClass, Gender, VisibleEquipment};
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, Connection, OptionalExtension};
-use std::collections::HashSet;
+use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
@@ -230,6 +231,75 @@ fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterR
             .unwrap_or(i64::from(onlinerpg_shared::hunger::SATIATION_START))
             .clamp(0, i64::from(onlinerpg_shared::hunger::SATIATION_MAX)) as u32,
     })
+}
+
+fn read_characters(
+    conn: &Connection,
+    account_name: &str,
+) -> Result<Vec<CharacterRecord>, AuthError> {
+    let account_name = account_name.trim();
+    if account_name.is_empty() {
+        return Err(AuthError::InvalidInput("Account name is required"));
+    }
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {}
+         FROM characters
+         WHERE account_name = ?1
+         ORDER BY created_at ASC, id ASC",
+        CHARACTER_COLUMNS
+    ))?;
+
+    let characters = stmt
+        .query_map(params![account_name], character_record_from_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(characters)
+}
+
+/// Slots the character-select preview draws.
+const PREVIEW_EQUIP_SLOTS: [EquipSlot; 3] =
+    [EquipSlot::MainHand, EquipSlot::OffHand, EquipSlot::Back];
+
+/// The preview's gear for a whole account in one query rather than one per
+/// character.
+fn read_visible_equipment(
+    conn: &Connection,
+    character_ids: &[i64],
+) -> Result<HashMap<i64, VisibleEquipment>, AuthError> {
+    if character_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let slots = PREVIEW_EQUIP_SLOTS.map(|slot| format!("'{}'", slot.as_str()));
+    let mut stmt = conn.prepare(&format!(
+        "SELECT character_id, equip_slot, item_def_id
+         FROM character_items
+         WHERE character_id IN ({})
+           AND equip_slot IN ({})",
+        vec!["?"; character_ids.len()].join(","),
+        slots.join(",")
+    ))?;
+
+    let rows = stmt.query_map(params_from_iter(character_ids), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+
+    let mut equipment: HashMap<i64, VisibleEquipment> = HashMap::new();
+    for row in rows {
+        let (character_id, slot, item_def_id) = row?;
+        let entry = equipment.entry(character_id).or_default();
+        match slot.parse() {
+            Ok(EquipSlot::MainHand) => entry.main_hand = Some(item_def_id),
+            Ok(EquipSlot::OffHand) => entry.off_hand = Some(item_def_id),
+            Ok(EquipSlot::Back) => entry.back = Some(item_def_id),
+            _ => {}
+        }
+    }
+    Ok(equipment)
 }
 
 #[derive(Debug)]
@@ -839,26 +909,34 @@ impl AuthService {
         }
     }
 
-    pub fn list_characters(&self, account_name: &str) -> Result<Vec<CharacterRecord>, AuthError> {
-        let account_name = account_name.trim();
-        if account_name.is_empty() {
-            return Err(AuthError::InvalidInput("Account name is required"));
-        }
-
+    /// The character list plus the gear its preview draws. Both reads share one
+    /// connection: this runs on every login, so it costs one checkout, not two.
+    pub fn list_characters_with_equipment(
+        &self,
+        account_name: &str,
+    ) -> Result<Vec<(CharacterRecord, VisibleEquipment)>, AuthError> {
         let conn = self.open_connection()?;
-        let mut stmt = conn.prepare(&format!(
-            "SELECT {}
-             FROM characters
-             WHERE account_name = ?1
-             ORDER BY created_at ASC, id ASC",
-            CHARACTER_COLUMNS
-        ))?;
+        let characters = read_characters(&conn, account_name)?;
+        let ids = characters.iter().map(|c| c.id).collect::<Vec<_>>();
+        let mut equipment = read_visible_equipment(&conn, &ids)?;
+        Ok(characters
+            .into_iter()
+            .map(|record| {
+                let worn = equipment.remove(&record.id).unwrap_or_default();
+                (record, worn)
+            })
+            .collect())
+    }
 
-        let characters = stmt
-            .query_map(params![account_name], character_record_from_row)?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(characters)
+    /// The preview's gear for one character — the freshly created one.
+    pub fn load_character_equipment(
+        &self,
+        character_id: i64,
+    ) -> Result<VisibleEquipment, AuthError> {
+        let conn = self.open_connection()?;
+        Ok(read_visible_equipment(&conn, &[character_id])?
+            .remove(&character_id)
+            .unwrap_or_default())
     }
 
     /// Id and canonical name of an existing character, matched ignoring

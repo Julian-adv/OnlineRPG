@@ -67,6 +67,14 @@ export type AccountCharacter = {
   attributes: CharacterAttributes
   class: CharacterClass
   gender: Gender
+  equipment?: VisibleEquipment
+}
+
+/** Equipped item def ids the character-select preview renders. */
+export type VisibleEquipment = {
+  main_hand?: string | null
+  off_hand?: string | null
+  back?: string | null
 }
 
 export type CharacterAttributes = {

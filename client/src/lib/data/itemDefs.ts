@@ -38,6 +38,15 @@ export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
 }
 
+/** Cloth colour of the cape a back-slot item is, or undefined when it is not
+ *  one — `capeColor` is the whole test, so a future quiver sits in the slot
+ *  without becoming a sheet. */
+export function capeColorOf(
+  itemDefId: string | null | undefined
+): string | undefined {
+  return itemDefId ? getItemDef(itemDefId)?.capeColor : undefined
+}
+
 /** Tooltip lines for what an item does: `guard` (with any armor enchant folded
  *  in, as combat resolves it) then `effects`. */
 export function statLabels(def: ItemDefinition, enchant = 0): string[] {

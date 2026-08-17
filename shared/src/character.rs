@@ -168,6 +168,14 @@ pub struct CharacterAttributes {
     pub guard: u8,
 }
 
+/// The equipped item def ids that show on a character-select preview.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VisibleEquipment {
+    pub main_hand: Option<String>,
+    pub off_hand: Option<String>,
+    pub back: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Character {
     pub id: i64,
@@ -180,4 +188,6 @@ pub struct Character {
     pub class: CharacterClass,
     #[serde(default)]
     pub gender: Gender,
+    #[serde(default)]
+    pub equipment: VisibleEquipment,
 }

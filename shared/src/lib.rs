@@ -80,7 +80,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      PlayerTradeRequested/RequestResult/Update/Ended/Error.
 /// v31: `Player.back` + PlayerBackChanged, so nearby clients render a
 ///      wearer's cape.
-pub const PROTOCOL_VERSION: u32 = 31;
+/// v32: `Character.equipment`, so character select renders each character's
+///      weapon, off-hand and cape.
+pub const PROTOCOL_VERSION: u32 = 32;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -104,7 +106,7 @@ pub const CLOSE_CODE_IDLE_TIMEOUT: u16 = 4003;
 #[cfg(target_arch = "wasm32")]
 mod wasm_api;
 
-pub use character::{Character, CharacterAttributes, CharacterClass, Gender};
+pub use character::{Character, CharacterAttributes, CharacterClass, Gender, VisibleEquipment};
 pub use entity::{Monster, MonsterLifecycle, MonsterState, Player, PlayerId};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,

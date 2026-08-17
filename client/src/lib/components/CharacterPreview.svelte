@@ -6,6 +6,7 @@
   import { AnimationIndex } from '../types/animations'
   import {
     createCharacterModelRoot,
+    findBoneByName,
     getGltfAnimations,
     retargetOrderedCharacterAnimationsForModel,
     selectOrderedCharacterAnimations,
@@ -13,9 +14,33 @@
   import {
     CHARACTER_ANIMATION_PACK_PATHS,
     getCharacterModelPath,
+    getWeaponModelPath,
   } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
-  import type { CharacterClass, Gender } from '../network/networkTypes'
+  import { capeColorOf, getItemDef } from '../data/itemDefs'
+  import { isTorchItemDefId } from '../stores/inventoryStore'
+  import {
+    FALLBACK_TORCH_TIP_LOCAL_OFFSET,
+    poseMainHandProp,
+    poseOffHandProp,
+    resolveTipNode,
+  } from '../utils/handProps'
+  import { TorchFireParticles } from '../effects/fire-particles'
+  import {
+    applyTorchFlickerWorld,
+    TORCH_BASE_DECAY,
+  } from '../utils/torchFlicker'
+  import {
+    attachCapeFit,
+    capeCollarBiasFor,
+    fitCapeToSkeleton,
+    type CapeRig,
+  } from '../effects/cape-rig'
+  import type {
+    CharacterClass,
+    Gender,
+    VisibleEquipment,
+  } from '../network/networkTypes'
 
   interface Props {
     positionX: number
@@ -25,6 +50,9 @@
     selected: boolean
     characterClass: CharacterClass
     gender?: Gender
+    equipment?: VisibleEquipment
+    /** Needed to billboard the torch flame's particles. */
+    camera?: THREE.Camera
   }
 
   let {
@@ -35,6 +63,8 @@
     selected,
     characterClass,
     gender,
+    equipment,
+    camera,
   }: Props = $props()
 
   // Load via shared cache so GLBs persist across Canvas lifecycles
@@ -42,8 +72,10 @@
   let locomotionGltfData = $state<GLTF | null>(null)
   let combatMeleeGltfData = $state<GLTF | null>(null)
 
+  const modelPath = $derived(getCharacterModelPath(characterClass, gender))
+
   $effect(() => {
-    loadGLB(getCharacterModelPath(characterClass, gender)).then((g) => {
+    loadGLB(modelPath).then((g) => {
       characterGltfData = g
     })
   })
@@ -95,6 +127,87 @@
 
     newAction.play()
     currentAction = newAction
+  }
+
+  let capeRig: CapeRig | null = null
+  // Bumped on dispose so a GLB that lands afterwards doesn't attach to a
+  // discarded rig.
+  let equipGeneration = 0
+
+  let torchFire: TorchFireParticles | null = null
+  let torchFireGroup = $state<THREE.Group | null>(null)
+  let torchLight = $state<THREE.PointLight | null>(null)
+  let torchTipNode: THREE.Object3D | null = null
+  let torchFlickerTime = 0
+  const _torchTipWorld = new THREE.Vector3()
+
+  /** The select scene is lit far more dimly than the night world the torch
+   *  constants are tuned for, and the tip sits centimetres from the wearer —
+   *  at full strength the flame would blow the character out. */
+  const TORCH_LIGHT_INTENSITY_SCALE = 0.03
+  const TORCH_LIGHT_DISTANCE = 6
+
+  function attachHeldItem(
+    characterRoot: THREE.Object3D,
+    itemDefId: string | null | undefined,
+    boneName: 'RightHand' | 'LeftHand'
+  ): void {
+    if (!itemDefId) return
+    const worldModel = getItemDef(itemDefId)?.worldModel
+    if (!worldModel) return
+
+    const gen = equipGeneration
+    loadGLB(getWeaponModelPath(worldModel)).then((gltf) => {
+      const bone = findBoneByName(characterRoot, boneName)
+      if (gen !== equipGeneration || !bone) return
+
+      const prop = gltf.scene.clone()
+      if (boneName === 'RightHand') poseMainHandProp(prop, itemDefId)
+      else poseOffHandProp(prop)
+      bone.add(prop)
+
+      if (isTorchItemDefId(itemDefId)) lightTorch(prop)
+    })
+  }
+
+  /** The flame and its glow live in world space, following the tip node that
+   *  rides the hand bone. */
+  function lightTorch(torch: THREE.Object3D): void {
+    torchTipNode = resolveTipNode(
+      torch,
+      'torch_tip',
+      FALLBACK_TORCH_TIP_LOCAL_OFFSET
+    )
+    torchFire = new TorchFireParticles()
+    torchFireGroup = torchFire.group
+
+    // Starts dark; the first flicker frame places it and sets its intensity.
+    torchLight = new THREE.PointLight(
+      '#ffcc66',
+      0,
+      TORCH_LIGHT_DISTANCE,
+      TORCH_BASE_DECAY
+    )
+  }
+
+  function extinguishTorch(): void {
+    torchFire?.dispose()
+    torchFire = null
+    torchFireGroup = null
+    torchLight = null
+    torchTipNode = null
+  }
+
+  function attachEquipment(characterRoot: THREE.Object3D): void {
+    attachHeldItem(characterRoot, equipment?.main_hand, 'RightHand')
+    attachHeldItem(characterRoot, equipment?.off_hand, 'LeftHand')
+
+    const capeColor = capeColorOf(equipment?.back)
+    if (!capeColor) return
+
+    const bias = capeCollarBiasFor(modelPath)
+    const fit = fitCapeToSkeleton(characterRoot, bias, modelPath)
+    if (fit) capeRig = attachCapeFit(fit, capeColor)
   }
 
   // --- Exported interface for parent game loop ---
@@ -151,6 +264,7 @@
 
       // Set modelRoot only after animation is playing to avoid T-pose flash
       clonedScene = newClonedScene
+      attachEquipment(newClonedScene)
       footBones = []
       newModelRoot.traverse((child) => {
         if (child instanceof THREE.Bone && /foot|toe/i.test(child.name)) {
@@ -161,39 +275,70 @@
     })
   }
 
-  const _footVec = new THREE.Vector3()
+  function updateTorch(delta: number): void {
+    if (!torchFire || !torchTipNode) return
 
-  export function update(delta: number): void {
-    if (!selected || !mixer || !currentAction) return
+    torchTipNode.getWorldPosition(_torchTipWorld)
+    torchFire.setOrigin(_torchTipWorld)
+    torchFire.update(delta, camera)
 
-    mixer.update(delta)
-
-    if (clonedScene && modelRoot && footBones.length > 0) {
-      clonedScene.position.y = 0
-      modelRoot.updateMatrixWorld(true)
-
-      const groupWorldY = modelRoot.parent
-        ? modelRoot.parent.getWorldPosition(_footVec).y
-        : positionY
-      let lowestFootY = Infinity
-      for (const bone of footBones) {
-        bone.getWorldPosition(_footVec)
-        const localY = _footVec.y - groupWorldY
-        if (localY < lowestFootY) lowestFootY = localY
-      }
-      clonedScene.position.y = -lowestFootY
-    }
-
-    const clip = currentAction.getClip()
-    if (clip && clip.duration > 0) {
-      const remainingTime = clip.duration - currentAction.time
-      if (remainingTime <= OVERLAP_BEFORE_END) {
-        playIdleAnimation()
-      }
+    if (torchLight) {
+      torchFlickerTime = applyTorchFlickerWorld(
+        torchLight,
+        torchFlickerTime,
+        delta,
+        _torchTipWorld.x,
+        _torchTipWorld.y,
+        _torchTipWorld.z,
+        TORCH_LIGHT_INTENSITY_SCALE
+      )
     }
   }
 
+  const _footVec = new THREE.Vector3()
+
+  export function update(delta: number): void {
+    if (selected && mixer && currentAction) {
+      mixer.update(delta)
+
+      if (clonedScene && modelRoot && footBones.length > 0) {
+        clonedScene.position.y = 0
+        modelRoot.updateMatrixWorld(true)
+
+        const groupWorldY = modelRoot.parent
+          ? modelRoot.parent.getWorldPosition(_footVec).y
+          : positionY
+        let lowestFootY = Infinity
+        for (const bone of footBones) {
+          bone.getWorldPosition(_footVec)
+          const localY = _footVec.y - groupWorldY
+          if (localY < lowestFootY) lowestFootY = localY
+        }
+        clonedScene.position.y = -lowestFootY
+      }
+
+      const clip = currentAction.getClip()
+      if (clip && clip.duration > 0) {
+        const remainingTime = clip.duration - currentAction.time
+        if (remainingTime <= OVERLAP_BEFORE_END) {
+          playIdleAnimation()
+        }
+      }
+    }
+
+    // After the mixer, so cloth and flame ride the pose this frame draws. Both
+    // step for every slot, not just the selected one: the cloth starts in its
+    // bind pose and needs frames to fall into a hang, and an unlit torch on an
+    // unselected character reads as a bug.
+    capeRig?.update(delta, null)
+    updateTorch(delta)
+  }
+
   export function dispose(): void {
+    equipGeneration++
+    capeRig?.dispose()
+    capeRig = null
+    extinguishTorch()
     if (mixer) {
       mixer.stopAllAction()
       mixer = null
@@ -229,4 +374,11 @@
   <T.Group position={[positionX, positionY, positionZ]} rotation.y={rotationY}>
     <T is={modelRoot} />
   </T.Group>
+{/if}
+
+{#if torchFireGroup}
+  <T is={torchFireGroup} />
+{/if}
+{#if torchLight}
+  <T is={torchLight} />
 {/if}

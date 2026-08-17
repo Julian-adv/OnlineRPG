@@ -32,10 +32,18 @@
   import {
     computeSoleGroundOffset,
     createCharacterModelRoot,
+    findBoneByName,
     getGltfAnimations,
     retargetOrderedCharacterAnimationsForModel,
     selectOrderedCharacterAnimations,
   } from '../utils/characterAnimationUtils'
+  import {
+    FALLBACK_TORCH_TIP_LOCAL_OFFSET,
+    MANDOLIN_ITEM_DEF_ID,
+    poseMainHandProp,
+    poseOffHandProp,
+    resolveTipNode,
+  } from '../utils/handProps'
   import {
     CHARACTER_ANIMATION_PACK_PATHS,
     getCharacterModelPath,
@@ -45,7 +53,7 @@
   import { loadGLB } from '../utils/gltfCache'
   import { pickRandom } from '../utils/randomUtils'
   import { inventoryStore, isTorchItemDefId } from '../stores/inventoryStore'
-  import { getItemDef } from '../data/itemDefs'
+  import { capeColorOf, getItemDef } from '../data/itemDefs'
   import {
     capeCollarBiasOverride,
     capeEnabled,
@@ -240,51 +248,6 @@
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
   const _nametagPos = new THREE.Vector3()
 
-  function findPrimarySkinnedMesh(
-    root: THREE.Object3D
-  ): THREE.SkinnedMesh | undefined {
-    let primarySkinnedMesh: THREE.SkinnedMesh | undefined
-    root.traverse((obj) => {
-      if (!(obj instanceof THREE.SkinnedMesh) || !obj.skeleton) return
-      if (
-        !primarySkinnedMesh ||
-        obj.skeleton.bones.length > primarySkinnedMesh.skeleton.bones.length
-      ) {
-        primarySkinnedMesh = obj
-      }
-    })
-    return primarySkinnedMesh
-  }
-
-  function findBoneByName(
-    root: THREE.Object3D,
-    name: string
-  ): THREE.Bone | undefined {
-    const primarySkinnedMesh = findPrimarySkinnedMesh(root)
-    if (!primarySkinnedMesh) return undefined
-    return primarySkinnedMesh.skeleton.bones.find((bone) => bone.name === name)
-  }
-
-  // In the fishing stance the hand bone's y-z plane runs forward-down to
-  // sideways, so a pure x pitch only swings the rod sideways; this euler
-  // points it forward and ~25° up (about 60° bent off the forearm).
-  const FISHING_ROD_ROTATION = new THREE.Euler(0, -Math.PI / 6, -Math.PI / 3)
-
-  const MANDOLIN_ITEM_DEF_ID = 'mandolin'
-
-  // The mandolin's origin sits on the strum point with the neck along +X and
-  // the soundboard facing +Z. Fitted to the guitar_playing clip by
-  // `tools/fit-hand-prop.mjs --tilt 15 --push 0.06 --lift 0.04`: 15° hangs the
-  // body down off the chest to the waist, the lift carries the neck up onto the
-  // fretting fingers instead of through the fist, and the push trades the sound
-  // box's depth in the torso against clearance for the strumming wrist, which
-  // the clip otherwise buries in it — 0.06 leaves the wrist 1 cm proud of the
-  // face. All three pivot on the fretting hand, so none of them costs the neck
-  // that grip. The position is no longer the plain palm offset because of them:
-  // it puts the origin back where the hand can hold it.
-  const MANDOLIN_ROTATION = new THREE.Euler(-2.413, -0.409, -0.353)
-  const MANDOLIN_POSITION = new THREE.Vector3(-0.03, 0.103, 0.126)
-
   // The source cast clip keeps rod-jerking flourishes after the swing; cut
   // where the pose meets the idle stance.
   const FISHING_CAST_TRIM_S = 2.5
@@ -301,18 +264,13 @@
     }
 
     weaponObject = gltfScene.clone()
-    // Offset from wrist bone toward palm so weapon looks gripped
-    weaponObject.position.set(0, 0.08, 0)
+    poseMainHandProp(weaponObject, itemDefId)
     if (itemDefId === 'fishing_rod') {
-      weaponObject.rotation.copy(FISHING_ROD_ROTATION)
       rodTipNode = resolveTipNode(
         weaponObject,
         'rod_tip',
         FALLBACK_ROD_TIP_LOCAL_OFFSET
       )
-    } else if (itemDefId === MANDOLIN_ITEM_DEF_ID) {
-      weaponObject.position.copy(MANDOLIN_POSITION)
-      weaponObject.rotation.copy(MANDOLIN_ROTATION)
     }
     rightHandBone.add(weaponObject)
   }
@@ -320,21 +278,6 @@
   let rodTipNode: THREE.Object3D | null = null
   const FALLBACK_ROD_TIP_LOCAL_OFFSET = new THREE.Vector3(-0.051, 2.117, -2.128)
   const rodTipScratch = new THREE.Vector3()
-
-  /** Named tip empty baked into a prop GLB, or a fallback child at the given
-   *  local offset — either way it rides the bone chain. */
-  function resolveTipNode(
-    prop: THREE.Object3D,
-    name: string,
-    fallbackOffset: THREE.Vector3
-  ): THREE.Object3D {
-    const found = prop.getObjectByName(name)
-    if (found) return found
-    const node = new THREE.Object3D()
-    node.position.copy(fallbackOffset)
-    prop.add(node)
-    return node
-  }
 
   /** World position of the equipped fishing rod's tip, or null when no rod
    *  is attached — the fishing line's anchor. */
@@ -352,7 +295,6 @@
 
   let offhandObject: THREE.Object3D | null = null
   let torchTipNode: THREE.Object3D | null = null
-  const FALLBACK_TORCH_TIP_LOCAL_OFFSET = new THREE.Vector3(0.6, 0, 0)
 
   function attachOffhandModel(
     gltfScene: THREE.Object3D,
@@ -365,8 +307,7 @@
     }
 
     offhandObject = gltfScene.clone()
-    offhandObject.position.set(0, 0.08, 0)
-    offhandObject.rotation.y = Math.PI
+    poseOffHandProp(offhandObject)
     leftHandBone.add(offhandObject)
     torchTipNode = resolveTipNode(
       offhandObject,
@@ -481,16 +422,12 @@
       : back
   )
 
-  /** The wearer's cloth colour, or null for no cape. `capeColor` is what marks
-   *  a back item as one — a future quiver would sit in the slot without it.
-   *  `/cape` forces the default sheet on with no item, for fitting work. */
-  const capeColor = $derived.by(() => {
-    const worn = equippedBackItemId
-      ? getItemDef(equippedBackItemId)?.capeColor
-      : undefined
-    if (worn) return worn
-    return isCurrentPlayer && $capeEnabled ? DEFAULT_CAPE_COLOR : null
-  })
+  /** The wearer's cloth colour, or null for no cape. `/cape` forces the
+   *  default sheet on with no item, for fitting work. */
+  const capeColor = $derived(
+    capeColorOf(equippedBackItemId) ??
+      (isCurrentPlayer && $capeEnabled ? DEFAULT_CAPE_COLOR : null)
+  )
 
   function detachCape() {
     capeRig?.dispose()
@@ -569,8 +506,7 @@
       const rightHandBone = findBoneByName(clonedScene, 'RightHand')
       if (!rightHandBone) return
       musicPropObject = gltf.scene.clone()
-      musicPropObject.position.copy(MANDOLIN_POSITION)
-      musicPropObject.rotation.copy(MANDOLIN_ROTATION)
+      poseMainHandProp(musicPropObject, MANDOLIN_ITEM_DEF_ID)
       rightHandBone.add(musicPropObject)
     })
   })
