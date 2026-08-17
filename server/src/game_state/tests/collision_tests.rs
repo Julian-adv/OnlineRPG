@@ -379,12 +379,15 @@ fn sealed_dungeon_entry() -> onlinerpg_shared::pathfinding::RuntimePassability {
 
 /// A restart makes a broken prop solid again under whoever logged out standing
 /// on it, and a dungeon never yields to a trapped mover — so the tick has to
-/// walk the player out instead of pinning them back inside the pillar.
+/// walk the player out instead of pinning them back inside the pillar. The
+/// refusal that found the seal must not also be corrected: that snap carries
+/// the cell they were refused at and would put them straight back in it.
 #[tokio::test]
 async fn a_player_sealed_in_is_walked_out_instead_of_pinned() {
     let game_state = make_test_game_state("movement_sealed_escape");
     let player_id = pid("boxed");
     game_state.add_player(make_player("boxed", 1.5, 1.5)).await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
     game_state
         .passability_write()
         .insert("dungeon:test".to_string(), sealed_dungeon_entry());
@@ -418,6 +421,57 @@ async fn a_player_sealed_in_is_walked_out_instead_of_pinned() {
         0,
         Some(0.0)
     ));
+    assert_eq!(
+        first_correction(&mut rx),
+        None,
+        "a rescued player must not be snapped back to the cell they were sealed in"
+    );
+}
+
+/// Furniture parked on a standing player seals their cell in the mask, but
+/// `blocking_entry_for_mover` lets them walk out of it — so pressing into the
+/// one side that is a wall must not read as sealed in and teleport them.
+#[tokio::test]
+async fn furniture_dropped_on_a_player_is_not_a_seal() {
+    let game_state = make_test_game_state("movement_furniture_not_sealed");
+    let player_id = pid("buried");
+    game_state.add_player(make_player("buried", 0.5, 4.5)).await;
+    // Tables on three sides, the room's own wall entry on the fourth.
+    game_state.sync_region_furniture(
+        0,
+        0,
+        &[
+            table_placement(0.5, 5.5),
+            table_placement(1.5, 4.5),
+            table_placement(0.5, 3.5),
+        ],
+    );
+    game_state
+        .passability_write()
+        .insert("dungeon:test".to_string(), sealed_dungeon_entry());
+
+    game_state
+        .update_player_position(
+            &player_id,
+            move_cmd(
+                Position {
+                    x: 0.5,
+                    y: 0.0,
+                    z: 6.5,
+                },
+                false,
+            ),
+            false,
+            false,
+        )
+        .await;
+    game_state.tick_player_movement(60.0).await;
+
+    assert_eq!(
+        player_xz(&game_state, &player_id).await,
+        (0.5, 4.5),
+        "the player can still walk out from under furniture; nothing should move them"
+    );
 }
 
 /// The escape is only for a mover with no legal step at all: an ordinary bump
@@ -439,55 +493,57 @@ fn a_mover_with_a_way_out_is_left_alone() {
 
 /// Props cluster in room corners, so the neighbour behind the wall is usually
 /// rock — and the mask writes edges only on carved cells, leaving that rock
-/// blank and so unsealed. The floor's own shape is what keeps the escape
-/// inside the level.
-#[test]
-fn the_escape_stays_off_the_rock_outside_the_maze() {
-    use onlinerpg_shared::dungeon::{
-        dungeon_origin, dungeon_passability, generate_dungeon_for, passability_floor_for_depth,
-    };
-    let entrance = Position {
-        x: -1616.0,
-        y: 1.05,
-        z: 4918.0,
-    };
-    let layouts = generate_dungeon_for("orc_warrens");
-    let mut cache = onlinerpg_shared::pathfinding::PassabilityCache::new();
-    cache.insert(
-        "dungeon:orc_warrens".to_string(),
-        dungeon_passability(&entrance, &layouts),
-    );
-    let (ox, oz) = dungeon_origin(entrance.x, entrance.z);
-    let depth = 9u8;
-    let layout = &layouts[depth as usize - 1];
-    let floor = passability_floor_for_depth(depth);
+/// blank and so unsealed. Every prop of a real dungeon floor, through the same
+/// call the movement tick makes: nothing may land off the carved floor.
+#[tokio::test]
+async fn no_prop_cell_escapes_onto_the_rock_outside_the_maze() {
+    use onlinerpg_shared::dungeon::{cell_center, passability_floor_for_depth, world_to_cell};
 
-    let mut checked = 0;
-    for prop in &layout.props {
-        let inside = Position {
-            x: ox + prop.x as f32 + 0.5,
-            y: onlinerpg_shared::dungeon::floor_world_y(entrance.y, depth),
-            z: oz + prop.z as f32 + 0.5,
-        };
-        let Some(out) = crate::game_state::passability::escape_from_sealed_cell(
-            &cache,
-            &inside,
-            floor,
-            |x, z| layout.is_carved((x - ox).floor() as i32, (z - oz).floor() as i32),
-        ) else {
+    const WARRENS_ID: &str = "orc_warrens";
+    let game_state = make_test_game_state("movement_escape_stays_carved");
+    game_state.ensure_dungeon_runtime(WARRENS_ID).await;
+    let entrance = game_state
+        .dungeon_defs
+        .get(WARRENS_ID)
+        .expect("orc_warrens def")
+        .position();
+
+    let depth = 9u8;
+    let props = {
+        let dungeons = game_state.dungeons.read().await;
+        let rt = dungeons.get(WARRENS_ID).expect("warrens runtime");
+        // `init_passability` does this at boot; the runtime alone has no cells.
+        game_state.passability_write().insert(
+            onlinerpg_shared::dungeon::dungeon_cache_key(WARRENS_ID),
+            onlinerpg_shared::dungeon::dungeon_passability(&entrance, &rt.layouts),
+        );
+        rt.layouts[depth as usize - 1]
+            .props
+            .iter()
+            .map(|p| (p.x, p.z))
+            .collect::<Vec<_>>()
+    };
+
+    let mut freed = 0;
+    for (px, pz) in props {
+        let inside = cell_center(&entrance, depth, (px, pz));
+        let Some(out) = game_state
+            .sealed_player_escape(&inside, passability_floor_for_depth(depth))
+            .await
+        else {
             continue;
         };
-        checked += 1;
+        freed += 1;
+        let (cx, cz) = world_to_cell(&entrance, out.x, out.z);
+        let dungeons = game_state.dungeons.read().await;
+        let layout =
+            &dungeons.get(WARRENS_ID).expect("warrens runtime").layouts[depth as usize - 1];
         assert!(
-            layout.is_carved((out.x - ox).floor() as i32, (out.z - oz).floor() as i32),
-            "prop ({}, {}) escaped onto rock at ({}, {})",
-            prop.x,
-            prop.z,
-            out.x,
-            out.z
+            layout.is_carved(cx, cz),
+            "prop ({px}, {pz}) escaped onto rock at cell ({cx}, {cz})"
         );
     }
-    assert!(checked > 0, "no sealed prop cell on depth {depth} to check");
+    assert!(freed > 0, "no sealed prop cell on depth {depth} to check");
 }
 
 mod init_passability_boot {

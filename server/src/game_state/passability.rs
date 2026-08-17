@@ -169,16 +169,40 @@ pub(super) fn resolve_step<'a>(
     StepOutcome::Blocked(info)
 }
 
-/// Where to put a mover whose own cell is sealed on every side, or `None` when
-/// it is not sealed (the usual case) or every neighbour is sealed too.
+/// Whether a mover in this cell has no legal step in any direction.
+///
+/// Not [`pathfinding::is_cell_sealed`]: that one reads the mask alone, so it
+/// also fires on the furniture parked on a standing player, whom
+/// `blocking_entry_for_mover` deliberately lets walk out. Asking the same way
+/// the mover's own steps are judged keeps that case out.
+pub(super) fn sealed_in(
+    cache: &pathfinding::PassabilityCache,
+    position: &crate::types::Position,
+    floor_level: u8,
+) -> bool {
+    let (cx, cz) = (position.x.floor() + 0.5, position.z.floor() + 0.5);
+    pathfinding::DIRS.iter().all(|&(dx, dz)| {
+        pathfinding::is_movement_blocked_for_mover(
+            cache,
+            cx,
+            cz,
+            cx + dx as f32,
+            cz + dz as f32,
+            floor_level,
+            Some(position.y),
+        )
+    })
+}
+
+/// Where to put a mover [`sealed_in`] its own cell, or `None` when every
+/// neighbour is sealed too — a position wrong in a way no nudge repairs.
 ///
 /// Only furniture yields to a trapped mover; a dungeon's own entry holds its
 /// walls, so it cannot without becoming a wall hack. That leaves a player
 /// standing where a broken crate used to be when the server restarted — the
 /// runtime's broken-prop set is memory only — inside a solid pillar with no
-/// legal step in any direction. What seals a cell is a 1x1 pillar or a shut
-/// door, so the way out is the adjoining cell; what the neighbours cannot fix
-/// is a position wrong in a way no nudge repairs.
+/// legal step in any direction, and what seals a cell that way is a 1x1 pillar
+/// or a shut door, so the way out is the adjoining cell.
 ///
 /// `stands_on` is what keeps that nudge inside the level. Cell bits are only
 /// written on the cells a floor carves, so the rock around a dungeon is blank —
@@ -190,8 +214,7 @@ pub(super) fn escape_from_sealed_cell(
     floor_level: u8,
     stands_on: impl Fn(f32, f32) -> bool,
 ) -> Option<crate::types::Position> {
-    let y = Some(position.y);
-    if !pathfinding::is_cell_sealed(cache, position.x, position.z, floor_level, y) {
+    if !sealed_in(cache, position, floor_level) {
         return None;
     }
     let (cx, cz) = (position.x.floor() + 0.5, position.z.floor() + 0.5);
@@ -199,7 +222,8 @@ pub(super) fn escape_from_sealed_cell(
         .iter()
         .map(|&(dx, dz)| (cx + dx as f32, cz + dz as f32))
         .find(|&(x, z)| {
-            stands_on(x, z) && !pathfinding::is_cell_sealed(cache, x, z, floor_level, y)
+            stands_on(x, z)
+                && !pathfinding::is_cell_sealed(cache, x, z, floor_level, Some(position.y))
         })
         .map(|(x, z)| crate::types::Position {
             x: onlinerpg_shared::wrap_world_x(x),

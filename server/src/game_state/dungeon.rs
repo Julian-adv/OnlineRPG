@@ -9,9 +9,9 @@
 use std::collections::{HashMap, HashSet};
 
 use onlinerpg_shared::dungeon::{
-    cell_center, dungeon_origin, floor_height_at, floor_world_y, generate_dungeon_for,
-    interior_doors, monster_level_for_depth, FloorLayout, PropKind, ENTRANCE_DOOR_ID,
-    FLOOR_Y_TOLERANCE, GRID,
+    cell_center, dungeon_origin, floor_height_at, floor_level_for_passability, floor_world_y,
+    generate_dungeon_for, interior_doors, monster_level_for_depth, world_to_cell, FloorLayout,
+    PropKind, ENTRANCE_DOOR_ID, FLOOR_Y_TOLERANCE, GRID,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
@@ -1222,32 +1222,33 @@ impl GameState {
         layout.walkable_drop_position(&entrance.position(), &monster_position, &preferred)
     }
 
-    /// Where to put a player whose cell is sealed on every side, or `None` when
-    /// they are not sealed in. Underground the neighbour has to be carved
-    /// floor: the passability mask leaves the rock around a dungeon blank, so
-    /// the cell behind the wall a prop stands against reads as open.
+    /// Where to put a player sealed into their own cell, or `None` when they
+    /// are not sealed in. Underground the neighbour has to be carved floor: the
+    /// passability mask leaves the rock around a dungeon blank, so the cell
+    /// behind the wall a prop stands against reads as open. The depth comes
+    /// from the passability floor, never from the floor the client claims.
     pub(super) async fn sealed_player_escape(
         &self,
         position: &Position,
         floor: u8,
-        floor_level: i8,
     ) -> Option<Position> {
-        let entrance = (floor_level < 0)
+        let depth = -floor_level_for_passability(floor);
+        let entrance = (depth > 0)
             .then(|| self.dungeon_defs.entrance_at(position.x, position.z))
             .flatten();
         let dungeons = self.dungeons.read().await;
         let carved = entrance.and_then(|e| {
             let layout = dungeons
                 .get(&e.id)
-                .and_then(|rt| rt.layouts.get((-floor_level) as usize - 1))?;
-            Some((layout, dungeon_origin(e.x, e.z)))
+                .and_then(|rt| rt.layouts.get(depth as usize - 1))?;
+            Some((layout, e.position()))
         });
         let cache = self.passability_read();
-        super::passability::escape_from_sealed_cell(&cache, position, floor, |x, z| match carved {
-            Some((layout, (ox, oz))) => {
-                layout.is_carved((x - ox).floor() as i32, (z - oz).floor() as i32)
-            }
-            None => true,
+        super::passability::escape_from_sealed_cell(&cache, position, floor, |x, z| {
+            carved.is_none_or(|(layout, entrance)| {
+                let (cx, cz) = world_to_cell(&entrance, x, z);
+                layout.is_carved(cx, cz)
+            })
         })
     }
 
