@@ -1308,12 +1308,19 @@ impl GameState {
             return current_floor;
         };
         if (position.y - expected_y).abs() > FLOOR_Y_TOLERANCE {
+            // Position and the floor kept are logged too: the client latches
+            // into claiming the floor below the one its Y sits on, and only the
+            // spot it happens at says which transition drops the Y update.
             warn!(
-                "Player {} floor {} Y mismatch: reported {:.1}, expected {:.1}",
+                "Player {} floor {} Y mismatch: reported {:.1}, expected {:.1} \
+                 at ({:.1},{:.1}), kept floor {}",
                 self.player_name_of(player_id).await,
                 requested_floor,
                 position.y,
-                expected_y
+                expected_y,
+                position.x,
+                position.z,
+                current_floor
             );
             return current_floor;
         }

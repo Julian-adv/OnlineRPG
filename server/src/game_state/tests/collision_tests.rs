@@ -340,6 +340,83 @@ async fn npc_movement_is_exempt_from_collision() {
     assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 6.5));
 }
 
+/// One dungeon-shaped entry (never yields to a trapped mover) whose cell
+/// (1, 1) is walled in on all four sides, the way a prop pillar seals its own.
+fn sealed_dungeon_entry() -> onlinerpg_shared::pathfinding::RuntimePassability {
+    use onlinerpg_shared::pathfinding::{RuntimeFloorGrid, RuntimePassability};
+    let mut cells = vec![0u8; 16];
+    let idx = |x: usize, z: usize| x + z * 4;
+    cells[idx(1, 1)] = 1 | 2 | 4 | 8;
+    cells[idx(1, 0)] = 4;
+    cells[idx(1, 2)] = 1;
+    cells[idx(0, 1)] = 2;
+    cells[idx(2, 1)] = 8;
+    RuntimePassability {
+        house_origin_x: 0.0,
+        house_origin_z: 0.0,
+        min_x: 0.0,
+        max_x: 4.0,
+        min_z: 0.0,
+        max_z: 4.0,
+        floors: vec![RuntimeFloorGrid {
+            floor_level: 0,
+            origin_x: 0,
+            origin_z: 0,
+            width: 4,
+            depth: 4,
+            y_base: 0.0,
+            wall_height: 3.0,
+            cells,
+        }],
+        stairwells: vec![],
+        yields_to_trapped_mover: false,
+    }
+}
+
+/// A restart makes a broken prop solid again under whoever logged out standing
+/// on it, and a dungeon never yields to a trapped mover — so the tick has to
+/// walk the player out instead of pinning them back inside the pillar.
+#[tokio::test]
+async fn a_player_sealed_in_is_walked_out_instead_of_pinned() {
+    let game_state = make_test_game_state("movement_sealed_escape");
+    let player_id = pid("boxed");
+    game_state.add_player(make_player("boxed", 1.5, 1.5)).await;
+    game_state
+        .passability_write()
+        .insert("dungeon:test".to_string(), sealed_dungeon_entry());
+
+    game_state
+        .update_player_position(
+            &player_id,
+            move_cmd(
+                Position {
+                    x: 1.5,
+                    y: 0.0,
+                    z: 3.5,
+                },
+                false,
+            ),
+            false,
+            false,
+        )
+        .await;
+    game_state.tick_player_movement(60.0).await;
+
+    let (x, z) = player_xz(&game_state, &player_id).await;
+    assert_ne!((x, z), (1.5, 1.5), "left pinned inside the sealed cell");
+    assert!(
+        (x - 1.5).abs() <= 1.0 && (z - 1.5).abs() <= 1.0,
+        "moved to an adjoining cell, not across the floor: ({x}, {z})"
+    );
+    assert!(!onlinerpg_shared::pathfinding::is_cell_sealed(
+        &game_state.passability_read(),
+        x,
+        z,
+        0,
+        Some(0.0)
+    ));
+}
+
 mod init_passability_boot {
     use super::*;
     use crate::terrain::io::TerrainIO;
