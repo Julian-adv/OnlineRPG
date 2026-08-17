@@ -10,7 +10,7 @@
 |------|------|------|------|
 | 1 | Old Crypt | 가죽 세트 일부 (투구·바지·벨트) | 운영 중 |
 | 2 | Orc Warrens | 가죽 세트 완성 (몸통·장갑·부츠) + 체인 세트 일부 (철 부츠·철 투구) + iron_sword (보스) | 운영 중 |
-| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 — 기본 망토·steel_longsword 애셋 대기 |
+| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 — 기본 망토 애셋 대기 |
 | 4 | (신규 던전) | 판금 세트 완성 (흉갑·투구·건틀릿) + claymore | 던전 미구현 |
 | 5 | (신규 던전) | ring_of_protection + rune_blade | 던전 미구현 |
 
@@ -138,7 +138,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 |------|------|------|-----------|--------|------|
 | 1 | goblin_sword·small_sword (1d4), spear (1d6) | 1d4~1d6 | 1,500~3,500 | 몬스터 10% 드랍, 상점 | 있음 |
 | 2 | iron_sword | 1d8 | 10,000 | orc_boss 무장·확정 드랍, 월드 드랍 1% (상점 비판매) | 있음 |
-| 3 | steel_longsword (가칭) | 1d10 | 16,000 | 티어 3 던전 무장 몬스터 + 보스 | **신규 애셋 필요** — 그때까지 ogre_boss는 greatclub(600c) 확정 드랍 |
+| 3 | steel_longsword | 1d10 | 16,000 | 티어 3 던전 무장 몬스터 + 보스 | 있음 — ogre_boss 확정 드랍. 일반 오거는 아직 greatclub(600c) 10% |
 | 4 | claymore (가칭) | 2d6 | 28,000 | 티어 4 던전 무장 몬스터 + 보스 | **신규 애셋 필요** |
 | 5 | rune_blade (가칭) | 2d8 | 50,000 | 티어 5 보스 20% 롤 (ring_of_protection과 동일 철학) | **신규 애셋 필요** |
 

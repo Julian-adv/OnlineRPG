@@ -24,6 +24,7 @@ goblin_sword,Goblin Sword,A crude short blade favored by goblins and orcs.,2,mai
 small_sword,Small Sword,A compact crude blade sized for small fighters.,1.5,main_hand,false,small_sword.png,weapons/small_sword.glb,weapon,1d4,metal,1500,,,,,,,,,,,,,,
 morningstar,Morningstar,A spiked iron head on a leather-wrapped haft. Heavy and crude — but there is no edge to keep.,5,main_hand,false,morningstar.png,weapons/morningstar.glb,weapon,1d8,metal,6000,,,,,,,,,,,,,,
 greatclub,Greatclub,A limb of oak studded with iron thorns. Too heavy for anything smaller than an ogre to swing well.,10,main_hand,false,greatclub.png,weapons/greatclub.glb,weapon,1d8,wood,600,,,,,,,,,,,,,,
+steel_longsword,Steel Longsword,A long steel blade with a ringed grip and a wheel pommel. Tempered steel keeps an edge that iron cannot hold.,4,main_hand,false,steel_longsword.png,weapons/steel_longsword.glb,weapon,1d10,metal,16000,,,,,,,,,,,,,,
 chain_mail,Chain Mail,Interlocking metal rings forming armor.,30,chest,false,chain_mail.png,armor/chain_mail.glb,armor,,metal,25000,5,,,,,,3,,,,,,,
 torch,Torch,A flickering wooden torch.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,50,,,,,,,,,,,,,,
 worn_torch,Worn Torch,A stubby half-burnt torch. Merchants won't pay for it.,1,off_hand,false,torch.png,weapons/torch.glb,weapon,1d4,wood,,,,,,,,,,,,,,,true
