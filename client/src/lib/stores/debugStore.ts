@@ -21,6 +21,11 @@ export const housingEditorMode = writable(false)
 export const passabilityDebugVisible = writable(false)
 export const riverWireframeVisible = writable(false)
 export const shoreWaveDebugVisible = writable(false)
+/** Prototype back cape on the local player, toggled by /cape. */
+export const capeEnabled = writable(false)
+/** Live override for the cape's collar bias (m), null = the model's recorded
+ *  value. Set by /cape_depth while eyeballing a character. */
+export const capeCollarBiasOverride = writable<number | null>(null)
 
 export interface PlayerDebugInfo {
   position: { x: number; y: number; z: number }

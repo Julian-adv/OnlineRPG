@@ -46,8 +46,19 @@
   import { pickRandom } from '../utils/randomUtils'
   import { inventoryStore, isTorchItemDefId } from '../stores/inventoryStore'
   import { getItemDef } from '../data/itemDefs'
-  import { torchLightEnabled } from '../stores/debugStore'
+  import {
+    capeCollarBiasOverride,
+    capeEnabled,
+    torchLightEnabled,
+  } from '../stores/debugStore'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
+  import type { WindState } from '../shaders/grass-material'
+  import {
+    attachCapeFit,
+    capeCollarBiasFor,
+    fitCapeToSkeleton,
+    type CapeRig,
+  } from '../effects/cape-rig'
 
   import type { CharacterClass, Gender } from '../network/networkTypes'
   import {
@@ -450,6 +461,42 @@
       }
     })
   })
+
+  // ── Prototype back cape (local player, /cape) ───────────
+  let capeRig: CapeRig | null = null
+
+  const capeCollarBias = $derived(
+    $capeCollarBiasOverride ?? capeCollarBiasFor(modelPath)
+  )
+
+  function detachCape() {
+    capeRig?.dispose()
+    capeRig = null
+  }
+
+  // The teardown owns the cape's lifetime: a bias change re-fits it (so
+  // /cape_depth can be dialled in live), and a rebuilt model — `modelRoot` is
+  // fresh then — drops the cape left on the discarded skeleton.
+  $effect(() => {
+    const wanted = isCurrentPlayer && $capeEnabled
+    const bias = capeCollarBias
+    const root = modelRoot
+    if (!wanted || !root || !clonedScene) return
+
+    const fit = fitCapeToSkeleton(clonedScene, bias)
+    if (!fit) {
+      console.warn('Could not fit a cape to this rig')
+      return
+    }
+    capeRig = attachCapeFit(fit)
+    return detachCape
+  })
+
+  /** Steps the cape cloth. Called from the game loop after `update`, so the
+   *  sheet follows this frame's pose and this frame's wind. */
+  export function updateCape(deltaTime: number, wind: WindState | null) {
+    capeRig?.update(deltaTime, wind)
+  }
 
   // ── Music emote prop ────────────────────────────────────
   // The server requires an instrument in the performer's inventory, but the

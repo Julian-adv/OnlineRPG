@@ -12,7 +12,10 @@ import {
   riverWireframeVisible,
   shoreWaveDebugVisible,
   passabilityDebugVisible,
+  capeEnabled,
+  capeCollarBiasOverride,
 } from './stores/debugStore'
+import { COLLAR_BIAS_LIMIT } from './effects/cape-rig'
 import { computeGrassPlacement, regenerateVegMeta } from './utils/grass-data'
 import { teleportLocalPlayer } from './utils/teleport'
 import { parseTpArgs, resolveTpDestination } from './utils/tp-args'
@@ -332,6 +335,59 @@ const COMMANDS: Record<string, Command> = {
       shoreWaveDebugVisible.set(next)
       addChatMessage({
         text: `Shore wave debug: ${next ? 'on' : 'off'}`,
+        sender: 'system',
+      })
+    },
+  },
+
+  '/cape': {
+    desc: 'Toggle the prototype cape on your character',
+    run: () => {
+      const next = !get(capeEnabled)
+      capeEnabled.set(next)
+      addChatMessage({
+        text: `Cape: ${next ? 'on' : 'off'}`,
+        sender: 'system',
+      })
+    },
+  },
+
+  '/cape_depth': {
+    desc: 'Sink the cape collar into the back: /cape_depth <metres|auto>',
+    run: (args) => {
+      const trimmed = args.trim()
+      if (!trimmed) {
+        const override = get(capeCollarBiasOverride)
+        addChatMessage({
+          text: `Cape collar depth: ${override === null ? 'auto (model default)' : `${override.toFixed(3)} m`}. /cape_depth <metres|auto>, + sinks it into the back.`,
+          sender: 'system',
+        })
+        return
+      }
+      if (trimmed === 'auto' || trimmed === 'reset') {
+        capeCollarBiasOverride.set(null)
+        addChatMessage({
+          text: 'Cape collar depth: auto (model default)',
+          sender: 'system',
+        })
+        return
+      }
+      const value = Number(trimmed)
+      if (!Number.isFinite(value)) {
+        addChatMessage({
+          text: 'Usage: /cape_depth <metres|auto> — e.g. /cape_depth 0.1',
+          sender: 'system',
+        })
+        return
+      }
+      const clamped = MathUtils.clamp(
+        value,
+        -COLLAR_BIAS_LIMIT,
+        COLLAR_BIAS_LIMIT
+      )
+      capeCollarBiasOverride.set(clamped)
+      addChatMessage({
+        text: `Cape collar depth: ${clamped.toFixed(3)} m`,
         sender: 'system',
       })
     },
