@@ -1654,29 +1654,49 @@ impl super::GameState {
         }
     }
 
-    pub async fn set_player_main_hand(&self, player_id: &PlayerId, item_def_id: Option<String>) {
-        let position = {
+    /// Update the gear nearby clients render and tell them what changed. Both
+    /// slots are compared under one write lock: every bag mutation routes
+    /// through here and almost none of them touch gear, so taking the global
+    /// players lock once per snapshot rather than once per slot matters.
+    pub async fn set_player_gear(
+        &self,
+        player_id: &PlayerId,
+        main_hand: Option<String>,
+        back: Option<String>,
+    ) {
+        let changed = {
             let mut players = self.players.write().await;
-            if let Some(player) = players.get_mut(player_id) {
-                if player.main_hand == item_def_id {
-                    return;
-                }
-                player.main_hand = item_def_id.clone();
-                Some((player.position, player.floor_level))
-            } else {
-                None
+            let Some(player) = players.get_mut(player_id) else {
+                return;
+            };
+            let mut messages = Vec::new();
+            if player.main_hand != main_hand {
+                player.main_hand = main_hand.clone();
+                messages.push(ServerMessage::PlayerMainHandChanged {
+                    player_id: *player_id,
+                    item_def_id: main_hand,
+                });
             }
+            if player.back != back {
+                player.back = back.clone();
+                messages.push(ServerMessage::PlayerBackChanged {
+                    player_id: *player_id,
+                    item_def_id: back,
+                });
+            }
+            if messages.is_empty() {
+                return;
+            }
+            (player.position, player.floor_level, messages)
         };
 
-        if let Some((position, floor_level)) = position {
+        let (position, floor_level, messages) = changed;
+        for message in messages {
             self.send_direct_message_to_players_within_position(
                 &position,
                 floor_level,
                 super::EVENT_DELIVERY_RADIUS,
-                ServerMessage::PlayerMainHandChanged {
-                    player_id: *player_id,
-                    item_def_id,
-                },
+                message,
                 Some(player_id),
             )
             .await;

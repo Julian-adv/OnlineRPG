@@ -38,6 +38,7 @@ interface PlayerBase {
   gender: Gender
   torchOn?: boolean
   mainHand?: string | null
+  back?: string | null
   lastDamageInfo?: PlayerDamageInfo
   lastRegenInfo?: PlayerDamageInfo
   lastGoldInfo?: PlayerGoldInfo

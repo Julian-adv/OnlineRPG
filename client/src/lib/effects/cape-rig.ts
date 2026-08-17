@@ -28,6 +28,8 @@ export interface CapeRigOptions {
   /** Bones per chain (default 5). */
   segments?: number
   body?: CapeBody
+  /** Cloth colour; defaults to the wool cape's dye. */
+  color?: THREE.ColorRepresentation
 }
 
 /** The part of the world's wind the cloth cares about — a `WindState` from the
@@ -69,8 +71,8 @@ const FALLBACK_BODY_DEPTH = 0.16
  *  the shoulders never lets the hem through the buttocks. */
 const COLLAR_BIAS_FADE = 0.3
 export const COLLAR_BIAS_LIMIT = 0.3
-/** The one cloth colour there is, until capes become real items. */
-const CAPE_COLOR = 0x6d1720
+/** Cloth colour for a cape whose item def names none. */
+export const DEFAULT_CAPE_COLOR = 0x6d1720
 const WIND_ACCEL = 2.4
 /** Ripple across the sheet: shallow and low-frequency, or the cape reads as a
  *  flag. It grows with travel speed, off a smoothed speed so a standing start
@@ -215,7 +217,49 @@ function buildGeometry(
   geometry.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeights, 4))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
+  // The bind-pose bounds don't cover a sheet that swings, so widen them once
+  // here. Without it the mesh has to opt out of frustum culling entirely, and
+  // an uncullable cape is drawn again in every shadow pass.
+  geometry.boundingSphere = new THREE.Sphere(
+    new THREE.Vector3(0, -options.length / 2, 0),
+    options.length * 1.6
+  )
   return geometry
+}
+
+/** Sheets and cloth, shared by everyone they fit. The skeleton stays
+ *  per-wearer; geometry and material do not vary with the pose, and both are
+ *  bounded by the handful of (model, bias) fits and cape colours in play — so
+ *  a crowd costs one set of GPU buffers, not one per cape. */
+const geometryCache = new Map<string, THREE.BufferGeometry>()
+const materialCache = new Map<string, THREE.Material>()
+
+function sharedGeometry(
+  options: CapeRigOptions,
+  segments: number
+): THREE.BufferGeometry {
+  const key = `${options.topWidth}|${options.bottomWidth}|${options.length}|${segments}`
+  let geometry = geometryCache.get(key)
+  if (!geometry) {
+    geometry = buildGeometry(options, segments)
+    geometryCache.set(key, geometry)
+  }
+  return geometry
+}
+
+function sharedMaterial(color: THREE.ColorRepresentation): THREE.Material {
+  const key = String(color)
+  let material = materialCache.get(key)
+  if (!material) {
+    material = new MeshStandardNodeMaterial({
+      color: new THREE.Color(color),
+      roughness: 0.74,
+      metalness: 0,
+      side: THREE.DoubleSide,
+    })
+    materialCache.set(key, material)
+  }
+  return material
 }
 
 export function createCapeRig(options: CapeRigOptions): CapeRig {
@@ -224,18 +268,12 @@ export function createCapeRig(options: CapeRigOptions): CapeRig {
   const body = options.body ?? null
 
   const root = new THREE.Group()
-  const geometry = buildGeometry(options, segments)
-  const material = new MeshStandardNodeMaterial({
-    color: new THREE.Color(CAPE_COLOR),
-    roughness: 0.74,
-    metalness: 0,
-    side: THREE.DoubleSide,
-  })
+  const geometry = sharedGeometry(options, segments)
+  const material = sharedMaterial(options.color ?? DEFAULT_CAPE_COLOR)
 
   const mesh = new THREE.SkinnedMesh(geometry, material)
   mesh.castShadow = true
   mesh.receiveShadow = true
-  mesh.frustumCulled = false
   root.add(mesh)
 
   // Collar anchors, fixed in cape space: the sheet's top edge at each chain.
@@ -444,8 +482,8 @@ export function createCapeRig(options: CapeRigOptions): CapeRig {
     mesh,
     update,
     dispose() {
-      geometry.dispose()
-      material.dispose()
+      // Geometry and material are shared and outlive this rig; the skeleton is
+      // this cape's own.
       skeleton.dispose()
       root.removeFromParent()
     },
@@ -526,9 +564,16 @@ function measureBackProfile(
   return depths
 }
 
-/** Build the cape a fit describes and hang it off the bone it names. */
-export function attachCapeFit(fit: CapeFit): CapeRig {
-  const rig = createCapeRig(fit.options)
+/** Build the cape a fit describes and hang it off the bone it names. `color` is
+ *  per-wearer, so it rides here rather than in the fit — fits come out of a
+ *  cache shared by everyone wearing the same model. */
+export function attachCapeFit(
+  fit: CapeFit,
+  color?: THREE.ColorRepresentation
+): CapeRig {
+  const rig = createCapeRig(
+    color === undefined ? fit.options : { ...fit.options, color }
+  )
   rig.root.position.copy(fit.position)
   rig.root.quaternion.copy(fit.quaternion)
   fit.parent.add(rig.root)
@@ -548,6 +593,11 @@ export function capeCollarBiasFor(modelPath: string): number {
   return COLLAR_BIAS_BY_MODEL[modelPath] ?? 0
 }
 
+/** Measured fits, keyed by model path and bias. Everything the fit measures
+ *  lives in bind space, so every wearer of a model shares it — a crowd costs
+ *  one mesh scan, not one per player. Only the spine bone is per-instance. */
+const fitCache = new Map<string, Omit<CapeFit, 'parent'>>()
+
 /** Cape frame for a character: hangs off `Spine2`, sized from the arm spread and
  *  torso height, spaced off the back by the mesh's own silhouette. Measured in
  *  bind space and expressed relative to the spine bone, so the cape hugs the
@@ -556,7 +606,8 @@ export function capeCollarBiasFor(modelPath: string): number {
  *  the shoulders. Returns null when the rig lacks the bones it needs. */
 export function fitCapeToSkeleton(
   characterRoot: THREE.Object3D,
-  collarBias = 0
+  collarBias = 0,
+  modelPath?: string
 ): CapeFit | null {
   const { meshes, skeleton } = findBodyMeshes(characterRoot)
   if (!skeleton) return null
@@ -567,6 +618,10 @@ export function fitCapeToSkeleton(
   const leftIndex = boneIndex('LeftArm')
   const rightIndex = boneIndex('RightArm')
   if (spineIndex < 0 || leftIndex < 0 || rightIndex < 0) return null
+
+  const cacheKey = modelPath && `${modelPath}|${collarBias}`
+  const cached = cacheKey ? fitCache.get(cacheKey) : undefined
+  if (cached) return { ...cached, parent: skeleton.bones[spineIndex] }
 
   const spineBind = bindMatrixOfBone(skeleton, spineIndex)
   const spinePos = new THREE.Vector3().setFromMatrixPosition(spineBind)
@@ -621,8 +676,7 @@ export function fitCapeToSkeleton(
   const basis = new THREE.Matrix4().makeBasis(right, up, back)
   const spineBindQuat = new THREE.Quaternion().setFromRotationMatrix(spineBind)
 
-  return {
-    parent: skeleton.bones[spineIndex],
+  const measured = {
     position: anchorBind.applyMatrix4(spineBind.clone().invert()),
     quaternion: new THREE.Quaternion()
       .setFromRotationMatrix(basis)
@@ -634,4 +688,6 @@ export function fitCapeToSkeleton(
       body: { minZ, step: PROFILE_STEP },
     },
   }
+  if (cacheKey) fitCache.set(cacheKey, measured)
+  return { ...measured, parent: skeleton.bones[spineIndex] }
 }

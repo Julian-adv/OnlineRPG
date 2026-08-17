@@ -341,7 +341,7 @@ const COMMANDS: Record<string, Command> = {
   },
 
   '/cape': {
-    desc: 'Toggle the prototype cape on your character',
+    desc: 'Wear a cape with no item equipped, for fitting work',
     run: () => {
       const next = !get(capeEnabled)
       capeEnabled.set(next)

@@ -108,10 +108,10 @@ impl PlayerInventory {
             .is_some_and(|item| TORCH_ITEM_IDS.contains(&item.item_def_id.as_str()))
     }
 
-    /// Equipped main-hand item def id, as broadcast to nearby players.
-    pub fn main_hand_def_id(&self) -> Option<String> {
+    /// Item def id worn in `slot`, as broadcast to nearby players.
+    pub fn equipped_def_id(&self, slot: EquipSlot) -> Option<String> {
         self.equipped
-            .get(&EquipSlot::MainHand)
+            .get(&slot)
             .map(|item| item.item_def_id.clone())
     }
 

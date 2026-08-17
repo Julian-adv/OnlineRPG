@@ -76,6 +76,9 @@ pub struct Player {
     /// Equipped main-hand item def id; `None` renders the class default.
     #[serde(default)]
     pub main_hand: Option<String>,
+    /// Equipped back item def id; `None` renders no cape.
+    #[serde(default)]
+    pub back: Option<String>,
     #[serde(skip)]
     pub object_id: Option<u32>,
     #[serde(skip)]
@@ -284,6 +287,7 @@ mod tests {
             floor_level: 0,
             object_type: None,
             main_hand: None,
+            back: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
@@ -320,6 +324,7 @@ mod tests {
             floor_level: 0,
             object_type: None,
             main_hand: None,
+            back: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),

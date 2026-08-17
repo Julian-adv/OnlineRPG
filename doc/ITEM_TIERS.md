@@ -10,7 +10,7 @@
 |------|------|------|------|
 | 1 | Old Crypt | 가죽 세트 일부 (투구·바지·벨트) | 운영 중 |
 | 2 | Orc Warrens | 가죽 세트 완성 (몸통·장갑·부츠) + 체인 세트 일부 (철 부츠·철 투구) + iron_sword (보스) | 운영 중 |
-| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 — 기본 망토 애셋 대기 |
+| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 — wool_cape는 아이템으로 존재하나 드랍 풀 미편입 |
 | 4 | (신규 던전) | 판금 세트 완성 (흉갑·투구·건틀릿) + claymore | 던전 미구현 |
 | 5 | (신규 던전) | ring_of_protection + rune_blade | 던전 미구현 |
 
@@ -74,7 +74,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 | 슬롯 | 아이템 | 획득처 | 상태 |
 |------|--------|--------|------|
-| back | 기본 망토 | 티어 3 던전 | **신규 애셋 필요** — 체인 등장 시점에 맞춰 배치 |
+| back | wool_cape (기본 망토) | 티어 3 던전 | 아이템·장착·렌더링 완료 (2026-08-17). 애셋은 GLB 없이 프로시저럴 — 색은 items.csv `capeColor`. 드랍 풀 편입(chestTier=3)만 남음 |
 | back | 특수 망토 (투명·보호 등) | **월드 드랍 전용** | **신규 애셋 필요** + 효과 시스템 설계 필요 |
 | shirt | 셔츠 | **월드 드랍 전용** | **신규 애셋 필요** — 악세서리성 희소템 |
 
@@ -160,8 +160,8 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 ## 남은 작업
 
-1. 신규 애셋: 기본 망토, 특수 망토, 셔츠, 장신구 아이콘 2종(life_saving·regeneration), 무기 3종(steel_longsword·claymore·rune_blade — 가칭). Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록.
-2. back 슬롯 캐릭터 부착 렌더링(리깅/흔들림). 장비 UI의 back·shirt 칸은 해당 아이템 등장 시 추가.
+1. 신규 애셋: 특수 망토, 셔츠, 장신구 아이콘 2종(life_saving·regeneration), 무기 3종(steel_longsword·claymore·rune_blade — 가칭). Meshy/ChatGPT 생성, `doc/assets/items.md`에 기록. 망토는 프로시저럴이라 3D 애셋이 필요 없다 — 새 망토는 items.csv 행 + 아이콘이면 된다.
+2. ~~back 슬롯 캐릭터 부착 렌더링~~ 완료 (2026-08-17). shirt 칸은 해당 아이템 등장 시 추가.
 3. 특수 망토·장신구 효과 시스템 — 투명은 서버 측 가시성 처리, 사망 방지·재생은 서버 전투 로직.
 4. **유저 간 거래 시스템.** 현재 `trading.rs`는 NPC 상인뿐, P2P 거래 미구현 — 월드 드랍 희소템 컨셉의 전제.
 5. 몬스터 월드 드랍 경로 — 사망 시 무기 드랍(`weapon_drop_chance`, `combat.rs`)을 희소템 롤로 확장.

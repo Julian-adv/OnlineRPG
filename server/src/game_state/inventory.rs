@@ -266,8 +266,12 @@ impl super::GameState {
     /// unchanged) from this one spot keeps everything in sync without each
     /// mutation site having to remember to send it.
     async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
-        self.set_player_main_hand(player_id, inventory.main_hand_def_id())
-            .await;
+        self.set_player_gear(
+            player_id,
+            inventory.equipped_def_id(EquipSlot::MainHand),
+            inventory.equipped_def_id(EquipSlot::Back),
+        )
+        .await;
         self.refresh_hunger_gear_drain(player_id, &inventory).await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
             .await;

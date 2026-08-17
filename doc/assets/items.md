@@ -74,3 +74,4 @@
     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-08-03) ![원화](../images/campfire_kit.png)
 - tip_hat.glb — Meshy.ai (유료 생성, 2026-08-13, "Feathered Coin Pouch"). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 폭 0.45m로 스케일 적용(0.45×0.20×0.45m, campfire_kit과 같은 폭), 원점=바닥 중심, 텍스처 2048²→512² 축소, emissive 없음 확인. 아이콘 tip_hat.png는 Cycles 직교 측면·위 각도 렌더 512²→128² (2026-08-13). 바닥에 놓는 팁 모자(`tip_hat` 아이템, doc/ECONOMY.md)
     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-08-13) ![원화](../images/tip_hat.png)
+- wool_cape.png — 자체 제작. 망토는 GLB가 없고 런타임에 만드는 버텍스 시트(client/src/lib/effects/cape-rig.ts)라, 아이콘용 메시를 Blender 스크립트로 따로 모델링했다: 같은 테이퍼 시트에 주름·말린 칼라·놋쇠 클래스프. Cycles 직교 측면·위 각도 렌더 512²→128² (`tools/blender-scripts/render_cape_icon.py wool_cape`, 2026-08-17). 천 색은 items.csv `capeColor`에서 읽으므로 새 망토도 같은 스크립트로 렌더한다. 외부 애셋 없음 — 라이선스 문제 없음

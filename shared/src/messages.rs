@@ -1052,6 +1052,12 @@ pub enum ServerMessage {
         player_id: PlayerId,
         item_def_id: Option<String>,
     },
+    /// A player's equipped back item changed; `None` removes the cape from
+    /// remote rendering.
+    PlayerBackChanged {
+        player_id: PlayerId,
+        item_def_id: Option<String>,
+    },
     PlayerInteractionChanged {
         player_id: PlayerId,
         object_type: Option<String>,

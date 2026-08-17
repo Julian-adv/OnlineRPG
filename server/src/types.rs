@@ -46,6 +46,7 @@ pub fn new_player(
         floor_level: 0,
         object_type: None,
         main_hand: None,
+        back: None,
         object_id: None,
         last_combat_at: 0,
         client_kind,

@@ -557,13 +557,10 @@
       // One wind reading per frame, shared by the cape and the wind particles.
       const windState = grassLayerRef?.getWindState() ?? null
 
-      // Update player model animations. The cape steps after the mixer so its
-      // cloth follows the pose the frame will actually render.
+      // Update player model animations (the cape steps inside `update`).
+      const dt = deltaTime / 1000
       const currentPlayerAnimationStart = performance.now()
-      if (currentPlayerModel) {
-        currentPlayerModel.update(deltaTime / 1000)
-        currentPlayerModel.updateCape(deltaTime / 1000, windState)
-      }
+      currentPlayerModel?.update(dt, windState)
       loopProfiler.record(
         'currentPlayerAnimation',
         performance.now() - currentPlayerAnimationStart
@@ -572,9 +569,7 @@
       // Update other player model animations
       const otherPlayerAnimationStart = performance.now()
       for (const playerModel of otherPlayerModels) {
-        if (playerModel) {
-          playerModel.update(deltaTime / 1000)
-        }
+        playerModel?.update(dt, windState)
       }
       loopProfiler.record(
         'otherPlayerAnimation',

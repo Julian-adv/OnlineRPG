@@ -56,9 +56,11 @@
   import {
     attachCapeFit,
     capeCollarBiasFor,
+    DEFAULT_CAPE_COLOR,
     fitCapeToSkeleton,
     type CapeRig,
   } from '../effects/cape-rig'
+  import { OFFSCREEN_Y } from '../utils/house-geo-utils'
 
   import type { CharacterClass, Gender } from '../network/networkTypes'
   import {
@@ -105,6 +107,9 @@
     /** Remote players' broadcast main-hand item def id; the local player
      *  renders from inventory instead. */
     mainHand?: string | null
+    /** Remote players' broadcast back item def id; the local player renders
+     *  from inventory instead. */
+    back?: string | null
     torchEffectsDisabled?: boolean
     /** Set for NPC remote players so canvas clicks can resolve this model
      *  back to its player id (read from userData by the input raycast). */
@@ -138,6 +143,7 @@
     lastGoldInfo,
     torchOn = false,
     mainHand = null,
+    back = null,
     torchEffectsDisabled = false,
     npcPlayerId,
   }: Props = $props()
@@ -462,40 +468,68 @@
     })
   })
 
-  // ── Prototype back cape (local player, /cape) ───────────
+  // ── Back cape ───────────────────────────────────────────
   let capeRig: CapeRig | null = null
 
   const capeCollarBias = $derived(
     $capeCollarBiasOverride ?? capeCollarBiasFor(modelPath)
   )
 
+  const equippedBackItemId = $derived(
+    isCurrentPlayer
+      ? ($inventoryStore.equipped.back?.item_def_id ?? null)
+      : back
+  )
+
+  /** The wearer's cloth colour, or null for no cape. `capeColor` is what marks
+   *  a back item as one — a future quiver would sit in the slot without it.
+   *  `/cape` forces the default sheet on with no item, for fitting work. */
+  const capeColor = $derived.by(() => {
+    const worn = equippedBackItemId
+      ? getItemDef(equippedBackItemId)?.capeColor
+      : undefined
+    if (worn) return worn
+    return isCurrentPlayer && $capeEnabled ? DEFAULT_CAPE_COLOR : null
+  })
+
   function detachCape() {
     capeRig?.dispose()
     capeRig = null
   }
 
-  // The teardown owns the cape's lifetime: a bias change re-fits it (so
-  // /cape_depth can be dialled in live), and a rebuilt model — `modelRoot` is
-  // fresh then — drops the cape left on the discarded skeleton.
+  // The teardown owns the cape's lifetime: a bias or colour change re-fits it
+  // (so /cape_depth can be dialled in live), and a rebuilt model — `modelRoot`
+  // is fresh then — drops the cape left on the discarded skeleton.
   $effect(() => {
-    const wanted = isCurrentPlayer && $capeEnabled
+    const color = capeColor
     const bias = capeCollarBias
     const root = modelRoot
-    if (!wanted || !root || !clonedScene) return
+    if (color === null || !root || !clonedScene) return
 
-    const fit = fitCapeToSkeleton(clonedScene, bias)
+    // Only cache the measurement for the model's own bias: /cape_depth dials
+    // arbitrary floats, and every one would leave a permanent cache entry.
+    const cacheable = $capeCollarBiasOverride === null
+    const fit = fitCapeToSkeleton(
+      clonedScene,
+      bias,
+      cacheable ? modelPath : undefined
+    )
     if (!fit) {
       console.warn('Could not fit a cape to this rig')
       return
     }
-    capeRig = attachCapeFit(fit)
+    capeRig = attachCapeFit(fit, color)
     return detachCape
   })
 
-  /** Steps the cape cloth. Called from the game loop after `update`, so the
-   *  sheet follows this frame's pose and this frame's wind. */
-  export function updateCape(deltaTime: number, wind: WindState | null) {
-    capeRig?.update(deltaTime, wind)
+  /** Steps the cape cloth, after the mixer so the sheet follows the pose this
+   *  frame renders. A parked remote player sits at OFFSCREEN_Y; skip the solve
+   *  and the draws rather than simulating cloth nobody can see. */
+  function updateCape(deltaTime: number, wind: WindState | null) {
+    if (!capeRig) return
+    const onScreen = position.y > OFFSCREEN_Y / 2
+    capeRig.root.visible = onScreen
+    if (onScreen) capeRig.update(deltaTime, wind)
   }
 
   // ── Music emote prop ────────────────────────────────────
@@ -881,8 +915,17 @@
     }
   })
 
-  // Function to update mixer and animation state and nametag - called from GameScene gameLoop
-  export function update(deltaTime: number) {
+  /** One frame for this model, called from the GameScene game loop. The cape
+   *  steps last so it reads the pose the mixer just set; `updatePose` returns
+   *  early in places, which is why the two are not simply written in sequence
+   *  at the call site. */
+  export function update(deltaTime: number, wind: WindState | null = null) {
+    updatePose(deltaTime)
+    updateCape(deltaTime, wind)
+  }
+
+  // Function to update mixer and animation state and nametag
+  function updatePose(deltaTime: number) {
     // Sync Three.js group position directly from the Vector3 prop
     // (Svelte cannot track mutations on THREE.Vector3 objects)
     if (modelGroup) {

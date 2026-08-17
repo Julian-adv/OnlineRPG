@@ -62,6 +62,7 @@ fn make_player(id: &str, x: f32, z: f32) -> Player {
         floor_level: 0,
         object_type: None,
         main_hand: None,
+        back: None,
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),

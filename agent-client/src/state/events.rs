@@ -139,7 +139,8 @@ impl SharedState {
             | ServerMessage::XpGained { .. }
             | ServerMessage::PlayerHealthUpdate { .. }
             | ServerMessage::PlayerTorchToggled { .. }
-            | ServerMessage::PlayerMainHandChanged { .. } => EventUrgency::Routine,
+            | ServerMessage::PlayerMainHandChanged { .. }
+            | ServerMessage::PlayerBackChanged { .. } => EventUrgency::Routine,
 
             // Being relocated invalidates our walk targets and floor
             // assumptions; someone else being relocated does not.

@@ -125,7 +125,7 @@
     shirt: 'Shirt',
   }
 
-  // null = wire slot without a panel cell yet (back/shirt until their items ship)
+  // null = wire slot without a panel cell yet (shirt until its items ship)
   const SLOT_POSITIONS: Record<
     EquipSlot,
     { top: number; left: number } | null
@@ -142,7 +142,7 @@
     belt: { top: 45, left: 50 },
     pants: { top: 60, left: 50 },
     boots: { top: 88, left: 50 },
-    back: null,
+    back: { top: 31, left: 90 },
     shirt: null,
   }
 

@@ -201,6 +201,25 @@ describe('cape fit', () => {
     expect(collarDepth + capeMinZAt(body, bulgeDrop)).toBeGreaterThan(0.219)
   })
 
+  it('reuses a measured fit across wearers of the same model', () => {
+    const facing = new THREE.Vector3(0, 0, 1)
+    const model = '/models/test-wearer.glb'
+    const first = fitCapeToSkeleton(makeCharacter(facing).root, 0, model)
+    if (!first) throw new Error('expected a fit')
+
+    // The second wearer measures nothing: it takes the cached bind-space fit
+    // and only resolves its own spine bone.
+    const { root, spine } = makeCharacter(facing)
+    const second = fitCapeToSkeleton(root, 0, model)
+    if (!second) throw new Error('expected a fit')
+
+    expect(second.parent).toBe(spine)
+    expect(second.parent).not.toBe(first.parent)
+    expect(second.options.body).toBe(first.options.body)
+    expect(second.position).toEqual(first.position)
+    expect(second.quaternion).toEqual(first.quaternion)
+  })
+
   it('refuses rigs without the bones it needs', () => {
     const bare = new THREE.Group()
     bare.add(new THREE.Bone())

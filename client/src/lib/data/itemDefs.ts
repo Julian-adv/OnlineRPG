@@ -27,6 +27,9 @@ export interface ItemDefinition {
   consumable?: boolean
   /** Satiation restored when eaten (doc/HUNGER.md). */
   nutrition?: number
+  /** Cloth colour of the procedural cape, e.g. `#6d1720`. Its presence is what
+   *  makes a back-slot item a cape rather than, say, a quiver. */
+  capeColor?: string
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>

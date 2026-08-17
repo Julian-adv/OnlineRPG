@@ -37,6 +37,7 @@ export type ServerPlayer = {
   floor_level: number
   object_type?: string
   main_hand?: string | null
+  back?: string | null
 }
 
 export type ServerMonster = {

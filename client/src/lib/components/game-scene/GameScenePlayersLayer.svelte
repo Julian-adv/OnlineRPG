@@ -552,6 +552,7 @@
         maxHealth={player.maxHealth}
         torchOn={player.torchOn}
         mainHand={player.mainHand}
+        back={player.back}
         {torchEffectsDisabled}
         npcPlayerId={player.isOfficialNpc ? player.id : undefined}
         onInteractionFinished={() =>

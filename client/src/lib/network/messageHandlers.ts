@@ -158,6 +158,7 @@ function toRemotePlayer(sp: ServerPlayer): RemotePlayer {
     gender: sp.gender,
     torchOn: sp.torch_on,
     mainHand: sp.main_hand ?? null,
+    back: sp.back ?? null,
     floorLevel: sp.floor_level ?? 0,
     isOfficialNpc: sp.is_official_npc ?? false,
   }
@@ -1022,6 +1023,12 @@ export function handleServerMessage(
         break
       }
       updatePlayer(data.player_id, { mainHand: data.item_def_id ?? null })
+      break
+    }
+
+    case 'PlayerBackChanged': {
+      if (isSelfPlayer(data.player_id)) break
+      updatePlayer(data.player_id, { back: data.item_def_id ?? null })
       break
     }
 

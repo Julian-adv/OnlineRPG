@@ -78,7 +78,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v30: player-to-player trading (doc/TRADE.md) — PlayerTradeRequest/
 ///      AtStall/Respond/SetOffer/Lock/Unlock/Confirm/Cancel and
 ///      PlayerTradeRequested/RequestResult/Update/Ended/Error.
-pub const PROTOCOL_VERSION: u32 = 30;
+/// v31: `Player.back` + PlayerBackChanged, so nearby clients render a
+///      wearer's cape.
+pub const PROTOCOL_VERSION: u32 = 31;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -180,6 +182,7 @@ mod tests {
             floor_level: 0,
             object_type: None,
             main_hand: None,
+            back: None,
             object_id: None,
             last_combat_at: 0,
             client_kind: Default::default(),
