@@ -58,10 +58,22 @@
     return entry.enchant !== 0 ? `+${entry.enchant} ${name}` : name
   }
 
+  /** Every request the player makes retires the last error: an update from
+   *  the other side must not wipe a refusal before it is read. */
+  function act(send: () => void) {
+    playerTradeError.set(null)
+    send()
+  }
+
   function pushOffer(items: PlayerTradeItem[], copper: number) {
-    networkManager.sendPlayerTradeSetOffer(
-      items.map((i) => ({ instance_id: i.instance_id, quantity: i.quantity })),
-      copper
+    act(() =>
+      networkManager.sendPlayerTradeSetOffer(
+        items.map((i) => ({
+          instance_id: i.instance_id,
+          quantity: i.quantity,
+        })),
+        copper
+      )
     )
   }
 
@@ -273,21 +285,23 @@
       {#if !trade.you.locked}
         <button
           class="primary"
-          onclick={() => networkManager.sendPlayerTradeLock(trade.revision)}
+          onclick={() =>
+            act(() => networkManager.sendPlayerTradeLock(trade.revision))}
         >
           Lock offer
         </button>
       {:else if !trade.you.confirmed}
         <button
           class="ghost"
-          onclick={() => networkManager.sendPlayerTradeUnlock()}
+          onclick={() => act(() => networkManager.sendPlayerTradeUnlock())}
         >
           Unlock
         </button>
         <button
           class="primary"
           disabled={!trade.them.locked}
-          onclick={() => networkManager.sendPlayerTradeConfirm(trade.revision)}
+          onclick={() =>
+            act(() => networkManager.sendPlayerTradeConfirm(trade.revision))}
         >
           {trade.them.locked ? 'Confirm trade' : 'Waiting for them to lock'}
         </button>

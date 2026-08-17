@@ -72,6 +72,29 @@ async fn open_session(pair: &TradePair) {
         .await;
 }
 
+async fn complete_trade(pair: &TradePair) {
+    let rev = revision(&pair.game_state, &pair.a).await;
+    pair.game_state.lock_player_trade(&pair.a, rev).await;
+    pair.game_state.lock_player_trade(&pair.b, rev).await;
+    pair.game_state
+        .confirm_player_trade(&pair.a, rev, &pair.auth)
+        .await;
+    pair.game_state
+        .confirm_player_trade(&pair.b, rev, &pair.auth)
+        .await;
+}
+
+async fn move_x(game_state: &GameState, player_id: &PlayerId, x: f32) {
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(player_id)
+        .unwrap()
+        .position
+        .x = x;
+}
+
 async fn revision(game_state: &GameState, player_id: &PlayerId) -> u32 {
     game_state
         .player_trades
@@ -111,15 +134,7 @@ async fn a_completed_trade_moves_items_and_coin_once() {
     pair.game_state
         .set_player_trade_offer(&pair.b, vec![slot(2, 1)], 0)
         .await;
-    let rev = revision(&pair.game_state, &pair.a).await;
-    pair.game_state.lock_player_trade(&pair.a, rev).await;
-    pair.game_state.lock_player_trade(&pair.b, rev).await;
-    pair.game_state
-        .confirm_player_trade(&pair.a, rev, &pair.auth)
-        .await;
-    pair.game_state
-        .confirm_player_trade(&pair.b, rev, &pair.auth)
-        .await;
+    complete_trade(&pair).await;
 
     let a_bag = bag_of(&pair.game_state, &pair.a).await;
     let b_bag = bag_of(&pair.game_state, &pair.b).await;
@@ -260,15 +275,7 @@ async fn an_overweight_receiver_aborts_the_whole_trade() {
     pair.game_state
         .set_player_trade_offer(&pair.a, vec![slot(1, 500)], 0)
         .await;
-    let rev = revision(&pair.game_state, &pair.a).await;
-    pair.game_state.lock_player_trade(&pair.a, rev).await;
-    pair.game_state.lock_player_trade(&pair.b, rev).await;
-    pair.game_state
-        .confirm_player_trade(&pair.a, rev, &pair.auth)
-        .await;
-    pair.game_state
-        .confirm_player_trade(&pair.b, rev, &pair.auth)
-        .await;
+    complete_trade(&pair).await;
 
     let a_bag = bag_of(&pair.game_state, &pair.a).await;
     assert_eq!(a_bag.len(), 1, "the giver keeps everything");
@@ -380,4 +387,167 @@ async fn npcs_refuse_player_trades() {
         .await
         .sessions
         .is_empty());
+}
+
+/// The session leaves the table the moment the second confirm lands, so a
+/// confirm that was already in flight has nothing to run the swap on again.
+#[tokio::test]
+async fn a_repeated_confirm_cannot_run_the_swap_twice() {
+    let pair = make_trade_pair("trade_double_confirm", 300, 0).await;
+    give(&pair.game_state, &pair.b, bag_item(1, "healing_potion", 10)).await;
+    open_session(&pair).await;
+    pair.game_state
+        .set_player_trade_offer(&pair.a, vec![], 100)
+        .await;
+    pair.game_state
+        .set_player_trade_offer(&pair.b, vec![slot(1, 3)], 0)
+        .await;
+    let rev = revision(&pair.game_state, &pair.a).await;
+    complete_trade(&pair).await;
+
+    pair.game_state
+        .confirm_player_trade(&pair.a, rev, &pair.auth)
+        .await;
+    pair.game_state
+        .confirm_player_trade(&pair.b, rev, &pair.auth)
+        .await;
+
+    assert_eq!(gold_of(&pair.game_state, &pair.a).await, 200);
+    assert_eq!(gold_of(&pair.game_state, &pair.b).await, 100);
+    let b_bag = bag_of(&pair.game_state, &pair.b).await;
+    assert_eq!(b_bag[0].quantity, 7);
+    let a_bag = bag_of(&pair.game_state, &pair.a).await;
+    assert_eq!(a_bag.len(), 1);
+    assert_eq!(a_bag[0].quantity, 3);
+}
+
+/// Slots naming the same stack merge into one entry, and a pair whose sum
+/// wraps u32 is refused rather than passing as a small number.
+#[tokio::test]
+async fn duplicate_slots_merge_and_cannot_overflow() {
+    let pair = make_trade_pair("trade_dup_slots", 0, 0).await;
+    give(&pair.game_state, &pair.a, bag_item(1, "healing_potion", 10)).await;
+    open_session(&pair).await;
+
+    pair.game_state
+        .set_player_trade_offer(&pair.a, vec![slot(1, 1), slot(1, 1)], 0)
+        .await;
+    {
+        let trades = pair.game_state.player_trades.read().await;
+        let items = &trades.get(&pair.a).unwrap().side(&pair.a).unwrap().items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].quantity, 2);
+    }
+
+    pair.game_state
+        .set_player_trade_offer(&pair.a, vec![slot(1, 6), slot(1, u32::MAX - 3)], 0)
+        .await;
+    {
+        let trades = pair.game_state.player_trades.read().await;
+        let items = &trades.get(&pair.a).unwrap().side(&pair.a).unwrap().items;
+        assert_eq!(
+            items.len(),
+            1,
+            "the overflowing offer was refused, the last one stands"
+        );
+        assert_eq!(items[0].quantity, 2);
+    }
+    assert_eq!(bag_of(&pair.game_state, &pair.a).await[0].quantity, 10);
+}
+
+/// A stall trade is measured to the table: the owner may stand well behind
+/// it, and a customer far from the table cannot open it.
+#[tokio::test]
+async fn stall_trades_measure_range_to_the_table() {
+    let pair = make_trade_pair("trade_stall_range", 0, 0).await;
+    let stall = onlinerpg_shared::stall::Stall {
+        id: 77,
+        owner: pair.b,
+        position: Position {
+            x: 13.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: 0.0,
+        floor_level: 0,
+    };
+    pair.game_state.stalls.write().await.insert(stall.id, stall);
+    move_x(&pair.game_state, &pair.b, 21.0).await;
+
+    move_x(&pair.game_state, &pair.a, 5.0).await;
+    pair.game_state
+        .request_player_trade_at_stall(&pair.a, 77)
+        .await;
+    assert!(
+        pair.game_state
+            .player_trades
+            .read()
+            .await
+            .get(&pair.a)
+            .is_none(),
+        "8 m from the table does not open"
+    );
+
+    move_x(&pair.game_state, &pair.a, 10.0).await;
+    pair.game_state
+        .request_player_trade_at_stall(&pair.a, 77)
+        .await;
+    assert!(
+        pair.game_state
+            .player_trades
+            .read()
+            .await
+            .get(&pair.a)
+            .is_some(),
+        "3 m from the table opens, even with the owner 11 m away"
+    );
+}
+
+/// Drifting off the table ends a stall trade like a cancel would, and the
+/// customer waits out the reopen cooldown either way.
+#[tokio::test]
+async fn walking_off_a_stall_trade_charges_the_reopen_cooldown() {
+    let pair = make_trade_pair("trade_stall_cooldown", 0, 0).await;
+    let stall = onlinerpg_shared::stall::Stall {
+        id: 78,
+        owner: pair.b,
+        position: Position {
+            x: 12.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        rotation: 0.0,
+        floor_level: 0,
+    };
+    pair.game_state.stalls.write().await.insert(stall.id, stall);
+    pair.game_state
+        .request_player_trade_at_stall(&pair.a, 78)
+        .await;
+    let rev = revision(&pair.game_state, &pair.a).await;
+
+    move_x(&pair.game_state, &pair.a, 30.0).await;
+    pair.game_state
+        .confirm_player_trade(&pair.a, rev, &pair.auth)
+        .await;
+    assert!(pair
+        .game_state
+        .player_trades
+        .read()
+        .await
+        .get(&pair.a)
+        .is_none());
+
+    move_x(&pair.game_state, &pair.a, 10.0).await;
+    pair.game_state
+        .request_player_trade_at_stall(&pair.a, 78)
+        .await;
+    assert!(
+        pair.game_state
+            .player_trades
+            .read()
+            .await
+            .get(&pair.a)
+            .is_none(),
+        "the stall stays shut to the customer who walked off"
+    );
 }

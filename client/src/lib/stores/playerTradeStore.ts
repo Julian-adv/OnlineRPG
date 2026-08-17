@@ -31,7 +31,8 @@ export interface PlayerTradeState {
 export const playerTrade = writable<PlayerTradeState | null>(null)
 
 /** Last rejection from the server (stale revision, overweight, untradeable),
- *  shown inside the window. Cleared on the next update. */
+ *  shown inside the window. Cleared by the player's next request or when the
+ *  trade ends — not by updates, which the other side can trigger. */
 export const playerTradeError = writable<string | null>(null)
 
 export interface PendingTradeRequest {

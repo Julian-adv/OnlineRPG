@@ -89,6 +89,7 @@ impl GameState {
         let Some(stall) = removed else {
             return false;
         };
+        self.drop_stall_trade(player_id, stall.id).await;
         self.send_direct_message_to_players_within_position(
             &stall.position,
             stall.floor_level,

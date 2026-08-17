@@ -554,7 +554,6 @@ export function handleServerMessage(
 
     case 'PlayerTradeUpdate':
       dismissTradeRequest(data.state.them.player_id)
-      playerTradeError.set(null)
       playerTrade.set(data.state)
       break
 

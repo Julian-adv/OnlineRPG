@@ -13,7 +13,7 @@ use super::inventory::{draw_from_bag, stack_into_bag, BagInsert};
 use super::StoredBuyback;
 
 /// Maximum distance between player and trader for any shop interaction.
-const MAX_TRADE_DISTANCE: f32 = 6.0;
+pub(super) const MAX_TRADE_DISTANCE: f32 = 6.0;
 
 /// Most recent sold units kept per (player, merchant) for buyback; older
 /// entries are dropped oldest-first.
