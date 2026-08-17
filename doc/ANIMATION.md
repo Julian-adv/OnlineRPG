@@ -41,9 +41,9 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 
 ## 2-2. 본 계층 구조 (부모-자식)
 
-![locomotion bone hierarchy](./images/animation-bone-hierarchy.svg)
+![locomotion bone hierarchy](./images/diagrams/animation-bone-hierarchy.svg)
 
-- 파일: `doc/images/animation-bone-hierarchy.svg`
+- 파일: `doc/images/diagrams/animation-bone-hierarchy.svg`
 - `locomotion.glb`에서 추출한 65개 본의 부모-자식 구조를 시각화한 이미지
 
 ## 3. 현재 매핑 정책
@@ -106,7 +106,7 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 ## 7. 버전 로그
 
 - `v0.8` (2026-02-21): 표준 클립 표에 `Animation Pack` 컬럼 추가
-- `v0.7` (2026-02-21): 본 계층 구조 표를 SVG 이미지 첨부 방식으로 변경 (`doc/images/animation-bone-hierarchy.svg`)
+- `v0.7` (2026-02-21): 본 계층 구조 표를 SVG 이미지 첨부 방식으로 변경 (`doc/images/diagrams/animation-bone-hierarchy.svg`)
 - `v0.6` (2026-02-21): VSCode 프리뷰 가독성을 위해 본 계층 구조를 Mermaid에서 테이블+인덴트 형식으로 변경
 - `v0.5` (2026-02-21): 본 계층 구조를 텍스트 트리에서 Mermaid 다이어그램으로 변경
 - `v0.4` (2026-02-21): `locomotion.glb` 본 계층 구조(`부모 ㄴ 자식`) 섹션 추가

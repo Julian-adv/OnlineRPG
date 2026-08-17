@@ -17,7 +17,7 @@ Agents and humans connect to the same world, act under the same rules, and inter
 - **3D Environment**: Quarter-view 3D game world based on Three.js
 - **Point-light Torches**: Torches cast real-time point lighting with attenuated falloff and shadows
 
-![Night scene with torch lighting](doc/images/gameplay-night.png)
+![Night scene with torch lighting](doc/images/gameplay/gameplay-night.png)
 
 - **Buildings & Housing**: Modular timber-framed structures with per-room occlusion and L-shaped roof connections
   - Multi-story builds: 2, 3, and 4 floors supported
@@ -25,12 +25,12 @@ Agents and humans connect to the same world, act under the same rules, and inter
   - Customizable wall, roof, and floor textures/materials
   - Furniture placement (e.g. beds) with in-world interaction (sleep / use)
 
-![Player-built timber-framed house with bed](doc/images/gameplay-housing.png)
+![Player-built timber-framed house with bed](doc/images/gameplay/gameplay-housing.png)
 - **Day/Night Cycle**: Time-of-day simulation with shifting sun, sky, and ambient lighting
   - Day/night length varies with the planet's orbital position (seasonal long days and long nights)
 - **Twin Moons**: Two-moon celestial simulation with independent orbits and phases
 
-![Celestial orbits panel showing the sun, planet, and twin moons](doc/images/gameplay-orbits.png)
+![Celestial orbits panel showing the sun, planet, and twin moons](doc/images/gameplay/gameplay-orbits.png)
 - **Procedural World**: Fully procedurally generated world — terrain, rivers, coastlines, and biomes
   - Vast 32 km × 32 km world
   - Procedural river generation with carved channels and braided distributaries
@@ -40,25 +40,25 @@ Agents and humans connect to the same world, act under the same rules, and inter
   - Animated sea waves (Gerstner) and flowing river ripples
   - River-to-sea deltas with branching distributaries and estuary blending where freshwater meets the ocean
 
-![Procedurally generated world map](doc/images/gameplay-worldmap.png)
+![Procedurally generated world map](doc/images/gameplay/gameplay-worldmap.png)
 
-![Auto-placed wooden bridge spanning a procedural river](doc/images/gameplay-bridge.png)
+![Auto-placed wooden bridge spanning a procedural river](doc/images/gameplay/gameplay-bridge.png)
 
-![River delta with braided distributaries and sand bars meeting the sea](doc/images/gameplay-delta.png)
+![River delta with braided distributaries and sand bars meeting the sea](doc/images/gameplay/gameplay-delta.png)
 
 - **Built-in Map Editor**: In-game tools for shaping the world
   - Terrain brushes (Road, Flatten, height paint) with live editing
   - Object placement (buildings, props, vegetation) with preview
   - Rectangular zone drawing for towns (no-spawn) and per-region monster spawn areas
 
-![In-game map editor with height brush active](doc/images/gameplay-map-editor.png)
+![In-game map editor with height brush active](doc/images/gameplay/gameplay-map-editor.png)
 
 - **Stat-Based Combat**: NetHack/D&D-style server-authoritative combat
   - Six classic attributes (STR, DEX, CON, INT, WIS, CHA), range 3–18
   - Character creation via 4d6-drop-lowest rolls, class modifiers, and a 72-point rebalance
   - All damage, hit, and resolution calculations handled on the server
 
-![Character sheet with stats, equipment paper-doll, and inventory](doc/images/gameplay-character-sheet.png)
+![Character sheet with stats, equipment paper-doll, and inventory](doc/images/gameplay/gameplay-character-sheet.png)
 
 - **Inventory & Equipment**: Weight-limited inventory with a full paper-doll equipment system
   - Eleven equip slots: head, main hand, off hand, chest, ear, neck, belt, pants, boots, and two rings

@@ -10,8 +10,8 @@ Blender MCP(`mcp__blender__execute_blender_code`)로 실행한다. Blender가 �
 
 산출물:
 - `client/public/models/<카테고리>/<name>.glb` — 원점 바닥 중심, 스케일 적용됨
-- `client/public/items/<name>.png` — 128×128 투명 배경 아이콘
-- `doc/images/<name>.png` — Meshy에 넣은 원화 원본 (있는 경우)
+- `client/public/items/<CAT>/<name>.png` — 128×128 투명 배경 아이콘 (CAT은 GLB와 동일: objects | armor | accessory | weapons)
+- `doc/images/items/<name>.png` (프롭이면 `doc/images/props/`) — Meshy에 넣은 원화 원본 (있는 경우)
 - `doc/assets/items.md` 또는 `props.md` 항목 — 소스·라이선스·치수·날짜
 
 앞의 파일 3개는 STEP 8에서 pc5090으로 복사하고, 문서 항목은 STEP 9에서 **pc5090 쪽에** 쓴다 (커밋이 그쪽에서 나가므로).
@@ -254,7 +254,7 @@ python .claude/skills/blender-item-asset/measure_glb.py client/public/models/<�
 
 ## STEP 7 — 원화 배치
 
-Meshy에 넣은 원화(ChatGPT 생성 이미지)가 있으면 원본 해상도 그대로 `doc/images/<name>.png`에 둔다. 축소하지 않는다 — 기존 원화들은 2MB대다.
+Meshy에 넣은 원화(ChatGPT 생성 이미지)가 있으면 원본 해상도 그대로 `doc/images/items/<name>.png`(프롭이면 `doc/images/props/`)에 둔다. 축소하지 않는다 — 기존 원화들은 2MB대다.
 
 ---
 
@@ -266,11 +266,12 @@ pc5090은 `~/.ssh/config`에 별칭이 있어 pc4090에서 바로 붙는다. 리
 
 ```bash
 NAME=<asset_name>; CAT=<카테고리>   # objects | armor | accessory | weapons
+IMGDIR=items                       # 프롭이면 props
 DEST=pc5090:/home/jake/work/OnlineRPG
 
 scp "client/public/models/$CAT/$NAME.glb" "$DEST/client/public/models/$CAT/"
-scp "client/public/items/$NAME.png"       "$DEST/client/public/items/"
-scp "doc/images/$NAME.png"                "$DEST/doc/images/"
+scp "client/public/items/$CAT/$NAME.png"  "$DEST/client/public/items/$CAT/"
+scp "doc/images/$IMGDIR/$NAME.png"       "$DEST/doc/images/$IMGDIR/"
 ```
 
 원화가 없는 애셋이면 세 번째 줄은 건너뛴다.
@@ -278,7 +279,7 @@ scp "doc/images/$NAME.png"                "$DEST/doc/images/"
 sha256으로 검증한다 — 크기만 보면 전송 잘림을 놓친다:
 
 ```bash
-for f in "client/public/models/$CAT/$NAME.glb" "client/public/items/$NAME.png" "doc/images/$NAME.png"; do
+for f in "client/public/models/$CAT/$NAME.glb" "client/public/items/$CAT/$NAME.png" "doc/images/$IMGDIR/$NAME.png"; do
   [ -f "$f" ] || continue
   l=$(sha256sum "$f" | cut -d' ' -f1)
   r=$(ssh pc5090 "sha256sum /home/jake/work/OnlineRPG/$f 2>/dev/null | cut -d' ' -f1")

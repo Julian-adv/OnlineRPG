@@ -215,8 +215,8 @@ TS 기반 `GenerateTerrainDialog` (6-Phase 인-게임 절차 생성) 는 Rust �
 
 세계 거시 배치를 손으로 그려 가이드한 리퍼런스 이미지:
 
-- ![map1.png](images/map1.png) — 손으로 그린 세계 지형 초안
-- ![map2.png](images/map2.png) — Gemini 가 자연스럽게 변환한 버전
+- ![map1.png](images/maps/map1.png) — 손으로 그린 세계 지형 초안
+- ![map2.png](images/maps/map2.png) — Gemini 가 자연스럽게 변환한 버전
 
 현재 베이크된 월드(seed 42)는 이 이미지를 직접 입력으로 쓰지 않고, Rust
 파이프라인의 `elevation_hotspots` / `river_carve_paths` (`WorldGenConfig`)

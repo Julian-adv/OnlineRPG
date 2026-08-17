@@ -15,7 +15,7 @@
 
 ## Female Knight
 
-- (초기) ComfyUI에서 jibMixZIT_v10.safetensors로 원화 생성 ![원화](../images/female-knight-concept.png)
+- (초기) ComfyUI에서 jibMixZIT_v10.safetensors로 원화 생성 ![원화](../images/characters/female-knight-concept.png)
 - 현재 원화 ![원화](../../client/public/character_concepts/female_knight.png) (그리기: ComfyUI jibMixZIT_v10, A포즈 변경만 Qwen Image Edit)
 - Tripo(유료 등급)에서 3d 모델로 변환 -> 10k 모델로 리매쉬
 - mixamo.com에서 리깅 및 애니메이션 부착
@@ -27,13 +27,13 @@
 `female_thief.glb`가 `female_rogue.glb`로 개명됨 (클래스 Thief → Rogue, 커밋 7eebc39). 현재 사용 중.
 
 - female_knight와 같은 workflow (3D 생성은 meshy.ai)
-- 원화 ![원화](../../client/public/character_concepts/female_rogue.png) (캐릭터 선택 UI 원화; 초기 thief 원화 `../images/thief-concept.png`에서 교체)
+- 원화 ![원화](../../client/public/character_concepts/female_rogue.png) (캐릭터 선택 UI 원화; 초기 thief 원화 `../images/characters/thief-concept.png`에서 교체)
 
 ## Knight
 
 - female_knight와 같은 workflow (3D 생성은 meshy.ai)
-- 원화 ![원화](../images/knight-concept.png)
-- nano banana2로 A 포즈 ![T-pose](../images/knight-A-pose.png)
+- 원화 ![원화](../images/characters/knight-concept.png)
+- nano banana2로 A 포즈 ![T-pose](../images/characters/knight-A-pose.png)
 - character_concepts 원화 `character_concepts/knight.png` (Gemini)
 
 ## Other Classes
@@ -63,8 +63,8 @@
 
 플레이어 클래스 아님.
 
-- guard — 경비병 NPC Karl (`guard.glb`, CharacterClass::Guard); 원화 `../images/karl-concept.png`, 3D는 Meshy.ai (라이센스는 위 License 표 참조)
-- npc_woman — 상인 NPC Rica (`npc_woman.glb`); 원화 `../images/rica-concept.png` (Gemini) (커밋 fb299e7)
+- guard — 경비병 NPC Karl (`guard.glb`, CharacterClass::Guard); 원화 `../images/characters/karl-concept.png`, 3D는 Meshy.ai (라이센스는 위 License 표 참조)
+- npc_woman — 상인 NPC Rica (`npc_woman.glb`); 원화 `../images/characters/rica-concept.png` (Gemini) (커밋 fb299e7)
 - night_merchant — 야간 상인 NPC Wick (`night_merchant.glb`); Meshy.ai Premium 등급, 생성 2026-08-08 (프롬프트명 "The Jolly Buccaneer"). OBJ로 받아 Mixamo 리깅(Excited) — Mixamo에서 텍스처가 하얗게 깨져 Blender에서 baseColor 재연결. 손가락 본 없는 33본 스켈레톤(기존 65본과 달리 손가락 애니 안 먹음, 런타임 리타게팅이 없는 본 트랙은 무시). baseColor 2048² JPEG, 노멀맵 없음. .blend 소스 `~/assets_original/night_merchant.blend` (텍스처 팩 포함)
 
 ## 텍스처 재패킹 (2026-08-06)
