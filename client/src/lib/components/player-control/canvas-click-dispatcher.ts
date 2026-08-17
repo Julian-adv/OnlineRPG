@@ -13,6 +13,7 @@ type BreakPropIntent = Extract<ClickIntent, { type: 'break_prop' }>
 type OpenPropIntent = Extract<ClickIntent, { type: 'open_prop' }>
 type CastFishingIntent = Extract<ClickIntent, { type: 'cast_fishing' }>
 type TipHatIntent = Extract<ClickIntent, { type: 'tip_hat' }>
+type StallIntent = Extract<ClickIntent, { type: 'stall' }>
 
 export interface CanvasClickActions {
   /** Player is at melee range — start the attack swing immediately. */
@@ -41,6 +42,7 @@ export interface CanvasClickActions {
   castFishing(intent: CastFishingIntent): void
   /** Open the tip dialog for a clicked hat, walking into range first. */
   approachAndTip(intent: TipHatIntent): void
+  approachAndTradeAtStall(intent: StallIntent): void
 }
 
 export function dispatchCanvasClickIntent(
@@ -96,6 +98,9 @@ export function dispatchCanvasClickIntent(
       return
     case 'tip_hat':
       actions.approachAndTip(intent)
+      return
+    case 'stall':
+      actions.approachAndTradeAtStall(intent)
       return
     case 'none':
       return

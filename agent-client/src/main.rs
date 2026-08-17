@@ -492,6 +492,11 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::TipHatRemoved { .. } => "TipHatRemoved",
         ServerMessage::GrillStarted => "GrillStarted",
         ServerMessage::GrillEnded { .. } => "GrillEnded",
+        ServerMessage::PlayerTradeRequested { .. } => "PlayerTradeRequested",
+        ServerMessage::PlayerTradeRequestResult { .. } => "PlayerTradeRequestResult",
+        ServerMessage::PlayerTradeUpdate { .. } => "PlayerTradeUpdate",
+        ServerMessage::PlayerTradeEnded { .. } => "PlayerTradeEnded",
+        ServerMessage::PlayerTradeError { .. } => "PlayerTradeError",
     }
 }
 

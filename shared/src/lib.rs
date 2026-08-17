@@ -75,7 +75,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      TipHatRemoved, ClientMessage::TipHat); GameState carries `tip_hats`.
 /// v29: debuffs (DebuffUpdate) replace HungerUpdate's `poisoned_ms` —
 ///      doc/DEBUFF.md.
-pub const PROTOCOL_VERSION: u32 = 29;
+/// v30: player-to-player trading (doc/TRADE.md) — PlayerTradeRequest/
+///      AtStall/Respond/SetOffer/Lock/Unlock/Confirm/Cancel and
+///      PlayerTradeRequested/RequestResult/Update/Ended/Error.
+pub const PROTOCOL_VERSION: u32 = 30;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized

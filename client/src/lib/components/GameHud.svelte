@@ -15,6 +15,8 @@
   import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
   import PartyInviteToast from './PartyInviteToast.svelte'
+  import PlayerTradeWindow from './PlayerTradeWindow.svelte'
+  import PlayerTradeRequestToast from './PlayerTradeRequestToast.svelte'
   import PartySummonToast from './PartySummonToast.svelte'
   import PartyPanel from './PartyPanel.svelte'
   import FriendRequestToast from './FriendRequestToast.svelte'
@@ -114,8 +116,10 @@
       onClose={() => inventoryVisible.set(false)}
     />
     <TradeWindow />
+    <PlayerTradeWindow />
     <TradeOfferToast />
     <PartyInviteToast />
+    <PlayerTradeRequestToast />
     <PartySummonToast />
     <PartyPanel />
     <FriendRequestToast />

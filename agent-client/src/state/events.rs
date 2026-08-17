@@ -198,7 +198,14 @@ impl SharedState {
             | ServerMessage::StallPlaced { .. }
             | ServerMessage::StallAppeared { .. }
             | ServerMessage::StallRemoved { .. }
-            | ServerMessage::GrillStarted => EventUrgency::Noise,
+            | ServerMessage::GrillStarted
+            // NPCs are refused player-to-player trades server-side, so these
+            // should never arrive; classified rather than left to the default.
+            | ServerMessage::PlayerTradeRequested { .. }
+            | ServerMessage::PlayerTradeRequestResult { .. }
+            | ServerMessage::PlayerTradeUpdate { .. }
+            | ServerMessage::PlayerTradeEnded { .. }
+            | ServerMessage::PlayerTradeError { .. } => EventUrgency::Noise,
 
             // Auth/character events: routine (handled before game entry)
             _ => EventUrgency::Routine,

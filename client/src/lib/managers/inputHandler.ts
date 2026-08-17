@@ -101,6 +101,13 @@ export type ClickIntent =
       distance: number
     }
   | {
+      /** Clicked a laid-out stall: opens a trade with its owner. */
+      type: 'stall'
+      stallId: number
+      position: Position
+      distance: number
+    }
+  | {
       type: 'interact_npc'
       playerId: number
       position: Position
@@ -139,6 +146,7 @@ export interface RaycastContext {
   propMeshes: THREE.Object3D[]
   groundItemMeshes: THREE.Object3D[]
   tipHatMeshes: THREE.Object3D[]
+  stallMeshes: THREE.Object3D[]
   groundMeshes: THREE.Object3D[]
   playerPosition: Position
   /** Gates house door clicks to the door's own floor (0 = ground/outdoors). */
@@ -493,6 +501,32 @@ class InputHandler {
           type: 'tip_hat',
           hatId: owner.userData.tipHatId as number,
           position: { x: hatPosition.x, y: hatPosition.y, z: hatPosition.z },
+          distance: Math.sqrt(dx * dx + dz * dz),
+        }
+      }
+    }
+
+    // Stalls, same shape as tip hats: click from anywhere, the server checks
+    // the distance to the table rather than to its owner.
+    if (context.stallMeshes.length > 0) {
+      const stallHits = raycaster.intersectObjects(context.stallMeshes, true)
+      const table = stallHits.length
+        ? findAncestorWithUserData(stallHits[0].object, 'stallId')
+        : null
+      if (table) {
+        const stallPosition = new THREE.Vector3()
+        table.getWorldPosition(stallPosition)
+        const pp = context.playerPosition
+        const dx = stallPosition.x - pp.x
+        const dz = stallPosition.z - pp.z
+        return {
+          type: 'stall',
+          stallId: table.userData.stallId as number,
+          position: {
+            x: stallPosition.x,
+            y: stallPosition.y,
+            z: stallPosition.z,
+          },
           distance: Math.sqrt(dx * dx + dz * dz),
         }
       }

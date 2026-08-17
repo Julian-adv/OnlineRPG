@@ -138,7 +138,7 @@ impl super::GameState {
         }
     }
 
-    async fn send_gold_update(&self, player_id: &PlayerId) {
+    pub(super) async fn send_gold_update(&self, player_id: &PlayerId) {
         let gold = self.get_player_gold(player_id).await;
         self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold })
             .await;
@@ -1076,6 +1076,12 @@ impl super::GameState {
         npc_player_id: &PlayerId,
         instance_id: u64,
     ) {
+        if self
+            .reject_if_trade_reserved(player_id, instance_id, "sell")
+            .await
+        {
+            return;
+        }
         let def = match self.validate_trader(player_id, npc_player_id).await {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
@@ -1340,6 +1346,9 @@ impl super::GameState {
         mut items: Vec<BagLineItem>,
     ) {
         if items.is_empty() {
+            return;
+        }
+        if self.reject_if_trading(player_id, "sell").await {
             return;
         }
         let def = match self.validate_trader(player_id, npc_player_id).await {

@@ -151,6 +151,19 @@ export type ClientMessage =
   | { FishingCast: { position: Position } }
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
+  | { PlayerTradeRequest: { target_name: string } }
+  | { PlayerTradeAtStall: { stall_id: number } }
+  | { PlayerTradeRespond: { requester_id: number; accept: boolean } }
+  | {
+      PlayerTradeSetOffer: {
+        items: { instance_id: number; quantity: number }[]
+        copper: number
+      }
+    }
+  | { PlayerTradeLock: { revision: number } }
+  | 'PlayerTradeUnlock'
+  | { PlayerTradeConfirm: { revision: number } }
+  | 'PlayerTradeCancel'
   | { PartyInvite: { target_name: string } }
   | { PartyRespond: { inviter_id: number; accept: boolean } }
   | { PartySummonRespond: { caster_id: number; accept: boolean } }

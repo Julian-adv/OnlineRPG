@@ -245,6 +245,7 @@ mod monster;
 mod party;
 mod passability;
 mod player;
+mod player_trade;
 pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
@@ -485,6 +486,9 @@ pub struct GameState {
     /// Standing tip hats keyed by owner: every owner move checks the leash,
     /// so the lookup has to be O(1) rather than a scan.
     tip_hats: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::tip_hat::TipHat>>>,
+    /// Live player-to-player trade sessions and pending requests
+    /// (doc/TRADE.md). Ranked above `player_gold`/`inventories`.
+    player_trades: Arc<RwLock<player_trade::PlayerTrades>>,
 }
 
 impl GameState {
@@ -655,6 +659,7 @@ impl GameState {
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
             stalls: Arc::new(RwLock::new(HashMap::new())),
             tip_hats: Arc::new(RwLock::new(HashMap::new())),
+            player_trades: Arc::new(RwLock::new(player_trade::PlayerTrades::default())),
         }
     }
 

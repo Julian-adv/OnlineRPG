@@ -161,6 +161,20 @@ pub struct CharacterSaveData {
     pub satiation: u32,
 }
 
+/// One row of the player-trade ledger. `*_items` are JSON arrays of
+/// `{def, qty, ench}` — never `instance_id`, which is minted per session and
+/// means nothing once the session ends.
+pub struct TradeLedgerEntry {
+    pub a_character_id: i64,
+    pub b_character_id: i64,
+    pub a_gold_before: i64,
+    pub a_gold_after: i64,
+    pub b_gold_before: i64,
+    pub b_gold_after: i64,
+    pub a_items: String,
+    pub b_items: String,
+}
+
 /// Column list shared between queries that return full CharacterRecord rows.
 const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation";
 
@@ -397,6 +411,7 @@ impl AuthService {
         Self::ensure_world_time_schema(&conn)?;
         Self::ensure_dungeon_chest_schema(&conn)?;
         Self::ensure_dungeon_discovery_schema(&conn)?;
+        Self::ensure_trade_ledger_schema(&conn)?;
 
         Ok(Self { pool })
     }
@@ -621,6 +636,38 @@ impl AuthService {
                 PRIMARY KEY (character_id, skill_id),
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Player-trade ledger (doc/TRADE.md). Written in the same transaction as
+    /// the trade itself, so it can never disagree with what happened. Gold
+    /// before and after both sides is what makes coin appearing from nowhere
+    /// detectable. No foreign key: a deleted character must not erase the
+    /// record of what they traded away.
+    fn ensure_trade_ledger_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS player_trades (
+                id INTEGER PRIMARY KEY,
+                traded_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                a_character_id INTEGER NOT NULL,
+                b_character_id INTEGER NOT NULL,
+                a_gold_before INTEGER NOT NULL,
+                a_gold_after INTEGER NOT NULL,
+                b_gold_before INTEGER NOT NULL,
+                b_gold_after INTEGER NOT NULL,
+                a_items TEXT NOT NULL,
+                b_items TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_trades_a ON player_trades(a_character_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_player_trades_b ON player_trades(b_character_id)",
             [],
         )?;
         Ok(())
@@ -1293,6 +1340,46 @@ impl AuthService {
         if let Some(datetime) = world_time {
             Self::write_world_time(&tx, datetime)?;
         }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A completed player trade: both sides' state, both inventories and the
+    /// ledger row in one commit. Separate from `save_batch` because the trade
+    /// must be durable before either client is told it succeeded, and because
+    /// the ledger row has to share the transaction to stay truthful.
+    pub fn commit_trade(
+        &self,
+        characters: &[CharacterSaveData],
+        inventories: &[(i64, Vec<ItemRow>)],
+        ledger: &TradeLedgerEntry,
+    ) -> Result<(), AuthError> {
+        let conn = self.open_connection()?;
+        let tx = conn.unchecked_transaction()?;
+        Self::write_character_states(&tx, characters)?;
+        Self::replace_inventories(
+            &tx,
+            inventories
+                .iter()
+                .map(|(id, items)| (*id, items.as_slice())),
+        )?;
+        tx.execute(
+            "INSERT INTO player_trades (
+                a_character_id, b_character_id,
+                a_gold_before, a_gold_after, b_gold_before, b_gold_after,
+                a_items, b_items
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                ledger.a_character_id,
+                ledger.b_character_id,
+                ledger.a_gold_before,
+                ledger.a_gold_after,
+                ledger.b_gold_before,
+                ledger.b_gold_after,
+                ledger.a_items,
+                ledger.b_items,
+            ],
+        )?;
         tx.commit()?;
         Ok(())
     }

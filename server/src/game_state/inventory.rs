@@ -387,6 +387,15 @@ impl super::GameState {
         inventories.get(player_id).cloned()
     }
 
+    /// Push the player's current inventory, for mutations that happen behind
+    /// their own locks and have no snapshot in hand.
+    pub(super) async fn push_inventory_update(&self, player_id: &PlayerId) {
+        let snapshot = self.inventories.read().await.get(player_id).cloned();
+        if let Some(snapshot) = snapshot {
+            self.send_inventory_snapshot(player_id, snapshot).await;
+        }
+    }
+
     pub(super) async fn mark_inventory_dirty(&self, player_id: &PlayerId) {
         let mut dirty = self.dirty_inventories.write().await;
         dirty.insert(*player_id);
@@ -492,6 +501,12 @@ impl super::GameState {
     }
 
     pub async fn equip_item(&self, player_id: &PlayerId, instance_id: u64) {
+        if self
+            .reject_if_trade_reserved(player_id, instance_id, "equip")
+            .await
+        {
+            return;
+        }
         let (snapshot, torch_on) = {
             let mut inventories = self.inventories.write().await;
             let inv = match inventories.get_mut(player_id) {
@@ -578,6 +593,12 @@ impl super::GameState {
     /// Use a consumable from the bag: resolve its effect and dispatch to the
     /// matching handler (healing potion, return scroll, ...).
     pub async fn use_item(&self, player_id: &PlayerId, instance_id: u64) {
+        if self
+            .reject_if_trade_reserved(player_id, instance_id, "use")
+            .await
+        {
+            return;
+        }
         // Resolve which usable effect this item carries before mutating anything.
         let effect = {
             let inventories = self.inventories.read().await;
@@ -1176,6 +1197,12 @@ impl super::GameState {
     }
 
     pub async fn drop_item(&self, player_id: &PlayerId, instance_id: u64) {
+        if self
+            .reject_if_trade_reserved(player_id, instance_id, "drop")
+            .await
+        {
+            return;
+        }
         let (player_position, rotation, floor_level) = {
             let players = self.players.read().await;
             match players.get(player_id) {
@@ -1274,6 +1301,9 @@ impl super::GameState {
     pub async fn drop_items(&self, player_id: &PlayerId, mut items: Vec<BagLineItem>) {
         items.retain(|i| i.qty > 0);
         if items.is_empty() {
+            return;
+        }
+        if self.reject_if_trading(player_id, "drop").await {
             return;
         }
         let Some(quantities) =

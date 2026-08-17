@@ -22,6 +22,7 @@
   import { sortBag } from './inventorySort'
   import { groupBagForSelection, splitGroupQty } from './inventoryGroups'
   import QuantityPopup from './QuantityPopup.svelte'
+  import { playerTrade, reservedQuantity } from '../stores/playerTradeStore'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 
   interface Props {
@@ -274,11 +275,15 @@
       {#each slots as slot, i (slot?.instance_id ?? `empty-${i}`)}
         {@const def = slot ? getItemDef(slot.item_def_id) : null}
         {@const locked = selectMode && slot !== null && !isSelectable(slot)}
+        {@const onTable = slot
+          ? reservedQuantity($playerTrade, slot.instance_id)
+          : 0}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="grid-cell"
           class:selected={slot !== null && selected.has(slot.instance_id)}
           class:locked
+          class:on-table={onTable > 0}
           use:itemTooltip={def && slot
             ? { def, item: slot, side: 'left' }
             : null}
@@ -300,6 +305,11 @@
           {/if}
           {#if slot && slot.quantity > 1}
             <span class="item-qty">{slot.quantity}</span>
+          {/if}
+          {#if onTable > 0}
+            <span class="item-reserved" title="On the trade table"
+              >{onTable}</span
+            >
           {/if}
           {#if slot !== null && selected.has(slot.instance_id)}
             <span class="item-selected-check">&check;</span>
@@ -496,6 +506,22 @@
     font-weight: 700;
     color: #fff;
     text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  }
+
+  /* How many units are on the trade table. The slot keeps its place — a bag
+     that re-flows mid-trade is a bag you misclick. */
+  .grid-cell.on-table {
+    box-shadow: inset 0 0 0 1px rgba(210, 170, 80, 0.7);
+  }
+
+  .item-reserved {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #f0d68a;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
   }
 
   .item-enchant {

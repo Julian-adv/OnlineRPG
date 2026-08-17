@@ -7,6 +7,7 @@
   import { loadGLB } from '../../utils/gltfCache'
 
   let stallModel = $state<THREE.Group | null>(null)
+  let group = $state<THREE.Group | undefined>(undefined)
 
   // Stalls exist on the surface only; hide them while underground.
   const stallEntries = $derived(
@@ -31,14 +32,19 @@
       cancelled = true
     }
   })
+
+  export function getGroup(): THREE.Group | undefined {
+    return group
+  }
 </script>
 
-<T.Group>
+<T.Group bind:ref={group}>
   {#if stallModel}
     {#each stallEntries as [id, stall] (id)}
       <T.Group
         position={[stall.position.x, stall.position.y, stall.position.z]}
         rotation={[0, stall.rotation, 0]}
+        userData={{ stallId: id }}
       >
         <T is={stallModel.clone(true)} />
       </T.Group>

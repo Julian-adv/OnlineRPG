@@ -175,6 +175,12 @@ pub(crate) enum PartyCommand<'a> {
     Leave,
 }
 
+/// `/trade <name>` opens a player-to-player trade (doc/TRADE.md). Parsed
+/// server-side like `/party`, so any client gets it without its own UI.
+pub(crate) fn parse_trade_command(message: &str) -> Option<&str> {
+    strip_command(message, "/trade").map(str::trim)
+}
+
 pub(crate) fn parse_party_command(message: &str) -> Option<PartyCommand<'_>> {
     let rest = strip_command(message, "/party")?;
     Some(match rest.split_once(' ') {
@@ -402,6 +408,16 @@ impl super::GameState {
 
         if let Some(reply) = parse_reply_command(&message) {
             self.send_reply(player_id, reply).await;
+            return;
+        }
+
+        if let Some(name) = parse_trade_command(&message) {
+            if name.is_empty() {
+                self.send_system_message(player_id, "Trade: /trade <name>")
+                    .await;
+            } else {
+                self.request_player_trade(player_id, name).await;
+            }
             return;
         }
 
