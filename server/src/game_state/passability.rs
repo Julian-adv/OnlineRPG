@@ -179,10 +179,16 @@ pub(super) fn resolve_step<'a>(
 /// legal step in any direction. What seals a cell is a 1x1 pillar or a shut
 /// door, so the way out is the adjoining cell; what the neighbours cannot fix
 /// is a position wrong in a way no nudge repairs.
+///
+/// `stands_on` is what keeps that nudge inside the level. Cell bits are only
+/// written on the cells a floor carves, so the rock around a dungeon is blank —
+/// unsealed by the mask, and most props sit in a room corner with rock on the
+/// other side of the wall. Callers who know the floor's own shape say so there.
 pub(super) fn escape_from_sealed_cell(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,
     floor_level: u8,
+    stands_on: impl Fn(f32, f32) -> bool,
 ) -> Option<crate::types::Position> {
     let y = Some(position.y);
     if !pathfinding::is_cell_sealed(cache, position.x, position.z, floor_level, y) {
@@ -192,7 +198,9 @@ pub(super) fn escape_from_sealed_cell(
     pathfinding::DIRS
         .iter()
         .map(|&(dx, dz)| (cx + dx as f32, cz + dz as f32))
-        .find(|&(x, z)| !pathfinding::is_cell_sealed(cache, x, z, floor_level, y))
+        .find(|&(x, z)| {
+            stands_on(x, z) && !pathfinding::is_cell_sealed(cache, x, z, floor_level, y)
+        })
         .map(|(x, z)| crate::types::Position {
             x: onlinerpg_shared::wrap_world_x(x),
             y: pathfinding::get_floor_y_base(cache, x, z, floor_level).unwrap_or(position.y),

@@ -1222,6 +1222,35 @@ impl GameState {
         layout.walkable_drop_position(&entrance.position(), &monster_position, &preferred)
     }
 
+    /// Where to put a player whose cell is sealed on every side, or `None` when
+    /// they are not sealed in. Underground the neighbour has to be carved
+    /// floor: the passability mask leaves the rock around a dungeon blank, so
+    /// the cell behind the wall a prop stands against reads as open.
+    pub(super) async fn sealed_player_escape(
+        &self,
+        position: &Position,
+        floor: u8,
+        floor_level: i8,
+    ) -> Option<Position> {
+        let entrance = (floor_level < 0)
+            .then(|| self.dungeon_defs.entrance_at(position.x, position.z))
+            .flatten();
+        let dungeons = self.dungeons.read().await;
+        let carved = entrance.and_then(|e| {
+            let layout = dungeons
+                .get(&e.id)
+                .and_then(|rt| rt.layouts.get((-floor_level) as usize - 1))?;
+            Some((layout, dungeon_origin(e.x, e.z)))
+        });
+        let cache = self.passability_read();
+        super::passability::escape_from_sealed_cell(&cache, position, floor, |x, z| match carved {
+            Some((layout, (ox, oz))) => {
+                layout.is_carved((x - ox).floor() as i32, (z - oz).floor() as i32)
+            }
+            None => true,
+        })
+    }
+
     /// Mark a dungeon monster's slot for respawn after it dies. Called
     /// from the combat death path; no-op for non-dungeon monsters.
     pub(super) async fn on_dungeon_monster_dead(&self, monster_id: &str) {

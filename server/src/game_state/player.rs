@@ -1063,6 +1063,7 @@ impl super::GameState {
         let mut moved: Vec<(PlayerId, Position, i8, Player, bool)> = Vec::new();
         let mut activities: Vec<(PlayerId, f32, bool)> = Vec::new();
         let mut refused: Vec<RefusedMove> = Vec::new();
+        let mut sealed: Vec<(PlayerId, Player, u8)> = Vec::new();
         {
             let mut queues = self.movement_intents.write().await;
             if queues.is_empty() {
@@ -1148,20 +1149,18 @@ impl super::GameState {
                                 break;
                             }
                             super::passability::StepOutcome::Blocked(info) => {
-                                // Sealed in on every side, with no step out to
-                                // refuse: move first, so the correction below
-                                // carries them clear instead of pinning them
-                                // back inside the wall.
-                                if let Some(out) = super::passability::escape_from_sealed_cell(
+                                // Every direction refused may mean sealed in
+                                // rather than merely walled: worth the cheap
+                                // check, freed after the tick where the floor's
+                                // own shape can be read.
+                                if onlinerpg_shared::pathfinding::is_cell_sealed(
                                     &cache,
-                                    &player.position,
+                                    player.position.x,
+                                    player.position.z,
                                     step_floor,
+                                    Some(player.position.y),
                                 ) {
-                                    warn!(
-                                        "Freeing player {} sealed at ({:.1},{:.1}) -> ({:.1},{:.1})",
-                                        player_id, player.position.x, player.position.z, out.x, out.z
-                                    );
-                                    player.position = out;
+                                    sealed.push((*player_id, player.clone(), step_floor));
                                 }
                                 // A blocked step never moves the player, so the
                                 // position/rotation here are what the correction
@@ -1224,6 +1223,7 @@ impl super::GameState {
             });
         }
 
+        self.free_sealed_players(sealed).await;
         self.correct_refused_positions(refused).await;
         self.record_movement_activity(&activities).await;
 
@@ -1243,6 +1243,29 @@ impl super::GameState {
                 update_msg,
             )
             .await;
+        }
+    }
+
+    /// Step players whose own cell is sealed on every side out to an adjoining
+    /// one. A dungeon prop the player broke is solid again after a restart —
+    /// the runtime's broken-prop set is memory only — and a dungeon entry
+    /// cannot yield to a trapped mover without yielding its walls too, so
+    /// nothing else ever lets them out. Teleport rather than a correction: the
+    /// mover is out of the world's geometry, not merely out of sync with it.
+    async fn free_sealed_players(&self, sealed: Vec<(PlayerId, Player, u8)>) {
+        for (player_id, player, floor) in sealed {
+            let Some(out) = self
+                .sealed_player_escape(&player.position, floor, player.floor_level)
+                .await
+            else {
+                continue;
+            };
+            warn!(
+                "Freeing player {} sealed at ({:.1},{:.1}) -> ({:.1},{:.1})",
+                player_id, player.position.x, player.position.z, out.x, out.z
+            );
+            self.teleport_player(&player_id, out, player.rotation, player.floor_level)
+                .await;
         }
     }
 

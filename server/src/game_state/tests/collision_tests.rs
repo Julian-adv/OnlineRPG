@@ -431,7 +431,63 @@ fn a_mover_with_a_way_out_is_left_alone() {
         y: 0.0,
         z: 1.5,
     };
-    assert!(crate::game_state::passability::escape_from_sealed_cell(&cache, &beside, 0).is_none());
+    assert!(
+        crate::game_state::passability::escape_from_sealed_cell(&cache, &beside, 0, |_, _| true)
+            .is_none()
+    );
+}
+
+/// Props cluster in room corners, so the neighbour behind the wall is usually
+/// rock — and the mask writes edges only on carved cells, leaving that rock
+/// blank and so unsealed. The floor's own shape is what keeps the escape
+/// inside the level.
+#[test]
+fn the_escape_stays_off_the_rock_outside_the_maze() {
+    use onlinerpg_shared::dungeon::{
+        dungeon_origin, dungeon_passability, generate_dungeon_for, passability_floor_for_depth,
+    };
+    let entrance = Position {
+        x: -1616.0,
+        y: 1.05,
+        z: 4918.0,
+    };
+    let layouts = generate_dungeon_for("orc_warrens");
+    let mut cache = onlinerpg_shared::pathfinding::PassabilityCache::new();
+    cache.insert(
+        "dungeon:orc_warrens".to_string(),
+        dungeon_passability(&entrance, &layouts),
+    );
+    let (ox, oz) = dungeon_origin(entrance.x, entrance.z);
+    let depth = 9u8;
+    let layout = &layouts[depth as usize - 1];
+    let floor = passability_floor_for_depth(depth);
+
+    let mut checked = 0;
+    for prop in &layout.props {
+        let inside = Position {
+            x: ox + prop.x as f32 + 0.5,
+            y: onlinerpg_shared::dungeon::floor_world_y(entrance.y, depth),
+            z: oz + prop.z as f32 + 0.5,
+        };
+        let Some(out) = crate::game_state::passability::escape_from_sealed_cell(
+            &cache,
+            &inside,
+            floor,
+            |x, z| layout.is_carved((x - ox).floor() as i32, (z - oz).floor() as i32),
+        ) else {
+            continue;
+        };
+        checked += 1;
+        assert!(
+            layout.is_carved((out.x - ox).floor() as i32, (out.z - oz).floor() as i32),
+            "prop ({}, {}) escaped onto rock at ({}, {})",
+            prop.x,
+            prop.z,
+            out.x,
+            out.z
+        );
+    }
+    assert!(checked > 0, "no sealed prop cell on depth {depth} to check");
 }
 
 mod init_passability_boot {
