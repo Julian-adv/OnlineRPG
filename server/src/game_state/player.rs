@@ -1148,28 +1148,18 @@ impl super::GameState {
                                 break;
                             }
                             super::passability::StepOutcome::Blocked(info) => {
-                                // Sealed in on every side — a dungeon prop the
-                                // player broke before a restart is solid again
-                                // under them, and a dungeon never yields to a
-                                // trapped mover. Step them out first so the
-                                // correction below carries them clear instead
-                                // of pinning them back inside the wall.
+                                // Sealed in on every side, with no step out to
+                                // refuse: move first, so the correction below
+                                // carries them clear instead of pinning them
+                                // back inside the wall.
                                 if let Some(out) = super::passability::escape_from_sealed_cell(
                                     &cache,
                                     &player.position,
                                     step_floor,
                                 ) {
                                     warn!(
-                                        "Freeing player {} sealed at ({:.1},{:.1}) y={:.1} floor={} \
-                                         -> ({:.1},{:.1}) y={:.1}",
-                                        player_id,
-                                        player.position.x,
-                                        player.position.z,
-                                        player.position.y,
-                                        step_floor,
-                                        out.x,
-                                        out.z,
-                                        out.y
+                                        "Freeing player {} sealed at ({:.1},{:.1}) -> ({:.1},{:.1})",
+                                        player_id, player.position.x, player.position.z, out.x, out.z
                                     );
                                     player.position = out;
                                 }

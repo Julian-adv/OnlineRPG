@@ -344,13 +344,17 @@ async fn npc_movement_is_exempt_from_collision() {
 /// (1, 1) is walled in on all four sides, the way a prop pillar seals its own.
 fn sealed_dungeon_entry() -> onlinerpg_shared::pathfinding::RuntimePassability {
     use onlinerpg_shared::pathfinding::{RuntimeFloorGrid, RuntimePassability};
+    const N: u8 = 1;
+    const E: u8 = 2;
+    const S: u8 = 4;
+    const W: u8 = 8;
     let mut cells = vec![0u8; 16];
     let idx = |x: usize, z: usize| x + z * 4;
-    cells[idx(1, 1)] = 1 | 2 | 4 | 8;
-    cells[idx(1, 0)] = 4;
-    cells[idx(1, 2)] = 1;
-    cells[idx(0, 1)] = 2;
-    cells[idx(2, 1)] = 8;
+    cells[idx(1, 1)] = N | E | S | W;
+    cells[idx(1, 0)] = S;
+    cells[idx(1, 2)] = N;
+    cells[idx(0, 1)] = E;
+    cells[idx(2, 1)] = W;
     RuntimePassability {
         house_origin_x: 0.0,
         house_origin_z: 0.0,
@@ -403,7 +407,6 @@ async fn a_player_sealed_in_is_walked_out_instead_of_pinned() {
     game_state.tick_player_movement(60.0).await;
 
     let (x, z) = player_xz(&game_state, &player_id).await;
-    assert_ne!((x, z), (1.5, 1.5), "left pinned inside the sealed cell");
     assert!(
         (x - 1.5).abs() <= 1.0 && (z - 1.5).abs() <= 1.0,
         "moved to an adjoining cell, not across the floor: ({x}, {z})"
@@ -415,6 +418,20 @@ async fn a_player_sealed_in_is_walked_out_instead_of_pinned() {
         0,
         Some(0.0)
     ));
+}
+
+/// The escape is only for a mover with no legal step at all: an ordinary bump
+/// into a wall must leave the player where they are.
+#[test]
+fn a_mover_with_a_way_out_is_left_alone() {
+    let mut cache = onlinerpg_shared::pathfinding::PassabilityCache::new();
+    cache.insert("dungeon:test".to_string(), sealed_dungeon_entry());
+    let beside = Position {
+        x: 2.5,
+        y: 0.0,
+        z: 1.5,
+    };
+    assert!(crate::game_state::passability::escape_from_sealed_cell(&cache, &beside, 0).is_none());
 }
 
 mod init_passability_boot {

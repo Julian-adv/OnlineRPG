@@ -38,7 +38,7 @@ pub use smooth::find_and_smooth_path;
 use std::collections::HashMap;
 
 /// The four cardinal neighbours.
-pub(super) const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+pub const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
 // Edge bitmask constants (matches TypeScript EDGE_N/E/S/W)
 pub(super) const EDGE_N: u8 = 1; // -Z edge

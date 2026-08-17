@@ -172,13 +172,13 @@ pub(super) fn resolve_step<'a>(
 /// Where to put a mover whose own cell is sealed on every side, or `None` when
 /// it is not sealed (the usual case) or every neighbour is sealed too.
 ///
-/// Dungeons set `yields_to_trapped_mover: false`, so unlike a house they never
-/// let a boxed-in mover step out: a player standing where a broken crate used
-/// to be when the server restarts — the runtime's broken-prop set is memory
-/// only — is inside a solid pillar with no legal step in any direction. What
-/// seals a cell is a 1x1 pillar or a shut door, so the way out is the adjoining
-/// corridor cell; anything the neighbours cannot fix is a position wrong in a
-/// way no nudge repairs.
+/// Only furniture yields to a trapped mover; a dungeon's own entry holds its
+/// walls, so it cannot without becoming a wall hack. That leaves a player
+/// standing where a broken crate used to be when the server restarted — the
+/// runtime's broken-prop set is memory only — inside a solid pillar with no
+/// legal step in any direction. What seals a cell is a 1x1 pillar or a shut
+/// door, so the way out is the adjoining cell; what the neighbours cannot fix
+/// is a position wrong in a way no nudge repairs.
 pub(super) fn escape_from_sealed_cell(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,
@@ -189,9 +189,9 @@ pub(super) fn escape_from_sealed_cell(
         return None;
     }
     let (cx, cz) = (position.x.floor() + 0.5, position.z.floor() + 0.5);
-    [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
-        .into_iter()
-        .map(|(dx, dz): (f32, f32)| (cx + dx, cz + dz))
+    pathfinding::DIRS
+        .iter()
+        .map(|&(dx, dz)| (cx + dx as f32, cz + dz as f32))
         .find(|&(x, z)| !pathfinding::is_cell_sealed(cache, x, z, floor_level, y))
         .map(|(x, z)| crate::types::Position {
             x: onlinerpg_shared::wrap_world_x(x),
@@ -426,80 +426,5 @@ mod tests {
     fn a_leg_crossing_no_floor_keeps_its_reported_height() {
         let cache = two_storey_cache();
         assert_eq!(collision_y(&cache, 50.0, 50.0, 51.0, 50.0, 0, 7.0), 7.0);
-    }
-
-    /// One 4x4 dungeon-like floor (never yields to a trapped mover) with cell
-    /// (1, 1) walled in on all four sides, the way a prop pillar seals its own
-    /// cell.
-    fn sealed_cell_cache() -> PassabilityCache {
-        const N: u8 = 1;
-        const E: u8 = 2;
-        const S: u8 = 4;
-        const W: u8 = 8;
-        let mut cells = vec![0u8; 16];
-        let idx = |x: usize, z: usize| x + z * 4;
-        cells[idx(1, 1)] = N | E | S | W;
-        cells[idx(1, 0)] = S;
-        cells[idx(1, 2)] = N;
-        cells[idx(0, 1)] = E;
-        cells[idx(2, 1)] = W;
-        let mut cache = PassabilityCache::new();
-        cache.insert(
-            "dungeon:test".to_string(),
-            RuntimePassability {
-                house_origin_x: 0.0,
-                house_origin_z: 0.0,
-                min_x: 0.0,
-                max_x: 4.0,
-                min_z: 0.0,
-                max_z: 4.0,
-                floors: vec![RuntimeFloorGrid {
-                    floor_level: 4,
-                    origin_x: 0,
-                    origin_z: 0,
-                    width: 4,
-                    depth: 4,
-                    y_base: -3.0,
-                    wall_height: 3.0,
-                    cells,
-                }],
-                stairwells: vec![],
-                yields_to_trapped_mover: false,
-            },
-        );
-        cache
-    }
-
-    #[test]
-    fn a_mover_sealed_in_is_moved_to_an_open_cell() {
-        let cache = sealed_cell_cache();
-        let inside = crate::types::Position {
-            x: 1.5,
-            y: -3.0,
-            z: 1.5,
-        };
-        let out = super::escape_from_sealed_cell(&cache, &inside, 4).expect("sealed in");
-        // An adjoining cell, on the floor's own ground height.
-        assert!((out.x - 1.5).abs() <= 1.0 && (out.z - 1.5).abs() <= 1.0);
-        assert!((out.x, out.z) != (inside.x, inside.z));
-        assert_eq!(out.y, -3.0);
-        assert!(!onlinerpg_shared::pathfinding::is_cell_sealed(
-            &cache,
-            out.x,
-            out.z,
-            4,
-            Some(out.y)
-        ));
-    }
-
-    #[test]
-    fn a_mover_with_a_way_out_is_left_alone() {
-        let cache = sealed_cell_cache();
-        let beside = crate::types::Position {
-            x: 2.5,
-            y: -3.0,
-            z: 1.5,
-        };
-        assert!(super::escape_from_sealed_cell(&cache, &beside, 4).is_none());
     }
 }
