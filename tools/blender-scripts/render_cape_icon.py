@@ -1,9 +1,10 @@
 """Render the inventory icon for a procedural cape.
 
-Capes have no GLB — the worn cape is a verlet sheet built at runtime (client/
-src/lib/effects/cape-rig.ts) — so the icon is modelled here instead: the same
-tapered sheet, pleated and draped, with a clasped collar. Cloth colour comes
-from the item's `capeColor`, so every cape's icon is this one script.
+The worn cape is a verlet sheet built at runtime (client/src/lib/effects/
+cape-rig.ts) — the GLB is only the ground drop — so the icon is modelled here
+instead: the same tapered sheet, pleated and draped, with a clasped collar.
+Cloth colour comes from the item's `capeColor`, so every cape's icon is this
+one script.
 
 Renders 512² and writes the 128² downscale the game loads, per the icon recipe
 in .claude/skills/blender-item-asset (the camera differs: the cape is modelled

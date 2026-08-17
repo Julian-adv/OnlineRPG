@@ -487,6 +487,7 @@ mod tests {
         assert_eq!(debut("breastplate"), Some(4));
         assert_eq!(debut("ring_of_protection"), Some(5));
         assert_eq!(debut("gold_ring"), Some(3));
+        assert_eq!(debut("wool_cape"), Some(3));
         // Accessories fill the low tiers' empty neck/ring lanes.
         assert_eq!(debut("silver_necklace"), Some(2));
         // Weapons and consumables stay out of chests entirely.
@@ -549,6 +550,27 @@ mod tests {
         for id in ["leather_helmet", "leather_pants", "leather_belt"] {
             assert_eq!(t2[id], CHEST_CARRYOVER_CHANCE, "{id} carries over at 10%");
         }
+
+        // Ogre Stronghold (tier 3): signature chain_mail plus four K=4 pieces
+        // — the cape rolls alongside the gauntlets and plate legs.
+        let t3: std::collections::HashMap<String, f32> =
+            defs.chest_roll_table(3).into_iter().collect();
+        let t3_set = [
+            "iron_gauntlets",
+            "plate_greaves",
+            "plate_boots",
+            "wool_cape",
+        ];
+        for id in t3_set {
+            assert_eq!(t3[id], 0.37, "{id} rolls at the K=4 constant");
+        }
+        assert_eq!(t3["gold_ring"], 0.1);
+        assert_eq!(t3["chain_mail"], 0.0, "signature rolls only as itself");
+        let opens = expected_opens_to_collect(&t3_set.map(|id| t3[id]));
+        assert!(
+            (4.0..=6.0).contains(&opens),
+            "ogre_stronghold set completion expects ~5 opens, got {opens:.2}"
+        );
     }
 
     #[test]

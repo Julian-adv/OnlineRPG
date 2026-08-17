@@ -10,7 +10,7 @@
 |------|------|------|------|
 | 1 | Old Crypt | 가죽 세트 일부 (투구·바지·벨트) | 운영 중 |
 | 2 | Orc Warrens | 가죽 세트 완성 (몸통·장갑·부츠) + 체인 세트 일부 (철 부츠·철 투구) + iron_sword (보스) | 운영 중 |
-| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 — wool_cape는 아이템으로 존재하나 드랍 풀 미편입 |
+| 3 | Ogre Stronghold (15층, ogre_boss) | 체인 세트 완성 (체인 메일·건틀릿) + 판금 세트 일부 (부츠·그리브) + 기본 망토 + steel_longsword | 운영 중 |
 | 4 | (신규 던전) | 판금 세트 완성 (흉갑·투구·건틀릿) + claymore | 던전 미구현 |
 | 5 | (신규 던전) | ring_of_protection + rune_blade | 던전 미구현 |
 
@@ -74,7 +74,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 | 슬롯 | 아이템 | 획득처 | 상태 |
 |------|--------|--------|------|
-| back | wool_cape (기본 망토) | 티어 3 던전 | 아이템·장착·렌더링 완료 (2026-08-17). 애셋은 GLB 없이 프로시저럴 — 색은 items.csv `capeColor`. 드랍 풀 편입(chestTier=3)만 남음 |
+| back | wool_cape (기본 망토) | 티어 3 던전 (37% 롤) | 완료 (2026-08-18). 애셋은 GLB 없이 프로시저럴 — 색은 items.csv `capeColor` |
 | back | 특수 망토 (투명·보호 등) | **월드 드랍 전용** | **신규 애셋 필요** + 효과 시스템 설계 필요 |
 | shirt | 셔츠 | **월드 드랍 전용** | **신규 애셋 필요** — 악세서리성 희소템 |
 
@@ -100,7 +100,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 |------|----------------|----------------------|-----------|
 | Old Crypt (T1) | leather_helmet | leather_pants·leather_belt 각 30% | ≈4.7회 |
 | Orc Warrens (T2) | leather_armor | leather_gloves·leather_boots·iron_boots·iron_helmet 각 37% | ≈5.0회 |
-| Ogre Stronghold (T3) | chain_mail | iron_gauntlets·plate_greaves·plate_boots·기본 망토 각 37% | ≈5.0회 (망토 애셋 전까지 3파츠 ≈4.7회) |
+| Ogre Stronghold (T3) | chain_mail | iron_gauntlets·plate_greaves·plate_boots·기본 망토 각 37% | ≈5.0회 |
 | 티어 4 던전 | breastplate | plate_helmet·plate_gauntlets 각 30% | ≈4.7회 |
 | 티어 5 던전 | (시그니처 없음) | ring_of_protection 20% | ≈5.0회 |
 
