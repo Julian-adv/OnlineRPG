@@ -48,8 +48,10 @@
 
   const def = $derived(getMonsterDef(type))
   const attackClips = $derived(attackClipNames(def))
-  // Re-rolled from `attackClips` at the start of every swing.
-  let attackClip = attackClips[0]
+  // Re-rolled from `attackClips` at the start of every swing, so this is only
+  // a seed — `untrack` says that out loud, the way the model resolution below
+  // does, instead of leaving a reactive read that never re-runs.
+  let attackClip = untrack(() => attackClips[0])
 
   // Monster type is fixed for the component's lifetime, so the model and any
   // hand weapon are resolved once at init from the initial type, not reactively.
