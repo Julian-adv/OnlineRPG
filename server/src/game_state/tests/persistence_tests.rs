@@ -84,6 +84,7 @@ async fn dirty_save_is_retried_after_failure() {
             quantity: 1,
             equip_slot: None,
             enchant: 0,
+            cape_color: None,
         }]
     );
 }
@@ -110,6 +111,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
                 quantity: 1,
                 equip_slot: None,
                 enchant: 0,
+                cape_color: None,
             }],
         )],
         &[],
@@ -226,6 +228,7 @@ fn item_row(
         quantity,
         equip_slot: equip_slot.map(|s| s.to_string()),
         enchant,
+        cape_color: None,
     }
 }
 
@@ -249,6 +252,26 @@ async fn load_saved_inventory(
         .await;
     game_state.load_player_inventory(&p, record.id, &auth).await;
     (game_state, p)
+}
+
+/// A dyed cape is only dyed while the colour survives the DB round trip.
+#[tokio::test]
+async fn a_dyed_cape_loads_back_dyed() {
+    let (game_state, p) = load_saved_inventory(
+        "dyed_cape_reload",
+        vec![crate::auth::ItemRow {
+            item_def_id: "wool_cape".to_string(),
+            quantity: 1,
+            equip_slot: Some("back".to_string()),
+            enchant: 0,
+            cape_color: Some("#3355ff".to_string()),
+        }],
+    )
+    .await;
+
+    let inv = game_state.get_player_inventory(&p).await.unwrap();
+    let cape = inv.equipped.get(&EquipSlot::Back).unwrap();
+    assert_eq!(cape.cape_color.as_deref(), Some("#3355ff"));
 }
 
 /// Bags saved before trading/pickup learned to stack hold one row per unit;

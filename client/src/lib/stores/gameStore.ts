@@ -39,6 +39,8 @@ interface PlayerBase {
   torchOn?: boolean
   mainHand?: string | null
   back?: string | null
+  /** Dye on that cape, as broadcast with it. */
+  backColor?: string | null
   lastDamageInfo?: PlayerDamageInfo
   lastRegenInfo?: PlayerDamageInfo
   lastGoldInfo?: PlayerGoldInfo

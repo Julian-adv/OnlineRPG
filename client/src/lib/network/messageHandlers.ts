@@ -25,6 +25,7 @@ import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import { capeDyeDialog } from '../stores/capeDyeStore'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
 import { activeDebuffs, type ActiveDebuff } from '../stores/debuffStore'
 import { debuffPresentation } from '../data/debuffPresentation'
@@ -159,6 +160,7 @@ function toRemotePlayer(sp: ServerPlayer): RemotePlayer {
     torchOn: sp.torch_on,
     mainHand: sp.main_hand ?? null,
     back: sp.back ?? null,
+    backColor: sp.back_color ?? null,
     floorLevel: sp.floor_level ?? 0,
     isOfficialNpc: sp.is_official_npc ?? false,
   }
@@ -1026,9 +1028,17 @@ export function handleServerMessage(
       break
     }
 
+    case 'CapeDyePrompt': {
+      capeDyeDialog.set({ instanceId: data.instance_id })
+      break
+    }
+
     case 'PlayerBackChanged': {
       if (isSelfPlayer(data.player_id)) break
-      updatePlayer(data.player_id, { back: data.item_def_id ?? null })
+      updatePlayer(data.player_id, {
+        back: data.item_def_id ?? null,
+        backColor: data.cape_color ?? null,
+      })
       break
     }
 

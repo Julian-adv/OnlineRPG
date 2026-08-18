@@ -202,7 +202,7 @@
     attachHeldItem(characterRoot, equipment?.main_hand, 'RightHand')
     attachHeldItem(characterRoot, equipment?.off_hand, 'LeftHand')
 
-    const capeColor = capeColorOf(equipment?.back)
+    const capeColor = capeColorOf(equipment?.back, equipment?.back_color)
     if (!capeColor) return
 
     const bias = capeCollarBiasFor(modelPath)

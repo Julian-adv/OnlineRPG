@@ -630,6 +630,12 @@ class NetworkManager {
     this.sendMessage({ UseItem: { instance_id: instanceId } })
   }
 
+  /** Spend the dye at `instanceId` on the worn cape. */
+  sendDyeCape(instanceId: number, color: string) {
+    if (!this.isNetworkableInstanceId(instanceId, 'dye')) return
+    this.sendMessage({ DyeCape: { instance_id: instanceId, color } })
+  }
+
   /** Drop copper into a nearby performer's tip hat. */
   sendTipHat(hatId: number, amount: number) {
     this.sendMessage({ TipHat: { hat_id: hatId, amount } })

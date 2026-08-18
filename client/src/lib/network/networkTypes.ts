@@ -38,6 +38,7 @@ export type ServerPlayer = {
   object_type?: string
   main_hand?: string | null
   back?: string | null
+  back_color?: string | null
 }
 
 export type ServerMonster = {
@@ -222,6 +223,7 @@ export type ClientMessage =
   | 'PickupStarted'
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
+  | { DyeCape: { instance_id: number; color: string } }
   | { TipHat: { hat_id: number; amount: number } }
   | { OpenShop: { merchant_player_id: number } }
   | { CloseShop: { merchant_player_id: number } }
@@ -269,6 +271,8 @@ export type ItemInstance = {
   quantity: number
   /** Weapon enchantment level (+N to attack and damage rolls). */
   enchant: number
+  /** Dye on this cape (`#rrggbb`), overriding the def's `capeColor`. */
+  cape_color?: string | null
 }
 
 export type PlayerInventory = {

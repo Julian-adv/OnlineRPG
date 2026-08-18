@@ -59,12 +59,24 @@ fn armor_enchant_success_bp(enchant: i32) -> u32 {
     enchant_success_bp(enchant.saturating_add(2))
 }
 
+/// A client-supplied cloth colour as `#rrggbb`, lowercased so the change
+/// compare in `set_player_gear` and the clients' material cache both key on
+/// one spelling. `None` if it is not a hex colour.
+pub(super) fn normalize_hex_color(color: &str) -> Option<String> {
+    let hex = color.strip_prefix('#')?;
+    (hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| format!("#{}", hex.to_ascii_lowercase()))
+}
+
 /// One unit-insert request: `quantity` units of one def at one enchant level,
 /// backed by ids starting at `first_instance_id`.
 pub(super) struct BagInsert<'a> {
     pub stackable: bool,
     pub item_def_id: &'a str,
     pub enchant: i32,
+    /// Dye carried by the units being inserted, so a dyed cape stays dyed
+    /// through a pickup, a trade or a buyback.
+    pub cape_color: Option<String>,
     pub first_instance_id: u64,
     pub quantity: u32,
 }
@@ -82,7 +94,13 @@ impl<'a> BagInsert<'a> {
             enchant,
             first_instance_id,
             quantity: 1,
+            cape_color: None,
         }
+    }
+
+    pub(super) fn with_cape_color(mut self, cape_color: Option<String>) -> Self {
+        self.cape_color = cape_color;
+        self
     }
 }
 
@@ -97,6 +115,7 @@ pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> 
         stackable,
         item_def_id,
         enchant,
+        cape_color,
         first_instance_id,
         quantity,
     } = insert;
@@ -105,10 +124,11 @@ pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> 
     }
 
     if stackable {
-        if let Some(stack) = bag
-            .iter_mut()
-            .find(|item| item.item_def_id == item_def_id && item.enchant == enchant)
-        {
+        if let Some(stack) = bag.iter_mut().find(|item| {
+            item.item_def_id == item_def_id
+                && item.enchant == enchant
+                && item.cape_color == cape_color
+        }) {
             stack.quantity += quantity;
             return 0;
         }
@@ -117,6 +137,7 @@ pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> 
             item_def_id: item_def_id.to_string(),
             quantity,
             enchant,
+            cape_color,
         });
         return 1;
     }
@@ -127,19 +148,27 @@ pub(super) fn stack_into_bag(bag: &mut Vec<ItemInstance>, insert: BagInsert) -> 
             item_def_id: item_def_id.to_string(),
             quantity: 1,
             enchant,
+            cape_color: cape_color.clone(),
         });
     }
     quantity as u64
 }
 
+/// One draw out of a bag: units that left together because they shared an
+/// entry, and the per-instance state they carry with them.
+pub(super) struct Draw {
+    pub enchant: i32,
+    pub cape_color: Option<String>,
+    pub quantity: u32,
+}
+
 /// The one bag-draw rule for def-keyed stock sales: requests carry no enchant,
-/// so units leave lowest-enchant-first. Returns the (enchant, quantity) draws
-/// taken, stopping short if the bag runs out.
+/// so units leave lowest-enchant-first. Stops short if the bag runs out.
 pub(super) fn draw_from_bag(
     bag: &mut Vec<ItemInstance>,
     item_def_id: &str,
     mut quantity: u32,
-) -> Vec<(i32, u32)> {
+) -> Vec<Draw> {
     let mut draws = Vec::new();
     while quantity > 0 {
         let Some(idx) = bag
@@ -152,7 +181,11 @@ pub(super) fn draw_from_bag(
             break;
         };
         let take = quantity.min(bag[idx].quantity);
-        draws.push((bag[idx].enchant, take));
+        draws.push(Draw {
+            enchant: bag[idx].enchant,
+            cape_color: bag[idx].cape_color.clone(),
+            quantity: take,
+        });
         if bag[idx].quantity > take {
             bag[idx].quantity -= take;
         } else {
@@ -203,6 +236,7 @@ pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
             quantity: item.quantity,
             equip_slot: None,
             enchant: item.enchant,
+            cape_color: item.cape_color.clone(),
         })
         .collect();
     for (slot, item) in &inv.equipped {
@@ -211,6 +245,7 @@ pub(super) fn serialize_inventory(inv: &PlayerInventory) -> Vec<ItemRow> {
             quantity: 1,
             equip_slot: Some(slot.as_str().to_string()),
             enchant: item.enchant,
+            cape_color: item.cape_color.clone(),
         });
     }
     rows
@@ -266,12 +301,7 @@ impl super::GameState {
     /// unchanged) from this one spot keeps everything in sync without each
     /// mutation site having to remember to send it.
     async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
-        self.set_player_gear(
-            player_id,
-            inventory.equipped_def_id(EquipSlot::MainHand),
-            inventory.equipped_def_id(EquipSlot::Back),
-        )
-        .await;
+        self.set_player_gear(player_id, &inventory).await;
         self.refresh_hunger_gear_drain(player_id, &inventory).await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
             .await;
@@ -331,6 +361,7 @@ impl super::GameState {
                                     item_def_id: row.item_def_id,
                                     quantity: 1,
                                     enchant: row.enchant,
+                                    cape_color: row.cape_color,
                                 },
                             );
                             next_id += 1;
@@ -350,6 +381,7 @@ impl super::GameState {
                                 stackable: self.item_defs.stackable(&row.item_def_id),
                                 item_def_id: &row.item_def_id,
                                 enchant: row.enchant,
+                                cape_color: row.cape_color,
                                 first_instance_id: next_id,
                                 quantity: row.quantity,
                             },
@@ -498,6 +530,7 @@ impl super::GameState {
                     quantity: 1,
                     enchant: 0,
                     dropped_by: Some(*player_id),
+                    cape_color: None,
                 })
                 .await;
             }
@@ -662,7 +695,103 @@ impl super::GameState {
                 self.use_coin_pouch(player_id, instance_id, &dice).await
             }
             UseEffect::ToggleTipHat => self.toggle_tip_hat(player_id).await,
+            UseEffect::PromptCapeDye => self.prompt_cape_dye(player_id, instance_id).await,
         }
+    }
+
+    /// Open the client's colour picker, spending nothing. Refuses here rather
+    /// than after the pick so nobody chooses a colour only to be told they
+    /// have no cape on.
+    async fn prompt_cape_dye(&self, player_id: &PlayerId, instance_id: u64) {
+        if self
+            .reject_if_defeated(player_id, "You can't dye while defeated")
+            .await
+        {
+            return;
+        }
+        let wearing = {
+            let inventories = self.inventories.read().await;
+            inventories
+                .get(player_id)
+                .is_some_and(|inv| self.wears_cape(inv))
+        };
+        if !wearing {
+            self.send_system_message(player_id, "You are not wearing a cape to dye")
+                .await;
+            return;
+        }
+        self.send_direct_message(player_id, ServerMessage::CapeDyePrompt { instance_id })
+            .await;
+    }
+
+    /// Whether the back slot holds something dyeable. One spelling for both
+    /// the prompt (read lock) and the dye itself (write lock), so the two
+    /// cannot drift into disagreeing about what a cape is.
+    fn wears_cape(&self, inv: &PlayerInventory) -> bool {
+        inv.equipped
+            .get(&EquipSlot::Back)
+            .and_then(|item| self.item_defs.get(&item.item_def_id))
+            .is_some_and(|def| def.is_cape())
+    }
+
+    /// Dye the worn cape and spend the dye. Everything the prompt checked is
+    /// checked again: the round trip through the picker is unbounded, and the
+    /// cape can come off or the dye be traded away in between.
+    pub async fn dye_cape(&self, player_id: &PlayerId, instance_id: u64, color: &str) {
+        if self
+            .reject_if_trade_reserved(player_id, instance_id, "use")
+            .await
+        {
+            return;
+        }
+        if self
+            .reject_if_defeated(player_id, "You can't dye while defeated")
+            .await
+        {
+            return;
+        }
+        let Some(color) = normalize_hex_color(color) else {
+            self.send_system_message(player_id, "That is not a colour")
+                .await;
+            return;
+        };
+
+        let snapshot = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            let is_dye = inv
+                .bag
+                .iter()
+                .find(|item| item.instance_id == instance_id)
+                .and_then(|item| self.item_defs.get(&item.item_def_id))
+                .is_some_and(|def| matches!(def.use_effect(), Some(UseEffect::PromptCapeDye)));
+            if !is_dye {
+                drop(inventories);
+                self.send_system_message(player_id, "Item not found in bag")
+                    .await;
+                return;
+            }
+            if !self.wears_cape(inv) {
+                drop(inventories);
+                self.send_system_message(player_id, "You are not wearing a cape to dye")
+                    .await;
+                return;
+            }
+            let cape = inv
+                .equipped
+                .get_mut(&EquipSlot::Back)
+                .expect("checked above");
+            cape.cape_color = Some(color);
+            consume_one(inv, instance_id);
+            inv.clone()
+        };
+
+        self.mark_inventory_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, snapshot).await;
+        self.send_system_message(player_id, "The dye soaks into the cloth.")
+            .await;
     }
 
     /// Open a fished-up coin pouch: roll its dice for the copper inside,
@@ -1195,6 +1324,7 @@ impl super::GameState {
                 quantity: 1,
                 enchant: 0,
                 dropped_by: None,
+                cape_color: None,
             })
             .await;
         }
@@ -1252,6 +1382,7 @@ impl super::GameState {
                             item_def_id: inv.bag[idx].item_def_id.clone(),
                             quantity: 1,
                             enchant: inv.bag[idx].enchant,
+                            cape_color: inv.bag[idx].cape_color.clone(),
                         };
                         (unit, false)
                     } else {
@@ -1283,6 +1414,7 @@ impl super::GameState {
             floor_level,
             quantity: 1,
             enchant: dropped.enchant,
+            cape_color: dropped.cape_color,
             dropped_by: Some(*player_id),
         };
 
@@ -1330,6 +1462,7 @@ impl super::GameState {
             qty: u32,
             item_def_id: String,
             enchant: i32,
+            cape_color: Option<String>,
         }
 
         let npc_def = self.official_npc_def(player_id).await;
@@ -1364,6 +1497,7 @@ impl super::GameState {
                     qty: req.qty,
                     item_def_id: item.item_def_id.clone(),
                     enchant: item.enchant,
+                    cape_color: item.cape_color.clone(),
                 });
             }
             // Every line is now guaranteed to apply cleanly — mutate.
@@ -1415,6 +1549,7 @@ impl super::GameState {
                     floor_level,
                     quantity,
                     enchant: plan.enchant,
+                    cape_color: plan.cape_color.clone(),
                     dropped_by: Some(*player_id),
                 })
                 .await;
@@ -1448,6 +1583,7 @@ impl super::GameState {
             quantity: 1,
             enchant: 0,
             dropped_by: Some(*player_id),
+            cape_color: None,
         })
         .await;
     }
@@ -1555,6 +1691,7 @@ impl super::GameState {
                     stackable,
                     item_def_id: &ground_item.item_def_id,
                     enchant: ground_item.enchant,
+                    cape_color: ground_item.cape_color.clone(),
                     first_instance_id: bag_instance_id,
                     quantity: take,
                 },

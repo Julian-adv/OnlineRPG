@@ -10,6 +10,7 @@ fn selling_off_a_stack_leaves_the_rest_of_it_reachable() {
         item_def_id: "healing_potion".to_string(),
         quantity: 3,
         enchant: 0,
+        cape_color: None,
     }];
 
     let mut spent: HashMap<u64, u32> = HashMap::new();
@@ -45,12 +46,14 @@ fn fragmented_stacks_are_gathered_across_every_instance() {
             item_def_id: "old_boot".to_string(),
             quantity: 1,
             enchant: 0,
+            cape_color: None,
         },
         onlinerpg_shared::inventory::ItemInstance {
             instance_id: 2,
             item_def_id: "old_boot".to_string(),
             quantity: 1,
             enchant: 0,
+            cape_color: None,
         },
     ];
 
@@ -76,6 +79,7 @@ fn worn_only_item_is_not_a_bag_copy() {
             item_def_id: "iron_sword".to_string(),
             quantity: 1,
             enchant: 0,
+            cape_color: None,
         },
     );
 

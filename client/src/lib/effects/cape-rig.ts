@@ -41,6 +41,10 @@ export interface CapeRig {
   root: THREE.Group
   mesh: THREE.SkinnedMesh
   update(dt: number, wind: CapeWind | null): void
+  /** Re-dye the hanging cloth. Nothing else in the rig depends on the colour,
+   *  so the dye picker swaps materials instead of rebuilding the sheet on
+   *  every drag of the colour wheel. */
+  setColor(color: THREE.ColorRepresentation): void
   dispose(): void
 }
 
@@ -229,10 +233,19 @@ function buildGeometry(
 
 /** Sheets and cloth, shared by everyone they fit. The skeleton stays
  *  per-wearer; geometry and material do not vary with the pose, and both are
- *  bounded by the handful of (model, bias) fits and cape colours in play — so
- *  a crowd costs one set of GPU buffers, not one per cape. */
+ *  bounded by the handful of (model, bias) fits in play — so a crowd costs
+ *  one set of GPU buffers, not one per cape. */
 const geometryCache = new Map<string, THREE.BufferGeometry>()
-const materialCache = new Map<string, THREE.Material>()
+
+/** Cape colours are dyed per player (doc/CAPE_CUSTOMIZATION.md), so unlike
+ *  the fits they have no small fixed set to converge on — a cache that only
+ *  ever grew would hold one material per colour ever seen. Counting wearers
+ *  shares one material across a crowd in the same colour and bounds the cache
+ *  at exactly what is on screen. */
+const materialCache = new Map<
+  string,
+  { material: THREE.Material; refs: number }
+>()
 
 function sharedGeometry(
   options: CapeRigOptions,
@@ -247,19 +260,35 @@ function sharedGeometry(
   return geometry
 }
 
-function sharedMaterial(color: THREE.ColorRepresentation): THREE.Material {
+/** Claim the material for `color`, counting this rig as a wearer. Every claim
+ *  is paired with a `releaseMaterial`. */
+function claimMaterial(color: THREE.ColorRepresentation): {
+  key: string
+  material: THREE.Material
+} {
   const key = String(color)
-  let material = materialCache.get(key)
-  if (!material) {
-    material = new MeshStandardNodeMaterial({
-      color: new THREE.Color(color),
-      roughness: 0.74,
-      metalness: 0,
-      side: THREE.DoubleSide,
-    })
-    materialCache.set(key, material)
+  let entry = materialCache.get(key)
+  if (!entry) {
+    entry = {
+      material: new MeshStandardNodeMaterial({
+        color: new THREE.Color(color),
+        roughness: 0.74,
+        metalness: 0,
+        side: THREE.DoubleSide,
+      }),
+      refs: 0,
+    }
+    materialCache.set(key, entry)
   }
-  return material
+  entry.refs++
+  return { key, material: entry.material }
+}
+
+function releaseMaterial(key: string) {
+  const entry = materialCache.get(key)
+  if (!entry || --entry.refs > 0) return
+  entry.material.dispose()
+  materialCache.delete(key)
 }
 
 export function createCapeRig(options: CapeRigOptions): CapeRig {
@@ -269,9 +298,9 @@ export function createCapeRig(options: CapeRigOptions): CapeRig {
 
   const root = new THREE.Group()
   const geometry = sharedGeometry(options, segments)
-  const material = sharedMaterial(options.color ?? DEFAULT_CAPE_COLOR)
+  let claimed = claimMaterial(options.color ?? DEFAULT_CAPE_COLOR)
 
-  const mesh = new THREE.SkinnedMesh(geometry, material)
+  const mesh = new THREE.SkinnedMesh(geometry, claimed.material)
   mesh.castShadow = true
   mesh.receiveShadow = true
   root.add(mesh)
@@ -481,9 +510,16 @@ export function createCapeRig(options: CapeRigOptions): CapeRig {
     root,
     mesh,
     update,
+    setColor(color) {
+      const next = claimMaterial(color)
+      releaseMaterial(claimed.key)
+      claimed = next
+      mesh.material = next.material
+    },
     dispose() {
-      // Geometry and material are shared and outlive this rig; the skeleton is
-      // this cape's own.
+      // Geometry is shared and outlives this rig, and so does the material
+      // while anyone still wears the colour; the skeleton is this cape's own.
+      releaseMaterial(claimed.key)
       skeleton.dispose()
       root.removeFromParent()
     },

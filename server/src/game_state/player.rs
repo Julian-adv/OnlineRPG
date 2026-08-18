@@ -2,6 +2,7 @@ use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
 use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
+use onlinerpg_shared::inventory::{EquipSlot, PlayerInventory};
 use onlinerpg_shared::{
     shortest_world_delta_x, wrap_world_x, MAX_MOVE_TARGET_DISTANCE, PLAYER_MOVE_SPEED,
 };
@@ -1658,12 +1659,14 @@ impl super::GameState {
     /// slots are compared under one write lock: every bag mutation routes
     /// through here and almost none of them touch gear, so taking the global
     /// players lock once per snapshot rather than once per slot matters.
-    pub async fn set_player_gear(
-        &self,
-        player_id: &PlayerId,
-        main_hand: Option<String>,
-        back: Option<String>,
-    ) {
+    /// Reads what shows from the inventory itself rather than taking a widening
+    /// list of `Option<String>`s. The cape's dye is part of it: re-dyeing
+    /// leaves the def id alone, so the colour has to count as a change or the
+    /// recolour never reaches anyone else.
+    pub async fn set_player_gear(&self, player_id: &PlayerId, inventory: &PlayerInventory) {
+        let main_hand = inventory.equipped_def_id(EquipSlot::MainHand);
+        let back = inventory.equipped_def_id(EquipSlot::Back);
+        let back_color = inventory.equipped_cape_color();
         let changed = {
             let mut players = self.players.write().await;
             let Some(player) = players.get_mut(player_id) else {
@@ -1677,11 +1680,13 @@ impl super::GameState {
                     item_def_id: main_hand,
                 });
             }
-            if player.back != back {
+            if player.back != back || player.back_color != back_color {
                 player.back = back.clone();
+                player.back_color = back_color.clone();
                 messages.push(ServerMessage::PlayerBackChanged {
                     player_id: *player_id,
                     item_def_id: back,
+                    cape_color: back_color,
                 });
             }
             if messages.is_empty() {

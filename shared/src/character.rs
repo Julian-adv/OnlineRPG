@@ -174,6 +174,9 @@ pub struct VisibleEquipment {
     pub main_hand: Option<String>,
     pub off_hand: Option<String>,
     pub back: Option<String>,
+    /// Dye on the worn cape, so a dyed cape looks dyed at character select.
+    #[serde(default)]
+    pub back_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

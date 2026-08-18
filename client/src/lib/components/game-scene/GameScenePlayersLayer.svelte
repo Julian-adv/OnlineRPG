@@ -553,6 +553,7 @@
         torchOn={player.torchOn}
         mainHand={player.mainHand}
         back={player.back}
+        backColor={player.backColor}
         {torchEffectsDisabled}
         npcPlayerId={player.isOfficialNpc ? player.id : undefined}
         onInteractionFinished={() =>

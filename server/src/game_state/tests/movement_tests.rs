@@ -62,6 +62,7 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
                     quantity: 1,
                     enchant: 0,
                     dropped_by: None,
+                    cape_color: None,
                 },
                 dropped_at_ms: 0,
             },

@@ -72,6 +72,8 @@ pub struct ItemRow {
     pub quantity: u32,
     pub equip_slot: Option<String>,
     pub enchant: i32,
+    /// Dye on a cape (doc/CAPE_CUSTOMIZATION.md); `None` on everything else.
+    pub cape_color: Option<String>,
 }
 
 /// One trained skill as stored in `character_skills`. The skill id is kept as
@@ -272,7 +274,7 @@ fn read_visible_equipment(
 
     let slots = PREVIEW_EQUIP_SLOTS.map(|slot| format!("'{}'", slot.as_str()));
     let mut stmt = conn.prepare(&format!(
-        "SELECT character_id, equip_slot, item_def_id
+        "SELECT character_id, equip_slot, item_def_id, cape_color
          FROM character_items
          WHERE character_id IN ({})
            AND equip_slot IN ({})",
@@ -285,17 +287,21 @@ fn read_visible_equipment(
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
         ))
     })?;
 
     let mut equipment: HashMap<i64, VisibleEquipment> = HashMap::new();
     for row in rows {
-        let (character_id, slot, item_def_id) = row?;
+        let (character_id, slot, item_def_id, cape_color) = row?;
         let entry = equipment.entry(character_id).or_default();
         match slot.parse() {
             Ok(EquipSlot::MainHand) => entry.main_hand = Some(item_def_id),
             Ok(EquipSlot::OffHand) => entry.off_hand = Some(item_def_id),
-            Ok(EquipSlot::Back) => entry.back = Some(item_def_id),
+            Ok(EquipSlot::Back) => {
+                entry.back = Some(item_def_id);
+                entry.back_color = cape_color;
+            }
             _ => {}
         }
     }
@@ -405,8 +411,9 @@ impl AuthService {
     ) -> Result<(), rusqlite::Error> {
         let mut delete = conn.prepare("DELETE FROM character_items WHERE character_id = ?1")?;
         let mut insert = conn.prepare(
-            "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot, enchant) \
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO character_items \
+             (character_id, item_def_id, quantity, equip_slot, enchant, cape_color) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
 
         for (character_id, items) in inventories {
@@ -417,7 +424,8 @@ impl AuthService {
                     item.item_def_id,
                     item.quantity,
                     item.equip_slot,
-                    item.enchant
+                    item.enchant,
+                    item.cape_color
                 ])?;
             }
         }
@@ -539,6 +547,7 @@ impl AuthService {
                 quantity INTEGER NOT NULL DEFAULT 1,
                 equip_slot TEXT,
                 enchant INTEGER NOT NULL DEFAULT 0,
+                cape_color TEXT,
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
             [],
@@ -620,11 +629,15 @@ impl AuthService {
     /// Columns added to character_items after release; mirrors
     /// `ensure_character_attribute_columns` for the characters table.
     fn ensure_character_item_columns(conn: &Connection) -> Result<(), rusqlite::Error> {
-        if !Self::table_columns(conn, "character_items")?.contains("enchant") {
+        let columns = Self::table_columns(conn, "character_items")?;
+        if !columns.contains("enchant") {
             conn.execute(
                 "ALTER TABLE character_items ADD COLUMN enchant INTEGER NOT NULL DEFAULT 0",
                 [],
             )?;
+        }
+        if !columns.contains("cape_color") {
+            conn.execute("ALTER TABLE character_items ADD COLUMN cape_color TEXT", [])?;
         }
 
         Ok(())
@@ -1491,7 +1504,8 @@ impl AuthService {
     pub fn load_inventory(&self, character_id: i64) -> Result<Vec<ItemRow>, AuthError> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT item_def_id, quantity, equip_slot, enchant FROM character_items WHERE character_id = ?1",
+            "SELECT item_def_id, quantity, equip_slot, enchant, cape_color \
+             FROM character_items WHERE character_id = ?1",
         )?;
         let rows = stmt
             .query_map(params![character_id], |row| {
@@ -1500,6 +1514,7 @@ impl AuthService {
                     quantity: row.get(1)?,
                     equip_slot: row.get(2)?,
                     enchant: row.get(3)?,
+                    cape_color: row.get(4)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

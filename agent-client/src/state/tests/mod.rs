@@ -70,6 +70,7 @@ pub(crate) fn ground_item(id: u64, def: &str, x: f32, z: f32, floor: i8) -> Grou
         quantity: 1,
         enchant: 0,
         dropped_by: None,
+        cape_color: None,
     }
 }
 
@@ -101,6 +102,7 @@ pub(crate) fn test_player(x: f32, z: f32) -> Player {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        back_color: None,
     }
 }
 

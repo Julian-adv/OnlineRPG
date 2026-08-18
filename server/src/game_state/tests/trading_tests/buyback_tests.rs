@@ -12,6 +12,7 @@ async fn sell_to_merchant_records_buyback_and_restores_item() {
             item_def_id: "iron_sword".to_string(),
             quantity: 1,
             enchant: 2,
+            cape_color: None,
         });
         inventories.insert(pid("buyer"), inv);
     }

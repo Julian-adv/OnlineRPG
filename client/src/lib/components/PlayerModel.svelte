@@ -18,7 +18,7 @@
   import TextLabel from './TextLabel.svelte'
   import type { Vector3 } from 'three'
   import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { get } from 'svelte/store'
   import { timeScale } from '../stores/timeStore'
@@ -54,6 +54,7 @@
   import { pickRandom } from '../utils/randomUtils'
   import { inventoryStore, isTorchItemDefId } from '../stores/inventoryStore'
   import { capeColorOf, getItemDef } from '../data/itemDefs'
+  import { capeDyePreview } from '../stores/capeDyeStore'
   import {
     capeCollarBiasOverride,
     capeEnabled,
@@ -115,6 +116,8 @@
     /** Remote players' broadcast main-hand item def id; the local player
      *  renders from inventory instead. */
     mainHand?: string | null
+    /** Dye on that cape, as broadcast with it. */
+    backColor?: string | null
     /** Remote players' broadcast back item def id; the local player renders
      *  from inventory instead. */
     back?: string | null
@@ -152,6 +155,7 @@
     torchOn = false,
     mainHand = null,
     back = null,
+    backColor = null,
     torchEffectsDisabled = false,
     npcPlayerId,
   }: Props = $props()
@@ -422,10 +426,18 @@
       : back
   )
 
+  /** The dye on that cape: the picker's live try-on first, then the worn
+   *  instance's own colour — remote wearers carry theirs on the broadcast. */
+  const equippedBackDye = $derived(
+    isCurrentPlayer
+      ? ($capeDyePreview ?? $inventoryStore.equipped.back?.cape_color ?? null)
+      : backColor
+  )
+
   /** The wearer's cloth colour, or null for no cape. `/cape` forces the
    *  default sheet on with no item, for fitting work. */
   const capeColor = $derived(
-    capeColorOf(equippedBackItemId) ??
+    capeColorOf(equippedBackItemId, equippedBackDye) ??
       (isCurrentPlayer && $capeEnabled ? DEFAULT_CAPE_COLOR : null)
   )
 
@@ -434,14 +446,16 @@
     capeRig = null
   }
 
-  // The teardown owns the cape's lifetime: a bias or colour change re-fits it
-  // (so /cape_depth can be dialled in live), and a rebuilt model — `modelRoot`
-  // is fresh then — drops the cape left on the discarded skeleton.
+  // The teardown owns the cape's lifetime: putting one on or off, or a bias
+  // change (so /cape_depth can be dialled in live), re-fits it, and a rebuilt
+  // model — `modelRoot` is fresh then — drops the cape left on the discarded
+  // skeleton. The colour is deliberately not a dependency: it is read once
+  // here and swapped in place afterwards.
   $effect(() => {
-    const color = capeColor
+    const wearing = capeColor !== null
     const bias = capeCollarBias
     const root = modelRoot
-    if (color === null || !root || !clonedScene) return
+    if (!wearing || !root || !clonedScene) return
 
     // Only cache the measurement for the model's own bias: /cape_depth dials
     // arbitrary floats, and every one would leave a permanent cache entry.
@@ -455,8 +469,16 @@
       console.warn('Could not fit a cape to this rig')
       return
     }
-    capeRig = attachCapeFit(fit, color)
+    capeRig = attachCapeFit(fit, untrack(() => capeColor) ?? DEFAULT_CAPE_COLOR)
     return detachCape
+  })
+
+  // Re-dyeing swaps the material on the sheet that is already hanging. The
+  // picker drags a colour continuously, and rebuilding the cloth per drag
+  // frame would rebuild the skeleton and drop the cloth back to its rest pose.
+  $effect(() => {
+    const color = capeColor
+    if (color !== null) capeRig?.setColor(color)
   })
 
   /** Steps the cape cloth, after the mixer so the sheet follows the pose this

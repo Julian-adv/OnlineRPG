@@ -113,6 +113,10 @@ pub struct ItemDefinition {
     /// Blocks player-to-player trading (doc/TRADE.md).
     #[serde(default)]
     pub untradeable: bool,
+    /// Cape only — the cloth colour of the procedural sheet. Its presence is
+    /// what makes a back-slot item a cape (doc/CAPE_CUSTOMIZATION.md).
+    #[serde(rename = "capeColor", default)]
+    pub cape_color: Option<String>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -141,6 +145,9 @@ pub enum UseEffect {
     OpenCoinPouch(String),
     /// Set a tip hat down in front of the user, or pick theirs back up.
     ToggleTipHat,
+    /// Ask the client to open the colour picker. Consumes nothing — the
+    /// chosen colour comes back as `DyeCape`.
+    PromptCapeDye,
 }
 
 impl ItemDefinition {
@@ -178,6 +185,12 @@ impl ItemDefinition {
 
     pub fn is_fish(&self) -> bool {
         self.category.as_deref() == Some("fish")
+    }
+
+    /// A back-slot item that renders as the procedural cloth sheet, and so
+    /// can be dyed.
+    pub fn is_cape(&self) -> bool {
+        self.cape_color.is_some()
     }
 
     /// What `/play_music` requires the performer to carry.
@@ -240,6 +253,7 @@ impl ItemDefinition {
             "party_summon_scroll" => Some(UseEffect::SummonParty),
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
             "tip_hat" => Some(UseEffect::ToggleTipHat),
+            "cape_dye" => Some(UseEffect::PromptCapeDye),
             _ => None,
         }
     }

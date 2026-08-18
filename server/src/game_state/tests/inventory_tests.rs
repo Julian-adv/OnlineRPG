@@ -17,6 +17,7 @@ fn insert(
             enchant,
             first_instance_id: id,
             quantity: qty,
+            cape_color: None,
         },
     )
 }

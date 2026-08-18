@@ -22,6 +22,9 @@ import sys
 import bpy
 from mathutils import Vector
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from icon_render import add_light, render_icon  # noqa: E402
+
 CLASP_COLOR = (0.62, 0.44, 0.12, 1.0)
 
 TOP_WIDTH = 0.38
@@ -168,18 +171,6 @@ def brass_material() -> bpy.types.Material:
     return mat
 
 
-def add_light(location, energy, size) -> None:
-    light = bpy.data.lights.new("key", "AREA")
-    light.energy = energy
-    light.size = size
-    obj = bpy.data.objects.new("key", light)
-    obj.location = location
-    obj.rotation_euler = (
-        Vector((0, 0, 0)) - Vector(location)
-    ).to_track_quat("-Z", "Y").to_euler()
-    bpy.context.collection.objects.link(obj)
-
-
 def main() -> None:
     item = item_def()
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -189,58 +180,16 @@ def main() -> None:
     clasp = build_clasp()
     clasp.data.materials.append(brass_material())
 
-    # Side-and-above three-quarter view, like the other item icons. Parented to
-    # an empty so the whole thing turns about the collar.
-    pivot = bpy.data.objects.new("pivot", None)
-    bpy.context.collection.objects.link(pivot)
-    for obj in (cape, clasp):
-        obj.parent = pivot
-    pivot.rotation_euler = (math.radians(-12), math.radians(22), 0)
-
-    # Frame it edge to edge like the rest of the icon set.
-    bpy.context.view_layer.update()
-    corners = [
-        obj.matrix_world @ Vector(corner)
-        for obj in (cape, clasp)
-        for corner in obj.bound_box
-    ]
-    xs = [c.x for c in corners]
-    ys = [c.y for c in corners]
-
-    cam_data = bpy.data.cameras.new("cam")
-    cam_data.type = "ORTHO"
-    cam_data.ortho_scale = max(max(xs) - min(xs), max(ys) - min(ys)) * 1.04
-    cam = bpy.data.objects.new("cam", cam_data)
-    cam.location = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, 2.0)
-    cam.rotation_euler = (0, 0, 0)
-    bpy.context.collection.objects.link(cam)
-    bpy.context.scene.camera = cam
-
     add_light((0.9, 0.7, 1.6), 70, 1.2)
     add_light((-1.1, -0.2, 0.9), 26, 1.8)
 
-    scene = bpy.context.scene
-    scene.view_settings.view_transform = "Standard"
-    scene.render.engine = "CYCLES"
-    scene.cycles.samples = 128
-    scene.cycles.use_denoising = True
-    scene.render.film_transparent = True
-    scene.render.resolution_x = scene.render.resolution_y = 512
-    scene.render.image_settings.file_format = "PNG"
-    scene.render.image_settings.color_mode = "RGBA"
-
-    out = os.path.join(REPO, "client", "public", "items", item["icon"])
-    scene.render.filepath = out
-    bpy.ops.render.render(write_still=True)
-
-    # The icon set is 128²; render large and downscale here so a re-render
-    # reproduces the shipped file rather than needing a second tool.
-    img = bpy.data.images.load(out, check_existing=False)
-    img.scale(128, 128)
-    img.file_format = "PNG"
-    img.save(filepath=out)
-    bpy.data.images.remove(img)
-    print(f"wrote {out}")
+    # Side-and-above three-quarter view, like the other item icons: the cape is
+    # modelled hanging, so the subject is tilted into view.
+    render_icon(
+        (cape, clasp),
+        os.path.join(REPO, "client", "public", "items", item["icon"]),
+        (math.radians(-12), math.radians(22), 0),
+    )
 
 
 main()

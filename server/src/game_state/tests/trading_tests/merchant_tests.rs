@@ -444,6 +444,7 @@ async fn sell_item_applies_deal_bonus() {
             item_def_id: "iron_sword".to_string(),
             quantity: 1,
             enchant: 0,
+            cape_color: None,
         });
         inventories.insert(pid("buyer"), inv);
     }

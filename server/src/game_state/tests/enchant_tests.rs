@@ -26,6 +26,7 @@ async fn setup_enchant_reader(
                 item_def_id: item_def_id.to_string(),
                 quantity: 1,
                 enchant: *enchant,
+                cape_color: None,
             },
         );
     }

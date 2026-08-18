@@ -38,13 +38,17 @@ export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
 }
 
-/** Cloth colour of the cape a back-slot item is, or undefined when it is not
- *  one — `capeColor` is the whole test, so a future quiver sits in the slot
- *  without becoming a sheet. */
+/** Cloth colour to render the cape in, or undefined when the back-slot item
+ *  is not a cape — `capeColor` is the whole test, so a future quiver sits in
+ *  the slot without becoming a sheet. A `dye` (the instance's own colour,
+ *  doc/CAPE_CUSTOMIZATION.md) overrides the def's, but never makes a cape of
+ *  something that isn't one. */
 export function capeColorOf(
-  itemDefId: string | null | undefined
+  itemDefId: string | null | undefined,
+  dye?: string | null
 ): string | undefined {
-  return itemDefId ? getItemDef(itemDefId)?.capeColor : undefined
+  const cloth = itemDefId ? getItemDef(itemDefId)?.capeColor : undefined
+  return cloth ? (dye ?? cloth) : undefined
 }
 
 /** Tooltip lines for what an item does: `guard` (with any armor enchant folded

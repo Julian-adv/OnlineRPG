@@ -269,6 +269,7 @@ async fn an_overweight_receiver_aborts_the_whole_trade() {
         item_def_id: "iron_sword".to_string(),
         quantity: 500,
         enchant: 0,
+        cape_color: None,
     };
     give(&pair.game_state, &pair.a, heavy).await;
     open_session(&pair).await;

@@ -26,6 +26,8 @@
   import LoadingDialog from './LoadingDialog.svelte'
   import RespawnDialog from './RespawnDialog.svelte'
   import TipHatDialog from './TipHatDialog.svelte'
+  import CapeDyeDialog from './CapeDyeDialog.svelte'
+  import { capeDyeDialog } from '../stores/capeDyeStore'
   import WorldMapDialog from './WorldMapDialog.svelte'
   import ServerNotice from './ServerNotice.svelte'
   import {
@@ -276,6 +278,16 @@
 
 {#if $worldMapVisible}
   <WorldMapDialog />
+{/if}
+
+{#if $capeDyeDialog}
+  <CapeDyeDialog
+    onConfirm={(color) => {
+      networkManager.sendDyeCape($capeDyeDialog!.instanceId, color)
+      capeDyeDialog.set(null)
+    }}
+    onCancel={() => capeDyeDialog.set(null)}
+  />
 {/if}
 
 {#if $tipHatDialog}

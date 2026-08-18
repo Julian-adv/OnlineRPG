@@ -1141,6 +1141,7 @@ async fn handle_client_message(
             player.back = inventory
                 .as_ref()
                 .and_then(|inv| inv.equipped_def_id(EquipSlot::Back));
+            player.back_color = inventory.as_ref().and_then(|inv| inv.equipped_cape_color());
 
             let mut responses = vec![ServerMessage::JoinSuccess {
                 player: player.clone(),
@@ -1641,6 +1642,12 @@ async fn handle_client_message(
         ClientMessage::UseItem { instance_id } => {
             if let Some(id) = &state.player_id {
                 game_state.use_item(id, instance_id).await;
+            }
+        }
+
+        ClientMessage::DyeCape { instance_id, color } => {
+            if let Some(id) = &state.player_id {
+                game_state.dye_cape(id, instance_id, &color).await;
             }
         }
 

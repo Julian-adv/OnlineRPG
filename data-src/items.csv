@@ -27,6 +27,7 @@ greatclub,Greatclub,A limb of oak studded with iron thorns. Too heavy for anythi
 steel_longsword,Steel Longsword,A long steel blade with a ringed grip and a wheel pommel. Tempered steel keeps an edge that iron cannot hold.,4,main_hand,false,weapons/steel_longsword.png,weapons/steel_longsword.glb,weapon,1d10,metal,16000,,,,,,,,,,,,,,,
 chain_mail,Chain Mail,Interlocking metal rings forming armor.,30,chest,false,armor/chain_mail.png,armor/chain_mail.glb,armor,,metal,25000,5,,,,,,3,,,,,,,,
 wool_cape,Wool Cape,A heavy wool cape that hangs from the shoulders and trails as you walk.,4,back,false,objects/wool_cape.png,armor/wool_cape.glb,armor,,cloth,4000,1,,,,,,3,0.37,,,,,,,#6d1720
+cape_dye,Cape Dye,A stoppered bottle of pigment. Use it while wearing a cape to soak the cloth in a colour of your choosing.,0.5,,true,objects/cape_dye.png,objects/cape_dye.glb,cape_dye,,,800,,,,,,,,,true,,,,,,
 torch,Torch,A flickering wooden torch.,1,off_hand,false,weapons/torch.png,weapons/torch.glb,weapon,1d4,wood,50,,,,,,,,,,,,,,,
 worn_torch,Worn Torch,A stubby half-burnt torch. Merchants won't pay for it.,1,off_hand,false,weapons/torch.png,weapons/torch.glb,weapon,1d4,wood,,,,,,,,,,,,,,,true,
 spear,Spear,A long wooden-shafted spear tipped with iron.,4,main_hand,false,weapons/spear_icon.png,weapons/spear.glb,weapon,1d6,metal,3500,,,,,,,,,,,,,,,

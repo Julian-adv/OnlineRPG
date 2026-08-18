@@ -79,6 +79,9 @@ pub struct Player {
     /// Equipped back item def id; `None` renders no cape.
     #[serde(default)]
     pub back: Option<String>,
+    /// Dye on that cape (`#rrggbb`); `None` uses the def's own colour.
+    #[serde(default)]
+    pub back_color: Option<String>,
     #[serde(skip)]
     pub object_id: Option<u32>,
     #[serde(skip)]
@@ -291,6 +294,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
+            back_color: None,
         };
         // rmp_serde writes the struct as a positional array, so `id` is the
         // first element — and 42 fits msgpack's single-byte positive fixint.
@@ -328,6 +332,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
+            back_color: None,
         };
         let bytes = rmp_serde::to_vec(&player).unwrap();
         let decoded: Player = rmp_serde::from_slice(&bytes).unwrap();

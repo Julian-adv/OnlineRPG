@@ -161,6 +161,7 @@ async fn respawn_player_revives_dead_player_only() {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        back_color: None,
     };
     let player_id = player.id;
     game_state.add_player(player).await;
@@ -230,6 +231,7 @@ async fn respawn_player_ignores_alive_player() {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        back_color: None,
     };
     let player_id = player.id;
     game_state.add_player(player).await;

@@ -12,6 +12,7 @@ use onlinerpg_shared::messages::DealKind;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio::sync::mpsc::error::TryRecvError as MpscTryRecvError;
 
+mod cape_dye_tests;
 mod chat_tests;
 mod collision_tests;
 mod combat_tests;
@@ -66,6 +67,7 @@ fn make_player(id: &str, x: f32, z: f32) -> Player {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        back_color: None,
     }
 }
 
@@ -87,6 +89,7 @@ fn bag_item(instance_id: u64, item_def_id: &str, quantity: u32) -> ItemInstance 
         item_def_id: item_def_id.to_string(),
         quantity,
         enchant: 0,
+        cape_color: None,
     }
 }
 

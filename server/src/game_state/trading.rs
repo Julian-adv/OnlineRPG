@@ -535,6 +535,7 @@ impl super::GameState {
                                 item_def_id: item_def_id.clone(),
                                 quantity: 1,
                                 enchant: 0,
+                                cape_color: None,
                             },
                         );
                         next_id += 1;
@@ -662,7 +663,7 @@ impl super::GameState {
             }
 
             // Residents have finite stock: take the unit out of their bag.
-            let (npc_snapshot, purchased_enchant) = if is_resident {
+            let (npc_snapshot, purchased_enchant, purchased_color) = if is_resident {
                 let Some(npc_inv) = inventories.get_mut(npc_player_id) else {
                     drop(inventories);
                     drop(gold_map);
@@ -677,8 +678,9 @@ impl super::GameState {
                         )
                         .await;
                 };
-                let Some(&(purchased_enchant, _)) =
-                    draw_from_bag(&mut npc_inv.bag, item_def_id, 1).first()
+                let Some(draw) = draw_from_bag(&mut npc_inv.bag, item_def_id, 1)
+                    .into_iter()
+                    .next()
                 else {
                     drop(inventories);
                     drop(gold_map);
@@ -693,15 +695,16 @@ impl super::GameState {
                         )
                         .await;
                 };
-                (Some(npc_inv.clone()), purchased_enchant)
+                (Some(npc_inv.clone()), draw.enchant, draw.cape_color)
             } else {
-                (None, 0)
+                (None, 0, None)
             };
 
             let inv = inventories.get_mut(player_id).expect("checked above");
             stack_into_bag(
                 &mut inv.bag,
-                BagInsert::one(stackable, item_def_id, purchased_enchant, instance_id),
+                BagInsert::one(stackable, item_def_id, purchased_enchant, instance_id)
+                    .with_cape_color(purchased_color),
             );
             let snapshot = inv.clone();
 
@@ -806,6 +809,7 @@ impl super::GameState {
             item_def_id: &'a str,
             qty: u32,
             enchant: i32,
+            cape_color: Option<String>,
         }
 
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
@@ -949,11 +953,12 @@ impl super::GameState {
             let npc_inv = inventories.get_mut(npc_player_id).expect("checked above");
             let mut purchases = Vec::new();
             for plan in &plans {
-                for (enchant, qty) in draw_from_bag(&mut npc_inv.bag, &plan.item_def_id, plan.qty) {
+                for draw in draw_from_bag(&mut npc_inv.bag, &plan.item_def_id, plan.qty) {
                     purchases.push(Purchase {
                         item_def_id: &plan.item_def_id,
-                        qty,
-                        enchant,
+                        qty: draw.quantity,
+                        enchant: draw.enchant,
+                        cape_color: draw.cape_color,
                     });
                 }
             }
@@ -965,6 +970,7 @@ impl super::GameState {
                     item_def_id: &plan.item_def_id,
                     qty: plan.qty,
                     enchant: 0,
+                    cape_color: None,
                 })
                 .collect()
         };
@@ -979,6 +985,7 @@ impl super::GameState {
                         stackable,
                         item_def_id: purchase.item_def_id,
                         enchant: purchase.enchant,
+                        cape_color: purchase.cape_color.clone(),
                         first_instance_id: next_id,
                         quantity: purchase.qty,
                     },
@@ -1148,7 +1155,7 @@ impl super::GameState {
         // entry id, reused as the instance id on repurchase.
         let npc_instance_id = self.next_instance_id().await;
 
-        let (snapshot, npc_snapshot, sold_enchant) = {
+        let (snapshot, npc_snapshot, sold_enchant, sold_color) = {
             let mut gold_map = self.player_gold.write().await;
             if !gold_map.contains_key(player_id) {
                 drop(gold_map);
@@ -1182,12 +1189,14 @@ impl super::GameState {
             }
 
             let mut inventories = self.inventories.write().await;
-            let Some((idx, sold_enchant)) = inventories.get_mut(player_id).and_then(|inv| {
-                inv.bag
-                    .iter()
-                    .position(|i| i.instance_id == instance_id)
-                    .map(|idx| (idx, inv.bag[idx].enchant))
-            }) else {
+            let Some((idx, sold_enchant, sold_color)) =
+                inventories.get_mut(player_id).and_then(|inv| {
+                    inv.bag
+                        .iter()
+                        .position(|i| i.instance_id == instance_id)
+                        .map(|idx| (idx, inv.bag[idx].enchant, inv.bag[idx].cape_color.clone()))
+                })
+            else {
                 drop(inventories);
                 drop(gold_map);
                 return self
@@ -1233,12 +1242,13 @@ impl super::GameState {
                         )
                         .await;
                 }
-                // Keep the sold unit's enchantment: a +3 sword stays +3 in
-                // the resident's bag.
+                // Keep the sold unit's enchantment and dye: a +3 sword stays
+                // +3 in the resident's bag, a dyed cape stays dyed.
                 let stackable = self.item_defs.stackable(&item_def_id);
                 stack_into_bag(
                     &mut npc_inv.bag,
-                    BagInsert::one(stackable, &item_def_id, sold_enchant, npc_instance_id),
+                    BagInsert::one(stackable, &item_def_id, sold_enchant, npc_instance_id)
+                        .with_cape_color(sold_color.clone()),
                 );
                 Some(npc_inv.clone())
             } else {
@@ -1257,7 +1267,7 @@ impl super::GameState {
             if is_resident {
                 *gold_map.get_mut(npc_player_id).expect("checked above") -= payout;
             }
-            (snapshot, npc_snapshot, sold_enchant)
+            (snapshot, npc_snapshot, sold_enchant, sold_color)
         };
 
         // The unit a merchant buys vanishes (no stock), so record it for
@@ -1271,6 +1281,7 @@ impl super::GameState {
                         entry_id: npc_instance_id,
                         item_def_id: item_def_id.clone(),
                         enchant: sold_enchant,
+                        cape_color: sold_color.clone(),
                         price: payout,
                     }],
                 )
@@ -1380,6 +1391,7 @@ impl super::GameState {
             qty: u32,
             item_def_id: String,
             enchant: i32,
+            cape_color: Option<String>,
             base_price: i64,
             deal_taken: Option<DealEntry>,
             payout: i64,
@@ -1429,6 +1441,7 @@ impl super::GameState {
             }
             let item_def_id = item.item_def_id.clone();
             let enchant = item.enchant;
+            let cape_color = item.cape_color.clone();
             if seller_def.is_some_and(|seller| seller.in_loadout(&item_def_id)) {
                 drop(inventories);
                 drop(gold_map);
@@ -1458,6 +1471,7 @@ impl super::GameState {
                 qty: req.qty,
                 item_def_id,
                 enchant,
+                cape_color,
                 base_price,
                 deal_taken: None,
                 payout: 0,
@@ -1545,6 +1559,7 @@ impl super::GameState {
                         stackable,
                         item_def_id: &plan.item_def_id,
                         enchant: plan.enchant,
+                        cape_color: plan.cape_color.clone(),
                         first_instance_id: next_unit_id,
                         quantity: plan.qty,
                     },
@@ -1580,6 +1595,7 @@ impl super::GameState {
                         entry_id: next_unit_id,
                         item_def_id: plan.item_def_id.clone(),
                         enchant: plan.enchant,
+                        cape_color: plan.cape_color.clone(),
                         price: unit_price,
                     });
                     next_unit_id += 1;
@@ -1819,7 +1835,8 @@ impl super::GameState {
             let stackable = self.item_defs.stackable(&entry.item_def_id);
             stack_into_bag(
                 &mut inv.bag,
-                BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id),
+                BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id)
+                    .with_cape_color(entry.cape_color.clone()),
             );
             let snapshot = inv.clone();
             *gold_map.get_mut(player_id).expect("checked above") -= entry.price;
@@ -1986,7 +2003,8 @@ impl super::GameState {
                 let stackable = self.item_defs.stackable(&entry.item_def_id);
                 stack_into_bag(
                     &mut inv.bag,
-                    BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id),
+                    BagInsert::one(stackable, &entry.item_def_id, entry.enchant, entry.entry_id)
+                        .with_cape_color(entry.cape_color.clone()),
                 );
             }
             let snapshot = inv.clone();

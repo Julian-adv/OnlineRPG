@@ -86,6 +86,10 @@ pub struct ItemInstance {
     /// on armor. Zero elsewhere; `default` keeps old payloads valid.
     #[serde(default)]
     pub enchant: i32,
+    /// Dye on this cape (`#rrggbb`), overriding the def's `capeColor`.
+    /// `None` everywhere else (doc/CAPE_CUSTOMIZATION.md).
+    #[serde(default)]
+    pub cape_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -115,6 +119,13 @@ impl PlayerInventory {
             .map(|item| item.item_def_id.clone())
     }
 
+    /// Dye on the worn cape, as broadcast alongside the back slot's def id.
+    pub fn equipped_cape_color(&self) -> Option<String> {
+        self.equipped
+            .get(&EquipSlot::Back)
+            .and_then(|item| item.cape_color.clone())
+    }
+
     /// Everything the player carries: bag and worn gear alike.
     pub fn items(&self) -> impl Iterator<Item = &ItemInstance> {
         self.bag.iter().chain(self.equipped.values())
@@ -141,6 +152,9 @@ pub struct GroundItem {
     /// doesn't wipe it.
     #[serde(default)]
     pub enchant: i32,
+    /// Same for a dyed cape's colour.
+    #[serde(default)]
+    pub cape_color: Option<String>,
     /// The player who put it there, if one did — loot and world drops carry
     /// `None`. On the item rather than the spawn message so attribution
     /// survives AOI churn and rejoins: a busker's uncollected tip is still

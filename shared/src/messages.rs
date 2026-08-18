@@ -77,6 +77,9 @@ pub struct BuybackEntry {
     pub entry_id: u64,
     pub item_def_id: String,
     pub enchant: i32,
+    /// Dye the sold cape carried, so buying it back returns it dyed.
+    #[serde(default)]
+    pub cape_color: Option<String>,
     /// Gold the player was paid for the unit (smallest unit) — buying it
     /// back costs exactly this, so the round trip is gold-neutral.
     pub price: i64,
@@ -178,6 +181,8 @@ pub struct PlayerTradeItem {
     pub item_def_id: String,
     pub quantity: u32,
     pub enchant: i32,
+    #[serde(default)]
+    pub cape_color: Option<String>,
 }
 
 /// What a client asks to put on the table: whole-offer, never a delta, so a
@@ -467,6 +472,13 @@ pub enum ClientMessage {
     /// Consume a usable item from the bag (e.g. drink a healing potion).
     UseItem {
         instance_id: u64,
+    },
+    /// Dye the worn cape with `color` (`#rrggbb`), spending the dye at
+    /// `instance_id`. Answers a `CapeDyePrompt`; the server re-checks
+    /// everything (doc/CAPE_CUSTOMIZATION.md).
+    DyeCape {
+        instance_id: u64,
+        color: String,
     },
     /// Drop `amount` copper into a nearby tip hat. The server checks the
     /// wallet, the distance and that the hat isn't the sender's own.
@@ -1046,6 +1058,12 @@ pub enum ServerMessage {
         player_id: PlayerId,
         enabled: bool,
     },
+    /// The client asked to use a cape dye and may open its colour picker:
+    /// there is a cape on to dye and the dye is in the bag. The server keeps
+    /// no pending state — `DyeCape` re-checks everything.
+    CapeDyePrompt {
+        instance_id: u64,
+    },
     /// A player's equipped main-hand item changed; `None` reverts remote
     /// rendering to the class default weapon.
     PlayerMainHandChanged {
@@ -1053,10 +1071,13 @@ pub enum ServerMessage {
         item_def_id: Option<String>,
     },
     /// A player's equipped back item changed; `None` removes the cape from
-    /// remote rendering.
+    /// remote rendering. `cape_color` is the dye on that instance, if any —
+    /// re-dyeing sends this with an unchanged `item_def_id`.
     PlayerBackChanged {
         player_id: PlayerId,
         item_def_id: Option<String>,
+        #[serde(default)]
+        cape_color: Option<String>,
     },
     PlayerInteractionChanged {
         player_id: PlayerId,

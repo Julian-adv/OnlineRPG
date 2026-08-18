@@ -405,6 +405,7 @@ fn a_joining_bard_takes_up_the_worn_mandolin() {
         item_def_id: def.to_string(),
         quantity: 1,
         enchant: 0,
+        cape_color: None,
     };
     let mut inventory = PlayerInventory {
         bag: vec![item(1, "worn_mandolin"), item(2, "mandolin")],
