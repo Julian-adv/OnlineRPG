@@ -4,9 +4,14 @@ import { color, float, frontFacing, mix, texture } from 'three/tsl'
 import type { WindState } from '../shaders/grass-material'
 import {
   BARBARIAN_CHARACTER_MODEL_PATH,
+  CAVEMAN_CHARACTER_MODEL_PATH,
+  CAVEWOMAN_CHARACTER_MODEL_PATH,
+  FEMALE_BARD_CHARACTER_MODEL_PATH,
   FEMALE_BARBARIAN_CHARACTER_MODEL_PATH,
   FEMALE_KNIGHT_CHARACTER_MODEL_PATH,
+  FEMALE_PRIEST_CHARACTER_MODEL_PATH,
   FEMALE_ROGUE_CHARACTER_MODEL_PATH,
+  PRIEST_CHARACTER_MODEL_PATH,
   ROGUE_CHARACTER_MODEL_PATH,
   VALKYRIE_CHARACTER_MODEL_PATH,
 } from '../utils/modelPaths'
@@ -734,11 +739,16 @@ export interface CapeCollarTuning {
  *  the sheet its clearance back just below, so a bending spine has room. */
 const COLLAR_TUNING_BY_MODEL: Record<string, Partial<CapeCollarTuning>> = {
   [BARBARIAN_CHARACTER_MODEL_PATH]: { bias: 0.03, fade: 0.1 },
+  [CAVEMAN_CHARACTER_MODEL_PATH]: { bias: 0.06 },
+  [CAVEWOMAN_CHARACTER_MODEL_PATH]: { bias: 0.06 },
+  [FEMALE_BARD_CHARACTER_MODEL_PATH]: { bias: 0.03 },
   [FEMALE_BARBARIAN_CHARACTER_MODEL_PATH]: { bias: 0.1 },
   [FEMALE_KNIGHT_CHARACTER_MODEL_PATH]: { bias: 0.1 },
+  [FEMALE_PRIEST_CHARACTER_MODEL_PATH]: { bias: 0.06 },
   [FEMALE_ROGUE_CHARACTER_MODEL_PATH]: { bias: 0.1 },
+  [PRIEST_CHARACTER_MODEL_PATH]: { bias: 0.02 },
   [ROGUE_CHARACTER_MODEL_PATH]: { bias: 0.04 },
-  [VALKYRIE_CHARACTER_MODEL_PATH]: { bias: 0.3 },
+  [VALKYRIE_CHARACTER_MODEL_PATH]: { bias: 0.22 },
 }
 
 const DEFAULT_COLLAR_TUNING: CapeCollarTuning = {
