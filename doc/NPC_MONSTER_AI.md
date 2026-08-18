@@ -35,8 +35,8 @@ Orchestrator Process
 서버가 몬스터 스폰을 결정하고 소유자를 지정한다 (치팅 방지). 클라이언트는 할당받은 몬스터의 AI(이동/공격)만 담당한다.
 
 **서버→클라이언트 스폰 흐름**:
-1. 서버가 스폰 규칙에 따라 스폰 필요성 판단 (10초 주기 tick)
-2. `ServerMessage::SpawnMonsterRequest { monster_type, center_x, center_z, radius }` → 소유자 클라이언트에 전달
+1. 서버가 스폰 규칙에 따라 스폰 필요성 판단 (10초 주기 tick, 플레이어당 한 틱에 한 마리)
+2. `ServerMessage::SpawnMonsterRequest { monster_type }` → 소유자 클라이언트에 전달
 3. 클라이언트가 반경 내 유효한 위치를 선정 (물/절벽/실내 회피)
 4. `ClientMessage::RequestSpawnMonster { monster_type, position, rotation }` → 서버에 전송
 5. 서버가 위치를 검증하고 몬스터 생성
@@ -109,6 +109,8 @@ min_interval_secs = 5
 **서버 측:**
 - 스폰 규칙 시스템: `world.json`의 `ambientSpawns` 배열로 규칙 정의 (타입, 최대 거리)
 - `tick_monster_spawns()`: 10초 주기로 스폰 필요성 판단, `SpawnMonsterRequest`를 클라이언트에 전송
+  - 한 틱에 플레이어당 최대 한 건만 요청하고, 타입은 규칙 목록을 섞은 순서로 훑어 고른다.
+    던전이 밀집 전투를 맡으므로 필드는 `maxMonstersPerPlayer`로 성기게 유지한다
   - 지상 스폰은 플레이어 레벨이 몬스터 레벨 -1 이상일 때만 요청한다 (`min_ambient_player_level`).
     레벨은 `monsters.csv`에서 오므로 규칙마다 따로 적지 않는다
 - 클라이언트가 위치를 선정하여 `RequestSpawnMonster`로 응답하면, 서버가 위치 검증 후 생성

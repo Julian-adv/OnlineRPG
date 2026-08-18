@@ -8,23 +8,17 @@ use tracing::info;
 pub struct WorldConfig {
     #[serde(rename = "spawnPosition")]
     pub spawn_position: SpawnPosition,
-    #[serde(
-        rename = "maxMonstersPerPlayer",
-        default = "default_max_monsters_per_player"
-    )]
+    /// Ambient monsters one player may own at once, across every type. Kept
+    /// small so the field stays sparse now that dungeons carry the dense
+    /// fights. The only server-wide bound there is: no global ceiling is
+    /// tracked, because this cap times the player count already is one. Loosely
+    /// enforced on purpose — corpses hold a slot until they fade, and the count
+    /// is read before the requests it gates go out.
+    #[serde(rename = "maxMonstersPerPlayer")]
     pub max_monsters_per_player: u32,
     /// Monster types that spawn dynamically around players (no fixed zones).
     #[serde(rename = "ambientSpawns", default)]
     pub ambient_spawns: Vec<AmbientSpawnRule>,
-}
-
-/// Ambient monsters one player may own at once, across every type. The only
-/// server-wide bound there is: no global ceiling is tracked, because this cap
-/// times the player count already is one. Loosely enforced on purpose —
-/// corpses hold a slot until they fade, and the count is read before the
-/// requests it gates go out.
-fn default_max_monsters_per_player() -> u32 {
-    30
 }
 
 fn default_max_distance() -> f32 {

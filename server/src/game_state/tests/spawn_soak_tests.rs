@@ -277,8 +277,8 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
 
     let cap = world_config().max_monsters_per_player as usize;
     let mut seed = 1;
-    // One request per type a tick, so filling the cap takes a few rounds.
-    for _ in 0..cap {
+    // One request a tick, plus slack for ticks whose position fails validation.
+    for _ in 0..cap * 4 {
         if game_state.monsters.read().await.owned_by(&player_id) >= cap {
             break;
         }
@@ -294,7 +294,7 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     // Full: the server has nothing to offer.
     game_state.tick_monster_spawns().await;
     assert_eq!(
-        spawn_requests(&mut rx, "goblin"),
+        requested_types(&mut rx).len(),
         0,
         "a player at its cap must not be asked for another monster"
     );
@@ -303,9 +303,9 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
     game_state.tick_monster_spawns().await;
 
     assert_eq!(
-        spawn_requests(&mut rx, "goblin"),
+        requested_types(&mut rx).len(),
         1,
-        "the walk released the abandoned monsters, so the walker is owed a goblin request"
+        "the walk released the abandoned monsters, so the walker is owed a spawn request"
     );
 }
 
@@ -913,10 +913,15 @@ async fn ambient_spawns_skip_players_below_the_monsters_level() {
     let mut beginner_rx = game_state.register_direct_channel(&pid("beginner")).await;
     let mut veteran_rx = game_state.register_direct_channel(&pid("veteran")).await;
 
-    game_state.tick_monster_spawns().await;
-
-    let for_beginner = requested_types(&mut beginner_rx);
-    let for_veteran = requested_types(&mut veteran_rx);
+    // A tick offers one type per player, so a full pass over the rules is what
+    // it takes for every type a player qualifies for to come up.
+    let mut for_beginner = Vec::new();
+    let mut for_veteran = Vec::new();
+    for _ in 0..gates.len() {
+        game_state.tick_monster_spawns().await;
+        for_beginner.extend(requested_types(&mut beginner_rx));
+        for_veteran.extend(requested_types(&mut veteran_rx));
+    }
     for (monster_type, min_level) in &gates {
         assert_eq!(
             for_beginner.contains(monster_type),

@@ -165,6 +165,23 @@ fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
         .count()
 }
 
+/// Whether `monster_type` comes up within one pass over the rules. A tick
+/// offers each player one type it has no outstanding allowance for, so every
+/// eligible type is offered exactly once per pass.
+async fn tick_until_spawn_request(
+    game_state: &GameState,
+    rx: &mut DirectRx,
+    monster_type: &str,
+) -> bool {
+    for _ in 0..crate::world_config::world_config().ambient_spawns.len() {
+        game_state.tick_monster_spawns().await;
+        if spawn_requests(rx, monster_type) > 0 {
+            return true;
+        }
+    }
+    false
+}
+
 fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntranceDef {
     game_state
         .dungeon_defs

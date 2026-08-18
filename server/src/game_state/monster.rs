@@ -846,11 +846,12 @@ impl super::GameState {
             .map_or(0, |def| u32::from(def.level).saturating_sub(1))
     }
 
-    /// Server-driven monster spawn tick. For each ambient spawn type and each
-    /// player below their cap, sends a SpawnMonsterRequest so the client can
-    /// pick a valid position near itself (grassland, not water, away from towns).
-    /// Each request records an expiring allowance the client's response must
-    /// consume via take_spawn_allowance.
+    /// Server-driven monster spawn tick. Each player below their cap gets at
+    /// most one SpawnMonsterRequest per tick — a randomly picked eligible type —
+    /// so the field fills in gradually instead of a full set of types landing at
+    /// once. The client picks a valid position near itself (grassland, not
+    /// water, away from towns). Each request records an expiring allowance the
+    /// client's response must consume via take_spawn_allowance.
     pub async fn tick_monster_spawns(&self) {
         let ambient_spawns = &crate::world_config::world_config().ambient_spawns;
         if ambient_spawns.is_empty() {
@@ -862,8 +863,8 @@ impl super::GameState {
         // Players eligible for ambient spawns this tick. NPC players only
         // qualify when a human is within sight range (no point spawning monsters
         // around an agent nobody is watching); humans always qualify. Computed
-        // once under a single read lock so the per-rule loop below needs none.
-        let candidates: Vec<(PlayerId, u32)> = {
+        // once under a single read lock so the loop below needs none.
+        let mut candidates: Vec<(PlayerId, u32)> = {
             let players = self.players.read().await;
             let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
             let human_positions: Vec<_> = players
@@ -890,49 +891,62 @@ impl super::GameState {
             return;
         }
 
-        // Indexed like `candidates`: the owner index answers each cap in O(1),
-        // so this reads only the players the tick asks about instead of walking
-        // every monster on the server.
-        let mut budget: Vec<usize> = {
+        // The owner index answers each cap in O(1), so this reads only the
+        // players the tick asks about instead of walking every monster on the
+        // server. The expiry sweep below still runs even if nobody is left.
+        {
             let monsters = self.monsters.read().await;
-            candidates
-                .iter()
-                .map(|(id, _)| max_per_player.saturating_sub(monsters.owned_by(id)))
-                .collect()
-        };
+            candidates.retain(|(id, _)| monsters.owned_by(id) < max_per_player);
+        }
+
+        // Indexed like `ambient_spawns`, so the level gate costs one lookup per
+        // rule instead of one per rule per player.
+        let min_levels: Vec<u32> = ambient_spawns
+            .iter()
+            .map(|rule| self.min_ambient_player_level(&rule.monster_type))
+            .collect();
 
         let now = Self::now_ms();
-        let requests = {
+        let recipients_by_rule = {
+            use rand::seq::SliceRandom;
             let mut allowances = self.ambient_spawn_allowances.write().await;
             allowances.retain(|_, expires_at| *expires_at > now);
-            let mut requests: Vec<(String, Vec<PlayerId>)> = Vec::new();
+            let mut by_rule: Vec<Vec<PlayerId>> = vec![Vec::new(); ambient_spawns.len()];
+            let mut rng = rand::thread_rng();
+            let mut order: Vec<usize> = (0..ambient_spawns.len()).collect();
 
-            for rule in ambient_spawns {
-                let min_player_level = self.min_ambient_player_level(&rule.monster_type);
-                let mut recipients = Vec::new();
-                for (i, (player_id, level)) in candidates.iter().enumerate() {
-                    if budget[i] == 0 || *level < min_player_level {
+            for (player_id, level) in &candidates {
+                // One request per player per tick. The scan runs in shuffled
+                // order, so the type on offer is uniform over the ones the
+                // player can take rather than following the rule list.
+                order.shuffle(&mut rng);
+                for &r in &order {
+                    if *level < min_levels[r] {
                         continue;
                     }
-                    // The owned key is only built once the cap check passes.
-                    let key = (*player_id, rule.monster_type.clone());
+                    // The owned key is only built once the level gate passes.
+                    let key = (*player_id, ambient_spawns[r].monster_type.clone());
                     if let Entry::Vacant(entry) = allowances.entry(key) {
                         entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
-                        budget[i] -= 1;
-                        recipients.push(*player_id);
+                        by_rule[r].push(*player_id);
+                        break;
                     }
                 }
-                if !recipients.is_empty() {
-                    requests.push((rule.monster_type.clone(), recipients));
-                }
             }
-            requests
+            by_rule
         };
 
-        for (monster_type, recipients) in requests {
+        // One send per type: the payload is encoded once and shared, so the
+        // type name is cloned per batch rather than per recipient.
+        for (r, recipients) in recipients_by_rule.into_iter().enumerate() {
+            if recipients.is_empty() {
+                continue;
+            }
             self.send_direct_message_to_players(
                 &recipients,
-                ServerMessage::SpawnMonsterRequest { monster_type },
+                ServerMessage::SpawnMonsterRequest {
+                    monster_type: ambient_spawns[r].monster_type.clone(),
+                },
             )
             .await;
         }

@@ -378,8 +378,7 @@ async fn ambient_spawn_requires_unconsumed_server_allowance() {
         "an unsolicited ambient spawn must be rejected"
     );
 
-    game_state.tick_monster_spawns().await;
-    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    assert!(tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await);
     assert!(game_state.take_spawn_allowance(&player_id, "goblin").await);
     assert!(
         !game_state.take_spawn_allowance(&player_id, "goblin").await,
@@ -396,9 +395,11 @@ async fn ambient_spawn_allowance_is_bounded_and_expires() {
         .await;
     let mut player_rx = game_state.register_direct_channel(&player_id).await;
 
-    game_state.tick_monster_spawns().await;
-    game_state.tick_monster_spawns().await;
-    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    assert!(tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await);
+    assert!(
+        !tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await,
+        "an outstanding allowance must not be re-issued"
+    );
 
     game_state
         .ambient_spawn_allowances
@@ -410,8 +411,10 @@ async fn ambient_spawn_allowance_is_bounded_and_expires() {
         "an expired allowance must not authorize a spawn"
     );
 
-    game_state.tick_monster_spawns().await;
-    assert_eq!(spawn_requests(&mut player_rx, "goblin"), 1);
+    assert!(
+        tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await,
+        "the expired allowance frees goblin to be offered again"
+    );
     game_state.remove_player(&player_id).await;
     assert!(game_state
         .ambient_spawn_allowances
