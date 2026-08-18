@@ -8,6 +8,7 @@
   import { gameStore } from '../stores/gameStore'
   import { npcContextMenu, type NpcMenuEntry } from '../stores/npcMenuStore'
   import { networkManager } from '../network/socket'
+  import { draggablePanel } from '../actions/draggablePanel'
 
   const roster = $derived($partyRoster)
   const selfId = $derived($gameStore.currentPlayer?.id)
@@ -70,8 +71,8 @@
 </script>
 
 {#if roster}
-  <div class="party-panel" aria-label="Party">
-    <div class="party-header">
+  <div class="party-panel" aria-label="Party" use:draggablePanel={'party'}>
+    <div class="party-header" data-drag-handle>
       <span class="party-title">
         PARTY
         <span class="party-count">

@@ -24,6 +24,7 @@
     FALLBACK_ICON,
   } from '../stores/dragStore'
   import { itemTooltip } from '../actions/itemTooltip'
+  import { draggablePanel } from '../actions/draggablePanel'
   import CharacterStatusPane from './CharacterStatusPane.svelte'
   import {
     characterPanelTab,
@@ -199,8 +200,13 @@
 </script>
 
 {#if visible}
-  <div class="character-panel" role="dialog" aria-label="Character">
-    <div class="panel-header">
+  <div
+    class="character-panel"
+    role="dialog"
+    aria-label="Character"
+    use:draggablePanel={'character'}
+  >
+    <div class="panel-header" data-drag-handle>
       <span class="panel-title">{name}</span>
       <span class="panel-class">{classLabel}</span>
       <button class="close-btn" onclick={onClose}>&times;</button>

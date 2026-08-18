@@ -24,6 +24,7 @@
   import QuantityPopup from './QuantityPopup.svelte'
   import { playerTrade, reservedQuantity } from '../stores/playerTradeStore'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
+  import { draggablePanel } from '../actions/draggablePanel'
 
   interface Props {
     visible: boolean
@@ -253,8 +254,9 @@
     aria-label="Inventory"
     data-panel="inventory"
     bind:this={panelEl}
+    use:draggablePanel={'inventory'}
   >
-    <div class="panel-header">
+    <div class="panel-header" data-drag-handle>
       <span class="panel-title">Inventory</span>
       <span class="gold-display"><GoldAmount copper={$playerGold} /></span>
       <span class="weight-display">
