@@ -68,6 +68,7 @@ describe('processCanvasClick cast-vs-walk', () => {
   beforeEach(() => {
     resetFishingStore()
     inputHandler.clearTransientInput()
+    alwaysRun.set(false)
   })
 
   it('casts when a rod is equipped and the click lands on deep enough water', () => {

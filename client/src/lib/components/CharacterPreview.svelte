@@ -2,7 +2,7 @@
   import { T } from '@threlte/core'
   import * as THREE from 'three'
   import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
-  import { onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { AnimationIndex } from '../types/animations'
   import {
     createCharacterModelRoot,
@@ -33,7 +33,7 @@
   } from '../utils/torchFlicker'
   import {
     attachCapeFit,
-    capeCollarBiasFor,
+    capeCollarTuningFor,
     fitCapeToSkeleton,
     type CapeRig,
   } from '../effects/cape-rig'
@@ -131,7 +131,8 @@
   }
 
   let capeRig: CapeRig | null = null
-  // Bumped on dispose so a GLB that lands afterwards doesn't attach to a
+  let heldProps: THREE.Object3D[] = []
+  // Bumped on detach so a GLB that lands afterwards doesn't attach to a
   // discarded rig.
   let equipGeneration = 0
 
@@ -166,6 +167,7 @@
       if (boneName === 'RightHand') poseMainHandProp(prop, itemDefId)
       else poseOffHandProp(prop)
       bone.add(prop)
+      heldProps.push(prop)
 
       if (isTorchItemDefId(itemDefId)) lightTorch(prop)
     })
@@ -199,22 +201,58 @@
     torchTipNode = null
   }
 
-  function attachEquipment(characterRoot: THREE.Object3D): void {
-    attachHeldItem(characterRoot, equipment?.main_hand, 'RightHand')
-    attachHeldItem(characterRoot, equipment?.off_hand, 'LeftHand')
+  function attachEquipment(
+    characterRoot: THREE.Object3D,
+    worn: VisibleEquipment | undefined
+  ): void {
+    attachHeldItem(characterRoot, worn?.main_hand, 'RightHand')
+    attachHeldItem(characterRoot, worn?.off_hand, 'LeftHand')
 
-    const capeColor = capeColorOf(equipment?.back, equipment?.back_color)
+    const capeColor = capeColorOf(worn?.back, worn?.back_color)
     if (!capeColor) return
 
-    const bias = capeCollarBiasFor(modelPath)
-    const fit = fitCapeToSkeleton(characterRoot, bias, modelPath)
+    const fit = fitCapeToSkeleton(
+      characterRoot,
+      capeCollarTuningFor(modelPath),
+      modelPath
+    )
     if (fit) {
       capeRig = attachCapeFit(fit, {
         color: capeColor,
-        texture: capeTextureUrl(equipment?.back_texture),
+        texture: capeTextureUrl(worn?.back_texture),
       })
     }
   }
+
+  function detachEquipment(): void {
+    equipGeneration++
+    capeRig?.dispose()
+    capeRig = null
+    extinguishTorch()
+    for (const prop of heldProps) prop.removeFromParent()
+    heldProps = []
+  }
+
+  // Returning from the game refreshes the list without remounting the slot;
+  // keyed on the visible fields so an unchanged list is a no-op.
+  const wornKey = $derived(
+    [
+      equipment?.main_hand,
+      equipment?.off_hand,
+      equipment?.back,
+      equipment?.back_color,
+      equipment?.back_texture,
+    ].join('|')
+  )
+  $effect(() => {
+    void wornKey
+    if (!modelRoot || !clonedScene) return
+    attachEquipment(
+      clonedScene,
+      untrack(() => equipment)
+    )
+    return detachEquipment
+  })
 
   // --- Exported interface for parent game loop ---
 
@@ -270,7 +308,6 @@
 
       // Set modelRoot only after animation is playing to avoid T-pose flash
       clonedScene = newClonedScene
-      attachEquipment(newClonedScene)
       footBones = []
       newModelRoot.traverse((child) => {
         if (child instanceof THREE.Bone && /foot|toe/i.test(child.name)) {
@@ -341,10 +378,6 @@
   }
 
   export function dispose(): void {
-    equipGeneration++
-    capeRig?.dispose()
-    capeRig = null
-    extinguishTorch()
     if (mixer) {
       mixer.stopAllAction()
       mixer = null

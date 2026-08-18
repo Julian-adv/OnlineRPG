@@ -66,7 +66,7 @@
   import type { WindState } from '../shaders/grass-material'
   import {
     attachCapeFit,
-    capeCollarBiasFor,
+    capeCollarTuningFor,
     DEFAULT_CAPE_COLOR,
     fitCapeToSkeleton,
     type CapeRig,
@@ -425,9 +425,11 @@
   // ── Back cape ───────────────────────────────────────────
   let capeRig: CapeRig | null = null
 
-  const capeCollarBias = $derived(
-    $capeCollarBiasOverride ?? capeCollarBiasFor(modelPath)
-  )
+  const capeCollarTuning = $derived.by(() => {
+    const tuning = capeCollarTuningFor(modelPath)
+    const override = $capeCollarBiasOverride
+    return override === null ? tuning : { ...tuning, bias: override }
+  })
 
   const equippedBackItemId = $derived(
     isCurrentPlayer
@@ -471,7 +473,7 @@
   // here and swapped in place afterwards.
   $effect(() => {
     const wearing = capeColor !== null
-    const bias = capeCollarBias
+    const tuning = capeCollarTuning
     const root = modelRoot
     if (!wearing || !root || !clonedScene) return
 
@@ -480,7 +482,7 @@
     const cacheable = $capeCollarBiasOverride === null
     const fit = fitCapeToSkeleton(
       clonedScene,
-      bias,
+      tuning,
       cacheable ? modelPath : undefined
     )
     if (!fit) {

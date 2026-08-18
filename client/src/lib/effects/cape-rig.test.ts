@@ -41,12 +41,13 @@ function tips(rig: CapeRig): THREE.Vector3[] {
   return out
 }
 
-/** Back-surface depth of the stand-in body, per height. The bulge between 0.9
- *  and 1.1 m is the buttocks. */
-function bodyDepth(y: number): number {
-  if (y > 1.2) return 0.15
-  if (y >= 0.9) return 0.22
-  return 0.1
+/** Stand-in back depth: buttocks bulge at 0.9–1.1 m, receding towards the
+ *  shoulders (|x|) like a real back. */
+function bodyDepth(y: number, x = 0): number {
+  const recess = 0.06 * (x / 0.15) ** 2
+  if (y > 1.2) return 0.15 - recess
+  if (y >= 0.9) return 0.22 - recess
+  return 0.1 - recess
 }
 
 /** Minimal stand-in for the character rigs: the model faces `facing`, whose
@@ -80,7 +81,7 @@ function makeCharacter(facing: THREE.Vector3): {
   const verts: number[] = []
   for (let y = 0.4; y <= 1.65; y += 0.05) {
     for (const x of [-0.15, 0, 0.15]) {
-      verts.push(x, y, -bodyDepth(y), x, y, 0.1)
+      verts.push(x, y, -bodyDepth(y, x), x, y, 0.1)
     }
   }
   const geometry = new THREE.BufferGeometry()
@@ -178,7 +179,7 @@ describe('cape fit', () => {
   it('sinks the collar by the bias without freeing the buttocks', () => {
     const { root, spine } = makeCharacter(new THREE.Vector3(0, 0, 1))
     const plain = fitCapeToSkeleton(root)
-    const sunk = fitCapeToSkeleton(root, 0.1)
+    const sunk = fitCapeToSkeleton(root, { bias: 0.1, fade: 0.3 })
     if (!plain || !sunk) throw new Error('expected a fit')
 
     const depthOf = (fit: NonNullable<typeof plain>) => {
@@ -205,13 +206,17 @@ describe('cape fit', () => {
   it('reuses a measured fit across wearers of the same model', () => {
     const facing = new THREE.Vector3(0, 0, 1)
     const model = '/models/test-wearer.glb'
-    const first = fitCapeToSkeleton(makeCharacter(facing).root, 0, model)
+    const first = fitCapeToSkeleton(
+      makeCharacter(facing).root,
+      undefined,
+      model
+    )
     if (!first) throw new Error('expected a fit')
 
     // The second wearer measures nothing: it takes the cached bind-space fit
     // and only resolves its own spine bone.
     const { root, spine } = makeCharacter(facing)
-    const second = fitCapeToSkeleton(root, 0, model)
+    const second = fitCapeToSkeleton(root, undefined, model)
     if (!second) throw new Error('expected a fit')
 
     expect(second.parent).toBe(spine)
@@ -240,7 +245,7 @@ describe('cape fit', () => {
       for (const p of capePoints(rig, segments)) {
         const local = root.worldToLocal(p.clone())
         // Behind the body surface at its own height (-z is behind here).
-        expect(-local.z).toBeGreaterThan(bodyDepth(local.y) - 1e-3)
+        expect(-local.z).toBeGreaterThan(bodyDepth(local.y, local.x) - 1e-3)
       }
     }
 

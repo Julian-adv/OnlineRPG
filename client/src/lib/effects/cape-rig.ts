@@ -2,7 +2,14 @@ import * as THREE from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import { color, float, frontFacing, mix, texture } from 'three/tsl'
 import type { WindState } from '../shaders/grass-material'
-import { FEMALE_ROGUE_CHARACTER_MODEL_PATH } from '../utils/modelPaths'
+import {
+  BARBARIAN_CHARACTER_MODEL_PATH,
+  FEMALE_BARBARIAN_CHARACTER_MODEL_PATH,
+  FEMALE_KNIGHT_CHARACTER_MODEL_PATH,
+  FEMALE_ROGUE_CHARACTER_MODEL_PATH,
+  ROGUE_CHARACTER_MODEL_PATH,
+  VALKYRIE_CHARACTER_MODEL_PATH,
+} from '../utils/modelPaths'
 
 /** Procedural back cape: a tapered skinned sheet driven by a tiny verlet cloth
  *  (3 chains × `segments` points). The solve runs in world space, so the sheet
@@ -72,10 +79,10 @@ const MAX_SEGMENT_BEND = Math.PI * 0.28
 const MAX_ROOT_BEND = Math.PI * 0.42
 /** Gap kept between the sheet and the measured back surface (m). */
 const SURFACE_CLEARANCE = 0.02
-/** Bows the top corners forward around the shoulders. The collar anchors are
- *  kinematic, so this has to stay under the clearance or the corners sit inside
- *  the wearer with no constraint able to push them out. */
-const SHOULDER_WRAP = 0.012
+/** Bows the top corners forward around the shoulders (m). The collar anchors
+ *  are kinematic and the profile is the back's deepest point, so this leans on
+ *  the shoulders receding from that point by more than the wrap. */
+const SHOULDER_WRAP = 0.035
 /** Height between back-profile samples (m). */
 const PROFILE_STEP = 0.05
 /** Fallback surface depth when a rig has no skinned geometry to measure. */
@@ -714,20 +721,37 @@ export function attachCapeFit(fit: CapeFit, skin?: CapeSkin): CapeRig {
   return rig
 }
 
-/** Hand-tuned collar bias per character model (m, deeper into the wearer). The
- *  silhouette is all the mesh has to offer, so hair and pauldrons read as body
- *  and hold the cape off the shoulders; eyeball the offset and record it here.
- *  Keyed by the paths in `utils/modelPaths`. */
-const COLLAR_BIAS_BY_MODEL: Record<string, number> = {
-  [FEMALE_ROGUE_CHARACTER_MODEL_PATH]: 0.1,
+/** How far the collar sinks into the measured back (`bias`, m) and over what
+ *  drop that fades out (`fade`, m). */
+export interface CapeCollarTuning {
+  bias: number
+  fade: number
 }
 
-/** Recorded bias for a character model path, 0 when it has not been tuned. */
-export function capeCollarBiasFor(modelPath: string): number {
-  return COLLAR_BIAS_BY_MODEL[modelPath] ?? 0
+/** Hand-tuned per character model: hair and pauldrons read as body in the
+ *  silhouette and hold the cape off the shoulders, so eyeball the bias and
+ *  record it here. A short fade sinks only the collar under the hair and gives
+ *  the sheet its clearance back just below, so a bending spine has room. */
+const COLLAR_TUNING_BY_MODEL: Record<string, Partial<CapeCollarTuning>> = {
+  [BARBARIAN_CHARACTER_MODEL_PATH]: { bias: 0.03, fade: 0.1 },
+  [FEMALE_BARBARIAN_CHARACTER_MODEL_PATH]: { bias: 0.1 },
+  [FEMALE_KNIGHT_CHARACTER_MODEL_PATH]: { bias: 0.1 },
+  [FEMALE_ROGUE_CHARACTER_MODEL_PATH]: { bias: 0.1 },
+  [ROGUE_CHARACTER_MODEL_PATH]: { bias: 0.04 },
+  [VALKYRIE_CHARACTER_MODEL_PATH]: { bias: 0.3 },
 }
 
-/** Measured fits, keyed by model path and bias. Everything the fit measures
+const DEFAULT_COLLAR_TUNING: CapeCollarTuning = {
+  bias: 0,
+  fade: COLLAR_BIAS_FADE,
+}
+
+/** Recorded tuning for a character model path; untouched models sit flush. */
+export function capeCollarTuningFor(modelPath: string): CapeCollarTuning {
+  return { ...DEFAULT_COLLAR_TUNING, ...COLLAR_TUNING_BY_MODEL[modelPath] }
+}
+
+/** Measured fits, keyed by model path and tuning. Everything the fit measures
  *  lives in bind space, so every wearer of a model shares it — a crowd costs
  *  one mesh scan, not one per player. Only the spine bone is per-instance. */
 const fitCache = new Map<string, Omit<CapeFit, 'parent'>>()
@@ -735,12 +759,12 @@ const fitCache = new Map<string, Omit<CapeFit, 'parent'>>()
 /** Cape frame for a character: hangs off `Spine2`, sized from the arm spread and
  *  torso height, spaced off the back by the mesh's own silhouette. Measured in
  *  bind space and expressed relative to the spine bone, so the cape hugs the
- *  back in every pose. `collarBias` sinks the collar that far into the measured
- *  surface — hair sits in the silhouette and would otherwise float the cape off
- *  the shoulders. Returns null when the rig lacks the bones it needs. */
+ *  back in every pose. `tuning` sinks the collar into the measured surface —
+ *  hair sits in the silhouette and would otherwise float the cape off the
+ *  shoulders. Returns null when the rig lacks the bones it needs. */
 export function fitCapeToSkeleton(
   characterRoot: THREE.Object3D,
-  collarBias = 0,
+  tuning: CapeCollarTuning = DEFAULT_COLLAR_TUNING,
   modelPath?: string
 ): CapeFit | null {
   const { meshes, skeleton } = findBodyMeshes(characterRoot)
@@ -753,7 +777,7 @@ export function fitCapeToSkeleton(
   const rightIndex = boneIndex('RightArm')
   if (spineIndex < 0 || leftIndex < 0 || rightIndex < 0) return null
 
-  const cacheKey = modelPath && `${modelPath}|${collarBias}`
+  const cacheKey = modelPath && `${modelPath}|${tuning.bias}|${tuning.fade}`
   const cached = cacheKey ? fitCache.get(cacheKey) : undefined
   if (cached) return { ...cached, parent: skeleton.bones[spineIndex] }
 
@@ -791,14 +815,14 @@ export function fitCapeToSkeleton(
   // so the collar itself does not have to stand off for them. The bias then
   // sinks the top of the sheet into the surface, fading out down the length.
   const bias = THREE.MathUtils.clamp(
-    collarBias,
+    tuning.bias,
     -COLLAR_BIAS_LIMIT,
     COLLAR_BIAS_LIMIT
   )
   const collarDepth = depths[0] + SURFACE_CLEARANCE - bias
   const minZ = new Float32Array(count)
   for (let i = 0; i < count; i++) {
-    const fade = bias * Math.max(0, 1 - (i * PROFILE_STEP) / COLLAR_BIAS_FADE)
+    const fade = bias * Math.max(0, 1 - (i * PROFILE_STEP) / tuning.fade)
     minZ[i] = depths[i] - collarDepth - fade
   }
 
