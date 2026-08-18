@@ -4,6 +4,9 @@
 # Rendered to conf.d/default.conf at startup by the base image's envsubst
 # entrypoint, which substitutes only *defined* env vars — the nginx runtime
 # $vars below pass through untouched.
+#
+# After editing, run tools/check-nginx-conf.sh: a mistake here otherwise
+# survives until a deploy, and a deploy disconnects every player.
 
 # Uploaded cape prints are content-addressed, so a cached copy can never be
 # wrong. Without this every client in a crowd pulls every print off the game
