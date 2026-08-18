@@ -553,6 +553,25 @@ always_active = true
         assert!(config.npcs[2].always_active(), "explicit override wins");
     }
 
+    /// A config that never mentions the key still yields a sprinting agent.
+    #[test]
+    fn agents_sprint_unless_the_config_says_otherwise() {
+        let config = parse(
+            r#"
+server = "ws://127.0.0.1:10006"
+
+[[npcs]]
+account = "npc_runner"
+
+[[npcs]]
+account = "npc_walker"
+always_sprint = false
+"#,
+        );
+        assert!(config.npcs[0].always_sprint, "default");
+        assert!(!config.npcs[1].always_sprint, "explicit override wins");
+    }
+
     /// Every registry NPC must find the prompt files the directory convention
     /// promises. A missing one is a startup crash on the server, in the dark.
     #[test]

@@ -22,6 +22,9 @@ pub(super) enum AgentAction {
             alias = "id"
         )]
         monster_id: String,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        #[serde(default)]
+        sprint: Option<bool>,
     },
     #[serde(rename = "move")]
     Move {
@@ -42,6 +45,9 @@ pub(super) enum AgentAction {
         // which is how the agent enters and descends a dungeon.
         #[serde(alias = "dungeon_depth", alias = "floor", alias = "floor_level")]
         depth: Option<i32>,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        #[serde(default)]
+        sprint: Option<bool>,
     },
     /// Keep following a character: re-approach whenever they move, until the
     /// LLM issues anything else that walks us somewhere, or the target is lost.
@@ -49,6 +55,9 @@ pub(super) enum AgentAction {
     Follow {
         #[serde(alias = "player", alias = "name", alias = "character")]
         target: String,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        #[serde(default)]
+        sprint: Option<bool>,
     },
     #[serde(rename = "respawn")]
     Respawn,
@@ -208,6 +217,9 @@ pub(super) enum AgentAction {
             alias = "target"
         )]
         item: PickupRef,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        #[serde(default)]
+        sprint: Option<bool>,
     },
     /// Sell one or more units of a bag item to a nearby merchant, walking up
     /// to them first. The server owns pricing, proximity and wallet checks.
@@ -338,7 +350,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         aliases: &[],
         doc: r#"- Attack a monster:
   {"type": "attack", "target": "m2_1"}
-  You walk into range first, then strike."#,
+  You walk into range first, then strike. Add "sprint": false to walk that
+  approach instead of sprinting it:
+  {"type": "attack", "target": "m2_1", "sprint": false}"#,
     },
     ActionSpec {
         names: &["follow"],
@@ -348,7 +362,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   {"type": "follow", "target": "PlayerName"}
   Any other action that takes your body over — a move, attack, pickup, chest,
   trade or fishing — stops the follow. Losing them ends it with a
-  [FollowEnded] event."#,
+  [FollowEnded] event. Add "sprint": false to pace yourself behind someone
+  who is walking:
+  {"type": "follow", "target": "PlayerName", "sprint": false}"#,
     },
     ActionSpec {
         names: &["move"],
@@ -369,6 +385,12 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   stay where you are.
   Never copy a character's coordinates into a move — use their name, or you
   walk right into them.
+
+  You sprint by default whenever you are well fed, which is half again as
+  fast as walking. Sprinting burns satiation about 30 times faster than
+  walking does, and stops on its own once you are no longer well fed. On a
+  long journey you may prefer to save the food — add "sprint": false to walk:
+  {"type": "move", "x": 10.0, "z": -5.0, "sprint": false}
 
 - Go into a dungeon. The world state names each entrance and how far away it
   is. Name the dungeon and the floor you want with "depth" — 1 is the first
@@ -431,7 +453,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   {"type": "pickup", "target": 6043}
   The world state marks who put an item down ("dropped by Mira"); a
   [GroundItem] event tells you when someone collects such an item, and an
-  item that is no longer listed is gone — don't reach for bare ground."#,
+  item that is no longer listed is gone — don't reach for bare ground.
+  A few steps rarely justify the hunger; add "sprint": false to walk:
+  {"type": "pickup", "target": 6043, "sprint": false}"#,
     },
     ActionSpec {
         names: &["open_chest"],
@@ -1144,7 +1168,7 @@ pub(super) fn action_to_command(
         AgentAction::Say { message } => Some(ClientMessage::ChatMessage {
             message: message.clone(),
         }),
-        AgentAction::Attack { monster_id } => Some(ClientMessage::PlayerAttack {
+        AgentAction::Attack { monster_id, .. } => Some(ClientMessage::PlayerAttack {
             monster_id: monster_id.clone(),
         }),
         AgentAction::Move {
@@ -1155,6 +1179,7 @@ pub(super) fn action_to_command(
             direction,
             distance,
             depth,
+            ..
         } => {
             // Name-targeted and dungeon-floor moves need SharedState (name
             // resolution, layouts); handled in `execute::handle_response`.
@@ -1264,6 +1289,50 @@ mod tests {
         let turn = parse_turn_tolerant(json).unwrap();
         assert!(turn.errors.is_empty(), "{:?}", turn.errors);
         turn.actions.into_iter().next().unwrap()
+    }
+
+    /// "Unset" must stay distinguishable from `false`: only the former takes
+    /// the agent's default.
+    #[test]
+    fn the_sprint_opt_out_parses_on_every_walking_action() {
+        let sprint_of = |json: &str| match parse_single_action(json) {
+            AgentAction::Move { sprint, .. }
+            | AgentAction::Attack { sprint, .. }
+            | AgentAction::Pickup { sprint, .. }
+            | AgentAction::Follow { sprint, .. } => sprint,
+            other => panic!("expected a walking action for {json}, got {other:?}"),
+        };
+
+        for (bare, opted_out) in [
+            (
+                r#"{"actions": [{"type": "move", "x": 1.0, "z": 2.0}]}"#,
+                r#"{"actions": [{"type": "move", "x": 1.0, "z": 2.0, "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "attack", "target": "m2_1"}]}"#,
+                r#"{"actions": [{"type": "attack", "target": "m2_1", "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "pickup", "target": 6043}]}"#,
+                r#"{"actions": [{"type": "pickup", "target": 6043, "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "follow", "target": "Karl"}]}"#,
+                r#"{"actions": [{"type": "follow", "target": "Karl", "sprint": false}]}"#,
+            ),
+        ] {
+            assert_eq!(sprint_of(bare), None, "{bare}");
+            assert_eq!(sprint_of(opted_out), Some(false), "{opted_out}");
+        }
+    }
+
+    /// The prompt must state the default speed, or the LLM cannot weigh travel
+    /// time against the food it costs.
+    #[test]
+    fn the_action_reference_explains_the_default_movement_speed() {
+        let reference = action_reference();
+        assert!(reference.contains("sprint by default"), "{reference}");
+        assert!(reference.contains(r#""sprint": false"#), "{reference}");
     }
 
     #[test]
@@ -1554,7 +1623,7 @@ mod tests {
             r#"{"actions": [{"type": "loot", "instance_id": 6043}]}"#,
             r#"{"actions": [{"type": "pick_up", "id": 6043}]}"#,
         ] {
-            let AgentAction::Pickup { item } = parse_single_action(json) else {
+            let AgentAction::Pickup { item, .. } = parse_single_action(json) else {
                 panic!("expected Pickup for {json}");
             };
             assert!(matches!(item, PickupRef::Id(6043)), "for {json}");
@@ -1684,7 +1753,7 @@ mod tests {
     /// or quoted — the same tolerance move targets already had.
     #[test]
     fn pickup_and_break_prop_tolerate_float_and_quoted_ids() {
-        let AgentAction::Pickup { item } =
+        let AgentAction::Pickup { item, .. } =
             parse_single_action(r#"{"actions": [{"type": "pickup", "target": 6043.0}]}"#)
         else {
             panic!("expected Pickup");
@@ -1764,7 +1833,7 @@ mod tests {
             r#"{"actions": [{"type": "pickup", "item": "small_sword"}]}"#,
             r#"{"actions": [{"type": "take", "name": "small_sword"}]}"#,
         ] {
-            let AgentAction::Pickup { item } = parse_single_action(json) else {
+            let AgentAction::Pickup { item, .. } = parse_single_action(json) else {
                 panic!("expected Pickup for {json}");
             };
             let PickupRef::Name(name) = item else {
@@ -2219,9 +2288,11 @@ mod tests {
                 direction: None,
                 distance: None,
                 depth: None,
+                sprint: None,
             },
             AgentAction::Attack {
                 monster_id: "m2_1".to_string(),
+                sprint: None,
             },
             AgentAction::Use {
                 item: "torch".to_string(),

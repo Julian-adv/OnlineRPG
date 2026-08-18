@@ -25,7 +25,7 @@ const DEFAULT_ATTACK_COOLDOWN_MS: u64 = 1500;
 /// Relative to agent-client working directory.
 const ANIMATION_DURATIONS_PATH: &str = "data/animation_durations.json";
 
-use super::movement::{open_blocking_door, MAX_STEP_DIST, MOVE_SPEED};
+use super::movement::{open_blocking_door, travel_ms, MAX_STEP_DIST};
 
 /// How often to poll when waiting (no active step to send), in ms.
 const CHASE_IDLE_TICK_MS: u64 = 200;
@@ -102,7 +102,7 @@ pub(super) async fn tick_combat(
     monster_id: String,
 ) -> Option<String> {
     // Chase until in range (handles monster movement during chase)
-    match chase_monster(state, &monster_id).await {
+    match chase_monster(state, &monster_id, None).await {
         ChaseResult::InRange => {}
         ChaseResult::Lost(reason) => {
             info!("Combat ended: monster {monster_id} lost during chase ({reason:?})");
@@ -313,8 +313,9 @@ impl std::fmt::Display for ChaseTarget<'_> {
 pub(super) async fn chase_monster(
     state: &Arc<Mutex<SharedState>>,
     monster_id: &str,
+    sprint: Option<bool>,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Monster(monster_id), false).await
+    chase_target(state, &ChaseTarget::Monster(monster_id), false, sprint).await
 }
 
 /// Walk up to another character and stop APPROACH_RANGE short of them,
@@ -322,8 +323,9 @@ pub(super) async fn chase_monster(
 pub(super) async fn approach_player(
     state: &Arc<Mutex<SharedState>>,
     player_id: &PlayerId,
+    sprint: Option<bool>,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Player(player_id), false).await
+    chase_target(state, &ChaseTarget::Player(player_id), false, sprint).await
 }
 
 /// The follow task's approach: the same walk, but its steps are background —
@@ -332,8 +334,9 @@ pub(super) async fn approach_player(
 pub(super) async fn follow_player(
     state: &Arc<Mutex<SharedState>>,
     player_id: &PlayerId,
+    sprint: Option<bool>,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Player(player_id), true).await
+    chase_target(state, &ChaseTarget::Player(player_id), true, sprint).await
 }
 
 /// Walk to a ground item and stop inside pickup range. Same loop as the
@@ -342,8 +345,9 @@ pub(super) async fn follow_player(
 pub(super) async fn walk_to_ground_item(
     state: &Arc<Mutex<SharedState>>,
     instance_id: u64,
+    sprint: Option<bool>,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::GroundItem(instance_id), false).await
+    chase_target(state, &ChaseTarget::GroundItem(instance_id), false, sprint).await
 }
 
 /// Walk to a fixed position on a floor, stopping within `arrive_range` of it.
@@ -352,6 +356,7 @@ pub(super) async fn walk_to_point(
     pos: onlinerpg_shared::Position,
     floor_level: i8,
     arrive_range: f32,
+    sprint: Option<bool>,
 ) -> ChaseResult {
     chase_target(
         state,
@@ -361,6 +366,7 @@ pub(super) async fn walk_to_point(
             arrive_range,
         },
         false,
+        sprint,
     )
     .await
 }
@@ -372,6 +378,7 @@ async fn chase_target(
     state: &Arc<Mutex<SharedState>>,
     target: &ChaseTarget<'_>,
     background: bool,
+    sprint: Option<bool>,
 ) -> ChaseResult {
     let chase_start = Instant::now();
     let mut path_waypoints: Vec<onlinerpg_shared::pathfinding::PathWaypoint> = Vec::new();
@@ -448,7 +455,9 @@ async fn chase_target(
             // fallback below assumes. Unlatch what we can, and give up rather
             // than walk a line through the geometry.
             if underground && !result.found {
-                if doors_opened < MAX_CHASE_DOORS && open_blocking_door(state, background).await {
+                if doors_opened < MAX_CHASE_DOORS
+                    && open_blocking_door(state, background, sprint).await
+                {
                     doors_opened += 1;
                     continue;
                 }
@@ -468,7 +477,7 @@ async fn chase_target(
         // Step toward next waypoint, subdividing long segments so the chase
         // walks at MOVE_SPEED. Fall back to a direct step toward the target
         // if A* returned no path.
-        let step_dist = if path_index < path_waypoints.len() {
+        let (step_dist, sprinting) = if path_index < path_waypoints.len() {
             let wp = path_waypoints[path_index].clone();
             let mut s = state.lock().await;
             let player = match s.self_player.as_ref() {
@@ -479,7 +488,7 @@ async fn chase_target(
 
             if to_wp.dist < 0.1 {
                 path_index += 1;
-                0.0
+                (0.0, false)
             } else {
                 let (step_x, step_z, sd) = if to_wp.dist <= MAX_STEP_DIST {
                     path_index += 1;
@@ -492,35 +501,45 @@ async fn chase_target(
                         MAX_STEP_DIST,
                     )
                 };
-                if let Err(e) = s
-                    .send_step(step_x, step_z, wp.floor, to_wp.rotation(), background)
+                match s
+                    .send_step(
+                        step_x,
+                        step_z,
+                        wp.floor,
+                        to_wp.rotation(),
+                        background,
+                        sprint,
+                    )
                     .await
                 {
-                    error!("Failed to send chase move: {e}");
-                    return ChaseResult::Error;
+                    Ok(sprinting) => (sd, sprinting),
+                    Err(e) => {
+                        error!("Failed to send chase move: {e}");
+                        return ChaseResult::Error;
+                    }
                 }
-                sd
             }
         } else {
             let mut s = state.lock().await;
-            match compute_step_toward(&s, target) {
+            let sprinting = s.sprint_allowed(sprint);
+            match compute_step_toward(&s, target, sprinting) {
                 Some((cmd, sd)) => {
                     if let Err(e) = s.send_flagged_command(cmd, background).await {
                         error!("Failed to send chase move: {e}");
                         return ChaseResult::Error;
                     }
-                    sd
+                    (sd, sprinting)
                 }
-                None => 0.0,
+                None => (0.0, false),
             }
         };
 
-        let travel_ms = if step_dist > 0.0 {
-            ((step_dist / MOVE_SPEED) * 1000.0) as u64
+        let step_ms = if step_dist > 0.0 {
+            travel_ms(step_dist, sprinting)
         } else {
             CHASE_IDLE_TICK_MS
         };
-        tokio::time::sleep(Duration::from_millis(travel_ms.max(50))).await;
+        tokio::time::sleep(Duration::from_millis(step_ms.max(50))).await;
     }
 }
 
@@ -529,7 +548,11 @@ async fn chase_target(
 /// return a path (e.g. target on un-pathable terrain) so the chase can still
 /// inch the player closer at walk speed. Steps stop short of the target by
 /// the tuning's `step_stop_dist`.
-fn compute_step_toward(state: &SharedState, target: &ChaseTarget) -> Option<(ClientMessage, f32)> {
+fn compute_step_toward(
+    state: &SharedState,
+    target: &ChaseTarget,
+    sprinting: bool,
+) -> Option<(ClientMessage, f32)> {
     let target_pos = target.position(state)?;
     let self_player = state.self_player.as_ref()?;
 
@@ -542,15 +565,17 @@ fn compute_step_toward(state: &SharedState, target: &ChaseTarget) -> Option<(Cli
     let target_dist = to_target.dist - stop_dist;
     let step_dist = target_dist.min(MAX_STEP_DIST);
     let ratio = step_dist / to_target.dist;
-    let cmd = ClientMessage::player_move(
-        onlinerpg_shared::Position {
+    let cmd = ClientMessage::PlayerMove {
+        position: onlinerpg_shared::Position {
             x: self_player.position.x + to_target.dx * ratio,
             y: target_pos.y,
             z: self_player.position.z + to_target.dz * ratio,
         },
-        to_target.rotation(),
-        0,
-    );
+        rotation: to_target.rotation(),
+        floor_level: 0,
+        append: false,
+        sprinting,
+    };
     Some((cmd, step_dist))
 }
 

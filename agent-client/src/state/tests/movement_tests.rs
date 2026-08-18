@@ -219,3 +219,32 @@ async fn packing_up_before_leaving_folds_our_stall_and_tip_hat() {
         Ok(ClientMessage::UseItem { instance_id: 41 })
     ));
 }
+
+/// Our gate must mirror the server's exactly, boundary included.
+#[tokio::test]
+async fn a_step_sprints_only_while_the_server_would_allow_it() {
+    use onlinerpg_shared::hunger::{hunger_state, NORMAL_MIN};
+
+    let sprinting_at = |satiation: Option<u32>, always: bool, asked: Option<bool>| async move {
+        let (mut s, mut rx) = test_state();
+        s.self_player = Some(test_player(0.0, 0.0));
+        s.always_sprint = always;
+        s.self_hunger = satiation.map(|sat| (sat, hunger_state(sat)));
+        s.send_step(1.0, 0.0, 0, 0.0, false, asked).await.unwrap();
+        match rx.try_recv() {
+            Ok(ClientMessage::PlayerMove { sprinting, .. }) => sprinting,
+            other => panic!("expected a PlayerMove, got {other:?}"),
+        }
+    };
+
+    // Unset takes the agent's default; an override outranks it both ways.
+    assert!(sprinting_at(Some(NORMAL_MIN + 1), true, None).await);
+    assert!(!sprinting_at(Some(NORMAL_MIN + 1), false, None).await);
+    assert!(!sprinting_at(Some(NORMAL_MIN + 1), true, Some(false)).await);
+    assert!(sprinting_at(Some(NORMAL_MIN + 1), false, Some(true)).await);
+    // The server's gate is strict (`> NORMAL_MIN`), so ours is too.
+    assert!(!sprinting_at(Some(NORMAL_MIN), true, Some(true)).await);
+    assert!(!sprinting_at(Some(0), true, Some(true)).await);
+    // Nothing known yet: let the request stand and the server judge it.
+    assert!(sprinting_at(None, true, None).await);
+}

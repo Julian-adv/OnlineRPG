@@ -278,12 +278,23 @@ impl SharedState {
         }
     }
 
+    /// The action's opt-out over `always_sprint`, then the server's own hunger
+    /// gate (`satiation > NORMAL_MIN`) so both sims agree on our speed. With no
+    /// hunger data yet, let the server judge.
+    pub fn sprint_allowed(&self, requested: Option<bool>) -> bool {
+        requested.unwrap_or(self.always_sprint)
+            && self
+                .self_hunger
+                .is_none_or(|(satiation, _)| satiation > onlinerpg_shared::hunger::NORMAL_MIN)
+    }
+
     /// Send one movement step toward (x, z) on passability floor `floor`,
     /// posed and floor-stamped by `step_pose`. The single way a mover puts a
     /// step on the wire, so none of them can forget to update the floor we
     /// declare — which the server checks our height against. `background` is
     /// for steps no current action asked for (the follow task), which must
-    /// stay out of the action-progress count.
+    /// stay out of the action-progress count. Returns whether the step
+    /// actually sprints, which is what the caller paces the walk by.
     pub async fn send_step(
         &mut self,
         x: f32,
@@ -291,7 +302,8 @@ impl SharedState {
         floor: u8,
         rotation: f32,
         background: bool,
-    ) -> anyhow::Result<()> {
+        sprint: Option<bool>,
+    ) -> anyhow::Result<bool> {
         let current_y = self
             .self_player
             .as_ref()
@@ -299,8 +311,16 @@ impl SharedState {
             .unwrap_or(0.0);
         let (position, floor_level) = self.step_pose(x, z, floor, current_y);
         self.adopt_floor_level(floor_level);
-        let cmd = ClientMessage::player_move(position, rotation, floor_level);
-        self.send_flagged_command(cmd, background).await
+        let sprinting = self.sprint_allowed(sprint);
+        let cmd = ClientMessage::PlayerMove {
+            position,
+            rotation,
+            floor_level,
+            append: false,
+            sprinting,
+        };
+        self.send_flagged_command(cmd, background).await?;
+        Ok(sprinting)
     }
 
     /// Put an entity on the ground of dungeon floor `floor`, leaving it where

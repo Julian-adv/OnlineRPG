@@ -22,6 +22,17 @@ use onlinerpg_shared::schedule::resolve_active_schedule;
 
 pub(super) const MOVE_SPEED: f32 = onlinerpg_shared::PLAYER_MOVE_SPEED;
 
+/// How long a step takes at the speed the server actually moves us. Pace a
+/// sprint like a walk and every step leaves from a stale position.
+pub(super) fn travel_ms(step_dist: f32, sprinting: bool) -> u64 {
+    let mult = if sprinting {
+        onlinerpg_shared::hunger::SPRINT_MOVE_MULT
+    } else {
+        1.0
+    };
+    ((step_dist / (MOVE_SPEED * mult)) * 1000.0) as u64
+}
+
 /// Maximum distance per move step (units). Longer segments are subdivided
 /// so the NPC walks at MOVE_SPEED instead of teleporting.
 pub(super) const MAX_STEP_DIST: f32 = 3.0;
@@ -136,7 +147,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
             wx,
             wz
         );
-        match execute_move(state, wx, wz, entry.floor_level).await {
+        match execute_move(state, wx, wz, entry.floor_level, None).await {
             MoveResult::Arrived => {}
             MoveResult::Blocked => {
                 warn!("Patrol waypoint {i} blocked — skipping ({wx:.1}, {wz:.1})");
@@ -168,7 +179,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         s.walkable_near(x, z, entry.floor_level)
     };
 
-    let arrived = match execute_move(state, walk_x, walk_z, entry.floor_level).await {
+    let arrived = match execute_move(state, walk_x, walk_z, entry.floor_level, None).await {
         MoveResult::Arrived => true,
         MoveResult::Blocked => {
             // Force-move to schedule position (e.g. cross-floor moves through
@@ -197,13 +208,14 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         // A forced move can span the whole map; legs keep every target under
         // the server's distance cap so none is silently refused.
         let from = s.self_player.as_ref().map_or(target, |p| p.position);
+        let sprinting = s.sprint_allowed(None);
         for (i, leg) in force_move_legs(&from, target).into_iter().enumerate() {
             let cmd = ClientMessage::PlayerMove {
                 position: leg,
                 rotation: rot_rad,
                 floor_level: entry.floor_level as i8,
                 append: i > 0,
-                sprinting: false,
+                sprinting,
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send schedule move: {e}");
@@ -243,12 +255,13 @@ pub(super) async fn execute_move(
     goal_x: f32,
     goal_z: f32,
     goal_floor: u8,
+    sprint: Option<bool>,
 ) -> MoveResult {
     let mut doors_opened = 0;
     let mut repaths = 0;
     while doors_opened <= MAX_DOORS_PER_MOVE && repaths <= MAX_CORRECTION_REPATHS {
         let before = state.lock().await.position_corrections;
-        match walk_path(state, goal_x, goal_z, goal_floor).await {
+        match walk_path(state, goal_x, goal_z, goal_floor, sprint).await {
             MoveResult::Blocked => {
                 // A refused step is a disagreement with the server, not a shut
                 // door. The correction already resynced our predicted position
@@ -259,7 +272,7 @@ pub(super) async fn execute_move(
                     info!("Re-pathing after a server position correction ({repaths}/{MAX_CORRECTION_REPATHS})");
                     continue;
                 }
-                if !open_blocking_door(state, false).await {
+                if !open_blocking_door(state, false, sprint).await {
                     return MoveResult::Blocked;
                 }
                 doors_opened += 1;
@@ -288,6 +301,7 @@ async fn walk_path(
     goal_x: f32,
     goal_z: f32,
     goal_floor: u8,
+    sprint: Option<bool>,
 ) -> MoveResult {
     let (path_result, start_floor) = {
         let s = state.lock().await;
@@ -315,7 +329,7 @@ async fn walk_path(
         &path_result.waypoints[..keep]
     };
 
-    match walk_waypoints(state, walked, false).await {
+    match walk_waypoints(state, walked, false, sprint).await {
         MoveResult::Arrived if !path_result.found => MoveResult::Blocked,
         other => other,
     }
@@ -328,12 +342,13 @@ async fn walk_waypoints(
     state: &Arc<Mutex<SharedState>>,
     waypoints: &[PathWaypoint],
     background: bool,
+    sprint: Option<bool>,
 ) -> MoveResult {
     let corrections = state.lock().await.position_corrections;
 
     for wp in waypoints {
         loop {
-            let travel_ms = {
+            let step_ms = {
                 let mut s = state.lock().await;
                 // The server snapped us back: this path walks into a step it
                 // refuses, so drop it rather than grind the same wall.
@@ -362,17 +377,26 @@ async fn walk_waypoints(
                     )
                 };
 
-                if let Err(e) = s
-                    .send_step(step_x, step_z, wp.floor, to_wp.rotation(), background)
+                match s
+                    .send_step(
+                        step_x,
+                        step_z,
+                        wp.floor,
+                        to_wp.rotation(),
+                        background,
+                        sprint,
+                    )
                     .await
                 {
-                    error!("Failed to send move waypoint: {e}");
-                    return MoveResult::Error;
+                    Ok(sprinting) => travel_ms(step_dist, sprinting),
+                    Err(e) => {
+                        error!("Failed to send move waypoint: {e}");
+                        return MoveResult::Error;
+                    }
                 }
-                ((step_dist / MOVE_SPEED) * 1000.0) as u64
             };
 
-            tokio::time::sleep(Duration::from_millis(travel_ms.max(50))).await;
+            tokio::time::sleep(Duration::from_millis(step_ms.max(50))).await;
         }
     }
 
@@ -392,7 +416,11 @@ struct DoorCandidate {
 /// unreachable. Covers dungeon corridor doors and house doors alike: a shut
 /// front door leaves a resident NPC with no route out of their own house just
 /// as surely as a shut crypt door hides the stairs down.
-pub(super) async fn open_blocking_door(state: &Arc<Mutex<SharedState>>, background: bool) -> bool {
+pub(super) async fn open_blocking_door(
+    state: &Arc<Mutex<SharedState>>,
+    background: bool,
+    sprint: Option<bool>,
+) -> bool {
     let Some((door, route)) = pick_reachable_door(state).await else {
         return false;
     };
@@ -400,7 +428,7 @@ pub(super) async fn open_blocking_door(state: &Arc<Mutex<SharedState>>, backgrou
     // The probe already proved this route; walk the waypoints it found rather
     // than paying for the same search again.
     if matches!(
-        walk_waypoints(state, &route, background).await,
+        walk_waypoints(state, &route, background, sprint).await,
         MoveResult::Error
     ) {
         return false;
@@ -722,6 +750,19 @@ mod tests {
             Some("bed")
         );
         assert!(s.refuses_play_command("/play_music"));
+    }
+
+    /// Mispaced steps leave from a stale position and get snapped back.
+    #[test]
+    fn a_sprinting_step_is_paced_by_the_sprint_speed() {
+        let walk = travel_ms(MAX_STEP_DIST, false);
+        let sprint = travel_ms(MAX_STEP_DIST, true);
+        assert_eq!(walk, ((MAX_STEP_DIST / MOVE_SPEED) * 1000.0) as u64);
+        assert_eq!(
+            sprint,
+            (walk as f32 / onlinerpg_shared::hunger::SPRINT_MOVE_MULT) as u64
+        );
+        assert!(sprint < walk);
     }
 
     #[test]
