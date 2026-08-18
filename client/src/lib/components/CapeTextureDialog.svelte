@@ -1,6 +1,7 @@
 <script lang="ts">
   import { capeTexturePreview } from '../stores/capeTextureStore'
   import { mountOverlay } from '../stores/overlayStack'
+  import { PRINT_ASPECT } from '../effects/cape-rig'
   import { apiFetch, getCapeUploadToken } from '../utils/networkUtils'
 
   interface Props {
@@ -12,7 +13,8 @@
 
   /** What the server accepts; the picture is fitted to this before upload so
    *  the round trip never carries a camera-sized file. */
-  const SIZE = 512
+  /** Tallest a print is stored; its width follows `PRINT_ASPECT`. */
+  const HEIGHT = 512
 
   let fileInput = $state<HTMLInputElement | null>(null)
   /** The picture waiting to be printed: blob and preview URL together, so the
@@ -35,22 +37,25 @@
     }
   })
 
-  /** Fit the picture inside a square, centred, with the rest left
-   *  transparent — the cloth mixes towards the print by its alpha, so the
-   *  padding simply shows the dye instead of stretching a crest over the
-   *  whole cape. */
+  /** The picture, scaled to the square's height and centred; the canvas clips
+   *  anything wider. Where it sits on the cape and how much of its width the
+   *  cloth crops are the cloth's business (`cape-rig.ts`), so tuning that
+   *  re-places prints already uploaded instead of needing them sent again.
+   *  Small pictures are not blown up — the sampler would do that for free, and
+   *  stored pixels cost every viewer, which is also why the file is only as
+   *  wide as the cloth can show. */
   async function toCapePng(file: File): Promise<Blob> {
     const bitmap = await createImageBitmap(file)
-    const scale = Math.min(SIZE / bitmap.width, SIZE / bitmap.height, 1)
-    const w = Math.max(1, Math.round(bitmap.width * scale))
-    const h = Math.max(1, Math.round(bitmap.height * scale))
+    const height = Math.min(HEIGHT, bitmap.height)
+    const width = Math.round(height * PRINT_ASPECT)
+    const w = Math.round((bitmap.width * height) / bitmap.height)
 
     const canvas = document.createElement('canvas')
-    canvas.width = SIZE
-    canvas.height = SIZE
+    canvas.width = width
+    canvas.height = height
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('no canvas')
-    ctx.drawImage(bitmap, (SIZE - w) / 2, (SIZE - h) / 2, w, h)
+    ctx.drawImage(bitmap, (width - w) / 2, 0, w, height)
     bitmap.close()
 
     const blob = await new Promise<Blob | null>((resolve) =>
@@ -61,7 +66,12 @@
   }
 
   async function pick(e: Event) {
-    const file = (e.currentTarget as HTMLInputElement).files?.[0]
+    const input = e.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    // Cleared before anything can fail: a file input fires `change` only when
+    // its value differs, so keeping the last pick would make choosing the same
+    // file again do nothing at all.
+    input.value = ''
     if (!file) return
     error = null
     try {

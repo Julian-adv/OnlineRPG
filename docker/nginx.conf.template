@@ -5,6 +5,13 @@
 # entrypoint, which substitutes only *defined* env vars — the nginx runtime
 # $vars below pass through untouched.
 
+# Uploaded cape prints are content-addressed, so a cached copy can never be
+# wrong. Without this every client in a crowd pulls every print off the game
+# process's disk (doc/CAPE_CUSTOMIZATION.md).
+proxy_cache_path /var/cache/nginx/cape-textures levels=1:2
+                 keys_zone=cape_textures:1m max_size=512m inactive=30d
+                 use_temp_path=off;
+
 server {
     listen 80;
     server_name _;
@@ -21,6 +28,24 @@ server {
     set $backend server;
 
     client_max_body_size 32m;
+
+    # Longer prefix than /api/, so it wins the match. Only GET and HEAD are
+    # cached by default, which leaves the upload and the admin block alone.
+    location /api/cape-texture/ {
+        proxy_cache cape_textures;
+        # Only a floor for responses that carry no freshness of their own; the
+        # upstream's own max-age wins, and it is what bounds how long a blocked
+        # print keeps being served.
+        proxy_cache_valid 200 1h;
+        # One upstream read per print when a crowd arrives together.
+        proxy_cache_lock on;
+        add_header X-Cache-Status $upstream_cache_status;
+        proxy_pass http://$backend:10007;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 
     location /api/ {
         proxy_pass http://$backend:10007;

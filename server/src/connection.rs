@@ -2070,7 +2070,7 @@ mod tests {
         let png = crate::test_util::test_png(8, [200, 40, 40, 255]);
         let hash = game_state
             .cape_textures()
-            .store(cape_upload_token, &png)
+            .store(cape_upload_token, png.clone().into())
             .await
             .expect("the token uploads");
         assert!(game_state.cape_textures().is_wearable(&hash).await);
@@ -2082,7 +2082,7 @@ mod tests {
         assert!(
             game_state
                 .cape_textures()
-                .store(cape_upload_token, &png)
+                .store(cape_upload_token, png.clone().into())
                 .await
                 .is_err(),
             "the token dies with the connection"

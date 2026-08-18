@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation(
     (url, onLoad) => {
       requested.push(url)
-      const map = new THREE.Texture()
+      const map = new THREE.Texture() as THREE.Texture<HTMLImageElement>
       onLoad?.(map)
       return map
     }
@@ -83,7 +83,8 @@ describe('cape skins', () => {
     const printed = rig.mesh.material
     rig.setSkin({ color: 0x112233, texture: PRINT })
     expect(rig.mesh.material).toBe(printed)
-    expect(requested).toEqual([PRINT], 'the same skin is not re-fetched')
+    // ...and the print behind it is not fetched a second time.
+    expect(requested).toEqual([PRINT])
 
     rig.dispose()
   })

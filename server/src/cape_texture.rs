@@ -6,6 +6,7 @@
 //! immutable; blocking is by hash, which is why re-uploading a blocked image
 //! cannot smuggle it back in.
 
+use bytes::Bytes;
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -21,8 +22,17 @@ use tracing::{info, warn};
 /// Edge length the client resizes to; anything larger is refused rather than
 /// downscaled, so a client bug can't quietly cost everyone bandwidth.
 pub const MAX_TEXTURE_SIZE: u32 = 512;
-/// Upload body cap. A 512² PNG of a real emblem is far under this.
-pub const MAX_UPLOAD_BYTES: usize = 256 * 1024;
+/// Upload body cap. Emblems on a clear background compress to a few tens of
+/// KB, but PNG is lossless: a photograph fitted into 512² runs 300-600 KB and
+/// an incompressible one approaches the 1 MB its pixels occupy raw. The cap
+/// sits above that; what bounds the stored file is `MAX_TEXTURE_SIZE`, and
+/// what bounds the decoder is `decode_limits`. This bounds only the bytes the
+/// server buffers.
+pub const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024;
+/// Room for one 512² RGBA image and the decoder's own scratch. Compressed
+/// bytes say nothing about pixel count, so without this a 2 MB PNG can ask
+/// the decoder for the 512 MB its default allowance permits.
+const MAX_DECODED_BYTES: u64 = 4 * 1024 * 1024;
 /// Uploads one account may make inside `UPLOAD_WINDOW`.
 const UPLOAD_LIMIT: usize = 10;
 const UPLOAD_WINDOW: Duration = Duration::from_secs(600);
@@ -35,6 +45,7 @@ const ALPHA_BLEED_PASSES: u32 = 4;
 pub enum UploadError {
     NotSignedIn,
     BadHash,
+    TooHeavy,
     TooLarge,
     NotAnImage,
     Blocked,
@@ -47,7 +58,10 @@ impl std::fmt::Display for UploadError {
         match self {
             UploadError::NotSignedIn => write!(f, "sign in first"),
             UploadError::BadHash => write!(f, "that is not a texture hash"),
-            UploadError::TooLarge => write!(f, "image too large"),
+            UploadError::TooHeavy => write!(f, "that picture is too heavy"),
+            UploadError::TooLarge => {
+                write!(f, "that picture is bigger than {MAX_TEXTURE_SIZE} pixels")
+            }
             UploadError::NotAnImage => write!(f, "not a readable image"),
             UploadError::Blocked => write!(f, "that image is blocked"),
             UploadError::RateLimited => write!(f, "too many uploads; wait a while"),
@@ -144,12 +158,12 @@ impl CapeTextureStore {
     /// Take an uploaded image and return its content hash. The bytes written
     /// are the server's own re-encode of what it decoded, so a payload that
     /// hides something behind a PNG header loses it here.
-    pub async fn store(&self, token: &str, bytes: &[u8]) -> Result<String, UploadError> {
+    pub async fn store(&self, token: &str, bytes: Bytes) -> Result<String, UploadError> {
         let Some(account) = self.account_for(token).await else {
             return Err(UploadError::NotSignedIn);
         };
         if bytes.len() > MAX_UPLOAD_BYTES {
-            return Err(UploadError::TooLarge);
+            return Err(UploadError::TooHeavy);
         }
         if !self.take_upload_slot(&account).await {
             return Err(UploadError::RateLimited);
@@ -158,9 +172,9 @@ impl CapeTextureStore {
         // Decoding, bleeding and re-encoding a 512² image is milliseconds of
         // CPU. Rare per player, but this runs on the shared runtime that also
         // carries every other player's ticks, so it goes to a blocking thread.
-        let owned = bytes.to_vec();
+        // `Bytes` moves in without copying the body again.
         let (png, hash) = tokio::task::spawn_blocking(move || {
-            let png = reencode(&owned)?;
+            let png = reencode(&bytes)?;
             let hash = hex_digest(&png);
             Ok::<_, UploadError>((png, hash))
         })
@@ -269,14 +283,26 @@ fn hex_digest(bytes: &[u8]) -> String {
 
 /// Decode, bleed the edges and write the PNG back out ourselves.
 fn reencode(bytes: &[u8]) -> Result<Vec<u8>, UploadError> {
-    let reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
+    let open = || {
+        ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(|_| UploadError::NotAnImage)
+    };
+    // Refused off the header, before a pixel is allocated: decoding first and
+    // measuring after let a small file spend a large buffer.
+    let (width, height) = open()?
+        .into_dimensions()
         .map_err(|_| UploadError::NotAnImage)?;
-    let decoded = reader.decode().map_err(|_| UploadError::NotAnImage)?;
-    if decoded.width() > MAX_TEXTURE_SIZE || decoded.height() > MAX_TEXTURE_SIZE {
+    if width > MAX_TEXTURE_SIZE || height > MAX_TEXTURE_SIZE {
         return Err(UploadError::TooLarge);
     }
-    let mut image = decoded.to_rgba8();
+
+    let mut reader = open()?;
+    reader.limits(decode_limits());
+    let mut image = reader
+        .decode()
+        .map_err(|_| UploadError::NotAnImage)?
+        .to_rgba8();
     bleed_alpha(&mut image);
 
     let mut out = Vec::new();
@@ -289,6 +315,17 @@ fn reencode(bytes: &[u8]) -> Result<Vec<u8>, UploadError> {
         )
         .map_err(|_| UploadError::NotAnImage)?;
     Ok(out)
+}
+
+/// What the decoder may spend on one upload. The header check above already
+/// agreed the dimensions; this is what stops a decoder from being talked into
+/// more than those dimensions imply.
+fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_TEXTURE_SIZE);
+    limits.max_image_height = Some(MAX_TEXTURE_SIZE);
+    limits.max_alloc = Some(MAX_DECODED_BYTES);
+    limits
 }
 
 /// Push the colour of opaque pixels outwards into transparent ones, leaving
@@ -370,16 +407,16 @@ mod tests {
         let bytes = png(8);
 
         assert!(matches!(
-            store.store("nonsense", &bytes).await,
+            store.store("nonsense", bytes.clone().into()).await,
             Err(UploadError::NotSignedIn)
         ));
 
         let token = store.open_session("account").await;
-        assert!(store.store(&token, &bytes).await.is_ok());
+        assert!(store.store(&token, bytes.clone().into()).await.is_ok());
 
         store.close_session(&token).await;
         assert!(matches!(
-            store.store(&token, &bytes).await,
+            store.store(&token, bytes.clone().into()).await,
             Err(UploadError::NotSignedIn)
         ));
     }
@@ -390,9 +427,28 @@ mod tests {
         let token = store.open_session("account").await;
 
         assert!(matches!(
-            store.store(&token, b"<script>everywhere</script>").await,
+            store
+                .store(&token, Bytes::from_static(b"<script>everywhere</script>"))
+                .await,
             Err(UploadError::NotAnImage)
         ));
+    }
+
+    /// The cap has to clear a *lossless* 512² photograph, not just an emblem:
+    /// PNG does not compress photographic pixels, so a picture that resized
+    /// exactly as asked was being refused for its weight alone.
+    #[tokio::test]
+    async fn a_full_size_photograph_still_fits_under_the_cap() {
+        let store = store("photo");
+        let token = store.open_session("account").await;
+        let bytes = crate::test_util::test_noise_png(MAX_TEXTURE_SIZE);
+
+        assert!(
+            bytes.len() > 256 * 1024,
+            "the fixture has to be heavier than an emblem to mean anything: {}",
+            bytes.len()
+        );
+        assert!(store.store(&token, bytes.clone().into()).await.is_ok());
     }
 
     #[tokio::test]
@@ -402,7 +458,7 @@ mod tests {
         let bytes = png(MAX_TEXTURE_SIZE + 1);
 
         assert!(matches!(
-            store.store(&token, &bytes).await,
+            store.store(&token, bytes.clone().into()).await,
             Err(UploadError::TooLarge)
         ));
     }
@@ -416,8 +472,14 @@ mod tests {
         let two = store.open_session("second").await;
         let bytes = png(16);
 
-        let first = store.store(&one, &bytes).await.expect("stored");
-        let second = store.store(&two, &bytes).await.expect("stored");
+        let first = store
+            .store(&one, bytes.clone().into())
+            .await
+            .expect("stored");
+        let second = store
+            .store(&two, bytes.clone().into())
+            .await
+            .expect("stored");
 
         assert_eq!(first, second);
         assert!(is_texture_hash(&first));
@@ -436,12 +498,15 @@ mod tests {
         let store = store("reupload");
         let token = store.open_session("account").await;
         let bytes = png(16);
-        let hash = store.store(&token, &bytes).await.expect("stored");
+        let hash = store
+            .store(&token, bytes.clone().into())
+            .await
+            .expect("stored");
 
         store.block(&hash).await.expect("blocked");
 
         assert!(matches!(
-            store.store(&token, &bytes).await,
+            store.store(&token, bytes.clone().into()).await,
             Err(UploadError::Blocked)
         ));
     }
@@ -453,12 +518,12 @@ mod tests {
 
         for i in 0..UPLOAD_LIMIT {
             let bytes = png(4 + i as u32);
-            assert!(store.store(&token, &bytes).await.is_ok());
+            assert!(store.store(&token, bytes.clone().into()).await.is_ok());
         }
 
         let bytes = png(64);
         assert!(matches!(
-            store.store(&token, &bytes).await,
+            store.store(&token, bytes.clone().into()).await,
             Err(UploadError::RateLimited)
         ));
     }

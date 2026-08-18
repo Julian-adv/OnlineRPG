@@ -86,6 +86,14 @@ const COLLAR_BIAS_FADE = 0.3
 export const COLLAR_BIAS_LIMIT = 0.3
 /** Cloth colour for a cape whose item def names none. */
 export const DEFAULT_CAPE_COLOR = 0x6d1720
+/** Width-to-height an uploaded print is stored at. The cloth only ever samples
+ *  the middle of a print's width — 0.41 to 0.62 of it, depending on the rig —
+ *  so a square file would ship, decode and hold in VRAM a third more pixels
+ *  than any wearer can show. 320×512 is the nearest round size above the
+ *  widest rig. Changing it makes prints already stored render at the wrong
+ *  width: the geometry bakes it in, which is what keeps the crop per-rig and
+ *  free of any per-texture state. */
+export const PRINT_ASPECT = 320 / 512
 const WIND_ACCEL = 2.4
 /** Ripple across the sheet: shallow and low-frequency, or the cape reads as a
  *  flag. It grows with travel speed, off a smoothed speed so a standing start
@@ -184,6 +192,15 @@ function buildGeometry(
   const count = rows * GEOM_COLS
   const positions = new Float32Array(count * 3)
   const uvs = new Float32Array(count * 2)
+  // A print stretched across the whole sheet would come out elongated: the
+  // sheet is about twice as tall as it is wide, and by a different amount per
+  // rig. So the print fills the drop and the cloth shows this much of its
+  // width, cropping the sides (doc/CAPE_CUSTOMIZATION.md, "천에 UV 입히기").
+  // Measured against the drop, then read back against how prints are stored.
+  const printCrop = Math.min(
+    PRINT_ASPECT,
+    (2 * halfWidthAt(options, 0.5)) / options.length
+  )
   const skinIndices = new Uint16Array(count * 4)
   const skinWeights = new Float32Array(count * 4)
 
@@ -196,7 +213,7 @@ function buildGeometry(
       const u = c / (GEOM_COLS - 1)
 
       sheetPoint(options, u, v, _vertex).toArray(positions, idx * 3)
-      uvs[idx * 2] = u
+      uvs[idx * 2] = ((u - 0.5) * printCrop) / PRINT_ASPECT + 0.5
       uvs[idx * 2 + 1] = 1 - v
 
       const [c0, c1, colT] = span(u * (COLUMNS - 1), COLUMNS)
@@ -352,7 +369,7 @@ function paintPrint(key: string, skin: CapeSkin, map: THREE.Texture) {
   // mirrored from behind, so the lining keeps the dye.
   const material = entry.material as MeshStandardNodeMaterial
   material.colorNode = mix(
-    color(skin.color),
+    color(new THREE.Color(skin.color)),
     print.rgb,
     print.a.mul(float(frontFacing))
   )

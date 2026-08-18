@@ -5,7 +5,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{rejection::BytesRejection, DefaultBodyLimit, Path, State},
     http::{
         header::{CACHE_CONTROL, CONTENT_TYPE},
         HeaderMap, StatusCode,
@@ -52,17 +52,24 @@ pub fn cape_texture_router(store: Arc<CapeTextureStore>, auth: Arc<AuthContext>)
 async fn upload_texture(
     State(store): State<Arc<CapeTextureStore>>,
     headers: HeaderMap,
-    body: Bytes,
+    // The body limit rejects before the handler runs, and its message is
+    // framework wording no player can act on. Caught here so every upload
+    // failure answers in the store's own words.
+    body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<UploadResponse>, (StatusCode, String)> {
     let token = api_auth::bearer_token(&headers).unwrap_or_default();
 
-    match store.store(token, &body).await {
+    let result = match body {
+        Ok(body) => store.store(token, body).await,
+        Err(_) => Err(UploadError::TooHeavy),
+    };
+    match result {
         Ok(hash) => Ok(Json(UploadResponse { hash })),
         Err(err) => {
             let status = match err {
                 UploadError::NotSignedIn => StatusCode::UNAUTHORIZED,
                 UploadError::BadHash => StatusCode::BAD_REQUEST,
-                UploadError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+                UploadError::TooHeavy | UploadError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
                 UploadError::NotAnImage => StatusCode::BAD_REQUEST,
                 UploadError::Blocked => StatusCode::FORBIDDEN,
                 UploadError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
@@ -76,8 +83,11 @@ async fn upload_texture(
     }
 }
 
-/// Public and immutable: the name is the content, so a cached copy can never
-/// be stale. Nearby players fetch this once per texture, whatever the crowd.
+/// Cached hard but not forever. The name is the content, so a copy can never
+/// be *wrong* — `immutable` and a year would be free correctness-wise. But a
+/// blocked print has to leave the viewers who already have it, and `immutable`
+/// means a browser never asks again. A day keeps the crowd's fan-out off the
+/// origin while bounding how long a blocked picture survives on screens.
 async fn get_texture(
     State(store): State<Arc<CapeTextureStore>>,
     Path(hash): Path<String>,
@@ -93,7 +103,7 @@ async fn get_texture(
     Ok((
         [
             (CONTENT_TYPE, "image/png"),
-            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            (CACHE_CONTROL, "public, max-age=86400"),
         ],
         bytes,
     ))
@@ -180,8 +190,8 @@ mod tests {
                 .headers()
                 .get("cache-control")
                 .and_then(|v| v.to_str().ok()),
-            Some("public, max-age=31536000, immutable"),
-            "the name is the content, so the copy can never go stale"
+            Some("public, max-age=86400"),
+            "cached hard, but not past a block taking effect"
         );
         assert!(!fetched.bytes().await.expect("body").is_empty());
 

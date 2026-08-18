@@ -5,6 +5,7 @@ import {
   capeMinZAt,
   createCapeRig,
   fitCapeToSkeleton,
+  PRINT_ASPECT,
   type CapeRig,
 } from './cape-rig'
 
@@ -335,5 +336,53 @@ describe('cape rig', () => {
     const local = rig.root.worldToLocal(tips(rig)[1].clone())
     expect(local.y).toBeLessThan(-OPTIONS.length * 0.75)
     expect(local.length()).toBeLessThan(OPTIONS.length * 1.05)
+  })
+})
+
+describe('print placement', () => {
+  /** An uploaded print is square, and the sheet is about twice as tall as it
+   *  is wide — by a different amount per rig. The UVs crop its width so the
+   *  picture lands at the shape it was uploaded, which holds only if a unit of
+   *  each UV axis measures the same distance on the cloth. */
+  it('crops a print to the sheet rather than stretching it', () => {
+    // The female knight's sheet, the narrowest of the three rigs.
+    const segments = 5
+    const options = { topWidth: 0.311, bottomWidth: 0.441, length: 0.921 }
+    const rig = createCapeRig({ ...options, segments })
+    const uv = rig.mesh.geometry.getAttribute('uv')
+    const position = rig.mesh.geometry.getAttribute('position')
+
+    // The middle row carries the sheet's mean width, and u runs it left to
+    // right, so this is what one unit of u measures on the cloth. One unit of
+    // v is the drop, so the print keeps its shape exactly when the two are in
+    // the ratio the print is stored at.
+    const cols = uv.count / (segments * 2 + 1)
+    const left = segments * cols
+    const right = left + cols - 1
+    const metresPerU =
+      (position.getX(right) - position.getX(left)) /
+      (uv.getX(right) - uv.getX(left))
+
+    expect(metresPerU).toBeCloseTo(options.length * PRINT_ASPECT, 2)
+
+    rig.dispose()
+  })
+
+  /** The print reaches both ends of the drop and the cloth crops its width, so
+   *  the UVs stay inside the unit square. Sampling never clamps, which is what
+   *  lets the picker hand over an edge-to-edge picture without its outermost
+   *  column streaking across the cape. */
+  it('samples only inside the print', () => {
+    const rig = createCapeRig(OPTIONS)
+    const uv = rig.mesh.geometry.getAttribute('uv')
+
+    for (let i = 0; i < uv.count; i++) {
+      expect(uv.getX(i)).toBeGreaterThanOrEqual(0)
+      expect(uv.getX(i)).toBeLessThanOrEqual(1)
+      expect(uv.getY(i)).toBeGreaterThanOrEqual(0)
+      expect(uv.getY(i)).toBeLessThanOrEqual(1)
+    }
+
+    rig.dispose()
   })
 })
