@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { addChatMessage, gameStore } from '../stores/gameStore'
   import { partyRoster } from '../stores/partyStore'
@@ -17,6 +17,7 @@
     commandCompletions,
     shouldFocusChatOnEnter,
   } from '../chat-input-keys'
+  import { ChatHistory } from '../chat-history'
   import { mountOverlay } from '../stores/overlayStack'
   import { chatFocusRequest, chatDraftRequest } from '../stores/npcMenuStore'
   import {
@@ -153,6 +154,7 @@
     }
   }
   let messageInput = $state('')
+  const history = ChatHistory.load()
   let chatContainer = $state<HTMLDivElement>()
   let transcriptVisible = $state(true)
   let inputFocused = $state(false)
@@ -207,18 +209,16 @@
   function sendMessage() {
     const trimmed = messageInput.trim()
     if (!trimmed) return
-    if (handleCommand(trimmed)) {
-      messageInput = ''
-      return
-    }
-    if (isConnected) {
+    if (!handleCommand(trimmed)) {
+      if (!isConnected) return
       if ($chatChannel === 'party' && !trimmed.startsWith('/')) {
         networkManager.sendPartyChat(trimmed)
       } else {
         networkManager.sendChatMessage(trimmed)
       }
-      messageInput = ''
     }
+    history.push(trimmed)
+    messageInput = ''
   }
 
   let commandMatches = $derived(
@@ -254,6 +254,15 @@
     } else if (intent === 'send') {
       event.preventDefault()
       sendMessage()
+    } else if (intent === 'history-prev' || intent === 'history-next') {
+      const line =
+        intent === 'history-prev'
+          ? history.prev(messageInput)
+          : history.next(messageInput)
+      if (line === null) return
+      event.preventDefault()
+      messageInput = line
+      tick().then(() => chatInput?.setSelectionRange(line.length, line.length))
     }
   }
 

@@ -37,6 +37,18 @@ describe('chatInputKeyIntent', () => {
     )
   })
 
+  it('browses history on the arrow keys', () => {
+    expect(chatInputKeyIntent(key('ArrowUp', { keyCode: 38 }))).toBe(
+      'history-prev'
+    )
+    expect(chatInputKeyIntent(key('ArrowDown', { keyCode: 40 }))).toBe(
+      'history-next'
+    )
+    expect(
+      chatInputKeyIntent(key('ArrowUp', { isComposing: true, keyCode: 38 }))
+    ).toBe('none')
+  })
+
   it('does not complete commands on Tab during IME composition', () => {
     expect(
       chatInputKeyIntent(key('Tab', { isComposing: true, keyCode: 9 }))
