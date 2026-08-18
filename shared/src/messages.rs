@@ -80,6 +80,9 @@ pub struct BuybackEntry {
     /// Dye the sold cape carried, so buying it back returns it dyed.
     #[serde(default)]
     pub cape_color: Option<String>,
+    /// Same for its texture hash.
+    #[serde(default)]
+    pub cape_texture: Option<String>,
     /// Gold the player was paid for the unit (smallest unit) — buying it
     /// back costs exactly this, so the round trip is gold-neutral.
     pub price: i64,
@@ -183,6 +186,8 @@ pub struct PlayerTradeItem {
     pub enchant: i32,
     #[serde(default)]
     pub cape_color: Option<String>,
+    #[serde(default)]
+    pub cape_texture: Option<String>,
 }
 
 /// What a client asks to put on the table: whole-offer, never a delta, so a
@@ -480,6 +485,18 @@ pub enum ClientMessage {
         instance_id: u64,
         color: String,
     },
+    /// Put the already-uploaded texture `texture` (a content hash) on the worn
+    /// cape, spending the transfer kit at `instance_id`. Answers a
+    /// `CapeTexturePrompt`; the server re-checks everything.
+    ApplyCapeTexture {
+        instance_id: u64,
+        texture: String,
+    },
+    /// Report the cape texture another player is wearing. The server records
+    /// the hash, the reporter and the target for an admin to review.
+    ReportCapeTexture {
+        player_id: PlayerId,
+    },
     /// Drop `amount` copper into a nearby tip hat. The server checks the
     /// wallet, the distance and that the hat isn't the sender's own.
     TipHat {
@@ -673,6 +690,11 @@ pub enum ServerMessage {
     AuthSuccess {
         account_name: String,
         characters: Vec<Character>,
+        /// Bearer credential for the player's own REST calls (cape texture
+        /// upload). Separate from the Google id token, which expires inside
+        /// an hour while a session runs all evening.
+        #[serde(default)]
+        cape_upload_token: String,
     },
     JoinSuccess {
         player: Player,
@@ -1064,6 +1086,12 @@ pub enum ServerMessage {
     CapeDyePrompt {
         instance_id: u64,
     },
+    /// Same for a cape transfer kit: a cape is on and the kit is in the bag,
+    /// so the client may open its image picker. Nothing is spent until
+    /// `ApplyCapeTexture`.
+    CapeTexturePrompt {
+        instance_id: u64,
+    },
     /// A player's equipped main-hand item changed; `None` reverts remote
     /// rendering to the class default weapon.
     PlayerMainHandChanged {
@@ -1078,6 +1106,8 @@ pub enum ServerMessage {
         item_def_id: Option<String>,
         #[serde(default)]
         cape_color: Option<String>,
+        #[serde(default)]
+        cape_texture: Option<String>,
     },
     PlayerInteractionChanged {
         player_id: PlayerId,

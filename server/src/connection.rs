@@ -169,6 +169,10 @@ struct ConnectionState {
     last_friends_online_poll: Option<Instant>,
     /// An `EnvReport` was already logged; later ones are dropped (spam clamp).
     env_reported: bool,
+    /// Credential this connection uploads cape textures with. Lives exactly
+    /// as long as the connection, which is what saves the store from having
+    /// to expire anything.
+    cape_upload_token: Option<String>,
 }
 
 /// Positions snapshot requests inside this window are dropped. Steady-state
@@ -213,6 +217,7 @@ impl ConnectionState {
             last_party_positions_poll: None,
             last_friends_online_poll: None,
             env_reported: false,
+            cape_upload_token: None,
         }
     }
 
@@ -559,6 +564,10 @@ pub async fn handle_connection(
         }
     }
 
+    if let Some(token) = state.cape_upload_token.take() {
+        game_state.cape_textures().close_session(&token).await;
+    }
+
     match &state.character_name {
         Some(name) => info!("Session ended for {name} ({})", state.client_ip),
         None => debug!("Connection handler finished"),
@@ -643,9 +652,18 @@ async fn finish_auth(
         account_name,
         characters.len()
     );
+    // Replaces any token an earlier auth on this connection handed out, so
+    // the store never holds two for one socket.
+    if let Some(previous) = state.cape_upload_token.take() {
+        game_state.cape_textures().close_session(&previous).await;
+    }
+    let cape_upload_token = game_state.cape_textures().open_session(&account_name).await;
+    state.cape_upload_token = Some(cape_upload_token.clone());
+
     vec![ServerMessage::AuthSuccess {
         account_name,
         characters,
+        cape_upload_token,
     }]
 }
 
@@ -1651,6 +1669,23 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::ApplyCapeTexture {
+            instance_id,
+            texture,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .apply_cape_texture(id, instance_id, &texture)
+                    .await;
+            }
+        }
+
+        ClientMessage::ReportCapeTexture { player_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.report_cape_texture(id, &player_id).await;
+            }
+        }
+
         ClientMessage::TipHat { hat_id, amount } => {
             if let Some(id) = &state.player_id {
                 game_state.tip_hat_tip(id, hat_id, amount).await;
@@ -2007,6 +2042,50 @@ mod tests {
         assert!(
             matches!(ok.as_slice(), [ServerMessage::AuthSuccess { .. }]),
             "lifting the ban restores access: {ok:?}"
+        );
+    }
+
+    /// The upload credential a player's own REST calls carry: issued with
+    /// `AuthSuccess`, good while the connection lives, gone when it ends.
+    #[tokio::test]
+    async fn finish_auth_issues_an_upload_token_that_dies_with_the_connection() {
+        let game_state = crate::game_state::tests::make_test_game_state("auth_upload_token");
+        let auth = crate::game_state::tests::make_test_auth("auth_upload_token");
+        let account = auth.login_npc("npc_upload_token").unwrap();
+
+        let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+        let ok = finish_auth(&game_state, &auth, &mut state, account, true).await;
+        let [ServerMessage::AuthSuccess {
+            cape_upload_token, ..
+        }] = ok.as_slice()
+        else {
+            panic!("expected an auth success, got {ok:?}");
+        };
+        assert_eq!(
+            state.cape_upload_token.as_deref(),
+            Some(cape_upload_token.as_str()),
+            "the connection keeps the token it handed out"
+        );
+
+        let png = crate::test_util::test_png(8, [200, 40, 40, 255]);
+        let hash = game_state
+            .cape_textures()
+            .store(cape_upload_token, &png)
+            .await
+            .expect("the token uploads");
+        assert!(game_state.cape_textures().is_wearable(&hash).await);
+
+        game_state
+            .cape_textures()
+            .close_session(cape_upload_token)
+            .await;
+        assert!(
+            game_state
+                .cape_textures()
+                .store(cape_upload_token, &png)
+                .await
+                .is_err(),
+            "the token dies with the connection"
         );
     }
 

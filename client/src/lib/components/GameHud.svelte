@@ -28,6 +28,8 @@
   import TipHatDialog from './TipHatDialog.svelte'
   import CapeDyeDialog from './CapeDyeDialog.svelte'
   import { capeDyeDialog } from '../stores/capeDyeStore'
+  import CapeTextureDialog from './CapeTextureDialog.svelte'
+  import { capeTextureDialog } from '../stores/capeTextureStore'
   import WorldMapDialog from './WorldMapDialog.svelte'
   import ServerNotice from './ServerNotice.svelte'
   import {
@@ -287,6 +289,16 @@
       capeDyeDialog.set(null)
     }}
     onCancel={() => capeDyeDialog.set(null)}
+  />
+{/if}
+
+{#if $capeTextureDialog}
+  <CapeTextureDialog
+    onConfirm={(hash) => {
+      networkManager.sendApplyCapeTexture($capeTextureDialog!.instanceId, hash)
+      capeTextureDialog.set(null)
+    }}
+    onCancel={() => capeTextureDialog.set(null)}
   />
 {/if}
 

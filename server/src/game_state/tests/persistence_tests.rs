@@ -85,6 +85,7 @@ async fn dirty_save_is_retried_after_failure() {
             equip_slot: None,
             enchant: 0,
             cape_color: None,
+            cape_texture: None,
         }]
     );
 }
@@ -112,6 +113,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
                 equip_slot: None,
                 enchant: 0,
                 cape_color: None,
+                cape_texture: None,
             }],
         )],
         &[],
@@ -229,6 +231,7 @@ fn item_row(
         equip_slot: equip_slot.map(|s| s.to_string()),
         enchant,
         cape_color: None,
+        cape_texture: None,
     }
 }
 
@@ -254,7 +257,11 @@ async fn load_saved_inventory(
     (game_state, p)
 }
 
-/// A dyed cape is only dyed while the colour survives the DB round trip.
+/// A 64-hex content hash, the only shape a worn `cape_texture` takes.
+const TEXTURE_HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// A dyed cape is only dyed while the colour and print survive the DB round
+/// trip.
 #[tokio::test]
 async fn a_dyed_cape_loads_back_dyed() {
     let (game_state, p) = load_saved_inventory(
@@ -265,6 +272,7 @@ async fn a_dyed_cape_loads_back_dyed() {
             equip_slot: Some("back".to_string()),
             enchant: 0,
             cape_color: Some("#3355ff".to_string()),
+            cape_texture: Some(TEXTURE_HASH.to_string()),
         }],
     )
     .await;
@@ -272,6 +280,7 @@ async fn a_dyed_cape_loads_back_dyed() {
     let inv = game_state.get_player_inventory(&p).await.unwrap();
     let cape = inv.equipped.get(&EquipSlot::Back).unwrap();
     assert_eq!(cape.cape_color.as_deref(), Some("#3355ff"));
+    assert_eq!(cape.cape_texture.as_deref(), Some(TEXTURE_HASH));
 }
 
 /// Bags saved before trading/pickup learned to stack hold one row per unit;

@@ -24,6 +24,8 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.24"
 axum = "0.8"
+image = { version = "0.25", default-features = false, features = ["png"] }
+sha2 = "0.10"
 tower-http = { version = "0.6", features = ["compression-gzip"] }
 
 [build-dependencies]

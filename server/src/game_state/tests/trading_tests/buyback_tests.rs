@@ -13,6 +13,7 @@ async fn sell_to_merchant_records_buyback_and_restores_item() {
             quantity: 1,
             enchant: 2,
             cape_color: None,
+            cape_texture: None,
         });
         inventories.insert(pid("buyer"), inv);
     }

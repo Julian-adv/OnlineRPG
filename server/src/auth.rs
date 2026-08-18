@@ -74,6 +74,8 @@ pub struct ItemRow {
     pub enchant: i32,
     /// Dye on a cape (doc/CAPE_CUSTOMIZATION.md); `None` on everything else.
     pub cape_color: Option<String>,
+    /// Texture hash on a cape; `None` on everything else.
+    pub cape_texture: Option<String>,
 }
 
 /// One trained skill as stored in `character_skills`. The skill id is kept as
@@ -274,7 +276,7 @@ fn read_visible_equipment(
 
     let slots = PREVIEW_EQUIP_SLOTS.map(|slot| format!("'{}'", slot.as_str()));
     let mut stmt = conn.prepare(&format!(
-        "SELECT character_id, equip_slot, item_def_id, cape_color
+        "SELECT character_id, equip_slot, item_def_id, cape_color, cape_texture
          FROM character_items
          WHERE character_id IN ({})
            AND equip_slot IN ({})",
@@ -288,12 +290,13 @@ fn read_visible_equipment(
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, Option<String>>(3)?,
+            row.get::<_, Option<String>>(4)?,
         ))
     })?;
 
     let mut equipment: HashMap<i64, VisibleEquipment> = HashMap::new();
     for row in rows {
-        let (character_id, slot, item_def_id, cape_color) = row?;
+        let (character_id, slot, item_def_id, cape_color, cape_texture) = row?;
         let entry = equipment.entry(character_id).or_default();
         match slot.parse() {
             Ok(EquipSlot::MainHand) => entry.main_hand = Some(item_def_id),
@@ -301,6 +304,7 @@ fn read_visible_equipment(
             Ok(EquipSlot::Back) => {
                 entry.back = Some(item_def_id);
                 entry.back_color = cape_color;
+                entry.back_texture = cape_texture;
             }
             _ => {}
         }
@@ -412,8 +416,9 @@ impl AuthService {
         let mut delete = conn.prepare("DELETE FROM character_items WHERE character_id = ?1")?;
         let mut insert = conn.prepare(
             "INSERT INTO character_items \
-             (character_id, item_def_id, quantity, equip_slot, enchant, cape_color) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (character_id, item_def_id, quantity, equip_slot, enchant, cape_color, \
+              cape_texture) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
 
         for (character_id, items) in inventories {
@@ -425,7 +430,8 @@ impl AuthService {
                     item.quantity,
                     item.equip_slot,
                     item.enchant,
-                    item.cape_color
+                    item.cape_color,
+                    item.cape_texture
                 ])?;
             }
         }
@@ -548,6 +554,7 @@ impl AuthService {
                 equip_slot TEXT,
                 enchant INTEGER NOT NULL DEFAULT 0,
                 cape_color TEXT,
+                cape_texture TEXT,
                 FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
             )",
             [],
@@ -638,6 +645,12 @@ impl AuthService {
         }
         if !columns.contains("cape_color") {
             conn.execute("ALTER TABLE character_items ADD COLUMN cape_color TEXT", [])?;
+        }
+        if !columns.contains("cape_texture") {
+            conn.execute(
+                "ALTER TABLE character_items ADD COLUMN cape_texture TEXT",
+                [],
+            )?;
         }
 
         Ok(())
@@ -1504,7 +1517,7 @@ impl AuthService {
     pub fn load_inventory(&self, character_id: i64) -> Result<Vec<ItemRow>, AuthError> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT item_def_id, quantity, equip_slot, enchant, cape_color \
+            "SELECT item_def_id, quantity, equip_slot, enchant, cape_color, cape_texture \
              FROM character_items WHERE character_id = ?1",
         )?;
         let rows = stmt
@@ -1515,6 +1528,7 @@ impl AuthService {
                     equip_slot: row.get(2)?,
                     enchant: row.get(3)?,
                     cape_color: row.get(4)?,
+                    cape_texture: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

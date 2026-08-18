@@ -27,6 +27,7 @@ async fn setup_enchant_reader(
                 quantity: 1,
                 enchant: *enchant,
                 cape_color: None,
+                cape_texture: None,
             },
         );
     }

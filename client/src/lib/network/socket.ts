@@ -636,6 +636,18 @@ class NetworkManager {
     this.sendMessage({ DyeCape: { instance_id: instanceId, color } })
   }
 
+  /** Spend the transfer kit at `instanceId`, printing the already-uploaded
+   *  `texture` (a content hash) onto the worn cape. */
+  sendApplyCapeTexture(instanceId: number, texture: string) {
+    if (!this.isNetworkableInstanceId(instanceId, 'print')) return
+    this.sendMessage({ ApplyCapeTexture: { instance_id: instanceId, texture } })
+  }
+
+  /** Report the print another player is wearing. */
+  sendReportCapeTexture(playerId: number) {
+    this.sendMessage({ ReportCapeTexture: { player_id: playerId } })
+  }
+
   /** Drop copper into a nearby performer's tip hat. */
   sendTipHat(hatId: number, amount: number) {
     this.sendMessage({ TipHat: { hat_id: hatId, amount } })

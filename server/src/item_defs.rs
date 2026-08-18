@@ -148,6 +148,9 @@ pub enum UseEffect {
     /// Ask the client to open the colour picker. Consumes nothing — the
     /// chosen colour comes back as `DyeCape`.
     PromptCapeDye,
+    /// Ask the client to open the image picker. Consumes nothing — the
+    /// uploaded picture's hash comes back as `ApplyCapeTexture`.
+    PromptCapeTexture,
 }
 
 impl ItemDefinition {
@@ -254,6 +257,7 @@ impl ItemDefinition {
             "coin_catch" => self.dice.clone().map(UseEffect::OpenCoinPouch),
             "tip_hat" => Some(UseEffect::ToggleTipHat),
             "cape_dye" => Some(UseEffect::PromptCapeDye),
+            "cape_texture" => Some(UseEffect::PromptCapeTexture),
             _ => None,
         }
     }

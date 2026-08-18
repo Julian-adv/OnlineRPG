@@ -135,6 +135,7 @@
     stallMeshes: THREE.Object3D[]
     monsterMeshes: THREE.Group[]
     npcMeshes?: THREE.Object3D[]
+    playerMeshes?: THREE.Object3D[]
     doorMeshes: THREE.Object3D[]
     objectMeshes: THREE.Object3D[]
     propMeshes: THREE.Object3D[]
@@ -153,6 +154,7 @@
     stallMeshes,
     monsterMeshes,
     npcMeshes = [],
+    playerMeshes = [],
     doorMeshes,
     objectMeshes,
     propMeshes,
@@ -1379,24 +1381,47 @@
   }
 
   /** Right-click on an NPC: open the context menu with the interactions the
-   *  NPC's data supports (doc/ECONOMY.md "거래 진입 UI"). */
+   *  NPC's data supports (doc/ECONOMY.md "거래 진입 UI"). Right-click on a
+   *  player offers to report the picture on their cape, which is the only
+   *  brake on what people print (doc/CAPE_CUSTOMIZATION.md). */
   function handleNpcContextMenu(event: MouseEvent) {
     if (!currentPlayer || currentPlayer.health <= 0) return
     const intent = processClickIntent(event)
-    if (intent.type !== 'interact_npc') return
-    const npc = get(gameStore).otherPlayers.get(intent.playerId)
-    if (!npc?.isOfficialNpc) return
-
-    const caps = getNpcCapabilities(npc.name)
-    const entries = [{ label: 'Talk', action: () => requestChatFocus() }]
-    if (caps.trade) {
-      entries.push({ label: 'Trade', action: () => approachAndTrade(intent) })
+    if (intent.type === 'interact_npc') {
+      const npc = get(gameStore).otherPlayers.get(intent.playerId)
+      if (npc?.isOfficialNpc) {
+        const caps = getNpcCapabilities(npc.name)
+        const entries = [{ label: 'Talk', action: () => requestChatFocus() }]
+        if (caps.trade) {
+          entries.push({
+            label: 'Trade',
+            action: () => approachAndTrade(intent),
+          })
+        }
+        npcContextMenu.set({
+          npcName: npc.name,
+          screenX: event.clientX,
+          screenY: event.clientY,
+          entries,
+        })
+        return
+      }
     }
+
+    const playerId = inputHandler.pickPlayer(event, camera, playerMeshes)
+    if (playerId === null) return
+    const player = get(gameStore).otherPlayers.get(playerId)
+    if (!player || player.isOfficialNpc || !player.backTexture) return
     npcContextMenu.set({
-      npcName: npc.name,
+      npcName: player.name,
       screenX: event.clientX,
       screenY: event.clientY,
-      entries,
+      entries: [
+        {
+          label: 'Report cape',
+          action: () => networkManager.sendReportCapeTexture(playerId),
+        },
+      ],
     })
   }
 

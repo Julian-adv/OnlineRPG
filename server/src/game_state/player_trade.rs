@@ -261,6 +261,7 @@ fn resolve_offer(
             quantity,
             enchant: item.enchant,
             cape_color: item.cape_color.clone(),
+            cape_texture: item.cape_texture.clone(),
         });
     }
     Ok(resolved)
@@ -1151,6 +1152,7 @@ impl super::GameState {
                                 now.item_def_id == then.item_def_id
                                     && now.enchant == then.enchant
                                     && now.cape_color == then.cape_color
+                                    && now.cape_texture == then.cape_texture
                                     && now.quantity == then.quantity
                             })
                     },
@@ -1190,6 +1192,7 @@ impl super::GameState {
                                 item_def_id: &item.item_def_id,
                                 enchant: item.enchant,
                                 cape_color: item.cape_color.clone(),
+                                cape_texture: item.cape_texture.clone(),
                                 first_instance_id: next_id,
                                 quantity: item.quantity,
                             },

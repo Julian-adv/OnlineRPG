@@ -26,6 +26,8 @@ import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { capeDyeDialog } from '../stores/capeDyeStore'
+import { capeTextureDialog } from '../stores/capeTextureStore'
+import { setCapeUploadToken } from '../utils/networkUtils'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
 import { activeDebuffs, type ActiveDebuff } from '../stores/debuffStore'
 import { debuffPresentation } from '../data/debuffPresentation'
@@ -161,6 +163,7 @@ function toRemotePlayer(sp: ServerPlayer): RemotePlayer {
     mainHand: sp.main_hand ?? null,
     back: sp.back ?? null,
     backColor: sp.back_color ?? null,
+    backTexture: sp.back_texture ?? null,
     floorLevel: sp.floor_level ?? 0,
     isOfficialNpc: sp.is_official_npc ?? false,
   }
@@ -306,6 +309,7 @@ export function handleServerMessage(
   switch (type) {
     case 'AuthSuccess': {
       const characters = (data.characters as AccountCharacter[]) ?? []
+      setCapeUploadToken(data.cape_upload_token || null)
       events.authSuccess.emit({
         accountName: data.account_name,
         characters,
@@ -1033,11 +1037,17 @@ export function handleServerMessage(
       break
     }
 
+    case 'CapeTexturePrompt': {
+      capeTextureDialog.set({ instanceId: data.instance_id })
+      break
+    }
+
     case 'PlayerBackChanged': {
       if (isSelfPlayer(data.player_id)) break
       updatePlayer(data.player_id, {
         back: data.item_def_id ?? null,
         backColor: data.cape_color ?? null,
+        backTexture: data.cape_texture ?? null,
       })
       break
     }

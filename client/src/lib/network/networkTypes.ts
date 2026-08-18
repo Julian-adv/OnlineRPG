@@ -39,6 +39,7 @@ export type ServerPlayer = {
   main_hand?: string | null
   back?: string | null
   back_color?: string | null
+  back_texture?: string | null
 }
 
 export type ServerMonster = {
@@ -76,6 +77,10 @@ export type VisibleEquipment = {
   main_hand?: string | null
   off_hand?: string | null
   back?: string | null
+  /** Dye on the worn cape, so a dyed cape looks dyed at character select. */
+  back_color?: string | null
+  /** Content hash of the print on it, for the same reason. */
+  back_texture?: string | null
 }
 
 export type CharacterAttributes = {
@@ -224,6 +229,8 @@ export type ClientMessage =
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
   | { DyeCape: { instance_id: number; color: string } }
+  | { ApplyCapeTexture: { instance_id: number; texture: string } }
+  | { ReportCapeTexture: { player_id: number } }
   | { TipHat: { hat_id: number; amount: number } }
   | { OpenShop: { merchant_player_id: number } }
   | { CloseShop: { merchant_player_id: number } }
@@ -273,6 +280,8 @@ export type ItemInstance = {
   enchant: number
   /** Dye on this cape (`#rrggbb`), overriding the def's `capeColor`. */
   cape_color?: string | null
+  /** Content hash of the print on this cape. */
+  cape_texture?: string | null
 }
 
 export type PlayerInventory = {

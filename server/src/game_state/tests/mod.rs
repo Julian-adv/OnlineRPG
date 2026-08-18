@@ -13,6 +13,7 @@ use tokio::sync::broadcast::error::TryRecvError;
 use tokio::sync::mpsc::error::TryRecvError as MpscTryRecvError;
 
 mod cape_dye_tests;
+mod cape_texture_tests;
 mod chat_tests;
 mod collision_tests;
 mod combat_tests;
@@ -68,6 +69,7 @@ fn make_player(id: &str, x: f32, z: f32) -> Player {
         last_combat_at: 0,
         client_kind: Default::default(),
         back_color: None,
+        back_texture: None,
     }
 }
 
@@ -90,6 +92,7 @@ fn bag_item(instance_id: u64, item_def_id: &str, quantity: u32) -> ItemInstance 
         quantity,
         enchant: 0,
         cape_color: None,
+        cape_texture: None,
     }
 }
 
@@ -309,6 +312,13 @@ fn make_game_state_with_zones(
         dungeon_defs,
         Arc::new(onlinerpg_terrain::height::HeightSampler::new(height)),
         Arc::new(onlinerpg_terrain::water::WaterSampler::new(water)),
+        Arc::new(
+            crate::cape_texture::CapeTextureStore::new(std::env::temp_dir().join(format!(
+                "onlinerpg_{test_name}_capes_{}",
+                uuid::Uuid::new_v4()
+            )))
+            .expect("cape texture store"),
+        ),
     )
 }
 

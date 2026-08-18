@@ -1660,13 +1660,14 @@ impl super::GameState {
     /// through here and almost none of them touch gear, so taking the global
     /// players lock once per snapshot rather than once per slot matters.
     /// Reads what shows from the inventory itself rather than taking a widening
-    /// list of `Option<String>`s. The cape's dye is part of it: re-dyeing
-    /// leaves the def id alone, so the colour has to count as a change or the
-    /// recolour never reaches anyone else.
+    /// list of `Option<String>`s. The cape's dye and texture are part of it:
+    /// neither changes the def id, so both have to count as a change or the
+    /// new look never reaches anyone else.
     pub async fn set_player_gear(&self, player_id: &PlayerId, inventory: &PlayerInventory) {
         let main_hand = inventory.equipped_def_id(EquipSlot::MainHand);
         let back = inventory.equipped_def_id(EquipSlot::Back);
         let back_color = inventory.equipped_cape_color();
+        let back_texture = inventory.equipped_cape_texture();
         let changed = {
             let mut players = self.players.write().await;
             let Some(player) = players.get_mut(player_id) else {
@@ -1680,13 +1681,18 @@ impl super::GameState {
                     item_def_id: main_hand,
                 });
             }
-            if player.back != back || player.back_color != back_color {
+            if player.back != back
+                || player.back_color != back_color
+                || player.back_texture != back_texture
+            {
                 player.back = back.clone();
                 player.back_color = back_color.clone();
+                player.back_texture = back_texture.clone();
                 messages.push(ServerMessage::PlayerBackChanged {
                     player_id: *player_id,
                     item_def_id: back,
                     cape_color: back_color,
+                    cape_texture: back_texture,
                 });
             }
             if messages.is_empty() {

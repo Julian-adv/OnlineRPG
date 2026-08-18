@@ -18,6 +18,7 @@ fn insert(
             first_instance_id: id,
             quantity: qty,
             cape_color: None,
+            cape_texture: None,
         },
     )
 }

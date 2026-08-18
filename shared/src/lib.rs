@@ -82,7 +82,7 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      wearer's cape.
 /// v32: `Character.equipment`, so character select renders each character's
 ///      weapon, off-hand and cape.
-pub const PROTOCOL_VERSION: u32 = 33;
+pub const PROTOCOL_VERSION: u32 = 34;
 
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
@@ -189,6 +189,7 @@ mod tests {
             last_combat_at: 0,
             client_kind: Default::default(),
             back_color: None,
+            back_texture: None,
         }];
         // A monster with every Option None guards the wire format itself:
         // rmp_serde encodes structs as positional arrays, so any field that

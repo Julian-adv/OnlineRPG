@@ -445,6 +445,7 @@ async fn sell_item_applies_deal_bonus() {
             quantity: 1,
             enchant: 0,
             cape_color: None,
+            cape_texture: None,
         });
         inventories.insert(pid("buyer"), inv);
     }

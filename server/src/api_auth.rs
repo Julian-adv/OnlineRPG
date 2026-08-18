@@ -1,6 +1,6 @@
 use axum::{
     extract::{Request, State},
-    http::{header::AUTHORIZATION, Method, StatusCode},
+    http::{header::AUTHORIZATION, HeaderMap, Method, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -20,15 +20,10 @@ pub async fn require_admin_for_writes(
         return Ok(next.run(req).await);
     }
 
-    let token = req
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(|| {
-            warn!("REST write rejected: missing bearer token");
-            unauthorized()
-        })?;
+    let token = bearer_token(req.headers()).ok_or_else(|| {
+        warn!("REST write rejected: missing bearer token");
+        unauthorized()
+    })?;
 
     if token_matches(token, &auth.npc_token) {
         return Ok(next.run(req).await);
@@ -51,6 +46,15 @@ pub async fn require_admin_for_writes(
         return Err((StatusCode::FORBIDDEN, "not an admin".to_string()));
     }
     Ok(next.run(req).await)
+}
+
+/// The bearer credential on a request, whichever kind it is — the admin
+/// allowlist checks one here, the cape upload checks a player's session token.
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
 }
 
 fn unauthorized() -> (StatusCode, String) {

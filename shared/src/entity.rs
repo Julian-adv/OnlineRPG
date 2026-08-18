@@ -82,6 +82,9 @@ pub struct Player {
     /// Dye on that cape (`#rrggbb`); `None` uses the def's own colour.
     #[serde(default)]
     pub back_color: Option<String>,
+    /// Texture hash on that cape; `None` leaves the cloth plain.
+    #[serde(default)]
+    pub back_texture: Option<String>,
     #[serde(skip)]
     pub object_id: Option<u32>,
     #[serde(skip)]
@@ -295,11 +298,14 @@ mod tests {
             last_combat_at: 0,
             client_kind: ClientKind::default(),
             back_color: None,
+            back_texture: None,
         };
         // rmp_serde writes the struct as a positional array, so `id` is the
         // first element — and 42 fits msgpack's single-byte positive fixint.
+        // The array header is one byte up to 15 fields and three beyond it.
         let bytes = rmp_serde::to_vec(&player).unwrap();
-        assert_eq!(bytes[1], 42, "id must encode as a bare msgpack integer");
+        let id_at = if bytes[0] & 0xf0 == 0x90 { 1 } else { 3 };
+        assert_eq!(bytes[id_at], 42, "id must encode as a bare msgpack integer");
 
         // Standalone too, so bare id fields are covered.
         let id_bytes = rmp_serde::to_vec(&PlayerId::from(7)).unwrap();
@@ -333,6 +339,7 @@ mod tests {
             last_combat_at: 0,
             client_kind: ClientKind::default(),
             back_color: None,
+            back_texture: None,
         };
         let bytes = rmp_serde::to_vec(&player).unwrap();
         let decoded: Player = rmp_serde::from_slice(&bytes).unwrap();

@@ -90,6 +90,10 @@ pub struct ItemInstance {
     /// `None` everywhere else (doc/CAPE_CUSTOMIZATION.md).
     #[serde(default)]
     pub cape_color: Option<String>,
+    /// Content hash of the texture applied to this cape, served from
+    /// `/api/cape-texture/<hash>`.
+    #[serde(default)]
+    pub cape_texture: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -126,6 +130,13 @@ impl PlayerInventory {
             .and_then(|item| item.cape_color.clone())
     }
 
+    /// Texture hash on the worn cape, broadcast the same way.
+    pub fn equipped_cape_texture(&self) -> Option<String> {
+        self.equipped
+            .get(&EquipSlot::Back)
+            .and_then(|item| item.cape_texture.clone())
+    }
+
     /// Everything the player carries: bag and worn gear alike.
     pub fn items(&self) -> impl Iterator<Item = &ItemInstance> {
         self.bag.iter().chain(self.equipped.values())
@@ -155,6 +166,9 @@ pub struct GroundItem {
     /// Same for a dyed cape's colour.
     #[serde(default)]
     pub cape_color: Option<String>,
+    /// And for its texture hash.
+    #[serde(default)]
+    pub cape_texture: Option<String>,
     /// The player who put it there, if one did — loot and world drops carry
     /// `None`. On the item rather than the spawn message so attribution
     /// survives AOI churn and rejoins: a busker's uncollected tip is still

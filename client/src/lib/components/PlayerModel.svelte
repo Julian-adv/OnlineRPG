@@ -55,6 +55,8 @@
   import { inventoryStore, isTorchItemDefId } from '../stores/inventoryStore'
   import { capeColorOf, getItemDef } from '../data/itemDefs'
   import { capeDyePreview } from '../stores/capeDyeStore'
+  import { capeTexturePreview } from '../stores/capeTextureStore'
+  import { capeTextureUrl } from '../utils/networkUtils'
   import {
     capeCollarBiasOverride,
     capeEnabled,
@@ -118,6 +120,8 @@
     mainHand?: string | null
     /** Dye on that cape, as broadcast with it. */
     backColor?: string | null
+    /** Content hash of the print on that cape, as broadcast with it. */
+    backTexture?: string | null
     /** Remote players' broadcast back item def id; the local player renders
      *  from inventory instead. */
     back?: string | null
@@ -125,6 +129,9 @@
     /** Set for NPC remote players so canvas clicks can resolve this model
      *  back to its player id (read from userData by the input raycast). */
     npcPlayerId?: number
+    /** Set for every remote player, NPC or not. Only the right-click menu
+     *  reads it, so tagging everyone leaves left-click behaviour alone. */
+    remotePlayerId?: number
   }
 
   let {
@@ -156,8 +163,10 @@
     mainHand = null,
     back = null,
     backColor = null,
+    backTexture = null,
     torchEffectsDisabled = false,
     npcPlayerId,
+    remotePlayerId,
   }: Props = $props()
 
   const DEFAULT_IDLE_INDICES = [
@@ -441,6 +450,15 @@
       (isCurrentPlayer && $capeEnabled ? DEFAULT_CAPE_COLOR : null)
   )
 
+  /** The print on that cape, as a URL the cloth can load: the picker's local
+   *  file first, then the stored hash the server broadcast. */
+  const capePrint = $derived(
+    isCurrentPlayer
+      ? ($capeTexturePreview ??
+          capeTextureUrl($inventoryStore.equipped.back?.cape_texture))
+      : capeTextureUrl(backTexture)
+  )
+
   function detachCape() {
     capeRig?.dispose()
     capeRig = null
@@ -469,16 +487,20 @@
       console.warn('Could not fit a cape to this rig')
       return
     }
-    capeRig = attachCapeFit(fit, untrack(() => capeColor) ?? DEFAULT_CAPE_COLOR)
+    capeRig = attachCapeFit(fit, {
+      color: untrack(() => capeColor) ?? DEFAULT_CAPE_COLOR,
+      texture: untrack(() => capePrint),
+    })
     return detachCape
   })
 
-  // Re-dyeing swaps the material on the sheet that is already hanging. The
-  // picker drags a colour continuously, and rebuilding the cloth per drag
-  // frame would rebuild the skeleton and drop the cloth back to its rest pose.
+  // Re-dyeing or re-printing swaps the material on the sheet that is already
+  // hanging. The picker drags a colour continuously, and rebuilding the cloth
+  // per drag frame would rebuild the skeleton and drop it to its rest pose.
   $effect(() => {
     const color = capeColor
-    if (color !== null) capeRig?.setColor(color)
+    const texture = capePrint
+    if (color !== null) capeRig?.setSkin({ color, texture })
   })
 
   /** Steps the cape cloth, after the mixer so the sheet follows the pose this
@@ -870,6 +892,9 @@
   $effect(() => {
     if (modelGroup && npcPlayerId) {
       modelGroup.userData.npcPlayerId = npcPlayerId
+    }
+    if (modelGroup && remotePlayerId) {
+      modelGroup.userData.remotePlayerId = remotePlayerId
     }
   })
 

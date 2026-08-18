@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
+import { color, float, frontFacing, mix, texture } from 'three/tsl'
 import type { WindState } from '../shaders/grass-material'
 import { FEMALE_ROGUE_CHARACTER_MODEL_PATH } from '../utils/modelPaths'
 
@@ -28,8 +29,16 @@ export interface CapeRigOptions {
   /** Bones per chain (default 5). */
   segments?: number
   body?: CapeBody
-  /** Cloth colour; defaults to the wool cape's dye. */
-  color?: THREE.ColorRepresentation
+  /** How the cloth looks; defaults to the wool cape's dye, unprinted. */
+  skin?: CapeSkin
+}
+
+/** What a cape looks like: a dyed colour, optionally printed over. The print
+ *  is a URL rather than a texture hash so the picker can try on a local file
+ *  through the same path a stored one takes. */
+export interface CapeSkin {
+  color: THREE.ColorRepresentation
+  texture?: string | null
 }
 
 /** The part of the world's wind the cloth cares about — a `WindState` from the
@@ -41,10 +50,10 @@ export interface CapeRig {
   root: THREE.Group
   mesh: THREE.SkinnedMesh
   update(dt: number, wind: CapeWind | null): void
-  /** Re-dye the hanging cloth. Nothing else in the rig depends on the colour,
-   *  so the dye picker swaps materials instead of rebuilding the sheet on
-   *  every drag of the colour wheel. */
-  setColor(color: THREE.ColorRepresentation): void
+  /** Re-dye or re-print the hanging cloth. Nothing else in the rig depends on
+   *  how it looks, so the pickers swap materials instead of rebuilding the
+   *  sheet on every drag of the colour wheel. */
+  setSkin(skin: CapeSkin): void
   dispose(): void
 }
 
@@ -240,12 +249,32 @@ const geometryCache = new Map<string, THREE.BufferGeometry>()
 /** Cape colours are dyed per player (doc/CAPE_CUSTOMIZATION.md), so unlike
  *  the fits they have no small fixed set to converge on — a cache that only
  *  ever grew would hold one material per colour ever seen. Counting wearers
- *  shares one material across a crowd in the same colour and bounds the cache
+ *  shares one material across a crowd in the same skin and bounds the cache
  *  at exactly what is on screen. */
 const materialCache = new Map<
   string,
   { material: THREE.Material; refs: number }
 >()
+
+/** Prints are keyed by URL alone, one level below the materials: the same
+ *  picture over two different dyes is two materials but one decode and one
+ *  1MB GPU texture. Refcounted rather than kept forever like the icon cache,
+ *  because player uploads are unbounded. */
+const printCache = new Map<string, { map: THREE.Texture; refs: number }>()
+
+const printLoader = new THREE.TextureLoader()
+
+/** A rig's hold on one shared material, and the skin that names it — the skin
+ *  is kept so releasing knows which print to let go of too. */
+interface Claimed {
+  key: string
+  skin: CapeSkin
+  material: THREE.Material
+}
+
+function skinKey(skin: CapeSkin): string {
+  return `${skin.color}|${skin.texture ?? ''}`
+}
 
 function sharedGeometry(
   options: CapeRigOptions,
@@ -260,18 +289,15 @@ function sharedGeometry(
   return geometry
 }
 
-/** Claim the material for `color`, counting this rig as a wearer. Every claim
+/** Claim the material for `skin`, counting this rig as a wearer. Every claim
  *  is paired with a `releaseMaterial`. */
-function claimMaterial(color: THREE.ColorRepresentation): {
-  key: string
-  material: THREE.Material
-} {
-  const key = String(color)
+function claimMaterial(skin: CapeSkin): Claimed {
+  const key = skinKey(skin)
   let entry = materialCache.get(key)
   if (!entry) {
     entry = {
       material: new MeshStandardNodeMaterial({
-        color: new THREE.Color(color),
+        color: new THREE.Color(skin.color),
         roughness: 0.74,
         metalness: 0,
         side: THREE.DoubleSide,
@@ -279,16 +305,73 @@ function claimMaterial(color: THREE.ColorRepresentation): {
       refs: 0,
     }
     materialCache.set(key, entry)
+    if (skin.texture) claimPrint(key, skin)
   }
   entry.refs++
-  return { key, material: entry.material }
+  return { key, skin, material: entry.material }
 }
 
-function releaseMaterial(key: string) {
+/** Fetch an uploaded print and lay it over the dye once it arrives. A hash an
+ *  admin has blocked stops being served, so the load simply fails and the cape
+ *  keeps wearing its colour — no sweep needed to unwear a blocked picture. */
+function claimPrint(key: string, skin: CapeSkin) {
+  const url = skin.texture
+  if (!url) return
+  const cached = printCache.get(url)
+  if (cached) {
+    cached.refs++
+    paintPrint(key, skin, cached.map)
+    return
+  }
+  printLoader.load(
+    url,
+    (map) => {
+      // The wearer may have taken it off while this was in flight; then
+      // nothing holds the print and it must not enter the cache.
+      if (!materialCache.has(key)) {
+        map.dispose()
+        return
+      }
+      map.colorSpace = THREE.SRGBColorSpace
+      printCache.set(url, { map, refs: 1 })
+      paintPrint(key, skin, map)
+    },
+    undefined,
+    // A blocked or missing print is the expected way a cape loses one, not a
+    // fault worth a console line every time it comes into view.
+    () => {}
+  )
+}
+
+function paintPrint(key: string, skin: CapeSkin, map: THREE.Texture) {
   const entry = materialCache.get(key)
+  if (!entry) return
+  const print = texture(map)
+  // Opaque still: the mix happens in the shader, so there is no sorting or
+  // depth cost to pay. The sheet is DoubleSide and the print would read
+  // mirrored from behind, so the lining keeps the dye.
+  const material = entry.material as MeshStandardNodeMaterial
+  material.colorNode = mix(
+    color(skin.color),
+    print.rgb,
+    print.a.mul(float(frontFacing))
+  )
+  material.needsUpdate = true
+}
+
+function releasePrint(url: string) {
+  const entry = printCache.get(url)
+  if (!entry || --entry.refs > 0) return
+  entry.map.dispose()
+  printCache.delete(url)
+}
+
+function releaseMaterial(claimed: Claimed) {
+  const entry = materialCache.get(claimed.key)
   if (!entry || --entry.refs > 0) return
   entry.material.dispose()
-  materialCache.delete(key)
+  materialCache.delete(claimed.key)
+  if (claimed.skin.texture) releasePrint(claimed.skin.texture)
 }
 
 export function createCapeRig(options: CapeRigOptions): CapeRig {
@@ -298,7 +381,7 @@ export function createCapeRig(options: CapeRigOptions): CapeRig {
 
   const root = new THREE.Group()
   const geometry = sharedGeometry(options, segments)
-  let claimed = claimMaterial(options.color ?? DEFAULT_CAPE_COLOR)
+  let claimed = claimMaterial(options.skin ?? { color: DEFAULT_CAPE_COLOR })
 
   const mesh = new THREE.SkinnedMesh(geometry, claimed.material)
   mesh.castShadow = true
@@ -510,16 +593,17 @@ export function createCapeRig(options: CapeRigOptions): CapeRig {
     root,
     mesh,
     update,
-    setColor(color) {
-      const next = claimMaterial(color)
-      releaseMaterial(claimed.key)
+    setSkin(skin) {
+      if (skinKey(skin) === claimed.key) return
+      const next = claimMaterial(skin)
+      releaseMaterial(claimed)
       claimed = next
       mesh.material = next.material
     },
     dispose() {
       // Geometry is shared and outlives this rig, and so does the material
       // while anyone still wears the colour; the skeleton is this cape's own.
-      releaseMaterial(claimed.key)
+      releaseMaterial(claimed)
       skeleton.dispose()
       root.removeFromParent()
     },
@@ -603,12 +687,9 @@ function measureBackProfile(
 /** Build the cape a fit describes and hang it off the bone it names. `color` is
  *  per-wearer, so it rides here rather than in the fit — fits come out of a
  *  cache shared by everyone wearing the same model. */
-export function attachCapeFit(
-  fit: CapeFit,
-  color?: THREE.ColorRepresentation
-): CapeRig {
+export function attachCapeFit(fit: CapeFit, skin?: CapeSkin): CapeRig {
   const rig = createCapeRig(
-    color === undefined ? fit.options : { ...fit.options, color }
+    skin === undefined ? fit.options : { ...fit.options, skin }
   )
   rig.root.position.copy(fit.position)
   rig.root.quaternion.copy(fit.quaternion)

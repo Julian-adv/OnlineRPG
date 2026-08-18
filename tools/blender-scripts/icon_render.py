@@ -20,6 +20,30 @@ RENDER_SIZE = 512
 SAMPLES = 128
 
 
+def principled(name, color, roughness, metallic=0.0):
+    """A plain opaque material — what every icon subject is made of."""
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Base Color"].default_value = color
+    bsdf.inputs["Roughness"].default_value = roughness
+    bsdf.inputs["Metallic"].default_value = metallic
+    return mat
+
+
+def export_glb(objects, out_path) -> None:
+    """Write `objects` as the item's ground-drop GLB."""
+    for obj in bpy.context.scene.objects:
+        obj.select_set(obj in objects)
+    bpy.ops.export_scene.gltf(
+        filepath=out_path,
+        export_format="GLB",
+        use_selection=True,
+        export_apply=True,
+    )
+    print(f"wrote {out_path}")
+
+
 def add_light(location, energy, size, aim=(0, 0, 0)) -> None:
     light = bpy.data.lights.new("key", "AREA")
     light.energy = energy

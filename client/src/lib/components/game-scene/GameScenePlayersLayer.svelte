@@ -470,6 +470,9 @@
         (group): group is THREE.Group =>
           group !== undefined && group.userData.npcPlayerId != null
       )}
+    playerMeshes={(otherPlayerModels ?? [])
+      .map((model) => model?.getModelGroup())
+      .filter((group): group is THREE.Group => group !== undefined)}
     {doorMeshes}
     {objectMeshes}
     {propMeshes}
@@ -554,8 +557,10 @@
         mainHand={player.mainHand}
         back={player.back}
         backColor={player.backColor}
+        backTexture={player.backTexture}
         {torchEffectsDisabled}
         npcPlayerId={player.isOfficialNpc ? player.id : undefined}
+        remotePlayerId={player.id}
         onInteractionFinished={() =>
           remotePlayerManager.handleInteractionFinished(player.id)}
       />

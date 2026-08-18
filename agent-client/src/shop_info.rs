@@ -293,6 +293,7 @@ mod tests {
                 quantity: 1,
                 enchant: 0,
                 cape_color: None,
+                cape_texture: None,
             })
             .collect()
     }

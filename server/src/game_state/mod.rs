@@ -372,6 +372,9 @@ pub struct GameState {
     /// beds sit above sea level, not just the ocean.
     water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
     housing_io: Arc<HousingIO>,
+    /// Uploaded cape textures: what a worn `cape_texture` is checked against
+    /// and where reports land (doc/CAPE_CUSTOMIZATION.md).
+    cape_textures: Arc<crate::cape_texture::CapeTextureStore>,
     /// Players whose state has changed since the last periodic save.
     dirty_players: Arc<RwLock<HashSet<PlayerId>>>,
     /// Players whose inventory has changed since the last periodic save.
@@ -583,6 +586,7 @@ impl GameState {
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
         height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
         water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
+        cape_textures: Arc<crate::cape_texture::CapeTextureStore>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
         let dungeon_discovery_cells = Arc::new(dungeon::discovery_cells(&dungeon_defs));
@@ -620,6 +624,7 @@ impl GameState {
             height_sampler,
             water_sampler,
             housing_io,
+            cape_textures,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
             dirty_inventories: Arc::new(RwLock::new(HashSet::new())),
             party_position_dirty: Arc::new(RwLock::new(HashSet::new())),
@@ -661,6 +666,11 @@ impl GameState {
             tip_hats: Arc::new(RwLock::new(HashMap::new())),
             player_trades: Arc::new(RwLock::new(player_trade::PlayerTrades::default())),
         }
+    }
+
+    /// Uploaded cape textures: session tokens, the blocklist and reports.
+    pub fn cape_textures(&self) -> &crate::cape_texture::CapeTextureStore {
+        &self.cape_textures
     }
 
     /// Get the no-spawn zones (for sending to clients on join).

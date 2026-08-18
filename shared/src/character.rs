@@ -177,6 +177,9 @@ pub struct VisibleEquipment {
     /// Dye on the worn cape, so a dyed cape looks dyed at character select.
     #[serde(default)]
     pub back_color: Option<String>,
+    /// Texture hash on the worn cape, for the same reason.
+    #[serde(default)]
+    pub back_texture: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

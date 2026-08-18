@@ -443,6 +443,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PlayerMainHandChanged { .. } => "PlayerMainHandChanged",
         ServerMessage::PlayerBackChanged { .. } => "PlayerBackChanged",
         ServerMessage::CapeDyePrompt { .. } => "CapeDyePrompt",
+        ServerMessage::CapeTexturePrompt { .. } => "CapeTexturePrompt",
         ServerMessage::HouseSpawned { .. } => "HouseSpawned",
         ServerMessage::HouseUpdated { .. } => "HouseUpdated",
         ServerMessage::TreeTilesInvalidated { .. } => "TreeTilesInvalidated",

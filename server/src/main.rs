@@ -2,6 +2,8 @@ mod announcements;
 mod api_auth;
 mod auth;
 mod bgm_defs;
+mod cape_texture;
+mod cape_texture_routes;
 mod celestial;
 mod conn_limit;
 mod connection;
@@ -26,6 +28,8 @@ mod world_drop_defs;
 
 use announcements::{announcements_router, AnnouncementStore};
 use auth::AuthService;
+use cape_texture::CapeTextureStore;
+use cape_texture_routes::cape_texture_router;
 use clap::Parser;
 use conn_limit::ConnectLimiter;
 use connection::{handle_connection, AuthContext, ServerContext};
@@ -243,6 +247,7 @@ struct StatePaths {
     npc_token: PathBuf,
     housing: PathBuf,
     announcements: PathBuf,
+    cape_textures: PathBuf,
 }
 
 fn state_paths(state_dir: &Path) -> StatePaths {
@@ -251,6 +256,7 @@ fn state_paths(state_dir: &Path) -> StatePaths {
         npc_token: state_dir.join(onlinerpg_shared::NPC_TOKEN_FILENAME),
         housing: state_dir.join("housing"),
         announcements: state_dir.join("announcements"),
+        cape_textures: state_dir.join("cape-textures"),
     }
 }
 
@@ -391,6 +397,18 @@ async fn main() -> ExitCode {
         std::path::PathBuf::from(&args.terrain_dir),
     )));
 
+    let cape_textures = match CapeTextureStore::new(paths.cape_textures.clone()) {
+        Ok(store) => Arc::new(store),
+        Err(e) => {
+            error!(
+                "Failed to open cape texture store at {}: {}",
+                paths.cape_textures.display(),
+                e
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+
     let game_state = Arc::new(GameState::new(
         monster_defs,
         item_defs,
@@ -401,6 +419,7 @@ async fn main() -> ExitCode {
         dungeon_defs,
         height_sampler,
         water_sampler,
+        Arc::clone(&cape_textures),
     ));
     game_state.load_npc_schedules(&npc_io).await;
     // Server-side collision data for the movement sim: houses, solid
@@ -619,6 +638,10 @@ async fn main() -> ExitCode {
             Arc::clone(&auth_ctx),
             api_auth::require_admin_for_writes,
         ))
+        // Merged after the admin layer on purpose: uploading a cape texture is
+        // a player action, authorised by the session token the server hands
+        // out at login rather than by the admin allowlist.
+        .merge(cape_texture_router(cape_textures, Arc::clone(&auth_ctx)))
         .layer(CompressionLayer::new());
     let terrain_addr = format!("{}:{}", args.api_bind, terrain_port);
     let mut api_task = JoinSet::new();

@@ -190,6 +190,7 @@ async fn packing_up_before_leaving_folds_our_stall_and_tip_hat() {
         quantity: 1,
         enchant: 0,
         cape_color: None,
+        cape_texture: None,
     }];
 
     s.tip_hats.insert(900, tip_hat(PlayerId::from(2)));

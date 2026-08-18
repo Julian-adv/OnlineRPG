@@ -41,6 +41,7 @@ interface PlayerBase {
   back?: string | null
   /** Dye on that cape, as broadcast with it. */
   backColor?: string | null
+  backTexture?: string | null
   lastDamageInfo?: PlayerDamageInfo
   lastRegenInfo?: PlayerDamageInfo
   lastGoldInfo?: PlayerGoldInfo

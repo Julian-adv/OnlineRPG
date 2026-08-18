@@ -724,6 +724,7 @@ impl GameState {
             enchant: 0,
             dropped_by: None,
             cape_color: None,
+            cape_texture: None,
         })
         .await;
     }

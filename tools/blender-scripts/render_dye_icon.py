@@ -17,7 +17,7 @@ import bpy
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from icon_render import add_light, render_icon  # noqa: E402
+from icon_render import add_light, export_glb, principled, render_icon  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -75,16 +75,6 @@ def lathe(profile, name, material):
     return obj
 
 
-def principled(name, color, roughness, metallic=0.0):
-    mat = bpy.data.materials.new(name)
-    mat.use_nodes = True
-    bsdf = mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = color
-    bsdf.inputs["Roughness"].default_value = roughness
-    bsdf.inputs["Metallic"].default_value = metallic
-    return mat
-
-
 def split_profile(low, high):
     """The bottle's own profile between two heights, capped flat at each cut —
     the fill line splits it into the dyed body and the clear neck."""
@@ -105,19 +95,6 @@ def build():
     return body, neck, cork
 
 
-def export_glb(objects):
-    for obj in bpy.context.scene.objects:
-        obj.select_set(obj in objects)
-    out = os.path.join(REPO, "client", "public", "models", "objects", "cape_dye.glb")
-    bpy.ops.export_scene.gltf(
-        filepath=out,
-        export_format="GLB",
-        use_selection=True,
-        export_apply=True,
-    )
-    print(f"wrote {out}")
-
-
 def render(objects):
     add_light((0.9, -0.8, 1.3), 70, 1.4, aim=BOTTLE_MIDDLE)
     add_light((-0.9, -0.5, 0.6), 22, 1.6, aim=BOTTLE_MIDDLE)
@@ -135,7 +112,10 @@ def render(objects):
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     objects = list(build())
-    export_glb(objects)
+    export_glb(
+        objects,
+        os.path.join(REPO, "client", "public", "models", "objects", "cape_dye.glb"),
+    )
     render(objects)
 
 

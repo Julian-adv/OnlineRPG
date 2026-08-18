@@ -77,6 +77,7 @@ data/player_anim_timing.json
 data/world_drop.json
 data/terrain/
 data/housing/
+data/cape-textures/
 server/data/game_data.db
 
 # User announcements: operator-authored content; only the format doc is tracked

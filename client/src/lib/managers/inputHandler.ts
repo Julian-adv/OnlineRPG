@@ -261,6 +261,29 @@ class InputHandler {
     return null
   }
 
+  /** Which remote player, if any, sits under the cursor. Its own raycast
+   *  rather than a `ClickIntent`: only the right-click menu asks, and folding
+   *  players into the click intents would turn every left-click on a passer-by
+   *  into an interaction. */
+  pickPlayer(
+    event: MouseEvent,
+    camera: THREE.Camera,
+    playerMeshes: THREE.Object3D[]
+  ): number | null {
+    if (playerMeshes.length === 0) return null
+    const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
+    return this.raycastWithOffsets<number>(
+      event,
+      rect,
+      camera,
+      playerMeshes,
+      (hit) => {
+        const owner = findAncestorWithUserData(hit.object, 'remotePlayerId')
+        return owner ? (owner.userData.remotePlayerId as number) : null
+      }
+    )
+  }
+
   processCanvasClick(event: MouseEvent, context: RaycastContext): ClickIntent {
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
 

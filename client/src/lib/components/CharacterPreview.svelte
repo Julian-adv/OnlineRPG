@@ -18,6 +18,7 @@
   } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
   import { capeColorOf, getItemDef } from '../data/itemDefs'
+  import { capeTextureUrl } from '../utils/networkUtils'
   import { isTorchItemDefId } from '../stores/inventoryStore'
   import {
     FALLBACK_TORCH_TIP_LOCAL_OFFSET,
@@ -207,7 +208,12 @@
 
     const bias = capeCollarBiasFor(modelPath)
     const fit = fitCapeToSkeleton(characterRoot, bias, modelPath)
-    if (fit) capeRig = attachCapeFit(fit, capeColor)
+    if (fit) {
+      capeRig = attachCapeFit(fit, {
+        color: capeColor,
+        texture: capeTextureUrl(equipment?.back_texture),
+      })
+    }
   }
 
   // --- Exported interface for parent game loop ---
