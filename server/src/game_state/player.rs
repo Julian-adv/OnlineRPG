@@ -1664,6 +1664,34 @@ impl super::GameState {
         }
     }
 
+    /// Revive a defeated player where they fell with `hp_percent` of their
+    /// max HP. Position, floor and the already-applied death penalty stay, so
+    /// this only announces the new HP — no AOI move. Returns false when the
+    /// player is alive or unknown.
+    pub async fn revive_in_place(&self, player_id: &PlayerId, hp_percent: u32) -> bool {
+        let revived = {
+            let mut players = self.players.write().await;
+            let Some(player) = players.get_mut(player_id).filter(|p| p.health == 0) else {
+                return false;
+            };
+            player.health = (player.max_health * hp_percent / 100).max(1);
+            player.clone()
+        };
+        info!("Player {} ({}) revived in place", revived.name, revived.id);
+        self.mark_dirty(player_id).await;
+        self.mark_party_vitals_dirty(player_id).await;
+        let (position, floor_level) = (revived.position, revived.floor_level);
+        self.send_direct_message_to_players_within_position(
+            &position,
+            floor_level,
+            super::EVENT_DELIVERY_RADIUS,
+            ServerMessage::PlayerRespawned { player: revived },
+            None,
+        )
+        .await;
+        true
+    }
+
     pub async fn get_player_position(&self, player_id: &PlayerId) -> Option<(Position, f32, i8)> {
         let players = self.players.read().await;
         players

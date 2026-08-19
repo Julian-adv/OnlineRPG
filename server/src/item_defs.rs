@@ -117,6 +117,9 @@ pub struct ItemDefinition {
     /// what makes a back-slot item a cape (doc/CAPE_CUSTOMIZATION.md).
     #[serde(rename = "capeColor", default)]
     pub cape_color: Option<String>,
+    /// Phoenix talisman only — max-HP percentage restored by a revive.
+    #[serde(rename = "reviveHpPercent", default)]
+    pub revive_hp_percent: Option<u32>,
 }
 
 /// The effect produced by consuming a usable item via `use_item`, decided by
@@ -151,6 +154,9 @@ pub enum UseEffect {
     /// Ask the client to open the image picker. Consumes nothing — the
     /// uploaded picture's hash comes back as `ApplyCapeTexture`.
     PromptCapeTexture,
+    /// Bring a defeated user back where they fell with this percentage of
+    /// their max HP (phoenix talisman).
+    ReviveInPlace(u32),
 }
 
 impl ItemDefinition {
@@ -258,6 +264,7 @@ impl ItemDefinition {
             "tip_hat" => Some(UseEffect::ToggleTipHat),
             "cape_dye" => Some(UseEffect::PromptCapeDye),
             "cape_texture" => Some(UseEffect::PromptCapeTexture),
+            "phoenix_talisman" => self.revive_hp_percent.map(UseEffect::ReviveInPlace),
             _ => None,
         }
     }

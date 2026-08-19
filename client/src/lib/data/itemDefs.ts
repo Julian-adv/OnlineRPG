@@ -27,6 +27,8 @@ export interface ItemDefinition {
   consumable?: boolean
   /** Satiation restored when eaten (doc/HUNGER.md). */
   nutrition?: number
+  /** Phoenix talisman: max-HP percentage restored by a revive. */
+  reviveHpPercent?: number
   /** Cloth colour of the procedural cape, e.g. `#6d1720`. Its presence is what
    *  makes a back-slot item a cape rather than, say, a quiver. */
   capeColor?: string

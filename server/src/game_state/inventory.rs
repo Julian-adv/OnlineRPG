@@ -754,7 +754,23 @@ impl super::GameState {
                 )
                 .await
             }
+            UseEffect::ReviveInPlace(hp_percent) => {
+                self.use_phoenix_talisman(player_id, instance_id, hp_percent)
+                    .await
+            }
         }
+    }
+
+    /// Use a phoenix talisman: revive a defeated user where they fell. The
+    /// revive runs first and only a successful one spends the talisman, so
+    /// using it alive — or twice — keeps it.
+    async fn use_phoenix_talisman(&self, player_id: &PlayerId, instance_id: u64, hp_percent: u32) {
+        if !self.revive_in_place(player_id, hp_percent).await {
+            self.send_system_message(player_id, "The talisman only stirs for the fallen")
+                .await;
+            return;
+        }
+        self.consume_one_and_sync(player_id, instance_id).await;
     }
 
     /// Open the client's picker, spending nothing. Refuses here rather than

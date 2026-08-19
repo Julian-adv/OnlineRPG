@@ -65,7 +65,7 @@
 | ring_of_protection | guard +1 (guard 열) | 티어 5 던전 (20% 롤) | 있음 |
 | gold_ring | CHA +1 (`cha+1`) | 티어 3 던전 (10% 롤) | 있음 |
 | silver_necklace | 허기 감소 ×0.75 (`sustenance`) | 티어 2 던전 (10% 롤) | 있음 (아이콘 필요) |
-| amulet_of_life_saving | 사망 1회 방지 후 소모 | **월드 드랍 전용** | **신규 아이콘 필요** |
+| amulet_of_life_saving | 사망 1회 방지 후 소모 | **월드 드랍 전용** | 소모품 `phoenix_talisman`(죽은 뒤 사용해 제자리 부활, Rica 5,000c + 월드 드랍 0.2%)으로 대체 구현 (2026-08-20). 착용형 자동 발동판은 보류 |
 | ring_of_regeneration | HP 지속 재생 | **월드 드랍 전용** | **신규 아이콘 필요** |
 
 amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍에서 제외 — 특수 망토와 같은 월드 드랍 트랙(거래템)으로만 푼다.
@@ -109,7 +109,7 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 ### 월드 드랍 (희소·거래템)
 
-- 대상: **특수 망토** (투명·보호 등 — 종류별 개별 롤), **셔츠**, **amulet_of_life_saving**, **ring_of_regeneration**.
+- 대상: **특수 망토** (투명·보호 등 — 종류별 개별 롤), **셔츠**, **ring_of_regeneration**. (amulet_of_life_saving은 상점 판매하는 소모품 phoenix_talisman으로 대체 — 희소·거래템 트랙이 아니라 아래 lumber_axe처럼 전역 보너스 테이블 0.2% 드랍)
 - 던전 체스트 풀에서 완전히 제외. 티어 4~5 지역·던전의 일반 몬스터 처치 시 **0.1~0.5%** 확률로 드랍 (상위 지역일수록 가중).
 - 확정 파밍 경로가 없어 희소성이 유지되고, 유저 간 거래의 축이 된다. "기대 ~5회" 목표의 의도적 예외.
 - 귀속(soulbound) 없음 — 거래 가능해야 컨셉이 성립.

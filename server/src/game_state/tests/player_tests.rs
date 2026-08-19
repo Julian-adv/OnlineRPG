@@ -306,3 +306,77 @@ async fn active_character_cannot_be_deleted_from_another_session() {
         Err(crate::auth::AuthError::CharacterNotFound)
     ));
 }
+
+// ---- Phoenix talisman (revive in place) ------------------------------------
+
+/// A player on a dungeon floor at `health`/30 HP carrying `talismans` phoenix talismans.
+async fn make_talisman_holder(
+    game_state: &GameState,
+    name: &str,
+    health: u32,
+    talismans: u32,
+) -> PlayerId {
+    let mut player = make_player(name, 40.0, -7.0);
+    player.health = health;
+    player.max_health = 30;
+    player.floor_level = -2;
+    player.rotation = 1.5;
+    let id = player.id;
+    game_state.add_player(player).await;
+    let mut inv = PlayerInventory::default();
+    inv.bag.push(bag_item(7, "phoenix_talisman", talismans));
+    game_state.inventories.write().await.insert(id, inv);
+    id
+}
+
+#[tokio::test]
+async fn phoenix_talisman_revives_where_the_player_fell_and_is_spent() {
+    let game_state = make_test_game_state("talisman_revive");
+    let id = make_talisman_holder(&game_state, "fallen", 0, 2).await;
+    let mut direct_rx = game_state.register_direct_channel(&id).await;
+
+    game_state.use_item(&id, 7).await;
+
+    let players = game_state.get_all_players().await;
+    let revived = &players[&id];
+    assert_eq!(revived.health, 21, "70% of 30");
+    assert_eq!(
+        revived.position,
+        Position {
+            x: 40.0,
+            y: 0.0,
+            z: -7.0
+        }
+    );
+    assert_eq!(revived.floor_level, -2);
+    assert_eq!(revived.rotation, 1.5);
+    assert_eq!(
+        game_state.inventories.read().await[&id].bag[0].quantity,
+        1,
+        "one talisman is spent"
+    );
+    let respawned = drain(&mut direct_rx)
+        .into_iter()
+        .find_map(|msg| match msg {
+            ServerMessage::PlayerRespawned { player } => Some(player),
+            _ => None,
+        })
+        .expect("Expected direct PlayerRespawned");
+    assert_eq!(respawned.health, 21);
+    assert_eq!(respawned.floor_level, -2);
+}
+
+#[tokio::test]
+async fn phoenix_talisman_is_kept_when_used_alive() {
+    let game_state = make_test_game_state("talisman_alive");
+    let id = make_talisman_holder(&game_state, "standing", 12, 1).await;
+    let mut direct_rx = game_state.register_direct_channel(&id).await;
+
+    game_state.use_item(&id, 7).await;
+
+    assert_eq!(game_state.get_all_players().await[&id].health, 12);
+    assert_eq!(game_state.inventories.read().await[&id].bag[0].quantity, 1);
+    assert!(drain(&mut direct_rx)
+        .iter()
+        .any(|msg| matches!(msg, ServerMessage::SystemMessage { .. })));
+}

@@ -4,6 +4,7 @@ import type {
   ItemInstance,
   PlayerInventory,
 } from '../network/networkTypes'
+import { getItemDef } from '../data/itemDefs'
 
 export type { EquipSlot, ItemInstance, PlayerInventory }
 
@@ -33,6 +34,16 @@ export function isTorchItemDefId(id: string | null | undefined): boolean {
 export const localTorchEquipped = derived(inventoryStore, (inv) => {
   const id = inv.equipped.off_hand?.item_def_id
   return isTorchItemDefId(id)
+})
+
+/** The local player's first revive item (phoenix talisman), offered on the
+ *  death dialog together with its def. */
+export const reviveItem = derived(inventoryStore, (inv) => {
+  for (const item of inv.bag) {
+    const def = getItemDef(item.item_def_id)
+    if (def?.reviveHpPercent != null) return { item, def }
+  }
+  return null
 })
 
 export function setInventory(inventory: PlayerInventory) {

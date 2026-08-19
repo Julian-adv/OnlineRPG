@@ -962,7 +962,7 @@ export function handleServerMessage(
           health: serverPlayer.health,
           maxHealth: serverPlayer.max_health,
         })
-        // Death exits the dungeon: respawn is always on the surface.
+        // Town respawn surfaces; a talisman revive stays on the same floor.
         dungeonManager.syncFromFloorLevel(
           serverPlayer.floor_level ?? 0,
           serverPlayer.position.x,

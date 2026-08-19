@@ -366,6 +366,15 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 - 서버에서 HP 0 확인 후 최대 HP로 회복, 원점(0,0,0)으로 이동
 - `PlayerRespawned { player }` 브로드캐스트
 
+### 제자리 부활 (불사조의 부적)
+
+- 가방에 `phoenix_talisman`이 있으면 사망 대화상자에 "Use Phoenix Talisman" 버튼이 뜬다
+- 클라이언트는 일반 소모품처럼 `UseItem { instance_id }`를 보낸다 (`UseEffect::ReviveInPlace`)
+- 서버는 HP 0일 때만 제자리·같은 층에서 최대 HP의 70%(items.csv `reviveHpPercent`)로 되살리고 부적 1개를 소모. 살아 있을 때 쓰면 거절하고 부적은 남긴다
+- 사망 시 이미 적용된 XP 페널티는 그대로. 무적 시간·쿨타임은 없다
+- 같은 `PlayerRespawned { player }`를 브로드캐스트하므로 클라이언트는 받은 위치·층을 그대로 따른다
+- 획득: Rica 판매(basePrice 5,000c), 월드 드랍 0.2% (`data-src/world_drop.csv`)
+
 ---
 
 ## 경험치 (XP) 시스템
@@ -501,6 +510,7 @@ Client → Server:
   PlayerAttack { monster_id }
   MonsterAttack { monster_id, target_player_id }
   RequestRespawn
+  UseItem { instance_id }          (phoenix_talisman → 제자리 부활)
 
 Server → Client (broadcast):
   PlayerAttacked   { player_id, monster_id, hit, roll, damage }

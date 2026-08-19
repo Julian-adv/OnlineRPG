@@ -1,5 +1,7 @@
 <script lang="ts">
   import { mountOverlay } from '../stores/overlayStack'
+  import { reviveItem } from '../stores/inventoryStore'
+  import { networkManager } from '../network/socket'
 
   interface Props {
     onRespawn: () => void
@@ -7,6 +9,11 @@
   }
 
   let { onRespawn, onLater }: Props = $props()
+
+  function useReviveItem(instanceId: number) {
+    networkManager.sendUseItem(instanceId)
+    onLater()
+  }
 
   // Escape defers the dialog exactly like the Later button.
   $effect(() => mountOverlay('respawn', onLater))
@@ -17,7 +24,16 @@
     <h2>You Died</h2>
     <p>Would you like to revive?</p>
     <div class="respawn-actions">
-      <button class="primary" onclick={onRespawn}>Revive</button>
+      {#if $reviveItem}
+        <button
+          class="talisman"
+          onclick={() => useReviveItem($reviveItem.item.instance_id)}
+        >
+          Use {$reviveItem.def.name} ({$reviveItem.def.reviveHpPercent}% HP, ×{$reviveItem
+            .item.quantity})
+        </button>
+      {/if}
+      <button class="primary" onclick={onRespawn}>Revive in Town</button>
       <button class="secondary" onclick={onLater}>Later</button>
     </div>
   </div>
@@ -56,6 +72,7 @@
 
   .respawn-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     justify-content: center;
   }
@@ -77,5 +94,11 @@
   .respawn-actions .secondary {
     background: #3d3d3d;
     color: #f0f0f0;
+  }
+
+  .respawn-actions .talisman {
+    background: #c9632a;
+    color: #fff4e6;
+    font-weight: 700;
   }
 </style>
