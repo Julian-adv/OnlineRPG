@@ -15,7 +15,7 @@ use onlinerpg_shared::housing::HouseData;
 use onlinerpg_shared::pathfinding;
 use onlinerpg_shared::{WORLD_MAX_X, WORLD_MIN_X, WORLD_WIDTH_X};
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Region object file shape (`data/terrain/objects/r{rx}_{rz}.json`).
 #[derive(Deserialize)]
@@ -235,11 +235,9 @@ pub(super) fn escape_from_sealed_cell(
 /// Cache floor index for a player, derived from the server's own position
 /// rather than the floor the client reported.
 ///
-/// Underground the position is server-owned in all three axes (floor changes
-/// only on stairs, Y from the floor's own height), so this agrees with the
-/// declared floor. In a house the Y that picks the storey is still the
-/// client's, so a mover can claim the wrong storey of the building it stands
-/// in.
+/// Underground and in a house the position is server-owned in all three axes
+/// (floor changes only on stairs, Y from the storey's own height — see
+/// `surface_ground_y`), so this agrees with the validated floor.
 pub(super) fn authoritative_floor(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,
@@ -248,6 +246,89 @@ pub(super) fn authoritative_floor(
 }
 
 impl super::GameState {
+    /// Surface counterpart of `validated_dungeon_floor`: a storey changes one
+    /// at a time, on a short leg touching the stairwell joining the two
+    /// (`from == to` for a standalone change). Also accepts dropping to the
+    /// ground where the held storey has no floor under the mover at all (the
+    /// room was edited away). Otherwise keeps the leg's starting floor.
+    /// Official NPCs walk their schedules across storeys unvalidated, as they
+    /// do through walls.
+    pub(super) async fn validated_house_floor(
+        &self,
+        player_id: &crate::types::PlayerId,
+        current_floor: i8,
+        requested_floor: i8,
+        from: &crate::types::Position,
+        to: &crate::types::Position,
+        is_official_npc: bool,
+    ) -> i8 {
+        if requested_floor == current_floor || is_official_npc {
+            return requested_floor;
+        }
+        let accepted = {
+            let cache = self.passability_read();
+            let lower = current_floor.min(requested_floor) as u8;
+            let upper = current_floor.max(requested_floor) as u8;
+            let to_x = from.x + onlinerpg_shared::shortest_world_delta_x(from.x, to.x);
+            (upper - lower == 1
+                && pathfinding::leg_touches_stairwell(
+                    &cache,
+                    lower,
+                    upper,
+                    (from.x, from.z),
+                    (to_x, to.z),
+                ))
+                || (requested_floor == 0
+                    && pathfinding::storey_ground_y(
+                        &cache,
+                        current_floor as u8,
+                        from.x,
+                        from.z,
+                        from.y,
+                    )
+                    .is_none())
+        };
+        if accepted {
+            return requested_floor;
+        }
+        warn!(
+            "Player {} storey change {} -> {} off the stairs at ({:.1},{:.1}), kept floor {}",
+            self.player_name_of(player_id).await,
+            current_floor,
+            requested_floor,
+            to.x,
+            to.z,
+            current_floor
+        );
+        current_floor
+    }
+
+    /// The Y to store for a mover on surface floor `floor` at `to`: the
+    /// dungeon entrance ramp, house storey or stairwell the server can model.
+    /// Open terrain keeps the reported Y — the server holds no bridge decks,
+    /// and nothing server-side consumes Y where no floor grid stands.
+    pub(super) async fn surface_ground_y(&self, floor: u8, to: &crate::types::Position) -> f32 {
+        if floor == 0 {
+            if let Some(entrance) = self.dungeon_defs.entrance_at(to.x, to.z) {
+                let dungeons = self.dungeons.read().await;
+                let ramp_y = dungeons.get(&entrance.id).and_then(|rt| {
+                    onlinerpg_shared::dungeon::ground_y_for_floor(
+                        &entrance.position(),
+                        &rt.layouts,
+                        floor,
+                        to.x,
+                        to.z,
+                    )
+                });
+                if let Some(y) = ramp_y {
+                    return y;
+                }
+            }
+        }
+        let cache = self.passability_read();
+        pathfinding::storey_ground_y(&cache, floor, to.x, to.z, to.y).unwrap_or(to.y)
+    }
+
     /// Cache guards recover from poisoning: a panic mid-update at worst
     /// leaves one stale entry, which must not take down the movement tick.
     pub(super) fn passability_read(
@@ -425,6 +506,7 @@ mod tests {
                     reversed: false,
                 }],
                 yields_to_trapped_mover: false,
+                is_ground: true,
             },
         );
         cache

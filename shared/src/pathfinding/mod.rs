@@ -30,9 +30,10 @@ pub use cache::{
 pub use query::{
     attack_line_blocked, blocking_entry_for_mover, get_floor_at_position, get_floor_y_base,
     in_stairwell_span, is_cardinal_move_blocked, is_cell_sealed, is_circle_blocked_on_floor,
-    is_movement_blocked, is_movement_blocked_for_mover, start_floor_at, supporting_floor_y,
-    BlockInfo,
+    is_movement_blocked, is_movement_blocked_for_mover, leg_touches_stairwell, start_floor_at,
+    storey_ground_y, supporting_floor_y, BlockInfo,
 };
+pub(crate) use query::{ramp_fraction, segment_touches_box};
 pub use smooth::find_and_smooth_path;
 
 use std::collections::HashMap;
@@ -84,6 +85,10 @@ pub struct RuntimePassability {
     /// only for furniture, the one kind that can land on a standing player.
     /// See `query::blocking_entry_for_mover`.
     pub yields_to_trapped_mover: bool,
+    /// Whether its grids are storeys a mover stands on (a house). False for
+    /// furniture and for a dungeon, whose surface shell is one flat grid over
+    /// the whole footprint — a collision hull, not ground.
+    pub is_ground: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -151,6 +156,7 @@ mod tests {
             }],
             stairwells: vec![],
             yields_to_trapped_mover: false,
+            is_ground: true,
         };
         ("house".to_string(), rp)
     }
@@ -638,6 +644,7 @@ mod tests {
                 reversed: false,
             }],
             yields_to_trapped_mover: false,
+            is_ground: true,
         };
         ("two_floor".to_string(), rp)
     }
@@ -658,6 +665,84 @@ mod tests {
         assert!(!query::in_stairwell_span(&cache, 0.5, 1.5, 10.0));
         // Off the stairwell's footprint, at a height it would have allowed.
         assert!(!query::in_stairwell_span(&cache, 2.5, 1.5, 2.0));
+    }
+
+    /// The height a server stores for a mover instead of the reported one:
+    /// landings and ramp on the stairs, the storey's `y_base` on its grid,
+    /// nothing on open terrain.
+    #[test]
+    fn storey_ground_y_follows_the_stairs_and_the_grid() {
+        let (id, rp) = make_two_floor_stairwell();
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+        // Stairwell x 0..1, z 0..4: entry landing, half-way up the 3m run
+        // between the 0.5m landings, exit landing — whichever storey the
+        // mover is keyed to, whatever it claims; then each storey's own grid.
+        for (floor, x, z, hint, want) in [
+            (0, 0.5, 0.25, 1000.0, Some(0.0)),
+            (0, 0.5, 2.0, 1000.0, Some(1.55)),
+            (1, 0.5, 2.0, -1000.0, Some(1.55)),
+            (0, 0.5, 3.75, 1000.0, Some(3.1)),
+            (0, 1.5, 0.5, 1000.0, Some(0.0)),
+            (1, 1.5, 3.5, -5.0, Some(3.1)),
+            (1, 1.5, 0.5, 0.0, None),
+            (0, 50.0, 50.0, 7.0, None),
+        ] {
+            let got = query::storey_ground_y(&cache, floor, x, z, hint);
+            let close = match (got, want) {
+                (Some(a), Some(b)) => (a - b).abs() < 1e-4,
+                (None, None) => true,
+                _ => false,
+            };
+            assert!(
+                close,
+                "floor {floor} at ({x}, {z}): got {got:?}, want {want:?}"
+            );
+        }
+    }
+
+    /// A dungeon's surface shell (or furniture) is a collision hull, not
+    /// ground: it must not flatten the stored Y of everyone walking near it.
+    #[test]
+    fn storey_ground_y_ignores_non_ground_entries() {
+        let (id, mut rp) = make_two_floor_stairwell();
+        rp.is_ground = false;
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+        assert_eq!(query::storey_ground_y(&cache, 0, 1.5, 0.5, 1000.0), None);
+        assert!(!query::leg_touches_stairwell(
+            &cache,
+            0,
+            1,
+            (0.5, 0.5),
+            (0.5, 1.5)
+        ));
+    }
+
+    /// Only a short leg touching the stairwell (±1 cell) may change storey.
+    #[test]
+    fn leg_touches_stairwell_bounds_where_a_storey_changes() {
+        let (id, rp) = make_two_floor_stairwell();
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+        let touches = |from, to| query::leg_touches_stairwell(&cache, 0, 1, from, to);
+
+        assert!(touches((0.5, 0.5), (0.5, 3.5)));
+        // A standalone change from the stairs, and from the margin cell.
+        assert!(touches((0.5, 2.5), (0.5, 2.5)));
+        assert!(touches((1.5, 2.5), (1.5, 2.5)));
+        // Two cells off the flight, and a leg clipping the margin but eight
+        // cells long (the run is four).
+        assert!(!touches((2.5, 2.5), (2.5, 2.5)));
+        assert!(!touches((1.5, -3.0), (1.5, 6.0)));
+        // Not the storeys this stairwell joins.
+        assert!(!query::leg_touches_stairwell(
+            &cache,
+            1,
+            2,
+            (0.5, 0.5),
+            (0.5, 3.5)
+        ));
     }
 
     /// A leg crosses obstacles mid-span as often as at its ends, so the
@@ -864,6 +949,7 @@ mod tests {
                 reversed: false,
             }],
             yields_to_trapped_mover: false,
+            is_ground: true,
         };
         ("house".to_string(), rp)
     }
@@ -993,6 +1079,7 @@ mod tests {
                 }],
                 stairwells: vec![],
                 yields_to_trapped_mover: false,
+                is_ground: true,
             },
         );
 
@@ -1054,6 +1141,7 @@ mod real_house_repro {
                 reversed: true,
             }],
             yields_to_trapped_mover: false,
+            is_ground: true,
         };
         ("r-23_+73_1".to_string(), rp)
     }
@@ -1137,6 +1225,7 @@ mod real_house_repro {
                 reversed: false,
             }],
             yields_to_trapped_mover: false,
+            is_ground: true,
         };
         ("dungeon:old_crypt".to_string(), rp)
     }

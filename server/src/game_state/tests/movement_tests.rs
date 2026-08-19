@@ -426,12 +426,6 @@ async fn positive_floor_above_limit_is_rejected() {
             Err(MpscTryRecvError::Empty)
         ));
     }
-
-    game_state.update_player_floor(&player_id, max_floor).await;
-    assert_eq!(
-        game_state.players.read().await[&player_id].floor_level,
-        max_floor
-    );
 }
 
 #[tokio::test]
@@ -478,23 +472,12 @@ async fn player_move_cannot_bypass_positive_floor_limit() {
     ));
 
     game_state
-        .update_player_position(
-            &player_id,
-            MoveCommand {
-                position: pos(1.0),
-                rotation: 0.0,
-                floor_level: max_floor,
-                append: false,
-                sprinting: false,
-            },
-            false,
-            false,
-        )
+        .update_player_position(&player_id, move_cmd(pos(1.0), false), false, false)
         .await;
     game_state.tick_player_movement(1.0).await;
     let player = game_state.players.read().await[&player_id].clone();
     assert_eq!(player.position.x, 1.0);
-    assert_eq!(player.floor_level, max_floor);
+    assert_eq!(player.floor_level, 0);
 }
 
 #[tokio::test]

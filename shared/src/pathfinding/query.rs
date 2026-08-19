@@ -4,7 +4,7 @@
 //! continuous player movement, plus floor-level lookups that translate a
 //! `(x, z, y)` world position to the floor it belongs to.
 
-use super::stair::stair_step;
+use super::stair::{stair_dims, stair_step};
 use super::{
     PassabilityCache, RuntimeFloorGrid, RuntimePassability, EDGE_E, EDGE_N, EDGE_S, EDGE_W,
 };
@@ -767,6 +767,166 @@ pub fn in_stairwell_span(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> bo
         rp.stairwells.iter().any(|stair| {
             stair_step(stair, cx - ox, cz - oz).is_some()
                 && stair_span_containing(rp, stair, y).is_some()
+        })
+    })
+}
+
+/// Slab clip of a 2D segment against an axis-aligned box.
+pub(crate) fn segment_touches_box(
+    (min_x, max_x): (f32, f32),
+    (min_z, max_z): (f32, f32),
+    (x0, z0): (f32, f32),
+    (x1, z1): (f32, f32),
+) -> bool {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p0, p1, lo, hi) in [(x0, x1, min_x, max_x), (z0, z1, min_z, max_z)] {
+        let d = p1 - p0;
+        if d.abs() <= f32::EPSILON {
+            if p0 < lo || p0 > hi {
+                return false;
+            }
+            continue;
+        }
+        let (ta, tb) = ((lo - p0) / d, (hi - p0) / d);
+        t0 = t0.max(ta.min(tb));
+        t1 = t1.min(ta.max(tb));
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
+
+/// Flat landing at each end of a stairwell's run, in metres. Mirrors the
+/// client's `LANDING_DEPTH` (`house-geo-utils.ts`).
+const STAIR_LANDING_DEPTH: f32 = 0.5;
+
+/// Cells of slack around a stairwell footprint within which a storey change
+/// is accepted: the server sim trails the client that flipped its floor.
+const STAIR_CHANGE_MARGIN: i32 = 1;
+
+/// Fraction climbed at run position `t` of a flight `len` long with flat
+/// landings of `landing` at both ends.
+pub(crate) fn ramp_fraction(t: f32, len: f32, landing: f32) -> f32 {
+    ((t - landing) / (len - 2.0 * landing).max(f32::EPSILON)).clamp(0.0, 1.0)
+}
+
+/// Height of a stairwell's walking surface at world `(x, z)`: the client's
+/// `getStairwellYOffset`, minus the half floor thickness it adds everywhere.
+fn stair_surface_y(
+    rp: &RuntimePassability,
+    stair: &super::StairwellInfo,
+    x: f32,
+    z: f32,
+) -> Option<f32> {
+    let lower_y = floor_y_base_of(rp, stair.lower_floor)?;
+    let upper_y = floor_y_base_of(rp, stair.upper_floor)?;
+    let len = stair_dims(stair).0 as f32;
+    let (start, along) = if stair.along_z {
+        (rp.house_origin_z + stair.local_min_z as f32, z)
+    } else {
+        (rp.house_origin_x + stair.local_min_x as f32, x)
+    };
+    let mut t = along - start;
+    if stair.reversed {
+        t = len - t;
+    }
+    let f = ramp_fraction(t.clamp(0.0, len), len, STAIR_LANDING_DEPTH);
+    Some(lower_y + (upper_y - lower_y) * f)
+}
+
+/// Ground height of house storey `floor` at `(x, z)`: a stairwell ramp
+/// touching that storey, else that storey's grid `y_base`. `None` on open
+/// terrain. `hint` only breaks ties between candidates (stacked stairwells,
+/// several grids on one level), so the reported Y is safe to pass.
+pub fn storey_ground_y(
+    cache: &PassabilityCache,
+    floor: u8,
+    x: f32,
+    z: f32,
+    hint: f32,
+) -> Option<f32> {
+    let cx = x.floor() as i32;
+    let cz = z.floor() as i32;
+    let mut stair_best: Option<(f32, f32)> = None;
+    let mut grid_best: Option<(f32, f32)> = None;
+    for rp in cache.values() {
+        if !rp.is_ground || x < rp.min_x || x > rp.max_x || z < rp.min_z || z > rp.max_z {
+            continue;
+        }
+        let ox = rp.house_origin_x.floor() as i32;
+        let oz = rp.house_origin_z.floor() as i32;
+        for stair in &rp.stairwells {
+            if (stair.lower_floor != floor && stair.upper_floor != floor)
+                || stair_step(stair, cx - ox, cz - oz).is_none()
+            {
+                continue;
+            }
+            if let Some(y) = stair_surface_y(rp, stair, x, z) {
+                let dist = (y - hint).abs();
+                if stair_best.is_none_or(|(d, _)| dist < d) {
+                    stair_best = Some((dist, y));
+                }
+            }
+        }
+        for grid in rp.floors.iter().filter(|f| f.floor_level == floor) {
+            let gx = cx - ox - grid.origin_x;
+            let gz = cz - oz - grid.origin_z;
+            if gx < 0 || gx >= grid.width as i32 || gz < 0 || gz >= grid.depth as i32 {
+                continue;
+            }
+            let dist = (grid.y_base - hint).abs();
+            if grid_best.is_none_or(|(d, _)| dist < d) {
+                grid_best = Some((dist, grid.y_base));
+            }
+        }
+    }
+    stair_best.or(grid_best).map(|(_, y)| y)
+}
+
+/// Whether the XZ leg `from`→`to` may carry a storey change between `lower`
+/// and `upper`: it touches a stairwell joining the two (±`STAIR_CHANGE_MARGIN`
+/// cells) and is no longer than twice that stairwell's run — a longer leg
+/// merely clipping the stairs would arrive on the other storey far from it.
+pub fn leg_touches_stairwell(
+    cache: &PassabilityCache,
+    lower: u8,
+    upper: u8,
+    from: (f32, f32),
+    to: (f32, f32),
+) -> bool {
+    let leg_sq = (to.0 - from.0).powi(2) + (to.1 - from.1).powi(2);
+    let m = STAIR_CHANGE_MARGIN as f32;
+    let (min_x, max_x) = (from.0.min(to.0) - m, from.0.max(to.0) + m);
+    let (min_z, max_z) = (from.1.min(to.1) - m, from.1.max(to.1) + m);
+    cache.values().any(|rp| {
+        if !rp.is_ground
+            || rp.stairwells.is_empty()
+            || max_x < rp.min_x
+            || min_x > rp.max_x
+            || max_z < rp.min_z
+            || min_z > rp.max_z
+        {
+            return false;
+        }
+        let ox = rp.house_origin_x.floor();
+        let oz = rp.house_origin_z.floor();
+        rp.stairwells.iter().any(|stair| {
+            stair.lower_floor == lower
+                && stair.upper_floor == upper
+                && leg_sq <= (2.0 * stair_dims(stair).0 as f32).powi(2)
+                && segment_touches_box(
+                    (
+                        ox + stair.local_min_x as f32 - m,
+                        ox + stair.local_max_x as f32 + m,
+                    ),
+                    (
+                        oz + stair.local_min_z as f32 - m,
+                        oz + stair.local_max_z as f32 + m,
+                    ),
+                    from,
+                    to,
+                )
         })
     })
 }

@@ -7,6 +7,7 @@
 //! back mid-staircase rather than failing a test.
 
 use super::{dungeon_origin, floor_world_y, FloorLayout, StairShaft, SHAFT_LEN, SHAFT_W};
+use crate::pathfinding::{ramp_fraction, segment_touches_box};
 use crate::world::Position;
 
 /// Flat landing length (in cells) at each end of a stair ramp.
@@ -31,15 +32,7 @@ pub fn shaft_run_pos(entrance: &Position, shaft: &StairShaft, x: f32, z: f32) ->
 
 /// Linear stair ramp with flat landings at both ends.
 fn ramp_y(high_y: f32, low_y: f32, t: f32) -> f32 {
-    let len = SHAFT_LEN as f32;
-    if t <= LANDING_CELLS {
-        return high_y;
-    }
-    if t >= len - LANDING_CELLS {
-        return low_y;
-    }
-    let f = (t - LANDING_CELLS) / (len - LANDING_CELLS * 2.0);
-    high_y + (low_y - high_y) * f
+    high_y + (low_y - high_y) * ramp_fraction(t, SHAFT_LEN as f32, LANDING_CELLS)
 }
 
 /// Y at the top of the shaft arriving at `depth` (the surface for depth 1).
@@ -99,32 +92,6 @@ pub fn leg_touches_shaft(
         from,
         to,
     )
-}
-
-/// Slab clip of a 2D segment against an axis-aligned box.
-fn segment_touches_box(
-    (min_x, max_x): (f32, f32),
-    (min_z, max_z): (f32, f32),
-    (x0, z0): (f32, f32),
-    (x1, z1): (f32, f32),
-) -> bool {
-    let (mut t0, mut t1) = (0.0f32, 1.0f32);
-    for (p0, p1, lo, hi) in [(x0, x1, min_x, max_x), (z0, z1, min_z, max_z)] {
-        let d = p1 - p0;
-        if d.abs() <= f32::EPSILON {
-            if p0 < lo || p0 > hi {
-                return false;
-            }
-            continue;
-        }
-        let (ta, tb) = ((lo - p0) / d, (hi - p0) / d);
-        t0 = t0.max(ta.min(tb));
-        t1 = t1.min(ta.max(tb));
-        if t0 > t1 {
-            return false;
-        }
-    }
-    true
 }
 
 /// Surface entrance ramp height, or `None` when (x, z) is off the shaft —

@@ -999,7 +999,9 @@ impl super::GameState {
         };
 
         // Dungeon floors (negative) are held to the entrance registry, the
-        // stairs and the floor's ground height, which replaces the reported Y.
+        // stairs and the floor's ground height, which replaces the reported Y;
+        // house storeys to their stairwells, and the Y to the ground the
+        // server models (`surface_ground_y`, below the cheap refusals).
         let declared_floor = floor_level;
         let floor_level = if floor_level < 0 || leg_floor < 0 {
             let verdict = self
@@ -1014,18 +1016,25 @@ impl super::GameState {
             new_position.y = verdict.y;
             verdict.floor
         } else {
-            floor_level
+            self.validated_house_floor(
+                player_id,
+                leg_floor,
+                floor_level,
+                &leg_start,
+                &new_position,
+                is_official_npc,
+            )
+            .await
         };
 
         // A coerced floor means the declared (position, floor) pair failed
-        // dungeon validation (which already warned why), and the mover never
+        // floor validation (which already warned why), and the mover never
         // sees its own PlayerMoved — snap so its floor resyncs instead of
         // diverging silently.
         if floor_level != declared_floor {
             self.snap_refused_move_back(player_id).await;
             return;
         }
-
         // The tick's health backstop would only drop the queue silently; the
         // client predicts every move it sends, so refuse here with a snap or
         // its phantom walks off without the body.
@@ -1044,6 +1053,11 @@ impl super::GameState {
                 );
             }
             return;
+        }
+        if floor_level >= 0 {
+            new_position.y = self
+                .surface_ground_y(floor_level as u8, &new_position)
+                .await;
         }
         let mut queues = self.movement_intents.write().await;
         let queue = queues.entry(*player_id).or_default();
@@ -1468,10 +1482,10 @@ impl super::GameState {
                 .await;
             return;
         }
-        let (current_floor, position) = {
+        let (current_floor, position, is_official_npc) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.floor_level, p.position),
+                Some(p) => (p.floor_level, p.position, p.is_official_npc),
                 None => return,
             }
         };
@@ -1487,7 +1501,15 @@ impl super::GameState {
             .await
             .floor
         } else {
-            floor_level
+            self.validated_house_floor(
+                player_id,
+                current_floor,
+                floor_level,
+                &position,
+                &position,
+                is_official_npc,
+            )
+            .await
         };
         if floor_level == current_floor {
             return;

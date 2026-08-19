@@ -40,7 +40,7 @@ pub(super) fn is_regular_key(k: u16) -> bool {
 
 /// A stairwell's run length (step count) and lateral width.
 #[inline]
-fn stair_dims(stair: &StairwellInfo) -> (i32, i32) {
+pub(super) fn stair_dims(stair: &StairwellInfo) -> (i32, i32) {
     let (dx, dz) = (
         stair.local_max_x - stair.local_min_x,
         stair.local_max_z - stair.local_min_z,

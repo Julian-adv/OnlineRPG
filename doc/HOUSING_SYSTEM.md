@@ -316,6 +316,15 @@ floorYBase(level) = level × (wallHeight + FLOOR_THICKNESS)
 4. X축/Z축 각각 셀 edge 교차 검사
 5. `WALL_HALF_THICKNESS(0.3m)` proximity buffer
 
+### Server-Owned Storey & Y
+
+서버는 클라가 보낸 층/Y를 그대로 믿지 않는다 (`validated_house_floor`, `surface_ground_y`):
+
+- 층 변경은 한 번에 한 층, 두 층을 잇는 stairwell footprint(±1 cell, 레그 길이 ≤ 2×run)에 닿는 레그에서만 허용. 그 외는 층 유지 + 스냅(`PositionCorrected`).
+- 예외: 들고 있는 층의 바닥이 발밑에 전혀 없으면(방이 편집으로 삭제됨) 0층으로 내려오는 변경은 허용.
+- 저장 Y: stairwell 위면 램프 높이(`getStairwellYOffset`와 동일 공식), 층 grid 위면 그 층의 `y_base`, 던전 입구 램프면 램프 높이. 열린 지형에서는 보고 Y 유지 (서버에 다리 데크 모델이 없고, grid 밖에서는 Y를 소비하는 서버 로직도 없음).
+- 관리자(trusted)와 공식 NPC(`is_official_npc`)는 층 검증을 건너뜀 (벽 충돌과 동일).
+
 ## Texture System
 
 ### Texture Catalog

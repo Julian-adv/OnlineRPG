@@ -374,6 +374,7 @@ fn sealed_dungeon_entry() -> onlinerpg_shared::pathfinding::RuntimePassability {
         }],
         stairwells: vec![],
         yields_to_trapped_mover: false,
+        is_ground: false,
     }
 }
 
