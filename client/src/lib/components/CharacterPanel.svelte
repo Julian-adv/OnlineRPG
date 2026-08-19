@@ -8,11 +8,8 @@
     CharacterClass,
     Gender,
   } from '../network/networkTypes'
-  import {
-    xp_for_level,
-    skill_xp_for_level,
-    skill_level_cap,
-  } from '../wasm/onlinerpg_shared'
+  import { skill_xp_for_level, skill_level_cap } from '../wasm/onlinerpg_shared'
+  import { levelProgress } from '../utils/xpProgress'
   import { skillsStore, SKILL_DISPLAY_NAMES } from '../stores/skillsStore'
   import type { SkillId, SkillProgress } from '../network/networkTypes'
   import {
@@ -154,14 +151,7 @@
     ][]
   ).flatMap(([slot, pos]) => (pos ? [{ slot, ...pos }] : []))
 
-  const levelStartXp = $derived(xp_for_level(level))
-  const nextLevelXp = $derived(xp_for_level(level + 1))
-  const neededXp = $derived(Math.max(1, nextLevelXp - levelStartXp))
-  const gainedXp = $derived(
-    Math.min(neededXp, Math.max(0, currentXp - levelStartXp))
-  )
-  const expProgress = $derived(gainedXp / neededXp)
-  const expPercent = $derived(Math.round(expProgress * 100))
+  const xpInfo = $derived(levelProgress(level, currentXp))
 
   function unequip(slot: EquipSlot) {
     networkManager.sendUnequipItem(slot)
@@ -274,19 +264,18 @@
           <div class="exp-block">
             <div class="exp-header">
               <span class="stat-label exp-label">Exp</span>
-              <span class="exp-text">{gainedXp}/{neededXp} ({expPercent}%)</span
+              <span class="exp-text"
+                >{xpInfo.gainedXp}/{xpInfo.neededXp} ({xpInfo.percent}%)</span
               >
             </div>
             <div
               class="exp-track"
               role="progressbar"
               aria-valuemin={0}
-              aria-valuemax={neededXp}
-              aria-valuenow={gainedXp}
+              aria-valuemax={xpInfo.neededXp}
+              aria-valuenow={xpInfo.gainedXp}
             >
-              <span
-                class="exp-fill"
-                style={`width: ${Math.min(100, expProgress * 100)}%`}
+              <span class="exp-fill" style={`width: ${xpInfo.progress * 100}%`}
               ></span>
             </div>
           </div>

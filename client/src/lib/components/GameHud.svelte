@@ -11,6 +11,7 @@
   import InventoryPanel from './InventoryPanel.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
   import HungerIndicator from './HungerIndicator.svelte'
+  import LevelBadge from './LevelBadge.svelte'
   import TradeWindow from './TradeWindow.svelte'
   import FishingPrompt from './FishingPrompt.svelte'
   import TradeOfferToast from './TradeOfferToast.svelte'
@@ -78,13 +79,21 @@
     onCloseRespawnDialog,
     onOpenSettings,
   }: Props = $props()
+
+  const playerLevel = $derived(
+    currentPlayerLevel ?? selectedCharacter?.level ?? 1
+  )
+  const playerXp = $derived(currentPlayerTotalXp ?? selectedCharacter?.xp ?? 0)
 </script>
 
 <div class="game-hud">
   <ServerNotice />
   <div class="top-left-hud">
     {#if selectedCharacter && !$mapEditorMode}
-      <HungerIndicator />
+      <div class="status-row">
+        <LevelBadge level={playerLevel} xp={playerXp} />
+        <HungerIndicator />
+      </div>
     {/if}
     <FPSCounter />
   </div>
@@ -107,8 +116,8 @@
       name={selectedCharacter.name}
       characterClass={selectedCharacter.class}
       gender={selectedCharacter.gender}
-      level={currentPlayerLevel ?? selectedCharacter.level}
-      currentXp={currentPlayerTotalXp ?? selectedCharacter.xp}
+      level={playerLevel}
+      currentXp={playerXp}
       currentHp={currentPlayerHp ?? selectedCharacter.max_hp}
       maxHp={currentPlayerMaxHp ?? selectedCharacter.max_hp}
       attributes={selectedCharacter.attributes}
@@ -363,6 +372,13 @@
     z-index: 1000;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    pointer-events: none;
+  }
+
+  .status-row {
+    display: flex;
     align-items: flex-start;
     gap: 6px;
     pointer-events: none;
