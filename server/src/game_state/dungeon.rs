@@ -204,12 +204,11 @@ impl GameState {
     ) -> Option<bool> {
         let entrance = self.dungeon_defs.get(entrance_id)?;
         let expected_floor = -i8::try_from(depth).ok()?;
-        let (player_pos, player_floor) = {
-            let players = self.players.read().await;
-            let player = players.get(player_id)?;
-            (player.position, player.floor_level)
-        };
+        let (player_pos, _, player_floor, player_name) = self.player_pose(player_id).await?;
         if player_floor != expected_floor {
+            warn!(
+                "Door toggle refused: {player_name} on floor {player_floor} asked for '{entrance_id}' depth {depth} door {door_id}"
+            );
             return None;
         }
 
@@ -243,7 +242,12 @@ impl GameState {
                     .find(|d| d.door_id == door_id)?
             };
             let reach = DOOR_INTERACT_RANGE + door.len as f32 * 0.5;
-            if door_line_dist_sq(&entrance.position(), door.seg(), &player_pos) > reach * reach {
+            let dist_sq = door_line_dist_sq(&entrance.position(), door.seg(), &player_pos);
+            if dist_sq > reach * reach {
+                warn!(
+                    "Door toggle refused: {player_name} is {:.1}m from '{entrance_id}' depth {depth} door {door_id} (reach {reach:.1})",
+                    dist_sq.sqrt()
+                );
                 return None;
             }
         }
@@ -261,6 +265,12 @@ impl GameState {
         };
         self.rebuild_dungeon_floor_passability(entrance_id, depth)
             .await;
+        info!(
+            "Player {player_name} {} '{entrance_id}' depth {depth} door {door_id} at ({:.1},{:.1})",
+            if is_open { "opened" } else { "closed" },
+            player_pos.x,
+            player_pos.z
+        );
         Some(is_open)
     }
 

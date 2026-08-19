@@ -457,6 +457,7 @@ export function handleServerMessage(
 
     case 'PositionCorrected': {
       // No id to match: it only ever goes to the player it corrects.
+      dungeonManager.requestDoorResyncAfterCorrection()
       events.positionCorrected.emit({
         x: data.position.x,
         y: data.position.y,

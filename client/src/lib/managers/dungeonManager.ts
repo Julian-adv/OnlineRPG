@@ -142,6 +142,8 @@ const SWITCH_HYSTERESIS = 0.3
 const DEPTH_SWITCH_FRACTION = 0.2
 /** Player collision footprint radius (m) — matches player-physics. */
 const PLAYER_RADIUS = 0.3
+/** Least gap between door re-pulls triggered by position corrections. */
+const CORRECTION_RESYNC_MIN_MS = 5000
 /** Entrance wall thickness (m). Single source of truth, shared with the mesh
  *  builder (buildDungeonEntranceGroup imports this) so the collision line sits
  *  on the wall's outer face — the player stops short of the *visible* wall, not
@@ -396,6 +398,7 @@ class DungeonManager {
   /** Entrance id whose door snapshot must be re-pulled, consumed once by the
    *  render layer (takeDoorSnapshotRequest). */
   private doorSnapshotRequest: string | null = null
+  private lastCorrectionResyncMs = 0
 
   get active(): boolean {
     return this.id !== null
@@ -982,6 +985,17 @@ class DungeonManager {
     const id = this.doorSnapshotRequest
     this.doorSnapshotRequest = null
     return id
+  }
+
+  /** A server position correction underground means our passability
+   *  disagrees with the server's; a shut door we believe open is the usual
+   *  cause, so re-pull the door snapshot (throttled). */
+  requestDoorResyncAfterCorrection() {
+    if (!this.id || get(currentDungeonDepth) < 1) return
+    const now = Date.now()
+    if (now - this.lastCorrectionResyncMs < CORRECTION_RESYNC_MIN_MS) return
+    this.lastCorrectionResyncMs = now
+    this.doorSnapshotRequest = this.id
   }
 
   /**
