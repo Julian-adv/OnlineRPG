@@ -209,14 +209,19 @@ impl MonsterAiManager {
     }
 
     /// Tick all managed monster brains. Returns commands to send.
+    ///
+    /// `self_player` is required: the server's `nearby_players` never includes
+    /// us, so without it our own monsters would never target the NPC we drive.
     pub fn tick_all(
         &mut self,
         delta_ms: f32,
         nearby_players: &HashMap<PlayerId, Player>,
+        self_player: Option<&Player>,
         passability_cache: &PassabilityCache,
     ) -> Vec<ClientMessage> {
         let players: Vec<NearbyPlayer> = nearby_players
             .values()
+            .chain(self_player)
             .map(|p| NearbyPlayer {
                 id: p.id,
                 position: p.position,
@@ -277,5 +282,77 @@ fn command_to_client_msg(cmd: AiCommand) -> ClientMessage {
             monster_id,
             target_player_id,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use onlinerpg_shared::{CharacterClass, MonsterState};
+
+    fn npc_player(x: f32, z: f32) -> Player {
+        Player {
+            id: PlayerId::from(7),
+            name: "Karl".to_string(),
+            position: Position { x, y: 0.0, z },
+            rotation: 0.0,
+            level: 1,
+            health: 10,
+            max_health: 10,
+            class: CharacterClass::Rogue,
+            gender: Default::default(),
+            is_official_npc: true,
+            torch_on: false,
+            floor_level: 0,
+            object_type: None,
+            main_hand: None,
+            back: None,
+            back_color: None,
+            back_texture: None,
+            object_id: None,
+            last_combat_at: 0,
+            client_kind: Default::default(),
+        }
+    }
+
+    fn aggressive_monster(x: f32, z: f32) -> Monster {
+        Monster {
+            id: "m1_1".to_string(),
+            monster_type: "goblin".to_string(),
+            position: Position { x, y: 0.0, z },
+            rotation: 0.0,
+            state: MonsterState::Idle,
+            owner_id: None,
+            health: 10,
+            max_health: 10,
+            floor_level: 0,
+            level_override: None,
+            aggressive: true,
+            lifecycle: Default::default(),
+            last_attack_at: 0,
+            last_move_at: 0,
+            move_budget: 0.0,
+        }
+    }
+
+    #[test]
+    fn owned_monster_attacks_the_agents_own_npc() {
+        let mut mgr = MonsterAiManager::new();
+        mgr.set_behavior_trees(MonsterAiManager::load_behavior_trees_from_json(
+            include_str!("../../data-src/behavior_trees.json"),
+        ));
+        mgr.add_monster(&aggressive_monster(1.0, 0.0));
+
+        let me = npc_player(0.0, 0.0);
+        let cache = PassabilityCache::new();
+        let cmds = mgr.tick_all(100.0, &HashMap::new(), Some(&me), &cache);
+
+        assert!(
+            cmds.iter().any(|c| matches!(
+                c,
+                ClientMessage::MonsterAttack { target_player_id, .. } if *target_player_id == me.id
+            )),
+            "monster ignored the NPC standing 1m away: {cmds:?}"
+        );
     }
 }
