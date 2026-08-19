@@ -7,6 +7,7 @@
 //! (`GameState::chest_opens`) because a lost claim is free loot.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, floor_height_at, floor_level_for_passability, floor_world_y,
@@ -31,6 +32,9 @@ const SPAWN_RETRY_MS: u64 = 10 * 1000;
 /// random angle. The minimum keeps items out from under the chest itself.
 const CHEST_LOOT_SCATTER_MIN: f32 = 0.8;
 const CHEST_LOOT_SCATTER_MAX: f32 = 3.0;
+
+/// Loot-pickup grace before a chest opener is sent back to town.
+const CHEST_RETURN_DELAY: Duration = Duration::from_secs(60);
 /// How close a player must stand to a prop to break (barrel/crate) or open
 /// (chest, the treasure chest included) it.
 const PROP_INTERACT_RANGE: f32 = 2.5;
@@ -586,6 +590,7 @@ impl GameState {
         };
 
         self.eject_chest_loot(item_def_ids.clone(), chest_pos, player_floor);
+        self.schedule_chest_return(player_id).await;
         let new_gold = {
             let mut gold_map = self.player_gold.write().await;
             let wallet = gold_map.entry(*player_id).or_insert(0);
@@ -616,6 +621,45 @@ impl GameState {
             None,
         )
         .await;
+    }
+
+    /// Arm the vault's return: `CHEST_RETURN_DELAY` after a real open the
+    /// opener is carried back to town unless they already left the dungeon.
+    /// A disconnect in between runs it first (`cleanup_player_session`), so
+    /// the deepest floor cannot be a parking spot between refills.
+    async fn schedule_chest_return(&self, player_id: &PlayerId) {
+        if !self.chest_returns.write().await.insert(*player_id) {
+            return;
+        }
+        self.send_system_message(
+            player_id,
+            "The vault's magic stirs — you will be carried back to town in a minute.",
+        )
+        .await;
+        let game_state = self.clone();
+        let player_id = *player_id;
+        tokio::spawn(async move {
+            tokio::time::sleep(CHEST_RETURN_DELAY).await;
+            game_state.fire_chest_return(&player_id).await;
+        });
+    }
+
+    /// Run a pending chest return now; no-op without one or once back on
+    /// the surface.
+    pub(super) async fn fire_chest_return(&self, player_id: &PlayerId) {
+        if !self.chest_returns.write().await.remove(player_id) {
+            return;
+        }
+        let in_dungeon = {
+            let players = self.players.read().await;
+            players.get(player_id).is_some_and(|p| p.floor_level < 0)
+        };
+        if !in_dungeon {
+            return;
+        }
+        self.teleport_to_town(player_id).await;
+        self.send_system_message(player_id, "The vault's magic carries you back to town.")
+            .await;
     }
 
     /// Burst a treasure chest's loot out as scattered ground items once the

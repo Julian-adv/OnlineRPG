@@ -1,7 +1,6 @@
 use super::auth_db;
 use crate::auth::{ban_message, unix_now, AuthService, DEFAULT_BAN_REASON};
 use crate::types::{ClientKind, Player, PlayerId, ServerMessage};
-use crate::world_config::world_config;
 use onlinerpg_shared::messages::strip_command;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -1257,9 +1256,7 @@ impl super::GameState {
             return;
         }
 
-        let spawn = &world_config().spawn_position;
-        self.teleport_player(player_id, spawn.position(), spawn.rotation, 0)
-            .await;
+        self.teleport_to_town(player_id).await;
         info!("Player {} escaped to spawn", player_id);
         self.send_system_message(player_id, "Escape: returned to the starting point.")
             .await;

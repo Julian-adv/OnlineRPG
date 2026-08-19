@@ -1,7 +1,6 @@
 use crate::auth::{AuthService, ItemRow};
 use crate::item_defs::UseEffect;
 use crate::types::{PlayerId, ServerMessage};
-use crate::world_config::world_config;
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
 use onlinerpg_shared::messages::BagLineItem;
 use rand::Rng;
@@ -1154,10 +1153,7 @@ impl super::GameState {
         }
 
         self.consume_one_and_sync(player_id, instance_id).await;
-
-        let spawn = &world_config().spawn_position;
-        self.teleport_player(player_id, spawn.position(), spawn.rotation, 0)
-            .await;
+        self.teleport_to_town(player_id).await;
     }
 
     /// Read a scroll of party summon: ask every other online party member to
