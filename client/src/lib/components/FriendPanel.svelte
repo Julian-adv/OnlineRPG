@@ -11,6 +11,7 @@
   } from '../stores/friendStore'
   import { networkManager } from '../network/socket'
   import { requestChatDraft } from '../stores/npcMenuStore'
+  import { draggablePanel } from '../actions/draggablePanel'
 
   const visible = $derived($friendPanelVisible)
   const friends = $derived(sortFriends($friendList, $onlineFriends))
@@ -40,8 +41,8 @@
 </script>
 
 {#if visible}
-  <div class="friend-panel" aria-label="Friends">
-    <div class="panel-header">
+  <div class="friend-panel" aria-label="Friends" use:draggablePanel={'friends'}>
+    <div class="panel-header" data-drag-handle>
       <span class="panel-title">Friends</span>
       <span class="friend-count">{friends.length}/{MAX_FRIENDS}</span>
       <button

@@ -14,6 +14,7 @@
   import ToggleSwitch from './ToggleSwitch.svelte'
   import { friendOnlineNoticeEnabled } from '../stores/friendStore'
   import { mountOverlay } from '../stores/overlayStack'
+  import { resetPanelLayout } from '../stores/panelLayout'
 
   interface Props {
     onClose: () => void
@@ -80,6 +81,14 @@
         >
       </div>
     {/if}
+
+    <div class="setting-row">
+      <span class="setting-label">
+        UI Layout
+        <span class="setting-hint">Panel positions</span>
+      </span>
+      <button class="quality-btn" onclick={resetPanelLayout}>Reset</button>
+    </div>
 
     <div class="divider"></div>
 
