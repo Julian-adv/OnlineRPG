@@ -447,8 +447,18 @@
     append = false
   ) {
     const wrappedPosition = { ...position, x: wrapWorldX(position.x) }
-    lastSentPosition = wrappedPosition
     const floorLevel = wireFloorLevel()
+    // The server checks the declared dungeon floor against Y: send the Y of
+    // the floor we claim, whatever the caller sampled.
+    if (floorLevel < 0) {
+      const y = dungeonManager.floorHeightAt(
+        -floorLevel,
+        wrappedPosition.x,
+        wrappedPosition.z
+      )
+      if (y !== null) wrappedPosition.y = y
+    }
+    lastSentPosition = wrappedPosition
     lastSentFloorLevel = floorLevel
     networkManager.sendPlayerMove(
       wrappedPosition,

@@ -214,14 +214,14 @@ export function stepMovementSubstrate({
       return { kind: 'blocked' }
     }
 
-    writePlayerPosition(
-      {
-        x: movementTarget.x,
-        y: sampleHeight(movementTarget.x, movementTarget.z),
-        z: movementTarget.z,
-      },
-      playerRotation
-    )
+    // Re-sampled: a leg's Y was fixed when it started, and a shaft is one
+    // straight leg, so the depth (and the floor's Y) can flip on the way.
+    const arrivedPos: Position = {
+      x: movementTarget.x,
+      y: sampleHeight(movementTarget.x, movementTarget.z),
+      z: movementTarget.z,
+    }
+    writePlayerPosition(arrivedPos, playerRotation)
 
     const nextWaypointIndex = currentWaypointIndex + 1
     if (nextWaypointIndex < pathWaypoints.length) {
@@ -256,7 +256,7 @@ export function stepMovementSubstrate({
       }
     }
 
-    sendPlayerMove(movementTarget, playerRotation, true)
+    sendPlayerMove(arrivedPos, playerRotation, true)
     return { kind: 'arrived', currentSpeed, playerRotation }
   }
 

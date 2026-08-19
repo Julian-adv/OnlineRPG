@@ -54,12 +54,14 @@ describe('stepMovementSubstrate', () => {
 
     expect(outcome.kind).toBe('arrived')
     expect(input.setFloorLevel).not.toHaveBeenCalled()
+    // The arrival send carries the freshly sampled Y, not the leg-start one.
+    const arrived = { x: 1, y: 1, z: 0 }
     expect(input.writePlayerPosition).toHaveBeenCalledWith(
-      { x: 1, y: 1, z: 0 },
+      arrived,
       expect.any(Number)
     )
     expect(input.sendPlayerMove).toHaveBeenCalledWith(
-      target,
+      arrived,
       expect.any(Number),
       true
     )
