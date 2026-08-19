@@ -13,7 +13,9 @@
   import { groundItemManager } from '../managers/groundItemManager'
   import { combatController } from '../managers/combatController'
   import {
+    playPropBreakSound,
     preloadFishingSounds,
+    preloadPropBreakSound,
     preloadSwordHitSound,
     preloadSwordMissSound,
   } from '../managers/sfxManager'
@@ -1353,6 +1355,7 @@
 
     propBreakTimer = setTimeout(() => {
       propBreakTimer = null
+      playPropBreakSound()
       networkManager.sendBreakDungeonProp(entranceId, depth, propId)
     }, PROP_SWING_IMPACT_MS)
     propSwingIdleTimer = setTimeout(() => {
@@ -1617,6 +1620,7 @@
   onMount(() => {
     preloadSwordHitSound()
     preloadSwordMissSound()
+    preloadPropBreakSound()
     preloadFishingSounds()
 
     const removeInputListeners = inputHandler.setupEventListeners(

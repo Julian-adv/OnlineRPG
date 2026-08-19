@@ -19,4 +19,16 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
 
 ## Combat
 
-- sword-*.ogg — predate this file; provenance not recorded here.
+- sword-leather.ogg, sword-flesh3.ogg, sword-miss3.ogg — predate this file;
+  provenance not recorded here. Mapped in `data/material-impact-sounds.json`.
+- sword-flesh.ogg, sword-flesh2.ogg, sword-miss.ogg, sword-miss2.ogg —
+  **[미사용]** earlier takes, removed 2026-08-19.
+
+## Props
+
+- crate-break.ogg — sword hitting a wooden crate, generated with
+  [Verse8](https://create.verse8.io/?chat=jksong3%2F3d-sword-box-interaction)
+  on 2026-08-19 ([original ogg](https://agent8-games.verse8.io/0x11e0427b8e50fcb8deda5fde7395c208018a7b89/mcp-uploads/static-assets/audio-548d2c36-7909-4673-ac67-e6d509b3ab33.ogg),
+  own generation, paid credits). The original has two hits; only the second
+  (1.70–2.60 s) is kept, with a 150 ms tail fade and −3 dB gain to match
+  sword-leather's impact level.

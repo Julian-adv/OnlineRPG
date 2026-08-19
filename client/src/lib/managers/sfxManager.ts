@@ -23,6 +23,12 @@ const FISHING_SOUNDS = {
 } as const
 export type FishingSound = keyof typeof FISHING_SOUNDS
 
+const PROP_BREAK_SOUND = {
+  url: '/sounds/crate-break.ogg',
+  volume: SWORD_HIT_VOLUME,
+  pool: 2,
+} as const
+
 const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
 const DEFAULT_SFX_VOLUME = 1
@@ -78,6 +84,7 @@ interface AudioPool {
 const swordHitPools = new Map<string, AudioPool>()
 const swordMissPools = new Map<string, AudioPool>()
 const fishingPools = new Map<string, AudioPool>()
+const propPools = new Map<string, AudioPool>()
 
 function canUseAudio(): boolean {
   return typeof Audio !== 'undefined'
@@ -173,6 +180,18 @@ export function playSwordMissSound(
     SWORD_MISS_VOLUME,
     SWORD_MISS_POOL_SIZE
   )
+}
+
+export function preloadPropBreakSound() {
+  const { url, volume, pool } = PROP_BREAK_SOUND
+  preloadAudioPool(propPools, url, volume, pool)
+}
+
+/** Barrel/crate shatter; the caller times it to the slash contact frame. */
+export function playPropBreakSound() {
+  if (!canUseAudio()) return
+  const { url, volume, pool } = PROP_BREAK_SOUND
+  playAudioFromPool(propPools, url, volume, pool)
 }
 
 export function preloadFishingSounds() {
