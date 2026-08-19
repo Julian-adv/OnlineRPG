@@ -1160,6 +1160,7 @@ async fn handle_client_message(
                 .as_ref()
                 .and_then(|inv| inv.equipped_def_id(EquipSlot::Back));
             player.back_color = inventory.as_ref().and_then(|inv| inv.equipped_cape_color());
+            player.back_texture = inventory.as_ref().and_then(|inv| inv.equipped_cape_texture());
 
             let mut responses = vec![ServerMessage::JoinSuccess {
                 player: player.clone(),
