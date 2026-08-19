@@ -1390,6 +1390,15 @@ impl super::GameState {
             let mut rng = rand::thread_rng();
             self.world_drop_defs.roll(&mut rng)
         };
+        if !item_def_ids.is_empty() {
+            info!(
+                "World drop {:?} at ({:.1},{:.1}) {}",
+                item_def_ids,
+                origin.x,
+                origin.z,
+                crate::dungeon_defs::place_label(&origin, floor_level)
+            );
+        }
         self.spawn_scattered_items(
             item_def_ids,
             origin,

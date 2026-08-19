@@ -12,6 +12,7 @@ use tracing::info;
 
 pub use onlinerpg_shared::dungeon::DungeonEntranceDef;
 use onlinerpg_shared::dungeon::{entrance, entrance_at, entrances};
+use onlinerpg_shared::Position;
 
 #[derive(Debug, Clone)]
 pub struct DungeonDefs;
@@ -90,4 +91,19 @@ impl DungeonDefs {
     pub fn entrance_at(&self, x: f32, z: f32) -> Option<&'static DungeonEntranceDef> {
         entrance_at(x, z)
     }
+}
+
+/// Where a position is, for log lines: the dungeon and depth underground, the
+/// house floor above ground level, or the open surface.
+pub fn place_label(position: &Position, floor_level: i8) -> String {
+    if floor_level < 0 {
+        return match entrance_at(position.x, position.z) {
+            Some(entrance) => format!("dungeon '{}' depth {}", entrance.id, -floor_level),
+            None => format!("dungeon floor {floor_level}"),
+        };
+    }
+    if floor_level > 0 {
+        return format!("floor {floor_level}");
+    }
+    "surface".to_string()
 }

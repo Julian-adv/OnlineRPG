@@ -433,9 +433,10 @@ impl super::GameState {
                 died
             };
             if is_dead {
-                let dropped_weapon_item_def_id = self
-                    .monster_defs
-                    .get(&monster_type)
+                let def = self.monster_defs.get(&monster_type);
+                // Depth-scaled dungeon monsters count as their effective level.
+                let effective_level = monster_level_override.or(def.map(|d| d.level));
+                let dropped_weapon_item_def_id = def
                     .filter(|def| {
                         def.weapon_drop_chance >= 1.0
                             || rand::thread_rng().gen::<f32>() < def.weapon_drop_chance
@@ -443,7 +444,16 @@ impl super::GameState {
                     .and_then(|def| def.weapon.as_deref())
                     .and_then(|weapon| self.item_defs.item_def_id_for_weapon_ref(weapon));
 
-                debug!("Monster {} died, broadcasting dead state", monster_id);
+                info!(
+                    "Player {} killed {} (lvl {}) at ({:.1},{:.1}) {}; weapon drop: {}",
+                    player_name,
+                    monster_type,
+                    effective_level.unwrap_or(0),
+                    monster_position.x,
+                    monster_position.z,
+                    crate::dungeon_defs::place_label(&monster_position, monster_floor_level),
+                    dropped_weapon_item_def_id.as_deref().unwrap_or("none")
+                );
                 self.send_direct_message_to_players_within_position(
                     &monster_position,
                     monster_floor_level,
@@ -494,10 +504,7 @@ impl super::GameState {
                 self.on_dungeon_monster_dead(&monster_id).await;
 
                 self.drain_hunger_for_kill(player_id).await;
-                if let Some(def) = self.monster_defs.get(&monster_type) {
-                    // Depth-scaled dungeon monsters yield XP for their
-                    // effective level, not the base definition level.
-                    let effective_level = monster_level_override.unwrap_or(def.level);
+                if let (Some(def), Some(effective_level)) = (def, effective_level) {
                     let base_xp = xp::monster_xp(effective_level, def.guard);
                     let sharers = self
                         .party_members_sharing_kill(
