@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 
 export type PanelId = 'character' | 'inventory' | 'friends' | 'party'
 
@@ -7,11 +7,7 @@ export interface PanelPos {
   y: number
 }
 
-export interface PanelLayout {
-  pos: Partial<Record<PanelId, PanelPos>>
-  /** Raise order, bottom first. Only raised panels get an inline z-index. */
-  order: PanelId[]
-}
+export type PanelPositions = Partial<Record<PanelId, PanelPos>>
 
 const STORAGE_KEY = 'hudPanelLayout'
 const PANEL_IDS: PanelId[] = ['character', 'inventory', 'friends', 'party']
@@ -19,89 +15,89 @@ const PANEL_IDS: PanelId[] = ['character', 'inventory', 'friends', 'party']
 /** A dragged-off-screen panel keeps this much of itself grabbable. */
 const MIN_VISIBLE_X = 48
 const HEADER_H = 28
-/** 41..44 stays under the trade windows' z-index 45. */
-const BASE_Z = 41
+/** 40..43 stays under the consent toasts (44) and trade windows (45). */
+const BASE_Z = 40
 
-const EMPTY: PanelLayout = { pos: {}, order: [] }
-
-export function parseLayout(raw: string | null): PanelLayout {
-  if (!raw) return EMPTY
+export function parsePositions(raw: string | null): PanelPositions {
+  if (!raw) return {}
   try {
-    const data = JSON.parse(raw) as Partial<PanelLayout>
-    const pos: PanelLayout['pos'] = {}
+    const data = JSON.parse(raw) as { pos?: PanelPositions }
+    const pos: PanelPositions = {}
     for (const id of PANEL_IDS) {
       const p = data.pos?.[id]
       if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
         pos[id] = { x: p.x, y: p.y }
       }
     }
-    const order = Array.isArray(data.order)
-      ? data.order.filter(
-          (id, i, all) => PANEL_IDS.includes(id) && all.indexOf(id) === i
-        )
-      : []
-    return { pos, order }
+    return pos
   } catch {
-    return EMPTY
+    return {}
   }
 }
 
-/** Keeps the header row reachable; the rest of the panel may leave the viewport. */
+/**
+ * Keeps the header row reachable; the rest of the panel may leave the viewport.
+ * `rightReserve` is the non-grabbable width at the panel's right end (its
+ * header buttons), which must stay off the visible sliver on the left edge.
+ */
 export function clampPanelPos(
   pos: PanelPos,
   size: { width: number; height: number },
   viewportWidth: number,
-  viewportHeight: number
+  viewportHeight: number,
+  rightReserve = 0
 ): PanelPos {
   return {
     x: Math.min(
-      Math.max(pos.x, MIN_VISIBLE_X - size.width),
+      Math.max(pos.x, MIN_VISIBLE_X + rightReserve - size.width),
       viewportWidth - MIN_VISIBLE_X
     ),
     y: Math.min(Math.max(pos.y, 0), Math.max(0, viewportHeight - HEADER_H)),
   }
 }
 
-/** null for a panel that was never raised: it keeps its CSS z-index. */
-export function panelZ(order: PanelId[], id: PanelId): number | null {
-  const index = order.indexOf(id)
-  return index < 0 ? null : BASE_Z + index
+/** `order` holds every mounted panel (the action raises on mount). */
+export function panelZ(order: PanelId[], id: PanelId): number {
+  return BASE_Z + order.indexOf(id)
 }
 
-function load(): PanelLayout {
+function load(): PanelPositions {
   try {
-    return parseLayout(localStorage.getItem(STORAGE_KEY))
+    return parsePositions(localStorage.getItem(STORAGE_KEY))
   } catch {
-    return EMPTY
+    return {}
   }
 }
 
-export const panelLayout = writable<PanelLayout>(load())
+/** Persisted panel positions. */
+export const panelPositions = writable<PanelPositions>(load())
 
-panelLayout.subscribe((layout) => {
+let hydrated = false
+panelPositions.subscribe((pos) => {
+  if (!hydrated) {
+    hydrated = true
+    return
+  }
   try {
-    if (layout.order.length === 0 && Object.keys(layout.pos).length === 0) {
-      localStorage.removeItem(STORAGE_KEY)
-    } else {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(layout))
-    }
+    // {pos} envelope kept for back-compat with the legacy {pos, order} shape
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ pos }))
   } catch {
     // unavailable storage; the layout just won't persist
   }
 })
 
+/** Session-only raise order, bottom first. */
+export const panelOrder = writable<PanelId[]>([])
+
 export function savePanelPos(id: PanelId, pos: PanelPos) {
-  panelLayout.update((l) => ({ ...l, pos: { ...l.pos, [id]: pos } }))
+  panelPositions.update((p) => ({ ...p, [id]: pos }))
 }
 
 export function raisePanel(id: PanelId) {
-  panelLayout.update((l) =>
-    l.order.at(-1) === id
-      ? l
-      : { ...l, order: [...l.order.filter((o) => o !== id), id] }
-  )
+  if (get(panelOrder).at(-1) === id) return
+  panelOrder.update((o) => [...o.filter((x) => x !== id), id])
 }
 
 export function resetPanelLayout() {
-  panelLayout.set(EMPTY)
+  panelPositions.set({})
 }

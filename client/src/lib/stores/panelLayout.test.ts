@@ -1,29 +1,25 @@
 import { describe, expect, it } from 'vitest'
-import { clampPanelPos, panelZ, parseLayout } from './panelLayout'
+import { clampPanelPos, panelZ, parsePositions } from './panelLayout'
 
 const SIZE = { width: 364, height: 600 }
 
-describe('parseLayout', () => {
+describe('parsePositions', () => {
   it('falls back to empty on missing or corrupt storage', () => {
-    const empty = { pos: {}, order: [] }
-    expect(parseLayout(null)).toEqual(empty)
-    expect(parseLayout('{oops')).toEqual(empty)
-    expect(parseLayout('"a string"')).toEqual(empty)
+    expect(parsePositions(null)).toEqual({})
+    expect(parsePositions('{oops')).toEqual({})
+    expect(parsePositions('"a string"')).toEqual({})
   })
 
-  it('drops unknown ids, duplicates and non-numeric positions', () => {
+  it('drops unknown ids and non-numeric positions, ignores a legacy order', () => {
     const raw = JSON.stringify({
       pos: {
         character: { x: 5, y: 6 },
         bogus: { x: 1, y: 2 },
         party: { x: 'a' },
       },
-      order: ['party', 'party', 'nope', 'character'],
-    })
-    expect(parseLayout(raw)).toEqual({
-      pos: { character: { x: 5, y: 6 } },
       order: ['party', 'character'],
     })
+    expect(parsePositions(raw)).toEqual({ character: { x: 5, y: 6 } })
   })
 })
 
@@ -42,6 +38,12 @@ describe('clampPanelPos', () => {
     expect(clampPanelPos({ x: 9999, y: 0 }, SIZE, 1920, 1080).x).toBe(1920 - 48)
   })
 
+  it('keeps the sliver clear of the header buttons on the left edge', () => {
+    expect(clampPanelPos({ x: -9999, y: 0 }, SIZE, 1920, 1080, 60).x).toBe(
+      48 + 60 - SIZE.width
+    )
+  })
+
   it('never lets the header leave the viewport vertically', () => {
     expect(clampPanelPos({ x: 0, y: -50 }, SIZE, 1920, 1080).y).toBe(0)
     expect(clampPanelPos({ x: 0, y: 9999 }, SIZE, 1920, 1080).y).toBe(1080 - 28)
@@ -53,12 +55,11 @@ describe('clampPanelPos', () => {
 })
 
 describe('panelZ', () => {
-  it('is null until raised, then ranks under the trade windows', () => {
-    expect(panelZ([], 'party')).toBeNull()
-    expect(panelZ(['party', 'character'], 'party')).toBe(41)
-    expect(panelZ(['party', 'character'], 'character')).toBe(42)
+  it('ranks panels bottom-up under the consent toasts', () => {
+    expect(panelZ(['party', 'character'], 'party')).toBe(40)
+    expect(panelZ(['party', 'character'], 'character')).toBe(41)
     expect(
       panelZ(['party', 'character', 'friends', 'inventory'], 'inventory')
-    ).toBeLessThan(45)
+    ).toBeLessThan(44)
   })
 })

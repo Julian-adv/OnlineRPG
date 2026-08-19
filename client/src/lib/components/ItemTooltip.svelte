@@ -9,19 +9,28 @@
     anchor: DOMRect
   }
 
-  // Mounted at document.body by the itemTooltip action; positions itself
-  // next to the anchor rect, clamped to the viewport vertically.
+  // Mounted at document.body by the itemTooltip action; sits beside the
+  // anchor, clamped vertically and flipped sideways when it would overflow.
   let { def, enchant = 0, side = 'right', anchor }: Props = $props()
+
+  const GAP = 8
+  // .tooltip rendered width: 160px + 2*8px padding + 2*1px border
+  const WIDTH = 178
+  const vw = window.innerWidth
+  const vh = window.innerHeight
 
   let height = $state(0)
 
-  const top = $derived(
-    Math.max(8, Math.min(anchor.top, window.innerHeight - height - 8))
+  const top = $derived(Math.max(GAP, Math.min(anchor.top, vh - height - GAP)))
+  const fitsLeft = $derived(anchor.left - GAP - WIDTH >= 0)
+  const fitsRight = $derived(anchor.right + GAP + WIDTH <= vw)
+  const onLeft = $derived(
+    side === 'left' ? fitsLeft || !fitsRight : fitsLeft && !fitsRight
   )
   const horizontal = $derived(
-    side === 'left'
-      ? `right: ${window.innerWidth - anchor.left + 8}px;`
-      : `left: ${anchor.right + 8}px;`
+    onLeft
+      ? `right: ${vw - anchor.left + GAP}px;`
+      : `left: ${anchor.right + GAP}px;`
   )
 </script>
 

@@ -76,7 +76,7 @@
     {#if $reloadNeeded}
       <div class="reload-notice">
         <span>Antialiasing changes require restart</span>
-        <button class="reload-btn" onclick={() => location.reload()}
+        <button class="action-btn" onclick={() => location.reload()}
           >Restart</button
         >
       </div>
@@ -87,7 +87,7 @@
         UI Layout
         <span class="setting-hint">Panel positions</span>
       </span>
-      <button class="quality-btn" onclick={resetPanelLayout}>Reset</button>
+      <button class="action-btn" onclick={resetPanelLayout}>Reset</button>
     </div>
 
     <div class="divider"></div>
@@ -169,7 +169,8 @@
     min-height: 30px;
   }
 
-  .setting-row + .setting-row {
+  .setting-row + .setting-row,
+  .reload-notice + .setting-row {
     margin-top: 12px;
   }
 
@@ -257,7 +258,7 @@
       -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 
-  .reload-btn {
+  .action-btn {
     background: #4a5568;
     color: #edf2f7;
     border: none;
@@ -271,7 +272,7 @@
     flex-shrink: 0;
   }
 
-  .reload-btn:hover {
+  .action-btn:hover {
     background: #718096;
   }
 </style>
