@@ -10,6 +10,7 @@
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import { entityGroundY } from '../managers/entity-ground'
+  import { playPropSound } from '../managers/sfxManager'
   import {
     evaluateSpawnAnimation,
     type GroundItemData,
@@ -184,6 +185,7 @@
           poured = true
         })
         selfAnimated = true
+        playPropSound('coinSpill')
       }
       // Measure the footprint/volume from the pose things actually sit under. An
       // animated pile is still at frame 0 (pre-spill, tiny) on `scene`, so for

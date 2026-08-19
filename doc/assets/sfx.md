@@ -32,3 +32,15 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
   own generation, paid credits). The original has two hits; only the second
   (1.70–2.60 s) is kept, with a 150 ms tail fade and −3 dB gain to match
   sword-leather's impact level.
+- chest-open.ogg — wooden chest lid opening, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
+  2026-08-19 (free tier, own generation; original
+  `The_sound_of_an_old__#3-1787144916360.mp3` kept in `~/assets_original/sfx/`
+  on pc5090). Trimmed to 0.95 s (trailing silence) with a 150 ms tail fade,
+  −3 dB gain, resampled 48→44.1 kHz. Replaces a Verse8 take from the same day.
+- coin-spill.ogg — gold coins pouring out of the chest, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
+  2026-08-19 (free tier, own generation; original
+  `The_sound_of_hundred_#2-1787144560968.mp3` kept in `~/assets_original/sfx/`
+  on pc5090). Trimmed to 1.8 s (trailing silence) with a 150 ms tail fade,
+  −1.5 dB gain, resampled 48→44.1 kHz.

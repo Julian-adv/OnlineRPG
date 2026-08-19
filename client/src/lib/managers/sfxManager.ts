@@ -23,11 +23,12 @@ const FISHING_SOUNDS = {
 } as const
 export type FishingSound = keyof typeof FISHING_SOUNDS
 
-const PROP_BREAK_SOUND = {
-  url: '/sounds/crate-break.ogg',
-  volume: SWORD_HIT_VOLUME,
-  pool: 2,
+const PROP_SOUNDS = {
+  break: { url: '/sounds/crate-break.ogg', volume: SWORD_HIT_VOLUME, pool: 2 },
+  chestOpen: { url: '/sounds/chest-open.ogg', volume: 0.5, pool: 2 },
+  coinSpill: { url: '/sounds/coin-spill.ogg', volume: 0.5, pool: 2 },
 } as const
+export type PropSound = keyof typeof PROP_SOUNDS
 
 const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
@@ -182,15 +183,18 @@ export function playSwordMissSound(
   )
 }
 
-export function preloadPropBreakSound() {
-  const { url, volume, pool } = PROP_BREAK_SOUND
-  preloadAudioPool(propPools, url, volume, pool)
+export function preloadPropSounds() {
+  for (const { url, volume, pool } of Object.values(PROP_SOUNDS)) {
+    preloadAudioPool(propPools, url, volume, pool)
+  }
 }
 
-/** Barrel/crate shatter; the caller times it to the slash contact frame. */
-export function playPropBreakSound() {
+/** `break`: barrel/crate shatter, timed by the caller to the slash contact
+ *  frame. `chestOpen`: lid swing on the open broadcast. `coinSpill`: the
+ *  pile's pour clip starting. */
+export function playPropSound(kind: PropSound) {
   if (!canUseAudio()) return
-  const { url, volume, pool } = PROP_BREAK_SOUND
+  const { url, volume, pool } = PROP_SOUNDS[kind]
   playAudioFromPool(propPools, url, volume, pool)
 }
 
