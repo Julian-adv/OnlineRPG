@@ -59,6 +59,19 @@
   let groundParentRef: THREE.Group | undefined = $state()
   let terrainAlignedRef: THREE.Group | undefined = $state()
 
+  // Shields are authored upright (disc in XY, boss toward -Z) to sit on the
+  // arm; on the ground they lie face-up, lifted so the rim rests on the floor.
+  const SHIELD_REST_ROT_X = Math.PI / 2
+  const isShield = $derived(
+    def?.equipSlot === 'off_hand' && def?.category === 'armor'
+  )
+  let restPose = $state<{ rotX: number; y: number } | null>(null)
+
+  function applyRestPose(obj: THREE.Object3D, pose: typeof restPose) {
+    obj.rotation.set(pose?.rotX ?? 0, 0, 0)
+    obj.position.set(0, pose?.y ?? 0, 0)
+  }
+
   // Self-animating loot (the dungeon coin pile): the GLB ships a spill/settle
   // clip that plays once on spawn, so the pile pours out of the chest and lands
   // instead of using the generic loot arc. The mixer is advanced by real frame
@@ -170,6 +183,7 @@
     selfClipLastMs = 0
     selfAnimated = false
     poured = false
+    restPose = null
     const path = getWeaponModelPath(worldModel)
     loadGLB(path).then((gltf) => {
       if (cancelled) return
@@ -194,6 +208,12 @@
       if (clip) {
         measureSource = cloneGroundItemScene(gltf.scene)
         bindClipOnce(measureSource, clip, true)
+      }
+      if (isShield) {
+        measureSource.rotation.set(SHIELD_REST_ROT_X, 0, 0)
+        const rotated = new THREE.Box3().setFromObject(measureSource)
+        restPose = { rotX: SHIELD_REST_ROT_X, y: -rotated.min.y }
+        applyRestPose(measureSource, restPose)
       }
       const box = new THREE.Box3().setFromObject(measureSource)
       worldModelBox = {
@@ -243,8 +263,12 @@
     const hand = data.inHand ? $localPlayerRightHand : null
     const targetParent = hand ?? ground
     if (scene.parent === targetParent) return
-    scene.position.set(0, hand ? 0.08 : 0, 0)
-    scene.rotation.set(0, 0, 0)
+    if (hand) {
+      scene.position.set(0, 0.08, 0)
+      scene.rotation.set(0, 0, 0)
+    } else {
+      applyRestPose(scene, restPose)
+    }
     targetParent.add(scene)
   })
 
