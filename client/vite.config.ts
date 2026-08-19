@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { execSync } from 'node:child_process'
 import { defineConfig, loadEnv } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import wasm from 'vite-plugin-wasm'
@@ -6,6 +7,18 @@ import wasm from 'vite-plugin-wasm'
 import { monsterCsvPlugin } from '../tools/vitePlugin.mjs'
 
 // https://vite.dev/config/
+function gitShortHash(): string {
+  try {
+    return execSync('git rev-parse --short HEAD', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim()
+  } catch {
+    return 'unknown'
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
@@ -38,9 +51,13 @@ export default defineConfig(({ mode }) => {
         }
       : undefined
 
-  const appVersion = JSON.parse(
-    fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')
-  ).version
+  // The build's commit rides on the handshake version so the server log can
+  // tell which bundle a session runs.
+  const appVersion = `${
+    JSON.parse(
+      fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')
+    ).version
+  }+${gitShortHash()}`
 
   return {
     plugins: [monsterCsvPlugin(), wasm(), svelte()],
