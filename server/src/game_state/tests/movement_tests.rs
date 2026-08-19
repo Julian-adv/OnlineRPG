@@ -897,3 +897,209 @@ fn within_radius_covers_every_point_inside_the_radius() {
         }
     }
 }
+
+mod dungeon_floor_gate {
+    use super::*;
+    use onlinerpg_shared::dungeon::{
+        cell_center, floor_height_at, generate_dungeon_for, FloorLayout, Room, GRID,
+        SHAFT_CHANGE_MARGIN,
+    };
+
+    /// The shaft joining depth `shallow` to the floor below it.
+    fn shaft_rect(layouts: &[FloorLayout], shallow: u8) -> Room {
+        layouts[shallow as usize].up_shaft.rect()
+    }
+
+    /// First carved cell of `layout` (row-major) passing `pred`.
+    fn carved_cell(layout: &FloorLayout, pred: impl Fn(i32, i32) -> bool) -> (i32, i32) {
+        (0..GRID)
+            .flat_map(|z| (0..GRID).map(move |x| (x, z)))
+            .find(|&(x, z)| layout.is_carved(x, z) && pred(x, z))
+            .expect("a carved cell")
+    }
+
+    /// A carved cell on `depth` clear of every shaft's margin, and at least
+    /// `min_cells` (Chebyshev) from the floor's down shaft.
+    fn room_cell_off_stairs(layouts: &[FloorLayout], depth: u8, min_cells: i32) -> (i32, i32) {
+        let layout = &layouts[depth as usize - 1];
+        let clear = SHAFT_CHANGE_MARGIN + 2;
+        let mut shafts = vec![layout.up_shaft.rect().expanded(clear)];
+        shafts.extend(layout.down_shaft.map(|s| s.rect().expanded(clear)));
+        let down = layout.down_shaft.expect("a floor below").rect().center();
+        carved_cell(layout, |x, z| {
+            !shafts.iter().any(|r| r.contains(x, z))
+                && (x - down.0).abs().max((z - down.1).abs()) >= min_cells
+        })
+    }
+
+    /// A carved cell on `depth` within a short leg of the down shaft, but
+    /// outside its margin.
+    fn room_cell_near_stairs(layouts: &[FloorLayout], depth: u8) -> (i32, i32) {
+        let layout = &layouts[depth as usize - 1];
+        let shaft = layout.down_shaft.expect("a floor below").rect();
+        let near = shaft.expanded(SHAFT_CHANGE_MARGIN + 3);
+        let margin = shaft.expanded(SHAFT_CHANGE_MARGIN + 1);
+        carved_cell(layout, |x, z| near.contains(x, z) && !margin.contains(x, z))
+    }
+
+    struct Delver {
+        game_state: GameState,
+        player_id: PlayerId,
+        rx: DirectRx,
+        entrance: Position,
+        layouts: Vec<FloorLayout>,
+        cell: (i32, i32),
+    }
+
+    /// A player standing on `depth` at `cell`, as a stair descent leaves them.
+    async fn delver(tag: &str, depth: u8, cell: impl Fn(&[FloorLayout]) -> (i32, i32)) -> Delver {
+        let game_state = make_test_game_state(tag);
+        let def = first_dungeon(&game_state);
+        let entrance = def.position();
+        let layouts = generate_dungeon_for(&def.id);
+        let cell = cell(&layouts);
+        let at = cell_center(&entrance, depth, cell);
+        let mut player = make_player("delver", at.x, at.z);
+        player.position.y = at.y;
+        player.floor_level = -(depth as i8);
+        game_state.add_player(player).await;
+        let player_id = pid("delver");
+        let rx = game_state.register_direct_channel(&player_id).await;
+        Delver {
+            game_state,
+            player_id,
+            rx,
+            entrance,
+            layouts,
+            cell,
+        }
+    }
+
+    impl Delver {
+        fn ground(&self, depth: u8, cell: (i32, i32)) -> Position {
+            let p = cell_center(&self.entrance, depth, cell);
+            let y = floor_height_at(&self.entrance, &self.layouts, depth, p.x, p.z).unwrap();
+            Position { y, ..p }
+        }
+
+        async fn send_move(&self, position: Position, floor_level: i8) {
+            self.game_state
+                .update_player_position(
+                    &self.player_id,
+                    MoveCommand {
+                        floor_level,
+                        ..move_cmd(position, false)
+                    },
+                    false,
+                    false,
+                )
+                .await;
+        }
+
+        async fn floor(&self) -> i8 {
+            self.game_state.players.read().await[&self.player_id].floor_level
+        }
+
+        async fn queued_target(&self) -> Option<(Position, i8)> {
+            self.game_state
+                .movement_intents
+                .read()
+                .await
+                .get(&self.player_id)
+                .and_then(|q| q.back())
+                .map(|w| (w.target, w.floor_level))
+        }
+    }
+
+    #[tokio::test]
+    async fn floor_change_off_the_stairs_is_refused_and_snapped() {
+        let mut d = delver("gate_off_stairs_move", 1, |l| room_cell_off_stairs(l, 1, 0)).await;
+        // Same spot, the floor below's flat Y: a forged descent through rock.
+        d.send_move(d.ground(2, d.cell), -2).await;
+
+        let (_, _, floor) = first_correction(&mut d.rx).expect("a refused floor change snaps");
+        assert_eq!(floor, -1);
+        assert!(d.queued_target().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn floor_change_message_off_the_stairs_is_ignored() {
+        let d = delver("gate_off_stairs_msg", 1, |l| room_cell_off_stairs(l, 1, 0)).await;
+        d.game_state.update_player_floor(&d.player_id, -2).await;
+        assert_eq!(d.floor().await, -1);
+        d.game_state.update_player_floor(&d.player_id, 0).await;
+        assert_eq!(d.floor().await, -1);
+    }
+
+    #[tokio::test]
+    async fn floor_change_on_the_shaft_is_accepted() {
+        let d = delver("gate_on_shaft_msg", 1, |l| shaft_rect(l, 1).center()).await;
+        d.game_state.update_player_floor(&d.player_id, -2).await;
+        assert_eq!(d.floor().await, -2);
+    }
+
+    #[tokio::test]
+    async fn short_leg_through_the_shaft_may_change_floor() {
+        let mut d = delver("gate_leg_through_shaft", 1, |l| room_cell_near_stairs(l, 1)).await;
+        let shaft = shaft_rect(&d.layouts, 1);
+        d.send_move(d.ground(2, shaft.center()), -2).await;
+        assert!(first_correction(&mut d.rx).is_none());
+        assert_eq!(d.queued_target().await.map(|(_, f)| f), Some(-2));
+    }
+
+    /// Y is interpolated along the whole leg, so a long one clipping the
+    /// shaft would cross onto the other floor's grid far from the stairs.
+    #[tokio::test]
+    async fn long_leg_through_the_shaft_is_refused() {
+        let mut d = delver("gate_long_leg", 1, |l| room_cell_off_stairs(l, 1, 20)).await;
+        let shaft = shaft_rect(&d.layouts, 1);
+        let target = d.ground(2, shaft.center());
+        let leg = cell_center(&d.entrance, 1, d.cell)
+            .dist_xz_sq(&target)
+            .sqrt();
+        assert!(
+            leg < onlinerpg_shared::MAX_MOVE_TARGET_DISTANCE,
+            "the leg must be refused by the stair gate, not the distance guard"
+        );
+        d.send_move(target, -2).await;
+        assert_eq!(first_correction(&mut d.rx).map(|c| c.2), Some(-1));
+        assert!(d.queued_target().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn depth_jump_is_refused_even_on_the_shaft() {
+        let d = delver("gate_depth_jump", 1, |l| shaft_rect(l, 1).center()).await;
+        assert!(d.layouts.len() >= 3, "test dungeon needs three floors");
+        d.game_state.update_player_floor(&d.player_id, -3).await;
+        assert_eq!(d.floor().await, -1);
+    }
+
+    #[tokio::test]
+    async fn surface_exit_needs_the_entrance_shaft() {
+        let mut d = delver("gate_surface_exit", 1, |l| room_cell_off_stairs(l, 1, 0)).await;
+        let mut up = cell_center(&d.entrance, 1, d.cell);
+        up.y = d.entrance.y;
+        d.send_move(up, 0).await;
+        assert_eq!(first_correction(&mut d.rx).map(|c| c.2), Some(-1));
+        assert_eq!(d.floor().await, -1);
+
+        let d = delver("gate_surface_exit_ok", 1, |l| shaft_rect(l, 0).center()).await;
+        d.game_state.update_player_floor(&d.player_id, 0).await;
+        assert_eq!(d.floor().await, 0);
+    }
+
+    #[tokio::test]
+    async fn reported_y_is_replaced_by_the_floors_own_height() {
+        let mut d = delver("gate_forged_y", 1, |l| room_cell_off_stairs(l, 1, 0)).await;
+        let honest = d.ground(1, d.cell);
+        let forged = Position {
+            y: honest.y + 2.0,
+            ..honest
+        };
+        d.send_move(forged, -1).await;
+        assert!(first_correction(&mut d.rx).is_none());
+        let (target, floor) = d.queued_target().await.expect("the move is queued");
+        assert_eq!(floor, -1);
+        assert_eq!(target.y, honest.y);
+    }
+}

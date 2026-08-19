@@ -288,6 +288,24 @@ fn full_descent_path_through_passability() {
     }
 }
 
+/// Uncarved rock is impassable in every direction: a mover put there by a
+/// floor change at a shaft's margin cannot roam it.
+#[test]
+fn rock_is_sealed_on_every_side() {
+    for seed in 0..20u64 {
+        for layout in &generate_dungeon(seed) {
+            let cells = floor_passability_cells(layout);
+            for z in 0..GRID {
+                for x in 0..GRID {
+                    if !layout.is_carved(x, z) {
+                        assert_eq!(cells[(x + z * GRID) as usize], super::EDGE_ALL);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Each stair shaft must be a dead-end on its floor: the only shaft cells that
 /// open onto a room cell are this floor's own landing. Otherwise same-floor A*
 /// treats the footprint (which sits inside a room) as a cut-through and marches

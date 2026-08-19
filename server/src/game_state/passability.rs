@@ -204,17 +204,17 @@ pub(super) fn sealed_in(
 /// legal step in any direction, and what seals a cell that way is a 1x1 pillar
 /// or a shut door, so the way out is the adjoining cell.
 ///
-/// `stands_on` is what keeps that nudge inside the level. Cell bits are only
-/// written on the cells a floor carves, so the rock around a dungeon is blank —
-/// unsealed by the mask, and most props sit in a room corner with rock on the
-/// other side of the wall. Callers who know the floor's own shape say so there.
+/// `stands_on` keeps the nudge on the level's own cells — and keeps it from
+/// becoming a lift: rock is sealed on every side, so a mover put there by a
+/// floor change reads as trapped too, and the carved cell next door may be
+/// another floor's room. Callers who know the floor's shape say so.
 pub(super) fn escape_from_sealed_cell(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,
     floor_level: u8,
     stands_on: impl Fn(f32, f32) -> bool,
 ) -> Option<crate::types::Position> {
-    if !sealed_in(cache, position, floor_level) {
+    if !stands_on(position.x, position.z) || !sealed_in(cache, position, floor_level) {
         return None;
     }
     let (cx, cz) = (position.x.floor() + 0.5, position.z.floor() + 0.5);
@@ -235,11 +235,11 @@ pub(super) fn escape_from_sealed_cell(
 /// Cache floor index for a player, derived from the server's own position
 /// rather than the floor the client reported.
 ///
-/// `validated_dungeon_floor` waves through any non-negative floor, so a client
-/// claiming floor 0 from three storeys underground would otherwise pick which
-/// walls apply to it and walk straight through the dungeon. Position is
-/// server-simulated in X/Z; the Y that picks the storey is not, so a mover can
-/// still claim the wrong storey of a building it is standing in.
+/// Underground the position is server-owned in all three axes (floor changes
+/// only on stairs, Y from the floor's own height), so this agrees with the
+/// declared floor. In a house the Y that picks the storey is still the
+/// client's, so a mover can claim the wrong storey of the building it stands
+/// in.
 pub(super) fn authoritative_floor(
     cache: &pathfinding::PassabilityCache,
     position: &crate::types::Position,

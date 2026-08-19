@@ -35,7 +35,8 @@ mod tests;
 pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec, ENTRANCE_DOOR_ID};
 pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
 pub use stairs::{
-    entrance_ramp_height_at, floor_height_at, ground_y_for_floor, shaft_run_pos, LANDING_CELLS,
+    entrance_ramp_height_at, floor_height_at, ground_y_for_floor, leg_touches_shaft, shaft_run_pos,
+    FLOOR_CHANGE_LEG_MAX, LANDING_CELLS, SHAFT_CHANGE_MARGIN,
 };
 
 use serde::Serialize;
@@ -117,7 +118,7 @@ impl Room {
         x >= self.x && x < self.x + self.w && z >= self.z && z < self.z + self.d
     }
 
-    fn expanded(&self, by: i32) -> Room {
+    pub fn expanded(&self, by: i32) -> Room {
         Room {
             x: self.x - by,
             z: self.z - by,
@@ -569,8 +570,8 @@ pub fn monster_level_for_depth(def_level: u8, depth: u8) -> u8 {
     }
 }
 
-/// All four edge bits set: a fully sealed, impassable cell. Used to turn a
-/// decorative prop's cell into a 1×1 collision pillar (see `roll_props`).
+/// All four edge bits set: a fully sealed, impassable cell — uncarved rock,
+/// or a decorative prop's 1×1 collision pillar (see `roll_props`).
 pub(crate) const EDGE_ALL: u8 = EDGE_N | EDGE_E | EDGE_S | EDGE_W;
 
 /// Edge-bitmask cells for one floor, derived from its carved mask plus walls
@@ -620,12 +621,14 @@ fn floor_passability_cells_inner(
 ) -> Vec<u8> {
     let mut cells = vec![0u8; (GRID * GRID) as usize];
 
+    // Rock is sealed on every side, so a mover put there cannot roam it.
     for z in 0..GRID {
         for x in 0..GRID {
+            let idx = (x + z * GRID) as usize;
             if !layout.is_carved(x, z) {
+                cells[idx] = EDGE_ALL;
                 continue;
             }
-            let idx = (x + z * GRID) as usize;
             if !layout.is_carved(x, z - 1) {
                 cells[idx] |= EDGE_N;
             }

@@ -67,9 +67,9 @@ fn correction_due(
 /// speed.
 #[derive(Clone)]
 pub(super) struct MoveIntent {
-    target: Position,
+    pub(super) target: Position,
     rotation: f32,
-    floor_level: i8,
+    pub(super) floor_level: i8,
     /// NPC connections are exempt: schedule force-moves may legitimately
     /// cross closed doors.
     check_collision: bool,
@@ -955,11 +955,6 @@ impl super::GameState {
             return;
         }
         new_position.x = wrap_world_x(new_position.x);
-        // Dungeon floors (negative) are validated against the entrance
-        // registry and the floor's expected world Y before being stored.
-        // Deliberately does not carry the name out: this runs for every move
-        // packet, and the only consumers are the rejection logs below, which
-        // can afford their own lookup.
         let (current_floor, current_position, health) = {
             let players = self.players.read().await;
             match players.get(player_id) {
@@ -970,14 +965,6 @@ impl super::GameState {
                 }
             }
         };
-        let declared_floor = floor_level;
-        let floor_level = if floor_level < 0 || current_floor < 0 {
-            self.validated_dungeon_floor(player_id, current_floor, floor_level, &new_position)
-                .await
-        } else {
-            floor_level
-        };
-
         if trusted {
             let sprinting = sprinting && self.hunger_sprint_allowed(player_id).await;
             self.apply_player_position(
@@ -997,6 +984,39 @@ impl super::GameState {
             return;
         }
 
+        // Appended legs chain off the queue tail, so both the floor change and
+        // the distance guard judge the new leg, not the path from the player.
+        let (leg_start, leg_floor) = if append {
+            self.movement_intents
+                .read()
+                .await
+                .get(player_id)
+                .and_then(|q| q.back())
+                .map(|w| (w.target, w.floor_level))
+                .unwrap_or((current_position, current_floor))
+        } else {
+            (current_position, current_floor)
+        };
+
+        // Dungeon floors (negative) are held to the entrance registry, the
+        // stairs and the floor's ground height, which replaces the reported Y.
+        let declared_floor = floor_level;
+        let floor_level = if floor_level < 0 || leg_floor < 0 {
+            let verdict = self
+                .validated_dungeon_floor(
+                    player_id,
+                    leg_floor,
+                    floor_level,
+                    &leg_start,
+                    &new_position,
+                )
+                .await;
+            new_position.y = verdict.y;
+            verdict.floor
+        } else {
+            floor_level
+        };
+
         // A coerced floor means the declared (position, floor) pair failed
         // dungeon validation (which already warned why), and the mover never
         // sees its own PlayerMoved — snap so its floor resyncs instead of
@@ -1014,22 +1034,8 @@ impl super::GameState {
             return;
         }
 
-        let mut queues = self.movement_intents.write().await;
-        // Appended legs chain off the queue tail, so the distance guard must
-        // measure the new leg, not the whole path from the current position.
-        let leg_start = if append {
-            queues
-                .get(player_id)
-                .and_then(|q| q.back())
-                .map(|w| w.target)
-                .unwrap_or(current_position)
-        } else {
-            current_position
-        };
         let dist_sq = leg_start.dist_xz_sq(&new_position);
         if dist_sq > MAX_MOVE_TARGET_DISTANCE * MAX_MOVE_TARGET_DISTANCE {
-            // The snap takes other locks; don't hold every mover's queue meanwhile.
-            drop(queues);
             if self.snap_refused_move_back(player_id).await {
                 warn!(
                     "Rejected move target {:.0}m away from player {}",
@@ -1039,6 +1045,7 @@ impl super::GameState {
             }
             return;
         }
+        let mut queues = self.movement_intents.write().await;
         let queue = queues.entry(*player_id).or_default();
         if !append {
             queue.clear();
@@ -1470,8 +1477,15 @@ impl super::GameState {
         };
 
         let floor_level = if floor_level < 0 || current_floor < 0 {
-            self.validated_dungeon_floor(player_id, current_floor, floor_level, &position)
-                .await
+            self.validated_dungeon_floor(
+                player_id,
+                current_floor,
+                floor_level,
+                &position,
+                &position,
+            )
+            .await
+            .floor
         } else {
             floor_level
         };

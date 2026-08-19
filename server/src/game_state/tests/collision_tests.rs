@@ -491,33 +491,41 @@ fn a_mover_with_a_way_out_is_left_alone() {
     );
 }
 
-/// Props cluster in room corners, so the neighbour behind the wall is usually
-/// rock — and the mask writes edges only on carved cells, leaving that rock
-/// blank and so unsealed. Every prop of a real dungeon floor, through the same
-/// call the movement tick makes: nothing may land off the carved floor.
-#[tokio::test]
-async fn no_prop_cell_escapes_onto_the_rock_outside_the_maze() {
-    use onlinerpg_shared::dungeon::{cell_center, passability_floor_for_depth, world_to_cell};
+const WARRENS_ID: &str = "orc_warrens";
 
-    const WARRENS_ID: &str = "orc_warrens";
-    let game_state = make_test_game_state("movement_escape_stays_carved");
+/// The orc warrens with its passability installed, as `init_passability`
+/// does at boot — the runtime alone has no cells.
+async fn warrens_with_passability(tag: &str) -> (GameState, Position) {
+    let game_state = make_test_game_state(tag);
     game_state.ensure_dungeon_runtime(WARRENS_ID).await;
     let entrance = game_state
         .dungeon_defs
         .get(WARRENS_ID)
         .expect("orc_warrens def")
         .position();
-
-    let depth = 9u8;
-    let props = {
+    {
         let dungeons = game_state.dungeons.read().await;
         let rt = dungeons.get(WARRENS_ID).expect("warrens runtime");
-        // `init_passability` does this at boot; the runtime alone has no cells.
         game_state.passability_write().insert(
             onlinerpg_shared::dungeon::dungeon_cache_key(WARRENS_ID),
             onlinerpg_shared::dungeon::dungeon_passability(&entrance, &rt.layouts),
         );
-        rt.layouts[depth as usize - 1]
+    }
+    (game_state, entrance)
+}
+
+/// Props cluster in room corners, so the neighbour behind the wall is usually
+/// rock. Every prop of a real dungeon floor, through the same call the
+/// movement tick makes: nothing may land off the carved floor.
+#[tokio::test]
+async fn no_prop_cell_escapes_onto_the_rock_outside_the_maze() {
+    use onlinerpg_shared::dungeon::{cell_center, passability_floor_for_depth, world_to_cell};
+
+    let (game_state, entrance) = warrens_with_passability("movement_escape_stays_carved").await;
+    let depth = 9u8;
+    let props = {
+        let dungeons = game_state.dungeons.read().await;
+        dungeons.get(WARRENS_ID).expect("warrens runtime").layouts[depth as usize - 1]
             .props
             .iter()
             .map(|p| (p.x, p.z))
@@ -606,5 +614,61 @@ mod init_passability_boot {
             .await;
         std::fs::remove_dir_all(&terrain_dir).unwrap();
         assert!(result.is_err());
+    }
+}
+
+/// Rock is sealed, not blank: a mover who ends up in it (a floor claimed at a
+/// shaft's margin) cannot roam it, and is not "rescued" into the carved cell
+/// next door — that would be a lift through the wrong floor's walls.
+#[tokio::test]
+async fn rock_is_a_dead_end_with_no_rescue() {
+    use onlinerpg_shared::dungeon::{cell_center, passability_floor_for_depth, GRID};
+
+    let (game_state, entrance) = warrens_with_passability("movement_rock_dead_end").await;
+    let depth = 3u8;
+    let floor = passability_floor_for_depth(depth);
+    let (rock, room, deeper_rock) = {
+        let dungeons = game_state.dungeons.read().await;
+        let layout =
+            &dungeons.get(WARRENS_ID).expect("warrens runtime").layouts[depth as usize - 1];
+        (1..GRID - 1)
+            .flat_map(|z| (1..GRID - 1).map(move |x| (x, z)))
+            .find_map(|(x, z)| {
+                (!layout.is_carved(x, z)
+                    && layout.is_carved(x + 1, z)
+                    && !layout.is_carved(x - 1, z))
+                .then(|| {
+                    (
+                        cell_center(&entrance, depth, (x, z)),
+                        cell_center(&entrance, depth, (x + 1, z)),
+                        cell_center(&entrance, depth, (x - 1, z)),
+                    )
+                })
+            })
+            .expect("rock beside a carved cell")
+    };
+
+    assert!(
+        game_state
+            .sealed_player_escape(&rock, floor)
+            .await
+            .is_none(),
+        "a mover in rock must not be nudged onto the floor"
+    );
+    let cache = game_state.passability_read();
+    for (from, to) in [(rock, room), (room, rock), (rock, deeper_rock)] {
+        assert!(
+            matches!(
+                super::super::passability::resolve_step(
+                    &cache, from.x, from.z, to.x, to.z, floor, from.y
+                ),
+                super::super::passability::StepOutcome::Blocked(_)
+            ),
+            "step ({:.1},{:.1}) -> ({:.1},{:.1}) must be blocked",
+            from.x,
+            from.z,
+            to.x,
+            to.z
+        );
     }
 }

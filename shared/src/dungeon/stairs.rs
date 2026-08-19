@@ -73,6 +73,60 @@ pub fn floor_height_at(
     Some(floor_y)
 }
 
+/// Cells of slack around a shaft within which a floor change is accepted:
+/// the server sim trails the client that flipped its floor.
+pub const SHAFT_CHANGE_MARGIN: i32 = 1;
+/// Longest leg that may carry a floor change. Y is interpolated along the
+/// whole leg, so a long one clipping the shaft would reach the other floor's
+/// grid far from it.
+pub const FLOOR_CHANGE_LEG_MAX: f32 = 2.0 * SHAFT_LEN as f32;
+
+/// Whether the leg `from`→`to` (world XZ) touches `shaft`'s footprint grown
+/// by `margin` cells — the only walk that may change floors.
+pub fn leg_touches_shaft(
+    entrance: &Position,
+    shaft: &StairShaft,
+    margin: i32,
+    from: (f32, f32),
+    to: (f32, f32),
+) -> bool {
+    let (ox, oz) = dungeon_origin(entrance.x, entrance.z);
+    let r = shaft.rect().expanded(margin);
+    let (min_x, min_z) = (ox + r.x as f32, oz + r.z as f32);
+    segment_touches_box(
+        (min_x, min_x + r.w as f32),
+        (min_z, min_z + r.d as f32),
+        from,
+        to,
+    )
+}
+
+/// Slab clip of a 2D segment against an axis-aligned box.
+fn segment_touches_box(
+    (min_x, max_x): (f32, f32),
+    (min_z, max_z): (f32, f32),
+    (x0, z0): (f32, f32),
+    (x1, z1): (f32, f32),
+) -> bool {
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (p0, p1, lo, hi) in [(x0, x1, min_x, max_x), (z0, z1, min_z, max_z)] {
+        let d = p1 - p0;
+        if d.abs() <= f32::EPSILON {
+            if p0 < lo || p0 > hi {
+                return false;
+            }
+            continue;
+        }
+        let (ta, tb) = ((lo - p0) / d, (hi - p0) / d);
+        t0 = t0.max(ta.min(tb));
+        t1 = t1.min(ta.max(tb));
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
+
 /// Surface entrance ramp height, or `None` when (x, z) is off the shaft —
 /// out there the terrain sampler owns Y.
 pub fn entrance_ramp_height_at(
@@ -121,6 +175,24 @@ mod tests {
         assert_eq!(ramp_y(top, top - 4.0, 1.0), top);
         assert_eq!(ramp_y(top, top - 4.0, SHAFT_LEN as f32 - 1.0), top - 4.0);
         assert_eq!(ramp_y(top, top - 4.0, 4.0), top - 2.0);
+    }
+
+    #[test]
+    fn leg_touches_shaft_within_one_cell_or_across_it() {
+        let (e, layouts) = crypt();
+        let shaft = layouts[0].up_shaft;
+        let r = shaft.rect();
+        let (ox, oz) = dungeon_origin(e.x, e.z);
+        let at = |cx: i32, cz: i32| (ox + cx as f32 + 0.5, oz + cz as f32 + 0.5);
+        let inside = at(r.x, r.z);
+        let beside = at(r.x - 1, r.z);
+        let far = at(r.x - 3, r.z);
+        let across = at(r.x + r.w + 2, r.z);
+        assert!(leg_touches_shaft(&e, &shaft, 1, inside, inside));
+        assert!(leg_touches_shaft(&e, &shaft, 1, beside, beside));
+        assert!(!leg_touches_shaft(&e, &shaft, 1, far, far));
+        assert!(leg_touches_shaft(&e, &shaft, 1, far, across));
+        assert!(!leg_touches_shaft(&e, &shaft, 0, beside, beside));
     }
 
     /// Standing anywhere on depth 1 that isn't a shaft must report that

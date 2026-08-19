@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, floor_height_at, floor_level_for_passability, floor_world_y,
-    generate_dungeon_for, interior_doors, monster_level_for_depth, world_to_cell, FloorLayout,
-    PropKind, ENTRANCE_DOOR_ID, FLOOR_Y_TOLERANCE, GRID,
+    generate_dungeon_for, interior_doors, leg_touches_shaft, monster_level_for_depth,
+    world_to_cell, FloorLayout, PropKind, ENTRANCE_DOOR_ID, FLOOR_CHANGE_LEG_MAX,
+    FLOOR_Y_TOLERANCE, GRID, SHAFT_CHANGE_MARGIN,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
@@ -44,6 +45,14 @@ const PROP_INTERACT_RANGE: f32 = 2.5;
 const DOOR_INTERACT_RANGE: f32 = 2.5;
 /// Chance that a freshly-broken barrel/crate spills a loose coin pile.
 const BROKEN_PROP_COIN_DROP_CHANCE: f64 = 0.20;
+
+/// What `validated_dungeon_floor` settled on: the floor to store, and the Y
+/// to store — the floor's own ground height underground, the reported one
+/// above ground where terrain owns Y.
+pub(super) struct DungeonFloorVerdict {
+    pub(super) floor: i8,
+    pub(super) y: f32,
+}
 
 /// A world-X range split at the wrap seam into canonical segments, so cell
 /// enumeration over it matches the cells wrapped player positions produce.
@@ -1279,10 +1288,10 @@ impl GameState {
     }
 
     /// Where to put a player sealed into their own cell, or `None` when they
-    /// are not sealed in. Underground the neighbour has to be carved floor: the
-    /// passability mask leaves the rock around a dungeon blank, so the cell
-    /// behind the wall a prop stands against reads as open. The depth comes
-    /// from the passability floor, never from the floor the client claims.
+    /// are not sealed in. Underground `stands_on` is the carved floor: rock is
+    /// sealed on every side too, and only a mover on the floor's own cells is
+    /// walked out. The depth comes from the passability floor, never from the
+    /// floor the client claims.
     pub(super) async fn sealed_player_escape(
         &self,
         position: &Position,
@@ -1334,66 +1343,101 @@ impl GameState {
         }
     }
 
-    /// Validate a client-reported floor change into/inside/out of a
-    /// dungeon. Returns the floor to actually store: the requested floor
-    /// when plausible, otherwise the player's current floor.
-    ///
-    /// Movement here mirrors the codebase's trust model (terrain
-    /// collision is client-side): we only require that the position lies
-    /// inside a known dungeon footprint and that the reported Y matches
-    /// the floor's ground height there, stair ramps included — clients
-    /// flip their claimed floor partway down a shaft, so mid-ramp
-    /// positions must validate for either adjacent floor.
+    /// Validate a client-declared floor for the move leg `from`→`to`
+    /// (`from == to` for a standalone floor change). A floor changes one
+    /// storey at a time, on a short leg touching the shaft joining the two;
+    /// the declared floor is then held to the footprint and to its ground
+    /// height at `to`, stair ramps included — clients flip their claim partway
+    /// down a shaft, so mid-ramp positions validate for either adjacent floor.
+    /// Anything else keeps the floor the leg started on.
     pub(super) async fn validated_dungeon_floor(
         &self,
         player_id: &PlayerId,
         current_floor: i8,
         requested_floor: i8,
-        position: &Position,
-    ) -> i8 {
-        if requested_floor >= 0 {
-            return requested_floor;
-        }
-
-        let Some(entrance) = self.dungeon_defs.entrance_at(position.x, position.z) else {
-            warn!(
-                "Player {} reported dungeon floor {} outside any dungeon footprint",
-                self.player_name_of(player_id).await,
-                requested_floor
-            );
-            return current_floor.max(0);
+        from: &Position,
+        to: &Position,
+    ) -> DungeonFloorVerdict {
+        let keep = DungeonFloorVerdict {
+            floor: current_floor,
+            y: to.y,
+        };
+        let changing = requested_floor != current_floor;
+        let entrance = self
+            .dungeon_defs
+            .entrance_at(to.x, to.z)
+            .or_else(|| self.dungeon_defs.entrance_at(from.x, from.z));
+        let Some(entrance) = entrance else {
+            if requested_floor < 0 {
+                warn!(
+                    "Player {} reported dungeon floor {} outside any dungeon footprint",
+                    self.player_name_of(player_id).await,
+                    requested_floor
+                );
+            }
+            // Nothing underground to hold a mover outside every footprint.
+            return DungeonFloorVerdict {
+                floor: requested_floor.max(0),
+                ..keep
+            };
         };
 
         self.ensure_dungeon_runtime(&entrance.id).await;
-        let depth = requested_floor.unsigned_abs() as usize;
-        let (total, expected_y) = {
-            let dungeons = self.dungeons.read().await;
-            match dungeons.get(&entrance.id) {
-                Some(d) => (
-                    d.layouts.len(),
-                    floor_height_at(
-                        &entrance.position(),
-                        &d.layouts,
-                        depth as u8,
-                        position.x,
-                        position.z,
-                    ),
-                ),
-                None => (0, None),
+        let dungeons = self.dungeons.read().await;
+        let layouts = dungeons
+            .get(&entrance.id)
+            .map(|d| &d.layouts[..])
+            .unwrap_or(&[]);
+
+        if changing {
+            let shallow = current_floor.max(requested_floor);
+            let on_stairs = shallow <= 0
+                && current_floor.min(requested_floor) == shallow - 1
+                && from.dist_xz_sq(to) <= FLOOR_CHANGE_LEG_MAX * FLOOR_CHANGE_LEG_MAX
+                && layouts
+                    .get(shallow.unsigned_abs() as usize)
+                    .is_some_and(|below| {
+                        leg_touches_shaft(
+                            &entrance.position(),
+                            &below.up_shaft,
+                            SHAFT_CHANGE_MARGIN,
+                            (from.x, from.z),
+                            (to.x, to.z),
+                        )
+                    });
+            if !on_stairs {
+                drop(dungeons);
+                warn!(
+                    "Player {} floor change {} -> {} off the stairs at ({:.1},{:.1}), kept floor {}",
+                    self.player_name_of(player_id).await,
+                    current_floor,
+                    requested_floor,
+                    to.x,
+                    to.z,
+                    current_floor
+                );
+                return keep;
             }
-        };
-        if depth == 0 || depth > total {
+        }
+        if requested_floor >= 0 {
+            return DungeonFloorVerdict {
+                floor: requested_floor,
+                ..keep
+            };
+        }
+
+        let depth = requested_floor.unsigned_abs();
+        let expected_y = floor_height_at(&entrance.position(), layouts, depth, to.x, to.z);
+        let total = layouts.len();
+        drop(dungeons);
+        let Some(expected_y) = expected_y else {
             warn!(
                 "Player {} reported invalid dungeon depth {} (dungeon '{}' has {} floors)",
                 player_id, depth, entrance.id, total
             );
-            return current_floor;
-        }
-        // None only for an out-of-range depth, refused above.
-        let Some(expected_y) = expected_y else {
-            return current_floor;
+            return keep;
         };
-        if (position.y - expected_y).abs() > FLOOR_Y_TOLERANCE {
+        if (to.y - expected_y).abs() > FLOOR_Y_TOLERANCE {
             // Position included: the client latches into claiming the floor
             // below the one its Y sits on, and where that starts is the lead.
             warn!(
@@ -1401,16 +1445,21 @@ impl GameState {
                  at ({:.1},{:.1}), kept floor {}",
                 self.player_name_of(player_id).await,
                 requested_floor,
-                position.y,
+                to.y,
                 expected_y,
-                position.x,
-                position.z,
+                to.x,
+                to.z,
                 current_floor
             );
-            return current_floor;
+            if changing {
+                return keep;
+            }
         }
 
-        requested_floor
+        DungeonFloorVerdict {
+            floor: requested_floor,
+            y: expected_y,
+        }
     }
 
     /// Infer the dungeon floor for an arbitrary position (used by debug
