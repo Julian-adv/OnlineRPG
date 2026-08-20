@@ -120,7 +120,10 @@ fn per_dungeon_boss_floors_and_entrance_dir() {
 // when old_crypt was capped to 5 floors via the dungeons.csv `floors` column
 // (the hash now covers the override path, `generate_dungeon_for`) and the
 // boss became `goblin_boss` (the type string is part of the hashed layout).
-const GOLDEN_OLD_CRYPT_HASH: u64 = 0x3cee_b5b1_9cd7_a3df;
+// Re-blessed when floors whose corridors hug a room wall (a mouth wider than
+// `CORRIDOR_MOUTH_MAX`) started being rejected and redrawn: the first
+// re-bless that moves rooms, corridors and shafts, not just spawns/props.
+const GOLDEN_OLD_CRYPT_HASH: u64 = 0xf3dd_e297_f08f_91e8;
 
 #[test]
 fn structure_invariants_many_seeds() {
@@ -533,6 +536,26 @@ fn entrance_door_id_is_not_an_interior_door() {
                     layout.depth
                 );
             }
+        }
+    }
+}
+
+/// A corridor running alongside a room wall would tear the wall open along
+/// its length.
+#[test]
+fn corridors_never_hug_a_room_wall() {
+    let registry = entrances().iter().flat_map(|e| generate_dungeon_for(&e.id));
+    let seeds = (0..100u64).flat_map(generate_dungeon);
+    for layout in registry.chain(seeds) {
+        for o in doors::wall_openings(&layout) {
+            assert!(
+                o.len <= gen::CORRIDOR_MOUTH_MAX,
+                "depth {} wall {} opening at {} is {} cells wide",
+                layout.depth,
+                o.wall,
+                o.lat0,
+                o.len
+            );
         }
     }
 }

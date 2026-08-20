@@ -81,12 +81,10 @@ fn door_hash(a: i32, b: i32, c: i32, d: i32) -> u32 {
     h % 1000
 }
 
-/// Scan each room's four walls for maximal runs whose outward neighbour is a
-/// corridor cell (a corridor mouth) and give each a door with
-/// `INTERIOR_DOOR_PCT`% chance, hashed from the opening's coordinates so the
-/// list is stable per layout.
-pub fn interior_doors(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
-    let mut doors = Vec::new();
+/// Every corridor mouth on the floor: maximal runs of a room wall whose
+/// outward neighbour is corridor, as door candidates.
+pub(super) fn wall_openings(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
+    let mut openings = Vec::new();
     for room in &layout.rooms {
         for wall in [WALL_N, WALL_E, WALL_S, WALL_W] {
             let spans_x = wall == WALL_N || wall == WALL_S;
@@ -120,26 +118,33 @@ pub fn interior_doors(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
                     start = lat;
                 }
                 if !open && start >= 0 {
-                    let (lat0, len) = (start, lat - start);
-                    if door_hash(layout.depth as i32, wall as i32, lat0, wall_line)
-                        < INTERIOR_DOOR_PCT * 10
-                    {
-                        doors.push(InteriorDoorSpec {
-                            wall,
-                            lat0,
-                            len,
-                            wall_line,
-                            door_id: (wall as u32) * 0x10000
-                                + (lat0 as u32) * 0x100
-                                + wall_line as u32,
-                        });
-                    }
+                    openings.push(InteriorDoorSpec {
+                        wall,
+                        lat0: start,
+                        len: lat - start,
+                        wall_line,
+                        door_id: (wall as u32) * 0x10000
+                            + (start as u32) * 0x100
+                            + wall_line as u32,
+                    });
                     start = -1;
                 }
             }
         }
     }
-    doors
+    openings
+}
+
+/// Give each corridor mouth a door with `INTERIOR_DOOR_PCT`% chance, hashed
+/// from the opening's coordinates so the list is stable per layout.
+pub fn interior_doors(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
+    wall_openings(layout)
+        .into_iter()
+        .filter(|d| {
+            door_hash(layout.depth as i32, d.wall as i32, d.lat0, d.wall_line)
+                < INTERIOR_DOOR_PCT * 10
+        })
+        .collect()
 }
 
 /// Flat `(ax, az, bx, bz)` quads of every interior door on the floor NOT in

@@ -7,6 +7,7 @@
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
+use super::doors::wall_openings;
 use super::{
     FloorLayout, PropKind, PropSpec, Room, SpawnSpec, StairShaft, BOSS_MONSTER_TYPE, GRID,
     MAX_DEPTH, MIN_DEPTH, SHAFT_LEN, SHAFT_W,
@@ -20,6 +21,10 @@ const SHAFT_ROOM_AXIAL: i32 = SHAFT_LEN + 2;
 const FLOOR_ATTEMPTS: u32 = 30;
 const ROOM_PLACE_ATTEMPTS: u32 = 60;
 const SPAWN_CLEAR_RADIUS: i32 = 3;
+/// Widest corridor mouth a room wall may have: a 2-wide corridor plus
+/// corner slop. A longer run is a corridor hugging the wall, which tears
+/// the wall open along its length; such floors are rejected and redrawn.
+pub(super) const CORRIDOR_MOUTH_MAX: i32 = 4;
 
 /// Percent of rooms that stay empty of decorative clutter.
 const EMPTY_ROOM_PCT: i32 = 30;
@@ -198,7 +203,11 @@ fn try_generate_floor(
         props: Vec::new(),
     };
 
-    if !floor_is_connected(&layout) {
+    if wall_openings(&layout)
+        .iter()
+        .any(|o| o.len > CORRIDOR_MOUTH_MAX)
+        || !floor_is_connected(&layout)
+    {
         return None;
     }
 
