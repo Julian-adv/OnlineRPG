@@ -240,14 +240,16 @@ const WHETSTONE_OIL_ITEM_ID: &str = "whetstone_oil";
 
 /// Remove one unit of `instance_id` from the bag, dropping the instance when
 /// the stack empties.
-fn consume_one(inv: &mut PlayerInventory, instance_id: u64) {
-    if let Some(idx) = inv.bag.iter().position(|i| i.instance_id == instance_id) {
-        if inv.bag[idx].quantity > 1 {
-            inv.bag[idx].quantity -= 1;
-        } else {
-            inv.bag.remove(idx);
-        }
+/// Returns the removed unit's def id, so callers can log without rescanning.
+fn consume_one(inv: &mut PlayerInventory, instance_id: u64) -> Option<String> {
+    let idx = inv.bag.iter().position(|i| i.instance_id == instance_id)?;
+    let def_id = inv.bag[idx].item_def_id.clone();
+    if inv.bag[idx].quantity > 1 {
+        inv.bag[idx].quantity -= 1;
+    } else {
+        inv.bag.remove(idx);
     }
+    Some(def_id)
 }
 
 /// Serialize a PlayerInventory into the flat row format used by AuthService
@@ -1370,15 +1372,22 @@ impl super::GameState {
     /// instance when the stack empties), persist, and push the fresh snapshot
     /// to the client.
     pub(super) async fn consume_one_and_sync(&self, player_id: &PlayerId, instance_id: u64) {
-        let snapshot = {
+        let (snapshot, item_def_id) = {
             let mut inventories = self.inventories.write().await;
             let inv = match inventories.get_mut(player_id) {
                 Some(inv) => inv,
                 None => return,
             };
-            consume_one(inv, instance_id);
-            inv.clone()
+            let def_id = consume_one(inv, instance_id);
+            (inv.clone(), def_id)
         };
+
+        if let Some(def_id) = item_def_id {
+            if let Some((position, _, floor_level, name)) = self.player_pose(player_id).await {
+                let place = crate::dungeon_defs::place_label(&position, floor_level);
+                info!("{name} consumed {def_id} at {place}");
+            }
+        }
 
         self.mark_dirty(player_id).await;
         self.mark_inventory_dirty(player_id).await;
