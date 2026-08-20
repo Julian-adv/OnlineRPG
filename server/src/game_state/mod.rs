@@ -701,6 +701,17 @@ impl GameState {
         &self.no_spawn_zones
     }
 
+    /// Flat distance from town — the spawn point, the same "town" respawn and
+    /// return-to-town already use. A second settlement must be added here
+    /// before it ships, or its surroundings count as deep frontier.
+    pub(crate) fn town_distance(&self, position: &crate::types::Position) -> f32 {
+        crate::world_config::world_config()
+            .spawn_position
+            .position()
+            .dist_xz_sq(position)
+            .sqrt()
+    }
+
     /// Evict terrain tiles idle since the previous sweep from both samplers.
     pub async fn sweep_terrain_caches(&self) -> usize {
         self.height_sampler.sweep_stale_tiles().await + self.water_sampler.sweep_stale_tiles().await

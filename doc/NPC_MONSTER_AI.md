@@ -111,7 +111,8 @@ min_interval_secs = 5
 - `tick_monster_spawns()`: 10초 주기로 스폰 필요성 판단, `SpawnMonsterRequest`를 클라이언트에 전송
   - 한 틱에 플레이어당 최대 한 건만 요청하고, 타입은 규칙 목록을 섞은 순서로 훑어 고른다.
     던전이 밀집 전투를 맡으므로 필드는 `maxMonstersPerPlayer`로 성기게 유지한다
-  - 지상 스폰은 플레이어 레벨이 몬스터 레벨 -1 이상일 때만 요청한다 (`min_ambient_player_level`).
+  - 지상 스폰은 플레이어의 마을 거리가 (몬스터 레벨 − 1) × 70m 이상일 때만
+    요청한다 (`min_ambient_town_distance`, [COMBAT.md](COMBAT.md)의 거리 게이트).
     레벨은 `monsters.csv`에서 오므로 규칙마다 따로 적지 않는다
 - 클라이언트가 위치를 선정하여 `RequestSpawnMonster`로 응답하면, 서버가 위치 검증 후 생성
 - `MonsterAssigned` → 소유자에게 직접 전송, `MonsterSpawned` → 전체 브로드캐스트

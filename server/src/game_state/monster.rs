@@ -25,6 +25,9 @@ const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
 const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
 const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
+/// Metres from town before an ambient type one level higher starts spawning.
+/// What you meet on the surface follows where you stand, not your level.
+const AMBIENT_SPAWN_METERS_PER_LEVEL: f32 = 70.0;
 /// Monsters the ownership sweep visits per lock acquisition, so it never holds
 /// the registry — written by every kill and every move — for all 135k. A write
 /// between chunks can reorder the map and hide monsters from that sweep; the
@@ -837,13 +840,13 @@ impl super::GameState {
         self.hand_off_monsters(adoptions).await;
     }
 
-    /// Lowest player level an ambient type spawns around — one below the
-    /// monster's own level, so the gate follows `monsters.csv` instead of being
+    /// How far from town an ambient type starts spawning — one step per level
+    /// above the first, so the gate follows `monsters.csv` instead of being
     /// authored per rule. Unknown types gate nothing.
-    pub(crate) fn min_ambient_player_level(&self, monster_type: &str) -> u32 {
-        self.monster_defs
-            .get(monster_type)
-            .map_or(0, |def| u32::from(def.level).saturating_sub(1))
+    pub(crate) fn min_ambient_town_distance(&self, monster_type: &str) -> f32 {
+        self.monster_defs.get(monster_type).map_or(0.0, |def| {
+            f32::from(def.level.saturating_sub(1)) * AMBIENT_SPAWN_METERS_PER_LEVEL
+        })
     }
 
     /// Server-driven monster spawn tick. Each player below their cap gets at
@@ -864,7 +867,7 @@ impl super::GameState {
         // qualify when a human is within sight range (no point spawning monsters
         // around an agent nobody is watching); humans always qualify. Computed
         // once under a single read lock so the loop below needs none.
-        let mut candidates: Vec<(PlayerId, u32)> = {
+        let mut candidates: Vec<(PlayerId, f32)> = {
             let players = self.players.read().await;
             let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
             let human_positions: Vec<_> = players
@@ -884,7 +887,7 @@ impl super::GameState {
                                 .iter()
                                 .any(|hp| player.position.dist_xz_sq(hp) <= radius_sq))
                 })
-                .map(|(id, player)| (*id, player.level))
+                .map(|(id, player)| (*id, self.town_distance(&player.position)))
                 .collect()
         };
         if candidates.is_empty() {
@@ -899,11 +902,11 @@ impl super::GameState {
             candidates.retain(|(id, _)| monsters.owned_by(id) < max_per_player);
         }
 
-        // Indexed like `ambient_spawns`, so the level gate costs one lookup per
-        // rule instead of one per rule per player.
-        let min_levels: Vec<u32> = ambient_spawns
+        // Indexed like `ambient_spawns`, so the distance gate costs one lookup
+        // per rule instead of one per rule per player.
+        let min_distances: Vec<f32> = ambient_spawns
             .iter()
-            .map(|rule| self.min_ambient_player_level(&rule.monster_type))
+            .map(|rule| self.min_ambient_town_distance(&rule.monster_type))
             .collect();
 
         let now = Self::now_ms();
@@ -915,16 +918,16 @@ impl super::GameState {
             let mut rng = rand::thread_rng();
             let mut order: Vec<usize> = (0..ambient_spawns.len()).collect();
 
-            for (player_id, level) in &candidates {
+            for (player_id, town_distance) in &candidates {
                 // One request per player per tick. The scan runs in shuffled
                 // order, so the type on offer is uniform over the ones the
                 // player can take rather than following the rule list.
                 order.shuffle(&mut rng);
                 for &r in &order {
-                    if *level < min_levels[r] {
+                    if *town_distance < min_distances[r] {
                         continue;
                     }
-                    // The owned key is only built once the level gate passes.
+                    // The owned key is only built once the distance gate passes.
                     let key = (*player_id, ambient_spawns[r].monster_type.clone());
                     if let Entry::Vacant(entry) = allowances.entry(key) {
                         entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
@@ -1174,6 +1177,12 @@ impl super::GameState {
             if zone.contains_with_margin(position.x, position.z, NO_SPAWN_MARGIN) {
                 return None;
             }
+        }
+
+        // The distance gate, measured where the monster lands. The offer-time
+        // check reads the player's distance and is one max_distance looser.
+        if self.town_distance(&position) < self.min_ambient_town_distance(monster_type) {
+            return None;
         }
 
         // Must be reasonably close to the requesting player (anti-cheat sanity)

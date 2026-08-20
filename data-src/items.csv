@@ -1,6 +1,7 @@
 id,name,description,weight,equipSlot,stackable,icon,worldModel,category,dice,material,basePrice,guard,rarityTier,catchWeight,sizeDice,trophyCm,minFishingLevel,chestTier,chestChance,consumable,nutrition,grillsInto,effects,useDebuff,untradeable,capeColor,reviveHpPercent
 iron_sword,Iron Sword,A sturdy iron longsword.,3,main_hand,false,weapons/iron_sword.png,weapons/sword.glb,weapon,1d8,metal,10000,,,,,,,,,,,,,,,,
 worn_iron_sword,Worn Iron Sword,A well-used iron longsword. Merchants won't pay for it.,3,main_hand,false,weapons/iron_sword.png,weapons/sword.glb,weapon,1d6,metal,,,,,,,,,,,,,,,true,,
+notched_iron_sword,Notched Iron Sword,Hobgoblin issue — a nicked edge and no maker's mark. Cuts the same but sells for far less.,3,main_hand,false,weapons/iron_sword.png,weapons/sword.glb,weapon,1d8,metal,2500,,,,,,,,,,,,,,,,
 wooden_shield,Wooden Shield,A round wooden shield.,6,off_hand,false,armor/shield_wooden.png,armor/shield_wooden.glb,armor,,wood,2500,1,,,,,,,,,,,,,,,
 raven_shield,Raven Shield,A round wooden shield painted with a black raven crest.,6,off_hand,false,armor/shield_raven.png,armor/shield_raven.glb,armor,,wood,7000,2,,,,,,2,0.2,,,,,,,,
 leather_helmet,Leather Helmet,A simple leather helmet.,1,head,false,armor/leather_helmet.png,armor/leather_helmet.glb,armor,,leather,1500,1,,,,,,1,,,,,,,,,

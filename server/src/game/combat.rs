@@ -44,6 +44,29 @@ pub fn monster_attack_bonus(level: u8) -> i32 {
     i32::from(level)
 }
 
+/// Dungeon floors with no place bonus — the whole tier-1 dungeon, so a
+/// beginner's first basement plays at the monsters' own numbers.
+pub const DUNGEON_SAFE_DEPTH: i32 = 5;
+/// To-hit per floor below the safe depth.
+pub const DUNGEON_DEPTH_ATTACK_BONUS: i32 = 3;
+/// Surface metres from town with no place bonus.
+pub const SURFACE_SAFE_METERS: f32 = 300.0;
+/// Metres beyond the safe ring per point of to-hit.
+pub const SURFACE_METERS_PER_ATTACK_BONUS: f32 = 20.0;
+
+/// The to-hit a *place* lends its monsters. Player guard climbs with gear and
+/// armour enchants far past any monster level, so danger has to ride where you
+/// hunt rather than what you meet: dungeon depth, or distance from town on the
+/// surface (doc/COMBAT.md). Each has a free band — tier-1 floors, the town's
+/// surroundings — so the bonus only ever erodes guard someone chose to test.
+pub fn place_attack_bonus(floor_level: i8, town_distance: f32) -> i32 {
+    if floor_level < 0 {
+        return (i32::from(floor_level.unsigned_abs()) - DUNGEON_SAFE_DEPTH).max(0)
+            * DUNGEON_DEPTH_ATTACK_BONUS;
+    }
+    ((town_distance - SURFACE_SAFE_METERS).max(0.0) / SURFACE_METERS_PER_ATTACK_BONUS) as i32
+}
+
 pub fn monster_max_health_for_level(level: u8) -> u32 {
     // Average of level d8, rounded up: Lv3 -> 14, Lv4 -> 18.
     (u32::from(level).max(1) * 9).div_ceil(2)
@@ -206,6 +229,34 @@ mod tests {
             .filter(|roll| resolves_as_hit(*roll, monster_attack_bonus(10), 21))
             .count();
         assert_eq!(landed, 9);
+    }
+
+    /// Where you hunt is the difficulty dial: free in the tier-1 basement and
+    /// around town, climbing past any guard on the deepest floors.
+    #[test]
+    fn place_lends_monsters_their_to_hit() {
+        // The whole tier-1 dungeon and the town's surroundings lend nothing.
+        assert_eq!(place_attack_bonus(-5, 0.0), 0);
+        assert_eq!(place_attack_bonus(0, 300.0), 0);
+        // Depth counts floors, not metres — the surface distance under a
+        // dungeon never reaches its monsters.
+        assert_eq!(place_attack_bonus(-6, 9_999.0), 3);
+        assert_eq!(place_attack_bonus(-10, 0.0), 15);
+        assert_eq!(place_attack_bonus(-15, 0.0), 30);
+        assert_eq!(place_attack_bonus(0, 560.0), 13);
+        let landed = |level, bonus, guard| {
+            (1..=20)
+                .filter(|roll| resolves_as_hit(*roll, monster_attack_bonus(level) + bonus, guard))
+                .count()
+        };
+        // A fully enchanted guard-61 player and a depth-scaled level-14
+        // troll: untouchable in town, hit 15% of the time fifteen floors
+        // down. Nothing about the monster changed — only where it stands.
+        assert_eq!(landed(14, place_attack_bonus(0, 0.0), 61), 0);
+        assert_eq!(landed(14, place_attack_bonus(-15, 0.0), 61), 3);
+        // The design anchor: a shop-geared guard-15 beginner on the tier-1
+        // bottom floor takes an orc's swing at coin-flip odds.
+        assert_eq!(landed(4, place_attack_bonus(-5, 0.0), 15), 9);
     }
 
     #[test]

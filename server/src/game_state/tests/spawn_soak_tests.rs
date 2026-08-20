@@ -883,55 +883,56 @@ async fn abandoning_a_pair_spreads_them_across_bystanders() {
     );
 }
 
-/// An ambient type only reaches players who have caught up to within one level
-/// of it, so a beginner's surface stays at the monsters they can fight.
+/// An ambient type only reaches players who have walked far enough from town
+/// for it, so the ground by the gates stays at the weakest monsters.
 #[tokio::test]
-async fn ambient_spawns_skip_players_below_the_monsters_level() {
-    let game_state = make_test_game_state("ambient_level_gate");
-    let gates: Vec<(String, u32)> = world_config()
+async fn ambient_spawns_skip_players_too_close_to_town() {
+    let game_state = make_test_game_state("ambient_distance_gate");
+    let gates: Vec<(String, f32)> = world_config()
         .ambient_spawns
         .iter()
         .map(|rule| {
             (
                 rule.monster_type.clone(),
-                game_state.min_ambient_player_level(&rule.monster_type),
+                game_state.min_ambient_town_distance(&rule.monster_type),
             )
         })
         .collect();
-    let highest = gates.iter().map(|(_, level)| *level).max().unwrap_or(0);
+    let furthest = gates.iter().map(|(_, d)| *d).fold(0.0_f32, f32::max);
     assert!(
-        highest > 1,
-        "no ambient type outlevels a beginner, so this covers nothing"
+        furthest > 0.0,
+        "every ambient type spawns at the town gates, so this covers nothing"
     );
 
-    let mut beginner = make_player("beginner", 0.0, 0.0);
-    beginner.level = 1;
-    let mut veteran = make_player("veteran", 200.0, 0.0);
-    veteran.level = highest;
-    game_state.add_player(beginner).await;
-    game_state.add_player(veteran).await;
-    let mut beginner_rx = game_state.register_direct_channel(&pid("beginner")).await;
-    let mut veteran_rx = game_state.register_direct_channel(&pid("veteran")).await;
+    let town = world_config().spawn_position.position();
+    let homebody = make_player("homebody", town.x, town.z);
+    // A step past the furthest gate: the distance is a float, so landing
+    // exactly on it can round under.
+    let wanderer = make_player("wanderer", town.x + furthest + 1.0, town.z);
+    game_state.add_player(homebody).await;
+    game_state.add_player(wanderer).await;
+    let mut homebody_rx = game_state.register_direct_channel(&pid("homebody")).await;
+    let mut wanderer_rx = game_state.register_direct_channel(&pid("wanderer")).await;
 
     // A tick offers one type per player, so a full pass over the rules is what
     // it takes for every type a player qualifies for to come up.
-    let mut for_beginner = Vec::new();
-    let mut for_veteran = Vec::new();
+    let mut for_homebody = Vec::new();
+    let mut for_wanderer = Vec::new();
     for _ in 0..gates.len() {
         game_state.tick_monster_spawns().await;
-        for_beginner.extend(requested_types(&mut beginner_rx));
-        for_veteran.extend(requested_types(&mut veteran_rx));
+        for_homebody.extend(requested_types(&mut homebody_rx));
+        for_wanderer.extend(requested_types(&mut wanderer_rx));
     }
-    for (monster_type, min_level) in &gates {
+    for (monster_type, min_distance) in &gates {
         assert_eq!(
-            for_beginner.contains(monster_type),
-            *min_level <= 1,
-            "{monster_type} (needs level {min_level}) reached a level 1 player, or the types they \
-             can fight did not"
+            for_homebody.contains(monster_type),
+            *min_distance <= 0.0,
+            "{monster_type} (needs {min_distance}m) reached a player standing in town, or the \
+             types that belong there did not"
         );
         assert!(
-            for_veteran.contains(monster_type),
-            "{monster_type} (needs level {min_level}) never reached a level {highest} player"
+            for_wanderer.contains(monster_type),
+            "{monster_type} (needs {min_distance}m) never reached a player past {furthest}m"
         );
     }
 }

@@ -780,9 +780,11 @@ impl super::GameState {
             return;
         }
         let target_guard = self.effective_guard(target_player_id).await;
+        let place_bonus =
+            combat::place_attack_bonus(monster_floor_level, self.town_distance(&monster_position));
 
         let result = combat::roll_attack_with_extra_damage_roll(
-            attack_bonus,
+            attack_bonus + place_bonus,
             target_guard,
             &damage_roll,
             weapon_damage_roll.as_deref(),

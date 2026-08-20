@@ -191,9 +191,9 @@ max_hp += hp_gain
 - `guard`가 곧 명중 목표값이다.
 - 플레이어 `attack_bonus = level / 2`(내림) + STR modifier + 무기 인챈트
 - 몬스터 `attack_bonus = level` — 플레이어보다 가파르다. 플레이어 guard는
-  레벨이 아니라 장비로 오르기 때문이다(아래 "몬스터 공격보너스와 플레이어
-  guard 밸런스"). `attackBonus`를 monsters.csv에 적으면 그 값이 우선하고,
-  던전 깊이 스케일링은 그 값에 올라간 레벨만큼을 더한다.
+  레벨이 아니라 장비로 오르기 때문이다(아래 "장소 명중 보너스").
+  `attackBonus`를 monsters.csv에 적으면 그 값이 우선하고, 던전 깊이
+  스케일링은 그 값에 올라간 레벨만큼을 더한다.
 
 #### 굴림 합계: 폭발 주사위 (Exploding d20)
 
@@ -246,33 +246,70 @@ P(30) = P(10) / 20 = (11/20) / 20 = 11/400 = 2.75%
 guard 40짜리 플레이어를 코볼트가 한 번 맞히려면 평균 400회, 공격 쿨다운
 1.9초 기준 13분을 때려야 한다. 무적은 아니되 사실상 무의미한 수준이다.
 
-### 몬스터 공격보너스와 플레이어 guard 밸런스
+### 장소 명중 보너스 (Place Attack Bonus)
 
-플레이어 guard는 레벨이 아니라 획득한 방어구로 오른다. 그래서 몬스터
-공격보너스는 컨텐츠가 상대할 **장비 단계**를 기준으로 맞춘다.
+플레이어 guard는 레벨이 아니라 획득한 방어구와 인챈트로 오르고, 상한이
+없다. 프로드 실측(2026-08-20)에서 Lv13~16 활동 사냥꾼의 guard 중앙값은
+40, 최고는 67이었고 그중 인챈트가 평균 14를 차지했다. 몬스터 명중
+보너스는 레벨이므로 최대 20에서 멈춘다 — 폭 28짜리 분포를 20칸짜리 d20
+창으로 덮을 수 없다. 그래서 **난이도는 무엇을 만나느냐가 아니라 어디서
+사냥하느냐**가 정한다.
 
-| 단계 | 장비 | 총 guard |
-|------|------|---------:|
-| 신규 (방어구 없음) | — | 10~12 |
-| 상점 구비 | wooden_shield, leather_pants | 12~14 |
-| Old Crypt 졸업 | + leather_helmet, leather_belt | 13~15 |
-| Orc Warrens 졸업 | + leather_armor, iron_helmet, iron_boots, leather_gloves, raven_shield | 20~22 |
-| 풀 플레이트 + 방패 | | 30~34 |
+```
+던전:  보너스 = max(0, 깊이 − DUNGEON_SAFE_DEPTH(5)) × DUNGEON_DEPTH_ATTACK_BONUS(3)
+표면:  보너스 = max(0, 마을 거리 − SURFACE_SAFE_METERS(300m)) / SURFACE_METERS_PER_ATTACK_BONUS(20m)
+```
 
-Orc Warrens 기준 명중률(입장 guard 15 / 졸업 guard 21):
+- 구현: [`place_attack_bonus`](../server/src/game/combat.rs), 적용은
+  [game_state/combat.rs](../server/src/game_state/combat.rs)의 몬스터 공격
+- 몬스터 레벨·HP·피해·XP는 건드리지 않는다. 명중만 장소를 탄다 — 깊이가
+  레벨을 올리면(`monster_level_for_depth`) XP가 `1 + level²`로 함께 뛴다.
+- **안전 구간이 초보 보호다.** 티어1 던전(Old Crypt, 5층)과 마을 반경
+  300m는 보너스 0이라 기존 밸런스 그대로다. 설계 앵커: 상점 장비를 갖춘
+  guard 15가 Old Crypt 5층에서 orc(lvl 4)에게 45% — 대상 guard를 보는
+  하한·클램프 없이, 안전 구간 상수 두 개로 끝난다.
 
-| 깊이 | 몬스터 (레벨) | G15 | G21 |
-|------|--------------|----:|----:|
-| 1~2 | Kobold (1) | 30% | 5% |
-| 3~4 | Goblin (2) | 35% | 5% |
-| 5 | Orc (4) | 45% | 15% |
-| 6~9 | Hobgoblin (6~7) | 55~60% | 25~30% |
-| 10 | Hobgoblin (8) | 65% | 35% |
-| 보스 | Orc Warlord (10) | 75% | 45% |
+실이용자 킬 가중 명중률(프로드 실측 대비):
 
-풀 플레이트(guard 30+)는 현재 어떤 몬스터에게도 5% 이하다. 깊이 스케일링은
-레벨 20까지 지원하지만(`MAX_DEPTH = 20`) 실제 던전이 5·10층뿐이라 몬스터가
-레벨 10에서 멈추기 때문 — 공식이 아니라 층수·신규 던전으로 풀 문제다.
+| 장소 | 보너스 | 현행 | 적용 후 |
+|---|---:|---:|---:|
+| Old Crypt 1~5층 | 0 | 4~19% | 변화 없음 |
+| Orc Warrens 8층 | 9 | 4% | 14% |
+| Orc Warrens 10층 | 15 | 8% | 45% |
+| Ogre Stronghold 10층 | 15 | 4% | 23% |
+| Ogre Stronghold 15층 | 30 | 2% | 49% |
+
+층당 3은 진행 사다리에 맞춘 값이다(hobgoblin 깊이 보정 기준): 상자
+졸업(guard 21)은 6~7층에서 40~55%, 인챈트를 약간 얹으면(26) 8~9층에서
+50~70%, 인챈트 확정 구간을 채우면(39) 10층도 20~30%로 버틴다. 8층부터는
+인챈트가 입장료가 되도록 — 연마유 골드 싱크가 진행 화폐다.
+
+표면은 같은 곡선을 거리로 읽는다 — 300m까지 0, 560m에서 +13, 800m에서
++25. 인챈트를 두른 guard 61은 근거리 표면에서 여전히 잘 안 맞는데, 그쪽은
+명중이 아니라 보상으로 다룬다(아래 거리 게이트).
+
+### 앰비언트 스폰 거리 게이트
+
+표면 몬스터 종류도 플레이어 레벨이 아니라 **마을로부터의 거리**가 정한다.
+레벨 1칸당 `AMBIENT_SPAWN_METERS_PER_LEVEL`(70m)씩 밀린다.
+
+| 몬스터 | 레벨 | 해금 거리 |
+|---|---:|---:|
+| Kobold | 1 | 0m |
+| Goblin | 2 | 70m |
+| Orc | 4 | 210m |
+| Hobgoblin | 5 | 280m |
+| Gnoll | 6 | 350m |
+| Bugbear | 7 | 420m |
+| Ogre | 8 | 490m |
+| Troll | 9 | 560m |
+
+- 구현: [`min_ambient_town_distance`](../server/src/game_state/monster.rs)
+- 마을 근처는 저레벨 몬스터만 나오므로 XP도 드랍 등급도 낮다. 고레벨
+  플레이어를 명중률로 쫓아내는 게 아니라 **보상 구배로 밀어낸다** — 실측상
+  표면 킬의 94%가 마을 반경 100~400m 안에서 일어나고 있었다.
+- 앰비언트 최고가 Troll(레벨 9)이라 560m 밖은 보상이 늘지 않는다. 새 상위
+  몬스터가 들어오면 그만큼 프론티어가 밀린다.
 
 ### 대미지 롤 (Damage Roll)
 
@@ -355,7 +392,7 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 ### 몬스터 → 플레이어 공격
 
 1. 클라이언트(몬스터 owner)가 `MonsterAttack { monster_id, target_player_id }` 전송
-2. 서버에서 히트 롤: `roll_attack(monster_attack_bonus, player_guard, monster_damage)`
+2. 서버에서 히트 롤: `roll_attack(monster_attack_bonus + place_attack_bonus, player_guard, monster_damage)`
 3. 결과를 전체 클라이언트에 브로드캐스트 (`MonsterAttackedPlayer`)
 4. 명중 시 플레이어 HP 차감
 5. HP가 0이 되면 `PlayerDead` 브로드캐스트
