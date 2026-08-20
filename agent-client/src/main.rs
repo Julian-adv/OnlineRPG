@@ -553,7 +553,8 @@ always_active = true
         assert!(config.npcs[2].always_active(), "explicit override wins");
     }
 
-    /// A config that never mentions the key still yields a sprinting agent.
+    /// Player-run agents sprint by default; hunger-exempt registry NPCs
+    /// walk unless the config says otherwise.
     #[test]
     fn agents_sprint_unless_the_config_says_otherwise() {
         let config = parse(
@@ -566,10 +567,19 @@ account = "npc_runner"
 [[npcs]]
 account = "npc_walker"
 always_sprint = false
+
+[[npcs]]
+id = "karl"
+
+[[npcs]]
+id = "rica"
+always_sprint = true
 "#,
         );
-        assert!(config.npcs[0].always_sprint, "default");
-        assert!(!config.npcs[1].always_sprint, "explicit override wins");
+        assert!(config.npcs[0].always_sprint(), "default");
+        assert!(!config.npcs[1].always_sprint(), "explicit override wins");
+        assert!(!config.npcs[2].always_sprint(), "registry NPC walks");
+        assert!(config.npcs[3].always_sprint(), "registry override wins");
     }
 
     /// Every registry NPC must find the prompt files the directory convention

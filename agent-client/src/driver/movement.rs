@@ -22,15 +22,14 @@ use onlinerpg_shared::schedule::resolve_active_schedule;
 
 pub(super) const MOVE_SPEED: f32 = onlinerpg_shared::PLAYER_MOVE_SPEED;
 
-/// How long a step takes at the speed the server actually moves us. Pace a
-/// sprint like a walk and every step leaves from a stale position.
-pub(super) fn travel_ms(step_dist: f32, sprinting: bool) -> u64 {
-    let mult = if sprinting {
-        onlinerpg_shared::hunger::SPRINT_MOVE_MULT
-    } else {
-        1.0
-    };
-    ((step_dist / (MOVE_SPEED * mult)) * 1000.0) as u64
+/// How long a step takes at the speed the server actually moves us: the
+/// hunger/debuff move multiplier the server folds into its step budget, times
+/// the sprint multiplier. Pace faster than the server walks and every step
+/// leaves from a stale position.
+pub(super) fn travel_ms(step_dist: f32, sprinting: bool, move_mult: f32) -> u64 {
+    let speed =
+        MOVE_SPEED * move_mult.max(0.01) * onlinerpg_shared::hunger::sprint_move_mult(sprinting);
+    ((step_dist / speed) * 1000.0) as u64
 }
 
 /// Maximum distance per move step (units). Longer segments are subdivided
@@ -147,7 +146,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
             wx,
             wz
         );
-        match execute_move(state, wx, wz, entry.floor_level, None).await {
+        match execute_move(state, wx, wz, entry.floor_level, Some(false)).await {
             MoveResult::Arrived => {}
             MoveResult::Blocked => {
                 warn!("Patrol waypoint {i} blocked — skipping ({wx:.1}, {wz:.1})");
@@ -179,7 +178,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         s.walkable_near(x, z, entry.floor_level)
     };
 
-    let arrived = match execute_move(state, walk_x, walk_z, entry.floor_level, None).await {
+    let arrived = match execute_move(state, walk_x, walk_z, entry.floor_level, Some(false)).await {
         MoveResult::Arrived => true,
         MoveResult::Blocked => {
             // Force-move to schedule position (e.g. cross-floor moves through
@@ -208,18 +207,24 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         // A forced move can span the whole map; legs keep every target under
         // the server's distance cap so none is silently refused.
         let from = s.self_player.as_ref().map_or(target, |p| p.position);
-        let sprinting = s.sprint_allowed(None);
         // All legs go out at once but the server walks them; until then our
         // optimistic position is a destination, not a body, and pose readers
         // (monster brains) must not act on it.
-        s.suppress_pose_for(PlanarDelta::between(&from, &target).dist / MOVE_SPEED);
+        let walk_ms = travel_ms(
+            PlanarDelta::between(&from, &target).dist,
+            false,
+            s.self_move_mult,
+        );
+        s.suppress_pose_for(walk_ms as f32 / 1000.0);
         for (i, leg) in force_move_legs(&from, target).into_iter().enumerate() {
             let cmd = ClientMessage::PlayerMove {
                 position: leg,
                 rotation: rot_rad,
                 floor_level: entry.floor_level as i8,
                 append: i > 0,
-                sprinting,
+                // Catch-up legs are free: forced moves are routine, not asked
+                // for, and must not price the schedule in satiation.
+                sprinting: false,
             };
             if let Err(e) = s.send_command(cmd).await {
                 error!("Failed to send schedule move: {e}");
@@ -392,7 +397,7 @@ async fn walk_waypoints(
                     )
                     .await
                 {
-                    Ok(sprinting) => travel_ms(step_dist, sprinting),
+                    Ok(sprinting) => travel_ms(step_dist, sprinting, s.self_move_mult),
                     Err(e) => {
                         error!("Failed to send move waypoint: {e}");
                         return MoveResult::Error;
@@ -758,15 +763,28 @@ mod tests {
 
     /// Mispaced steps leave from a stale position and get snapped back.
     #[test]
-    fn a_sprinting_step_is_paced_by_the_sprint_speed() {
-        let walk = travel_ms(MAX_STEP_DIST, false);
-        let sprint = travel_ms(MAX_STEP_DIST, true);
+    fn a_step_is_paced_by_the_speed_the_server_moves_us() {
+        let walk = travel_ms(MAX_STEP_DIST, false, 1.0);
+        let sprint = travel_ms(MAX_STEP_DIST, true, 1.0);
         assert_eq!(walk, ((MAX_STEP_DIST / MOVE_SPEED) * 1000.0) as u64);
         assert_eq!(
             sprint,
             (walk as f32 / onlinerpg_shared::hunger::SPRINT_MOVE_MULT) as u64
         );
         assert!(sprint < walk);
+        // A Weak walker is slowed server-side; pacing at full speed would
+        // leave every step from a stale position.
+        let weak = travel_ms(
+            MAX_STEP_DIST,
+            false,
+            onlinerpg_shared::hunger::WEAK_MOVE_MULT,
+        );
+        assert_eq!(
+            weak,
+            ((MAX_STEP_DIST / (MOVE_SPEED * onlinerpg_shared::hunger::WEAK_MOVE_MULT)) * 1000.0)
+                as u64
+        );
+        assert!(weak > walk);
     }
 
     #[test]

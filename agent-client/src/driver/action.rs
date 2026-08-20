@@ -23,7 +23,6 @@ pub(super) enum AgentAction {
         )]
         monster_id: String,
         /// Unset = the agent's `always_sprint` default; false walks instead.
-        #[serde(default)]
         sprint: Option<bool>,
     },
     #[serde(rename = "move")]
@@ -46,7 +45,6 @@ pub(super) enum AgentAction {
         #[serde(alias = "dungeon_depth", alias = "floor", alias = "floor_level")]
         depth: Option<i32>,
         /// Unset = the agent's `always_sprint` default; false walks instead.
-        #[serde(default)]
         sprint: Option<bool>,
     },
     /// Keep following a character: re-approach whenever they move, until the
@@ -55,8 +53,8 @@ pub(super) enum AgentAction {
     Follow {
         #[serde(alias = "player", alias = "name", alias = "character")]
         target: String,
-        /// Unset = the agent's `always_sprint` default; false walks instead.
-        #[serde(default)]
+        /// Unset walks the catch-ups (the target sets the pace anyway);
+        /// true sprints them.
         sprint: Option<bool>,
     },
     #[serde(rename = "respawn")]
@@ -218,7 +216,6 @@ pub(super) enum AgentAction {
         )]
         item: PickupRef,
         /// Unset = the agent's `always_sprint` default; false walks instead.
-        #[serde(default)]
         sprint: Option<bool>,
     },
     /// Sell one or more units of a bag item to a nearby merchant, walking up
@@ -239,6 +236,8 @@ pub(super) enum AgentAction {
         /// when omitted.
         #[serde(default, alias = "amount", alias = "count")]
         qty: Option<Qty>,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        sprint: Option<bool>,
     },
     /// Buy one catalog item from a nearby merchant, walking up to them
     /// first. The server owns catalog, pricing and gold checks.
@@ -254,6 +253,8 @@ pub(super) enum AgentAction {
             alias = "target"
         )]
         merchant: Option<String>,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        sprint: Option<bool>,
     },
     /// Drop one or more units of a bag item on the ground where you stand.
     /// Stricter than the web client: worn gear must be taken off first.
@@ -285,6 +286,8 @@ pub(super) enum AgentAction {
             alias = "target"
         )]
         merchant: Option<String>,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        sprint: Option<bool>,
     },
     /// Smash a breakable dungeon prop (barrel/crate) on the current floor,
     /// walking up to it first. The server validates floor and proximity.
@@ -292,6 +295,8 @@ pub(super) enum AgentAction {
     BreakProp {
         #[serde(alias = "id", alias = "prop", alias = "target")]
         prop_id: u32,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        sprint: Option<bool>,
     },
     /// Open a chest standing in the agent's own room: the nearest one, or the
     /// great chest when `chest` asks for it. The server validates floor,
@@ -301,6 +306,8 @@ pub(super) enum AgentAction {
     OpenChest {
         #[serde(default, alias = "target", alias = "which", alias = "name")]
         chest: Option<String>,
+        /// Unset = the agent's `always_sprint` default; false walks instead.
+        sprint: Option<bool>,
     },
     /// Reroll starting stats. Only meaningful during character creation,
     /// where it is the agent's version of the web client's reroll button.
@@ -362,9 +369,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   {"type": "follow", "target": "PlayerName"}
   Any other action that takes your body over — a move, attack, pickup, chest,
   trade or fishing — stops the follow. Losing them ends it with a
-  [FollowEnded] event. Add "sprint": false to pace yourself behind someone
-  who is walking:
-  {"type": "follow", "target": "PlayerName", "sprint": false}"#,
+  [FollowEnded] event. A follow walks its catch-ups — you are paced by the
+  person you follow anyway; add "sprint": true only to close a big gap fast:
+  {"type": "follow", "target": "PlayerName", "sprint": true}"#,
     },
     ActionSpec {
         names: &["move"],
@@ -389,7 +396,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   You sprint by default whenever you are well fed, which is half again as
   fast as walking. Sprinting burns satiation about 30 times faster than
   walking does, and stops on its own once you are no longer well fed. On a
-  long journey you may prefer to save the food — add "sprint": false to walk:
+  long journey you may prefer to save the food — add "sprint": false to walk.
+  Every action that walks you somewhere (move, attack, pickup, open_chest,
+  break_prop, sell, buy) takes the same "sprint": false:
   {"type": "move", "x": 10.0, "z": -5.0, "sprint": false}
 
 - Go into a dungeon. The world state names each entrance and how far away it
@@ -1299,7 +1308,12 @@ mod tests {
             AgentAction::Move { sprint, .. }
             | AgentAction::Attack { sprint, .. }
             | AgentAction::Pickup { sprint, .. }
-            | AgentAction::Follow { sprint, .. } => sprint,
+            | AgentAction::Follow { sprint, .. }
+            | AgentAction::OpenChest { sprint, .. }
+            | AgentAction::BreakProp { sprint, .. }
+            | AgentAction::Sell { sprint, .. }
+            | AgentAction::Buy { sprint, .. }
+            | AgentAction::Buyback { sprint, .. } => sprint,
             other => panic!("expected a walking action for {json}, got {other:?}"),
         };
 
@@ -1319,6 +1333,26 @@ mod tests {
             (
                 r#"{"actions": [{"type": "follow", "target": "Karl"}]}"#,
                 r#"{"actions": [{"type": "follow", "target": "Karl", "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "open_chest"}]}"#,
+                r#"{"actions": [{"type": "open_chest", "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "break_prop", "target": 7}]}"#,
+                r#"{"actions": [{"type": "break_prop", "target": 7, "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "sell", "item": "apple"}]}"#,
+                r#"{"actions": [{"type": "sell", "item": "apple", "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "buy", "item": "apple"}]}"#,
+                r#"{"actions": [{"type": "buy", "item": "apple", "sprint": false}]}"#,
+            ),
+            (
+                r#"{"actions": [{"type": "buyback", "item": "apple"}]}"#,
+                r#"{"actions": [{"type": "buyback", "item": "apple", "sprint": false}]}"#,
             ),
         ] {
             assert_eq!(sprint_of(bare), None, "{bare}");
@@ -1644,7 +1678,7 @@ mod tests {
                 Some("the big one"),
             ),
         ] {
-            let AgentAction::OpenChest { chest } = parse_single_action(json) else {
+            let AgentAction::OpenChest { chest, .. } = parse_single_action(json) else {
                 panic!("expected OpenChest for {json}");
             };
             assert_eq!(chest.as_deref(), want, "for {json}");
@@ -1675,7 +1709,7 @@ mod tests {
             r#"{"actions": [{"type": "purchase", "item_def_id": "healing_potion", "from": "Rica"}]}"#,
             r#"{"actions": [{"type": "buy_item", "name": "healing_potion", "target": "Rica"}]}"#,
         ] {
-            let AgentAction::Buy { item, merchant } = parse_single_action(json) else {
+            let AgentAction::Buy { item, merchant, .. } = parse_single_action(json) else {
                 panic!("expected Buy for {json}");
             };
             assert_eq!(
@@ -1692,7 +1726,7 @@ mod tests {
             r#"{"actions": [{"type": "buy_back", "item_id": "iron_sword", "npc": "Rica"}]}"#,
             r#"{"actions": [{"type": "repurchase", "name": "iron_sword", "from": "Rica"}]}"#,
         ] {
-            let AgentAction::Buyback { item, merchant } = parse_single_action(json) else {
+            let AgentAction::Buyback { item, merchant, .. } = parse_single_action(json) else {
                 panic!("expected Buyback for {json}");
             };
             assert_eq!(
@@ -1742,7 +1776,7 @@ mod tests {
             r#"{"actions": [{"type": "smash", "id": 3}]}"#,
             r#"{"actions": [{"type": "break", "target": 3}]}"#,
         ] {
-            let AgentAction::BreakProp { prop_id } = parse_single_action(json) else {
+            let AgentAction::BreakProp { prop_id, .. } = parse_single_action(json) else {
                 panic!("expected BreakProp for {json}");
             };
             assert_eq!(prop_id, 3, "for {json}");
@@ -1764,7 +1798,7 @@ mod tests {
             r#"{"actions": [{"type": "break_prop", "target": 3.0}]}"#,
             r#"{"actions": [{"type": "break_prop", "target": "3"}]}"#,
         ] {
-            let AgentAction::BreakProp { prop_id } = parse_single_action(json) else {
+            let AgentAction::BreakProp { prop_id, .. } = parse_single_action(json) else {
                 panic!("expected BreakProp for {json}");
             };
             assert_eq!(prop_id, 3, "for {json}");
@@ -1782,7 +1816,7 @@ mod tests {
         };
         assert_eq!((item.as_str(), merchant), ("healing_potion", None));
 
-        let AgentAction::Buy { item, merchant } =
+        let AgentAction::Buy { item, merchant, .. } =
             parse_single_action(r#"{"actions": [{"type": "buy", "target": "healing_potion"}]}"#)
         else {
             panic!("expected Buy");

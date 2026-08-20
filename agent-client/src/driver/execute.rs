@@ -175,7 +175,12 @@ async fn chest_approach(
 }
 
 /// Walk to a resolved dungeon sighting, reporting either way.
-async fn walk_to_sighting(state: &Arc<Mutex<SharedState>>, approach: Option<Approach>, what: &str) {
+async fn walk_to_sighting(
+    state: &Arc<Mutex<SharedState>>,
+    approach: Option<Approach>,
+    what: &str,
+    sprint: Option<bool>,
+) {
     let Some((pos, floor, range)) = approach else {
         let mut s = state.lock().await;
         s.push_agent_event(format!(
@@ -183,7 +188,7 @@ async fn walk_to_sighting(state: &Arc<Mutex<SharedState>>, approach: Option<Appr
         ));
         return;
     };
-    let outcome = match walk_to_point(state, pos, floor, range, None).await {
+    let outcome = match walk_to_point(state, pos, floor, range, sprint).await {
         ChaseResult::InRange => format!("[Arrived] You stand next to {what}."),
         ChaseResult::Lost(loss) => {
             format!("[MoveFailed] You did not reach {what} — {}.", loss.clause())
@@ -306,7 +311,7 @@ pub(super) async fn handle_response(
     memory_file: &Option<String>,
     favor_file: &Option<String>,
     skip_movement: bool,
-) -> Option<String> {
+) -> Option<(String, Option<bool>)> {
     let agent_resp = match parse_turn_tolerant(response) {
         Ok(r) => r,
         Err(e) => {
@@ -509,7 +514,7 @@ pub(super) async fn handle_response(
                     continue;
                 }
             }
-            last_attack_target = Some(monster_id.clone());
+            last_attack_target = Some((monster_id.clone(), *sprint));
         }
 
         // Haggling: resolve the target player's name to an id and send the
@@ -855,10 +860,11 @@ pub(super) async fn handle_response(
             item,
             merchant,
             qty,
+            sprint,
         } = action
         {
             let Some((merchant_id, merchant_name)) =
-                reach_merchant(state, "SellFailed", merchant.as_deref()).await
+                reach_merchant(state, "SellFailed", merchant.as_deref(), *sprint).await
             else {
                 continue;
             };
@@ -953,9 +959,14 @@ pub(super) async fn handle_response(
         // Buy a catalog item: resolve the merchant, walk up to them, and
         // send the purchase. The server owns catalog, pricing and gold
         // checks and answers with GoldUpdate/InventoryUpdated or TradeError.
-        if let AgentAction::Buy { item, merchant } = action {
+        if let AgentAction::Buy {
+            item,
+            merchant,
+            sprint,
+        } = action
+        {
             let Some((merchant_id, merchant_name)) =
-                reach_merchant(state, "BuyFailed", merchant.as_deref()).await
+                reach_merchant(state, "BuyFailed", merchant.as_deref(), *sprint).await
             else {
                 continue;
             };
@@ -983,9 +994,14 @@ pub(super) async fn handle_response(
 
         // Buy back a unit sold to this merchant this session, at the exact
         // payout recorded server-side. Entry list arrives via BuybackUpdated.
-        if let AgentAction::Buyback { item, merchant } = action {
+        if let AgentAction::Buyback {
+            item,
+            merchant,
+            sprint,
+        } = action
+        {
             let Some((merchant_id, merchant_name)) =
-                reach_merchant(state, "BuybackFailed", merchant.as_deref()).await
+                reach_merchant(state, "BuybackFailed", merchant.as_deref(), *sprint).await
             else {
                 continue;
             };
@@ -1041,7 +1057,7 @@ pub(super) async fn handle_response(
         // and ask the server, which owns the floor, proximity and kind checks.
         // Only a prop we share a room with counts, the way `open_chest` only
         // reaches the chests in sight. Chest props go through that action.
-        if let AgentAction::BreakProp { prop_id } = action {
+        if let AgentAction::BreakProp { prop_id, sprint } = action {
             let sighted = {
                 let s = state.lock().await;
                 s.dungeon_here()
@@ -1069,7 +1085,7 @@ pub(super) async fn handle_response(
                 continue;
             };
             let (pos, floor, range) = approach_beside(&prop.position, prop.approach, floor_level);
-            match walk_to_point(state, pos, floor, range, None).await {
+            match walk_to_point(state, pos, floor, range, *sprint).await {
                 ChaseResult::InRange => {
                     let mut s = state.lock().await;
                     let cmd = onlinerpg_shared::ClientMessage::BreakDungeonProp {
@@ -1103,7 +1119,11 @@ pub(super) async fn handle_response(
         // Open a chest in our own room: cross to it and ask the server. Only a
         // chest we share a room with counts, so this walks what a web player's
         // click walks and never routes to one the agent has not found.
-        if let AgentAction::OpenChest { chest: want } = action {
+        if let AgentAction::OpenChest {
+            chest: want,
+            sprint,
+        } = action
+        {
             let target = {
                 let s = state.lock().await;
                 let sighted = s.chests_in_sight();
@@ -1120,7 +1140,7 @@ pub(super) async fn handle_response(
                 continue;
             };
             let (pos, floor, range) = approach_beside(&chest.position, chest.approach, chest_floor);
-            match walk_to_point(state, pos, floor, range, None).await {
+            match walk_to_point(state, pos, floor, range, *sprint).await {
                 ChaseResult::InRange => {
                     let depth = chest_floor.unsigned_abs();
                     let mut s = state.lock().await;
@@ -1386,15 +1406,18 @@ pub(super) async fn handle_response(
                         state,
                         prop_approach(state, prop_id).await,
                         &format!("prop {prop_id}"),
+                        sprint,
                     )
                     .await;
                 }
                 Some(MoveTarget::Chest { selector }) => {
                     match chest_approach(state, &selector).await {
                         Some((approach, label)) => {
-                            walk_to_sighting(state, Some(approach), label).await;
+                            walk_to_sighting(state, Some(approach), label, sprint).await;
                         }
-                        None => walk_to_sighting(state, None, "the selected chest").await,
+                        None => {
+                            walk_to_sighting(state, None, "the selected chest", sprint).await;
+                        }
                     }
                 }
                 Some(MoveTarget::Dungeon { .. }) => unreachable!("handled above"),
@@ -1543,6 +1566,7 @@ async fn reach_merchant(
     state: &Arc<Mutex<SharedState>>,
     tag: &str,
     merchant: Option<&str>,
+    sprint: Option<bool>,
 ) -> Option<(onlinerpg_shared::PlayerId, String)> {
     let resolved = {
         let mut s = state.lock().await;
@@ -1576,7 +1600,7 @@ async fn reach_merchant(
         id.map(|id| (id, super::prompt::player_name(&s, &id)))
     };
     let (id, name) = resolved?;
-    match approach_player(state, &id, None).await {
+    match approach_player(state, &id, sprint).await {
         ChaseResult::InRange => Some((id, name)),
         ChaseResult::Lost(loss) => {
             let mut s = state.lock().await;

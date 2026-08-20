@@ -35,6 +35,21 @@ pub enum HungerState {
     Weak,
 }
 
+/// The sprint gate, shared by server and agent-client so both sims agree on
+/// whether a step sprints.
+pub fn can_sprint(satiation: u32) -> bool {
+    satiation > NORMAL_MIN
+}
+
+/// A step's sprint speed factor, shared so both sims pace it identically.
+pub fn sprint_move_mult(sprinting: bool) -> f32 {
+    if sprinting {
+        SPRINT_MOVE_MULT
+    } else {
+        1.0
+    }
+}
+
 pub fn hunger_state(satiation: u32) -> HungerState {
     if satiation >= NORMAL_MIN {
         HungerState::Normal

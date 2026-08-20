@@ -96,13 +96,14 @@ pub(super) fn load_attack_cooldown() -> Duration {
 }
 
 /// Execute one combat tick: check if target is alive and in range, chase or attack.
-/// Returns Some(monster_id) to keep targeting, or None if combat ended.
+/// Returns whether to keep targeting; false means combat ended.
 pub(super) async fn tick_combat(
     state: &Arc<Mutex<SharedState>>,
-    monster_id: String,
-) -> Option<String> {
+    monster_id: &str,
+    sprint: Option<bool>,
+) -> bool {
     // Chase until in range (handles monster movement during chase)
-    match chase_monster(state, &monster_id, None).await {
+    match chase_monster(state, monster_id, sprint).await {
         ChaseResult::InRange => {}
         ChaseResult::Lost(reason) => {
             info!("Combat ended: monster {monster_id} lost during chase ({reason:?})");
@@ -122,7 +123,7 @@ pub(super) async fn tick_combat(
                 ),
             };
             s.push_agent_event(note);
-            return None;
+            return false;
         }
         ChaseResult::Error => {
             info!("Combat ended: error during chase of {monster_id}");
@@ -131,17 +132,17 @@ pub(super) async fn tick_combat(
                 "[CombatEnded] You lost {monster_id} — something went wrong on the way. \
                  Decide your next move."
             ));
-            return None;
+            return false;
         }
     }
 
     // Face the monster before attacking (matches web client behavior)
     {
         let mut s = state.lock().await;
-        if let Some(face_cmd) = s.face_monster_command(&monster_id) {
+        if let Some(face_cmd) = s.face_monster_command(monster_id) {
             if let Err(e) = s.send_command(face_cmd).await {
                 error!("Failed to send face-monster move: {e}");
-                return None;
+                return false;
             }
         }
     }
@@ -150,15 +151,15 @@ pub(super) async fn tick_combat(
     {
         let mut s = state.lock().await;
         let cmd = ClientMessage::PlayerAttack {
-            monster_id: monster_id.clone(),
+            monster_id: monster_id.to_string(),
         };
         if let Err(e) = s.send_command(cmd).await {
             error!("Failed to send attack: {e}");
-            return None;
+            return false;
         }
     }
 
-    Some(monster_id)
+    true
 }
 
 pub(super) enum ChaseResult {
@@ -330,13 +331,20 @@ pub(super) async fn approach_player(
 
 /// The follow task's approach: the same walk, but its steps are background —
 /// the task outlives the turn, and steps landing mid-settle must not pass
-/// for the running action's result.
+/// for the running action's result. Unset sprint walks: the target sets the
+/// pace, so sprinting the catch-ups buys no ground for the food.
 pub(super) async fn follow_player(
     state: &Arc<Mutex<SharedState>>,
     player_id: &PlayerId,
     sprint: Option<bool>,
 ) -> ChaseResult {
-    chase_target(state, &ChaseTarget::Player(player_id), true, sprint).await
+    chase_target(
+        state,
+        &ChaseTarget::Player(player_id),
+        true,
+        sprint.or(Some(false)),
+    )
+    .await
 }
 
 /// Walk to a ground item and stop inside pickup range. Same loop as the
@@ -476,8 +484,9 @@ async fn chase_target(
 
         // Step toward next waypoint, subdividing long segments so the chase
         // walks at MOVE_SPEED. Fall back to a direct step toward the target
-        // if A* returned no path.
-        let (step_dist, sprinting) = if path_index < path_waypoints.len() {
+        // if A* returned no path. Each branch yields how long the step takes
+        // the server; no-step branches idle a tick.
+        let step_ms = if path_index < path_waypoints.len() {
             let wp = path_waypoints[path_index].clone();
             let mut s = state.lock().await;
             let player = match s.self_player.as_ref() {
@@ -488,7 +497,7 @@ async fn chase_target(
 
             if to_wp.dist < 0.1 {
                 path_index += 1;
-                (0.0, false)
+                CHASE_IDLE_TICK_MS
             } else {
                 let (step_x, step_z, sd) = if to_wp.dist <= MAX_STEP_DIST {
                     path_index += 1;
@@ -512,7 +521,7 @@ async fn chase_target(
                     )
                     .await
                 {
-                    Ok(sprinting) => (sd, sprinting),
+                    Ok(sprinting) => travel_ms(sd, sprinting, s.self_move_mult),
                     Err(e) => {
                         error!("Failed to send chase move: {e}");
                         return ChaseResult::Error;
@@ -521,38 +530,35 @@ async fn chase_target(
             }
         } else {
             let mut s = state.lock().await;
-            let sprinting = s.sprint_allowed(sprint);
-            match compute_step_toward(&s, target, sprinting) {
-                Some((cmd, sd)) => {
-                    if let Err(e) = s.send_flagged_command(cmd, background).await {
-                        error!("Failed to send chase move: {e}");
-                        return ChaseResult::Error;
+            match compute_step_toward(&s, target) {
+                Some((step_x, step_z, rotation, sd)) => {
+                    let floor = s.passability_floor();
+                    match s
+                        .send_step(step_x, step_z, floor, rotation, background, sprint)
+                        .await
+                    {
+                        Ok(sprinting) => travel_ms(sd, sprinting, s.self_move_mult),
+                        Err(e) => {
+                            error!("Failed to send chase move: {e}");
+                            return ChaseResult::Error;
+                        }
                     }
-                    (sd, sprinting)
                 }
-                None => (0.0, false),
+                None => CHASE_IDLE_TICK_MS,
             }
         };
 
-        let step_ms = if step_dist > 0.0 {
-            travel_ms(step_dist, sprinting)
-        } else {
-            CHASE_IDLE_TICK_MS
-        };
         tokio::time::sleep(Duration::from_millis(step_ms.max(50))).await;
     }
 }
 
-/// Return a single MAX_STEP_DIST-limited move toward the target, plus the
-/// step's distance for sleep timing. Used as the fall-through when A* can't
-/// return a path (e.g. target on un-pathable terrain) so the chase can still
-/// inch the player closer at walk speed. Steps stop short of the target by
-/// the tuning's `step_stop_dist`.
-fn compute_step_toward(
-    state: &SharedState,
-    target: &ChaseTarget,
-    sprinting: bool,
-) -> Option<(ClientMessage, f32)> {
+/// A single MAX_STEP_DIST-limited step target toward the chase target —
+/// (x, z, rotation, step distance) — for the fall-through when A* can't
+/// return a path (e.g. target on un-pathable terrain), so the chase can
+/// still inch the player closer. The caller sends it through `send_step`,
+/// which poses and floor-stamps it. Steps stop short of the target by the
+/// tuning's `step_stop_dist`.
+fn compute_step_toward(state: &SharedState, target: &ChaseTarget) -> Option<(f32, f32, f32, f32)> {
     let target_pos = target.position(state)?;
     let self_player = state.self_player.as_ref()?;
 
@@ -565,18 +571,12 @@ fn compute_step_toward(
     let target_dist = to_target.dist - stop_dist;
     let step_dist = target_dist.min(MAX_STEP_DIST);
     let ratio = step_dist / to_target.dist;
-    let cmd = ClientMessage::PlayerMove {
-        position: onlinerpg_shared::Position {
-            x: self_player.position.x + to_target.dx * ratio,
-            y: target_pos.y,
-            z: self_player.position.z + to_target.dz * ratio,
-        },
-        rotation: to_target.rotation(),
-        floor_level: 0,
-        append: false,
-        sprinting,
-    };
-    Some((cmd, step_dist))
+    Some((
+        self_player.position.x + to_target.dx * ratio,
+        self_player.position.z + to_target.dz * ratio,
+        to_target.rotation(),
+        step_dist,
+    ))
 }
 
 #[cfg(test)]

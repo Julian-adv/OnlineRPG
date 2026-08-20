@@ -655,9 +655,13 @@ impl SharedState {
                 self.self_gold = Some(*gold);
             }
             ServerMessage::HungerUpdate {
-                satiation, state, ..
+                satiation,
+                state,
+                move_mult,
+                ..
             } => {
                 self.self_hunger = Some((*satiation, *state));
+                self.self_move_mult = *move_mult;
             }
             ServerMessage::DebuffUpdate { ref debuffs } => {
                 self.self_debuffs = debuffs.iter().map(|d| d.id.clone()).collect();

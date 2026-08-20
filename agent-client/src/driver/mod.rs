@@ -199,7 +199,7 @@ pub async fn llm_driver(
         Duration::from_secs(rand::thread_rng().gen_range(0..secs))
     };
     let mut last_prompt_at = Instant::now() - idle_stagger;
-    let mut attack_target: Option<String> = None;
+    let mut attack_target: Option<(String, Option<bool>)> = None;
     let mut last_attack_at = Instant::now() - attack_cooldown;
     let mut llm_in_flight: Option<tokio::task::JoinHandle<anyhow::Result<String>>> = None;
     let mut prompt_pending_since: Option<Instant> = None;
@@ -395,9 +395,13 @@ pub async fn llm_driver(
         }
 
         // === Combat tick ===
-        if attack_target.is_some() && last_attack_at.elapsed() >= attack_cooldown {
-            attack_target = tick_combat(&state, attack_target.unwrap()).await;
-            last_attack_at = Instant::now();
+        if let Some((monster_id, sprint)) = attack_target.clone() {
+            if last_attack_at.elapsed() >= attack_cooldown {
+                if !tick_combat(&state, &monster_id, sprint).await {
+                    attack_target = None;
+                }
+                last_attack_at = Instant::now();
+            }
         }
 
         // === Check schedule transitions ===

@@ -555,10 +555,13 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
         ServerMessage::HungerUpdate {
             satiation, state, ..
         } => {
-            use onlinerpg_shared::hunger::HungerState;
+            use onlinerpg_shared::hunger::{can_sprint, HungerState};
             let line = match state {
-                HungerState::Normal => format!(
+                HungerState::Normal if can_sprint(*satiation) => format!(
                     "[Hunger] You are adequately fed ({satiation}/1000) and can sprint."
+                ),
+                HungerState::Normal => format!(
+                    "[Hunger] You are adequately fed ({satiation}/1000) but too low to sprint — your moves walk until you eat."
                 ),
                 HungerState::Hungry => format!(
                     "[Hunger] You are getting hungry ({satiation}/1000): sprinting is unavailable and natural healing is slower."

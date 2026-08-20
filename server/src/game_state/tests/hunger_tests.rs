@@ -301,6 +301,31 @@ async fn activity_drain_announces_only_band_transitions() {
     );
 }
 
+/// The sprint gate (`can_sprint`) flips inside the Normal band; clients
+/// mirror it, so the flip must be announced even though the band holds.
+#[tokio::test]
+async fn a_walking_drain_that_closes_the_sprint_gate_announces_it() {
+    let game_state = make_test_game_state("gate_flip");
+    let (id, mut rx) = make_eater(&game_state, "edge_walker", 302).await;
+    drain(&mut rx);
+
+    game_state
+        .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+        .await;
+    assert!(
+        last_hunger_update(&drain(&mut rx)).is_none(),
+        "302 → 301 keeps the gate open, stays quiet"
+    );
+
+    game_state
+        .record_movement_activity(&[(id, MOVEMENT_DRAIN_INTERVAL_SECS, false)])
+        .await;
+    let (satiation, state, _) =
+        last_hunger_update(&drain(&mut rx)).expect("301 → 300 closes the sprint gate");
+    assert_eq!(satiation, 300);
+    assert_eq!(state, HungerState::Normal, "the band did not move");
+}
+
 #[tokio::test]
 async fn sprint_stops_at_300_without_draining_into_weakness() {
     let game_state = make_test_game_state("sprint_floor");

@@ -8,9 +8,9 @@
 //! transitions and eating, never per tick.
 
 use onlinerpg_shared::hunger::{
-    effective_multipliers, hunger_state, Campfire, CAMPFIRE_GRILL_RADIUS, FOOD_REGEN_DURATION_SECS,
-    GRILL_CAST_MS, MOVEMENT_DRAIN_INTERVAL_SECS, NORMAL_MIN, SPRINT_DRAIN_INTERVAL_SECS,
-    SUSTENANCE_DRAIN_MULT,
+    can_sprint, effective_multipliers, hunger_state, Campfire, CAMPFIRE_GRILL_RADIUS,
+    FOOD_REGEN_DURATION_SECS, GRILL_CAST_MS, MOVEMENT_DRAIN_INTERVAL_SECS, NORMAL_MIN,
+    SPRINT_DRAIN_INTERVAL_SECS, SUSTENANCE_DRAIN_MULT,
 };
 use onlinerpg_shared::inventory::PlayerInventory;
 use onlinerpg_shared::{PlayerId, Position, ServerMessage};
@@ -138,7 +138,7 @@ impl super::GameState {
             .filter_map(|pid| {
                 let d = hunger.get(pid)?;
                 let (m, _, _) = effective_multipliers(d.satiation, d.debuff_mults(now));
-                let sprint_allowed = d.satiation > NORMAL_MIN;
+                let sprint_allowed = can_sprint(d.satiation);
                 (m != 1.0 || !sprint_allowed).then_some((*pid, (m, sprint_allowed)))
             })
             .collect()
@@ -165,7 +165,7 @@ impl super::GameState {
         let hunger = self.hunger.read().await;
         hunger
             .get(player_id)
-            .is_some_and(|d| d.satiation > NORMAL_MIN)
+            .is_some_and(|d| can_sprint(d.satiation))
     }
 
     /// Weak and `blocksRegen`-debuffed players never regen; Hungry players
@@ -224,7 +224,8 @@ impl super::GameState {
                 let Some(data) = hunger.get_mut(pid) else {
                     continue;
                 };
-                let old_state = hunger_state(data.satiation);
+                let old_satiation = data.satiation;
+                let old_state = hunger_state(old_satiation);
                 let drained_seconds =
                     active_seconds.max(0.0) * data.debuff_drain_mult(now) * data.gear_drain_mult;
 
@@ -232,7 +233,7 @@ impl super::GameState {
                 let movement_points =
                     take_points(&mut data.movement_seconds, MOVEMENT_DRAIN_INTERVAL_SECS);
 
-                if *sprinting && data.satiation > NORMAL_MIN {
+                if *sprinting && can_sprint(data.satiation) {
                     data.sprint_seconds += drained_seconds;
                 }
                 // Sprint drain floors at the Normal minimum: sprinting alone
@@ -244,8 +245,11 @@ impl super::GameState {
                 data.satiation = data.satiation.saturating_sub(movement_points);
 
                 let new_state = hunger_state(data.satiation);
-                let sprint_depleted = *sprinting && data.satiation == NORMAL_MIN;
-                if old_state != new_state || sprint_depleted {
+                // A sprint-gate flip inside the Normal band (satiation
+                // reaching exactly NORMAL_MIN) is invisible to the band check
+                // but changes whether steps sprint — clients mirror the gate.
+                if old_state != new_state || can_sprint(old_satiation) != can_sprint(data.satiation)
+                {
                     updates.push((*pid, data.hunger_msg(now)));
                     dirty.push(*pid);
                 }

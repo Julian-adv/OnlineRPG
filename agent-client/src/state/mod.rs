@@ -149,6 +149,10 @@ pub struct SharedState {
     /// Our own hunger (satiation, band) from `HungerUpdate`; stays None for
     /// exempt NPCs.
     pub self_hunger: Option<(u32, onlinerpg_shared::hunger::HungerState)>,
+    /// Our effective move multiplier from `HungerUpdate` (band x debuffs);
+    /// 1.0 until one arrives. The server folds it into its step budget, so
+    /// walks are paced by it too.
+    pub self_move_mult: f32,
     /// Our own active debuff ids from `DebuffUpdate` (doc/DEBUFF.md).
     pub self_debuffs: Vec<String>,
     /// Burning campfires in our AOI, for the grill-your-catch decision.
@@ -339,6 +343,7 @@ impl SharedState {
             self_player: None,
             self_gold: None,
             self_hunger: None,
+            self_move_mult: 1.0,
             self_debuffs: Vec::new(),
             campfires: HashMap::new(),
             stalls: HashMap::new(),

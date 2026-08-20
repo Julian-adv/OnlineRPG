@@ -48,9 +48,11 @@ activity_window_secs = 30                   # How long after last activity to st
 # and an NPC nobody can see has no one to act for. Set per NPC to override.
 # always_active = true
 
-# Sprint on every walk while well fed (default). Off walks everywhere, which
-# costs far less satiation. Individual actions can still opt out with
-# "sprint": false.
+# Sprint on every walk while well fed. Defaults to true for the agent you run
+# yourself; registry NPCs (`id = "..."`) are hunger-exempt and default to
+# false so the whole town does not run everywhere for free. Walking actions
+# can opt per action with "sprint": false / true; schedule walks and follow
+# catch-ups always walk.
 # always_sprint = true
 
 # LLM Scheduler: controls concurrent LLM calls across all NPCs

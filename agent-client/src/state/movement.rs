@@ -279,13 +279,13 @@ impl SharedState {
     }
 
     /// The action's opt-out over `always_sprint`, then the server's own hunger
-    /// gate (`satiation > NORMAL_MIN`) so both sims agree on our speed. With no
+    /// gate (shared `can_sprint`) so both sims agree on our speed. With no
     /// hunger data yet, let the server judge.
     pub fn sprint_allowed(&self, requested: Option<bool>) -> bool {
         requested.unwrap_or(self.always_sprint)
             && self
                 .self_hunger
-                .is_none_or(|(satiation, _)| satiation > onlinerpg_shared::hunger::NORMAL_MIN)
+                .is_none_or(|(satiation, _)| onlinerpg_shared::hunger::can_sprint(satiation))
     }
 
     /// Send one movement step toward (x, z) on passability floor `floor`,

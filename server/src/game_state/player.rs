@@ -1118,12 +1118,8 @@ impl super::GameState {
                 let sprinting = waypoints
                     .front()
                     .is_some_and(|intent| intent.sprinting && sprint_allowed);
-                let sprint_mult = if sprinting {
-                    onlinerpg_shared::hunger::SPRINT_MOVE_MULT
-                } else {
-                    1.0
-                };
-                let max_step = base_step * hunger_mult * sprint_mult;
+                let max_step =
+                    base_step * hunger_mult * onlinerpg_shared::hunger::sprint_move_mult(sprinting);
                 let old_position = player.position;
                 let old_floor = player.floor_level;
                 let old_rotation = player.rotation;
