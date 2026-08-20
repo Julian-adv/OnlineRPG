@@ -1,13 +1,50 @@
+<script lang="ts" module>
+  import * as THREE from 'three'
+  import type { BadgeStyle } from '../utils/textBadge'
+
+  const BADGE_FONT_PX = 64
+  const QTY_BADGE_LIFT = 0.12
+  const QTY_STYLE: BadgeStyle = {
+    id: 'qty',
+    fontPx: BADGE_FONT_PX,
+    pixelsPerUnit: 320,
+    bold: true,
+    color: '#ffe9a8',
+    outlineColor: 'rgba(0,0,0,0.85)',
+    outlineWidth: BADGE_FONT_PX * 0.16,
+  }
+  // Matches the player nametag (TextLabel at fontSize 0.3, outlineWidth 7),
+  // a notch smaller at 0.22 world units per em.
+  const NAME_STYLE: BadgeStyle = {
+    id: 'name',
+    fontPx: BADGE_FONT_PX,
+    pixelsPerUnit: 288,
+    bold: false,
+    color: '#ffffff',
+    outlineColor: '#000000',
+    outlineWidth: 6,
+  }
+  const NAME_GAP = 0.06
+  const UP = new THREE.Vector3(0, 1, 0)
+  const nameAnchor = new THREE.Vector3()
+  // The label floats above the item purely as feedback: raycasting it would
+  // make it its own hover target, keeping the hover alive under the cursor.
+  const NO_RAYCAST = () => {}
+</script>
+
 <script lang="ts">
   import { T } from '@threlte/core'
   import { onDestroy } from 'svelte'
-  import * as THREE from 'three'
   import { getItemDef } from '../data/itemDefs'
   import { getWeaponModelPath } from '../utils/modelPaths'
   import { loadGLB } from '../utils/gltfCache'
   import { loadIconTexture } from '../utils/iconTextureCache'
   import { createRng } from '../utils/simplex-noise'
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
+  import { hoveredGroundItemId } from '../stores/gameStore'
+  import { billboardScale } from '../utils/billboardScale'
+  import { makeTextBadge } from '../utils/textBadge'
+  import { itemDisplayName } from '../data/itemDefs'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import { entityGroundY } from '../managers/entity-ground'
   import { playPropSound } from '../managers/sfxManager'
@@ -21,6 +58,8 @@
     animationTimeMs?: number
     heightManager?: TerrainHeightManager
     heightRevision?: number
+    /** Only needed for the hover label's zoom falloff. */
+    camera?: THREE.Camera
   }
 
   let {
@@ -28,11 +67,11 @@
     animationTimeMs = 0,
     heightManager,
     heightRevision = 0,
+    camera,
   }: Props = $props()
 
   const def = $derived(getItemDef(data.itemDefId))
   const label = $derived(def?.name ?? data.itemDefId)
-  const UP = new THREE.Vector3(0, 1, 0)
   const TERRAIN_NORMAL_SAMPLE_DISTANCE = 0.75
   const MAX_TERRAIN_Y_DELTA_FOR_TILT = 0.75
 
@@ -291,59 +330,14 @@
     def?.worldModel || def?.icon ? null : makeNameTexture(label)
   )
 
-  // Pile badge ("x12"): outlined text on a canvas cut to fit the glyphs, so
-  // it stays sharp once scaled down to item size.
-  const QTY_FONT_PX = 64
-  const QTY_PIXELS_PER_UNIT = 320
-  const QTY_BADGE_LIFT = 0.12
-
-  function makeQuantityTexture(text: string): {
-    texture: THREE.CanvasTexture
-    width: number
-    height: number
-  } {
-    const font = `bold ${QTY_FONT_PX}px sans-serif`
-    const outline = QTY_FONT_PX * 0.16
-    const pad = Math.ceil(outline)
-    const c = document.createElement('canvas')
-    const ctx = c.getContext('2d')!
-    ctx.font = font
-    c.width = Math.ceil(ctx.measureText(text).width) + pad * 2
-    c.height = Math.ceil(QTY_FONT_PX * 1.25) + pad * 2
-    // Resizing the canvas reset the context state, font included.
-    ctx.font = font
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.lineJoin = 'round'
-    ctx.strokeStyle = 'rgba(0,0,0,0.85)'
-    ctx.lineWidth = outline
-    ctx.strokeText(text, c.width / 2, c.height / 2)
-    ctx.fillStyle = '#ffe9a8'
-    ctx.fillText(text, c.width / 2, c.height / 2)
-
-    const texture = new THREE.CanvasTexture(c)
-    texture.minFilter = THREE.LinearFilter
-    texture.magFilter = THREE.LinearFilter
-    texture.colorSpace = THREE.SRGBColorSpace
-    return {
-      texture,
-      width: c.width / QTY_PIXELS_PER_UNIT,
-      height: c.height / QTY_PIXELS_PER_UNIT,
-    }
-  }
-
   // Keyed on the text, not `data`, so the manager's copy-on-write item
   // replacements (in-hand, spawn-animation clear) don't rebuild the texture.
   const qtyText = $derived(data.quantity > 1 ? `x${data.quantity}` : null)
-  const qtyBadge = $derived(qtyText ? makeQuantityTexture(qtyText) : null)
+  const qtyBadge = $derived(qtyText ? makeTextBadge(qtyText, QTY_STYLE) : null)
   // Sits above the model's top, so a spear's badge clears the spear.
   const qtyBadgeY = $derived(
     (worldModelBox ? worldModelBox.max.y : 0.3) + QTY_BADGE_LIFT
   )
-  $effect(() => {
-    const badge = qtyBadge
-    return () => badge?.texture.dispose()
-  })
 
   // Icon billboard for items with no world model (fish, jewellery, armor):
   // the inventory icon floats over the spot instead of a placeholder box.
@@ -372,6 +366,37 @@
   // billboard, else the placeholder box (also shown while either loads).
   const displayMode = $derived(
     worldModelScene ? 'model' : iconTexture ? 'icon' : 'box'
+  )
+
+  // Hover name label. The placeholder box already carries a permanent name
+  // sprite, so it is the one mode that skips this.
+  const hoveredName = $derived.by(() => {
+    if ($hoveredGroundItemId !== data.instanceId) return null
+    if (data.inHand || displayMode === 'box') return null
+    return itemDisplayName(data.itemDefId, data.enchant)
+  })
+  const nameBadge = $derived(
+    hoveredName ? makeTextBadge(hoveredName, NAME_STYLE) : null
+  )
+  // Same zoom falloff the nametags use, so the label holds a steady on-screen
+  // size. Read only while hovering, so resting items never recompute it.
+  const nameScale = $derived.by(() => {
+    void animationTimeMs
+    if (!camera) return 1
+    return billboardScale(
+      camera.position.distanceTo(
+        nameAnchor.set(displayX, displayY + qtyBadgeY, displayZ)
+      )
+    )
+  })
+  // Stacks above the count badge when a pile carries both.
+  const nameBadgeY = $derived(
+    qtyBadge && nameBadge
+      ? qtyBadgeY +
+          qtyBadge.height / 2 +
+          (nameBadge.height * nameScale) / 2 +
+          NAME_GAP
+      : qtyBadgeY
   )
 
   onDestroy(() => {
@@ -614,6 +639,23 @@
         map={qtyBadge.texture}
         transparent={true}
         depthWrite={false}
+      />
+    </T.Sprite>
+  {/if}
+
+  {#if nameBadge}
+    <!-- Hover name: billboards at the root group, above the count badge. -->
+    <T.Sprite
+      position.y={nameBadgeY}
+      scale={[nameBadge.width * nameScale, nameBadge.height * nameScale, 1]}
+      renderOrder={4}
+      raycast={NO_RAYCAST}
+    >
+      <T.SpriteMaterial
+        map={nameBadge.texture}
+        transparent={true}
+        depthWrite={false}
+        depthTest={false}
       />
     </T.Sprite>
   {/if}

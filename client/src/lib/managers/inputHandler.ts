@@ -160,11 +160,11 @@ export interface RaycastContext {
   waterSurfaceAt?: (x: number, z: number) => number
 }
 
-/** Result of hovering a placed object that carries display text (e.g. signpost). */
-export interface HoverText {
-  position: Position
-  text: string
-}
+/** What the cursor is over: a placed object carrying display text (e.g. a
+ *  signpost) or a ground item. */
+export type HoverTarget =
+  | { kind: 'text'; position: Position; text: string }
+  | { kind: 'groundItem'; instanceId: number }
 
 class InputHandler {
   private keysPressed = new Set<string>()
@@ -629,43 +629,50 @@ class InputHandler {
   }
 
   /**
-   * Raycast the pointer against the placed-object meshes only and return the
-   * display text of the first object that carries one (set on userData.objectText).
-   * Cheap enough to run on pointermove: it intersects just the object overlay
-   * group, not the whole scene. Returns null when nothing texted is under the cursor.
+   * Raycast the pointer against the placed-object and ground-item meshes only,
+   * returning what the frontmost hit belongs to: an object's display text
+   * (userData.objectText) or a ground item (userData.groundItemId).
+   * Cheap enough to run on pointermove: it intersects those two groups, not
+   * the whole scene. Returns null when the cursor is over neither.
    */
   processHover(
     event: MouseEvent,
     camera: THREE.Camera,
-    objectMeshes: THREE.Object3D[]
-  ): HoverText | null {
-    if (objectMeshes.length === 0) return null
+    objectMeshes: THREE.Object3D[],
+    groundItemMeshes: THREE.Object3D[]
+  ): HoverTarget | null {
+    const targets = [...objectMeshes, ...groundItemMeshes]
+    if (targets.length === 0) return null
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
     this._hoverNDC.set(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
     )
     this._hoverRaycaster.setFromCamera(this._hoverNDC, camera)
-    const hits = this._hoverRaycaster.intersectObjects(objectMeshes, true)
+    const hits = this._hoverRaycaster.intersectObjects(targets, true)
     if (hits.length === 0) return null
 
-    let obj: THREE.Object3D | null = hits[0].object
-    while (obj) {
-      const text = obj.userData?.objectText
-      if (typeof text === 'string' && text.length > 0) {
-        // World position (robust if the overlay group is ever transformed);
-        // equals obj.position today since the group sits at the scene root.
-        obj.getWorldPosition(this._hoverWorldPos)
-        return {
-          position: {
-            x: this._hoverWorldPos.x,
-            y: this._hoverWorldPos.y,
-            z: this._hoverWorldPos.z,
-          },
-          text,
-        }
+    const item = findAncestorWithUserData(hits[0].object, 'groundItemId')
+    if (item) {
+      return {
+        kind: 'groundItem',
+        instanceId: item.userData.groundItemId as number,
       }
-      obj = obj.parent
+    }
+    const texted = findAncestorWithUserData(hits[0].object, 'objectText')
+    if (texted && texted.userData.objectText !== '') {
+      // World position (robust if the overlay group is ever transformed);
+      // equals obj.position today since the group sits at the scene root.
+      texted.getWorldPosition(this._hoverWorldPos)
+      return {
+        kind: 'text',
+        position: {
+          x: this._hoverWorldPos.x,
+          y: this._hoverWorldPos.y,
+          z: this._hoverWorldPos.z,
+        },
+        text: texted.userData.objectText as string,
+      }
     }
     return null
   }

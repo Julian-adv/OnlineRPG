@@ -1,7 +1,8 @@
-import { writable } from 'svelte/store'
+import { derived, writable } from 'svelte/store'
 import { SvelteMap } from 'svelte/reactivity'
 import type { Vector3 } from 'three'
 import type { CharacterClass, Gender } from '../network/networkTypes'
+import type { HoverTarget } from '../managers/inputHandler'
 import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
@@ -99,15 +100,22 @@ const initialGameState: GameState = {
 
 export const gameStore = writable<GameState>(initialGameState)
 
-/** World-space anchor + text of the placed object (e.g. signpost) currently
- *  under the cursor, or null when none. Drives the hover speech bubble. */
-export interface HoveredSignpost {
-  x: number
-  y: number
-  z: number
-  text: string
-}
-export const hoveredSignpost = writable<HoveredSignpost | null>(null)
+/** What the cursor is over, or null when it is over neither a texted object
+ *  nor a ground item. Single source of truth: the two hover overlays read the
+ *  variant they render, so they can never both be showing. */
+export const hoverTarget = writable<HoverTarget | null>(null)
+
+/** Placed object (e.g. signpost) under the cursor. Drives the speech bubble. */
+export const hoveredSignpost = derived(hoverTarget, (target) =>
+  target?.kind === 'text' ? target : null
+)
+
+/** Ground item under the cursor. Every ground item subscribes, so this is
+ *  derived to a plain id — a number the store dedupes, rather than an object
+ *  that would wake all of them on any hover change. */
+export const hoveredGroundItemId = derived(hoverTarget, (target) =>
+  target?.kind === 'groundItem' ? target.instanceId : null
+)
 
 /** Set from JoinSuccess; unlocks debug/cheat UI (server re-validates). */
 export const isAdminUser = writable(false)

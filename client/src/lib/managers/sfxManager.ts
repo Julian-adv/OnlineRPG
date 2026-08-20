@@ -24,7 +24,7 @@ const FISHING_SOUNDS = {
 export type FishingSound = keyof typeof FISHING_SOUNDS
 
 const PROP_SOUNDS = {
-  break: { url: '/sounds/crate-break.ogg', volume: SWORD_HIT_VOLUME, pool: 2 },
+  break: { url: '/sounds/crate-break.ogg', volume: 0.4, pool: 2 },
   chestOpen: { url: '/sounds/chest-open.ogg', volume: 0.5, pool: 2 },
   coinSpill: { url: '/sounds/coin-spill.ogg', volume: 0.5, pool: 2 },
 } as const

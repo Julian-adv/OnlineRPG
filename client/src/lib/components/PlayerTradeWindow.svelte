@@ -1,7 +1,7 @@
 <script lang="ts">
   import { networkManager } from '../network/socket'
   import { inventoryStore, playerGold } from '../stores/inventoryStore'
-  import { getItemDef } from '../data/itemDefs'
+  import { getItemDef, itemDisplayName } from '../data/itemDefs'
   import { itemTooltip } from '../actions/itemTooltip'
   import { mountOverlay } from '../stores/overlayStack'
   import {
@@ -52,10 +52,7 @@
   )
 
   function displayName(entry: PlayerTradeItem): string {
-    const def = getItemDef(entry.item_def_id)
-    const name = def?.name ?? entry.item_def_id
-    // Enchant belongs in the name, not a tooltip: nobody hovers mid-trade.
-    return entry.enchant !== 0 ? `+${entry.enchant} ${name}` : name
+    return itemDisplayName(entry.item_def_id, entry.enchant)
   }
 
   /** Every request the player makes retires the last error: an update from
@@ -268,8 +265,7 @@
                   draggable="false"
                 />
                 <span class="item-name">
-                  {item.enchant !== 0 ? `+${item.enchant} ` : ''}{def?.name ??
-                    item.item_def_id}
+                  {itemDisplayName(item.item_def_id, item.enchant)}
                 </span>
                 <span class="qty">{free}/{item.quantity}</span>
               </button>

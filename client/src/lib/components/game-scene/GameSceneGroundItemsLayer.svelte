@@ -8,9 +8,10 @@
 
   interface Props {
     heightManager?: TerrainHeightManager
+    camera?: THREE.Camera
   }
 
-  let { heightManager }: Props = $props()
+  let { heightManager, camera }: Props = $props()
 
   let animationTimeMs = $state(nowMs())
   let group = $state<THREE.Group | undefined>(undefined)
@@ -47,6 +48,12 @@
 
 <T.Group bind:ref={group}>
   {#each itemEntries as [id, data] (id)}
-    <GroundItem {data} {animationTimeMs} {heightManager} {heightRevision} />
+    <GroundItem
+      {data}
+      {animationTimeMs}
+      {heightManager}
+      {heightRevision}
+      {camera}
+    />
   {/each}
 </T.Group>

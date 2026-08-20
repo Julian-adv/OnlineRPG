@@ -6,6 +6,7 @@ export interface GroundItemData {
   instanceId: number
   itemDefId: string
   quantity: number
+  enchant: number
   position: { x: number; y: number; z: number }
   floorLevel: number
   inHand?: boolean
@@ -103,6 +104,7 @@ class GroundItemManager {
       instanceId: item.instance_id,
       itemDefId: item.item_def_id,
       quantity: item.quantity,
+      enchant: item.enchant,
       position: { ...item.position },
       floorLevel: item.floor_level,
       restingRotationY,

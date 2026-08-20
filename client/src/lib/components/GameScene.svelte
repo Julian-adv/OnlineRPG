@@ -212,9 +212,9 @@
   let signpostBubblePos = $derived(
     $hoveredSignpost
       ? new THREE.Vector3(
-          $hoveredSignpost.x,
-          $hoveredSignpost.y,
-          $hoveredSignpost.z
+          $hoveredSignpost.position.x,
+          $hoveredSignpost.position.y,
+          $hoveredSignpost.position.z
         )
       : new THREE.Vector3()
   )
@@ -1239,6 +1239,7 @@
   <GameSceneGroundItemsLayer
     bind:this={groundItemsLayerRef}
     heightManager={terrainHeightManager}
+    {camera}
   />
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />

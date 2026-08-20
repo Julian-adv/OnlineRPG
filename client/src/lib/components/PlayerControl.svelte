@@ -2,11 +2,7 @@
   import { onMount } from 'svelte'
   import { useThrelte } from '@threlte/core'
   import * as THREE from 'three'
-  import {
-    gameStore,
-    hoveredSignpost,
-    type LocalPlayer,
-  } from '../stores/gameStore'
+  import { gameStore, hoverTarget, type LocalPlayer } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
   import type { PositionCorrection } from '../network/networkTypes'
   import { monsterManager } from '../managers/monsterManager'
@@ -1567,24 +1563,34 @@
   let hoverTrailing: ReturnType<typeof setTimeout> | null = null
   let pendingHoverEvent: MouseEvent | null = null
 
+  // An item being picked up is hidden through its parent's `visible`, which
+  // raycasts ignore — so a hit on one that is gone or already in hand is dropped.
+  function isHoverableItem(instanceId: number): boolean {
+    const item = groundItemManager.items.get(instanceId)
+    return !!item && !item.inHand
+  }
+
   function runHover(event: MouseEvent) {
     lastHoverRaycast = performance.now()
-    const hit = inputHandler.processHover(event, camera, objectMeshes)
-    const key = hit
-      ? `${hit.text}@${hit.position.x.toFixed(1)},${hit.position.z.toFixed(1)}`
-      : null
+    const hit = inputHandler.processHover(
+      event,
+      camera,
+      objectMeshes,
+      groundItemMeshes
+    )
+    const target =
+      hit?.kind === 'groundItem' && !isHoverableItem(hit.instanceId)
+        ? null
+        : hit
+    const key =
+      target?.kind === 'groundItem'
+        ? `item:${target.instanceId}`
+        : target
+          ? `text:${target.text}@${target.position.x.toFixed(1)},${target.position.z.toFixed(1)}`
+          : null
     if (key === lastHoverKey) return
     lastHoverKey = key
-    hoveredSignpost.set(
-      hit
-        ? {
-            x: hit.position.x,
-            y: hit.position.y,
-            z: hit.position.z,
-            text: hit.text,
-          }
-        : null
-    )
+    hoverTarget.set(target)
   }
 
   function handlePointerHover(event: MouseEvent) {
@@ -1614,7 +1620,7 @@
     }
     if (lastHoverKey === null) return
     lastHoverKey = null
-    hoveredSignpost.set(null)
+    hoverTarget.set(null)
   }
 
   onMount(() => {

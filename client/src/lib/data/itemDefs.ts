@@ -53,6 +53,14 @@ export function capeColorOf(
   return cloth ? (dye ?? cloth) : undefined
 }
 
+/** Name as players must see it: the enchant is part of the name, never only a
+ *  tooltip line — +0 and +7 are otherwise identical, the cheapest scam there
+ *  is. */
+export function itemDisplayName(itemDefId: string, enchant = 0): string {
+  const name = getItemDef(itemDefId)?.name ?? itemDefId
+  return enchant !== 0 ? `+${enchant} ${name}` : name
+}
+
 /** Tooltip lines for what an item does: `guard` (with any armor enchant folded
  *  in, as combat resolves it) then `effects`. */
 export function statLabels(def: ItemDefinition, enchant = 0): string[] {
