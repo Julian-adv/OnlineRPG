@@ -988,7 +988,7 @@ impl super::GameState {
             .await?;
         let canonical = self.player_name_of(&target_id).await;
         info!(admin = ?admin_id, target = %canonical, "admin kick");
-        self.kick_player(&target_id, "Removed by an operator", auth)
+        self.kick_player(&target_id, "Removed by an operator", None, auth)
             .await;
         Ok(format!("Kick: {canonical} was disconnected."))
     }
@@ -1053,7 +1053,7 @@ impl super::GameState {
         info!(admin = ?admin_id, target = %canonical, ?minutes, "admin ban");
 
         let kicked_with = ban_message(Some(DEFAULT_BAN_REASON), until_unix);
-        self.evict_account_session_locked(&account, &kicked_with, auth)
+        self.evict_account_session_locked(&account, &kicked_with, None, auth)
             .await;
 
         Ok(match minutes {

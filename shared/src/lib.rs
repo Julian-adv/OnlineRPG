@@ -9,6 +9,7 @@ pub mod debuff;
 pub mod dungeon;
 pub mod entity;
 pub mod fishing;
+pub mod fnv;
 pub mod furniture;
 pub mod housing;
 pub mod hunger;
@@ -84,6 +85,42 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      weapon, off-hand and cape.
 pub const PROTOCOL_VERSION: u32 = 34;
 
+/// Fingerprint of the dungeon layout generator this build compiled, stamped by
+/// `build.rs`. Layouts never travel the wire — both sides generate them from
+/// the entrance id — so a stale generator desyncs without changing any message
+/// shape, which `PROTOCOL_VERSION` cannot see. See the layout fingerprint
+/// section of doc/REMOTE_AGENT_CLIENT.md.
+pub const LAYOUT_VERSION: &str = env!("LAYOUT_VERSION");
+
+/// Marks the fingerprint inside a client version string. Riding the string
+/// rather than a new `ClientInfo` field is deliberate: rmp_serde encodes
+/// structs as positional arrays, so a 4th field makes the server fail to
+/// decode an older client's `ClientInfo` at all — and that path only logs,
+/// leaving the client refused in silence instead of told to update.
+const LAYOUT_TAG: &str = "+layout.";
+
+/// Client version string with this build's fingerprint appended, e.g.
+/// `0.1.0+layout.1f3c...`.
+pub fn stamp_layout_version(client_version: &str) -> String {
+    format!("{client_version}{LAYOUT_TAG}{LAYOUT_VERSION}")
+}
+
+/// The fingerprint a client stamped, or `None` from a build predating the
+/// stamp — itself a mismatch worth refusing. Stops at the next `+` so the
+/// suffix stays a tag list a sibling fingerprint could join.
+pub fn layout_version_of(client_version: &str) -> Option<&str> {
+    client_version
+        .rsplit_once(LAYOUT_TAG)
+        .and_then(|(_, tail)| tail.split('+').next())
+}
+
+/// Whether a client reported this build's fingerprint. Self-reported like the
+/// rest of `ClientInfo`, and that is fine: lying only buys the liar the desync
+/// this gate prevents.
+pub fn layout_version_matches(client_version: &str) -> bool {
+    layout_version_of(client_version) == Some(LAYOUT_VERSION)
+}
+
 /// WebSocket close code sent when the handshake is refused (wrong protocol
 /// version, or traffic before `ClientInfo`). Lives outside the serialized
 /// message shape on purpose: a client too old to understand a new message can
@@ -95,6 +132,13 @@ pub const CLOSE_CODE_PROTOCOL_MISMATCH: u16 = 4001;
 /// `conn_limit` allows. Unlike a protocol refusal this is transient, so
 /// clients should keep retrying on their normal backoff.
 pub const CLOSE_CODE_RATE_LIMITED: u16 = 4002;
+
+/// WebSocket close code sent when a session ends because the client's world
+/// disagrees with the server's — today, grinding dungeon walls only its own
+/// build generated. Unlike a protocol refusal this is found mid-session, and
+/// clients should reload rather than reconnect: the same build lands in the
+/// same disagreement.
+pub const CLOSE_CODE_CLIENT_DESYNC: u16 = 4004;
 
 /// WebSocket close code sent when the server drops a connection for going
 /// quiet — no login inside the unauth grace period, or no heartbeat in game.

@@ -80,7 +80,7 @@ pub async fn send_client_info(tx: &mut WsTx) -> anyhow::Result<()> {
         &ClientMessage::ClientInfo {
             protocol_version: onlinerpg_shared::PROTOCOL_VERSION,
             client_kind: "cli".to_string(),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_version: onlinerpg_shared::stamp_layout_version(env!("CARGO_PKG_VERSION")),
         },
     )
     .await
@@ -170,8 +170,15 @@ pub async fn recv(rx: &mut WsRx) -> anyhow::Result<ServerMessage> {
             Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => continue,
             // A refusal can outrun its own AuthError; then the close code is
             // the only reason left, and this build must not retry it forever.
+            // A desync close means the same thing one step later: this build
+            // and the server disagree about the world, so the next connection
+            // lands in the same place. Both are for a new binary to fix.
             Some(Ok(Message::Close(Some(f))))
-                if u16::from(f.code) == onlinerpg_shared::CLOSE_CODE_PROTOCOL_MISMATCH =>
+                if matches!(
+                    u16::from(f.code),
+                    onlinerpg_shared::CLOSE_CODE_PROTOCOL_MISMATCH
+                        | onlinerpg_shared::CLOSE_CODE_CLIENT_DESYNC
+                ) =>
             {
                 return Err(AuthRejected(format!(
                     "Server refused this build: {} — update agent-client",

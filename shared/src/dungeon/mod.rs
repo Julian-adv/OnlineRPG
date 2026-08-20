@@ -363,16 +363,10 @@ impl FloorLayout {
     }
 }
 
-/// FNV-1a 64 over the entrance id. Implemented inline because
-/// `DefaultHasher` is not stable across Rust releases and the seed must
-/// match between independently-built server and client binaries.
+/// FNV-1a 64 over the entrance id — see `crate::fnv` for why not
+/// `DefaultHasher`.
 pub fn dungeon_seed(entrance_id: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in entrance_id.as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
+    crate::fnv::fnv1a64(crate::fnv::FNV_OFFSET, entrance_id.bytes())
 }
 
 /// Total floor count for a dungeon, 5..=20, derived from the seed.
@@ -473,7 +467,17 @@ pub fn world_to_cell(entrance: &Position, x: f32, z: f32) -> (i32, i32) {
 
 /// Passability cache key for a dungeon (one entry covers every floor).
 pub fn dungeon_cache_key(entrance_id: &str) -> String {
-    format!("dungeon:{entrance_id}")
+    format!("{DUNGEON_KEY_PREFIX}{entrance_id}")
+}
+
+/// Namespace `dungeon_cache_key` builds, so callers can recognise its keys
+/// without re-deriving the prefix.
+pub const DUNGEON_KEY_PREFIX: &str = "dungeon:";
+
+/// Whether a passability block key names a dungeon (rather than furniture or
+/// a house).
+pub fn is_dungeon_cache_key(key: &str) -> bool {
+    key.starts_with(DUNGEON_KEY_PREFIX)
 }
 
 /// One weighted entry in a depth's spawn table. `aggressive` makes that dungeon

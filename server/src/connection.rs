@@ -4,7 +4,7 @@ use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
 use crate::game_state::{
     encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level,
-    DirectMessage, GameState,
+    DirectMessage, GameState, KickNotice,
 };
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
@@ -149,7 +149,7 @@ struct ConnectionState {
     must_close: bool,
     account_name: Option<String>,
     account_session_id: Option<u64>,
-    account_rx: Option<mpsc::UnboundedReceiver<ServerMessage>>,
+    account_rx: Option<mpsc::UnboundedReceiver<KickNotice>>,
     player_id: Option<PlayerId>,
     /// Entered character's name, kept here so disconnect-path logs can name the
     /// player after `GameState` has already dropped the record.
@@ -387,14 +387,16 @@ pub async fn handle_connection(
                     None => std::future::pending().await,
                 }
             } => {
-                if let Some(msg) = account_msg {
-                    if let Some(bytes) = encode_server_msg(&msg) {
+                if let Some(notice) = account_msg {
+                    if let Some(bytes) = encode_server_msg(&notice.message) {
                         let _ = ws_sender.send(Message::Binary(bytes)).await;
                     }
-                    info!(
-                        "Account {:?} kicked by a replacement login",
-                        state.account_name
-                    );
+                    // A code the client acts on (reload, stop reconnecting)
+                    // rather than a bare close it can only guess at.
+                    if let Some(code) = notice.close_code {
+                        let _ = ws_sender.send(close_frame(code, "client desync")).await;
+                    }
+                    info!("Account {:?} session ended by the server", state.account_name);
                     break;
                 }
             }
@@ -730,6 +732,24 @@ fn handle_handshake(
                     "Protocol v{} required, you sent v{} — {CLIENT_UPDATE_HINT}",
                     onlinerpg_shared::PROTOCOL_VERSION,
                     protocol_version
+                ),
+            }]);
+        }
+        // Same refusal path, for the break the protocol version cannot see:
+        // a stale dungeon generator (see `LAYOUT_VERSION`).
+        if !onlinerpg_shared::layout_version_matches(client_version) {
+            if let Some(tail) = PROTOCOL_REFUSAL_LOG.claim() {
+                warn!(
+                    "Refusing client: dungeon layout {} (server built {}) ip={} kind={client_kind} version={client_version}{tail}",
+                    onlinerpg_shared::layout_version_of(client_version).unwrap_or("unstamped"),
+                    onlinerpg_shared::LAYOUT_VERSION,
+                    state.client_ip,
+                );
+            }
+            state.must_close = true;
+            return Some(vec![ServerMessage::AuthError {
+                message: format!(
+                    "This build's dungeon layouts differ from the server's — {CLIENT_UPDATE_HINT}"
                 ),
             }]);
         }
@@ -2105,7 +2125,7 @@ mod tests {
         ClientMessage::ClientInfo {
             protocol_version,
             client_kind: kind.to_string(),
-            client_version: "test".to_string(),
+            client_version: onlinerpg_shared::stamp_layout_version("test"),
         }
     }
 
@@ -2129,6 +2149,31 @@ mod tests {
         assert!(!state.must_close);
         // Later messages pass through once the handshake is done.
         assert!(handle_handshake(&ClientMessage::Heartbeat, &mut state).is_none());
+    }
+
+    #[test]
+    fn handshake_refuses_a_stale_dungeon_layout() {
+        // Both shapes a mismatch takes: a build stamped with someone else's
+        // generator, and one predating the stamp entirely.
+        for version in [
+            onlinerpg_shared::stamp_layout_version("test")
+                .replace(onlinerpg_shared::LAYOUT_VERSION, "0000000000000000"),
+            "0.1.0".to_string(),
+        ] {
+            let mut state = ConnectionState::new(Ipv4Addr::LOCALHOST.into());
+            let responses = handle_handshake(
+                &ClientMessage::ClientInfo {
+                    protocol_version: onlinerpg_shared::PROTOCOL_VERSION,
+                    client_kind: "cli".to_string(),
+                    client_version: version.clone(),
+                },
+                &mut state,
+            );
+
+            assert!(is_auth_error(&responses), "{version} should be refused");
+            assert!(state.must_close);
+            assert!(state.client_kind.is_none());
+        }
     }
 
     #[test]

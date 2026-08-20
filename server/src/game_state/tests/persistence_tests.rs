@@ -162,7 +162,10 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
         .await;
     assert!(matches!(
         kick_rx.try_recv(),
-        Ok(ServerMessage::Kicked { player_id, .. }) if player_id == a
+        Ok(KickNotice {
+            message: ServerMessage::Kicked { player_id, .. },
+            ..
+        }) if player_id == a
     ));
 
     // The kick flushed A's post-drop inventory and detached it, so a

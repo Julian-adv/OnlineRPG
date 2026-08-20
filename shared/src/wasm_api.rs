@@ -51,6 +51,21 @@ pub fn protocol_version() -> u32 {
     crate::PROTOCOL_VERSION
 }
 
+/// Close code the server ends a desynced session with. Cached client-side like
+/// the refusal code: `onclose` can fire before wasm is loaded.
+#[wasm_bindgen]
+pub fn close_code_client_desync() -> u16 {
+    crate::CLOSE_CODE_CLIENT_DESYNC
+}
+
+/// `client_version` with this build's layout fingerprint appended, so a cached
+/// bundle whose dungeon generator predates the server's is refused at the
+/// handshake instead of drawing a maze the server does not have.
+#[wasm_bindgen]
+pub fn stamp_layout_version(client_version: &str) -> String {
+    crate::stamp_layout_version(client_version)
+}
+
 /// Close code the server refuses a stale build with. Exported so the web
 /// client compares against the same number the server sends; callers must
 /// cache it while wasm is loaded, since `onclose` also fires before that.

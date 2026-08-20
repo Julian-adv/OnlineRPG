@@ -10,6 +10,34 @@ fn find_player(players: &[Player], id: PlayerId) -> &Player {
 }
 
 #[tokio::test]
+async fn an_operator_kick_closes_plainly_but_a_desync_kick_tells_the_client_to_reload() {
+    let auth = make_test_auth("kick_close_codes");
+    let game_state = make_test_game_state("kick_close_codes");
+
+    for (close_code, expected) in [
+        (None, None),
+        (
+            Some(onlinerpg_shared::CLOSE_CODE_CLIENT_DESYNC),
+            Some(onlinerpg_shared::CLOSE_CODE_CLIENT_DESYNC),
+        ),
+    ] {
+        let account = auth.login_npc("npc_kick_close").unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        game_state
+            .register_account_session(&account, tx, &auth)
+            .await;
+        game_state
+            .evict_account_session_locked(&account, "because", close_code, &auth)
+            .await;
+
+        match rx.try_recv() {
+            Ok(notice) => assert_eq!(notice.close_code, expected),
+            other => panic!("expected the session to be ended, got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn replacement_login_kicks_the_previous_account_session() {
     let auth = make_test_auth("account_session_replacement");
     let account = auth.login_npc("npc_account_session").unwrap();
@@ -26,7 +54,10 @@ async fn replacement_login_kicks_the_previous_account_session() {
 
     assert!(matches!(
         first_rx.try_recv(),
-        Ok(ServerMessage::Kicked { player_id, .. }) if player_id == PlayerId::from(0)
+        Ok(KickNotice {
+            message: ServerMessage::Kicked { player_id, .. },
+            ..
+        }) if player_id == PlayerId::from(0)
     ));
     assert!(
         !game_state

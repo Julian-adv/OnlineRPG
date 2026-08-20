@@ -1,3 +1,4 @@
+use super::KickNotice;
 use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
@@ -59,6 +60,101 @@ fn correction_due(
         _ => {
             last.insert(*player_id, now);
             true
+        }
+    }
+}
+
+/// Where a refusal landed, for streak comparison.
+#[derive(Clone, Copy)]
+struct GrindSite<'a> {
+    key: &'a str,
+    cell: (i32, i32),
+    intent_floor: i8,
+}
+
+/// The streak site a refusal belongs to, or `None` when the detector ignores
+/// it: surface geometry ships with the terrain and cannot drift this way, and
+/// a sealed player is being rescued rather than refused.
+fn grind_site(r: &RefusedMove) -> Option<GrindSite<'_>> {
+    (onlinerpg_shared::dungeon::is_dungeon_cache_key(&r.block_key) && !r.sealed).then(|| {
+        GrindSite {
+            key: &r.block_key,
+            cell: (r.step_x.round() as i32, r.step_z.round() as i32),
+            intent_floor: r.intent_floor,
+        }
+    })
+}
+
+/// How far from where a streak started still counts as the same wall. One
+/// cell: a client pushing a wall jitters across the cell boundary between
+/// corrections (real refusals alternate (-1456,4702) and (-1457,4702)), and an
+/// exact match restarts the count on every flip. The anchor never moves, so
+/// this stays a 3x3 patch rather than following someone along a corridor.
+const LAYOUT_GRIND_RADIUS: i32 = 1;
+
+/// Advance a player's grind streak, returning its length on the one correction
+/// that reaches `LAYOUT_GRIND_LIMIT`. `count` only climbs, so that is once per
+/// streak: a player who cannot be kicked does not re-fire every cooldown.
+///
+/// `site` is `None` for a refusal this detector ignores, which ends any streak:
+/// a player who moved on is not stuck.
+fn record_grind(
+    grinds: &mut HashMap<PlayerId, LayoutGrind>,
+    player_id: &PlayerId,
+    site: Option<GrindSite<'_>>,
+    now: std::time::Instant,
+) -> Option<u32> {
+    let Some(site) = site else {
+        grinds.remove(player_id);
+        return None;
+    };
+    let grind = grinds
+        .entry(*player_id)
+        .or_insert_with(|| LayoutGrind::new(site, now));
+    let near_anchor = (grind.cell.0 - site.cell.0).abs() <= LAYOUT_GRIND_RADIUS
+        && (grind.cell.1 - site.cell.1).abs() <= LAYOUT_GRIND_RADIUS;
+    if grind.key != site.key
+        || !near_anchor
+        || grind.intent_floor != site.intent_floor
+        || now.duration_since(grind.at) >= LAYOUT_GRIND_TTL
+    {
+        *grind = LayoutGrind::new(site, now);
+    }
+    // The anchor stays where the streak began; only the count moves.
+    grind.count += 1;
+    grind.at = now;
+    (grind.count == LAYOUT_GRIND_LIMIT).then_some(grind.count)
+}
+
+/// How many corrections at one dungeon wall mean the client is drawing a maze
+/// this server does not have. Each one costs a full
+/// `POSITION_CORRECTION_COOLDOWN`, so this is ~20 seconds of a player walking
+/// into the same cell — deliberately far past a stuck path or a held key.
+const LAYOUT_GRIND_LIMIT: u32 = 10;
+
+/// Streaks stop counting once the player stops feeding them; anything older is
+/// a finished episode and gets pruned.
+const LAYOUT_GRIND_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// One player's run of refusals at a single dungeon cell.
+pub(super) struct LayoutGrind {
+    /// What blocked them, e.g. `dungeon:old_crypt`.
+    key: String,
+    /// Where the streak started, rounded to a cell.
+    cell: (i32, i32),
+    intent_floor: i8,
+    count: u32,
+    at: std::time::Instant,
+}
+
+impl LayoutGrind {
+    fn new(site: GrindSite<'_>, now: std::time::Instant) -> Self {
+        Self {
+            key: site.key.to_string(),
+            cell: site.cell,
+            intent_floor: site.intent_floor,
+            count: 0,
+            at: now,
         }
     }
 }
@@ -329,7 +425,7 @@ impl super::GameState {
     pub(crate) async fn register_account_session(
         &self,
         account_name: &str,
-        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        kick_tx: mpsc::UnboundedSender<KickNotice>,
         auth: &AuthService,
     ) -> u64 {
         let _sessions = self.character_session_lock.lock().await;
@@ -343,7 +439,7 @@ impl super::GameState {
     pub(crate) async fn register_account_session_locked(
         &self,
         account_name: &str,
-        kick_tx: mpsc::UnboundedSender<ServerMessage>,
+        kick_tx: mpsc::UnboundedSender<KickNotice>,
         auth: &AuthService,
     ) -> u64 {
         use std::sync::atomic::Ordering;
@@ -361,9 +457,12 @@ impl super::GameState {
 
         if let Some(replaced) = replaced {
             info!("Replacing active session for account '{}'", account_name);
-            let _ = replaced.kick_tx.send(ServerMessage::Kicked {
-                player_id: replaced.player_id.unwrap_or(PlayerId::from(0)),
-                reason: "Another session logged in with the same account".to_string(),
+            let _ = replaced.kick_tx.send(KickNotice {
+                message: ServerMessage::Kicked {
+                    player_id: replaced.player_id.unwrap_or(PlayerId::from(0)),
+                    reason: "Another session logged in with the same account".to_string(),
+                },
+                close_code: None,
             });
             if let Some(player_id) = replaced.player_id {
                 self.cleanup_player_session(&player_id, auth).await;
@@ -496,11 +595,20 @@ impl super::GameState {
     /// session the way a replacement login would: the `kick_tx` message makes
     /// the connection loop close the socket, and removing the session first
     /// keeps the disconnect path from cleaning up a second time.
-    pub(crate) async fn kick_player(&self, player_id: &PlayerId, reason: &str, auth: &AuthService) {
+    ///
+    /// `close_code` turns the kick into an instruction the client acts on
+    /// (reload rather than reconnect); `None` just leaves the reason on screen.
+    pub(crate) async fn kick_player(
+        &self,
+        player_id: &PlayerId,
+        reason: &str,
+        close_code: Option<u16>,
+        auth: &AuthService,
+    ) {
         let _sessions = self.character_session_lock.lock().await;
         match self.account_of_player(player_id).await {
             Some(account) => {
-                self.evict_account_session_locked(&account, reason, auth)
+                self.evict_account_session_locked(&account, reason, close_code, auth)
                     .await
             }
             // No session row to close, but per-player state still has to go.
@@ -529,6 +637,7 @@ impl super::GameState {
         &self,
         account_name: &str,
         reason: &str,
+        close_code: Option<u16>,
         auth: &AuthService,
     ) {
         let session = self
@@ -539,9 +648,12 @@ impl super::GameState {
         let Some(session) = session else {
             return;
         };
-        let _ = session.kick_tx.send(ServerMessage::Kicked {
-            player_id: session.player_id.unwrap_or(PlayerId::from(0)),
-            reason: reason.to_string(),
+        let _ = session.kick_tx.send(KickNotice {
+            message: ServerMessage::Kicked {
+                player_id: session.player_id.unwrap_or(PlayerId::from(0)),
+                reason: reason.to_string(),
+            },
+            close_code,
         });
         // Only a session that reached the game has per-player state to clear.
         if let Some(player_id) = session.player_id {
@@ -1314,13 +1426,59 @@ impl super::GameState {
                 .filter(|r| correction_due(&mut last, &r.player_id, now))
                 .collect()
         };
-        for r in due {
+        // One pass each over the batch, rather than a lock per refusal: names
+        // for the warn, then streaks for the desync detector.
+        let profiles: Vec<(String, bool)> = {
+            let players = self.players.read().await;
+            due.iter()
+                .map(|r| match players.get(&r.player_id) {
+                    Some(p) => (p.name.clone(), p.is_official_npc),
+                    None => (r.player_id.to_string(), false),
+                })
+                .collect()
+        };
+        let fires: Vec<usize> = {
+            let mut grinds = self.stale_layout_grinds.write().await;
+            // Only prune site, like the correction map above.
+            grinds.retain(|_, g| now.duration_since(g.at) < LAYOUT_GRIND_TTL);
+            due.iter()
+                .enumerate()
+                .filter_map(|(i, r)| {
+                    record_grind(&mut grinds, &r.player_id, grind_site(r), now).map(|_| i)
+                })
+                .collect()
+        };
+        let mut kicks = Vec::new();
+        for i in fires {
+            let (name, is_npc) = &profiles[i];
+            let r = &due[i];
+            // Our own NPCs ship with the server, so their layout is ours by
+            // construction: one of them stuck here is a bug on our side, and
+            // disconnecting it would only feed a systemd restart loop.
+            if *is_npc {
+                warn!(
+                    "Layout grind by NPC {name} at {} floor {} x{LAYOUT_GRIND_LIMIT} — our bug, not a stale build",
+                    r.block_key, r.intent_floor
+                );
+                continue;
+            }
+            warn!(
+                "Layout grind: {name} pushed {} floor {} x{LAYOUT_GRIND_LIMIT} — disconnecting, its layout is not ours",
+                r.block_key, r.intent_floor
+            );
+            kicks.push(r.player_id);
+        }
+        if !kicks.is_empty() {
+            self.pending_layout_kicks.write().await.extend(kicks);
+        }
+
+        for (r, (name, _)) in due.iter().zip(&profiles) {
             // Stays at warn: with the slide in place a hit means client and
             // server disagree — a bug signal, not an expected outcome.
             warn!(
                 "Blocked move for player {}: ({:.1},{:.1}) -> ({:.1},{:.1}) y={:.1}->{:.1} \
                  floor={} (intent {}) by {} stairwell={} consulted={}",
-                r.player_id,
+                name,
                 r.position.x,
                 r.position.z,
                 r.step_x,
@@ -1340,6 +1498,32 @@ impl super::GameState {
                     rotation: r.rotation,
                     floor_level: r.floor_level,
                 },
+            )
+            .await;
+        }
+    }
+
+    /// Disconnect the players the grind detector flagged. Runs from the time
+    /// sync tick because the movement tick has no `AuthService` to persist
+    /// them with.
+    pub async fn drain_stale_layout_kicks(&self, auth: &AuthService) {
+        let pending = std::mem::take(&mut *self.pending_layout_kicks.write().await);
+        if pending.is_empty() {
+            return;
+        }
+        {
+            let mut grinds = self.stale_layout_grinds.write().await;
+            for player_id in &pending {
+                grinds.remove(player_id);
+            }
+        }
+        for player_id in pending {
+            self.kick_player(
+                &player_id,
+                "Your client and this server disagree about the dungeon's walls. \
+                 Reloading — if this repeats, update your client.",
+                Some(onlinerpg_shared::CLOSE_CODE_CLIENT_DESYNC),
+                auth,
             )
             .await;
         }
@@ -2262,5 +2446,97 @@ impl super::GameState {
     #[allow(dead_code)]
     pub async fn get_all_players(&self) -> HashMap<PlayerId, Player> {
         self.players.read().await.clone()
+    }
+}
+
+#[cfg(test)]
+mod grind_tests {
+    use super::*;
+
+    fn site(key: &str, cell: (i32, i32)) -> Option<GrindSite<'_>> {
+        Some(GrindSite {
+            key,
+            cell,
+            intent_floor: -4,
+        })
+    }
+
+    /// Replay a run of refusals, returning the streak length at each fire.
+    fn run(sites: &[Option<GrindSite<'_>>]) -> Vec<u32> {
+        let mut grinds = HashMap::new();
+        let player = PlayerId::from(1);
+        let start = std::time::Instant::now();
+        sites
+            .iter()
+            .enumerate()
+            .filter_map(|(i, site)| {
+                let now = start + POSITION_CORRECTION_COOLDOWN * i as u32;
+                record_grind(&mut grinds, &player, *site, now)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn one_cell_ground_past_the_limit_fires_once() {
+        let wall = site("dungeon:old_crypt", (-1456, 4702));
+        let fires = run(&vec![wall; LAYOUT_GRIND_LIMIT as usize * 3]);
+        assert_eq!(fires, vec![LAYOUT_GRIND_LIMIT]);
+    }
+
+    #[test]
+    fn a_streak_short_of_the_limit_never_fires() {
+        let wall = site("dungeon:old_crypt", (-1456, 4702));
+        assert!(run(&vec![wall; LAYOUT_GRIND_LIMIT as usize - 1]).is_empty());
+    }
+
+    #[test]
+    fn moving_to_another_wall_starts_over() {
+        let mut sites = vec![site("dungeon:old_crypt", (-1456, 4702)); 9];
+        // One refusal well clear of the streak: they are walking, not stuck.
+        sites.push(site("dungeon:old_crypt", (-1460, 4702)));
+        sites.extend(vec![site("dungeon:old_crypt", (-1456, 4702)); 9]);
+        assert!(run(&sites).is_empty());
+    }
+
+    #[test]
+    fn jitter_across_the_cell_boundary_keeps_the_streak() {
+        // The shape prod actually logs: the same push rounding to neighbouring
+        // cells from one correction to the next.
+        let sites: Vec<_> = (0..LAYOUT_GRIND_LIMIT as usize)
+            .map(|i| site("dungeon:old_crypt", (-1456 - (i % 2) as i32, 4702)))
+            .collect();
+        assert_eq!(run(&sites), vec![LAYOUT_GRIND_LIMIT]);
+    }
+
+    #[test]
+    fn a_streak_cannot_walk_its_anchor_down_a_corridor() {
+        // Each step is within a cell of the last, but not of where it began.
+        let sites: Vec<_> = (0..LAYOUT_GRIND_LIMIT as usize * 2)
+            .map(|i| site("dungeon:old_crypt", (-1456 + i as i32, 4702)))
+            .collect();
+        assert!(run(&sites).is_empty());
+    }
+
+    #[test]
+    fn surface_and_furniture_refusals_are_ignored() {
+        assert!(run(&vec![None; LAYOUT_GRIND_LIMIT as usize * 2]).is_empty());
+    }
+
+    #[test]
+    fn a_streak_that_goes_quiet_expires() {
+        let wall = site("dungeon:old_crypt", (-1456, 4702));
+        let mut grinds = HashMap::new();
+        let player = PlayerId::from(1);
+        let start = std::time::Instant::now();
+        let mut last = start;
+        for i in 0..LAYOUT_GRIND_LIMIT - 1 {
+            last = start + POSITION_CORRECTION_COOLDOWN * i;
+            record_grind(&mut grinds, &player, wall, last);
+        }
+        // Back long after the last refusal: a fresh episode, not the tail of
+        // the old one. The TTL runs from when the streak last moved.
+        let later = last + LAYOUT_GRIND_TTL + POSITION_CORRECTION_COOLDOWN;
+        assert!(record_grind(&mut grinds, &player, wall, later).is_none());
+        assert!(grinds.get(&player).is_some_and(|g| g.count == 1));
     }
 }

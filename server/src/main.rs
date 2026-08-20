@@ -117,6 +117,10 @@ async fn time_sync_tick(game_state: &GameState, auth_service: &Arc<AuthService>,
     // Close player trades both sides went quiet on.
     game_state.sweep_player_trades().await;
 
+    // Disconnect clients grinding walls their build invented (stale dungeon
+    // layout). Queued by the movement tick, which has no AuthService.
+    game_state.drain_stale_layout_kicks(auth_service).await;
+
     // Pay NPC trader salaries on game-day rollover (economy phase 3)
     game_state.tick_npc_salaries().await;
 

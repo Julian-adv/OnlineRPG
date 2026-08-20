@@ -819,7 +819,10 @@ async fn ban_evicts_the_account_session_playing_any_character() {
         .await;
 
     match kick_rx.try_recv() {
-        Ok(ServerMessage::Kicked { reason, .. }) => assert!(
+        Ok(KickNotice {
+            message: ServerMessage::Kicked { reason, .. },
+            ..
+        }) => assert!(
             reason.contains("30 minute"),
             "the kick carries the remaining time: {reason}"
         ),
@@ -861,7 +864,13 @@ async fn ban_evicts_a_session_still_at_character_select() {
         .await;
 
     assert!(
-        matches!(kick_rx.try_recv(), Ok(ServerMessage::Kicked { .. })),
+        matches!(
+            kick_rx.try_recv(),
+            Ok(KickNotice {
+                message: ServerMessage::Kicked { .. },
+                ..
+            })
+        ),
         "a pre-game session must be closed too"
     );
     assert!(
@@ -938,7 +947,10 @@ async fn kick_command_disconnects_the_named_player() {
         .await;
 
     match kick_rx.try_recv() {
-        Ok(ServerMessage::Kicked { player_id, reason }) => {
+        Ok(KickNotice {
+            message: ServerMessage::Kicked { player_id, reason },
+            ..
+        }) => {
             assert_eq!(player_id, target_id);
             assert_eq!(reason, "Removed by an operator");
         }

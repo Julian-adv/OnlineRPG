@@ -296,7 +296,18 @@ struct IdState {
 struct AccountSession {
     id: u64,
     player_id: Option<PlayerId>,
-    kick_tx: mpsc::UnboundedSender<ServerMessage>,
+    kick_tx: mpsc::UnboundedSender<KickNotice>,
+}
+
+/// A session ending from the server side: what to tell the player, and how to
+/// close the socket afterwards.
+#[derive(Debug)]
+pub(crate) struct KickNotice {
+    pub(crate) message: ServerMessage,
+    /// Close code for the frame that follows. `None` closes normally, which is
+    /// right for a kick the client should not act on beyond showing the
+    /// reason (an operator's `/kick`, a replacement login).
+    pub(crate) close_code: Option<u16>,
 }
 
 /// Anchor for the game clock: game time = `start_game_seconds` plus scaled
@@ -400,6 +411,13 @@ pub struct GameState {
     /// a correction is sent, and pruned on the refused-move path, so it needs
     /// no disconnect cleanup and stays empty in the normal case.
     last_position_correction: Arc<RwLock<HashMap<PlayerId, Instant>>>,
+    /// Players grinding the same dungeon wall correction after correction —
+    /// the signature of a build whose generated layout differs from ours. Only
+    /// touched when a correction is sent, and pruned on the same path.
+    stale_layout_grinds: Arc<RwLock<HashMap<PlayerId, player::LayoutGrind>>>,
+    /// Players the grind detector wants disconnected, drained by a path that
+    /// holds an `AuthService` (the movement tick does not).
+    pending_layout_kicks: Arc<RwLock<Vec<PlayerId>>>,
     /// No-spawn zones (towns, safe areas) from region zone files.
     no_spawn_zones: Vec<NoSpawnZone>,
     /// Player inventories (bag + equipment), keyed by player_id.
@@ -635,6 +653,8 @@ impl GameState {
             character_session_lock: Arc::new(Mutex::new(())),
             open_doors: Arc::new(RwLock::new(HashSet::new())),
             last_position_correction: Arc::new(RwLock::new(HashMap::new())),
+            stale_layout_grinds: Arc::new(RwLock::new(HashMap::new())),
+            pending_layout_kicks: Arc::new(RwLock::new(Vec::new())),
             passability: Arc::new(std::sync::RwLock::new(
                 onlinerpg_shared::pathfinding::PassabilityCache::new(),
             )),

@@ -25,7 +25,9 @@ import initWasm, {
   serialize_client_message,
   deserialize_server_message,
   protocol_version,
+  stamp_layout_version,
   close_code_protocol_mismatch,
+  close_code_client_desync,
 } from '../wasm/onlinerpg_shared'
 import { createEvent } from './networkEvents'
 import { handleServerMessage } from './messageHandlers'
@@ -67,6 +69,28 @@ const MAX_RECONNECT_ATTEMPTS = 10
 /// TCP connect closes with 1006), so it stays null until then — and a refusal
 /// can only reach a client that already sent a wasm-serialized message.
 let protocolMismatchCloseCode: number | null = null
+let clientDesyncCloseCode: number | null = null
+
+/** Survives the reload it triggers, so a cache still serving the stale bundle
+ *  shows the notice instead of reloading forever. */
+const STALE_RELOAD_FLAG = 'openmmo:stale-build-reloaded'
+
+/** Long enough to read why the page is reloading. */
+const RELOAD_NOTICE_MS = 2500
+
+/** Only a new bundle fixes a refused build, so fetch it for them — once per
+ *  tab, since a stale cache would otherwise loop. */
+function reloadOnceForStaleBuild() {
+  if (typeof window === 'undefined') return
+  try {
+    if (window.sessionStorage.getItem(STALE_RELOAD_FLAG)) return
+    window.sessionStorage.setItem(STALE_RELOAD_FLAG, '1')
+  } catch {
+    // Storage disabled: skip the reload rather than loop.
+    return
+  }
+  window.setTimeout(() => window.location.reload(), RELOAD_NOTICE_MS)
+}
 
 class NetworkManager {
   private socket: WebSocket | null = null
@@ -83,6 +107,7 @@ class NetworkManager {
   /// Reset per socket, like `handshakeSent`: the reason belongs to the
   /// connection that was refused, not to the session.
   private lastAuthErrorMessage: string | null = null
+  private lastKickReason: string | null = null
 
   // Events
   readonly respawnRequested = createEvent<() => void>()
@@ -108,9 +133,21 @@ class NetworkManager {
     // merely opened proves nothing, since refusals arrive after the open.
     this.authSuccess.on(() => {
       this.reconnectAttempts = 0
+      this.lastKickReason = null
+      // This build is current, so a later refusal deserves its own reload.
+      try {
+        window.sessionStorage.removeItem(STALE_RELOAD_FLAG)
+      } catch {
+        // Nothing to clear when storage is unavailable.
+      }
     })
     this.authError.on((message) => {
       this.lastAuthErrorMessage = message
+    })
+    // The reason arrives as a message just before the close frame that says
+    // what to do about it, so hold it for the handler that has the code.
+    this.kicked.on((reason) => {
+      this.lastKickReason = reason
     })
   }
 
@@ -134,6 +171,7 @@ class NetworkManager {
     if (!this.wasmReady) {
       await initWasm()
       protocolMismatchCloseCode = close_code_protocol_mismatch()
+      clientDesyncCloseCode = close_code_client_desync()
       this.wasmReady = true
     }
   }
@@ -191,16 +229,20 @@ class NetworkManager {
 
       // The refusal's own AuthError carries the full "how to fix it" hint;
       // the close frame only has room for a short reason.
-      if (event.code === protocolMismatchCloseCode) {
+      // Two ways the server says "a new build, not another attempt": refused
+      // at the handshake, or ended mid-session once the sims disagreed.
+      const desynced = event.code === clientDesyncCloseCode
+      if (event.code === protocolMismatchCloseCode || desynced) {
         this.refusedPermanently = true
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer)
           this.reconnectTimer = null
         }
         serverNotice.set(
-          this.lastAuthErrorMessage ??
+          (desynced ? this.lastKickReason : this.lastAuthErrorMessage) ??
             'This client is out of date. Please reload the page.'
         )
+        reloadOnceForStaleBuild()
         return
       }
 
@@ -827,7 +869,7 @@ class NetworkManager {
       ClientInfo: {
         protocol_version: protocol_version(),
         client_kind: 'web',
-        client_version: __APP_VERSION__,
+        client_version: stamp_layout_version(__APP_VERSION__),
       },
     })
     this.socket!.send(bytes)
