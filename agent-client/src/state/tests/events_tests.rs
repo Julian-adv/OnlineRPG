@@ -331,3 +331,47 @@ fn a_fresh_drop_is_sighted_immediately() {
         s.agent_events
     );
 }
+
+/// Monster damage arrives only via MonsterAttackedPlayer/PlayerDead; both
+/// must land in the local health mirrors, or a dead body reads as alive to
+/// everything gated on it (auto-respawn, own-monster targeting).
+#[test]
+fn monster_damage_and_death_update_local_health() {
+    let (mut s, _rx) = test_state();
+    let me = test_player(0.0, 0.0);
+    s.self_player_id = Some(me.id);
+    s.self_player = Some(me);
+    let mut neighbour = test_player(5.0, 5.0);
+    neighbour.id = PlayerId::from(2);
+    s.nearby_players.insert(neighbour.id, neighbour);
+
+    s.push_event(ServerMessage::MonsterAttackedPlayer {
+        monster_id: "m1".to_string(),
+        player_id: PlayerId::from(1),
+        hit: true,
+        roll: 18,
+        damage: 7,
+        current_health: 3,
+    });
+    assert_eq!(s.self_player.as_ref().unwrap().health, 3);
+
+    s.push_event(ServerMessage::MonsterAttackedPlayer {
+        monster_id: "m1".to_string(),
+        player_id: PlayerId::from(2),
+        hit: true,
+        roll: 18,
+        damage: 6,
+        current_health: 4,
+    });
+    assert_eq!(s.nearby_players[&PlayerId::from(2)].health, 4);
+
+    s.push_event(ServerMessage::PlayerDead {
+        player_id: PlayerId::from(1),
+    });
+    assert_eq!(s.self_player.as_ref().unwrap().health, 0);
+
+    s.push_event(ServerMessage::PlayerDead {
+        player_id: PlayerId::from(2),
+    });
+    assert_eq!(s.nearby_players[&PlayerId::from(2)].health, 0);
+}

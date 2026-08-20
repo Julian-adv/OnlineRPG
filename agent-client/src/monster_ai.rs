@@ -212,13 +212,21 @@ impl MonsterAiManager {
     ///
     /// `self_player` is required: the server's `nearby_players` never includes
     /// us, so without it our own monsters would never target the NPC we drive.
+    /// `self_pass_floor` is our passability floor; a brain on another floor
+    /// must not see us, or it would chase its owner through the floor.
     pub fn tick_all(
         &mut self,
         delta_ms: f32,
         nearby_players: &HashMap<PlayerId, Player>,
         self_player: Option<&Player>,
+        self_pass_floor: u8,
         passability_cache: &PassabilityCache,
     ) -> Vec<ClientMessage> {
+        if self.brains.is_empty() {
+            return Vec::new();
+        }
+        // Self goes last, so an off-floor brain gets the same vec minus its
+        // tail instead of a rebuilt one.
         let players: Vec<NearbyPlayer> = nearby_players
             .values()
             .chain(self_player)
@@ -228,6 +236,7 @@ impl MonsterAiManager {
                 health: p.health,
             })
             .collect();
+        let without_self = players.len() - self_player.is_some() as usize;
 
         let path_provider = CachePathProvider {
             cache: passability_cache,
@@ -242,9 +251,14 @@ impl MonsterAiManager {
             else {
                 continue;
             };
+            let visible = if brain.path_floor == self_pass_floor {
+                &players[..]
+            } else {
+                &players[..without_self]
+            };
             let result = brain.tick_with_behavior_tree(
                 delta_ms,
-                &players,
+                visible,
                 behavior_tree,
                 &path_provider,
                 &mut rng,
@@ -288,64 +302,36 @@ fn command_to_client_msg(cmd: AiCommand) -> ClientMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use onlinerpg_shared::{CharacterClass, MonsterState};
+    use crate::state::tests::{monster, test_player};
 
     fn npc_player(x: f32, z: f32) -> Player {
         Player {
-            id: PlayerId::from(7),
-            name: "Karl".to_string(),
-            position: Position { x, y: 0.0, z },
-            rotation: 0.0,
-            level: 1,
-            health: 10,
-            max_health: 10,
-            class: CharacterClass::Rogue,
-            gender: Default::default(),
             is_official_npc: true,
-            torch_on: false,
-            floor_level: 0,
-            object_type: None,
-            main_hand: None,
-            back: None,
-            back_color: None,
-            back_texture: None,
-            object_id: None,
-            last_combat_at: 0,
-            client_kind: Default::default(),
+            ..test_player(x, z)
         }
     }
 
-    fn aggressive_monster(x: f32, z: f32) -> Monster {
-        Monster {
-            id: "m1_1".to_string(),
-            monster_type: "goblin".to_string(),
-            position: Position { x, y: 0.0, z },
-            rotation: 0.0,
-            state: MonsterState::Idle,
-            owner_id: None,
-            health: 10,
-            max_health: 10,
-            floor_level: 0,
-            level_override: None,
-            aggressive: true,
-            lifecycle: Default::default(),
-            last_attack_at: 0,
-            last_move_at: 0,
-            move_budget: 0.0,
-        }
-    }
-
-    #[test]
-    fn owned_monster_attacks_the_agents_own_npc() {
+    fn manager_with_goblin(x: f32, z: f32) -> MonsterAiManager {
         let mut mgr = MonsterAiManager::new();
         mgr.set_behavior_trees(MonsterAiManager::load_behavior_trees_from_json(
             include_str!("../../data-src/behavior_trees.json"),
         ));
-        mgr.add_monster(&aggressive_monster(1.0, 0.0));
+        mgr.add_monster(&Monster {
+            monster_type: "goblin".to_string(),
+            position: Position { x, y: 0.0, z },
+            aggressive: true,
+            ..monster("m1_1")
+        });
+        mgr
+    }
+
+    #[test]
+    fn owned_monster_attacks_the_agents_own_npc() {
+        let mut mgr = manager_with_goblin(1.0, 0.0);
 
         let me = npc_player(0.0, 0.0);
         let cache = PassabilityCache::new();
-        let cmds = mgr.tick_all(100.0, &HashMap::new(), Some(&me), &cache);
+        let cmds = mgr.tick_all(100.0, &HashMap::new(), Some(&me), 0, &cache);
 
         assert!(
             cmds.iter().any(|c| matches!(
@@ -353,6 +339,24 @@ mod tests {
                 ClientMessage::MonsterAttack { target_player_id, .. } if *target_player_id == me.id
             )),
             "monster ignored the NPC standing 1m away: {cmds:?}"
+        );
+    }
+
+    #[test]
+    fn owned_monster_ignores_its_npc_on_another_floor() {
+        let mut mgr = manager_with_goblin(1.0, 0.0);
+
+        let me = npc_player(0.0, 0.0);
+        let cache = PassabilityCache::new();
+        let dungeon_floor = onlinerpg_shared::dungeon::passability_floor_for_level(-1);
+        let cmds = mgr.tick_all(100.0, &HashMap::new(), Some(&me), dungeon_floor, &cache);
+
+        assert!(
+            !cmds.iter().any(|c| matches!(
+                c,
+                ClientMessage::MonsterAttack { target_player_id, .. } if *target_player_id == me.id
+            )),
+            "monster attacked its NPC through the floor: {cmds:?}"
         );
     }
 }

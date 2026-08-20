@@ -41,7 +41,7 @@ pub(crate) fn p(x: f32, y: f32, z: f32) -> Position {
     Position { x, y, z }
 }
 
-fn monster(id: &str) -> Monster {
+pub(crate) fn monster(id: &str) -> Monster {
     Monster {
         id: id.to_string(),
         monster_type: "slime".to_string(),

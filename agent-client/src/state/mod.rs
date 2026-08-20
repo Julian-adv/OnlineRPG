@@ -292,6 +292,10 @@ pub struct SharedState {
     /// A path that produced a refused step will produce it again, so movers
     /// watch this and abandon the path instead of grinding the same wall.
     pub position_corrections: u32,
+    /// Until when `self_player.position` is a promise, not a pose: a schedule
+    /// force-move sends all its legs up front while the server walks them, so
+    /// consumers that need the real body (monster brains) wait this out.
+    pub self_pose_settles_at: Option<std::time::Instant>,
     /// The chest we last asked the server to open, until it answers. Opening a
     /// clutter prop is recorded before the answer arrives (an already-claimed
     /// prop is a silent no-op, and without the record we would target it
@@ -387,6 +391,7 @@ impl SharedState {
             game_minute: None,
             self_floor_level: 0,
             position_corrections: 0,
+            self_pose_settles_at: None,
             pending_chest_open: None,
             treasure_chests_spent: HashSet::new(),
             cmd_tx,

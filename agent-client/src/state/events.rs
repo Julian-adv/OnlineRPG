@@ -269,6 +269,19 @@ impl SharedState {
     }
 
     /// Push an event and update tracked state. Returns the urgency of the event.
+    /// Mirror a player's health into both local copies — `self_player` and
+    /// the `nearby_players` entry — whichever exist.
+    fn set_player_health(&mut self, player_id: &PlayerId, health: u32) {
+        if self.self_player_id.as_ref() == Some(player_id) {
+            if let Some(p) = self.self_player.as_mut() {
+                p.health = health;
+            }
+        }
+        if let Some(p) = self.nearby_players.get_mut(player_id) {
+            p.health = health;
+        }
+    }
+
     pub fn push_event(&mut self, msg: ServerMessage) -> EventUrgency {
         // Feed the spectator panel before mutating, while names still resolve
         if let Some(watch) = self.watch.clone() {
@@ -489,6 +502,19 @@ impl SharedState {
                     p.health = *health;
                     p.max_health = *max_health;
                 }
+            }
+            // Monster damage arrives only through these two, so without them
+            // `self_player.health` never drops and everything gated on it
+            // (auto-respawn, own-monster targeting) reads a live body.
+            ServerMessage::MonsterAttackedPlayer {
+                player_id,
+                current_health,
+                ..
+            } => {
+                self.set_player_health(player_id, *current_health);
+            }
+            ServerMessage::PlayerDead { player_id } => {
+                self.set_player_health(player_id, 0);
             }
             // Only ever sent direct to the player who earned (or lost) the XP,
             // so this never describes anyone in `nearby_players`.

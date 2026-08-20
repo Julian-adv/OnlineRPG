@@ -209,6 +209,10 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
         // the server's distance cap so none is silently refused.
         let from = s.self_player.as_ref().map_or(target, |p| p.position);
         let sprinting = s.sprint_allowed(None);
+        // All legs go out at once but the server walks them; until then our
+        // optimistic position is a destination, not a body, and pose readers
+        // (monster brains) must not act on it.
+        s.suppress_pose_for(PlanarDelta::between(&from, &target).dist / MOVE_SPEED);
         for (i, leg) in force_move_legs(&from, target).into_iter().enumerate() {
             let cmd = ClientMessage::PlayerMove {
                 position: leg,

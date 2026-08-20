@@ -418,6 +418,28 @@ impl SharedState {
         self.self_floor_level = floor_level;
     }
 
+    /// Whether `self_player.position` currently reflects the real body rather
+    /// than a force-move burst the server is still walking.
+    pub fn self_pose_settled(&self) -> bool {
+        self.self_pose_settles_at
+            .is_none_or(|t| std::time::Instant::now() >= t)
+    }
+
+    /// Flag `self_player.position` as a promise for the next `walk_secs`
+    /// plus slack: a force-move burst sends legs the server has yet to walk.
+    /// A sub-second walk (the usual last metre) is not worth hiding.
+    pub fn suppress_pose_for(&mut self, walk_secs: f32) {
+        const POSE_SETTLE_SLACK: std::time::Duration = std::time::Duration::from_secs(2);
+        if walk_secs <= 1.0 {
+            return;
+        }
+        self.self_pose_settles_at = Some(
+            std::time::Instant::now()
+                + std::time::Duration::from_secs_f32(walk_secs)
+                + POSE_SETTLE_SLACK,
+        );
+    }
+
     /// Drop every trace of a monster: the entry itself, its AI mirror, its
     /// move-dedup slot, and its sighting so a reappearance announces again.
     /// The single recipe for all removal paths — a new shadow collection
@@ -438,6 +460,7 @@ impl SharedState {
             p.rotation = rotation;
             p.floor_level = floor_level;
         }
+        self.self_pose_settles_at = None;
         self.adopt_floor_level(floor_level);
         self.position_corrections = self.position_corrections.wrapping_add(1);
         if let Some(id) = self.self_player_id {

@@ -568,6 +568,14 @@ async fn run_npc_session(
             let (commands, pending) = {
                 let wc = Arc::clone(&s.world_cache);
                 let world = wc.read().unwrap();
+                // Deliberately the plain conversion, not `passability_floor()`
+                // (stair-shaft aware): brains set `path_floor` with the same
+                // plain mapping, and the gate must match it.
+                let self_pass_floor =
+                    onlinerpg_shared::dungeon::passability_floor_for_level(s.self_floor_level);
+                // A force-move burst leaves our optimistic position pointing
+                // at the destination; hide self until the server catches up.
+                let pose_settled = s.self_pose_settled();
                 let SharedState {
                     ref nearby_players,
                     ref self_player,
@@ -577,7 +585,8 @@ async fn run_npc_session(
                 let cmds = monster_ai.tick_all(
                     delta_ms,
                     nearby_players,
-                    self_player.as_ref(),
+                    self_player.as_ref().filter(|_| pose_settled),
+                    self_pass_floor,
                     world.passability_cache(),
                 );
                 drop(world);
