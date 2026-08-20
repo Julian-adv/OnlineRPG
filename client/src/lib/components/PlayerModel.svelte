@@ -252,6 +252,7 @@
   let socialClipsByName = new SvelteMap<string, THREE.AnimationClip>()
   let socialLoading = false
   let lastPlayerState: PlayerStateName | undefined
+  let lastInteractionAnim: string | undefined
   let lastAttackCounter: number | undefined
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
@@ -1045,10 +1046,13 @@
     if (validAnimations.length > 0) {
       if (
         lastPlayerState !== playerState ||
+        (playerState === 'interact' &&
+          lastInteractionAnim !== interactionAnim) ||
         (playerState === 'moving' && lastMovementMode !== movementMode) ||
         (playerState === 'attack' && lastAttackCounter !== attackCounter)
       ) {
         lastPlayerState = playerState
+        lastInteractionAnim = interactionAnim
         lastMovementMode = movementMode
         // Assign even when undefined, or the check stays true every frame and
         // the re-trigger pins the clip to frame 0.
