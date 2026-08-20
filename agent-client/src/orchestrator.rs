@@ -561,10 +561,16 @@ async fn run_npc_session(
                 let world = wc.read().unwrap();
                 let SharedState {
                     ref nearby_players,
+                    ref self_player,
                     ref mut monster_ai,
                     ..
                 } = *s;
-                let cmds = monster_ai.tick_all(delta_ms, nearby_players, world.passability_cache());
+                let cmds = monster_ai.tick_all(
+                    delta_ms,
+                    nearby_players,
+                    self_player.as_ref(),
+                    world.passability_cache(),
+                );
                 drop(world);
                 let pending = s.drain_pending_commands();
                 (cmds, pending)
