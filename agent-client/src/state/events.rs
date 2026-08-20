@@ -824,11 +824,25 @@ impl SharedState {
                 position,
                 rotation,
                 state,
+                owner_id,
                 ..
             } => {
                 self.apply_monster_pose(monster_id, *position, *rotation, *state);
-                self.monster_ai
-                    .apply_authoritative_position(monster_id, *position);
+                // The fanout names the current owner; if it isn't us, any brain
+                // we still hold is stale from a missed handoff — drop it.
+                if owner_id.is_some() && *owner_id != self.self_player_id {
+                    if let Some(m) = self
+                        .nearby_monsters
+                        .get_mut(monster_id)
+                        .filter(|m| m.owner_id != *owner_id)
+                    {
+                        m.owner_id = *owner_id;
+                        self.monster_ai.remove_monster(monster_id);
+                    }
+                } else {
+                    self.monster_ai
+                        .apply_authoritative_position(monster_id, *position);
+                }
             }
             ServerMessage::HouseSpawned { ref house } => {
                 self.world_cache.write().unwrap().add_house(house.clone());

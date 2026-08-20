@@ -756,13 +756,24 @@ class MonsterManager {
     position: { x: number; y: number; z: number },
     rotation: number,
     state: MonsterData['state'],
-    targetPosition: { x: number; y: number; z: number }
+    targetPosition: { x: number; y: number; z: number },
+    ownerId?: number
   ) {
     const monster = this.monsters.get(id)
     if (monster) {
       // Guard: If monster is dead, don't allow state changes back to alive states
       if (monster.state === 'dead' && state !== 'dead') {
         return
+      }
+
+      // The fanout names the current owner; a mismatch means we missed a
+      // handoff and would fight the real owner's stream with a stale brain.
+      if (ownerId !== undefined && ownerId !== monster.ownerId) {
+        const myPlayerId = get(gameStore).currentPlayer?.id
+        if (monster.ownerId === myPlayerId) {
+          ai_remove_brain(id)
+        }
+        monster.ownerId = ownerId
       }
 
       const hasPendingImpact =

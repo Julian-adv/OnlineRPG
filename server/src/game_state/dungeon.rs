@@ -1219,7 +1219,6 @@ impl GameState {
                         .map(|id| Handoff {
                             monster_id: id.clone(),
                             new_owner,
-                            old_owner: Some(*player_id),
                         })
                         .collect()
                 };

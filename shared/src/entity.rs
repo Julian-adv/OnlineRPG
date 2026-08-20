@@ -220,6 +220,11 @@ pub struct Monster {
     /// refilled at its run speed. A move costing more than this is refused.
     #[serde(skip)]
     pub move_budget: f32,
+    /// Server timestamp (ms) of the last ownership change. A non-owner move
+    /// inside the grace window after it is an in-flight packet, not a stale
+    /// controller.
+    #[serde(skip)]
+    pub owner_since: u64,
 }
 
 impl Monster {
@@ -260,6 +265,7 @@ mod tests {
             last_attack_at: 0,
             last_move_at: 0,
             move_budget: 0.0,
+            owner_since: 0,
         };
         let bytes = rmp_serde::to_vec(&monster).unwrap();
         let decoded: Monster = rmp_serde::from_slice(&bytes).unwrap();

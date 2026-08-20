@@ -34,6 +34,9 @@ const AMBIENT_SPAWN_METERS_PER_LEVEL: f32 = 70.0;
 /// next tick restarts from zero over a fresh order, so a reconcile is at worst
 /// delayed a few ticks, never skipped.
 const OWNERSHIP_SCAN_CHUNK: usize = 4_000;
+/// How long after an ownership change a non-owner move is still treated as an
+/// in-flight packet from the normal handoff, rather than a stale controller.
+const STALE_CONTROLLER_GRACE_MS: u64 = 2_000;
 
 /// One tick's view of the roster, bucketed by cell, so the ownership sweep
 /// locks it once rather than once per monster.
@@ -49,12 +52,20 @@ enum Attendance {
     Bystander(PlayerId),
 }
 
+/// How `update_monster_position` treats the mover: the owner simulates, a
+/// stale controller is released, everything else (dead, unknown, in-flight
+/// packets inside the handoff grace window) is dropped silently.
+enum MoveGate {
+    Owner { position: Position, floor_level: i8 },
+    Ignore,
+    Stale(Box<crate::types::Monster>),
+}
+
 /// One reassignment for `hand_off_monsters` to apply. Picking the candidate is
 /// the caller's job; this is just the request.
 pub(super) struct Handoff {
     pub monster_id: String,
     pub new_owner: PlayerId,
-    pub old_owner: Option<PlayerId>,
 }
 
 /// owner → the ids it owns, so the spawn cap is O(1) and a disconnect finds
@@ -207,18 +218,22 @@ impl MonsterRegistry {
         }
     }
 
-    /// Returns the updated monster, so callers can announce the handoff
-    /// without looking it up again.
+    /// Returns the updated monster and the owner it actually had, so callers
+    /// can announce the handoff to the real previous owner — the one planned
+    /// at scan time may have been outraced by a concurrent adoption.
     pub(crate) fn reassign_owner(
         &mut self,
         id: &str,
         new_owner: PlayerId,
-    ) -> Option<&crate::types::Monster> {
+        now: u64,
+    ) -> Option<(&crate::types::Monster, Option<PlayerId>)> {
         let monster = self.monsters.get_mut(id)?;
-        self.ids_by_owner.remove(monster.owner_id, id);
+        let previous_owner = monster.owner_id;
+        self.ids_by_owner.remove(previous_owner, id);
         self.ids_by_owner.add(Some(new_owner), id);
         monster.owner_id = Some(new_owner);
-        Some(monster)
+        monster.owner_since = now;
+        Some((monster, previous_owner))
     }
 
     /// Move a monster, keeping its index entry in step, and return it so callers
@@ -357,6 +372,7 @@ impl super::GameState {
             // reported position is the spawn point, so nothing legitimate needs
             // budget yet. The bucket then fills as real time passes.
             move_budget: 0.0,
+            owner_since: Self::now_ms(),
         };
 
         let mut monsters = self.monsters.write().await;
@@ -450,15 +466,48 @@ impl super::GameState {
             && rotation.is_finite()
             && target_position.is_finite()
             && state != MonsterState::Dead;
-        let Some((sample_from, floor_level)) = ({
+        let gate = {
             let monsters = self.monsters.read().await;
-            monsters.get(&monster_id).and_then(|monster| {
-                monster
-                    .is_controllable_by(mover_id)
-                    .then_some((monster.position, monster.floor_level))
-            })
-        }) else {
-            return;
+            match monsters.get(&monster_id) {
+                None => MoveGate::Ignore,
+                Some(monster) if monster.is_controllable_by(mover_id) => MoveGate::Owner {
+                    position: monster.position,
+                    floor_level: monster.floor_level,
+                },
+                Some(monster)
+                    if monster.state == MonsterState::Dead
+                        || Self::now_ms().saturating_sub(monster.owner_since)
+                            <= STALE_CONTROLLER_GRACE_MS =>
+                {
+                    MoveGate::Ignore
+                }
+                Some(monster) => MoveGate::Stale(Box::new(monster.clone())),
+            }
+        };
+        let (sample_from, floor_level) = match gate {
+            MoveGate::Owner {
+                position,
+                floor_level,
+            } => (position, floor_level),
+            MoveGate::Ignore => return,
+            // A stale controller missed its release and is simulating a brain
+            // it no longer owns: tell it to drop the brain.
+            MoveGate::Stale(monster) => {
+                warn!(
+                    "Stale controller {} moved monster {} owned by {:?}",
+                    mover_id, monster_id, monster.owner_id
+                );
+                let still_watching = {
+                    let players = self.players.read().await;
+                    players
+                        .get(mover_id)
+                        .is_some_and(|player| Self::watches(player, &monster))
+                };
+                for message in Self::release_view_messages(&monster, still_watching) {
+                    self.send_direct_message(mover_id, message).await;
+                }
+                return;
+            }
         };
         if input_valid {
             // Store canonical X like player moves do; see
@@ -739,7 +788,6 @@ impl super::GameState {
             handoffs.push(Handoff {
                 monster_id,
                 new_owner,
-                old_owner: Some(*old_owner),
             });
         }
         (handoffs, orphans)
@@ -815,7 +863,6 @@ impl super::GameState {
         if entered.is_empty() {
             return;
         }
-        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
         let adoptions: Vec<Handoff> = {
             let players = self.players.read().await;
             entered
@@ -824,16 +871,12 @@ impl super::GameState {
                     let attended = monster
                         .owner_id
                         .and_then(|id| players.get(&id))
-                        .is_some_and(|owner| {
-                            owner.floor_level == monster.floor_level
-                                && monster.position.dist_xz_sq(&owner.position) <= radius_sq
-                        });
+                        .is_some_and(|owner| Self::watches(owner, monster));
                     !attended
                 })
                 .map(|monster| Handoff {
                     monster_id: monster.id.clone(),
                     new_owner: *player_id,
-                    old_owner: monster.owner_id,
                 })
                 .collect()
         };
@@ -986,6 +1029,28 @@ impl super::GameState {
         }
     }
 
+    /// Whether `player` is inside the monster's AOI — the per-player form of
+    /// `players_in_aoi`.
+    fn watches(player: &crate::types::Player, monster: &crate::types::Monster) -> bool {
+        let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
+        player.floor_level == monster.floor_level
+            && monster.position.dist_xz_sq(&player.position) <= radius_sq
+    }
+
+    /// The messages that end a client's control of `monster`: the removal,
+    /// plus a bystander respawn when that client can still see it.
+    fn release_view_messages(
+        monster: &crate::types::Monster,
+        still_watching: bool,
+    ) -> impl Iterator<Item = ServerMessage> {
+        std::iter::once(ServerMessage::MonsterRemoved {
+            monster_id: monster.id.clone(),
+        })
+        .chain(still_watching.then(|| ServerMessage::MonsterSpawned {
+            monster: monster.clone(),
+        }))
+    }
+
     /// Every player inside the AOI around `position` on `floor_level`, with the
     /// squared distance. Lazy so `attendance` can stop at the owner; the seam
     /// can yield a player twice, which neither caller minds.
@@ -1049,7 +1114,6 @@ impl super::GameState {
                         handoffs.push(Handoff {
                             monster_id: monster.id.clone(),
                             new_owner,
-                            old_owner: monster.owner_id,
                         })
                     }
                     Attendance::Nobody => {
@@ -1097,24 +1161,46 @@ impl super::GameState {
         // reconcile after a burst of disconnects) must not hold the registry
         // write lock, or the channel map, across all of it at once.
         for batch in handoffs.chunks(OWNERSHIP_SCAN_CHUNK) {
+            let now = Self::now_ms();
             let reassigned: Vec<(crate::types::Monster, PlayerId, Option<PlayerId>)> = {
                 let mut monsters = self.monsters.write().await;
                 batch
                     .iter()
                     .filter_map(|h| {
-                        let monster = monsters.reassign_owner(&h.monster_id, h.new_owner)?;
-                        Some((monster.clone(), h.new_owner, h.old_owner))
+                        let (monster, previous_owner) =
+                            monsters.reassign_owner(&h.monster_id, h.new_owner, now)?;
+                        Some((monster.clone(), h.new_owner, previous_owner))
+                    })
+                    .collect()
+            };
+            // Who to release, resolved in one short players guard so the send
+            // loop below holds only the channel map. Normally the release
+            // finds the old owner out of sight, but a race can release one
+            // still watching: that one gets a bystander respawn so the
+            // monster doesn't go invisible for it.
+            let releases: Vec<Option<(PlayerId, bool)>> = {
+                let players = self.players.read().await;
+                reassigned
+                    .iter()
+                    .map(|(monster, new_owner, old_owner)| {
+                        old_owner.filter(|id| id != new_owner).map(|id| {
+                            let watching = players
+                                .get(&id)
+                                .is_some_and(|player| Self::watches(player, monster));
+                            (id, watching)
+                        })
                     })
                     .collect()
             };
             // One channel-map guard per batch; `tx.send` is synchronous.
             let channels = self.direct_channels.read().await;
-            for (monster, new_owner, old_owner) in reassigned {
+            for ((monster, new_owner, _), release) in reassigned.into_iter().zip(releases) {
                 debug!("Monster {} handed to {}", monster.id, new_owner);
-                if let Some(tx) = old_owner.and_then(|id| channels.get(&id)) {
-                    let _ = tx.send(super::DirectMessage::Typed(ServerMessage::MonsterRemoved {
-                        monster_id: monster.id.clone(),
-                    }));
+                if let Some(tx) = release.and_then(|(id, _)| channels.get(&id)) {
+                    let still_watching = release.is_some_and(|(_, watching)| watching);
+                    for message in Self::release_view_messages(&monster, still_watching) {
+                        let _ = tx.send(super::DirectMessage::Typed(message));
+                    }
                 }
                 if let Some(tx) = channels.get(&new_owner) {
                     let _ = tx.send(super::DirectMessage::Typed(

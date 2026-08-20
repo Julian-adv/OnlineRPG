@@ -46,6 +46,8 @@ Orchestrator Process
 
 이 규칙은 웹 클라이언트와 agent-client 모두 동일하게 적용.
 
+**소유권 자가 치유**: 핸드오프는 실제 직전 소유자에게 `MonsterRemoved`를 보내고(경합에서 계획이 어긋나도), 그 소유자가 아직 AOI 안이면 `MonsterSpawned`로 관전자 시점을 복원한다. 소유권 변경 2초 유예 이후의 비소유자 `MonsterMove`는 무시 대신 release(`MonsterRemoved`[+`MonsterSpawned`])로 응답해 낡은 brain을 내리게 하며, 클라이언트도 `MonsterMoved.owner_id`가 자신이 아니면 brain을 제거한다.
+
 ## 2계층 AI 시스템
 
 | 계층 | 대상 | 방식 | 비용 |

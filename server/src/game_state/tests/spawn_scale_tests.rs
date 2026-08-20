@@ -421,7 +421,7 @@ async fn registry_indexes_track_the_map_through_every_mutation() {
         .monsters
         .write()
         .await
-        .reassign_owner(&spawned[2], owners[2]);
+        .reassign_owner(&spawned[2], owners[2], 0);
     audit("after reassign_owner").await;
 
     // A corpse handed off, which is the disconnect path itself: `owned` below
@@ -431,7 +431,7 @@ async fn registry_indexes_track_the_map_through_every_mutation() {
         .monsters
         .write()
         .await
-        .reassign_owner(&spawned[4], owners[0]);
+        .reassign_owner(&spawned[4], owners[0], 0);
     audit("after reassigning a corpse").await;
 
     game_state.remove_monsters_by_owner(&owners[2]).await;

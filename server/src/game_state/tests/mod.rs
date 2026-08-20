@@ -236,6 +236,7 @@ fn make_monster(id: &str, position: Position, floor_level: i8) -> crate::types::
         last_attack_at: 0,
         last_move_at: 0,
         move_budget: 0.0,
+        owner_since: 0,
     }
 }
 

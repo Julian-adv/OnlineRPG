@@ -138,9 +138,19 @@ async fn monster_move_requires_ownership() {
         1.0,
         "a non-owner move must not change the monster position"
     );
+    // The non-owner is told to drop its brain and, still being in sight,
+    // gets the monster back as a bystander view.
     match hijacker_rx.try_recv() {
-        Err(MpscTryRecvError::Empty) => {}
-        other => panic!("a rejected move must not fan out, got {other:?}"),
+        Ok(ServerMessage::MonsterRemoved { monster_id }) => {
+            assert_eq!(monster_id, "victim_monster")
+        }
+        other => panic!("a non-owner move must be answered by a release, got {other:?}"),
+    }
+    match hijacker_rx.try_recv() {
+        Ok(ServerMessage::MonsterSpawned { monster }) => {
+            assert_eq!(monster.owner_id, Some(owner_id))
+        }
+        other => panic!("Expected a bystander respawn for the watcher, got {other:?}"),
     }
 
     game_state

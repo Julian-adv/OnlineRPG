@@ -806,7 +806,8 @@ export function handleServerMessage(
         data.position,
         data.rotation,
         data.state,
-        data.target_position
+        data.target_position,
+        data.owner_id
       )
       break
 

@@ -263,7 +263,7 @@ async fn dying_beside_a_party_member_clears_watched_monsters_as_well_as_owned_on
         .monsters
         .write()
         .await
-        .reassign_owner(&not_owned, stayer);
+        .reassign_owner(&not_owned, stayer, 0);
     assert_eq!(
         owner_of(&game_state, &not_owned).await,
         Some(stayer),
