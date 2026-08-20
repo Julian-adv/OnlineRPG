@@ -525,8 +525,9 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         aliases: &[],
         doc: r#"- (merchants only) Offer a nearby player a private price on one item — a
   haggle. "kind" is "buy" (they buy from you, the default) or "sell" (they
-  sell to you); "modifier_pct" moves the price by that many percent, so a
-  negative number is a discount. The server clamps and validates the offer:
+  sell to you). Which sign favors the player depends on "kind": on a "buy",
+  negative is their discount; on a "sell", *positive* is the bonus you pay
+  them (negative lowballs them). The server clamps and validates the offer:
   {"type": "offer_deal", "target": "darkcocoa", "item": "healing_potion", "kind": "buy", "modifier_pct": -10}"#,
     },
     ActionSpec {

@@ -74,6 +74,28 @@ pub(crate) fn sell_payout(base_price: i64, sell_rate_percent: u32, modifier_pct:
     (base_price * i64::from(sell_rate_percent) * (100 + i64::from(modifier_pct)) / 10_000).max(1)
 }
 
+/// A granted deal in words. Which sign favors the player flips with the
+/// side, so the wording is derived here rather than from the raw percentage.
+pub(crate) fn deal_notice(
+    merchant_name: &str,
+    item_name: &str,
+    kind: DealKind,
+    modifier_pct: i32,
+    ttl_ms: u64,
+) -> String {
+    let pct = modifier_pct.abs();
+    let mins = (ttl_ms / 60_000).max(1);
+    let offer = match kind {
+        DealKind::Buy if modifier_pct < 0 => format!("{pct}% off {item_name}"),
+        DealKind::Buy => format!("{item_name} at {pct}% above the usual price"),
+        DealKind::Sell if modifier_pct > 0 => {
+            format!("{pct}% over the usual price for your {item_name}")
+        }
+        DealKind::Sell => format!("{pct}% under the usual price for your {item_name}"),
+    };
+    format!("{merchant_name} offers you {offer} ({mins} min).")
+}
+
 /// What a deal costs the merchant relative to undiscounted prices. Markups
 /// (buy modifier > 0) and lowball sell offers cost nothing.
 fn deal_cost(base_price: i64, sell_rate_percent: u32, kind: DealKind, modifier_pct: i32) -> i64 {
@@ -351,6 +373,20 @@ impl super::GameState {
             },
         )
         .await;
+        // The modifier is only drawn inside the trade window, which the player
+        // may never open — say it in chat too. A 0% grant is a keepsake
+        // unlock, not a price: it has nothing to announce.
+        if applied != 0 {
+            let item_name = self
+                .item_defs
+                .get(item_def_id)
+                .map_or(item_def_id, |def| def.name.as_str());
+            self.send_system_message(
+                target_player_id,
+                deal_notice(&merchant_name, item_name, kind, applied, DEAL_TTL_MS),
+            )
+            .await;
+        }
         self.send_direct_message(
             npc_player_id,
             ServerMessage::DealResult {

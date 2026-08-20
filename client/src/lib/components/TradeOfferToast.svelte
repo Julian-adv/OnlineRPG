@@ -3,6 +3,8 @@
     pendingTradeOffer,
     acceptTradeOffer,
     declineTradeOffer,
+    shopDeals,
+    hasLiveDeal,
     type PendingTradeOffer,
   } from '../stores/tradeStore'
   import { networkManager } from '../network/socket'
@@ -12,6 +14,11 @@
   const OFFER_TTL_MS = 30_000
 
   const offer = $derived($pendingTradeOffer)
+
+  // A haggled price is only drawn inside the window this toast asks to open.
+  const withDeal = $derived(
+    offer ? hasLiveDeal($shopDeals, offer.session.merchantPlayerId) : false
+  )
 
   function accept(offer: PendingTradeOffer) {
     acceptTradeOffer(offer)
@@ -50,5 +57,13 @@
     ondecline={() => decline(offer)}
   >
     <strong>{offer.session.merchantName}</strong> wants to trade with you
+    {#if withDeal}<span class="deal-note">— holding a price for you</span>{/if}
   </ConsentToast>
 {/if}
+
+<style>
+  .deal-note {
+    color: var(--accent);
+    font-weight: 600;
+  }
+</style>

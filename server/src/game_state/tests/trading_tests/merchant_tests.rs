@@ -18,6 +18,27 @@ fn haggling_band_widens_with_cha_within_limits() {
     assert_eq!(deals::deal_half_band_pct(255), 25);
 }
 
+#[test]
+fn the_deal_notice_reads_the_sign_against_the_side() {
+    let notice = |kind, pct| deals::deal_notice("Wick", "Bread", kind, pct, 300_000);
+    assert_eq!(
+        notice(DealKind::Buy, -10),
+        "Wick offers you 10% off Bread (5 min)."
+    );
+    assert_eq!(
+        notice(DealKind::Buy, 10),
+        "Wick offers you Bread at 10% above the usual price (5 min)."
+    );
+    assert_eq!(
+        notice(DealKind::Sell, 10),
+        "Wick offers you 10% over the usual price for your Bread (5 min)."
+    );
+    assert_eq!(
+        notice(DealKind::Sell, -10),
+        "Wick offers you 10% under the usual price for your Bread (5 min)."
+    );
+}
+
 #[tokio::test]
 async fn offer_deal_clamps_modifier_to_cha_band() {
     let game_state = make_test_game_state("offer_clamp");
