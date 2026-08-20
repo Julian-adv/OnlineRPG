@@ -183,7 +183,7 @@ async fn walk_to_sighting(state: &Arc<Mutex<SharedState>>, approach: Option<Appr
         ));
         return;
     };
-    let outcome = match walk_to_point(state, pos, floor, range).await {
+    let outcome = match walk_to_point(state, pos, floor, range, None).await {
         ChaseResult::InRange => format!("[Arrived] You stand next to {what}."),
         ChaseResult::Lost(loss) => {
             format!("[MoveFailed] You did not reach {what} — {}.", loss.clause())
@@ -419,7 +419,7 @@ pub(super) async fn handle_response(
         }
 
         // Keep following a character until something else takes over.
-        if let AgentAction::Follow { target } = action {
+        if let AgentAction::Follow { target, sprint } = action {
             let name = target.trim();
             let target_id = {
                 let mut s = state.lock().await;
@@ -437,10 +437,11 @@ pub(super) async fn handle_response(
             let name = name.to_string();
             let task_state = Arc::clone(state);
             let task_name = name.clone();
+            let sprint = *sprint;
             let handle = tokio::spawn(async move {
                 loop {
                     let before = target_pos(&task_state, &target_id).await;
-                    let ended = match follow_player(&task_state, &target_id).await {
+                    let ended = match follow_player(&task_state, &target_id, sprint).await {
                         ChaseResult::InRange => {
                             tokio::time::sleep(FOLLOW_RECHECK).await;
                             None
@@ -480,9 +481,9 @@ pub(super) async fn handle_response(
         }
 
         // For attack actions, chase the monster and attack
-        if let AgentAction::Attack { monster_id } = action {
+        if let AgentAction::Attack { monster_id, sprint } = action {
             info!("Agent attacking monster {monster_id}, chasing...");
-            match chase_monster(state, monster_id).await {
+            match chase_monster(state, monster_id, *sprint).await {
                 ChaseResult::InRange => {
                     // Face the monster before attacking
                     let mut s = state.lock().await;
@@ -1068,7 +1069,7 @@ pub(super) async fn handle_response(
                 continue;
             };
             let (pos, floor, range) = approach_beside(&prop.position, prop.approach, floor_level);
-            match walk_to_point(state, pos, floor, range).await {
+            match walk_to_point(state, pos, floor, range, None).await {
                 ChaseResult::InRange => {
                     let mut s = state.lock().await;
                     let cmd = onlinerpg_shared::ClientMessage::BreakDungeonProp {
@@ -1119,7 +1120,7 @@ pub(super) async fn handle_response(
                 continue;
             };
             let (pos, floor, range) = approach_beside(&chest.position, chest.approach, chest_floor);
-            match walk_to_point(state, pos, floor, range).await {
+            match walk_to_point(state, pos, floor, range, None).await {
                 ChaseResult::InRange => {
                     let depth = chest_floor.unsigned_abs();
                     let mut s = state.lock().await;
@@ -1164,7 +1165,7 @@ pub(super) async fn handle_response(
         // Pick up a ground item: resolve the reference, walk into pickup
         // range, and send the pickup. The server owns the range, floor and
         // weight checks and answers with InventoryUpdated or a SystemMessage.
-        if let AgentAction::Pickup { item } = action {
+        if let AgentAction::Pickup { item, sprint } = action {
             let resolved = {
                 let s = state.lock().await;
                 resolve_ground_item(&s, item)
@@ -1177,7 +1178,7 @@ pub(super) async fn handle_response(
                 ));
                 continue;
             };
-            match walk_to_ground_item(state, instance_id).await {
+            match walk_to_ground_item(state, instance_id, *sprint).await {
                 ChaseResult::InRange => {
                     let mut s = state.lock().await;
                     // The crouch nearby players see from a web client.
@@ -1233,8 +1234,10 @@ pub(super) async fn handle_response(
             direction,
             distance,
             depth,
+            sprint,
         } = action
         {
+            let sprint = *sprint;
             // A name resolves across every namespace the world state prints,
             // and that decides which mover runs.
             let named = target.as_deref().map(str::trim).filter(|s| !s.is_empty());
@@ -1260,12 +1263,12 @@ pub(super) async fn handle_response(
             match (&resolved, depth) {
                 (Some(MoveTarget::Dungeon { id, .. }), _) => {
                     let goal = resolve_move_goal(x, z, &None, &None, None).ok();
-                    move_to_dungeon_floor(state, *depth, goal, Some(id)).await;
+                    move_to_dungeon_floor(state, *depth, goal, Some(id), sprint).await;
                     continue;
                 }
                 (None, Some(_)) => {
                     let goal = resolve_move_goal(x, z, &None, &None, None).ok();
-                    move_to_dungeon_floor(state, *depth, goal, None).await;
+                    move_to_dungeon_floor(state, *depth, goal, None, sprint).await;
                     continue;
                 }
                 (Some(other), Some(d)) => {
@@ -1285,7 +1288,7 @@ pub(super) async fn handle_response(
                 // Stop a polite distance short instead of pathing onto their
                 // exact position, which would overlap the models.
                 Some(MoveTarget::Character { id, name }) => {
-                    match approach_player(state, &id).await {
+                    match approach_player(state, &id, sprint).await {
                         ChaseResult::InRange => {
                             info!("Agent walked up to {name}");
                             let mut s = state.lock().await;
@@ -1325,7 +1328,7 @@ pub(super) async fn handle_response(
                 }
                 // Walking to a monster is the same chase an attack runs, minus
                 // the swing: it closes the gap so the next attack lands.
-                Some(MoveTarget::Monster { id }) => match chase_monster(state, &id).await {
+                Some(MoveTarget::Monster { id }) => match chase_monster(state, &id, sprint).await {
                     ChaseResult::InRange => {
                         info!("Agent walked up to monster {id}");
                         let mut s = state.lock().await;
@@ -1353,7 +1356,7 @@ pub(super) async fn handle_response(
                     }
                 },
                 Some(MoveTarget::GroundItem { instance_id, name }) => {
-                    match walk_to_ground_item(state, instance_id).await {
+                    match walk_to_ground_item(state, instance_id, sprint).await {
                         ChaseResult::InRange => {
                             info!("Agent walked to ground item {name} [{instance_id}]");
                             let mut s = state.lock().await;
@@ -1407,7 +1410,7 @@ pub(super) async fn handle_response(
                         )
                     };
                     match goal {
-                        Ok((gx, gz)) => match execute_move(state, gx, gz, floor).await {
+                        Ok((gx, gz)) => match execute_move(state, gx, gz, floor, sprint).await {
                             MoveResult::Arrived => {
                                 info!("Agent arrived at ({gx:.1}, {gz:.1})");
                                 let mut s = state.lock().await;
@@ -1573,7 +1576,7 @@ async fn reach_merchant(
         id.map(|id| (id, super::prompt::player_name(&s, &id)))
     };
     let (id, name) = resolved?;
-    match approach_player(state, &id).await {
+    match approach_player(state, &id, None).await {
         ChaseResult::InRange => Some((id, name)),
         ChaseResult::Lost(loss) => {
             let mut s = state.lock().await;
@@ -1601,6 +1604,7 @@ async fn move_to_dungeon_floor(
     depth: Option<i32>,
     goal_xz: Option<(f32, f32)>,
     named: Option<&str>,
+    sprint: Option<bool>,
 ) {
     // No depth means "walk to that entrance and stop there", which only a
     // named dungeon can ask for.
@@ -1671,7 +1675,7 @@ async fn move_to_dungeon_floor(
     if outside || depth.is_none_or(|d| d == 0) {
         let entrance = dungeon.entrance;
         if matches!(
-            execute_move(state, entrance.x, entrance.z, 0).await,
+            execute_move(state, entrance.x, entrance.z, 0, sprint).await,
             MoveResult::Blocked
         ) {
             warn!("Could not reach the {} entrance", dungeon.name);
@@ -1714,7 +1718,7 @@ async fn move_to_dungeon_floor(
     };
     let (gx, gz) = goal_xz.unwrap_or((landing.x, landing.z));
     let floor = dungeon.passability_floor(depth);
-    match execute_move(state, gx, gz, floor).await {
+    match execute_move(state, gx, gz, floor, sprint).await {
         MoveResult::Arrived => {
             info!("Agent reached {} floor {depth}", dungeon.name);
             let mut s = state.lock().await;

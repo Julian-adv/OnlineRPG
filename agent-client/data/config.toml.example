@@ -48,6 +48,11 @@ activity_window_secs = 30                   # How long after last activity to st
 # and an NPC nobody can see has no one to act for. Set per NPC to override.
 # always_active = true
 
+# Sprint on every walk while well fed (default). Off walks everywhere, which
+# costs far less satiation. Individual actions can still opt out with
+# "sprint": false.
+# always_sprint = true
+
 # LLM Scheduler: controls concurrent LLM calls across all NPCs
 max_concurrent = 2                          # Max simultaneous LLM calls (min 1, default 2)
 request_timeout_secs = 120                  # Give up on one call (0 = never); applies to every
