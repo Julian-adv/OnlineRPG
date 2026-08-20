@@ -111,6 +111,7 @@ impl super::GameState {
         weapon_drop: Option<GroundItem>,
         origin: Position,
         floor_level: i8,
+        monster_level: Option<u8>,
     ) {
         let game_state = self.clone();
         tokio::spawn(async move {
@@ -118,7 +119,9 @@ impl super::GameState {
             if let Some(item) = weapon_drop {
                 game_state.spawn_ground_item(item).await;
             }
-            game_state.spawn_world_drops(origin, floor_level).await;
+            game_state
+                .spawn_world_drops(origin, floor_level, monster_level)
+                .await;
         });
     }
 
@@ -498,6 +501,7 @@ impl super::GameState {
                     weapon_drop,
                     monster_position,
                     monster_floor_level,
+                    effective_level,
                 );
 
                 // Dungeon monsters: free their spawn slot for respawn.

@@ -234,6 +234,10 @@ const CAPE_PRINT: CapeTool = CapeTool {
     done: "The print takes to the cloth.",
 };
 
+/// The reagent every enchant reading burns, on top of the scroll
+/// (doc/ENCHANT.md). Bought from Rica; it is the enchant ladder's gold sink.
+const WHETSTONE_OIL_ITEM_ID: &str = "whetstone_oil";
+
 /// Remove one unit of `instance_id` from the bag, dropping the instance when
 /// the stack empties.
 fn consume_one(inv: &mut PlayerInventory, instance_id: u64) {
@@ -1286,6 +1290,14 @@ impl super::GameState {
         {
             return;
         }
+        // The oil is drawn by definition, not by instance, so it cannot be
+        // reconciled against a trade table's instance-level reservations.
+        if self
+            .reject_if_trading(player_id, "read an enchant scroll")
+            .await
+        {
+            return;
+        }
 
         // Rolled before the lock is taken; `pick` chooses among the targets
         // the selector finds.
@@ -1306,6 +1318,17 @@ impl super::GameState {
                 self.send_system_message(player_id, scroll.no_target).await;
                 return;
             };
+
+            // No oil, no reading: the scroll stays in the bag.
+            if draw_from_bag(&mut inv.bag, WHETSTONE_OIL_ITEM_ID, 1).is_empty() {
+                drop(inventories);
+                self.send_system_message(
+                    player_id,
+                    "You need Whetstone Oil to prepare the gear before the runes bite.",
+                )
+                .await;
+                return;
+            }
 
             // Spent whether the enchant takes or the piece breaks.
             consume_one(inv, instance_id);
@@ -1394,13 +1417,23 @@ impl super::GameState {
     /// rare drop can spill from anything that yields loot. Table entries are
     /// validated against `ItemDefs` at load time, so every rolled id is
     /// guaranteed to have a definition here.
-    pub(super) async fn spawn_world_drops(&self, origin: crate::types::Position, floor_level: i8) {
+    ///
+    /// `source_level` is the killed monster's effective level, which some
+    /// entries pay out less on when it is low (`world_drop.csv`). Chests and
+    /// props have no level and pass `None` — they roll at full chance, since
+    /// each one only yields loot once per dungeon instance.
+    pub(super) async fn spawn_world_drops(
+        &self,
+        origin: crate::types::Position,
+        floor_level: i8,
+        source_level: Option<u8>,
+    ) {
         /// How far from the loot origin a world drop scatters.
         const WORLD_DROP_OFFSET_METERS: f32 = 1.5;
 
         let item_def_ids = {
             let mut rng = rand::thread_rng();
-            self.world_drop_defs.roll(&mut rng)
+            self.world_drop_defs.roll(&mut rng, source_level)
         };
         if !item_def_ids.is_empty() {
             info!(

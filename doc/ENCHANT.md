@@ -8,11 +8,13 @@
 
 | 주문서 | 대상 | +N 효과 | 카테고리 | 가격 | 월드 드랍 |
 | ------ | ---- | ------- | -------- | ---: | --------: |
-| Scroll of Enchant Weapon | 장착한 주무기 | 명중·피해 굴림에 +N | `enchant_scroll` | 1,200c | 1% |
-| Scroll of Enchant Armor | 착용 방어구 중 **무작위 1개** | guard에 +N | `enchant_armor_scroll` | 1,200c | 1% |
+| Scroll of Enchant Weapon | 장착한 주무기 | 명중·피해 굴림에 +N | `enchant_scroll` | 1,200c | 1% (유효레벨 8 이하 0.5%) |
+| Scroll of Enchant Armor | 착용 방어구 중 **무작위 1개** | guard에 +N | `enchant_armor_scroll` | 1,200c | 1% (유효레벨 8 이하 0.5%) |
 
 - 정의: [data-src/items.csv](../data-src/items.csv), 드랍률: [data-src/world_drop.csv](../data-src/world_drop.csv)
 - 상인은 팔지 않는다. 획득 경로는 월드 드랍뿐이고, 되팔기는 가능하다.
+- 읽으려면 **연마유(Whetstone Oil) 1개**가 함께 필요하다 — Rica가 1g에
+  판다. 아래 "연마유" 참고.
 
 ## 읽는 규칙
 
@@ -20,7 +22,10 @@
 
 - 전투불능 상태에서는 읽지 못한다 — 주문서를 소모하지 않고 거부한다.
 - 대상이 없으면(무기 미장착 / 방어구 미착용) 역시 소모하지 않고 거부한다.
-- 대상이 있으면 **성공하든 파괴되든 주문서는 소모된다.**
+- 연마유가 없으면 소모 없이 거부한다 — 대상 확인 다음, 소모 직전 순서다.
+- 대상이 있으면 **성공하든 파괴되든 주문서와 연마유 1개가 소모된다.**
+- 거래창을 열어 둔 동안에는 읽지 못한다. 연마유는 인스턴스가 아니라 정의로
+  꺼내므로 거래 예약 수량과 대조할 수 없다(`reject_if_trading`).
 - 확률 굴림은 서버가 잠금 밖에서 하고, 결과는 인벤토리 스냅샷과 갱신된
   guard로 클라이언트에 함께 내려간다.
 
@@ -144,11 +149,33 @@
 - **확정 구간**: `enchant_success_bp`의 `..=4`와 방어구 shift 값. 방어구를
   두 칸 민 이유는 부위 수 6개다 — 부위가 늘거나 줄면 이 값을 함께 본다.
 - **공급**: `world_drop.csv`의 드랍률. 방어구는 부위 수만큼 수요가 크므로
-  무기와 같은 1%로 시작해 텔레메트리를 보고 조정한다
-  ([DESIGN_DIRECTION.md](DESIGN_DIRECTION.md)의 공급 확대 항목).
-- **골드 싱크**: 시도마다 소모품(연마유 등)을 요구하는 설계가
-  DESIGN_DIRECTION.md에 있으나 아직 구현하지 않았다. 확률표와 독립적으로
-  소각량을 조절하는 손잡이다.
+  무기와 같은 1%로 시작했고, 프로드 텔레메트리(7일 4.4만 킬 = 주문서 800장)를
+  보고 저렙 감산을 넣었다 — `lowLevelChance`/`lowLevelMaxLevel` 두 칸으로
+  유효레벨 8 이하의 사냥감은 0.5%만 굴린다. 유효레벨은 던전 심도 보정을 거친
+  값이므로(`monster_level_for_depth`) 깊은 층의 코볼트는 저렙으로 새지 않는다.
+  상자·통은 레벨이 없어 전체 확률로 굴린다 — 던전 인스턴스당 1회뿐이라
+  파밍 경로가 되지 않는다.
+- **골드 싱크**: 연마유. 아래 절 참고.
+
+## 연마유 (Whetstone Oil)
+
+읽기 1회마다 함께 타는 소모품이다. 확률표를 건드리지 않고 소각량만 조절하는
+손잡이라, 주문서 공급이 남아돌 때 먼저 돌린다.
+
+| 항목 | 값 |
+| ---- | --- |
+| 아이템 | `whetstone_oil` (category `reagent`, 겹침, 무게 0.2) |
+| 구입 | Rica 1g = 10,000c (되팔기 40% = 4,000c) |
+| 소모 | 읽기 1회당 1개 — 성공·파괴 무관 |
+
+- 그 자체로는 쓸 수 없다(`use_effect` 없음 → `consumable` 미표기).
+- 방어구 6부위 +3 풀세팅은 주문서 18~26장이므로 연마유도 같은 수 —
+  18~26g이 함께 탄다. 활동 유저 하루 수입 중앙값(7.7g, 2026-08-20 프로드
+  로그)으로 2.5~3.5일치다.
+- 가격 근거: 주문서 공급이 주 891장(킬당 1.99%)이고 읽기는 결국 공급에
+  묶이므로, 1g이면 정상 상태 소각이 주 ~890g이다. 같은 주 상점 구매 소각이
+  892g이었으니 골드 싱크가 두 배가 되고 주간 순증(3,771g)의 약 24%를 태운다.
+  2,000c로는 주 178g에 그쳐 손잡이 구실을 못 한다.
 
 ## 관련 파일
 
@@ -159,4 +186,5 @@
 | 카테고리 → 효과 매핑 | [server/src/item_defs.rs](../server/src/item_defs.rs) |
 | 테스트 | [server/src/game_state/tests/enchant_tests.rs](../server/src/game_state/tests/enchant_tests.rs) |
 | 아이템·드랍 데이터 | [data-src/items.csv](../data-src/items.csv), [data-src/world_drop.csv](../data-src/world_drop.csv) |
+| 드랍률 레벨 보정 | [server/src/world_drop_defs.rs](../server/src/world_drop_defs.rs) |
 | 툴팁 표기 | [client/src/lib/data/itemDefs.ts](../client/src/lib/data/itemDefs.ts) |

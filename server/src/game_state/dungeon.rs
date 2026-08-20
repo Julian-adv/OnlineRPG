@@ -688,7 +688,9 @@ impl GameState {
                 )
                 .await;
             // Rare bonus world drops burst out with the rest.
-            game_state.spawn_world_drops(chest_pos, floor_level).await;
+            game_state
+                .spawn_world_drops(chest_pos, floor_level, None)
+                .await;
         });
     }
 
@@ -732,7 +734,7 @@ impl GameState {
                 self.spawn_dungeon_coin_pile(drop_pos, -(depth as i8)).await;
             }
             // Rare bonus world drops, independent of the coin roll.
-            self.spawn_world_drops(prop_pos, -(depth as i8)).await;
+            self.spawn_world_drops(prop_pos, -(depth as i8), None).await;
         }
     }
 
@@ -772,7 +774,8 @@ impl GameState {
                 .await;
             self.spawn_dungeon_coin_pile(drop_pos, -(depth as i8)).await;
             // Rare bonus world drops, in addition to the coin pile.
-            self.spawn_world_drops(chest_pos, -(depth as i8)).await;
+            self.spawn_world_drops(chest_pos, -(depth as i8), None)
+                .await;
         }
     }
 
