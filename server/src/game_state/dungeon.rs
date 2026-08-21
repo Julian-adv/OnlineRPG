@@ -1254,6 +1254,8 @@ impl GameState {
             },
         )
         .await;
+        self.send_direct_message_to_players(&evicted, ServerMessage::DungeonReset)
+            .await;
 
         let mut dungeons = self.dungeons.write().await;
         for rt in dungeons.values_mut() {

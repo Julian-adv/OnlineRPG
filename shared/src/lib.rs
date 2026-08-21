@@ -83,7 +83,11 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      wearer's cape.
 /// v32: `Character.equipment`, so character select renders each character's
 ///      weapon, off-hand and cape.
-pub const PROTOCOL_VERSION: u32 = 34;
+/// v35: DungeonReset, sent to each occupant the sunset reset puts out of a
+///      dungeon so the client can play the roar.
+/// v36: `XpGained.monster_id` names the kill the XP came from, so the client
+///      can hold the gain until that monster starts going down.
+pub const PROTOCOL_VERSION: u32 = 36;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

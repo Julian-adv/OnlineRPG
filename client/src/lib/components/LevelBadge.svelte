@@ -9,11 +9,137 @@
 
   const xpInfo = $derived(levelProgress(level, xp))
   const ring = new Tween(0, { duration: 300, easing: cubicOut })
+  const spark = new Tween(0, { duration: 0 })
+  // Flight time is `base + distance`: a launch from the gauge start gets the
+  // full wind-up, a mid-flight extension only pays for the extra distance.
+  const LAUNCH_MS = 420
+  const EXTEND_MS = 160
+  const LEVEL_HOLD_MS = 260
+  const motionQuery =
+    typeof matchMedia === 'function'
+      ? matchMedia('(prefers-reduced-motion: reduce)')
+      : null
 
+  // Where the spark lands: the badge's rounded-rect edge, hit by the ray the
+  // conic gauge draws at that progress.
+  const EDGE_HALF = 24.5
+  const EDGE_RADIUS = 11
+
+  function ringPoint(progress: number) {
+    const theta = progress * Math.PI * 2
+    const dx = Math.sin(theta)
+    const dy = -Math.cos(theta)
+    let t = Math.min(
+      dx === 0 ? Infinity : EDGE_HALF / Math.abs(dx),
+      dy === 0 ? Infinity : EDGE_HALF / Math.abs(dy)
+    )
+    const flat = EDGE_HALF - EDGE_RADIUS
+    if (Math.abs(dx * t) > flat && Math.abs(dy * t) > flat) {
+      const cx = Math.sign(dx) * flat
+      const cy = Math.sign(dy) * flat
+      const b = cx * dx + cy * dy
+      const c = cx * cx + cy * cy - EDGE_RADIUS * EDGE_RADIUS
+      t = b + Math.sqrt(Math.max(0, b * b - c))
+    }
+    return { x: dx * t, y: dy * t }
+  }
+
+  let sparkOn = $state(false)
+  let burst = $state(false)
+  let burstAt = $state({ x: 0, y: -EDGE_HALF })
   let pulse = $state<'gain' | 'level' | null>(null)
   let pulseTimer: ReturnType<typeof setTimeout> | undefined
+  let arriveTimer: ReturnType<typeof setTimeout> | undefined
+  let holdTimer: ReturnType<typeof setTimeout> | undefined
+  // Mid level-up: two legs, so a plain gain restarts the spark instead of
+  // moving its finish line.
+  let leveling = false
+  let runId = 0
   let prevLevel = level
   let prevXp = xp
+
+  /** Abandon whatever is in flight; every fresh start goes through here. */
+  function cancel() {
+    runId += 1
+    clearTimeout(arriveTimer)
+    clearTimeout(holdTimer)
+    leveling = false
+    sparkOn = false
+    burst = false
+  }
+
+  function flash(kind: 'gain' | 'level') {
+    pulse = kind
+    clearTimeout(pulseTimer)
+    pulseTimer = setTimeout(() => (pulse = null), kind === 'level' ? 1000 : 700)
+  }
+
+  // Arrival is driven by our own timer, not the tween's promise: retargeting
+  // aborts the running tween, and an aborted promise never settles.
+  function travel(
+    to: number,
+    kind: 'gain' | 'level',
+    id: number,
+    base: number,
+    onArrive?: () => void
+  ) {
+    const ms = Math.round(base + Math.abs(to - spark.current) * 1000)
+    clearTimeout(arriveTimer)
+    clearTimeout(holdTimer)
+    burst = false
+    sparkOn = true
+    // From wherever the head is now, so an extended flight keeps flowing.
+    spark.set(to, { duration: ms, easing: cubicOut })
+    arriveTimer = setTimeout(() => {
+      if (id !== runId) return
+      ring.set(to, { duration: 260 })
+      flash(kind)
+      sparkOn = false
+      burstAt = ringPoint(to)
+      burst = true
+      onArrive?.()
+    }, ms)
+  }
+
+  function launch(
+    to: number,
+    kind: 'gain' | 'level',
+    id: number,
+    onArrive?: () => void
+  ) {
+    spark.set(0, { duration: 0 })
+    travel(to, kind, id, LAUNCH_MS, onArrive)
+  }
+
+  function play(target: number, leveled: boolean) {
+    if (motionQuery?.matches) {
+      cancel()
+      ring.set(target)
+      flash(leveled ? 'level' : 'gain')
+      return
+    }
+    // XP that lands mid-flight moves the finish line; the spark on screen keeps
+    // going and ends on the new total instead of starting over.
+    if (sparkOn && !leveling && !leveled) {
+      travel(target, 'gain', runId, EXTEND_MS)
+      return
+    }
+    cancel()
+    const id = runId
+    if (!leveled) {
+      launch(target, 'gain', id)
+      return
+    }
+    leveling = true
+    launch(1, 'level', id, () => {
+      holdTimer = setTimeout(() => {
+        if (id !== runId) return
+        burst = false
+        ring.set(0, { duration: 0 })
+        launch(target, 'level', id, () => (leveling = false))
+      }, LEVEL_HOLD_MS)
+    })
+  }
 
   $effect(() => {
     const target = xpInfo.progress
@@ -22,18 +148,11 @@
     prevLevel = level
     prevXp = xp
     untrack(() => {
-      if (leveled) {
-        ring
-          .set(1, { duration: 350 })
-          .then(() => ring.set(0, { duration: 0 }))
-          .then(() => ring.set(target, { duration: 450 }))
-      } else {
-        ring.set(target)
-      }
       if (leveled || gained) {
-        pulse = leveled ? 'level' : 'gain'
-        clearTimeout(pulseTimer)
-        pulseTimer = setTimeout(() => (pulse = null), leveled ? 1000 : 700)
+        play(target, leveled)
+      } else {
+        cancel()
+        ring.set(target)
       }
     })
   })
@@ -48,10 +167,20 @@
   class="level-badge"
   class:gaining={pulse === 'gain'}
   class:leveling-up={pulse === 'level'}
+  class:sparking={sparkOn}
   style:--xp={`${ring.current * 100}%`}
+  style:--spark={`${spark.current * 100}%`}
   aria-label={`Level ${level}, ${xpInfo.gainedXp} of ${xpInfo.neededXp} XP (${xpInfo.percent}%). Open character panel`}
   onclick={toggle}
 >
+  {#if burst}
+    <span
+      class="burst"
+      style:--bx={`${burstAt.x}px`}
+      style:--by={`${burstAt.y}px`}
+      onanimationend={() => (burst = false)}
+    ></span>
+  {/if}
   <span class="caption">Lv</span>
   <span class="value">{level}</span>
   <div class="xp-tooltip" role="tooltip">
@@ -62,6 +191,14 @@
 </button>
 
 <style>
+  /* Typed, so the per-frame spark position substitutes instead of re-parsing
+     the gradient's token stream. */
+  @property --spark {
+    syntax: '<percentage>';
+    inherits: true;
+    initial-value: 0%;
+  }
+
   .level-badge {
     --ring: #5ec8f0;
     position: relative;
@@ -84,19 +221,109 @@
     transition: box-shadow 200ms ease;
   }
 
-  .level-badge::before {
+  .level-badge::before,
+  .level-badge::after {
     content: '';
     position: absolute;
     inset: -1px;
     padding: 3px;
     border-radius: inherit;
-    background: conic-gradient(var(--ring) var(--xp), #7a766c 0);
     mask:
       linear-gradient(#000 0 0) content-box,
       linear-gradient(#000 0 0);
     mask-composite: exclude;
     -webkit-mask-composite: xor;
     pointer-events: none;
+  }
+
+  .level-badge::before {
+    background: conic-gradient(var(--ring) var(--xp), #7a766c 0);
+  }
+
+  .level-badge::after {
+    inset: -2px;
+    padding: 4px;
+    background: conic-gradient(
+      transparent max(0%, calc(var(--spark, 0%) - 11%)),
+      rgba(168, 228, 255, 0.6) max(0%, calc(var(--spark, 0%) - 5.5%)),
+      rgba(232, 249, 255, 0.95) max(0%, calc(var(--spark, 0%) - 2%)),
+      #ffffff var(--spark, 0%),
+      rgba(232, 249, 255, 0.7) min(100%, calc(var(--spark, 0%) + 1%)),
+      transparent min(100%, calc(var(--spark, 0%) + 2%))
+    );
+    opacity: 0;
+    transition: opacity 260ms ease;
+  }
+
+  .level-badge.sparking::after {
+    opacity: 1;
+    transition-duration: 60ms;
+  }
+
+  .burst {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgba(226, 246, 255, 0.9) 0%,
+      rgba(120, 196, 240, 0.4) 36%,
+      transparent 68%
+    );
+    pointer-events: none;
+    animation: burst-glow 340ms ease-out forwards;
+  }
+
+  .burst::after {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    background: #ffffff;
+    clip-path: polygon(
+      50% 0%,
+      59% 41%,
+      100% 50%,
+      59% 59%,
+      50% 100%,
+      41% 59%,
+      0% 50%,
+      41% 41%
+    );
+    animation: burst-star 340ms ease-out forwards;
+  }
+
+  @keyframes burst-glow {
+    0% {
+      opacity: 0;
+      transform: translate(var(--bx), var(--by)) scale(0.4);
+    }
+    30% {
+      opacity: 1;
+      transform: translate(var(--bx), var(--by)) scale(1.15);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(var(--bx), var(--by)) scale(1.4);
+    }
+  }
+
+  @keyframes burst-star {
+    0% {
+      opacity: 0.6;
+      transform: scale(0.35) rotate(-20deg);
+    }
+    35% {
+      opacity: 1;
+      transform: scale(1.15) rotate(0deg);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(0.8) rotate(14deg);
+    }
   }
 
   .level-badge.gaining {
@@ -176,6 +403,11 @@
     .level-badge,
     .xp-tooltip {
       transition: none;
+    }
+
+    .level-badge::after,
+    .burst {
+      display: none;
     }
   }
 </style>

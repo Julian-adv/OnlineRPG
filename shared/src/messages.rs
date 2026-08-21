@@ -1014,6 +1014,9 @@ pub enum ServerMessage {
         leveled_up: bool,
         max_hp: u32,
         current_hp: u32,
+        /// The kill this XP came from, so a client can hold the gain until that
+        /// monster starts its death animation. `None` for the death penalty.
+        monster_id: Option<String>,
     },
     /// Direct message: the receiving player's full trained-skill map, sent
     /// once on EnterGame. Skills stay out of the broadcast `Player` struct —
@@ -1364,6 +1367,9 @@ pub enum ServerMessage {
     GrillEnded {
         grilled_item_def_id: Option<String>,
     },
+    /// Direct to each occupant sunset just put out of a dungeon, alongside the
+    /// system line: the roar they hear as the dark takes them.
+    DungeonReset,
 }
 
 pub use crate::entity::PlayerId;

@@ -11,6 +11,13 @@ const SWORD_MISS_VOLUME = 0.5
 const SWORD_HIT_POOL_SIZE = 4
 const SWORD_MISS_POOL_SIZE = 4
 
+interface SoundSpec {
+  url: string
+  volume: number
+  pool: number
+}
+type SoundTable = Readonly<Record<string, SoundSpec>>
+
 // The reel fires on every reel-stance engage, so it gets a deeper pool; the
 // rest are one-shot moments.
 const FISHING_SOUNDS = {
@@ -29,6 +36,11 @@ const PROP_SOUNDS = {
   coinSpill: { url: '/sounds/coin-spill.ogg', volume: 0.5, pool: 2 },
 } as const
 export type PropSound = keyof typeof PROP_SOUNDS
+
+const DUNGEON_SOUNDS = {
+  reset: { url: '/sounds/dungeon-roar.ogg', volume: 0.5, pool: 1 },
+} as const
+export type DungeonSound = keyof typeof DUNGEON_SOUNDS
 
 const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
@@ -82,10 +94,9 @@ interface AudioPool {
   index: number
 }
 
-const swordHitPools = new Map<string, AudioPool>()
-const swordMissPools = new Map<string, AudioPool>()
-const fishingPools = new Map<string, AudioPool>()
-const propPools = new Map<string, AudioPool>()
+// One pool per url, shared by every group. Playback volume is applied per
+// play, so a url two groups happen to share still sounds right in both.
+const pools = new Map<string, AudioPool>()
 
 function canUseAudio(): boolean {
   return typeof Audio !== 'undefined'
@@ -98,12 +109,7 @@ function createAudio(url: string, volume: number): HTMLAudioElement {
   return audio
 }
 
-function preloadAudioPool(
-  pools: Map<string, AudioPool>,
-  url: string,
-  volume: number,
-  poolSize: number
-) {
+function preloadAudioPool(url: string, volume: number, poolSize: number) {
   if (!canUseAudio() || pools.has(url)) return
 
   const pool = {
@@ -118,13 +124,8 @@ function preloadAudioPool(
   pools.set(url, pool)
 }
 
-function playAudioFromPool(
-  pools: Map<string, AudioPool>,
-  url: string,
-  volume: number,
-  poolSize: number
-) {
-  preloadAudioPool(pools, url, volume, poolSize)
+function playAudioFromPool(url: string, volume: number, poolSize: number) {
+  preloadAudioPool(url, volume, poolSize)
 
   const pool = pools.get(url)
   if (!pool) return
@@ -144,26 +145,32 @@ function playAudioFromPool(
   }
 }
 
+function preloadSounds(table: SoundTable) {
+  for (const { url, volume, pool } of Object.values(table)) {
+    preloadAudioPool(url, volume, pool)
+  }
+}
+
+function playSound({ url, volume, pool }: SoundSpec) {
+  if (!canUseAudio()) return
+  playAudioFromPool(url, volume, pool)
+}
+
 export function preloadSwordHitSound() {
   for (const url of getAllMaterialHitSoundUrls()) {
-    preloadAudioPool(swordHitPools, url, SWORD_HIT_VOLUME, SWORD_HIT_POOL_SIZE)
+    preloadAudioPool(url, SWORD_HIT_VOLUME, SWORD_HIT_POOL_SIZE)
   }
 }
 
 export function preloadSwordMissSound() {
   for (const url of getAllMaterialMissSoundUrls()) {
-    preloadAudioPool(
-      swordMissPools,
-      url,
-      SWORD_MISS_VOLUME,
-      SWORD_MISS_POOL_SIZE
-    )
+    preloadAudioPool(url, SWORD_MISS_VOLUME, SWORD_MISS_POOL_SIZE)
   }
 }
 
 export function playSwordHitSound(url = DEFAULT_MATERIAL_HIT_SOUND_URL) {
   if (!canUseAudio()) return
-  playAudioFromPool(swordHitPools, url, SWORD_HIT_VOLUME, SWORD_HIT_POOL_SIZE)
+  playAudioFromPool(url, SWORD_HIT_VOLUME, SWORD_HIT_POOL_SIZE)
 }
 
 export function playSwordMissSound(
@@ -175,33 +182,32 @@ export function playSwordMissSound(
     window.setTimeout(() => playSwordMissSound(url), delayMs)
     return
   }
-  playAudioFromPool(
-    swordMissPools,
-    url,
-    SWORD_MISS_VOLUME,
-    SWORD_MISS_POOL_SIZE
-  )
+  playAudioFromPool(url, SWORD_MISS_VOLUME, SWORD_MISS_POOL_SIZE)
 }
 
 export function preloadPropSounds() {
-  for (const { url, volume, pool } of Object.values(PROP_SOUNDS)) {
-    preloadAudioPool(propPools, url, volume, pool)
-  }
+  preloadSounds(PROP_SOUNDS)
 }
 
 /** `break`: barrel/crate shatter, timed by the caller to the slash contact
  *  frame. `chestOpen`: lid swing on the open broadcast. `coinSpill`: the
  *  pile's pour clip starting. */
 export function playPropSound(kind: PropSound) {
-  if (!canUseAudio()) return
-  const { url, volume, pool } = PROP_SOUNDS[kind]
-  playAudioFromPool(propPools, url, volume, pool)
+  playSound(PROP_SOUNDS[kind])
+}
+
+/** Called on dungeon entry, not at world entry: the roar is the heaviest clip
+ *  here and only delvers ever hear it. */
+export function preloadDungeonSounds() {
+  preloadSounds(DUNGEON_SOUNDS)
+}
+
+export function playDungeonSound(kind: DungeonSound) {
+  playSound(DUNGEON_SOUNDS[kind])
 }
 
 export function preloadFishingSounds() {
-  for (const { url, volume, pool } of Object.values(FISHING_SOUNDS)) {
-    preloadAudioPool(fishingPools, url, volume, pool)
-  }
+  preloadSounds(FISHING_SOUNDS)
 }
 
 const pendingFishingTimers = new Set<number>()
@@ -218,8 +224,7 @@ export function playFishingSound(kind: FishingSound, delayMs = 0) {
     pendingFishingTimers.add(timer)
     return
   }
-  const { url, volume, pool } = FISHING_SOUNDS[kind]
-  playAudioFromPool(fishingPools, url, volume, pool)
+  playSound(FISHING_SOUNDS[kind])
 }
 
 /** A cast aborted mid-flight must not splash after the line is back in. */

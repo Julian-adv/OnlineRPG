@@ -11,6 +11,7 @@
  * player-physics can consult it without prop drilling.
  */
 import { get } from 'svelte/store'
+import { preloadDungeonSounds } from './sfxManager'
 import {
   dungeon_layout,
   dungeon_constants,
@@ -509,6 +510,7 @@ class DungeonManager {
    */
   enter(id: string, entrance: DungeonEntrance) {
     if (this.id === id) return
+    preloadDungeonSounds()
     if (this.id) this.exit()
     this.layouts = dungeon_layout(id) as DungeonFloorLayout[]
     dungeon_add_passability(id, entrance.x, entrance.y, entrance.z)

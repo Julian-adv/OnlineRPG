@@ -534,7 +534,14 @@ async fn dungeon_reset_evicts_occupants_and_wakes_the_guardian() {
         "the boot tick must leave delvers where they stand"
     );
 
+    let mut rx = game_state.register_direct_channel(&player_id).await;
     advance_one_night(&game_state).await;
+    assert!(
+        drain(&mut rx)
+            .iter()
+            .any(|m| matches!(m, ServerMessage::DungeonReset)),
+        "the evicted delver hears the roar"
+    );
 
     let entrance = game_state
         .dungeon_defs

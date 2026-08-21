@@ -522,7 +522,8 @@ impl super::GameState {
                     let mut recipients = Vec::with_capacity(sharers.len() + 1);
                     recipients.push(*player_id);
                     recipients.extend(sharers);
-                    self.grant_monster_kill_xp(&recipients, share).await;
+                    self.grant_monster_kill_xp(&recipients, share, &monster_id)
+                        .await;
                 }
 
                 // Schedule removal after 30 seconds. Through despawn_monsters
@@ -552,7 +553,12 @@ impl super::GameState {
     /// (HP rolls plus the full heal), dirty marks, and the direct XpGained
     /// notice. A zero share (tiny monster split) sends nothing. Batched over
     /// the whole party so one kill takes each lock once.
-    async fn grant_monster_kill_xp(&self, recipients: &[PlayerId], xp_amount: u32) {
+    async fn grant_monster_kill_xp(
+        &self,
+        recipients: &[PlayerId],
+        xp_amount: u32,
+        monster_id: &str,
+    ) {
         if xp_amount == 0 {
             return;
         }
@@ -647,6 +653,7 @@ impl super::GameState {
                     leveled_up,
                     max_hp,
                     current_hp,
+                    monster_id: Some(monster_id.to_string()),
                 },
             )
             .await;
@@ -1082,6 +1089,7 @@ impl super::GameState {
                 leveled_up: false,
                 max_hp: max_hp_for_msg,
                 current_hp: current_hp_for_msg,
+                monster_id: None,
             },
         )
         .await;

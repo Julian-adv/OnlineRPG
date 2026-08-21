@@ -500,6 +500,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PlayerTradeUpdate { .. } => "PlayerTradeUpdate",
         ServerMessage::PlayerTradeEnded { .. } => "PlayerTradeEnded",
         ServerMessage::PlayerTradeError { .. } => "PlayerTradeError",
+        ServerMessage::DungeonReset => "DungeonReset",
     }
 }
 

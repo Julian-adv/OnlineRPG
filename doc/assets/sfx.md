@@ -44,3 +44,13 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
   `The_sound_of_hundred_#2-1787144560968.mp3` kept in `~/assets_original/sfx/`
   on pc5090). Trimmed to 1.8 s (trailing silence) with a 150 ms tail fade,
   −1.5 dB gain, resampled 48→44.1 kHz.
+
+## World
+
+- dungeon-roar.ogg — the roar that wakes far below when sunset resets the
+  dungeons, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
+  2026-08-21 (free tier, own generation; original
+  `The_sound_of_monster_#3-1787310281519.mp3` kept in `~/assets_original/sfx/`
+  on pc5090). Trimmed to 4.64 s with a 150 ms tail fade, −3 dB gain,
+  resampled 48→44.1 kHz.

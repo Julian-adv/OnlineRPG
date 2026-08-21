@@ -18,6 +18,7 @@ import type { Position } from '../utils/movementUtils'
 import type { TerrainHeightManager } from './terrainHeightManager'
 import type { TerrainSplatManager } from './terrainSplatManager'
 import { playSwordHitSound, playSwordMissSound } from './sfxManager'
+import { clearXpArrival, releaseXpArrival } from './xpArrival'
 import type { NoSpawnZone } from './zoneManager'
 import { TILE_DIM, worldToTileCoord } from './terrain-height-types'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
@@ -330,6 +331,12 @@ class MonsterManager {
     monster.pendingSwordHitSoundUrl = undefined
   }
 
+  /** This kill is still on its way down (waiting out the blade's impact or
+   *  the hit reaction), so its XP has a moment to wait for. */
+  isDeathPending(id: string): boolean {
+    return this.monsters.get(id)?.isDeadPending === true
+  }
+
   handleMonsterDead(id: string, droppedWeaponItemDefId?: string | null) {
     const monster = this.monsters.get(id)
     if (monster) {
@@ -471,6 +478,7 @@ class MonsterManager {
       ai_remove_brain(id)
     }
     this.monsters.clear()
+    clearXpArrival()
   }
 
   update(deltaTime: number) {
@@ -689,11 +697,14 @@ class MonsterManager {
     gateXzMovement = false
   ) {
     if (update.state) {
+      // The frame the kill starts falling: XP held for it can ride the clip.
+      const falling = update.state === 'dead' && monster.state !== 'dead'
       monster.state = update.state
       this.updateMoveSpeedFromState(monster)
       if (update.state === 'hit' || update.state === 'dead') {
         this.playPendingSwordHitSound(monster)
       }
+      if (falling) releaseXpArrival(monster.id)
     }
 
     if (update.rotation !== undefined) {

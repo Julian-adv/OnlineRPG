@@ -16,6 +16,7 @@ import { FishingAnimationName } from '../types/animations'
 import {
   cancelPendingFishingSounds,
   playFishingSound,
+  playDungeonSound,
 } from '../managers/sfxManager'
 import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
 import { monsterManager } from '../managers/monsterManager'
@@ -24,6 +25,7 @@ import { bridgeManager } from '../managers/bridgeManager'
 import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
+import { queueXpArrival, releaseXpArrival } from '../managers/xpArrival'
 import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
 import { capeDyeDialog } from '../stores/capeDyeStore'
 import { capeTextureDialog } from '../stores/capeTextureStore'
@@ -299,12 +301,10 @@ export function handleServerMessage(
   events: MessageEvents,
   disconnect: () => void
 ) {
-  if (typeof raw === 'string') {
-    return
-  }
-
-  const type = Object.keys(raw)[0]
-  const data = raw[type]
+  // Payloadless variants (GrillStarted, DungeonReset) arrive as a bare name.
+  const isBare = typeof raw === 'string'
+  const type = isBare ? raw : Object.keys(raw)[0]
+  const data = isBare ? undefined : raw[type]
 
   switch (type) {
     case 'AuthSuccess': {
@@ -1359,40 +1359,61 @@ export function handleServerMessage(
         }
       }
 
+      // A kill's XP lands on the badge as that monster starts going down, so
+      // the gauge spark rides the death animation instead of the packet.
+      const killedId: string | null = data.monster_id ?? null
+      const heldForKill =
+        isCurrentPlayer &&
+        !isStaleGain &&
+        data.xp_amount > 0 &&
+        killedId !== null &&
+        monsterManager.isDeathPending(killedId)
+          ? killedId
+          : null
+      // An immediate change (the death penalty) must land on top of a held
+      // kill, never under it.
+      if (isCurrentPlayer && !heldForKill) releaseXpArrival()
       updatePlayer(data.player_id, {
-        ...(isStaleGain ? {} : { level: data.new_level, totalXp: newTotalXp }),
+        ...(isStaleGain || heldForKill
+          ? {}
+          : { level: data.new_level, totalXp: newTotalXp }),
         health: data.current_hp,
         maxHealth: data.max_hp,
         ...(isCurrentPlayer ? { lastRegenInfo: regenInfo } : {}),
       })
+      // Held XP takes its combat-log lines with it, so the badge, the
+      // character panel and the chat all turn over on the same beat.
+      const lines: string[] = []
       if (data.xp_amount > 0) {
-        addCombatMessage({
-          text: `You gained ${data.xp_amount} XP.`,
-          sender: 'local',
-        })
+        lines.push(`You gained ${data.xp_amount} XP.`)
       } else if (previousLevel !== null) {
-        if (xpLost > 0) {
-          addCombatMessage({
-            text: `Death penalty: You lost ${xpLost} XP.`,
-            sender: 'local',
-          })
-        } else {
-          addCombatMessage({ text: 'Death penalty applied.', sender: 'local' })
+        lines.push(
+          xpLost > 0
+            ? `Death penalty: You lost ${xpLost} XP.`
+            : 'Death penalty applied.'
+        )
+      }
+      if (!isStaleGain) {
+        if (data.leveled_up) {
+          lines.push(`Level up! You are now level ${data.new_level}.`)
+        } else if (previousLevel !== null && data.new_level < previousLevel) {
+          lines.push(`Level down. You are now level ${data.new_level}.`)
         }
       }
-      if (isStaleGain) {
-        break
-      }
-      if (data.leveled_up) {
-        addCombatMessage({
-          text: `Level up! You are now level ${data.new_level}.`,
-          sender: 'local',
-        })
-      } else if (previousLevel !== null && data.new_level < previousLevel) {
-        addCombatMessage({
-          text: `Level down. You are now level ${data.new_level}.`,
-          sender: 'local',
-        })
+      if (heldForKill) {
+        const playerId = data.player_id
+        queueXpArrival(
+          { level: data.new_level, totalXp: newTotalXp, lines },
+          heldForKill,
+          (xp) => {
+            updatePlayer(playerId, { level: xp.level, totalXp: xp.totalXp })
+            for (const text of xp.lines) {
+              addCombatMessage({ text, sender: 'local' })
+            }
+          }
+        )
+      } else {
+        for (const text of lines) addCombatMessage({ text, sender: 'local' })
       }
       break
     }
@@ -1602,6 +1623,10 @@ export function handleServerMessage(
           sender: 'local',
         })
       }
+      break
+
+    case 'DungeonReset':
+      playDungeonSound('reset')
       break
   }
 }
