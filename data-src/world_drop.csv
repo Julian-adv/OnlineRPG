@@ -1,7 +1,7 @@
 id,chance,lowLevelChance,lowLevelMaxLevel
 healing_potion,0.01,,
 coin_pile,0.01,,
-iron_sword,0.01,,
+iron_sword,0.005,,
 scroll_of_return,0.005,,
 scroll_of_enchant_weapon,0.01,0.005,8
 scroll_of_enchant_armor,0.01,0.005,8
