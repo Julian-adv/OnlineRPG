@@ -467,6 +467,9 @@
     monsterMeshes={monsterModels
       .map((model) => model?.getMeshGroup())
       .filter((group) => group !== undefined) as THREE.Group[]}
+    monsterHoverMeshes={monsterModels
+      .map((model) => model?.getHoverMeshGroup())
+      .filter((group) => group !== undefined) as THREE.Group[]}
     npcMeshes={(otherPlayerModels ?? [])
       .map((model) => model?.getModelGroup())
       .filter(

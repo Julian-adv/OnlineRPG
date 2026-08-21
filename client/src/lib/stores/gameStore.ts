@@ -100,9 +100,9 @@ const initialGameState: GameState = {
 
 export const gameStore = writable<GameState>(initialGameState)
 
-/** What the cursor is over, or null when it is over neither a texted object
- *  nor a ground item. Single source of truth: the two hover overlays read the
- *  variant they render, so they can never both be showing. */
+/** What the cursor is over (texted object, ground item or monster), or null.
+ *  Single source of truth: each hover overlay reads the variant it renders,
+ *  so no two can be showing at once. */
 export const hoverTarget = writable<HoverTarget | null>(null)
 
 /** Placed object (e.g. signpost) under the cursor. Drives the speech bubble. */
@@ -115,6 +115,11 @@ export const hoveredSignpost = derived(hoverTarget, (target) =>
  *  that would wake all of them on any hover change. */
 export const hoveredGroundItemId = derived(hoverTarget, (target) =>
   target?.kind === 'groundItem' ? target.instanceId : null
+)
+
+/** Monster under the cursor, as a deduped plain id for the same reason. */
+export const hoveredMonsterId = derived(hoverTarget, (target) =>
+  target?.kind === 'monster' ? target.monsterId : null
 )
 
 /** Set from JoinSuccess; unlocks debug/cheat UI (server re-validates). */

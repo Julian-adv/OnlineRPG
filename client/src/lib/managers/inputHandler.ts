@@ -161,10 +161,36 @@ export interface RaycastContext {
 }
 
 /** What the cursor is over: a placed object carrying display text (e.g. a
- *  signpost) or a ground item. */
+ *  signpost), a ground item, or a monster. */
 export type HoverTarget =
   | { kind: 'text'; position: Position; text: string }
   | { kind: 'groundItem'; instanceId: number }
+  | { kind: 'monster'; monsterId: string }
+
+/** Stable identity for a hover target, used to dedupe store writes. */
+export function hoverTargetKey(target: HoverTarget | null): string | null {
+  if (!target) return null
+  switch (target.kind) {
+    case 'text':
+      return `text:${target.text}@${target.position.x.toFixed(1)},${target.position.z.toFixed(1)}`
+    case 'groundItem':
+      return `item:${target.instanceId}`
+    case 'monster':
+      return `monster:${target.monsterId}`
+  }
+}
+
+/** Inputs for the pointermove hover raycast. `monsterMeshes` should be the
+ *  invisible hover proxies, not the skinned models — this runs at ~20 Hz. */
+export interface HoverContext {
+  camera: THREE.Camera
+  objectMeshes: THREE.Object3D[]
+  groundItemMeshes: THREE.Object3D[]
+  monsterMeshes: THREE.Object3D[]
+  /** False when the target can't be named right now (corpse, item mid-pickup):
+   *  it occludes nothing and the ray looks past it. */
+  isHoverable: (target: HoverTarget) => boolean
+}
 
 class InputHandler {
   private keysPressed = new Set<string>()
@@ -629,49 +655,64 @@ class InputHandler {
   }
 
   /**
-   * Raycast the pointer against the placed-object and ground-item meshes only,
-   * returning what the frontmost hit belongs to: an object's display text
-   * (userData.objectText) or a ground item (userData.groundItemId).
-   * Cheap enough to run on pointermove: it intersects those two groups, not
-   * the whole scene. Returns null when the cursor is over neither.
+   * Raycast the pointer against the placed-object, ground-item and monster
+   * meshes only, returning what the frontmost hoverable hit belongs to: an
+   * object's display text (userData.objectText), a ground item
+   * (userData.groundItemId) or a monster (userData.monsterId). Hits the
+   * context deems unhoverable (a corpse, an item mid-pickup) are looked past —
+   * loot often lands exactly where a monster died.
+   * Cheap enough to run on pointermove: it intersects those groups, not
+   * the whole scene. Returns null when the cursor is over none of them.
    */
-  processHover(
-    event: MouseEvent,
-    camera: THREE.Camera,
-    objectMeshes: THREE.Object3D[],
-    groundItemMeshes: THREE.Object3D[]
-  ): HoverTarget | null {
-    const targets = [...objectMeshes, ...groundItemMeshes]
+  processHover(event: MouseEvent, context: HoverContext): HoverTarget | null {
+    const targets = [
+      ...context.objectMeshes,
+      ...context.groundItemMeshes,
+      ...context.monsterMeshes,
+    ]
     if (targets.length === 0) return null
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
     this._hoverNDC.set(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
       -((event.clientY - rect.top) / rect.height) * 2 + 1
     )
-    this._hoverRaycaster.setFromCamera(this._hoverNDC, camera)
+    this._hoverRaycaster.setFromCamera(this._hoverNDC, context.camera)
     const hits = this._hoverRaycaster.intersectObjects(targets, true)
-    if (hits.length === 0) return null
 
-    const item = findAncestorWithUserData(hits[0].object, 'groundItemId')
-    if (item) {
-      return {
-        kind: 'groundItem',
-        instanceId: item.userData.groundItemId as number,
-      }
+    // A mesh yields one hit per intersected triangle; skip repeats.
+    let lastObject: THREE.Object3D | null = null
+    for (const hit of hits) {
+      if (hit.object === lastObject) continue
+      lastObject = hit.object
+      const target = this.resolveHoverTarget(hit.object)
+      if (target && context.isHoverable(target)) return target
     }
-    const texted = findAncestorWithUserData(hits[0].object, 'objectText')
-    if (texted && texted.userData.objectText !== '') {
-      // World position (robust if the overlay group is ever transformed);
-      // equals obj.position today since the group sits at the scene root.
-      texted.getWorldPosition(this._hoverWorldPos)
-      return {
-        kind: 'text',
-        position: {
-          x: this._hoverWorldPos.x,
-          y: this._hoverWorldPos.y,
-          z: this._hoverWorldPos.z,
-        },
-        text: texted.userData.objectText as string,
+    return null
+  }
+
+  /** One walk up the parent chain, checking every hover key per ancestor. */
+  private resolveHoverTarget(obj: THREE.Object3D): HoverTarget | null {
+    for (let o: THREE.Object3D | null = obj; o; o = o.parent) {
+      const data = o.userData
+      if (data?.groundItemId != null) {
+        return { kind: 'groundItem', instanceId: data.groundItemId as number }
+      }
+      if (data?.monsterId != null) {
+        return { kind: 'monster', monsterId: data.monsterId as string }
+      }
+      if (data?.objectText) {
+        // World position (robust if the overlay group is ever transformed);
+        // equals obj.position today since the group sits at the scene root.
+        o.getWorldPosition(this._hoverWorldPos)
+        return {
+          kind: 'text',
+          position: {
+            x: this._hoverWorldPos.x,
+            y: this._hoverWorldPos.y,
+            z: this._hoverWorldPos.z,
+          },
+          text: data.objectText as string,
+        }
       }
     }
     return null

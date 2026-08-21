@@ -15,7 +15,12 @@
     preloadSwordHitSound,
     preloadSwordMissSound,
   } from '../managers/sfxManager'
-  import { inputHandler, type ClickIntent } from '../managers/inputHandler'
+  import {
+    inputHandler,
+    hoverTargetKey,
+    type ClickIntent,
+    type HoverTarget,
+  } from '../managers/inputHandler'
   import { getNpcCapabilities } from '../data/traderDefs'
   import {
     NPC_TRADE_RANGE_METERS,
@@ -132,6 +137,9 @@
     tipHatMeshes: THREE.Object3D[]
     stallMeshes: THREE.Object3D[]
     monsterMeshes: THREE.Group[]
+    /** Invisible bind-pose boxes, one per monster — the 20 Hz hover raycast
+     *  tests these instead of the skinned triangles. */
+    monsterHoverMeshes: THREE.Group[]
     npcMeshes?: THREE.Object3D[]
     playerMeshes?: THREE.Object3D[]
     doorMeshes: THREE.Object3D[]
@@ -151,6 +159,7 @@
     tipHatMeshes,
     stallMeshes,
     monsterMeshes,
+    monsterHoverMeshes,
     npcMeshes = [],
     playerMeshes = [],
     doorMeshes,
@@ -1378,10 +1387,7 @@
         z: currentPlayer!.position.z,
       },
       playerVisualFloorLevel: get(playerVisualFloorLevel),
-      isMonsterDead: (id) => {
-        const m = monsterManager.monsters.get(id)
-        return m?.state === 'dead' || false
-      },
+      isMonsterDead,
       canCastFishing:
         getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
           ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,
@@ -1555,39 +1561,39 @@
     playerControlMachine.update(deltaTime, options)
   }
 
-  // Hover speech bubble for placed objects that carry text (e.g. signposts).
+  // Hover overlays: signpost speech bubble, ground-item and monster names.
   // Driven by pointermove (event-based, not per-frame) and raycast only against
-  // the object overlay group, throttled to ~20 Hz — negligible cost.
+  // those groups, throttled to ~20 Hz — negligible cost.
   let lastHoverRaycast = 0
   let lastHoverKey: string | null = null
   let hoverTrailing: ReturnType<typeof setTimeout> | null = null
   let pendingHoverEvent: MouseEvent | null = null
 
+  const isMonsterDead = (id: string) =>
+    monsterManager.monsters.get(id)?.state === 'dead'
+
   // An item being picked up is hidden through its parent's `visible`, which
-  // raycasts ignore — so a hit on one that is gone or already in hand is dropped.
-  function isHoverableItem(instanceId: number): boolean {
-    const item = groundItemManager.items.get(instanceId)
-    return !!item && !item.inHand
+  // raycasts ignore — so a hit on one that is gone or already in hand doesn't
+  // count. A corpse likewise names nothing; both let the ray look past them.
+  function isHoverable(target: HoverTarget): boolean {
+    if (target.kind === 'groundItem') {
+      const item = groundItemManager.items.get(target.instanceId)
+      return !!item && !item.inHand
+    }
+    if (target.kind === 'monster') return !isMonsterDead(target.monsterId)
+    return true
   }
 
   function runHover(event: MouseEvent) {
     lastHoverRaycast = performance.now()
-    const hit = inputHandler.processHover(
-      event,
+    const target = inputHandler.processHover(event, {
       camera,
       objectMeshes,
-      groundItemMeshes
-    )
-    const target =
-      hit?.kind === 'groundItem' && !isHoverableItem(hit.instanceId)
-        ? null
-        : hit
-    const key =
-      target?.kind === 'groundItem'
-        ? `item:${target.instanceId}`
-        : target
-          ? `text:${target.text}@${target.position.x.toFixed(1)},${target.position.z.toFixed(1)}`
-          : null
+      groundItemMeshes,
+      monsterMeshes: monsterHoverMeshes,
+      isHoverable,
+    })
+    const key = hoverTargetKey(target)
     if (key === lastHoverKey) return
     lastHoverKey = key
     hoverTarget.set(target)

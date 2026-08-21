@@ -1,3 +1,12 @@
+<script lang="ts" module>
+  import type { Box3 } from 'three'
+
+  // Bind-pose bounding box per model file, shared across instances. Sizes the
+  // nameplate height and the invisible hover proxy. Deliberately non-reactive.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const bindPoseBoxByModel = new Map<string, Box3>()
+</script>
+
 <script lang="ts">
   import { T, useLoader } from '@threlte/core'
   import TextLabel from './TextLabel.svelte'
@@ -21,6 +30,7 @@
     loadSharedPackClipsForModel,
   } from '../utils/characterAnimationUtils'
   import { billboardScale } from '../utils/billboardScale'
+  import { hoveredMonsterId } from '../stores/gameStore'
 
   interface Props {
     position: { x: number; y: number; z: number }
@@ -102,6 +112,8 @@
   let group = $state<THREE.Group>()
   let nametagGroup = $state<THREE.Group | undefined>(undefined)
   let nametagHeight = $state(2.5)
+  let hoverBox = $state<Box3 | null>(null)
+  let hoverProxyGroup = $state<THREE.Group | undefined>(undefined)
   let animDebugInfo = $state('')
   let isDeadAnimationFinished = $state(false)
   let isAttackAnimationFinished = $state(true)
@@ -241,6 +253,10 @@
       group.position.set(position.x, position.y, position.z)
       group.rotation.y = rotation
     }
+    if (hoverProxyGroup) {
+      hoverProxyGroup.position.set(position.x, position.y, position.z)
+      hoverProxyGroup.rotation.y = rotation
+    }
 
     // 1. Sync animation with state
     if (monsterState !== 'attack') {
@@ -334,11 +350,14 @@
           }
         })
 
-        if (isBoss) {
-          // Hang the nameplate just above the scaled bind-pose head.
-          const modelTop = new THREE.Box3().setFromObject(clonedScene).max.y
-          nametagHeight = modelTop * initialScale + 0.4
+        let box = bindPoseBoxByModel.get(initialModel)
+        if (!box) {
+          box = new THREE.Box3().setFromObject(clonedScene)
+          bindPoseBoxByModel.set(initialModel, box)
         }
+        // Hang the nameplate just above the scaled bind-pose head.
+        nametagHeight = box.max.y * initialScale + 0.4
+        hoverBox = box
 
         model = clonedScene
         // Setup mixer on the cloned scene
@@ -450,6 +469,10 @@
   export function getNametagGroup() {
     return nametagGroup
   }
+
+  export function getHoverMeshGroup() {
+    return hoverProxyGroup
+  }
 </script>
 
 {#if model}
@@ -463,18 +486,57 @@
   </T.Group>
 {/if}
 
+{#if model && hoverBox}
+  <!-- Invisible bind-pose box the 20 Hz hover raycast tests instead of the
+       skinned triangles. Raycasts ignore `visible`, so it never renders. Kept
+       out of the model group so clicks still hit the actual silhouette. -->
+  <T.Group
+    bind:ref={hoverProxyGroup}
+    position={[position.x, position.y, position.z]}
+    rotation={[0, rotation, 0]}
+    scale={[initialScale, initialScale, initialScale]}
+    userData={{ monsterId: id }}
+  >
+    <T.Mesh
+      visible={false}
+      position={[
+        (hoverBox.min.x + hoverBox.max.x) / 2,
+        (hoverBox.min.y + hoverBox.max.y) / 2,
+        (hoverBox.min.z + hoverBox.max.z) / 2,
+      ]}
+    >
+      <T.BoxGeometry
+        args={[
+          hoverBox.max.x - hoverBox.min.x,
+          hoverBox.max.y - hoverBox.min.y,
+          hoverBox.max.z - hoverBox.min.z,
+        ]}
+      />
+      <T.MeshBasicMaterial />
+    </T.Mesh>
+  </T.Group>
+{/if}
+
 <!-- Name tag / Debug info -->
 <T.Group bind:ref={nametagGroup}>
-  {#if isBoss && monsterState !== 'dead'}
+  {#if monsterState !== 'dead' && (isBoss || $hoveredMonsterId === id)}
+    <!-- Boss: permanent gold nameplate. Others: hover-only name, sized to
+         match the ground-item hover label. -->
     <TextLabel
       text={initialDef?.name ?? type}
-      fontSize={0.3}
-      color="#ffd166"
-      outlineColor="#422d00"
       outlineWidth={5}
       position={[0, 0, 0]}
       anchorX="center"
       anchorY="bottom"
+      {...isBoss
+        ? { fontSize: 0.3, color: '#ffd166', outlineColor: '#422d00' }
+        : {
+            fontSize: 0.22,
+            color: '#ffffff',
+            outlineColor: '#000000',
+            depthTest: false,
+            renderOrder: 4,
+          }}
     />
   {/if}
   {#if animDebugInfo}
