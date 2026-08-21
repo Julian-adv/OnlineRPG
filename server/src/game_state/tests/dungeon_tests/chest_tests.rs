@@ -21,8 +21,14 @@ async fn crypt_chest_spot(game_state: &GameState) -> (u8, Position) {
 }
 
 /// Mark the crypt's deepest-floor guardian dead (creating the floor runtime
-/// if needed) and, when given, seat a player on that floor.
-async fn kill_crypt_guardian(game_state: &GameState, deepest: u8, player_id: Option<PlayerId>) {
+/// if needed) and, when given, seat a player on that floor. `claimant` earns
+/// the chest, as standing within `CHEST_CLAIM_RADIUS` of the boss would.
+async fn kill_crypt_guardian(
+    game_state: &GameState,
+    deepest: u8,
+    player_id: Option<PlayerId>,
+    claimant: Option<i64>,
+) {
     let mut dungeons = game_state.dungeons.write().await;
     let rt = dungeons.get_mut(CRYPT_ID).expect("crypt runtime");
     let floor = rt
@@ -32,17 +38,39 @@ async fn kill_crypt_guardian(game_state: &GameState, deepest: u8, player_id: Opt
             slots: Vec::new(),
             players: HashSet::new(),
             boss_defeated: false,
+            chest_claimants: HashSet::new(),
         });
     if let Some(player_id) = player_id {
         floor.players.insert(player_id);
     }
+    if let Some(character_id) = claimant {
+        floor.chest_claimants.insert(character_id);
+    }
     floor.boss_defeated = true;
+}
+
+/// Roll the game clock past sunset so the next tick resets the dungeons.
+async fn advance_one_night(game_state: &GameState) {
+    game_state.debug_set_time(0, 0);
+    game_state.tick_dungeon_reset().await;
+    game_state.debug_set_time(23, 0);
+    game_state.tick_dungeon_reset().await;
 }
 
 /// Put a character next to the Old Crypt's chest on the deepest floor with
 /// the guardian already dead — every check `open_dungeon_chest` makes before
 /// the nightly refill gate.
 async fn stage_chest_opener(game_state: &GameState, name: &str, character_id: i64) -> PlayerId {
+    stage_opener(game_state, name, character_id, true).await
+}
+
+/// As above, but `earns_claim` decides whether they were beside the guardian.
+async fn stage_opener(
+    game_state: &GameState,
+    name: &str,
+    character_id: i64,
+    earns_claim: bool,
+) -> PlayerId {
     let player_id = pid(name);
     let (deepest, chest_pos) = crypt_chest_spot(game_state).await;
 
@@ -52,7 +80,13 @@ async fn stage_chest_opener(game_state: &GameState, name: &str, character_id: i6
     game_state
         .register_player_character(&player_id, character_id, 0, attrs_with_cha(12), 0, None)
         .await;
-    kill_crypt_guardian(game_state, deepest, Some(player_id)).await;
+    kill_crypt_guardian(
+        game_state,
+        deepest,
+        Some(player_id),
+        earns_claim.then_some(character_id),
+    )
+    .await;
     player_id
 }
 
@@ -408,8 +442,7 @@ async fn dungeon_chest_open_arms_a_town_return() {
     game_state
         .teleport_player(&player_id, chest_pos, 0.0, -(deepest as i8))
         .await;
-    // Leaving the floor brought the guardian back.
-    kill_crypt_guardian(&game_state, deepest, None).await;
+    // The guardian stays down and the claim with it until the dungeon resets.
     while rx.try_recv().is_ok() {}
     game_state
         .open_dungeon_chest(&player_id, CRYPT_ID, &auth)
@@ -418,5 +451,152 @@ async fn dungeon_chest_open_arms_a_town_return() {
     assert!(
         !game_state.chest_returns.read().await.contains(&player_id),
         "an empty open must not arm a return"
+    );
+}
+
+/// Standing by the chest is not enough: the chest belongs to whoever was
+/// beside the guardian when it fell, so a character parked on the last floor
+/// no longer collects without fighting.
+#[tokio::test]
+async fn dungeon_chest_refuses_a_bystander_who_missed_the_kill() {
+    let auth = make_test_auth("chest_bystander");
+    let account = auth.login_npc("npc_chest_bystander").unwrap();
+    let character = create_test_character(&auth, &account, "Parked");
+
+    let game_state = make_test_game_state("chest_bystander");
+    let player_id = stage_opener(&game_state, "Parked", character.id, false).await;
+
+    let mut direct_rx = game_state.register_direct_channel(&player_id).await;
+    game_state
+        .open_dungeon_chest(&player_id, CRYPT_ID, &auth)
+        .await;
+
+    assert_chest_rejected(&mut direct_rx, "felled the guardian");
+    assert_eq!(game_state.get_player_gold(&player_id).await, 0);
+    assert!(
+        auth.load_dungeon_history(character.id)
+            .map(|h| h.0)
+            .unwrap()
+            .is_empty(),
+        "a refused open must not consume the night's chest"
+    );
+}
+
+/// The claim outlives leaving the floor — a party that steps out to rest can
+/// come back for the chest they earned.
+#[tokio::test]
+async fn chest_claim_survives_leaving_the_floor() {
+    let auth = make_test_auth("chest_claim_persists");
+    let account = auth.login_npc("npc_chest_claim").unwrap();
+    let character = create_test_character(&auth, &account, "Returner");
+
+    let game_state = make_test_game_state("chest_claim_persists");
+    let player_id = stage_chest_opener(&game_state, "Returner", character.id).await;
+    let (deepest, chest_pos) = crypt_chest_spot(&game_state).await;
+
+    game_state.teleport_to_town(&player_id).await;
+    game_state
+        .teleport_player(&player_id, chest_pos, 0.0, -(deepest as i8))
+        .await;
+
+    game_state
+        .open_dungeon_chest(&player_id, CRYPT_ID, &auth)
+        .await;
+
+    assert!(
+        game_state.get_player_gold(&player_id).await > 0,
+        "the chest paid out to its claimant after a round trip"
+    );
+}
+
+/// Sunset empties the dungeons: occupants surface at the entrance and the
+/// guardian's slot is freed, which is the only thing that lifts the claim.
+#[tokio::test]
+async fn dungeon_reset_evicts_occupants_and_wakes_the_guardian() {
+    let auth = make_test_auth("dungeon_reset");
+    let account = auth.login_npc("npc_dungeon_reset").unwrap();
+    let character = create_test_character(&auth, &account, "Delver");
+
+    let game_state = make_test_game_state("dungeon_reset");
+    let player_id = stage_chest_opener(&game_state, "Delver", character.id).await;
+    let deepest = crypt_chest_spot(&game_state).await.0;
+
+    // First tick after boot only records the epoch — a restart must not
+    // empty every dungeon.
+    game_state.tick_dungeon_reset().await;
+    assert!(
+        game_state
+            .players
+            .read()
+            .await
+            .get(&player_id)
+            .is_some_and(|p| p.floor_level == -(deepest as i8)),
+        "the boot tick must leave delvers where they stand"
+    );
+
+    advance_one_night(&game_state).await;
+
+    let entrance = game_state
+        .dungeon_defs
+        .get(CRYPT_ID)
+        .expect("old_crypt def")
+        .position();
+    let players = game_state.players.read().await;
+    let player = players.get(&player_id).expect("delver still online");
+    assert_eq!(player.floor_level, 0, "the reset surfaces every occupant");
+    assert!(
+        player.position.dist_xz_sq(&entrance) < 0.01,
+        "the reset lands them at the entrance, got {:?}",
+        player.position
+    );
+    drop(players);
+
+    let dungeons = game_state.dungeons.read().await;
+    let floor = dungeons
+        .get(CRYPT_ID)
+        .and_then(|rt| rt.floors.get(&deepest))
+        .expect("staged floor");
+    assert!(
+        !floor.boss_defeated,
+        "the guardian rises with the new night"
+    );
+    assert!(floor.chest_claimants.is_empty(), "the night's claims lapse");
+}
+
+/// Someone descending while the sweep runs entered on the new night, so their
+/// floor keeps its guardian rather than being freed under their feet — which
+/// would orphan that floor's live monsters.
+#[tokio::test]
+async fn dungeon_reset_sweeps_a_floor_someone_walked_into() {
+    let auth = make_test_auth("reset_latecomer");
+    let account = auth.login_npc("npc_reset_latecomer").unwrap();
+    let character = create_test_character(&auth, &account, "Latecomer");
+
+    let game_state = make_test_game_state("reset_latecomer");
+    let player_id = stage_chest_opener(&game_state, "Latecomer", character.id).await;
+    let deepest = crypt_chest_spot(&game_state).await.0;
+
+    game_state.tick_dungeon_reset().await;
+    // Re-seat them as if they had just descended.
+    let chest_pos = crypt_chest_spot(&game_state).await.1;
+    game_state
+        .teleport_player(&player_id, chest_pos, 0.0, -(deepest as i8))
+        .await;
+    kill_crypt_guardian(&game_state, deepest, Some(player_id), None).await;
+
+    advance_one_night(&game_state).await;
+
+    let dungeons = game_state.dungeons.read().await;
+    let floor = dungeons
+        .get(CRYPT_ID)
+        .and_then(|rt| rt.floors.get(&deepest))
+        .expect("staged floor");
+    assert!(
+        floor.players.is_empty(),
+        "the second sweep pass evicts a latecomer it can still see"
+    );
+    assert!(
+        !floor.boss_defeated,
+        "an emptied floor is reset like any other"
     );
 }

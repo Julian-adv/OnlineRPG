@@ -505,7 +505,8 @@ impl super::GameState {
                 );
 
                 // Dungeon monsters: free their spawn slot for respawn.
-                self.on_dungeon_monster_dead(&monster_id).await;
+                self.on_dungeon_monster_dead(&monster_id, monster_position, monster_floor_level)
+                    .await;
 
                 self.drain_hunger_for_kill(player_id).await;
                 if let (Some(def), Some(effective_level)) = (def, effective_level) {

@@ -310,3 +310,49 @@ async fn dying_alone_on_a_floor_clears_the_monsters_the_exit_despawned() {
         );
     }
 }
+
+/// Emptying a floor used to zero every slot's respawn clock, including the
+/// boss's — so a party could step onto the stairs and back to refight the
+/// guardian every couple of minutes, each kill a guaranteed weapon drop.
+/// A slain boss now holds its slot until the dungeon resets.
+#[tokio::test]
+async fn a_slain_boss_does_not_return_when_the_floor_empties() {
+    let game_state = make_test_game_state("boss_slot_holds");
+    let entrance = first_dungeon(&game_state);
+    let player_id = add_occupant(&game_state, "Delver", &entrance).await;
+
+    // A boss slot on this floor, freshly slain.
+    {
+        let mut dungeons = game_state.dungeons.write().await;
+        let floor = dungeons
+            .get_mut(&entrance.id)
+            .and_then(|rt| rt.floors.get_mut(&DEPTH))
+            .expect("entered floor");
+        floor.slots.push(super::dungeon::SpawnSlot {
+            alive_monster_id: None,
+            respawn_at_ms: super::dungeon::BOSS_RESPAWN_NEVER,
+            is_boss: true,
+        });
+        floor.boss_defeated = true;
+        floor.chest_claimants.insert(7);
+    }
+
+    leave_floor(&game_state, &player_id, &entrance).await;
+
+    let dungeons = game_state.dungeons.read().await;
+    let floor = dungeons
+        .get(&entrance.id)
+        .and_then(|rt| rt.floors.get(&DEPTH))
+        .expect("floor runtime outlives its occupants");
+    let boss = floor.slots.iter().find(|s| s.is_boss).expect("boss slot");
+    assert_eq!(
+        boss.respawn_at_ms,
+        super::dungeon::BOSS_RESPAWN_NEVER,
+        "an empty floor must not free the guardian's slot"
+    );
+    assert!(floor.boss_defeated, "the guardian stays down");
+    assert!(
+        floor.chest_claimants.contains(&7),
+        "and the claim it earned stays with it"
+    );
+}
