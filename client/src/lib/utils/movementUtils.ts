@@ -47,6 +47,7 @@ export interface PlayerState {
   movementMode?: MovementMode
   attackCounter?: number
   interactionAnim?: string
+  interactionCounter?: number
   interactOffsetY?: number
 }
 

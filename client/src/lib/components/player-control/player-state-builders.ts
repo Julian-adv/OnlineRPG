@@ -74,16 +74,12 @@ export function buildInteractState(
     rotation,
     position,
     interactionAnim: anim,
+    // Bump so repeating the same anim still re-triggers (see attackCounter).
+    interactionCounter: (prev.interactionCounter ?? 0) + 1,
     interactOffsetY: offsetY,
   }
 }
 
 export function buildPickupState(prev: PlayerState): PlayerState {
-  return {
-    ...prev,
-    state: 'interact',
-    speed: 0,
-    interactionAnim: 'pickup',
-    interactOffsetY: 0,
-  }
+  return buildInteractState(prev, prev.position, prev.rotation, 'pickup', 0)
 }

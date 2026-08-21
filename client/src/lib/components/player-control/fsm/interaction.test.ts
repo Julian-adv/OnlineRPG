@@ -16,6 +16,7 @@ import {
   handlePickupGrab,
   shouldFinishPendingPickup,
 } from './interaction'
+import { buildInteractState, buildPickupState } from '../player-state-builders'
 
 describe('getObjectInteractionEntryPosition', () => {
   it('applies x/z interaction offsets', () => {
@@ -119,6 +120,7 @@ describe('beginObjectInteraction', () => {
       rotation: 1.5,
       position: { x: 10, y: 2, z: 20 },
       interactionAnim: 'sit',
+      interactionCounter: 1,
       interactOffsetY: 0.5,
     })
   })
@@ -141,6 +143,22 @@ describe('exitObjectInteraction', () => {
       interactionAnim: undefined,
       interactOffsetY: undefined,
     })
+  })
+})
+
+describe('interactionCounter', () => {
+  it('increments on every build so a repeated anim still re-triggers', () => {
+    const first = buildPickupState(previousPlayerState)
+    const second = buildInteractState(
+      first,
+      { x: 0, y: 0, z: 0 },
+      0,
+      'pickup',
+      0
+    )
+
+    expect(first.interactionCounter).toBe(1)
+    expect(second.interactionCounter).toBe(2)
   })
 })
 
@@ -257,6 +275,7 @@ describe('beginPickupInteraction', () => {
       state: 'interact',
       speed: 0,
       interactionAnim: 'pickup',
+      interactionCounter: 1,
       interactOffsetY: 0,
     })
   })

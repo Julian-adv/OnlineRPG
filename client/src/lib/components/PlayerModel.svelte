@@ -95,6 +95,7 @@
     isCurrentPlayer: boolean
     playerState: PlayerStateName
     interactionAnim?: string
+    interactionCounter?: number
     interactOffsetY?: number
     attackCounter?: number
     speed: number
@@ -140,6 +141,7 @@
     isCurrentPlayer,
     playerState,
     interactionAnim,
+    interactionCounter,
     interactOffsetY = 0,
     attackCounter,
     speed: _speed,
@@ -250,14 +252,11 @@
   let validAnimations = $state<THREE.AnimationClip[]>([])
   let offhandClips = new SvelteMap<string, THREE.AnimationClip>()
   let socialClipsByName = new SvelteMap<string, THREE.AnimationClip>()
-  let socialLoading = false
-  let lastPlayerState: PlayerStateName | undefined
-  let lastInteractionAnim: string | undefined
-  let lastAttackCounter: number | undefined
+  let socialLoadPromise: Promise<void> | null = null
+  let lastAnimKey: string | undefined
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
-  let lastMovementMode: MovementMode | undefined
   let weaponObject: THREE.Object3D | null = null
   const OVERLAP_BEFORE_END = 0.3 // Start next animation overlap 0.3 seconds before current ends
   const _nametagPos = new THREE.Vector3()
@@ -586,10 +585,9 @@
     return AnimationIndex.JOG // Default fallback
   }
 
-  async function loadSocialAnimations() {
-    if (socialLoading || socialClipsByName.size > 0) return
-    socialLoading = true
-    try {
+  function loadSocialAnimations(): Promise<void> {
+    if (socialLoadPromise) return socialLoadPromise
+    socialLoadPromise = (async () => {
       // Interaction-state clips come from two packs; both land in the same
       // by-name map since interactionAnim is resolved purely by clip name.
       const [socialGltf, fishingGltf] = await Promise.all([
@@ -609,10 +607,9 @@
         }
         socialClipsByName.set(clip.name, clip)
       }
-    } finally {
-      socialLoading = false
-    }
-    if (mixer && playerState === 'interact') playAnimationForState()
+      if (mixer && playerState === 'interact') playAnimationForState()
+    })()
+    return socialLoadPromise
   }
 
   let offhandLoadPromise: Promise<void> | null = null
@@ -682,11 +679,15 @@
       clip = validAnimations[AnimationIndex.DYING]
     } else if (playerState === 'interact') {
       interactionFinishedNotified = false
+      pickupGrabNotified = false
       clip = interactionAnim
         ? socialClipsByName.get(interactionAnim)
         : undefined
       if (!clip) {
         loadSocialAnimations()
+        // While the packs load, keep the change pending so the frame loop
+        // retries; a name missing from loaded packs stays consumed.
+        if (socialClipsByName.size === 0) lastAnimKey = undefined
         return
       }
     } else {
@@ -1044,19 +1045,16 @@
 
     // Update animation state
     if (validAnimations.length > 0) {
-      if (
-        lastPlayerState !== playerState ||
-        (playerState === 'interact' &&
-          lastInteractionAnim !== interactionAnim) ||
-        (playerState === 'moving' && lastMovementMode !== movementMode) ||
-        (playerState === 'attack' && lastAttackCounter !== attackCounter)
-      ) {
-        lastPlayerState = playerState
-        lastInteractionAnim = interactionAnim
-        lastMovementMode = movementMode
-        // Assign even when undefined, or the check stays true every frame and
-        // the re-trigger pins the clip to frame 0.
-        lastAttackCounter = attackCounter
+      const animKey =
+        playerState === 'interact'
+          ? `interact:${interactionAnim}:${interactionCounter}`
+          : playerState === 'moving'
+            ? `moving:${movementMode}`
+            : playerState === 'attack'
+              ? `attack:${attackCounter}`
+              : playerState
+      if (lastAnimKey !== animKey) {
+        lastAnimKey = animKey
         playAnimationForState()
       }
     }

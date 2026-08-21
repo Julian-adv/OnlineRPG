@@ -149,6 +149,9 @@
         : FishingAnimationName.IDLE
       : currentPlayerState.interactionAnim
   )
+  const effectiveInteractionCounter = $derived(
+    fishingOverrideActive ? undefined : currentPlayerState.interactionCounter
+  )
 
   // Visual floor: matches what remotes report, so a player on the stairs isn't
   // hidden from the floor they're still on. See playerVisualFloorLevel.
@@ -491,6 +494,7 @@
     isCurrentPlayer={true}
     playerState={effectivePlayerState}
     interactionAnim={effectiveInteractionAnim}
+    interactionCounter={effectiveInteractionCounter}
     interactOffsetY={currentPlayerState.interactOffsetY}
     attackCounter={currentPlayerState.attackCounter}
     speed={currentPlayerState.speed}
@@ -542,6 +546,7 @@
         isCurrentPlayer={false}
         playerState={remotePlayer.state}
         interactionAnim={remotePlayer.interactionAnim}
+        interactionCounter={remotePlayer.interactionCounter}
         interactOffsetY={remotePlayer.interactOffsetY}
         attackCounter={remotePlayer.attackCounter}
         speed={remotePlayer.speed}

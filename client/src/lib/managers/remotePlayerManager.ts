@@ -311,6 +311,7 @@ class PlayerStateManager {
       state: 'interact',
       speed: 0,
       interactionAnim: anim,
+      interactionCounter: (player.interactionCounter ?? 0) + 1,
       interactOffsetY: offsetY,
     }
     if (position) {
