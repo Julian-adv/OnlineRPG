@@ -161,9 +161,20 @@ export interface RaycastContext {
 }
 
 /** What the cursor is over: a placed object carrying display text (e.g. a
- *  signpost), a ground item, a monster, or a remote player (NPC or not). */
+ *  signpost), an interactable prop carrying a display name (tip hat, stall,
+ *  chest), a ground item, a monster, or a remote player (NPC or not).
+ *  A 'name' position is the ground point under the prop's footprint center;
+ *  the label floats `labelY` above it and the ring drapes around it. */
 export type HoverTarget =
   | { kind: 'text'; position: Position; text: string }
+  | {
+      kind: 'name'
+      position: Position
+      text: string
+      labelY: number
+      ringRadius: number
+      floorLevel: number
+    }
   | { kind: 'groundItem'; instanceId: number }
   | { kind: 'monster'; monsterId: string }
   | { kind: 'player'; playerId: number }
@@ -174,6 +185,8 @@ export function hoverTargetKey(target: HoverTarget | null): string | null {
   switch (target.kind) {
     case 'text':
       return `text:${target.text}@${target.position.x.toFixed(1)},${target.position.z.toFixed(1)}`
+    case 'name':
+      return `name:${target.text}@${target.position.x.toFixed(1)},${target.position.z.toFixed(1)}`
     case 'groundItem':
       return `item:${target.instanceId}`
     case 'monster':
@@ -189,12 +202,17 @@ export function hoverTargetKey(target: HoverTarget | null): string | null {
 export interface HoverContext {
   camera: THREE.Camera
   objectMeshes: THREE.Object3D[]
+  tipHatMeshes: THREE.Object3D[]
+  stallMeshes: THREE.Object3D[]
+  propMeshes: THREE.Object3D[]
   groundItemMeshes: THREE.Object3D[]
   monsterMeshes: THREE.Object3D[]
   playerMeshes: THREE.Object3D[]
   /** False when the target can't be named right now (corpse, item mid-pickup):
    *  it occludes nothing and the ray looks past it. */
   isHoverable: (target: HoverTarget) => boolean
+  /** Live display name for a player id (a stall's owner), or null if unknown. */
+  ownerName: (playerId: number) => string | null
 }
 
 class InputHandler {
@@ -660,10 +678,11 @@ class InputHandler {
   }
 
   /**
-   * Raycast the pointer against the placed-object, ground-item and monster
-   * meshes only, returning what the frontmost hoverable hit belongs to: an
-   * object's display text (userData.objectText), a ground item
-   * (userData.groundItemId) or a monster (userData.monsterId). Hits the
+   * Raycast the pointer against the placed-object, tip-hat, stall, dungeon-
+   * prop, ground-item and monster meshes only, returning what the frontmost hoverable hit belongs
+   * to: an object's display text (userData.objectText), an interactable
+   * prop's name (userData.hoverName), a ground item (userData.groundItemId)
+   * or a monster (userData.monsterId). Hits the
    * context deems unhoverable (a corpse, an item mid-pickup) are looked past —
    * loot often lands exactly where a monster died.
    * Cheap enough to run on pointermove: it intersects those groups, not
@@ -672,6 +691,9 @@ class InputHandler {
   processHover(event: MouseEvent, context: HoverContext): HoverTarget | null {
     const targets = [
       ...context.objectMeshes,
+      ...context.tipHatMeshes,
+      ...context.stallMeshes,
+      ...context.propMeshes,
       ...context.groundItemMeshes,
       ...context.monsterMeshes,
       ...context.playerMeshes,
@@ -690,14 +712,17 @@ class InputHandler {
     for (const hit of hits) {
       if (hit.object === lastObject) continue
       lastObject = hit.object
-      const target = this.resolveHoverTarget(hit.object)
+      const target = this.resolveHoverTarget(hit.object, context)
       if (target && context.isHoverable(target)) return target
     }
     return null
   }
 
   /** One walk up the parent chain, checking every hover key per ancestor. */
-  private resolveHoverTarget(obj: THREE.Object3D): HoverTarget | null {
+  private resolveHoverTarget(
+    obj: THREE.Object3D,
+    context: HoverContext
+  ): HoverTarget | null {
     for (let o: THREE.Object3D | null = obj; o; o = o.parent) {
       const data = o.userData
       if (data?.groundItemId != null) {
@@ -708,6 +733,33 @@ class InputHandler {
       }
       if (data?.remotePlayerId != null) {
         return { kind: 'player', playerId: data.remotePlayerId as number }
+      }
+      if (data?.hoverName) {
+        // Anchor at the footprint center on the ground plane, in the prop's
+        // local frame (hoverCenter), carried to world space with its yaw.
+        const center = data.hoverCenter as { x: number; y: number; z: number }
+        this._hoverWorldPos.set(center.x, center.y, center.z)
+        o.localToWorld(this._hoverWorldPos)
+        // A stall is named for its live owner, resolved at hover time so the
+        // layer's userData stays static (no store reads on the render path).
+        let text = data.hoverName as string
+        const ownerId = data.hoverOwnerId as number | undefined
+        if (ownerId != null) {
+          const owner = context.ownerName(ownerId)
+          if (owner) text = `${owner}'s ${text}`
+        }
+        return {
+          kind: 'name',
+          position: {
+            x: this._hoverWorldPos.x,
+            y: this._hoverWorldPos.y,
+            z: this._hoverWorldPos.z,
+          },
+          text,
+          labelY: data.hoverLabelY as number,
+          ringRadius: data.hoverRingRadius as number,
+          floorLevel: data.hoverFloorLevel as number,
+        }
       }
       if (data?.objectText) {
         // World position (robust if the overlay group is ever transformed);

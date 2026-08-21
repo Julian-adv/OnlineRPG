@@ -61,3 +61,16 @@ export function makeTextBadge(text: string, style: BadgeStyle): TextBadge {
   cache.set(key, badge)
   return badge
 }
+
+/** Hover name label style, shared by ground items and interactable props.
+ *  Matches the player nametag (TextLabel at fontSize 0.3, outlineWidth 7),
+ *  a notch smaller at 0.22 world units per em. */
+export const NAME_BADGE_STYLE: BadgeStyle = {
+  id: 'name',
+  fontPx: 64,
+  pixelsPerUnit: 288,
+  bold: false,
+  color: '#ffffff',
+  outlineColor: '#000000',
+  outlineWidth: 6,
+}

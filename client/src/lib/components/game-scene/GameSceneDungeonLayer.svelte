@@ -16,6 +16,7 @@
     dungeonPropsResetRevision,
     dungeonPropsRevision,
   } from '../../stores/dungeonStore'
+  import { hoverMetrics, type HoverMetrics } from '../../utils/hoverMetrics'
   import {
     dungeonManager,
     ENTRANCE_DOOR_DEPTH,
@@ -119,10 +120,14 @@
   /** Per-kind metrics measured once per GLB: base-seat offset (−bbox.min.y),
    *  height, and horizontal half-extents (hx/hz) — used to seat the model, to
    *  align a chest's long side to its wall, and to inset a boxy prop off it. */
-  const propMetrics = new SvelteMap<
-    string,
-    { seatY: number; height: number; hx: number; hz: number }
-  >()
+  type PropMetrics = {
+    seatY: number
+    height: number
+    hx: number
+    hz: number
+    hover: HoverMetrics
+  }
+  const propMetrics = new SvelteMap<string, PropMetrics>()
   /** Nest a stacked prop slightly into the one below to hide the seam. */
   const PROP_STACK_NEST = 0.97
   /** Wall torch: base height up the (3m) wall — flame sits ~2.3m. */
@@ -238,6 +243,7 @@
         height: Math.max(0.1, size.y),
         hx: size.x / 2,
         hz: size.z / 2,
+        hover: hoverMetrics(template),
       }
       propMetrics.set(kind, m)
     }
@@ -262,6 +268,7 @@
     propId: number,
     kind: string,
     depth: number,
+    m: PropMetrics,
     opts: { breakable?: boolean; openable?: boolean }
   ) {
     clone.userData.dungeonProp = true
@@ -271,6 +278,21 @@
     clone.userData.propEntranceId = dungeonManager.dungeonId
     if (opts.breakable) clone.userData.propBreakable = true
     if (opts.openable) clone.userData.propOpenable = true
+    // Hover label + target ring, chests only: loot is gameplay, while barrels
+    // and crates stay unannounced discovery toys. hoverCenter drops to the
+    // dungeon floor (clone.position must already be set), so the label spans
+    // the full model height above it.
+    if (opts.openable) {
+      clone.userData.hoverName = 'Chest'
+      clone.userData.hoverLabelY = m.height
+      clone.userData.hoverRingRadius = m.hover.ringRadius
+      clone.userData.hoverCenter = {
+        x: m.hover.center.x,
+        y: -clone.position.y,
+        z: m.hover.center.z,
+      }
+      clone.userData.hoverFloorLevel = -depth
+    }
   }
 
   /** Resolve a catalog id to its loaded GLB template, or null on any failure.
@@ -459,7 +481,7 @@
       const openable = prop.kind === 'chest'
       const interactive = breakable || openable
       if (interactive) {
-        tagInteractiveProp(clone, index, prop.kind, depth, {
+        tagInteractiveProp(clone, index, prop.kind, depth, m, {
           breakable,
           openable,
         })
@@ -505,7 +527,7 @@
     const clone = template.clone()
     clone.position.set(chest[0] + 0.5, m.seatY, chest[1] + 0.5)
     clone.rotation.y = 0
-    tagInteractiveProp(clone, TREASURE_CHEST_PROP_ID, 'chest', depth, {
+    tagInteractiveProp(clone, TREASURE_CHEST_PROP_ID, 'chest', depth, m, {
       openable: true,
     })
     clone.traverse((o) => {

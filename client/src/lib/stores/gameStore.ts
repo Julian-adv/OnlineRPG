@@ -1,4 +1,4 @@
-import { derived, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 import { SvelteMap } from 'svelte/reactivity'
 import type { Vector3 } from 'three'
 import type { CharacterClass, Gender } from '../network/networkTypes'
@@ -108,6 +108,19 @@ export const hoverTarget = writable<HoverTarget | null>(null)
 /** Placed object (e.g. signpost) under the cursor. Drives the speech bubble. */
 export const hoveredSignpost = derived(hoverTarget, (target) =>
   target?.kind === 'text' ? target : null
+)
+
+/** Drop a 'name' hover: its target is a positional snapshot, so when the
+ *  entity vanishes under a resting cursor (picked-up tip hat, closed stall)
+ *  the label and ring would freeze in place until the next pointermove. */
+export function clearNameHover() {
+  if (get(hoverTarget)?.kind === 'name') hoverTarget.set(null)
+}
+
+/** Interactable prop under the cursor (tip hat, stall, chest). Drives the
+ *  name label and target ring. */
+export const hoveredNameLabel = derived(hoverTarget, (target) =>
+  target?.kind === 'name' ? target : null
 )
 
 /** Ground item under the cursor. Every ground item subscribes, so this is

@@ -1,5 +1,6 @@
 import { SvelteMap } from 'svelte/reactivity'
 import { hmrSingleton } from '../utils/hmr'
+import { clearNameHover } from '../stores/gameStore'
 import type { ServerStall } from '../network/networkTypes'
 
 /** Laid-out merchant stalls by id. Surface-only, like campfires. */
@@ -11,6 +12,7 @@ class StallManager {
   }
 
   remove(id: number) {
+    clearNameHover()
     this.stalls.delete(id)
   }
 

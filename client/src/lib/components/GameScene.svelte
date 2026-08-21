@@ -8,11 +8,14 @@
     gameStore,
     resetGameStore,
     hoveredSignpost,
+    hoveredNameLabel,
     type LocalPlayer,
     type RemotePlayer,
     type ChatBubble,
   } from '../stores/gameStore'
   import SignpostBubble from './ChatBubble.svelte'
+  import HoverNameLabel from './HoverNameLabel.svelte'
+  import TargetRing from './TargetRing.svelte'
   import {
     startChatBubbleChecker,
     stopChatBubbleChecker,
@@ -209,6 +212,7 @@
   let stallsLayerRef = $state<GameSceneStallsLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
   let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
+  let hoverNameLabelRef = $state<HoverNameLabel | undefined>(undefined)
   let signpostBubblePos = $derived(
     $hoveredSignpost
       ? new THREE.Vector3(
@@ -578,6 +582,8 @@
 
       // Keep the signpost hover bubble facing the camera
       signpostBubbleRef?.update()
+      // Keep the prop hover name label a steady on-screen size
+      hoverNameLabelRef?.update()
 
       // Update unified torch light flickering (single shadow-casting light)
       playersLayer?.updateUnifiedTorchFlicker(deltaTime / 1000)
@@ -1286,6 +1292,25 @@
     position={signpostBubblePos}
     {camera}
     message={$hoveredSignpost.text}
+  />
+{/if}
+
+{#if $hoveredNameLabel && camera}
+  <HoverNameLabel
+    bind:this={hoverNameLabelRef}
+    text={$hoveredNameLabel.text}
+    position={$hoveredNameLabel.position}
+    labelY={$hoveredNameLabel.labelY}
+    {camera}
+  />
+  <TargetRing
+    heightManager={terrainHeightManager}
+    x={$hoveredNameLabel.position.x}
+    z={$hoveredNameLabel.position.z}
+    radius={$hoveredNameLabel.ringRadius}
+    floorLevel={$hoveredNameLabel.floorLevel}
+    fallbackY={$hoveredNameLabel.position.y}
+    color="#ffd166"
   />
 {/if}
 

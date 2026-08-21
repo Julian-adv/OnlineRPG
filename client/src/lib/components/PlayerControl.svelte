@@ -202,6 +202,9 @@
   }
   playerVisualFloorLevel.subscribe(syncFloorLevel)
   currentDungeonDepth.subscribe(syncFloorLevel)
+  // Crossing a dungeon boundary swaps the visible entity layers wholesale;
+  // a resting cursor would otherwise keep a stale snapshot hover.
+  currentDungeonDepth.subscribe(() => clearHover())
 
   const { renderer } = useThrelte()
 
@@ -1611,7 +1614,7 @@
     playerControlMachine.update(deltaTime, options)
   }
 
-  // Hover overlays: signpost speech bubble, ground-item and monster names.
+  // Hover overlays: signpost speech bubble, ground-item, prop and monster names.
   // Driven by pointermove (event-based, not per-frame) and raycast only against
   // those groups, throttled to ~20 Hz — negligible cost.
   let lastHoverRaycast = 0
@@ -1638,15 +1641,28 @@
     return true
   }
 
+  /** Display name for a player id (stall owner labels), self included. */
+  function ownerName(playerId: number): string | null {
+    const state = get(gameStore)
+    if (state.currentPlayer?.id === playerId) {
+      return state.currentPlayer.name ?? null
+    }
+    return state.otherPlayers.get(playerId)?.name ?? null
+  }
+
   function runHover(event: MouseEvent) {
     lastHoverRaycast = performance.now()
     const target = inputHandler.processHover(event, {
       camera,
       objectMeshes,
+      tipHatMeshes,
+      stallMeshes,
+      propMeshes,
       groundItemMeshes,
       monsterMeshes: monsterHoverMeshes,
       playerMeshes: playerHoverMeshes,
       isHoverable,
+      ownerName,
     })
     const key = hoverTargetKey(target)
     if (key === lastHoverKey) return

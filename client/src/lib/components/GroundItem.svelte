@@ -13,17 +13,6 @@
     outlineColor: 'rgba(0,0,0,0.85)',
     outlineWidth: BADGE_FONT_PX * 0.16,
   }
-  // Matches the player nametag (TextLabel at fontSize 0.3, outlineWidth 7),
-  // a notch smaller at 0.22 world units per em.
-  const NAME_STYLE: BadgeStyle = {
-    id: 'name',
-    fontPx: BADGE_FONT_PX,
-    pixelsPerUnit: 288,
-    bold: false,
-    color: '#ffffff',
-    outlineColor: '#000000',
-    outlineWidth: 6,
-  }
   const NAME_GAP = 0.06
   const UP = new THREE.Vector3(0, 1, 0)
   const nameAnchor = new THREE.Vector3()
@@ -43,7 +32,7 @@
   import { localPlayerRightHand } from '../stores/playerHandRegistry'
   import { hoveredGroundItemId } from '../stores/gameStore'
   import { billboardScale } from '../utils/billboardScale'
-  import { makeTextBadge } from '../utils/textBadge'
+  import { makeTextBadge, NAME_BADGE_STYLE } from '../utils/textBadge'
   import { itemDisplayName } from '../data/itemDefs'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import { entityGroundY } from '../managers/entity-ground'
@@ -403,7 +392,7 @@
     return itemDisplayName(data.itemDefId, data.enchant)
   })
   const nameBadge = $derived(
-    hoveredName ? makeTextBadge(hoveredName, NAME_STYLE) : null
+    hoveredName ? makeTextBadge(hoveredName, NAME_BADGE_STYLE) : null
   )
   // Same zoom falloff the nametags use, so the label holds a steady on-screen
   // size. Read only while hovering, so resting items never recompute it.
