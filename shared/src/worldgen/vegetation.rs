@@ -33,7 +33,7 @@ fn decode_height(v: u16) -> f32 {
 fn decode_heightmap(bytes: &[u8]) -> Vec<f32> {
     debug_assert_eq!(bytes.len(), VERTS_PER_SIDE * VERTS_PER_SIDE * 2);
     let mut out = Vec::with_capacity(VERTS_PER_SIDE * VERTS_PER_SIDE);
-    for chunk in bytes.chunks_exact(2) {
+    for chunk in bytes.as_chunks::<2>().0 {
         let v = u16::from_le_bytes([chunk[0], chunk[1]]);
         out.push(decode_height(v));
     }

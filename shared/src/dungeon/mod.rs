@@ -745,7 +745,7 @@ fn floor_passability_cells_inner(
     // east-wall door seals EDGE_E / EDGE_W across the two columns. ORing both
     // cells' bits is what `is_*_blocked` checks, so sealing one side suffices,
     // but we seal both for symmetry with the carve pass.
-    for q in closed_door_segs.chunks_exact(4) {
+    for q in closed_door_segs.as_chunks::<4>().0 {
         let (ax, az, bx, bz) = (q[0], q[1], q[2], q[3]);
         if az == bz {
             // North-wall door: opening spans x in [ax, bx) on wall line z = az.
