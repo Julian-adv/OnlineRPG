@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampPanelPos, panelZ, parsePositions } from './panelLayout'
+import { clampPanelPos, panelZ, parsePositions, PANEL_IDS } from './panelLayout'
 
 const SIZE = { width: 364, height: 600 }
 
@@ -56,10 +56,13 @@ describe('clampPanelPos', () => {
 
 describe('panelZ', () => {
   it('ranks panels bottom-up under the consent toasts', () => {
-    expect(panelZ(['party', 'character'], 'party')).toBe(40)
-    expect(panelZ(['party', 'character'], 'character')).toBe(41)
-    expect(
-      panelZ(['party', 'character', 'friends', 'inventory'], 'inventory')
-    ).toBeLessThan(44)
+    expect(panelZ(['party', 'character'], 'party')).toBe(39)
+    expect(panelZ(['party', 'character'], 'character')).toBe(40)
+  })
+
+  it('keeps every panel under the consent toasts (44) with all raised', () => {
+    for (const id of PANEL_IDS) {
+      expect(panelZ(PANEL_IDS, id)).toBeLessThan(44)
+    }
   })
 })

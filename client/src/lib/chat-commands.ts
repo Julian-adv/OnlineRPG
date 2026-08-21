@@ -24,6 +24,7 @@ import { tpDestinations } from './utils/tp-destinations'
 import { dungeonManager } from './managers/dungeonManager'
 import { chatChannel } from './stores/chatChannelStore'
 import { partyRoster } from './stores/partyStore'
+import { EMOTE_LIST } from './emote-meta'
 
 function teleportTo(x: number, y: number, z: number) {
   const wrappedX = teleportLocalPlayer(x, y, z)
@@ -111,7 +112,25 @@ const COMMANDS: Record<string, Command> = {
     desc: 'Play a tune where you stand (needs an instrument): /play_music [song]',
   },
   '/emote': {
-    desc: 'Play an emote where you stand: /emote excited',
+    desc: 'Play an emote where you stand: /emote twist — bare /emote lists them',
+    run: (args) => {
+      const name = args.trim()
+      if (name) {
+        // The server is the validator; forward like an unhandled command.
+        networkManager.sendChatMessage(`/emote ${name}`)
+        return
+      }
+      // Kept to the server's own compact shape (play_emote's reply): command
+      // tokens embedded in prose get mangled by chat translation.
+      addChatMessage({
+        text: `Emotes: ${EMOTE_LIST.map((e) => e.anim).join(', ')}`,
+        sender: 'system',
+      })
+      addChatMessage({
+        text: 'Dances loop until you move. Social menu: G',
+        sender: 'system',
+      })
+    },
   },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },
   '/spawnmob': {

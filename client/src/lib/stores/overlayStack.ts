@@ -1,6 +1,7 @@
 import { get, writable, type Readable } from 'svelte/store'
 import { characterPanelVisible, inventoryVisible } from './debugStore'
 import { friendPanelVisible } from './friendStore'
+import { emotePanelVisible } from './emoteStore'
 import { shopSession } from './tradeStore'
 
 /** HUD overlays Escape interacts with. */
@@ -8,6 +9,7 @@ export type OverlayId =
   | 'worldMap'
   | 'character'
   | 'friends'
+  | 'emotes'
   | 'inventory'
   | 'trade'
   | 'playerTrade'
@@ -18,9 +20,10 @@ export type OverlayId =
   | 'capeDye'
   | 'capeTexture'
   | 'chatChannelMenu'
+  | 'socialMenu'
 
 /** `layer` is paint order, not raw z-index: `.game-hud`'s z-index:1 stacking
- *  context traps the panels' 40/45 below the root-level dialogs (each 30,
+ *  context traps the panels' 39..45 below the root-level dialogs (each 30,
  *  ranked by DOM order) and settings (10000).
  *  Store-backed panels close here; dialogs register their closer via
  *  mountOverlay, and one that registers none (loading) blocks Escape. */
@@ -28,6 +31,7 @@ const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   character: { layer: 0, close: () => characterPanelVisible.set(false) },
   inventory: { layer: 0, close: () => inventoryVisible.set(false) },
   friends: { layer: 0, close: () => friendPanelVisible.set(false) },
+  emotes: { layer: 0, close: () => emotePanelVisible.set(false) },
   trade: { layer: 1, close: () => shopSession.set(null) },
   // Closer registered by the window: once a side is locked Escape
   // must not throw the negotiation away.
@@ -39,8 +43,9 @@ const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   capeTexture: { layer: 3 },
   worldMap: { layer: 4 },
   settings: { layer: 5 },
-  // A transient popup: whenever it is open, Escape must hit it first.
+  // Transient popups: whenever one is open, Escape must hit it first.
   chatChannelMenu: { layer: 6 },
+  socialMenu: { layer: 6 },
 }
 
 const stack = writable<OverlayId[]>([])
@@ -62,6 +67,7 @@ function track(id: OverlayId, open: boolean) {
 characterPanelVisible.subscribe((open) => track('character', open))
 inventoryVisible.subscribe((open) => track('inventory', open))
 friendPanelVisible.subscribe((open) => track('friends', open))
+emotePanelVisible.subscribe((open) => track('emotes', open))
 shopSession.subscribe((session) => track('trade', session !== null))
 
 const overlayClosers: Partial<Record<OverlayId, () => void>> = {}
