@@ -31,6 +31,9 @@
   } from '../utils/characterAnimationUtils'
   import { billboardScale } from '../utils/billboardScale'
   import { hoveredMonsterId } from '../stores/gameStore'
+  import { HOVER_SCALE_IDLE, stickyHoverScale } from '../utils/stickyHover'
+  import type { TerrainHeightManager } from '../managers/terrainHeightManager'
+  import TargetRing from './TargetRing.svelte'
 
   interface Props {
     position: { x: number; y: number; z: number }
@@ -39,6 +42,8 @@
     attackCounter?: number
     id: string
     type: string
+    floorLevel?: number
+    heightManager?: TerrainHeightManager | null
     lastDamageInfo?: MonsterData['lastDamageInfo']
     droppedWeaponItemDefId?: string
     onHitFinished?: () => void
@@ -51,6 +56,8 @@
     attackCounter,
     id,
     type,
+    floorLevel = 0,
+    heightManager = null,
     lastDamageInfo,
     droppedWeaponItemDefId,
     onHitFinished,
@@ -114,6 +121,33 @@
   let nametagHeight = $state(2.5)
   let hoverBox = $state<Box3 | null>(null)
   let hoverProxyGroup = $state<THREE.Group | undefined>(undefined)
+  // Hover hysteresis: the hovered monster's proxy inflates so the pointer
+  // must drift further out before the target drops.
+  const stickyScale = $derived.by(() => {
+    if (!hoverBox || $hoveredMonsterId !== id) return HOVER_SCALE_IDLE
+    return stickyHoverScale(
+      {
+        x: hoverBox.max.x - hoverBox.min.x,
+        y: hoverBox.max.y - hoverBox.min.y,
+        z: hoverBox.max.z - hoverBox.min.z,
+      },
+      initialScale
+    )
+  })
+  // Target ring sized to the bind-pose footprint.
+  const ringRadius = $derived(
+    hoverBox
+      ? Math.max(
+          0.4,
+          (Math.max(
+            hoverBox.max.x - hoverBox.min.x,
+            hoverBox.max.z - hoverBox.min.z
+          ) /
+            2) *
+            initialScale
+        )
+      : 0
+  )
   let animDebugInfo = $state('')
   let isDeadAnimationFinished = $state(false)
   let isAttackAnimationFinished = $state(true)
@@ -499,6 +533,7 @@
   >
     <T.Mesh
       visible={false}
+      scale={stickyScale}
       position={[
         (hoverBox.min.x + hoverBox.max.x) / 2,
         (hoverBox.min.y + hoverBox.max.y) / 2,
@@ -515,6 +550,17 @@
       <T.MeshBasicMaterial />
     </T.Mesh>
   </T.Group>
+{/if}
+
+{#if monsterState !== 'dead' && $hoveredMonsterId === id && ringRadius > 0}
+  <TargetRing
+    {heightManager}
+    x={position.x}
+    z={position.z}
+    radius={ringRadius}
+    {floorLevel}
+    fallbackY={position.y}
+  />
 {/if}
 
 <!-- Name tag / Debug info -->

@@ -1233,6 +1233,7 @@
   <GameSceneMonstersLayer
     monsters={monsterManager.monsters}
     {currentPlayer}
+    heightManager={terrainHeightManager}
     bind:monsterModels
   />
 

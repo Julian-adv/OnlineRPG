@@ -47,6 +47,7 @@
   import { itemDisplayName } from '../data/itemDefs'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import { entityGroundY } from '../managers/entity-ground'
+  import TargetRing from './TargetRing.svelte'
   import { playPropSound } from '../managers/sfxManager'
   import {
     evaluateSpawnAnimation,
@@ -334,9 +335,35 @@
   // replacements (in-hand, spawn-animation clear) don't rebuild the texture.
   const qtyText = $derived(data.quantity > 1 ? `x${data.quantity}` : null)
   const qtyBadge = $derived(qtyText ? makeTextBadge(qtyText, QTY_STYLE) : null)
-  // Sits above the model's top, so a spear's badge clears the spear.
+  // Pad sits under the model's visual center and circumscribes its footprint
+  // (radius = half the x/z diagonal); both fall back to defaults until a model
+  // box is known. Derived from the box so there is one source of truth.
+  const GROUND_PAD_RADIUS = 0.32
+  const worldModelCenter = $derived(
+    worldModelBox
+      ? {
+          x: (worldModelBox.min.x + worldModelBox.max.x) / 2,
+          z: (worldModelBox.min.z + worldModelBox.max.z) / 2,
+        }
+      : { x: 0, z: 0 }
+  )
+  const groundPadRadius = $derived(
+    worldModelBox
+      ? Math.hypot(
+          worldModelBox.max.x - worldModelBox.min.x,
+          worldModelBox.max.z - worldModelBox.min.z
+        ) / 2
+      : GROUND_PAD_RADIUS
+  )
+  // Hover ring, slightly larger than the footprint it marks.
+  const ringRadius = $derived(groundPadRadius + 0.08)
+
+  // Sits above the model's top, so a spear's badge clears the spear; lifts
+  // further with the ring radius so wide items keep the label clear of it.
   const qtyBadgeY = $derived(
-    (worldModelBox ? worldModelBox.max.y : 0.3) + QTY_BADGE_LIFT
+    (worldModelBox ? worldModelBox.max.y : 0.3) +
+      QTY_BADGE_LIFT +
+      ringRadius * 0.4
   )
 
   // Icon billboard for items with no world model (fish, jewellery, armor):
@@ -462,27 +489,7 @@
   // generous click target. It is a child of the root group (so a click on it
   // walks up to `groundItemId`), but counter-offsets the root's hover/spawn-arc
   // lift so it stays planted on the ground with a hair of clearance.
-  const GROUND_PAD_RADIUS = 0.32
   const GROUND_PAD_CLEARANCE = 0.012
-  // Pad sits under the model's visual center and circumscribes its footprint
-  // (radius = half the x/z diagonal); both fall back to defaults until a model
-  // box is known. Derived from the box so there is one source of truth.
-  const worldModelCenter = $derived(
-    worldModelBox
-      ? {
-          x: (worldModelBox.min.x + worldModelBox.max.x) / 2,
-          z: (worldModelBox.min.z + worldModelBox.max.z) / 2,
-        }
-      : { x: 0, z: 0 }
-  )
-  const groundPadRadius = $derived(
-    worldModelBox
-      ? Math.hypot(
-          worldModelBox.max.x - worldModelBox.min.x,
-          worldModelBox.max.z - worldModelBox.min.z
-        ) / 2
-      : GROUND_PAD_RADIUS
-  )
   const groundPadY = $derived(
     GROUND_PAD_CLEARANCE - restHover - (spawnTransform?.offsetY ?? 0)
   )
@@ -631,7 +638,9 @@
     <!-- Count badge for a pile. At the root group so it billboards upright
          instead of tilting with the terrain or spinning with the model. -->
     <T.Sprite
+      position.x={groundPadOffset.x}
       position.y={qtyBadgeY}
+      position.z={groundPadOffset.z}
       scale={[qtyBadge.width, qtyBadge.height, 1]}
       renderOrder={3}
     >
@@ -646,7 +655,9 @@
   {#if nameBadge}
     <!-- Hover name: billboards at the root group, above the count badge. -->
     <T.Sprite
+      position.x={groundPadOffset.x}
       position.y={nameBadgeY}
+      position.z={groundPadOffset.z}
       scale={[nameBadge.width * nameScale, nameBadge.height * nameScale, 1]}
       renderOrder={4}
       raycast={NO_RAYCAST}
@@ -703,3 +714,15 @@
     </T.Group>
   </T.Group>
 </T.Group>
+
+{#if $hoveredGroundItemId === data.instanceId && !data.inHand}
+  <TargetRing
+    heightManager={heightManager ?? null}
+    x={displayX + groundPadOffset.x}
+    z={displayZ + groundPadOffset.z}
+    radius={ringRadius}
+    floorLevel={data.floorLevel}
+    fallbackY={baseY}
+    color="#ffd166"
+  />
+{/if}

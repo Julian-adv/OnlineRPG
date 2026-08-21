@@ -1,8 +1,20 @@
 <script module lang="ts">
   import * as THREE from 'three'
+  import { HOVER_SCALE_IDLE, stickyHoverScale } from '../utils/stickyHover'
 
   const HEALTH_BAR_WIDTH = 1.0
   const HEALTH_BAR_HEIGHT = 0.08
+
+  // Fixed character-sized hover box; every player shares the skeleton, so the
+  // never-rendered proxy geometry/material are shared across instances too.
+  const HOVER_BOX = { x: 0.9, y: 1.9, z: 0.9 }
+  const HOVER_GEOMETRY = new THREE.BoxGeometry(
+    HOVER_BOX.x,
+    HOVER_BOX.y,
+    HOVER_BOX.z
+  )
+  const HOVER_MATERIAL = new THREE.MeshBasicMaterial()
+  const HOVER_SCALE_STICKY = stickyHoverScale(HOVER_BOX)
 
   // Shared across all PlayerModel instances — the fill geometry never changes.
   // Left-anchored via translate so the mesh only needs scale.x to grow/shrink.
@@ -82,6 +94,9 @@
   import ChatBubble from './ChatBubble.svelte'
   import DamageText from './DamageText.svelte'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
+  import { hoveredPlayerId } from '../stores/gameStore'
+  import type { TerrainHeightManager } from '../managers/terrainHeightManager'
+  import TargetRing from './TargetRing.svelte'
   import {
     HELD_EMOTE_ANIMS,
     MUSIC_EMOTE_ANIM,
@@ -133,6 +148,9 @@
     /** Set for every remote player, NPC or not. Only the right-click menu
      *  reads it, so tagging everyone leaves left-click behaviour alone. */
     remotePlayerId?: number
+    /** Remote player's floor (negative = dungeon depth), for the hover ring. */
+    floorLevel?: number
+    heightManager?: TerrainHeightManager | null
   }
 
   let {
@@ -169,6 +187,8 @@
     torchEffectsDisabled = false,
     npcPlayerId,
     remotePlayerId,
+    floorLevel = 0,
+    heightManager = null,
   }: Props = $props()
 
   const DEFAULT_IDLE_INDICES = [
@@ -247,6 +267,14 @@
   let currentAction = $state<THREE.AnimationAction | null>(null)
   let modelRoot = $state<THREE.Group | null>(null)
   let modelGroup = $state<THREE.Group | undefined>(undefined)
+
+  let hoverProxyGroup = $state<THREE.Group | undefined>(undefined)
+  const isHoveredPlayer = $derived(
+    remotePlayerId !== undefined && $hoveredPlayerId === remotePlayerId
+  )
+  // Remote positions are mutated in place (see updatePose), so the ring
+  // position is republished from the frame loop while hovered.
+  let ringPos = $state<{ x: number; y: number; z: number } | null>(null)
 
   let clonedScene: THREE.Object3D | null = null
   let validAnimations = $state<THREE.AnimationClip[]>([])
@@ -891,6 +919,10 @@
     return modelGroup
   }
 
+  export function getHoverMeshGroup() {
+    return hoverProxyGroup
+  }
+
   // Tag the model group so the click raycast can resolve NPC models
   // back to their player id.
   $effect(() => {
@@ -918,6 +950,21 @@
     if (modelGroup) {
       const yOffset = playerState === 'interact' ? interactOffsetY : 0
       modelGroup.position.set(position.x, position.y + yOffset, position.z)
+    }
+    if (hoverProxyGroup) {
+      hoverProxyGroup.position.set(position.x, position.y, position.z)
+    }
+    if (isHoveredPlayer) {
+      if (
+        !ringPos ||
+        ringPos.x !== position.x ||
+        ringPos.y !== position.y ||
+        ringPos.z !== position.z
+      ) {
+        ringPos = { x: position.x, y: position.y, z: position.z }
+      }
+    } else if (ringPos) {
+      ringPos = null
     }
 
     // Update nametag logic (formerly in useTask)
@@ -1078,6 +1125,36 @@
     <!-- 3D Character Model with real animations -->
     <T is={modelRoot} />
   </T.Group>
+{/if}
+
+{#if !isCurrentPlayer && remotePlayerId !== undefined}
+  <!-- Invisible box the 20 Hz hover raycast tests; kept out of the model
+       group so clicks still hit the actual silhouette. -->
+  <T.Group
+    bind:ref={hoverProxyGroup}
+    position={[position.x, position.y, position.z]}
+    userData={{ remotePlayerId }}
+  >
+    <T.Mesh
+      visible={false}
+      geometry={HOVER_GEOMETRY}
+      material={HOVER_MATERIAL}
+      position={[0, HOVER_BOX.y / 2, 0]}
+      scale={isHoveredPlayer ? HOVER_SCALE_STICKY : HOVER_SCALE_IDLE}
+    />
+  </T.Group>
+
+  {#if isHoveredPlayer && ringPos && health > 0}
+    <TargetRing
+      {heightManager}
+      x={ringPos.x}
+      z={ringPos.z}
+      radius={0.55}
+      {floorLevel}
+      fallbackY={ringPos.y}
+      color="#4da6ff"
+    />
+  {/if}
 {/if}
 
 <!-- Torch fire particles (world space) -->

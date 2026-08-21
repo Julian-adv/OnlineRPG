@@ -479,6 +479,9 @@
     playerMeshes={(otherPlayerModels ?? [])
       .map((model) => model?.getModelGroup())
       .filter((group): group is THREE.Group => group !== undefined)}
+    playerHoverMeshes={(otherPlayerModels ?? [])
+      .map((model) => model?.getHoverMeshGroup())
+      .filter((group): group is THREE.Group => group !== undefined)}
     {doorMeshes}
     {objectMeshes}
     {propMeshes}
@@ -569,6 +572,8 @@
         {torchEffectsDisabled}
         npcPlayerId={player.isOfficialNpc ? player.id : undefined}
         remotePlayerId={player.id}
+        floorLevel={player.floorLevel}
+        {heightManager}
         onInteractionFinished={() =>
           remotePlayerManager.handleInteractionFinished(player.id)}
       />

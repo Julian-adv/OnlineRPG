@@ -6,6 +6,7 @@
   import { networkManager } from '../network/socket'
   import type { PositionCorrection } from '../network/networkTypes'
   import { monsterManager } from '../managers/monsterManager'
+  import { remotePlayerManager } from '../managers/remotePlayerManager'
   import { groundItemManager } from '../managers/groundItemManager'
   import { combatController } from '../managers/combatController'
   import {
@@ -142,6 +143,8 @@
     monsterHoverMeshes: THREE.Group[]
     npcMeshes?: THREE.Object3D[]
     playerMeshes?: THREE.Object3D[]
+    /** Invisible boxes, one per remote player, for the hover raycast. */
+    playerHoverMeshes?: THREE.Object3D[]
     doorMeshes: THREE.Object3D[]
     objectMeshes: THREE.Object3D[]
     propMeshes: THREE.Object3D[]
@@ -162,6 +165,7 @@
     monsterHoverMeshes,
     npcMeshes = [],
     playerMeshes = [],
+    playerHoverMeshes = [],
     doorMeshes,
     objectMeshes,
     propMeshes,
@@ -1369,8 +1373,48 @@
     }, PROP_SWING_RETURN_MS)
   }
 
+  // Sticky hover keeps the target ring up while the pointer sits in the
+  // hovered monster's margin; a click there should attack, not walk, even
+  // though the ray misses the actual silhouette.
+  function hoveredMonsterAttackIntent(): ClickIntent | null {
+    const hover = get(hoverTarget)
+    if (hover?.kind !== 'monster' || isMonsterDead(hover.monsterId)) return null
+    const monster = monsterManager.monsters.get(hover.monsterId)
+    if (!monster || !currentPlayer) return null
+    const p = currentPlayer.position
+    const dx = shortestWrappedDeltaX(p.x, monster.position.x)
+    const dz = monster.position.z - p.z
+    return {
+      type: 'attack_monster',
+      monsterId: hover.monsterId,
+      hitPoint: { x: p.x + dx, y: monster.position.y, z: monster.position.z },
+      distance: Math.sqrt(dx * dx + dz * dz),
+    }
+  }
+
+  // Same coherence for NPCs: a click in the sticky margin interacts instead
+  // of walking. Non-NPC players stay left-click inert by design, so hovering
+  // one never overrides a click.
+  function hoveredNpcInteractIntent(): ClickIntent | null {
+    const hover = get(hoverTarget)
+    if (hover?.kind !== 'player' || !currentPlayer) return null
+    if (!get(gameStore).otherPlayers.get(hover.playerId)?.isOfficialNpc)
+      return null
+    const npcPos = remotePlayerManager.players.get(hover.playerId)?.position
+    if (!npcPos) return null
+    const p = currentPlayer.position
+    const dx = shortestWrappedDeltaX(p.x, npcPos.x)
+    const dz = npcPos.z - p.z
+    return {
+      type: 'interact_npc',
+      playerId: hover.playerId,
+      position: { x: p.x + dx, y: npcPos.y, z: npcPos.z },
+      distance: Math.sqrt(dx * dx + dz * dz),
+    }
+  }
+
   function processClickIntent(event: MouseEvent): ClickIntent {
-    return inputHandler.processCanvasClick(event, {
+    const intent = inputHandler.processCanvasClick(event, {
       camera,
       monsterMeshes,
       npcMeshes,
@@ -1393,6 +1437,12 @@
           ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,
       waterSurfaceAt,
     })
+    if (intent.type === 'move_to_ground' || intent.type === 'none') {
+      return (
+        hoveredMonsterAttackIntent() ?? hoveredNpcInteractIntent() ?? intent
+      )
+    }
+    return intent
   }
 
   /** Right-click on an NPC: open the context menu with the interactions the
@@ -1581,6 +1631,10 @@
       return !!item && !item.inHand
     }
     if (target.kind === 'monster') return !isMonsterDead(target.monsterId)
+    if (target.kind === 'player') {
+      const player = get(gameStore).otherPlayers.get(target.playerId)
+      return !!player && player.health > 0
+    }
     return true
   }
 
@@ -1591,6 +1645,7 @@
       objectMeshes,
       groundItemMeshes,
       monsterMeshes: monsterHoverMeshes,
+      playerMeshes: playerHoverMeshes,
       isHoverable,
     })
     const key = hoverTargetKey(target)
@@ -1641,8 +1696,18 @@
     )
 
     const canvas = renderer.domElement
+    // OrbitControls listens on the canvas's wrapper and captures the pointer
+    // there on every mousedown; that retargets pointer events and fires a
+    // spurious pointerleave on the canvas even though the cursor never moved.
+    // A leave "to" an ancestor of the canvas can only be that retargeting —
+    // a real leave lands on a sibling overlay, another element, or null.
+    const handlePointerLeave = (e: PointerEvent) => {
+      if (e.relatedTarget instanceof Node && e.relatedTarget.contains(canvas))
+        return
+      clearHover()
+    }
     canvas.addEventListener('pointermove', handlePointerHover)
-    canvas.addEventListener('pointerleave', clearHover)
+    canvas.addEventListener('pointerleave', handlePointerLeave)
 
     const unsubscribeNetworkEvents = subscribePlayerNetworkEvents({
       isCurrentPlayerEligibleForRespawn: () =>
@@ -1658,7 +1723,7 @@
     return () => {
       removeInputListeners()
       canvas.removeEventListener('pointermove', handlePointerHover)
-      canvas.removeEventListener('pointerleave', clearHover)
+      canvas.removeEventListener('pointerleave', handlePointerLeave)
       clearHover()
       unsubscribeNetworkEvents()
       playerControlMachine.dispose()

@@ -161,11 +161,12 @@ export interface RaycastContext {
 }
 
 /** What the cursor is over: a placed object carrying display text (e.g. a
- *  signpost), a ground item, or a monster. */
+ *  signpost), a ground item, a monster, or a remote player (NPC or not). */
 export type HoverTarget =
   | { kind: 'text'; position: Position; text: string }
   | { kind: 'groundItem'; instanceId: number }
   | { kind: 'monster'; monsterId: string }
+  | { kind: 'player'; playerId: number }
 
 /** Stable identity for a hover target, used to dedupe store writes. */
 export function hoverTargetKey(target: HoverTarget | null): string | null {
@@ -177,16 +178,20 @@ export function hoverTargetKey(target: HoverTarget | null): string | null {
       return `item:${target.instanceId}`
     case 'monster':
       return `monster:${target.monsterId}`
+    case 'player':
+      return `player:${target.playerId}`
   }
 }
 
-/** Inputs for the pointermove hover raycast. `monsterMeshes` should be the
- *  invisible hover proxies, not the skinned models — this runs at ~20 Hz. */
+/** Inputs for the pointermove hover raycast. `monsterMeshes` and
+ *  `playerMeshes` should be the invisible hover proxies, not the skinned
+ *  models — this runs at ~20 Hz. */
 export interface HoverContext {
   camera: THREE.Camera
   objectMeshes: THREE.Object3D[]
   groundItemMeshes: THREE.Object3D[]
   monsterMeshes: THREE.Object3D[]
+  playerMeshes: THREE.Object3D[]
   /** False when the target can't be named right now (corpse, item mid-pickup):
    *  it occludes nothing and the ray looks past it. */
   isHoverable: (target: HoverTarget) => boolean
@@ -669,6 +674,7 @@ class InputHandler {
       ...context.objectMeshes,
       ...context.groundItemMeshes,
       ...context.monsterMeshes,
+      ...context.playerMeshes,
     ]
     if (targets.length === 0) return null
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
@@ -699,6 +705,9 @@ class InputHandler {
       }
       if (data?.monsterId != null) {
         return { kind: 'monster', monsterId: data.monsterId as string }
+      }
+      if (data?.remotePlayerId != null) {
+        return { kind: 'player', playerId: data.remotePlayerId as number }
       }
       if (data?.objectText) {
         // World position (robust if the overlay group is ever transformed);

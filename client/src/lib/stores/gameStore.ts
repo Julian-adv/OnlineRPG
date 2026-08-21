@@ -122,6 +122,11 @@ export const hoveredMonsterId = derived(hoverTarget, (target) =>
   target?.kind === 'monster' ? target.monsterId : null
 )
 
+/** Remote player (NPC or not) under the cursor, deduped like the above. */
+export const hoveredPlayerId = derived(hoverTarget, (target) =>
+  target?.kind === 'player' ? target.playerId : null
+)
+
 /** Set from JoinSuccess; unlocks debug/cheat UI (server re-validates). */
 export const isAdminUser = writable(false)
 

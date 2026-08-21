@@ -6,16 +6,19 @@
   import { unwrapWorldXNear, WORLD_WIDTH_X } from '../../terrain/world-wrap'
   import type { LocalPlayer } from '../../stores/gameStore'
   import type { MonsterData } from '../../types/Monster'
+  import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
 
   interface Props {
     monsters: Map<string, MonsterData>
     currentPlayer: LocalPlayer | null
+    heightManager?: TerrainHeightManager | null
     monsterModels?: (Monster | undefined)[]
   }
 
   let {
     monsters,
     currentPlayer,
+    heightManager = null,
     monsterModels = $bindable<(Monster | undefined)[]>([]),
   }: Props = $props()
 
@@ -57,6 +60,8 @@
     bind:this={monsterModels[index]}
     id={monster.id}
     type={monster.type}
+    floorLevel={monster.floorLevel ?? 0}
+    {heightManager}
     position={displayPosition(monster)}
     rotation={monster.rotation}
     monsterState={monster.state}
