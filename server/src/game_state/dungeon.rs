@@ -36,6 +36,7 @@ const SPAWN_RETRY_MS: u64 = 10 * 1000;
 /// random angle. The minimum keeps items out from under the chest itself.
 const CHEST_LOOT_SCATTER_MIN: f32 = 0.8;
 const CHEST_LOOT_SCATTER_MAX: f32 = 3.0;
+pub(super) const DUNGEON_RESET_WARNING_DURATION: Duration = Duration::from_millis(4_640);
 
 /// Loot-pickup grace before a chest opener is sent back to town.
 const CHEST_RETURN_DELAY: Duration = Duration::from_secs(60);
@@ -1217,6 +1218,22 @@ impl GameState {
     /// A second pass catches anyone who started descending during the first.
     /// Whatever it still misses keeps its floor until the next sunset.
     async fn reset_dungeons(&self) {
+        let warned: Vec<PlayerId> = {
+            let dungeons = self.dungeons.read().await;
+            dungeons
+                .values()
+                .flat_map(|rt| rt.floors.values())
+                .flat_map(|fr| fr.players.iter().copied())
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        if !warned.is_empty() {
+            self.send_direct_message_to_players(&warned, ServerMessage::DungeonReset)
+                .await;
+            tokio::time::sleep(DUNGEON_RESET_WARNING_DURATION).await;
+        }
+
         let mut evicted = Vec::new();
         for _ in 0..2 {
             let occupants: Vec<(PlayerId, Position)> = {
@@ -1254,8 +1271,6 @@ impl GameState {
             },
         )
         .await;
-        self.send_direct_message_to_players(&evicted, ServerMessage::DungeonReset)
-            .await;
 
         let mut dungeons = self.dungeons.write().await;
         for rt in dungeons.values_mut() {

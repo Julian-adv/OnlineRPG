@@ -511,7 +511,7 @@ async fn chest_claim_survives_leaving_the_floor() {
 
 /// Sunset empties the dungeons: occupants surface at the entrance and the
 /// guardian's slot is freed, which is the only thing that lifts the claim.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dungeon_reset_evicts_occupants_and_wakes_the_guardian() {
     let auth = make_test_auth("dungeon_reset");
     let account = auth.login_npc("npc_dungeon_reset").unwrap();
@@ -535,13 +535,28 @@ async fn dungeon_reset_evicts_occupants_and_wakes_the_guardian() {
     );
 
     let mut rx = game_state.register_direct_channel(&player_id).await;
-    advance_one_night(&game_state).await;
+    let reset_state = game_state.clone();
+    let reset = tokio::spawn(async move { advance_one_night(&reset_state).await });
+    tokio::task::yield_now().await;
     assert!(
         drain(&mut rx)
             .iter()
             .any(|m| matches!(m, ServerMessage::DungeonReset)),
-        "the evicted delver hears the roar"
+        "the delver hears the roar before being evicted"
     );
+
+    tokio::time::advance(
+        crate::game_state::dungeon::DUNGEON_RESET_WARNING_DURATION
+            - std::time::Duration::from_millis(1),
+    )
+    .await;
+    assert_eq!(
+        game_state.players.read().await[&player_id].floor_level,
+        -(deepest as i8),
+        "the reset waits for the full roar"
+    );
+    tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    reset.await.expect("dungeon reset task");
 
     let entrance = game_state
         .dungeon_defs
@@ -573,7 +588,7 @@ async fn dungeon_reset_evicts_occupants_and_wakes_the_guardian() {
 /// Someone descending while the sweep runs entered on the new night, so their
 /// floor keeps its guardian rather than being freed under their feet — which
 /// would orphan that floor's live monsters.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dungeon_reset_sweeps_a_floor_someone_walked_into() {
     let auth = make_test_auth("reset_latecomer");
     let account = auth.login_npc("npc_reset_latecomer").unwrap();

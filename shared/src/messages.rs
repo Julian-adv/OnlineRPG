@@ -1367,8 +1367,7 @@ pub enum ServerMessage {
     GrillEnded {
         grilled_item_def_id: Option<String>,
     },
-    /// Direct to each occupant sunset just put out of a dungeon, alongside the
-    /// system line: the roar they hear as the dark takes them.
+    /// Direct to each dungeon occupant before the sunset reset puts them out.
     DungeonReset,
 }
 
