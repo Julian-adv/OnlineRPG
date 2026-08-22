@@ -141,7 +141,21 @@ bpy.context.view_layer.update()
 result = {"dims": [round(v, 4) for v in o.dimensions]}
 ```
 
-착용구·사물은 원점=바닥 중심. **무기는 예외** — `spear.glb`/`sword.glb`의 손 소켓 규약(원점이 그립, 칼날이 +X)을 따른다.
+착용구·사물은 원점=바닥 중심. **무기는 예외** — `spear.glb`/`sword.glb`의 손 소켓 규약(원점이 그립, 칼날이 +X)을 따른다:
+
+1. 가장 긴 축을 +X로 돌린다. 어느 끝이 머리인지는 눈이 아니라 굵기로 정한다 — 양 끝 20% 구간의 최대 반경을 재서 굵은 쪽이 +X.
+2. 전장을 목표값으로 스케일 적용.
+3. 원점 = 자루 중심선 위, 손잡이 끝에서 전장의 **13.6%** 지점(`sword.glb` 비율). 그 X 근처 얇은 슬랩의 Y·Z 중점을 잡으면 중심선이 나온다.
+4. `measure_glb.py`의 `centreXZ` X값이 `전장 × (0.5 - 0.136)`과 맞는지로 검증한다 (전장 1.5m면 +0.546).
+
+긴 무기는 아이콘이 프레임을 못 채운다. **오브젝트가 아니라 카메라를 시선축으로 롤**시켜 대각선 구도를 만들고(사본만 렌더, export되는 GLB는 소켓 자세 그대로), 오쏘 핏은 카메라 공간에서 계산하므로 롤 뒤에도 그대로 동작한다:
+
+```python
+q = mathutils.Euler((math.radians(62), 0, math.radians(35))).to_quaternion()
+cam.rotation_euler = (q @ mathutils.Quaternion((0, 0, 1), CAM_ROLL)).to_euler()
+```
+
+greatclub은 -65°였다. 각도는 20° 간격으로 한 바퀴 훑고 좁혀서 고른다.
 
 기울여 눕히는 게 자연스러운 애셋(건틀릿 등)은 여기서 X축 회전을 함께 적용한다.
 
