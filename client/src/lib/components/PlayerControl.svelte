@@ -202,9 +202,6 @@
   }
   playerVisualFloorLevel.subscribe(syncFloorLevel)
   currentDungeonDepth.subscribe(syncFloorLevel)
-  // Crossing a dungeon boundary swaps the visible entity layers wholesale;
-  // a resting cursor would otherwise keep a stale snapshot hover.
-  currentDungeonDepth.subscribe(() => clearHover())
 
   const { renderer } = useThrelte()
 
@@ -1699,6 +1696,12 @@
     lastHoverKey = null
     hoverTarget.set(null)
   }
+
+  // Crossing a dungeon boundary swaps the visible entity layers wholesale;
+  // a resting cursor would otherwise keep a stale snapshot hover. Subscribed
+  // below the hover state it clears: subscribe fires its callback right here,
+  // and the `let`s above are TDZ until their declarations run.
+  currentDungeonDepth.subscribe(() => clearHover())
 
   onMount(() => {
     preloadSwordHitSound()
