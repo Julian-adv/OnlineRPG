@@ -107,3 +107,6 @@ agent-client/data/cache/
 !.codex/config.toml
 !.codex/skills/
 !.codex/skills/**
+
+# ElevenLabs SFX audition candidates (originals live in ~/assets_original/sfx/)
+sfx-candidates/

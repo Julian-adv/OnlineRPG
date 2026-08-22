@@ -42,6 +42,97 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
   during battle"). Trimmed to 0.62 s (trailing silence) with a 90 ms tail fade,
   peak-normalized to ≈ −3 dB, resampled 48→44.1 kHz.
 
+- orc-death.ogg — orc death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original `orc-death_take9_2026-08-22.mp3`
+  kept in `~/assets_original/sfx/` on pc5090; 1.0 s request, prompt: "The
+  short, guttural death roar of an orc warrior cut down by a sword in
+  battle"). Trimmed to 0.55 s with a 100 ms tail fade, peak-normalized to −3
+  dB, 44.1 kHz mono ogg.
+
+- orc-female-death.ogg — female orc death cry, generated with [ElevenLabs
+  Sound Effects](https://elevenlabs.io/sound-effects) via the API on
+  2026-08-22 (Starter tier, own generation; original
+  `orc-female-death_take1_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; 1.0 s request, prompt: "The short death cry of a female orc warrior
+  struck down by a sword in battle"). Trimmed to 0.50 s with a 100 ms tail
+  fade, peak-normalized to −3 dB, 44.1 kHz mono ogg.
+
+- hobgoblin-death.ogg — hobgoblin death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original
+  `hobgoblin-death_take2_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; 1.0 s request, prompt: "The harsh, barking death cry of a hobgoblin
+  soldier felled by a sword"). Trimmed to 0.45 s with a 100 ms tail fade,
+  peak-normalized to −3 dB, 44.1 kHz mono ogg.
+
+- gnoll-death.ogg — gnoll death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original `gnoll-death_take1_2026-08-22.mp3`
+  kept in `~/assets_original/sfx/` on pc5090; 1.0 s request, prompt: "The
+  yelping, hyena-like death howl of a gnoll cut down in battle"). Trimmed to
+  0.85 s with a 100 ms tail fade, peak-normalized to −3 dB, 44.1 kHz mono
+  ogg.
+
+- bugbear-death.ogg — bugbear death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original `bugbear-death_take2_2026-08-22.mp3`
+  kept in `~/assets_original/sfx/` on pc5090; 1.0 s request, prompt: "A big
+  shaggy bear-like goblin monster's death cry: a snarling guttural growl
+  breaking into a pained yelp as it is cut down. Animal voice only, no drums,
+  no percussion, no music."). Trimmed to 0.70 s with a 100 ms tail fade,
+  peak-normalized to −3 dB, 44.1 kHz mono ogg.
+
+- ogre-death.ogg — ogre death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original `ogre-death_take4_2026-08-22.mp3`
+  kept in `~/assets_original/sfx/` on pc5090; 1.0 s request, prompt: "A huge
+  brutish ogre monster's deep guttural death groan, a hoarse animal voice
+  choking off as it collapses from a sword wound. Voice only, no horns, no
+  music."). Trimmed to 0.90 s with a 100 ms tail fade, peak-normalized to −3
+  dB, 44.1 kHz mono ogg.
+
+- troll-death.ogg — troll death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original `troll-death_take6_2026-08-22.mp3`
+  kept in `~/assets_original/sfx/` on pc5090; 0.6 s request, prompt: "The
+  drawn-out, rasping death roar of a troll dying from a deep sword wound").
+  Trimmed to 0.50 s with a 100 ms tail fade, peak-normalized to −3 dB,
+  44.1 kHz mono ogg.
+
+- stone-golem-death.ogg — stone golem death cry, generated with [ElevenLabs
+  Sound Effects](https://elevenlabs.io/sound-effects) via the API on
+  2026-08-22 (Starter tier, own generation; original
+  `stone-golem-death_take1_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; 1.0 s request, prompt: "A stone golem crumbling apart, grinding rock
+  and falling rubble as it dies"). Trimmed to 0.65 s with a 100 ms tail fade,
+  peak-normalized to −3 dB, 44.1 kHz mono ogg.
+
+- orc-boss-death.ogg — orc chieftain (orc_boss) death cry, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) via the API
+  on 2026-08-22 (Starter tier, own generation; original
+  `orc-boss-death_take2_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; 1.0 s request, prompt: "The furious, booming death roar of a massive
+  orc chieftain falling in battle"). Trimmed to 0.70 s with a 100 ms tail
+  fade, peak-normalized to −3 dB, 44.1 kHz mono ogg.
+
+- ogre-boss-death.ogg — ogre warlord (ogre_boss) death cry, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) via the API
+  on 2026-08-22 (Starter tier, own generation; original
+  `ogre-boss-death_take9_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; 0.6 s request, prompt: "A giant ogre warlord monster's deep roaring
+  death cry, a massive hoarse beast voice breaking into a groan as it falls.
+  Voice only, no horns, no music."). Trimmed to 0.55 s with a 100 ms tail
+  fade, peak-normalized to −3 dB, 44.1 kHz mono ogg.
+
+- scp939-death.ogg — scp939 death cry, generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original `scp939-death_take4_2026-08-22.mp3`
+  kept in `~/assets_original/sfx/` on pc5090; 0.6 s request, prompt: "The wet,
+  distorted death shriek of a fleshy eyeless monster, unnatural and wrong").
+  Trimmed to 0.45 s with a 100 ms tail fade, peak-normalized to −3 dB,
+  44.1 kHz mono ogg.
+
 ## Players
 
 - player-hurt-female.ogg — female character's cry when a hit lands on her (any
