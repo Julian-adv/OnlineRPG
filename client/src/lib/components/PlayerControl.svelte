@@ -235,11 +235,11 @@
 
   function isSprintingNow(): boolean {
     if (!sprintAvailable()) return false
-    if (
-      clickSprinting &&
-      (startingClickMovement || playerControlMachine?.stateName === 'moving')
-    )
-      return true
+    const moving = playerControlMachine?.stateName === 'moving'
+    // Combat chase runs (see getMovementMode) — at sprint speed, or a fleeing
+    // monster outruns the player. Same satiation gate and cost as sprint.
+    if (combatController.isInCombat && moving) return true
+    if (clickSprinting && (startingClickMovement || moving)) return true
     return inputHandler.isSprintRequested && inputHandler.hasKeysPressed
   }
 
