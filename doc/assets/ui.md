@@ -4,6 +4,8 @@
 
 - https://icon-sets.iconify.design/fa6-solid/people-group/
 - https://icon-sets.iconify.design/icon-park-solid/backpack/
+- https://icon-sets.iconify.design/fa6-solid/handshake-simple/ — social corner button in GameHud.svelte
+- https://icon-sets.iconify.design/fa6-solid/face-smile/ — Emotes entry in the social flyout, GameHud.svelte
 - GitHub mark (octicon mark-github, MIT) — inline SVG in LoginScreen.svelte
 
 ## Party UI design mockups
