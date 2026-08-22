@@ -195,8 +195,13 @@
   },
   {
     "id": "health_potion",
-    "name": "Health Potion",
-    "model": "objects/health_potion.glb"
+    "name": "Greater Healing Potion",
+    "model": "objects/greater_healing_potion.glb"
+  },
+  {
+    "id": "healing_potion",
+    "name": "Healing Potion",
+    "model": "objects/healing_potion.glb"
   },
   {
     "id": "scroll",

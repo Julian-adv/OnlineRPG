@@ -6,7 +6,9 @@ argument-hint: [입력 glb/fbx 경로] [애셋 이름]
 
 # 아이템 애셋 파이프라인
 
-Blender MCP(`mcp__blender__execute_blender_code`)로 실행한다. Blender가 켜져 있고 애드온이 연결돼 있어야 한다.
+헤드리스 Blender로 실행한다 — 스크립트를 하나 써서 `blender -b -P <script>.py -- <인자>`로 돌린다. (Blender MCP는 2026-08-21에 제거됐다. pc5090의 `~/opt/blender` 포터블 5.2.0 LTS가 `blender`로 잡혀 있다.)
+
+**Meshy에서는 OBJ가 아니라 GLB로 받는다.** OBJ 포맷에는 PBR 슬롯이 없어 패키지에 `map_Kd`(베이스 컬러) 한 장만 들어온다 — metallic/roughness·normal이 통째로 빠지고, 금속·유리 부분이 납작한 색으로 나온다. 같은 모델의 GLB에는 `base_color` / `metallic_roughness` / `normal` 3장이 다 들어 있다. OBJ로 이미 받았다면 다시 받는 게 절차적 보정보다 빠르고 결과도 낫다 (2026-08-22에 물약 2개 + whetstone_oil을 이 이유로 재작업).
 
 산출물:
 - `client/public/models/<카테고리>/<name>.glb` — 원점 바닥 중심, 스케일 적용됨
@@ -179,6 +181,15 @@ cam.rotation_euler = (math.radians(62), 0, math.radians(35))
 bpy.context.view_layer.update()   # matrix_world 읽기 전 필수
 cam.location = cam.matrix_world.to_3x3() @ mathutils.Vector((0, 0, 2.0)) + aim
 
+# 금속은 반사할 대상이 없으면 검게 나온다 — metallic 맵이 붙은 애셋은 월드가 필수다.
+# film_transparent는 카메라 광선에만 적용되므로 배경 투명은 그대로 유지된다.
+world = bpy.data.worlds.new("IconWorld")
+sc.world = world
+world.use_nodes = True
+bg = world.node_tree.nodes["Background"]
+bg.inputs[0].default_value = (0.55, 0.57, 0.62, 1)
+bg.inputs[1].default_value = 1.2
+
 sc.render.engine = 'CYCLES'
 sc.cycles.samples = 128
 sc.cycles.use_denoising = True
@@ -331,6 +342,8 @@ ssh pc5090 "cd ~/work/OnlineRPG && git diff --stat doc/assets/"          # 4) �
 ## 함정
 
 - **Meshy emissive**: 노드 삭제만으론 부족 (STEP 2). 빼먹으면 인게임에서 하얗게 발광한다.
+- **glTF 임포트는 오브젝트를 QUATERNION 회전 모드로 남긴다**: 그 상태에서 `o.rotation_euler = (0, 0, yaw)`를 넣으면 **조용히 무시된다** — `transform_apply`는 `{'FINISHED'}`를 반환하고 회전값도 0으로 지워지는데 메시는 그대로다. 요 각도를 주기 전에 `o.rotation_mode = 'XYZ'`를 반드시 먼저 지정할 것. OBJ 임포트에는 없는 함정이다 (2026-08-22 whetstone_oil에서 발견).
+- **회전이 먹었는지는 렌더로 판단하지 말 것**: Cycles 노이즈 때문에 각도별 렌더가 다 미묘하게 달라 보여서, 위 버그를 스윕 이미지 8장을 보고도 못 잡았다. export한 GLB의 W/D 값이 실제로 뒤바뀌는지로 검증한다 — `measure_glb.py`.
 - **기준 애셋이 "없다"고 단정하지 말 것**: `models/`는 대부분 gitignore돼 있고 체크아웃이 수십 커밋 뒤처져 있을 수 있다. `assets.lock`과 `git fetch` 먼저 확인한다 (2026-08-04에 apple.glb를 없다고 판단해 엉뚱한 기준을 쓴 적 있음).
 - **Y: 네트워크 드라이브**: `ls`가 120초 넘게 걸릴 수 있다. 파일 경로를 이미 알면 목록 조회하지 말고 바로 임포트할 것.
 - **텍스처 축소는 임포트 직후에**: export 후에는 GLB에 이미 구워져 있다.
