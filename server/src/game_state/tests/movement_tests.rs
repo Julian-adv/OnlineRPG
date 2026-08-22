@@ -915,6 +915,21 @@ mod dungeon_floor_gate {
         })
     }
 
+    /// A carved cell on `depth` inside the down shaft's change margin but off
+    /// its footprint, carved on the floor below too — where a stair descent's
+    /// racing floor-change message lands.
+    fn room_cell_beside_stairs(layouts: &[FloorLayout], depth: u8) -> (i32, i32) {
+        let shaft = layouts[depth as usize - 1]
+            .down_shaft
+            .expect("a floor below")
+            .rect();
+        let margin = shaft.expanded(SHAFT_CHANGE_MARGIN);
+        let below = &layouts[depth as usize];
+        carved_cell(&layouts[depth as usize - 1], |x, z| {
+            margin.contains(x, z) && !shaft.contains(x, z) && below.is_carved(x, z)
+        })
+    }
+
     /// A carved cell on `depth` within a short leg of the down shaft, but
     /// outside its margin.
     fn room_cell_near_stairs(layouts: &[FloorLayout], depth: u8) -> (i32, i32) {
@@ -1019,6 +1034,27 @@ mod dungeon_floor_gate {
         let d = delver("gate_on_shaft_msg", 1, |l| shaft_rect(l, 1).center()).await;
         d.game_state.update_player_floor(&d.player_id, -2).await;
         assert_eq!(d.floor().await, -2);
+    }
+
+    /// The floor-change message races the walk, landing while the stored Y
+    /// still reads the departing floor's ground. Beside the shaft that is a
+    /// mid-transition claim: accepted, with Y snapped to the claimed floor —
+    /// refusing latched the player on the old floor, cut off from the new
+    /// floor's broadcasts.
+    #[tokio::test]
+    async fn floor_change_beside_the_shaft_with_departing_y_is_accepted() {
+        let d = delver("gate_beside_shaft_msg", 1, |l| {
+            room_cell_beside_stairs(l, 1)
+        })
+        .await;
+        d.game_state.update_player_floor(&d.player_id, -2).await;
+        assert_eq!(d.floor().await, -2);
+        let snapped = d.ground(2, d.cell).y;
+        let y = d.game_state.players.read().await[&d.player_id].position.y;
+        assert!(
+            (y - snapped).abs() < 0.01,
+            "Y must snap to the claimed floor"
+        );
     }
 
     #[tokio::test]

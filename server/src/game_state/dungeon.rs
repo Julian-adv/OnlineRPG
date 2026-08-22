@@ -1577,6 +1577,17 @@ impl GameState {
 
         let depth = requested_floor.unsigned_abs();
         let expected_y = floor_height_at(&entrance.position(), layouts, depth, to.x, to.z);
+        let departing_y = (changing && current_floor < 0)
+            .then(|| {
+                floor_height_at(
+                    &entrance.position(),
+                    layouts,
+                    current_floor.unsigned_abs(),
+                    to.x,
+                    to.z,
+                )
+            })
+            .flatten();
         let total = layouts.len();
         drop(dungeons);
         let Some(expected_y) = expected_y else {
@@ -1587,6 +1598,18 @@ impl GameState {
             return keep;
         };
         if (to.y - expected_y).abs() > FLOOR_Y_TOLERANCE {
+            // A change that passed the stairs gate while the Y still reads the
+            // departing floor's ground: the floor-change message races the
+            // walk (`PlayerFloorChanged` validates against the stored, not-yet
+            // -descended position). Accept and snap to the claimed floor —
+            // refusing latched the player on the old floor, cutting them off
+            // from the new floor's broadcasts.
+            if departing_y.is_some_and(|y| (to.y - y).abs() <= FLOOR_Y_TOLERANCE) {
+                return DungeonFloorVerdict {
+                    floor: requested_floor,
+                    y: expected_y,
+                };
+            }
             // Position included: the client latches into claiming the floor
             // below the one its Y sits on, and where that starts is the lead.
             warn!(

@@ -1670,26 +1670,29 @@ impl super::GameState {
             }
         };
 
-        let floor_level = if floor_level < 0 || current_floor < 0 {
-            self.validated_dungeon_floor(
-                player_id,
-                current_floor,
-                floor_level,
-                &position,
-                &position,
-            )
-            .await
-            .floor
+        let (floor_level, snapped_y) = if floor_level < 0 || current_floor < 0 {
+            let verdict = self
+                .validated_dungeon_floor(
+                    player_id,
+                    current_floor,
+                    floor_level,
+                    &position,
+                    &position,
+                )
+                .await;
+            (verdict.floor, Some(verdict.y))
         } else {
-            self.validated_house_floor(
-                player_id,
-                current_floor,
-                floor_level,
-                &position,
-                &position,
-                is_official_npc,
-            )
-            .await
+            let floor = self
+                .validated_house_floor(
+                    player_id,
+                    current_floor,
+                    floor_level,
+                    &position,
+                    &position,
+                    is_official_npc,
+                )
+                .await;
+            (floor, None)
         };
         if floor_level == current_floor {
             return;
@@ -1715,6 +1718,12 @@ impl super::GameState {
                 return;
             };
             player.floor_level = floor_level;
+            // A mid-transition accept snaps Y to the claimed floor's ground;
+            // leaving the departing floor's Y would misplace AOI and targeting
+            // until the next move lands.
+            if let Some(y) = snapped_y {
+                player.position.y = y;
+            }
             player.clone()
         };
 
