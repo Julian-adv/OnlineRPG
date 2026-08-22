@@ -304,8 +304,8 @@ async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
 
     assert_eq!(
         requested_types(&mut rx).len(),
-        1,
-        "the walk released the abandoned monsters, so the walker is owed a spawn request"
+        crate::game_state::monster::AMBIENT_SPAWN_BURST,
+        "the walk released the abandoned monsters, so the walker is owed a burst of requests"
     );
 }
 
@@ -883,8 +883,9 @@ async fn abandoning_a_pair_spreads_them_across_bystanders() {
     );
 }
 
-/// An ambient type only reaches players who have walked far enough from town
-/// for it, so the ground by the gates stays at the weakest monsters.
+/// An ambient type only reaches players one max_distance past its landing
+/// gate — deep enough that no spot the client may pick can fail it — so the
+/// ground by the gates stays at the weakest monsters.
 #[tokio::test]
 async fn ambient_spawns_skip_players_too_close_to_town() {
     let game_state = make_test_game_state("ambient_distance_gate");
@@ -894,7 +895,7 @@ async fn ambient_spawns_skip_players_too_close_to_town() {
         .map(|rule| {
             (
                 rule.monster_type.clone(),
-                game_state.min_ambient_town_distance(&rule.monster_type),
+                game_state.min_ambient_town_distance(&rule.monster_type) + rule.max_distance,
             )
         })
         .collect();

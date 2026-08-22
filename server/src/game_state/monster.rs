@@ -1,7 +1,7 @@
 use crate::types::{MonsterLifecycle, MonsterState, PlayerId, Position, ServerMessage};
 use std::collections::hash_map::Entry;
 use std::collections::HashSet;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Keep spawns this many meters clear of every no-spawn zone (towns), so the
 /// area *around* a town stays empty too. Mirrors the client's TOWN_MARGIN.
@@ -25,6 +25,10 @@ const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
 const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
 const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
+/// Spawn requests one player may receive per tick, so an empty field refills
+/// in a few ticks instead of one monster per tick. Bounded per tick by the
+/// player's cap deficit and the eligible types (one open allowance per type).
+pub(crate) const AMBIENT_SPAWN_BURST: usize = 3;
 /// Metres from town before an ambient type one level higher starts spawning.
 /// What you meet on the surface follows where you stand, not your level.
 const AMBIENT_SPAWN_METERS_PER_LEVEL: f32 = 70.0;
@@ -202,8 +206,24 @@ impl MonsterRegistry {
     /// what an ownership handoff balances on. Broader than the ambient spawn
     /// cap it also gates: dungeon and admin-spawned monsters are exempt from
     /// that cap but still counted here.
+    /// Corpses included — they still cost fanout, so adoption load balancing
+    /// counts them. The spawn cap uses `owned_alive_by`.
     pub(crate) fn owned_by(&self, owner: &PlayerId) -> usize {
         self.ids_by_owner.len_for(owner)
+    }
+
+    /// Live monsters only — the spawn cap ignores corpses, so a kill frees
+    /// its slot immediately instead of for the corpse's fade time. O(cap):
+    /// walks the owner's handful of ids, not the map.
+    pub(crate) fn owned_alive_by(&self, owner: &PlayerId) -> usize {
+        self.ids_by_owner
+            .for_owner(owner)
+            .filter(|id| {
+                self.monsters
+                    .get(*id)
+                    .is_some_and(|m| m.state != MonsterState::Dead)
+            })
+            .count()
     }
 
     /// Every monster id a player owns — what a disconnect has to clear,
@@ -318,12 +338,12 @@ impl super::GameState {
                 && Self::find_ambient_rule(&monster_type).is_some()
         });
 
-        // O(1) against the owner index: this runs on every spawn, tens of
+        // O(cap) against the owner index: this runs on every spawn, tens of
         // thousands of times per tick at target population.
         if let Some(owner) = capped_owner {
             let max_per_player =
                 crate::world_config::world_config().max_monsters_per_player as usize;
-            let owned = self.monsters.read().await.owned_by(&owner);
+            let owned = self.monsters.read().await.owned_alive_by(&owner);
             if owned >= max_per_player {
                 warn!("Monster spawn rejected: player {owner} already owns {owned} monsters");
                 return None;
@@ -378,9 +398,9 @@ impl super::GameState {
         let mut monsters = self.monsters.write().await;
         monsters.insert(id.clone(), monster.clone());
         let total = monsters.len();
-        debug!(
-            "Spawned monster {} [owner #{}, spawn #{}] (Total: {})",
-            id, owner_number, spawn_count, total
+        info!(
+            "Spawned {} {} at ({:.1},{:.1}) for owner #{} (total: {})",
+            monster_type, id, position.x, position.z, owner_number, total
         );
 
         self.send_direct_message_to_players_within_position(
@@ -572,7 +592,7 @@ impl super::GameState {
                 // only an accepted one spends it.
                 monster.move_budget = budget;
                 if raw_dist > budget {
-                    debug!(
+                    warn!(
                         "Rejected monster move {:.0}m (budget {:.1}m): monster {} by {}",
                         raw_dist, budget, monster_id, mover_id
                     );
@@ -583,9 +603,11 @@ impl super::GameState {
                     break 'check false;
                 };
                 if (new_position.y - expected_y).abs() > MONSTER_GROUND_Y_TOLERANCE_METERS {
-                    debug!(
-                        "Rejected monster Y {:.1} (expected {:.1}): monster {} by {}",
-                        new_position.y, expected_y, monster_id, mover_id
+                    warn!(
+                        "Rejected monster Y {:.2} (expected {:.2}): monster {} by {} from ({:.2},{:.2},{:.2}) to ({:.2},{:.2})",
+                        new_position.y, expected_y, monster_id, mover_id,
+                        sample_from.x, sample_from.y, sample_from.z,
+                        new_position.x, new_position.z
                     );
                     break 'check false;
                 }
@@ -614,7 +636,7 @@ impl super::GameState {
                     .is_some()
                 };
                 if blocked {
-                    debug!(
+                    warn!(
                         "Rejected monster move through blocked terrain: {monster_id} by {mover_id}"
                     );
                     break 'check false;
@@ -892,10 +914,10 @@ impl super::GameState {
         })
     }
 
-    /// Server-driven monster spawn tick. Each player below their cap gets at
-    /// most one SpawnMonsterRequest per tick — a randomly picked eligible type —
-    /// so the field fills in gradually instead of a full set of types landing at
-    /// once. The client picks a valid position near itself (grassland, not
+    /// Server-driven monster spawn tick. Each player below their cap gets up
+    /// to AMBIENT_SPAWN_BURST SpawnMonsterRequests per tick — randomly picked
+    /// eligible types, at most one per type — bounded by their cap deficit.
+    /// The client picks a valid position near itself (grassland, not
     /// water, away from towns). Each request records an expiring allowance the
     /// client's response must consume via take_spawn_allowance.
     pub async fn tick_monster_spawns(&self) {
@@ -910,7 +932,7 @@ impl super::GameState {
         // qualify when a human is within sight range (no point spawning monsters
         // around an agent nobody is watching); humans always qualify. Computed
         // once under a single read lock so the loop below needs none.
-        let mut candidates: Vec<(PlayerId, f32)> = {
+        let candidates: Vec<(PlayerId, f32)> = {
             let players = self.players.read().await;
             let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
             let human_positions: Vec<_> = players
@@ -937,19 +959,29 @@ impl super::GameState {
             return;
         }
 
-        // The owner index answers each cap in O(1), so this reads only the
+        // The owner index answers each cap in O(cap), so this reads only the
         // players the tick asks about instead of walking every monster on the
         // server. The expiry sweep below still runs even if nobody is left.
-        {
+        let candidates: Vec<(PlayerId, f32, usize)> = {
             let monsters = self.monsters.read().await;
-            candidates.retain(|(id, _)| monsters.owned_by(id) < max_per_player);
-        }
+            candidates
+                .into_iter()
+                .filter_map(|(id, town_distance)| {
+                    let want = max_per_player
+                        .saturating_sub(monsters.owned_alive_by(&id))
+                        .min(AMBIENT_SPAWN_BURST);
+                    (want > 0).then_some((id, town_distance, want))
+                })
+                .collect()
+        };
 
         // Indexed like `ambient_spawns`, so the distance gate costs one lookup
-        // per rule instead of one per rule per player.
+        // per rule instead of one per rule per player. One max_distance deeper
+        // than the landing gate, so no spot the client may pick can fail it —
+        // a failed pick would burn the type's allowance for its full TTL.
         let min_distances: Vec<f32> = ambient_spawns
             .iter()
-            .map(|rule| self.min_ambient_town_distance(&rule.monster_type))
+            .map(|rule| self.min_ambient_town_distance(&rule.monster_type) + rule.max_distance)
             .collect();
 
         let now = Self::now_ms();
@@ -961,12 +993,16 @@ impl super::GameState {
             let mut rng = rand::thread_rng();
             let mut order: Vec<usize> = (0..ambient_spawns.len()).collect();
 
-            for (player_id, town_distance) in &candidates {
-                // One request per player per tick. The scan runs in shuffled
-                // order, so the type on offer is uniform over the ones the
-                // player can take rather than following the rule list.
+            for (player_id, town_distance, want) in &candidates {
+                // The scan runs in shuffled order, so the types on offer are
+                // uniform over the ones the player can take rather than
+                // following the rule list.
                 order.shuffle(&mut rng);
+                let mut granted = 0;
                 for &r in &order {
+                    if granted == *want {
+                        break;
+                    }
                     if *town_distance < min_distances[r] {
                         continue;
                     }
@@ -975,7 +1011,7 @@ impl super::GameState {
                     if let Entry::Vacant(entry) = allowances.entry(key) {
                         entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
                         by_rule[r].push(*player_id);
-                        break;
+                        granted += 1;
                     }
                 }
             }
@@ -1266,7 +1302,8 @@ impl super::GameState {
         }
 
         // The distance gate, measured where the monster lands. The offer-time
-        // check reads the player's distance and is one max_distance looser.
+        // check requires the player one max_distance deeper, so any spot
+        // within the rule's range passes here.
         if self.town_distance(&position) < self.min_ambient_town_distance(monster_type) {
             return None;
         }
