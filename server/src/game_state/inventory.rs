@@ -1308,7 +1308,7 @@ impl super::GameState {
             (rng.gen_range(0..ENCHANT_BP_SCALE), rng.gen::<u64>())
         };
 
-        let (snapshot, message, enchant_log) = {
+        let (snapshot, message, enchant_log, scroll_def) = {
             let mut inventories = self.inventories.write().await;
             let inv = match inventories.get_mut(player_id) {
                 Some(inv) => inv,
@@ -1333,7 +1333,7 @@ impl super::GameState {
             }
 
             // Spent whether the enchant takes or the piece breaks.
-            consume_one(inv, instance_id);
+            let scroll_def = consume_one(inv, instance_id);
 
             let item = inv.equipped.get_mut(&slot).expect("the selector found it");
             let name = self.item_name(&item.item_def_id);
@@ -1351,10 +1351,20 @@ impl super::GameState {
                     format!("enchanted {} to +{}", item.item_def_id, item.enchant),
                 )
             };
-            (inv.clone(), message, enchant_log)
+            (inv.clone(), message, enchant_log, scroll_def)
         };
 
-        info!("{} {enchant_log}", self.player_name_of(player_id).await);
+        let name = self.player_name_of(player_id).await;
+        info!("{name} {enchant_log}");
+        // The reading's reagents skip consume_one_and_sync, so journal-based
+        // consumption metrics need their own lines here.
+        if let Some((position, _, floor_level, _)) = self.player_pose(player_id).await {
+            let place = crate::dungeon_defs::place_label(&position, floor_level);
+            info!("{name} consumed {WHETSTONE_OIL_ITEM_ID} at {place}");
+            if let Some(scroll_def) = scroll_def {
+                info!("{name} consumed {scroll_def} at {place}");
+            }
+        }
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
         self.send_system_message(player_id, message).await;
