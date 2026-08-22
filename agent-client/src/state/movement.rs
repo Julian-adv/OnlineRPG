@@ -378,6 +378,45 @@ impl SharedState {
         position
     }
 
+    /// Y for a surface monster move: the server validates the stored Y plus
+    /// its own terrain delta, so carry the monster's last pose Y forward by
+    /// our sampled delta. An absolute snap would fight any offset between the
+    /// stored Y and our tiles for the monster's whole life, and the brain's
+    /// raw Y goes stale on every slope.
+    pub(super) async fn ground_tracked_position(
+        &self,
+        prev: Option<Position>,
+        position: Position,
+        context: &str,
+    ) -> Position {
+        let Some(prev) = prev else {
+            return self.snap_position_to_ground(position, context).await;
+        };
+        let (from, to) = tokio::join!(
+            self.height_sampler.sample_height(prev.x, prev.z),
+            self.height_sampler.sample_height(position.x, position.z),
+        );
+        match (from, to) {
+            (Ok(from_ground), Ok(to_ground)) => Position {
+                y: prev.y + (to_ground - from_ground),
+                ..position
+            },
+            (from, to) => {
+                let e = if let Err(e) = from {
+                    e
+                } else {
+                    to.unwrap_err()
+                };
+                tracing::warn!(
+                    "Failed to sample terrain height for {context} at ({:.1}, {:.1}): {e}",
+                    position.x,
+                    position.z
+                );
+                position
+            }
+        }
+    }
+
     /// Apply an authoritative monster pose — server fanout, a reject
     /// correction, or the local echo of our own outgoing move.
     pub(super) fn apply_monster_pose(

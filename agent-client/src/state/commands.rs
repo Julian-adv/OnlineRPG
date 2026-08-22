@@ -102,8 +102,9 @@ impl SharedState {
                 } else {
                     // position and target_position are independent coordinates, so
                     // sample both terrain heights concurrently rather than serially.
+                    let prev = self.nearby_monsters.get(&monster_id).map(|m| m.position);
                     tokio::join!(
-                        self.snap_position_to_ground(position, "MonsterMove"),
+                        self.ground_tracked_position(prev, position, "MonsterMove"),
                         self.snap_position_to_ground(target_position, "MonsterMove target"),
                     )
                 };
