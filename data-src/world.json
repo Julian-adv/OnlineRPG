@@ -46,6 +46,10 @@
     {
       "monsterType": "troll",
       "maxDistance": 60
+    },
+    {
+      "monsterType": "stone_golem",
+      "maxDistance": 60
     }
   ]
 }

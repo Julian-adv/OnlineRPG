@@ -81,3 +81,24 @@
     > d&d 혹은 nethack에 나오는 kobold를 3d로 제작할 수 있게 T자형 포즈로 그려줘
 
     ![원화](../images/monsters/kobold-concept.png)
+
+- stone_golem Meshy.ai (유료 생성, 2026-08-20, "Stone Golem") 에서 2d -> 3d 생성 후
+  mixamo.com에서 auto-rig (24본). 소스는 `assets/stone_golem.fbx` 하나만 보관
+  - troll과 같은 Blender 파이프라인(Mixamo 재질 되돌리기, `mixamorig:` 접두사 제거,
+    원점=바닥 중심, `export_yup=True`). 높이 2.5m — 오거(2.4m)와 트롤(2.7m) 사이.
+    금속 부위가 없어 metallic 0 / roughness 상수로 뒀다
+  - 리그가 24본뿐이라(손가락/눈 본 없음) 공용 팩 대신 Meshy가 준 자체 클립 5개를
+    T-pose 리그로 리타게팅해 GLB에 bake한다 — idle/walk/run/slap/dead.
+    소스는 `assets/Meshy_AI_Stone_Golem/`의 Mixamo FBX 5개
+  - 리타게팅이 루트 변위를 두 리그의 Hips 높이 비로 스케일하는 탓에 몸이 떠서
+    idle 26cm, slap 42cm가 공중에 뜬다. 홉고블린과 같이 T-pose base의 발바닥
+    높이로 프레임마다 Hips를 내려 접지시킨다. run(체공)·dead(넘어짐)는 프레임별로
+    끌어내리면 몸이 땅에 박히므로 상수 오프셋만 준다
+  - GLB export 직전에 armature를 `pose_position = "REST"`로 두면 안 된다 —
+    glTF 익스포터가 매 프레임을 rest 포즈로 샘플링해 클립이 키 2개짜리 정지
+    애니메이션으로 나간다
+  - 무기 없이 주먹으로 때린다 — `slap` 하나만 쓴다 (bleed 없음: 석재 골렘은
+    출혈하지 않음). material `stone`은 타격음 규칙에 없어 기본 hit sound로 폴백
+  - `attackRange`는 2.0 — 타격 순간(0.6s) 오른손이 원점에서 1.3m 앞(+Z)에 있어,
+    트롤과 같은 2.8로 두면 손이 닿지 않는 거리에서 헛손질한다. `attackImpactDelay`도
+    같은 0.6s에 맞춘 600ms이고, `attackCooldown`은 slap 길이(1567ms)보다 긴 1900

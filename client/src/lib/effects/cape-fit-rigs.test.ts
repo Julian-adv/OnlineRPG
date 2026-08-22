@@ -89,49 +89,65 @@ function posedSurfaceDepth(
 const CLIPS = ['idle1', 'walk', 'jog']
 const RIGS = ['knight', 'female_knight', 'barbarian']
 
-describe('cape fit on the real rigs', () => {
-  it.each(RIGS)(
-    'hugs %s through every locomotion pose',
-    async (rig) => {
-      const loco = await loadGltf('public/models/animations/locomotion.glb')
-      const source = await loadGltf(`public/models/characters/${rig}.glb`)
-      const { clonedScene, modelRoot } = createCharacterModelRoot(source.scene)
-      modelRoot.updateMatrixWorld(true)
+// The models live on Hugging Face, not in git — CI checks out without them.
+const MODELS = [
+  'public/models/animations/locomotion.glb',
+  ...RIGS.map((rig) => `public/models/characters/${rig}.glb`),
+]
 
-      const fit = fitCapeToSkeleton(clonedScene)
-      expect(fit).not.toBeNull()
-      if (!fit) return
-
-      const cape = attachCapeFit(fit)
-
-      for (const clipName of CLIPS) {
-        const clip = loco.animations.find((c) => c.name === clipName)
-        expect(clip, `${clipName} clip`).toBeDefined()
-        const [retargeted] = await retargetAnimationsForCharacterModel(
-          modelRoot,
-          loco.scene,
-          [clip!]
+describe.skipIf(MODELS.some((path) => !fs.existsSync(path)))(
+  'cape fit on the real rigs',
+  () => {
+    it.each(RIGS)(
+      'hugs %s through every locomotion pose',
+      async (rig) => {
+        const loco = await loadGltf('public/models/animations/locomotion.glb')
+        const source = await loadGltf(`public/models/characters/${rig}.glb`)
+        const { clonedScene, modelRoot } = createCharacterModelRoot(
+          source.scene
         )
-        const mixer = new THREE.AnimationMixer(modelRoot)
-        mixer.clipAction(retargeted).play()
-        mixer.update(0.9)
         modelRoot.updateMatrixWorld(true)
-        cape.update(1 / 60, null)
 
-        const collar = cape.root.getWorldPosition(new THREE.Vector3())
-        const back = new THREE.Vector3(0, 0, 1).applyQuaternion(
-          cape.root.getWorldQuaternion(new THREE.Quaternion())
-        )
-        const surface = posedSurfaceDepth(modelRoot, back, collar.y, cape.mesh)
-        const gap = collar.dot(back) - surface
+        const fit = fitCapeToSkeleton(clonedScene)
+        expect(fit).not.toBeNull()
+        if (!fit) return
 
-        // Clear of the back, but nowhere near the head-sized standoff that a
-        // pose-dependent fit used to bake in.
-        expect(gap, `${rig}/${clipName} collar gap`).toBeGreaterThan(0)
-        expect(gap, `${rig}/${clipName} collar gap`).toBeLessThan(0.045)
-        mixer.stopAllAction()
-      }
-    },
-    20000
-  )
-})
+        const cape = attachCapeFit(fit)
+
+        for (const clipName of CLIPS) {
+          const clip = loco.animations.find((c) => c.name === clipName)
+          expect(clip, `${clipName} clip`).toBeDefined()
+          const [retargeted] = await retargetAnimationsForCharacterModel(
+            modelRoot,
+            loco.scene,
+            [clip!]
+          )
+          const mixer = new THREE.AnimationMixer(modelRoot)
+          mixer.clipAction(retargeted).play()
+          mixer.update(0.9)
+          modelRoot.updateMatrixWorld(true)
+          cape.update(1 / 60, null)
+
+          const collar = cape.root.getWorldPosition(new THREE.Vector3())
+          const back = new THREE.Vector3(0, 0, 1).applyQuaternion(
+            cape.root.getWorldQuaternion(new THREE.Quaternion())
+          )
+          const surface = posedSurfaceDepth(
+            modelRoot,
+            back,
+            collar.y,
+            cape.mesh
+          )
+          const gap = collar.dot(back) - surface
+
+          // Clear of the back, but nowhere near the head-sized standoff that a
+          // pose-dependent fit used to bake in.
+          expect(gap, `${rig}/${clipName} collar gap`).toBeGreaterThan(0)
+          expect(gap, `${rig}/${clipName} collar gap`).toBeLessThan(0.045)
+          mixer.stopAllAction()
+        }
+      },
+      20000
+    )
+  }
+)
