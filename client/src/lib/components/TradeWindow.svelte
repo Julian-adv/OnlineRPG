@@ -51,6 +51,7 @@
     groupKey?: string
     def: ItemDefinition
     max: number
+    defaultQty?: number
     unitPrice: number
   }
 
@@ -168,6 +169,9 @@
   const netCost = $derived(buyTotal - sellTotal)
   const canConfirm = $derived(cart.length > 0 && netCost <= $playerGold)
 
+  /** Pre-selected buy amount; a stock or gold cap below this wins. */
+  const DEFAULT_BUY_QTY = 10
+
   /** Buying a catalog item has no owned "stack" to bound quantity by, so the
    *  popup caps at what the player can currently afford — a UX convenience
    *  only; the server re-validates gold/weight for real on confirm. */
@@ -200,7 +204,14 @@
       addBuyUnits(itemDefId, unitPrice, 1)
       return
     }
-    pendingAdd = { kind: 'buy', itemDefId, def, max, unitPrice }
+    pendingAdd = {
+      kind: 'buy',
+      itemDefId,
+      def,
+      max,
+      defaultQty: Math.min(max, DEFAULT_BUY_QTY, affordableQty(unitPrice)),
+      unitPrice,
+    }
   }
 
   function addBuyUnits(itemDefId: string, unitPrice: number, qty: number) {
@@ -605,6 +616,7 @@
   itemName={pendingAdd?.def.name ?? ''}
   icon={pendingAdd?.def.icon ?? ''}
   max={pendingAdd?.max ?? 1}
+  defaultQty={pendingAdd?.defaultQty}
   onConfirm={confirmPendingAdd}
   onCancel={cancelPendingAdd}
 />

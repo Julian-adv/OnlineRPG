@@ -6,18 +6,21 @@
     itemName: string
     icon: string
     max: number
+    /** Pre-selected amount; defaults to `max`. */
+    defaultQty?: number
     onConfirm: (qty: number) => void
     onCancel: () => void
   }
 
-  let { visible, itemName, icon, max, onConfirm, onCancel }: Props = $props()
+  let { visible, itemName, icon, max, defaultQty, onConfirm, onCancel }: Props =
+    $props()
 
   let qty = $state(1)
   let inputEl = $state<HTMLInputElement | null>(null)
 
   $effect(() => {
     if (!visible) return
-    qty = max
+    qty = clamp(defaultQty ?? max)
     tick().then(() => {
       if (!visible) return
       inputEl?.focus()
