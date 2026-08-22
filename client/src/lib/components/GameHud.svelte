@@ -84,6 +84,10 @@
     currentPlayerLevel ?? selectedCharacter?.level ?? 1
   )
   const playerXp = $derived(currentPlayerTotalXp ?? selectedCharacter?.xp ?? 0)
+  const playerHp = $derived(currentPlayerHp ?? selectedCharacter?.max_hp ?? 0)
+  const playerMaxHp = $derived(
+    currentPlayerMaxHp ?? selectedCharacter?.max_hp ?? 0
+  )
 </script>
 
 <div class="game-hud">
@@ -91,7 +95,12 @@
   <div class="top-left-hud">
     {#if selectedCharacter && !$mapEditorMode}
       <div class="status-row">
-        <LevelBadge level={playerLevel} xp={playerXp} />
+        <LevelBadge
+          level={playerLevel}
+          xp={playerXp}
+          hp={playerHp}
+          maxHp={playerMaxHp}
+        />
         <HungerIndicator />
       </div>
     {/if}
@@ -118,8 +127,8 @@
       gender={selectedCharacter.gender}
       level={playerLevel}
       currentXp={playerXp}
-      currentHp={currentPlayerHp ?? selectedCharacter.max_hp}
-      maxHp={currentPlayerMaxHp ?? selectedCharacter.max_hp}
+      currentHp={playerHp}
+      maxHp={playerMaxHp}
       attributes={selectedCharacter.attributes}
       onClose={() => characterPanelVisible.set(false)}
     />

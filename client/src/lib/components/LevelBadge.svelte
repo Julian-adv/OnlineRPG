@@ -5,7 +5,12 @@
   import { characterPanelVisible } from '../stores/debugStore'
   import { levelProgress } from '../utils/xpProgress'
 
-  let { level, xp }: { level: number; xp: number } = $props()
+  let {
+    level,
+    xp,
+    hp,
+    maxHp,
+  }: { level: number; xp: number; hp: number; maxHp: number } = $props()
 
   const xpInfo = $derived(levelProgress(level, xp))
   const ring = new Tween(0, { duration: 300, easing: cubicOut })
@@ -170,7 +175,7 @@
   class:sparking={sparkOn}
   style:--xp={`${ring.current * 100}%`}
   style:--spark={`${spark.current * 100}%`}
-  aria-label={`Level ${level}, ${xpInfo.gainedXp} of ${xpInfo.neededXp} XP (${xpInfo.percent}%). Open character panel`}
+  aria-label={`Level ${level}, ${xpInfo.gainedXp} of ${xpInfo.neededXp} XP (${xpInfo.percent}%), HP ${hp} of ${maxHp}. Open character panel`}
   onclick={toggle}
 >
   {#if burst}
@@ -184,9 +189,15 @@
   <span class="caption">Lv</span>
   <span class="value">{level}</span>
   <div class="xp-tooltip" role="tooltip">
-    <strong>{xpInfo.gainedXp.toLocaleString()}</strong>
-    <span> / {xpInfo.neededXp.toLocaleString()} XP</span>
-    <em>({xpInfo.percent}%)</em>
+    <div>
+      <strong>{xpInfo.gainedXp.toLocaleString()}</strong>
+      <span> / {xpInfo.neededXp.toLocaleString()} XP</span>
+      <em>({xpInfo.percent}%)</em>
+    </div>
+    <div>
+      <strong class="hp">{Math.round(hp).toLocaleString()}</strong>
+      <span> / {Math.round(maxHp).toLocaleString()} HP</span>
+    </div>
   </div>
 </button>
 
@@ -371,6 +382,7 @@
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
     color: #aaa79f;
     font-size: 11px;
+    text-align: left;
     white-space: nowrap;
     pointer-events: none;
     opacity: 0;
@@ -382,8 +394,16 @@
       visibility 120ms;
   }
 
+  .xp-tooltip div + div {
+    margin-top: 3px;
+  }
+
   .xp-tooltip strong {
     color: #f0c040;
+  }
+
+  .xp-tooltip strong.hp {
+    color: #e05a4d;
   }
 
   .xp-tooltip em {

@@ -23,7 +23,7 @@
 
 <script lang="ts">
   import { calendarVisible } from '../stores/debugStore'
-  import { isUnderground } from '../stores/dungeonStore'
+  import { currentDungeonDepth, isUnderground } from '../stores/dungeonStore'
   import { getSolarDaylightWindow } from '../utils/celestialSimulation'
   import {
     type MoonDefinition,
@@ -323,6 +323,7 @@
   <div class="sky-track">
     {#if $isUnderground}
       <img class="horizon dungeon" src="/icons/horizon-dungeon.png" alt="" />
+      <span class="dungeon-floor">{$currentDungeonDepth}</span>
     {:else}
       <div
         class="night-sky"
@@ -462,6 +463,23 @@
 
   .horizon.dungeon {
     opacity: 1;
+  }
+
+  .dungeon-floor {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding-left: 8px;
+    z-index: 2;
+    font-family: system-ui, sans-serif;
+    font-size: 15px;
+    font-weight: bold;
+    color: #f2e2b0;
+    text-shadow:
+      0 0 6px rgba(0, 0, 0, 0.9),
+      0 1px 2px rgba(0, 0, 0, 0.95);
   }
 
   .sun {
