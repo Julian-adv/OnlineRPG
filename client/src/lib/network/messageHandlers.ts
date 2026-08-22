@@ -17,6 +17,7 @@ import {
   cancelPendingFishingSounds,
   playFishingSound,
   playDungeonSound,
+  playPlayerDeathSound,
   playPlayerHurtSound,
   playPropSound,
 } from '../managers/sfxManager'
@@ -124,6 +125,23 @@ import type {
   ServerMonster,
   ServerPlayer,
 } from './networkTypes'
+
+// A fatal blow arrives twice: as MonsterAttackedPlayer, which lines the cry up
+// with the impact frame, and again as PlayerDead. First claim wins so the
+// scream never doubles; deaths with no blow behind them (debuff ticks) still
+// cry on PlayerDead alone.
+const DEATH_CRY_WINDOW_MS = 2000
+const deathCriedAt = new Map<string, number>()
+
+function claimPlayerDeath(playerId: string) {
+  const now = performance.now()
+  for (const [id, at] of deathCriedAt) {
+    if (now - at >= DEATH_CRY_WINDOW_MS) deathCriedAt.delete(id)
+  }
+  if (deathCriedAt.has(playerId)) return false
+  deathCriedAt.set(playerId, now)
+  return true
+}
 
 function mapBuyback(
   entries:
@@ -904,7 +922,13 @@ export function handleServerMessage(
       }
 
       if (data.hit && data.damage > 0 && target) {
-        playPlayerHurtSound(target.gender, impactDelayMs)
+        if (data.current_health <= 0) {
+          if (claimPlayerDeath(data.player_id)) {
+            playPlayerDeathSound(target.gender, impactDelayMs)
+          }
+        } else {
+          playPlayerHurtSound(target.gender, impactDelayMs)
+        }
       }
 
       updatePlayer(data.player_id, {
@@ -929,9 +953,15 @@ export function handleServerMessage(
       console.log('Player dead:', data.player_id)
       const gameState = get(gameStore)
       const isDeadCurrentPlayer = gameState.currentPlayer?.id === data.player_id
+      const deadPlayer = isDeadCurrentPlayer
+        ? gameState.currentPlayer
+        : gameState.otherPlayers.get(data.player_id)
       const deadPlayerName = isDeadCurrentPlayer
         ? 'You'
-        : (gameState.otherPlayers.get(data.player_id)?.name ?? 'Unknown')
+        : (deadPlayer?.name ?? 'Unknown')
+      if (deadPlayer && claimPlayerDeath(data.player_id)) {
+        playPlayerDeathSound(deadPlayer.gender)
+      }
       addCombatMessage({
         text: `${deadPlayerName === 'You' ? 'You have' : deadPlayerName + ' has'} been slain!`,
         sender: 'system',

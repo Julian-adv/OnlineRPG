@@ -14,6 +14,7 @@
     preloadFishingSounds,
     preloadPropSounds,
     preloadMonsterDeathSounds,
+    preloadPlayerDeathSounds,
     preloadPlayerHurtSounds,
     preloadSwordHitSound,
     preloadSwordMissSound,
@@ -1732,6 +1733,7 @@
     preloadSwordMissSound()
     preloadMonsterDeathSounds()
     preloadPlayerHurtSounds()
+    preloadPlayerDeathSounds()
     preloadPropSounds()
     preloadFishingSounds()
 

@@ -47,6 +47,12 @@ const PLAYER_HURT_SOUNDS: Record<Gender, SoundSpec> = {
   male: { url: '/sounds/player-hurt-male.ogg', volume: 0.5, pool: 1 },
 }
 
+// Death cry. Pool 2: two players can fall within a breath of each other.
+const PLAYER_DEATH_SOUNDS: Record<Gender, SoundSpec> = {
+  female: { url: '/sounds/player-death-female.ogg', volume: 0.5, pool: 2 },
+  male: { url: '/sounds/player-death-male.ogg', volume: 0.5, pool: 2 },
+}
+
 const DUNGEON_SOUNDS = {
   reset: { url: '/sounds/dungeon-roar.ogg', volume: 0.5, pool: 1 },
 } as const
@@ -232,6 +238,21 @@ export function playPlayerHurtSound(gender: Gender, delayMs = 0) {
   }
   if (hurtVoice && !hurtVoice.paused && !hurtVoice.ended) return
   hurtVoice = playAudioFromPool(spec.url, spec.volume, spec.pool)
+}
+
+export function preloadPlayerDeathSounds() {
+  preloadSounds(PLAYER_DEATH_SOUNDS)
+}
+
+/** `delayMs` lines the scream up with the killing blow's impact frame. */
+export function playPlayerDeathSound(gender: Gender, delayMs = 0) {
+  const spec = PLAYER_DEATH_SOUNDS[gender]
+  if (!spec || !canUseAudio()) return
+  if (delayMs > 0) {
+    window.setTimeout(() => playSound(spec), delayMs)
+    return
+  }
+  playSound(spec)
 }
 
 export function preloadPropSounds() {
