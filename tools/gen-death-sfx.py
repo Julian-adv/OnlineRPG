@@ -20,6 +20,8 @@ PROMPTS = {
     "ogre_boss": "A giant ogre warlord monster's short death cry: a deep hoarse beast voice that climbs sharply in pitch at the very end, finishing on a high choked yelp as it falls. Voice only, no horns, no music.",
     "player_death_female": "A young female warrior's short agonized death scream as a sword strikes her down, a single piercing cry cut off abruptly as she falls. Human voice only, no music, no reverb.",
     "player_death_male": "A young male warrior's short agonized death scream as a sword strikes him down, a single hoarse cry cut off abruptly as he falls. Human voice only, no music, no reverb.",
+    "sword_stone": "A steel sword blade striking a stone golem: a hard metallic clang ringing off solid rock with a short spray of stone chips and grit. Impact only, no voice, no music.",
+    "sword_flesh": "A sword blade cutting deep into a huge fleshy monster: a heavy wet meaty thud with a thick tearing of flesh. Impact only, no voice, no music.",
     "scp939": "The wet, distorted death shriek of a fleshy eyeless monster, unnatural and wrong",
 }
 

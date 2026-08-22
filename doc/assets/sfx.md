@@ -19,10 +19,29 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
 
 ## Combat
 
-- sword-leather.ogg, sword-flesh3.ogg, sword-miss3.ogg — predate this file;
-  provenance not recorded here. Mapped in `data/material-impact-sounds.json`.
+- sword-leather.ogg, sword-miss3.ogg — predate this file; provenance not
+  recorded here. Mapped in `data/material-impact-sounds.json`.
+- sword-flesh4.ogg — sword cutting into a fleshy monster (`metal` → `flesh`:
+  ogre, troll, scp939), generated with [ElevenLabs Sound
+  Effects](https://elevenlabs.io/sound-effects) via the API on 2026-08-22
+  (Starter tier, own generation; original
+  `sword-flesh4.ogg_take5_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; prompt: "A sword blade cutting deep into a huge fleshy monster: a
+  heavy wet meaty thud with a thick tearing of flesh. Impact only, no voice,
+  no music."). Take 5 of a 0.7 s request, kept full length with a 100 ms tail
+  fade, peak-normalized to −3 dB, 44.1 kHz mono.
+- sword-stone.ogg — sword striking a stone golem (`metal` → `stone`),
+  generated with [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects)
+  via the API on 2026-08-22 (Starter tier, own generation; original
+  `sword-stone.ogg_take9_2026-08-22.mp3` kept in `~/assets_original/sfx/` on
+  pc5090; prompt: "A steel sword blade striking a stone golem: a hard metallic
+  clang ringing off solid rock with a short spray of stone chips and grit.
+  Impact only, no voice, no music."). Take 9 of a 0.7 s request, kept full
+  length with a 100 ms tail fade, peak-normalized to −3 dB, 44.1 kHz mono.
+
 - sword-flesh.ogg, sword-flesh2.ogg, sword-miss.ogg, sword-miss2.ogg —
   **[미사용]** earlier takes, removed 2026-08-19.
+- sword-flesh3.ogg — **[미사용]** replaced by sword-flesh4.ogg on 2026-08-22.
 
 ## Monsters
 
