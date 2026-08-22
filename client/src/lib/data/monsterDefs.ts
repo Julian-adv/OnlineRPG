@@ -34,6 +34,17 @@ export interface MonsterDefinition {
    * kobold's tail does.
    */
   corpseGroundOffset?: number
+  /**
+   * When false, skip the corpse auto-grounding entirely: the death clip is
+   * authored to end at ground level (stone_golem).
+   */
+  corpseAutoGround?: boolean
+  /**
+   * World-metre footprint radius for the hover ring and proxy, overriding the
+   * bind-pose box. Needed when the bind pose spreads the arms and the box
+   * overstates the body (stone_golem).
+   */
+  hoverRadius?: number
   material?: string
   /**
    * When true (default), a killing blow plays the hit reaction before the death

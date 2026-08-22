@@ -387,6 +387,18 @@
         let box = bindPoseBoxByModel.get(initialModel)
         if (!box) {
           box = new THREE.Box3().setFromObject(clonedScene)
+          // A bind pose with spread arms overstates the footprint; the def
+          // override clamps the XZ extents (model space) around the centre,
+          // shrinking the ring, sticky scale, and hover proxy together.
+          const radius = def?.hoverRadius
+          if (radius !== undefined) {
+            const half = radius / initialScale
+            for (const axis of ['x', 'z'] as const) {
+              const center = (box.min[axis] + box.max[axis]) / 2
+              box.min[axis] = Math.max(box.min[axis], center - half)
+              box.max[axis] = Math.min(box.max[axis], center + half)
+            }
+          }
           bindPoseBoxByModel.set(initialModel, box)
         }
         // Hang the nameplate just above the scaled bind-pose head.
@@ -409,8 +421,14 @@
             isDeadAnimationFinished = true
             // The death clip clamps with the body still raised, so settle the
             // corpse onto the ground — unless its clip was already grounded on
-            // load, where settling again would just show as a jump.
-            if (model && !deadGroundApplied && !initialDef?.sharedAnims) {
+            // load, where settling again would just show as a jump, or the
+            // type opts out because its clip ends at ground level as authored.
+            if (
+              model &&
+              !deadGroundApplied &&
+              !initialDef?.sharedAnims &&
+              initialDef?.corpseAutoGround !== false
+            ) {
               deadGroundApplied = true
               // corpseGroundOffset is authored in world metres; de-scale it
               // since model.position lives inside the scaled group.
