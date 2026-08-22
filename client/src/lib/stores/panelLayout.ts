@@ -1,6 +1,6 @@
 import { get, writable } from 'svelte/store'
 
-export type PanelId = 'character' | 'inventory' | 'friends' | 'party'
+export type PanelId = 'character' | 'inventory' | 'friends' | 'party' | 'emotes'
 
 export interface PanelPos {
   x: number
@@ -10,13 +10,20 @@ export interface PanelPos {
 export type PanelPositions = Partial<Record<PanelId, PanelPos>>
 
 const STORAGE_KEY = 'hudPanelLayout'
-const PANEL_IDS: PanelId[] = ['character', 'inventory', 'friends', 'party']
+export const PANEL_IDS: PanelId[] = [
+  'character',
+  'inventory',
+  'friends',
+  'party',
+  'emotes',
+]
 
 /** A dragged-off-screen panel keeps this much of itself grabbable. */
 const MIN_VISIBLE_X = 48
 const HEADER_H = 28
-/** 40..43 stays under the consent toasts (44) and trade windows (45). */
-const BASE_Z = 40
+/** 39..43 stays under the consent toasts (44) and trade windows (45) even
+ *  with all five panels raised. */
+const BASE_Z = 39
 
 export function parsePositions(raw: string | null): PanelPositions {
   if (!raw) return {}

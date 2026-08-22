@@ -11,6 +11,13 @@ export const emoteRequest = writable<string | null>(null)
  *  track runs out. `PlayerControl` leaves the interaction and clears it. */
 export const emoteStopRequest = writable(false)
 
+/** The emote panel (HUD social menu / G key). */
+export const emotePanelVisible = writable(false)
+
+/** Anim the local player is currently emoting, for the panel's highlight.
+ *  `PlayerControl` owns it: set on entering an emote, cleared on exit. */
+export const localEmoteAnim = writable<string | null>(null)
+
 /** Clip the `/play_music` emote holds, and the interaction the server stores
  *  for it. Must match `MUSIC_EMOTE` in `shared/src/messages.rs` — the server
  *  and agent-client read it from there. */

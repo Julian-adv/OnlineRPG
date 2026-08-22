@@ -64,7 +64,7 @@
   import { isAdminUser } from '../stores/gameStore'
   import { closeTopOverlay } from '../stores/overlayStack'
   import { friendPanelVisible } from '../stores/friendStore'
-  import { emoteStopRequest } from '../stores/emoteStore'
+  import { emotePanelVisible, emoteStopRequest } from '../stores/emoteStore'
 
   function toDegrees(radians: number) {
     const degrees = (radians * 180) / Math.PI
@@ -115,6 +115,10 @@
     if ((event.key === 'f' || event.key === 'F') && isGameKey(event)) {
       event.preventDefault()
       friendPanelVisible.update((v) => !v)
+    }
+    if ((event.key === 'g' || event.key === 'G') && isGameKey(event)) {
+      event.preventDefault()
+      emotePanelVisible.update((v) => !v)
     }
   }
 

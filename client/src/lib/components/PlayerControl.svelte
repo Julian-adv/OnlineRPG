@@ -126,6 +126,7 @@
   import {
     emoteRequest,
     emoteStopRequest,
+    localEmoteAnim,
     EMOTE_ANIMS,
     HELD_EMOTE_ANIMS,
     ONE_SHOT_EMOTE_ANIMS,
@@ -527,9 +528,24 @@
     if (dx !== 0 || dz !== 0) playerRotation = Math.atan2(dx, dz)
   }
 
+  // The panel highlight is a projection of the real state, not a flag set on
+  // enter/exit: death, attacks, fishing, and bench-sitting all leave an emote
+  // without passing any single exit function.
+  let lastEmoteSync: string | null = null
+  function syncLocalEmote(next: PlayerState) {
+    const anim =
+      next.state === 'interact' && EMOTE_ANIMS.has(next.interactionAnim ?? '')
+        ? (next.interactionAnim ?? null)
+        : null
+    if (anim === lastEmoteSync) return
+    lastEmoteSync = anim
+    localEmoteAnim.set(anim)
+  }
+
   function setPlayerState(next: PlayerState) {
     playerState = next
     onStateChange(next)
+    syncLocalEmote(next)
   }
 
   gameStore.subscribe((state) => {
@@ -583,6 +599,7 @@
     if (shouldEmitProjectedPlayerState(playerState, newState)) {
       playerState = newState
       onStateChange(newState)
+      syncLocalEmote(newState)
     }
   }
 
@@ -1154,6 +1171,10 @@
     if (getInteractionExitKind(playerState) === 'pickup') {
       finishPendingPickup()
     }
+
+    // Leftover deceleration would let the movement tick's resetStoppedSpeed
+    // project the fresh interact state back to idle one frame later.
+    currentSpeed = 0
 
     const result = beginObjectInteraction({
       intent: {
@@ -1754,6 +1775,9 @@
       clearStandUpTimer()
       clearJumpFeedbackTimer()
       clearPropSwingTimers()
+      // The store outlives this component (character select, logout).
+      lastEmoteSync = null
+      localEmoteAnim.set(null)
     }
   })
 </script>
