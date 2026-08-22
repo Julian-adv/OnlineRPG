@@ -503,6 +503,7 @@
     interactionCounter={effectiveInteractionCounter}
     interactOffsetY={currentPlayerState.interactOffsetY}
     attackCounter={currentPlayerState.attackCounter}
+    hitCounter={currentPlayer.hitCounter}
     speed={currentPlayerState.speed}
     rotation={currentPlayerState.rotation}
     movementMode={currentPlayerState.movementMode}
@@ -555,6 +556,7 @@
         interactionCounter={remotePlayer.interactionCounter}
         interactOffsetY={remotePlayer.interactOffsetY}
         attackCounter={remotePlayer.attackCounter}
+        hitCounter={player.hitCounter}
         speed={remotePlayer.speed}
         rotation={remotePlayer.rotation}
         movementMode={remotePlayer.movementMode}

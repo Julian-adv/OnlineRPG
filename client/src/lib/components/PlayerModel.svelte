@@ -23,6 +23,26 @@
     HEALTH_BAR_HEIGHT
   )
   healthBarFillGeometry.translate(HEALTH_BAR_WIDTH / 2, 0, 0)
+
+  // Retargeted clips are shared per character profile, so the additive
+  // rebuild runs once per source clip instead of once per player.
+  const additiveClipCache = new WeakMap<
+    THREE.AnimationClip,
+    THREE.AnimationClip
+  >()
+
+  function additiveUpperBodyClip(clip: THREE.AnimationClip) {
+    const cached = additiveClipCache.get(clip)
+    if (cached) return cached
+    const additive = clip.clone()
+    // Dropping position keeps the recoil in the body instead of shoving it.
+    additive.tracks = additive.tracks.filter(
+      (track) => !track.name.endsWith('.position')
+    )
+    THREE.AnimationUtils.makeClipAdditive(additive)
+    additiveClipCache.set(clip, additive)
+    return additive
+  }
 </script>
 
 <script lang="ts">
@@ -113,6 +133,7 @@
     interactionCounter?: number
     interactOffsetY?: number
     attackCounter?: number
+    hitCounter?: number
     speed: number
     rotation: number
     movementMode?: MovementMode
@@ -162,6 +183,7 @@
     interactionCounter,
     interactOffsetY = 0,
     attackCounter,
+    hitCounter,
     speed: _speed,
     rotation,
     movementMode,
@@ -282,6 +304,11 @@
   let socialClipsByName = new SvelteMap<string, THREE.AnimationClip>()
   let socialLoadPromise: Promise<void> | null = null
   let lastAnimKey: string | undefined
+  let hitAction: THREE.AnimationAction | null = null
+  // False when the pack lacked the clip: the ordered array substitutes
+  // slash1 there, and layering a swing on every blow is worse than nothing.
+  let hitClipLoaded = false
+  let lastHitCounter = hitCounter
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
@@ -653,6 +680,20 @@
     return offhandLoadPromise
   }
 
+  // Additive, so a blow never cuts a swing or a stride short.
+  function playHitReaction() {
+    if (!mixer || !hitClipLoaded) return
+    if (!hitAction) {
+      const clip = validAnimations[AnimationIndex.HIT]
+      if (!clip) return
+      hitAction = mixer.clipAction(additiveUpperBodyClip(clip))
+      hitAction.blendMode = THREE.AdditiveAnimationBlendMode
+      hitAction.loop = THREE.LoopOnce
+    }
+    hitAction.stop()
+    hitAction.play()
+  }
+
   function playAnimationForState() {
     // Check if mixer and animations are available
     if (!mixer || validAnimations.length === 0) return
@@ -758,6 +799,8 @@
     const activeGltf = activeGltfData
     if (activeGltf && !mixer && !modelRoot) {
       console.log('Setting up real animation system')
+      hitAction = null
+      hitClipLoaded = false
 
       const { clonedScene: cloned, modelRoot: newModelRoot } =
         createCharacterModelRoot(activeGltf.scene)
@@ -818,6 +861,10 @@
                 ? 'combat_melee.glb'
                 : 'female_knight.glb'
           console.log(`✅ Found animation: ${selection.name} (${source})`)
+        }
+
+        if (selection.name === AnimationName.HIT) {
+          hitClipLoaded = !selection.fromFallback
         }
 
         if (selection.name === AnimationName.SLASH1 && onAttackDuration) {
@@ -898,6 +945,7 @@
         mixer.stopAllAction()
         mixer = null
       }
+      hitAction = null
       if (modelRoot) {
         modelRoot = null
       }
@@ -1088,6 +1136,11 @@
           onInteractionFinished()
         }
       }
+    }
+
+    if (lastHitCounter !== hitCounter) {
+      lastHitCounter = hitCounter
+      if (hitCounter !== undefined && playerState !== 'dead') playHitReaction()
     }
 
     // Update animation state

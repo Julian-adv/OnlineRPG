@@ -40,6 +40,7 @@ EXPORT_PACKS = {
         "combat_idle",
         "claw1",
         "claw2",
+        "hit",
     ],
     "social": [
         "sleep",

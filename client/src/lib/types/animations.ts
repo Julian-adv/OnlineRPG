@@ -17,6 +17,7 @@ export enum AnimationName {
   ATTACK3 = 'attack3',
   ATTACK4 = 'attack4',
   DYING = 'dying',
+  HIT = 'hit',
 }
 
 /** Position of each clip in the ordered `validAnimations` array, which is

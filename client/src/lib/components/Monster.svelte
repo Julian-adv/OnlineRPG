@@ -203,8 +203,8 @@
   function playAnimation(forceRestart = false) {
     if (!mixer || !$gltf) return
 
-    // Monsters on the shared packs have no hit reaction: keep what is playing
-    // and end the flinch right away.
+    // Monsters without a hit clip: keep what is playing and end the flinch
+    // right away.
     if (monsterState === 'hit' && !def?.animHit) {
       onHitFinished?.()
       return

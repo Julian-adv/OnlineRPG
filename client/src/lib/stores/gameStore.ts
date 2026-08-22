@@ -45,6 +45,8 @@ interface PlayerBase {
   backTexture?: string | null
   lastDamageInfo?: PlayerDamageInfo
   lastRegenInfo?: PlayerDamageInfo
+  /** Bumped on each blow that lands, to fire the flinch reaction. */
+  hitCounter?: number
   lastGoldInfo?: PlayerGoldInfo
 }
 

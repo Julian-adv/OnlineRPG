@@ -219,6 +219,20 @@ function emitCurrentPlayerDamageInfo(
   }
 }
 
+let hitSequence = 0
+
+/** Bump the flinch counter at the monster's impact frame, like the hurt cry.
+ *  Only the change is read, so one sequence across players is enough. */
+function emitPlayerHit(playerId: number, delayMs: number) {
+  const bump = () => updatePlayer(playerId, { hitCounter: ++hitSequence })
+
+  if (delayMs > 0) {
+    globalThis.setTimeout(bump, delayMs)
+  } else {
+    bump()
+  }
+}
+
 /** Resolve object interaction for a remote player: find nearest placement, snap position/rotation. */
 async function applyObjectInteraction(
   playerId: number,
@@ -928,6 +942,7 @@ export function handleServerMessage(
           }
         } else {
           playPlayerHurtSound(target.gender, impactDelayMs)
+          emitPlayerHit(data.player_id, impactDelayMs)
         }
       }
 

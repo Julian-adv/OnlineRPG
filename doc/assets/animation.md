@@ -36,6 +36,16 @@
     두 클립 다 타격 시점이 ≈0.75–0.8s라 gnoll `attackImpactDelay` 750 / `attackDamageTextDelay` 850.
     1700ms 쿨다운보다 짧아 스윙 사이에 `combat_idle`이 잠깐 들어간다.
 
+- Standing React Small From Front 02 https://www.mixamo.com/#/?query=standing+react&type=Motion%2CMotionPack
+  (combat_melee pack, `hit`, 플레이어 피격 리액션 + 공용 팩 몬스터 `animHit`)
+  - 2026-08-23 Mixamo, Without Skin(65본), 24f/0.8s. `assets/Standing React Small From Front 02.fbx`를
+    `import_mixamo_animation(..., target_armature_name="Armature_combat")`로 bake하고
+    (fake user를 켜야 저장된다) `export_animations.py -- --packs combat_melee`로 뽑은 도너에서
+    `graft-glb-clip.py`로 `hit` 클립만 배포본 `combat_melee.glb`에 이식했다 — 기존 8개 클립과
+    스켈레톤은 바이트 그대로다. Hips는 첫/끝 프레임이 같아 드리프트 없음.
+  - 플레이어 쪽은 `PlayerModel.svelte`가 이 클립을 additive(`makeClipAdditive`, position 트랙 제거)로
+    깔아 얹는다. 이동·공격 클립을 끊지 않고 상체만 움찔하게 하려는 것.
+
 - Fishing Cast https://www.mixamo.com/#/?query=fishing&type=Motion%2CMotionPack (fishing pack, `fishing_cast`)
 - Fishing Idle https://www.mixamo.com/#/?query=fishing&type=Motion%2CMotionPack (fishing pack, `fishing_idle`)
   - 두 fishing 액션의 `RightHand` 키에는 로컬 Z +40° 오프셋이 bake되어 있다 (탑다운
