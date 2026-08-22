@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { EMOTE_LIST, emoteListMatchesServer } from './emote-meta'
+import { EMOTE_LIST } from './emote-meta'
 import { LOOPING_EMOTE_ANIMS, ONE_SHOT_EMOTE_ANIMS } from './stores/emoteStore'
 
 // The wire contract lives in shared/src/messages.rs; emoteStore mirrors it by
 // hand. Parse the Rust source so drift fails here instead of shipping a panel
-// that silently omits a new emote.
+// that silently omits a new emote (the panel itself derives from emoteStore).
 function rustEmoteList(constName: string): string[] {
   const source = readFileSync(
     path.resolve(__dirname, '../../../shared/src/messages.rs'),
@@ -33,14 +33,13 @@ describe('emote panel metadata', () => {
     )
   })
 
-  it('covers exactly the emotes /emote accepts, with correct loop flags', () => {
-    expect(emoteListMatchesServer()).toBe(true)
-  })
-
-  it('has a label and glyph for every entry', () => {
+  it('derives one labelled entry per accepted emote', () => {
+    expect(new Set(EMOTE_LIST.map((e) => e.anim))).toEqual(
+      new Set([...ONE_SHOT_EMOTE_ANIMS, ...LOOPING_EMOTE_ANIMS])
+    )
     for (const emote of EMOTE_LIST) {
       expect(emote.label.length).toBeGreaterThan(0)
-      expect(emote.glyph.length).toBeGreaterThan(0)
+      expect(emote.loops).toBe(LOOPING_EMOTE_ANIMS.has(emote.anim))
     }
   })
 })

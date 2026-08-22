@@ -1,11 +1,3 @@
-<script lang="ts" module>
-  import { SvelteSet } from 'svelte/reactivity'
-
-  // Anims whose preview clip 404'd; the glyph stays and we don't retry.
-  // Module-level so a remount doesn't re-request known-missing files.
-  const missingPreviews = new SvelteSet<string>()
-</script>
-
 <script lang="ts">
   import {
     emotePanelVisible,
@@ -26,7 +18,6 @@
   const usable = $derived(
     $gameStore.isConnected && ($gameStore.currentPlayer?.health ?? 0) > 0
   )
-  let hovered = $state<string | null>(null)
 
   function play(emote: EmoteMeta) {
     // Clicking the running looping emote stops it, like Escape does.
@@ -37,10 +28,6 @@
     // Same path as typing the command: the server validates and its
     // broadcast starts our animation (see chat-commands `/emote`).
     networkManager.sendChatMessage(`/emote ${emote.anim}`)
-  }
-
-  function previewUrl(anim: string): string {
-    return `/emotes/${anim}.webp`
   }
 </script>
 
@@ -55,31 +42,17 @@
       >
     </div>
 
-    <div class="emote-grid">
+    <div class="emote-rows">
       {#each EMOTE_LIST as emote (emote.anim)}
         <button
-          class="emote-card"
+          class="emote-row"
           class:active={active === emote.anim}
           disabled={!usable}
           title={emote.loops && active === emote.anim
             ? 'Stop'
             : `/emote ${emote.anim}`}
           onclick={() => play(emote)}
-          onpointerenter={() => (hovered = emote.anim)}
-          onpointerleave={() => (hovered = null)}
         >
-          <span class="emote-face">
-            <span class="emote-glyph">{emote.glyph}</span>
-            {#if hovered === emote.anim && !missingPreviews.has(emote.anim)}
-              <img
-                class="emote-preview"
-                src={previewUrl(emote.anim)}
-                alt=""
-                draggable="false"
-                onerror={() => missingPreviews.add(emote.anim)}
-              />
-            {/if}
-          </span>
           <span class="emote-label">{emote.label}</span>
           {#if emote.loops}
             <span class="loop-badge" title="Loops until you move">↻</span>
@@ -98,7 +71,7 @@
     right: 16px;
     top: 16%;
     z-index: 40;
-    width: 244px;
+    width: 180px;
     display: flex;
     flex-direction: column;
     backdrop-filter: blur(4px);
@@ -142,89 +115,61 @@
     color: #fff;
   }
 
-  .emote-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 6px;
-  }
-
-  .emote-card {
-    position: relative;
+  .emote-rows {
     display: flex;
     flex-direction: column;
+    gap: 4px;
+  }
+
+  .emote-row {
+    display: flex;
     align-items: center;
-    gap: 3px;
-    padding: 7px 2px 5px;
+    gap: 6px;
+    padding: 6px 10px;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 6px;
     color: #cfd9e3;
     font-family: inherit;
-    font-size: 10px;
+    font-size: 12px;
+    text-align: left;
     cursor: pointer;
     transition:
       background 150ms ease,
       border-color 150ms ease;
   }
 
-  .emote-card:hover:not(:disabled) {
+  .emote-row:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.1);
     border-color: rgba(255, 255, 255, 0.35);
     color: #fff;
   }
 
-  .emote-card:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  .emote-card.active {
+  .emote-row.active {
     border-color: rgba(88, 255, 88, 0.7);
     box-shadow: 0 0 8px rgba(88, 255, 88, 0.35);
     color: #8fe08f;
   }
 
-  .emote-face {
-    position: relative;
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .emote-glyph {
-    font-size: 24px;
-    line-height: 1;
-  }
-
-  .emote-preview {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    border-radius: 4px;
-    background: rgba(6, 10, 14, 0.7);
+  .emote-row:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 
   .emote-label {
+    flex: 1;
     overflow: hidden;
-    max-width: 100%;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .loop-badge {
-    position: absolute;
-    top: 2px;
-    right: 4px;
     color: #7f8f9f;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1;
   }
 
-  .emote-card.active .loop-badge {
+  .emote-row.active .loop-badge {
     color: #8fe08f;
   }
 
