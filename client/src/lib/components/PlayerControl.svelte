@@ -13,6 +13,8 @@
     playPropSound,
     preloadFishingSounds,
     preloadPropSounds,
+    preloadMonsterDeathSounds,
+    preloadPlayerHurtSounds,
     preloadSwordHitSound,
     preloadSwordMissSound,
   } from '../managers/sfxManager'
@@ -1707,6 +1709,8 @@
   onMount(() => {
     preloadSwordHitSound()
     preloadSwordMissSound()
+    preloadMonsterDeathSounds()
+    preloadPlayerHurtSounds()
     preloadPropSounds()
     preloadFishingSounds()
 

@@ -17,6 +17,7 @@ import {
   cancelPendingFishingSounds,
   playFishingSound,
   playDungeonSound,
+  playPlayerHurtSound,
   playPropSound,
 } from '../managers/sfxManager'
 import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
@@ -880,10 +881,17 @@ export function handleServerMessage(
     case 'MonsterAttackedPlayer': {
       const gameState = get(gameStore)
       const isCurrentPlayer = gameState.currentPlayer?.id === data.player_id
+      const target = isCurrentPlayer
+        ? gameState.currentPlayer
+        : gameState.otherPlayers.get(data.player_id)
       const monster = monsterManager.monsters.get(data.monster_id)
       if (monster?.ownerId !== gameState.currentPlayer?.id) {
         monsterManager.handleMonsterAttackStarted(data.monster_id, 250)
       }
+
+      const impactDelayMs = monsterManager.getMonsterAttackDamageTextDelayMs(
+        data.monster_id
+      )
 
       if (isCurrentPlayer) {
         emitCurrentPlayerDamageInfo(
@@ -891,8 +899,12 @@ export function handleServerMessage(
           data.damage,
           data.hit,
           data.current_health,
-          monsterManager.getMonsterAttackDamageTextDelayMs(data.monster_id)
+          impactDelayMs
         )
+      }
+
+      if (data.hit && data.damage > 0 && target) {
+        playPlayerHurtSound(target.gender, impactDelayMs)
       }
 
       updatePlayer(data.player_id, {
@@ -901,7 +913,7 @@ export function handleServerMessage(
 
       const monsterTargetName = isCurrentPlayer
         ? 'You'
-        : (gameState.otherPlayers.get(data.player_id)?.name ?? 'Unknown')
+        : (target?.name ?? 'Unknown')
       addCombatMessage({
         text: data.hit
           ? `rolled ${data.roll}: HIT ${monsterTargetName} for ${data.damage} damage!`

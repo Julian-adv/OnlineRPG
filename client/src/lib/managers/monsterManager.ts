@@ -17,7 +17,11 @@ import { dungeonManager } from './dungeonManager'
 import type { Position } from '../utils/movementUtils'
 import type { TerrainHeightManager } from './terrainHeightManager'
 import type { TerrainSplatManager } from './terrainSplatManager'
-import { playSwordHitSound, playSwordMissSound } from './sfxManager'
+import {
+  playMonsterDeathSound,
+  playSwordHitSound,
+  playSwordMissSound,
+} from './sfxManager'
 import { clearXpArrival, releaseXpArrival } from './xpArrival'
 import type { NoSpawnZone } from './zoneManager'
 import { TILE_DIM, worldToTileCoord } from './terrain-height-types'
@@ -325,6 +329,12 @@ class MonsterManager {
     monster.pendingSwordHitSoundUrl = undefined
   }
 
+  // Rides the killing blow's contact frame; the death clip lands much later.
+  private playDeathSound(monster: MonsterData) {
+    const url = getMonsterDef(monster.type)?.deathSound
+    if (url) playMonsterDeathSound(url)
+  }
+
   /** This kill is still on its way down (waiting out the blade's impact or
    *  the hit reaction), so its XP has a moment to wait for. */
   isDeathPending(id: string): boolean {
@@ -346,12 +356,14 @@ class MonsterManager {
         monster.isLastHitSuccess &&
         deathPlaysHit
       ) {
+        this.playDeathSound(monster)
         monster.isDeadPending = true
         // The hit clip may have already finished (clamped, no further
         // 'finished' event) — restart it so its completion re-arms the death.
         this.restartHitClip(monster)
       } else {
         // Otherwise die immediately
+        this.playDeathSound(monster)
         this.applyMonsterPose(monster, { state: 'dead' })
         monster.stateTimer = 0
       }
@@ -525,6 +537,7 @@ class MonsterManager {
           impactJustExpired = true
 
           if (monster.isDeadPending) {
+            this.playDeathSound(monster)
             // Fatal impact: optionally play hit first, then transition to death
             // when the hit clip reports completion. Monsters with an awkward hit
             // clip (deathPlaysHit=false) go straight to the death clip.

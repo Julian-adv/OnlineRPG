@@ -24,6 +24,41 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
 - sword-flesh.ogg, sword-flesh2.ogg, sword-miss.ogg, sword-miss2.ogg —
   **[미사용]** earlier takes, removed 2026-08-19.
 
+## Monsters
+
+- kobold-death.ogg — kobold death groan, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
+  2026-08-22 (free tier, own generation; original
+  `The_short_groan_a_ko_#4-1787326141343.mp3` kept in `~/assets_original/sfx/`
+  on pc5090; prompt: "The short groan a kobold makes when it dies"). The
+  original holds two takes; only the first (0.60–1.05 s) is kept, with a
+  150 ms tail fade, peak-normalized to −3 dB, resampled 48→44.1 kHz.
+
+- goblin-death.ogg — goblin death cry (used by both goblin and goblin_boss),
+  generated with [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects)
+  on 2026-08-22 (free tier, own generation; original
+  `The_sound_of_a_gobli_#2-1787399405795.mp3` kept in `~/assets_original/sfx/`
+  on pc5090; prompt: "The sound of a goblin dying from an opponent's sword
+  during battle"). Trimmed to 0.62 s (trailing silence) with a 90 ms tail fade,
+  peak-normalized to ≈ −3 dB, resampled 48→44.1 kHz.
+
+## Players
+
+- player-hurt-female.ogg — female character's cry when a hit lands on her (any
+  class), generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
+  2026-08-22 (free tier, own generation; original
+  `A_female_warrior_let_#1-1787398743608.mp3` kept in `~/assets_original/sfx/`
+  on pc5090; prompt: "A female warrior lets out a short groan after being
+  struck by an opponent's sword during battle"). Trimmed to 0.24 s (trailing
+  silence) with a 70 ms tail fade, peak-normalized to −3 dB, resampled
+  48→44.1 kHz.
+
+- player-hurt-male.ogg — male counterpart, same generator and date (original
+  `A_male_warrior_lets__#3-1787399204599.mp3` kept alongside; same prompt with
+  "female" → "male"). Trimmed to 0.50 s (trailing silence) with an 80 ms tail
+  fade, peak-normalized to ≈ −3 dB, resampled 48→44.1 kHz.
+
 ## Props
 
 - crate-break.ogg — sword hitting a wooden crate, generated with
@@ -36,13 +71,15 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
   [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
   2026-08-19 (free tier, own generation; original
   `The_sound_of_an_old__#3-1787144916360.mp3` kept in `~/assets_original/sfx/`
-  on pc5090). Trimmed to 0.95 s (trailing silence) with a 150 ms tail fade,
+  on pc5090; prompt: "The sound of an old treasure chest slowly creaking as it
+  opens"). Trimmed to 0.95 s (trailing silence) with a 150 ms tail fade,
   −3 dB gain, resampled 48→44.1 kHz. Replaces a Verse8 take from the same day.
 - coin-spill.ogg — gold coins pouring out of the chest, generated with
   [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
   2026-08-19 (free tier, own generation; original
   `The_sound_of_hundred_#2-1787144560968.mp3` kept in `~/assets_original/sfx/`
-  on pc5090). Trimmed to 1.8 s (trailing silence) with a 150 ms tail fade,
+  on pc5090; prompt: "The sound of hundreds of gold coins slithering out of a
+  treasure chest"). Trimmed to 1.8 s (trailing silence) with a 150 ms tail fade,
   −1.5 dB gain, resampled 48→44.1 kHz.
 
 ## World
@@ -52,5 +89,6 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
   [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on
   2026-08-21 (free tier, own generation; original
   `The_sound_of_monster_#3-1787310281519.mp3` kept in `~/assets_original/sfx/`
-  on pc5090). Trimmed to 4.64 s with a 150 ms tail fade, −3 dB gain,
+  on pc5090; prompt: "The sound of monsters waking up and howling deep within
+  the dungeon"). Trimmed to 4.64 s with a 150 ms tail fade, −3 dB gain,
   resampled 48→44.1 kHz.

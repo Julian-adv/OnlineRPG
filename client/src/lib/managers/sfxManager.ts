@@ -5,7 +5,11 @@ import {
   getAllMaterialHitSoundUrls,
   getAllMaterialMissSoundUrls,
 } from '../data/materialImpactSounds'
+import monsterDefs from '../data/monsterDefs'
+import type { Gender } from '../network/networkTypes'
 
+const MONSTER_DEATH_VOLUME = 0.5
+const MONSTER_DEATH_POOL_SIZE = 3
 const SWORD_HIT_VOLUME = 0.55
 const SWORD_MISS_VOLUME = 0.5
 const SWORD_HIT_POOL_SIZE = 4
@@ -36,6 +40,12 @@ const PROP_SOUNDS = {
   coinSpill: { url: '/sounds/coin-spill.ogg', volume: 0.5, pool: 2 },
 } as const
 export type PropSound = keyof typeof PROP_SOUNDS
+
+// Voice on taking damage. Pool 1 each: only one cry ever plays at a time.
+const PLAYER_HURT_SOUNDS: Record<Gender, SoundSpec> = {
+  female: { url: '/sounds/player-hurt-female.ogg', volume: 0.5, pool: 1 },
+  male: { url: '/sounds/player-hurt-male.ogg', volume: 0.5, pool: 1 },
+}
 
 const DUNGEON_SOUNDS = {
   reset: { url: '/sounds/dungeon-roar.ogg', volume: 0.5, pool: 1 },
@@ -140,6 +150,7 @@ function playAudioFromPool(url: string, volume: number, poolSize: number) {
     audio.currentTime = 0
     audio.volume = effectiveVolume
     audio.play().catch(() => {})
+    return audio
   } catch {
     // Browser audio policies can reject playback until the first user gesture.
   }
@@ -183,6 +194,44 @@ export function playSwordMissSound(
     return
   }
   playAudioFromPool(url, SWORD_MISS_VOLUME, SWORD_MISS_POOL_SIZE)
+}
+
+/** Monster death cry; only the defs that declare one. */
+export function preloadMonsterDeathSounds() {
+  for (const def of Object.values(monsterDefs)) {
+    if (def.deathSound) {
+      preloadAudioPool(
+        def.deathSound,
+        MONSTER_DEATH_VOLUME,
+        MONSTER_DEATH_POOL_SIZE
+      )
+    }
+  }
+}
+
+export function playMonsterDeathSound(url: string) {
+  if (!canUseAudio()) return
+  playAudioFromPool(url, MONSTER_DEATH_VOLUME, MONSTER_DEATH_POOL_SIZE)
+}
+
+export function preloadPlayerHurtSounds() {
+  preloadSounds(PLAYER_HURT_SOUNDS)
+}
+
+// A cry already in the air wins: restarting it mid-breath reads as a stutter
+// rather than a second blow.
+let hurtVoice: HTMLAudioElement | undefined
+
+/** `delayMs` lines the cry up with the monster's impact frame. */
+export function playPlayerHurtSound(gender: Gender, delayMs = 0) {
+  const spec = PLAYER_HURT_SOUNDS[gender]
+  if (!spec || !canUseAudio()) return
+  if (delayMs > 0) {
+    window.setTimeout(() => playPlayerHurtSound(gender), delayMs)
+    return
+  }
+  if (hurtVoice && !hurtVoice.paused && !hurtVoice.ended) return
+  hurtVoice = playAudioFromPool(spec.url, spec.volume, spec.pool)
 }
 
 export function preloadPropSounds() {

@@ -75,6 +75,8 @@ export interface MonsterDefinition {
    * hand's finger bases sit in bone space rather than trusting the finger
    * joint, which auto-rigs misplace (the ogre's is 0.24). */
   weaponOffset?: number
+  /** Death cry, played on the killing blow (path under /sounds). */
+  deathSound?: string
   /** Play the shared character packs; only for models rigged on the character
    * skeleton, which then ship no clips of their own. */
   sharedAnims?: boolean
