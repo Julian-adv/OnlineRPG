@@ -529,7 +529,7 @@
       if (
         $teleportLoading &&
         currentPlayer &&
-        terrainHeightManager.hasHeightDataForGrid(
+        terrainHeightManager.hasHeightData(
           currentPlayer.position.x,
           currentPlayer.position.z
         )

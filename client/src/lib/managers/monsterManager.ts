@@ -96,10 +96,13 @@ class MonsterManager {
     return this.sampleHeight(x, z)
   }
 
+  /** Ground-resolved copy of `position`, or null when the terrain tile isn't
+   *  streamed in yet — the one case where no snap is possible and a sent Y
+   *  would be the brain's stale one. */
   private snapToMonsterGround(
     monster: MonsterData,
     position: { x: number; y: number; z: number }
-  ): Position {
+  ): Position | null {
     if ((monster.floorLevel ?? 0) < 0) {
       return {
         x: position.x,
@@ -112,20 +115,8 @@ class MonsterManager {
         z: position.z,
       }
     }
-    return this.snapPositionToTerrain(position)
-  }
-
-  private snapPositionToTerrain(position: {
-    x: number
-    y: number
-    z: number
-  }): Position {
-    if (
-      !this.heightManager ||
-      !this.heightManager.hasHeightDataForGrid(position.x, position.z)
-    ) {
-      return position
-    }
+    if (!this.heightManager) return { ...position }
+    if (!this.heightManager.hasHeightData(position.x, position.z)) return null
     return {
       x: position.x,
       y: this.heightManager.getHeightAtWorldPosition(position.x, position.z),
@@ -738,8 +729,12 @@ class MonsterManager {
         const position = cmd.position
           ? this.snapToMonsterGround(monster, cmd.position)
           : undefined
+        // Unsnappable destination: the server would reject the stale Y —
+        // hold the report, the brain retries next tick.
+        if (cmd.position && !position) continue
         const targetPosition = cmd.target_position
-          ? this.snapToMonsterGround(monster, cmd.target_position)
+          ? (this.snapToMonsterGround(monster, cmd.target_position) ??
+            cmd.target_position)
           : undefined
 
         this.applyMonsterPose(monster, {
@@ -791,11 +786,10 @@ class MonsterManager {
         monster.impactDelay !== undefined && monster.impactDelay > 0
       const shouldDelayNetworkHit = hasPendingImpact && state === 'hit'
 
-      const snappedPosition = this.snapToMonsterGround(monster, position)
-      const snappedTargetPosition = this.snapToMonsterGround(
-        monster,
-        targetPosition
-      )
+      const snappedPosition =
+        this.snapToMonsterGround(monster, position) ?? position
+      const snappedTargetPosition =
+        this.snapToMonsterGround(monster, targetPosition) ?? targetPosition
       // Authoritative update: apply position/target directly (no movement gate).
       // When the hit is delayed, omit `state` so the current state is kept until
       // the pending impact resolves.

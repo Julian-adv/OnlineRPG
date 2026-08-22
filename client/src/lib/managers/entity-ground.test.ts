@@ -9,7 +9,7 @@ function fakeHeightManager(
   height: number
 ): TerrainHeightManager {
   return {
-    hasHeightDataForGrid: vi.fn(() => loaded),
+    hasHeightData: vi.fn(() => loaded),
     getHeightAtWorldPosition: vi.fn(() => height),
   } as unknown as TerrainHeightManager
 }
@@ -24,7 +24,7 @@ describe('entityGroundY', () => {
     const manager = fakeHeightManager(true, 8.5)
 
     expect(entityGroundY(manager, 0, 12, 20, 3)).toBe(8.5)
-    expect(manager.hasHeightDataForGrid).toHaveBeenCalledWith(12, 20)
+    expect(manager.hasHeightData).toHaveBeenCalledWith(12, 20)
     expect(manager.getHeightAtWorldPosition).toHaveBeenCalledWith(12, 20)
   })
 
@@ -39,7 +39,7 @@ describe('entityGroundY', () => {
     const manager = fakeHeightManager(true, 8.5)
 
     expect(entityGroundY(manager, -1, 12, 20, 3)).toBe(3)
-    expect(manager.hasHeightDataForGrid).not.toHaveBeenCalled()
+    expect(manager.hasHeightData).not.toHaveBeenCalled()
   })
 
   it('passes the reference Y through to the bridge deck query', () => {

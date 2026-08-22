@@ -40,7 +40,7 @@ export function entityGroundY(
 
   // getHeightAtWorldPosition returns 0 for unloaded tiles rather than null,
   // so the guard is what keeps an entity from snapping to sea level.
-  if (heightManager?.hasHeightDataForGrid(wx, z)) {
+  if (heightManager?.hasHeightData(wx, z)) {
     return heightManager.getHeightAtWorldPosition(wx, z)
   }
   return fallbackY

@@ -121,23 +121,12 @@ export class TerrainHeightManager {
     return getHeightAtCell(this.state, tileX, tileZ, cellX, cellZ)
   }
 
+  // The one centered tile getHeightAtWorldPosition reads: its bilinear cells
+  // stay in [0, TILE_DIM], so no neighbour tile is ever touched.
   hasHeightData(worldX: number, worldZ: number): boolean {
     return this.state.heightmaps.has(
       tileKey(worldToTileCoord(worldX), worldToTileCoord(worldZ))
     )
-  }
-
-  hasHeightDataForGrid(worldX: number, worldZ: number): boolean {
-    const floorX = Math.floor(worldX / TERRAIN_TILE_SIZE)
-    const floorZ = Math.floor(worldZ / TERRAIN_TILE_SIZE)
-    for (let dz = 0; dz <= 1; dz++) {
-      for (let dx = 0; dx <= 1; dx++) {
-        if (!this.state.heightmaps.has(tileKey(floorX + dx, floorZ + dz))) {
-          return false
-        }
-      }
-    }
-    return true
   }
 
   getHeightAtWorldPosition(worldX: number, worldZ: number): number {
