@@ -30,7 +30,6 @@
   import { rotatedRectAabb } from '../../utils/objectFootprint'
   import type { DoorLeaf, InteriorDoor } from '../../utils/dungeon-geometry'
   import { networkManager } from '../../network/socket'
-  import { playPropSound } from '../../managers/sfxManager'
   import {
     buildDungeonEntranceGroup,
     buildDungeonFloorGroup,
@@ -737,7 +736,6 @@
       if (instant) mixer.setTime(chestOpenClip.duration) // already-open: skip the swing
       propMixers.push(mixer)
     }
-    if (!instant) playPropSound('chestOpen')
   }
 
   /** Cache the up-shaft sub-group's meshes + world AABB for the fade pass.

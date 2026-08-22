@@ -17,6 +17,7 @@ import {
   cancelPendingFishingSounds,
   playFishingSound,
   playDungeonSound,
+  playPropSound,
 } from '../managers/sfxManager'
 import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
 import { monsterManager } from '../managers/monsterManager'
@@ -1114,7 +1115,8 @@ export function handleServerMessage(
     case 'DungeonChestOpened': {
       // No items + no gold = re-open of a chest already claimed tonight;
       // the lid still swings, showing an empty box.
-      dungeonManager.markTreasureChestOpened(data.entrance_id)
+      if (dungeonManager.markTreasureChestOpened(data.entrance_id))
+        playPropSound('chestOpen')
       const empty = (data.item_def_ids as string[]).length === 0 && !data.gold
       addChatMessage({
         text: empty
@@ -1134,13 +1136,30 @@ export function handleServerMessage(
       )
       break
 
-    case 'DungeonPropBroken':
-      dungeonManager.markPropBroken(data.entrance_id, data.depth, data.prop_id)
+    // Snapshots reconcile silently; only live broadcasts play prop sounds.
+    case 'DungeonPropBroken': {
+      const isNew = dungeonManager.markPropBroken(
+        data.entrance_id,
+        data.depth,
+        data.prop_id
+      )
+      const selfBreak = dungeonManager.consumeSelfBreak(
+        data.depth,
+        data.prop_id
+      )
+      if (isNew && !selfBreak) playPropSound('break')
       break
+    }
 
-    case 'DungeonPropOpened':
-      dungeonManager.markPropOpened(data.entrance_id, data.depth, data.prop_id)
+    case 'DungeonPropOpened': {
+      const isNew = dungeonManager.markPropOpened(
+        data.entrance_id,
+        data.depth,
+        data.prop_id
+      )
+      if (isNew) playPropSound('chestOpen')
       break
+    }
 
     case 'DungeonDoorToggled':
       dungeonManager.applyDoorToggle(

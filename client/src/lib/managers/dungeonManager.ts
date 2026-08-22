@@ -378,6 +378,8 @@ class DungeonManager {
    *  fires the break once the player is within range (see GameSceneDungeonLayer
    *  update). Cleared on arrival, a new movement click, or leaving the dungeon. */
   private pendingBreakState: PendingPropBreak | null = null
+  /** Self-initiated breaks awaiting their server echo, keyed `depth:propId`. */
+  private selfBrokenProps = new Set<string>()
   /** A chest the player clicked and is walking toward; the dungeon layer sends
    *  the open once the player is within range. Same lifecycle as
    *  `pendingBreakState`. */
@@ -516,6 +518,7 @@ class DungeonManager {
     dungeon_add_passability(id, entrance.x, entrance.y, entrance.z)
     this.brokenProps.clear()
     this.openedProps.clear()
+    this.selfBrokenProps.clear()
     this.treasureChestOpenedState = false
     this.openDoors.clear()
     this.doorSyncInside = true
@@ -534,6 +537,7 @@ class DungeonManager {
     this.layouts = []
     this.brokenProps.clear()
     this.openedProps.clear()
+    this.selfBrokenProps.clear()
     this.treasureChestOpenedState = false
     this.openDoors.clear()
     this.doorSyncInside = true
@@ -581,42 +585,49 @@ class DungeonManager {
     this.brokenProps.set(depth, nextBroken)
     this.openedProps.set(depth, nextOpened)
     this.rebuildFloorPassability(depth)
-    if (removedState) dungeonPropsResetRevision.update((n) => n + 1)
+    // A reset invalidates unacknowledged self-breaks.
+    if (removedState) {
+      this.selfBrokenProps.clear()
+      dungeonPropsResetRevision.update((n) => n + 1)
+    }
     dungeonPropsRevision.update((n) => n + 1)
   }
 
-  /**
-   * Record a single newly-broken prop (live break broadcast). No-op if already
-   * known broken, so a re-broadcast won't thrash the render layer.
-   */
-  markPropBroken(entranceId: string, depth: number, propId: number) {
-    if (entranceId !== this.id) return
+  /** Record a live prop break and report whether it was new. */
+  markPropBroken(entranceId: string, depth: number, propId: number): boolean {
+    if (entranceId !== this.id) return false
     let set = this.brokenProps.get(depth)
     if (!set) {
       set = new Set()
       this.brokenProps.set(depth, set)
     }
-    if (set.has(propId)) return
+    if (set.has(propId)) return false
     set.add(propId)
     this.rebuildFloorPassability(depth)
     dungeonPropsRevision.update((n) => n + 1)
+    return true
   }
 
-  /**
-   * Record a single newly-opened chest (live open broadcast). No-op if already
-   * known open. Drives only the render layer (no passability change — the
-   * chest stays solid when open).
-   */
-  markPropOpened(entranceId: string, depth: number, propId: number) {
-    if (entranceId !== this.id) return
+  noteSelfBreak(depth: number, propId: number) {
+    this.selfBrokenProps.add(`${depth}:${propId}`)
+  }
+
+  consumeSelfBreak(depth: number, propId: number): boolean {
+    return this.selfBrokenProps.delete(`${depth}:${propId}`)
+  }
+
+  /** Record a live chest open and report whether it was new. */
+  markPropOpened(entranceId: string, depth: number, propId: number): boolean {
+    if (entranceId !== this.id) return false
     let set = this.openedProps.get(depth)
     if (!set) {
       set = new Set()
       this.openedProps.set(depth, set)
     }
-    if (set.has(propId)) return
+    if (set.has(propId)) return false
     set.add(propId)
     dungeonPropsRevision.update((n) => n + 1)
+    return true
   }
 
   get treasureChestOpened(): boolean {
@@ -625,10 +636,11 @@ class DungeonManager {
 
   /** Record the treasure chest opening (live broadcast); the render layer
    *  plays the lid animation off the revision bump. */
-  markTreasureChestOpened(entranceId: string) {
-    if (entranceId !== this.id || this.treasureChestOpenedState) return
+  markTreasureChestOpened(entranceId: string): boolean {
+    if (entranceId !== this.id || this.treasureChestOpenedState) return false
     this.treasureChestOpenedState = true
     dungeonPropsRevision.update((n) => n + 1)
+    return true
   }
 
   /**
