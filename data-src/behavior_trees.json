@@ -57,6 +57,22 @@
             "children": [
               {
                 "type": "condition",
+                "name": "target_in_range",
+                "params": {
+                  "range": 5.0
+                }
+              },
+              {
+                "type": "action",
+                "name": "attack_target"
+              }
+            ]
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "condition",
                 "name": "has_target"
               },
               {
@@ -134,6 +150,22 @@
               {
                 "type": "action",
                 "name": "return_to_spawn"
+              }
+            ]
+          },
+          {
+            "type": "sequence",
+            "children": [
+              {
+                "type": "condition",
+                "name": "target_in_range",
+                "params": {
+                  "range": 5.0
+                }
+              },
+              {
+                "type": "action",
+                "name": "attack_target"
               }
             ]
           },
