@@ -10,6 +10,8 @@ export interface MonsterData {
   moveSpeed: number
   stateTimer: number
   attackCounter?: number
+  hitCounter?: number
+  deadPendingTimer?: number
   lastAttackStartedAt?: number
   impactDelay?: number // Delay until hit state starts
   isLastHitSuccess?: boolean // Whether the last attack was a hit

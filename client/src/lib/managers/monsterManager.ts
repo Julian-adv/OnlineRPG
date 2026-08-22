@@ -75,6 +75,8 @@ const DEFAULT_MONSTER_BEHAVIOR = 'brave'
 // data-src/behavior_trees.json.
 const AGGRESSIVE_MONSTER_BEHAVIOR = 'aggressive'
 const MONSTER_POSITION_EPSILON = 0.001
+// Backstop for a pending death whose hit clip never reports completion.
+const DEAD_PENDING_TIMEOUT_MS = 2000
 
 class MonsterManager {
   monsters = new SvelteMap<string, MonsterData>()
@@ -263,6 +265,7 @@ class MonsterManager {
       moveSpeed: def?.walkSpeed ?? 1,
       stateTimer: 0,
       attackCounter: 0,
+      hitCounter: 0,
       health: hp,
       maxHealth: maxHp,
       spawnPosition: { ...position },
@@ -337,12 +340,16 @@ class MonsterManager {
       // If we are waiting for an impact, delay the visual death
       if (monster.impactDelay && monster.impactDelay > 0) {
         monster.isDeadPending = true
+        monster.deadPendingTimer = 0
       } else if (
         monster.state === 'hit' &&
         monster.isLastHitSuccess &&
         deathPlaysHit
       ) {
         monster.isDeadPending = true
+        // The hit clip may have already finished (clamped, no further
+        // 'finished' event) — restart it so its completion re-arms the death.
+        this.restartHitClip(monster)
       } else {
         // Otherwise die immediately
         this.applyMonsterPose(monster, { state: 'dead' })
@@ -356,10 +363,21 @@ class MonsterManager {
     const monster = this.monsters.get(id)
     if (!monster?.isDeadPending || monster.state !== 'hit') return
 
+    this.finishPendingDeath(monster)
+  }
+
+  private finishPendingDeath(monster: MonsterData) {
     this.applyMonsterPose(monster, { state: 'dead' })
     monster.stateTimer = 0
     monster.isDeadPending = false
-    this.monsters.set(id, { ...monster })
+    this.monsters.set(monster.id, { ...monster })
+  }
+
+  // Restarts the flinch clip (a bump forces the component to replay it even
+  // when the state is already 'hit') and re-opens the pending-death window.
+  private restartHitClip(monster: MonsterData) {
+    monster.hitCounter = (monster.hitCounter ?? 0) + 1
+    monster.deadPendingTimer = 0
   }
 
   handleMonsterAttacked(
@@ -516,7 +534,9 @@ class MonsterManager {
               state: leadWithHit ? 'hit' : 'dead',
             })
             monster.stateTimer = 0
-            if (!leadWithHit) {
+            if (leadWithHit) {
+              this.restartHitClip(monster)
+            } else {
               monster.isDeadPending = false
             }
           } else if (monster.ownerId === myPlayerId) {
@@ -531,14 +551,25 @@ class MonsterManager {
               ) ?? []
             this.processAiCommands(monster, hitCommands)
           } else if (monster.isLastHitSuccess) {
-            // Non-owner: show hit stagger visually
+            // Non-owner: show hit stagger visually; restart so a repeat hit
+            // on the clamped clip doesn't no-op.
             this.applyMonsterPose(monster, { state: 'hit' })
+            this.restartHitClip(monster)
             monster.stateTimer = 0
           } else if (monster.targetPlayerId && monster.state !== 'attack') {
             // Non-owner miss: show attack state visually
             this.applyMonsterPose(monster, { state: 'attack' })
             monster.stateTimer = 0
           }
+        }
+      }
+
+      // Backstop: never leave a killed monster standing if the hit clip's
+      // completion event is missed.
+      if (monster.isDeadPending && !monster.impactDelay) {
+        monster.deadPendingTimer = (monster.deadPendingTimer ?? 0) + deltaTime
+        if (monster.deadPendingTimer > DEAD_PENDING_TIMEOUT_MS) {
+          this.finishPendingDeath(monster)
         }
       }
 
@@ -727,7 +758,7 @@ class MonsterManager {
     for (const cmd of commands) {
       if (cmd.type === 'Move') {
         const position = cmd.position
-          ? this.snapToMonsterGround(monster, cmd.position)
+          ? (this.snapToMonsterGround(monster, cmd.position) ?? undefined)
           : undefined
         // Unsnappable destination: the server would reject the stale Y —
         // hold the report, the brain retries next tick.

@@ -55,8 +55,8 @@
   // moving its finish line.
   let leveling = false
   let runId = 0
-  let prevLevel = level
-  let prevXp = xp
+  let prevLevel = untrack(() => level)
+  let prevXp = untrack(() => xp)
 
   /** Abandon whatever is in flight; every fresh start goes through here. */
   function cancel() {

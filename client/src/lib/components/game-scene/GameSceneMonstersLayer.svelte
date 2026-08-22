@@ -66,6 +66,7 @@
     rotation={monster.rotation}
     monsterState={monster.state}
     attackCounter={monster.attackCounter}
+    hitCounter={monster.hitCounter}
     lastDamageInfo={monster.lastDamageInfo}
     droppedWeaponItemDefId={monster.droppedWeaponItemDefId}
     onHitFinished={() => monsterManager.handleMonsterHitFinished(monster.id)}

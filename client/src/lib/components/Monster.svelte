@@ -40,6 +40,7 @@
     rotation: number
     monsterState: MonsterData['state']
     attackCounter?: number
+    hitCounter?: number
     id: string
     type: string
     floorLevel?: number
@@ -54,6 +55,7 @@
     rotation,
     monsterState,
     attackCounter,
+    hitCounter,
     id,
     type,
     floorLevel = 0,
@@ -155,6 +157,7 @@
   let lastDeadAnimFinished = $state(false)
   let lastAttackAnimFinished = $state(true)
   let lastAttackCounter = $state<number | undefined>(undefined)
+  let lastHitCounter = $state<number | undefined>(undefined)
   let damageTextRef = $state<ReturnType<typeof DamageText>>()
   let lastAppliedOpacity = 1
   let materialsCloned = false
@@ -298,20 +301,28 @@
     }
     if (
       lastAttackCounter !== attackCounter ||
+      lastHitCounter !== hitCounter ||
       lastMonsterState !== monsterState ||
       lastDeadAnimFinished !== isDeadAnimationFinished ||
       lastAttackAnimFinished !== isAttackAnimationFinished
     ) {
       const attackCounterChanged = lastAttackCounter !== attackCounter
+      // A repeat hit re-lands while the clip is clamped on its last frame; the
+      // restart also re-arms the 'finished' event a pending death waits on.
+      const hitCounterChanged = lastHitCounter !== hitCounter
       if (attackCounterChanged && monsterState === 'attack') {
         isAttackAnimationFinished = false
         attackClip = attackClips[Math.floor(Math.random() * attackClips.length)]
       }
       lastAttackCounter = attackCounter
+      lastHitCounter = hitCounter
       lastMonsterState = monsterState
       lastDeadAnimFinished = isDeadAnimationFinished
       lastAttackAnimFinished = isAttackAnimationFinished
-      playAnimation(attackCounterChanged && monsterState === 'attack')
+      playAnimation(
+        (attackCounterChanged && monsterState === 'attack') ||
+          (hitCounterChanged && monsterState === 'hit')
+      )
     }
 
     // 2. Update damage texts
