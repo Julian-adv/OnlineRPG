@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Writable } from 'svelte/store'
   import ChatPanel from './ChatPanel.svelte'
   import FPSCounter from './FPSCounter.svelte'
   import WavePhaseDebug from './WavePhaseDebug.svelte'
@@ -94,38 +95,38 @@
 
   let socialMenuOpen = $state(false)
 
-  // Escape closes the flyout through the overlay stack, like the chat
-  // channel menu.
+  // Every way the flyout closes, mounted only while it is open: Escape
+  // through the overlay stack (like the chat channel menu), a pointer down
+  // outside it, and focusing the chat input — Enter hides Escape from the
+  // stack, so an open flyout would eat the next unfocused Escape.
   $effect(() => {
     if (!socialMenuOpen) return
-    return mountOverlay('socialMenu', () => (socialMenuOpen = false))
+    const close = () => (socialMenuOpen = false)
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target as Element | null)?.closest('.social-wrap')) close()
+    }
+    const onFocusIn = (event: FocusEvent) => {
+      const tag = (event.target as Element | null)?.tagName?.toLowerCase()
+      if (tag === 'input' || tag === 'textarea') close()
+    }
+
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('focusin', onFocusIn)
+    const unmount = mountOverlay('socialMenu', close)
+
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('focusin', onFocusIn)
+      unmount()
+    }
   })
 
-  function onWindowPointerDown(event: PointerEvent) {
-    if (!socialMenuOpen) return
-    if ((event.target as Element | null)?.closest('.social-wrap')) return
+  function toggleFromSocialMenu(panel: Writable<boolean>) {
     socialMenuOpen = false
-  }
-
-  // Focusing the chat input (Enter) hides Escape from the overlay stack, so
-  // an open flyout would silently eat the next unfocused Escape. Close it.
-  function onWindowFocusIn(event: FocusEvent) {
-    if (!socialMenuOpen) return
-    const tag = (event.target as Element | null)?.tagName?.toLowerCase()
-    if (tag === 'input' || tag === 'textarea') socialMenuOpen = false
-  }
-
-  function toggleFromSocialMenu(panel: 'friends' | 'emotes') {
-    socialMenuOpen = false
-    if (panel === 'friends') friendPanelVisible.update((v) => !v)
-    else emotePanelVisible.update((v) => !v)
+    panel.update((v) => !v)
   }
 </script>
-
-<svelte:window
-  onpointerdown={onWindowPointerDown}
-  onfocusin={onWindowFocusIn}
-/>
 
 <div class="game-hud">
   <ServerNotice />
@@ -280,7 +281,7 @@
             <div class="social-menu">
               <button
                 class="social-item"
-                onclick={() => toggleFromSocialMenu('friends')}
+                onclick={() => toggleFromSocialMenu(friendPanelVisible)}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -297,7 +298,7 @@
               </button>
               <button
                 class="social-item"
-                onclick={() => toggleFromSocialMenu('emotes')}
+                onclick={() => toggleFromSocialMenu(emotePanelVisible)}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -525,11 +526,7 @@
       color 150ms ease;
   }
 
-  .corner-btn:hover {
-    background: rgba(80, 80, 80, 0.95);
-    color: #fff;
-  }
-
+  .corner-btn:hover,
   .corner-btn.menu-open {
     background: rgba(80, 80, 80, 0.95);
     color: #fff;
