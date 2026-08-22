@@ -61,6 +61,10 @@ class PlayerStateManager {
   // Queue for pending attacks when player is still moving
   private attackQueue = new SvelteMap<number, string[]>()
 
+  /** Flinch counters, kept apart from the player entries the movement loop
+   *  rebuilds each frame. */
+  hitCounters = new SvelteMap<number, number>()
+
   // Buffered position/rotation received during attack animation (1-slot queue).
   // Applied when the attack ends.
   private pendingMove = new Map<
@@ -226,6 +230,7 @@ class PlayerStateManager {
   initPlayer(playerId: number, position: Position, rotation: number) {
     this.targetPositions.set(playerId, { ...position })
     this.targetSprinting.delete(playerId)
+    this.seedHitCounter(playerId)
     this.players.set(playerId, {
       position: { ...position },
       state: 'idle',
@@ -244,6 +249,7 @@ class PlayerStateManager {
     this.attackQueue.delete(playerId)
     this.pendingMove.delete(playerId)
     this.attackStartTimes.delete(playerId)
+    this.hitCounters.delete(playerId)
   }
 
   // Reset all data
@@ -256,6 +262,19 @@ class PlayerStateManager {
     this.attackQueue.clear()
     this.pendingMove.clear()
     this.attackStartTimes.clear()
+    this.hitCounters.clear()
+  }
+
+  /** Seed the key so per-player reads never fall back to the map-wide signal.
+   *  Never overwrites: a reset count would read as a hit and fire the flinch. */
+  private seedHitCounter(playerId: number) {
+    if (!this.hitCounters.has(playerId)) this.hitCounters.set(playerId, 0)
+  }
+
+  /** Bump the flinch counter for a remote taking a blow. */
+  handleHit(playerId: number) {
+    if (!this.players.has(playerId)) return
+    this.hitCounters.set(playerId, (this.hitCounters.get(playerId) ?? 0) + 1)
   }
 
   handleDead(playerId: number) {
@@ -286,6 +305,7 @@ class PlayerStateManager {
 
   teleportPlayer(playerId: number, position: Position, rotation: number) {
     this.targetPositions.set(playerId, { ...position })
+    this.seedHitCounter(playerId)
     this.targetSprinting.delete(playerId)
     this.movementData.delete(playerId)
     this.players.set(playerId, {

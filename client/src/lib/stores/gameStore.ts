@@ -45,14 +45,15 @@ interface PlayerBase {
   backTexture?: string | null
   lastDamageInfo?: PlayerDamageInfo
   lastRegenInfo?: PlayerDamageInfo
-  /** Bumped on each blow that lands, to fire the flinch reaction. */
-  hitCounter?: number
   lastGoldInfo?: PlayerGoldInfo
 }
 
 export interface LocalPlayer extends PlayerBase {
   position: Vector3
   rotation: number
+  /** Bumped on each blow that lands, to fire the flinch reaction. Remotes
+   *  keep theirs in remotePlayerManager.hitCounters. */
+  hitCounter?: number
 }
 
 export interface RemotePlayer extends PlayerBase {

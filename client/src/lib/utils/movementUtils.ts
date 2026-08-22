@@ -39,6 +39,8 @@ export type PlayerStateName =
   | 'interact'
   | 'jump'
 
+/** Rebuilt from scratch each frame by the remote movement loop, so every
+ *  field must belong to the current state — nothing that has to survive a move. */
 export interface PlayerState {
   position: Position
   state: PlayerStateName

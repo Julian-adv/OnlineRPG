@@ -556,7 +556,7 @@
         interactionCounter={remotePlayer.interactionCounter}
         interactOffsetY={remotePlayer.interactOffsetY}
         attackCounter={remotePlayer.attackCounter}
-        hitCounter={player.hitCounter}
+        hitCounter={remotePlayerManager.hitCounters.get(player.id)}
         speed={remotePlayer.speed}
         rotation={remotePlayer.rotation}
         movementMode={remotePlayer.movementMode}

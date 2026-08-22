@@ -219,12 +219,24 @@ function emitCurrentPlayerDamageInfo(
   }
 }
 
-let hitSequence = 0
-
 /** Bump the flinch counter at the monster's impact frame, like the hurt cry.
- *  Only the change is read, so one sequence across players is enough. */
-function emitPlayerHit(playerId: number, delayMs: number) {
-  const bump = () => updatePlayer(playerId, { hitCounter: ++hitSequence })
+ *  Only the change is read. Remotes bump the manager's per-player map, which
+ *  saves the delayed store republish this would otherwise cost per blow. */
+function emitPlayerHit(
+  playerId: number,
+  isCurrentPlayer: boolean,
+  delayMs: number
+) {
+  const bump = () => {
+    if (!isCurrentPlayer) {
+      remotePlayerManager.handleHit(playerId)
+      return
+    }
+    const player = get(gameStore).currentPlayer
+    if (player?.id === playerId) {
+      updatePlayer(playerId, { hitCounter: (player.hitCounter ?? 0) + 1 })
+    }
+  }
 
   if (delayMs > 0) {
     globalThis.setTimeout(bump, delayMs)
@@ -942,7 +954,7 @@ export function handleServerMessage(
           }
         } else {
           playPlayerHurtSound(target.gender, impactDelayMs)
-          emitPlayerHit(data.player_id, impactDelayMs)
+          emitPlayerHit(data.player_id, isCurrentPlayer, impactDelayMs)
         }
       }
 
