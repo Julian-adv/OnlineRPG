@@ -35,8 +35,8 @@ mod tests;
 pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec, ENTRANCE_DOOR_ID};
 pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
 pub use stairs::{
-    entrance_ramp_height_at, floor_height_at, ground_y_for_floor, leg_touches_shaft, shaft_run_pos,
-    FLOOR_CHANGE_LEG_MAX, LANDING_CELLS, SHAFT_CHANGE_MARGIN,
+    entrance_ramp_height_at, floor_height_at, ground_y_for_floor, leg_touches_shaft,
+    on_stair_shaft, shaft_run_pos, FLOOR_CHANGE_LEG_MAX, LANDING_CELLS, SHAFT_CHANGE_MARGIN,
 };
 
 use serde::Serialize;
@@ -80,12 +80,6 @@ pub const SHAFT_LEN: i32 = 8;
 /// Default final-floor boss, used when a dungeons.csv row leaves its `boss`
 /// column blank and by seed-only property tests.
 pub const BOSS_MONSTER_TYPE: &str = "goblin_boss";
-
-/// How far a player's Y may sit from a floor's world Y and still be accepted
-/// as standing on it. Part of the wire contract: a client declaring a dungeon
-/// floor is refused outside this band (`validated_dungeon_floor`), and any
-/// client computing its own Y underground must stay inside it.
-pub const FLOOR_Y_TOLERANCE: f32 = 2.5;
 
 /// A* node budget for long in-dungeon path queries. Maze floors plus the
 /// open-surface leak through the entrance stairwell can exhaust the

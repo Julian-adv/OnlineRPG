@@ -884,8 +884,8 @@ fn within_radius_covers_every_point_inside_the_radius() {
 mod dungeon_floor_gate {
     use super::*;
     use onlinerpg_shared::dungeon::{
-        cell_center, floor_height_at, generate_dungeon_for, FloorLayout, Room, GRID,
-        SHAFT_CHANGE_MARGIN,
+        cell_center, floor_height_at, generate_dungeon_for, FloorLayout, Room,
+        DUNGEON_FLOOR_HEIGHT, GRID, SHAFT_CHANGE_MARGIN,
     };
 
     /// The shaft joining depth `shallow` to the floor below it.
@@ -1022,9 +1022,14 @@ mod dungeon_floor_gate {
 
     #[tokio::test]
     async fn floor_change_message_off_the_stairs_is_ignored() {
-        let d = delver("gate_off_stairs_msg", 1, |l| room_cell_off_stairs(l, 1, 0)).await;
+        let mut d = delver("gate_off_stairs_msg", 1, |l| room_cell_off_stairs(l, 1, 0)).await;
         d.game_state.update_player_floor(&d.player_id, -2).await;
         assert_eq!(d.floor().await, -1);
+        // The client renders the floor it asked for and re-announces it every
+        // frame, so a refusal has to reach it.
+        let (_, _, floor) =
+            first_correction(&mut d.rx).expect("a refused floor change must correct the client");
+        assert_eq!(floor, -1);
         d.game_state.update_player_floor(&d.player_id, 0).await;
         assert_eq!(d.floor().await, -1);
     }
@@ -1054,6 +1059,27 @@ mod dungeon_floor_gate {
         assert!(
             (y - snapped).abs() < 0.01,
             "Y must snap to the claimed floor"
+        );
+    }
+
+    /// A shaft's ramp is shared geometry, so a stored Y trailing the climb
+    /// matches neither floor. Refusing on it latched the climber below.
+    #[tokio::test]
+    async fn floor_change_on_the_shaft_survives_a_trailing_y() {
+        let d = delver("gate_shaft_trailing_y", 2, |l| shaft_rect(l, 1).center()).await;
+        let ramp_y = d.ground(1, d.cell).y;
+        {
+            let mut players = d.game_state.players.write().await;
+            players.get_mut(&d.player_id).unwrap().position.y = ramp_y - DUNGEON_FLOOR_HEIGHT;
+        }
+
+        d.game_state.update_player_floor(&d.player_id, -1).await;
+
+        assert_eq!(d.floor().await, -1);
+        let y = d.game_state.players.read().await[&d.player_id].position.y;
+        assert!(
+            (y - ramp_y).abs() < 0.01,
+            "Y must snap to the ramp under the player, got {y} for {ramp_y}"
         );
     }
 

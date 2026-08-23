@@ -12,8 +12,8 @@ use std::time::Duration;
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, floor_height_at, floor_level_for_passability, floor_world_y,
     generate_dungeon_for, interior_doors, leg_touches_shaft, monster_level_for_depth,
-    world_to_cell, FloorLayout, PropKind, ENTRANCE_DOOR_ID, FLOOR_CHANGE_LEG_MAX,
-    FLOOR_Y_TOLERANCE, GRID, SHAFT_CHANGE_MARGIN,
+    on_stair_shaft, world_to_cell, FloorLayout, PropKind, DUNGEON_FLOOR_HEIGHT, ENTRANCE_DOOR_ID,
+    FLOOR_CHANGE_LEG_MAX, GRID, SHAFT_CHANGE_MARGIN,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
@@ -1510,10 +1510,9 @@ impl GameState {
     /// Validate a client-declared floor for the move leg `from`→`to`
     /// (`from == to` for a standalone floor change). A floor changes one
     /// storey at a time, on a short leg touching the shaft joining the two;
-    /// the declared floor is then held to the footprint and to its ground
-    /// height at `to`, stair ramps included — clients flip their claim partway
-    /// down a shaft, so mid-ramp positions validate for either adjacent floor.
-    /// Anything else keeps the floor the leg started on.
+    /// anything else keeps the floor the leg started on. Y is never a reason
+    /// to refuse — the verdict carries the ground height derived from the
+    /// settled floor and `to`'s XZ.
     pub(super) async fn validated_dungeon_floor(
         &self,
         player_id: &PlayerId,
@@ -1526,7 +1525,6 @@ impl GameState {
             floor: current_floor,
             y: to.y,
         };
-        let changing = requested_floor != current_floor;
         let entrance = self
             .dungeon_defs
             .entrance_at(to.x, to.z)
@@ -1553,7 +1551,7 @@ impl GameState {
             .map(|d| &d.layouts[..])
             .unwrap_or(&[]);
 
-        if changing {
+        if requested_floor != current_floor {
             let shallow = current_floor.max(requested_floor);
             let on_stairs = shallow <= 0
                 && current_floor.min(requested_floor) == shallow - 1
@@ -1592,17 +1590,12 @@ impl GameState {
 
         let depth = requested_floor.unsigned_abs();
         let expected_y = floor_height_at(&entrance.position(), layouts, depth, to.x, to.z);
-        let departing_y = (changing && current_floor < 0)
-            .then(|| {
-                floor_height_at(
-                    &entrance.position(),
-                    layouts,
-                    current_floor.unsigned_abs(),
-                    to.x,
-                    to.z,
-                )
-            })
-            .flatten();
+        // Shaft ramps are geometry both floors share, so no Y there tells them
+        // apart: Y is derived from (floor, XZ), never a veto. Off the ramps the
+        // ground is flat, and a stored Y a whole floor away means the server's
+        // own position drifted from the floor it holds — worth seeing.
+        let drifted = expected_y.is_some_and(|y| (to.y - y).abs() > DUNGEON_FLOOR_HEIGHT)
+            && !on_stair_shaft(&entrance.position(), layouts, depth, to.x, to.z);
         let total = layouts.len();
         drop(dungeons);
         let Some(expected_y) = expected_y else {
@@ -1612,35 +1605,16 @@ impl GameState {
             );
             return keep;
         };
-        if (to.y - expected_y).abs() > FLOOR_Y_TOLERANCE {
-            // A change that passed the stairs gate while the Y still reads the
-            // departing floor's ground: the floor-change message races the
-            // walk (`PlayerFloorChanged` validates against the stored, not-yet
-            // -descended position). Accept and snap to the claimed floor —
-            // refusing latched the player on the old floor, cutting them off
-            // from the new floor's broadcasts.
-            if departing_y.is_some_and(|y| (to.y - y).abs() <= FLOOR_Y_TOLERANCE) {
-                return DungeonFloorVerdict {
-                    floor: requested_floor,
-                    y: expected_y,
-                };
-            }
-            // Position included: the client latches into claiming the floor
-            // below the one its Y sits on, and where that starts is the lead.
+        if drifted {
             warn!(
-                "Player {} floor {} Y mismatch: reported {:.1}, expected {:.1} \
-                 at ({:.1},{:.1}), kept floor {}",
+                "Player {} floor {} Y drift: stored {:.1}, floor {:.1} at ({:.1},{:.1})",
                 self.player_name_of(player_id).await,
                 requested_floor,
                 to.y,
                 expected_y,
                 to.x,
-                to.z,
-                current_floor
+                to.z
             );
-            if changing {
-                return keep;
-            }
         }
 
         DungeonFloorVerdict {
@@ -1651,8 +1625,11 @@ impl GameState {
 
     /// Infer the dungeon floor for an arbitrary position (used by debug
     /// teleports): if it lies in a dungeon footprint and its Y matches a
-    /// floor's world Y, return that floor; otherwise 0 (surface).
+    /// floor's world Y, return that floor; otherwise 0 (surface). The only
+    /// place a floor is read off a Y — everywhere else it is server state.
     pub(crate) async fn dungeon_floor_for_position(&self, position: &Position) -> i8 {
+        /// How near a floor's world Y a position must sit to read as that floor.
+        const FLOOR_Y_TOLERANCE: f32 = 2.5;
         let Some(entrance) = self.dungeon_defs.entrance_at(position.x, position.z) else {
             return 0;
         };

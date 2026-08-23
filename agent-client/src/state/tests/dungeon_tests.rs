@@ -273,7 +273,7 @@ fn descending_steps_declare_a_floor_the_server_accepts() {
                 seen_underground = true;
                 let expected = dungeon.floor_y(floor_level.unsigned_abs());
                 assert!(
-                    (pose.y - expected).abs() <= SERVER_FLOOR_Y_TOLERANCE,
+                    (pose.y - expected).abs() <= FLOOR_Y_SANITY,
                     "floor {floor_level} declared at y={} (floor sits at {expected})",
                     pose.y
                 );

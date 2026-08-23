@@ -1670,7 +1670,7 @@ impl super::GameState {
             }
         };
 
-        let (floor_level, snapped_y) = if floor_level < 0 || current_floor < 0 {
+        let (settled_floor, snapped_y) = if floor_level < 0 || current_floor < 0 {
             let verdict = self
                 .validated_dungeon_floor(
                     player_id,
@@ -1694,6 +1694,11 @@ impl super::GameState {
                 .await;
             (floor, None)
         };
+        // Refused claims must be told, or the client re-announces forever.
+        if settled_floor != floor_level {
+            self.snap_refused_move_back(player_id).await;
+        }
+        let floor_level = settled_floor;
         if floor_level == current_floor {
             return;
         }

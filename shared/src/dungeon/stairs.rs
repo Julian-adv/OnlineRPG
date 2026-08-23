@@ -1,10 +1,9 @@
 //! Stair-shaft Y model: how high the ground is anywhere on a shaft's run.
 //!
 //! Every client that moves underground needs this, and they must all agree:
-//! the server accepts a claimed dungeon floor only when the reported Y is
-//! within [`FLOOR_Y_TOLERANCE`](super::FLOOR_Y_TOLERANCE) of that floor's
-//! world Y, so a second copy of the ramp profile that drifts snaps the mover
-//! back mid-staircase rather than failing a test.
+//! the server overwrites an underground Y with its own value from
+//! `(floor, XZ)`, so a second copy of the ramp profile that drifts gets
+//! snapped mid-staircase rather than failing a test.
 
 use super::{dungeon_origin, floor_world_y, FloorLayout, StairShaft, SHAFT_LEN, SHAFT_W};
 use crate::pathfinding::{ramp_fraction, segment_touches_box};
@@ -64,6 +63,25 @@ pub fn floor_height_at(
         }
     }
     Some(floor_y)
+}
+
+/// Whether `(x, z)` sits on either stair shaft of the floor at `depth` — the
+/// only place that floor's ground is not flat.
+pub fn on_stair_shaft(
+    entrance: &Position,
+    layouts: &[FloorLayout],
+    depth: u8,
+    x: f32,
+    z: f32,
+) -> bool {
+    let Some(layout) = depth.checked_sub(1).and_then(|i| layouts.get(i as usize)) else {
+        return false;
+    };
+    shaft_run_pos(entrance, &layout.up_shaft, x, z).is_some()
+        || layout
+            .down_shaft
+            .as_ref()
+            .is_some_and(|d| shaft_run_pos(entrance, d, x, z).is_some())
 }
 
 /// Cells of slack around a shaft within which a floor change is accepted:

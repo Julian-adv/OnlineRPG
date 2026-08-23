@@ -504,6 +504,12 @@ export function handleServerMessage(
     case 'PositionCorrected': {
       // No id to match: it only ever goes to the player it corrects.
       dungeonManager.requestDoorResyncAfterCorrection()
+      // A correction is how a refused floor claim comes back.
+      dungeonManager.syncFromFloorLevel(
+        data.floor_level ?? 0,
+        data.position.x,
+        data.position.z
+      )
       events.positionCorrected.emit({
         x: data.position.x,
         y: data.position.y,

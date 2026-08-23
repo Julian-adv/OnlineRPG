@@ -192,6 +192,5 @@ fn mid_shaft_point(dungeon: &crate::dungeon::Dungeon) -> (f32, f32, f32) {
     panic!("no mid-ramp point found on the entrance shaft");
 }
 
-/// The server's `FLOOR_Y_TOLERANCE`: how far a declared dungeon floor may
-/// sit from the Y we send before `validated_dungeon_floor` refuses it.
-const SERVER_FLOOR_Y_TOLERANCE: f32 = 2.5;
+/// The server overwrites Y; this only guards our own pose model.
+const FLOOR_Y_SANITY: f32 = 2.5;
