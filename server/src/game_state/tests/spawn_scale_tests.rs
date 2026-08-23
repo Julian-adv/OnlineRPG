@@ -97,9 +97,34 @@ async fn spawn_path_cost_at_scale() {
         }
         let per_spawn = start.elapsed() / SPAWNS as u32;
 
+        // The move-coupled spawn roll, once per moving player per tick: the
+        // cost that replaced the old 10s issuance tick.
+        let (from, to) = (
+            Position {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Position {
+                x: 0.6,
+                y: 0.0,
+                z: 0.0,
+            },
+        );
+        let steps: Vec<crate::game_state::ambient_spawn::MoveStep> = owners
+            .iter()
+            .map(|id| crate::game_state::ambient_spawn::MoveStep {
+                player_id: *id,
+                from,
+                to,
+                floor_level: 0,
+                is_official_npc: false,
+            })
+            .collect();
+        game_state.enable_ambient_spawns();
         let start = Instant::now();
-        game_state.tick_monster_spawns().await;
-        let spawn_tick = start.elapsed();
+        game_state.spawn_along_movement(&steps).await;
+        let spawn_rolls = start.elapsed() / steps.len() as u32;
 
         // First tick reconciles every stale owner at once — a cold-start
         // transient. The second is the steady state: owners already correct,
@@ -136,7 +161,7 @@ async fn spawn_path_cost_at_scale() {
 
         println!(
             "{population:>7} monsters / {USERS} users: spawn_monster {per_spawn:>10.2?}  \
-             tick_monster_spawns {spawn_tick:>10.2?}  ownership cold {cold_tick:>10.2?} \
+             spawn roll {spawn_rolls:>10.2?}  ownership cold {cold_tick:>10.2?} \
              warm {warm_tick:>10.2?}  \
              move {per_move:>10.2?}"
         );

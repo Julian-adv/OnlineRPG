@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::character::{Character, CharacterAttributes, CharacterClass, Gender};
 use crate::entity::{Monster, MonsterState, Player};
-use crate::world::{GameDateTime, NoSpawnZone, Position};
+use crate::world::{GameDateTime, Position};
 use crate::{fishing, housing, inventory, skills};
 
 /// Which side of a merchant trade a haggled deal applies to.
@@ -353,11 +353,6 @@ pub enum ClientMessage {
     },
     ChatMessage {
         message: String,
-    },
-    RequestSpawnMonster {
-        monster_type: String,
-        position: Position,
-        rotation: f32,
     },
     MonsterMove {
         monster_id: String,
@@ -946,12 +941,6 @@ pub enum ServerMessage {
     MonsterAssigned {
         monster: Monster,
     },
-    /// Server asks this client to spawn a monster somewhere near the player.
-    /// The client picks a valid position (grassland, not water, away from towns)
-    /// around its own location and replies with RequestSpawnMonster.
-    SpawnMonsterRequest {
-        monster_type: String,
-    },
     MonsterMoved {
         monster_id: String,
         position: Position,
@@ -1153,10 +1142,6 @@ pub enum ServerMessage {
         wall_dir: housing::WallDirection,
         segment_index: u32,
         is_open: bool,
-    },
-    /// Sent once on join: all no-spawn zones so the client can validate spawn positions.
-    NoSpawnZones {
-        zones: Vec<NoSpawnZone>,
     },
     /// Sent once on join: full inventory state.
     InventoryState {

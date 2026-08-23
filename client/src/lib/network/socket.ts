@@ -580,16 +580,6 @@ class NetworkManager {
     this.sendMessage({ ChatMessage: { message } })
   }
 
-  requestSpawnMonster(
-    type: string,
-    position: { x: number; y: number; z: number },
-    rotation: number
-  ) {
-    this.sendMessage({
-      RequestSpawnMonster: { monster_type: type, position, rotation },
-    })
-  }
-
   sendToggleDoor(
     houseId: string,
     roomIndex: number,

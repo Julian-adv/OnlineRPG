@@ -34,15 +34,15 @@ Orchestrator Process
 
 서버가 몬스터 스폰을 결정하고 소유자를 지정한다 (치팅 방지). 클라이언트는 할당받은 몬스터의 AI(이동/공격)만 담당한다.
 
-**서버→클라이언트 스폰 흐름**:
-1. 서버가 스폰 규칙에 따라 스폰 필요성 판단 (10초 주기 tick, 플레이어당 한 틱에 한 마리)
-2. `ServerMessage::SpawnMonsterRequest { monster_type }` → 소유자 클라이언트에 전달
-3. 클라이언트가 반경 내 유효한 위치를 선정 (물/절벽/실내 회피)
-4. `ClientMessage::RequestSpawnMonster { monster_type, position, rotation }` → 서버에 전송
-5. 서버가 위치를 검증하고 몬스터 생성
-6. `ServerMessage::MonsterAssigned { monster }` → 소유자에게 직접 전송
-7. `ServerMessage::MonsterSpawned { monster }` → 전체 브로드캐스트
-8. 클라이언트는 할당된 몬스터에 대해 `MonsterMove`/`MonsterAttack` 전송
+**스폰 흐름** (위치 선정까지 전부 서버, [REPEAT_FARMING.md](REPEAT_FARMING.md)):
+1. 이동 틱마다 그 틱에 걸어간 거리 `d`로 `1 - 0.98^d`를 굴린다 — 서 있으면 0
+2. 성공하면 서버가 진행 방향 화면 가장자리 바로 밖(화면 정렬 정사각형의 변, 반변 20m)에
+   후보점을 하나 뽑는다
+3. 검증: 노스폰 존 + 마을 거리 게이트, 지면 재질(`SplatSampler`), 물, 그리고 플레이어까지
+   1m 셀 워크로 도달 가능한지. 하나라도 걸리면 그 굴림은 버린다 (재시도 없음)
+4. `ServerMessage::MonsterAssigned { monster }` → 소유자에게 직접 전송
+5. `ServerMessage::MonsterSpawned { monster }` → AOI 안 전원에게 전송
+6. 클라이언트는 할당된 몬스터에 대해 `MonsterMove`/`MonsterAttack` 전송
 
 이 규칙은 웹 클라이언트와 agent-client 모두 동일하게 적용.
 
@@ -109,14 +109,12 @@ min_interval_secs = 5
 ### Phase 1: Monster AI Module ✅ 구현 완료
 
 **서버 측:**
-- 스폰 규칙 시스템: `world.json`의 `ambientSpawns` 배열로 규칙 정의 (타입, 최대 거리)
-- `tick_monster_spawns()`: 10초 주기로 스폰 필요성 판단, `SpawnMonsterRequest`를 클라이언트에 전송
-  - 한 틱에 플레이어당 최대 한 건만 요청하고, 타입은 규칙 목록을 섞은 순서로 훑어 고른다.
-    던전이 밀집 전투를 맡으므로 필드는 `maxMonstersPerPlayer`로 성기게 유지한다
-  - 지상 스폰은 플레이어의 마을 거리가 (몬스터 레벨 − 1) × 70m 이상일 때만
-    요청한다 (`min_ambient_town_distance`, [COMBAT.md](COMBAT.md)의 거리 게이트).
+- 스폰 규칙 시스템: `world.json`의 `ambientSpawns` 배열로 타입 정의
+- `ambient_spawn.rs`: 이동 거리에 비례해 스폰을 허가하고, 위치도 서버가 고른다
+  - 동시 생존은 `maxMonstersPerPlayer`가 그대로 상한이다
+  - 타입은 **스폰 지점**의 마을 거리가 (몬스터 레벨 − 1) × 70m 이상인 것 중에서 고른다
+    (`min_ambient_town_distance`, [COMBAT.md](COMBAT.md)의 거리 게이트).
     레벨은 `monsters.csv`에서 오므로 규칙마다 따로 적지 않는다
-- 클라이언트가 위치를 선정하여 `RequestSpawnMonster`로 응답하면, 서버가 위치 검증 후 생성
 - `MonsterAssigned` → 소유자에게 직접 전송, `MonsterSpawned` → 전체 브로드캐스트
 - 전투 검증: 서버가 공격 판정(hit/miss, 데미지 roll), 쿨다운 체크, HP 관리, 사망 처리
 - 사망 몬스터 30초 후 자동 제거 (`MonsterRemoved`)
@@ -136,7 +134,6 @@ min_interval_secs = 5
 - chase 범위 초과 / 타겟 사망·소실 시에도 idle 대신 return (스폰 지점 복귀)
 - 이동 거리 2~10, 거리 비례 walk/run 확률 (가까울수록 walk)
 - WASM 기반 A* 경로 탐색, 물/절벽 회피
-- `SpawnMonsterRequest` 수신 시 반경 내 유효 위치 선정하여 `RequestSpawnMonster` 응답
 - `MonsterMove`/`MonsterAttack` 메시지로 서버에 동기화
 - 원격 몬스터는 `targetPosition` 기반 보간 이동
 
@@ -168,7 +165,7 @@ min_interval_secs = 5
 - `server/src/game_state/combat.rs` — 서버 전투 판정 (플레이어↔몬스터)
 - `server/src/monster_defs.rs` — 생성된 몬스터 정의 로드 (`data/monsters.json`)
 - `server/src/world_config.rs` — 월드 설정 로드 (`data-src/world.json` 스폰 규칙)
-- `server/src/connection.rs` — 메시지 라우팅 (RequestSpawnMonster, MonsterMove 등)
+- `server/src/connection.rs` — 메시지 라우팅 (MonsterMove 등)
 - `client/src/lib/managers/monsterManager.ts` — 클라이언트 몬스터 AI FSM (Phase 1 구현체)
 - `client/src/lib/network/messageHandlers.ts` — 클라이언트 메시지 핸들러
 - `client/src/lib/network/socket.ts` — 클라이언트 네트워크 전송 메서드

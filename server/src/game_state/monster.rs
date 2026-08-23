@@ -5,7 +5,7 @@ use tracing::{debug, info, warn};
 
 /// Keep spawns this many meters clear of every no-spawn zone (towns), so the
 /// area *around* a town stays empty too. Mirrors the client's TOWN_MARGIN.
-const NO_SPAWN_MARGIN: f32 = 30.0;
+pub(super) const NO_SPAWN_MARGIN: f32 = 30.0;
 
 /// Headroom over a monster's run speed at which its move token bucket refills,
 /// absorbing jitter between the owner's simulation clock and packet arrival.
@@ -24,11 +24,6 @@ const MONSTER_GROUND_Y_TOLERANCE_METERS: f32 = 0.25;
 /// misconfigured types). Kept just above the player's own speed so an unknown
 /// type stays tightly bounded rather than inheriting a fast monster's leeway.
 const DEFAULT_MONSTER_RUN_SPEED: f32 = 3.5;
-const AMBIENT_SPAWN_ALLOWANCE_TTL_MS: u64 = 30_000;
-/// Spawn requests one player may receive per tick, so an empty field refills
-/// in a few ticks instead of one monster per tick. Bounded per tick by the
-/// player's cap deficit and the eligible types (one open allowance per type).
-pub(crate) const AMBIENT_SPAWN_BURST: usize = 3;
 /// Metres from town before an ambient type one level higher starts spawning.
 /// What you meet on the surface follows where you stand, not your level.
 const AMBIENT_SPAWN_METERS_PER_LEVEL: f32 = 70.0;
@@ -432,7 +427,7 @@ impl super::GameState {
 
     /// The Y a move to `to` should land on: the ground delta applied to the
     /// stored Y, so an off-ground offset is carried rather than snapped away.
-    /// Ambient spawns are grounded by `validate_spawn_request`, but `/spawnmob`
+    /// Ambient spawns are grounded by `ambient_spawn.rs`, but `/spawnmob`
     /// seeds Y from the admin's pose, and such a monster stays off-ground for
     /// life. `None` means refuse the move, not "no opinion".
     async fn expected_monster_move_y(
@@ -914,126 +909,6 @@ impl super::GameState {
         })
     }
 
-    /// Server-driven monster spawn tick. Each player below their cap gets up
-    /// to AMBIENT_SPAWN_BURST SpawnMonsterRequests per tick — randomly picked
-    /// eligible types, at most one per type — bounded by their cap deficit.
-    /// The client picks a valid position near itself (grassland, not
-    /// water, away from towns). Each request records an expiring allowance the
-    /// client's response must consume via take_spawn_allowance.
-    pub async fn tick_monster_spawns(&self) {
-        let ambient_spawns = &crate::world_config::world_config().ambient_spawns;
-        if ambient_spawns.is_empty() {
-            return;
-        }
-
-        let max_per_player = crate::world_config::world_config().max_monsters_per_player as usize;
-
-        // Players eligible for ambient spawns this tick. NPC players only
-        // qualify when a human is within sight range (no point spawning monsters
-        // around an agent nobody is watching); humans always qualify. Computed
-        // once under a single read lock so the loop below needs none.
-        let candidates: Vec<(PlayerId, f32)> = {
-            let players = self.players.read().await;
-            let radius_sq = super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS;
-            let human_positions: Vec<_> = players
-                .values()
-                .filter(|p| !p.is_official_npc)
-                .map(|p| p.position)
-                .collect();
-            players
-                .iter()
-                .filter(|(_, player)| {
-                    // Dungeon players get slot-based spawns, not ambient
-                    // ones (spawn validation is XZ-only and would place
-                    // surface monsters right above the dungeon).
-                    player.floor_level >= 0
-                        && (!player.is_official_npc
-                            || human_positions
-                                .iter()
-                                .any(|hp| player.position.dist_xz_sq(hp) <= radius_sq))
-                })
-                .map(|(id, player)| (*id, self.town_distance(&player.position)))
-                .collect()
-        };
-        if candidates.is_empty() {
-            return;
-        }
-
-        // The owner index answers each cap in O(cap), so this reads only the
-        // players the tick asks about instead of walking every monster on the
-        // server. The expiry sweep below still runs even if nobody is left.
-        let candidates: Vec<(PlayerId, f32, usize)> = {
-            let monsters = self.monsters.read().await;
-            candidates
-                .into_iter()
-                .filter_map(|(id, town_distance)| {
-                    let want = max_per_player
-                        .saturating_sub(monsters.owned_alive_by(&id))
-                        .min(AMBIENT_SPAWN_BURST);
-                    (want > 0).then_some((id, town_distance, want))
-                })
-                .collect()
-        };
-
-        // Indexed like `ambient_spawns`, so the distance gate costs one lookup
-        // per rule instead of one per rule per player. One max_distance deeper
-        // than the landing gate, so no spot the client may pick can fail it —
-        // a failed pick would burn the type's allowance for its full TTL.
-        let min_distances: Vec<f32> = ambient_spawns
-            .iter()
-            .map(|rule| self.min_ambient_town_distance(&rule.monster_type) + rule.max_distance)
-            .collect();
-
-        let now = Self::now_ms();
-        let recipients_by_rule = {
-            use rand::seq::SliceRandom;
-            let mut allowances = self.ambient_spawn_allowances.write().await;
-            allowances.retain(|_, expires_at| *expires_at > now);
-            let mut by_rule: Vec<Vec<PlayerId>> = vec![Vec::new(); ambient_spawns.len()];
-            let mut rng = rand::thread_rng();
-            let mut order: Vec<usize> = (0..ambient_spawns.len()).collect();
-
-            for (player_id, town_distance, want) in &candidates {
-                // The scan runs in shuffled order, so the types on offer are
-                // uniform over the ones the player can take rather than
-                // following the rule list.
-                order.shuffle(&mut rng);
-                let mut granted = 0;
-                for &r in &order {
-                    if granted == *want {
-                        break;
-                    }
-                    if *town_distance < min_distances[r] {
-                        continue;
-                    }
-                    // The owned key is only built once the distance gate passes.
-                    let key = (*player_id, ambient_spawns[r].monster_type.clone());
-                    if let Entry::Vacant(entry) = allowances.entry(key) {
-                        entry.insert(now + AMBIENT_SPAWN_ALLOWANCE_TTL_MS);
-                        by_rule[r].push(*player_id);
-                        granted += 1;
-                    }
-                }
-            }
-            by_rule
-        };
-
-        // One send per type: the payload is encoded once and shared, so the
-        // type name is cloned per batch rather than per recipient.
-        for (r, recipients) in recipients_by_rule.into_iter().enumerate() {
-            if recipients.is_empty() {
-                continue;
-            }
-            self.send_direct_message_to_players(
-                &recipients,
-                ServerMessage::SpawnMonsterRequest {
-                    monster_type: ambient_spawns[r].monster_type.clone(),
-                },
-            )
-            .await;
-        }
-    }
-
     /// Same predicate as `player_ids_within_position(.., EVENT_DELIVERY_RADIUS)`
     /// but against a per-tick snapshot, so a sweep over every monster locks the
     /// roster once instead of twice per monster.
@@ -1265,77 +1140,5 @@ impl super::GameState {
         if let Some(owner_id) = monster.owner_id {
             self.send_direct_message(&owner_id, removal).await;
         }
-    }
-
-    /// Validate a client-requested spawn: it must carry finite values, be a
-    /// configured ambient type, sit outside every no-spawn zone, and be within
-    /// range of the requesting player. The server supplies the authoritative
-    /// terrain Y. Placement stays client-selected: grassland has no
-    /// server-side source at all, and water is simply not wired up yet
-    /// (`water_depth_at` could check it, as `inventory.rs` already does).
-    ///
-    /// Returns the position to store with canonical X and server-sampled Y.
-    pub async fn validate_spawn_request(
-        &self,
-        player_id: &PlayerId,
-        monster_type: &str,
-        position: &Position,
-        rotation: f32,
-    ) -> Option<Position> {
-        // The range check below only reads x/z, so without this a non-finite y
-        // or rotation would reach MonsterSpawned.
-        if !position.is_finite() || !rotation.is_finite() {
-            return None;
-        }
-        let mut position = *position;
-        position.x = onlinerpg_shared::wrap_world_x(position.x);
-        let rule = match Self::find_ambient_rule(monster_type) {
-            Some(r) => r,
-            None => return None,
-        };
-
-        // Reject if inside any no-spawn zone (towns, safe areas) + margin
-        for zone in &self.no_spawn_zones {
-            if zone.contains_with_margin(position.x, position.z, NO_SPAWN_MARGIN) {
-                return None;
-            }
-        }
-
-        // The distance gate, measured where the monster lands. The offer-time
-        // check requires the player one max_distance deeper, so any spot
-        // within the rule's range passes here.
-        if self.town_distance(&position) < self.min_ambient_town_distance(monster_type) {
-            return None;
-        }
-
-        // Must be reasonably close to the requesting player (anti-cheat sanity)
-        let player_pos = {
-            let players = self.players.read().await;
-            match players.get(player_id) {
-                Some(p) => p.position,
-                None => return None,
-            }
-        };
-        let max = rule.max_distance + 10.0; // tolerance
-        if player_pos.dist_xz_sq(&position) > max * max {
-            return None;
-        }
-        position.y = self
-            .height_sampler
-            .sample_height(position.x, position.z)
-            .await
-            .ok()?;
-        Some(position)
-    }
-
-    /// Consume the player's unexpired allowance for this type, if any. Each
-    /// tick-issued request authorizes exactly one accepted spawn response.
-    pub async fn take_spawn_allowance(&self, player_id: &PlayerId, monster_type: &str) -> bool {
-        let now = Self::now_ms();
-        self.ambient_spawn_allowances
-            .write()
-            .await
-            .remove(&(*player_id, monster_type.to_string()))
-            .is_some_and(|expires_at| expires_at > now)
     }
 }

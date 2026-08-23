@@ -12,6 +12,7 @@ use onlinerpg_shared::messages::DealKind;
 use tokio::sync::broadcast::error::TryRecvError;
 use tokio::sync::mpsc::error::TryRecvError as MpscTryRecvError;
 
+mod ambient_spawn_tests;
 mod cape_dye_tests;
 mod cape_texture_tests;
 mod chat_tests;
@@ -160,33 +161,57 @@ fn drain(rx: &mut DirectRx) -> Vec<ServerMessage> {
     msgs
 }
 
-fn spawn_requests(rx: &mut DirectRx, monster_type: &str) -> usize {
-    drain(rx)
-        .into_iter()
-        .filter(|message| {
-            matches!(
-                message,
-                ServerMessage::SpawnMonsterRequest { monster_type: ty } if ty == monster_type
+/// Walk a player to (x, z) through the real move path — queued waypoint plus
+/// movement tick — so distance-coupled ambient spawning sees the displacement.
+/// Long walks are split into legs the move guard accepts.
+async fn walk_player_to(game_state: &GameState, player_id: &PlayerId, x: f32, z: f32) {
+    // Comfortably inside the move guard, so no leg is refused.
+    const LEG: f32 = onlinerpg_shared::MAX_MOVE_TARGET_DISTANCE * 0.8;
+    loop {
+        let from = game_state.players.read().await[player_id].position;
+        let dx = onlinerpg_shared::shortest_world_delta_x(from.x, x);
+        let dz = z - from.z;
+        let remaining = (dx * dx + dz * dz).sqrt();
+        if remaining < 0.001 {
+            return;
+        }
+        let t = (LEG / remaining).min(1.0);
+        let target = Position {
+            x: onlinerpg_shared::wrap_world_x(from.x + dx * t),
+            y: from.y,
+            z: from.z + dz * t,
+        };
+        game_state
+            .update_player_position(
+                player_id,
+                crate::game_state::MoveCommand {
+                    position: target,
+                    rotation: 0.0,
+                    floor_level: 0,
+                    append: false,
+                    sprinting: false,
+                },
+                false,
+                false,
             )
-        })
-        .count()
+            .await;
+        game_state.tick_player_movement(60.0).await;
+    }
 }
 
-/// Whether `monster_type` comes up within one pass over the rules. A tick
-/// offers each player one type it has no outstanding allowance for, so every
-/// eligible type is offered exactly once per pass.
-async fn tick_until_spawn_request(
-    game_state: &GameState,
-    rx: &mut DirectRx,
-    monster_type: &str,
-) -> bool {
-    for _ in 0..crate::world_config::world_config().ambient_spawns.len() {
-        game_state.tick_monster_spawns().await;
-        if spawn_requests(rx, monster_type) > 0 {
-            return true;
-        }
+/// Pace `legs` × 10m back and forth from (x, z). Pacing rather than striding
+/// off: a monster left outside the AOI is released and despawned, so the tail
+/// of a straight run says nothing about what it drew.
+async fn pace_player(game_state: &GameState, player_id: &PlayerId, x: f32, z: f32, legs: usize) {
+    for leg in 0..legs {
+        let to = if leg.is_multiple_of(2) { z + 10.0 } else { z };
+        walk_player_to(game_state, player_id, x, to).await;
     }
-    false
+}
+
+/// Monsters this player owns and has not killed.
+async fn owned_monster_count(game_state: &GameState, player_id: &PlayerId) -> usize {
+    game_state.monsters.read().await.owned_alive_by(player_id)
 }
 
 fn first_dungeon(game_state: &GameState) -> crate::dungeon_defs::DungeonEntranceDef {
@@ -281,6 +306,33 @@ impl onlinerpg_terrain::water::WaterTiles for SeaOnlyWater {
     }
 }
 
+/// Land everywhere at 5m: a walk in any direction stays on dry flat ground,
+/// so ambient spawn placement is never refused by the terrain.
+struct FlatLand;
+
+#[async_trait::async_trait]
+impl onlinerpg_terrain::height::HeightTiles for FlatLand {
+    async fn read_heightmap(&self, _tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
+        Ok(uniform_heightmap(5.0))
+    }
+}
+
+/// A flat, dry, grassy world — the fixture for ambient spawn tests.
+fn make_flat_world_game_state(test_name: &str) -> GameState {
+    make_game_state_with(test_name, FlatLand, SeaOnlyWater)
+}
+
+/// Splat for tests: every cell is the vegetation base, so a spawn is never
+/// rejected for the ground it lands on.
+struct GrassSplat;
+
+#[async_trait::async_trait]
+impl onlinerpg_terrain::splat::SplatTiles for GrassSplat {
+    async fn read_splat(&self, _tx: i32, _tz: i32) -> std::io::Result<Vec<u8>> {
+        Ok(vec![0u8; onlinerpg_terrain::defaults::SPLATMAP_SIZE])
+    }
+}
+
 fn make_game_state_with(
     test_name: &str,
     height: impl onlinerpg_terrain::height::HeightTiles + 'static,
@@ -314,6 +366,7 @@ fn make_game_state_with_zones(
         dungeon_defs,
         Arc::new(onlinerpg_terrain::height::HeightSampler::new(height)),
         Arc::new(onlinerpg_terrain::water::WaterSampler::new(water)),
+        Arc::new(onlinerpg_terrain::splat::SplatSampler::new(GrassSplat)),
         Arc::new(
             crate::cape_texture::CapeTextureStore::new(std::env::temp_dir().join(format!(
                 "onlinerpg_{test_name}_capes_{}",

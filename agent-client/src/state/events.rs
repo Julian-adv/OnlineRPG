@@ -133,7 +133,6 @@ impl SharedState {
             | ServerMessage::PlayerDisappeared { .. }
             | ServerMessage::MonsterSpawned { .. }
             | ServerMessage::MonsterAssigned { .. }
-            | ServerMessage::SpawnMonsterRequest { .. }
             | ServerMessage::MonsterDead { .. }
             | ServerMessage::MonsterRemoved { .. }
             | ServerMessage::XpGained { .. }
@@ -578,21 +577,6 @@ impl SharedState {
             ServerMessage::MonsterSpawned { monster } => {
                 self.nearby_monsters
                     .insert(monster.id.clone(), monster.clone());
-            }
-            ServerMessage::SpawnMonsterRequest { monster_type } => {
-                if let Some(pos) = self.find_valid_spawn_position() {
-                    let mut rng = rand::thread_rng();
-                    let rotation = rng.gen_range(0.0..std::f32::consts::TAU);
-                    self.pending_commands
-                        .push(ClientMessage::RequestSpawnMonster {
-                            monster_type: monster_type.clone(),
-                            position: pos,
-                            rotation,
-                        });
-                }
-            }
-            ServerMessage::NoSpawnZones { zones } => {
-                self.no_spawn_zones = zones.clone();
             }
             ServerMessage::MonsterAssigned { monster } => {
                 self.nearby_monsters

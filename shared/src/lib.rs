@@ -87,7 +87,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      the client can play the roar.
 /// v36: `XpGained.monster_id` names the kill the XP came from, so the client
 ///      can hold the gain until that monster starts going down.
-pub const PROTOCOL_VERSION: u32 = 36;
+/// v37: SpawnMonsterRequest/RequestSpawnMonster are gone — the server places
+///      ambient monsters itself, keyed to distance walked
+///      (doc/REPEAT_FARMING.md).
+pub const PROTOCOL_VERSION: u32 = 37;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

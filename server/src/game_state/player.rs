@@ -954,10 +954,6 @@ impl super::GameState {
         self.remove_player_stall(player_id).await;
         self.remove_player_tip_hat(player_id).await;
         self.drop_player_trade(player_id, "They left.").await;
-        self.ambient_spawn_allowances
-            .write()
-            .await
-            .retain(|(owner_id, _), _| owner_id != player_id);
         self.last_player_attacks.write().await.remove(player_id);
         // A player disconnecting inside a dungeon leaves its floor first,
         // so its monsters get reassigned (or despawned) instead of being
@@ -1093,6 +1089,17 @@ impl super::GameState {
                 },
             )
             .await;
+            // An admin's moves apply here and never reach the movement tick,
+            // so roll their displacement here or they would never meet an
+            // ambient monster.
+            self.spawn_along_movement(&[super::ambient_spawn::MoveStep {
+                player_id: *player_id,
+                from: current_position,
+                to: new_position,
+                floor_level,
+                is_official_npc,
+            }])
+            .await;
             return;
         }
 
@@ -1201,6 +1208,8 @@ impl super::GameState {
     pub async fn tick_player_movement(&self, dt: f32) {
         let base_step = PLAYER_MOVE_SPEED * MOVE_SPEED_SLACK * dt.max(0.0);
         let mut moved: Vec<(PlayerId, Position, i8, Player, bool)> = Vec::new();
+        let mut steps: Vec<super::ambient_spawn::MoveStep> = Vec::new();
+
         let mut activities: Vec<(PlayerId, f32, bool)> = Vec::new();
         let mut refused: Vec<RefusedMove> = Vec::new();
         {
@@ -1333,6 +1342,13 @@ impl super::GameState {
                 // displacement burns satiation (doc/HUNGER.md).
                 if position_changed {
                     activities.push((*player_id, dt.max(0.0), sprinting));
+                    steps.push(super::ambient_spawn::MoveStep {
+                        player_id: *player_id,
+                        from: old_position,
+                        to: player.position,
+                        floor_level: player.floor_level,
+                        is_official_npc: player.is_official_npc,
+                    });
                 }
                 if position_changed
                     || player.floor_level != old_floor
@@ -1371,6 +1387,11 @@ impl super::GameState {
             )
             .await;
         }
+
+        // Last: placement samples terrain, and nothing should delay the move
+        // fanout. Distance walked is what grants ambient monsters
+        // (doc/REPEAT_FARMING.md).
+        self.spawn_along_movement(&steps).await;
     }
 
     /// Step players sealed into their own cell out to an adjoining one, and

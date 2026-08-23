@@ -67,17 +67,6 @@ impl SharedState {
                     sprinting,
                 }
             }
-            ClientMessage::RequestSpawnMonster {
-                monster_type,
-                position,
-                rotation,
-            } => ClientMessage::RequestSpawnMonster {
-                monster_type,
-                position: self
-                    .snap_position_to_ground(position, "RequestSpawnMonster")
-                    .await,
-                rotation,
-            },
             ClientMessage::MonsterMove {
                 monster_id,
                 position,

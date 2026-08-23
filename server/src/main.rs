@@ -404,6 +404,10 @@ async fn main() -> ExitCode {
         std::path::PathBuf::from(&args.terrain_dir),
     )));
 
+    let splat_sampler = Arc::new(onlinerpg_terrain::splat::SplatSampler::new(TerrainIO::new(
+        std::path::PathBuf::from(&args.terrain_dir),
+    )));
+
     let cape_textures = match CapeTextureStore::new(paths.cape_textures.clone()) {
         Ok(store) => Arc::new(store),
         Err(e) => {
@@ -426,6 +430,7 @@ async fn main() -> ExitCode {
         dungeon_defs,
         height_sampler,
         water_sampler,
+        splat_sampler,
         Arc::clone(&cape_textures),
     ));
     game_state.load_npc_schedules(&npc_io).await;
@@ -483,18 +488,6 @@ async fn main() -> ExitCode {
         move || {
             let game_state = Arc::clone(&game_state_for_party_vitals);
             async move { game_state.tick_party_vitals().await }
-        },
-    ));
-
-    // Every 10s, top up each player's ambient monsters toward their caps.
-    let game_state_for_spawns = Arc::clone(&game_state);
-    background.spawn(run_ticks(
-        "monster spawn",
-        Duration::from_secs(10),
-        drain_shutdown.clone(),
-        move || {
-            let game_state = Arc::clone(&game_state_for_spawns);
-            async move { game_state.tick_monster_spawns().await }
         },
     ));
 

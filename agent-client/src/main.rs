@@ -451,8 +451,6 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::HousesInArea { .. } => "HousesInArea",
         ServerMessage::DoorToggled { .. } => "DoorToggled",
         ServerMessage::MonsterAssigned { .. } => "MonsterAssigned",
-        ServerMessage::SpawnMonsterRequest { .. } => "SpawnMonsterRequest",
-        ServerMessage::NoSpawnZones { .. } => "NoSpawnZones",
         ServerMessage::PlayerInteractionChanged { .. } => "PlayerInteractionChanged",
         ServerMessage::PlayerMusicStarted { .. } => "PlayerMusicStarted",
         ServerMessage::InteractionRejected { .. } => "InteractionRejected",

@@ -304,7 +304,9 @@ guard 40짜리 플레이어를 코볼트가 한 번 맞히려면 평균 400회, 
 | Ogre | 8 | 490m |
 | Troll | 9 | 560m |
 
-- 구현: [`min_ambient_town_distance`](../server/src/game_state/monster.rs)
+- 구현: [`min_ambient_town_distance`](../server/src/game_state/monster.rs). 거리는
+  플레이어가 아니라 **몬스터가 놓이는 지점**에서 잰다
+  ([`ambient_spawn.rs`](../server/src/game_state/ambient_spawn.rs))
 - 마을 근처는 저레벨 몬스터만 나오므로 XP도 드랍 등급도 낮다. 고레벨
   플레이어를 명중률로 쫓아내는 게 아니라 **보상 구배로 밀어낸다** — 실측상
   표면 킬의 94%가 마을 반경 100~400m 안에서 일어나고 있었다.

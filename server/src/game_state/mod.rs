@@ -229,6 +229,7 @@ pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
     }
 }
 
+pub(crate) mod ambient_spawn;
 mod chat;
 pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
@@ -342,7 +343,6 @@ pub struct GameState {
     /// `elapsed_secs` sent to players entering earshot mid-performance;
     /// cleared with the `MUSIC_EMOTE` interaction.
     music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
-    ambient_spawn_allowances: Arc<RwLock<HashMap<(PlayerId, String), u64>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -382,6 +382,14 @@ pub struct GameState {
     /// with `height_sampler` so fishing's water check covers rivers, whose
     /// beds sit above sea level, not just the ocean.
     water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
+    /// Server-side ground material (tile-cached). Keeps move-coupled ambient
+    /// spawns on grassland, the check the client used to make.
+    splat_sampler: Arc<onlinerpg_terrain::splat::SplatSampler>,
+    /// Test-only: move-coupled ambient spawning is off unless a test asks for
+    /// it, so tests that walk players around are not perturbed by monsters
+    /// arriving at random.
+    #[cfg(test)]
+    ambient_spawns_enabled: Arc<std::sync::atomic::AtomicBool>,
     housing_io: Arc<HousingIO>,
     /// Uploaded cape textures: what a worn `cape_texture` is checked against
     /// and where reports land (doc/CAPE_CUSTOMIZATION.md).
@@ -609,6 +617,7 @@ impl GameState {
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
         height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
         water_sampler: Arc<onlinerpg_terrain::water::WaterSampler>,
+        splat_sampler: Arc<onlinerpg_terrain::splat::SplatSampler>,
         cape_textures: Arc<crate::cape_texture::CapeTextureStore>,
     ) -> Self {
         let (broadcast_tx, _) = broadcast::channel(1000);
@@ -622,7 +631,6 @@ impl GameState {
             player_spatial_cells: Arc::new(RwLock::new(SpatialIndex::default())),
             monsters: Arc::new(RwLock::new(monster::MonsterRegistry::default())),
             music_performances: Arc::new(RwLock::new(HashMap::new())),
-            ambient_spawn_allowances: Arc::new(RwLock::new(HashMap::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {
@@ -646,6 +654,9 @@ impl GameState {
             next_fishing_session: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             height_sampler,
             water_sampler,
+            splat_sampler,
+            #[cfg(test)]
+            ambient_spawns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             housing_io,
             cape_textures,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),
@@ -700,11 +711,6 @@ impl GameState {
         &self.cape_textures
     }
 
-    /// Get the no-spawn zones (for sending to clients on join).
-    pub fn no_spawn_zones(&self) -> &[NoSpawnZone] {
-        &self.no_spawn_zones
-    }
-
     /// Flat distance from town — the spawn point, the same "town" respawn and
     /// return-to-town already use. A second settlement must be added here
     /// before it ships, or its surroundings count as deep frontier.
@@ -716,9 +722,11 @@ impl GameState {
             .sqrt()
     }
 
-    /// Evict terrain tiles idle since the previous sweep from both samplers.
+    /// Evict terrain tiles idle since the previous sweep from every sampler.
     pub async fn sweep_terrain_caches(&self) -> usize {
-        self.height_sampler.sweep_stale_tiles().await + self.water_sampler.sweep_stale_tiles().await
+        self.height_sampler.sweep_stale_tiles().await
+            + self.water_sampler.sweep_stale_tiles().await
+            + self.splat_sampler.sweep_stale_tiles().await
     }
 
     pub fn subscribe(&self) -> GameStateReceiver {

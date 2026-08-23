@@ -29,8 +29,6 @@ Both arrays are optional (default empty). Coordinates are world-space. Both zone
 ### Shared crate (`shared/src/lib.rs`)
 - `NoSpawnZone` struct with `#[serde(rename_all = "camelCase")]` — used directly for both Rust deserialization and JSON serialization (no intermediate struct needed)
 - `NoSpawnZone::contains(x, z)` helper for point-in-rect checks
-- `ServerMessage::SpawnMonsterRequest` uses rectangular bounds (`min_x/min_z/max_x/max_z`)
-- `ServerMessage::NoSpawnZones` — sent once on player join so agent-client can validate spawn positions
 
 ### Terrain crate (`terrain/src/`)
 - `coords::zone_path()` — `{base}/zones/r{+XX}_{+ZZ}.json`
@@ -38,18 +36,14 @@ Both arrays are optional (default empty). Coordinates are world-space. Both zone
 
 ### Server
 - `world_config.rs` — `MonsterSpawnRule` with rectangular bounds + `maxTotal`, `load_spawn_config_from_regions()` reads all zone files at startup
-- `game_state/mod.rs` — `no_spawn_zones` field, constructor takes spawn rules + zones as params, `no_spawn_zones()` accessor
-- `game_state/monster.rs` — `validate_spawn_request()` checks rect bounds + no-spawn zones, `tick_monster_spawns()` sends rect coords
+- `game_state/mod.rs` — `no_spawn_zones` field, constructor takes spawn rules + zones as params
+- `game_state/ambient_spawn.rs` — the only consumer: a spawn point inside a zone (+ margin) is dropped
 - `terrain/routes.rs` — `GET/PUT /api/terrain/zones/{rx}/{rz}`
-- `connection.rs` — sends `NoSpawnZones` on join
 - `main.rs` — loads zones from region files at startup, passes to `GameState::new()`
 
-### Agent-client (`agent-client/src/state.rs`)
-- Stores `no_spawn_zones` received via `ServerMessage::NoSpawnZones`
-- `find_valid_spawn_position()` picks random point within rect, rejects if inside a house or no-spawn zone
-
-### Web client
-- `messageHandlers.ts` — handles `SpawnMonsterRequest` with rect bounds, `NoSpawnZones` (no-op for now)
+### Clients
+Zones never reach a client: the server places every ambient monster itself
+(`ambient_spawn.rs`), so no client validates spawn positions any more.
 
 ### Map editor
 - `stores/editorStore.ts` — `EditorTool` includes `'zone'`, shared stores for zone sub-tool, draw state, form values (`spawnFormMonsterType`, `spawnFormMaxPerPlayer`, etc.), `currentZoneData` (shared between panel and overlay)
@@ -64,4 +58,3 @@ Both arrays are optional (default empty). Coordinates are world-space. Both zone
 ## Notes
 - **Cross-region zones**: A zone drawn in region A may cover region B territory. Server aggregates all zones into a flat list so validation works. Editor shows zones stored in the current region only.
 - **Hot-reload**: After editor saves a zone, server won't see it until restart. Acceptable for v1.
-- **Agent-client zone source**: Currently receives zones via WebSocket `NoSpawnZones` message on join. Could alternatively read zone files directly from disk (agent-client has `TerrainIO` access), but kept as WebSocket for now.

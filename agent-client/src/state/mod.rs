@@ -10,10 +10,10 @@ use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::{HouseData, WallDirection};
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::pathfinding::{self, PassabilityCache, PathResult};
+use onlinerpg_shared::Position;
 use onlinerpg_shared::{
     Character, ClientMessage, Monster, MonsterState, Player, PlayerId, ServerMessage,
 };
-use onlinerpg_shared::{NoSpawnZone, Position};
 use onlinerpg_terrain::height::HeightSampler;
 use rand::Rng;
 use std::sync::Arc;
@@ -316,8 +316,6 @@ pub struct SharedState {
     pub monster_ai: MonsterAiManager,
     /// Pending commands from monster AI and spawn requests
     pending_commands: Vec<ClientMessage>,
-    /// No-spawn zones received from server on join
-    no_spawn_zones: Vec<NoSpawnZone>,
     /// Spectator panel handle; feeds it chat/combat/system lines
     watch: Option<Arc<crate::watch::NpcWatch>>,
     /// Running follow loop: (target name, task handle). Anything that takes
@@ -403,7 +401,6 @@ impl SharedState {
             urgent_notify: Arc::new(Notify::new()),
             monster_ai: MonsterAiManager::new(),
             pending_commands: Vec::new(),
-            no_spawn_zones: Vec::new(),
             watch,
             follow_task: None,
             wake_urgency: EventUrgency::Noise,

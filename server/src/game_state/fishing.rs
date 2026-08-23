@@ -556,16 +556,23 @@ impl GameState {
     /// handler on the tiles the cast validation just touched — the tick
     /// stays IO-free. Sample failures just keep walking: the cast target
     /// itself already proved fishable, so the fallback is the cast distance.
-    /// Water depth (surface − bed) at a wrapped-x point; `None` when a
-    /// sampler fails.
-    pub(super) async fn water_depth_at(&self, wx: f32, z: f32) -> Option<f32> {
+    /// Ground height and water depth (surface − bed) at a wrapped-x point;
+    /// `None` when a sampler fails. The one place both samplers are joined.
+    pub(super) async fn ground_and_depth_at(&self, wx: f32, z: f32) -> Option<(f32, f32)> {
         match tokio::join!(
             self.height_sampler.sample_height(wx, z),
             self.water_sampler.sample_surface(wx, z),
         ) {
-            (Ok(bed), Ok(surface)) => Some(surface - bed),
+            (Ok(bed), Ok(surface)) => Some((bed, surface - bed)),
             _ => None,
         }
+    }
+
+    /// Water depth at a wrapped-x point.
+    pub(super) async fn water_depth_at(&self, wx: f32, z: f32) -> Option<f32> {
+        self.ground_and_depth_at(wx, z)
+            .await
+            .map(|(_, depth)| depth)
     }
 
     async fn measure_reel_floor(&self, player_pos: &Position, cast_x: f32, cast_z: f32) -> f32 {

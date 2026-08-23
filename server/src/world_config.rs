@@ -21,21 +21,13 @@ pub struct WorldConfig {
     pub ambient_spawns: Vec<AmbientSpawnRule>,
 }
 
-fn default_max_distance() -> f32 {
-    60.0
-}
-
 /// A monster type that spawns dynamically near players, instead of within a
-/// hand-authored rectangle. The client picks the actual position (grassland,
-/// not water, away from towns); the server only enforces caps and validates.
+/// hand-authored rectangle. The server picks the position, keyed to distance
+/// walked (`ambient_spawn.rs`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AmbientSpawnRule {
     #[serde(rename = "monsterType")]
     pub monster_type: String,
-    /// Server-side sanity bound: a requested spawn must be within this many
-    /// meters of the requesting player.
-    #[serde(rename = "maxDistance", default = "default_max_distance")]
-    pub max_distance: f32,
 }
 
 #[derive(Debug, Deserialize)]

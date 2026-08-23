@@ -824,17 +824,6 @@ export function handleServerMessage(
       break
     }
 
-    case 'SpawnMonsterRequest': {
-      // Server asks us to spawn a monster near the local player; pick a valid
-      // grassland spot away from water/towns and request it.
-      monsterManager.tryAmbientSpawn(data.monster_type)
-      break
-    }
-
-    case 'NoSpawnZones':
-      monsterManager.setNoSpawnZones(data.zones ?? [])
-      break
-
     case 'MonsterAssigned': {
       const assigned: ServerMonster = data.monster
       // May be a reassignment of a monster we already track (dungeon

@@ -1194,11 +1194,6 @@ async fn handle_client_message(
                 datetime,
             });
 
-            // Send no-spawn zones so client can validate spawn positions
-            responses.push(ServerMessage::NoSpawnZones {
-                zones: game_state.no_spawn_zones().to_vec(),
-            });
-
             // Send inventory state
             if let Some(inv) = inventory {
                 responses.push(ServerMessage::InventoryState { inventory: inv });
@@ -1299,54 +1294,6 @@ async fn handle_client_message(
                     .await;
             } else {
                 warn!("Received chat message from client that is not in game");
-            }
-        }
-
-        ClientMessage::RequestSpawnMonster {
-            monster_type,
-            position,
-            rotation,
-        } => {
-            if let Some(id) = &state.player_id {
-                let Some(position) = game_state
-                    .validate_spawn_request(id, &monster_type, &position, rotation)
-                    .await
-                else {
-                    warn!(
-                        "Spawn request rejected: position ({:.1}, {:.1}) rotation {:.1} invalid for {} from {}",
-                        position.x,
-                        position.z,
-                        rotation,
-                        monster_type,
-                        state.character_name.as_deref().unwrap_or("<none>")
-                    );
-                    return Ok(vec![]);
-                };
-                if !game_state.take_spawn_allowance(id, &monster_type).await {
-                    warn!(
-                        "Spawn request rejected: no unconsumed allowance for {} from {}",
-                        monster_type,
-                        state.character_name.as_deref().unwrap_or("<none>")
-                    );
-                } else if let Some(monster) = game_state
-                    .spawn_monster(
-                        monster_type,
-                        position,
-                        rotation,
-                        Some(*id),
-                        0,
-                        crate::types::MonsterLifecycle::Ambient,
-                        None,
-                        false,
-                    )
-                    .await
-                {
-                    game_state
-                        .send_direct_message(id, ServerMessage::MonsterAssigned { monster })
-                        .await;
-                }
-            } else {
-                warn!("Received spawn request from client that is not in game");
             }
         }
 

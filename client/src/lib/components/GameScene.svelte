@@ -179,7 +179,6 @@
   )
   const waterFieldManager = new WaterFieldManager()
   monsterManager.heightManager = terrainHeightManager
-  monsterManager.splatManager = terrainSplatManager
   remotePlayerManager.heightManager = terrainHeightManager
   editorHeightManager.set(terrainHeightManager)
   editorSplatManager.set(terrainSplatManager)

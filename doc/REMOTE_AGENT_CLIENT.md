@@ -166,7 +166,7 @@ agent-client                     구글                      사용자
 | 플레이어 화면에 거래창을 **밀어넣기** | [`trading.rs`](../server/src/game_state/trading.rs) `open_trade` | 위에 종속 |
 | 급여 수령 (골드 파우셋) | [`salary.rs`](../server/src/game_state/salary.rs) | 절대 아님 |
 | 이동 시 충돌 검사 면제 | [`player.rs`](../server/src/game_state/player.rs) `check_collision: !is_npc` | 아님 (치트다) |
-| 주변 몬스터 앰비언트 스폰 대상에서 제외 | [`monster.rs`](../server/src/game_state/monster.rs) | 아님 — 인간과 같은 규칙을 받아야 사냥으로 성장한다 |
+| 주변 몬스터 앰비언트 스폰 대상에서 제외 | [`ambient_spawn.rs`](../server/src/game_state/ambient_spawn.rs) | 아님 — 인간과 같은 규칙을 받아야 사냥으로 성장한다 |
 | 클라이언트 UI에서 NPC 취급 (클릭 → 대화/거래) | [`PlayerControl.svelte`](../client/src/lib/components/PlayerControl.svelte) | 아님 — 공식 NPC로 오인시키면 안 된다 |
 | `/who` 집계에서 NPC로 분류 | [`chat.rs`](../server/src/game_state/chat.rs) | 아님 — 클라이언트 종류로 다시 센다 (아래) |
 

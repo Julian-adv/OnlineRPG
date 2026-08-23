@@ -337,169 +337,19 @@ async fn monster_move_cannot_report_dead_state() {
 }
 
 #[tokio::test]
-async fn non_finite_spawn_request_is_rejected() {
-    let game_state = make_test_game_state("spawn_request_non_finite");
-    let player_id = pid("spawner");
-    game_state
-        .add_player(make_player("spawner", 10.0, 20.0))
-        .await;
-
-    let valid = Position {
-        x: 12.0,
-        y: 0.5,
-        z: 22.0,
-    };
-    assert!(game_state
-        .validate_spawn_request(&player_id, "goblin", &valid, 1.5)
-        .await
-        .is_some());
-
-    for (label, position) in non_finite_positions(valid) {
-        assert!(
-            game_state
-                .validate_spawn_request(&player_id, "goblin", &position, 1.5)
-                .await
-                .is_none(),
-            "position {label}"
-        );
-    }
-    for (rotation, value_name) in NON_FINITE {
-        assert!(
-            game_state
-                .validate_spawn_request(&player_id, "goblin", &valid, rotation)
-                .await
-                .is_none(),
-            "rotation {value_name}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn ambient_spawn_requires_unconsumed_server_allowance() {
-    let game_state = make_test_game_state("ambient_spawn_allowance");
-    let player_id = pid("spawner");
-    game_state
-        .add_player(make_player("spawner", 10.0, 20.0))
-        .await;
-    let mut player_rx = game_state.register_direct_channel(&player_id).await;
-
-    assert!(
-        !game_state.take_spawn_allowance(&player_id, "goblin").await,
-        "an unsolicited ambient spawn must be rejected"
-    );
-
-    assert!(tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await);
-    assert!(game_state.take_spawn_allowance(&player_id, "goblin").await);
-    assert!(
-        !game_state.take_spawn_allowance(&player_id, "goblin").await,
-        "one allowance must authorize at most one spawn"
-    );
-}
-
-#[tokio::test]
-async fn ambient_spawn_allowance_is_bounded_and_expires() {
-    let game_state = make_test_game_state("ambient_spawn_allowance_expiry");
-    let player_id = pid("spawner");
-    game_state
-        .add_player(make_player("spawner", 10.0, 20.0))
-        .await;
-    let mut player_rx = game_state.register_direct_channel(&player_id).await;
-
-    assert!(tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await);
-    assert!(
-        !tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await,
-        "an outstanding allowance must not be re-issued"
-    );
-
-    game_state
-        .ambient_spawn_allowances
-        .write()
-        .await
-        .insert((player_id, "goblin".to_string()), GameState::now_ms());
-    assert!(
-        !game_state.take_spawn_allowance(&player_id, "goblin").await,
-        "an expired allowance must not authorize a spawn"
-    );
-
-    assert!(
-        tick_until_spawn_request(&game_state, &mut player_rx, "goblin").await,
-        "the expired allowance frees goblin to be offered again"
-    );
-    game_state.remove_player(&player_id).await;
-    assert!(game_state
-        .ambient_spawn_allowances
-        .read()
-        .await
-        .keys()
-        .all(|(owner_id, _)| owner_id != &player_id));
-}
-
-#[tokio::test]
-async fn wrapped_spawn_cannot_bypass_no_spawn_zone() {
-    let zone = onlinerpg_shared::NoSpawnZone {
-        min_x: -1.0,
-        min_z: -1.0,
-        max_x: 1.0,
-        max_z: 1.0,
-    };
-    let game_state = make_game_state_with_zones(
-        "wrapped_spawn_zone",
-        SplitWorldTiles,
-        SeaOnlyWater,
-        vec![zone],
-    );
-    let player_id = pid("spawner");
-    game_state
-        .add_player(make_player("spawner", 0.0, 0.0))
-        .await;
-    let wrapped_zone_position = Position {
-        x: onlinerpg_shared::WORLD_WIDTH_X,
-        y: 0.0,
-        z: 0.0,
-    };
-
-    assert!(game_state
-        .validate_spawn_request(&player_id, "goblin", &wrapped_zone_position, 0.0)
-        .await
-        .is_none());
-
-    // Positive control: the same fixture accepts a periodic-equivalent
-    // position clear of the zone's margin, so the rejection above is the zone
-    // and not a missing rule or player.
-    let wrapped_clear_position = Position {
-        x: onlinerpg_shared::WORLD_WIDTH_X,
-        y: 0.0,
-        z: 40.0,
-    };
-    assert_eq!(
-        game_state
-            .validate_spawn_request(&player_id, "goblin", &wrapped_clear_position, 0.0)
-            .await
-            .expect("clear of the zone and within range")
-            .x,
-        0.0
-    );
-}
-
-#[tokio::test]
 async fn ambient_spawn_stores_authoritative_world_position() {
     let game_state = make_test_game_state("canonical_spawn_position");
     let player_id = pid("spawner");
     game_state
         .add_player(make_player("spawner", 1.0, 0.0))
         .await;
-    let raw_position = Position {
-        x: onlinerpg_shared::WORLD_WIDTH_X * 2.0 + 1.0,
-        y: 0.0,
+    // What the placement hands `spawn_monster`: a seam-wrapped X and the
+    // ground the server samples, never the reported pose.
+    let position = Position {
+        x: onlinerpg_shared::wrap_world_x(onlinerpg_shared::WORLD_WIDTH_X * 2.0 + 1.0),
+        y: 5.0,
         z: 0.0,
     };
-
-    let position = game_state
-        .validate_spawn_request(&player_id, "goblin", &raw_position, 0.0)
-        .await
-        .expect("the periodic position is in range");
-    assert_eq!(position.x, 1.0);
-    assert_eq!(position.y, 5.0);
 
     let monster = game_state
         .spawn_monster(

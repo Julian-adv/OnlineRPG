@@ -1,13 +1,13 @@
 //! Soak harness: does ambient spawning still work after hours of roaming
-//! agent-client bots? Compresses the 10s spawn tick (main.rs:445) into a loop.
+//! bots? Walks each bot the distance a 10s tick covers and lets the
+//! server's move-coupled spawning (`ambient_spawn.rs`) do the rest.
 use super::*;
 
 const TICK_SECONDS: u64 = 10;
 const TWO_HOURS_TICKS: u64 = 2 * 3600 / TICK_SECONDS;
-/// How far a roaming bot travels between two spawn ticks (~3m/s for 10s).
+/// How far a roaming bot travels between two ticks (~3m/s for 10s).
 const ROAM_PER_TICK: f32 = 30.0;
-/// The bot chases and kills whatever it can see (NPC_SIGHT_RADIUS). Spawns
-/// land at 22m, so a bot that stays put does clear its own spawns.
+/// The bot chases and kills whatever it can see (NPC_SIGHT_RADIUS).
 const KILL_RADIUS: f32 = onlinerpg_shared::NPC_SIGHT_RADIUS;
 
 fn lcg(seed: &mut u64) -> f32 {
@@ -40,65 +40,9 @@ async fn set_player_on_floor(
         .await;
 }
 
-fn requested_types(rx: &mut DirectRx) -> Vec<String> {
-    drain(rx)
-        .into_iter()
-        .filter_map(|message| match message {
-            ServerMessage::SpawnMonsterRequest { monster_type } => Some(monster_type),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Mirrors connection.rs:1211 + agent-client's find_valid_spawn_position:
-/// answer every SpawnMonsterRequest with a point 22m from the bot.
-async fn answer_spawn_requests(
-    game_state: &GameState,
-    player_id: &PlayerId,
-    rx: &mut DirectRx,
-    seed: &mut u64,
-) -> usize {
-    let requested = requested_types(rx);
-
-    let center = game_state.get_all_players().await[player_id].position;
-    let mut spawned = 0;
-    for monster_type in requested {
-        let angle = lcg(seed) * std::f32::consts::TAU;
-        let position = Position {
-            x: onlinerpg_shared::wrap_world_x(center.x + angle.cos() * 22.0),
-            y: 0.0,
-            z: center.z + angle.sin() * 22.0,
-        };
-        let Some(position) = game_state
-            .validate_spawn_request(player_id, &monster_type, &position, 0.0)
-            .await
-        else {
-            continue;
-        };
-        if !game_state
-            .take_spawn_allowance(player_id, &monster_type)
-            .await
-        {
-            continue;
-        }
-        if game_state
-            .spawn_monster(
-                monster_type,
-                position,
-                0.0,
-                Some(*player_id),
-                0,
-                MonsterLifecycle::Ambient,
-                None,
-                false,
-            )
-            .await
-            .is_some()
-        {
-            spawned += 1;
-        }
-    }
-    spawned
+/// Monsters on the server, corpses included.
+async fn monster_count(game_state: &GameState) -> usize {
+    game_state.monsters.read().await.len()
 }
 
 /// The bot kills what is in reach; corpse cleanup (combat.rs:535) then removes
@@ -120,37 +64,45 @@ async fn kill_monsters_in_reach(game_state: &GameState, player_id: &PlayerId) ->
     doomed.len()
 }
 
+/// One tick of roaming: turn a little, then walk `ROAM_PER_TICK` — through the
+/// real move path, which is what grants spawns.
+async fn roam(game_state: &GameState, player_id: &PlayerId, seed: &mut u64, heading: &mut f32) {
+    *heading += (lcg(seed) - 1.0) * 0.4;
+    let from = game_state.get_all_players().await[player_id].position;
+    walk_player_to(
+        game_state,
+        player_id,
+        from.x + heading.cos() * ROAM_PER_TICK,
+        from.z + heading.sin() * ROAM_PER_TICK,
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn ambient_spawns_survive_two_hours_of_roaming_bots() {
-    let game_state = make_test_game_state("spawn_soak");
+    let game_state = make_flat_world_game_state("spawn_soak");
     let player_id = pid("roaming_bot");
     game_state
         .add_player(make_player("roaming_bot", 0.0, 0.0))
         .await;
-    let mut rx = game_state.register_direct_channel(&player_id).await;
+    game_state.enable_ambient_spawns();
 
     let mut seed = 0x5EED_1234u64;
     let mut heading = 0.0f32;
-    let (mut x, mut z) = (0.0f32, 0.0f32);
     let mut spawns_by_tick = Vec::new();
     let mut kills_total = 0usize;
 
     for _ in 0..TWO_HOURS_TICKS {
         game_state.tick_monster_ownership().await;
-        heading += (lcg(&mut seed) - 1.0) * 0.4;
-        x += heading.cos() * ROAM_PER_TICK;
-        z += heading.sin() * ROAM_PER_TICK;
-        set_player_xz(&game_state, &player_id, x, z).await;
-
-        // Kill before spawning: a real kill costs a chase plus several swings,
+        // Kill before roaming: a real kill costs a chase plus several swings,
         // so a monster spawned this tick is only reachable on a later one.
         kills_total += kill_monsters_in_reach(&game_state, &player_id).await;
-        game_state.tick_monster_spawns().await;
-        spawns_by_tick
-            .push(answer_spawn_requests(&game_state, &player_id, &mut rx, &mut seed).await);
+        let before = monster_count(&game_state).await;
+        roam(&game_state, &player_id, &mut seed, &mut heading).await;
+        spawns_by_tick.push(monster_count(&game_state).await.saturating_sub(before));
     }
 
-    let alive = game_state.monsters.read().await.len();
+    let alive = monster_count(&game_state).await;
     let first_hour: usize = spawns_by_tick[..spawns_by_tick.len() / 2].iter().sum();
     let last_30: usize = spawns_by_tick[spawns_by_tick.len() - 30..].iter().sum();
     println!(
@@ -170,7 +122,7 @@ async fn ambient_spawns_survive_two_hours_of_roaming_bots() {
 /// monsters accumulating is what would let it grow without limit.
 #[tokio::test]
 async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
-    let game_state = make_test_game_state("spawn_soak_global");
+    let game_state = make_flat_world_game_state("spawn_soak_global");
     let per_player = world_config().max_monsters_per_player as usize;
     let bots = 40;
 
@@ -181,32 +133,25 @@ async fn abandoned_monsters_do_not_accumulate_across_many_bots() {
         // Spread the bots far apart so nobody shares another's monsters.
         let (x, z) = (i as f32 * 500.0, i as f32 * 500.0);
         game_state.add_player(make_player(&name, x, z)).await;
-        let rx = game_state.register_direct_channel(&id).await;
-        bot_state.push((id, rx, x, z, 0.0f32));
+        bot_state.push((id, 0.0f32));
     }
+    game_state.enable_ambient_spawns();
 
     let mut seed = 0xB07u64;
     for _ in 0..TWO_HOURS_TICKS {
         game_state.tick_monster_ownership().await;
-        for (id, _, x, z, heading) in bot_state.iter_mut() {
-            *heading += (lcg(&mut seed) - 1.0) * 0.4;
-            *x += heading.cos() * ROAM_PER_TICK;
-            *z += heading.sin() * ROAM_PER_TICK;
-            set_player_xz(&game_state, id, *x, *z).await;
-        }
-        game_state.tick_monster_spawns().await;
-        for (id, rx, ..) in bot_state.iter_mut() {
-            answer_spawn_requests(&game_state, id, rx, &mut seed).await;
+        for (id, heading) in bot_state.iter_mut() {
+            roam(&game_state, id, &mut seed, heading).await;
         }
     }
 
-    let peak = game_state.monsters.read().await.len();
+    let peak = monster_count(&game_state).await;
     let peak_unattended = count_unattended(&game_state).await;
 
-    // Bots stop spawning and stand still. One tick clears everything they
-    // walked away from — nothing unattended may remain.
+    // Bots stand still. One tick clears everything they walked away from —
+    // nothing unattended may remain.
     game_state.tick_monster_ownership().await;
-    let alive = game_state.monsters.read().await.len();
+    let alive = monster_count(&game_state).await;
     let unattended = count_unattended(&game_state).await;
     println!(
         "{bots} bots x {per_player}/player: peak {peak} alive ({peak_unattended} \
@@ -240,72 +185,63 @@ async fn count_unattended(game_state: &GameState) -> usize {
     unattended
 }
 
-/// Control: same loop, bot never moves. If roaming is the load-bearing
-/// element, this one keeps spawning forever.
+/// The point of the redesign: a bot that never moves is never given anything,
+/// however long it stands there.
 #[tokio::test]
-async fn stationary_bot_keeps_spawning() {
-    let game_state = make_test_game_state("spawn_soak_still");
+async fn stationary_bot_never_spawns() {
+    let game_state = make_flat_world_game_state("spawn_soak_still");
     let player_id = pid("still_bot");
     game_state
         .add_player(make_player("still_bot", 0.0, 0.0))
         .await;
-    let mut rx = game_state.register_direct_channel(&player_id).await;
+    game_state.enable_ambient_spawns();
 
-    let mut seed = 0x5EED_1234u64;
-    let mut spawns_by_tick = Vec::new();
     for _ in 0..TWO_HOURS_TICKS {
-        game_state.tick_monster_spawns().await;
-        spawns_by_tick
-            .push(answer_spawn_requests(&game_state, &player_id, &mut rx, &mut seed).await);
+        game_state
+            .tick_player_movement(f32::from(TICK_SECONDS as u16))
+            .await;
         kill_monsters_in_reach(&game_state, &player_id).await;
     }
-    let last_30: usize = spawns_by_tick[spawns_by_tick.len() - 30..].iter().sum();
-    println!("stationary spawns in last 5 min: {last_30}");
-    assert!(last_30 > 0);
+    assert_eq!(
+        monster_count(&game_state).await,
+        0,
+        "standing in one spot must not farm"
+    );
 }
 
-/// Minimal repro of the original bug, inverted into its fix: no kills, no
-/// roaming loop. Fill the per-player cap and walk 1km away — abandoned
-/// monsters once held the cap forever and the server stopped asking; now the
-/// walk itself frees the slots, no sweep needed.
+/// Fill the per-player cap, then walk away from the lot: the abandoned
+/// monsters used to hold their owner's slots forever, and the walker was never
+/// given another. Now the walk itself releases them and the cap refills.
 #[tokio::test]
-async fn walking_away_frees_the_cap_for_a_new_spawn_request() {
-    let game_state = make_test_game_state("spawn_soak_min");
+async fn walking_away_frees_the_cap_for_new_spawns() {
+    let game_state = make_flat_world_game_state("spawn_soak_min");
     let player_id = pid("walker");
     game_state.add_player(make_player("walker", 0.0, 0.0)).await;
-    let mut rx = game_state.register_direct_channel(&player_id).await;
+    game_state.enable_ambient_spawns();
 
     let cap = world_config().max_monsters_per_player as usize;
-    let mut seed = 1;
-    // One request a tick, plus slack for ticks whose position fails validation.
-    for _ in 0..cap * 4 {
-        if game_state.monsters.read().await.owned_by(&player_id) >= cap {
-            break;
-        }
-        game_state.tick_monster_spawns().await;
-        answer_spawn_requests(&game_state, &player_id, &mut rx, &mut seed).await;
+    while game_state.monsters.read().await.owned_alive_by(&player_id) < cap {
+        pace_player(&game_state, &player_id, 0.0, 0.0, 20).await;
     }
     assert_eq!(
-        game_state.monsters.read().await.owned_by(&player_id),
+        game_state.monsters.read().await.owned_alive_by(&player_id),
         cap,
         "the walker should be at its cap before it walks away"
     );
 
-    // Full: the server has nothing to offer.
-    game_state.tick_monster_spawns().await;
-    assert_eq!(
-        requested_types(&mut rx).len(),
-        0,
-        "a player at its cap must not be asked for another monster"
+    walk_player_to(&game_state, &player_id, 1000.0, 1000.0).await;
+    assert!(
+        game_state.monsters.read().await.owned_alive_by(&player_id) < cap,
+        "the walk away must release the monsters it left behind"
     );
 
-    set_player_xz(&game_state, &player_id, 1000.0, 1000.0).await;
-    game_state.tick_monster_spawns().await;
-
+    while game_state.monsters.read().await.owned_alive_by(&player_id) < cap {
+        pace_player(&game_state, &player_id, 1000.0, 1000.0, 20).await;
+    }
     assert_eq!(
-        requested_types(&mut rx).len(),
-        crate::game_state::monster::AMBIENT_SPAWN_BURST,
-        "the walk released the abandoned monsters, so the walker is owed a burst of requests"
+        game_state.monsters.read().await.owned_alive_by(&player_id),
+        cap,
+        "walking on must keep granting monsters once the old ones are released"
     );
 }
 
@@ -881,59 +817,4 @@ async fn abandoning_a_pair_spreads_them_across_bystanders() {
         [Some(near), Some(far)].into(),
         "two monsters over two bystanders should be one each, not both on the nearest"
     );
-}
-
-/// An ambient type only reaches players one max_distance past its landing
-/// gate — deep enough that no spot the client may pick can fail it — so the
-/// ground by the gates stays at the weakest monsters.
-#[tokio::test]
-async fn ambient_spawns_skip_players_too_close_to_town() {
-    let game_state = make_test_game_state("ambient_distance_gate");
-    let gates: Vec<(String, f32)> = world_config()
-        .ambient_spawns
-        .iter()
-        .map(|rule| {
-            (
-                rule.monster_type.clone(),
-                game_state.min_ambient_town_distance(&rule.monster_type) + rule.max_distance,
-            )
-        })
-        .collect();
-    let furthest = gates.iter().map(|(_, d)| *d).fold(0.0_f32, f32::max);
-    assert!(
-        furthest > 0.0,
-        "every ambient type spawns at the town gates, so this covers nothing"
-    );
-
-    let town = world_config().spawn_position.position();
-    let homebody = make_player("homebody", town.x, town.z);
-    // A step past the furthest gate: the distance is a float, so landing
-    // exactly on it can round under.
-    let wanderer = make_player("wanderer", town.x + furthest + 1.0, town.z);
-    game_state.add_player(homebody).await;
-    game_state.add_player(wanderer).await;
-    let mut homebody_rx = game_state.register_direct_channel(&pid("homebody")).await;
-    let mut wanderer_rx = game_state.register_direct_channel(&pid("wanderer")).await;
-
-    // A tick offers one type per player, so a full pass over the rules is what
-    // it takes for every type a player qualifies for to come up.
-    let mut for_homebody = Vec::new();
-    let mut for_wanderer = Vec::new();
-    for _ in 0..gates.len() {
-        game_state.tick_monster_spawns().await;
-        for_homebody.extend(requested_types(&mut homebody_rx));
-        for_wanderer.extend(requested_types(&mut wanderer_rx));
-    }
-    for (monster_type, min_distance) in &gates {
-        assert_eq!(
-            for_homebody.contains(monster_type),
-            *min_distance <= 0.0,
-            "{monster_type} (needs {min_distance}m) reached a player standing in town, or the \
-             types that belong there did not"
-        );
-        assert!(
-            for_wanderer.contains(monster_type),
-            "{monster_type} (needs {min_distance}m) never reached a player past {furthest}m"
-        );
-    }
 }

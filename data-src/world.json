@@ -7,49 +7,16 @@
   },
   "maxMonstersPerPlayer": 8,
   "ambientSpawns": [
-    {
-      "monsterType": "scp939",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "kobold",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "goblin",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "orc",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "orc_female",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "hobgoblin",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "gnoll",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "bugbear",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "ogre",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "troll",
-      "maxDistance": 60
-    },
-    {
-      "monsterType": "stone_golem",
-      "maxDistance": 60
-    }
+    { "monsterType": "scp939" },
+    { "monsterType": "kobold" },
+    { "monsterType": "goblin" },
+    { "monsterType": "orc" },
+    { "monsterType": "orc_female" },
+    { "monsterType": "hobgoblin" },
+    { "monsterType": "gnoll" },
+    { "monsterType": "bugbear" },
+    { "monsterType": "ogre" },
+    { "monsterType": "troll" },
+    { "monsterType": "stone_golem" }
   ]
 }

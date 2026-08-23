@@ -82,7 +82,7 @@ impl TerrainSummaryJob {
             return Some(Feature::Building);
         }
         let height = self.height_sampler.sample_height(cx, cz).await.ok();
-        let surface = self.splat_sampler.primary_at(cx, cz).await.ok();
+        let surface = self.splat_sampler.dominant_at(cx, cz).await.ok();
         surface_feature(surface, height)
     }
 

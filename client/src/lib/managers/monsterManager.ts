@@ -16,17 +16,12 @@ import {
 import { dungeonManager } from './dungeonManager'
 import type { Position } from '../utils/movementUtils'
 import type { TerrainHeightManager } from './terrainHeightManager'
-import type { TerrainSplatManager } from './terrainSplatManager'
 import {
   playMonsterDeathSound,
   playSwordHitSound,
   playSwordMissSound,
 } from './sfxManager'
 import { clearXpArrival, releaseXpArrival } from './xpArrival'
-import type { NoSpawnZone } from './zoneManager'
-import { TILE_DIM, worldToTileCoord } from './terrain-height-types'
-import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
-import { readCell, VEGETATION_BASE_SLOT } from '../terrain/splat-encoding'
 import { shortestWrappedDeltaX, wrapWorldX } from '../terrain/world-wrap'
 import {
   PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
@@ -66,12 +61,6 @@ interface TickResult {
   state: MonsterState
 }
 
-// Ambient spawn placement: distance band around the player and town buffer.
-const AMBIENT_MIN_DIST = 20
-const AMBIENT_MAX_DIST = 25
-const TOWN_MARGIN = 30 // keep spawns this far outside no-spawn zones too
-const WATER_MIN_HEIGHT = 0.3 // reject sea / submerged ground below this
-const MAX_SPAWN_ATTEMPTS = 12
 const DEFAULT_MONSTER_BEHAVIOR = 'brave'
 // Behavior tree for proactive (선공형) monsters; acquires targets on sight.
 // Overrides the monster type's default when the spawn is flagged aggressive.
@@ -85,8 +74,6 @@ const DEAD_PENDING_TIMEOUT_MS = 2000
 class MonsterManager {
   monsters = new SvelteMap<string, MonsterData>()
   heightManager: TerrainHeightManager | null = null
-  splatManager: TerrainSplatManager | null = null
-  private noSpawnZones: NoSpawnZone[] = []
   private templatesLoaded = false
 
   private sampleHeight(x: number, z: number): number {
@@ -128,10 +115,6 @@ class MonsterManager {
       y: this.heightManager.getHeightAtWorldPosition(position.x, position.z),
       z: position.z,
     }
-  }
-
-  setNoSpawnZones(zones: NoSpawnZone[]) {
-    this.noSpawnZones = zones
   }
 
   private ensureTemplatesLoaded() {
@@ -896,76 +879,6 @@ class MonsterManager {
       })
       return false
     }
-  }
-
-  /**
-   * Server asked us to spawn a monster near the local player. Pick a position
-   * 20–25m away on grassland, avoiding water and towns, then request it. Picks
-   * the first valid spot found; if none after a few tries, the server retries
-   * next tick.
-   */
-  tryAmbientSpawn(monsterType: string) {
-    const player = get(gameStore).currentPlayer
-    if (!player) return
-    const px = player.position.x
-    const pz = player.position.z
-
-    // Don't spawn anything around a player who is standing in (or near) a town.
-    if (this.nearNoSpawnZone(px, pz)) return
-
-    for (let i = 0; i < MAX_SPAWN_ATTEMPTS; i++) {
-      const angle = Math.random() * Math.PI * 2
-      const distance =
-        AMBIENT_MIN_DIST + Math.random() * (AMBIENT_MAX_DIST - AMBIENT_MIN_DIST)
-      const x = px + Math.cos(angle) * distance
-      const z = pz + Math.sin(angle) * distance
-
-      const y = this.sampleHeight(x, z)
-      if (y < WATER_MIN_HEIGHT) continue // sea / submerged
-      if (!this.isGrassAt(x, z)) continue // road / sand / cliff / riverbed / snow
-      if (this.nearNoSpawnZone(x, z)) continue // town + margin
-
-      networkManager.requestSpawnMonster(
-        monsterType,
-        { x, y, z },
-        Math.random() * Math.PI * 2
-      )
-      return
-    }
-  }
-
-  /** Is the dominant terrain type at (x,z) the grass-supporting base ground? */
-  private isGrassAt(x: number, z: number): boolean {
-    const sm = this.splatManager
-    if (!sm) return false
-    const tileX = worldToTileCoord(x)
-    const tileZ = worldToTileCoord(z)
-    const data = sm.getSplatData(tileX, tileZ)
-    if (!data) return false
-
-    const tileMinX = tileX * TERRAIN_TILE_SIZE - TERRAIN_TILE_SIZE / 2
-    const tileMinZ = tileZ * TERRAIN_TILE_SIZE - TERRAIN_TILE_SIZE / 2
-    const cellX = Math.min(TILE_DIM - 1, Math.max(0, Math.floor(x - tileMinX)))
-    const cellZ = Math.min(TILE_DIM - 1, Math.max(0, Math.floor(z - tileMinZ)))
-    const cell = readCell(data, cellZ * TILE_DIM + cellX)
-    const dominant = cell.blend >= 128 ? cell.secondaryIdx : cell.primaryIdx
-    return dominant === VEGETATION_BASE_SLOT
-  }
-
-  /** Within TOWN_MARGIN of any no-spawn zone (towns / safe areas)? */
-  private nearNoSpawnZone(x: number, z: number): boolean {
-    const m = TOWN_MARGIN
-    for (const zone of this.noSpawnZones) {
-      if (
-        x >= zone.minX - m &&
-        x <= zone.maxX + m &&
-        z >= zone.minZ - m &&
-        z <= zone.maxZ + m
-      ) {
-        return true
-      }
-    }
-    return false
   }
 }
 

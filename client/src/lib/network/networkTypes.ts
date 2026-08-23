@@ -145,13 +145,6 @@ export type ClientMessage =
   | { PlayerFloorChanged: { floor_level: number } }
   | { ChatMessage: { message: string } }
   | {
-      RequestSpawnMonster: {
-        monster_type: string
-        position: Position
-        rotation: number
-      }
-    }
-  | {
       MonsterMove: {
         monster_id: string
         position: Position
