@@ -4,7 +4,12 @@
     emoteStopRequest,
     localEmoteAnim,
   } from '../stores/emoteStore'
-  import { EMOTE_LIST, type EmoteMeta } from '../emote-meta'
+  import {
+    EMOTE_LIST,
+    emoteClickCommand,
+    type EmoteIntent,
+    type EmoteMeta,
+  } from '../emote-meta'
   import { gameStore } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
   import { innerWidth } from 'svelte/reactivity/window'
@@ -91,15 +96,26 @@
     $gameStore.isConnected && ($gameStore.currentPlayer?.health ?? 0) > 0
   )
 
+  // Last commanded emote, kept until the server echo confirms it (or a TTL
+  // assumes rejection). See emoteClickCommand.
+  let intent = $state<EmoteIntent | null>(null)
+  $effect(() => {
+    if (intent && active === intent.anim) intent = null
+  })
+
   function play(emote: EmoteMeta) {
     // Clicking the running looping emote stops it, like Escape does.
-    if (emote.loops && active === emote.anim) {
+    if (
+      emoteClickCommand(emote, active, intent, performance.now()) === 'stop'
+    ) {
       emoteStopRequest.set(true)
+      intent = { anim: null, at: performance.now() }
       return
     }
     // Same path as typing the command: the server validates and its
     // broadcast starts our animation (see chat-commands `/emote`).
     networkManager.sendChatMessage(`/emote ${emote.anim}`)
+    intent = { anim: emote.anim, at: performance.now() }
   }
 </script>
 

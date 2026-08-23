@@ -22,3 +22,27 @@ export const EMOTE_LIST: EmoteMeta[] = [...SLASH_EMOTE_ANIMS].map((anim) => ({
   label: labelFor(anim),
   loops: LOOPING_EMOTE_ANIMS.has(anim),
 }))
+
+/** The player's last click — anim they commanded (null = stop) and when. */
+export interface EmoteIntent {
+  anim: string | null
+  at: number
+}
+
+/** After this long an unconfirmed intent is assumed rejected by the server. */
+export const EMOTE_INTENT_TTL_MS = 2000
+
+/** Whether clicking `emote` should stop or play, judged against the last
+ *  commanded intent rather than the server echo — the echo lags a round
+ *  trip, and deciding on stale state turns fast clicks into wrong stops
+ *  (or dead re-stops) while an earlier command is still in flight. */
+export function emoteClickCommand(
+  emote: EmoteMeta,
+  active: string | null,
+  intent: EmoteIntent | null,
+  now: number
+): 'stop' | 'play' {
+  const current =
+    intent && now - intent.at <= EMOTE_INTENT_TTL_MS ? intent.anim : active
+  return emote.loops && current === emote.anim ? 'stop' : 'play'
+}
