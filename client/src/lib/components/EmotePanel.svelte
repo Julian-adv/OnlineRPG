@@ -155,7 +155,9 @@
   .emote-panel {
     position: fixed;
     right: 16px;
-    top: 16%;
+    /* Above the HUD corner buttons, so it opens next to the social flyout
+       that summoned it. */
+    bottom: 64px;
     z-index: 40;
     width: 180px;
     display: flex;
