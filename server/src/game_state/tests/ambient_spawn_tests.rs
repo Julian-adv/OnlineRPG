@@ -47,7 +47,7 @@ async fn walking_forever_still_stops_at_the_cap() {
 }
 
 #[tokio::test]
-async fn spawns_land_on_the_screen_edge_the_player_is_heading_for() {
+async fn spawns_land_on_the_screen_edge_inside_the_heading_cone() {
     let center = Position {
         x: 100.0,
         y: 0.0,
@@ -66,22 +66,21 @@ async fn spawns_land_on_the_screen_edge_the_player_is_heading_for() {
         (-1.0, -1.0, "screen left"),
         (1.0, -1.0, "screen up"),
         (-1.0, 1.0, "screen down"),
+        (1.0, 0.2, "off-axis"),
     ] {
-        for _ in 0..50 {
-            let point = GameState::screen_edge_point(&center, dx, dz);
+        for _ in 0..200 {
+            let point = GameState::screen_cone_point(&center, dx, dz);
             let (u, v) = screen(&point);
-            let leads_sideways = (dx + dz).abs() >= (dx - dz).abs();
-            let (along, across) = if leads_sideways { (u, v) } else { (v, u) };
-            // The leading edge is the one the heading points at, 20m out on
-            // that side; the free coordinate rides anywhere along it.
-            let expected = 20.0 * if leads_sideways { dx + dz } else { dx - dz }.signum();
             assert!(
-                (along - expected).abs() < 0.01,
-                "{label}: expected the {expected}m edge, got {along}"
+                (u.abs().max(v.abs()) - 20.0).abs() < 0.01,
+                "{label}: the point must sit on the square's edge, got ({u},{v})"
             );
+            let off = (dz.atan2(dx) - (point.z - center.z).atan2(point.x - center.x))
+                .abs()
+                .to_degrees();
             assert!(
-                across.abs() <= 20.01,
-                "{label}: the point must stay on the square, got {across}"
+                off <= 30.01,
+                "{label}: {off}° off the heading — the cone is 30°"
             );
         }
     }

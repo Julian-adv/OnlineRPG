@@ -3,19 +3,20 @@
 //! Monsters are granted by distance walked, not by the clock: every movement
 //! tick rolls `1 - (1 - p)^d` over that tick's displacement, so standing still
 //! yields nothing and how the client chops its moves up does not matter. The
-//! server picks the position — just outside the screen, on the side the player
-//! is heading — validates it and walks the line back to the player, so a
-//! monster never appears somewhere it could not walk in from.
+//! server picks the position — just outside the screen, in a narrow cone
+//! around the heading — validates it and walks the line back to the player, so
+//! a monster never appears somewhere it could not walk in from.
 
 use crate::types::{MonsterLifecycle, PlayerId, Position, ServerMessage};
 use onlinerpg_shared::{shortest_world_delta_x, wrap_world_x, MAX_MOVE_TARGET_DISTANCE};
 use rand::Rng;
 use tracing::debug;
 
-/// Chance of a spawn per metre walked: one monster per 24.5m, capping a
-/// nonstop runner near 660 kills/hour. Tuned by playtest
+/// Chance of a spawn per metre walked: one monster per 12m. What throttles a
+/// hunt at this rate is how fast the player can kill, not this roll — the
+/// point of the move coupling is where monsters are met, not how many
 /// (doc/REPEAT_FARMING.md).
-const SPAWN_CHANCE_PER_METER: f64 = 0.04;
+const SPAWN_CHANCE_PER_METER: f64 = 0.08;
 /// Half-edge of the screen-aligned square spawns land on. Covers the visible
 /// ground up to a 2.0 aspect ratio, and its corner stays inside AOI
 /// (`EVENT_DELIVERY_RADIUS`) so the owner's client can simulate the monster.
@@ -26,6 +27,10 @@ const _: () = assert!(
     2.0 * SPAWN_HALF_EDGE * SPAWN_HALF_EDGE
         < super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
 );
+/// Half-angle of the cone spawns land in, measured off the heading. The bare
+/// screen edge reaches 90° off the path, where a walking player never looks
+/// and the monster is gone before it is noticed (doc/REPEAT_FARMING.md).
+const SPAWN_CONE_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_6;
 /// Cell size of the reachability walk — the resolution of both the passability
 /// cache and the terrain grid.
 const REACH_STEP_METERS: f32 = 1.0;
@@ -81,11 +86,11 @@ impl super::GameState {
         }
     }
 
-    /// Place one monster just off the screen edge the player is heading for.
+    /// Place one monster just off the screen edge, inside the heading cone.
     /// Every gate is a plain reject — the roll is what rations spawns — and
     /// they run cheapest first: arithmetic, then locks, then terrain.
     async fn spawn_ahead_of(&self, step: &MoveStep, dx: f32, dz: f32) {
-        let point = Self::screen_edge_point(&step.to, dx, dz);
+        let point = Self::screen_cone_point(&step.to, dx, dz);
         for zone in &self.no_spawn_zones {
             if zone.contains_with_margin(point.x, point.z, super::monster::NO_SPAWN_MARGIN) {
                 return;
@@ -131,6 +136,18 @@ impl super::GameState {
             )
             .await
         {
+            debug!(
+                "Ambient spawn {} {} at {:.0}m {:+.0}° off #{}'s heading",
+                monster.id,
+                monster.monster_type,
+                step.to.dist_xz_sq(&monster.position).sqrt(),
+                {
+                    let ox = shortest_world_delta_x(step.to.x, monster.position.x);
+                    let oz = monster.position.z - step.to.z;
+                    (dx * oz - dz * ox).atan2(dx * ox + dz * oz).to_degrees()
+                },
+                step.player_id
+            );
             // The owner runs the AI, and it only starts on this message.
             self.send_direct_message(&step.player_id, ServerMessage::MonsterAssigned { monster })
                 .await;
@@ -138,25 +155,23 @@ impl super::GameState {
     }
 
     /// A point on the screen-aligned square of half-edge `SPAWN_HALF_EDGE`
-    /// around `center`, on the edge the player is walking toward.
+    /// around `center`, within `SPAWN_CONE_HALF_ANGLE` of the heading.
     ///
     /// The camera is isometric (yaw -45°), so the screen axes are the world
-    /// diagonals: `u = (x + z)/√2` runs right, `v = (x - z)/√2` runs up. The
-    /// √2 cancels out of the comparison, leaving two adds and an absolute
-    /// value to decide which edge the heading points at.
-    pub(super) fn screen_edge_point(center: &Position, dx: f32, dz: f32) -> Position {
-        let free = rand::Rng::gen_range(&mut rand::thread_rng(), -SPAWN_HALF_EDGE..SPAWN_HALF_EDGE);
-        let edge = |along: f32| SPAWN_HALF_EDGE * along.signum();
-        let (u, v) = if (dx + dz).abs() >= (dx - dz).abs() {
-            (edge(dx + dz), free)
-        } else {
-            (free, edge(dx - dz))
-        };
-        let inv_sqrt2 = std::f32::consts::FRAC_1_SQRT_2;
+    /// diagonals and the square is an L1 ball in world space: the ray leaves it
+    /// at `H√2 / (|rx| + |rz|)`, which is `max(|u|, |v|) = H` rewritten.
+    pub(super) fn screen_cone_point(center: &Position, dx: f32, dz: f32) -> Position {
+        let angle = dz.atan2(dx)
+            + rand::Rng::gen_range(
+                &mut rand::thread_rng(),
+                -SPAWN_CONE_HALF_ANGLE..SPAWN_CONE_HALF_ANGLE,
+            );
+        let (rx, rz) = (angle.cos(), angle.sin());
+        let reach = SPAWN_HALF_EDGE * std::f32::consts::SQRT_2 / (rx.abs() + rz.abs());
         Position {
-            x: wrap_world_x(center.x + (u + v) * inv_sqrt2),
+            x: wrap_world_x(center.x + rx * reach),
             y: center.y,
-            z: center.z + (u - v) * inv_sqrt2,
+            z: center.z + rz * reach,
         }
     }
 

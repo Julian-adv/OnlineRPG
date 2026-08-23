@@ -1055,8 +1055,21 @@ impl super::GameState {
                 .filter_map(|id| monsters.remove(id))
                 .collect()
         };
+        let now = Self::now_ms();
         for monster in removed {
-            debug!("Despawned monster {}", monster.id);
+            if monster.lifecycle == MonsterLifecycle::Ambient {
+                // `owner_since` restarts on a handoff, so this is time held by
+                // the last owner, not always time alive.
+                debug!(
+                    "Ambient despawn {} {} after {}s held, state {:?}",
+                    monster.id,
+                    monster.monster_type,
+                    now.saturating_sub(monster.owner_since) / 1000,
+                    monster.state
+                );
+            } else {
+                debug!("Despawned monster {}", monster.id);
+            }
             self.announce_monster_removed(&monster).await;
         }
     }
