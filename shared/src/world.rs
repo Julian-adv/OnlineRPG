@@ -129,9 +129,12 @@ pub const NPC_SIGHT_RADIUS: f32 = 27.0;
 
 /// Server AOI for gameplay event delivery, and the client's dungeon
 /// registration / door-resync boundary (exposed to TS via
-/// dungeon_constants()): the farthest world point visible in a fullscreen
-/// browser spanning dual 4K monitors.
-pub const EVENT_DELIVERY_RADIUS: f32 = 43.0;
+/// dungeon_constants()): the farthest world point one fullscreen browser
+/// shows. The isometric camera puts a screen corner at
+/// `sqrt((10*aspect)^2 + 17.32^2)` metres of ground, so 32 covers up to 2.7:1
+/// — 16:10 through 21:9. A 32:9 screen reaches 39.6m and pops entities in at
+/// its corners; that buys ~45% off the per-player fanout and simulation set.
+pub const EVENT_DELIVERY_RADIUS: f32 = 32.0;
 
 /// Agent connections must receive everything they perceive.
 const _: () = assert!(EVENT_DELIVERY_RADIUS >= NPC_SIGHT_RADIUS);

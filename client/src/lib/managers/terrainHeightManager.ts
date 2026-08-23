@@ -95,6 +95,20 @@ export class TerrainHeightManager {
     )
   }
 
+  /** Cache a heightmap for ground sampling only. Skips the original fetch and
+   *  the height-changed notify: listeners exist for edits, and a warm-up that
+   *  woke them would build layers for tiles that never render. */
+  async warmHeightmap(tileX: number, tileZ: number): Promise<void> {
+    await doLoad(
+      this.state,
+      this.inflightHeightmaps,
+      this.terrainApiUrl,
+      tileX,
+      tileZ,
+      () => {}
+    )
+  }
+
   async loadOriginalHeightmap(
     tileX: number,
     tileZ: number
@@ -129,26 +143,36 @@ export class TerrainHeightManager {
     )
   }
 
-  getHeightAtWorldPosition(worldX: number, worldZ: number): number {
+  /** Ground height, or null when the tile isn't streamed in. Reads the one
+   *  centered tile directly: the bilinear cells stay in [0, TILE_DIM], so a
+   *  single lookup replaces `hasHeightData` plus four `getHeightAtCell`s on
+   *  the per-frame entity grounding path. */
+  groundYOrNull(worldX: number, worldZ: number): number | null {
     const tileX = worldToTileCoord(worldX)
     const tileZ = worldToTileCoord(worldZ)
-    const tileMinX = tileX * TERRAIN_TILE_SIZE - TERRAIN_TILE_SIZE / 2
-    const tileMinZ = tileZ * TERRAIN_TILE_SIZE - TERRAIN_TILE_SIZE / 2
-    const localX = worldX - tileMinX
-    const localZ = worldZ - tileMinZ
+    const data = this.state.heightmaps.get(tileKey(tileX, tileZ))
+    if (!data) return null
+
+    const localX = worldX - (tileX * TERRAIN_TILE_SIZE - TERRAIN_TILE_SIZE / 2)
+    const localZ = worldZ - (tileZ * TERRAIN_TILE_SIZE - TERRAIN_TILE_SIZE / 2)
     const cellX = Math.floor(localX)
     const cellZ = Math.floor(localZ)
     const fracX = localX - cellX
     const fracZ = localZ - cellZ
 
-    const h00 = getHeightAtCell(this.state, tileX, tileZ, cellX, cellZ)
-    const h10 = getHeightAtCell(this.state, tileX, tileZ, cellX + 1, cellZ)
-    const h01 = getHeightAtCell(this.state, tileX, tileZ, cellX, cellZ + 1)
-    const h11 = getHeightAtCell(this.state, tileX, tileZ, cellX + 1, cellZ + 1)
+    const row = cellZ * VERTS_PER_SIDE + cellX
+    const h00 = decodeHeight(data[row])
+    const h10 = decodeHeight(data[row + 1])
+    const h01 = decodeHeight(data[row + VERTS_PER_SIDE])
+    const h11 = decodeHeight(data[row + VERTS_PER_SIDE + 1])
 
     const h0 = h00 + (h10 - h00) * fracX
     const h1 = h01 + (h11 - h01) * fracX
     return h0 + (h1 - h0) * fracZ
+  }
+
+  getHeightAtWorldPosition(worldX: number, worldZ: number): number {
+    return this.groundYOrNull(worldX, worldZ) ?? 0
   }
 
   hasWater(tileX: number, tileZ: number): boolean {

@@ -70,6 +70,31 @@ export function createTerrainTiles(
   return tiles
 }
 
+/**
+ * Tiles whose heightmaps must be resident, widest-first-needed order. The 2x2
+ * render grid guarantees only 32m of loaded ground around the player, so a
+ * monster its client owns can stand on an unstreamed tile and have its move
+ * reports held; this ring guarantees 96m. The render tiles come first so the
+ * loading screen never waits behind a ring fetch.
+ */
+export function heightPrefetchTiles(
+  floorChunkX: number,
+  floorChunkZ: number
+): TerrainChunk[] {
+  const tiles: TerrainChunk[] = []
+  for (let dz = -1; dz <= 2; dz++) {
+    for (let dx = -1; dx <= 2; dx++) {
+      tiles.push({ x: floorChunkX + dx, z: floorChunkZ + dz })
+    }
+  }
+  const isRender = (t: TerrainChunk) =>
+    t.x >= floorChunkX &&
+    t.x <= floorChunkX + 1 &&
+    t.z >= floorChunkZ &&
+    t.z <= floorChunkZ + 1
+  return [...tiles.filter(isRender), ...tiles.filter((t) => !isRender(t))]
+}
+
 /** Inverse of `createTerrainTiles`'s id format. Returns null on a malformed id. */
 export function parseTileId(
   id: string

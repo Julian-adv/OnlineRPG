@@ -5,6 +5,7 @@ import {
   type Vector3Like,
   createTerrainTiles,
   getTerrainChunkFromPosition,
+  heightPrefetchTiles,
 } from './terrain-utils'
 
 export interface TerrainTileManagerCallbacks {
@@ -12,6 +13,11 @@ export interface TerrainTileManagerCallbacks {
   setTiles(tiles: TerrainTile[]): void
   getCenterChunk(): TerrainChunk
   setCenterChunk(chunk: TerrainChunk): void
+}
+
+/** The slice of TerrainHeightManager the tile manager warms tiles through. */
+export interface HeightWarmer {
+  warmHeightmap(tileX: number, tileZ: number): Promise<void>
 }
 
 export interface TerrainTileManager {
@@ -24,7 +30,8 @@ export interface TerrainTileManager {
 }
 
 export function createTerrainTileManager(
-  cb: TerrainTileManagerCallbacks
+  cb: TerrainTileManagerCallbacks,
+  heightWarmer: HeightWarmer
 ): TerrainTileManager {
   let pendingTileQueue: TerrainTile[] = []
 
@@ -42,6 +49,12 @@ export function createTerrainTileManager(
     cb.setTiles(keptTiles)
 
     pendingTileQueue = allTiles.filter((t) => !keptIds.has(t.id))
+
+    for (const tile of heightPrefetchTiles(centerChunkX, centerChunkZ)) {
+      heightWarmer.warmHeightmap(tile.x, tile.z).catch((e) => {
+        console.debug(`heightmap warm failed (${tile.x}, ${tile.z}):`, e)
+      })
+    }
   }
 
   function drainQueue() {

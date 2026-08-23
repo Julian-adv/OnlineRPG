@@ -2,6 +2,7 @@
 //! bots? Walks each bot the distance a 10s tick covers and lets the
 //! server's move-coupled spawning (`ambient_spawn.rs`) do the rest.
 use super::*;
+use onlinerpg_shared::EVENT_DELIVERY_RADIUS as AOI;
 
 const TICK_SECONDS: u64 = 10;
 const TWO_HOURS_TICKS: u64 = 2 * 3600 / TICK_SECONDS;
@@ -502,7 +503,7 @@ async fn goblin_near_the_edge(game_state: &GameState, owner: PlayerId) -> String
         .spawn_monster(
             "goblin".to_string(),
             Position {
-                x: 40.0,
+                x: AOI - 3.0,
                 y: 0.0,
                 z: 0.0,
             },
@@ -528,7 +529,7 @@ async fn goblin_near_the_edge(game_state: &GameState, owner: PlayerId) -> String
 /// actually saw a boundary crossing.
 async fn wander_out(game_state: &GameState, owner: &PlayerId, monster_id: &str) {
     let walked_to = Position {
-        x: 44.5,
+        x: AOI + 1.5,
         y: 0.0,
         z: 0.0,
     };
@@ -558,7 +559,8 @@ async fn a_monster_that_wanders_off_is_handed_to_whoever_is_near_it() {
     let game_state = make_test_game_state("wander_handoff");
     let owner = add_player_on_floor(&game_state, "shepherd", 0).await;
     let stranger = add_player_on_floor(&game_state, "stranger", 0).await;
-    set_player_xz(&game_state, &stranger, 80.0, 0.0).await;
+    // Past the shepherd's AOI, with the wandered-to spot inside its own.
+    set_player_xz(&game_state, &stranger, 2.0 * AOI - 6.0, 0.0).await;
     let monster_id = goblin_near_the_edge(&game_state, owner).await;
 
     wander_out(&game_state, &owner, &monster_id).await;
@@ -566,7 +568,7 @@ async fn a_monster_that_wanders_off_is_handed_to_whoever_is_near_it() {
     assert_eq!(
         owner_of(&game_state, &monster_id).await,
         Some(stranger),
-        "44.5m is outside the shepherd's AOI and inside the stranger's"
+        "the wandered-to spot is outside the shepherd's AOI and inside the stranger's"
     );
 }
 

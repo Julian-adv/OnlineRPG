@@ -126,13 +126,16 @@ async fn movement_into_aoi_sends_a_monster_that_walked_there() {
     let game_state = make_test_game_state("moved_monster_aoi");
     let walker_id = pid("walker");
     let owner_id = pid("monster_owner");
+    // All three spots hang off the AOI: the monster walks from outside it to a
+    // spot the walker only reaches after moving.
+    let aoi = onlinerpg_shared::EVENT_DELIVERY_RADIUS;
     let start = Position {
-        x: 87.0,
+        x: 2.0 * aoi + 1.0,
         y: 0.0,
         z: 0.0,
     };
     let walked_to = Position {
-        x: 80.0,
+        x: 2.0 * aoi - 6.0,
         y: 0.0,
         z: 0.0,
     };
@@ -164,7 +167,7 @@ async fn movement_into_aoi_sends_a_monster_that_walked_there() {
 
     let mut direct_rx = game_state.register_direct_channel(&walker_id).await;
     game_state
-        .update_player_position(&walker_id, move_cmd(pos(40.0), false), false, false)
+        .update_player_position(&walker_id, move_cmd(pos(aoi - 3.0), false), false, false)
         .await;
     game_state.tick_player_movement(60.0).await;
 

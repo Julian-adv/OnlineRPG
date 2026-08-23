@@ -76,45 +76,43 @@ class MonsterManager {
   heightManager: TerrainHeightManager | null = null
   private templatesLoaded = false
 
-  private sampleHeight(x: number, z: number): number {
-    return this.heightManager?.getHeightAtWorldPosition(x, z) ?? 0
-  }
-
-  /** Ground height on the monster's floor: dungeon floor Y or terrain. */
-  private monsterGroundY(monster: MonsterData, x: number, z: number): number {
+  /** Ground height on the monster's floor, or null when the terrain tile
+   *  isn't streamed in — reporting the brain's stale Y then would sink the
+   *  monster to sea level and get the move refused. `fallbackY` covers the
+   *  floors that have no sample of their own. */
+  private monsterGroundYOrNull(
+    monster: MonsterData,
+    x: number,
+    z: number,
+    fallbackY: number
+  ): number | null {
     const fl = monster.floorLevel ?? 0
     if (fl < 0) {
-      return dungeonManager.floorHeightAt(-fl, x, z) ?? monster.position.y
+      return dungeonManager.floorHeightAt(-fl, x, z) ?? fallbackY
     }
-    return this.sampleHeight(x, z)
+    if (!this.heightManager) return fallbackY
+    return this.heightManager.groundYOrNull(x, z)
   }
 
-  /** Ground-resolved copy of `position`, or null when the terrain tile isn't
-   *  streamed in yet — the one case where no snap is possible and a sent Y
-   *  would be the brain's stale one. */
+  private monsterGroundY(monster: MonsterData, x: number, z: number): number {
+    const y = monster.position.y
+    return this.monsterGroundYOrNull(monster, x, z, y) ?? y
+  }
+
+  /** Ground-resolved copy of `position`, or null when the tile isn't streamed
+   *  in yet — the hold sentinel `processAiCommands` reports on. */
   private snapToMonsterGround(
     monster: MonsterData,
     position: { x: number; y: number; z: number }
   ): Position | null {
-    if ((monster.floorLevel ?? 0) < 0) {
-      return {
-        x: position.x,
-        y:
-          dungeonManager.floorHeightAt(
-            -(monster.floorLevel ?? 0),
-            position.x,
-            position.z
-          ) ?? position.y,
-        z: position.z,
-      }
-    }
-    if (!this.heightManager) return { ...position }
-    if (!this.heightManager.hasHeightData(position.x, position.z)) return null
-    return {
-      x: position.x,
-      y: this.heightManager.getHeightAtWorldPosition(position.x, position.z),
-      z: position.z,
-    }
+    const y = this.monsterGroundYOrNull(
+      monster,
+      position.x,
+      position.z,
+      position.y
+    )
+    if (y === null) return null
+    return { x: position.x, y, z: position.z }
   }
 
   private ensureTemplatesLoaded() {

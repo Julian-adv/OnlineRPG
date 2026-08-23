@@ -439,16 +439,19 @@
     currentPlayerState = newState
   }
 
-  const tileManager = createTerrainTileManager({
-    getTiles: () => terrainTiles,
-    setTiles: (tiles) => {
-      terrainTiles = tiles
+  const tileManager = createTerrainTileManager(
+    {
+      getTiles: () => terrainTiles,
+      setTiles: (tiles) => {
+        terrainTiles = tiles
+      },
+      getCenterChunk: () => terrainCenterChunk,
+      setCenterChunk: (chunk) => {
+        terrainCenterChunk = chunk
+      },
     },
-    getCenterChunk: () => terrainCenterChunk,
-    setCenterChunk: (chunk) => {
-      terrainCenterChunk = chunk
-    },
-  })
+    terrainHeightManager
+  )
 
   // Force terrain rebuild when requested (e.g. after region delete/generate)
   let lastRebuildVersion = 0
@@ -523,7 +526,7 @@
       }
       drainTileWork(graphicsPreset.terrainTileWorkPerFrame)
       syncTileMeshes()
-      // Finalize teleport once full 3x3 heightmap grid is loaded.
+      // Finalize teleport once the landing tile's heightmap is loaded.
       // Underground the dungeon owns Y — never snap to terrain height.
       if (
         $teleportLoading &&
