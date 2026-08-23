@@ -163,7 +163,7 @@
   let materialsCloned = false
   let deadGroundApplied = false
   let corpseTimer = 0
-  const CORPSE_FADE_START = 25
+  const CORPSE_FADE_START = 55
   const CORPSE_FADE_DURATION = 5
 
   function cloneMaterials() {

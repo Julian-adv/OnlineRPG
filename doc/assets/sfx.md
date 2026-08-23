@@ -70,9 +70,15 @@ kHz mono.
 
 - orc-death.ogg — orc. Take 9, 1.0 s request trimmed to 0.55 s. "The short,
   guttural death roar of an orc warrior cut down by a sword in battle"
-- orc-female-death.ogg — female orc. Take 1, 1.0 s request trimmed to 0.50 s.
-  "The short death cry of a female orc warrior struck down by a sword in
-  battle"
+- orc-female-death.ogg — female orc. **2026-08-24 재생성** — 첫 버전(take 1, "The short
+  death cry of a female orc warrior struck down by a sword in battle")이 남자
+  오크와 거의 같은 음높이였다. 오크 묘사를 넣으면 계속 남성 톤이 나와서 프롬프트를
+  "A woman's very short, sharp, high-pitched death scream, a single shrill
+  feminine cry less than half a second long, cut off instantly as a sword
+  strikes her down. Clearly a female human-like voice, high soprano pitch, no
+  growl, no male voice, no music."로 바꾸고 0.6 s·prompt_influence 0.6으로
+  5테이크 뽑아 take 3 채택 (스펙트럼 중심 3.3 kHz, 이전 1.8 kHz). 0.5 s에서
+  100 ms 테일 페이드. 원본 `orc-female-death_take3hi2_2026-08-24.mp3`
 - hobgoblin-death.ogg — hobgoblin. Take 2, 1.0 s request trimmed to 0.45 s.
   "The harsh, barking death cry of a hobgoblin soldier felled by a sword"
 - gnoll-death.ogg — gnoll. Take 1, 1.0 s request trimmed to 0.85 s. "The

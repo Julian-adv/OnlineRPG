@@ -430,7 +430,7 @@ impl super::GameState {
                 }
                 if died {
                     // Through the registry so the kill frees its spawn slot now,
-                    // not when the corpse is swept 30s later.
+                    // not when the corpse is swept 60s later.
                     monsters.mark_dead(&monster_id);
                 }
                 died
@@ -526,14 +526,14 @@ impl super::GameState {
                         .await;
                 }
 
-                // Schedule removal after 30 seconds. Through despawn_monsters
+                // Schedule removal after 60 seconds. Through despawn_monsters
                 // so the removal reaches the corpse's owner directly even when
                 // it has wandered out of range — the radius fanout alone left
                 // a ghost corpse on the owner's client.
                 let game_state = self.clone();
                 let id_to_remove = monster_id.clone();
                 tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
                     let still_dead = game_state
                         .monsters
                         .read()
@@ -541,7 +541,7 @@ impl super::GameState {
                         .get(&id_to_remove)
                         .is_some_and(|monster| monster.state == MonsterState::Dead);
                     if still_dead {
-                        debug!("Monster {} removed after 30s corpse time", id_to_remove);
+                        debug!("Monster {} removed after 60s corpse time", id_to_remove);
                         game_state.despawn_monsters(vec![id_to_remove]).await;
                     }
                 });

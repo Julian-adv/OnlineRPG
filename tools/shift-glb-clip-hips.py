@@ -12,6 +12,10 @@ converted through the node's parent chain rather than applied to a raw axis.
 
 Usage:
   python tools/shift-glb-clip-hips.py IN.glb CLIP DY OUT.glb [--node Hips]
+      [--ramp FROM TO]
+
+--ramp fades the shift in between two sample indices (0 before FROM, full from
+TO on) so a clip whose start is already right, like a death fall, keeps it.
 
 Writing OUT.glb over IN.glb in place is not supported — write elsewhere and
 move it afterwards.
@@ -95,13 +99,26 @@ def world_to_node_delta(gltf, node_index, world_delta):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if len(args) != 4:
-        raise SystemExit(__doc__)
-    src, clip_name, dy, dst = args[0], args[1], float(args[2]), args[3]
+    argv = sys.argv[1:]
     node_name = "Hips"
-    if "--node" in sys.argv:
-        node_name = sys.argv[sys.argv.index("--node") + 1]
+    ramp = None
+    if "--node" in argv:
+        at = argv.index("--node")
+        node_name = argv[at + 1]
+        del argv[at : at + 2]
+    if "--ramp" in argv:
+        at = argv.index("--ramp")
+        ramp = int(argv[at + 1]), int(argv[at + 2])
+        del argv[at : at + 3]
+    if len(argv) != 4:
+        raise SystemExit(__doc__)
+    src, clip_name, dy, dst = argv[0], argv[1], float(argv[2]), argv[3]
+
+    def weight(i):
+        if ramp is None:
+            return 1.0
+        start, end = ramp
+        return min(1.0, max(0.0, (i - start) / (end - start)))
 
     gltf, binary = read_glb(src)
     names = [n.get("name") for n in gltf["nodes"]]
@@ -139,7 +156,8 @@ def main():
         for i in range(accessor["count"]):
             at = base + 12 * i
             value = struct.unpack_from("<3f", binary, at)
-            struct.pack_into("<3f", binary, at, *(v + d for v, d in zip(value, delta)))
+            w = weight(i)
+            struct.pack_into("<3f", binary, at, *(v + d * w for v, d in zip(value, delta)))
         print(f"shifted {accessor['count']} samples of {clip_name}")
 
     write_glb(dst, gltf, binary)
