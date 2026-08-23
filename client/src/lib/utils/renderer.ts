@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { WebGPURenderer } from 'three/webgpu'
 import {
   applyInitialAntialias,
+  getAppliedAntialias,
   getCurrentPreset,
 } from '../stores/graphicsSettings'
 
@@ -36,6 +37,29 @@ export function createWebGPURenderer(canvas: HTMLCanvasElement) {
     } catch {
       // backend not yet initialized — safe to ignore
     }
+  }
+
+  return renderer
+}
+
+/** Renderer for the small secondary preview canvases. Reuses the main
+ *  renderer's applied antialias without re-recording it (that record is
+ *  the main canvas's restart-notice source), and defers a dispose that
+ *  races init() so the GPU device is actually released. The pixel-ratio
+ *  cap must come from the Canvas `dpr` prop — Threlte overwrites anything
+ *  set here. */
+export function createPreviewWebGPURenderer(canvas: HTMLCanvasElement) {
+  const renderer = new WebGPURenderer({
+    canvas,
+    antialias: getAppliedAntialias(),
+  })
+
+  const _origDispose = renderer.dispose.bind(renderer)
+  renderer.dispose = () => {
+    renderer
+      .init()
+      .then(() => _origDispose())
+      .catch(() => {})
   }
 
   return renderer
