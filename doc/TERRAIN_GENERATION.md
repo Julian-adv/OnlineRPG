@@ -218,7 +218,12 @@ cargo run -p terrain-gen --release -- render-map-world `
 빠른 시각 반복은 같은 명령에 `--region-x-min=-2 --region-x-max=-2
 --region-z-min=4 --region-z-max=4`를 붙인다. 결과가 맞으면 범위 옵션을 빼서
 32×32 전 세계를 생성한다. 출력은 최상위 1024px 타일과 `128/`, `256/`,
-`512/` LOD를 합쳐 총 4,096개다. 이 경로는 Phase 1–6 전역 필드와 기존
+`512/` LOD를 합쳐 총 4,096개이며, 텍스처 타일은 PNG 무손실 압축이 거의
+듣지 않으므로 lossy WebP(quality 82, `r±xx_±zz.webp`)로 저장한다. 서버는
+fantasy WebP를 우선 서빙하고 없으면 legacy PNG로 폴백하며, Content-Type은
+파일 매직 바이트로 판별한다. 서버는 PNG 시절의 fantasy 타일은 더 이상 읽지
+않으므로, PNG 세대 데이터 디렉터리에는 부분 렌더가 아니라 전 범위 렌더를
+한 번 돌려야 한다(퍼블리시가 같은 슬롯의 옛 `.png`도 함께 지운다). 이 경로는 Phase 1–6 전역 필드와 기존
 1024px minimap의 1m 의미 마스크만 사용한다. 월드맵 이미지 변경 때문에
 262,144 gameplay tile의 height/splat/vegetation을 다시 쓰는 것은 느리고
 플레이 데이터를 불필요하게 변경하므로 full `bake`를 실행하지 않는다.

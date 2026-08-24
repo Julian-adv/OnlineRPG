@@ -7,6 +7,7 @@ use axum::{
     Json, Router,
 };
 use serde::Deserialize;
+use sha2::Digest;
 use std::sync::Arc;
 use tracing::{error, warn};
 
@@ -284,6 +285,7 @@ async fn put_grass(
 async fn get_minimap(
     Path((rx, rz)): Path<(i32, i32)>,
     Query(query): Query<MinimapQuery>,
+    request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
     let size = query.size.unwrap_or(1024);
@@ -294,14 +296,44 @@ async fn get_minimap(
         error!("Failed to read minimap ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    // max-age bounds staleness for players, whose ?v= never bumps outside an
-    // editor session — don't raise it to immutable. 404s cache too, so clients
-    // near unbaked regions don't re-request them every retry.
+    // The client's ?v= only changes on client deploys, so a server-side rebake
+    // must reach players through revalidation: cache briefly, then let the
+    // ETag turn repeat fetches into bodyless 304s. 404s cache briefly too, so
+    // clients near unbaked regions don't hammer the route.
     const MINIMAP_CACHE: (header::HeaderName, &str) =
         (header::CACHE_CONTROL, "public, max-age=300");
     match data {
         Some(bytes) => {
-            Ok(([(header::CONTENT_TYPE, "image/png"), MINIMAP_CACHE], bytes).into_response())
+            let digest = sha2::Sha256::digest(&bytes);
+            let tag = digest
+                .iter()
+                .take(8)
+                .fold(0u64, |acc, byte| (acc << 8) | u64::from(*byte));
+            let etag = format!("\"{tag:016x}\"");
+            let revalidated = request_headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v == etag);
+            if revalidated {
+                return Ok((
+                    StatusCode::NOT_MODIFIED,
+                    [(header::ETAG, etag)],
+                    [MINIMAP_CACHE],
+                )
+                    .into_response());
+            }
+            let content_type = if bytes.starts_with(b"RIFF") {
+                "image/webp"
+            } else {
+                "image/png"
+            };
+            Ok((
+                [(header::ETAG, etag)],
+                [(header::CONTENT_TYPE, content_type.to_string())],
+                [MINIMAP_CACHE],
+                bytes,
+            )
+                .into_response())
         }
         None => Ok((StatusCode::NOT_FOUND, [MINIMAP_CACHE]).into_response()),
     }

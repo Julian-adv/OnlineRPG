@@ -126,13 +126,13 @@ fn fantasy_minimap_paths_use_fixed_root_and_lod() {
     let base = Path::new("terrain");
     assert_eq!(
         coords::fantasy_minimap_path(base, -2, 4),
-        base.join("minimap-fantasy").join("r-02_+04.png")
+        base.join("minimap-fantasy").join("r-02_+04.webp")
     );
     assert_eq!(
         coords::fantasy_minimap_lod_path(base, -2, 4, 256),
         base.join("minimap-fantasy")
             .join("256")
-            .join("r-02_+04.png")
+            .join("r-02_+04.webp")
     );
 }
 

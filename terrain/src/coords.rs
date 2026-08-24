@@ -123,35 +123,43 @@ pub fn tree_region_dir(base: &Path, rx: i32, rz: i32) -> PathBuf {
 
 /// Build filesystem path for a region minimap PNG file.
 pub fn minimap_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
-    minimap_path_in(base, "minimap", rx, rz)
+    minimap_path_in(base, "minimap", "png", rx, rz)
 }
 
+/// Fantasy world-map tiles are baked as lossy WebP; the gameplay minimap stays PNG.
 pub fn fantasy_minimap_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
-    minimap_path_in(base, FANTASY_MINIMAP_DIR, rx, rz)
+    minimap_path_in(base, FANTASY_MINIMAP_DIR, "webp", rx, rz)
 }
 
-fn minimap_path_in(base: &Path, directory: &str, rx: i32, rz: i32) -> PathBuf {
+fn minimap_path_in(base: &Path, directory: &str, ext: &str, rx: i32, rz: i32) -> PathBuf {
     let rx = wrap_region_x(rx);
     base.join(directory)
-        .join(format!("r{:+03}_{:+03}.png", rx, rz))
+        .join(format!("r{rx:+03}_{rz:+03}.{ext}"))
 }
 
 pub fn minimap_lod_path(base: &Path, rx: i32, rz: i32, size: u32) -> PathBuf {
-    minimap_lod_path_in(base, "minimap", rx, rz, size)
+    minimap_lod_path_in(base, "minimap", "png", rx, rz, size)
 }
 
 pub fn fantasy_minimap_lod_path(base: &Path, rx: i32, rz: i32, size: u32) -> PathBuf {
-    minimap_lod_path_in(base, FANTASY_MINIMAP_DIR, rx, rz, size)
+    minimap_lod_path_in(base, FANTASY_MINIMAP_DIR, "webp", rx, rz, size)
 }
 
-fn minimap_lod_path_in(base: &Path, directory: &str, rx: i32, rz: i32, size: u32) -> PathBuf {
+fn minimap_lod_path_in(
+    base: &Path,
+    directory: &str,
+    ext: &str,
+    rx: i32,
+    rz: i32,
+    size: u32,
+) -> PathBuf {
     if size >= 1024 {
-        return minimap_path_in(base, directory, rx, rz);
+        return minimap_path_in(base, directory, ext, rx, rz);
     }
     let rx = wrap_region_x(rx);
     base.join(directory)
         .join(size.to_string())
-        .join(format!("r{:+03}_{:+03}.png", rx, rz))
+        .join(format!("r{rx:+03}_{rz:+03}.{ext}"))
 }
 
 /// Build filesystem path for the per-tile river-field binary (RFD1) —

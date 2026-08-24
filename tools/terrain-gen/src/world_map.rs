@@ -58,7 +58,7 @@ pub fn run(
     }
 
     eprintln!(
-        "Rendering {} regions ({} PNGs) to staging {}",
+        "Rendering {} regions ({} WebP tiles) to staging {}",
         regions.len(),
         expected_files,
         staging.display()
@@ -122,7 +122,7 @@ pub fn run(
 
         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
         let stride = (regions.len() / 20).max(1);
-        if done == regions.len() || done % stride == 0 {
+        if done == regions.len() || done.is_multiple_of(stride) {
             eprintln!(
                 "  rendered {}/{} regions ({:.1}s)",
                 done,
@@ -1235,11 +1235,11 @@ fn legacy_tile_path(root: &Path, rx: i32, rz: i32) -> PathBuf {
 }
 
 fn tile_path(root: &Path, size: u32, rx: i32, rz: i32) -> PathBuf {
+    let name = format!("r{:+03}_{:+03}.webp", rx, rz);
     if size == 1024 {
-        legacy_tile_path(root, rx, rz)
+        root.join(name)
     } else {
-        root.join(size.to_string())
-            .join(format!("r{:+03}_{:+03}.png", rx, rz))
+        root.join(size.to_string()).join(name)
     }
 }
 
@@ -1371,21 +1371,29 @@ fn save_render(
         &render.river,
         FeatureStyle::for_size(size),
     );
-    save_png(&image, path)
+    save_webp(&image, path)
 }
 
-fn save_png(image: &RgbImage, path: &Path) -> Result<()> {
-    image
-        .save(path)
-        .with_context(|| format!("write {}", path.display()))
+// Lossy quality 82: visually transparent for painterly tiles at ~1/8 the PNG size.
+const WEBP_QUALITY: f32 = 82.0;
+
+fn save_webp(image: &RgbImage, path: &Path) -> Result<()> {
+    let encoded =
+        webp::Encoder::from_rgb(image.as_raw(), image.width(), image.height()).encode(WEBP_QUALITY);
+    std::fs::write(path, &*encoded).with_context(|| format!("write {}", path.display()))
 }
 
 fn publish_file(staged: &Path, final_path: &Path) -> Result<()> {
-    match std::fs::remove_file(final_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(error).with_context(|| format!("replace {}", final_path.display()))
+    // Also drop the PNG-era tile at this slot: the server no longer looks for
+    // fantasy PNGs, so leaving one would waste disk and mislead a partial
+    // rebake into thinking the region still serves.
+    for stale in [final_path.to_path_buf(), final_path.with_extension("png")] {
+        match std::fs::remove_file(&stale) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("replace {}", stale.display()))
+            }
         }
     }
     std::fs::rename(staged, final_path).with_context(|| format!("publish {}", final_path.display()))

@@ -218,7 +218,7 @@ struct AppState {
     boot_id: u64,
 }
 
-/// Where the panel reads baked region minimaps from. These are the same PNGs
+/// Where the panel reads baked region minimaps from. These are the same tiles
 /// the web client's world map draws, so the spectator view cannot drift from
 /// the game's own colours the way a second elevation ramp would.
 pub enum MinimapSource {
@@ -301,7 +301,7 @@ pub async fn serve(hub: Arc<WatchHub>, minimap: MinimapSource, port: u16) {
         .route("/", get(page))
         .route("/api/npcs", get(npcs))
         .route("/api/state", get(state_snapshot))
-        .route("/api/minimap/{rx}/{rz}", get(minimap_png))
+        .route("/api/minimap/{rx}/{rz}", get(minimap_tile))
         .layer(middleware::from_fn(guard_host))
         .with_state(app_state);
 
@@ -464,21 +464,28 @@ async fn state_snapshot(State(app): State<Arc<AppState>>, Query(q): Query<NpcQue
     Json(body).into_response()
 }
 
-/// Serve one baked region PNG, straight through from the terrain source.
-async fn minimap_png(
+/// Serve one baked region tile, straight through from the terrain source.
+async fn minimap_tile(
     State(app): State<Arc<AppState>>,
     axum::extract::Path((rx, rz)): axum::extract::Path<(i32, i32)>,
 ) -> Response {
     match app.minimap.read(rx, rz).await {
-        Ok(Some(png)) => (
-            [
-                (header::CONTENT_TYPE, "image/png"),
-                // Baked data; only a re-bake changes it.
-                (header::CACHE_CONTROL, "max-age=300"),
-            ],
-            png,
-        )
-            .into_response(),
+        Ok(Some(tile)) => {
+            let content_type = if tile.starts_with(b"RIFF") {
+                "image/webp"
+            } else {
+                "image/png"
+            };
+            (
+                [
+                    (header::CONTENT_TYPE, content_type),
+                    // Baked data; only a re-bake changes it.
+                    (header::CACHE_CONTROL, "max-age=300"),
+                ],
+                tile,
+            )
+                .into_response()
+        }
         // Outside the baked area — the page just leaves that region blank.
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
