@@ -60,7 +60,7 @@ export type DungeonSound = keyof typeof DUNGEON_SOUNDS
 
 const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
-const DEFAULT_SFX_VOLUME = 1
+const DEFAULT_SFX_VOLUME = 0.5
 
 // Node ≥22 exposes a localStorage global whose methods are unusable without
 // --localstorage-file, so feature-test the method, not the object.
