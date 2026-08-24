@@ -9,6 +9,29 @@ fn default_weapon_drop_chance() -> f32 {
     1.0
 }
 
+/// Parse a `drops` column ("id:chance|id:chance"); a malformed entry fails
+/// the boot here rather than a kill later.
+fn parse_drops(id: &str, drops: Option<&str>) -> Vec<(String, f32)> {
+    drops
+        .unwrap_or("")
+        .split('|')
+        .filter(|s| !s.is_empty())
+        .map(|entry| {
+            let (item, chance) = entry.split_once(':').unwrap_or_else(|| {
+                panic!("monster '{id}': drops entry '{entry}' must be id:chance")
+            });
+            let chance: f32 = chance.parse().unwrap_or_else(|_| {
+                panic!("monster '{id}': drops entry '{entry}' has a bad chance")
+            });
+            assert!(
+                (0.0..=1.0).contains(&chance),
+                "monster '{id}': drops entry '{entry}' chance out of [0,1]"
+            );
+            (item.to_string(), chance)
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct MonsterDefinition {
@@ -66,6 +89,12 @@ pub struct MonsterDefinition {
     pub anim_dead: String,
     #[serde(default)]
     pub material: Option<String>,
+    /// Bonus drops rolled per kill, as "item_id:chance|item_id:chance".
+    #[serde(default)]
+    pub drops: Option<String>,
+    /// `drops` parsed once at load; handlers never re-split the string.
+    #[serde(skip)]
+    drop_entries: Vec<(String, f32)>,
 }
 
 impl MonsterDefinition {
@@ -86,6 +115,11 @@ impl MonsterDefinition {
             - combat::monster_attack_bonus(self.level)
     }
 
+    /// Parsed `drops` column: (item_def_id, chance) pairs.
+    pub fn drop_entries(&self) -> &[(String, f32)] {
+        &self.drop_entries
+    }
+
     pub fn damage_roll(&self) -> String {
         self.damage_roll
             .clone()
@@ -101,13 +135,22 @@ pub struct MonsterDefs {
 impl MonsterDefs {
     pub fn load() -> Self {
         let data = include_str!("../../data/monsters.json");
-        let defs: HashMap<String, MonsterDefinition> =
+        let mut defs: HashMap<String, MonsterDefinition> =
             serde_json::from_str(data).expect("Failed to parse monsters.json");
+        for (id, def) in defs.iter_mut() {
+            def.drop_entries = parse_drops(id, def.drops.as_deref());
+        }
 
         info!("Loaded {} monster definitions", defs.len());
         for (id, def) in &defs {
             if let Some(debuff) = &def.hit_debuff {
                 crate::debuff_defs::assert_debuff_exists(debuff, &format!("monster '{id}'"));
+            }
+            for (item_id, _) in def.drop_entries() {
+                assert!(
+                    crate::item_defs::item_defs().get(item_id).is_some(),
+                    "monster '{id}' drops unknown item '{item_id}'"
+                );
             }
             info!(
                 "  {} - level:{} HP:{} guard:{} attackBonus:{} walkSpeed:{} runSpeed:{} attackRange:{} chaseRange:{} cooldown:{}ms damage:{}",
@@ -136,6 +179,13 @@ impl MonsterDefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kobolds_drop_apples_rarely() {
+        let defs = MonsterDefs::load();
+        let kobold = defs.get("kobold").expect("kobold def");
+        assert_eq!(kobold.drop_entries(), [("apple".to_string(), 0.01)]);
+    }
 
     #[test]
     fn the_gnoll_claws_inflict_bleeding() {

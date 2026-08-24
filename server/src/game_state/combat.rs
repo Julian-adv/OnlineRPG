@@ -109,6 +109,7 @@ impl super::GameState {
     pub(super) fn spawn_kill_loot_after_impact(
         &self,
         weapon_drop: Option<GroundItem>,
+        monster_drops: Vec<String>,
         origin: Position,
         floor_level: i8,
         monster_level: Option<u8>,
@@ -120,7 +121,7 @@ impl super::GameState {
                 game_state.spawn_ground_item(item).await;
             }
             game_state
-                .spawn_world_drops(origin, floor_level, monster_level)
+                .spawn_world_drops(origin, floor_level, monster_level, monster_drops)
                 .await;
         });
     }
@@ -499,10 +500,16 @@ impl super::GameState {
                 } else {
                     None
                 };
-                // Weapon drop and rare bonus world drops alike wait for the
-                // blow to land.
+                let monster_drops = def.map_or_else(Vec::new, |def| {
+                    crate::world_drop_defs::roll_independent(
+                        def.drop_entries().iter().map(|(id, c)| (id.as_str(), *c)),
+                        &mut rand::thread_rng(),
+                    )
+                });
+                // All kill loot waits for the blow to land.
                 self.spawn_kill_loot_after_impact(
                     weapon_drop,
+                    monster_drops,
                     monster_position,
                     monster_floor_level,
                     effective_level,

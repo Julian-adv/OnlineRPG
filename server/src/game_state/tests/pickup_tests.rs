@@ -116,6 +116,7 @@ async fn monster_loot_is_withheld_until_the_killing_blow_lands() {
             cape_color: None,
             cape_texture: None,
         }),
+        Vec::new(),
         drop_position,
         0,
         None,

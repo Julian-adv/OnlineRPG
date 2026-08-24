@@ -1017,9 +1017,18 @@ impl super::GameState {
             return;
         }
 
-        let outcome = self.apply_eat(player_id, nutrition).await;
+        let (outcome, gained) = self.apply_eat(player_id, nutrition).await;
+        // A meal that adds no satiation (already full) is refused outright —
+        // nothing has been consumed yet.
+        if gained == 0 {
+            self.send_system_message(player_id, "You are too full to eat another bite")
+                .await;
+            return;
+        }
         self.consume_one_and_sync(player_id, instance_id).await;
-        self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(nutrition))
+        // Healing scales with the satiation actually gained, so a nearly
+        // full stomach heals proportionally less.
+        self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(gained))
             .await;
         let name = self.item_name(&def_id);
         self.send_system_message(player_id, format!("You eat the {name}."))
@@ -1435,7 +1444,8 @@ impl super::GameState {
     /// by every loot source (monster kills, dungeon chests, broken props) so a
     /// rare drop can spill from anything that yields loot. Table entries are
     /// validated against `ItemDefs` at load time, so every rolled id is
-    /// guaranteed to have a definition here.
+    /// guaranteed to have a definition here. `bonus_item_ids` (a monster's own
+    /// pre-rolled drops) ride along in the same scatter pass.
     ///
     /// `source_level` is the killed monster's effective level, which some
     /// entries pay out less on when it is low (`world_drop.csv`). Chests and
@@ -1446,17 +1456,19 @@ impl super::GameState {
         origin: crate::types::Position,
         floor_level: i8,
         source_level: Option<u8>,
+        bonus_item_ids: Vec<String>,
     ) {
         /// How far from the loot origin a world drop scatters.
         const WORLD_DROP_OFFSET_METERS: f32 = 1.5;
 
-        let item_def_ids = {
+        let mut item_def_ids = bonus_item_ids;
+        {
             let mut rng = rand::thread_rng();
-            self.world_drop_defs.roll(&mut rng, source_level)
-        };
+            item_def_ids.extend(self.world_drop_defs.roll(&mut rng, source_level));
+        }
         if !item_def_ids.is_empty() {
             info!(
-                "World drop {:?} at ({:.1},{:.1}) {}",
+                "Bonus drops {:?} at ({:.1},{:.1}) {}",
                 item_def_ids,
                 origin.x,
                 origin.z,

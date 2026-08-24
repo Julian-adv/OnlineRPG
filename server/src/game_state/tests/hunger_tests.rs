@@ -114,7 +114,7 @@ async fn meals_only_clamp_at_the_hard_cap() {
 }
 
 #[tokio::test]
-async fn eating_at_the_cap_is_allowed_and_wastes_excess_nutrition() {
+async fn eating_at_the_cap_is_refused_and_keeps_the_food() {
     let game_state = make_test_game_state("overeat");
     let (id, mut rx) = make_eater(&game_state, "glutton", 820).await;
     put_in_bag(&game_state, &id, 1, "jerky").await;
@@ -126,7 +126,7 @@ async fn eating_at_the_cap_is_allowed_and_wastes_excess_nutrition() {
     put_in_bag(&game_state, &id, 2, "apple").await;
     game_state.use_item(&id, 2).await;
     assert_eq!(game_state.hunger_satiation(&id).await, Some(SATIATION_MAX));
-    assert!(bag_ids(&game_state, &id).await.is_empty());
+    assert_eq!(bag_ids(&game_state, &id).await, vec!["apple"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -409,6 +409,53 @@ async fn food_restores_hp_over_ten_seconds() {
     game_state.cancel_food_regeneration(&id).await;
     game_state.tick_food_regeneration().await;
     assert_eq!(game_state.players.read().await[&id].health, 3);
+}
+
+#[tokio::test]
+async fn healing_scales_with_satiation_gained() {
+    let game_state = make_test_game_state("partial_heal");
+    let (id, _rx) = make_eater(&game_state, "nibbler", 900).await;
+    put_in_bag(&game_state, &id, 1, "bread").await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .health = 1;
+
+    game_state.use_item(&id, 1).await;
+    for _ in 0..10 {
+        game_state.tick_food_regeneration().await;
+    }
+    // Only 100 of the bread's 540 nutrition fit, so it heals 100/20 = 5.
+    assert_eq!(game_state.players.read().await[&id].health, 6);
+}
+
+#[tokio::test]
+async fn eating_while_full_is_refused() {
+    let game_state = make_test_game_state("full_no_heal");
+    let (id, _rx) = make_eater(&game_state, "glutton", 1000).await;
+    put_in_bag(&game_state, &id, 1, "bread").await;
+    game_state
+        .players
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .health = 1;
+
+    game_state.use_item(&id, 1).await;
+    game_state.tick_food_regeneration().await;
+    assert_eq!(game_state.players.read().await[&id].health, 1);
+    let inventories = game_state.inventories.read().await;
+    assert!(
+        inventories[&id]
+            .bag
+            .iter()
+            .any(|i| i.item_def_id == "bread"),
+        "the refused meal stays in the bag"
+    );
 }
 
 #[tokio::test]
