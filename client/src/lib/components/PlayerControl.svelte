@@ -1583,7 +1583,12 @@
       openProp,
       moveToGround: (position, sprinting) => {
         combatController.cancelCombat()
-        handleClickToMove(position, { sprinting })
+        const snapped = dungeonManager.snapDescentWallClick(
+          position.x,
+          position.z,
+          position.y
+        )
+        handleClickToMove(snapped ?? position, { sprinting })
       },
       castFishing: (intent) => {
         if (!currentPlayer || currentPlayer.health <= 0) return

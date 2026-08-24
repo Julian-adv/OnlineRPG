@@ -34,6 +34,7 @@ import {
 import { DUNGEON_ENTRANCES, type DungeonEntranceDef } from '../data/dungeonDefs'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { DungeonWall } from '../utils/dungeon-geo-constants'
+import { shaftRect } from '../utils/dungeon-geo-shaft'
 
 export interface DungeonRoom {
   x: number
@@ -133,6 +134,13 @@ export interface DungeonEntrance {
 }
 
 /** Hysteresis (in run cells) around the switch point for floor switches. */
+// Wall-click snap: a hit this far outside a down-shaft's footprint (its side
+// wall) still counts, and the snapped target lands this far inside the edge.
+// Only hits below the current floor's walking surface qualify.
+const SHAFT_SNAP_MARGIN = 0.5
+const SHAFT_SNAP_INSET = 0.3
+const SHAFT_SNAP_Y_EPS = 0.2
+
 const SWITCH_HYSTERESIS = 0.3
 /** Fraction of the shaft run at which the rendered floor switches — well before
  *  the 0.5 midpoint, so a short descent already reveals (and adopts as logical)
@@ -481,6 +489,45 @@ class DungeonManager {
    */
   isOnEntranceShaft(x: number, z: number): boolean {
     return this.shaftRunPos(1, false, x, z) !== null
+  }
+
+  /**
+   * A click on a descending stair-shaft's side wall, snapped onto the ramp.
+   * The wall hides most of the stairs from the iso camera, so a hit just
+   * outside the shaft footprint and below the current walking surface counts
+   * as a click on the stairs. Null when no snap applies.
+   */
+  snapDescentWallClick(
+    x: number,
+    z: number,
+    y: number
+  ): { x: number; y: number; z: number } | null {
+    if (!this.active) return null
+    const depth = get(currentDungeonDepth)
+    if (depth < 1) return null
+    const shaft = this.layoutAt(depth)?.downShaft
+    if (!shaft) return null
+    if (y >= this.floorY(depth) - SHAFT_SNAP_Y_EPS) return null
+    const r = shaftRect(shaft, constants())
+    const x0 = this.originX + r.x
+    const z0 = this.originZ + r.z
+    if (x < x0 - SHAFT_SNAP_MARGIN || x >= x0 + r.w + SHAFT_SNAP_MARGIN) {
+      return null
+    }
+    if (z < z0 - SHAFT_SNAP_MARGIN || z >= z0 + r.d + SHAFT_SNAP_MARGIN) {
+      return null
+    }
+    const sx = Math.min(
+      Math.max(x, x0 + SHAFT_SNAP_INSET),
+      x0 + r.w - SHAFT_SNAP_INSET
+    )
+    const sz = Math.min(
+      Math.max(z, z0 + SHAFT_SNAP_INSET),
+      z0 + r.d - SHAFT_SNAP_INSET
+    )
+    if (sx === x && sz === z) return null
+    const sy = this.floorHeightAt(depth, sx, sz)
+    return sy === null ? null : { x: sx, y: sy, z: sz }
   }
 
   /**
