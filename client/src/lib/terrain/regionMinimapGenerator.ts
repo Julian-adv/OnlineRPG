@@ -5,7 +5,8 @@ import { getTerrainApiUrl } from '../utils/networkUtils'
 export function regionMinimapServerUrl(
   rx: number,
   rz: number,
-  version: number
+  version: number,
+  size = 1024
 ): string {
-  return `${getTerrainApiUrl()}/api/terrain/minimap/${rx}/${rz}?v=${version}`
+  return `${getTerrainApiUrl()}/api/terrain/minimap/${rx}/${rz}?v=${version}&size=${size}`
 }

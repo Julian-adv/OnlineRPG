@@ -127,6 +127,16 @@ pub fn minimap_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
         .join(format!("r{:+03}_{:+03}.png", rx, rz))
 }
 
+pub fn minimap_lod_path(base: &Path, rx: i32, rz: i32, size: u32) -> PathBuf {
+    if size >= 1024 {
+        return minimap_path(base, rx, rz);
+    }
+    let rx = wrap_region_x(rx);
+    base.join("minimap")
+        .join(size.to_string())
+        .join(format!("r{:+03}_{:+03}.png", rx, rz))
+}
+
 /// Build filesystem path for the per-tile river-field binary (RFD1) —
 /// pixel-aligned surfaceY + flowDir lookup table consumed by the runtime
 /// quad-mesh river renderer. See `shared/src/worldgen/tile_bake/river_field.rs`.

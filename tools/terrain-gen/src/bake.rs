@@ -8,11 +8,11 @@
 //! The file layout matches `terrain::TerrainIO` so the runtime can load the
 //! output without any format conversion.
 
+use crate::map_tile::{render_region_pyramid_bounded, TILES_PER_REGION};
 use anyhow::{Context, Result};
-use image::{ImageBuffer, Rgb, RgbImage};
 use onlinerpg_shared::worldgen::{
     coasts, continent, elevation, erosion, rivers, roads, settlements,
-    tile_bake::{self, bridges, HEIGHT_BIAS, HEIGHT_STEP, TILE_DIM, VERTS_PER_SIDE},
+    tile_bake::{self, bridges},
     vegetation, GlobalMap, WorldGenConfig,
 };
 use onlinerpg_terrain::coords;
@@ -20,13 +20,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::time::Instant;
-
-/// Tiles per region side (16 → 256 tiles per region, 1024 m square).
-const TILES_PER_REGION: i32 = 16;
-/// Region minimap PNG side length in pixels (1 cell = 1 pixel).
-const REGION_PX: u32 = TILES_PER_REGION as u32 * TILE_DIM as u32;
 
 fn remove_if_exists(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
@@ -35,18 +29,6 @@ fn remove_if_exists(path: &Path) -> Result<()> {
         Err(e) => Err(anyhow::Error::from(e).context(format!("remove {}", path.display()))),
     }
 }
-
-// Minimap classification thresholds and palette (mirrors
-// `client/src/lib/terrain/regionMinimapGenerator.ts` so on-disk and
-// client-generated PNGs are pixel-identical).
-const DEEP_WATER_THRESHOLD_M: f32 = -1.5;
-const VISIBLE_SAND_THRESHOLD_M: f32 = -0.25;
-const COLOR_DEEP_WATER: [u8; 3] = [30, 60, 150];
-const COLOR_SHALLOW_WATER: [u8; 3] = [100, 160, 220];
-const COLOR_FALLBACK: [u8; 3] = [120, 120, 100];
-
-const MAX_PALETTE: usize = 16;
-type MinimapPalette = [[u8; 3]; MAX_PALETTE];
 
 pub fn run(
     config: &WorldGenConfig,
@@ -271,19 +253,6 @@ pub fn run(
         }
     }
 
-    // Per-region minimap accumulators. Each tile worker fills its 64×64
-    // patch into the region's image; PNG encoding is deferred to a single
-    // sequential pass after the bake completes.
-    let palette = load_minimap_palette();
-    let minimaps: HashMap<(i32, i32), Mutex<RgbImage>> = region_xs
-        .iter()
-        .flat_map(|&rx| {
-            region_zs
-                .iter()
-                .map(move |&rz| ((rx, rz), Mutex::new(ImageBuffer::new(REGION_PX, REGION_PX))))
-        })
-        .collect();
-
     // --- Tile enumeration + parallel bake. -------------------------------
     let mut tile_coords: Vec<(i32, i32)> = Vec::with_capacity(region_count * 256);
     for &rx in &region_xs {
@@ -366,27 +335,6 @@ pub fn run(
                 remove_if_exists(&wfpath)?;
             }
 
-            if !water_field_only {
-                // Stamp this tile's 64×64 patch into its region minimap. Locking
-                // is per-region — within-region contention is bounded by rayon's
-                // worker count, so the wait is negligible against bake cost.
-                let rx = tx.div_euclid(TILES_PER_REGION);
-                let rz = tz.div_euclid(TILES_PER_REGION);
-                let lx = tx.rem_euclid(TILES_PER_REGION) as u32;
-                let lz = tz.rem_euclid(TILES_PER_REGION) as u32;
-                let mut img = minimaps[&(rx, rz)]
-                    .lock()
-                    .expect("region minimap mutex poisoned");
-                stamp_tile_minimap(
-                    &mut img,
-                    lx,
-                    lz,
-                    &baked.heightmap,
-                    &baked.splatmap,
-                    &palette,
-                );
-            }
-
             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
             let report_at = next_report.load(Ordering::Relaxed);
             if n >= report_at || n == total_tiles {
@@ -429,19 +377,19 @@ pub fn run(
         return Ok(());
     }
 
-    // --- Region minimap PNGs. --------------------------------------------
+    // --- Region map PNGs. ------------------------------------------------
     let t_mini = Instant::now();
-    minimaps
+    let region_coords: Vec<(i32, i32)> = region_xs
+        .iter()
+        .flat_map(|&rx| region_zs.iter().map(move |&rz| (rx, rz)))
+        .collect();
+    region_coords
         .into_par_iter()
-        .try_for_each(|((rx, rz), mtx)| -> Result<()> {
-            let img = mtx.into_inner().expect("region minimap mutex poisoned");
-            let path = coords::minimap_path(out, rx, rz);
-            img.save(&path)
-                .with_context(|| format!("write {}", path.display()))?;
-            Ok(())
+        .try_for_each(|(rx, rz)| -> Result<()> {
+            render_region_pyramid_bounded(out, out, rx, rz, region_min, region_max)
         })?;
     eprintln!(
-        "Wrote {} region minimap PNGs in {:.2}s",
+        "Wrote {} region map pyramids in {:.2}s",
         region_count,
         t_mini.elapsed().as_secs_f32()
     );
@@ -551,74 +499,6 @@ fn build_worldgen_json(
         "settlements": settlements_json,
         "roads": roads_json,
     })
-}
-
-/// Load the global terrain palette's `minimapColor` slots from
-/// `shared/palette.json`. Slots beyond the JSON length stay at the fallback
-/// color so out-of-range splat indices never panic. Embedded at compile time
-/// so the binary stays self-contained.
-fn load_minimap_palette() -> MinimapPalette {
-    const PALETTE_JSON: &str = include_str!("../../../shared/palette.json");
-    let v: serde_json::Value =
-        serde_json::from_str(PALETTE_JSON).expect("shared/palette.json is valid JSON");
-    let layers = v["layers"].as_array().expect("palette.json: layers array");
-    let mut palette: MinimapPalette = [COLOR_FALLBACK; MAX_PALETTE];
-    for (i, layer) in layers.iter().enumerate().take(MAX_PALETTE) {
-        let arr = layer["minimapColor"]
-            .as_array()
-            .expect("palette.json: minimapColor array");
-        palette[i] = [
-            arr[0].as_u64().expect("minimapColor[0]") as u8,
-            arr[1].as_u64().expect("minimapColor[1]") as u8,
-            arr[2].as_u64().expect("minimapColor[2]") as u8,
-        ];
-    }
-    palette
-}
-
-/// Stamp one tile into its region minimap image. Classification mirrors
-/// `client/src/lib/terrain/regionMinimapGenerator.ts` so on-disk and
-/// client-generated PNGs are pixel-identical.
-fn stamp_tile_minimap(
-    img: &mut RgbImage,
-    lx: u32,
-    lz: u32,
-    heightmap: &[u8],
-    splatmap: &[u8],
-    palette: &MinimapPalette,
-) {
-    let base_x = lx * TILE_DIM as u32;
-    let base_z = lz * TILE_DIM as u32;
-    for cz in 0..TILE_DIM {
-        for cx in 0..TILE_DIM {
-            // Heightmap is per-vertex (65×65). Sampling the top-left vertex
-            // of each cell matches the client's `cz * VERTS_PER_SIDE + cx`.
-            let hi = (cz * VERTS_PER_SIDE + cx) * 2;
-            let raw = u16::from_le_bytes([heightmap[hi], heightmap[hi + 1]]);
-            let h = raw as f32 * HEIGHT_STEP - HEIGHT_BIAS;
-
-            let rgb = if h < DEEP_WATER_THRESHOLD_M {
-                COLOR_DEEP_WATER
-            } else if h < VISIBLE_SAND_THRESHOLD_M {
-                COLOR_SHALLOW_WATER
-            } else {
-                let si = (cz * TILE_DIM + cx) * 4;
-                let packed = splatmap[si];
-                let primary = ((packed >> 4) & 0x0f) as usize;
-                let secondary = (packed & 0x0f) as usize;
-                let blend = splatmap[si + 2] as f32 / 255.0;
-                let cp = palette[primary];
-                let cs = palette[secondary];
-                [
-                    (cp[0] as f32 * (1.0 - blend) + cs[0] as f32 * blend).round() as u8,
-                    (cp[1] as f32 * (1.0 - blend) + cs[1] as f32 * blend).round() as u8,
-                    (cp[2] as f32 * (1.0 - blend) + cs[2] as f32 * blend).round() as u8,
-                ]
-            };
-
-            img.put_pixel(base_x + cx as u32, base_z + cz as u32, Rgb(rgb));
-        }
-    }
 }
 
 /// Embedded copy of `client/public/models/objects/catalog.json` so the bake

@@ -197,9 +197,35 @@ impl TerrainIO {
         }
     }
 
+    pub async fn read_minimap_lod(
+        &self,
+        rx: i32,
+        rz: i32,
+        size: u32,
+    ) -> std::io::Result<Option<Vec<u8>>> {
+        if size >= 1024 {
+            return self.read_minimap(rx, rz).await;
+        }
+        let path = coords::minimap_lod_path(&self.base_dir, rx, rz, size);
+        match fs::read(&path).await {
+            Ok(data) => Ok(Some(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.read_minimap(rx, rz).await,
+            Err(e) => Err(e),
+        }
+    }
+
     pub async fn write_minimap(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::minimap_path(&self.base_dir, rx, rz);
-        write_terrain_file(&path, data).await
+        write_terrain_file(&path, data).await?;
+        for size in [128, 256, 512] {
+            let lod_path = coords::minimap_lod_path(&self.base_dir, rx, rz, size);
+            match fs::remove_file(lod_path).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 
     /// Read pre-computed grass placement data (variable-length binary).
@@ -361,7 +387,12 @@ impl TerrainIO {
         let tree_dir = coords::tree_region_dir(&self.base_dir, rx, rz);
         let orig_height_dir = coords::original_height_region_dir(&self.base_dir, rx, rz);
         let orig_grass_dir = coords::original_grass_region_dir(&self.base_dir, rx, rz);
-        let minimap_file = coords::minimap_path(&self.base_dir, rx, rz);
+        let minimap_files = [
+            coords::minimap_path(&self.base_dir, rx, rz),
+            coords::minimap_lod_path(&self.base_dir, rx, rz, 128),
+            coords::minimap_lod_path(&self.base_dir, rx, rz, 256),
+            coords::minimap_lod_path(&self.base_dir, rx, rz, 512),
+        ];
 
         for dir in [
             &height_dir,
@@ -377,10 +408,12 @@ impl TerrainIO {
                 Err(e) => return Err(e),
             }
         }
-        match fs::remove_file(&minimap_file).await {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
+        for file in minimap_files {
+            match fs::remove_file(file).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
         }
         Ok(())
     }

@@ -173,7 +173,8 @@ terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 - `river-field/r±xx_±zz/r_±xxxxx_±zzzzz.bin` — RFD1 (강 있는 타일만)
 - `trees/r±xx_±zz/t_±xxxxx_±zzzzz.bin` — Phase 8 tree V1
 - `grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin` — Phase 8 grass V3
-- `minimap/m_r±xx_±zz.png` — region 단위 minimap (1 px = 1 splat cell)
+- `minimap/r±xx_±zz.png` — 1024px shaded-relief map tile
+- `minimap/{128,256,512}/r±xx_±zz.png` — 월드맵 줌별 LOD
 - `objects/r±xx_±zz.json` — region 단위 오브젝트 목록 (현재 bridge placements)
 - `worldgen.json` — 시드, config, 정착지/도로 목록 (게임 서버가
   로드할 수 있도록)
@@ -187,6 +188,28 @@ terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 3. 마음에 안 들면 시드 바꾸거나 config 조정 → goto 1.
 4. 마음에 들면 `terrain-gen bake --seed 12345` (`--out` 기본 `data/terrain`).
 5. 게임 실행. 기존 `TerrainIO`가 파일을 그대로 로드.
+
+전체 월드를 다시 베이크하지 않고 기존 height/splat/tree 데이터로 한 지역만
+확인하려면 다음 명령을 사용한다.
+
+```powershell
+cargo run -p terrain-gen --release -- render-map-region `
+  --terrain data/terrain --region-x=-2 --region-z=4 `
+  --out data/terrain/worldmap_preview/r-02_+04-relief.png
+```
+
+서비스용 LOD까지 해당 지역에 다시 쓰려면 `render-map-pyramid`를 사용한다.
+
+```powershell
+cargo run -p terrain-gen --release -- render-map-pyramid `
+  --terrain data/terrain --out data/terrain --region-x=-2 --region-z=4
+```
+
+지명은 minimap PNG에 굽지 않는다. `data-src/map_labels.csv`를 원본으로 두고
+클라이언트가 HTML 레이어에 표시한다. 따라서 지형 LOD와 무관하게 철자와 월드
+좌표가 유지되며, 줌 단계별 계층과 충돌 회피는
+`client/src/lib/utils/worldMapLabelLayout.ts`에서 처리한다. 충돌 시 낮은 우선순위의
+텍스트만 숨기고 정착지와 발견 지점의 마커 좌표는 이동하지 않는다.
 
 preview는 수 초 안에 끝나야 반복 튜닝이 실용적임. 그래서 Phase 1-6은
 저해상도 전역 맵에서만 동작하도록 최적화한다.
@@ -346,7 +369,8 @@ data/terrain/
   river-field/r±xx_±zz/r_±xxxxx_±zzzzz.bin  # RFD1 (강 있는 타일만)
   trees/r±xx_±zz/t_±xxxxx_±zzzzz.bin        # V1
   grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin        # V3
-  minimap/m_r±xx_±zz.png                    # region 단위 minimap (1 px = 1 cell)
+  minimap/r±xx_±zz.png                      # 1024px shaded-relief map tile
+  minimap/{128,256,512}/r±xx_±zz.png        # 월드맵 줌별 LOD
   objects/r±xx_±zz.json                     # region 단위 오브젝트 (현재 bridges)
   worldgen.json                             # seed/config/settlements/roads
   worldgen_preview/<seed_hex>/              # §5.3 preview PNGs 의 dump (preview 명령과 동일 경로)

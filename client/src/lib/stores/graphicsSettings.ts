@@ -99,7 +99,7 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 1024,
     treeCastsShadow: true,
     enableWindParticles: true,
-    worldMapImageCacheLimit: Infinity,
+    worldMapImageCacheLimit: 256,
   },
   medium: {
     ...FULL_RENDER_SETTINGS,

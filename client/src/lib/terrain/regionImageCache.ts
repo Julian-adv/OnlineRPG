@@ -29,7 +29,8 @@ export class RegionImageCache {
   load(
     rx: number,
     rz: number,
-    version: number
+    version: number,
+    sourceSize = 1024
   ): Promise<HTMLImageElement | null> {
     if (version !== this.version) {
       this.flush()
@@ -37,9 +38,13 @@ export class RegionImageCache {
     }
 
     const wrx = wrapRegionX(rx)
-    const key = regionKey(wrx, rz)
+    const key = `${regionKey(wrx, rz)}@${sourceSize}`
     const cached = this.images.get(key)
-    if (cached) return Promise.resolve(cached)
+    if (cached) {
+      this.images.delete(key)
+      this.images.set(key, cached)
+      return Promise.resolve(cached)
+    }
     const failure = this.failed.get(key)
     if (failure && Date.now() < failure.retryAt) return Promise.resolve(null)
     const inFlight = this.pending.get(key)
@@ -67,7 +72,7 @@ export class RegionImageCache {
         }
         resolve(null)
       }
-      img.src = regionMinimapServerUrl(wrx, rz, version)
+      img.src = regionMinimapServerUrl(wrx, rz, version, sourceSize)
     })
     this.pending.set(key, promise)
     return promise

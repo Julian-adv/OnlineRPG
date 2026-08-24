@@ -16,6 +16,7 @@
 mod apply_houses;
 mod bake;
 mod inspect;
+mod map_tile;
 mod preview;
 mod prune_house_trees;
 
@@ -270,6 +271,36 @@ enum Cmd {
         at: Vec<String>,
     },
 
+    /// Render one region map from existing baked height and splat tiles.
+    RenderMapRegion {
+        #[arg(long, default_value = "data/terrain")]
+        terrain: PathBuf,
+
+        #[arg(long, allow_hyphen_values = true)]
+        region_x: i32,
+
+        #[arg(long, allow_hyphen_values = true)]
+        region_z: i32,
+
+        #[arg(long)]
+        out: PathBuf,
+    },
+
+    /// Render one region and its 128/256/512/1024 map pyramid.
+    RenderMapPyramid {
+        #[arg(long, default_value = "data/terrain")]
+        terrain: PathBuf,
+
+        #[arg(long, default_value = "data/terrain")]
+        out: PathBuf,
+
+        #[arg(long, allow_hyphen_values = true)]
+        region_x: i32,
+
+        #[arg(long, allow_hyphen_values = true)]
+        region_z: i32,
+    },
+
     /// Remove baked tree instances that overlap persisted house footprints.
     PruneHouseTrees {
         /// Terrain directory containing `trees/`.
@@ -397,6 +428,18 @@ fn main() -> Result<()> {
             }
             inspect::probe(&cfg, &points)
         }
+        Cmd::RenderMapRegion {
+            terrain,
+            region_x,
+            region_z,
+            out,
+        } => map_tile::render_region_to_path(&terrain, region_x, region_z, &out),
+        Cmd::RenderMapPyramid {
+            terrain,
+            out,
+            region_x,
+            region_z,
+        } => map_tile::render_region_pyramid(&terrain, &out, region_x, region_z),
         Cmd::PruneHouseTrees {
             terrain,
             housing,

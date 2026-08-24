@@ -1,11 +1,12 @@
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use std::sync::Arc;
 use tracing::{error, warn};
 
@@ -18,6 +19,11 @@ use crate::game_state::GameState;
 struct ObjectsState {
     terrain: Arc<TerrainIO>,
     game_state: Arc<GameState>,
+}
+
+#[derive(Deserialize)]
+struct MinimapQuery {
+    size: Option<u32>,
 }
 
 pub fn terrain_router(terrain_io: Arc<TerrainIO>, game_state: Arc<GameState>) -> Router {
@@ -277,9 +283,14 @@ async fn put_grass(
 
 async fn get_minimap(
     Path((rx, rz)): Path<(i32, i32)>,
+    Query(query): Query<MinimapQuery>,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_minimap(rx, rz).await.map_err(|e| {
+    let size = query.size.unwrap_or(1024);
+    if ![128, 256, 512, 1024].contains(&size) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let data = terrain.read_minimap_lod(rx, rz, size).await.map_err(|e| {
         error!("Failed to read minimap ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
