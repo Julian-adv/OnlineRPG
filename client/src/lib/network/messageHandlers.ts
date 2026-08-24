@@ -959,7 +959,7 @@ export function handleServerMessage(
       if (data.hit && data.damage > 0 && target) {
         if (data.current_health <= 0) {
           if (claimPlayerDeath(data.player_id)) {
-            playPlayerDeathSound(target.gender, impactDelayMs)
+            playPlayerDeathSound(target.gender)
           }
         } else {
           playPlayerHurtSound(target.gender, impactDelayMs)
