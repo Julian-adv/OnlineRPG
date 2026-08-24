@@ -51,25 +51,28 @@ fn region_x_wraps_across_baked_file_range() {
 #[test]
 fn heightmap_path_positive() {
     let p = coords::heightmap_path(Path::new("terrain"), 5, 3);
-    assert_eq!(
-        p.to_str().unwrap(),
-        "terrain/height/r+00_+00/h_+0005_+0003.bin"
-    );
+    let expected: std::path::PathBuf = ["terrain", "height", "r+00_+00", "h_+0005_+0003.bin"]
+        .iter()
+        .collect();
+    assert_eq!(p, expected);
 }
 
 #[test]
 fn heightmap_path_negative() {
     let p = coords::heightmap_path(Path::new("terrain"), -5, -20);
-    assert_eq!(
-        p.to_str().unwrap(),
-        "terrain/height/r-01_-02/h_-0005_-0020.bin"
-    );
+    let expected: std::path::PathBuf = ["terrain", "height", "r-01_-02", "h_-0005_-0020.bin"]
+        .iter()
+        .collect();
+    assert_eq!(p, expected);
 }
 
 #[test]
 fn splatmap_path_format() {
     let p = coords::splatmap_path(Path::new("t"), 0, 0);
-    assert_eq!(p.to_str().unwrap(), "t/splat/r+00_+00/s_+0000_+0000.bin");
+    let expected: std::path::PathBuf = ["t", "splat", "r+00_+00", "s_+0000_+0000.bin"]
+        .iter()
+        .collect();
+    assert_eq!(p, expected);
 }
 
 #[test]
