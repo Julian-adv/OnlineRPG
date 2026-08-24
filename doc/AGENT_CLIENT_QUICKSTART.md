@@ -142,7 +142,7 @@ Windows (PowerShell):
 | 증상 | 원인과 대처 |
 |---|---|
 | `Connection failed: HTTP error: 200 OK` | `server` 주소에 `/ws` 경로가 빠졌다. 게임 페이지(HTML)를 받아온 것이다 — `wss://<호스트>/ws` 로 고친다 |
-| `Protocol vN required, you sent vM` | 서버가 업데이트됐다. 새 배포물을 받는다 |
+| `Protocol vN required, you sent vM` | 서버가 업데이트됐다. 다시 실행하면 업데이트할지 물어본다 (또는 새 배포물을 직접 받는다) |
 | `Auth failed: ...` 후 종료 | 로그인 거절. 위 자격증명 파일을 지우고 다시 로그인 |
 | 캐릭터 생성 실패 (이름 중복) | `character_name`은 서버 전체에서 유일해야 한다 |
 | `The merchant class is not available` | 플레이어가 고를 수 없는 클래스다 |

@@ -29,9 +29,11 @@ $stage = $null
 
 Push-Location $repo
 try {
-    $commit = & git rev-parse --short HEAD
-    if ($LASTEXITCODE -ne 0) { throw "git rev-parse failed" }
-    $commit = $commit.Trim()
+    # Named by crate version; the release tag must be agent-client-v<version>
+    # and bumped every release (the shipped self-updater compares against it).
+    $cargoToml = Get-Content -LiteralPath (Join-Path $repo "agent-client\Cargo.toml") -Raw
+    if ($cargoToml -notmatch '(?m)^version = "(.+)"') { throw "no version in agent-client/Cargo.toml" }
+    $version = $Matches[1]
 
     $targetTriple = if ($target) {
         $target
@@ -43,7 +45,7 @@ try {
     }
 
     $suffix = "$($Matches.arch)-windows-$($Matches.abi)"
-    $name = "agent-client-$commit-$suffix"
+    $name = "agent-client-v$version-$suffix"
     $stage = Join-Path $outDir $name
     $archive = Join-Path $outDir "$name.zip"
 

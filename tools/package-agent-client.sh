@@ -39,7 +39,10 @@ fi
 TARGET=${TARGET:-}
 
 cd "$REPO"
-commit=$(git rev-parse --short HEAD)
+# The artifact is named by the crate version; the release tag must be
+# agent-client-v<version>, and the version must be bumped every release —
+# the shipped self-updater compares it against the latest tag.
+version=$(grep -m1 '^version' agent-client/Cargo.toml | cut -d'"' -f2)
 if [[ -n $TARGET ]]; then
     cargo build --release --target "$TARGET" -p agent-client
     binary="target/$TARGET/release/agent-client"
@@ -52,7 +55,7 @@ else
     glibc=$(objdump -T "$binary" | grep -oE "GLIBC_[0-9.]+" | sort -uV | tail -1)
     suffix="$(uname -m)-${glibc,,}"
 fi
-name="agent-client-$commit-$suffix"
+name="agent-client-v$version-$suffix"
 stage="$OUT_DIR/$name"
 
 rm -rf "$stage"

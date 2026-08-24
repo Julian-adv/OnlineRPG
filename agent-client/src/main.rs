@@ -15,6 +15,7 @@ mod shop_info;
 mod splat;
 mod state;
 mod terrain_http;
+mod update;
 mod watch;
 mod ws;
 
@@ -81,6 +82,10 @@ struct Config {
     /// Spectator panel port on 127.0.0.1 (default: 0, off)
     #[serde(default)]
     watch_port: u16,
+
+    /// Check GitHub releases at startup and self-update (default on).
+    #[serde(default = "default_true")]
+    auto_update: bool,
 
     /// Claude CLI integration config (shared across NPCs that don't override)
     #[serde(default)]
@@ -157,6 +162,10 @@ fn default_request_timeout_secs() -> u64 {
     120
 }
 
+fn default_true() -> bool {
+    true
+}
+
 const CONFIG_PATH: &str = "data/config.toml";
 
 fn resolve_npc_token(config_value: Option<String>) -> anyhow::Result<String> {
@@ -204,6 +213,11 @@ async fn main() -> anyhow::Result<()> {
 
     if config.auth.mode == AuthMode::Google {
         check_google_mode_config(&config.npcs)?;
+    }
+
+    update::cleanup_old_binary();
+    if config.auto_update {
+        update::check().await;
     }
 
     // NPCs inherit root-level backend configs when they don't override them
