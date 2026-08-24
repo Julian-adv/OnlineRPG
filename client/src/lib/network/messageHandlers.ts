@@ -98,7 +98,6 @@ import {
 import { enqueueConsent } from '../stores/consentQueue'
 import { editorTreeDataManager } from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
-import type { MonsterData } from '../types/Monster'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
@@ -764,18 +763,7 @@ export function handleServerMessage(
       monsterManager.reset()
       if (data.monsters) {
         Object.values(data.monsters as Record<string, ServerMonster>).forEach(
-          (monster) => {
-            monsterManager.spawnWithId(
-              monster.id,
-              monster.monster_type as MonsterData['type'],
-              monster.position,
-              monster.owner_id,
-              monster.health,
-              monster.max_health,
-              monster.floor_level,
-              monster.aggressive
-            )
-          }
+          (monster) => monsterManager.spawnWithId(monster)
         )
       }
 
@@ -813,34 +801,14 @@ export function handleServerMessage(
     }
 
     case 'MonsterSpawned': {
-      const monster: ServerMonster = data.monster
-      monsterManager.spawnWithId(
-        monster.id,
-        monster.monster_type as MonsterData['type'],
-        monster.position,
-        monster.owner_id,
-        monster.health,
-        monster.max_health,
-        monster.floor_level,
-        monster.aggressive
-      )
+      monsterManager.spawnWithId(data.monster as ServerMonster)
       break
     }
 
     case 'MonsterAssigned': {
-      const assigned: ServerMonster = data.monster
       // May be a reassignment of a monster we already track (dungeon
       // owner handover): update the owner and (re)create our brain.
-      monsterManager.adoptOwnership(
-        assigned.id,
-        assigned.monster_type as MonsterData['type'],
-        assigned.position,
-        assigned.owner_id,
-        assigned.health,
-        assigned.max_health,
-        assigned.floor_level,
-        assigned.aggressive
-      )
+      monsterManager.adoptOwnership(data.monster as ServerMonster)
       break
     }
 

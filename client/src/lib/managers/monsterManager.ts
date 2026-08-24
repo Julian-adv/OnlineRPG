@@ -7,6 +7,7 @@ import { gameStore, type GameState } from '../stores/gameStore'
 import { inventoryStore } from '../stores/inventoryStore'
 import { remotePlayerManager } from './remotePlayerManager'
 import type { MonsterData } from '../types/Monster'
+import type { ServerMonster } from '../network/networkTypes'
 import { getMonsterDef } from '../data/monsterDefs'
 import { getItemDef } from '../data/itemDefs'
 import {
@@ -166,126 +167,78 @@ class MonsterManager {
    * ownership handover of a monster we already track (dungeon floors
    * reassign AI when the previous owner leaves).
    */
-  adoptOwnership(
-    id: string,
-    type: MonsterData['type'],
-    position: { x: number; y: number; z: number },
-    ownerId?: number,
-    health?: number,
-    maxHealth?: number,
-    floorLevel?: number,
-    aggressive?: boolean
-  ) {
-    const existing = this.monsters.get(id)
+  adoptOwnership(monster: ServerMonster) {
+    const existing = this.monsters.get(monster.id)
     if (!existing) {
-      this.spawnWithId(
-        id,
-        type,
-        position,
-        ownerId,
-        health,
-        maxHealth,
-        floorLevel,
-        aggressive
-      )
+      this.spawnWithId(monster)
       return
     }
-    existing.ownerId = ownerId
-    if (floorLevel !== undefined) existing.floorLevel = floorLevel
-    this.monsters.set(id, { ...existing })
-
-    const myPlayerId = get(gameStore).currentPlayer?.id
-    if (ownerId === myPlayerId && existing.state !== 'dead') {
-      // Recreate the brain from the monster's live state.
-      ai_remove_brain(id)
-      const def = getMonsterDef(type)
-      this.ensureTemplatesLoaded()
-      const fl = existing.floorLevel ?? 0
-      ai_create_brain({
-        monsterId: id,
-        monsterType: type,
-        position: existing.position,
-        health: existing.health,
-        maxHealth: existing.maxHealth,
-        walkSpeed: def?.walkSpeed ?? 1,
-        runSpeed: def?.runSpeed ?? 8,
-        attackRange: def?.attackRange ?? 2,
-        chaseRange: def?.chaseRange ?? 25,
-        attackCooldown:
-          def?.attackCooldown ?? DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
-        behavior: this.resolveBehavior(type, aggressive),
-        pathFloor:
-          fl < 0 && dungeonManager.active
-            ? dungeonManager.passabilityFloor(-fl)
-            : 0,
-      })
+    existing.ownerId = monster.owner_id
+    if (monster.floor_level !== undefined) {
+      existing.floorLevel = monster.floor_level
     }
+    this.monsters.set(monster.id, { ...existing })
+    this.ensureBrain(existing, monster.aggressive)
   }
 
-  spawnWithId(
-    id: string,
-    type: MonsterData['type'],
-    position: { x: number; y: number; z: number },
-    ownerId?: number,
-    health?: number,
-    maxHealth?: number,
-    floorLevel?: number,
-    aggressive?: boolean
-  ) {
-    if (this.monsters.has(id)) return
+  spawnWithId(monster: ServerMonster) {
+    if (this.monsters.has(monster.id)) return
 
+    const type = monster.monster_type as MonsterData['type']
+    // Corpses stay in the server's AOI, so re-entering a floor respawns
+    // them dead; anything else transient collapses to idle.
+    const spawnDead = monster.state === 'dead'
     const def = getMonsterDef(type)
     // Server is authoritative for HP and always sends health/max_health on
     // spawn; the constant is only a defensive fallback.
-    const hp = health ?? 10
-    const maxHp = maxHealth ?? 10
-
-    this.monsters.set(id, {
-      id,
+    const record: MonsterData = {
+      id: monster.id,
       type,
-      position,
+      position: monster.position,
       rotation: 0,
-      state: 'idle',
-      ownerId,
+      state: spawnDead ? 'dead' : 'idle',
+      ownerId: monster.owner_id,
       moveSpeed: def?.walkSpeed ?? 1,
       stateTimer: 0,
       attackCounter: 0,
       hitCounter: 0,
-      health: hp,
-      maxHealth: maxHp,
-      spawnPosition: { ...position },
-      floorLevel: floorLevel ?? 0,
-    })
+      health: monster.health ?? 10,
+      maxHealth: monster.max_health ?? 10,
+      spawnPosition: { ...monster.position },
+      floorLevel: monster.floor_level ?? 0,
+    }
+    this.monsters.set(monster.id, record)
+    this.ensureBrain(record, monster.aggressive)
+  }
 
-    // Create WASM brain for owned monsters
-    const gameState = get(gameStore)
-    const myPlayerId = gameState.currentPlayer?.id
-    if (ownerId === myPlayerId) {
-      this.ensureTemplatesLoaded()
-      const behavior = this.resolveBehavior(type, aggressive)
-      // Dungeon monsters path on their depth's passability floor so the
-      // maze walls apply; surface monsters use the open overworld (0).
-      const fl = floorLevel ?? 0
-      const pathFloor =
+  /** (Re)create our WASM brain from the monster's live state. Only monsters
+   *  we own get one, and corpses never do. */
+  private ensureBrain(monster: MonsterData, aggressive?: boolean) {
+    if (monster.ownerId !== get(gameStore).currentPlayer?.id) return
+    if (monster.state === 'dead') return
+    ai_remove_brain(monster.id)
+    this.ensureTemplatesLoaded()
+    const def = getMonsterDef(monster.type)
+    // Dungeon monsters path on their depth's passability floor so the
+    // maze walls apply; surface monsters use the open overworld (0).
+    const fl = monster.floorLevel ?? 0
+    ai_create_brain({
+      monsterId: monster.id,
+      monsterType: monster.type,
+      position: monster.position,
+      health: monster.health,
+      maxHealth: monster.maxHealth,
+      walkSpeed: def?.walkSpeed ?? 1,
+      runSpeed: def?.runSpeed ?? 8,
+      attackRange: def?.attackRange ?? 2,
+      chaseRange: def?.chaseRange ?? 25,
+      attackCooldown: def?.attackCooldown ?? DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
+      behavior: this.resolveBehavior(monster.type, aggressive),
+      pathFloor:
         fl < 0 && dungeonManager.active
           ? dungeonManager.passabilityFloor(-fl)
-          : 0
-      ai_create_brain({
-        monsterId: id,
-        monsterType: type,
-        position,
-        health: hp,
-        maxHealth: maxHp,
-        walkSpeed: def?.walkSpeed ?? 1,
-        runSpeed: def?.runSpeed ?? 8,
-        attackRange: def?.attackRange ?? 2,
-        chaseRange: def?.chaseRange ?? 25,
-        attackCooldown:
-          def?.attackCooldown ?? DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
-        behavior,
-        pathFloor,
-      })
-    }
+          : 0,
+    })
   }
 
   remove(id: string) {

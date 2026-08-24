@@ -5,6 +5,12 @@
   // nameplate height and the invisible hover proxy. Deliberately non-reactive.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const bindPoseBoxByModel = new Map<string, Box3>()
+
+  // Raw corpse ground offset per monster type (die-clip final pose is
+  // type-invariant), so the per-vertex scan runs once per type, not per
+  // corpse. Deliberately non-reactive.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const corpseGroundOffsetByType = new Map<string, number>()
 </script>
 
 <script lang="ts">
@@ -151,7 +157,9 @@
       : 0
   )
   let animDebugInfo = $state('')
-  let isDeadAnimationFinished = $state(false)
+  // Starts true for a monster that is already a corpse on spawn (AOI
+  // re-entry), so the dead-pose clip plays instead of the fall.
+  let isDeadAnimationFinished = $state(untrack(() => monsterState) === 'dead')
   let isAttackAnimationFinished = $state(true)
   let lastMonsterState = $state<MonsterData['state'] | undefined>(undefined)
   let lastDeadAnimFinished = $state(false)
@@ -198,6 +206,35 @@
         mesh.castShadow = opacity >= 0.25
       }
     })
+  }
+
+  // The death clip clamps with the body still raised, so settle the
+  // corpse onto the ground — unless its clip was already grounded on
+  // load, where settling again would just show as a jump, or the
+  // type opts out because its clip ends at ground level as authored.
+  // Pose-dependent: only call with the corpse pose applied to the skeleton.
+  function applyCorpseGround() {
+    if (
+      model &&
+      !deadGroundApplied &&
+      !initialDef?.sharedAnims &&
+      initialDef?.corpseAutoGround !== false
+    ) {
+      deadGroundApplied = true
+      let offset = corpseGroundOffsetByType.get(type)
+      if (offset === undefined) {
+        offset = computeCorpseGroundOffset(model)
+        corpseGroundOffsetByType.set(type, offset)
+      }
+      // corpseGroundOffset is authored in world metres; de-scale it
+      // since model.position lives inside the scaled group.
+      model.position.y += offset + (def?.corpseGroundOffset ?? 0) / initialScale
+    }
+  }
+
+  function settleCorpse() {
+    isDeadAnimationFinished = true
+    applyCorpseGround()
   }
 
   function playAnimation(forceRestart = false) {
@@ -262,8 +299,19 @@
           isDeadAnimationFinished = false
         }
 
-        newAction.reset().fadeIn(fadeDuration).play()
-
+        newAction.reset()
+        if (monsterState === 'dead' && !currentAction) {
+          // Already dead on our very first play (AOI re-entry corpse): every
+          // def reuses the die clip as the dead pose, so jump to its final
+          // frame instead of replaying the fall, then evaluate so the ground
+          // offset measures the lying body.
+          newAction.play()
+          newAction.time = Math.max(0, clip.duration - 1e-4)
+          mixer.update(0)
+          settleCorpse()
+        } else {
+          newAction.fadeIn(fadeDuration).play()
+        }
         currentAction = newAction
       }
     } else {
@@ -429,24 +477,7 @@
             isAttackAnimationFinished = true
           }
           if (finishedClipName === (def?.animDie ?? 'Die')) {
-            isDeadAnimationFinished = true
-            // The death clip clamps with the body still raised, so settle the
-            // corpse onto the ground — unless its clip was already grounded on
-            // load, where settling again would just show as a jump, or the
-            // type opts out because its clip ends at ground level as authored.
-            if (
-              model &&
-              !deadGroundApplied &&
-              !initialDef?.sharedAnims &&
-              initialDef?.corpseAutoGround !== false
-            ) {
-              deadGroundApplied = true
-              // corpseGroundOffset is authored in world metres; de-scale it
-              // since model.position lives inside the scaled group.
-              model.position.y +=
-                computeCorpseGroundOffset(model) +
-                (def?.corpseGroundOffset ?? 0) / initialScale
-            }
+            settleCorpse()
           }
         })
 
