@@ -234,10 +234,11 @@ pub struct PropSpec {
     pub kind: PropKind,
     /// How many of `kind` are stacked vertically (1 or 2). Chests never stack.
     pub stack: u8,
-    /// Yaw in whole degrees (0..360). Meaning depends on `kind`: for clutter
-    /// (barrel/crate/chest) it's a random jitter for variety; for `TorchWall`
-    /// it's the room-facing direction the client mounts it by (north wall → 0,
-    /// east wall → 270).
+    /// Yaw in whole degrees (0..360). Meaning depends on `kind`: for
+    /// barrel/crate it's a random jitter for variety; for `Chest` it's the
+    /// back-wall yaw the client seats the hinge by (N 0, S 180, W 90, E 270);
+    /// for `TorchWall` it's the room-facing direction the client mounts it by
+    /// (north wall → 0, east wall → 270).
     pub rotation: u16,
 }
 
