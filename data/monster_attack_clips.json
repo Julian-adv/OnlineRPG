@@ -1,10 +1,12 @@
 {
   "bugbear": 1533,
+  "cyclop": 1500,
   "gnoll": 1433,
   "goblin": 1500,
   "goblin_boss": 1500,
   "hobgoblin": 1533,
   "kobold": 1500,
+  "lizardfolk": 1500,
   "ogre": 1533,
   "ogre_boss": 1533,
   "orc": 1500,
