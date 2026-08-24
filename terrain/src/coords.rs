@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 pub const WORLD_TILES_X: i32 = 512;
 pub const WORLD_MIN_TILE_X: i32 = -256;
 pub const WORLD_MAX_TILE_X: i32 = WORLD_MIN_TILE_X + WORLD_TILES_X;
+pub const FANTASY_MINIMAP_DIR: &str = "minimap-fantasy";
 
 /// Normalize a render/data tile X into the canonical baked file range.
 #[inline]
@@ -122,17 +123,33 @@ pub fn tree_region_dir(base: &Path, rx: i32, rz: i32) -> PathBuf {
 
 /// Build filesystem path for a region minimap PNG file.
 pub fn minimap_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
+    minimap_path_in(base, "minimap", rx, rz)
+}
+
+pub fn fantasy_minimap_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
+    minimap_path_in(base, FANTASY_MINIMAP_DIR, rx, rz)
+}
+
+fn minimap_path_in(base: &Path, directory: &str, rx: i32, rz: i32) -> PathBuf {
     let rx = wrap_region_x(rx);
-    base.join("minimap")
+    base.join(directory)
         .join(format!("r{:+03}_{:+03}.png", rx, rz))
 }
 
 pub fn minimap_lod_path(base: &Path, rx: i32, rz: i32, size: u32) -> PathBuf {
+    minimap_lod_path_in(base, "minimap", rx, rz, size)
+}
+
+pub fn fantasy_minimap_lod_path(base: &Path, rx: i32, rz: i32, size: u32) -> PathBuf {
+    minimap_lod_path_in(base, FANTASY_MINIMAP_DIR, rx, rz, size)
+}
+
+fn minimap_lod_path_in(base: &Path, directory: &str, rx: i32, rz: i32, size: u32) -> PathBuf {
     if size >= 1024 {
-        return minimap_path(base, rx, rz);
+        return minimap_path_in(base, directory, rx, rz);
     }
     let rx = wrap_region_x(rx);
-    base.join("minimap")
+    base.join(directory)
         .join(size.to_string())
         .join(format!("r{:+03}_{:+03}.png", rx, rz))
 }

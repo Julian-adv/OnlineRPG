@@ -6,9 +6,14 @@
   } from '../data/mapLabels'
   import { RegionImageCache } from '../terrain/regionImageCache'
   import {
+    getMapFrameCornerReservedBounds,
     layoutMapLabels,
     type ScreenRect,
   } from '../utils/worldMapLabelLayout'
+  import {
+    persistWorldMapView,
+    resolveWorldMapView,
+  } from '../utils/worldMapViewState'
 
   const REGION_SIZE = 16
   const TILE_DIM = 64
@@ -17,7 +22,8 @@
   const WORLD_MAX_REGION_Z = 15
 
   const MIN_ZOOM = 1
-  const DEFAULT_ZOOM = 8
+  const DEFAULT_ZOOM = 16
+  const MOBILE_AREA_ZOOM_REFERENCE = 8
 
   // --- Place-name labels, plus the player's discovered dungeon entrances ---
   type LabelKind = MapLabelKind
@@ -42,6 +48,8 @@
   let savedCamX: number | null = null
   let savedCamZ: number | null = null
   let savedZoom: number | null = null
+  let followPlayerOnOpen = true
+  let useDefaultZoomOnOpen = true
 </script>
 
 <script lang="ts">
@@ -80,7 +88,6 @@
 
   let playerX = $derived(wrapWorldX($gameStore.currentPlayer?.position.x ?? 0))
   let playerZ = $derived($gameStore.currentPlayer?.position.z ?? 0)
-  let playerHeading = $derived($gameStore.currentPlayer?.rotation ?? 0)
 
   // --- Camera state (world coordinates of view center) ---
   let camX = $state(0)
@@ -88,24 +95,26 @@
 
   // --- Zoom state (in regions/km) ---
   let zoomSpan = $state(DEFAULT_ZOOM)
-  let teleportMode = $state(false)
+  let initializedForOpen = $state(false)
 
   // Restore saved view state or center on player when dialog opens
   $effect(() => {
-    if ($worldMapVisible) {
-      if (savedCamX !== null && savedCamZ !== null) {
-        camX = savedCamX
-        camZ = savedCamZ
-      } else {
-        camX = playerX
-        camZ = playerZ
-      }
-      if (savedZoom !== null) {
-        zoomSpan = Math.min(savedZoom, maxZoomSpan)
-      } else {
-        zoomSpan = defaultZoomSpan
-      }
+    if (!$worldMapVisible) {
+      initializedForOpen = false
+      return
     }
+    if (initializedForOpen) return
+    initializedForOpen = true
+
+    const restored = resolveWorldMapView(
+      { camX: savedCamX, camZ: savedCamZ, zoomSpan: savedZoom },
+      { followPlayerOnOpen, useDefaultZoomOnOpen },
+      { camX: playerX, camZ: playerZ, zoomSpan: defaultZoomSpan },
+      maxZoomSpan
+    )
+    camX = restored.camX
+    camZ = restored.camZ
+    zoomSpan = restored.zoomSpan
   })
 
   // Party existence only: roster churn must not re-request (a membership
@@ -339,7 +348,9 @@
       })
     }
 
-    const reservedBounds: ScreenRect[] = []
+    const viewport = { left: 0, top: 0, right: cw, bottom: ch }
+    const reservedBounds: ScreenRect[] =
+      getMapFrameCornerReservedBounds(viewport)
     const player = worldToScreen(playerX, playerZ, cw, ch)
     if (onScreen(player, cw, ch, 20)) {
       reservedBounds.push({
@@ -372,12 +383,12 @@
     return layoutMapLabels(inputs, {
       zoomSpan,
       areaZoomSpan: mobileMapBudget
-        ? (zoomSpan * DEFAULT_ZOOM) / maxZoomSpan
+        ? (zoomSpan * MOBILE_AREA_ZOOM_REFERENCE) / maxZoomSpan
         : zoomSpan,
-      viewport: { left: 0, top: 0, right: cw, bottom: ch },
+      viewport,
       reservedBounds,
       collisionPadding: 5,
-      edgePadding: 8,
+      edgePadding: 16,
       markerGap: 11,
     }).map(({ label, anchor, textOffset, textVisible }) => ({
       key: label.key,
@@ -398,19 +409,13 @@
   let selfMarker = $derived.by<{
     left: number
     top: number
-    angle: number
   } | null>(() => {
     const cw = containerW
     const ch = containerH
     if (cw <= 0 || ch <= 0) return null
     const p = worldToScreen(playerX, playerZ, cw, ch)
     if (!onScreen(p, cw, ch, 20)) return null
-    return {
-      ...p,
-      angle:
-        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
-        ROTATE_ANGLE,
-    }
+    return p
   })
 
   // --- Party member markers (HTML layer, same transform as the labels) ---
@@ -451,21 +456,25 @@
 
   // --- Zoom controls ---
   function zoomIn() {
+    useDefaultZoomOnOpen = false
     zoomSpan = Math.max(MIN_ZOOM, zoomSpan - 1)
   }
 
   function zoomOut() {
+    useDefaultZoomOnOpen = false
     zoomSpan = Math.min(maxZoomSpan, zoomSpan + 1)
   }
 
   function zoomReset() {
     zoomSpan = defaultZoomSpan
+    useDefaultZoomOnOpen = true
     savedZoom = null
   }
 
   function resetCamera() {
     camX = playerX
     camZ = playerZ
+    followPlayerOnOpen = true
     savedCamX = null
     savedCamZ = null
   }
@@ -513,6 +522,7 @@
       rawDx * rawDx + rawDz * rawDz > DRAG_THRESHOLD_PX2
     ) {
       suppressNextClick = true
+      followPlayerOnOpen = false
     }
     const dx = rawDx / scale
     const dz = rawDz / scale
@@ -544,9 +554,13 @@
   // Save view state on component destroy (covers all close paths)
   $effect(() => {
     return () => {
-      savedCamX = camX
-      savedCamZ = camZ
-      savedZoom = zoomSpan
+      const saved = persistWorldMapView(
+        { camX, camZ, zoomSpan },
+        { followPlayerOnOpen, useDefaultZoomOnOpen }
+      )
+      savedCamX = saved.camX
+      savedCamZ = saved.camZ
+      savedZoom = saved.zoomSpan
     }
   })
 
@@ -556,7 +570,6 @@
       renderGeneration++
       regionImages.flush()
     }
-    teleportMode = false
     worldMapVisible.set(false)
   }
 
@@ -576,7 +589,7 @@
       event.stopPropagation()
       return
     }
-    const teleportRequested = (event.ctrlKey || teleportMode) && $isAdminUser
+    const teleportRequested = event.ctrlKey && $isAdminUser
     if (!teleportRequested) return
     event.preventDefault()
     event.stopPropagation()
@@ -640,30 +653,54 @@
     class:mobile-map-budget={mobileMapBudget}
     role="dialog"
     aria-modal="true"
+    aria-labelledby="world-map-title"
+    tabindex="-1"
   >
     <div class="header">
-      <h2>World Map</h2>
+      <h2 id="world-map-title">World Map</h2>
       <div class="controls">
-        <button class="ctrl-btn" onclick={zoomIn} title="Zoom In">+</button>
-        <button class="ctrl-btn" onclick={zoomOut} title="Zoom Out"
-          >&minus;</button
+        <button
+          type="button"
+          class="ctrl-btn symbol-btn"
+          onclick={zoomIn}
+          title="Zoom In"
+          aria-label="Zoom in">+</button
         >
-        <button class="ctrl-btn" onclick={zoomReset} title="Reset Zoom"
-          >Reset</button
+        <button
+          type="button"
+          class="ctrl-btn symbol-btn"
+          onclick={zoomOut}
+          title="Zoom Out"
+          aria-label="Zoom out">&minus;</button
         >
-        <button class="ctrl-btn" onclick={resetCamera} title="Center on Player"
-          >&#8982;</button
+        <button
+          type="button"
+          class="ctrl-btn reset-btn"
+          onclick={zoomReset}
+          title="Reset Zoom"
+          aria-label="Reset zoom">Reset</button
         >
-        {#if $isAdminUser}
-          <button
-            class="ctrl-btn"
-            class:active={teleportMode}
-            onclick={() => (teleportMode = !teleportMode)}
-            title="Teleport Mode">TP</button
-          >
-        {/if}
+        <button
+          type="button"
+          class="ctrl-btn center-btn"
+          onclick={resetCamera}
+          title="Center on Player"
+          aria-label="Center on player"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="6.5"></circle>
+            <path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"></path>
+            <circle cx="12" cy="12" r="1.5" class="center-dot"></circle>
+          </svg></button
+        >
       </div>
-      <button class="close-btn" onclick={close}>&times;</button>
+      <button
+        type="button"
+        class="close-btn"
+        onclick={close}
+        title="Close"
+        aria-label="Close world map">&times;</button
+      >
     </div>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -683,7 +720,22 @@
             class:area={label.area}
             style="left: {label.left}px; top: {label.top}px; --label-text-x: {label.textOffsetX}px; --label-text-y: {label.textOffsetY}px;"
           >
-            {#if !label.area}
+            {#if label.kind === 'capital' || label.kind === 'city' || label.kind === 'town'}
+              <svg
+                class="marker crest-marker"
+                viewBox="0 0 18 24"
+                aria-hidden="true"
+              >
+                <path
+                  class="crest-shield"
+                  d="M2.25 2.25h13.5v9.2c0 5.15-2.95 8.45-6.75 10.3-3.8-1.85-6.75-5.15-6.75-10.3z"
+                ></path>
+                <path
+                  class="crest-sigil"
+                  d="M5.3 7.1h7.4M6.4 7.1v4.25h5.2V7.1M7.2 11.35v3.9M10.8 11.35v3.9M5.8 15.25h6.4"
+                ></path>
+              </svg>
+            {:else if !label.area}
               <span class="marker"></span>
             {/if}
             {#if label.textVisible}
@@ -705,11 +757,14 @@
         {#if selfMarker}
           <svg
             class="self-marker"
-            style="left: {selfMarker.left}px; top: {selfMarker.top}px; transform: translate(-50%, -50%) rotate({selfMarker.angle}rad);"
-            viewBox="-7 -7 16 14"
+            style="left: {selfMarker.left}px; top: {selfMarker.top}px;"
+            viewBox="0 0 20 20"
             aria-hidden="true"
           >
-            <path d="M 8 0 L -6 6 L -3 0 L -6 -6 Z"></path>
+            <circle class="self-marker-rim" cx="10" cy="10" r="8"></circle>
+            <circle class="self-marker-core" cx="10" cy="10" r="5.4"></circle>
+            <circle class="self-marker-shine" cx="8.2" cy="7.8" r="1.6"
+            ></circle>
           </svg>
         {/if}
       </div>
@@ -741,64 +796,48 @@
     --wm-gold: #c49b4b;
     --wm-gold-hi: #f0ce78;
     --wm-brass: #76572b;
+    --wm-serif:
+      'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, 'Times New Roman',
+      'Noto Serif KR', AppleMyungjo, Batang, serif;
     position: relative;
     isolation: isolate;
-    width: min(80vw, 800px);
-    height: min(80vh, 800px);
+    width: min(80vw, 80dvh, 800px);
+    height: min(80vw, 80dvh, 800px);
     display: flex;
     flex-direction: column;
-    border-radius: 8px;
-    border: 1px solid var(--wm-brass);
+    border: 1px solid #38270e;
+    border-radius: 5px;
     background: var(--wm-night);
     color: var(--wm-paper);
     box-shadow:
       0 26px 80px rgba(0, 0, 0, 0.72),
-      0 0 0 1px #21170b,
-      inset 0 0 0 1px rgba(240, 206, 120, 0.16);
+      0 0 0 1px #160f07,
+      0 0 18px rgba(196, 155, 75, 0.18);
     overflow: hidden;
   }
 
   .dialog::before {
     content: '';
     position: absolute;
-    inset: 5px;
+    inset: 0;
     z-index: 10;
-    border: 1px solid rgba(240, 206, 120, 0.2);
-    border-radius: 4px;
-    background:
-      linear-gradient(90deg, var(--wm-gold), transparent) left top / 28px 1px
-        no-repeat,
-      linear-gradient(180deg, var(--wm-gold), transparent) left top / 1px 28px
-        no-repeat,
-      linear-gradient(-90deg, var(--wm-gold), transparent) right top / 28px 1px
-        no-repeat,
-      linear-gradient(180deg, var(--wm-gold), transparent) right top / 1px 28px
-        no-repeat,
-      linear-gradient(90deg, var(--wm-gold), transparent) left bottom / 28px 1px
-        no-repeat,
-      linear-gradient(0deg, var(--wm-gold), transparent) left bottom / 1px 28px
-        no-repeat,
-      linear-gradient(-90deg, var(--wm-gold), transparent) right bottom / 28px
-        1px no-repeat,
-      linear-gradient(0deg, var(--wm-gold), transparent) right bottom / 1px 28px
-        no-repeat;
+    background: url('/textures/ui/world-map/ornate-frame.png') center / 100%
+      100% no-repeat;
     pointer-events: none;
   }
 
   .dialog.mobile-map-budget {
-    width: calc(
-      100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)
-    );
-    height: min(
+    width: min(
+      calc(
+        100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)
+      ),
       calc(
         100dvh - 96px - env(safe-area-inset-top) - env(safe-area-inset-bottom)
       ),
-      calc(
-        100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)
-      )
+      440px
     );
-    max-width: 440px;
-    max-height: 440px;
+    height: auto;
+    aspect-ratio: 1;
   }
 
   .header {
@@ -807,26 +846,21 @@
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     flex: 0 0 52px;
-    padding: 0 15px;
+    padding: 0 max(30px, 8%);
     border-bottom: 1px solid var(--wm-brass);
     background:
-      linear-gradient(180deg, rgba(72, 57, 34, 0.62), rgba(17, 20, 15, 0.96)),
-      repeating-linear-gradient(94deg, #1c170f 0 18px, #241c11 20px 38px);
+      linear-gradient(180deg, rgba(55, 38, 20, 0.2), rgba(7, 7, 5, 0.72)),
+      url('/textures/ui/world-map/dark-wood.png') center 44% / cover;
     box-shadow:
-      inset 0 -1px rgba(240, 206, 120, 0.12),
+      inset 0 -1px rgba(240, 206, 120, 0.22),
       0 3px 12px rgba(0, 0, 0, 0.38);
   }
 
-  .header::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    bottom: -4px;
-    width: 7px;
-    height: 7px;
-    border: 1px solid var(--wm-brass);
-    background: #171b14;
-    transform: translateX(-50%) rotate(45deg);
+  .header h2,
+  .controls,
+  .close-btn {
+    position: relative;
+    z-index: 11;
   }
 
   .header h2 {
@@ -834,11 +868,10 @@
     margin: 0;
     overflow: hidden;
     color: var(--wm-paper);
-    font-family:
-      Georgia, 'Times New Roman', 'Noto Serif KR', AppleMyungjo, Batang, serif;
-    font-size: 17px;
+    font-family: var(--wm-serif);
+    font-size: 20px;
     font-weight: 700;
-    letter-spacing: 0.13em;
+    letter-spacing: 0.06em;
     line-height: 1;
     text-overflow: ellipsis;
     text-shadow: 0 2px 3px #080604;
@@ -848,23 +881,24 @@
   .controls {
     grid-column: 2;
     display: flex;
-    gap: 5px;
+    gap: 6px;
   }
 
   .ctrl-btn {
-    min-width: 32px;
-    height: 31px;
-    padding: 0 8px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0 9px;
     border: 1px solid var(--wm-brass);
     border-radius: 4px;
-    background: linear-gradient(180deg, #273027, #111711);
+    background:
+      linear-gradient(180deg, rgba(57, 48, 31, 0.68), rgba(13, 13, 10, 0.9)),
+      url('/textures/ui/world-map/dark-wood.png') center / 220px 220px;
     box-shadow:
-      inset 0 0 0 1px rgba(240, 206, 120, 0.08),
+      inset 0 0 0 1px rgba(240, 206, 120, 0.12),
       0 2px 4px rgba(0, 0, 0, 0.36);
     color: #d8ccb0;
-    font-family:
-      Georgia, 'Times New Roman', 'Noto Serif KR', AppleMyungjo, Batang, serif;
-    font-size: 14px;
+    font-family: var(--wm-serif);
+    font-size: 15px;
     cursor: pointer;
     line-height: 1;
     transition:
@@ -875,14 +909,36 @@
 
   .ctrl-btn:hover {
     border-color: var(--wm-gold-hi);
-    background: linear-gradient(180deg, #364133, #192119);
+    background:
+      linear-gradient(180deg, rgba(96, 74, 39, 0.62), rgba(27, 22, 14, 0.92)),
+      url('/textures/ui/world-map/dark-wood.png') center / 220px 220px;
     color: #fff0c8;
   }
 
-  .ctrl-btn.active {
-    border-color: var(--wm-gold-hi);
-    background: linear-gradient(180deg, #574626, #282113);
-    color: #ffe39b;
+  .ctrl-btn.symbol-btn {
+    padding: 0;
+    font-size: 22px;
+    font-weight: 400;
+  }
+
+  .ctrl-btn.center-btn {
+    display: grid;
+    place-items: center;
+    padding: 0;
+  }
+
+  .center-btn svg {
+    width: 19px;
+    height: 19px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-width: 1.5;
+  }
+
+  .center-btn .center-dot {
+    fill: currentColor;
+    stroke: none;
   }
 
   .close-btn {
@@ -890,8 +946,9 @@
     justify-self: end;
     background: none;
     border: none;
-    color: #b6a98d;
-    font-size: 22px;
+    color: #c7a866;
+    font-family: var(--wm-serif);
+    font-size: 27px;
     cursor: pointer;
     padding: 0 4px;
     line-height: 1;
@@ -934,11 +991,11 @@
     z-index: 4;
     background: radial-gradient(
       ellipse at center,
-      transparent 62%,
-      rgba(7, 8, 5, 0.12) 78%,
-      rgba(5, 6, 4, 0.44) 100%
+      transparent 67%,
+      rgba(7, 8, 5, 0.07) 83%,
+      rgba(5, 6, 4, 0.22) 100%
     );
-    box-shadow: inset 0 0 44px rgba(5, 6, 4, 0.34);
+    box-shadow: inset 0 0 32px rgba(5, 6, 4, 0.18);
   }
 
   .map-container.dragging {
@@ -984,8 +1041,7 @@
     left: 0;
     top: 0;
     white-space: nowrap;
-    font-family:
-      Georgia, 'Times New Roman', 'Noto Serif KR', AppleMyungjo, Batang, serif;
+    font-family: var(--wm-serif);
     transform: translate(
       calc(-50% + var(--label-text-x)),
       calc(-50% + var(--label-text-y))
@@ -998,78 +1054,104 @@
   }
 
   .map-label.continent .text {
-    font-size: 22px;
+    font-size: 32px;
     font-weight: 600;
-    letter-spacing: 4px;
-    color: #eee1bd;
+    letter-spacing: 8px;
+    color: #f0dfb6;
     text-shadow:
-      0 1px 0 #4a3115,
-      0 0 4px rgba(8, 6, 3, 0.92),
-      0 3px 8px rgba(0, 0, 0, 0.72);
+      0 1px 0 #5b3d19,
+      0 0 3px rgba(8, 6, 3, 0.96),
+      0 3px 7px rgba(0, 0, 0, 0.78);
   }
 
   .map-label.sea .text {
-    font-size: 15px;
+    font-size: 21px;
     font-style: italic;
     font-weight: 600;
-    letter-spacing: 2px;
-    color: #a8cbd4;
+    letter-spacing: 3px;
+    color: #abcbd5;
+    text-shadow:
+      0 1px 0 rgba(133, 179, 194, 0.24),
+      0 0 3px rgba(3, 19, 30, 0.96),
+      0 3px 7px rgba(0, 0, 0, 0.78);
   }
 
   .map-label.island .text {
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 600;
     font-style: italic;
-    letter-spacing: 0.4px;
-    color: #d8d4b8;
+    letter-spacing: 0.6px;
+    color: #ddd7bc;
   }
 
   .map-label.capital .text {
-    font-size: 16px;
+    font-size: 17px;
     font-weight: 700;
     letter-spacing: 0.3px;
     color: #fff0c8;
   }
 
   .map-label.city .text {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.2px;
     color: #efe5c9;
   }
 
   .map-label.town .text {
-    font-size: 13px;
+    font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.2px;
     color: #ddd2b1;
   }
 
-  .map-label.capital .marker {
-    width: 12px;
-    height: 12px;
-    border: 2px solid #271b0b;
-    border-radius: 2px;
-    background: linear-gradient(135deg, #ffe395, #b67b21);
-    box-shadow:
-      0 0 0 2px rgba(236, 193, 91, 0.68),
-      0 2px 5px rgba(0, 0, 0, 0.7);
-    transform: translate(-50%, -50%) rotate(45deg);
+  .map-label .crest-marker {
+    overflow: visible;
+    border-radius: 0;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.82));
   }
 
-  .map-label.city .marker {
-    width: 9px;
-    height: 9px;
-    background: #d7a947;
-    border: 2px solid #281d0e;
-    box-shadow: 0 0 0 1px rgba(255, 225, 148, 0.42);
+  .map-label.capital .crest-marker {
+    width: 15px;
+    height: 20px;
   }
 
-  .map-label.town .marker {
-    width: 8px;
-    height: 8px;
-    background: #1c251b;
-    border: 2px solid #c59b4a;
+  .map-label.city .crest-marker {
+    width: 14px;
+    height: 19px;
+  }
+
+  .map-label.town .crest-marker {
+    width: 13px;
+    height: 18px;
+  }
+
+  .crest-shield {
+    fill: #17170f;
+    stroke: #d4a536;
+    stroke-linejoin: round;
+    stroke-width: 1.6;
+  }
+
+  .crest-sigil {
+    fill: none;
+    stroke: #f2ca62;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.25;
+  }
+
+  .map-label.city .crest-shield {
+    stroke: #c59632;
+  }
+
+  .map-label.town .crest-shield {
+    fill: #1b2117;
+    stroke: #bd9132;
+  }
+
+  .map-label.town .crest-sigil {
+    stroke: #dfb84d;
   }
 
   .map-label.dungeon .text {
@@ -1092,17 +1174,29 @@
   .self-marker {
     position: absolute;
     z-index: 3;
-    width: 16px;
-    height: 14px;
+    width: 20px;
+    height: 20px;
     overflow: visible;
-    filter: drop-shadow(0 0 3px rgba(255, 50, 50, 0.8));
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.92))
+      drop-shadow(0 0 3px rgba(218, 50, 27, 0.72));
   }
 
-  .self-marker path {
-    fill: #ff3333;
-    stroke: #fff;
-    stroke-width: 1.5;
-    stroke-linejoin: round;
+  .self-marker-rim {
+    fill: #35160c;
+    stroke: #f2cf62;
+    stroke-width: 1.8;
+  }
+
+  .self-marker-core {
+    fill: #d92717;
+    stroke: #720f0a;
+    stroke-width: 0.8;
+  }
+
+  .self-marker-shine {
+    fill: #ffb37c;
+    opacity: 0.88;
   }
 
   .party-marker {
@@ -1143,16 +1237,16 @@
     }
 
     .dialog::before {
-      inset: 3px;
+      background-size: 100% 100%;
     }
 
     .header {
       flex-basis: 48px;
-      padding: 0 10px;
+      padding: 0 max(24px, 8%);
     }
 
     .header h2 {
-      font-size: 14px;
+      font-size: 15px;
       letter-spacing: 0.07em;
     }
 
@@ -1170,11 +1264,6 @@
     .close-btn {
       font-size: 20px;
       padding-right: 1px;
-    }
-
-    .map-label.continent .text {
-      font-size: 19px;
-      letter-spacing: 3px;
     }
   }
 </style>

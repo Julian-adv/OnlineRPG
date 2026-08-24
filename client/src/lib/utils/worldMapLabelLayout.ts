@@ -43,6 +43,48 @@ export interface MapLabelLayoutOptions {
   markerGap?: number
 }
 
+export const MAP_FRAME_CORNER_SAFE_RATIO = 0.08
+
+export function getMapFrameCornerReservedBounds(
+  viewport: ScreenRect,
+  cornerRatio = MAP_FRAME_CORNER_SAFE_RATIO
+): ScreenRect[] {
+  const width = Math.max(0, viewport.right - viewport.left)
+  const height = Math.max(0, viewport.bottom - viewport.top)
+  const size = Math.min(
+    width / 2,
+    height / 2,
+    Math.ceil(width * Math.max(0, cornerRatio))
+  )
+
+  return [
+    {
+      left: viewport.left,
+      top: viewport.top,
+      right: viewport.left + size,
+      bottom: viewport.top + size,
+    },
+    {
+      left: viewport.right - size,
+      top: viewport.top,
+      right: viewport.right,
+      bottom: viewport.top + size,
+    },
+    {
+      left: viewport.left,
+      top: viewport.bottom - size,
+      right: viewport.left + size,
+      bottom: viewport.bottom,
+    },
+    {
+      left: viewport.right - size,
+      top: viewport.bottom - size,
+      right: viewport.right,
+      bottom: viewport.bottom,
+    },
+  ]
+}
+
 interface OccupiedRect {
   bounds: ScreenRect
   ownerIndex?: number
@@ -54,9 +96,9 @@ export const MAP_LABEL_ZOOM_RANGE = {
   sea: { min: 4, max: Infinity },
   capital: { min: 1, max: Infinity },
   city: { min: 1, max: 24 },
-  town: { min: 1, max: 16 },
-  island: { min: 1, max: 16 },
-  dungeon: { min: 1, max: 24 },
+  town: { min: 1, max: 24 },
+  island: { min: 1, max: 24 },
+  dungeon: { min: 1, max: 8 },
 } as const satisfies Record<MapLabelKind, { min: number; max: number }>
 
 export const MAP_LABEL_TEXT_ZOOM_RANGE = {
@@ -64,8 +106,8 @@ export const MAP_LABEL_TEXT_ZOOM_RANGE = {
   sea: { min: 4, max: Infinity },
   capital: { min: 1, max: Infinity },
   city: { min: 1, max: 16 },
-  town: { min: 1, max: 8 },
-  island: { min: 1, max: 16 },
+  town: { min: 1, max: 24 },
+  island: { min: 1, max: 24 },
   dungeon: { min: 1, max: 3 },
 } as const satisfies Record<MapLabelKind, { min: number; max: number }>
 
@@ -85,19 +127,19 @@ const DEFAULT_MARKER_RADIUS = {
   continent: 0,
   sea: 0,
   island: 0,
-  capital: 7,
-  city: 6,
-  town: 6,
+  capital: 11,
+  city: 10,
+  town: 10,
   dungeon: 6,
 } as const satisfies Record<MapLabelKind, number>
 
 const TEXT_STYLE = {
-  continent: { fontSize: 22, widthFactor: 0.68, letterSpacing: 4 },
-  sea: { fontSize: 15, widthFactor: 0.58, letterSpacing: 2 },
-  island: { fontSize: 13, widthFactor: 0.6, letterSpacing: 0.4 },
-  capital: { fontSize: 16, widthFactor: 0.62, letterSpacing: 0.3 },
-  city: { fontSize: 14, widthFactor: 0.62, letterSpacing: 0.2 },
-  town: { fontSize: 13, widthFactor: 0.62, letterSpacing: 0.2 },
+  continent: { fontSize: 32, widthFactor: 0.68, letterSpacing: 8 },
+  sea: { fontSize: 21, widthFactor: 0.58, letterSpacing: 3 },
+  island: { fontSize: 16, widthFactor: 0.6, letterSpacing: 0.6 },
+  capital: { fontSize: 17, widthFactor: 0.62, letterSpacing: 0.3 },
+  city: { fontSize: 15, widthFactor: 0.62, letterSpacing: 0.2 },
+  town: { fontSize: 15, widthFactor: 0.62, letterSpacing: 0.2 },
   dungeon: { fontSize: 13, widthFactor: 0.6, letterSpacing: 0.2 },
 } as const satisfies Record<
   MapLabelKind,
@@ -146,6 +188,8 @@ export function getMapLabelCandidateOffsets(
 
   const horizontal = markerGap + textSize.width / 2
   const vertical = markerGap + textSize.height / 2
+  const outerHorizontal = horizontal + markerGap
+  const outerVertical = vertical + markerGap
   return [
     { x: horizontal, y: 0 },
     { x: 0, y: -vertical },
@@ -155,6 +199,10 @@ export function getMapLabelCandidateOffsets(
     { x: -horizontal, y: -vertical },
     { x: horizontal, y: vertical },
     { x: -horizontal, y: vertical },
+    { x: outerHorizontal, y: 0 },
+    { x: 0, y: -outerVertical },
+    { x: 0, y: outerVertical },
+    { x: -outerHorizontal, y: 0 },
   ]
 }
 
@@ -223,7 +271,8 @@ export function layoutMapLabels<T extends MapLabelDef>(
     let result = hiddenResult(input)
 
     for (const relaxLowerPriority of [false, true]) {
-      for (const offset of offsets) {
+      const candidates = relaxLowerPriority ? offsets : offsets.slice(0, 8)
+      for (const offset of candidates) {
         const center = {
           x: input.anchor.x + offset.x,
           y: input.anchor.y + offset.y,

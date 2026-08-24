@@ -112,6 +112,25 @@ fn periodic_minimap_path_aliases_opposite_world_edge() {
         coords::minimap_path(base, 16, 0),
         coords::minimap_path(base, -16, 0)
     );
+    assert_eq!(
+        coords::fantasy_minimap_path(base, -17, 0),
+        coords::fantasy_minimap_path(base, 15, 0)
+    );
+}
+
+#[test]
+fn fantasy_minimap_paths_use_fixed_root_and_lod() {
+    let base = Path::new("terrain");
+    assert_eq!(
+        coords::fantasy_minimap_path(base, -2, 4),
+        base.join("minimap-fantasy").join("r-02_+04.png")
+    );
+    assert_eq!(
+        coords::fantasy_minimap_lod_path(base, -2, 4, 256),
+        base.join("minimap-fantasy")
+            .join("256")
+            .join("r-02_+04.png")
+    );
 }
 
 #[test]
@@ -161,6 +180,99 @@ async fn read_missing_splatmap_returns_default() {
     let data = io.read_splatmap(999, 999).await.unwrap();
     assert_eq!(data.len(), defaults::SPLATMAP_SIZE);
     assert_eq!(data[0], 0);
+}
+
+#[tokio::test]
+async fn fantasy_minimap_takes_priority_per_requested_lod() {
+    let dir = unique_temp_dir("fantasy_minimap_priority");
+    let io = crate::io::TerrainIO::new(dir.clone());
+    let rx = -2;
+    let rz = 4;
+    let files = [
+        (
+            coords::minimap_path(&dir, rx, rz),
+            b"legacy-base".as_slice(),
+        ),
+        (
+            coords::minimap_lod_path(&dir, rx, rz, 256),
+            b"legacy-256".as_slice(),
+        ),
+        (
+            coords::fantasy_minimap_path(&dir, rx, rz),
+            b"fantasy-base".as_slice(),
+        ),
+        (
+            coords::fantasy_minimap_lod_path(&dir, rx, rz, 256),
+            b"fantasy-256".as_slice(),
+        ),
+    ];
+    for (path, data) in files {
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(path, data).await.unwrap();
+    }
+
+    assert_eq!(
+        io.read_minimap(rx, rz).await.unwrap().unwrap(),
+        b"fantasy-base"
+    );
+    assert_eq!(
+        io.read_minimap_lod(rx, rz, 256).await.unwrap().unwrap(),
+        b"fantasy-256"
+    );
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn missing_fantasy_minimap_lod_falls_back_without_losing_requested_size() {
+    let dir = unique_temp_dir("fantasy_minimap_fallback");
+    let io = crate::io::TerrainIO::new(dir.clone());
+    let rx = 3;
+    let rz = -5;
+    let fantasy_base = coords::fantasy_minimap_path(&dir, rx, rz);
+    let legacy_base = coords::minimap_path(&dir, rx, rz);
+    let legacy_lod = coords::minimap_lod_path(&dir, rx, rz, 128);
+    for path in [&legacy_base, &legacy_lod] {
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+    }
+    tokio::fs::write(&legacy_base, b"legacy-base")
+        .await
+        .unwrap();
+    tokio::fs::write(&legacy_lod, b"legacy-128").await.unwrap();
+
+    assert_eq!(
+        io.read_minimap(rx, rz).await.unwrap().unwrap(),
+        b"legacy-base"
+    );
+    assert_eq!(
+        io.read_minimap_lod(rx, rz, 128).await.unwrap().unwrap(),
+        b"legacy-128"
+    );
+    tokio::fs::create_dir_all(fantasy_base.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&fantasy_base, b"fantasy-base")
+        .await
+        .unwrap();
+    assert_eq!(
+        io.read_minimap(rx, rz).await.unwrap().unwrap(),
+        b"fantasy-base"
+    );
+    assert_eq!(
+        io.read_minimap_lod(rx, rz, 128).await.unwrap().unwrap(),
+        b"legacy-128"
+    );
+    tokio::fs::remove_file(&legacy_lod).await.unwrap();
+    assert_eq!(
+        io.read_minimap_lod(rx, rz, 128).await.unwrap().unwrap(),
+        b"fantasy-base"
+    );
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
 }
 
 #[tokio::test]

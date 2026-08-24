@@ -63,7 +63,7 @@ const FULL_RENDER_SETTINGS = {
   initialTerrainQueueDrainCount: Infinity,
   initialTileWorkDrainCount: Infinity,
   warmupScenePipelines: true,
-  worldMapDefaultZoomSpan: 8,
+  worldMapDefaultZoomSpan: 16,
   worldMapMaxZoomSpan: 32,
 } satisfies Omit<
   GraphicsPreset,

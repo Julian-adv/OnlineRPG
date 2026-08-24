@@ -19,6 +19,7 @@ mod inspect;
 mod map_tile;
 mod preview;
 mod prune_house_trees;
+mod world_map;
 
 use anyhow::Result;
 use apply_houses::ApplyOptions;
@@ -301,6 +302,34 @@ enum Cmd {
         region_z: i32,
     },
 
+    /// Render a lightweight full-world fantasy map from the macro world and
+    /// existing 1 m minimap semantics without baking gameplay terrain.
+    RenderMapWorld {
+        #[command(flatten)]
+        gen: GenArgs,
+
+        #[arg(long, default_value = "data/terrain/minimap")]
+        legacy_source: PathBuf,
+
+        #[arg(long, default_value = "data/terrain")]
+        terrain: PathBuf,
+
+        #[arg(long, default_value = "data/terrain/minimap-fantasy")]
+        out: PathBuf,
+
+        #[arg(long, default_value_t = -16, allow_hyphen_values = true)]
+        region_x_min: i32,
+
+        #[arg(long, default_value_t = 15, allow_hyphen_values = true)]
+        region_x_max: i32,
+
+        #[arg(long, default_value_t = -16, allow_hyphen_values = true)]
+        region_z_min: i32,
+
+        #[arg(long, default_value_t = 15, allow_hyphen_values = true)]
+        region_z_max: i32,
+    },
+
     /// Remove baked tree instances that overlap persisted house footprints.
     PruneHouseTrees {
         /// Terrain directory containing `trees/`.
@@ -440,6 +469,35 @@ fn main() -> Result<()> {
             region_x,
             region_z,
         } => map_tile::render_region_pyramid(&terrain, &out, region_x, region_z),
+        Cmd::RenderMapWorld {
+            gen,
+            legacy_source,
+            terrain,
+            out,
+            region_x_min,
+            region_x_max,
+            region_z_min,
+            region_z_max,
+        } => {
+            if region_x_max < region_x_min || region_z_max < region_z_min {
+                anyhow::bail!(
+                    "invalid region range: x[{},{}] z[{},{}]",
+                    region_x_min,
+                    region_x_max,
+                    region_z_min,
+                    region_z_max,
+                );
+            }
+            let cfg = gen.into_config();
+            world_map::run(
+                &cfg,
+                &legacy_source,
+                &terrain,
+                &out,
+                (region_x_min, region_z_min),
+                (region_x_max, region_z_max),
+            )
+        }
         Cmd::PruneHouseTrees {
             terrain,
             housing,

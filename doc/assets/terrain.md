@@ -9,6 +9,13 @@
 
 - https://blog.runevision.com/2026/03/fast-and-gorgeous-erosion-filter.html for reference
 
+## Fantasy World Map Textures
+
+- `tools/terrain-gen/assets/world-map/ocean.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier is not exposed), generated 2026-08-24 using the user-provided fantasy map as a style reference; project-owned generated asset.
+- `tools/terrain-gen/assets/world-map/lowland.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier is not exposed), generated 2026-08-24 using the user-provided fantasy map as a style reference; project-owned generated asset.
+- `tools/terrain-gen/assets/world-map/forest.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier is not exposed), generated 2026-08-24 using the user-provided fantasy map as a style reference; project-owned generated asset.
+- `tools/terrain-gen/assets/world-map/mountain.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier is not exposed), generated 2026-08-24 using the user-provided fantasy map as a style reference; project-owned generated asset.
+
 ## Splat Map Texture GLB Export
 
 - Plane의 크기는 상관없다. 코드에서 geometry는 무시하고 material의 텍스처만 추출한다.

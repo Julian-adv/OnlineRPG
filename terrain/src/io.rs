@@ -109,6 +109,17 @@ async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     atomic_write(path, data).await
 }
 
+async fn read_first_existing(paths: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
+    for path in paths {
+        match fs::read(path).await {
+            Ok(data) => return Ok(Some(data)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(None)
+}
+
 pub struct TerrainIO {
     base_dir: PathBuf,
 }
@@ -189,12 +200,11 @@ impl TerrainIO {
     }
 
     pub async fn read_minimap(&self, rx: i32, rz: i32) -> std::io::Result<Option<Vec<u8>>> {
-        let path = coords::minimap_path(&self.base_dir, rx, rz);
-        match fs::read(&path).await {
-            Ok(data) => Ok(Some(data)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e),
-        }
+        read_first_existing(&[
+            coords::fantasy_minimap_path(&self.base_dir, rx, rz),
+            coords::minimap_path(&self.base_dir, rx, rz),
+        ])
+        .await
     }
 
     pub async fn read_minimap_lod(
@@ -206,12 +216,13 @@ impl TerrainIO {
         if size >= 1024 {
             return self.read_minimap(rx, rz).await;
         }
-        let path = coords::minimap_lod_path(&self.base_dir, rx, rz, size);
-        match fs::read(&path).await {
-            Ok(data) => Ok(Some(data)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.read_minimap(rx, rz).await,
-            Err(e) => Err(e),
-        }
+        read_first_existing(&[
+            coords::fantasy_minimap_lod_path(&self.base_dir, rx, rz, size),
+            coords::minimap_lod_path(&self.base_dir, rx, rz, size),
+            coords::fantasy_minimap_path(&self.base_dir, rx, rz),
+            coords::minimap_path(&self.base_dir, rx, rz),
+        ])
+        .await
     }
 
     pub async fn write_minimap(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {

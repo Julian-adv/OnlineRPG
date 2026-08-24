@@ -125,6 +125,7 @@ Rust 바이너리 crate (워크스페이스 새 멤버). `shared::worldgen`에
 ```
 terrain-gen preview      --seed <N>             [--out <dir>]
 terrain-gen bake         --seed <N>             [--out <dir>] [--region-{x,z}-{min,max} <i>]
+terrain-gen render-map-world --seed <N> --legacy-source <dir> --out <dir>
 terrain-gen inspect-tile --seed <N> --tile-x <TX> --tile-z <TZ>
 terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 ```
@@ -204,6 +205,23 @@ cargo run -p terrain-gen --release -- render-map-region `
 cargo run -p terrain-gen --release -- render-map-pyramid `
   --terrain data/terrain --out data/terrain --region-x=-2 --region-z=4
 ```
+
+판타지 월드맵은 gameplay terrain 전체를 다시 베이크하지 않고 다음 명령으로
+별도 생성한다.
+
+```powershell
+cargo run -p terrain-gen --release -- render-map-world `
+  --seed 42 --legacy-source data/terrain/minimap `
+  --out data/terrain/minimap-fantasy
+```
+
+빠른 시각 반복은 같은 명령에 `--region-x-min=-2 --region-x-max=-2
+--region-z-min=4 --region-z-max=4`를 붙인다. 결과가 맞으면 범위 옵션을 빼서
+32×32 전 세계를 생성한다. 출력은 최상위 1024px 타일과 `128/`, `256/`,
+`512/` LOD를 합쳐 총 4,096개다. 이 경로는 Phase 1–6 전역 필드와 기존
+1024px minimap의 1m 의미 마스크만 사용한다. 월드맵 이미지 변경 때문에
+262,144 gameplay tile의 height/splat/vegetation을 다시 쓰는 것은 느리고
+플레이 데이터를 불필요하게 변경하므로 full `bake`를 실행하지 않는다.
 
 지명은 minimap PNG에 굽지 않는다. `data-src/map_labels.csv`를 원본으로 두고
 클라이언트가 HTML 레이어에 표시한다. 따라서 지형 LOD와 무관하게 철자와 월드

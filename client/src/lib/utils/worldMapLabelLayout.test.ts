@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MapLabelDef, MapLabelKind } from '../data/mapLabels'
 import {
+  getMapFrameCornerReservedBounds,
   getMapLabelCandidateOffsets,
   isMapLabelTextVisibleAtZoom,
   isMapLabelVisibleAtZoom,
@@ -18,14 +19,18 @@ describe('world map label zoom hierarchy', () => {
     expect(isMapLabelVisibleAtZoom('city', 1)).toBe(true)
     expect(isMapLabelVisibleAtZoom('city', 24)).toBe(true)
     expect(isMapLabelVisibleAtZoom('city', 25)).toBe(false)
-    expect(isMapLabelVisibleAtZoom('island', 16)).toBe(true)
-    expect(isMapLabelVisibleAtZoom('island', 17)).toBe(false)
+    expect(isMapLabelVisibleAtZoom('island', 24)).toBe(true)
+    expect(isMapLabelVisibleAtZoom('island', 25)).toBe(false)
+    expect(isMapLabelTextVisibleAtZoom('island', 24)).toBe(true)
+    expect(isMapLabelTextVisibleAtZoom('island', 25)).toBe(false)
     expect(isMapLabelVisibleAtZoom('sea', 3)).toBe(false)
     expect(isMapLabelVisibleAtZoom('sea', 4)).toBe(true)
     expect(isMapLabelVisibleAtZoom('continent', 7)).toBe(false)
     expect(isMapLabelVisibleAtZoom('continent', 8)).toBe(true)
-    expect(isMapLabelTextVisibleAtZoom('town', 8)).toBe(true)
-    expect(isMapLabelTextVisibleAtZoom('town', 9)).toBe(false)
+    expect(isMapLabelTextVisibleAtZoom('town', 24)).toBe(true)
+    expect(isMapLabelTextVisibleAtZoom('town', 25)).toBe(false)
+    expect(isMapLabelVisibleAtZoom('dungeon', 8)).toBe(true)
+    expect(isMapLabelVisibleAtZoom('dungeon', 9)).toBe(false)
     expect(isMapLabelTextVisibleAtZoom('dungeon', 3)).toBe(true)
     expect(isMapLabelTextVisibleAtZoom('dungeon', 4)).toBe(false)
   })
@@ -62,6 +67,15 @@ describe('world map label candidates', () => {
 })
 
 describe('world map label collision layout', () => {
+  it('reserves all four ornate frame corners at eight percent', () => {
+    expect(getMapFrameCornerReservedBounds(viewport)).toEqual([
+      { left: 0, top: 0, right: 32, bottom: 32 },
+      { left: 368, top: 0, right: 400, bottom: 32 },
+      { left: 0, top: 208, right: 32, bottom: 240 },
+      { left: 368, top: 208, right: 400, bottom: 240 },
+    ])
+  })
+
   it('moves only city text while preserving its world and screen anchors', () => {
     const area = label('VALDRAN', 'continent', 3122.8, 7819.9)
     const city = label('Garasden', 'capital', 1929.6, 2746.2)
