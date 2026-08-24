@@ -21,6 +21,8 @@
   const WORLD_MIN_REGION_Z = -16
   const WORLD_MAX_REGION_Z = 15
   const ATLAS_PADDING_PX = 2
+  // Average deep-sea color of the baked fantasy tiles, shown past the world edge
+  const OUT_OF_WORLD_OCEAN = '#01294e'
 
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 16
@@ -312,7 +314,7 @@
       })
 
       ctx.clearRect(0, 0, cw, ch)
-      ctx.fillStyle = '#000'
+      ctx.fillStyle = OUT_OF_WORLD_OCEAN
       ctx.fillRect(0, 0, cw, ch)
       ctx.save()
       ctx.translate(cw / 2, ch / 2)
