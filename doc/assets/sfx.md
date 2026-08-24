@@ -30,6 +30,7 @@ peak-normalized to ≈ −3 dB, with a short tail fade.
   heavy wet meaty thud with a thick tearing of flesh. Impact only, no voice,
   no music."). Take 5 of a 0.7 s request, kept full length with a 100 ms tail
   fade, peak-normalized to −3 dB, 44.1 kHz mono.
+  2026-08-24 오거 타격음이 너무 커서 게인 ×0.9 (−0.9 dB, peak −2.5 dB) — flesh 재질 전부에 걸린다.
 - sword-stone.ogg — sword striking a stone golem (`metal` → `stone`),
   generated with [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects)
   via the API on 2026-08-22 (Starter tier, own generation; original
@@ -77,10 +78,14 @@ kHz mono.
   feminine cry less than half a second long, cut off instantly as a sword
   strikes her down. Clearly a female human-like voice, high soprano pitch, no
   growl, no male voice, no music."로 바꾸고 0.6 s·prompt_influence 0.6으로
-  5테이크 뽑아 take 3 채택 (스펙트럼 중심 3.3 kHz, 이전 1.8 kHz). 0.5 s에서
-  100 ms 테일 페이드. 원본 `orc-female-death_take3hi2_2026-08-24.mp3`
-- hobgoblin-death.ogg — hobgoblin. Take 2, 1.0 s request trimmed to 0.45 s.
-  "The harsh, barking death cry of a hobgoblin soldier felled by a sword"
+  5테이크 뽑아 take 5 채택 (스펙트럼 중심 3.6 kHz, 이전 1.8 kHz). 0.5 s에서
+  100 ms 테일 페이드. 원본 `orc-female-death_take5hi2_2026-08-24.mp3`
+- hobgoblin-death.ogg — hobgoblin. **2026-08-24 재생성** — 첫 버전("harsh,
+  barking death cry")이 개 짖는 소리처럼 들려서 "The harsh, guttural death cry
+  of a hobgoblin soldier felled by a sword: a rough snarling humanoid war-cry
+  choking off as he falls. Voice only, no dog, no barking, no animal, no
+  music."(0.8 s·influence 0.6)으로 4테이크 뽑아 take 2 채택, 0.7 s에서 100 ms
+  테일 페이드. 원본 `hobgoblin-death_take2_2026-08-24.mp3`
 - gnoll-death.ogg — gnoll. Take 1, 1.0 s request trimmed to 0.85 s. "The
   yelping, hyena-like death howl of a gnoll cut down in battle"
 - bugbear-death.ogg — bugbear. Take 2, 1.0 s request trimmed to 0.70 s. "A big
@@ -90,7 +95,7 @@ kHz mono.
 - ogre-death.ogg — ogre. Take 4, 1.0 s request trimmed to 0.90 s. "A huge
   brutish ogre monster's deep guttural death groan, a hoarse animal voice
   choking off as it collapses from a sword wound. Voice only, no horns, no
-  music."
+  music." 2026-08-24 너무 커서 게인 ×0.9 (−0.9 dB, peak −3.4 dB).
 - troll-death.ogg — troll. Take 6, 0.6 s request trimmed to 0.50 s. "The
   drawn-out, rasping death roar of a troll dying from a deep sword wound"
 - stone-golem-death.ogg — stone golem. Take 1, 1.0 s request trimmed to 0.65

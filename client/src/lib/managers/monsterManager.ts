@@ -402,7 +402,9 @@ class MonsterManager {
     } else {
       monster.pendingSwordHitSoundUrl = undefined
     }
-    if (!hit && isLocalPlayerAttack) {
+    // Every swing that misses whooshes, another player's included; their
+    // weapon is unknown here so it falls back to the default miss sound.
+    if (!hit) {
       playSwordMissSound(
         getMaterialMissSoundUrl(weaponMaterial),
         SWORD_MISS_DELAY_MS

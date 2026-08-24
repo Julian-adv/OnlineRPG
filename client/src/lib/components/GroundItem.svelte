@@ -325,9 +325,12 @@
   const qtyText = $derived(data.quantity > 1 ? `x${data.quantity}` : null)
   const qtyBadge = $derived(qtyText ? makeTextBadge(qtyText, QTY_STYLE) : null)
   // Pad sits under the model's visual center and circumscribes its footprint
-  // (radius = half the x/z diagonal); both fall back to defaults until a model
-  // box is known. Derived from the box so there is one source of truth.
+  // (radius = half the x/z diagonal, but never under the minimum — a slim
+  // bottle's footprint is a few cm and unclickable); both fall back to
+  // defaults until a model box is known. Derived from the box so there is one
+  // source of truth.
   const GROUND_PAD_RADIUS = 0.32
+  const GROUND_PAD_MIN_RADIUS = 0.25
   const worldModelCenter = $derived(
     worldModelBox
       ? {
@@ -338,10 +341,13 @@
   )
   const groundPadRadius = $derived(
     worldModelBox
-      ? Math.hypot(
-          worldModelBox.max.x - worldModelBox.min.x,
-          worldModelBox.max.z - worldModelBox.min.z
-        ) / 2
+      ? Math.max(
+          GROUND_PAD_MIN_RADIUS,
+          Math.hypot(
+            worldModelBox.max.x - worldModelBox.min.x,
+            worldModelBox.max.z - worldModelBox.min.z
+          ) / 2
+        )
       : GROUND_PAD_RADIUS
   )
   // Hover ring, slightly larger than the footprint it marks.
@@ -444,10 +450,11 @@
   )
   // Items rendered as a 3D world model are authored to sit on their base
   // (origin at the model's bottom), so they rest just above the ground with a
-  // small lift to avoid z-fighting and clipping into minor terrain rises. The
-  // larger +0.3 hover is only for the icon-billboard fallback, which floats
-  // above the spot so the flat sprite reads clearly.
-  const WORLD_MODEL_REST_HOVER = 0.05
+  // small lift to avoid z-fighting and clipping into minor terrain rises
+  // (0.05 read as floating on larger models). The larger +0.3 hover is only
+  // for the icon-billboard fallback, which floats above the spot so the flat
+  // sprite reads clearly.
+  const WORLD_MODEL_REST_HOVER = 0.02
   const restHover = $derived(
     selfAnimated
       ? data.floorLevel < 0

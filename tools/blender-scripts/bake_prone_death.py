@@ -86,10 +86,10 @@ def ease(t):
     return t * t * (3 - 2 * t)
 
 
-def verts(only=None):
+def verts():
     dg = bpy.context.evaluated_depsgraph_get()
     vs = []
-    for m in (only or meshes):
+    for m in meshes:
         ev = m.evaluated_get(dg)
         vs += [ev.matrix_world @ v.co for v in ev.data.vertices]
     return vs

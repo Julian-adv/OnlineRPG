@@ -10,7 +10,7 @@ import argparse, json, os, pathlib, sys, time, urllib.request
 PROMPTS = {
     "orc": "The short, guttural death roar of an orc warrior cut down by a sword in battle",
     "orc_female": "A woman's very short, sharp, high-pitched death scream, a single shrill feminine cry less than half a second long, cut off instantly as a sword strikes her down. Clearly a female human-like voice, high soprano pitch, no growl, no male voice, no music.",
-    "hobgoblin": "The harsh, barking death cry of a hobgoblin soldier felled by a sword",
+    "hobgoblin": "The harsh, guttural death cry of a hobgoblin soldier felled by a sword: a rough snarling humanoid war-cry choking off as he falls. Voice only, no dog, no barking, no animal, no music.",
     "gnoll": "The yelping, hyena-like death howl of a gnoll cut down in battle",
     "bugbear": "A big shaggy bear-like goblin monster's death cry: a snarling guttural growl breaking into a pained yelp as it is cut down. Animal voice only, no drums, no percussion, no music.",
     "ogre": "A huge brutish ogre monster's deep guttural death groan, a hoarse animal voice choking off as it collapses from a sword wound. Voice only, no horns, no music.",

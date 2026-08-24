@@ -21,9 +21,9 @@ Writing OUT.glb over IN.glb in place is not supported — write elsewhere and
 move it afterwards.
 """
 
+import argparse
 import json
 import struct
-import sys
 
 GLB_MAGIC = 0x46546C67
 JSON_CHUNK = 0x4E4F534A
@@ -99,20 +99,18 @@ def world_to_node_delta(gltf, node_index, world_delta):
 
 
 def main():
-    argv = sys.argv[1:]
-    node_name = "Hips"
-    ramp = None
-    if "--node" in argv:
-        at = argv.index("--node")
-        node_name = argv[at + 1]
-        del argv[at : at + 2]
-    if "--ramp" in argv:
-        at = argv.index("--ramp")
-        ramp = int(argv[at + 1]), int(argv[at + 2])
-        del argv[at : at + 3]
-    if len(argv) != 4:
-        raise SystemExit(__doc__)
-    src, clip_name, dy, dst = argv[0], argv[1], float(argv[2]), argv[3]
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument("src")
+    ap.add_argument("clip_name")
+    ap.add_argument("dy", type=float)
+    ap.add_argument("dst")
+    ap.add_argument("--node", default="Hips")
+    ap.add_argument("--ramp", nargs=2, type=int, metavar=("FROM", "TO"))
+    args = ap.parse_args()
+    src, clip_name, dy, dst = args.src, args.clip_name, args.dy, args.dst
+    node_name, ramp = args.node, args.ramp
 
     def weight(i):
         if ramp is None:

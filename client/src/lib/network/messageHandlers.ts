@@ -20,6 +20,7 @@ import {
   playPlayerDeathSound,
   playPlayerHurtSound,
   playPropSound,
+  playSwordMissSound,
 } from '../managers/sfxManager'
 import { FISHING_CAST_SWING_DELAY_MS } from '../data/combatTiming'
 import { monsterManager } from '../managers/monsterManager'
@@ -55,6 +56,8 @@ import {
   removeBobber,
 } from '../stores/fishingStore'
 import { getItemDef } from '../data/itemDefs'
+import { getMonsterDef } from '../data/monsterDefs'
+import { getMaterialMissSoundUrl } from '../data/materialImpactSounds'
 import {
   shopSession,
   applyDealUpdate,
@@ -942,6 +945,17 @@ export function handleServerMessage(
         )
       }
 
+      if (!data.hit) {
+        // Whoosh with the monster's weapon material; unarmed types fall
+        // through to the default miss sound.
+        const monsterWeapon = monster && getMonsterDef(monster.type)?.weapon
+        playSwordMissSound(
+          getMaterialMissSoundUrl(
+            monsterWeapon ? getItemDef(monsterWeapon)?.material : undefined
+          ),
+          impactDelayMs
+        )
+      }
       if (data.hit && data.damage > 0 && target) {
         if (data.current_health <= 0) {
           if (claimPlayerDeath(data.player_id)) {

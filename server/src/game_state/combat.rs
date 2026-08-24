@@ -327,6 +327,10 @@ impl super::GameState {
         } = match self.validate_player_attack(player_id, &monster_id).await {
             Ok(ctx) => ctx,
             Err(reason) => {
+                warn!(
+                    "Rejected player attack: {} -> {} ({:?})",
+                    player_id, monster_id, reason
+                );
                 self.send_direct_message(
                     player_id,
                     ServerMessage::PlayerAttackRejected { monster_id, reason },
