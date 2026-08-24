@@ -219,9 +219,6 @@ class MonsterManager {
     ai_remove_brain(monster.id)
     this.ensureTemplatesLoaded()
     const def = getMonsterDef(monster.type)
-    // Dungeon monsters path on their depth's passability floor so the
-    // maze walls apply; surface monsters use the open overworld (0).
-    const fl = monster.floorLevel ?? 0
     ai_create_brain({
       monsterId: monster.id,
       monsterType: monster.type,
@@ -234,10 +231,7 @@ class MonsterManager {
       chaseRange: def?.chaseRange ?? 25,
       attackCooldown: def?.attackCooldown ?? DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
       behavior: this.resolveBehavior(monster.type, aggressive),
-      pathFloor:
-        fl < 0 && dungeonManager.active
-          ? dungeonManager.passabilityFloor(-fl)
-          : 0,
+      pathFloor: this.pathFloorFor(monster),
     })
   }
 
@@ -443,6 +437,10 @@ class MonsterManager {
     const gameState = get(gameStore)
     const myPlayerId = gameState.currentPlayer?.id
     const nearbyPlayers = this.buildNearbyPlayers(gameState)
+    // Built lazily: most clients own no monsters most frames.
+    let nearbyMonsters:
+      | ReturnType<MonsterManager['buildNearbyMonsters']>
+      | undefined
 
     for (const monster of this.monsters.values()) {
       // Keep non-owned monster Y aligned with its floor's ground (owned
@@ -541,7 +539,13 @@ class MonsterManager {
           continue
         }
 
-        const raw = ai_tick_brain(monster.id, deltaTime, nearbyPlayers)
+        nearbyMonsters ??= this.buildNearbyMonsters()
+        const raw = ai_tick_brain(
+          monster.id,
+          deltaTime,
+          nearbyPlayers,
+          nearbyMonsters
+        )
         // ai_tick_brain returns a TickResult object with commands, position, rotation, state
         const result = raw as TickResult
 
@@ -592,6 +596,37 @@ class MonsterManager {
         }
       }
     }
+  }
+
+  // Monster poses for cell separation (doc/MONSTER_SEPARATION.md); the
+  // shared brain decides which states occupy cells, filters by its own
+  // floor, and excludes itself.
+  private buildNearbyMonsters(): Array<{
+    id: string
+    position: { x: number; y: number; z: number }
+    state: string
+    pathFloor: number
+  }> {
+    const list = []
+    for (const m of this.monsters.values()) {
+      if (m.state === 'dead' || m.isDeadPending || m.health <= 0) continue
+      list.push({
+        id: m.id,
+        position: m.position,
+        state: m.state,
+        pathFloor: this.pathFloorFor(m),
+      })
+    }
+    return list
+  }
+
+  // Dungeon monsters path on their depth's passability floor; surface
+  // monsters use the open overworld (0).
+  private pathFloorFor(monster: MonsterData): number {
+    const fl = monster.floorLevel ?? 0
+    return fl < 0 && dungeonManager.active
+      ? dungeonManager.passabilityFloor(-fl)
+      : 0
   }
 
   private buildNearbyPlayers(gameState: GameState): Array<{

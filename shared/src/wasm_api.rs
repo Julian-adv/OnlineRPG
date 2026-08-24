@@ -18,7 +18,7 @@ use wasm_bindgen::prelude::*;
 use crate::furniture;
 use crate::housing;
 use crate::messages::{deserialize_server_msg, serialize_client_msg, ClientMessage};
-use crate::monster_ai::{self, BehaviorTree, MonsterBrain, NearbyPlayer};
+use crate::monster_ai::{self, BehaviorTree, MonsterBrain, NearbyMonster, NearbyPlayer};
 use crate::pathfinding::{self, PassabilityCache};
 use crate::world::Position;
 
@@ -669,6 +669,10 @@ impl monster_ai::PathProvider for WasmPathProvider {
     ) -> bool {
         with_cache(|c| pathfinding::attack_line_blocked(c, from_x, from_z, to_x, to_z, floor))
     }
+
+    fn cell_passable(&self, x: f32, z: f32, floor: u8) -> bool {
+        with_cache(|c| !pathfinding::is_cell_sealed(c, x, z, floor, None))
+    }
 }
 
 #[wasm_bindgen]
@@ -733,9 +737,12 @@ pub fn ai_tick_brain(
     monster_id: &str,
     delta_ms: f32,
     nearby_players: JsValue,
+    nearby_monsters: JsValue,
 ) -> Result<JsValue, JsError> {
     let players: Vec<NearbyPlayer> = serde_wasm_bindgen::from_value(nearby_players)
         .map_err(|e| JsError::new(&format!("Invalid nearby_players: {e}")))?;
+    let monsters: Vec<NearbyMonster> = serde_wasm_bindgen::from_value(nearby_monsters)
+        .map_err(|e| JsError::new(&format!("Invalid nearby_monsters: {e}")))?;
 
     let result = MONSTER_BRAINS.with(|brains| {
         let mut brains = brains.borrow_mut();
@@ -748,7 +755,14 @@ pub fn ai_tick_brain(
         AI_BEHAVIOR_TREES.with(|trees| {
             let trees = trees.borrow();
             monster_ai::behavior_tree_for(&trees, &brain.behavior).map(|tree| {
-                brain.tick_with_behavior_tree(delta_ms, &players, tree, &WasmPathProvider, &mut rng)
+                brain.tick_with_behavior_tree(
+                    delta_ms,
+                    &players,
+                    &monsters,
+                    tree,
+                    &WasmPathProvider,
+                    &mut rng,
+                )
             })
         })
     });

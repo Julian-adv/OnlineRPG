@@ -5,9 +5,9 @@
 
 use super::tree::BehaviorStatus;
 use super::{
-    AiCommand, AiState, BehaviorTree, NearbyPlayer, PathProvider, TickResult, DEFAULT_ATTACK_RANGE,
-    DEFAULT_CHASE_RANGE, DEFAULT_HIT_STAGGER_MS, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
-    NETWORK_SYNC_INTERVAL_MS,
+    cell_of, AiCommand, AiState, BehaviorTree, NearbyMonster, NearbyPlayer, PathProvider,
+    TickResult, DEFAULT_ATTACK_RANGE, DEFAULT_CHASE_RANGE, DEFAULT_HIT_STAGGER_MS,
+    DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST, NETWORK_SYNC_INTERVAL_MS,
 };
 use crate::pathfinding::PathWaypoint;
 use crate::{MonsterState, PlayerId, Position};
@@ -66,6 +66,22 @@ pub struct MonsterBrain {
     /// Time left in the swing currently being delivered.
     #[serde(default)]
     pub(super) swing_left_ms: f32,
+    /// The free cell near the target the chase is heading to; kept while it
+    /// stays free so re-slotting doesn't oscillate.
+    #[serde(default)]
+    pub(super) chase_goal_cell: Option<(i32, i32)>,
+    /// Cells occupied by standing nearby monsters, rebuilt each tick.
+    #[serde(skip)]
+    pub(super) occupied_cells: Vec<(i32, i32)>,
+    /// A standing monster with a smaller id shares our cell this tick — we
+    /// are the one who moves aside. Rebuilt each tick.
+    #[serde(skip)]
+    pub(super) cell_yield: bool,
+    /// Walking off a shared cell to a slot of our own after a yield. Attack
+    /// entry stays refused until arrival, or the yielder would stop at the
+    /// first cell boundary, still overlapped.
+    #[serde(default)]
+    pub(super) reslotting: bool,
 }
 
 impl MonsterBrain {
@@ -122,6 +138,10 @@ impl MonsterBrain {
             attack_cooldown_left_ms: 0.0,
             swing_commit_ms,
             swing_left_ms: 0.0,
+            chase_goal_cell: None,
+            occupied_cells: Vec::new(),
+            cell_yield: false,
+            reslotting: false,
         }
     }
 
@@ -205,7 +225,7 @@ impl MonsterBrain {
             commands,
             position: self.position,
             rotation: self.rotation,
-            state: self.state.to_monster_state(),
+            state: self.network_state(),
         }
     }
 
@@ -213,12 +233,35 @@ impl MonsterBrain {
         &mut self,
         delta_ms: f32,
         nearby_players: &[NearbyPlayer],
+        nearby_monsters: &[NearbyMonster],
         behavior_tree: &BehaviorTree,
         path_provider: &dyn PathProvider,
         rng: &mut impl Rng,
     ) -> TickResult {
         if self.state == AiState::Dead || self.health == 0 {
             return self.tick_result(vec![]);
+        }
+
+        self.occupied_cells.clear();
+        self.cell_yield = false;
+        let my_cell = cell_of(self.position.x, self.position.z);
+        for m in nearby_monsters {
+            if !m.state.is_stationary()
+                || m.path_floor != self.path_floor
+                || m.id == self.monster_id
+            {
+                continue;
+            }
+            let cell = cell_of(m.position.x, m.position.z);
+            self.occupied_cells.push(cell);
+            // Sharing a cell with a smaller-id stander: we are the one who
+            // yields (see bt_attack_target / the door-wait spread).
+            if cell == my_cell && m.id.as_str() < self.monster_id.as_str() {
+                self.cell_yield = true;
+            }
+        }
+        if !matches!(self.state, AiState::Chase | AiState::Hold | AiState::Attack) {
+            self.reslotting = false;
         }
 
         self.state_timer_ms += delta_ms;

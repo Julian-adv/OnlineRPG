@@ -3,6 +3,7 @@
 //! the next waypoint.
 
 use super::{AiCommand, AiState, MonsterBrain, PathProvider};
+use crate::pathfinding::PathWaypoint;
 use crate::world::{bearing_xz, shortest_world_delta_x, wrap_world_x};
 use crate::Position;
 use rand::Rng;
@@ -161,30 +162,43 @@ impl MonsterBrain {
         }
     }
 
+    /// Path query in the periodic frame nearest the monster: a canonical goal
+    /// on the far side of the seam would otherwise ask for a path a whole
+    /// world width long, and the waypoints come back re-wrapped. A house
+    /// straddling the seam is invisible to the query — the gap
+    /// `passability::wrapped_block_info` covers on the server.
+    pub(super) fn query_path(
+        &self,
+        goal_x: f32,
+        goal_z: f32,
+        path_provider: &dyn PathProvider,
+    ) -> Vec<PathWaypoint> {
+        let local_goal_x = self.position.x + shortest_world_delta_x(self.position.x, goal_x);
+        let mut waypoints = path_provider
+            .find_path(
+                self.position.x,
+                self.position.z,
+                self.path_floor,
+                local_goal_x,
+                goal_z,
+                self.path_floor,
+            )
+            .waypoints;
+        for wp in &mut waypoints {
+            wp.x = wrap_world_x(wp.x);
+        }
+        waypoints
+    }
+
     pub(super) fn compute_path(
         &mut self,
         goal_x: f32,
         goal_z: f32,
         path_provider: &dyn PathProvider,
     ) {
-        // Query in the periodic frame nearest the monster: a canonical goal on
-        // the far side of the seam would otherwise ask for a path a whole world
-        // width long. A house straddling the seam is invisible to the query —
-        // the gap `passability::wrapped_block_info` covers on the server.
-        let local_goal_x = self.position.x + shortest_world_delta_x(self.position.x, goal_x);
-        let result = path_provider.find_path(
-            self.position.x,
-            self.position.z,
-            self.path_floor,
-            local_goal_x,
-            goal_z,
-            self.path_floor,
-        );
+        let waypoints = self.query_path(goal_x, goal_z, path_provider);
         let turned_mid_leg = self.current_waypoint_idx < self.waypoints.len();
-        self.waypoints = result.waypoints;
-        for wp in &mut self.waypoints {
-            wp.x = wrap_world_x(wp.x);
-        }
+        self.waypoints = waypoints;
         self.current_waypoint_idx = 0;
         self.path_elapsed_ms = 0.0;
         // Only a repath that cuts a leg short is a bend. Replacing a finished
@@ -197,38 +211,60 @@ impl MonsterBrain {
 
     /// Follow waypoints. Returns true if path is exhausted.
     pub(super) fn follow_path(&mut self, delta_ms: f32) -> bool {
+        self.follow_path_gated(delta_ms, false).0
+    }
+
+    /// Like `follow_path`, but when `gated` refuses to step into a cell in
+    /// `occupied_cells` — the mover holds in place instead (NetHack-style
+    /// queueing, doc/MONSTER_SEPARATION.md). Returns (reached, held).
+    pub(super) fn follow_path_gated(&mut self, delta_ms: f32, gated: bool) -> (bool, bool) {
         if self.current_waypoint_idx >= self.waypoints.len() {
-            return true;
+            return (true, false);
         }
 
         let wp = &self.waypoints[self.current_waypoint_idx];
-        let dx = shortest_world_delta_x(self.position.x, wp.x);
-        let dz = wp.z - self.position.z;
+        let (wp_x, wp_z) = (wp.x, wp.z);
+        let dx = shortest_world_delta_x(self.position.x, wp_x);
+        let dz = wp_z - self.position.z;
         let dist = (dx * dx + dz * dz).sqrt();
         let step = self.move_speed * delta_ms / 1000.0;
+        let snap = dist <= step;
+        let (nx, nz) = if snap {
+            (wp_x, wp_z)
+        } else {
+            (
+                wrap_world_x(self.position.x + dx / dist * step),
+                self.position.z + dz / dist * step,
+            )
+        };
 
-        if dist <= step {
-            self.position.x = wp.x;
-            self.position.z = wp.z;
+        if gated {
+            let to = super::cell_of(nx, nz);
+            if to != super::cell_of(self.position.x, self.position.z)
+                && self.occupied_cells.contains(&to)
+            {
+                return (false, true);
+            }
+        }
+
+        self.position.x = nx;
+        self.position.z = nz;
+        if snap {
             self.current_waypoint_idx += 1;
             self.mark_path_bend();
 
             if self.current_waypoint_idx >= self.waypoints.len() {
-                return true;
+                return (true, false);
             }
 
             let next = &self.waypoints[self.current_waypoint_idx];
             let (x, z) = (next.x, next.z);
             self.face_toward(x, z);
         } else {
-            let nx = dx / dist;
-            let nz = dz / dist;
-            self.position.x = wrap_world_x(self.position.x + nx * step);
-            self.position.z += nz * step;
             self.rotation = bearing_xz(dx, dz).unwrap_or(self.rotation);
         }
 
-        false
+        (false, false)
     }
 
     pub(super) fn target_moved_significantly_by(

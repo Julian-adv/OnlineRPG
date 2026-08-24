@@ -26,6 +26,15 @@ pub trait PathProvider {
         to_z: f32,
         floor: u8,
     ) -> bool;
+
+    /// Cheap pre-check that the cell holding `(x, z)` can be stood in at all.
+    /// Standing-cell candidates go through this before `find_path`: A* has no
+    /// early goal reject, so a wall-interior candidate would otherwise flood
+    /// the whole reachable region every try. Default true — a provider without
+    /// the data just pays the path query.
+    fn cell_passable(&self, _x: f32, _z: f32, _floor: u8) -> bool {
+        true
+    }
 }
 
 /// PathProvider backed by a reference to PassabilityCache (for native Rust).
@@ -64,5 +73,9 @@ impl<'a> PathProvider for CachePathProvider<'a> {
         floor: u8,
     ) -> bool {
         pathfinding::attack_line_blocked(self.cache, from_x, from_z, to_x, to_z, floor)
+    }
+
+    fn cell_passable(&self, x: f32, z: f32, floor: u8) -> bool {
+        !pathfinding::is_cell_sealed(self.cache, x, z, floor, None)
     }
 }

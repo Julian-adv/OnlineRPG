@@ -56,6 +56,8 @@ Orchestrator Process
 | Deterministic | NPC 전투 (chase, attack loop) | 기존 tick_combat | 0원 |
 | LLM | NPC 대화, 고수준 판단 | per-NPC LLM call | $$$ |
 
+같은 대상을 쫓는 몬스터들이 겹쳐 서지 않게 하는 설계는 [MONSTER_SEPARATION.md](MONSTER_SEPARATION.md).
+
 ## 3계층 프롬프트 시스템
 
 | 계층 | 파일 | 내용 | 갱신 |

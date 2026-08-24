@@ -582,6 +582,7 @@ async fn run_npc_session(
                 let pose_settled = s.self_pose_settled();
                 let SharedState {
                     ref nearby_players,
+                    ref nearby_monsters,
                     ref self_player,
                     ref mut monster_ai,
                     ..
@@ -589,6 +590,7 @@ async fn run_npc_session(
                 let cmds = monster_ai.tick_all(
                     delta_ms,
                     nearby_players,
+                    nearby_monsters,
                     self_player.as_ref().filter(|_| pose_settled),
                     self_pass_floor,
                     world.passability_cache(),
