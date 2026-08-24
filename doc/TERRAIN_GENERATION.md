@@ -223,6 +223,21 @@ cargo run -p terrain-gen --release -- render-map-world `
 262,144 gameplay tile의 height/splat/vegetation을 다시 쓰는 것은 느리고
 플레이 데이터를 불필요하게 변경하므로 full `bake`를 실행하지 않는다.
 
+v2 렌더러는 `world-atlas-guide.png`를 32 km 월드 전체에 bilinear 투영해
+산맥, 숲 군락, 계곡과 연안이 지역 타일 경계에서 끊기지 않게 한다. 실제
+육지/바다 판정은 raw terrain 또는 기존 minimap 의미 마스크가 계속
+담당하므로 지형 가이드는 게임의 해안선이나 도시 좌표를 바꾸지 않는다.
+가까운 줌의 미세 질감은 반복 가능한 lowland/forest/rock/ocean albedo와
+실제 높이의 hillshade를 섞어 보강한다. 전역 가이드 비중은 1024/512/256/128
+LOD에서 각각 46/64/80/92%로 높아져, 최대 확대에서는 로컬 디테일을 유지하고
+기본 월드 줌에서는 한 장처럼 이어진 산맥과 숲 구성을 우선한다.
+
+강과 도로는 지형 색상과 LOD downsample 단계에서 중복 합성하지 않는다.
+각 LOD를 저장하기 직전에 한 번만 합성하며, 축척이 작을수록 flow와 경로
+길이가 큰 주요 선만 남긴다. 클라이언트는 보이는 지역 이미지를 먼저 하나의
+HiDPI offscreen atlas에 공통 정수 경계로 조립한 다음 전체 atlas를 한 번만
+회전해 비동기 타일 사이의 대각선 틈을 방지한다.
+
 지명은 minimap PNG에 굽지 않는다. `data-src/map_labels.csv`를 원본으로 두고
 클라이언트가 HTML 레이어에 표시한다. 따라서 지형 LOD와 무관하게 철자와 월드
 좌표가 유지되며, 줌 단계별 계층과 충돌 회피는

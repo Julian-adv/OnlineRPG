@@ -20,6 +20,7 @@
   const REGION_PX = REGION_SIZE * TILE_DIM // 1024
   const WORLD_MIN_REGION_Z = -16
   const WORLD_MAX_REGION_Z = 15
+  const ATLAS_PADDING_PX = 2
 
   const MIN_ZOOM = 1
   const DEFAULT_ZOOM = 16
@@ -140,7 +141,17 @@
   let dragStartCamZ = 0
 
   // --- Canvas rendering ---
+  interface RenderedView {
+    camX: number
+    camZ: number
+    zoomSpan: number
+    width: number
+    height: number
+  }
+
   let renderGeneration = 0
+  let renderAtlas: HTMLCanvasElement | null = null
+  let renderedView = $state<RenderedView | null>(null)
 
   $effect(() => {
     if (!canvasEl || containerW <= 0 || containerH <= 0) return
@@ -160,8 +171,11 @@
 
     const backingW = Math.max(1, Math.round(cw * dpr))
     const backingH = Math.max(1, Math.round(ch * dpr))
-    if (canvasEl.width !== backingW) canvasEl.width = backingW
-    if (canvasEl.height !== backingH) canvasEl.height = backingH
+    if (canvasEl.width !== backingW || canvasEl.height !== backingH) {
+      canvasEl.width = backingW
+      canvasEl.height = backingH
+      renderedView = null
+    }
     const ctx = canvasEl.getContext('2d')!
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.imageSmoothingEnabled = true
@@ -198,16 +212,10 @@
     const viewLeft = cx - viewWorldW / 2
     const viewTop = cz - viewWorldH / 2
 
-    // Clear to black
-    ctx.clearRect(0, 0, cw, ch)
-    ctx.fillStyle = '#000'
-    ctx.fillRect(0, 0, cw, ch)
-
-    // 45-degree rotation: expand visible region to cover rotated corners
-    const expand = Math.SQRT2 // rotated square needs ~1.41x coverage
-
-    const expandedViewWorldW = viewWorldW * expand
-    const expandedViewWorldH = viewWorldH * expand
+    // Bounding square of the viewport after undoing its 45-degree rotation.
+    const expandedViewWorldSize = (viewWorldW + viewWorldH) / Math.SQRT2
+    const expandedViewWorldW = expandedViewWorldSize
+    const expandedViewWorldH = expandedViewWorldSize
     const expandedViewLeft = cx - expandedViewWorldW / 2
     const expandedViewTop = cz - expandedViewWorldH / 2
 
@@ -224,49 +232,107 @@
       (expandedViewTop + expandedViewWorldH + TILE_DIM / 2) / REGION_PX
     )
 
-    const promises: Promise<void>[] = []
+    interface LoadedRegion {
+      image: HTMLImageElement
+      worldX: number
+      worldZ: number
+    }
+
+    const promises: Promise<LoadedRegion | null>[] = []
     for (let rz = expRegionMinRz; rz <= expRegionMaxRz; rz++) {
       if (rz < WORLD_MIN_REGION_Z || rz > WORLD_MAX_REGION_Z) continue
       for (let rx = expRegionMinRx; rx <= expRegionMaxRx; rx++) {
-        // Region world origin
         const regionWorldX = rx * REGION_PX - TILE_DIM / 2
         const regionWorldZ = rz * REGION_PX - TILE_DIM / 2
 
-        // Canvas position (before rotation, relative to view center)
-        const drawX = Math.floor((regionWorldX - viewLeft) * scale)
-        const drawY = Math.floor((regionWorldZ - viewTop) * scale)
-        const drawSize = Math.ceil(REGION_PX * scale)
-
         promises.push(
           regionImages.load(rx, rz, mmVer, sourceSize).then((img) => {
-            if (gen !== renderGeneration) return
-            if (img) {
-              ctx.save()
-              ctx.translate(cw / 2, ch / 2)
-              ctx.rotate(ROTATE_ANGLE)
-              ctx.translate(-cw / 2, -ch / 2)
-              ctx.drawImage(img, drawX, drawY, drawSize, drawSize)
-              ctx.restore()
+            if (!img || gen !== renderGeneration) return null
+            return {
+              image: img,
+              worldX: regionWorldX,
+              worldZ: regionWorldZ,
             }
           })
         )
       }
     }
 
-    Promise.all(promises).then(() => {
+    Promise.all(promises).then((regions) => {
       if (gen !== renderGeneration) return
 
+      const atlas = (renderAtlas ??= document.createElement('canvas'))
+      const atlasWidth =
+        Math.max(1, Math.ceil(expandedViewWorldW * scale * dpr)) +
+        ATLAS_PADDING_PX * 2
+      const atlasHeight =
+        Math.max(1, Math.ceil(expandedViewWorldH * scale * dpr)) +
+        ATLAS_PADDING_PX * 2
+      if (atlas.width !== atlasWidth) atlas.width = atlasWidth
+      if (atlas.height !== atlasHeight) atlas.height = atlasHeight
+      const atlasCtx = atlas.getContext('2d')!
+      atlasCtx.setTransform(1, 0, 0, 1, 0, 0)
+      atlasCtx.clearRect(0, 0, atlas.width, atlas.height)
+      atlasCtx.imageSmoothingEnabled = true
+      atlasCtx.imageSmoothingQuality = 'high'
+
+      for (const region of regions) {
+        if (!region) continue
+        const x0 =
+          ATLAS_PADDING_PX +
+          Math.round((region.worldX - expandedViewLeft) * scale * dpr)
+        const y0 =
+          ATLAS_PADDING_PX +
+          Math.round((region.worldZ - expandedViewTop) * scale * dpr)
+        const x1 =
+          ATLAS_PADDING_PX +
+          Math.round(
+            (region.worldX + REGION_PX - expandedViewLeft) * scale * dpr
+          )
+        const y1 =
+          ATLAS_PADDING_PX +
+          Math.round(
+            (region.worldZ + REGION_PX - expandedViewTop) * scale * dpr
+          )
+
+        atlasCtx.save()
+        atlasCtx.beginPath()
+        atlasCtx.rect(x0, y0, x1 - x0, y1 - y0)
+        atlasCtx.clip()
+        atlasCtx.drawImage(region.image, x0, y0, x1 - x0, y1 - y0)
+        atlasCtx.restore()
+      }
+
+      atlasCtx.setTransform(dpr, 0, 0, dpr, ATLAS_PADDING_PX, ATLAS_PADDING_PX)
+      drawHouseMapFootprints(atlasCtx, houses, {
+        centerX: cx,
+        viewLeft: expandedViewLeft,
+        viewTop: expandedViewTop,
+        scale,
+      })
+
+      ctx.clearRect(0, 0, cw, ch)
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, cw, ch)
       ctx.save()
       ctx.translate(cw / 2, ch / 2)
       ctx.rotate(ROTATE_ANGLE)
       ctx.translate(-cw / 2, -ch / 2)
-      drawHouseMapFootprints(ctx, houses, {
-        centerX: cx,
-        viewLeft,
-        viewTop,
-        scale,
-      })
+      ctx.drawImage(
+        atlas,
+        (expandedViewLeft - viewLeft) * scale - ATLAS_PADDING_PX / dpr,
+        (expandedViewTop - viewTop) * scale - ATLAS_PADDING_PX / dpr,
+        atlas.width / dpr,
+        atlas.height / dpr
+      )
       ctx.restore()
+      renderedView = {
+        camX: cx,
+        camZ: cz,
+        zoomSpan: span,
+        width: cw,
+        height: ch,
+      }
     })
   })
 
@@ -287,16 +353,17 @@
   // the world seam renders near the edge instead of a full wrap away), scale
   // around the view center, then the same -45° rotation the canvas applies
   // (ctx.rotate(ROTATE_ANGLE)).
-  function worldToScreen(x: number, z: number, cw: number, ch: number) {
-    x = unwrapWorldXNear(camX, x)
-    const scale = Math.min(cw, ch) / (zoomSpan * REGION_PX)
-    const lx = (x - (camX - cw / scale / 2)) * scale
-    const ly = (z - (camZ - ch / scale / 2)) * scale
-    const ox = lx - cw / 2
-    const oy = ly - ch / 2
+  function worldToScreen(x: number, z: number, view: RenderedView) {
+    x = unwrapWorldXNear(view.camX, x)
+    const scale =
+      Math.min(view.width, view.height) / (view.zoomSpan * REGION_PX)
+    const lx = (x - (view.camX - view.width / scale / 2)) * scale
+    const ly = (z - (view.camZ - view.height / scale / 2)) * scale
+    const ox = lx - view.width / 2
+    const oy = ly - view.height / 2
     return {
-      left: ox * COS_R - oy * SIN_R + cw / 2,
-      top: ox * SIN_R + oy * COS_R + ch / 2,
+      left: ox * COS_R - oy * SIN_R + view.width / 2,
+      top: ox * SIN_R + oy * COS_R + view.height / 2,
     }
   }
 
@@ -333,14 +400,15 @@
   })
 
   let visibleLabels = $derived.by<PlacedLabel[]>(() => {
-    const cw = containerW
-    const ch = containerH
-    if (cw <= 0 || ch <= 0) return []
+    const view = renderedView
+    if (!view) return []
+    const cw = view.width
+    const ch = view.height
 
     const margin = 80 // keep labels whose anchor is just off-edge
     const inputs: { label: MapLabel; anchor: { x: number; y: number } }[] = []
     for (const label of mapLabels) {
-      const p = worldToScreen(label.x, label.z, cw, ch)
+      const p = worldToScreen(label.x, label.z, view)
       if (!onScreen(p, cw, ch, margin)) continue
       inputs.push({
         label,
@@ -351,7 +419,7 @@
     const viewport = { left: 0, top: 0, right: cw, bottom: ch }
     const reservedBounds: ScreenRect[] =
       getMapFrameCornerReservedBounds(viewport)
-    const player = worldToScreen(playerX, playerZ, cw, ch)
+    const player = worldToScreen(playerX, playerZ, view)
     if (onScreen(player, cw, ch, 20)) {
       reservedBounds.push({
         left: player.left - 12,
@@ -369,7 +437,7 @@
       for (const position of $partyPositions) {
         const name = names.get(position.id)
         if (!name) continue
-        const p = worldToScreen(position.x, position.z, cw, ch)
+        const p = worldToScreen(position.x, position.z, view)
         if (!onScreen(p, cw, ch, 40)) continue
         reservedBounds.push({
           left: p.left - 9,
@@ -381,10 +449,10 @@
     }
 
     return layoutMapLabels(inputs, {
-      zoomSpan,
+      zoomSpan: view.zoomSpan,
       areaZoomSpan: mobileMapBudget
-        ? (zoomSpan * MOBILE_AREA_ZOOM_REFERENCE) / maxZoomSpan
-        : zoomSpan,
+        ? (view.zoomSpan * MOBILE_AREA_ZOOM_REFERENCE) / maxZoomSpan
+        : view.zoomSpan,
       viewport,
       reservedBounds,
       collisionPadding: 5,
@@ -410,11 +478,10 @@
     left: number
     top: number
   } | null>(() => {
-    const cw = containerW
-    const ch = containerH
-    if (cw <= 0 || ch <= 0) return null
-    const p = worldToScreen(playerX, playerZ, cw, ch)
-    if (!onScreen(p, cw, ch, 20)) return null
+    const view = renderedView
+    if (!view) return null
+    const p = worldToScreen(playerX, playerZ, view)
+    if (!onScreen(p, view.width, view.height, 20)) return null
     return p
   })
 
@@ -430,9 +497,8 @@
   let partyMarkers = $derived.by<PartyMarker[]>(() => {
     const roster = $partyRoster
     const positions = $partyPositions
-    const cw = containerW
-    const ch = containerH
-    if (!roster || cw <= 0 || ch <= 0) return []
+    const view = renderedView
+    if (!roster || !view) return []
 
     // Join against the roster: a member who left since the last push (or an
     // id the roster never knew) must not draw a ghost.
@@ -441,8 +507,8 @@
     for (const pos of positions) {
       const name = names.get(pos.id)
       if (!name) continue
-      const p = worldToScreen(pos.x, pos.z, cw, ch)
-      if (!onScreen(p, cw, ch, 40)) continue
+      const p = worldToScreen(pos.x, pos.z, view)
+      if (!onScreen(p, view.width, view.height, 40)) continue
       out.push({
         id: pos.id,
         name,

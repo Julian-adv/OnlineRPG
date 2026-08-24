@@ -18,6 +18,7 @@ const REGION_PX: usize = 1024;
 const TILES_PER_REGION: i32 = 16;
 const WORLD_MIN_REGION: i32 = -16;
 const WORLD_MAX_REGION: i32 = 15;
+const BASE_GUIDE_WEIGHT: f32 = 0.46;
 const LEGACY_COLORS: [[u8; 3]; 11] = [
     [80, 140, 50],
     [210, 185, 110],
@@ -86,10 +87,38 @@ pub fn run(
         let lod_256 = downsample_half(&lod_512, &gamma);
         let lod_128 = downsample_half(&lod_256, &gamma);
 
-        save_png(&base.image, &tile_path(&staging, 1024, rx, rz))?;
-        save_png(&lod_512.image, &tile_path(&staging, 512, rx, rz))?;
-        save_png(&lod_256.image, &tile_path(&staging, 256, rx, rz))?;
-        save_png(&lod_128.image, &tile_path(&staging, 128, rx, rz))?;
+        save_render(
+            &base,
+            1024,
+            rx,
+            rz,
+            &textures,
+            &tile_path(&staging, 1024, rx, rz),
+        )?;
+        save_render(
+            &lod_512,
+            512,
+            rx,
+            rz,
+            &textures,
+            &tile_path(&staging, 512, rx, rz),
+        )?;
+        save_render(
+            &lod_256,
+            256,
+            rx,
+            rz,
+            &textures,
+            &tile_path(&staging, 256, rx, rz),
+        )?;
+        save_render(
+            &lod_128,
+            128,
+            rx,
+            rz,
+            &textures,
+            &tile_path(&staging, 128, rx, rz),
+        )?;
 
         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
         let stride = (regions.len() / 20).max(1);
@@ -328,10 +357,10 @@ fn derive_relief_fields(map: &GlobalMap) -> DerivedFields {
                 let detail =
                     value_noise(config_seed(map) ^ 0xC4A0_9E21, nx * 128.0, nz * 128.0, 128);
                 let clusters = large * 0.72 + detail * 0.28;
-                let elevation_gate = 1.0 - smoothstep(520.0, 1250.0, map.elevation_m[i]);
-                let slope_gate = 1.0 - smoothstep(0.22, 1.15, local_slope);
+                let elevation_gate = 1.0 - smoothstep(720.0, 1500.0, map.elevation_m[i]);
+                let slope_gate = 1.0 - smoothstep(0.34, 1.35, local_slope);
                 forest[i] =
-                    unit_to_u8(smoothstep(0.43, 0.58, clusters) * elevation_gate * slope_gate);
+                    unit_to_u8(smoothstep(0.37, 0.54, clusters) * elevation_gate * slope_gate);
             }
         }
     }
@@ -394,7 +423,7 @@ fn raster_rivers(river_map: &rivers::RiverMap, res: usize) -> Vec<u8> {
         for (index, &(x, z)) in river.points.iter().enumerate() {
             let flow = river.flow.get(index).copied().unwrap_or(1.0).ln_1p() / max_flow;
             let radius = if flow > 0.72 { 1 } else { 0 };
-            stamp_mask(&mut mask, res, x as i32, z as i32, radius, 255);
+            stamp_mask(&mut mask, res, x as i32, z as i32, radius, unit_to_u8(flow));
         }
     }
     mask
@@ -402,9 +431,19 @@ fn raster_rivers(river_map: &rivers::RiverMap, res: usize) -> Vec<u8> {
 
 fn raster_roads(road_net: &roads::RoadNetwork, res: usize) -> Vec<u8> {
     let mut mask = vec![0u8; res * res];
+    let max_length = road_net
+        .roads
+        .iter()
+        .map(|road| road.points.len())
+        .max()
+        .unwrap_or(1) as f32;
+    let max_log_length = max_length.ln_1p();
     for road in &road_net.roads {
+        let normalized_length = (road.points.len() as f32).ln_1p() / max_log_length;
+        let importance = smoothstep(0.34, 1.0, normalized_length);
+        let value = unit_to_u8(0.12 + importance * 0.88);
         for &(x, z) in &road.points {
-            stamp_mask(&mut mask, res, x as i32, z as i32, 0, 255);
+            stamp_mask(&mut mask, res, x as i32, z as i32, 0, value);
         }
     }
     mask
@@ -669,14 +708,17 @@ impl Semantic {
         let road = proximity(pixel, [140, 135, 125], 38.0).max(
             proximity(pixel, [160, 155, 150], 34.0).max(proximity(pixel, [170, 160, 145], 34.0)),
         ) * neutral;
+        let exact_river = shallow_water.max(river_blue);
+        let river_importance = smoothstep(0.025, 0.48, sample.river);
+        let road_importance = smoothstep(0.035, 0.58, sample.road);
         Self {
             land,
             river: if land {
-                shallow_water.max(river_blue).max(sample.river * 0.82)
+                exact_river * river_importance
             } else {
                 0.0
             },
-            road: road.max(sample.road * 0.82),
+            road: road * road_importance,
             sand: proximity(pixel, [210, 185, 110], 44.0).max(sample.coast * 0.5),
             rock: proximity(pixel, [130, 110, 90], 52.0).max(proximity(
                 pixel,
@@ -695,21 +737,27 @@ impl Semantic {
 }
 
 struct Textures {
+    atlas_guide: RgbImage,
     ocean: RgbImage,
     lowland: RgbImage,
     forest: RgbImage,
-    mountain: RgbImage,
+    rock: RgbImage,
 }
 
 impl Textures {
     fn load() -> Result<Self> {
+        let atlas_guide = decode_texture(
+            include_bytes!("../assets/world-map/world-atlas-guide.png"),
+            "world atlas guide",
+        )?;
         Ok(Self {
+            atlas_guide,
             ocean: decode_texture(include_bytes!("../assets/world-map/ocean.png"), "ocean")?,
             lowland: decode_texture(include_bytes!("../assets/world-map/lowland.png"), "lowland")?,
             forest: decode_texture(include_bytes!("../assets/world-map/forest.png"), "forest")?,
-            mountain: decode_texture(
-                include_bytes!("../assets/world-map/mountain.png"),
-                "mountain",
+            rock: decode_texture(
+                include_bytes!("../assets/world-map/rock-albedo.png"),
+                "rock albedo",
             )?,
         })
     }
@@ -725,6 +773,7 @@ struct RegionRender {
     image: RgbImage,
     road: Vec<u8>,
     river: Vec<u8>,
+    land: Vec<u8>,
 }
 
 fn render_region(
@@ -737,6 +786,7 @@ fn render_region(
     let mut image = RgbImage::new(REGION_PX as u32, REGION_PX as u32);
     let mut road = vec![0u8; REGION_PX * REGION_PX];
     let mut river = vec![0u8; REGION_PX * REGION_PX];
+    let mut land = vec![0u8; REGION_PX * REGION_PX];
     for z in 0..REGION_PX {
         for x in 0..REGION_PX {
             let wx = region_world_coord(rx, x);
@@ -758,9 +808,15 @@ fn render_region(
             let i = z * REGION_PX + x;
             road[i] = unit_to_u8(semantic.road);
             river[i] = unit_to_u8(semantic.river);
+            land[i] = if semantic.land { 255 } else { 0 };
         }
     }
-    RegionRender { image, road, river }
+    RegionRender {
+        image,
+        road,
+        river,
+        land,
+    }
 }
 
 fn render_land(
@@ -777,59 +833,83 @@ fn render_land(
     } else {
         (sample.slope, sample.shade)
     };
-    let relief_gate = smoothstep(0.12, 0.72, slope).max(sample.ridge);
-    let mut rock = smoothstep(420.0, 1250.0, height) * (0.28 + relief_gate * 0.52);
+    let relief_gate = smoothstep(0.28, 0.95, slope).max(sample.ridge * 0.65);
+    let mut rock = smoothstep(680.0, 1500.0, height) * (0.12 + relief_gate * 0.34);
     rock = rock
-        .max(smoothstep(0.22, 1.2, slope) * smoothstep(75.0, 500.0, height))
-        .max(sample.ridge * 0.82)
-        .max(semantic.rock * 0.82)
-        .max(semantic.snow * 0.94)
+        .max(smoothstep(0.42, 1.35, slope) * smoothstep(220.0, 900.0, height) * 0.52)
+        .max(sample.ridge * 0.46)
+        .max(semantic.rock * 0.44)
+        .max(semantic.snow * 0.72)
         .clamp(0.0, 1.0);
-    let forest =
-        (sample.forest * (1.0 - rock * 0.88) * (1.0 - semantic.sand * 0.8)).clamp(0.0, 1.0);
+    let forest = (sample.forest.powf(0.72) * (1.0 - rock * 0.55) * (1.0 - semantic.sand * 0.72))
+        .clamp(0.0, 1.0);
+    let valley_green = (1.0 - smoothstep(420.0, 1100.0, height))
+        * (1.0 - smoothstep(0.14, 0.80, slope))
+        * (1.0 - semantic.sand);
     let lowland = sample_texture(&textures.lowland, wx, wz, 48.0);
-    let mut color = tint(lowland, [0.78, 0.92, 0.66]);
+    let mut local = tint(lowland, [0.72, 0.96 + valley_green * 0.08, 0.62]);
     if forest > 0.01 {
         let forest_color = sample_texture(&textures.forest, wx, wz, 32.0);
-        color = mix(color, tint(forest_color, [0.82, 0.94, 0.72]), forest * 0.9);
+        local = mix(local, tint(forest_color, [0.76, 0.98, 0.68]), forest * 0.82);
     }
     if rock > 0.01 {
-        let mountain = sample_texture(&textures.mountain, wx, wz, 32.0);
-        color = mix(color, tint(mountain, [0.92, 0.91, 0.86]), rock);
+        let rock_color = sample_texture(&textures.rock, wx, wz, 52.0);
+        local = mix(local, tint(rock_color, [0.94, 0.93, 0.88]), rock * 0.42);
     }
     let shore = semantic.sand.max(sample.coast * 0.55) * (1.0 - rock);
-    color = mix(color, [185.0, 166.0, 107.0], shore * 0.58);
-    let ridge_light = sample.ridge * rock * 0.12;
-    color = scale(color, (shade + ridge_light).clamp(0.60, 1.30));
-
-    if semantic.river > 0.02 {
-        color = mix(
-            color,
-            [35.0, 116.0, 146.0],
-            (semantic.river * 0.94).clamp(0.0, 0.94),
-        );
-    }
-    if semantic.road > 0.02 {
-        color = mix(
-            color,
-            [164.0, 145.0, 112.0],
-            (semantic.road * 0.88).clamp(0.0, 0.9),
-        );
-    }
-    to_rgb(color)
+    local = mix(local, [185.0, 166.0, 107.0], shore * 0.48);
+    let relief = 0.88 + shade * 0.12 + sample.ridge * rock * 0.035;
+    local = scale(local, relief.clamp(0.84, 1.16));
+    let guide = sample_world_guide(&textures.atlas_guide, wx, wz);
+    let guide_weight = BASE_GUIDE_WEIGHT * (1.0 - guide_water_likelihood(guide));
+    to_rgb(mix(local, guide, guide_weight))
 }
 
 fn render_ocean(wx: f32, wz: f32, sample: MacroSample, textures: &Textures) -> [u8; 3] {
     let texture = sample_texture(&textures.ocean, wx, wz, 48.0);
-    let mut color = mix([7.0, 29.0, 59.0], tint(texture, [0.58, 0.69, 0.78]), 0.72);
-    let shelf = 1.0 - smoothstep(10.0, 105.0, sample.dist_to_land_m);
-    let foam = 1.0 - smoothstep(5.0, 20.0, sample.dist_to_land_m);
-    color = mix(color, [24.0, 117.0, 139.0], shelf * 0.68);
+    let mut local = mix([5.0, 25.0, 55.0], tint(texture, [0.56, 0.68, 0.80]), 0.74);
+    let shelf = 1.0 - smoothstep(12.0, 125.0, sample.dist_to_land_m);
+    let foam = 1.0 - smoothstep(4.0, 18.0, sample.dist_to_land_m);
+    local = mix(local, [18.0, 112.0, 139.0], shelf * 0.58);
     let luminance = (texture[0] + texture[1] + texture[2]) / (255.0 * 3.0);
     let sparkle = luminance * luminance * luminance;
-    color = mix(color, [98.0, 203.0, 199.0], foam * (0.28 + sparkle * 0.4));
-    color = scale(color, 0.96 + (sample.shade - 1.0) * shelf * 0.08);
-    to_rgb(color)
+    local = mix(local, [93.0, 199.0, 196.0], foam * (0.24 + sparkle * 0.34));
+    local = scale(local, 0.97 + (sample.shade - 1.0) * shelf * 0.06);
+    let guide = sample_world_guide(&textures.atlas_guide, wx, wz);
+    let guide_weight = BASE_GUIDE_WEIGHT * guide_water_likelihood(guide);
+    to_rgb(mix(local, guide, guide_weight))
+}
+
+fn sample_world_guide(image: &RgbImage, wx: f32, wz: f32) -> [f32; 3] {
+    let world = 32768.0;
+    let nx = (wx + world * 0.5).rem_euclid(world) / world;
+    let nz = ((wz + world * 0.5) / world).clamp(0.0, 1.0);
+    let x = nx * image.width() as f32;
+    let y = nz * (image.height() - 1) as f32;
+    let x0 = x.floor() as i64;
+    let y0 = y.floor() as u32;
+    let tx = x - x0 as f32;
+    let ty = y - y0 as f32;
+    let x0 = x0.rem_euclid(image.width() as i64) as u32;
+    let x1 = (x0 + 1) % image.width();
+    let y1 = (y0 + 1).min(image.height() - 1);
+    let p00 = image.get_pixel(x0, y0).0;
+    let p10 = image.get_pixel(x1, y0).0;
+    let p01 = image.get_pixel(x0, y1).0;
+    let p11 = image.get_pixel(x1, y1).0;
+    let mut color = [0.0; 3];
+    for channel in 0..3 {
+        let top = p00[channel] as f32 * (1.0 - tx) + p10[channel] as f32 * tx;
+        let bottom = p01[channel] as f32 * (1.0 - tx) + p11[channel] as f32 * tx;
+        color[channel] = top * (1.0 - ty) + bottom * ty;
+    }
+    color
+}
+
+fn guide_water_likelihood(color: [f32; 3]) -> f32 {
+    let blue_over_green = smoothstep(9.0, 38.0, color[2] - color[1]);
+    let blue_over_red = smoothstep(18.0, 62.0, color[2] - color[0]);
+    blue_over_green * blue_over_red
 }
 
 fn sample_texture(image: &RgbImage, wx: f32, wz: f32, cycles: f32) -> [f32; 3] {
@@ -917,6 +997,7 @@ fn downsample_half(source: &RegionRender, gamma: &GammaLut) -> RegionRender {
     let mut image = RgbImage::new(out_width as u32, out_height as u32);
     let mut road = vec![0u8; out_width * out_height];
     let mut river = vec![0u8; out_width * out_height];
+    let mut land = vec![0u8; out_width * out_height];
     for y in 0..out_height {
         for x in 0..out_width {
             let source_pixels = [
@@ -953,25 +1034,21 @@ fn downsample_half(source: &RegionRender, gamma: &GammaLut) -> RegionRender {
                 .map(|&i| source.river[i])
                 .max()
                 .unwrap_or(0);
-            let mut color = [rgb[0] as f32, rgb[1] as f32, rgb[2] as f32];
-            if river[target] > 24 {
-                color = mix(
-                    color,
-                    [35.0, 116.0, 146.0],
-                    river[target] as f32 / 255.0 * 0.9,
-                );
-            }
-            if road[target] > 24 {
-                color = mix(
-                    color,
-                    [164.0, 145.0, 112.0],
-                    road[target] as f32 / 255.0 * 0.82,
-                );
-            }
-            image.put_pixel(x as u32, y as u32, Rgb(to_rgb(color)));
+            land[target] = ((source_indices
+                .iter()
+                .map(|&i| source.land[i] as u16)
+                .sum::<u16>()
+                + 2)
+                / 4) as u8;
+            image.put_pixel(x as u32, y as u32, Rgb(rgb));
         }
     }
-    RegionRender { image, road, river }
+    RegionRender {
+        image,
+        road,
+        river,
+        land,
+    }
 }
 
 fn legacy_palette_score(image: &RgbImage) -> f32 {
@@ -1138,6 +1215,11 @@ fn region_world_coord(region: i32, pixel: usize) -> f32 {
     region as f32 * REGION_PX as f32 - 32.0 + pixel as f32 + 0.5
 }
 
+fn lod_region_world_coord(region: i32, pixel: usize, size: u32) -> f32 {
+    let footprint = REGION_PX as f32 / size as f32;
+    region as f32 * REGION_PX as f32 - 32.0 + (pixel as f32 + 0.5) * footprint
+}
+
 fn region_coordinates(region_min: (i32, i32), region_max: (i32, i32)) -> Vec<(i32, i32)> {
     let mut regions = Vec::new();
     for rz in region_min.1..=region_max.1 {
@@ -1159,6 +1241,137 @@ fn tile_path(root: &Path, size: u32, rx: i32, rz: i32) -> PathBuf {
         root.join(size.to_string())
             .join(format!("r{:+03}_{:+03}.png", rx, rz))
     }
+}
+
+#[derive(Clone, Copy)]
+struct FeatureStyle {
+    river_threshold: f32,
+    river_opacity: f32,
+    road_threshold: f32,
+    road_opacity: f32,
+}
+
+impl FeatureStyle {
+    fn for_size(size: u32) -> Self {
+        match size {
+            128 => Self {
+                river_threshold: 0.42,
+                river_opacity: 0.52,
+                road_threshold: 0.52,
+                road_opacity: 0.36,
+            },
+            256 => Self {
+                river_threshold: 0.24,
+                river_opacity: 0.64,
+                road_threshold: 0.34,
+                road_opacity: 0.48,
+            },
+            512 => Self {
+                river_threshold: 0.11,
+                river_opacity: 0.76,
+                road_threshold: 0.19,
+                road_opacity: 0.60,
+            },
+            _ => Self {
+                river_threshold: 0.035,
+                river_opacity: 0.88,
+                road_threshold: 0.075,
+                road_opacity: 0.72,
+            },
+        }
+    }
+}
+
+fn compose_features(image: &mut RgbImage, road: &[u8], river: &[u8], style: FeatureStyle) {
+    for (index, pixel) in image.pixels_mut().enumerate() {
+        let mut color = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
+        let river_strength = river[index] as f32 / 255.0;
+        if river_strength > style.river_threshold {
+            let alpha =
+                smoothstep(style.river_threshold, 1.0, river_strength) * style.river_opacity;
+            color = mix(color, [34.0, 119.0, 151.0], alpha);
+        }
+        let road_strength = road[index] as f32 / 255.0;
+        if road_strength > style.road_threshold {
+            let alpha = smoothstep(style.road_threshold, 1.0, road_strength) * style.road_opacity;
+            color = mix(color, [168.0, 149.0, 111.0], alpha);
+        }
+        *pixel = Rgb(to_rgb(color));
+    }
+}
+
+fn guide_weight_for_size(size: u32) -> f32 {
+    match size {
+        128 => 0.92,
+        256 => 0.80,
+        512 => 0.64,
+        _ => BASE_GUIDE_WEIGHT,
+    }
+}
+
+fn additional_guide_alpha(target_weight: f32, material_match: f32) -> f32 {
+    let base = (BASE_GUIDE_WEIGHT * material_match).clamp(0.0, 1.0);
+    let target = (target_weight * material_match).clamp(base, 1.0);
+    if target <= base || base >= 1.0 {
+        0.0
+    } else {
+        (target - base) / (1.0 - base)
+    }
+}
+
+fn blend_lod_guide(
+    image: &mut RgbImage,
+    land: &[u8],
+    size: u32,
+    rx: i32,
+    rz: i32,
+    textures: &Textures,
+) {
+    let target_weight = guide_weight_for_size(size);
+    if target_weight <= BASE_GUIDE_WEIGHT {
+        return;
+    }
+    debug_assert_eq!(image.width(), size);
+    debug_assert_eq!(image.height(), size);
+    debug_assert_eq!(land.len(), (size * size) as usize);
+    let width = image.width() as usize;
+    for y in 0..image.height() {
+        for x in 0..image.width() {
+            let index = y as usize * width + x as usize;
+            let wx = lod_region_world_coord(rx, x as usize, size);
+            let wz = lod_region_world_coord(rz, y as usize, size);
+            let guide = sample_world_guide(&textures.atlas_guide, wx, wz);
+            let guide_water = guide_water_likelihood(guide);
+            let land_coverage = land[index] as f32 / 255.0;
+            let material_match =
+                land_coverage * (1.0 - guide_water) + (1.0 - land_coverage) * guide_water;
+            let alpha = additional_guide_alpha(target_weight, material_match);
+            if alpha > 0.0 {
+                let pixel = image.get_pixel_mut(x, y);
+                let color = [pixel[0] as f32, pixel[1] as f32, pixel[2] as f32];
+                *pixel = Rgb(to_rgb(mix(color, guide, alpha)));
+            }
+        }
+    }
+}
+
+fn save_render(
+    render: &RegionRender,
+    size: u32,
+    rx: i32,
+    rz: i32,
+    textures: &Textures,
+    path: &Path,
+) -> Result<()> {
+    let mut image = render.image.clone();
+    blend_lod_guide(&mut image, &render.land, size, rx, rz, textures);
+    compose_features(
+        &mut image,
+        &render.road,
+        &render.river,
+        FeatureStyle::for_size(size),
+    );
+    save_png(&image, path)
 }
 
 fn save_png(image: &RgbImage, path: &Path) -> Result<()> {
@@ -1272,16 +1485,115 @@ mod tests {
     }
 
     #[test]
-    fn lod_keeps_a_one_pixel_river() {
-        let mut image = RgbImage::from_pixel(2, 2, Rgb([80, 100, 70]));
-        image.put_pixel(0, 0, Rgb([35, 116, 146]));
+    fn world_guide_is_bilinear_and_wraps_x() {
+        let image = RgbImage::from_fn(2, 2, |x, y| Rgb([(x * 100) as u8, (y * 80) as u8, 20]));
+        assert_eq!(
+            sample_world_guide(&image, -16384.0, -16384.0),
+            sample_world_guide(&image, 16384.0, -16384.0)
+        );
+        assert_eq!(
+            sample_world_guide(&image, -8192.0, -16384.0),
+            [50.0, 0.0, 20.0]
+        );
+    }
+
+    #[test]
+    fn guide_material_gate_rejects_obvious_mismatches() {
+        assert!(guide_water_likelihood([8.0, 28.0, 92.0]) > 0.9);
+        assert!(guide_water_likelihood([54.0, 86.0, 35.0]) < 0.01);
+    }
+
+    #[test]
+    fn lod_guide_blend_reaches_target_weight() {
+        for size in [1024, 512, 256, 128] {
+            let target = guide_weight_for_size(size);
+            for material_match in [0.0, 0.35, 1.0] {
+                let base = BASE_GUIDE_WEIGHT * material_match;
+                let alpha = additional_guide_alpha(target, material_match);
+                let final_weight = base + (1.0 - base) * alpha;
+                assert!((final_weight - target * material_match).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn lod_world_coordinates_use_pixel_footprint_centers() {
+        assert_eq!(
+            lod_region_world_coord(-2, 0, 1024),
+            region_world_coord(-2, 0)
+        );
+        assert_eq!(lod_region_world_coord(0, 0, 512), -31.0);
+        assert_eq!(
+            lod_region_world_coord(0, 1, 128) - lod_region_world_coord(0, 0, 128),
+            8.0
+        );
+    }
+
+    #[test]
+    fn river_raster_preserves_log_flow_strength() {
+        let river_map = rivers::RiverMap {
+            downstream: vec![None; 64],
+            flow: vec![0.0; 64],
+            rivers: vec![rivers::Polyline {
+                points: vec![(0, 0), (3, 0), (6, 0)],
+                flow: vec![1.0, 100.0, 10_000.0],
+            }],
+        };
+        let mask = raster_rivers(&river_map, 8);
+        assert!(mask[0] < mask[3]);
+        assert!(mask[3] < mask[6]);
+    }
+
+    #[test]
+    fn road_raster_prioritizes_long_routes() {
+        let road_net = roads::RoadNetwork {
+            roads: vec![
+                roads::Road {
+                    points: vec![(0, 0), (1, 0)],
+                },
+                roads::Road {
+                    points: vec![(0, 3), (1, 3), (2, 3), (3, 3), (4, 3), (5, 3)],
+                },
+            ],
+        };
+        let mask = raster_roads(&road_net, 8);
+        assert!(mask[0] < mask[3 * 8]);
+    }
+
+    #[test]
+    fn lod_keeps_feature_mask_without_recomposing_color() {
+        let image = RgbImage::from_pixel(2, 2, Rgb([80, 100, 70]));
         let source = RegionRender {
             image,
             road: vec![0; 4],
             river: vec![255, 0, 0, 0],
+            land: vec![255, 255, 0, 0],
         };
         let lod = downsample_half(&source, &GammaLut::new());
         assert_eq!(lod.river, vec![255]);
-        assert!(lod.image.get_pixel(0, 0)[2] > lod.image.get_pixel(0, 0)[0]);
+        assert_eq!(lod.land, vec![128]);
+        assert_eq!(lod.image.get_pixel(0, 0).0, [80, 100, 70]);
+
+        let mut composed = lod.image.clone();
+        compose_features(
+            &mut composed,
+            &lod.road,
+            &lod.river,
+            FeatureStyle::for_size(128),
+        );
+        assert!(composed.get_pixel(0, 0)[2] > lod.image.get_pixel(0, 0)[2]);
+    }
+
+    #[test]
+    fn smaller_lods_suppress_minor_features() {
+        let terrain = RgbImage::from_pixel(1, 1, Rgb([80, 100, 70]));
+        let road = [0];
+        let river = [100];
+        let mut base = terrain.clone();
+        let mut overview = terrain.clone();
+        compose_features(&mut base, &road, &river, FeatureStyle::for_size(1024));
+        compose_features(&mut overview, &road, &river, FeatureStyle::for_size(128));
+        assert_ne!(base.get_pixel(0, 0), terrain.get_pixel(0, 0));
+        assert_eq!(overview.get_pixel(0, 0), terrain.get_pixel(0, 0));
     }
 }
