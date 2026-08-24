@@ -888,11 +888,12 @@ mod tests {
             if name.ends_with("-wal") || name.ends_with("-shm") {
                 continue;
             }
+            // Normalize to forward slashes so expectations hold on Windows.
             found.push(
                 path.strip_prefix(base)
                     .unwrap_or(&path)
                     .to_string_lossy()
-                    .into_owned(),
+                    .replace('\\', "/"),
             );
             if path.is_dir() {
                 found.extend(walk_relative(base, &path));
