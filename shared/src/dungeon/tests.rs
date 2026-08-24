@@ -123,7 +123,9 @@ fn per_dungeon_boss_floors_and_entrance_dir() {
 // Re-blessed when floors whose corridors hug a room wall (a mouth wider than
 // `CORRIDOR_MOUTH_MAX`) started being rejected and redrawn: the first
 // re-bless that moves rooms, corridors and shafts, not just spawns/props.
-const GOLDEN_OLD_CRYPT_HASH: u64 = 0xf3dd_e297_f08f_91e8;
+// Re-blessed when cyclop and lizardfolk joined the depth 1..=5 spawn table:
+// two more weighted entries change what roll_spawns picks.
+const GOLDEN_OLD_CRYPT_HASH: u64 = 0x7f98_28ca_ea47_d91b;
 
 #[test]
 fn structure_invariants_many_seeds() {
