@@ -22,6 +22,7 @@
   import {
     attackClipNames,
     getMonsterDef,
+    parseWeaponRotation,
     splitClipNames,
   } from '../data/monsterDefs'
   import { getItemDef } from '../data/itemDefs'
@@ -107,10 +108,18 @@
     ? useLoader(GLTFLoader).load(`/models/${initialWeaponModel}`)
     : undefined
 
-  // Weapon grip transform relative to the attach bone, tuned by eye. The bone
-  // sits at the wrist, so weaponOffset slides the grip out to the palm.
-  const WEAPON_OFFSET = new THREE.Vector3(0, initialDef?.weaponOffset ?? 0, 0)
-  const WEAPON_ROTATION = new THREE.Euler(0, 0, 0)
+  // Weapon grip transform relative to the attach bone. The bone sits at the
+  // wrist, so weaponOffset slides the grip out to the palm; x/z and the
+  // rotation settle it into the fist on rigs whose hand bone is not aligned
+  // with the grip. tools/rig-importer fits these against the real weapon model.
+  const WEAPON_OFFSET = new THREE.Vector3(
+    initialDef?.weaponOffsetX ?? 0,
+    initialDef?.weaponOffset ?? 0,
+    initialDef?.weaponOffsetZ ?? 0
+  )
+  const WEAPON_ROTATION = new THREE.Euler(
+    ...parseWeaponRotation(initialDef?.weaponRotation)
+  )
   const WEAPON_SCALE = 1
   let weaponAttached = false
   let weaponObject: THREE.Object3D | undefined
