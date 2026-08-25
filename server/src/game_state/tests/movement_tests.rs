@@ -310,7 +310,7 @@ async fn one_tick_budget_spans_queued_legs() {
     // across legs, not per leg.
     game_state.tick_player_movement(0.5).await;
     let mid = player_x(&game_state, &player_id).await;
-    assert!(mid >= 1.5 && mid < 2.1, "mid was {mid}");
+    assert!((1.5..2.1).contains(&mid), "mid was {mid}");
 
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_x(&game_state, &player_id).await, 3.0);
