@@ -4,13 +4,90 @@
     emoteStopRequest,
     localEmoteAnim,
   } from '../stores/emoteStore'
-  import { EMOTE_LIST, type EmoteMeta } from '../emote-meta'
+  import {
+    EMOTE_LIST,
+    emoteClickCommand,
+    type EmoteIntent,
+    type EmoteMeta,
+  } from '../emote-meta'
   import { gameStore } from '../stores/gameStore'
   import { networkManager } from '../network/socket'
+  import { innerWidth } from 'svelte/reactivity/window'
   import { draggablePanel } from '../actions/draggablePanel'
+  import { panelPositions } from '../stores/panelLayout'
+  import { EMOTE_PANEL_W, previewPlacement } from '../emote-preview-layout'
+  import EmotePreview from './EmotePreview.svelte'
 
   const visible = $derived($emotePanelVisible)
   const active = $derived($localEmoteAnim)
+  const previewPlayer = $derived($gameStore.currentPlayer)
+
+  // Last pointed-at emote; kept playing after the pointer leaves so the
+  // preview never snaps back to an empty box. Cleared on close — the
+  // component itself stays mounted for the whole session.
+  let previewed = $state<EmoteMeta | null>(null)
+  $effect(() => {
+    // Also cleared on death/disconnect, so the box doesn't pop back open
+    // by itself on respawn or reconnect.
+    if (!visible || !usable) previewed = null
+    // Re-evaluate the mount latch per open; deaths keep the device warm.
+    if (!visible) everFit = false
+  })
+
+  // The box hangs off the panel's side. Work out which side has room from
+  // the panel's position and the viewport; with room on neither (narrow
+  // phone viewports), don't mount the preview canvas at all.
+  const placement = $derived(
+    previewPlacement(
+      $panelPositions.emotes?.x ??
+        (innerWidth.current ?? 0) - EMOTE_PANEL_W - 16,
+      innerWidth.current ?? 0
+    )
+  )
+
+  // The store position updates on drag release, so hide the box while the
+  // panel is mid-drag instead of letting it ride off-screen on a stale side.
+  // Mirrors draggablePanel's gesture test (left button, not a header button,
+  // 4px slop) so a plain click never blinks the preview.
+  let draggingPanel = $state(false)
+  let dragPointerId: number | null = null
+  function trackDragStart(node: HTMLElement) {
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0 || dragPointerId !== null) return
+      if ((e.target as HTMLElement).closest('button')) return
+      dragPointerId = e.pointerId
+      const { clientX, clientY } = e
+      const move = (m: PointerEvent) => {
+        if (m.pointerId !== dragPointerId) return
+        const dx = m.clientX - clientX
+        const dy = m.clientY - clientY
+        if (dx * dx + dy * dy >= 16) draggingPanel = true
+      }
+      const up = (u: PointerEvent) => {
+        if (u.pointerId !== dragPointerId) return
+        dragPointerId = null
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        draggingPanel = false
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    }
+    node.addEventListener('pointerdown', down)
+    return { destroy: () => node.removeEventListener('pointerdown', down) }
+  }
+
+  // Mount the preview stack once a fitting position has existed, then keep
+  // it warm; visibility churn (resize, zoom, drags across the fit boundary)
+  // only nulls the anim instead of rebuilding the WebGPU canvas.
+  let everFit = $state(false)
+  $effect(() => {
+    // Reads `visible` so the latch re-evaluates on every reopen, not only
+    // when the placement inputs change.
+    if (visible && placement.fits) everFit = true
+  })
   // sendChatMessage is a silent no-op while disconnected; grey out like the
   // chat input does instead of eating clicks. Dead players are greyed out
   // too — the server accepts a corpse's /emote, so the client must not
@@ -19,21 +96,32 @@
     $gameStore.isConnected && ($gameStore.currentPlayer?.health ?? 0) > 0
   )
 
+  // Last commanded emote, kept until the server echo confirms it (or a TTL
+  // assumes rejection). See emoteClickCommand.
+  let intent = $state<EmoteIntent | null>(null)
+  $effect(() => {
+    if (intent && active === intent.anim) intent = null
+  })
+
   function play(emote: EmoteMeta) {
     // Clicking the running looping emote stops it, like Escape does.
-    if (emote.loops && active === emote.anim) {
+    if (
+      emoteClickCommand(emote, active, intent, performance.now()) === 'stop'
+    ) {
       emoteStopRequest.set(true)
+      intent = { anim: null, at: performance.now() }
       return
     }
     // Same path as typing the command: the server validates and its
     // broadcast starts our animation (see chat-commands `/emote`).
     networkManager.sendChatMessage(`/emote ${emote.anim}`)
+    intent = { anim: emote.anim, at: performance.now() }
   }
 </script>
 
 {#if visible}
   <div class="emote-panel" aria-label="Emotes" use:draggablePanel={'emotes'}>
-    <div class="panel-header" data-drag-handle>
+    <div class="panel-header" data-drag-handle use:trackDragStart>
       <span class="panel-title">Emotes</span>
       <button
         class="close-btn"
@@ -52,6 +140,8 @@
             ? 'Stop'
             : `/emote ${emote.anim}`}
           onclick={() => play(emote)}
+          onpointerenter={() => (previewed = emote)}
+          onfocus={() => (previewed = emote)}
         >
           <span class="emote-label">{emote.label}</span>
           {#if emote.loops}
@@ -62,6 +152,18 @@
     </div>
 
     <div class="panel-hint">/emote &lt;name&gt; · dances stop on move</div>
+
+    {#if previewPlayer && everFit}
+      <EmotePreview
+        anim={usable && placement.fits && !draggingPanel
+          ? (previewed?.anim ?? null)
+          : null}
+        label={previewed?.label ?? null}
+        characterClass={previewPlayer.characterClass}
+        gender={previewPlayer.gender}
+        side={placement.side}
+      />
+    {/if}
   </div>
 {/if}
 
@@ -69,7 +171,9 @@
   .emote-panel {
     position: fixed;
     right: 16px;
-    top: 16%;
+    /* Above the HUD corner buttons, so it opens next to the social flyout
+       that summoned it. */
+    bottom: 64px;
     z-index: 40;
     width: 180px;
     display: flex;
