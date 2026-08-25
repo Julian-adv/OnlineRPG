@@ -840,9 +840,7 @@
             viewBox="0 0 20 20"
             aria-hidden="true"
           >
-            <path
-              class="self-marker-point"
-              d="M 24.5 10 L 14 4.4 L 14 15.6 Z"
+            <path class="self-marker-point" d="M 24.5 10 L 14 4.4 L 14 15.6 Z"
             ></path>
             <circle class="self-marker-rim" cx="10" cy="10" r="8"></circle>
             <circle class="self-marker-core" cx="10" cy="10" r="5.4"></circle>
