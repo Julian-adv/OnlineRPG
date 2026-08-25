@@ -774,6 +774,7 @@ struct RegionRender {
     road: Vec<u8>,
     river: Vec<u8>,
     land: Vec<u8>,
+    forest: Vec<u8>,
 }
 
 fn render_region(
@@ -787,6 +788,7 @@ fn render_region(
     let mut road = vec![0u8; REGION_PX * REGION_PX];
     let mut river = vec![0u8; REGION_PX * REGION_PX];
     let mut land = vec![0u8; REGION_PX * REGION_PX];
+    let mut forest = vec![0u8; REGION_PX * REGION_PX];
     for z in 0..REGION_PX {
         for x in 0..REGION_PX {
             let wx = region_world_coord(rx, x);
@@ -799,13 +801,15 @@ fn render_region(
                 }
                 SemanticSource::Generated => Semantic::generated(sample),
             };
+            let i = z * REGION_PX + x;
             let color = if semantic.land {
-                render_land(wx, wz, sample, semantic, textures)
+                let (color, forest_strength) = render_land(wx, wz, sample, semantic, textures);
+                forest[i] = unit_to_u8(forest_strength);
+                color
             } else {
                 render_ocean(wx, wz, sample, textures)
             };
             image.put_pixel(x as u32, z as u32, Rgb(color));
-            let i = z * REGION_PX + x;
             road[i] = unit_to_u8(semantic.road);
             river[i] = unit_to_u8(semantic.river);
             land[i] = if semantic.land { 255 } else { 0 };
@@ -816,6 +820,7 @@ fn render_region(
         road,
         river,
         land,
+        forest,
     }
 }
 
@@ -825,7 +830,7 @@ fn render_land(
     sample: MacroSample,
     semantic: Semantic,
     textures: &Textures,
-) -> [u8; 3] {
+) -> ([u8; 3], f32) {
     let height = semantic.height.unwrap_or(sample.height);
     let (slope, shade) = if let Some((dx, dz)) = semantic.slope {
         let local = hillshade(dx, dz);
@@ -861,8 +866,8 @@ fn render_land(
     let relief = 0.88 + shade * 0.12 + sample.ridge * rock * 0.035;
     local = scale(local, relief.clamp(0.84, 1.16));
     let guide = sample_world_guide(&textures.atlas_guide, wx, wz);
-    let guide_weight = BASE_GUIDE_WEIGHT * (1.0 - guide_water_likelihood(guide));
-    to_rgb(mix(local, guide, guide_weight))
+    let guide_weight = BASE_GUIDE_WEIGHT * guide_material_match(guide, 1.0, forest);
+    (to_rgb(mix(local, guide, guide_weight)), forest)
 }
 
 fn render_ocean(wx: f32, wz: f32, sample: MacroSample, textures: &Textures) -> [u8; 3] {
@@ -910,6 +915,15 @@ fn guide_water_likelihood(color: [f32; 3]) -> f32 {
     let blue_over_green = smoothstep(9.0, 38.0, color[2] - color[1]);
     let blue_over_red = smoothstep(18.0, 62.0, color[2] - color[0]);
     blue_over_green * blue_over_red
+}
+
+/// How strongly a guide pixel reads as forest canopy: dark, green-dominant.
+/// Bright field greens and gray rock both fall to 0.
+fn guide_forest_likelihood(color: [f32; 3]) -> f32 {
+    let luminance = (color[0] + color[1] + color[2]) / 3.0;
+    let darkness = 1.0 - smoothstep(55.0, 95.0, luminance);
+    let green_excess = smoothstep(2.0, 14.0, color[1] - color[0].max(color[2]));
+    darkness * green_excess
 }
 
 fn sample_texture(image: &RgbImage, wx: f32, wz: f32, cycles: f32) -> [f32; 3] {
@@ -998,6 +1012,7 @@ fn downsample_half(source: &RegionRender, gamma: &GammaLut) -> RegionRender {
     let mut road = vec![0u8; out_width * out_height];
     let mut river = vec![0u8; out_width * out_height];
     let mut land = vec![0u8; out_width * out_height];
+    let mut forest = vec![0u8; out_width * out_height];
     for y in 0..out_height {
         for x in 0..out_width {
             let source_pixels = [
@@ -1040,6 +1055,12 @@ fn downsample_half(source: &RegionRender, gamma: &GammaLut) -> RegionRender {
                 .sum::<u16>()
                 + 2)
                 / 4) as u8;
+            forest[target] = ((source_indices
+                .iter()
+                .map(|&i| source.forest[i] as u16)
+                .sum::<u16>()
+                + 2)
+                / 4) as u8;
             image.put_pixel(x as u32, y as u32, Rgb(rgb));
         }
     }
@@ -1048,6 +1069,7 @@ fn downsample_half(source: &RegionRender, gamma: &GammaLut) -> RegionRender {
         road,
         river,
         land,
+        forest,
     }
 }
 
@@ -1309,6 +1331,16 @@ fn guide_weight_for_size(size: u32) -> f32 {
     }
 }
 
+/// How much the guide may show through at this pixel. Water/land agreement
+/// gates everywhere; on land, painted canopy must also agree with the real
+/// forest strength so art direction cannot swallow real fields at far zoom.
+fn guide_material_match(guide: [f32; 3], land_coverage: f32, real_forest: f32) -> f32 {
+    let guide_water = guide_water_likelihood(guide);
+    let veg_match = 1.0 - (guide_forest_likelihood(guide) - real_forest).abs();
+    (land_coverage * (1.0 - guide_water) + (1.0 - land_coverage) * guide_water)
+        * (land_coverage * veg_match + (1.0 - land_coverage))
+}
+
 fn additional_guide_alpha(target_weight: f32, material_match: f32) -> f32 {
     let base = (BASE_GUIDE_WEIGHT * material_match).clamp(0.0, 1.0);
     let target = (target_weight * material_match).clamp(base, 1.0);
@@ -1322,6 +1354,7 @@ fn additional_guide_alpha(target_weight: f32, material_match: f32) -> f32 {
 fn blend_lod_guide(
     image: &mut RgbImage,
     land: &[u8],
+    forest: &[u8],
     size: u32,
     rx: i32,
     rz: i32,
@@ -1334,6 +1367,7 @@ fn blend_lod_guide(
     debug_assert_eq!(image.width(), size);
     debug_assert_eq!(image.height(), size);
     debug_assert_eq!(land.len(), (size * size) as usize);
+    debug_assert_eq!(forest.len(), (size * size) as usize);
     let width = image.width() as usize;
     for y in 0..image.height() {
         for x in 0..image.width() {
@@ -1341,10 +1375,9 @@ fn blend_lod_guide(
             let wx = lod_region_world_coord(rx, x as usize, size);
             let wz = lod_region_world_coord(rz, y as usize, size);
             let guide = sample_world_guide(&textures.atlas_guide, wx, wz);
-            let guide_water = guide_water_likelihood(guide);
             let land_coverage = land[index] as f32 / 255.0;
             let material_match =
-                land_coverage * (1.0 - guide_water) + (1.0 - land_coverage) * guide_water;
+                guide_material_match(guide, land_coverage, forest[index] as f32 / 255.0);
             let alpha = additional_guide_alpha(target_weight, material_match);
             if alpha > 0.0 {
                 let pixel = image.get_pixel_mut(x, y);
@@ -1364,7 +1397,15 @@ fn save_render(
     path: &Path,
 ) -> Result<()> {
     let mut image = render.image.clone();
-    blend_lod_guide(&mut image, &render.land, size, rx, rz, textures);
+    blend_lod_guide(
+        &mut image,
+        &render.land,
+        &render.forest,
+        size,
+        rx,
+        rz,
+        textures,
+    );
     compose_features(
         &mut image,
         &render.road,
@@ -1576,10 +1617,12 @@ mod tests {
             road: vec![0; 4],
             river: vec![255, 0, 0, 0],
             land: vec![255, 255, 0, 0],
+            forest: vec![255, 255, 0, 0],
         };
         let lod = downsample_half(&source, &GammaLut::new());
         assert_eq!(lod.river, vec![255]);
         assert_eq!(lod.land, vec![128]);
+        assert_eq!(lod.forest, vec![128]);
         assert_eq!(lod.image.get_pixel(0, 0).0, [80, 100, 70]);
 
         let mut composed = lod.image.clone();
@@ -1590,6 +1633,48 @@ mod tests {
             FeatureStyle::for_size(128),
         );
         assert!(composed.get_pixel(0, 0)[2] > lod.image.get_pixel(0, 0)[2]);
+    }
+
+    #[test]
+    fn guide_forest_likelihood_separates_canopy_field_and_rock() {
+        let canopy = guide_forest_likelihood([44.0, 56.0, 30.0]);
+        let field = guide_forest_likelihood([110.0, 120.0, 60.0]);
+        let rock = guide_forest_likelihood([70.0, 70.0, 70.0]);
+        assert!(
+            canopy > 0.8,
+            "dark canopy green should read as forest: {canopy}"
+        );
+        assert!(
+            field < 0.05,
+            "bright field green must not read as forest: {field}"
+        );
+        assert!(rock < 0.05, "gray rock must not read as forest: {rock}");
+    }
+
+    #[test]
+    fn painted_canopy_cannot_swallow_real_fields() {
+        let canopy = [44.0, 56.0, 30.0];
+        let field_guide = [110.0, 120.0, 60.0];
+        let over_field = guide_material_match(canopy, 1.0, 0.0);
+        let over_forest = guide_material_match(canopy, 1.0, 1.0);
+        let clearing_over_forest = guide_material_match(field_guide, 1.0, 1.0);
+        let ocean = guide_material_match([20.0, 60.0, 120.0], 0.0, 0.0);
+        assert!(
+            over_field < 0.25,
+            "canopy over real fields must be gated: {over_field}"
+        );
+        assert!(
+            over_forest > 0.85,
+            "canopy over real forest passes: {over_forest}"
+        );
+        assert!(
+            clearing_over_forest < 0.25,
+            "painted clearing over real forest must be gated: {clearing_over_forest}"
+        );
+        assert!(
+            ocean > 0.85,
+            "vegetation term must not affect water: {ocean}"
+        );
     }
 
     #[test]
