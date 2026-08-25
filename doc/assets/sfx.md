@@ -112,6 +112,20 @@ kHz mono.
   wet, distorted death shriek of a fleshy eyeless monster, unnatural and
   wrong"
 
+The two below were generated in the [ElevenLabs Sound
+Effects](https://elevenlabs.io/sound-effects) web UI on 2026-08-25 (free tier,
+own generations), each a single take of a 1.0 s request. Both were folded to
+mono, resampled 48→44.1 kHz, given a 100 ms tail fade and peak-normalized to
+−3 dB. The originals are `~/Downloads/cyclop_death.mp3` and
+`lizardfolk_death.mp3` on the mac — not yet filed under `~/assets_original/sfx/`
+like the rest.
+
+- cyclop-death.ogg — cyclop. Trimmed to 0.70 s (the cry stops at 0.68 s).
+  "Deep growl, Voice only, no horns, no music."
+- lizardfolk-death.ogg — lizardfolk. Trimmed to 0.90 s (the cry stops at
+  0.89 s). "small dragon growl with a little snake sound, Voice only, no
+  horns, no music."
+
 ## Players
 
 - player-hurt-female.ogg — female character's cry when a hit lands on her (any

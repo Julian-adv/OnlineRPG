@@ -75,11 +75,44 @@ export interface MonsterDefinition {
    * hand's finger bases sit in bone space rather than trusting the finger
    * joint, which auto-rigs misplace (the ogre's is 0.24). */
   weaponOffset?: number
+  /** Sideways and forward nudge along the weapon bone's local X and Z, in
+   * metres. A palm is not on the bone axis, so a grip that reads right from the
+   * front can still float beside the hand from above. */
+  weaponOffsetX?: number
+  weaponOffsetZ?: number
+  /** Grip rotation as `rx|ry|rz` in degrees, about the weapon bone's local
+   * axes. Weapons are modelled pointing +Y; a rig whose hand bone runs a
+   * different way needs turning to sit in the fist. */
+  weaponRotation?: string | number
   /** Death cry, played on the killing blow (path under /sounds). */
   deathSound?: string
   /** Play the shared character packs; only for models rigged on the character
    * skeleton, which then ship no clips of their own. */
   sharedAnims?: boolean
+}
+
+const DEGREES_TO_RADIANS = Math.PI / 180
+
+/**
+ * Read a `rx|ry|rz` grip rotation into radians.
+ *
+ * A single number reaches this as a number rather than a string, because the
+ * CSV converter coerces anything numeric — so `90` means 90 degrees about x.
+ */
+export function parseWeaponRotation(
+  value: string | number | undefined
+): [number, number, number] {
+  if (value === undefined || value === '') return [0, 0, 0]
+
+  const parts = String(value)
+    .split('|')
+    .map((part) => Number(part.trim()))
+  const angles: [number, number, number] = [0, 0, 0]
+  for (let axis = 0; axis < 3; axis++) {
+    const angle = parts[axis]
+    angles[axis] = Number.isFinite(angle) ? angle * DEGREES_TO_RADIANS : 0
+  }
+  return angles
 }
 
 const monsterDefs = monstersJson as Record<string, MonsterDefinition>

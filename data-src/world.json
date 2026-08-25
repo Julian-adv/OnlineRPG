@@ -18,6 +18,8 @@
     { "monsterType": "bugbear" },
     { "monsterType": "ogre" },
     { "monsterType": "troll" },
-    { "monsterType": "stone_golem" }
+    { "monsterType": "stone_golem" },
+    { "monsterType": "lizardfolk" },
+    { "monsterType": "cyclop" }
   ]
 }
