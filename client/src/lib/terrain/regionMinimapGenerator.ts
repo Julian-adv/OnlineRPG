@@ -1,6 +1,6 @@
 import { getTerrainApiUrl } from '../utils/networkUtils'
 
-const MINIMAP_RENDER_REVISION = 7
+const MINIMAP_RENDER_REVISION = 8
 
 /** Build the server URL for a region minimap. The version busts the browser
  *  cache when the editor regenerates bakes mid-session. */

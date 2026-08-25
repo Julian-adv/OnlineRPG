@@ -654,7 +654,7 @@ impl RawRegion {
             river: weight(PAL_RIVER_BED),
             road: (weight(PAL_ROAD) + weight(PAL_STONE_PATH) + weight(PAL_PAVING)).clamp(0.0, 1.0),
             sand: weight(PAL_SAND),
-            rock: (weight(PAL_CLIFF) + weight(PAL_DIRT) * 0.35).clamp(0.0, 1.0),
+            rock: (weight(PAL_CLIFF) + weight(PAL_DIRT) * 0.6).clamp(0.0, 1.0),
             snow: weight(PAL_SNOW),
             height: Some(height),
             slope: Some((slope_x, slope_z)),
@@ -720,14 +720,17 @@ impl Semantic {
             },
             road: road * road_importance,
             sand: proximity(pixel, [210, 185, 110], 44.0).max(sample.coast * 0.5),
+            // Bare-mountain browns must survive even where the macro world has
+            // no relief (data-only massifs like the snow mountains), so the
+            // baseline carries most of the weight and macro terms only add.
             rock: proximity(pixel, [130, 110, 90], 52.0).max(proximity(
                 pixel,
                 [180, 100, 60],
                 54.0,
-            )) * (0.24
-                + smoothstep(300.0, 1050.0, sample.height) * 0.28
-                + smoothstep(0.12, 0.72, sample.slope) * 0.28
-                + sample.ridge * 0.20),
+            )) * (0.52
+                + smoothstep(300.0, 1050.0, sample.height) * 0.18
+                + smoothstep(0.12, 0.72, sample.slope) * 0.18
+                + sample.ridge * 0.12),
             snow: proximity(pixel, [240, 240, 245], 42.0)
                 * smoothstep(650.0, 1450.0, sample.height),
             height: None,
@@ -843,7 +846,7 @@ fn render_land(
     rock = rock
         .max(smoothstep(0.42, 1.35, slope) * smoothstep(220.0, 900.0, height) * 0.52)
         .max(sample.ridge * 0.46)
-        .max(semantic.rock * 0.44)
+        .max(semantic.rock * 0.95)
         .max(semantic.snow * 0.72)
         .clamp(0.0, 1.0);
     let forest = (sample.forest.powf(0.72) * (1.0 - rock * 0.55) * (1.0 - semantic.sand * 0.72))
@@ -859,14 +862,19 @@ fn render_land(
     }
     if rock > 0.01 {
         let rock_color = sample_texture(&textures.rock, wx, wz, 52.0);
-        local = mix(local, tint(rock_color, [0.94, 0.93, 0.88]), rock * 0.42);
+        local = mix(local, tint(rock_color, [0.94, 0.93, 0.88]), rock * 0.68);
     }
     let shore = semantic.sand.max(sample.coast * 0.55) * (1.0 - rock);
     local = mix(local, [185.0, 166.0, 107.0], shore * 0.48);
+    let snow = semantic.snow.clamp(0.0, 1.0);
+    if snow > 0.01 {
+        local = mix(local, [236.0, 241.0, 247.0], snow * 0.9);
+    }
     let relief = 0.88 + shade * 0.12 + sample.ridge * rock * 0.035;
     local = scale(local, relief.clamp(0.84, 1.16));
     let guide = sample_world_guide(&textures.atlas_guide, wx, wz);
-    let guide_weight = BASE_GUIDE_WEIGHT * guide_material_match(guide, 1.0, forest);
+    let guide_weight =
+        BASE_GUIDE_WEIGHT * guide_material_match(guide, 1.0, forest) * (1.0 - snow * 0.7);
     (to_rgb(mix(local, guide, guide_weight)), forest)
 }
 
@@ -1633,6 +1641,51 @@ mod tests {
             FeatureStyle::for_size(128),
         );
         assert!(composed.get_pixel(0, 0)[2] > lod.image.get_pixel(0, 0)[2]);
+    }
+
+    fn flat_lowland_sample() -> MacroSample {
+        MacroSample {
+            land: true,
+            height: 30.0,
+            dist_to_land_m: 0.0,
+            river: 0.0,
+            road: 0.0,
+            coast: 0.0,
+            slope: 0.0,
+            shade: 1.0,
+            ridge: 0.0,
+            forest: 0.0,
+        }
+    }
+
+    #[test]
+    fn legacy_bare_mountains_stay_rocky_without_macro_relief() {
+        let semantic = Semantic::legacy([130, 110, 90], flat_lowland_sample());
+        assert!(
+            semantic.rock >= 0.45,
+            "data-only brown massifs need a strong rock signal: {}",
+            semantic.rock
+        );
+    }
+
+    #[test]
+    fn snow_splat_renders_bright_snow() {
+        let textures = Textures::load().expect("bundled textures decode");
+        let mut semantic = Semantic::generated(flat_lowland_sample());
+        semantic.snow = 1.0;
+        semantic.rock = 0.4;
+        let (snowy, _) = render_land(0.0, 0.0, flat_lowland_sample(), semantic, &textures);
+        let brightness = snowy.iter().map(|&c| c as u32).sum::<u32>();
+        assert!(
+            brightness > 560,
+            "full snow should render near-white, got {snowy:?}"
+        );
+        semantic.snow = 0.0;
+        let (bare, _) = render_land(0.0, 0.0, flat_lowland_sample(), semantic, &textures);
+        assert!(
+            brightness > bare.iter().map(|&c| c as u32).sum::<u32>() + 150,
+            "snow must clearly brighten the tile: {snowy:?} vs {bare:?}"
+        );
     }
 
     #[test]
