@@ -450,3 +450,81 @@ async fn height_sampler_flat_terrain() {
     let h2 = sampler.sample_height(10.5, -5.3).await.unwrap();
     assert!((h2 - 0.0).abs() < 0.001, "Expected sea level, got {h2}");
 }
+
+async fn seed_minimap_files(dir: &std::path::Path, rx: i32, rz: i32) -> Vec<std::path::PathBuf> {
+    let mut paths = vec![
+        coords::minimap_path(dir, rx, rz),
+        coords::fantasy_minimap_path(dir, rx, rz),
+    ];
+    for size in [128, 256, 512] {
+        paths.push(coords::minimap_lod_path(dir, rx, rz, size));
+        paths.push(coords::fantasy_minimap_lod_path(dir, rx, rz, size));
+    }
+    for path in &paths {
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(path, b"stale").await.unwrap();
+    }
+    paths
+}
+
+#[tokio::test]
+async fn write_minimap_drops_stale_fantasy_tiles() {
+    let dir = unique_temp_dir("write_minimap_fantasy");
+    let io = crate::io::TerrainIO::new(dir.clone());
+    let (rx, rz) = (-2, 4);
+    seed_minimap_files(&dir, rx, rz).await;
+
+    io.write_minimap(rx, rz, b"fresh-legacy").await.unwrap();
+
+    assert_eq!(
+        io.read_minimap(rx, rz).await.unwrap().unwrap(),
+        b"fresh-legacy"
+    );
+    assert_eq!(
+        io.read_minimap_lod(rx, rz, 256).await.unwrap().unwrap(),
+        b"fresh-legacy"
+    );
+    assert!(!coords::fantasy_minimap_path(&dir, rx, rz).exists());
+    for size in [128, 256, 512] {
+        assert!(!coords::fantasy_minimap_lod_path(&dir, rx, rz, size).exists());
+    }
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn delete_region_removes_fantasy_tiles() {
+    let dir = unique_temp_dir("delete_region_fantasy");
+    let io = crate::io::TerrainIO::new(dir.clone());
+    let (rx, rz) = (3, -1);
+    let paths = seed_minimap_files(&dir, rx, rz).await;
+
+    io.delete_region(rx, rz).await.unwrap();
+
+    for path in paths {
+        assert!(!path.exists(), "{path:?} survived delete_region");
+    }
+    assert!(io.read_minimap(rx, rz).await.unwrap().is_none());
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}
+
+#[tokio::test]
+async fn stat_minimap_lod_matches_read_preference() {
+    let dir = unique_temp_dir("stat_minimap_pref");
+    let io = crate::io::TerrainIO::new(dir.clone());
+    let (rx, rz) = (1, 2);
+    seed_minimap_files(&dir, rx, rz).await;
+
+    let (path, meta) = io.stat_minimap_lod(rx, rz, 256).await.unwrap().unwrap();
+    assert_eq!(path, coords::fantasy_minimap_lod_path(&dir, rx, rz, 256));
+    assert_eq!(meta.len(), b"stale".len() as u64);
+
+    tokio::fs::remove_file(&path).await.unwrap();
+    let (path, _) = io.stat_minimap_lod(rx, rz, 256).await.unwrap().unwrap();
+    assert_eq!(path, coords::minimap_lod_path(&dir, rx, rz, 256));
+
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+}

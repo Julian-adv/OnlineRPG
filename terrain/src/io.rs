@@ -109,6 +109,20 @@ async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     atomic_write(path, data).await
 }
 
+/// LOD sizes baked below the 1024 base tile.
+pub const MINIMAP_LOD_SIZES: [u32; 3] = [128, 256, 512];
+
+async fn remove_files(paths: &[PathBuf]) -> std::io::Result<()> {
+    for path in paths {
+        match fs::remove_file(path).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
 async fn read_first_existing(paths: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
     for path in paths {
         match fs::read(path).await {
@@ -199,12 +213,36 @@ impl TerrainIO {
         write_terrain_file(&path, data).await
     }
 
-    pub async fn read_minimap(&self, rx: i32, rz: i32) -> std::io::Result<Option<Vec<u8>>> {
-        read_first_existing(&[
+    /// Candidate files for a minimap request, in preference order: the baked
+    /// fantasy tile first, then the legacy PNG, then coarser fallbacks.
+    fn minimap_candidates(&self, rx: i32, rz: i32, size: u32) -> Vec<PathBuf> {
+        if size >= 1024 {
+            return vec![
+                coords::fantasy_minimap_path(&self.base_dir, rx, rz),
+                coords::minimap_path(&self.base_dir, rx, rz),
+            ];
+        }
+        vec![
+            coords::fantasy_minimap_lod_path(&self.base_dir, rx, rz, size),
+            coords::minimap_lod_path(&self.base_dir, rx, rz, size),
             coords::fantasy_minimap_path(&self.base_dir, rx, rz),
             coords::minimap_path(&self.base_dir, rx, rz),
-        ])
-        .await
+        ]
+    }
+
+    /// Fantasy tiles for a region: base plus every LOD.
+    fn fantasy_minimap_files(&self, rx: i32, rz: i32) -> Vec<PathBuf> {
+        let mut paths = vec![coords::fantasy_minimap_path(&self.base_dir, rx, rz)];
+        paths.extend(
+            MINIMAP_LOD_SIZES
+                .iter()
+                .map(|&size| coords::fantasy_minimap_lod_path(&self.base_dir, rx, rz, size)),
+        );
+        paths
+    }
+
+    pub async fn read_minimap(&self, rx: i32, rz: i32) -> std::io::Result<Option<Vec<u8>>> {
+        read_first_existing(&self.minimap_candidates(rx, rz, 1024)).await
     }
 
     pub async fn read_minimap_lod(
@@ -213,30 +251,40 @@ impl TerrainIO {
         rz: i32,
         size: u32,
     ) -> std::io::Result<Option<Vec<u8>>> {
-        if size >= 1024 {
-            return self.read_minimap(rx, rz).await;
+        read_first_existing(&self.minimap_candidates(rx, rz, size)).await
+    }
+
+    /// Resolve which file a minimap request would serve, with its metadata,
+    /// without reading the body — lets callers build a cache tag cheaply.
+    pub async fn stat_minimap_lod(
+        &self,
+        rx: i32,
+        rz: i32,
+        size: u32,
+    ) -> std::io::Result<Option<(PathBuf, std::fs::Metadata)>> {
+        for path in self.minimap_candidates(rx, rz, size) {
+            match fs::metadata(&path).await {
+                Ok(meta) => return Ok(Some((path, meta))),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
         }
-        read_first_existing(&[
-            coords::fantasy_minimap_lod_path(&self.base_dir, rx, rz, size),
-            coords::minimap_lod_path(&self.base_dir, rx, rz, size),
-            coords::fantasy_minimap_path(&self.base_dir, rx, rz),
-            coords::minimap_path(&self.base_dir, rx, rz),
-        ])
-        .await
+        Ok(None)
     }
 
     pub async fn write_minimap(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::minimap_path(&self.base_dir, rx, rz);
         write_terrain_file(&path, data).await?;
-        for size in [128, 256, 512] {
-            let lod_path = coords::minimap_lod_path(&self.base_dir, rx, rz, size);
-            match fs::remove_file(lod_path).await {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
+        // The freshly baked PNG only reaches players if the stale fantasy tile
+        // is gone; the region falls back to legacy art until the next
+        // `render-map-world` bake.
+        let mut stale = self.fantasy_minimap_files(rx, rz);
+        stale.extend(
+            MINIMAP_LOD_SIZES
+                .iter()
+                .map(|&size| coords::minimap_lod_path(&self.base_dir, rx, rz, size)),
+        );
+        remove_files(&stale).await
     }
 
     /// Read pre-computed grass placement data (variable-length binary).
@@ -398,12 +446,13 @@ impl TerrainIO {
         let tree_dir = coords::tree_region_dir(&self.base_dir, rx, rz);
         let orig_height_dir = coords::original_height_region_dir(&self.base_dir, rx, rz);
         let orig_grass_dir = coords::original_grass_region_dir(&self.base_dir, rx, rz);
-        let minimap_files = [
-            coords::minimap_path(&self.base_dir, rx, rz),
-            coords::minimap_lod_path(&self.base_dir, rx, rz, 128),
-            coords::minimap_lod_path(&self.base_dir, rx, rz, 256),
-            coords::minimap_lod_path(&self.base_dir, rx, rz, 512),
-        ];
+        let mut minimap_files = vec![coords::minimap_path(&self.base_dir, rx, rz)];
+        minimap_files.extend(
+            MINIMAP_LOD_SIZES
+                .iter()
+                .map(|&size| coords::minimap_lod_path(&self.base_dir, rx, rz, size)),
+        );
+        minimap_files.extend(self.fantasy_minimap_files(rx, rz));
 
         for dir in [
             &height_dir,
@@ -419,14 +468,7 @@ impl TerrainIO {
                 Err(e) => return Err(e),
             }
         }
-        for file in minimap_files {
-            match fs::remove_file(file).await {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
+        remove_files(&minimap_files).await
     }
 
     /// List region coordinates with a `r{rx}_{rz}.json` file under `subdir`.

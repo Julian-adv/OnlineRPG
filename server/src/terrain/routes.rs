@@ -292,51 +292,69 @@ async fn get_minimap(
     if ![128, 256, 512, 1024].contains(&size) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let data = terrain.read_minimap_lod(rx, rz, size).await.map_err(|e| {
-        error!("Failed to read minimap ({}, {}): {}", rx, rz, e);
+    let found = terrain.stat_minimap_lod(rx, rz, size).await.map_err(|e| {
+        error!("Failed to stat minimap ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     // The client's ?v= only changes on client deploys, so a server-side rebake
     // must reach players through revalidation: cache briefly, then let the
-    // ETag turn repeat fetches into bodyless 304s. 404s cache briefly too, so
-    // clients near unbaked regions don't hammer the route.
+    // ETag turn repeat fetches into bodyless 304s. The tag comes from the
+    // file's identity (path/mtime/len) so revalidation never reads the body.
+    // 404s cache briefly too, so clients near unbaked regions don't hammer
+    // the route.
     const MINIMAP_CACHE: (header::HeaderName, &str) =
         (header::CACHE_CONTROL, "public, max-age=300");
-    match data {
-        Some(bytes) => {
-            let digest = sha2::Sha256::digest(&bytes);
-            let tag = digest
-                .iter()
-                .take(8)
-                .fold(0u64, |acc, byte| (acc << 8) | u64::from(*byte));
-            let etag = format!("\"{tag:016x}\"");
-            let revalidated = request_headers
-                .get(header::IF_NONE_MATCH)
-                .and_then(|v| v.to_str().ok())
-                .is_some_and(|v| v == etag);
-            if revalidated {
-                return Ok((
-                    StatusCode::NOT_MODIFIED,
-                    [(header::ETAG, etag)],
-                    [MINIMAP_CACHE],
-                )
-                    .into_response());
-            }
-            let content_type = if bytes.starts_with(b"RIFF") {
-                "image/webp"
-            } else {
-                "image/png"
-            };
-            Ok((
-                [(header::ETAG, etag)],
-                [(header::CONTENT_TYPE, content_type.to_string())],
-                [MINIMAP_CACHE],
-                bytes,
-            )
-                .into_response())
-        }
-        None => Ok((StatusCode::NOT_FOUND, [MINIMAP_CACHE]).into_response()),
+    let Some((path, meta)) = found else {
+        return Ok((StatusCode::NOT_FOUND, [MINIMAP_CACHE]).into_response());
+    };
+    let etag = minimap_etag(&path, &meta);
+    let revalidated = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == etag);
+    if revalidated {
+        return Ok((
+            StatusCode::NOT_MODIFIED,
+            [(header::ETAG, etag)],
+            [MINIMAP_CACHE],
+        )
+            .into_response());
     }
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        error!("Failed to read minimap ({}, {}): {}", rx, rz, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let content_type = if bytes.starts_with(b"RIFF") {
+        "image/webp"
+    } else {
+        "image/png"
+    };
+    Ok((
+        [(header::ETAG, etag)],
+        [(header::CONTENT_TYPE, content_type.to_string())],
+        [MINIMAP_CACHE],
+        bytes,
+    )
+        .into_response())
+}
+
+/// Cache tag for a minimap file: which file was picked, plus its mtime and
+/// size. A rebake or an editor save changes all three sources cheaply.
+fn minimap_etag(path: &std::path::Path, meta: &std::fs::Metadata) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    hasher.update(meta.len().to_le_bytes());
+    if let Ok(modified) = meta.modified() {
+        if let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH) {
+            hasher.update(since_epoch.as_nanos().to_le_bytes());
+        }
+    }
+    let digest = hasher.finalize();
+    let tag = digest
+        .iter()
+        .take(8)
+        .fold(0u64, |acc, byte| (acc << 8) | u64::from(*byte));
+    format!("\"{tag:016x}\"")
 }
 
 async fn put_minimap(

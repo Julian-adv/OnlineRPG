@@ -10,8 +10,8 @@
 
 ## World map
 
-- `client/public/textures/ui/world-map/dark-wood.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference; project-owned generated asset
-- `client/public/textures/ui/world-map/ornate-frame.png` — OpenAI Codex built-in ImageGen edit, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference, then ffmpeg color-keyed to restore real alpha transparency; project-owned generated asset
+- `client/public/textures/ui/world-map/dark-wood.webp` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference; project-owned generated asset. Shipped as 768² WebP q88 (2026-08-26): the source 1254² PNG was 2.0 MB but is only drawn as a 220 px button tile and a 52 px header bar
+- `client/public/textures/ui/world-map/ornate-frame.webp` — OpenAI Codex built-in ImageGen edit, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference, then ffmpeg color-keyed to restore real alpha transparency; project-owned generated asset. Shipped as 1254² WebP q90 (2026-08-26), same resolution as the 1.3 MB source PNG
 - Settlement crest marker + player self-marker — hand-authored inline SVG in WorldMapDialog.svelte (OpenAI Codex, 2026-08-24), original shapes with no external source
 
 ## Party UI design mockups

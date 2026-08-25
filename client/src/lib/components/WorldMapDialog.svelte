@@ -902,7 +902,7 @@
     position: absolute;
     inset: 0;
     z-index: 10;
-    background: url('/textures/ui/world-map/ornate-frame.png') center / 100%
+    background: url('/textures/ui/world-map/ornate-frame.webp') center / 100%
       100% no-repeat;
     pointer-events: none;
   }
@@ -933,7 +933,7 @@
     border-bottom: 1px solid var(--wm-brass);
     background:
       linear-gradient(180deg, rgba(55, 38, 20, 0.2), rgba(7, 7, 5, 0.72)),
-      url('/textures/ui/world-map/dark-wood.png') center 44% / cover;
+      url('/textures/ui/world-map/dark-wood.webp') center 44% / cover;
     box-shadow:
       inset 0 -1px rgba(240, 206, 120, 0.22),
       0 3px 12px rgba(0, 0, 0, 0.38);
@@ -975,7 +975,7 @@
     border-radius: 4px;
     background:
       linear-gradient(180deg, rgba(57, 48, 31, 0.68), rgba(13, 13, 10, 0.9)),
-      url('/textures/ui/world-map/dark-wood.png') center / 220px 220px;
+      url('/textures/ui/world-map/dark-wood.webp') center / 220px 220px;
     box-shadow:
       inset 0 0 0 1px rgba(240, 206, 120, 0.12),
       0 2px 4px rgba(0, 0, 0, 0.36);
@@ -994,7 +994,7 @@
     border-color: var(--wm-gold-hi);
     background:
       linear-gradient(180deg, rgba(96, 74, 39, 0.62), rgba(27, 22, 14, 0.92)),
-      url('/textures/ui/world-map/dark-wood.png') center / 220px 220px;
+      url('/textures/ui/world-map/dark-wood.webp') center / 220px 220px;
     color: #fff0c8;
   }
 
