@@ -48,6 +48,14 @@ impl HungerData {
         self.active(now).map(|d| d.def.dps).sum()
     }
 
+    fn damaging_debuff_ids(&self, now: Instant) -> String {
+        self.active(now)
+            .filter(|d| d.def.dps > 0)
+            .map(|d| d.def.id.as_str())
+            .collect::<Vec<_>>()
+            .join("+")
+    }
+
     fn debuff_msg(&self, now: Instant) -> ServerMessage {
         ServerMessage::DebuffUpdate {
             debuffs: self
@@ -140,7 +148,7 @@ impl super::GameState {
                 return;
             }
         }
-        let mut damage: Vec<(PlayerId, u32)> = Vec::new();
+        let mut damage: Vec<(PlayerId, u32, String)> = Vec::new();
         let mut updates: Vec<(PlayerId, [ServerMessage; 2])> = Vec::new();
         {
             let mut hunger = self.hunger.write().await;
@@ -150,7 +158,7 @@ impl super::GameState {
                 }
                 let dps = data.debuff_dps(now);
                 if dps > 0 {
-                    damage.push((*pid, dps));
+                    damage.push((*pid, dps, data.damaging_debuff_ids(now)));
                 }
                 let before = data.debuffs.len();
                 data.debuffs.retain(|d| d.until > now);
@@ -169,9 +177,10 @@ impl super::GameState {
         }
     }
 
-    async fn apply_debuff_damage(&self, damage: Vec<(PlayerId, u32)>) {
+    async fn apply_debuff_damage(&self, damage: Vec<(PlayerId, u32, String)>) {
         struct Hit {
             pid: PlayerId,
+            cause: String,
             position: onlinerpg_shared::Position,
             floor: i8,
             health: u32,
@@ -181,7 +190,7 @@ impl super::GameState {
             let mut players = self.players.write().await;
             damage
                 .into_iter()
-                .filter_map(|(pid, amount)| {
+                .filter_map(|(pid, amount, cause)| {
                     let player = players.get_mut(&pid)?;
                     if player.health == 0 {
                         return None;
@@ -189,6 +198,7 @@ impl super::GameState {
                     player.health = player.health.saturating_sub(amount);
                     Some(Hit {
                         pid,
+                        cause,
                         position: player.position,
                         floor: player.floor_level,
                         health: player.health,
@@ -217,7 +227,7 @@ impl super::GameState {
             )
             .await;
             if hit.health == 0 {
-                self.announce_player_death(&hit.pid, hit.position, hit.floor)
+                self.announce_player_death(&hit.pid, hit.position, hit.floor, &hit.cause)
                     .await;
             }
         }

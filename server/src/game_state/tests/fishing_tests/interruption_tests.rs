@@ -77,7 +77,7 @@ async fn death_reels_in_the_line() {
 
     game_state.start_fishing(&id, water_target()).await;
     advance_with_ticks(&game_state, u64::from(CAST_MS) + 250).await;
-    game_state.on_player_died(&id).await;
+    game_state.on_player_died(&id, "test").await;
 
     assert!(
         drain(&mut rx).iter().any(|m| matches!(

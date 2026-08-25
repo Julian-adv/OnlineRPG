@@ -688,6 +688,16 @@ impl super::GameState {
     ) {
         // 1. Check if monster exists, is alive, and is owned by the requester.
         // Also check server-side cooldown guard.
+        struct MonsterAttackSnapshot {
+            attack_bonus: i32,
+            damage_roll: String,
+            weapon_damage_roll: Option<String>,
+            position: Position,
+            floor_level: i8,
+            attack_range: f32,
+            hit_debuff: Option<String>,
+            monster_type: String,
+        }
         let now = Self::now_ms();
         let mut monster_data = None;
 
@@ -721,32 +731,35 @@ impl super::GameState {
                                     .unwrap_or_else(|| "1d6".to_string()),
                             ),
                         };
-                        monster_data = Some((
+                        monster_data = Some(MonsterAttackSnapshot {
                             attack_bonus,
                             damage_roll,
                             weapon_damage_roll,
-                            monster.position,
-                            monster.floor_level,
-                            def.map(|d| d.attack_range)
+                            position: monster.position,
+                            floor_level: monster.floor_level,
+                            attack_range: def
+                                .map(|d| d.attack_range)
                                 .unwrap_or(onlinerpg_shared::monster_ai::DEFAULT_ATTACK_RANGE),
-                            def.and_then(|d| d.hit_debuff.clone()),
-                        ));
+                            hit_debuff: def.and_then(|d| d.hit_debuff.clone()),
+                            monster_type: monster.monster_type.clone(),
+                        });
                     }
                 }
             }
         }
 
-        let (
+        let Some(MonsterAttackSnapshot {
             attack_bonus,
             damage_roll,
             weapon_damage_roll,
-            monster_position,
-            monster_floor_level,
-            monster_attack_range,
+            position: monster_position,
+            floor_level: monster_floor_level,
+            attack_range: monster_attack_range,
             hit_debuff,
-        ) = match monster_data {
-            Some(data) => data,
-            None => return,
+            monster_type,
+        }) = monster_data
+        else {
+            return;
         };
 
         // 2. Check if target player exists and is alive
@@ -875,13 +888,14 @@ impl super::GameState {
             }
         }
 
-        if did_die {
-            if let Some((target_position, target_floor)) = target_loc {
-                self.announce_player_death(target_player_id, target_position, target_floor)
-                    .await;
-            } else {
-                self.on_player_died(target_player_id).await;
-            }
+        if let (true, Some((target_position, target_floor))) = (did_die, target_loc) {
+            self.announce_player_death(
+                target_player_id,
+                target_position,
+                target_floor,
+                &monster_type,
+            )
+            .await;
         }
     }
 
@@ -891,8 +905,9 @@ impl super::GameState {
         player_id: &PlayerId,
         position: Position,
         floor_level: i8,
+        cause: &str,
     ) {
-        self.on_player_died(player_id).await;
+        self.on_player_died(player_id, cause).await;
         self.send_direct_message_to_players_within_position(
             &position,
             floor_level,
@@ -996,7 +1011,14 @@ impl super::GameState {
     /// fishing session (a dead angler can't keep a line wet — doc/FISHING.md),
     /// then the XP penalty. One chokepoint so future death sources can't
     /// forget a side effect.
-    pub(super) async fn on_player_died(&self, player_id: &PlayerId) {
+    pub(super) async fn on_player_died(&self, player_id: &PlayerId, cause: &str) {
+        if let Some((position, _, floor_level, name)) = self.player_pose(player_id).await {
+            let place = crate::dungeon_defs::place_label(&position, floor_level);
+            info!(
+                "Player {name} died to {cause} at ({:.1},{:.1}) {place}",
+                position.x, position.z
+            );
+        }
         self.movement_intents.write().await.remove(player_id);
         self.cancel_concentration_if_active(player_id).await;
         self.cancel_food_regeneration(player_id).await;
