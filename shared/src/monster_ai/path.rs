@@ -35,6 +35,30 @@ pub trait PathProvider {
     fn cell_passable(&self, _x: f32, _z: f32, _floor: u8) -> bool {
         true
     }
+
+    /// `find_path` keeping out of `blocked` cells (standing monsters) within
+    /// `max_nodes`. Default: the plain path, refused if it crosses one.
+    #[allow(clippy::too_many_arguments)]
+    fn find_path_avoiding(
+        &self,
+        start_x: f32,
+        start_z: f32,
+        start_floor: u8,
+        goal_x: f32,
+        goal_z: f32,
+        goal_floor: u8,
+        blocked: &[(i32, i32)],
+        _max_nodes: usize,
+    ) -> PathResult {
+        let result = self.find_path(start_x, start_z, start_floor, goal_x, goal_z, goal_floor);
+        if super::leg_crosses_occupied(start_x, start_z, &result.waypoints, blocked) {
+            return PathResult {
+                waypoints: vec![],
+                found: false,
+            };
+        }
+        result
+    }
 }
 
 /// PathProvider backed by a reference to PassabilityCache (for native Rust).
@@ -77,5 +101,29 @@ impl<'a> PathProvider for CachePathProvider<'a> {
 
     fn cell_passable(&self, x: f32, z: f32, floor: u8) -> bool {
         !pathfinding::is_cell_sealed(self.cache, x, z, floor, None)
+    }
+
+    fn find_path_avoiding(
+        &self,
+        start_x: f32,
+        start_z: f32,
+        start_floor: u8,
+        goal_x: f32,
+        goal_z: f32,
+        goal_floor: u8,
+        blocked: &[(i32, i32)],
+        max_nodes: usize,
+    ) -> PathResult {
+        pathfinding::find_and_smooth_path_avoiding(
+            start_x,
+            start_z,
+            start_floor,
+            goal_x,
+            goal_z,
+            goal_floor,
+            self.cache,
+            max_nodes,
+            blocked,
+        )
     }
 }

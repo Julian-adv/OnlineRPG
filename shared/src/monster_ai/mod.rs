@@ -96,6 +96,11 @@ const CHASE_CELL_RANGE_MARGIN: f32 = 0.15;
 /// A sidestep is a local flow around a blocker — refuse one whose path is a
 /// long detour.
 const SIDESTEP_MAX_PATH_METERS: f32 = 3.0;
+/// A held chaser may back out and round the queue instead of waiting, but
+/// only by a local detour — not a trek across the map.
+const DETOUR_MAX_PATH_METERS: f32 = 12.0;
+/// Small budget: the common hold (a sealed corridor) has no detour to find.
+const DETOUR_MAX_NODES: usize = 300;
 /// Standing-cell candidates path-tested per repath, nearest first. Bounds the
 /// pathfinding cost when the nearest candidates are unreachable (corridor
 /// walls).
@@ -134,39 +139,18 @@ fn path_len(x: f32, z: f32, waypoints: &[crate::pathfinding::PathWaypoint]) -> f
 }
 
 /// Whether walking `waypoints` from `(x, z)` enters any cell in `occupied`.
-/// Sampled at quarter-cell steps so no 1m cell is skipped; the start cell is
-/// exempt (a leg may sweep back through it).
 fn leg_crosses_occupied(
     x: f32,
     z: f32,
     waypoints: &[crate::pathfinding::PathWaypoint],
     occupied: &[(i32, i32)],
 ) -> bool {
-    if occupied.is_empty() {
-        return false;
-    }
-    let start_cell = cell_of(x, z);
     let (mut px, mut pz) = (x, z);
-    let mut last_cell = start_cell;
-    for wp in waypoints {
-        let dx = crate::world::shortest_world_delta_x(px, wp.x);
-        let dz = wp.z - pz;
-        let len = (dx * dx + dz * dz).sqrt();
-        let steps = (len / 0.25).ceil().max(1.0) as i32;
-        for i in 1..=steps {
-            let t = i as f32 / steps as f32;
-            let cell = cell_of(crate::world::wrap_world_x(px + dx * t), pz + dz * t);
-            if cell == last_cell {
-                continue;
-            }
-            last_cell = cell;
-            if cell != start_cell && occupied.contains(&cell) {
-                return true;
-            }
-        }
+    waypoints.iter().any(|wp| {
+        let hit = crate::pathfinding::segment_enters_cells(px, pz, wp.x, wp.z, occupied);
         (px, pz) = (wp.x, wp.z);
-    }
-    false
+        hit
+    })
 }
 
 fn param(params: &HashMap<String, f32>, name: &str, default: f32) -> f32 {

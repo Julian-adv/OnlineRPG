@@ -1794,3 +1794,252 @@ fn sidestep_rejects_a_euclidean_shortcut_that_is_route_farther() {
     assert_eq!(brain.network_state(), MonsterState::Idle, "quiet hold");
     assert!(brain.position.z < 11.0, "never wandered into the pocket");
 }
+
+/// Two lanes along x (z ∈ [10, 11) and [11, 12)) split by a wall with gaps at
+/// x ∈ [9, 10) and [13, 14). Plain paths take the shortest route ignoring
+/// standers; avoiding paths take the shortest route clear of them.
+struct TwoLanes;
+impl TwoLanes {
+    fn routes(sx: f32, sz: f32, gx: f32, gz: f32, gf: u8) -> Vec<Vec<PathWaypoint>> {
+        let wp = |x: f32, z: f32| PathWaypoint { x, z, floor: gf };
+        let other = if sz < 11.0 { 11.5 } else { 10.5 };
+        let mut routes = Vec::new();
+        if sz.floor() == gz.floor() {
+            routes.push(vec![wp(gx, gz)]);
+        } else {
+            for g in [9.5, 13.5] {
+                routes.push(vec![wp(g, sz), wp(g, gz), wp(gx, gz)]);
+            }
+        }
+        for (g1, g2) in [(9.5, 13.5), (13.5, 9.5)] {
+            routes.push(vec![
+                wp(g1, sz),
+                wp(g1, other),
+                wp(g2, other),
+                wp(g2, gz),
+                wp(gx, gz),
+            ]);
+        }
+        routes.sort_by(|a, b| path_len(sx, sz, a).total_cmp(&path_len(sx, sz, b)));
+        routes
+    }
+}
+impl PathProvider for TwoLanes {
+    fn find_path(&self, sx: f32, sz: f32, sf: u8, gx: f32, gz: f32, gf: u8) -> PathResult {
+        self.find_path_avoiding(sx, sz, sf, gx, gz, gf, &[], 0)
+    }
+
+    /// The lane wall stops a blow unless the line crosses it in a gap.
+    fn attack_line_blocked(&self, fx: f32, fz: f32, tx: f32, tz: f32, _floor: u8) -> bool {
+        if (fz < 11.0) == (tz < 11.0) {
+            return false;
+        }
+        let x = fx + (tx - fx) * (11.0 - fz) / (tz - fz);
+        !((9.0..10.0).contains(&x) || (13.0..14.0).contains(&x))
+    }
+
+    fn find_path_avoiding(
+        &self,
+        sx: f32,
+        sz: f32,
+        _sf: u8,
+        gx: f32,
+        gz: f32,
+        gf: u8,
+        blocked: &[(i32, i32)],
+        _max_nodes: usize,
+    ) -> PathResult {
+        if (10.0..12.0).contains(&gz) {
+            for route in Self::routes(sx, sz, gx, gz, gf) {
+                if !leg_crosses_occupied(sx, sz, &route, blocked) {
+                    return PathResult {
+                        waypoints: route,
+                        found: true,
+                    };
+                }
+            }
+        }
+        PathResult {
+            waypoints: vec![],
+            found: false,
+        }
+    }
+}
+
+fn stander_at(id: &str, x: f32, z: f32) -> NearbyMonster {
+    NearbyMonster {
+        id: id.into(),
+        position: Position { x, y: 0.0, z },
+        state: MonsterState::Idle,
+        path_floor: 0,
+    }
+}
+
+/// A stander blocks the lane between the chaser and its slot, with no
+/// sidestep available (walls both sides). Instead of holding forever the
+/// chaser backs out through the near gap, rounds the other lane, and
+/// arrives from the far side — a changed approach angle.
+#[test]
+fn held_chaser_detours_around_the_queue() {
+    let mut brain = brain_at("m1", 10.5, 10.5);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(13.5, 10.5);
+    let others = vec![stander_at("m2", 11.5, 10.5)];
+
+    let mut min_x = brain.position.x;
+    let mut entered_stander = false;
+    for _ in 0..900 {
+        brain.tick_with_behavior_tree(16.0, &players, &others, &tree, &TwoLanes, &mut rng);
+        min_x = min_x.min(brain.position.x);
+        entered_stander |= cell_of(brain.position.x, brain.position.z) == (11, 10);
+    }
+
+    assert!(
+        min_x < 10.0,
+        "must back out through the gap first, min x {min_x}"
+    );
+    assert!(!entered_stander, "never walked through the stander");
+    assert_eq!(brain.state(), AiState::Attack, "arrived via the detour");
+    assert_eq!(
+        cell_of(brain.position.x, brain.position.z).0,
+        12,
+        "past the stander"
+    );
+}
+
+/// The slot gets taken while the detour is under way: the detour drops and
+/// the chaser re-slots to a free cell instead of walking into the taker.
+#[test]
+fn detour_drops_when_its_goal_cell_is_taken() {
+    let mut brain = brain_at("m1", 10.5, 10.5);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(13.5, 10.5);
+    let mut others = vec![stander_at("m2", 11.5, 10.5)];
+
+    for step in 0..900 {
+        brain.tick_with_behavior_tree(16.0, &players, &others, &tree, &TwoLanes, &mut rng);
+        if step == 10 {
+            assert!(brain.position.x < 10.0, "detour under way");
+            others.push(stander_at("m3", 12.5, 10.5));
+        }
+    }
+
+    let cell = cell_of(brain.position.x, brain.position.z);
+    assert!(
+        cell != (12, 10) && cell != (11, 10),
+        "not on a stander: {cell:?}"
+    );
+    assert_eq!(brain.state(), AiState::Attack);
+}
+
+/// A sealed 1-wide corridor offers no detour: the avoiding search fails and
+/// the queued chaser still waits quietly behind the stander.
+#[test]
+fn no_detour_in_a_sealed_corridor_keeps_the_queue() {
+    let mut brain = brain_at("m1", 14.5, 10.5);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(10.0, 10.5);
+    let others = vec![stander_at("m2", 12.5, 10.5)];
+
+    let mut moved_late = 0.0_f32;
+    for step in 0..400 {
+        let before = brain.position;
+        brain.tick_with_behavior_tree(16.0, &players, &others, &tree, &corridor_1_wide(), &mut rng);
+        if step >= 200 {
+            let dx = brain.position.x - before.x;
+            let dz = brain.position.z - before.z;
+            moved_late += (dx * dx + dz * dz).sqrt();
+        }
+    }
+
+    assert!(moved_late < 0.01, "must queue, moved {moved_late}m late");
+    assert_eq!(brain.network_state(), MonsterState::Idle);
+    assert_eq!(cell_of(brain.position.x, brain.position.z), (13, 10));
+}
+
+/// The stair-landing scene: the target stands at the open end of a walled
+/// shaft row; the pack, chasing from below the shaft's side wall, must round
+/// the wall to the open side instead of holding against it.
+fn shaft_room() -> crate::pathfinding::PassabilityCache {
+    use crate::pathfinding::{
+        PassabilityCache, RuntimeFloorGrid, RuntimePassability, EDGE_E, EDGE_N, EDGE_S, EDGE_W,
+    };
+    let (w, d) = (12usize, 8usize);
+    let mut cells = vec![0u8; w * d];
+    for x in 0..w {
+        cells[x] |= EDGE_N;
+        cells[x + (d - 1) * w] |= EDGE_S;
+    }
+    for z in 0..d {
+        cells[z * w] |= EDGE_W;
+        cells[z * w + w - 1] |= EDGE_E;
+    }
+    let sz = 3usize;
+    for x in 3..=8usize {
+        cells[x + sz * w] |= EDGE_N | EDGE_S;
+        cells[x + (sz - 1) * w] |= EDGE_S;
+        cells[x + (sz + 1) * w] |= EDGE_N;
+    }
+    cells[8 + sz * w] |= EDGE_E;
+    cells[9 + sz * w] |= EDGE_W;
+    let rp = RuntimePassability {
+        house_origin_x: 10.0,
+        house_origin_z: 10.0,
+        min_x: 10.0,
+        max_x: 22.0,
+        min_z: 10.0,
+        max_z: 18.0,
+        floors: vec![RuntimeFloorGrid {
+            floor_level: 0,
+            origin_x: 0,
+            origin_z: 0,
+            width: w as u8,
+            depth: d as u8,
+            y_base: 0.0,
+            wall_height: 3.0,
+            cells,
+        }],
+        stairwells: vec![],
+        yields_to_trapped_mover: false,
+        is_ground: true,
+    };
+    let mut cache = PassabilityCache::new();
+    cache.insert("room".into(), rp);
+    cache
+}
+
+#[test]
+fn pack_below_a_shaft_wall_rounds_it_to_the_open_end() {
+    use crate::monster_ai::path::CachePathProvider;
+    let cache = shaft_room();
+    let provider = CachePathProvider { cache: &cache };
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(7);
+    let players = attacker_at(13.5, 13.5);
+    let mut brains = [
+        brain_at("m1", 12.5, 14.5),
+        brain_at("m2", 15.5, 14.5),
+        brain_at("m3", 17.5, 14.5),
+    ];
+    for _ in 0..2400 {
+        for i in 0..brains.len() {
+            let others = view_of(
+                &brains
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, b)| b)
+                    .collect::<Vec<_>>(),
+            );
+            brains[i].tick_with_behavior_tree(16.0, &players, &others, &tree, &provider, &mut rng);
+        }
+    }
+    let attacking = brains
+        .iter()
+        .filter(|b| b.state() == AiState::Attack)
+        .count();
+    assert_eq!(attacking, 3, "only {attacking} reached the open side");
+}

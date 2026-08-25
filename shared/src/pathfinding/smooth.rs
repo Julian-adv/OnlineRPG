@@ -6,7 +6,7 @@
 //! floor; floor-transition waypoints (stairwell entry/exit) are anchored
 //! so the path stays cardinal across the seam.
 
-use super::astar::find_path;
+use super::astar::{find_path_avoiding, segment_enters_cells};
 use super::query::{
     is_cardinal_move_blocked, is_circle_blocked_on_floor, segment_obstacles, SegmentObstacles,
 };
@@ -18,7 +18,11 @@ use super::{PassabilityCache, PathResult, PathWaypoint};
 const PLAYER_RADIUS: f32 = 0.3;
 
 /// Greedy line-of-sight path smoothing. Only smooths within the same floor level.
-fn smooth_path(waypoints: &[PathWaypoint], cache: &PassabilityCache) -> Vec<PathWaypoint> {
+fn smooth_path(
+    waypoints: &[PathWaypoint],
+    cache: &PassabilityCache,
+    blocked: &[(i32, i32)],
+) -> Vec<PathWaypoint> {
     if waypoints.len() <= 2 {
         return waypoints.to_vec();
     }
@@ -40,7 +44,7 @@ fn smooth_path(waypoints: &[PathWaypoint], cache: &PassabilityCache) -> Vec<Path
                 if waypoints[probe].floor != waypoints[anchor].floor {
                     break;
                 }
-                if is_line_passable(&waypoints[anchor], &waypoints[probe], cache) {
+                if line_passable_avoiding(&waypoints[anchor], &waypoints[probe], cache, blocked) {
                     farthest = probe;
                 } else {
                     break;
@@ -63,7 +67,19 @@ pub(super) fn is_line_passable(
     to: &PathWaypoint,
     cache: &PassabilityCache,
 ) -> bool {
-    if !cells_line_passable(from, to, cache) {
+    line_passable_avoiding(from, to, cache, &[])
+}
+
+/// `is_line_passable` that also refuses to cross a `blocked` cell.
+fn line_passable_avoiding(
+    from: &PathWaypoint,
+    to: &PathWaypoint,
+    cache: &PassabilityCache,
+    blocked: &[(i32, i32)],
+) -> bool {
+    if !cells_line_passable(from, to, cache)
+        || segment_enters_cells(from.x, from.z, to.x, to.z, blocked)
+    {
         return false;
     }
     // Cell-edge traversal permits diagonals whose interior grazes a convex wall
@@ -125,7 +141,6 @@ fn cells_line_passable(from: &PathWaypoint, to: &PathWaypoint, cache: &Passabili
         if x == x1 && z == z1 {
             return true;
         }
-
         let e2 = 2 * err;
         let step_x = e2 > -dz;
         let step_z = e2 < dx;
@@ -173,7 +188,11 @@ fn direct_line_ok(
     goal_z: f32,
     floor: u8,
     cache: &PassabilityCache,
+    blocked: &[(i32, i32)],
 ) -> bool {
+    if segment_enters_cells(start_x, start_z, goal_x, goal_z, blocked) {
+        return false;
+    }
     let min_x = start_x.min(goal_x);
     let max_x = start_x.max(goal_x);
     let min_z = start_z.min(goal_z);
@@ -210,8 +229,44 @@ pub fn find_and_smooth_path(
     cache: &PassabilityCache,
     max_nodes: usize,
 ) -> PathResult {
+    find_and_smooth_path_avoiding(
+        start_x,
+        start_z,
+        start_floor,
+        goal_x,
+        goal_z,
+        goal_floor,
+        cache,
+        max_nodes,
+        &[],
+    )
+}
+
+/// [`find_and_smooth_path`] that keeps out of `blocked` cells, in the search
+/// and in the smoothing alike — a wall-only line check would otherwise cut
+/// the detour straight back through the cell it was routed around.
+#[allow(clippy::too_many_arguments)]
+pub fn find_and_smooth_path_avoiding(
+    start_x: f32,
+    start_z: f32,
+    start_floor: u8,
+    goal_x: f32,
+    goal_z: f32,
+    goal_floor: u8,
+    cache: &PassabilityCache,
+    max_nodes: usize,
+    blocked: &[(i32, i32)],
+) -> PathResult {
     if start_floor == goal_floor
-        && direct_line_ok(start_x, start_z, goal_x, goal_z, start_floor, cache)
+        && direct_line_ok(
+            start_x,
+            start_z,
+            goal_x,
+            goal_z,
+            start_floor,
+            cache,
+            blocked,
+        )
     {
         return PathResult {
             waypoints: vec![PathWaypoint {
@@ -223,7 +278,7 @@ pub fn find_and_smooth_path(
         };
     }
 
-    let result = find_path(
+    let result = find_path_avoiding(
         start_x,
         start_z,
         start_floor,
@@ -232,6 +287,7 @@ pub fn find_and_smooth_path(
         goal_floor,
         cache,
         max_nodes,
+        blocked,
     );
     if result.waypoints.is_empty() {
         return result;
@@ -245,7 +301,7 @@ pub fn find_and_smooth_path(
         floor: start_floor,
     });
     full_path.extend(result.waypoints);
-    let smoothed = smooth_path(&full_path, cache);
+    let smoothed = smooth_path(&full_path, cache, blocked);
     PathResult {
         // Remove the start position — the client already knows where the player is
         // and uses the first waypoint as the movement target.

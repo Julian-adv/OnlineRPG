@@ -82,6 +82,9 @@ pub struct MonsterBrain {
     /// first cell boundary, still overlapped.
     #[serde(default)]
     pub(super) reslotting: bool,
+    /// Detour goal; repaths keep avoiding standers until arrival.
+    #[serde(default)]
+    pub(super) detour_goal: Option<(f32, f32)>,
 }
 
 impl MonsterBrain {
@@ -142,6 +145,7 @@ impl MonsterBrain {
             occupied_cells: Vec::new(),
             cell_yield: false,
             reslotting: false,
+            detour_goal: None,
         }
     }
 
@@ -262,6 +266,7 @@ impl MonsterBrain {
         }
         if !matches!(self.state, AiState::Chase | AiState::Hold | AiState::Attack) {
             self.reslotting = false;
+            self.detour_goal = None;
         }
 
         self.state_timer_ms += delta_ms;

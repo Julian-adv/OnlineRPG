@@ -8,8 +8,8 @@ use super::{
     CHASE_CELL_RANGE_MARGIN, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
     DEFAULT_IDLE_CHECK_MS, DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
     DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
-    FLEE_SAFE_DIST_MARGIN, MAX_SLOT_PATH_TRIES, MIN_PARTIAL_PROGRESS_METERS,
-    SIDESTEP_MAX_PATH_METERS,
+    DETOUR_MAX_NODES, DETOUR_MAX_PATH_METERS, FLEE_SAFE_DIST_MARGIN, MAX_SLOT_PATH_TRIES,
+    MIN_PARTIAL_PROGRESS_METERS, SIDESTEP_MAX_PATH_METERS,
 };
 use crate::world::{shortest_world_delta_x, wrap_world_x};
 use crate::MonsterState;
@@ -380,13 +380,19 @@ impl MonsterBrain {
         // While waiting on an unreachable target (empty waypoints, Hold),
         // retry only at repath cadence — every tick would flood A* at 60Hz.
         let exhausted = self.current_waypoint_idx >= self.waypoints.len();
+        let target_moved = self.target_moved_significantly_by(&target_pos, target_move_threshold);
         let needs_repath = (exhausted && self.state != AiState::Hold)
             || self.path_elapsed_ms > path_recalc_ms
-            || self.target_moved_significantly_by(&target_pos, target_move_threshold);
+            || target_moved;
 
         if needs_repath {
+            if target_moved {
+                self.detour_goal = None;
+            }
             self.last_known_target_pos = Some(target_pos);
-            if !self.path_to_chase_slot(&target_pos, path_provider) {
+            if !self.continue_detour(path_provider)
+                && !self.path_to_chase_slot(&target_pos, path_provider)
+            {
                 // No reachable free cell — head for the target itself; the
                 // advance gate still queues us behind standers. A* answers an
                 // unreachable target with a partial path (found=false):
@@ -416,10 +422,11 @@ impl MonsterBrain {
 
         let (reached, held) = self.follow_path_gated(delta_ms, true);
         if held {
-            // Flow around the blocker when possible; retry at repath cadence,
-            // not every tick.
+            // Flow around the blocker, or back out and round the queue, when
+            // possible; retry at repath cadence, not every tick.
             if (self.state != AiState::Hold || needs_repath)
-                && self.try_sidestep(&target_pos, path_provider, true)
+                && (self.try_sidestep(&target_pos, path_provider, true)
+                    || self.try_detour(&target_pos, path_provider))
             {
                 self.state = AiState::Chase;
                 if self.should_sync_move() {
@@ -435,6 +442,7 @@ impl MonsterBrain {
         self.state = AiState::Chase;
         if reached {
             self.reslotting = false;
+            self.detour_goal = None;
         }
         if self.should_sync_move() {
             commands.push(self.make_chase_move_cmd(target_pos));
@@ -561,6 +569,54 @@ impl MonsterBrain {
             return true;
         }
         false
+    }
+
+    /// Back out and re-route around the standers; the goal sticks in
+    /// `detour_goal` so repaths keep avoiding instead of rejoining the queue.
+    fn try_detour(
+        &mut self,
+        target_pos: &crate::Position,
+        path_provider: &dyn PathProvider,
+    ) -> bool {
+        let goal = match self.chase_goal_cell {
+            Some(cell) => cell_center(cell),
+            None => (target_pos.x, target_pos.z),
+        };
+        self.detour_goal = Some(goal);
+        self.continue_detour(path_provider)
+    }
+
+    /// Re-route toward `detour_goal` around the standers. Drops the detour
+    /// (false) when no local one remains — the caller re-slots as usual.
+    fn continue_detour(&mut self, path_provider: &dyn PathProvider) -> bool {
+        let Some((goal_x, goal_z)) = self.detour_goal else {
+            return false;
+        };
+        let local_goal_x = self.position.x + shortest_world_delta_x(self.position.x, goal_x);
+        let mut result = path_provider.find_path_avoiding(
+            self.position.x,
+            self.position.z,
+            self.path_floor,
+            local_goal_x,
+            goal_z,
+            self.path_floor,
+            &self.occupied_cells,
+            DETOUR_MAX_NODES,
+        );
+        for wp in &mut result.waypoints {
+            wp.x = wrap_world_x(wp.x);
+        }
+        if !result.found
+            || result.waypoints.is_empty()
+            || path_len(self.position.x, self.position.z, &result.waypoints)
+                > DETOUR_MAX_PATH_METERS
+        {
+            self.detour_goal = None;
+            return false;
+        }
+        self.install_path(result.waypoints);
+        self.face_first_waypoint();
+        true
     }
 
     /// Rule 1 of doc/MONSTER_SEPARATION.md: path to a free standing cell near

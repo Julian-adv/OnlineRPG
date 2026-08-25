@@ -673,6 +673,32 @@ impl monster_ai::PathProvider for WasmPathProvider {
     fn cell_passable(&self, x: f32, z: f32, floor: u8) -> bool {
         with_cache(|c| !pathfinding::is_cell_sealed(c, x, z, floor, None))
     }
+
+    fn find_path_avoiding(
+        &self,
+        start_x: f32,
+        start_z: f32,
+        start_floor: u8,
+        goal_x: f32,
+        goal_z: f32,
+        goal_floor: u8,
+        blocked: &[(i32, i32)],
+        max_nodes: usize,
+    ) -> pathfinding::PathResult {
+        with_cache(|c| {
+            pathfinding::find_and_smooth_path_avoiding(
+                start_x,
+                start_z,
+                start_floor,
+                goal_x,
+                goal_z,
+                goal_floor,
+                c,
+                max_nodes,
+                blocked,
+            )
+        })
+    }
 }
 
 #[wasm_bindgen]

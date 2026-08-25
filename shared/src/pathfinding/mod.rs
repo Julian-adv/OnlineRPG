@@ -22,7 +22,7 @@ mod query;
 mod smooth;
 mod stair;
 
-pub use astar::{find_path, DEFAULT_MAX_NODES};
+pub use astar::{find_path, segment_enters_cells, DEFAULT_MAX_NODES};
 pub use cache::{
     apply_door_overlays, build_furniture_passability, build_runtime_passability, door_cells,
     update_door_edge, FurniturePiece,
@@ -34,7 +34,7 @@ pub use query::{
     storey_ground_y, supporting_floor_y, BlockInfo,
 };
 pub(crate) use query::{ramp_fraction, segment_touches_box};
-pub use smooth::find_and_smooth_path;
+pub use smooth::{find_and_smooth_path, find_and_smooth_path_avoiding};
 
 use std::collections::HashMap;
 
@@ -1090,6 +1090,45 @@ mod tests {
             !(first.x.floor() as i32 == 6 && first.z.floor() as i32 == 5),
             "the escape step must not cross the wall side: {:?}",
             result.waypoints
+        );
+    }
+
+    /// A blocked cell (a standing monster) is avoided by the search and by
+    /// smoothing alike: a wall-only line check would cut the detour straight
+    /// back through the cell it was routed around.
+    #[test]
+    fn find_and_smooth_path_avoiding_keeps_out_of_blocked_cells() {
+        let (id, rp) = make_rect_room(5, 5);
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+        let blocked = [(12, 12)];
+
+        let plain = find_and_smooth_path(10.5, 12.5, 0, 14.5, 12.5, 0, &cache, 500);
+        assert!(
+            plain.found && plain.waypoints.len() == 1,
+            "open room: straight line"
+        );
+
+        let result =
+            find_and_smooth_path_avoiding(10.5, 12.5, 0, 14.5, 12.5, 0, &cache, 500, &blocked);
+        assert!(result.found);
+        let last = result.waypoints.last().unwrap();
+        assert!((last.x - 14.5).abs() < 0.01 && (last.z - 12.5).abs() < 0.01);
+        let (mut px, mut pz) = (10.5_f32, 12.5_f32);
+        for wp in &result.waypoints {
+            assert!(
+                !segment_enters_cells(px, pz, wp.x, wp.z, &blocked),
+                "path crosses the blocked cell: {:?}",
+                result.waypoints
+            );
+            (px, pz) = (wp.x, wp.z);
+        }
+
+        let same = find_and_smooth_path_avoiding(10.5, 12.5, 0, 14.5, 12.5, 0, &cache, 500, &[]);
+        assert_eq!(
+            same.waypoints.len(),
+            plain.waypoints.len(),
+            "empty set = plain"
         );
     }
 }

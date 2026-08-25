@@ -11,6 +11,7 @@ use std::collections::{BinaryHeap, HashMap, HashSet};
 use super::query::{is_cardinal_move_blocked, is_movement_blocked_for_mover};
 use super::stair::{build_stair_cells, floor_to_key, is_regular_key, key_to_floor, AStarKey};
 use super::{PassabilityCache, PathResult, PathWaypoint, DIRS};
+use crate::world::wrap_world_x;
 
 /// Default max nodes for A* expansion. Sized for multi-floor house traversal.
 pub const DEFAULT_MAX_NODES: usize = 2000;
@@ -65,6 +66,58 @@ pub fn find_path(
     goal_floor: u8,
     cache: &PassabilityCache,
     max_nodes: usize,
+) -> PathResult {
+    find_path_avoiding(
+        start_x,
+        start_z,
+        start_floor,
+        goal_x,
+        goal_z,
+        goal_floor,
+        cache,
+        max_nodes,
+        &[],
+    )
+}
+
+/// Whether the 1m cell `(x, z)`, in any periodic frame, is in `blocked`.
+pub(super) fn cell_blocked(blocked: &[(i32, i32)], x: i32, z: i32) -> bool {
+    !blocked.is_empty() && blocked.contains(&(wrap_world_x(x as f32 + 0.5).floor() as i32, z))
+}
+
+/// Whether a mover walking `(x0, z0)`→`(x1, z1)` enters any of `cells`
+/// (canonical, see `monster_ai::cell_of`). Sampled at quarter-cell steps so
+/// no 1m cell is skipped; the start cell is exempt. The chase gate, the
+/// occupied-leg check and the smoother all use this one sweep so they agree
+/// on which cells a leg touches.
+pub fn segment_enters_cells(x0: f32, z0: f32, x1: f32, z1: f32, cells: &[(i32, i32)]) -> bool {
+    if cells.is_empty() {
+        return false;
+    }
+    let dx = crate::world::shortest_world_delta_x(x0, x1);
+    let dz = z1 - z0;
+    let steps = ((dx * dx + dz * dz).sqrt() / 0.25).ceil().max(1.0) as i32;
+    let start = (x0.floor() as i32, z0.floor() as i32);
+    (1..=steps).any(|i| {
+        let t = i as f32 / steps as f32;
+        let cell = ((x0 + dx * t).floor() as i32, (z0 + dz * t).floor() as i32);
+        cell != start && cell_blocked(cells, cell.0, cell.1)
+    })
+}
+
+/// [`find_path`] that also refuses to enter `blocked` cells — standing
+/// monsters, so a chase can detour around a queue instead of waiting in it.
+#[allow(clippy::too_many_arguments)]
+pub fn find_path_avoiding(
+    start_x: f32,
+    start_z: f32,
+    start_floor: u8,
+    goal_x: f32,
+    goal_z: f32,
+    goal_floor: u8,
+    cache: &PassabilityCache,
+    max_nodes: usize,
+    blocked: &[(i32, i32)],
 ) -> PathResult {
     let sx = start_x.floor() as i32;
     let sz = start_z.floor() as i32;
@@ -219,8 +272,9 @@ pub fn find_path(
                 let nz = cur.z + dz;
                 let new_g = cur.g + 1;
 
-                if is_cardinal_move_blocked(cache, cur.x, cur.z, dx, dz, cur_floor)
-                    && !(cur_key == start_key && start_escapes(dx, dz))
+                if cell_blocked(blocked, nx, nz)
+                    || (is_cardinal_move_blocked(cache, cur.x, cur.z, dx, dz, cur_floor)
+                        && !(cur_key == start_key && start_escapes(dx, dz)))
                 {
                     continue;
                 }
@@ -271,6 +325,9 @@ pub fn find_path(
         if !confine_to_floor {
             if let Some(sc) = stair_cells.get(&cur_key) {
                 for neighbor in [&sc.prev, &sc.next].into_iter().flatten() {
+                    if cell_blocked(blocked, neighbor.x, neighbor.z) {
+                        continue;
+                    }
                     let new_g = cur.g + 1;
                     let nkey: AStarKey = (neighbor.x, neighbor.z, neighbor.fk);
                     if let Some(existing) = closed.get(&nkey) {
