@@ -1552,3 +1552,245 @@ fn stacked_door_waiters_spread_one_per_cell() {
     }
     assert_distinct_cells(&[&b1, &b2, &b3], "door waiters must spread");
 }
+
+/// The door shuts while the pack is mid-chase: everyone must settle into a
+/// quiet hold (spread one per cell), not keep milling about.
+#[test]
+fn door_closing_mid_chase_settles_the_pack() {
+    use std::cell::Cell;
+    struct Door {
+        open: Cell<bool>,
+    }
+    impl PathProvider for Door {
+        fn find_path(&self, _sx: f32, _sz: f32, _sf: u8, gx: f32, gz: f32, gf: u8) -> PathResult {
+            let lanes = (10.0..12.0).contains(&gz);
+            if lanes && (self.open.get() || gx >= 12.0) {
+                PathResult {
+                    waypoints: vec![PathWaypoint {
+                        x: gx,
+                        z: gz,
+                        floor: gf,
+                    }],
+                    found: true,
+                }
+            } else if lanes {
+                // Like the real A*: an unreachable goal answers with a
+                // partial path to the closest reachable cell (found=false).
+                PathResult {
+                    waypoints: vec![PathWaypoint {
+                        x: 12.2,
+                        z: gz,
+                        floor: gf,
+                    }],
+                    found: false,
+                }
+            } else {
+                PathResult {
+                    waypoints: vec![],
+                    found: false,
+                }
+            }
+        }
+
+        fn attack_line_blocked(&self, fx: f32, _fz: f32, tx: f32, _tz: f32, _floor: u8) -> bool {
+            !self.open.get() && (fx < 12.0) != (tx < 12.0)
+        }
+    }
+
+    let door = Door {
+        open: Cell::new(true),
+    };
+    let mut b1 = brain_at("m1", 18.0, 10.5);
+    let mut b2 = brain_at("m2", 19.5, 10.5);
+    let mut b3 = brain_at("m3", 21.0, 10.5);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(10.0, 10.5);
+
+    // The server refuses a move through the shut door by echoing back the
+    // kept position; the owner snaps the brain there.
+    fn enforce_door(brain: &mut MonsterBrain, before: Position, open: bool) {
+        if !open && before.x >= 12.0 && brain.position.x < 12.0 {
+            brain.apply_authoritative_position(before);
+        }
+    }
+
+    let mut moved_late = 0.0_f32;
+    for step in 0..900 {
+        if step == 20 {
+            door.open.set(false);
+        }
+        let before = [b1.position, b2.position, b3.position];
+        let v1 = view_of(&[&b2, &b3]);
+        b1.tick_with_behavior_tree(16.0, &players, &v1, &tree, &door, &mut rng);
+        enforce_door(&mut b1, before[0], door.open.get());
+        let v2 = view_of(&[&b1, &b3]);
+        b2.tick_with_behavior_tree(16.0, &players, &v2, &tree, &door, &mut rng);
+        enforce_door(&mut b2, before[1], door.open.get());
+        let v3 = view_of(&[&b1, &b2]);
+        b3.tick_with_behavior_tree(16.0, &players, &v3, &tree, &door, &mut rng);
+        enforce_door(&mut b3, before[2], door.open.get());
+        if step >= 700 {
+            for (b, p) in [&b1, &b2, &b3].iter().zip(before.iter()) {
+                let dx = b.position.x - p.x;
+                let dz = b.position.z - p.z;
+                moved_late += (dx * dx + dz * dz).sqrt();
+            }
+        }
+    }
+
+    assert!(
+        moved_late < 0.01,
+        "the pack must settle, moved {moved_late}m in the last 200 steps"
+    );
+    for b in [&b1, &b2, &b3] {
+        assert_eq!(b.network_state(), MonsterState::Idle, "quiet wait");
+    }
+    assert_distinct_cells(&[&b1, &b2, &b3], "door pack spreads");
+}
+
+/// Every path detours through cell (10, 11) first — the shape a wall gives
+/// A* — and a stander sits in that cell. The sidestep must reject legs that
+/// cross an occupied cell, or it re-picks the same blocked sidestep every
+/// tick and jogs in place forever.
+#[test]
+fn sidestep_rejects_a_leg_through_an_occupied_cell() {
+    struct NorthDetour;
+    impl PathProvider for NorthDetour {
+        fn find_path(&self, _sx: f32, _sz: f32, _sf: u8, gx: f32, gz: f32, gf: u8) -> PathResult {
+            PathResult {
+                waypoints: vec![
+                    PathWaypoint {
+                        x: 10.5,
+                        z: 11.5,
+                        floor: gf,
+                    },
+                    PathWaypoint {
+                        x: gx,
+                        z: gz,
+                        floor: gf,
+                    },
+                ],
+                found: true,
+            }
+        }
+
+        fn attack_line_blocked(&self, _fx: f32, _fz: f32, _tx: f32, _tz: f32, _floor: u8) -> bool {
+            false
+        }
+    }
+
+    let mut brain = brain_at("m1", 10.5, 10.5);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(12.5, 9.0);
+    let stander = vec![NearbyMonster {
+        id: "m2".into(),
+        position: Position {
+            x: 10.5,
+            y: 0.0,
+            z: 11.5,
+        },
+        state: MonsterState::Idle,
+        path_floor: 0,
+    }];
+
+    let mut moved_late = 0.0_f32;
+    for step in 0..300 {
+        let before = brain.position;
+        brain.tick_with_behavior_tree(16.0, &players, &stander, &tree, &NorthDetour, &mut rng);
+        if step >= 150 {
+            let dx = brain.position.x - before.x;
+            let dz = brain.position.z - before.z;
+            moved_late += (dx * dx + dz * dz).sqrt();
+        }
+    }
+
+    assert!(
+        moved_late < 0.01,
+        "must settle instead of jogging in place, moved {moved_late}m late"
+    );
+    assert_eq!(brain.network_state(), MonsterState::Idle, "quiet hold");
+    assert!(brain.position.z < 11.0, "never entered the occupied cell");
+}
+
+/// The route to the goal dips south around a wall, but a stander blocks the
+/// dip. The north pocket is euclidean-closer to the goal yet route-farther —
+/// a sidestep there would be undone by the next repath, oscillating forever.
+/// The route-length check must reject it so the chaser queues quietly.
+#[test]
+fn sidestep_rejects_a_euclidean_shortcut_that_is_route_farther() {
+    struct DipMaze;
+    impl PathProvider for DipMaze {
+        fn find_path(&self, sx: f32, _sz: f32, _sf: u8, gx: f32, gz: f32, gf: u8) -> PathResult {
+            // Goals in the slot zone (east-north) are reachable only via a
+            // southern dip; everything else is a straight line.
+            if gz > 11.0 && gx > 11.0 {
+                PathResult {
+                    waypoints: vec![
+                        PathWaypoint {
+                            x: sx,
+                            z: 9.5,
+                            floor: gf,
+                        },
+                        PathWaypoint {
+                            x: gx,
+                            z: gz,
+                            floor: gf,
+                        },
+                    ],
+                    found: true,
+                }
+            } else {
+                PathResult {
+                    waypoints: vec![PathWaypoint {
+                        x: gx,
+                        z: gz,
+                        floor: gf,
+                    }],
+                    found: true,
+                }
+            }
+        }
+
+        fn attack_line_blocked(&self, _fx: f32, _fz: f32, _tx: f32, _tz: f32, _floor: u8) -> bool {
+            false
+        }
+    }
+
+    let mut brain = brain_at("m1", 10.5, 10.5);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(12.5, 11.9);
+    let stander = |x: f32, z: f32, id: &str| NearbyMonster {
+        id: id.into(),
+        position: Position { x, y: 0.0, z },
+        state: MonsterState::Idle,
+        path_floor: 0,
+    };
+    // South dip blocked, east/west taken: the only free neighbor is the
+    // north pocket.
+    let others = vec![
+        stander(10.5, 9.5, "m2"),
+        stander(11.5, 10.5, "m3"),
+        stander(9.5, 10.5, "m4"),
+    ];
+
+    let mut moved_late = 0.0_f32;
+    for step in 0..300 {
+        let before = brain.position;
+        brain.tick_with_behavior_tree(16.0, &players, &others, &tree, &DipMaze, &mut rng);
+        if step >= 150 {
+            let dx = brain.position.x - before.x;
+            let dz = brain.position.z - before.z;
+            moved_late += (dx * dx + dz * dz).sqrt();
+        }
+    }
+
+    assert!(
+        moved_late < 0.01,
+        "must queue instead of oscillating, moved {moved_late}m late"
+    );
+    assert_eq!(brain.network_state(), MonsterState::Idle, "quiet hold");
+    assert!(brain.position.z < 11.0, "never wandered into the pocket");
+}

@@ -172,31 +172,58 @@ impl MonsterBrain {
         goal_x: f32,
         goal_z: f32,
         path_provider: &dyn PathProvider,
-    ) -> Vec<PathWaypoint> {
-        let local_goal_x = self.position.x + shortest_world_delta_x(self.position.x, goal_x);
-        let mut waypoints = path_provider
-            .find_path(
-                self.position.x,
-                self.position.z,
-                self.path_floor,
-                local_goal_x,
-                goal_z,
-                self.path_floor,
-            )
-            .waypoints;
-        for wp in &mut waypoints {
-            wp.x = wrap_world_x(wp.x);
-        }
-        waypoints
+    ) -> crate::pathfinding::PathResult {
+        self.query_path_from(
+            self.position.x,
+            self.position.z,
+            goal_x,
+            goal_z,
+            path_provider,
+        )
     }
 
+    /// The same seam-aware query from an arbitrary start on our floor (used
+    /// to measure a route from a sidestep candidate).
+    pub(super) fn query_path_from(
+        &self,
+        start_x: f32,
+        start_z: f32,
+        goal_x: f32,
+        goal_z: f32,
+        path_provider: &dyn PathProvider,
+    ) -> crate::pathfinding::PathResult {
+        let local_goal_x = start_x + shortest_world_delta_x(start_x, goal_x);
+        let mut result = path_provider.find_path(
+            start_x,
+            start_z,
+            self.path_floor,
+            local_goal_x,
+            goal_z,
+            self.path_floor,
+        );
+        for wp in &mut result.waypoints {
+            wp.x = wrap_world_x(wp.x);
+        }
+        result
+    }
+
+    /// Path toward the goal, accepting a partial leg: A* answers an
+    /// unreachable goal with the path to the closest reachable cell
+    /// (`found: false`). Callers that must not settle for that check
+    /// `query_path().found` themselves.
     pub(super) fn compute_path(
         &mut self,
         goal_x: f32,
         goal_z: f32,
         path_provider: &dyn PathProvider,
     ) {
-        let waypoints = self.query_path(goal_x, goal_z, path_provider);
+        let waypoints = self.query_path(goal_x, goal_z, path_provider).waypoints;
+        self.install_path(waypoints);
+    }
+
+    /// Adopt a freshly queried leg: reset progress and the repath timer, and
+    /// mark a bend when this cuts a leg short.
+    pub(super) fn install_path(&mut self, waypoints: Vec<PathWaypoint>) {
         let turned_mid_leg = self.current_waypoint_idx < self.waypoints.len();
         self.waypoints = waypoints;
         self.current_waypoint_idx = 0;

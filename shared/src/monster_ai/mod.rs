@@ -100,6 +100,10 @@ const SIDESTEP_MAX_PATH_METERS: f32 = 3.0;
 /// pathfinding cost when the nearest candidates are unreachable (corridor
 /// walls).
 const MAX_SLOT_PATH_TRIES: usize = 6;
+/// A partial path toward an unreachable target is worth walking only while it
+/// still covers ground; below this it has degenerated to "where we already
+/// stand" and the chase waits instead.
+const MIN_PARTIAL_PROGRESS_METERS: f32 = 0.5;
 
 /// Separation cell for the 1m grid (doc/MONSTER_SEPARATION.md) — one standing
 /// monster per cell, NetHack-style.
@@ -127,6 +131,42 @@ fn path_len(x: f32, z: f32, waypoints: &[crate::pathfinding::PathWaypoint]) -> f
         (px, pz) = (wp.x, wp.z);
     }
     len
+}
+
+/// Whether walking `waypoints` from `(x, z)` enters any cell in `occupied`.
+/// Sampled at quarter-cell steps so no 1m cell is skipped; the start cell is
+/// exempt (a leg may sweep back through it).
+fn leg_crosses_occupied(
+    x: f32,
+    z: f32,
+    waypoints: &[crate::pathfinding::PathWaypoint],
+    occupied: &[(i32, i32)],
+) -> bool {
+    if occupied.is_empty() {
+        return false;
+    }
+    let start_cell = cell_of(x, z);
+    let (mut px, mut pz) = (x, z);
+    let mut last_cell = start_cell;
+    for wp in waypoints {
+        let dx = crate::world::shortest_world_delta_x(px, wp.x);
+        let dz = wp.z - pz;
+        let len = (dx * dx + dz * dz).sqrt();
+        let steps = (len / 0.25).ceil().max(1.0) as i32;
+        for i in 1..=steps {
+            let t = i as f32 / steps as f32;
+            let cell = cell_of(crate::world::wrap_world_x(px + dx * t), pz + dz * t);
+            if cell == last_cell {
+                continue;
+            }
+            last_cell = cell;
+            if cell != start_cell && occupied.contains(&cell) {
+                return true;
+            }
+        }
+        (px, pz) = (wp.x, wp.z);
+    }
+    false
 }
 
 fn param(params: &HashMap<String, f32>, name: &str, default: f32) -> f32 {

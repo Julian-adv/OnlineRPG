@@ -3,12 +3,13 @@
 
 use super::tree::BehaviorStatus;
 use super::{
-    cell_center, cell_of, param, path_len, AiCommand, AiState, BehaviorNode, MonsterBrain,
-    NearbyPlayer, PathProvider, ATTACK_RELEASE_MARGIN_METERS, CHASE_CELL_RANGE_MARGIN,
-    DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS, DEFAULT_IDLE_CHECK_MS,
-    DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST, DEFAULT_PATH_RECALC_MS,
-    DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD, FLEE_SAFE_DIST_MARGIN,
-    MAX_SLOT_PATH_TRIES, SIDESTEP_MAX_PATH_METERS,
+    cell_center, cell_of, leg_crosses_occupied, param, path_len, AiCommand, AiState, BehaviorNode,
+    MonsterBrain, NearbyPlayer, PathProvider, ATTACK_RELEASE_MARGIN_METERS,
+    CHASE_CELL_RANGE_MARGIN, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
+    DEFAULT_IDLE_CHECK_MS, DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
+    DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
+    FLEE_SAFE_DIST_MARGIN, MAX_SLOT_PATH_TRIES, MIN_PARTIAL_PROGRESS_METERS,
+    SIDESTEP_MAX_PATH_METERS,
 };
 use crate::world::{shortest_world_delta_x, wrap_world_x};
 use crate::MonsterState;
@@ -386,9 +387,17 @@ impl MonsterBrain {
         if needs_repath {
             self.last_known_target_pos = Some(target_pos);
             if !self.path_to_chase_slot(&target_pos, path_provider) {
-                // No reachable free cell — chase the target itself; the
-                // advance gate still queues us behind standers.
-                self.compute_path(target_pos.x, target_pos.z, path_provider);
+                // No reachable free cell — head for the target itself; the
+                // advance gate still queues us behind standers. A* answers an
+                // unreachable target with a partial path (found=false):
+                // walking it brings the pack up to the door, and once the
+                // partial leg stops covering ground it counts as no path, so
+                // the chase waits instead of re-arriving every tick.
+                let result = self.query_path(target_pos.x, target_pos.z, path_provider);
+                let keep = result.found
+                    || path_len(self.position.x, self.position.z, &result.waypoints)
+                        > MIN_PARTIAL_PROGRESS_METERS;
+                self.install_path(if keep { result.waypoints } else { Vec::new() });
             }
             if self.waypoints.is_empty() {
                 // Unreachable target (a shut door): wait here instead of
@@ -480,12 +489,28 @@ impl MonsterBrain {
         let cur_dz = goal_z - self.position.z;
         let cur_d = cur_dx * cur_dx + cur_dz * cur_dz;
 
+        // Route-closer, not just euclidean-closer: near a wall the
+        // straight-line gradient points into dead pockets, and a sidestep
+        // picked by it undoes the goal path every cycle — walk 0.6m up,
+        // repath walks 0.6m back down, forever (the dungeon-wall jog). Only
+        // a candidate whose own route to the goal is strictly shorter than
+        // the one we hold makes progress.
+        let cur_route = path_len(
+            self.position.x,
+            self.position.z,
+            &self.waypoints[self.current_waypoint_idx.min(self.waypoints.len())..],
+        );
+        if require_closer && cur_route <= 0.0 {
+            // No candidate route can be strictly shorter than nothing.
+            return false;
+        }
+
         // Score the cardinals by cheap checks first; A* runs below, in order,
         // only until one succeeds.
         let mut candidates: Vec<((f32, f32), f32)> = Vec::new();
         for &(ox, oz) in crate::pathfinding::DIRS.iter() {
-            let (cx, cz) = cell_center((here.0 + ox, here.1 + oz));
-            let cell = cell_of(cx, cz);
+            let cell = (here.0 + ox, here.1 + oz);
+            let (cx, cz) = cell_center(cell);
             if cell == target_cell
                 || self.occupied_cells.contains(&cell)
                 || !path_provider.cell_passable(cx, cz, self.path_floor)
@@ -503,15 +528,34 @@ impl MonsterBrain {
         candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         for ((cx, cz), _) in candidates {
-            let waypoints = self.query_path(cx, cz, path_provider);
-            if waypoints.is_empty()
-                || path_len(self.position.x, self.position.z, &waypoints) > SIDESTEP_MAX_PATH_METERS
+            let result = self.query_path(cx, cz, path_provider);
+            // The leg must not cross an occupied cell either: a wall can make
+            // A* route to a free neighbor *through* someone else's cell, and
+            // the advance gate would stop that leg on its first crossing —
+            // then the next tick re-picks the exact same sidestep, forever
+            // (the stair-wall in-place jog).
+            if !result.found
+                || result.waypoints.is_empty()
+                || path_len(self.position.x, self.position.z, &result.waypoints)
+                    > SIDESTEP_MAX_PATH_METERS
+                || leg_crosses_occupied(
+                    self.position.x,
+                    self.position.z,
+                    &result.waypoints,
+                    &self.occupied_cells,
+                )
             {
                 continue;
             }
+            if require_closer {
+                let cand_route = self.query_path_from(cx, cz, goal_x, goal_z, path_provider);
+                if !cand_route.found || path_len(cx, cz, &cand_route.waypoints) >= cur_route {
+                    continue;
+                }
+            }
             // Deliberately not `compute_path`: the repath timer keeps running
             // so the interrupted goal is re-tried on its normal cadence.
-            self.waypoints = waypoints;
+            self.waypoints = result.waypoints;
             self.current_waypoint_idx = 0;
             self.face_first_waypoint();
             return true;
@@ -584,14 +628,21 @@ impl MonsterBrain {
         false
     }
 
-    /// Commit a goal cell: path to its center, keeping the cell only when a
-    /// path exists.
+    /// Commit a goal cell: path to its center, keeping the cell only when the
+    /// goal is actually reachable. `found` is load-bearing: A* answers an
+    /// unreachable goal with a partial path toward it, and accepting that
+    /// made the two front monsters at a shut door ping-pong forever — each
+    /// "reached" the partial end in the other's lane and re-slotted to the
+    /// opposite player-side cell. (The raw-target fallback deliberately keeps
+    /// partial paths: its goal is fixed, so it converges at the door and
+    /// holds.)
     fn try_goal_cell(&mut self, cell: (i32, i32), path_provider: &dyn PathProvider) -> bool {
         let (gx, gz) = cell_center(cell);
-        self.compute_path(gx, gz, path_provider);
-        if self.waypoints.is_empty() {
+        let result = self.query_path(gx, gz, path_provider);
+        if !result.found || result.waypoints.is_empty() {
             return false;
         }
+        self.install_path(result.waypoints);
         self.chase_goal_cell = Some(cell);
         true
     }
