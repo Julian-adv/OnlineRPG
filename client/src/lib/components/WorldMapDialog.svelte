@@ -91,6 +91,7 @@
 
   let playerX = $derived(wrapWorldX($gameStore.currentPlayer?.position.x ?? 0))
   let playerZ = $derived($gameStore.currentPlayer?.position.z ?? 0)
+  let playerHeading = $derived($gameStore.currentPlayer?.rotation ?? 0)
 
   // --- Camera state (world coordinates of view center) ---
   let camX = $state(0)
@@ -479,12 +480,18 @@
   let selfMarker = $derived.by<{
     left: number
     top: number
+    angle: number
   } | null>(() => {
     const view = renderedView
     if (!view) return null
     const p = worldToScreen(playerX, playerZ, view)
     if (!onScreen(p, view.width, view.height, 20)) return null
-    return p
+    return {
+      ...p,
+      angle:
+        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
+        ROTATE_ANGLE,
+    }
   })
 
   // --- Party member markers (HTML layer, same transform as the labels) ---
@@ -829,10 +836,14 @@
         {#if selfMarker}
           <svg
             class="self-marker"
-            style="left: {selfMarker.left}px; top: {selfMarker.top}px;"
+            style="left: {selfMarker.left}px; top: {selfMarker.top}px; transform: translate(-50%, -50%) rotate({selfMarker.angle}rad);"
             viewBox="0 0 20 20"
             aria-hidden="true"
           >
+            <path
+              class="self-marker-point"
+              d="M 24.5 10 L 14 4.4 L 14 15.6 Z"
+            ></path>
             <circle class="self-marker-rim" cx="10" cy="10" r="8"></circle>
             <circle class="self-marker-core" cx="10" cy="10" r="5.4"></circle>
             <circle class="self-marker-shine" cx="8.2" cy="7.8" r="1.6"
@@ -1252,6 +1263,13 @@
     transform: translate(-50%, -50%);
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.92))
       drop-shadow(0 0 3px rgba(218, 50, 27, 0.72));
+  }
+
+  .self-marker-point {
+    fill: #f2cf62;
+    stroke: #35160c;
+    stroke-width: 1.2;
+    stroke-linejoin: round;
   }
 
   .self-marker-rim {
