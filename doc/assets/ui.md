@@ -12,6 +12,7 @@
 
 - `client/public/textures/ui/world-map/dark-wood.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference; project-owned generated asset
 - `client/public/textures/ui/world-map/ornate-frame.png` — OpenAI Codex built-in ImageGen edit, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference, then ffmpeg color-keyed to restore real alpha transparency; project-owned generated asset
+- Settlement crest marker + player self-marker — hand-authored inline SVG in WorldMapDialog.svelte (OpenAI Codex, 2026-08-24), original shapes with no external source
 
 ## Party UI design mockups
 
