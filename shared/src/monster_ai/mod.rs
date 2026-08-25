@@ -25,7 +25,7 @@ mod tree;
 mod tests;
 
 pub use brain::MonsterBrain;
-pub use command::{AiCommand, AiState, NearbyPlayer, TickResult};
+pub use command::{AiCommand, AiState, NearbyMonster, NearbyPlayer, TickResult};
 pub use path::{CachePathProvider, PathProvider};
 pub use tree::{behavior_tree_for, load_behavior_trees, BehaviorNode, BehaviorTree};
 
@@ -87,6 +87,71 @@ pub const DEFAULT_BEHAVIOR: &str = "brave";
 /// targets on sight. Selected when `Monster::aggressive` is set, overriding the
 /// monster type's configured behavior.
 pub const AGGRESSIVE_BEHAVIOR: &str = "aggressive";
+
+/// Slack inside `attack_range` when picking a standing cell, so the cell
+/// center still passes `bt_attack_target`'s range check. Must stay small:
+/// with a 2m reach the diagonal front cell (~1.8m) has to remain valid, or a
+/// 2-wide corridor can only ever seat one attacker.
+const CHASE_CELL_RANGE_MARGIN: f32 = 0.15;
+/// A sidestep is a local flow around a blocker — refuse one whose path is a
+/// long detour.
+const SIDESTEP_MAX_PATH_METERS: f32 = 3.0;
+/// A held chaser may back out and round the queue instead of waiting, but
+/// only by a local detour — not a trek across the map.
+const DETOUR_MAX_PATH_METERS: f32 = 12.0;
+/// Small budget: the common hold (a sealed corridor) has no detour to find.
+const DETOUR_MAX_NODES: usize = 300;
+/// Standing-cell candidates path-tested per repath, nearest first. Bounds the
+/// pathfinding cost when the nearest candidates are unreachable (corridor
+/// walls).
+const MAX_SLOT_PATH_TRIES: usize = 6;
+/// A partial path toward an unreachable target is worth walking only while it
+/// still covers ground; below this it has degenerated to "where we already
+/// stand" and the chase waits instead.
+const MIN_PARTIAL_PROGRESS_METERS: f32 = 0.5;
+
+/// Separation cell for the 1m grid (doc/MONSTER_SEPARATION.md) — one standing
+/// monster per cell, NetHack-style.
+pub(crate) fn cell_of(x: f32, z: f32) -> (i32, i32) {
+    (
+        crate::world::wrap_world_x(x).floor() as i32,
+        z.floor() as i32,
+    )
+}
+
+fn cell_center(cell: (i32, i32)) -> (f32, f32) {
+    (
+        crate::world::wrap_world_x(cell.0 as f32 + 0.5),
+        cell.1 as f32 + 0.5,
+    )
+}
+
+/// Total XZ length of a waypoint path starting from `(x, z)`.
+fn path_len(x: f32, z: f32, waypoints: &[crate::pathfinding::PathWaypoint]) -> f32 {
+    let (mut px, mut pz, mut len) = (x, z, 0.0);
+    for wp in waypoints {
+        let dx = crate::world::shortest_world_delta_x(px, wp.x);
+        let dz = wp.z - pz;
+        len += (dx * dx + dz * dz).sqrt();
+        (px, pz) = (wp.x, wp.z);
+    }
+    len
+}
+
+/// Whether walking `waypoints` from `(x, z)` enters any cell in `occupied`.
+fn leg_crosses_occupied(
+    x: f32,
+    z: f32,
+    waypoints: &[crate::pathfinding::PathWaypoint],
+    occupied: &[(i32, i32)],
+) -> bool {
+    let (mut px, mut pz) = (x, z);
+    waypoints.iter().any(|wp| {
+        let hit = crate::pathfinding::segment_enters_cells(px, pz, wp.x, wp.z, occupied);
+        (px, pz) = (wp.x, wp.z);
+        hit
+    })
+}
 
 fn param(params: &HashMap<String, f32>, name: &str, default: f32) -> f32 {
     params.get(name).copied().unwrap_or(default)

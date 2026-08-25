@@ -388,20 +388,16 @@
     // Chests sit with their hinge (model back, local −Z) against a wall and
     // their opening (local +Z) facing into the room. The lid swings up and back
     // over the hinge, so the chest is also pushed off that wall (below) to
-    // clear it. Pick the back wall from the carved grid, preferring a Z-facing
-    // wall so the long (X) side runs parallel to it.
+    // clear it. The generator picks the back wall and ships its yaw in
+    // `rotation` (like torches), so both sides agree on the chest's axis.
     let chestYawDeg = 0
     let chestBackWall: 'N' | 'S' | 'W' | 'E' | null = null
     if (prop.kind === 'chest') {
-      if (!carvedAt(prop.x, prop.z - 1))
-        chestBackWall = 'N' // wall on −Z
-      else if (!carvedAt(prop.x, prop.z + 1))
-        chestBackWall = 'S' // wall on +Z
-      else if (!carvedAt(prop.x - 1, prop.z))
-        chestBackWall = 'W' // wall on −X
-      else if (!carvedAt(prop.x + 1, prop.z)) chestBackWall = 'E' // wall on +X
-      // Map the model's back (local −Z) onto the chosen wall.
-      chestYawDeg = chestBackWall ? CHEST_BACK_WALL_YAW[chestBackWall] : 0
+      chestYawDeg = prop.rotation
+      chestBackWall =
+        (Object.keys(CHEST_BACK_WALL_YAW) as ('N' | 'S' | 'W' | 'E')[]).find(
+          (w) => CHEST_BACK_WALL_YAW[w] === prop.rotation
+        ) ?? 'N'
     }
 
     const breakable = isBreakable(prop.kind)

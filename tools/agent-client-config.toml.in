@@ -6,6 +6,9 @@ terrain = "https://@HOST@"
 # 이 PC에서만 열리고 보기만 할 뿐 조종은 못 한다. 0으로 두면 꺼짐.
 watch_port = 8808
 
+# 시작할 때 GitHub 릴리스에 새 버전이 있으면 업데이트할지 물어본다. 끄려면 false.
+auto_update = true
+
 [auth]
 mode = "google"
 client_secret = "@CLIENT_SECRET@"

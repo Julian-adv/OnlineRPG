@@ -3,12 +3,15 @@
 
 use super::tree::BehaviorStatus;
 use super::{
-    param, AiCommand, AiState, BehaviorNode, MonsterBrain, NearbyPlayer, PathProvider,
-    ATTACK_RELEASE_MARGIN_METERS, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
+    cell_center, cell_of, leg_crosses_occupied, param, path_len, AiCommand, AiState, BehaviorNode,
+    MonsterBrain, NearbyPlayer, PathProvider, ATTACK_RELEASE_MARGIN_METERS,
+    CHASE_CELL_RANGE_MARGIN, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
     DEFAULT_IDLE_CHECK_MS, DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
     DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
-    FLEE_SAFE_DIST_MARGIN,
+    DETOUR_MAX_NODES, DETOUR_MAX_PATH_METERS, FLEE_SAFE_DIST_MARGIN, MAX_SLOT_PATH_TRIES,
+    MIN_PARTIAL_PROGRESS_METERS, SIDESTEP_MAX_PATH_METERS,
 };
+use crate::world::{shortest_world_delta_x, wrap_world_x};
 use crate::MonsterState;
 use rand::Rng;
 use std::collections::HashMap;
@@ -285,6 +288,21 @@ impl MonsterBrain {
             None => return BehaviorStatus::Failure,
         };
 
+        // Stacked attackers in one cell: the smallest id keeps it, the rest
+        // yield back to chase for slots of their own. Entry stays refused
+        // while the re-slot walk is under way so a yielder doesn't stop at
+        // the first cell boundary, still overlapped. A committed swing lands
+        // first, as with the range release below.
+        if self.swing_left_ms <= 0.0 {
+            if self.cell_yield {
+                self.reslotting = true;
+                return BehaviorStatus::Failure;
+            }
+            if self.reslotting && self.state != AiState::Attack {
+                return BehaviorStatus::Failure;
+            }
+        }
+
         let range = param(params, "range", self.attack_range);
         // Engage at `range`, release further out: see ATTACK_RELEASE_MARGIN_METERS.
         let limit = if self.state == AiState::Attack {
@@ -354,33 +372,389 @@ impl MonsterBrain {
         let target_move_threshold =
             param(params, "targetMoveThreshold", DEFAULT_TARGET_MOVE_THRESHOLD);
 
-        self.state = AiState::Chase;
         self.move_speed = self.run_speed;
+        if self.state != AiState::Hold {
+            self.state = AiState::Chase;
+        }
 
-        let needs_repath = self.waypoints.is_empty()
-            || self.current_waypoint_idx >= self.waypoints.len()
+        // While waiting on an unreachable target (empty waypoints, Hold),
+        // retry only at repath cadence — every tick would flood A* at 60Hz.
+        let exhausted = self.current_waypoint_idx >= self.waypoints.len();
+        let target_moved = self.target_moved_significantly_by(&target_pos, target_move_threshold);
+        let needs_repath = (exhausted && self.state != AiState::Hold)
             || self.path_elapsed_ms > path_recalc_ms
-            || self.target_moved_significantly_by(&target_pos, target_move_threshold);
+            || target_moved;
 
         if needs_repath {
-            self.compute_path(target_pos.x, target_pos.z, path_provider);
+            if target_moved {
+                self.detour_goal = None;
+            }
             self.last_known_target_pos = Some(target_pos);
+            if !self.continue_detour(path_provider)
+                && !self.path_to_chase_slot(&target_pos, path_provider)
+            {
+                // No reachable free cell — head for the target itself; the
+                // advance gate still queues us behind standers. A* answers an
+                // unreachable target with a partial path (found=false):
+                // walking it brings the pack up to the door, and once the
+                // partial leg stops covering ground it counts as no path, so
+                // the chase waits instead of re-arriving every tick.
+                let result = self.query_path(target_pos.x, target_pos.z, path_provider);
+                let keep = result.found
+                    || path_len(self.position.x, self.position.z, &result.waypoints)
+                        > MIN_PARTIAL_PROGRESS_METERS;
+                self.install_path(if keep { result.waypoints } else { Vec::new() });
+            }
             if self.waypoints.is_empty() {
-                return BehaviorStatus::Failure;
+                // Unreachable target (a shut door): wait here instead of
+                // failing into a frantic wander. A bunched wait still
+                // spreads — a cell-sharer steps one cell aside when it can.
+                if !(self.cell_yield && self.try_sidestep(&target_pos, path_provider, false)) {
+                    self.enter_hold(commands);
+                    return BehaviorStatus::Running;
+                }
             }
         }
 
-        self.follow_path(delta_ms);
+        if self.state == AiState::Hold && self.current_waypoint_idx >= self.waypoints.len() {
+            return BehaviorStatus::Running;
+        }
+
+        let (reached, held) = self.follow_path_gated(delta_ms, true);
+        if held {
+            // Flow around the blocker, or back out and round the queue, when
+            // possible; retry at repath cadence, not every tick.
+            if (self.state != AiState::Hold || needs_repath)
+                && (self.try_sidestep(&target_pos, path_provider, true)
+                    || self.try_detour(&target_pos, path_provider))
+            {
+                self.state = AiState::Chase;
+                if self.should_sync_move() {
+                    commands.push(self.make_chase_move_cmd(target_pos));
+                }
+                return BehaviorStatus::Running;
+            }
+            self.enter_hold(commands);
+            return BehaviorStatus::Running;
+        }
+        // A Hold that got a path again resumes; the state change makes
+        // `should_sync_move` report the transition at once.
+        self.state = AiState::Chase;
+        if reached {
+            self.reslotting = false;
+            self.detour_goal = None;
+        }
         if self.should_sync_move() {
-            commands.push(AiCommand::Move {
-                monster_id: self.monster_id.clone(),
-                position: self.position,
-                rotation: self.rotation,
-                state: MonsterState::Run,
-                target_position: target_pos,
-            });
+            commands.push(self.make_chase_move_cmd(target_pos));
         }
         BehaviorStatus::Running
+    }
+
+    /// Enter (or stay in) the chase hold — queued behind a stander, or
+    /// waiting on an unreachable target. `AiState::Hold` reports as Idle so
+    /// remote clients stop the model.
+    fn enter_hold(&mut self, commands: &mut Vec<AiCommand>) {
+        self.reslotting = false;
+        if self.state == AiState::Hold {
+            return;
+        }
+        self.state = AiState::Hold;
+        self.state_timer_ms = 0.0;
+        self.target_position = None;
+        // Consume the state-change sync trigger; the pose goes out with this
+        // command instead.
+        self.should_sync_move();
+        commands.push(self.make_move_cmd());
+    }
+
+    fn make_chase_move_cmd(&self, target_pos: crate::Position) -> AiCommand {
+        AiCommand::Move {
+            monster_id: self.monster_id.clone(),
+            position: self.position,
+            rotation: self.rotation,
+            state: MonsterState::Run,
+            target_position: target_pos,
+        }
+    }
+
+    /// A held chaser flows around the blocker NetHack-style: step into an
+    /// adjacent free cell strictly closer to its goal. Cardinal only — a
+    /// diagonal's swept line clips the very cell that blocked us. Replaces the
+    /// current leg; the next repath rebuilds the full path from the new cell.
+    fn try_sidestep(
+        &mut self,
+        target_pos: &crate::Position,
+        path_provider: &dyn PathProvider,
+        require_closer: bool,
+    ) -> bool {
+        let (goal_x, goal_z) = match self.chase_goal_cell {
+            Some(cell) => cell_center(cell),
+            None => (target_pos.x, target_pos.z),
+        };
+        let here = cell_of(self.position.x, self.position.z);
+        let target_cell = cell_of(target_pos.x, target_pos.z);
+        let cur_dx = shortest_world_delta_x(self.position.x, goal_x);
+        let cur_dz = goal_z - self.position.z;
+        let cur_d = cur_dx * cur_dx + cur_dz * cur_dz;
+
+        // Route-closer, not just euclidean-closer: near a wall the
+        // straight-line gradient points into dead pockets, and a sidestep
+        // picked by it undoes the goal path every cycle — walk 0.6m up,
+        // repath walks 0.6m back down, forever (the dungeon-wall jog). Only
+        // a candidate whose own route to the goal is strictly shorter than
+        // the one we hold makes progress.
+        let cur_route = path_len(
+            self.position.x,
+            self.position.z,
+            &self.waypoints[self.current_waypoint_idx.min(self.waypoints.len())..],
+        );
+        if require_closer && cur_route <= 0.0 {
+            // No candidate route can be strictly shorter than nothing.
+            return false;
+        }
+
+        // Score the cardinals by cheap checks first; A* runs below, in order,
+        // only until one succeeds.
+        let mut candidates: Vec<((f32, f32), f32)> = Vec::new();
+        for &(ox, oz) in crate::pathfinding::DIRS.iter() {
+            let cell = (here.0 + ox, here.1 + oz);
+            let (cx, cz) = cell_center(cell);
+            if cell == target_cell
+                || self.occupied_cells.contains(&cell)
+                || !path_provider.cell_passable(cx, cz, self.path_floor)
+            {
+                continue;
+            }
+            let dx = shortest_world_delta_x(cx, goal_x);
+            let dz = goal_z - cz;
+            let d = dx * dx + dz * dz;
+            if require_closer && d >= cur_d {
+                continue;
+            }
+            candidates.push(((cx, cz), d));
+        }
+        candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+        for ((cx, cz), _) in candidates {
+            let result = self.query_path(cx, cz, path_provider);
+            // The leg must not cross an occupied cell either: a wall can make
+            // A* route to a free neighbor *through* someone else's cell, and
+            // the advance gate would stop that leg on its first crossing —
+            // then the next tick re-picks the exact same sidestep, forever
+            // (the stair-wall in-place jog).
+            if !result.found
+                || result.waypoints.is_empty()
+                || path_len(self.position.x, self.position.z, &result.waypoints)
+                    > SIDESTEP_MAX_PATH_METERS
+                || leg_crosses_occupied(
+                    self.position.x,
+                    self.position.z,
+                    &result.waypoints,
+                    &self.occupied_cells,
+                )
+            {
+                continue;
+            }
+            if require_closer {
+                let cand_route = self.query_path_from(cx, cz, goal_x, goal_z, path_provider);
+                if !cand_route.found || path_len(cx, cz, &cand_route.waypoints) >= cur_route {
+                    continue;
+                }
+            }
+            // Deliberately not `compute_path`: the repath timer keeps running
+            // so the interrupted goal is re-tried on its normal cadence.
+            self.waypoints = result.waypoints;
+            self.current_waypoint_idx = 0;
+            self.face_first_waypoint();
+            return true;
+        }
+        false
+    }
+
+    /// Back out and re-route around the standers; the goal sticks in
+    /// `detour_goal` so repaths keep avoiding instead of rejoining the queue.
+    fn try_detour(
+        &mut self,
+        target_pos: &crate::Position,
+        path_provider: &dyn PathProvider,
+    ) -> bool {
+        let goal = match self.chase_goal_cell {
+            Some(cell) => cell_center(cell),
+            None => (target_pos.x, target_pos.z),
+        };
+        self.detour_goal = Some(goal);
+        self.continue_detour(path_provider)
+    }
+
+    /// Re-route toward `detour_goal` around the standers. Drops the detour
+    /// (false) when no local one remains — the caller re-slots as usual.
+    fn continue_detour(&mut self, path_provider: &dyn PathProvider) -> bool {
+        let Some((goal_x, goal_z)) = self.detour_goal else {
+            return false;
+        };
+        let local_goal_x = self.position.x + shortest_world_delta_x(self.position.x, goal_x);
+        let mut result = path_provider.find_path_avoiding(
+            self.position.x,
+            self.position.z,
+            self.path_floor,
+            local_goal_x,
+            goal_z,
+            self.path_floor,
+            &self.occupied_cells,
+            DETOUR_MAX_NODES,
+        );
+        for wp in &mut result.waypoints {
+            wp.x = wrap_world_x(wp.x);
+        }
+        if !result.found
+            || result.waypoints.is_empty()
+            || path_len(self.position.x, self.position.z, &result.waypoints)
+                > DETOUR_MAX_PATH_METERS
+        {
+            self.detour_goal = None;
+            return false;
+        }
+        self.install_path(result.waypoints);
+        self.face_first_waypoint();
+        true
+    }
+
+    /// Rule 1 of doc/MONSTER_SEPARATION.md: path to a free standing cell near
+    /// the target, nearest to us first, trying the next-best cell when one is
+    /// unreachable — the nearest may sit outside a corridor. Keeps the
+    /// previous goal cell while it stays valid and reachable so re-slotting
+    /// doesn't oscillate. False = no reachable free cell (waypoints left
+    /// empty; caller falls back to the raw target position).
+    fn path_to_chase_slot(
+        &mut self,
+        target_pos: &crate::Position,
+        path_provider: &dyn PathProvider,
+    ) -> bool {
+        let max_d = self.attack_range - CHASE_CELL_RANGE_MARGIN;
+        if max_d <= 0.0 {
+            self.chase_goal_cell = None;
+            return false;
+        }
+
+        if let Some(cell) = self.chase_goal_cell {
+            if self.chase_cell_valid(cell, target_pos, max_d, path_provider)
+                && self.try_goal_cell(cell, path_provider)
+            {
+                return true;
+            }
+        }
+
+        let target_cell = cell_of(target_pos.x, target_pos.z);
+        let r = max_d.ceil() as i32;
+        let base_x = target_pos.x.floor();
+        let base_z = target_pos.z.floor();
+        let mut candidates: Vec<((i32, i32), f32)> = Vec::new();
+        for ox in -r..=r {
+            for oz in -r..=r {
+                let cx = wrap_world_x(base_x + ox as f32 + 0.5);
+                let cz = base_z + oz as f32 + 0.5;
+                let cell = cell_of(cx, cz);
+                if !self.chase_cell_open(cell, target_cell, target_pos, max_d) {
+                    continue;
+                }
+                let dx = shortest_world_delta_x(self.position.x, cx);
+                let dz = cz - self.position.z;
+                candidates.push((cell, dx * dx + dz * dz));
+            }
+        }
+        candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+
+        // The raycast half of validity is deferred to here — the sort
+        // discards most of the scan, so only cells about to be path-tested
+        // pay it. Invalid cells don't consume path tries.
+        let mut tries = 0;
+        for (cell, _) in candidates {
+            if tries >= MAX_SLOT_PATH_TRIES {
+                break;
+            }
+            if !self.chase_cell_attackable(cell, target_pos, path_provider) {
+                continue;
+            }
+            tries += 1;
+            if self.try_goal_cell(cell, path_provider) {
+                return true;
+            }
+        }
+        self.chase_goal_cell = None;
+        false
+    }
+
+    /// Commit a goal cell: path to its center, keeping the cell only when the
+    /// goal is actually reachable. `found` is load-bearing: A* answers an
+    /// unreachable goal with a partial path toward it, and accepting that
+    /// made the two front monsters at a shut door ping-pong forever — each
+    /// "reached" the partial end in the other's lane and re-slotted to the
+    /// opposite player-side cell. (The raw-target fallback deliberately keeps
+    /// partial paths: its goal is fixed, so it converges at the door and
+    /// holds.)
+    fn try_goal_cell(&mut self, cell: (i32, i32), path_provider: &dyn PathProvider) -> bool {
+        let (gx, gz) = cell_center(cell);
+        let result = self.query_path(gx, gz, path_provider);
+        if !result.found || result.waypoints.is_empty() {
+            return false;
+        }
+        self.install_path(result.waypoints);
+        self.chase_goal_cell = Some(cell);
+        true
+    }
+
+    /// Cheap half of candidate validity: not the target's own cell,
+    /// unoccupied, and close enough that standing at its center can deliver
+    /// the attack.
+    fn chase_cell_open(
+        &self,
+        cell: (i32, i32),
+        target_cell: (i32, i32),
+        target_pos: &crate::Position,
+        max_d: f32,
+    ) -> bool {
+        if cell == target_cell || self.occupied_cells.contains(&cell) {
+            return false;
+        }
+        let (cx, cz) = cell_center(cell);
+        let dx = shortest_world_delta_x(cx, target_pos.x);
+        let dz = target_pos.z - cz;
+        dx * dx + dz * dz <= max_d * max_d
+    }
+
+    /// Raycast half of candidate validity: standable, and with a clear attack
+    /// line. The line check is load-bearing: a target up a stair (or behind a
+    /// shut door) projects XZ-near cells on our own floor — settling in one
+    /// would leave us attack-refused against the wall, re-arriving every
+    /// tick, running in place. Rejecting them falls back to chasing the raw
+    /// target position, whose stair-cell goal is what lets the path climb
+    /// after it.
+    fn chase_cell_attackable(
+        &self,
+        cell: (i32, i32),
+        target_pos: &crate::Position,
+        path_provider: &dyn PathProvider,
+    ) -> bool {
+        let (cx, cz) = cell_center(cell);
+        path_provider.cell_passable(cx, cz, self.path_floor)
+            && !path_provider.attack_line_blocked(
+                cx,
+                cz,
+                target_pos.x,
+                target_pos.z,
+                self.path_floor,
+            )
+    }
+
+    fn chase_cell_valid(
+        &self,
+        cell: (i32, i32),
+        target_pos: &crate::Position,
+        max_d: f32,
+        path_provider: &dyn PathProvider,
+    ) -> bool {
+        self.chase_cell_open(cell, cell_of(target_pos.x, target_pos.z), target_pos, max_d)
+            && self.chase_cell_attackable(cell, target_pos, path_provider)
     }
 
     fn select_target_in_range(&mut self, nearby_players: &[NearbyPlayer], range: f32) -> bool {

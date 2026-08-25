@@ -60,7 +60,7 @@ export type DungeonSound = keyof typeof DUNGEON_SOUNDS
 
 const STORAGE_KEY_VOLUME = 'onlinerpg_sfxVolume'
 const STORAGE_KEY_MUTED = 'onlinerpg_sfxMuted'
-const DEFAULT_SFX_VOLUME = 1
+const DEFAULT_SFX_VOLUME = 0.5
 
 // Node ≥22 exposes a localStorage global whose methods are unusable without
 // --localstorage-file, so feature-test the method, not the object.
@@ -244,15 +244,10 @@ export function preloadPlayerDeathSounds() {
   preloadSounds(PLAYER_DEATH_SOUNDS)
 }
 
-/** `delayMs` lines the scream up with the killing blow's impact frame. */
-export function playPlayerDeathSound(gender: Gender, delayMs = 0) {
-  const spec = PLAYER_DEATH_SOUNDS[gender]
-  if (!spec || !canUseAudio()) return
-  if (delayMs > 0) {
-    window.setTimeout(() => playSound(spec), delayMs)
-    return
-  }
-  playSound(spec)
+/** Immediate: the collapse starts at the killing-blow message, so the cry
+ *  plays with it rather than waiting for the attack's impact frame. */
+export function playPlayerDeathSound(gender: Gender) {
+  playSound(PLAYER_DEATH_SOUNDS[gender])
 }
 
 export function preloadPropSounds() {

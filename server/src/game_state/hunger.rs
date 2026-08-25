@@ -270,19 +270,23 @@ impl super::GameState {
             .await;
     }
 
-    /// Apply an `Eat`'s satiation side; the food's `useDebuff` (raw fish →
-    /// food poisoning) is rolled by the caller via `inflict_debuff`.
+    /// Apply an `Eat`'s satiation side and return how much satiation the meal
+    /// actually added (0 when already full); the food's `useDebuff` (raw fish
+    /// → food poisoning) is rolled by the caller via `inflict_debuff`.
     pub(super) async fn apply_eat(
         &self,
         player_id: &PlayerId,
         nutrition: u32,
-    ) -> Option<ServerMessage> {
+    ) -> (Option<ServerMessage>, u32) {
         let now = Instant::now();
         let mut hunger = self.hunger.write().await;
         // No hunger entry (official NPC): heal and decrement still proceed.
-        let data = hunger.get_mut(player_id)?;
+        let Some(data) = hunger.get_mut(player_id) else {
+            return (None, nutrition);
+        };
+        let before = data.satiation;
         data.satiation = onlinerpg_shared::hunger::apply_nutrition(data.satiation, nutrition);
-        Some(data.hunger_msg(now))
+        (Some(data.hunger_msg(now)), data.satiation - before)
     }
 
     pub(super) async fn start_food_regeneration(&self, player_id: &PlayerId, amount: u32) {

@@ -26,6 +26,39 @@ pub trait PathProvider {
         to_z: f32,
         floor: u8,
     ) -> bool;
+
+    /// Cheap pre-check that the cell holding `(x, z)` can be stood in at all.
+    /// Standing-cell candidates go through this before `find_path`: A* has no
+    /// early goal reject, so a wall-interior candidate would otherwise flood
+    /// the whole reachable region every try. Default true — a provider without
+    /// the data just pays the path query.
+    fn cell_passable(&self, _x: f32, _z: f32, _floor: u8) -> bool {
+        true
+    }
+
+    /// `find_path` keeping out of `blocked` cells (standing monsters) within
+    /// `max_nodes`. Default: the plain path, refused if it crosses one.
+    #[allow(clippy::too_many_arguments)]
+    fn find_path_avoiding(
+        &self,
+        start_x: f32,
+        start_z: f32,
+        start_floor: u8,
+        goal_x: f32,
+        goal_z: f32,
+        goal_floor: u8,
+        blocked: &[(i32, i32)],
+        _max_nodes: usize,
+    ) -> PathResult {
+        let result = self.find_path(start_x, start_z, start_floor, goal_x, goal_z, goal_floor);
+        if super::leg_crosses_occupied(start_x, start_z, &result.waypoints, blocked) {
+            return PathResult {
+                waypoints: vec![],
+                found: false,
+            };
+        }
+        result
+    }
 }
 
 /// PathProvider backed by a reference to PassabilityCache (for native Rust).
@@ -64,5 +97,33 @@ impl<'a> PathProvider for CachePathProvider<'a> {
         floor: u8,
     ) -> bool {
         pathfinding::attack_line_blocked(self.cache, from_x, from_z, to_x, to_z, floor)
+    }
+
+    fn cell_passable(&self, x: f32, z: f32, floor: u8) -> bool {
+        !pathfinding::is_cell_sealed(self.cache, x, z, floor, None)
+    }
+
+    fn find_path_avoiding(
+        &self,
+        start_x: f32,
+        start_z: f32,
+        start_floor: u8,
+        goal_x: f32,
+        goal_z: f32,
+        goal_floor: u8,
+        blocked: &[(i32, i32)],
+        max_nodes: usize,
+    ) -> PathResult {
+        pathfinding::find_and_smooth_path_avoiding(
+            start_x,
+            start_z,
+            start_floor,
+            goal_x,
+            goal_z,
+            goal_floor,
+            self.cache,
+            max_nodes,
+            blocked,
+        )
     }
 }

@@ -17,6 +17,9 @@ pub enum AiState {
     Dead,
     Flee,
     Return,
+    /// Chase on hold: queued behind a stander, or waiting on an unreachable
+    /// target (doc/MONSTER_SEPARATION.md). Reports as Idle.
+    Hold,
 }
 
 impl AiState {
@@ -31,6 +34,7 @@ impl AiState {
             AiState::Dead => MonsterState::Dead,
             AiState::Flee => MonsterState::Run,
             AiState::Return => MonsterState::Walk,
+            AiState::Hold => MonsterState::Idle,
         }
     }
 }
@@ -41,6 +45,21 @@ pub struct NearbyPlayer {
     pub id: PlayerId,
     pub position: Position,
     pub health: u32,
+}
+
+/// Other monsters' last-synced poses, for cell-occupancy separation
+/// (doc/MONSTER_SEPARATION.md). Caller filters out dead monsters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NearbyMonster {
+    pub id: String,
+    pub position: Position,
+    /// Last-synced network state. Only stationary states
+    /// ([`MonsterState::is_stationary`]) occupy cells — a ~500ms-stale
+    /// position is wrong for a mover.
+    pub state: MonsterState,
+    #[serde(default)]
+    pub path_floor: u8,
 }
 
 /// Behavior output — translated by the caller into network messages.

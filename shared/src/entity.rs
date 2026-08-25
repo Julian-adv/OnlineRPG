@@ -148,6 +148,14 @@ pub enum MonsterState {
     Dead,
 }
 
+impl MonsterState {
+    /// States in which a monster stands still — the ones that occupy a
+    /// separation cell (doc/MONSTER_SEPARATION.md).
+    pub fn is_stationary(self) -> bool {
+        matches!(self, Self::Idle | Self::Attack | Self::Hit)
+    }
+}
+
 impl fmt::Display for MonsterState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

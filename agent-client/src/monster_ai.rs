@@ -2,12 +2,12 @@
 
 use onlinerpg_shared::dungeon::passability_floor_for_level;
 use onlinerpg_shared::monster_ai::{
-    self, AiCommand, BehaviorTree, CachePathProvider, MonsterBrain, NearbyPlayer,
+    self, AiCommand, BehaviorTree, CachePathProvider, MonsterBrain, NearbyMonster, NearbyPlayer,
     AGGRESSIVE_BEHAVIOR, DEFAULT_ATTACK_COOLDOWN_MS, DEFAULT_ATTACK_RANGE, DEFAULT_BEHAVIOR,
     DEFAULT_CHASE_RANGE, DEFAULT_RUN_SPEED, DEFAULT_WALK_SPEED,
 };
 use onlinerpg_shared::pathfinding::PassabilityCache;
-use onlinerpg_shared::{ClientMessage, Monster, Player, PlayerId, Position};
+use onlinerpg_shared::{ClientMessage, Monster, MonsterState, Player, PlayerId, Position};
 use std::collections::HashMap;
 use tracing::info;
 
@@ -218,6 +218,7 @@ impl MonsterAiManager {
         &mut self,
         delta_ms: f32,
         nearby_players: &HashMap<PlayerId, Player>,
+        nearby_monsters: &HashMap<String, Monster>,
         self_player: Option<&Player>,
         self_pass_floor: u8,
         passability_cache: &PassabilityCache,
@@ -237,6 +238,19 @@ impl MonsterAiManager {
             })
             .collect();
         let without_self = players.len() - self_player.is_some() as usize;
+
+        // Standing-monster poses for cell separation; each brain filters by
+        // its own floor and excludes itself.
+        let monsters: Vec<NearbyMonster> = nearby_monsters
+            .values()
+            .filter(|m| m.health > 0 && m.state != MonsterState::Dead)
+            .map(|m| NearbyMonster {
+                id: m.id.clone(),
+                position: m.position,
+                state: m.state,
+                path_floor: passability_floor_for_level(m.floor_level),
+            })
+            .collect();
 
         let path_provider = CachePathProvider {
             cache: passability_cache,
@@ -259,6 +273,7 @@ impl MonsterAiManager {
             let result = brain.tick_with_behavior_tree(
                 delta_ms,
                 visible,
+                &monsters,
                 behavior_tree,
                 &path_provider,
                 &mut rng,
@@ -331,7 +346,7 @@ mod tests {
 
         let me = npc_player(0.0, 0.0);
         let cache = PassabilityCache::new();
-        let cmds = mgr.tick_all(100.0, &HashMap::new(), Some(&me), 0, &cache);
+        let cmds = mgr.tick_all(100.0, &HashMap::new(), &HashMap::new(), Some(&me), 0, &cache);
 
         assert!(
             cmds.iter().any(|c| matches!(
@@ -349,7 +364,7 @@ mod tests {
         let me = npc_player(0.0, 0.0);
         let cache = PassabilityCache::new();
         let dungeon_floor = onlinerpg_shared::dungeon::passability_floor_for_level(-1);
-        let cmds = mgr.tick_all(100.0, &HashMap::new(), Some(&me), dungeon_floor, &cache);
+        let cmds = mgr.tick_all(100.0, &HashMap::new(), &HashMap::new(), Some(&me), dungeon_floor, &cache);
 
         assert!(
             !cmds.iter().any(|c| matches!(

@@ -350,7 +350,9 @@ pwsh -NoProfile -Command "cd <repo>; $env:GOOGLE_CLI_CLIENT_SECRET=...; .\tools\
 
 실행 정책도 둘이 저장소가 따로다. 한쪽에서 `Set-ExecutionPolicy`를 해도 다른 쪽은 `Restricted`로 읽고 스크립트 로드를 거부한다.
 
-`PROTOCOL_VERSION`([`shared/src/lib.rs`](../shared/src/lib.rs))이 올라가면 기존 배포본은 `Protocol vN required`로 거절되므로, 서버 배포와 함께 새 릴리스를 올리고 인게임 공지에 재다운로드 안내를 넣는다.
+`PROTOCOL_VERSION`([`shared/src/lib.rs`](../shared/src/lib.rs))이 올라가면 기존 배포본은 `Protocol vN required`로 거절되므로, 서버 배포와 함께 새 릴리스를 올리고 인게임 공지에 재다운로드 안내를 넣는다. v0.35.0부터는 클라이언트가 시작할 때 GitHub 릴리스를 확인해 스스로 업데이트한다(`agent-client/src/update.rs`): 새 버전이 있으면 업데이트 여부를 물어보고, 승낙하면 설치 후 "다시 실행하세요"를 안내하고 종료한다 (터미널이 아니면 건너뛴다). 바이너리와 패키지 소유 파일(`data/system_prompt.txt`, `animation_durations.json`, `user_prompts/`, `README.md`)만 교체하고 `config.toml`·`user_prompt.txt`·메모리·캐시는 건드리지 않는다. `config.toml`의 `auto_update = false`로 끈다.
+
+**릴리스 절차**: `agent-client/Cargo.toml`의 version을 올리고(자동 업데이트가 이 값과 최신 태그를 비교한다 — 안 올리면 구버전들이 새 릴리스를 영원히 다시 받는다), 두 패키징 스크립트가 만든 `agent-client-v<version>-<platform>` 자산을 태그 `agent-client-v<version>`으로 `gh release create` 한다. 자산 이름의 플랫폼 접미사(`windows-msvc.zip`, `glibc*.tar.gz`)는 업데이터가 매칭하는 규약이므로 바꾸지 않는다.
 
 ## 운영·보안 고려사항
 

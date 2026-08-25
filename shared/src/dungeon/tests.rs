@@ -123,7 +123,7 @@ fn per_dungeon_boss_floors_and_entrance_dir() {
 // Re-blessed when floors whose corridors hug a room wall (a mouth wider than
 // `CORRIDOR_MOUTH_MAX`) started being rejected and redrawn: the first
 // re-bless that moves rooms, corridors and shafts, not just spawns/props.
-const GOLDEN_OLD_CRYPT_HASH: u64 = 0xf3dd_e297_f08f_91e8;
+const GOLDEN_OLD_CRYPT_HASH: u64 = 0xb13d_97b2_a65a_6424;
 
 #[test]
 fn structure_invariants_many_seeds() {
@@ -668,6 +668,12 @@ fn walkable_drop_never_lands_in_a_wall() {
 /// and with sane stack/rotation values.
 #[test]
 fn props_are_well_placed() {
+    let solid_at = |layout: &FloorLayout, x: i32, z: i32| {
+        layout
+            .props
+            .iter()
+            .any(|p| (p.x, p.z) == (x, z) && p.kind.is_solid())
+    };
     let in_room = |layout: &FloorLayout, x: i32, z: i32| {
         layout
             .rooms
@@ -743,6 +749,28 @@ fn props_are_well_placed() {
                 );
                 if matches!(p.kind, PropKind::Chest) {
                     assert_eq!(p.stack, 1, "seed {seed}: chest must not stack");
+                    let back = gen::chest_back_delta(layout, p.x, p.z);
+                    assert_eq!(
+                        p.rotation,
+                        gen::chest_yaw(back),
+                        "seed {seed}: chest rotation is not its back-wall yaw"
+                    );
+                    // Loot spilled from the opening must not roll down stairs.
+                    assert!(
+                        !gen::cell_in_any_shaft(layout, p.x - back.0, p.z - back.1),
+                        "seed {seed}: chest ({},{}) opens into a shaft",
+                        p.x,
+                        p.z
+                    );
+                    // The overflowing body keeps its flanks clear.
+                    for (fx, fz) in gen::flank_cells(p.x, p.z, back) {
+                        assert!(
+                            !solid_at(layout, fx, fz),
+                            "seed {seed}: solid prop on chest ({},{}) flank ({fx},{fz})",
+                            p.x,
+                            p.z
+                        );
+                    }
                 }
                 assert!(p.rotation < 360, "seed {seed}: rotation out of range");
 
@@ -753,6 +781,16 @@ fn props_are_well_placed() {
                         "seed {seed}: two props share cell ({},{})",
                         p.x,
                         p.z
+                    );
+                }
+            }
+
+            // The treasure chest (rendered yaw 0) keeps its x±1 flanks clear.
+            if let Some((cx, cz)) = layout.chest {
+                for (fx, fz) in gen::flank_cells(cx, cz, (0, -1)) {
+                    assert!(
+                        !solid_at(layout, fx, fz),
+                        "seed {seed}: solid prop on treasure chest flank ({fx},{fz})"
                     );
                 }
             }

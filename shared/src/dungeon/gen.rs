@@ -538,6 +538,37 @@ fn wall_sides(layout: &FloorLayout, x: i32, z: i32) -> u8 {
     n
 }
 
+/// Wall a chest backs onto, as the cell delta toward it: the first uncarved
+/// neighbour in the client's N, S, W, E order (no wall → the client defaults
+/// to backing north).
+pub(super) fn chest_back_delta(layout: &FloorLayout, x: i32, z: i32) -> (i32, i32) {
+    [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        .into_iter()
+        .find(|&(dx, dz)| !layout.is_carved(x + dx, z + dz))
+        .unwrap_or((0, -1))
+}
+
+/// The two cells flanking a chest along its long side (which runs along the
+/// backed wall); the ~1.5m model overflows the 1m cell into these flanks, so
+/// they must hold no other solid prop.
+pub(super) fn flank_cells(x: i32, z: i32, back: (i32, i32)) -> [(i32, i32); 2] {
+    match back {
+        (0, _) => [(x - 1, z), (x + 1, z)],
+        _ => [(x, z - 1), (x, z + 1)],
+    }
+}
+
+/// Yaw the client renders a chest with: hinge onto the backed wall
+/// (N → 0°, S → 180°, W → 90°, E → 270°).
+pub(super) fn chest_yaw(back: (i32, i32)) -> u16 {
+    match back {
+        (0, -1) => 0,
+        (0, 1) => 180,
+        (-1, 0) => 90,
+        _ => 270,
+    }
+}
+
 /// Whether `(x, z)` is a sound spot to drop a clutter prop: carved room floor,
 /// clear of the stairs/chest/monsters, and not standing in a doorway. The last
 /// rule is the whole point of the placement constraints — a prop may hug a wall
@@ -672,6 +703,15 @@ fn roll_props(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<PropSpec> {
     let landings = collect_landing_cells(layout);
 
     let mut taken = vec![false; (GRID * GRID) as usize];
+    // The treasure chest renders yaw-0 (long side along X); reserve its
+    // flanks like a placed chest's so clutter can't clip its body.
+    if let Some((cx, cz)) = layout.chest {
+        for (fx, fz) in flank_cells(cx, cz, (0, -1)) {
+            if layout.is_carved(fx, fz) {
+                taken[(fx + fz * GRID) as usize] = true;
+            }
+        }
+    }
     let mut props = Vec::new();
     // Base passability for the connectivity backstop. `layout.props` is empty at
     // this point, so this has no prop seals yet; we add each kept prop's seal as
@@ -746,13 +786,48 @@ fn roll_props(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<PropSpec> {
                 continue;
             }
 
-            let kind = pick_prop_kind(rng);
+            // A chest's ~1.5m body overflows its 1m cell along the backed
+            // wall, and loot spilled from it would roll down a stair shaft in
+            // front: demote to a crate when a flank is already taken or the
+            // opening faces a shaft, and reserve both flanks once a chest
+            // stands. The demote path takes the stack draw a chest would
+            // skip, but the branch is a pure function of shared state, so
+            // server and client still walk identical streams. (Flank indices
+            // need no bounds check: rooms keep a 1-cell border inside the
+            // grid.)
+            let mut kind = pick_prop_kind(rng);
+            let mut chest_back = None;
+            if kind == PropKind::Chest {
+                let back = chest_back_delta(layout, x, z);
+                let flanks = flank_cells(x, z, back);
+                let front = (x - back.0, z - back.1);
+                if flanks
+                    .iter()
+                    .any(|&(fx, fz)| taken[(fx + fz * GRID) as usize])
+                    || cell_in_any_shaft(layout, front.0, front.1)
+                {
+                    kind = PropKind::Crate;
+                } else {
+                    for (fx, fz) in flanks {
+                        taken[(fx + fz * GRID) as usize] = true;
+                        corners.retain(|&c| c != (fx, fz));
+                        edges.retain(|&c| c != (fx, fz));
+                    }
+                    chest_back = Some(back);
+                }
+            }
             let stack = if kind != PropKind::Chest && rng.gen_range(0..100) < PROP_STACK_PCT {
                 2
             } else {
                 1
             };
-            let rotation = rng.gen_range(0..360) as u16;
+            // Chests carry their back-wall yaw (like torches) so the client
+            // never re-derives the wall pick; the draw still happens to keep
+            // the stream layout-independent.
+            let mut rotation = rng.gen_range(0..360) as u16;
+            if let Some(back) = chest_back {
+                rotation = chest_yaw(back);
+            }
             props.push(PropSpec {
                 x,
                 z,
