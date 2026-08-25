@@ -894,12 +894,15 @@ export function handleServerMessage(
       const target = isCurrentPlayer
         ? gameState.currentPlayer
         : gameState.otherPlayers.get(data.player_id)
+      const targetPos = isCurrentPlayer
+        ? gameState.currentPlayer?.position
+        : remotePlayerManager.players.get(data.player_id)?.position
       const monster = monsterManager.monsters.get(data.monster_id)
       if (monster?.ownerId !== gameState.currentPlayer?.id) {
         monsterManager.handleMonsterAttackStarted(
           data.monster_id,
           250,
-          target?.position
+          targetPos
         )
       }
 
