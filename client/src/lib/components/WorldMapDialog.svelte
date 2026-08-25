@@ -675,24 +675,28 @@
 
   function teleportAt(clientX: number, clientY: number) {
     if (!$isAdminUser) return
-    if (!containerEl || containerW <= 0 || containerH <= 0) return
+    // Invert worldToScreen against the view actually on screen, so a click
+    // during an in-flight pan/zoom lands where the admin sees, not where the
+    // camera already moved.
+    const view = renderedView
+    if (!containerEl || !view) return
 
     const rect = containerEl.getBoundingClientRect()
     const pixelX = clientX - rect.left
     const pixelY = clientY - rect.top
 
-    const viewSize = zoomSpan * REGION_PX
-    const canvasSize = Math.min(containerW, containerH)
+    const viewSize = view.zoomSpan * REGION_PX
+    const canvasSize = Math.min(view.width, view.height)
     const scale = canvasSize / viewSize
 
     // Screen offset from center, then rotate by +45 degrees to undo canvas rotation
-    const sx = (pixelX - containerW / 2) / scale
-    const sz = (pixelY - containerH / 2) / scale
+    const sx = (pixelX - view.width / 2) / scale
+    const sz = (pixelY - view.height / 2) / scale
     const angle = Math.PI / 4
     const cosA = Math.cos(angle)
     const sinA = Math.sin(angle)
-    const worldX = camX + (sx * cosA - sz * sinA)
-    const worldZ = camZ + (sx * sinA + sz * cosA)
+    const worldX = view.camX + (sx * cosA - sz * sinA)
+    const worldZ = view.camZ + (sx * sinA + sz * cosA)
 
     teleportLocalPlayer(worldX, 0, worldZ)
     close()
