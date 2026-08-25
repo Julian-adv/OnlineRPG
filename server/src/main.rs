@@ -299,12 +299,13 @@ const MIN_NPC_TOKEN_LEN: usize = 16;
 /// The fantasy tiles live outside git, so a fresh deploy that skips
 /// `terrain-gen render-map-world` would silently serve the legacy minimap art.
 fn warn_if_fantasy_map_missing(terrain_dir: &Path) {
-    let fantasy_dir = terrain_dir.join(onlinerpg_terrain::coords::FANTASY_MINIMAP_DIR);
+    let family = onlinerpg_terrain::coords::MinimapFamily::Fantasy;
+    let fantasy_dir = terrain_dir.join(family.dir());
     let has_tiles = std::fs::read_dir(&fantasy_dir)
         .map(|entries| {
             entries
                 .flatten()
-                .any(|e| e.path().extension().is_some_and(|ext| ext == "webp"))
+                .any(|e| e.path().extension().is_some_and(|ext| ext == family.ext()))
         })
         .unwrap_or(false);
     if !has_tiles {

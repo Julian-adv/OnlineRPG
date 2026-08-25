@@ -16,6 +16,7 @@
 mod apply_houses;
 mod bake;
 mod inspect;
+mod map_color;
 mod map_tile;
 mod preview;
 mod prune_house_trees;
@@ -468,7 +469,7 @@ fn main() -> Result<()> {
             out,
             region_x,
             region_z,
-        } => map_tile::render_region_pyramid(&terrain, &out, region_x, region_z),
+        } => map_tile::render_region_pyramid(&terrain, &out, region_x, region_z, None),
         Cmd::RenderMapWorld {
             gen,
             legacy_source,

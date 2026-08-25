@@ -10,12 +10,17 @@
   import { houseMapFootprints } from '../stores/housingMapStore'
   import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
   import { RegionImageCache } from '../terrain/regionImageCache'
+  import { pickMinimapSourceSize } from '../terrain/regionMinimapGenerator'
   import {
     graphicsQuality,
     getEffectivePreset,
   } from '../stores/graphicsSettings'
   import { REGION_CELLS, TILE_DIM } from '../terrain/terrain-constants'
-  import { wrapWorldX } from '../terrain/world-wrap'
+  import {
+    wrapWorldX,
+    WORLD_MIN_REGION_Z,
+    WORLD_MAX_REGION_Z,
+  } from '../terrain/world-wrap'
   import {
     drawDungeonEntranceMarkers,
     drawHouseMapFootprints,
@@ -34,8 +39,6 @@
   const REDRAW_STEP_RAD = Math.PI / 18
   /** ~4 regions cover the rotated view; keep a little slack for movement. */
   const IMAGE_CACHE_LIMIT = 12
-  const WORLD_MIN_REGION_Z = -16
-  const WORLD_MAX_REGION_Z = 15
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
 
@@ -88,7 +91,7 @@
 
     const scale = SIZE / VIEW_WORLD
     const projectedRegionPx = REGION_CELLS * scale * dpr
-    const sourceSize = projectedRegionPx <= 512 ? 512 : 1024
+    const sourceSize = pickMinimapSourceSize(projectedRegionPx, 512)
     const viewLeft = px - VIEW_WORLD / 2
     const viewTop = pz - VIEW_WORLD / 2
 

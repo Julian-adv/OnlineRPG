@@ -1,3 +1,4 @@
+use crate::map_color::{lerp, mix, scale, smooth_curve, smoothstep, to_rgb, unit_to_u8};
 use anyhow::{bail, Context, Result};
 use image::{Rgb, RgbImage};
 use onlinerpg_shared::worldgen::{
@@ -15,10 +16,26 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 const REGION_PX: usize = 1024;
+const FANTASY_FAMILY: coords::MinimapFamily = coords::MinimapFamily::Fantasy;
+const LEGACY_FAMILY: coords::MinimapFamily = coords::MinimapFamily::Legacy;
+/// Every tile size a region is written at, largest first — each LOD is the
+/// half-scale of the one before it.
+const TILE_SIZES: [u32; 4] = [
+    coords::MINIMAP_BASE_SIZE,
+    coords::MINIMAP_LOD_SIZES[2],
+    coords::MINIMAP_LOD_SIZES[1],
+    coords::MINIMAP_LOD_SIZES[0],
+];
 const TILES_PER_REGION: i32 = 16;
 const WORLD_MIN_REGION: i32 = -16;
 const WORLD_MAX_REGION: i32 = 15;
 const BASE_GUIDE_WEIGHT: f32 = 0.46;
+/// Side length of the baked world in meters. This module renders the fixed
+/// 32x32-region world, so it is derived from the region bounds rather than
+/// read from `WorldGenConfig` — the two must agree.
+const WORLD_SIZE_M: f32 =
+    ((WORLD_MAX_REGION - WORLD_MIN_REGION + 1) * TILES_PER_REGION) as f32 * TILE_SIZE_M;
+const TILE_SIZE_M: f32 = 64.0;
 const LEGACY_COLORS: [[u8; 3]; 11] = [
     [80, 140, 50],
     [210, 185, 110],
@@ -47,12 +64,12 @@ pub fn run(
     let textures = Textures::load()?;
     let gamma = GammaLut::new();
     let regions = region_coordinates(region_min, region_max);
-    let expected_files = regions.len() * 4;
+    let expected_files = regions.len() * TILE_SIZES.len();
     let staging = staging_path(out)?;
 
     std::fs::create_dir_all(&staging)
         .with_context(|| format!("create staging directory {}", staging.display()))?;
-    for size in [128, 256, 512] {
+    for size in coords::MINIMAP_LOD_SIZES {
         std::fs::create_dir_all(staging.join(size.to_string()))
             .with_context(|| format!("create staging LOD {}", size))?;
     }
@@ -82,43 +99,19 @@ pub fn run(
                 generated_count.fetch_add(1, Ordering::Relaxed);
             }
         }
-        let base = render_region(rx, rz, &macro_world, &textures, &source);
-        let lod_512 = downsample_half(&base, &gamma);
-        let lod_256 = downsample_half(&lod_512, &gamma);
-        let lod_128 = downsample_half(&lod_256, &gamma);
-
-        save_render(
-            &base,
-            1024,
-            rx,
-            rz,
-            &textures,
-            &tile_path(&staging, 1024, rx, rz),
-        )?;
-        save_render(
-            &lod_512,
-            512,
-            rx,
-            rz,
-            &textures,
-            &tile_path(&staging, 512, rx, rz),
-        )?;
-        save_render(
-            &lod_256,
-            256,
-            rx,
-            rz,
-            &textures,
-            &tile_path(&staging, 256, rx, rz),
-        )?;
-        save_render(
-            &lod_128,
-            128,
-            rx,
-            rz,
-            &textures,
-            &tile_path(&staging, 128, rx, rz),
-        )?;
+        let mut render = render_region(rx, rz, &macro_world, &textures, &source);
+        for size in TILE_SIZES {
+            if size < coords::MINIMAP_BASE_SIZE {
+                render = render.downsampled(&gamma);
+            }
+            save_render(
+                &render,
+                rx,
+                rz,
+                &textures,
+                &tile_path(&staging, size, rx, rz),
+            )?;
+        }
 
         let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
         let stride = (regions.len() / 20).max(1);
@@ -133,15 +126,13 @@ pub fn run(
         Ok(())
     })?;
 
-    for size in [128, 256, 512] {
+    for size in coords::MINIMAP_LOD_SIZES {
         std::fs::create_dir_all(out.join(size.to_string()))
             .with_context(|| format!("create output LOD {}", size))?;
     }
-    std::fs::create_dir_all(out)
-        .with_context(|| format!("create output directory {}", out.display()))?;
 
     regions.par_iter().try_for_each(|&(rx, rz)| -> Result<()> {
-        for size in [1024, 512, 256, 128] {
+        for size in TILE_SIZES {
             publish_file(
                 &tile_path(&staging, size, rx, rz),
                 &tile_path(out, size, rx, rz),
@@ -150,7 +141,7 @@ pub fn run(
         Ok(())
     })?;
 
-    for size in [128, 256, 512] {
+    for size in coords::MINIMAP_LOD_SIZES {
         let _ = std::fs::remove_dir(staging.join(size.to_string()));
     }
     let _ = std::fs::remove_dir(&staging);
@@ -780,6 +771,16 @@ struct RegionRender {
     forest: Vec<u8>,
 }
 
+impl RegionRender {
+    fn size(&self) -> u32 {
+        self.image.width()
+    }
+
+    fn downsampled(&self, gamma: &GammaLut) -> Self {
+        downsample_half(self, gamma)
+    }
+}
+
 fn render_region(
     rx: i32,
     rz: i32,
@@ -894,7 +895,7 @@ fn render_ocean(wx: f32, wz: f32, sample: MacroSample, textures: &Textures) -> [
 }
 
 fn sample_world_guide(image: &RgbImage, wx: f32, wz: f32) -> [f32; 3] {
-    let world = 32768.0;
+    let world = WORLD_SIZE_M;
     let nx = (wx + world * 0.5).rem_euclid(world) / world;
     let nz = ((wz + world * 0.5) / world).clamp(0.0, 1.0);
     let x = nx * image.width() as f32;
@@ -935,7 +936,7 @@ fn guide_forest_likelihood(color: [f32; 3]) -> f32 {
 }
 
 fn sample_texture(image: &RgbImage, wx: f32, wz: f32, cycles: f32) -> [f32; 3] {
-    let world = 32768.0;
+    let world = WORLD_SIZE_M;
     let x = (wx + world * 0.5).rem_euclid(world) / world;
     let z = (wz + world * 0.5) / world;
     let base = even_cycles(cycles);
@@ -1188,43 +1189,6 @@ fn tint(color: [f32; 3], tint: [f32; 3]) -> [f32; 3] {
     [color[0] * tint[0], color[1] * tint[1], color[2] * tint[2]]
 }
 
-fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        lerp(a[0], b[0], t),
-        lerp(a[1], b[1], t),
-        lerp(a[2], b[2], t),
-    ]
-}
-
-fn scale(color: [f32; 3], factor: f32) -> [f32; 3] {
-    [color[0] * factor, color[1] * factor, color[2] * factor]
-}
-
-fn to_rgb(color: [f32; 3]) -> [u8; 3] {
-    [
-        color[0].round().clamp(0.0, 255.0) as u8,
-        color[1].round().clamp(0.0, 255.0) as u8,
-        color[2].round().clamp(0.0, 255.0) as u8,
-    ]
-}
-
-fn unit_to_u8(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
-    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    smooth_curve(t)
-}
-
-fn smooth_curve(value: f32) -> f32 {
-    value * value * (3.0 - 2.0 * value)
-}
-
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
-
 fn srgb_to_linear(value: f32) -> f32 {
     if value <= 0.04045 {
         value / 12.92
@@ -1260,13 +1224,16 @@ fn region_coordinates(region_min: (i32, i32), region_max: (i32, i32)) -> Vec<(i3
     regions
 }
 
+/// `root` is the family directory itself (the CLI's `--legacy-source` /
+/// `--out`), so these build the in-family layout rather than taking a terrain
+/// base dir — the filename format still comes from `coords`.
 fn legacy_tile_path(root: &Path, rx: i32, rz: i32) -> PathBuf {
-    root.join(format!("r{:+03}_{:+03}.png", rx, rz))
+    root.join(coords::region_tile_name(rx, rz, LEGACY_FAMILY.ext()))
 }
 
 fn tile_path(root: &Path, size: u32, rx: i32, rz: i32) -> PathBuf {
-    let name = format!("r{:+03}_{:+03}.webp", rx, rz);
-    if size == 1024 {
+    let name = coords::region_tile_name(rx, rz, FANTASY_FAMILY.ext());
+    if size >= coords::MINIMAP_BASE_SIZE {
         root.join(name)
     } else {
         root.join(size.to_string()).join(name)
@@ -1363,20 +1330,16 @@ fn blend_lod_guide(
     image: &mut RgbImage,
     land: &[u8],
     forest: &[u8],
-    size: u32,
     rx: i32,
     rz: i32,
     textures: &Textures,
 ) {
+    let size = image.width();
     let target_weight = guide_weight_for_size(size);
     if target_weight <= BASE_GUIDE_WEIGHT {
         return;
     }
-    debug_assert_eq!(image.width(), size);
-    debug_assert_eq!(image.height(), size);
-    debug_assert_eq!(land.len(), (size * size) as usize);
-    debug_assert_eq!(forest.len(), (size * size) as usize);
-    let width = image.width() as usize;
+    let width = size as usize;
     for y in 0..image.height() {
         for x in 0..image.width() {
             let index = y as usize * width + x as usize;
@@ -1398,22 +1361,14 @@ fn blend_lod_guide(
 
 fn save_render(
     render: &RegionRender,
-    size: u32,
     rx: i32,
     rz: i32,
     textures: &Textures,
     path: &Path,
 ) -> Result<()> {
+    let size = render.size();
     let mut image = render.image.clone();
-    blend_lod_guide(
-        &mut image,
-        &render.land,
-        &render.forest,
-        size,
-        rx,
-        rz,
-        textures,
-    );
+    blend_lod_guide(&mut image, &render.land, &render.forest, rx, rz, textures);
     compose_features(
         &mut image,
         &render.road,

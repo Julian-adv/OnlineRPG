@@ -456,7 +456,7 @@ async fn seed_minimap_files(dir: &std::path::Path, rx: i32, rz: i32) -> Vec<std:
         coords::minimap_path(dir, rx, rz),
         coords::fantasy_minimap_path(dir, rx, rz),
     ];
-    for size in [128, 256, 512] {
+    for size in coords::MINIMAP_LOD_SIZES {
         paths.push(coords::minimap_lod_path(dir, rx, rz, size));
         paths.push(coords::fantasy_minimap_lod_path(dir, rx, rz, size));
     }
@@ -487,7 +487,7 @@ async fn write_minimap_drops_stale_fantasy_tiles() {
         b"fresh-legacy"
     );
     assert!(!coords::fantasy_minimap_path(&dir, rx, rz).exists());
-    for size in [128, 256, 512] {
+    for size in coords::MINIMAP_LOD_SIZES {
         assert!(!coords::fantasy_minimap_lod_path(&dir, rx, rz, size).exists());
     }
 
@@ -518,13 +518,18 @@ async fn stat_minimap_lod_matches_read_preference() {
     let (rx, rz) = (1, 2);
     seed_minimap_files(&dir, rx, rz).await;
 
-    let (path, meta) = io.stat_minimap_lod(rx, rz, 256).await.unwrap().unwrap();
-    assert_eq!(path, coords::fantasy_minimap_lod_path(&dir, rx, rz, 256));
+    let (tile, meta) = io.stat_minimap_lod(rx, rz, 256).await.unwrap().unwrap();
+    assert_eq!(
+        tile.path,
+        coords::fantasy_minimap_lod_path(&dir, rx, rz, 256)
+    );
+    assert_eq!(tile.family, coords::MinimapFamily::Fantasy);
     assert_eq!(meta.len(), b"stale".len() as u64);
 
-    tokio::fs::remove_file(&path).await.unwrap();
-    let (path, _) = io.stat_minimap_lod(rx, rz, 256).await.unwrap().unwrap();
-    assert_eq!(path, coords::minimap_lod_path(&dir, rx, rz, 256));
+    tokio::fs::remove_file(&tile.path).await.unwrap();
+    let (tile, _) = io.stat_minimap_lod(rx, rz, 256).await.unwrap().unwrap();
+    assert_eq!(tile.path, coords::minimap_lod_path(&dir, rx, rz, 256));
+    assert_eq!(tile.family, coords::MinimapFamily::Legacy);
 
     let _ = tokio::fs::remove_dir_all(&dir).await;
 }

@@ -91,25 +91,20 @@ interface OccupiedRect {
   priority: number
 }
 
+/** Zoom span each label kind is drawn across. `textMax` narrows the range for
+ *  the name itself, so a marker can outlive its text; it defaults to `max`. */
 export const MAP_LABEL_ZOOM_RANGE = {
   continent: { min: 8, max: Infinity },
   sea: { min: 4, max: Infinity },
   capital: { min: 1, max: Infinity },
-  city: { min: 1, max: 24 },
+  city: { min: 1, max: 24, textMax: 16 },
   town: { min: 1, max: 24 },
   island: { min: 1, max: 24 },
-  dungeon: { min: 1, max: 8 },
-} as const satisfies Record<MapLabelKind, { min: number; max: number }>
-
-export const MAP_LABEL_TEXT_ZOOM_RANGE = {
-  continent: { min: 8, max: Infinity },
-  sea: { min: 4, max: Infinity },
-  capital: { min: 1, max: Infinity },
-  city: { min: 1, max: 16 },
-  town: { min: 1, max: 24 },
-  island: { min: 1, max: 24 },
-  dungeon: { min: 1, max: 3 },
-} as const satisfies Record<MapLabelKind, { min: number; max: number }>
+  dungeon: { min: 1, max: 8, textMax: 3 },
+} as const satisfies Record<
+  MapLabelKind,
+  { min: number; max: number; textMax?: number }
+>
 
 export const MAP_LABEL_PRIORITY = {
   continent: 800,
@@ -158,8 +153,9 @@ export function isMapLabelTextVisibleAtZoom(
   kind: MapLabelKind,
   zoomSpan: number
 ): boolean {
-  const range = MAP_LABEL_TEXT_ZOOM_RANGE[kind]
-  return zoomSpan >= range.min && zoomSpan <= range.max
+  const range: { min: number; max: number; textMax?: number } =
+    MAP_LABEL_ZOOM_RANGE[kind]
+  return zoomSpan >= range.min && zoomSpan <= (range.textMax ?? range.max)
 }
 
 export function isFixedMapLabel(kind: MapLabelKind): boolean {

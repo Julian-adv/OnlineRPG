@@ -11,6 +11,8 @@ use sha2::Digest;
 use std::sync::Arc;
 use tracing::{error, warn};
 
+use onlinerpg_terrain::coords;
+
 use super::io::TerrainIO;
 use crate::game_state::GameState;
 
@@ -288,8 +290,8 @@ async fn get_minimap(
     request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    let size = query.size.unwrap_or(1024);
-    if ![128, 256, 512, 1024].contains(&size) {
+    let size = query.size.unwrap_or(coords::MINIMAP_BASE_SIZE);
+    if size != coords::MINIMAP_BASE_SIZE && !coords::MINIMAP_LOD_SIZES.contains(&size) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let found = terrain.stat_minimap_lod(rx, rz, size).await.map_err(|e| {
@@ -304,10 +306,10 @@ async fn get_minimap(
     // the route.
     const MINIMAP_CACHE: (header::HeaderName, &str) =
         (header::CACHE_CONTROL, "public, max-age=300");
-    let Some((path, meta)) = found else {
+    let Some((tile, meta)) = found else {
         return Ok((StatusCode::NOT_FOUND, [MINIMAP_CACHE]).into_response());
     };
-    let etag = minimap_etag(&path, &meta);
+    let etag = minimap_etag(&tile.path, &meta);
     let revalidated = request_headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -320,18 +322,13 @@ async fn get_minimap(
         )
             .into_response());
     }
-    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+    let bytes = tokio::fs::read(&tile.path).await.map_err(|e| {
         error!("Failed to read minimap ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let content_type = if bytes.starts_with(b"RIFF") {
-        "image/webp"
-    } else {
-        "image/png"
-    };
     Ok((
         [(header::ETAG, etag)],
-        [(header::CONTENT_TYPE, content_type.to_string())],
+        [(header::CONTENT_TYPE, tile.family.content_type())],
         [MINIMAP_CACHE],
         bytes,
     )

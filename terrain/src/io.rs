@@ -109,9 +109,6 @@ async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     atomic_write(path, data).await
 }
 
-/// LOD sizes baked below the 1024 base tile.
-pub const MINIMAP_LOD_SIZES: [u32; 3] = [128, 256, 512];
-
 async fn remove_files(paths: &[PathBuf]) -> std::io::Result<()> {
     for path in paths {
         match fs::remove_file(path).await {
@@ -123,15 +120,10 @@ async fn remove_files(paths: &[PathBuf]) -> std::io::Result<()> {
     Ok(())
 }
 
-async fn read_first_existing(paths: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
-    for path in paths {
-        match fs::read(path).await {
-            Ok(data) => return Ok(Some(data)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(None)
+/// A minimap file the read/stat path selected, with the family it came from.
+pub struct MinimapCandidate {
+    pub path: PathBuf,
+    pub family: coords::MinimapFamily,
 }
 
 pub struct TerrainIO {
@@ -215,34 +207,41 @@ impl TerrainIO {
 
     /// Candidate files for a minimap request, in preference order: the baked
     /// fantasy tile first, then the legacy PNG, then coarser fallbacks.
-    fn minimap_candidates(&self, rx: i32, rz: i32, size: u32) -> Vec<PathBuf> {
-        if size >= 1024 {
-            return vec![
-                coords::fantasy_minimap_path(&self.base_dir, rx, rz),
-                coords::minimap_path(&self.base_dir, rx, rz),
-            ];
+    fn minimap_candidates(&self, rx: i32, rz: i32, size: u32) -> Vec<MinimapCandidate> {
+        use coords::MinimapFamily::{Fantasy, Legacy};
+        let at = |family: coords::MinimapFamily, size: u32| MinimapCandidate {
+            path: family.lod_path(&self.base_dir, rx, rz, size),
+            family,
+        };
+        if size >= coords::MINIMAP_BASE_SIZE {
+            return vec![at(Fantasy, size), at(Legacy, size)];
         }
         vec![
-            coords::fantasy_minimap_lod_path(&self.base_dir, rx, rz, size),
-            coords::minimap_lod_path(&self.base_dir, rx, rz, size),
-            coords::fantasy_minimap_path(&self.base_dir, rx, rz),
-            coords::minimap_path(&self.base_dir, rx, rz),
+            at(Fantasy, size),
+            at(Legacy, size),
+            at(Fantasy, coords::MINIMAP_BASE_SIZE),
+            at(Legacy, coords::MINIMAP_BASE_SIZE),
         ]
     }
 
-    /// Fantasy tiles for a region: base plus every LOD.
-    fn fantasy_minimap_files(&self, rx: i32, rz: i32) -> Vec<PathBuf> {
-        let mut paths = vec![coords::fantasy_minimap_path(&self.base_dir, rx, rz)];
-        paths.extend(
-            MINIMAP_LOD_SIZES
-                .iter()
-                .map(|&size| coords::fantasy_minimap_lod_path(&self.base_dir, rx, rz, size)),
-        );
-        paths
+    /// Every minimap file a region owns, in both families.
+    fn all_minimap_files(&self, rx: i32, rz: i32) -> Vec<PathBuf> {
+        use coords::MinimapFamily::{Fantasy, Legacy};
+        [Fantasy, Legacy]
+            .into_iter()
+            .flat_map(|family| {
+                std::iter::once(family.base_path(&self.base_dir, rx, rz)).chain(
+                    coords::MINIMAP_LOD_SIZES
+                        .iter()
+                        .map(move |&size| family.lod_path(&self.base_dir, rx, rz, size)),
+                )
+            })
+            .collect()
     }
 
     pub async fn read_minimap(&self, rx: i32, rz: i32) -> std::io::Result<Option<Vec<u8>>> {
-        read_first_existing(&self.minimap_candidates(rx, rz, 1024)).await
+        self.read_minimap_lod(rx, rz, coords::MINIMAP_BASE_SIZE)
+            .await
     }
 
     pub async fn read_minimap_lod(
@@ -251,20 +250,28 @@ impl TerrainIO {
         rz: i32,
         size: u32,
     ) -> std::io::Result<Option<Vec<u8>>> {
-        read_first_existing(&self.minimap_candidates(rx, rz, size)).await
+        for candidate in self.minimap_candidates(rx, rz, size) {
+            match fs::read(&candidate.path).await {
+                Ok(data) => return Ok(Some(data)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(None)
     }
 
-    /// Resolve which file a minimap request would serve, with its metadata,
-    /// without reading the body — lets callers build a cache tag cheaply.
+    /// Resolve which file a minimap request would serve, with its family and
+    /// metadata, without reading the body — lets callers build a cache tag and
+    /// pick a Content-Type cheaply.
     pub async fn stat_minimap_lod(
         &self,
         rx: i32,
         rz: i32,
         size: u32,
-    ) -> std::io::Result<Option<(PathBuf, std::fs::Metadata)>> {
-        for path in self.minimap_candidates(rx, rz, size) {
-            match fs::metadata(&path).await {
-                Ok(meta) => return Ok(Some((path, meta))),
+    ) -> std::io::Result<Option<(MinimapCandidate, std::fs::Metadata)>> {
+        for candidate in self.minimap_candidates(rx, rz, size) {
+            match fs::metadata(&candidate.path).await {
+                Ok(meta) => return Ok(Some((candidate, meta))),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
             }
@@ -275,15 +282,14 @@ impl TerrainIO {
     pub async fn write_minimap(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {
         let path = coords::minimap_path(&self.base_dir, rx, rz);
         write_terrain_file(&path, data).await?;
-        // The freshly baked PNG only reaches players if the stale fantasy tile
-        // is gone; the region falls back to legacy art until the next
-        // `render-map-world` bake.
-        let mut stale = self.fantasy_minimap_files(rx, rz);
-        stale.extend(
-            MINIMAP_LOD_SIZES
-                .iter()
-                .map(|&size| coords::minimap_lod_path(&self.base_dir, rx, rz, size)),
-        );
+        // The freshly written PNG only reaches players once the stale fantasy
+        // tile and both LOD sets are gone; the region falls back to legacy art
+        // until the next `render-map-world` bake.
+        let stale: Vec<PathBuf> = self
+            .all_minimap_files(rx, rz)
+            .into_iter()
+            .filter(|p| *p != path)
+            .collect();
         remove_files(&stale).await
     }
 
@@ -446,13 +452,7 @@ impl TerrainIO {
         let tree_dir = coords::tree_region_dir(&self.base_dir, rx, rz);
         let orig_height_dir = coords::original_height_region_dir(&self.base_dir, rx, rz);
         let orig_grass_dir = coords::original_grass_region_dir(&self.base_dir, rx, rz);
-        let mut minimap_files = vec![coords::minimap_path(&self.base_dir, rx, rz)];
-        minimap_files.extend(
-            MINIMAP_LOD_SIZES
-                .iter()
-                .map(|&size| coords::minimap_lod_path(&self.base_dir, rx, rz, size)),
-        );
-        minimap_files.extend(self.fantasy_minimap_files(rx, rz));
+        let minimap_files = self.all_minimap_files(rx, rz);
 
         for dir in [
             &height_dir,

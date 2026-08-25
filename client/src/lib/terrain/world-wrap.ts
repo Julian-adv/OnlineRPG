@@ -2,6 +2,9 @@ import { REGION_CELLS } from './terrain-constants'
 
 /** Regions per wrap of the cylindrical world: -16 through +15. */
 export const WORLD_REGIONS_X = 32
+/** Z does not wrap — the baked world is clamped to these region rows. */
+export const WORLD_MIN_REGION_Z = -16
+export const WORLD_MAX_REGION_Z = 15
 /** Full baked circumference in meters. */
 export const WORLD_WIDTH_X = WORLD_REGIONS_X * REGION_CELLS
 /** Tile -256 extends half a 64 m tile west of its center at -16,384. */

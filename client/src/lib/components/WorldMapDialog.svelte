@@ -7,9 +7,11 @@
   import { RegionImageCache } from '../terrain/regionImageCache'
   import {
     getMapFrameCornerReservedBounds,
+    isFixedMapLabel,
     layoutMapLabels,
     type ScreenRect,
   } from '../utils/worldMapLabelLayout'
+  import { pickMinimapSourceSize } from '../terrain/regionMinimapGenerator'
   import {
     persistWorldMapView,
     resolveWorldMapView,
@@ -18,9 +20,9 @@
   const REGION_SIZE = 16
   const TILE_DIM = 64
   const REGION_PX = REGION_SIZE * TILE_DIM // 1024
-  const WORLD_MIN_REGION_Z = -16
-  const WORLD_MAX_REGION_Z = 15
   const ATLAS_PADDING_PX = 2
+  /** Floor on the image-cache size for LODs small enough to keep many of. */
+  const COARSE_CACHE_LIMIT: Record<number, number> = { 128: 1024, 256: 512 }
   // Average deep-sea color of the baked fantasy tiles, shown past the world edge
   const OUT_OF_WORLD_OCEAN = '#01294e'
 
@@ -43,6 +45,12 @@
   const ROTATE_ANGLE = -Math.PI / 4
   const COS_R = Math.cos(ROTATE_ANGLE)
   const SIN_R = Math.sin(ROTATE_ANGLE)
+
+  /** Undo the canvas rotation: a screen-space offset in world units becomes a
+   *  world-space offset. */
+  function screenDeltaToWorld(dx: number, dz: number) {
+    return { x: dx * COS_R + dz * SIN_R, z: -dx * SIN_R + dz * COS_R }
+  }
 
   // Module-level: images persist across dialog open/close.
   const regionImages = new RegionImageCache()
@@ -68,7 +76,12 @@
     graphicsQuality,
     getEffectivePreset,
   } from '../stores/graphicsSettings'
-  import { wrapWorldX, unwrapWorldXNear } from '../terrain/world-wrap'
+  import {
+    wrapWorldX,
+    unwrapWorldXNear,
+    WORLD_MIN_REGION_Z,
+    WORLD_MAX_REGION_Z,
+  } from '../terrain/world-wrap'
   import { mountOverlay } from '../stores/overlayStack'
   import { drawHouseMapFootprints } from '../utils/map-structures'
   import { teleportLocalPlayer } from '../utils/teleport'
@@ -78,10 +91,6 @@
   const defaultZoomSpan = $derived(graphicsPreset.worldMapDefaultZoomSpan)
   const maxZoomSpan = $derived(graphicsPreset.worldMapMaxZoomSpan)
   const imageCacheLimit = $derived(graphicsPreset.worldMapImageCacheLimit)
-
-  $effect(() => {
-    regionImages.limit = imageCacheLimit
-  })
 
   // --- Component state ---
   let containerEl = $state<HTMLDivElement>()
@@ -190,22 +199,12 @@
     const canvasSize = Math.min(cw, ch)
     const scale = canvasSize / viewSize
     const projectedRegionPx = REGION_PX * scale * dpr
-    const sourceSize =
-      projectedRegionPx <= 128
-        ? 128
-        : projectedRegionPx <= 256
-          ? 256
-          : projectedRegionPx <= 512
-            ? 512
-            : 1024
-    if (!mobileMapBudget) {
-      regionImages.limit =
-        sourceSize === 128
-          ? Math.max(imageCacheLimit, 1024)
-          : sourceSize === 256
-            ? Math.max(imageCacheLimit, 512)
-            : imageCacheLimit
-    }
+    const sourceSize = pickMinimapSourceSize(projectedRegionPx)
+    // Coarse tiles are ~64x cheaper per image, so the preset's image budget
+    // buys proportionally more of them.
+    regionImages.limit = mobileMapBudget
+      ? imageCacheLimit
+      : Math.max(imageCacheLimit, COARSE_CACHE_LIMIT[sourceSize] ?? 0)
 
     // World-space extents of the viewport
     const viewWorldW = cw / scale
@@ -217,22 +216,20 @@
 
     // Bounding square of the viewport after undoing its 45-degree rotation.
     const expandedViewWorldSize = (viewWorldW + viewWorldH) / Math.SQRT2
-    const expandedViewWorldW = expandedViewWorldSize
-    const expandedViewWorldH = expandedViewWorldSize
-    const expandedViewLeft = cx - expandedViewWorldW / 2
-    const expandedViewTop = cz - expandedViewWorldH / 2
+    const expandedViewLeft = cx - expandedViewWorldSize / 2
+    const expandedViewTop = cz - expandedViewWorldSize / 2
 
     const expRegionMinRx = Math.floor(
       (expandedViewLeft + TILE_DIM / 2) / REGION_PX
     )
     const expRegionMaxRx = Math.floor(
-      (expandedViewLeft + expandedViewWorldW + TILE_DIM / 2) / REGION_PX
+      (expandedViewLeft + expandedViewWorldSize + TILE_DIM / 2) / REGION_PX
     )
     const expRegionMinRz = Math.floor(
       (expandedViewTop + TILE_DIM / 2) / REGION_PX
     )
     const expRegionMaxRz = Math.floor(
-      (expandedViewTop + expandedViewWorldH + TILE_DIM / 2) / REGION_PX
+      (expandedViewTop + expandedViewWorldSize + TILE_DIM / 2) / REGION_PX
     )
 
     interface LoadedRegion {
@@ -266,10 +263,10 @@
 
       const atlas = (renderAtlas ??= document.createElement('canvas'))
       const atlasWidth =
-        Math.max(1, Math.ceil(expandedViewWorldW * scale * dpr)) +
+        Math.max(1, Math.ceil(expandedViewWorldSize * scale * dpr)) +
         ATLAS_PADDING_PX * 2
       const atlasHeight =
-        Math.max(1, Math.ceil(expandedViewWorldH * scale * dpr)) +
+        Math.max(1, Math.ceil(expandedViewWorldSize * scale * dpr)) +
         ATLAS_PADDING_PX * 2
       if (atlas.width !== atlasWidth) atlas.width = atlasWidth
       if (atlas.height !== atlasHeight) atlas.height = atlasHeight
@@ -402,98 +399,6 @@
     return [...MAP_LABELS, ...dungeons]
   })
 
-  let visibleLabels = $derived.by<PlacedLabel[]>(() => {
-    const view = renderedView
-    if (!view) return []
-    const cw = view.width
-    const ch = view.height
-
-    const margin = 80 // keep labels whose anchor is just off-edge
-    const inputs: { label: MapLabel; anchor: { x: number; y: number } }[] = []
-    for (const label of mapLabels) {
-      const p = worldToScreen(label.x, label.z, view)
-      if (!onScreen(p, cw, ch, margin)) continue
-      inputs.push({
-        label,
-        anchor: { x: p.left, y: p.top },
-      })
-    }
-
-    const viewport = { left: 0, top: 0, right: cw, bottom: ch }
-    const reservedBounds: ScreenRect[] =
-      getMapFrameCornerReservedBounds(viewport)
-    const player = worldToScreen(playerX, playerZ, view)
-    if (onScreen(player, cw, ch, 20)) {
-      reservedBounds.push({
-        left: player.left - 12,
-        top: player.top - 12,
-        right: player.left + 12,
-        bottom: player.top + 12,
-      })
-    }
-
-    const roster = $partyRoster
-    if (roster) {
-      const names = new Map(
-        roster.members.map((member) => [member.id, member.name])
-      )
-      for (const position of $partyPositions) {
-        const name = names.get(position.id)
-        if (!name) continue
-        const p = worldToScreen(position.x, position.z, view)
-        if (!onScreen(p, cw, ch, 40)) continue
-        reservedBounds.push({
-          left: p.left - 9,
-          top: p.top - 13,
-          right: p.left + 16 + name.length * 7,
-          bottom: p.top + 13,
-        })
-      }
-    }
-
-    return layoutMapLabels(inputs, {
-      zoomSpan: view.zoomSpan,
-      areaZoomSpan: mobileMapBudget
-        ? (view.zoomSpan * MOBILE_AREA_ZOOM_REFERENCE) / maxZoomSpan
-        : view.zoomSpan,
-      viewport,
-      reservedBounds,
-      collisionPadding: 5,
-      edgePadding: 16,
-      markerGap: 11,
-    }).map(({ label, anchor, textOffset, textVisible }) => ({
-      key: label.key,
-      name: label.name,
-      kind: label.kind,
-      left: anchor.x,
-      top: anchor.y,
-      area:
-        label.kind === 'continent' ||
-        label.kind === 'sea' ||
-        label.kind === 'island',
-      textOffsetX: textOffset.x,
-      textOffsetY: textOffset.y,
-      textVisible,
-    }))
-  })
-
-  let selfMarker = $derived.by<{
-    left: number
-    top: number
-    angle: number
-  } | null>(() => {
-    const view = renderedView
-    if (!view) return null
-    const p = worldToScreen(playerX, playerZ, view)
-    if (!onScreen(p, view.width, view.height, 20)) return null
-    return {
-      ...p,
-      angle:
-        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
-        ROTATE_ANGLE,
-    }
-  })
-
   // --- Party member markers (HTML layer, same transform as the labels) ---
   interface PartyMarker {
     id: number
@@ -528,6 +433,86 @@
     }
     return out
   })
+
+  let visibleLabels = $derived.by<PlacedLabel[]>(() => {
+    const view = renderedView
+    if (!view) return []
+    const cw = view.width
+    const ch = view.height
+
+    const margin = 80 // keep labels whose anchor is just off-edge
+    const inputs: { label: MapLabel; anchor: { x: number; y: number } }[] = []
+    for (const label of mapLabels) {
+      const p = worldToScreen(label.x, label.z, view)
+      if (!onScreen(p, cw, ch, margin)) continue
+      inputs.push({
+        label,
+        anchor: { x: p.left, y: p.top },
+      })
+    }
+
+    const viewport = { left: 0, top: 0, right: cw, bottom: ch }
+    const reservedBounds: ScreenRect[] =
+      getMapFrameCornerReservedBounds(viewport)
+    const player = worldToScreen(playerX, playerZ, view)
+    if (onScreen(player, cw, ch, 20)) {
+      reservedBounds.push({
+        left: player.left - 12,
+        top: player.top - 12,
+        right: player.left + 12,
+        bottom: player.top + 12,
+      })
+    }
+
+    for (const marker of partyMarkers) {
+      reservedBounds.push({
+        left: marker.left - 9,
+        top: marker.top - 13,
+        right: marker.left + 16 + marker.name.length * 7,
+        bottom: marker.top + 13,
+      })
+    }
+
+    return layoutMapLabels(inputs, {
+      zoomSpan: view.zoomSpan,
+      areaZoomSpan: mobileMapBudget
+        ? (view.zoomSpan * MOBILE_AREA_ZOOM_REFERENCE) / maxZoomSpan
+        : view.zoomSpan,
+      viewport,
+      reservedBounds,
+      collisionPadding: 5,
+      edgePadding: 16,
+      markerGap: 11,
+    }).map(({ label, anchor, textOffset, textVisible }) => ({
+      key: label.key,
+      name: label.name,
+      kind: label.kind,
+      left: anchor.x,
+      top: anchor.y,
+      area: isFixedMapLabel(label.kind),
+      textOffsetX: textOffset.x,
+      textOffsetY: textOffset.y,
+      textVisible,
+    }))
+  })
+
+  let selfMarker = $derived.by<{
+    left: number
+    top: number
+    angle: number
+  } | null>(() => {
+    const view = renderedView
+    if (!view) return null
+    const p = worldToScreen(playerX, playerZ, view)
+    if (!onScreen(p, view.width, view.height, 20)) return null
+    return {
+      ...p,
+      angle:
+        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
+        ROTATE_ANGLE,
+    }
+  })
+
 
   // --- Zoom controls ---
   function zoomIn() {
@@ -599,13 +584,9 @@
       suppressNextClick = true
       followPlayerOnOpen = false
     }
-    const dx = rawDx / scale
-    const dz = rawDz / scale
-    const angle = Math.PI / 4
-    const cosA = Math.cos(angle)
-    const sinA = Math.sin(angle)
-    camX = dragStartCamX - (dx * cosA - dz * sinA)
-    camZ = dragStartCamZ - (dx * sinA + dz * cosA)
+    const delta = screenDeltaToWorld(rawDx / scale, rawDz / scale)
+    camX = dragStartCamX - delta.x
+    camZ = dragStartCamZ - delta.z
   }
 
   function handlePointerUp() {
@@ -696,16 +677,11 @@
     const canvasSize = Math.min(view.width, view.height)
     const scale = canvasSize / viewSize
 
-    // Screen offset from center, then rotate by +45 degrees to undo canvas rotation
-    const sx = (pixelX - view.width / 2) / scale
-    const sz = (pixelY - view.height / 2) / scale
-    const angle = Math.PI / 4
-    const cosA = Math.cos(angle)
-    const sinA = Math.sin(angle)
-    const worldX = view.camX + (sx * cosA - sz * sinA)
-    const worldZ = view.camZ + (sx * sinA + sz * cosA)
-
-    teleportLocalPlayer(worldX, 0, worldZ)
+    const delta = screenDeltaToWorld(
+      (pixelX - view.width / 2) / scale,
+      (pixelY - view.height / 2) / scale
+    )
+    teleportLocalPlayer(view.camX + delta.x, 0, view.camZ + delta.z)
     close()
   }
 

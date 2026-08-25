@@ -8,7 +8,7 @@
 //! The file layout matches `terrain::TerrainIO` so the runtime can load the
 //! output without any format conversion.
 
-use crate::map_tile::{render_region_pyramid_bounded, TILES_PER_REGION};
+use crate::map_tile::{render_region_pyramid, TILES_PER_REGION};
 use anyhow::{Context, Result};
 use onlinerpg_shared::worldgen::{
     coasts, continent, elevation, erosion, rivers, roads, settlements,
@@ -386,7 +386,7 @@ pub fn run(
     region_coords
         .into_par_iter()
         .try_for_each(|(rx, rz)| -> Result<()> {
-            render_region_pyramid_bounded(out, out, rx, rz, region_min, region_max)
+            render_region_pyramid(out, out, rx, rz, Some((region_min, region_max)))
         })?;
     eprintln!(
         "Wrote {} region map pyramids in {:.2}s",

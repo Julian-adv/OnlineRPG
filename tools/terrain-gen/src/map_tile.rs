@@ -1,3 +1,4 @@
+use crate::map_color::{lerp, mix, scale, smoothstep, to_rgb};
 use anyhow::{bail, Context, Result};
 use image::{Rgb, RgbImage};
 use onlinerpg_shared::tree_format::{
@@ -30,7 +31,10 @@ pub fn new_region_image() -> RgbImage {
     RgbImage::new(REGION_PX, REGION_PX)
 }
 
-pub fn load_minimap_palette() -> MinimapPalette {
+pub static MINIMAP_PALETTE: std::sync::LazyLock<MinimapPalette> =
+    std::sync::LazyLock::new(load_minimap_palette);
+
+fn load_minimap_palette() -> MinimapPalette {
     const PALETTE_JSON: &str = include_str!("../../../shared/palette.json");
     let value: serde_json::Value =
         serde_json::from_str(PALETTE_JSON).expect("shared/palette.json is valid JSON");
@@ -66,51 +70,17 @@ pub fn render_region_pyramid(
     output: &Path,
     region_x: i32,
     region_z: i32,
-) -> Result<()> {
-    render_region_pyramid_inner(terrain, output, region_x, region_z, None)
-}
-
-pub fn render_region_pyramid_bounded(
-    terrain: &Path,
-    output: &Path,
-    region_x: i32,
-    region_z: i32,
-    region_min: (i32, i32),
-    region_max: (i32, i32),
-) -> Result<()> {
-    render_region_pyramid_inner(
-        terrain,
-        output,
-        region_x,
-        region_z,
-        Some((region_min, region_max)),
-    )
-}
-
-fn render_region_pyramid_inner(
-    terrain: &Path,
-    output: &Path,
-    region_x: i32,
-    region_z: i32,
     bounds: Option<RegionBounds>,
 ) -> Result<()> {
-    let image = render_region_image(terrain, region_x, region_z, bounds)?;
-    save_image(&image, &coords::minimap_path(output, region_x, region_z))?;
-    let mip_512 = downsample_half(&image);
-    save_image(
-        &mip_512,
-        &coords::minimap_lod_path(output, region_x, region_z, 512),
-    )?;
-    let mip_256 = downsample_half(&mip_512);
-    save_image(
-        &mip_256,
-        &coords::minimap_lod_path(output, region_x, region_z, 256),
-    )?;
-    let mip_128 = downsample_half(&mip_256);
-    save_image(
-        &mip_128,
-        &coords::minimap_lod_path(output, region_x, region_z, 128),
-    )?;
+    let mut mip = render_region_image(terrain, region_x, region_z, bounds)?;
+    save_image(&mip, &coords::minimap_path(output, region_x, region_z))?;
+    for size in coords::MINIMAP_LOD_SIZES.into_iter().rev() {
+        mip = downsample_half(&mip);
+        save_image(
+            &mip,
+            &coords::minimap_lod_path(output, region_x, region_z, size),
+        )?;
+    }
     Ok(())
 }
 
@@ -120,7 +90,7 @@ fn render_region_image(
     region_z: i32,
     bounds: Option<RegionBounds>,
 ) -> Result<RgbImage> {
-    let palette = load_minimap_palette();
+    let palette = &*MINIMAP_PALETTE;
     let heights = load_height_neighborhood(terrain, region_x, region_z, bounds)?;
     let splatmap = load_region_splatmap(terrain, region_x, region_z)?;
     let height_side = REGION_PX as usize + RELIEF_BORDER * 2 + 1;
@@ -177,7 +147,7 @@ fn render_region_image(
                 slope_x,
                 slope_z,
                 &splatmap[splat_index..splat_index + 4],
-                &palette,
+                palette,
             );
             image.put_pixel(cell_x as u32, cell_z as u32, Rgb(rgb));
         }
@@ -624,35 +594,6 @@ fn vegetation_density(meta: u8) -> f32 {
         240..=249 => (meta - 240) as f32 / 9.0,
         _ => 0.0,
     }
-}
-
-fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
-    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
-
-fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        lerp(a[0], b[0], t),
-        lerp(a[1], b[1], t),
-        lerp(a[2], b[2], t),
-    ]
-}
-
-fn scale(color: [f32; 3], factor: f32) -> [f32; 3] {
-    [color[0] * factor, color[1] * factor, color[2] * factor]
-}
-
-fn to_rgb(color: [f32; 3]) -> [u8; 3] {
-    [
-        color[0].round().clamp(0.0, 255.0) as u8,
-        color[1].round().clamp(0.0, 255.0) as u8,
-        color[2].round().clamp(0.0, 255.0) as u8,
-    ]
 }
 
 #[cfg(test)]

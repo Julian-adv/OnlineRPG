@@ -243,16 +243,31 @@ impl MinimapSource {
         }
     }
 
-    async fn read(&self, rx: i32, rz: i32) -> anyhow::Result<Option<Vec<u8>>> {
+    /// Returns the tile bytes and the Content-Type to serve them under.
+    async fn read(&self, rx: i32, rz: i32) -> anyhow::Result<Option<(Vec<u8>, String)>> {
         match self {
-            Self::Local(io) => Ok(io.read_minimap(rx, rz).await?),
+            Self::Local(io) => {
+                let size = onlinerpg_terrain::coords::MINIMAP_BASE_SIZE;
+                let Some((tile, _)) = io.stat_minimap_lod(rx, rz, size).await? else {
+                    return Ok(None);
+                };
+                let bytes = tokio::fs::read(&tile.path).await?;
+                Ok(Some((bytes, tile.family.content_type().to_string())))
+            }
             Self::Http { base_url, http } => {
                 let url = format!("{base_url}/api/terrain/minimap/{rx}/{rz}");
                 let response = http.get(&url).send().await?;
                 if response.status() == reqwest::StatusCode::NOT_FOUND {
                     return Ok(None);
                 }
-                Ok(Some(response.error_for_status()?.bytes().await?.to_vec()))
+                let response = response.error_for_status()?;
+                let content_type = response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("image/png")
+                    .to_string();
+                Ok(Some((response.bytes().await?.to_vec(), content_type)))
             }
         }
     }
@@ -470,17 +485,12 @@ async fn minimap_tile(
     axum::extract::Path((rx, rz)): axum::extract::Path<(i32, i32)>,
 ) -> Response {
     match app.minimap.read(rx, rz).await {
-        Ok(Some(tile)) => {
-            let content_type = if tile.starts_with(b"RIFF") {
-                "image/webp"
-            } else {
-                "image/png"
-            };
+        Ok(Some((tile, content_type))) => {
             (
                 [
                     (header::CONTENT_TYPE, content_type),
                     // Baked data; only a re-bake changes it.
-                    (header::CACHE_CONTROL, "max-age=300"),
+                    (header::CACHE_CONTROL, "max-age=300".to_string()),
                 ],
                 tile,
             )
