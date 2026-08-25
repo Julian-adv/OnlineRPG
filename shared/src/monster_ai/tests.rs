@@ -2043,3 +2043,143 @@ fn pack_below_a_shaft_wall_rounds_it_to_the_open_end() {
         .count();
     assert_eq!(attacking, 3, "only {attacking} reached the open side");
 }
+
+/// Remote clients walk toward `target_position` until the next sync. Aimed at
+/// the player, they overshoot the cell the chase stops at and get yanked back
+/// every sync; so the chase reports a point on its own path just ahead.
+#[test]
+fn chase_move_targets_a_point_on_the_path_not_the_player() {
+    let mut brain = make_brain();
+    brain.target_player_id = Some(1.into());
+    let tree = BehaviorTree {
+        description: None,
+        root: BehaviorNode::Action {
+            name: "chase_target".into(),
+            params: HashMap::new(),
+        },
+    };
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(10.0, 40.0);
+
+    let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
+    let target = result
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            AiCommand::Move {
+                target_position, ..
+            } => Some(*target_position),
+            _ => None,
+        })
+        .expect("entering the chase syncs a move");
+    let ahead = target.z - brain.position.z;
+    let max_ahead = brain.run_speed * NETWORK_SYNC_INTERVAL_MS / 1000.0 * 2.0 + 0.01;
+    assert!(
+        (target.x - brain.position.x).abs() < 1.0 && ahead > 0.0 && ahead <= max_ahead,
+        "target must sit on the path within {max_ahead}m, got {target:?} from {:?}",
+        brain.position
+    );
+}
+
+#[test]
+fn chase_lookahead_stops_where_the_attack_engages() {
+    let mut brain = make_brain();
+    brain.install_path(vec![PathWaypoint {
+        x: 10.0,
+        z: 20.0,
+        floor: 0,
+    }]);
+    let target = Position {
+        x: 10.0,
+        y: 0.0,
+        z: 21.0,
+    };
+    let range = 3.0;
+    let free = brain.path_lookahead(100.0, None);
+    assert!((free.z - 20.0).abs() < 1e-3);
+    let clipped = brain.path_lookahead(100.0, Some((target, range)));
+    assert!((clipped.z - 18.0).abs() < 1e-3, "{clipped:?}");
+    let short = brain.path_lookahead(2.0, Some((target, range)));
+    assert!((short.z - 12.0).abs() < 1e-3, "{short:?}");
+}
+
+/// Remote-client replica of the chase: walk toward each sync's target at the
+/// state's speed and check the attack transition lands where the client is.
+#[test]
+fn chase_syncs_land_the_client_where_the_attack_starts() {
+    let trees = load_behavior_trees(include_str!("../../../data-src/behavior_trees.json")).unwrap();
+    let tree = &trees["brave"];
+    let mut chased = 0;
+    for seed in 0..40u64 {
+        let mut rng = SmallRng::seed_from_u64(seed);
+        let (px, pz) = (
+            10.0 + (seed % 7) as f32 - 3.0,
+            16.5 + (seed % 5) as f32 * 0.4,
+        );
+        let mut brain = make_brain();
+        let players = attacker_at(px, pz);
+        let mut client_pos: Option<Position> = None;
+        let mut client_target = Position {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        let mut client_speed = 0.0;
+        let mut trace = Vec::new();
+        for _ in 0..200 {
+            if let Some(cp) = client_pos.as_mut() {
+                let dx = shortest_world_delta_x(cp.x, client_target.x);
+                let dz = client_target.z - cp.z;
+                let d = (dx * dx + dz * dz).sqrt();
+                let step = client_speed * 0.2;
+                if d <= step {
+                    *cp = client_target;
+                } else if d > 0.0 {
+                    cp.x += dx / d * step;
+                    cp.z += dz / d * step;
+                }
+            }
+            let result =
+                brain.tick_with_behavior_tree(200.0, &players, &[], tree, &DirectPath, &mut rng);
+            for c in &result.commands {
+                if let AiCommand::Move {
+                    position,
+                    state,
+                    target_position,
+                    ..
+                } = c
+                {
+                    trace.push((*state, *position, *target_position));
+                    if let (MonsterState::Run, Some(cp)) = (state, client_pos) {
+                        if client_speed == 0.0 {
+                            let err = cp.dist_xz_sq(position).sqrt();
+                            assert!(
+                                err < 0.01,
+                                "player ({px},{pz}): chase began {err:.2}m from the stop\n{trace:#?}"
+                            );
+                        }
+                    }
+                    if let (MonsterState::Attack, Some(cp)) = (state, client_pos) {
+                        let err = cp.dist_xz_sq(position).sqrt();
+                        assert!(
+                            err < 0.3,
+                            "player ({px},{pz}): attack at {position:?} but client at {cp:?} (err {err:.2})\n{trace:#?}"
+                        );
+                    }
+                    client_pos = Some(*position);
+                    client_target = *target_position;
+                    client_speed = match state {
+                        MonsterState::Run => brain.run_speed,
+                        MonsterState::Walk => brain.walk_speed,
+                        _ => 0.0,
+                    };
+                }
+            }
+            if brain.state() == AiState::Attack {
+                chased += trace.iter().any(|(s, _, _)| *s == MonsterState::Run) as usize;
+                break;
+            }
+        }
+    }
+    assert!(chased >= 5, "only {chased} seeds produced a chase");
+}

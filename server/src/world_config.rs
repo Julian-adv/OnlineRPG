@@ -19,6 +19,10 @@ pub struct WorldConfig {
     /// Monster types that spawn dynamically around players (no fixed zones).
     #[serde(rename = "ambientSpawns", default)]
     pub ambient_spawns: Vec<AmbientSpawnRule>,
+    /// Brains tick on the server; off hands them back to owning clients
+    /// (doc/SERVER_SIDE_MONSTER_AI.md).
+    #[serde(rename = "serverMonsterAi", default = "default_true")]
+    pub server_monster_ai: bool,
 }
 
 /// A monster type that spawns dynamically near players, instead of within a
@@ -48,6 +52,10 @@ impl SpawnPosition {
             z: self.z,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 static WORLD_CONFIG: LazyLock<WorldConfig> = LazyLock::new(|| {

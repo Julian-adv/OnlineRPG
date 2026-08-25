@@ -243,6 +243,7 @@ mod friends;
 pub(crate) mod hunger;
 mod inventory;
 mod monster;
+mod monster_ai;
 mod party;
 mod passability;
 mod player;
@@ -339,6 +340,10 @@ pub struct GameState {
     last_player_attacks: Arc<RwLock<HashMap<PlayerId, u64>>>,
     player_spatial_cells: Arc<RwLock<SpatialIndex<PlayerId>>>,
     monsters: Arc<RwLock<monster::MonsterRegistry>>,
+    /// Server-driven brains (doc/SERVER_SIDE_MONSTER_AI.md); empty while
+    /// `server_monster_ai` is off and clients still simulate.
+    monster_brains: Arc<Mutex<monster_ai::ServerBrains>>,
+    server_monster_ai: Arc<std::sync::atomic::AtomicBool>,
     /// player_id → (resolved track title, performance start). Source of the
     /// `elapsed_secs` sent to players entering earshot mid-performance;
     /// cleared with the `MUSIC_EMOTE` interaction.
@@ -657,6 +662,10 @@ impl GameState {
             splat_sampler,
             #[cfg(test)]
             ambient_spawns_enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            monster_brains: Arc::new(Mutex::new(monster_ai::ServerBrains::new())),
+            server_monster_ai: Arc::new(std::sync::atomic::AtomicBool::new(
+                !cfg!(test) && crate::world_config::world_config().server_monster_ai,
+            )),
             housing_io,
             cape_textures,
             dirty_players: Arc::new(RwLock::new(HashSet::new())),

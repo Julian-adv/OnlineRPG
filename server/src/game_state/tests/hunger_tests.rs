@@ -378,7 +378,7 @@ async fn server_applies_sprint_speed_and_rejects_it_without_fuel() {
 
     game_state.tick_player_movement(1.0).await;
 
-    let walk_step = onlinerpg_shared::PLAYER_MOVE_SPEED * super::super::player::MOVE_SPEED_SLACK;
+    let walk_step = onlinerpg_shared::PLAYER_MOVE_SPEED;
     let sprint_step = walk_step * onlinerpg_shared::hunger::SPRINT_MOVE_MULT;
     let players = game_state.players.read().await;
     assert!((players[&runner].position.x - (100.0 + sprint_step)).abs() < 0.001);

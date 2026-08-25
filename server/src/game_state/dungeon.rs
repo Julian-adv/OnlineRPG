@@ -1177,8 +1177,10 @@ impl GameState {
                         },
                     );
                     drop(index);
-                    self.send_direct_message(owner, ServerMessage::MonsterAssigned { monster })
-                        .await;
+                    if !self.server_monster_ai() {
+                        self.send_direct_message(owner, ServerMessage::MonsterAssigned { monster })
+                            .await;
+                    }
                 }
                 (Some(slot), None) => {
                     slot.alive_monster_id = None;

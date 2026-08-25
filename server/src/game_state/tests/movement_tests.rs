@@ -306,11 +306,11 @@ async fn one_tick_budget_spans_queued_legs() {
             .await;
     }
 
-    // Budget ≈ 1.98m: leg 1 consumed whole, leg 2 partially — the cap holds
+    // Budget 1.5m: leg 1 consumed whole, leg 2 partially — the budget holds
     // across legs, not per leg.
     game_state.tick_player_movement(0.5).await;
     let mid = player_x(&game_state, &player_id).await;
-    assert!(mid > 1.5 && mid < 2.1, "mid was {mid}");
+    assert!(mid >= 1.5 && mid < 2.1, "mid was {mid}");
 
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_x(&game_state, &player_id).await, 3.0);
@@ -1325,4 +1325,31 @@ async fn in_flight_move_after_handoff_stays_silent() {
             panic!("an in-flight move within the grace window must stay silent, got {other:?}")
         }
     }
+}
+
+#[tokio::test]
+async fn sim_tracks_nominal_progress_instead_of_racing_to_the_leg_end() {
+    let game_state = make_test_game_state("movement_nominal_progress");
+    let player_id = pid("walker");
+    game_state.add_player(make_player("walker", 0.0, 0.0)).await;
+    let target = Position {
+        x: 0.0,
+        y: 0.0,
+        z: 30.0,
+    };
+    game_state
+        .update_player_position(&player_id, move_cmd(target, false), false, false)
+        .await;
+    for _ in 0..5 {
+        game_state.tick_player_movement(0.2).await;
+    }
+    let z = game_state.players.read().await[&player_id].position.z;
+    let nominal = onlinerpg_shared::PLAYER_MOVE_SPEED * 1.0;
+    assert!(
+        (z - nominal).abs() < 1e-3,
+        "sim should walk at client speed: {z}"
+    );
+    game_state.tick_player_movement(60.0).await;
+    let z = game_state.players.read().await[&player_id].position.z;
+    assert!((z - 30.0).abs() < 1e-3, "leg should still complete: {z}");
 }

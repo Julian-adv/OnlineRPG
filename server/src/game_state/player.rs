@@ -11,9 +11,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-/// Headroom over walk speed so the sim absorbs network jitter and catches up.
-pub(super) const MOVE_SPEED_SLACK: f32 = 1.15;
-
 /// Most queued waypoints per player; legit smoothed paths stay well under.
 const MAX_QUEUED_WAYPOINTS: usize = 32;
 
@@ -1206,7 +1203,9 @@ impl super::GameState {
     /// broadcast the results. A tick's budget can span several short legs;
     /// consumed waypoints are popped in place, finished queues dropped.
     pub async fn tick_player_movement(&self, dt: f32) {
-        let base_step = PLAYER_MOVE_SPEED * MOVE_SPEED_SLACK * dt.max(0.0);
+        // Exactly the client's speed: headroom ran the sim to the leg end
+        // ahead of the client, and monsters swung at that empty spot.
+        let base_step = PLAYER_MOVE_SPEED * dt.max(0.0);
         let mut moved: Vec<(PlayerId, Position, i8, Player, bool)> = Vec::new();
         let mut steps: Vec<super::ambient_spawn::MoveStep> = Vec::new();
 
@@ -1217,8 +1216,6 @@ impl super::GameState {
             if queues.is_empty() {
                 return;
             }
-            // Hunger scales the speed itself, slack wraps the scaled value — a
-            // Weak player's sim must not outrun their slowed client.
             let mover_ids: Vec<PlayerId> = queues.keys().copied().collect();
             let hunger_profiles = self.hunger_movement_profiles_for(&mover_ids).await;
             let mut players = self.players.write().await;
@@ -2288,7 +2285,7 @@ impl super::GameState {
             self.send_direct_message(
                 player_id,
                 ServerMessage::MonsterSpawned {
-                    monster: monster.clone(),
+                    monster: self.wire_monster(monster),
                 },
             )
             .await;

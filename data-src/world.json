@@ -6,6 +6,7 @@
     "rotation": 158.8
   },
   "maxMonstersPerPlayer": 8,
+  "serverMonsterAi": true,
   "ambientSpawns": [
     { "monsterType": "scp939" },
     { "monsterType": "kobold" },

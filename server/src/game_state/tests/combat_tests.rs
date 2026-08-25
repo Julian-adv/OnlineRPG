@@ -918,7 +918,7 @@ async fn out_of_range_player_attack_only_provokes_monster() {
 
     {
         let mut monsters = game_state.monsters.write().await;
-        let mut monster = make_monster("distant_monster", pos(2.01), 0);
+        let mut monster = make_monster("distant_monster", pos(3.01), 0);
         monster.owner_id = Some(controller_id);
         monsters.insert("distant_monster".to_string(), monster);
     }

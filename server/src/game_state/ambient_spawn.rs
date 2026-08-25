@@ -149,8 +149,13 @@ impl super::GameState {
                 step.player_id
             );
             // The owner runs the AI, and it only starts on this message.
-            self.send_direct_message(&step.player_id, ServerMessage::MonsterAssigned { monster })
+            if !self.server_monster_ai() {
+                self.send_direct_message(
+                    &step.player_id,
+                    ServerMessage::MonsterAssigned { monster },
+                )
                 .await;
+            }
         }
     }
 

@@ -25,7 +25,7 @@ brain의 tick 입력은 `nearby_players`뿐이라 다른 몬스터의 존재를 
   막을 수 없고 막지 않는다. 노리는 것은 **멈춰 선 위치**가 웬만하면 벌어지는 것.
 - **waypoint 경로 추종 방식이라 steering force(boids식 분리)와 맞지 않는다.**
   매 tick 힘을 섞는 대신 목적지와 전진 여부를 셀 단위로 판단한다.
-- 서버는 통행 가능성만 검증하고 몬스터-몬스터 충돌은 보지 않는다. **서버 변경 없음.**
+- 서버는 통행 가능성만 검증하고 몬스터-몬스터 충돌은 보지 않는다. 뇌가 서버에서 돌 때([SERVER_SIDE_MONSTER_AI.md](SERVER_SIDE_MONSTER_AI.md)) 같은 셀 분리 로직이 `server/src/game_state/monster_ai.rs`에서 그대로 실행된다.
 
 ## 설계: 셀 점유 (넷핵식, 한 셀에 한 몬스터)
 

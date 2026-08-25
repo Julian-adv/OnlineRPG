@@ -1220,8 +1220,10 @@ impl super::GameState {
             else {
                 break;
             };
-            self.send_direct_message(admin_id, ServerMessage::MonsterAssigned { monster })
-                .await;
+            if !self.server_monster_ai() {
+                self.send_direct_message(admin_id, ServerMessage::MonsterAssigned { monster })
+                    .await;
+            }
             spawned += 1;
         }
         info!(admin = ?admin_id, monster_type, spawned, "admin spawnmob");

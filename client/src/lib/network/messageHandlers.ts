@@ -896,7 +896,11 @@ export function handleServerMessage(
         : gameState.otherPlayers.get(data.player_id)
       const monster = monsterManager.monsters.get(data.monster_id)
       if (monster?.ownerId !== gameState.currentPlayer?.id) {
-        monsterManager.handleMonsterAttackStarted(data.monster_id, 250)
+        monsterManager.handleMonsterAttackStarted(
+          data.monster_id,
+          250,
+          target?.position
+        )
       }
 
       const impactDelayMs = monsterManager.getMonsterAttackDamageTextDelayMs(

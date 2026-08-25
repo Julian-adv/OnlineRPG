@@ -12,6 +12,9 @@ const WEAPON_DROP_OFFSET_METERS: f32 = 2.0;
 // Mirrors the web and agent clients' 2m melee reach. This server-side check is
 // authoritative: clients may request an attack directly without chasing.
 const PLAYER_MELEE_ATTACK_RANGE_METERS: f32 = 2.0;
+// The server walks the player at client speed and so trails it by the network
+// lag; a swing thrown on arrival must not be refused for that.
+const PLAYER_MELEE_RANGE_TOLERANCE_METERS: f32 = 1.0;
 // Out-of-range swings may still pull aggro when the monster is plausibly
 // nearby, but farther requests are ignored to prevent remote provocation.
 pub(super) const PLAYER_ATTACK_PROVOKE_RANGE_METERS: f32 = 10.0;
@@ -286,11 +289,14 @@ impl super::GameState {
                 player_floor,
             )
         };
-        if distance_sq > PLAYER_MELEE_ATTACK_RANGE_METERS.powi(2) {
+        let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_MELEE_RANGE_TOLERANCE_METERS;
+        if distance_sq > melee_range.powi(2) {
             // A swing at a monster behind a shut door must not reach it as
             // aggro either.
             if distance_sq <= PLAYER_ATTACK_PROVOKE_RANGE_METERS.powi(2) && !walled_off() {
-                if let Some(owner_id) = monster_owner_id {
+                if self.server_monster_ai() {
+                    self.brain_hit(monster_id, player_id, false, 0).await;
+                } else if let Some(owner_id) = monster_owner_id {
                     self.send_direct_message(
                         &owner_id,
                         ServerMessage::MonsterProvoked {
@@ -413,7 +419,9 @@ impl super::GameState {
         )
         .await;
 
-        if result_hit {
+        if !result_hit {
+            self.brain_hit(&monster_id, player_id, false, 0).await;
+        } else {
             // Damage and the kill claim share one guard, so a second attacker
             // landing at the same instant sees Dead and stops.
             let is_dead = {
@@ -440,7 +448,11 @@ impl super::GameState {
                 }
                 died
             };
-            if is_dead {
+            if !is_dead {
+                self.brain_hit(&monster_id, player_id, true, result_damage)
+                    .await;
+            } else {
+                self.brain_death(&monster_id).await;
                 let def = self.monster_defs.get(&monster_type);
                 // Depth-scaled dungeon monsters count as their effective level.
                 let effective_level = monster_level_override.or(def.map(|d| d.level));
@@ -680,14 +692,30 @@ impl super::GameState {
         }
     }
 
+    /// A client's swing request. With server brains on it is ignored: the
+    /// registry still files a cap owner, so the ownership gate alone would
+    /// let that client aim the monster.
     pub async fn broadcast_monster_attack(
         &self,
         attacker_player_id: &PlayerId,
         monster_id: &str,
         target_player_id: &PlayerId,
     ) {
-        // 1. Check if monster exists, is alive, and is owned by the requester.
-        // Also check server-side cooldown guard.
+        if self.server_monster_ai() {
+            return;
+        }
+        self.monster_attack(Some(attacker_player_id), monster_id, target_player_id)
+            .await;
+    }
+
+    /// `attacker` is the owning client, or `None` for the server's own brain.
+    /// Cooldown, reach and wall checks apply to both.
+    pub(super) async fn monster_attack(
+        &self,
+        attacker: Option<&PlayerId>,
+        monster_id: &str,
+        target_player_id: &PlayerId,
+    ) {
         struct MonsterAttackSnapshot {
             attack_bonus: i32,
             damage_roll: String,
@@ -704,7 +732,11 @@ impl super::GameState {
         {
             let mut monsters = self.monsters.write().await;
             if let Some(monster) = monsters.get_mut(monster_id) {
-                if monster.is_controllable_by(attacker_player_id) {
+                let controllable = match attacker {
+                    Some(attacker) => monster.is_controllable_by(attacker),
+                    None => monster.state != MonsterState::Dead,
+                };
+                if controllable {
                     let def = self.monster_defs.get(&monster.monster_type);
                     let attack_cooldown_ms =
                         def.map(|d| u64::from(d.attack_cooldown)).unwrap_or(1500);

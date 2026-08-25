@@ -6,6 +6,7 @@ export interface MonsterData {
   state: 'idle' | 'walk' | 'run' | 'attack' | 'hit' | 'dead'
   ownerId?: number
   targetPosition?: { x: number; y: number; z: number }
+  syncCorrection?: { x: number; z: number } // server offset still to absorb
   targetPlayerId?: number // Who the monster is attacking
   moveSpeed: number
   stateTimer: number

@@ -236,9 +236,73 @@ impl MonsterBrain {
         }
     }
 
+    /// Where the path puts us `meters` further on — the goal itself when the
+    /// path is shorter, or the point where the path first comes within
+    /// `engage` (radius) of a target, since the chase turns into an attack
+    /// there and never reaches the rest. What remote clients walk toward
+    /// between syncs: a point the brain will actually pass.
+    pub(super) fn path_lookahead(&self, meters: f32, engage: Option<(Position, f32)>) -> Position {
+        let (mut x, mut z, mut left) = (self.position.x, self.position.z, meters);
+        let at = |x, z| Position {
+            x,
+            y: self.position.y,
+            z,
+        };
+        if let Some((t, r)) = engage {
+            if at(x, z).dist_xz_sq(&t) <= r * r {
+                return at(x, z);
+            }
+        }
+        for wp in &self.waypoints[self.current_waypoint_idx.min(self.waypoints.len())..] {
+            let dx = shortest_world_delta_x(x, wp.x);
+            let dz = wp.z - z;
+            let dist = (dx * dx + dz * dz).sqrt();
+            let mut len = dist.min(left);
+            if let Some((t, r)) = engage {
+                if let Some(d) = ray_circle_entry(x, z, dx, dz, dist, &t, r) {
+                    len = len.min(d);
+                }
+            }
+            if len < dist || left <= dist {
+                if dist > 0.0 {
+                    x = wrap_world_x(x + dx / dist * len);
+                    z += dz / dist * len;
+                }
+                return at(x, z);
+            }
+            left -= dist;
+            (x, z) = (wp.x, wp.z);
+        }
+        at(x, z)
+    }
+
     /// Follow waypoints. Returns true if path is exhausted.
     pub(super) fn follow_path(&mut self, delta_ms: f32) -> bool {
         self.follow_path_gated(delta_ms, false).0
+    }
+
+    /// Gated follow, but a step that enters `range` of `target` stops
+    /// right at the entry point — the same point remote clients walk to
+    /// (`path_lookahead`), so the attack transition doesn't jolt the model.
+    pub(super) fn follow_path_engaging(
+        &mut self,
+        delta_ms: f32,
+        target: Position,
+        range: f32,
+    ) -> (bool, bool) {
+        let before = self.position;
+        let outside = before.dist_xz_sq(&target) > range * range;
+        let result = self.follow_path_gated(delta_ms, true);
+        if outside && self.position.dist_xz_sq(&target) <= range * range {
+            let dx = shortest_world_delta_x(before.x, self.position.x);
+            let dz = self.position.z - before.z;
+            let dist = (dx * dx + dz * dz).sqrt();
+            if let Some(d) = ray_circle_entry(before.x, before.z, dx, dz, dist, &target, range) {
+                self.position.x = wrap_world_x(before.x + dx / dist * d);
+                self.position.z = before.z + dz / dist * d;
+            }
+        }
+        result
     }
 
     /// Like `follow_path`, but when `gated` refuses to step into a cell in
@@ -304,4 +368,31 @@ impl MonsterBrain {
             Some(last) => last.dist_xz_sq(target_pos) > threshold * threshold,
         }
     }
+}
+
+/// Distance along the ray from (x, z) in direction (dx, dz)/`dist` at which
+/// it first enters the circle of radius `r` around `center`; None if it never
+/// does within `dist`.
+pub(super) fn ray_circle_entry(
+    x: f32,
+    z: f32,
+    dx: f32,
+    dz: f32,
+    dist: f32,
+    center: &Position,
+    r: f32,
+) -> Option<f32> {
+    if dist <= 0.0 {
+        return None;
+    }
+    let (ux, uz) = (dx / dist, dz / dist);
+    let cx = shortest_world_delta_x(x, center.x);
+    let cz = center.z - z;
+    let proj = cx * ux + cz * uz;
+    let perp_sq = cx * cx + cz * cz - proj * proj;
+    if r * r < perp_sq {
+        return None;
+    }
+    let d = proj - (r * r - perp_sq).sqrt();
+    (d >= 0.0 && d <= dist).then_some(d)
 }

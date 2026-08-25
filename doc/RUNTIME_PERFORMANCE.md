@@ -1,5 +1,20 @@
 # Runtime Performance Optimization (60fps)
 
+## Server monster AI metrics (2026-08-25)
+
+뇌가 서버에서 돌기 시작함 ([SERVER_SIDE_MONSTER_AI.md](SERVER_SIDE_MONSTER_AI.md)). 30 s마다 journald에:
+
+```
+monster ai: brains N active N ticks N ticked/tick N pathfinds/s N commands/s N over_budget N worst Nms
+```
+
+- `brains`: 살아있는 뇌 수 (AOI 밖 몬스터 포함) / `active`: 이번 틱에 누군가 보고 있던 몬스터
+- `over_budget`: 40 ms 예산을 넘겨 다음 틱으로 넘긴 횟수 (30 s 창, 최대 150) — 0이 정상
+- `worst`: 창 안 최장 틱 시간
+- `pathfinds/s`: A\* 호출률 — 병목 지표. 코어를 위협하면 SERVER_SIDE_MONSTER_AI §6.1(표적별 경로 공유)로.
+
+A(별도 머신) 판단 기준: 5,000 동접 외삽에서 `over_budget`이 상시 0이 아니거나 `worst`가 100 ms를 넘으면.
+
 ## Passability cache: spatial index investigated, not built (2026-07-21)
 
 ### Question

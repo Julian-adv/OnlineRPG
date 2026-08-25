@@ -491,6 +491,19 @@ async fn main() -> ExitCode {
         },
     ));
 
+    // Server-driven monster brains (doc/SERVER_SIDE_MONSTER_AI.md); same
+    // cadence as player movement.
+    let game_state_for_monster_ai = Arc::clone(&game_state);
+    background.spawn(run_ticks(
+        "monster ai",
+        Duration::from_millis(200),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&game_state_for_monster_ai);
+            async move { game_state.tick_monster_ai().await }
+        },
+    ));
+
     // Safety net behind the event-driven ownership handoff (AOI diff, monster
     // move fanout, adoption on sight): repairs what a race strands and frees
     // monsters nobody can see. The events do the real-time work, so this only

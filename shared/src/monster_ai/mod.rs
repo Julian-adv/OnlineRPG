@@ -82,6 +82,8 @@ const ATTACK_RELEASE_MARGIN_METERS: f32 = 0.5;
 /// interpolate toward `target_position` in between, and state changes still sync
 /// immediately. Server-authoritative movement (F-006) absorbs the coarser rate.
 const NETWORK_SYNC_INTERVAL_MS: f32 = 500.0;
+/// See `MonsterBrain::engage_range`.
+const ENGAGE_INSET_METERS: f32 = 0.05;
 pub const DEFAULT_BEHAVIOR: &str = "brave";
 /// Behavior tree used by proactive (선공형) monsters that acquire and attack
 /// targets on sight. Selected when `Monster::aggressive` is set, overriding the

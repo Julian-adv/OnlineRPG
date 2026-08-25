@@ -34,6 +34,8 @@ Orchestrator Process
 
 서버가 몬스터 스폰을 결정하고 소유자를 지정한다 (치팅 방지). 클라이언트는 할당받은 몬스터의 AI(이동/공격)만 담당한다.
 
+**2026-08-25부터 뇌는 서버에서 돈다** ([SERVER_SIDE_MONSTER_AI.md](SERVER_SIDE_MONSTER_AI.md), `serverMonsterAi` 플래그). 아래 소유 모델은 서버 내부 장부(스폰 캡, despawn)로만 남고, 클라이언트에는 `owner_id: None`으로 전달되어 어떤 클라도 뇌를 만들지 않는다. 플래그 off일 때만 아래가 클라이언트에 그대로 적용된다.
+
 **스폰 흐름** (위치 선정까지 전부 서버, [REPEAT_FARMING.md](REPEAT_FARMING.md)):
 1. 이동 틱마다 그 틱에 걸어간 거리 `d`로 `1 - 0.98^d`를 굴린다 — 서 있으면 0
 2. 성공하면 서버가 진행 방향 화면 가장자리 바로 밖(화면 정렬 정사각형의 변, 반변 20m)에

@@ -8,8 +8,9 @@ use super::{
     CHASE_CELL_RANGE_MARGIN, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
     DEFAULT_IDLE_CHECK_MS, DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
     DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
-    DETOUR_MAX_NODES, DETOUR_MAX_PATH_METERS, FLEE_SAFE_DIST_MARGIN, MAX_SLOT_PATH_TRIES,
-    MIN_PARTIAL_PROGRESS_METERS, SIDESTEP_MAX_PATH_METERS,
+    DETOUR_MAX_NODES, DETOUR_MAX_PATH_METERS, ENGAGE_INSET_METERS, FLEE_SAFE_DIST_MARGIN,
+    MAX_SLOT_PATH_TRIES, MIN_PARTIAL_PROGRESS_METERS, NETWORK_SYNC_INTERVAL_MS,
+    SIDESTEP_MAX_PATH_METERS,
 };
 use crate::world::{shortest_world_delta_x, wrap_world_x};
 use crate::MonsterState;
@@ -420,7 +421,14 @@ impl MonsterBrain {
             return BehaviorStatus::Running;
         }
 
-        let (reached, held) = self.follow_path_gated(delta_ms, true);
+        // A chase transition syncs before its first step: remote clients
+        // still show the old motion, and a post-step sync jolts them a whole
+        // tick. It also stands in for this tick's interval sync.
+        let pre_synced = self.state == AiState::Chase && self.state != self.last_synced_state;
+        if pre_synced {
+            self.sync_chase(target_pos, commands);
+        }
+        let (reached, held) = self.follow_path_engaging(delta_ms, target_pos, self.engage_range());
         if held {
             // Flow around the blocker, or back out and round the queue, when
             // possible; retry at repath cadence, not every tick.
@@ -429,8 +437,8 @@ impl MonsterBrain {
                     || self.try_detour(&target_pos, path_provider))
             {
                 self.state = AiState::Chase;
-                if self.should_sync_move() {
-                    commands.push(self.make_chase_move_cmd(target_pos));
+                if !pre_synced {
+                    self.sync_chase(target_pos, commands);
                 }
                 return BehaviorStatus::Running;
             }
@@ -444,10 +452,23 @@ impl MonsterBrain {
             self.reslotting = false;
             self.detour_goal = None;
         }
+        if !pre_synced {
+            self.sync_chase(target_pos, commands);
+        }
+        BehaviorStatus::Running
+    }
+
+    /// Where the chase stops: just inside attack range, so the range check
+    /// that follows is not a float coin-flip at the boundary. Remote clients
+    /// walk to the same point.
+    fn engage_range(&self) -> f32 {
+        self.attack_range - ENGAGE_INSET_METERS
+    }
+
+    fn sync_chase(&mut self, target_pos: crate::Position, commands: &mut Vec<AiCommand>) {
         if self.should_sync_move() {
             commands.push(self.make_chase_move_cmd(target_pos));
         }
-        BehaviorStatus::Running
     }
 
     /// Enter (or stay in) the chase hold — queued behind a stander, or
@@ -467,13 +488,19 @@ impl MonsterBrain {
         commands.push(self.make_move_cmd());
     }
 
+    /// Remote clients walk toward `target_position` until the next sync, so
+    /// it must lie on the path, a couple of sync intervals ahead — aiming
+    /// them at the target itself overshoots the standing cell the chase
+    /// actually stops at, and every sync yanks the model back.
     fn make_chase_move_cmd(&self, target_pos: crate::Position) -> AiCommand {
+        let lookahead = self.move_speed * NETWORK_SYNC_INTERVAL_MS / 1000.0 * 2.0;
+        let engage = (target_pos, self.engage_range());
         AiCommand::Move {
             monster_id: self.monster_id.clone(),
             position: self.position,
             rotation: self.rotation,
             state: MonsterState::Run,
-            target_position: target_pos,
+            target_position: self.path_lookahead(lookahead, Some(engage)),
         }
     }
 

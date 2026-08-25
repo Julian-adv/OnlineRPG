@@ -403,7 +403,7 @@ impl super::GameState {
             monster.floor_level,
             super::EVENT_DELIVERY_RADIUS,
             ServerMessage::MonsterSpawned {
-                monster: monster.clone(),
+                monster: self.wire_monster(&monster),
             },
             None,
         )
@@ -430,7 +430,7 @@ impl super::GameState {
     /// Ambient spawns are grounded by `ambient_spawn.rs`, but `/spawnmob`
     /// seeds Y from the admin's pose, and such a monster stays off-ground for
     /// life. `None` means refuse the move, not "no opinion".
-    async fn expected_monster_move_y(
+    pub(super) async fn expected_monster_move_y(
         &self,
         floor_level: i8,
         from: Position,
@@ -475,6 +475,10 @@ impl super::GameState {
         state: MonsterState,
         mut target_position: Position,
     ) {
+        // The server simulates: a client's move is noise, not a stale brain.
+        if self.server_monster_ai() {
+            return;
+        }
         // Dead is rejected like malformed input: only server combat may kill a
         // monster.
         let input_valid = new_position.is_finite()
@@ -671,7 +675,7 @@ impl super::GameState {
         .await;
     }
 
-    async fn fanout_monster_position_update(
+    pub(super) async fn fanout_monster_position_update(
         &self,
         monster: &crate::types::Monster,
         old_position: Position,
@@ -734,7 +738,7 @@ impl super::GameState {
         self.send_direct_message_to_players(
             &entered,
             ServerMessage::MonsterSpawned {
-                monster: monster.clone(),
+                monster: self.wire_monster(monster),
             },
         )
         .await;
@@ -1097,6 +1101,11 @@ impl super::GameState {
                     })
                     .collect()
             };
+            // With server brains a handoff is bookkeeping only: no client
+            // held a brain, so nothing is released or assigned.
+            if self.server_monster_ai() {
+                continue;
+            }
             // Who to release, resolved in one short players guard so the send
             // loop below holds only the channel map. Normally the release
             // finds the old owner out of sight, but a race can release one

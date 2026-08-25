@@ -54,6 +54,9 @@ pub struct MonsterDefinition {
     pub chase_range: f32,
     #[serde(rename = "attackCooldown")]
     pub attack_cooldown: u32,
+    /// Behavior tree name (data-src/behavior_trees.json).
+    #[serde(default)]
+    pub behavior: Option<String>,
     #[serde(rename = "attackImpactDelay", default)]
     pub attack_impact_delay: u32,
     #[serde(rename = "attackDamageTextDelay", default)]

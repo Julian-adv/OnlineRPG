@@ -69,6 +69,10 @@ const DEFAULT_MONSTER_BEHAVIOR = 'brave'
 // data-src/behavior_trees.json.
 const AGGRESSIVE_MONSTER_BEHAVIOR = 'aggressive'
 const MONSTER_POSITION_EPSILON = 0.001
+// Server corrections under this size are absorbed by speed, not snapped.
+const SYNC_BLEND_MAX_METERS = 2.5
+const SYNC_CATCHUP_FRACTION = 0.5 // of move speed, while moving
+const SYNC_IDLE_ABSORB_MPS = 2.0
 // Backstop for a pending death whose hit clip never reports completion.
 const DEAD_PENDING_TIMEOUT_MS = 2000
 
@@ -382,7 +386,12 @@ class MonsterManager {
     }
   }
 
-  handleMonsterAttackStarted(monsterId: string, dedupeWindowMs = 0) {
+  // Facing is the client's call: the server's rotation lags the target.
+  handleMonsterAttackStarted(
+    monsterId: string,
+    dedupeWindowMs = 0,
+    target?: { x: number; z: number }
+  ) {
     const monster = this.monsters.get(monsterId)
     if (!monster || monster.state === 'dead') return
 
@@ -395,7 +404,13 @@ class MonsterManager {
       return
     }
 
-    this.applyMonsterPose(monster, { state: 'attack' })
+    let rotation: number | undefined
+    if (target) {
+      const dx = shortestWrappedDeltaX(monster.position.x, target.x)
+      const dz = target.z - monster.position.z
+      if (dx !== 0 || dz !== 0) rotation = Math.atan2(dx, dz)
+    }
+    this.applyMonsterPose(monster, { rotation, state: 'attack' })
     monster.attackCounter = (monster.attackCounter ?? 0) + 1
     monster.lastAttackStartedAt = now
     this.monsters.set(monsterId, { ...monster })
@@ -583,6 +598,7 @@ class MonsterManager {
         this.monsters.set(monster.id, { ...monster })
       } else {
         // Interpolate remote monsters
+        const blended = this.absorbSyncCorrection(monster, deltaTime)
         if (
           monster.state !== 'dead' &&
           !monster.isDeadPending &&
@@ -591,7 +607,7 @@ class MonsterManager {
         ) {
           this.moveTowards(monster, monster.targetPosition, deltaTime)
           this.monsters.set(monster.id, { ...monster })
-        } else if (impactJustExpired || damageTextFired) {
+        } else if (blended || impactJustExpired || damageTextFired) {
           this.monsters.set(monster.id, { ...monster })
         }
       }
@@ -801,8 +817,19 @@ class MonsterManager {
         monster.impactDelay !== undefined && monster.impactDelay > 0
       const shouldDelayNetworkHit = hasPendingImpact && state === 'hit'
 
-      const snappedPosition =
-        this.snapToMonsterGround(monster, position) ?? position
+      const jumpDx = shortestWrappedDeltaX(monster.position.x, position.x)
+      const jumpDz = position.z - monster.position.z
+      const jump = Math.hypot(jumpDx, jumpDz)
+      const soften =
+        jump > MONSTER_POSITION_EPSILON &&
+        jump < SYNC_BLEND_MAX_METERS &&
+        state !== 'dead' &&
+        state !== 'hit' &&
+        monster.state !== 'dead'
+      monster.syncCorrection = soften ? { x: jumpDx, z: jumpDz } : undefined
+      const snappedPosition = soften
+        ? monster.position
+        : (this.snapToMonsterGround(monster, position) ?? position)
       const snappedTargetPosition =
         this.snapToMonsterGround(monster, targetPosition) ?? targetPosition
       // Authoritative update: apply position/target directly (no movement gate).
@@ -828,10 +855,36 @@ class MonsterManager {
     }
   }
 
+  private absorbSyncCorrection(monster: MonsterData, deltaTime: number) {
+    const c = monster.syncCorrection
+    if (!c) return false
+    const rate = this.isMovementState(monster.state)
+      ? monster.moveSpeed * SYNC_CATCHUP_FRACTION
+      : SYNC_IDLE_ABSORB_MPS
+    const remaining = Math.hypot(c.x, c.z)
+    const step = (rate * deltaTime) / 1000
+    const p = monster.position
+    const done = this.moveTowards(
+      monster,
+      { x: wrapWorldX(p.x + c.x), y: p.y, z: p.z + c.z },
+      deltaTime,
+      rate
+    )
+    if (done) {
+      monster.syncCorrection = undefined
+    } else {
+      const keep = 1 - step / remaining
+      c.x *= keep
+      c.z *= keep
+    }
+    return true
+  }
+
   private moveTowards(
     monster: MonsterData,
     target: { x: number; y: number; z: number },
-    deltaTime: number // in ms
+    deltaTime: number, // in ms
+    speed = monster.moveSpeed
   ): boolean {
     // Positions are canonical, so a step toward a target across the seam has
     // to take the periodic short path and stay canonical afterwards.
@@ -839,7 +892,7 @@ class MonsterManager {
     const dz = target.z - monster.position.z
     const distance = Math.sqrt(dx * dx + dz * dz)
 
-    const moveStep = (monster.moveSpeed * deltaTime) / 1000
+    const moveStep = (speed * deltaTime) / 1000
     const onUpperFloor = (monster.currentFloor ?? 0) > 0
     // Dungeon floors live below Y=0, so the "stepped into water" guard
     // only applies to surface monsters.
