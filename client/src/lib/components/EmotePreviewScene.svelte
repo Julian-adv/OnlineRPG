@@ -3,7 +3,6 @@
   import * as THREE from 'three'
   import { PMREMGenerator, type WebGPURenderer } from 'three/webgpu'
   import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
-  import { untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import {
     computeSoleGroundOffset,
@@ -14,7 +13,10 @@
     CHARACTER_ANIMATION_PACK_PATHS,
     getCharacterModelPath,
   } from '../utils/modelPaths'
-  import { getCurrentPreset } from '../stores/graphicsSettings'
+  import {
+    getEffectivePreset,
+    graphicsQuality,
+  } from '../stores/graphicsSettings'
   import { createRenderCadence } from '../utils/renderCadence'
   import { loadGLB } from '../utils/gltfCache'
   import type { CharacterClass, Gender } from '../network/networkTypes'
@@ -49,9 +51,11 @@
     renderer.init().then(() => {
       if (disposed) return
       const pmremGenerator = new PMREMGenerator(renderer)
-      envRt = pmremGenerator.fromScene(new RoomEnvironment())
+      const room = new RoomEnvironment()
+      envRt = pmremGenerator.fromScene(room)
       scene.environment = envRt.texture
       scene.environmentIntensity = 0.55
+      room.traverse((o) => (o as THREE.Mesh).geometry?.dispose())
       pmremGenerator.dispose()
       invalidate()
     })
@@ -64,7 +68,7 @@
 
   let modelRoot = $state<THREE.Group | null>(null)
   let mixer = $state<THREE.AnimationMixer | null>(null)
-  let currentAction = $state<THREE.AnimationAction | null>(null)
+  let currentAction: THREE.AnimationAction | null = null
   const clipsByName = new SvelteMap<string, THREE.AnimationClip>()
 
   const modelPath = $derived(getCharacterModelPath(characterClass, gender))
@@ -105,14 +109,10 @@
     if (!clip) return
 
     const action = mixer.clipAction(clip)
-    const previous = untrack(() => currentAction)
-    // A null-anim spell (drag, death) followed by the same clip resumes
-    // where it left off — only a genuinely new clip restarts. Hard switch,
-    // no crossfade: interrupted fades snap to stale weights (three.js
-    // fadeIn/fadeOut hardcode their endpoints), and a preview should show
-    // the hovered emote instantly anyway.
-    if (previous !== action) {
-      previous?.stop()
+    // Re-hovering the same clip resumes it; only a new clip restarts. Hard
+    // switch, no crossfade — interrupted three.js fades snap to stale weights.
+    if (currentAction !== action) {
+      currentAction?.stop()
       action.reset()
       action.loop = THREE.LoopRepeat
       action.play()
@@ -124,10 +124,11 @@
     invalidate()
   })
 
-  // Manual invalidation: no anim playing (panel open, nothing hovered yet)
-  // means no renders at all. Steps at the graphics preset's frame cap so
-  // the preview can't out-render the main scene.
-  const cadence = createRenderCadence(getCurrentPreset().maxRenderFps)
+  // Manual invalidation: nothing hovered means no renders at all. Steps at the
+  // preset's frame cap so the preview can't out-render the main scene.
+  const cadence = $derived(
+    createRenderCadence(getEffectivePreset($graphicsQuality).maxRenderFps)
+  )
   let pendingDelta = 0
   useTask(
     (delta) => {

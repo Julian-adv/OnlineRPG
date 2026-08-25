@@ -14,7 +14,11 @@
   import { networkManager } from '../network/socket'
   import { innerWidth } from 'svelte/reactivity/window'
   import { draggablePanel } from '../actions/draggablePanel'
-  import { panelPositions } from '../stores/panelLayout'
+  import { draggingPanel, panelPositions } from '../stores/panelLayout'
+  import {
+    getEffectivePreset,
+    graphicsQuality,
+  } from '../stores/graphicsSettings'
   import { EMOTE_PANEL_W, previewPlacement } from '../emote-preview-layout'
   import EmotePreview from './EmotePreview.svelte'
 
@@ -23,20 +27,33 @@
   const previewPlayer = $derived($gameStore.currentPlayer)
 
   // Last pointed-at emote; kept playing after the pointer leaves so the
-  // preview never snaps back to an empty box. Cleared on close — the
-  // component itself stays mounted for the whole session.
+  // preview never snaps back to an empty box.
   let previewed = $state<EmoteMeta | null>(null)
+
+  // Mount the preview stack once a fitting position has existed, then keep it
+  // warm for the rest of this open; fit churn only nulls the anim.
+  let everFit = $state(false)
   $effect(() => {
-    // Also cleared on death/disconnect, so the box doesn't pop back open
-    // by itself on respawn or reconnect.
-    if (!visible || !usable) previewed = null
-    // Re-evaluate the mount latch per open; deaths keep the device warm.
-    if (!visible) everFit = false
+    if (!visible) {
+      previewed = null
+      everFit = false
+      return
+    }
+    // Death/disconnect clears the hover so the box can't pop back open by
+    // itself on respawn.
+    if (!usable) previewed = null
+    if (placement.fits && affordable) everFit = true
   })
 
-  // The box hangs off the panel's side. Work out which side has room from
-  // the panel's position and the viewport; with room on neither (narrow
-  // phone viewports), don't mount the preview canvas at all.
+  // A second WebGPU device costs more than the layers low already drops, so
+  // the preview is a full-budget-only extra.
+  const affordable = $derived(
+    $graphicsQuality !== 'low' &&
+      getEffectivePreset($graphicsQuality).renderBudget === 'full'
+  )
+
+  // Which side of the panel has room for the box; neither side (narrow phone
+  // viewports) means the preview canvas never mounts.
   const placement = $derived(
     previewPlacement(
       $panelPositions.emotes?.x ??
@@ -45,49 +62,10 @@
     )
   )
 
-  // The store position updates on drag release, so hide the box while the
-  // panel is mid-drag instead of letting it ride off-screen on a stale side.
-  // Mirrors draggablePanel's gesture test (left button, not a header button,
-  // 4px slop) so a plain click never blinks the preview.
-  let draggingPanel = $state(false)
-  let dragPointerId: number | null = null
-  function trackDragStart(node: HTMLElement) {
-    const down = (e: PointerEvent) => {
-      if (e.button !== 0 || dragPointerId !== null) return
-      if ((e.target as HTMLElement).closest('button')) return
-      dragPointerId = e.pointerId
-      const { clientX, clientY } = e
-      const move = (m: PointerEvent) => {
-        if (m.pointerId !== dragPointerId) return
-        const dx = m.clientX - clientX
-        const dy = m.clientY - clientY
-        if (dx * dx + dy * dy >= 16) draggingPanel = true
-      }
-      const up = (u: PointerEvent) => {
-        if (u.pointerId !== dragPointerId) return
-        dragPointerId = null
-        window.removeEventListener('pointermove', move)
-        window.removeEventListener('pointerup', up)
-        window.removeEventListener('pointercancel', up)
-        draggingPanel = false
-      }
-      window.addEventListener('pointermove', move)
-      window.addEventListener('pointerup', up)
-      window.addEventListener('pointercancel', up)
-    }
-    node.addEventListener('pointerdown', down)
-    return { destroy: () => node.removeEventListener('pointerdown', down) }
-  }
+  // The stored position only updates on drag release, so hide the box mid-drag
+  // instead of letting it ride off-screen on a stale side.
+  const dragging = $derived($draggingPanel === 'emotes')
 
-  // Mount the preview stack once a fitting position has existed, then keep
-  // it warm; visibility churn (resize, zoom, drags across the fit boundary)
-  // only nulls the anim instead of rebuilding the WebGPU canvas.
-  let everFit = $state(false)
-  $effect(() => {
-    // Reads `visible` so the latch re-evaluates on every reopen, not only
-    // when the placement inputs change.
-    if (visible && placement.fits) everFit = true
-  })
   // sendChatMessage is a silent no-op while disconnected; grey out like the
   // chat input does instead of eating clicks. Dead players are greyed out
   // too — the server accepts a corpse's /emote, so the client must not
@@ -121,7 +99,7 @@
 
 {#if visible}
   <div class="emote-panel" aria-label="Emotes" use:draggablePanel={'emotes'}>
-    <div class="panel-header" data-drag-handle use:trackDragStart>
+    <div class="panel-header" data-drag-handle>
       <span class="panel-title">Emotes</span>
       <button
         class="close-btn"
@@ -153,9 +131,9 @@
 
     <div class="panel-hint">/emote &lt;name&gt; · dances stop on move</div>
 
-    {#if previewPlayer && everFit}
+    {#if previewPlayer && everFit && affordable}
       <EmotePreview
-        anim={usable && placement.fits && !draggingPanel
+        anim={usable && placement.fits && !dragging
           ? (previewed?.anim ?? null)
           : null}
         label={previewed?.label ?? null}

@@ -1,5 +1,6 @@
 import {
   clampPanelPos,
+  draggingPanel,
   panelOrder,
   panelPositions,
   panelZ,
@@ -76,6 +77,7 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
       if (!moved) {
         if (dx * dx + dy * dy < DRAG_THRESHOLD_SQ) return
         moved = true
+        draggingPanel.set(id)
         // Hand over from the CSS defaults (right / translateY) without a jump.
         place(rect.left, rect.top)
       }
@@ -99,6 +101,7 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
     }
 
     function stop() {
+      if (moved) draggingPanel.set(null)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)

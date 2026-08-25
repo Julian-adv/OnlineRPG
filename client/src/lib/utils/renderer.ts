@@ -43,11 +43,10 @@ export function createWebGPURenderer(canvas: HTMLCanvasElement) {
 }
 
 /** Renderer for the small secondary preview canvases. Reuses the main
- *  renderer's applied antialias without re-recording it (that record is
- *  the main canvas's restart-notice source), and defers a dispose that
- *  races init() so the GPU device is actually released. The pixel-ratio
- *  cap must come from the Canvas `dpr` prop — Threlte overwrites anything
- *  set here. */
+ *  renderer's applied antialias without re-recording it (that record drives
+ *  the settings restart notice), and defers dispose past init() so the GPU
+ *  device is actually released. Cap the pixel ratio via the Canvas `dpr`
+ *  prop — Threlte overwrites anything set here. */
 export function createPreviewWebGPURenderer(canvas: HTMLCanvasElement) {
   const renderer = new WebGPURenderer({
     canvas,

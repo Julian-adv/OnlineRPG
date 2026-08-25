@@ -41,7 +41,7 @@
   aria-hidden="true"
 >
   <div class="preview-canvas">
-    <Canvas createRenderer={createPreviewWebGPURenderer} {dpr}>
+    <Canvas createRenderer={createPreviewWebGPURenderer} {dpr} shadows={false}>
       <EmotePreviewScene {anim} {characterClass} {gender} bind:playing />
     </Canvas>
   </div>

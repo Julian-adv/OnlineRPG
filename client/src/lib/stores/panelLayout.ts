@@ -96,6 +96,9 @@ panelPositions.subscribe((pos) => {
 /** Session-only raise order, bottom first. */
 export const panelOrder = writable<PanelId[]>([])
 
+/** Panel currently being dragged; its stored position is stale until release. */
+export const draggingPanel = writable<PanelId | null>(null)
+
 export function savePanelPos(id: PanelId, pos: PanelPos) {
   panelPositions.update((p) => ({ ...p, [id]: pos }))
 }
