@@ -352,10 +352,12 @@ fn chase_to_attack_fires_without_waiting_full_cooldown() {
     };
     let mut rng = SmallRng::seed_from_u64(42);
 
+    // Inside the engage distance, not merely inside the reach: a chase that
+    // has yet to close swings only once it has (`engage_limit`).
     let players = vec![NearbyPlayer {
         id: 1.into(),
         position: Position {
-            x: 11.9,
+            x: 11.0,
             y: 0.0,
             z: 10.0,
         },
@@ -1322,6 +1324,26 @@ fn chase_goal_avoids_a_cell_occupied_by_a_stander() {
     );
 }
 
+/// A lone chaser closes in instead of stopping at the edge of its reach.
+#[test]
+fn a_lone_chaser_stops_close_not_at_the_edge_of_its_range() {
+    let mut brain = brain_at("m1", 16.0, 10.2);
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(10.3, 10.2);
+
+    for _ in 0..400 {
+        brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
+        if brain.state() == AiState::Attack {
+            break;
+        }
+    }
+
+    assert_eq!(brain.state(), AiState::Attack);
+    let dist = brain.position.dist_xz_sq(&players[0].position).sqrt();
+    assert!(dist < 1.5, "stopped {dist:.2}m away");
+}
+
 #[test]
 fn a_corridor_queues_chasers_one_per_cell() {
     let mut b1 = brain_at("m1", 13.0, 10.5);
@@ -1382,6 +1404,28 @@ fn a_corridor_queues_chasers_one_per_cell() {
     assert_eq!(b2.state(), AiState::Attack, "second in line advances");
 }
 
+/// A long-reach chaser (scp939, 3m) closes to its engage distance, not into
+/// the target's lap.
+#[test]
+fn a_long_reach_chaser_stops_at_its_engage_distance() {
+    let mut brain = brain_at("m1", 16.0, 10.2);
+    brain.attack_range = 3.0;
+    let tree = chase_attack_tree();
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(10.3, 10.2);
+
+    for _ in 0..400 {
+        brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
+        if brain.state() == AiState::Attack {
+            break;
+        }
+    }
+
+    assert_eq!(brain.state(), AiState::Attack);
+    let dist = brain.position.dist_xz_sq(&players[0].position).sqrt();
+    assert!((1.2..=2.6).contains(&dist), "stopped {dist:.2}m away");
+}
+
 #[test]
 fn no_free_cell_falls_back_to_the_raw_target_position() {
     // Reach so short (0.8m) that no other cell's center is in range of a
@@ -1416,10 +1460,10 @@ fn no_free_cell_falls_back_to_the_raw_target_position() {
     assert_eq!(brain.state(), AiState::Attack);
 }
 
-/// A 2-wide corridor seats two attackers: the second chaser sidesteps into
-/// the other lane instead of queueing behind the first.
+/// A 2-wide corridor seats both lanes: a chaser sidesteps into the other lane
+/// instead of queueing behind the first.
 #[test]
-fn a_two_wide_corridor_seats_two_attackers() {
+fn a_two_wide_corridor_seats_both_lanes() {
     let mut b1 = brain_at("m1", 13.0, 10.5);
     let mut b2 = brain_at("m2", 15.0, 10.5);
     let mut b3 = brain_at("m3", 17.0, 10.5);
@@ -1436,24 +1480,27 @@ fn a_two_wide_corridor_seats_two_attackers() {
         b3.tick_with_behavior_tree(16.0, &players, &v3, &tree, &corridor_2_wide(), &mut rng);
     }
 
-    // Which chaser wins the second lane is a race — assert the shape, not
-    // the identities: two attackers in different lanes, one queued.
+    // Which chaser wins which cell is a race — assert the shape, not the
+    // identities: both lanes in use, every attacker in reach, one per cell.
     let brains = [&b1, &b2, &b3];
     let attackers: Vec<_> = brains
         .iter()
         .filter(|b| b.state() == AiState::Attack)
         .collect();
-    let holders: Vec<_> = brains
-        .iter()
-        .filter(|b| b.network_state() == MonsterState::Idle)
-        .collect();
-    assert_eq!(attackers.len(), 2, "a 2-wide corridor seats two attackers");
-    assert_eq!(holders.len(), 1, "the third queues");
-    assert_ne!(
-        cell_of(attackers[0].position.x, attackers[0].position.z).1,
-        cell_of(attackers[1].position.x, attackers[1].position.z).1,
-        "the two attackers sit in different lanes"
+    assert!(
+        attackers.len() >= 2,
+        "a 2-wide corridor seats more than one attacker, got {}",
+        attackers.len()
     );
+    let lanes: std::collections::HashSet<i32> = attackers
+        .iter()
+        .map(|b| cell_of(b.position.x, b.position.z).1)
+        .collect();
+    assert!(lanes.len() >= 2, "the attackers spread over both lanes");
+    for b in &attackers {
+        let d = b.position.dist_xz_sq(&players[0].position).sqrt();
+        assert!(d <= 2.0, "{} swings from {d:.2}m", b.monster_id);
+    }
 
     assert_distinct_cells(&[&b1, &b2, &b3], "one per cell");
 }

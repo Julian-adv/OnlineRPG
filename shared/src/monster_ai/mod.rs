@@ -82,8 +82,14 @@ const ATTACK_RELEASE_MARGIN_METERS: f32 = 0.5;
 /// interpolate toward `target_position` in between, and state changes still sync
 /// immediately. Server-authoritative movement (F-006) absorbs the coarser rate.
 const NETWORK_SYNC_INTERVAL_MS: f32 = 500.0;
-/// See `MonsterBrain::engage_range`.
+/// See `MonsterBrain::chase_stop_range`.
 const ENGAGE_INSET_METERS: f32 = 0.05;
+/// How far inside the engage circle `follow_path_engaging` lands the step that
+/// enters it. See the clamp there.
+const ENGAGE_CLAMP_INSET: f32 = 0.01;
+/// Fraction of the attack range a chase closes to before it stops and swings.
+/// See `engage_limit` and doc/MONSTER_SEPARATION.md 접근 거리.
+const ENGAGE_FRACTION: f32 = 0.6;
 pub const DEFAULT_BEHAVIOR: &str = "brave";
 /// Behavior tree used by proactive (선공형) monsters that acquire and attack
 /// targets on sight. Selected when `Monster::aggressive` is set, overriding the

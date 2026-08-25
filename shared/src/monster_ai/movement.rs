@@ -2,7 +2,7 @@
 //! idle/move/flee states, computing and following waypoint paths, and facing
 //! the next waypoint.
 
-use super::{AiCommand, AiState, MonsterBrain, PathProvider};
+use super::{AiCommand, AiState, MonsterBrain, PathProvider, ENGAGE_CLAMP_INSET};
 use crate::pathfinding::PathWaypoint;
 use crate::world::{bearing_xz, shortest_world_delta_x, wrap_world_x};
 use crate::Position;
@@ -288,16 +288,24 @@ impl MonsterBrain {
         &mut self,
         delta_ms: f32,
         target: Position,
-        range: f32,
+        range: Option<f32>,
     ) -> (bool, bool) {
         let before = self.position;
+        let range = range.unwrap_or(0.0);
         let outside = before.dist_xz_sq(&target) > range * range;
         let result = self.follow_path_gated(delta_ms, true);
         if outside && self.position.dist_xz_sq(&target) <= range * range {
             let dx = shortest_world_delta_x(before.x, self.position.x);
             let dz = self.position.z - before.z;
             let dist = (dx * dx + dz * dz).sqrt();
-            if let Some(d) = ray_circle_entry(before.x, before.z, dx, dz, dist, &target, range) {
+            // A hair inside the circle, not on it: landing exactly on the
+            // boundary leaves the next tick's `outside` test to float error,
+            // and a walk that reads outside re-enters and re-clamps to the
+            // same point, parking there.
+            let entry_range = range - ENGAGE_CLAMP_INSET;
+            if let Some(d) =
+                ray_circle_entry(before.x, before.z, dx, dz, dist, &target, entry_range)
+            {
                 self.position.x = wrap_world_x(before.x + dx / dist * d);
                 self.position.z = before.z + dz / dist * d;
             }

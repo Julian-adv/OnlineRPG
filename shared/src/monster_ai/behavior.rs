@@ -8,14 +8,20 @@ use super::{
     CHASE_CELL_RANGE_MARGIN, DEFAULT_FLEE_HEALTH_RATIO, DEFAULT_FLEE_MAX_DURATION_MS,
     DEFAULT_IDLE_CHECK_MS, DEFAULT_LEASH_RANGE, DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST,
     DEFAULT_PATH_RECALC_MS, DEFAULT_RETURN_ARRIVE_DIST, DEFAULT_TARGET_MOVE_THRESHOLD,
-    DETOUR_MAX_NODES, DETOUR_MAX_PATH_METERS, ENGAGE_INSET_METERS, FLEE_SAFE_DIST_MARGIN,
-    MAX_SLOT_PATH_TRIES, MIN_PARTIAL_PROGRESS_METERS, NETWORK_SYNC_INTERVAL_MS,
-    SIDESTEP_MAX_PATH_METERS,
+    DETOUR_MAX_NODES, DETOUR_MAX_PATH_METERS, ENGAGE_FRACTION, ENGAGE_INSET_METERS,
+    FLEE_SAFE_DIST_MARGIN, MAX_SLOT_PATH_TRIES, MIN_PARTIAL_PROGRESS_METERS,
+    NETWORK_SYNC_INTERVAL_MS, SIDESTEP_MAX_PATH_METERS,
 };
 use crate::world::{shortest_world_delta_x, wrap_world_x};
 use crate::MonsterState;
 use rand::Rng;
 use std::collections::HashMap;
+
+/// How close a chase closes before it swings: well inside the reach, so a
+/// monster doesn't stop and flail at the edge of it.
+fn engage_limit(range: f32) -> f32 {
+    range * ENGAGE_FRACTION
+}
 
 impl MonsterBrain {
     pub(super) fn eval_behavior_node(
@@ -305,11 +311,14 @@ impl MonsterBrain {
         }
 
         let range = param(params, "range", self.attack_range);
-        // Engage at `range`, release further out: see ATTACK_RELEASE_MARGIN_METERS.
+        // Engage well inside `range`, release further out (see
+        // doc/MONSTER_SEPARATION.md 접근 거리, ATTACK_RELEASE_MARGIN_METERS).
         let limit = if self.state == AiState::Attack {
             range + ATTACK_RELEASE_MARGIN_METERS
-        } else {
+        } else if self.as_close_as_we_get() {
             range
+        } else {
+            engage_limit(range)
         };
         // A swing already under way finishes; see `swing_left_ms`. A wall
         // between the two refuses the blow the way distance does, so the chase
@@ -428,7 +437,8 @@ impl MonsterBrain {
         if pre_synced {
             self.sync_chase(target_pos, commands);
         }
-        let (reached, held) = self.follow_path_engaging(delta_ms, target_pos, self.engage_range());
+        let (reached, held) =
+            self.follow_path_engaging(delta_ms, target_pos, self.chase_stop_range());
         if held {
             // Flow around the blocker, or back out and round the queue, when
             // possible; retry at repath cadence, not every tick.
@@ -458,11 +468,27 @@ impl MonsterBrain {
         BehaviorStatus::Running
     }
 
-    /// Where the chase stops: just inside attack range, so the range check
-    /// that follows is not a float coin-flip at the boundary. Remote clients
-    /// walk to the same point.
-    fn engage_range(&self) -> f32 {
-        self.attack_range - ENGAGE_INSET_METERS
+    /// Radius the walk (and the position it reports to remote clients) stops
+    /// on, `None` while walking to a standing cell: that path runs to the
+    /// cell, since stopping short leaves us mid-cell, in someone else's. Just
+    /// inside `engage_limit` so the attack's range check is not a float
+    /// coin-flip at the boundary.
+    fn chase_stop_range(&self) -> Option<f32> {
+        if self.chase_goal_cell.is_some() {
+            None
+        } else {
+            Some(engage_limit(self.attack_range) - ENGAGE_INSET_METERS)
+        }
+    }
+
+    /// No closer approach is coming — standing at the cell the separation grid
+    /// handed us with the path spent, or held with nowhere to step (queued
+    /// behind a stander, or the target walled off) — so the full reach counts.
+    fn as_close_as_we_get(&self) -> bool {
+        self.state == AiState::Hold
+            || (self.current_waypoint_idx >= self.waypoints.len()
+                && (self.chase_goal_cell.is_none()
+                    || self.chase_goal_cell == Some(cell_of(self.position.x, self.position.z))))
     }
 
     fn sync_chase(&mut self, target_pos: crate::Position, commands: &mut Vec<AiCommand>) {
@@ -494,13 +520,13 @@ impl MonsterBrain {
     /// actually stops at, and every sync yanks the model back.
     fn make_chase_move_cmd(&self, target_pos: crate::Position) -> AiCommand {
         let lookahead = self.move_speed * NETWORK_SYNC_INTERVAL_MS / 1000.0 * 2.0;
-        let engage = (target_pos, self.engage_range());
+        let engage = self.chase_stop_range().map(|r| (target_pos, r));
         AiCommand::Move {
             monster_id: self.monster_id.clone(),
             position: self.position,
             rotation: self.rotation,
             state: MonsterState::Run,
-            target_position: self.path_lookahead(lookahead, Some(engage)),
+            target_position: self.path_lookahead(lookahead, engage),
         }
     }
 
@@ -647,8 +673,8 @@ impl MonsterBrain {
     }
 
     /// Rule 1 of doc/MONSTER_SEPARATION.md: path to a free standing cell near
-    /// the target, nearest to us first, trying the next-best cell when one is
-    /// unreachable — the nearest may sit outside a corridor. Keeps the
+    /// the target, nearest to the target first, trying the next-best cell when
+    /// one is unreachable — the nearest may sit outside a corridor. Keeps the
     /// previous goal cell while it stays valid and reachable so re-slotting
     /// doesn't oscillate. False = no reachable free cell (waypoints left
     /// empty; caller falls back to the raw target position).
@@ -675,21 +701,39 @@ impl MonsterBrain {
         let r = max_d.ceil() as i32;
         let base_x = target_pos.x.floor();
         let base_z = target_pos.z.floor();
-        let mut candidates: Vec<((i32, i32), f32)> = Vec::new();
+        // Our side of the target first (side 0), nearest the engage distance
+        // within that side: ranking the whole ring by our own distance let a
+        // chaser settle on the first cell that merely had the target in reach
+        // and swing from the edge of its range, and ranking by closeness alone
+        // walks a long-reach monster into the target's lap. Cells past the
+        // target rank last, by our distance — reaching one means rounding the
+        // target, and the leg would cross its cell.
+        let engage = engage_limit(self.attack_range);
+        let approach_x = shortest_world_delta_x(target_pos.x, self.position.x);
+        let approach_z = self.position.z - target_pos.z;
+        let mut candidates: Vec<((i32, i32), (u8, f32))> = Vec::new();
         for ox in -r..=r {
             for oz in -r..=r {
                 let cx = wrap_world_x(base_x + ox as f32 + 0.5);
                 let cz = base_z + oz as f32 + 0.5;
                 let cell = cell_of(cx, cz);
-                if !self.chase_cell_open(cell, target_cell, target_pos, max_d) {
+                let Some(target_d_sq) = self.chase_cell_open(cell, target_cell, target_pos, max_d)
+                else {
                     continue;
-                }
-                let dx = shortest_world_delta_x(self.position.x, cx);
-                let dz = cz - self.position.z;
-                candidates.push((cell, dx * dx + dz * dz));
+                };
+                let tdx = shortest_world_delta_x(target_pos.x, cx);
+                let tdz = cz - target_pos.z;
+                let cost = if tdx * approach_x + tdz * approach_z >= 0.0 {
+                    (0, (target_d_sq.sqrt() - engage).abs())
+                } else {
+                    let dx = shortest_world_delta_x(self.position.x, cx);
+                    let dz = cz - self.position.z;
+                    (1, dx * dx + dz * dz)
+                };
+                candidates.push((cell, cost));
             }
         }
-        candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
+        candidates.sort_by(|a, b| a.1 .0.cmp(&b.1 .0).then(a.1 .1.total_cmp(&b.1 .1)));
 
         // The raycast half of validity is deferred to here — the sort
         // discards most of the scan, so only cells about to be path-tested
@@ -732,21 +776,23 @@ impl MonsterBrain {
 
     /// Cheap half of candidate validity: not the target's own cell,
     /// unoccupied, and close enough that standing at its center can deliver
-    /// the attack.
+    /// the attack. `Some` carries the cell's squared distance to the target,
+    /// which the caller ranks by.
     fn chase_cell_open(
         &self,
         cell: (i32, i32),
         target_cell: (i32, i32),
         target_pos: &crate::Position,
         max_d: f32,
-    ) -> bool {
+    ) -> Option<f32> {
         if cell == target_cell || self.occupied_cells.contains(&cell) {
-            return false;
+            return None;
         }
         let (cx, cz) = cell_center(cell);
         let dx = shortest_world_delta_x(cx, target_pos.x);
         let dz = target_pos.z - cz;
-        dx * dx + dz * dz <= max_d * max_d
+        let d_sq = dx * dx + dz * dz;
+        (d_sq <= max_d * max_d).then_some(d_sq)
     }
 
     /// Raycast half of candidate validity: standable, and with a clear attack
@@ -781,6 +827,7 @@ impl MonsterBrain {
         path_provider: &dyn PathProvider,
     ) -> bool {
         self.chase_cell_open(cell, cell_of(target_pos.x, target_pos.z), target_pos, max_d)
+            .is_some()
             && self.chase_cell_attackable(cell, target_pos, path_provider)
     }
 
