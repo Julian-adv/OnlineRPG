@@ -927,9 +927,9 @@
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     flex: 0 0 52px;
-    /* Top padding rebalances the bottom border + inset highlight, so the
-       content sits on the wood bar's visual center. */
-    padding: 3px max(30px, 8%) 0;
+    /* The ornate frame overlay hides the top 18/1254 of the square dialog, so
+       matching top padding keeps the content on the visible wood bar's center. */
+    padding: calc(18 / 1254 * 100%) max(30px, 8%) 0;
     border-bottom: 1px solid var(--wm-brass);
     background:
       linear-gradient(180deg, rgba(55, 38, 20, 0.2), rgba(7, 7, 5, 0.72)),
