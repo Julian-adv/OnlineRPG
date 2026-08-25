@@ -8,6 +8,12 @@
 - https://icon-sets.iconify.design/fa6-solid/face-smile/ — Emotes entry in the social flyout, GameHud.svelte
 - GitHub mark (octicon mark-github, MIT) — inline SVG in LoginScreen.svelte
 
+## World map
+
+- `client/public/textures/ui/world-map/dark-wood.png` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference; project-owned generated asset
+- `client/public/textures/ui/world-map/ornate-frame.png` — OpenAI Codex built-in ImageGen edit, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference, then ffmpeg color-keyed to restore real alpha transparency; project-owned generated asset
+- Settlement crest marker + player self-marker — hand-authored inline SVG in WorldMapDialog.svelte (OpenAI Codex, 2026-08-24), original shapes with no external source
+
 ## Party UI design mockups
 
 - `doc/design/party-ui/openmmo-current-game.jpg` — local OpenMMO gameplay capture from `localhost:10004`, 2026-08-05

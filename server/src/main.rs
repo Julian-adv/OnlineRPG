@@ -296,6 +296,26 @@ fn load_or_create_npc_token(path: &Path) -> std::io::Result<String> {
 /// is 32 hex chars.
 const MIN_NPC_TOKEN_LEN: usize = 16;
 
+/// The fantasy tiles live outside git, so a fresh deploy that skips
+/// `terrain-gen render-map-world` would silently serve the legacy minimap art.
+fn warn_if_fantasy_map_missing(terrain_dir: &Path) {
+    let fantasy_dir = terrain_dir.join(onlinerpg_terrain::coords::FANTASY_MINIMAP_DIR);
+    let has_tiles = std::fs::read_dir(&fantasy_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.path().extension().is_some_and(|ext| ext == "webp"))
+        })
+        .unwrap_or(false);
+    if !has_tiles {
+        warn!(
+            "No fantasy world-map tiles at {} — the world map will fall back to \
+             legacy minimap PNGs. Run `terrain-gen render-map-world` to bake them.",
+            fantasy_dir.display()
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     tracing_subscriber::fmt()
@@ -380,6 +400,7 @@ async fn main() -> ExitCode {
     let housing_io = Arc::new(HousingIO::new(paths.housing));
     let npc_io = Arc::new(NpcIO::new(args.npc_data_dir.clone()));
     let terrain_io = Arc::new(TerrainIO::new(PathBuf::from(&args.terrain_dir)));
+    warn_if_fantasy_map_missing(std::path::Path::new(&args.terrain_dir));
     let announcement_store = Arc::new(AnnouncementStore::new(paths.announcements));
     announcement_store.warm().await;
 
@@ -901,11 +922,12 @@ mod tests {
             if name.ends_with("-wal") || name.ends_with("-shm") {
                 continue;
             }
+            // Normalize to forward slashes so expectations hold on Windows.
             found.push(
                 path.strip_prefix(base)
                     .unwrap_or(&path)
                     .to_string_lossy()
-                    .into_owned(),
+                    .replace('\\', "/"),
             );
             if path.is_dir() {
                 found.extend(walk_relative(base, &path));

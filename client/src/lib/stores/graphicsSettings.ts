@@ -63,7 +63,7 @@ const FULL_RENDER_SETTINGS = {
   initialTerrainQueueDrainCount: Infinity,
   initialTileWorkDrainCount: Infinity,
   warmupScenePipelines: true,
-  worldMapDefaultZoomSpan: 8,
+  worldMapDefaultZoomSpan: 16,
   worldMapMaxZoomSpan: 32,
 } satisfies Omit<
   GraphicsPreset,
@@ -99,7 +99,7 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 1024,
     treeCastsShadow: true,
     enableWindParticles: true,
-    worldMapImageCacheLimit: Infinity,
+    worldMapImageCacheLimit: 256,
   },
   medium: {
     ...FULL_RENDER_SETTINGS,

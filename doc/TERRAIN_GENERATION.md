@@ -125,6 +125,7 @@ Rust 바이너리 crate (워크스페이스 새 멤버). `shared::worldgen`에
 ```
 terrain-gen preview      --seed <N>             [--out <dir>]
 terrain-gen bake         --seed <N>             [--out <dir>] [--region-{x,z}-{min,max} <i>]
+terrain-gen render-map-world --seed <N> --legacy-source <dir> --out <dir>
 terrain-gen inspect-tile --seed <N> --tile-x <TX> --tile-z <TZ>
 terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 ```
@@ -173,7 +174,8 @@ terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 - `river-field/r±xx_±zz/r_±xxxxx_±zzzzz.bin` — RFD1 (강 있는 타일만)
 - `trees/r±xx_±zz/t_±xxxxx_±zzzzz.bin` — Phase 8 tree V1
 - `grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin` — Phase 8 grass V3
-- `minimap/m_r±xx_±zz.png` — region 단위 minimap (1 px = 1 splat cell)
+- `minimap/r±xx_±zz.png` — 1024px shaded-relief map tile
+- `minimap/{128,256,512}/r±xx_±zz.png` — 월드맵 줌별 LOD
 - `objects/r±xx_±zz.json` — region 단위 오브젝트 목록 (현재 bridge placements)
 - `worldgen.json` — 시드, config, 정착지/도로 목록 (게임 서버가
   로드할 수 있도록)
@@ -187,6 +189,68 @@ terrain-gen probe-point  --seed <N> --at <X,Z>  [--at <X,Z> ...]
 3. 마음에 안 들면 시드 바꾸거나 config 조정 → goto 1.
 4. 마음에 들면 `terrain-gen bake --seed 12345` (`--out` 기본 `data/terrain`).
 5. 게임 실행. 기존 `TerrainIO`가 파일을 그대로 로드.
+
+전체 월드를 다시 베이크하지 않고 기존 height/splat/tree 데이터로 한 지역만
+확인하려면 다음 명령을 사용한다.
+
+```powershell
+cargo run -p terrain-gen --release -- render-map-region `
+  --terrain data/terrain --region-x=-2 --region-z=4 `
+  --out data/terrain/worldmap_preview/r-02_+04-relief.png
+```
+
+서비스용 LOD까지 해당 지역에 다시 쓰려면 `render-map-pyramid`를 사용한다.
+
+```powershell
+cargo run -p terrain-gen --release -- render-map-pyramid `
+  --terrain data/terrain --out data/terrain --region-x=-2 --region-z=4
+```
+
+판타지 월드맵은 gameplay terrain 전체를 다시 베이크하지 않고 다음 명령으로
+별도 생성한다.
+
+```powershell
+cargo run -p terrain-gen --release -- render-map-world `
+  --seed 42 --legacy-source data/terrain/minimap `
+  --out data/terrain/minimap-fantasy
+```
+
+빠른 시각 반복은 같은 명령에 `--region-x-min=-2 --region-x-max=-2
+--region-z-min=4 --region-z-max=4`를 붙인다. 결과가 맞으면 범위 옵션을 빼서
+32×32 전 세계를 생성한다. 출력은 최상위 1024px 타일과 `128/`, `256/`,
+`512/` LOD를 합쳐 총 4,096개이며, 텍스처 타일은 PNG 무손실 압축이 거의
+듣지 않으므로 lossy WebP(quality 82, `r±xx_±zz.webp`)로 저장한다. 서버는
+fantasy WebP를 우선 서빙하고 없으면 legacy PNG로 폴백하며, Content-Type은
+파일 매직 바이트로 판별한다. 서버는 PNG 시절의 fantasy 타일은 더 이상 읽지
+않으므로, PNG 세대 데이터 디렉터리에는 부분 렌더가 아니라 전 범위 렌더를
+한 번 돌려야 한다(퍼블리시가 같은 슬롯의 옛 `.png`도 함께 지운다). 이 경로는 Phase 1–6 전역 필드와 기존
+1024px minimap의 1m 의미 마스크만 사용한다. 월드맵 이미지 변경 때문에
+262,144 gameplay tile의 height/splat/vegetation을 다시 쓰는 것은 느리고
+플레이 데이터를 불필요하게 변경하므로 full `bake`를 실행하지 않는다.
+
+v2 렌더러는 `world-atlas-guide.png`를 32 km 월드 전체에 bilinear 투영해
+산맥, 숲 군락, 계곡과 연안이 지역 타일 경계에서 끊기지 않게 한다. 실제
+육지/바다 판정은 raw terrain 또는 기존 minimap 의미 마스크가 계속
+담당하므로 지형 가이드는 게임의 해안선이나 도시 좌표를 바꾸지 않는다.
+가까운 줌의 미세 질감은 반복 가능한 lowland/forest/rock/ocean albedo와
+실제 높이의 hillshade를 섞어 보강한다. 가이드 반영은 픽셀 단위 land-cover
+게이트를 통과해야 한다: 물/뭍 일치에 더해, 뭍에서는 가이드의 숲 캐노피
+판정(어두운 초록)과 실데이터 forest 강도가 일치해야 하므로 가이드가 실제
+들판을 숲으로 덮지 못한다. 전역 가이드 비중은 1024/512/256/128
+LOD에서 각각 46/64/80/92%로 높아져, 최대 확대에서는 로컬 디테일을 유지하고
+기본 월드 줌에서는 한 장처럼 이어진 산맥과 숲 구성을 우선한다.
+
+강과 도로는 지형 색상과 LOD downsample 단계에서 중복 합성하지 않는다.
+각 LOD를 저장하기 직전에 한 번만 합성하며, 축척이 작을수록 flow와 경로
+길이가 큰 주요 선만 남긴다. 클라이언트는 보이는 지역 이미지를 먼저 하나의
+HiDPI offscreen atlas에 공통 정수 경계로 조립한 다음 전체 atlas를 한 번만
+회전해 비동기 타일 사이의 대각선 틈을 방지한다.
+
+지명은 minimap PNG에 굽지 않는다. `data-src/map_labels.csv`를 원본으로 두고
+클라이언트가 HTML 레이어에 표시한다. 따라서 지형 LOD와 무관하게 철자와 월드
+좌표가 유지되며, 줌 단계별 계층과 충돌 회피는
+`client/src/lib/utils/worldMapLabelLayout.ts`에서 처리한다. 충돌 시 낮은 우선순위의
+텍스트만 숨기고 정착지와 발견 지점의 마커 좌표는 이동하지 않는다.
 
 preview는 수 초 안에 끝나야 반복 튜닝이 실용적임. 그래서 Phase 1-6은
 저해상도 전역 맵에서만 동작하도록 최적화한다.
@@ -346,7 +410,8 @@ data/terrain/
   river-field/r±xx_±zz/r_±xxxxx_±zzzzz.bin  # RFD1 (강 있는 타일만)
   trees/r±xx_±zz/t_±xxxxx_±zzzzz.bin        # V1
   grass/r±xx_±zz/g_±xxxxx_±zzzzz.bin        # V3
-  minimap/m_r±xx_±zz.png                    # region 단위 minimap (1 px = 1 cell)
+  minimap/r±xx_±zz.png                      # 1024px shaded-relief map tile
+  minimap/{128,256,512}/r±xx_±zz.png        # 월드맵 줌별 LOD
   objects/r±xx_±zz.json                     # region 단위 오브젝트 (현재 bridges)
   worldgen.json                             # seed/config/settlements/roads
   worldgen_preview/<seed_hex>/              # §5.3 preview PNGs 의 dump (preview 명령과 동일 경로)
