@@ -346,7 +346,14 @@ mod tests {
 
         let me = npc_player(0.0, 0.0);
         let cache = PassabilityCache::new();
-        let cmds = mgr.tick_all(100.0, &HashMap::new(), &HashMap::new(), Some(&me), 0, &cache);
+        let cmds = mgr.tick_all(
+            100.0,
+            &HashMap::new(),
+            &HashMap::new(),
+            Some(&me),
+            0,
+            &cache,
+        );
 
         assert!(
             cmds.iter().any(|c| matches!(
@@ -364,7 +371,14 @@ mod tests {
         let me = npc_player(0.0, 0.0);
         let cache = PassabilityCache::new();
         let dungeon_floor = onlinerpg_shared::dungeon::passability_floor_for_level(-1);
-        let cmds = mgr.tick_all(100.0, &HashMap::new(), &HashMap::new(), Some(&me), dungeon_floor, &cache);
+        let cmds = mgr.tick_all(
+            100.0,
+            &HashMap::new(),
+            &HashMap::new(),
+            Some(&me),
+            dungeon_floor,
+            &cache,
+        );
 
         assert!(
             !cmds.iter().any(|c| matches!(
