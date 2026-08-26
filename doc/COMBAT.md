@@ -447,6 +447,8 @@ xp = 1 + level²  +  guard_bonus
 
 ### 레벨업 필요 XP
 
+재설계 진행 중 — 새 표와 마이그레이션은 [LEVEL_CURVE.md](LEVEL_CURVE.md).
+
 모든 레벨에 동일한 공식 적용: `XP(n) = 20 × 2^(n−2)` (n ≥ 2)
 
 | 레벨 | 필요 누적 XP |
