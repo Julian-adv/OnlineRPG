@@ -71,6 +71,10 @@ pub enum AiCommand {
         position: Position,
         rotation: f32,
         state: MonsterState,
+        /// Where a remote view walks the model until the next sync — a point on
+        /// the mover's own path, not its destination. Aiming a viewer's straight
+        /// line at the destination walks the model through the walls the path
+        /// goes around. See `MonsterBrain::current_leg_target`.
         target_position: Position,
     },
     Attack {

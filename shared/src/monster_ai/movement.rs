@@ -67,14 +67,7 @@ impl MonsterBrain {
         self.face_first_waypoint();
         self.clear_path_bend();
 
-        // target_position was set above, safe to unwrap
-        commands.push(AiCommand::Move {
-            monster_id: self.monster_id.clone(),
-            position: self.position,
-            rotation: self.rotation,
-            state: self.state.to_monster_state(),
-            target_position: self.target_position.unwrap(),
-        });
+        commands.push(self.make_move_cmd());
     }
 
     pub(super) fn transition_to_flee(
@@ -240,6 +233,31 @@ impl MonsterBrain {
     /// path is shorter, or the point where the path first comes within
     /// `engage` (radius) of a target, since the chase turns into an attack
     /// there and never reaches the rest. What remote clients walk toward
+    /// Where a remote view should head between syncs on a non-chase leg: the
+    /// end of the leg being walked, never the destination past the next corner
+    /// — the wire carries one point and a viewer beelines to it, so aiming it
+    /// at the destination walks the drawn monster through the walls the path
+    /// goes around. Chase needs its own ([`Self::path_lookahead`]): it syncs on
+    /// an interval, so it must aim past the leg end, and clamp to the engage
+    /// circle. This one may aim exactly at the leg end because every waypoint
+    /// arrival marks a path bend, and a bend always syncs.
+    pub(super) fn current_leg_target(&self) -> Position {
+        // Standing (idle, hold) — a leftover waypoint would walk the model on.
+        if self.target_position.is_none() {
+            return self.position;
+        }
+        match self.waypoints.get(self.current_waypoint_idx) {
+            Some(wp) => Position {
+                x: wp.x,
+                y: self.position.y,
+                z: wp.z,
+            },
+            // Path spent: the leg is over and the destination beyond it may not
+            // even be reachable (`compute_path` accepts partials).
+            None => self.position,
+        }
+    }
+
     /// between syncs: a point the brain will actually pass.
     pub(super) fn path_lookahead(&self, meters: f32, engage: Option<(Position, f32)>) -> Position {
         let (mut x, mut z, mut left) = (self.position.x, self.position.z, meters);

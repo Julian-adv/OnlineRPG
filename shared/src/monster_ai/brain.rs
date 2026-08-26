@@ -178,8 +178,8 @@ impl MonsterBrain {
     /// (chase/return/flee): true on entering a new movement state, on a path
     /// bend, or once `NETWORK_SYNC_INTERVAL_MS` has elapsed. Resets the timer
     /// when it fires so the brain simulates every frame but only syncs a couple
-    /// of times a second. Remote clients interpolate toward `target_position`
-    /// between syncs.
+    /// of times a second. Remote clients interpolate toward the command's
+    /// `target_position` between syncs — see [`Self::current_leg_target`].
     pub(super) fn should_sync_move(&mut self) -> bool {
         if self.take_path_bend()
             || self.state != self.last_synced_state
@@ -395,15 +395,19 @@ impl MonsterBrain {
         }
     }
 
-    /// Build a `Move` command from the brain's current pose, defaulting the
-    /// target position to the current position when none is set.
-    pub(super) fn make_move_cmd(&self) -> AiCommand {
+    /// The one `Move` literal: every sync goes out through here or
+    /// [`Self::make_chase_move_cmd`], which differ only in where they point.
+    pub(super) fn move_cmd_to(&self, target_position: Position) -> AiCommand {
         AiCommand::Move {
             monster_id: self.monster_id.clone(),
             position: self.position,
             rotation: self.rotation,
             state: self.state.to_monster_state(),
-            target_position: self.target_position.unwrap_or(self.position),
+            target_position,
         }
+    }
+
+    pub(super) fn make_move_cmd(&self) -> AiCommand {
+        self.move_cmd_to(self.current_leg_target())
     }
 }

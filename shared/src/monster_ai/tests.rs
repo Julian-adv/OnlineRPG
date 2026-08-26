@@ -152,13 +152,7 @@ fn idle_does_not_transition_before_check_interval() {
 #[test]
 fn idle_can_transition_to_move() {
     let mut brain = make_brain();
-    let tree = BehaviorTree {
-        description: None,
-        root: BehaviorNode::Action {
-            name: "wander".into(),
-            params: HashMap::from([("checkMs".into(), 1000.0)]),
-        },
-    };
+    let tree = wander_tree(1000.0);
     let mut rng = SmallRng::seed_from_u64(42);
 
     let result = brain.tick_with_behavior_tree(1001.0, &[], &[], &tree, &DirectPath, &mut rng);
@@ -435,6 +429,16 @@ fn attacker_at(x: f32, z: f32) -> Vec<NearbyPlayer> {
         position: Position { x, y: 0.0, z },
         health: 10,
     }]
+}
+
+fn wander_tree(check_ms: f32) -> BehaviorTree {
+    BehaviorTree {
+        description: None,
+        root: BehaviorNode::Action {
+            name: "wander".into(),
+            params: HashMap::from([("checkMs".into(), check_ms)]),
+        },
+    }
 }
 
 /// Bare attack action: a failed range check drops the brain to Idle without
@@ -982,6 +986,47 @@ impl PathProvider for BentPath {
     fn attack_line_blocked(&self, _fx: f32, _fz: f32, _tx: f32, _tz: f32, _floor: u8) -> bool {
         false
     }
+}
+
+/// A remote viewer draws a straight line to the reported `target_position`, so
+/// it has to be the leg being walked, not the destination beyond the corner —
+/// aimed there, the drawn monster cuts through the walls the path goes around.
+/// This is what put wandering monsters inside dungeon rock.
+#[test]
+fn a_reported_target_stays_on_the_leg_being_walked() {
+    let mut brain = make_brain();
+    let tree = wander_tree(0.0);
+    let mut rng = SmallRng::seed_from_u64(42);
+
+    // BentPath's legs are axis-aligned, so a target on the leg shares an axis
+    // with the pose reported beside it. The destination past the corner does
+    // not — that is the whole difference.
+    let mut moves = 0;
+    for _ in 0..400 {
+        let result = brain.tick_with_behavior_tree(16.0, &[], &[], &tree, &BentPath, &mut rng);
+        for cmd in &result.commands {
+            let AiCommand::Move {
+                position,
+                target_position,
+                state,
+                ..
+            } = cmd
+            else {
+                continue;
+            };
+            if *state == MonsterState::Idle {
+                continue;
+            }
+            moves += 1;
+            assert!(
+                (position.x - target_position.x).abs() < 1e-3
+                    || (position.z - target_position.z).abs() < 1e-3,
+                "target {target_position:?} is off the leg walked from {position:?}"
+            );
+        }
+    }
+
+    assert!(moves > 0, "the wander must report at least one move");
 }
 
 /// The server only sees the straight line between two reported positions, and

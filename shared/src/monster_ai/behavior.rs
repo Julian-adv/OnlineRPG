@@ -13,7 +13,6 @@ use super::{
     NETWORK_SYNC_INTERVAL_MS, SIDESTEP_MAX_PATH_METERS,
 };
 use crate::world::{shortest_world_delta_x, wrap_world_x};
-use crate::MonsterState;
 use rand::Rng;
 use std::collections::HashMap;
 
@@ -521,13 +520,7 @@ impl MonsterBrain {
     fn make_chase_move_cmd(&self, target_pos: crate::Position) -> AiCommand {
         let lookahead = self.move_speed * NETWORK_SYNC_INTERVAL_MS / 1000.0 * 2.0;
         let engage = self.chase_stop_range().map(|r| (target_pos, r));
-        AiCommand::Move {
-            monster_id: self.monster_id.clone(),
-            position: self.position,
-            rotation: self.rotation,
-            state: MonsterState::Run,
-            target_position: self.path_lookahead(lookahead, engage),
-        }
+        self.move_cmd_to(self.path_lookahead(lookahead, engage))
     }
 
     /// A held chaser flows around the blocker NetHack-style: step into an
