@@ -23,8 +23,8 @@ export type OverlayId =
   | 'socialMenu'
 
 /** `layer` is paint order, not raw z-index: `.game-hud`'s z-index:1 stacking
- *  context traps the panels' 39..45 below the root-level dialogs (each 30,
- *  ranked by DOM order) and settings (10000).
+ *  context traps the panel band (see panelLayout) below the root-level dialogs
+ *  (each 30, ranked by DOM order) and settings (10000).
  *  Store-backed panels close here; dialogs register their closer via
  *  mountOverlay, and one that registers none (loading) blocks Escape. */
 const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {

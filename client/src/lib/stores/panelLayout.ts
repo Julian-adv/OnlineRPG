@@ -1,6 +1,17 @@
 import { get, writable } from 'svelte/store'
 
-export type PanelId = 'character' | 'inventory' | 'friends' | 'party' | 'emotes'
+const STORAGE_KEY = 'hudPanelLayout'
+export const PANEL_IDS = [
+  'character',
+  'inventory',
+  'friends',
+  'party',
+  'emotes',
+  'trade',
+  'playerTrade',
+] as const
+
+export type PanelId = (typeof PANEL_IDS)[number]
 
 export interface PanelPos {
   x: number
@@ -9,21 +20,13 @@ export interface PanelPos {
 
 export type PanelPositions = Partial<Record<PanelId, PanelPos>>
 
-const STORAGE_KEY = 'hudPanelLayout'
-export const PANEL_IDS: PanelId[] = [
-  'character',
-  'inventory',
-  'friends',
-  'party',
-  'emotes',
-]
-
 /** A dragged-off-screen panel keeps this much of itself grabbable. */
 const MIN_VISIBLE_X = 48
 const HEADER_H = 28
-/** 39..43 stays under the consent toasts (44) and trade windows (45) even
- *  with all five panels raised. */
-const BASE_Z = 39
+/** Where the consent toasts sit; ConsentToast.svelte reads it. The panel band
+ *  ends just below, so adding an id shifts the whole band down on its own. */
+export const PANEL_Z_CEILING = 44
+const BASE_Z = PANEL_Z_CEILING - PANEL_IDS.length
 
 export function parsePositions(raw: string | null): PanelPositions {
   if (!raw) return {}
@@ -64,7 +67,7 @@ export function clampPanelPos(
 }
 
 /** `order` holds every mounted panel (the action raises on mount). */
-export function panelZ(order: PanelId[], id: PanelId): number {
+export function panelZ(order: readonly PanelId[], id: PanelId): number {
   return BASE_Z + order.indexOf(id)
 }
 

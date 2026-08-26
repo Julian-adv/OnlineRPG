@@ -15,6 +15,7 @@
   import { MAX_TRADE_DISTANCE_METERS } from '../data/tradeConstants'
   import GoldAmount from './GoldAmount.svelte'
   import { itemTooltip } from '../actions/itemTooltip'
+  import { draggablePanel } from '../actions/draggablePanel'
   import { networkManager } from '../network/socket'
   import QuantityPopup from './QuantityPopup.svelte'
   import {
@@ -372,7 +373,13 @@
 </script>
 
 {#if session}
-  <div class="trade-window" role="dialog" aria-label="Trade" data-panel="trade">
+  <div
+    class="trade-window"
+    role="dialog"
+    aria-label="Trade"
+    data-panel="trade"
+    use:draggablePanel={'trade'}
+  >
     {#if portraitSrc && !portraitFailed}
       <img
         class="merchant-portrait"
@@ -382,7 +389,7 @@
         onerror={() => (portraitFailed = true)}
       />
     {/if}
-    <div class="panel-header">
+    <div class="panel-header" data-drag-handle>
       <span class="panel-title">
         {isResident
           ? `Trade with ${session.merchantName}`
@@ -627,7 +634,7 @@
     left: 50%;
     top: 45%;
     transform: translate(-50%, -50%);
-    z-index: 45;
+    z-index: 40;
     display: flex;
     flex-direction: column;
     backdrop-filter: blur(4px);

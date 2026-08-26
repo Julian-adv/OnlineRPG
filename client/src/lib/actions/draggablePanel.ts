@@ -119,6 +119,8 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
     node.style.zIndex = String(panelZ(order, id))
   })
   const unsubPos = panelPositions.subscribe((pos) => {
+    // Saving one panel emits to all of them; skip the rest's forced reflow.
+    if (pos[id] === stored) return
     stored = pos[id]
     apply()
   })

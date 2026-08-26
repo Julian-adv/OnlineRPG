@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
+  import { PANEL_Z_CEILING } from '../stores/panelLayout'
 
   /** Shared shell for the accept/decline consent toasts (party invite, trade
    * offer, party summon): fixed top-center card, accent-colored name, button
@@ -37,7 +38,7 @@
   class:with-gauge={gaugeDurationMs > 0}
   role="alertdialog"
   aria-label={label}
-  style="top: {top}; --accent: {accent}"
+  style="top: {top}; --accent: {accent}; z-index: {PANEL_Z_CEILING}"
 >
   <div class="toast-row">
     <span class="toast-text">
@@ -67,7 +68,6 @@
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 44;
     padding: 8px 12px;
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 10px;

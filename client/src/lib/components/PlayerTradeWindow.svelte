@@ -3,6 +3,7 @@
   import { inventoryStore, playerGold } from '../stores/inventoryStore'
   import { getItemDef, itemDisplayName } from '../data/itemDefs'
   import { itemTooltip } from '../actions/itemTooltip'
+  import { draggablePanel } from '../actions/draggablePanel'
   import { mountOverlay } from '../stores/overlayStack'
   import {
     playerTrade,
@@ -148,8 +149,9 @@
     role="dialog"
     aria-label="Trade with {trade.them.name}"
     data-panel="playerTrade"
+    use:draggablePanel={'playerTrade'}
   >
-    <div class="panel-header">
+    <div class="panel-header" data-drag-handle>
       <span class="panel-title">Trade with {trade.them.name}</span>
       <button
         class="close-btn"
@@ -326,7 +328,7 @@
     left: 50%;
     top: 45%;
     transform: translate(-50%, -50%);
-    z-index: 45;
+    z-index: 40;
     display: flex;
     flex-direction: column;
     width: min(600px, calc(100vw - 32px));
