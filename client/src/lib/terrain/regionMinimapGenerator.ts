@@ -7,8 +7,13 @@ export const MINIMAP_SOURCE_SIZES = [128, 256, 512, 1024] as const
 
 /** Smallest baked tile that still covers `projectedPx` on screen. `minSize`
  *  lets a caller refuse the coarsest LODs. */
-export function pickMinimapSourceSize(projectedPx: number, minSize = 128): number {
-  const size = MINIMAP_SOURCE_SIZES.find((candidate) => projectedPx <= candidate)
+export function pickMinimapSourceSize(
+  projectedPx: number,
+  minSize = 128
+): number {
+  const size = MINIMAP_SOURCE_SIZES.find(
+    (candidate) => projectedPx <= candidate
+  )
   return Math.max(size ?? 1024, minSize)
 }
 

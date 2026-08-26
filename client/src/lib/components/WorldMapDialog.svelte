@@ -513,7 +513,6 @@
     }
   })
 
-
   // --- Zoom controls ---
   function zoomIn() {
     useDefaultZoomOnOpen = false
