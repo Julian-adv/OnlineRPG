@@ -26,11 +26,6 @@
     type HoverTarget,
   } from '../managers/inputHandler'
   import { getNpcCapabilities } from '../data/traderDefs'
-  import {
-    NPC_TRADE_RANGE_METERS,
-    TIP_HAT_RANGE_METERS,
-    STALL_TRADE_RANGE_METERS,
-  } from '../data/tradeConstants'
   import { tipHatManager } from '../managers/tipHatManager'
   import { tipHatDialog } from '../stores/tipHatStore'
   import { npcContextMenu, requestChatFocus } from '../stores/npcMenuStore'
@@ -62,6 +57,15 @@
   import { housingManager } from '../managers/housingManager'
   import { findPath } from '../managers/pathfinding'
   import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
+  import {
+    DUNGEON_DOOR_APPROACH,
+    HOUSE_DOOR_APPROACH,
+    NPC_TRADE_APPROACH,
+    OBJECT_APPROACH,
+    PICKUP_APPROACH,
+    STALL_TRADE_APPROACH,
+    TIP_HAT_APPROACH,
+  } from '../data/approachRanges'
   import { passability_get_floor_at } from '../wasm/onlinerpg_shared'
   import { get } from 'svelte/store'
   import { sprintRequested } from '../stores/movementSettings'
@@ -100,7 +104,6 @@
   import {
     exitPickupInteraction as buildExitPickupInteraction,
     handlePickupGrab,
-    decidePickupApproach,
     applyObjectInteractionPosition,
     getObjectInteractionExitPosition,
     beginPickupInteraction,
@@ -109,6 +112,13 @@
     handleInteractKey,
     getInteractionExitKind,
   } from './player-control/fsm/interaction'
+  import {
+    planApproach,
+    resolveApproach,
+    type ApproachSpec,
+    type PendingApproach,
+  } from './player-control/fsm/approach'
+
   import {
     beginAttack,
     ensureAttackState,
@@ -415,15 +425,31 @@
   }
 
   function stopMovement() {
+    const approach = movingState()?.approach ?? null
     clearStandUpTimer()
     currentSpeed = 0
     clickSprinting = false
     // Settle into idle BEFORE emitting: the projection derives 'moving' vs
     // 'idle' from the machine's owned state, so the transition must precede the
-    // emit. Leaving the moving state also drops its target/movementState/path —
-    // nothing to reset. arrive() overrides idle with pickup/attack right after.
+    // emit. Leaving the moving state also drops its target/movementState/path/
+    // approach — nothing to reset. The walk-up action (or arrive()'s attack)
+    // overrides idle right after.
     transitionTo('idle')
     updatePlayerState()
+    // Every way a click-walk ends — arrival, a wall, a slope — lands here, so
+    // this is the one place the walk-up action has to be resolved.
+    if (
+      approach &&
+      currentPlayer &&
+      currentPlayer.health > 0 &&
+      resolveApproach(
+        approach,
+        currentPlayer.position,
+        get(currentDungeonDepth)
+      )
+    ) {
+      approach.act()
+    }
   }
 
   // Explicitly drive the machine's owned state to a data-less state. The machine
@@ -505,6 +531,9 @@
   // dropping the moving state drops the chase goal with it, so the next tick
   // re-routes from where we now actually are.
   function applyPositionCorrection(correction: PositionCorrection) {
+    // The snap means we never reached what we were walking to.
+    const m = movingState()
+    if (m) m.approach = null
     stopMovement()
     playerRotation = correction.rotation
     writePlayerPosition(
@@ -776,7 +805,7 @@
           waypoints: chase.pathWaypoints,
           waypointIndex: 0,
           chaseGoal: chase.chaseGoal,
-          pendingPickupAfterMove: null,
+          approach: null,
         })
       }
     },
@@ -840,15 +869,10 @@
     arrive: (nextCurrentSpeed: number, nextPlayerRotation: number) => {
       currentSpeed = nextCurrentSpeed
       playerRotation = nextPlayerRotation
-      const pickupAfterArrival = movingState()?.pendingPickupAfterMove ?? null
-      // stopMovement() settles to idle (and emits); the pickup/attack branches
-      // below override that state when arrival hands off to them.
+      // stopMovement() settles to idle (and emits) and runs any armed walk-up
+      // action; the chase branch below overrides idle when arrival hands off to
+      // an attack instead. A walk-up cancels combat, so only one can apply.
       stopMovement()
-
-      if (pickupAfterArrival !== null) {
-        enterPickup(pickupAfterArrival)
-        return
-      }
 
       if (combatController.isInCombat) {
         initiateAttack(combatController.targetMonsterId!)
@@ -869,9 +893,12 @@
     exitPickupInteraction,
     exitObjectInteraction,
     clearClickMovement: () => {
-      // No-op: keyboard always transitions to keyboard_moving (markMoving),
-      // idle (setKeyboardIdleRuntime), or via stopMovement this same frame, and
-      // leaving the moving state drops its target/movementState/pendingPickup.
+      // Keyboard is taking the walk over, so the click's queued interaction is
+      // off. The rest of the moving state needs no reset: keyboard transitions
+      // to keyboard_moving (markMoving), idle (setKeyboardIdleRuntime), or via
+      // stopMovement this same frame, all of which leave the moving state.
+      const m = movingState()
+      if (m) m.approach = null
     },
     cancelCombat: () => combatController.cancelCombat(),
     markMoving: () => {
@@ -977,14 +1004,9 @@
 
   function createMoveRequestActions(
     clickPosition: Position,
-    pickupAfterArrival: number | null,
-    options: { pickupAfterArrival?: number | null }
+    options: { approach?: PendingApproach | null }
   ): MoveRequestActions {
     return {
-      clearPendingPickupAfterMove: () => {
-        const m = movingState()
-        if (m) m.pendingPickupAfterMove = null
-      },
       exitPickupAndRetry: () => {
         exitPickupInteraction()
         handleClickToMove(clickPosition, options)
@@ -998,7 +1020,7 @@
           enqueuePlayerControlEvent({
             type: 'delayed_request_move',
             position: { ...clickPosition },
-            pickupAfterArrival,
+            approach: options.approach ?? null,
           })
         }, STAND_UP_DURATION)
       },
@@ -1014,7 +1036,9 @@
           waypoints: started.pathWaypoints,
           waypointIndex: started.currentWaypointIndex,
           chaseGoal: null,
-          pendingPickupAfterMove: started.pendingPickupAfterMoveInstanceId,
+          // Armed only now: a refused request (dead, keyboard held) must not
+          // leave an action waiting to fire on some later, unrelated stop.
+          approach: options.approach ?? null,
         })
         updatePlayerState(started.movementState.totalDistance)
       },
@@ -1097,13 +1121,12 @@
 
   function handleClickToMove(
     clickPosition: Position,
-    options: { pickupAfterArrival?: number | null; sprinting?: boolean } = {}
+    options: { approach?: PendingApproach | null; sprinting?: boolean } = {}
   ) {
     // Any fresh movement cancels a pending prop break/open (breakProp/openProp
     // re-arm it after their own walk-up call below).
     dungeonManager.clearPendingBreak()
     dungeonManager.clearPendingOpen()
-    const pickupAfterArrival = options.pickupAfterArrival ?? null
     // Approach moves (chase, walk-up) carry no modifier: follow the preference.
     clickSprinting =
       (options.sprinting ?? sprintRequested(false)) && sprintAvailable()
@@ -1115,7 +1138,6 @@
     startingClickMovement = true
     runMoveRequest({
       clickPosition,
-      pickupAfterArrival,
       currentPlayer,
       interactionExit: getInteractionExitKind(playerState),
       isMoving: isMovingNow(),
@@ -1126,11 +1148,7 @@
       waypointHeight,
       sendPlayerMove,
       startSpeed: currentSpeed,
-      actions: createMoveRequestActions(
-        clickPosition,
-        pickupAfterArrival,
-        options
-      ),
+      actions: createMoveRequestActions(clickPosition, options),
     })
     startingClickMovement = false
     if (playerControlMachine.stateName !== 'moving') clickSprinting = false
@@ -1241,70 +1259,93 @@
     })
   }
 
-  function approachAndPickup(
-    intent: Extract<ClickIntent, { type: 'pickup_ground_item' }>
+  /** `canActNow` is false while an interaction animation still has to be
+   *  exited — the walk-up runs the exit, then fires the action on arrival. */
+  function approachAndAct(
+    spec: ApproachSpec,
+    act: () => void,
+    canActNow = true
   ) {
-    const decision = decidePickupApproach({
-      playerState,
-      intent,
-      getGroundItem: (instanceId) => groundItemManager.items.get(instanceId),
-    })
-    if (decision.kind === 'ignored_dead') return
+    if (!currentPlayer || currentPlayer.health <= 0) return
 
-    combatController.cancelCombat()
-    handleClickToMove(decision.target, {
-      pickupAfterArrival: decision.pickupAfterArrival,
-    })
-  }
-
-  /** Act on a clicked target now if it's within `range`, else walk toward it
-   *  and stop a metre short. The walk-up alone is the whole action when out of
-   *  range — the player clicks again on arrival. */
-  function approachWithin(
-    intent: { position: Position; distance: number },
-    range: number,
-    actInRange: () => void
-  ) {
-    if (intent.distance <= range) {
-      actInRange()
+    const plan = planApproach(currentPlayer.position, spec, canActNow)
+    if (plan.kind === 'act_now') {
+      act()
       return
     }
-    if (!currentPlayer) return
+
     combatController.cancelCombat()
-    const dx = currentPlayer.position.x - intent.position.x
-    const dz = currentPlayer.position.z - intent.position.z
-    const dist = Math.sqrt(dx * dx + dz * dz) || 1
-    const stopShort = Math.min(range - 1, dist)
-    handleClickToMove({
-      x: intent.position.x + (dx / dist) * stopShort,
-      y: intent.position.y,
-      z: intent.position.z + (dz / dist) * stopShort,
+    handleClickToMove(plan.target, {
+      approach: { spec, depth: get(currentDungeonDepth), act },
     })
   }
 
-  /** Open a trading NPC's window, walking into range first if needed. */
-  function approachAndTrade(
+  function pickupItem(
+    intent: Extract<ClickIntent, { type: 'pickup_ground_item' }>
+  ) {
+    if (playerState.state === 'dead') return
+    const item = groundItemManager.items.get(intent.instanceId)
+    // Never pick up straight from an interaction: re-entering picking_up would
+    // overwrite the owned id and strand the grabbed item on the hand bone
+    // (finishPickup never runs). The walk-up settles the interaction first.
+    approachAndAct(
+      { position: item?.position ?? intent.position, ...PICKUP_APPROACH },
+      () => enterPickup(intent.instanceId),
+      getInteractionExitKind(playerState) === 'none'
+    )
+  }
+
+  function interactObject(
+    intent: Extract<ClickIntent, { type: 'interact_object' }>
+  ) {
+    approachAndAct({ position: intent.position, ...OBJECT_APPROACH }, () =>
+      enterInteraction(intent)
+    )
+  }
+
+  function toggleDoor(intent: Extract<ClickIntent, { type: 'toggle_door' }>) {
+    approachAndAct({ position: intent.position, ...HOUSE_DOOR_APPROACH }, () =>
+      networkManager.sendToggleDoor(
+        intent.houseId,
+        intent.roomIndex,
+        intent.wallDir,
+        intent.segmentIndex
+      )
+    )
+  }
+
+  function toggleDungeonDoor(
+    intent: Extract<ClickIntent, { type: 'toggle_dungeon_door' }>
+  ) {
+    approachAndAct(
+      { position: intent.position, ...DUNGEON_DOOR_APPROACH },
+      () => {
+        const id = dungeonManager.dungeonId
+        if (id) {
+          networkManager.sendToggleDungeonDoor(id, intent.depth, intent.doorId)
+        }
+      }
+    )
+  }
+
+  function tradeWithNpc(
     intent: Extract<ClickIntent, { type: 'interact_npc' }>
   ) {
-    approachWithin(intent, NPC_TRADE_RANGE_METERS, () =>
+    approachAndAct({ position: intent.position, ...NPC_TRADE_APPROACH }, () =>
       networkManager.sendOpenShop(intent.playerId)
     )
   }
 
-  /** Open a tip hat's dialog, walking into range first if needed. */
-  function approachAndTip(intent: Extract<ClickIntent, { type: 'tip_hat' }>) {
-    approachWithin(intent, TIP_HAT_RANGE_METERS, () => {
+  function tipHat(intent: Extract<ClickIntent, { type: 'tip_hat' }>) {
+    approachAndAct({ position: intent.position, ...TIP_HAT_APPROACH }, () => {
       const hat = tipHatManager.hats.get(intent.hatId)
       if (hat) tipHatDialog.set({ hatId: hat.id, ownerName: hat.owner_name })
     })
   }
 
-  /** Open a trade at a clicked stall, walking up to the table first. The
-   *  stall standing there is its owner's consent, so there is no request. */
-  function approachAndTradeAtStall(
-    intent: Extract<ClickIntent, { type: 'stall' }>
-  ) {
-    approachWithin(intent, STALL_TRADE_RANGE_METERS, () =>
+  /** The stall standing there is its owner's consent, so there is no request. */
+  function tradeAtStall(intent: Extract<ClickIntent, { type: 'stall' }>) {
+    approachAndAct({ position: intent.position, ...STALL_TRADE_APPROACH }, () =>
       networkManager.sendPlayerTradeAtStall(intent.stallId)
     )
   }
@@ -1428,13 +1469,14 @@
     const npcPos = remotePlayerManager.players.get(hover.playerId)?.position
     if (!npcPos) return null
     const p = currentPlayer.position
-    const dx = shortestWrappedDeltaX(p.x, npcPos.x)
-    const dz = npcPos.z - p.z
     return {
       type: 'interact_npc',
       playerId: hover.playerId,
-      position: { x: p.x + dx, y: npcPos.y, z: npcPos.z },
-      distance: Math.sqrt(dx * dx + dz * dz),
+      position: {
+        x: p.x + shortestWrappedDeltaX(p.x, npcPos.x),
+        y: npcPos.y,
+        z: npcPos.z,
+      },
     }
   }
 
@@ -1485,7 +1527,7 @@
         if (caps.trade) {
           entries.push({
             label: 'Trade',
-            action: () => approachAndTrade(intent),
+            action: () => tradeWithNpc(intent),
           })
         }
         npcContextMenu.set({
@@ -1540,31 +1582,10 @@
         initiateAttack(monsterId)
       },
       chaseAndAttack,
-      toggleDoor: (houseId, roomIndex, wallDir, segmentIndex) => {
-        const m = movingState()
-        if (m) m.pendingPickupAfterMove = null
-        networkManager.sendToggleDoor(houseId, roomIndex, wallDir, segmentIndex)
-      },
-      toggleDungeonDoor: (depth, doorId) => {
-        // Server flips and broadcasts the new state; the DungeonDoorToggled
-        // handler applies it (entrance store + interior door map), so the swing
-        // syncs to everyone nearby.
-        const id = dungeonManager.dungeonId
-        if (id) networkManager.sendToggleDungeonDoor(id, depth, doorId)
-      },
-      enterInteraction,
-      enterPickup: (intent) => {
-        // Mid-interaction (pickup or object anim), re-entering picking_up would
-        // overwrite the owned id and strand the grabbed item on the hand bone
-        // (finishPickup never runs) — approach instead, which settles the
-        // interaction and re-enters the pickup on arrival.
-        if (getInteractionExitKind(playerState) !== 'none') {
-          approachAndPickup(intent)
-          return
-        }
-        enterPickup(intent.instanceId)
-      },
-      approachAndPickup,
+      toggleDoor,
+      toggleDungeonDoor,
+      interactObject,
+      pickupItem,
       interactNpc: (intent) => {
         const npc = get(gameStore).otherPlayers.get(intent.playerId)
         if (!npc?.isOfficialNpc) return
@@ -1572,13 +1593,13 @@
         // else starts a conversation. Right-click offers both explicitly.
         const caps = getNpcCapabilities(npc.name)
         if (caps.defaultAction === 'trade') {
-          approachAndTrade(intent)
+          tradeWithNpc(intent)
         } else {
           requestChatFocus()
         }
       },
-      approachAndTip,
-      approachAndTradeAtStall,
+      tipHat,
+      tradeAtStall,
       breakProp,
       openProp,
       moveToGround: (position, sprinting) => {
@@ -1616,6 +1637,13 @@
   }
 
   function dispatchPlayerControlEvent(event: PlayerControlEvent) {
+    // A fresh click supersedes the armed walk-up action, even one that starts
+    // no movement of its own (a cast, an in-reach interaction). A click that
+    // hit nothing at all shouldn't cancel the walk the player is already on.
+    if (event.type === 'canvas_intent' && event.intent.type !== 'none') {
+      const m = movingState()
+      if (m) m.approach = null
+    }
     dispatchQueuedPlayerControlEvent(event, createPlayerControlEventActions())
   }
 

@@ -8,7 +8,6 @@ import {
 } from './move-request'
 
 const baseInput = {
-  pickupAfterArrival: null,
   currentPlayerHealth: 10,
   interactionExit: 'none' as const,
   hasCurrentPlayer: true,
@@ -17,16 +16,6 @@ const baseInput = {
 }
 
 describe('decideMoveRequest', () => {
-  it('clears pending pickup only for ordinary movement requests', () => {
-    expect(decideMoveRequest(baseInput).clearPendingPickupAfterMove).toBe(true)
-    expect(
-      decideMoveRequest({
-        ...baseInput,
-        pickupAfterArrival: 3,
-      }).clearPendingPickupAfterMove
-    ).toBe(false)
-  })
-
   it('ignores dead players before interaction exit handling', () => {
     expect(
       decideMoveRequest({
@@ -34,10 +23,7 @@ describe('decideMoveRequest', () => {
         currentPlayerHealth: 0,
         interactionExit: 'pickup',
       })
-    ).toEqual({
-      kind: 'ignored',
-      clearPendingPickupAfterMove: true,
-    })
+    ).toEqual({ kind: 'ignored' })
   })
 
   it('preserves pickup immediate retry and object delayed stand-up decisions', () => {
@@ -103,7 +89,6 @@ describe('startClickMovement', () => {
     const started = startClickMovement({
       currentPos,
       clickPosition,
-      pickupAfterArrival: null,
       currentFloor: 0,
       getFloorAt: vi.fn(() => 1),
       findPath: vi.fn(() => ({
@@ -116,7 +101,6 @@ describe('startClickMovement', () => {
 
     expect(started.pathWaypoints).toEqual([{ x: 2, z: 3, floor: 1 }])
     expect(started.movementTarget).toEqual({ x: 2, y: 5, z: 3 })
-    expect(started.pendingPickupAfterMoveInstanceId).toBeNull()
     expect(sendPlayerMove).toHaveBeenCalledWith(
       { x: 2, y: 5, z: 3 },
       expect.any(Number),
@@ -134,7 +118,6 @@ describe('startClickMovement', () => {
     startClickMovement({
       currentPos,
       clickPosition,
-      pickupAfterArrival: null,
       currentFloor: 0,
       getFloorAt: vi.fn(() => 1),
       findPath: vi.fn(() => ({ waypoints: [{ x: 2, z: 3, floor: 1 }] })),
@@ -152,7 +135,6 @@ describe('startClickMovement', () => {
     const started = startClickMovement({
       currentPos,
       clickPosition,
-      pickupAfterArrival: 42,
       currentFloor: 0,
       getFloorAt: vi.fn(() => 2),
       findPath: vi.fn(() => ({ waypoints: [] })),
@@ -163,14 +145,12 @@ describe('startClickMovement', () => {
 
     expect(started.pathWaypoints).toEqual([{ x: 4, z: 5, floor: 2 }])
     expect(started.movementTarget).toEqual({ x: 4, y: 9, z: 5 })
-    expect(started.pendingPickupAfterMoveInstanceId).toBe(42)
   })
 
   it('carries the running speed into the new leg instead of restarting at 0', () => {
     const started = startClickMovement({
       currentPos,
       clickPosition,
-      pickupAfterArrival: null,
       ...deps,
       startSpeed: 4.5,
     })
@@ -181,7 +161,6 @@ describe('startClickMovement', () => {
 
 function actions(): MoveRequestActions {
   return {
-    clearPendingPickupAfterMove: vi.fn(),
     exitPickupAndRetry: vi.fn(),
     exitObjectAndDelay: vi.fn(),
     applyStartedMovement: vi.fn(),
@@ -193,7 +172,6 @@ describe('runMoveRequest', () => {
     const pickupActions = actions()
     runMoveRequest({
       clickPosition: { x: 1, y: 0, z: 0 },
-      pickupAfterArrival: null,
       currentPlayer: { health: 10, position: { x: 0, y: 0, z: 0 } },
       interactionExit: 'pickup',
       isMoving: false,
@@ -208,7 +186,6 @@ describe('runMoveRequest', () => {
     const objectActions = actions()
     runMoveRequest({
       clickPosition: { x: 1, y: 0, z: 0 },
-      pickupAfterArrival: null,
       currentPlayer: { health: 10, position: { x: 0, y: 0, z: 0 } },
       interactionExit: 'object',
       isMoving: false,
@@ -225,7 +202,6 @@ describe('runMoveRequest', () => {
     const a = actions()
     runMoveRequest({
       clickPosition: { x: 1, y: 0, z: 0 },
-      pickupAfterArrival: 7,
       currentPlayer: { health: 10, position: { x: 0, y: 0, z: 0 } },
       interactionExit: 'none',
       isMoving: false,
@@ -234,15 +210,13 @@ describe('runMoveRequest', () => {
       ...deps,
     })
 
-    expect(a.clearPendingPickupAfterMove).not.toHaveBeenCalled()
     expect(a.applyStartedMovement).toHaveBeenCalledOnce()
   })
 
-  it('clears pending pickup and ignores blocked requests', () => {
+  it('ignores blocked requests', () => {
     const a = actions()
     runMoveRequest({
       clickPosition: { x: 1, y: 0, z: 0 },
-      pickupAfterArrival: null,
       currentPlayer: { health: 0, position: { x: 0, y: 0, z: 0 } },
       interactionExit: 'none',
       isMoving: false,
@@ -251,7 +225,6 @@ describe('runMoveRequest', () => {
       ...deps,
     })
 
-    expect(a.clearPendingPickupAfterMove).toHaveBeenCalledOnce()
     expect(a.applyStartedMovement).not.toHaveBeenCalled()
   })
 })

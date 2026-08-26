@@ -74,7 +74,6 @@ interface BeginObjectInteractionInput {
 }
 
 export interface BeginObjectInteractionOutcome {
-  pendingPickupAfterMoveInstanceId: null
   isMoving: false
   movementTarget: Position | null
   playerRotation: number
@@ -90,7 +89,6 @@ export function beginObjectInteraction({
   cancelCombat()
 
   return {
-    pendingPickupAfterMoveInstanceId: null,
     isMoving: false,
     movementTarget: null,
     playerRotation: intent.rotation,
@@ -115,47 +113,6 @@ export function exitObjectInteraction(
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Pickup approach decision (far pickup → walk to item, then pick up on arrival)
-// ───────────────────────────────────────────────────────────────────────────
-
-export interface PickupApproachIntent {
-  instanceId: number
-  position: Position
-}
-
-interface GroundItemLike {
-  position: Position
-}
-
-export type PickupApproachDecision =
-  | { kind: 'ignored_dead' }
-  | {
-      kind: 'approach'
-      target: Position
-      pickupAfterArrival: number
-    }
-
-interface DecidePickupApproachInput {
-  playerState: PlayerState
-  intent: PickupApproachIntent
-  getGroundItem: (instanceId: number) => GroundItemLike | undefined
-}
-
-export function decidePickupApproach({
-  playerState,
-  intent,
-  getGroundItem,
-}: DecidePickupApproachInput): PickupApproachDecision {
-  if (playerState.state === 'dead') return { kind: 'ignored_dead' }
-
-  return {
-    kind: 'approach',
-    target: getGroundItem(intent.instanceId)?.position ?? intent.position,
-    pickupAfterArrival: intent.instanceId,
-  }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // Pickup enter transition
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -171,7 +128,6 @@ export type BeginPickupOutcome =
   | { kind: 'ignored' }
   | {
       kind: 'started'
-      pendingPickupAfterMoveInstanceId: null
       pendingPickupInstanceId: number
       isMoving: false
       movementTarget: Position | null
@@ -195,7 +151,6 @@ export function beginPickupInteraction({
 
   return {
     kind: 'started',
-    pendingPickupAfterMoveInstanceId: null,
     pendingPickupInstanceId: instanceId,
     isMoving: false,
     movementTarget: null,

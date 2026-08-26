@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ClickIntent } from '../../managers/inputHandler'
-import { PLAYER_PICKUP_RANGE_METERS } from '../../data/combatTiming'
 import {
   dispatchCanvasClickIntent,
   type CanvasClickActions,
@@ -12,32 +11,30 @@ function makeActions() {
     chaseAndAttack: vi.fn(),
     toggleDoor: vi.fn(),
     toggleDungeonDoor: vi.fn(),
-    enterInteraction: vi.fn(),
-    enterPickup: vi.fn(),
-    approachAndPickup: vi.fn(),
+    interactObject: vi.fn(),
+    pickupItem: vi.fn(),
     interactNpc: vi.fn(),
     breakProp: vi.fn(),
     openProp: vi.fn(),
     moveToGround: vi.fn(),
     castFishing: vi.fn(),
-    approachAndTip: vi.fn(),
-    approachAndTradeAtStall: vi.fn(),
+    tipHat: vi.fn(),
+    tradeAtStall: vi.fn(),
   } satisfies CanvasClickActions
 }
 
 describe('dispatchCanvasClickIntent tip hats', () => {
-  it('routes a tip_hat intent to approachAndTip', () => {
+  it('routes a tip_hat intent to tipHat', () => {
     const actions = makeActions()
     const intent: ClickIntent = {
       type: 'tip_hat',
       hatId: 7,
       position: { x: 1, y: 0, z: 2 },
-      distance: 4,
     }
 
     dispatchCanvasClickIntent(intent, false, actions)
 
-    expect(actions.approachAndTip).toHaveBeenCalledWith(intent)
+    expect(actions.tipHat).toHaveBeenCalledWith(intent)
   })
 })
 
@@ -75,34 +72,34 @@ describe('dispatchCanvasClickIntent prop handling', () => {
   })
 })
 
-describe('dispatchCanvasClickIntent pickup handling', () => {
-  it('starts pickup immediately when the ground item is within pickup range', () => {
+describe('dispatchCanvasClickIntent walk-up interactions', () => {
+  it('routes a ground item to pickupItem at any distance', () => {
     const actions = makeActions()
     const intent: ClickIntent = {
       type: 'pickup_ground_item',
       instanceId: 42,
       position: { x: 1, y: 0, z: 2 },
-      distance: PLAYER_PICKUP_RANGE_METERS,
     }
 
     dispatchCanvasClickIntent(intent, false, actions)
 
-    expect(actions.enterPickup).toHaveBeenCalledWith(intent)
-    expect(actions.approachAndPickup).not.toHaveBeenCalled()
+    expect(actions.pickupItem).toHaveBeenCalledWith(intent)
   })
 
-  it('moves toward the ground item before pickup when it is out of range', () => {
+  it('routes a far door to toggleDoor rather than a plain walk', () => {
     const actions = makeActions()
     const intent: ClickIntent = {
-      type: 'pickup_ground_item',
-      instanceId: 42,
-      position: { x: 1, y: 0, z: 2 },
-      distance: PLAYER_PICKUP_RANGE_METERS + 0.01,
+      type: 'toggle_door',
+      houseId: 'h1',
+      roomIndex: 0,
+      wallDir: 'north',
+      segmentIndex: 2,
+      position: { x: 30, y: 0, z: 0 },
     }
 
     dispatchCanvasClickIntent(intent, false, actions)
 
-    expect(actions.approachAndPickup).toHaveBeenCalledWith(intent)
-    expect(actions.enterPickup).not.toHaveBeenCalled()
+    expect(actions.toggleDoor).toHaveBeenCalledWith(intent)
+    expect(actions.moveToGround).not.toHaveBeenCalled()
   })
 })

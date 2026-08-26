@@ -18,7 +18,6 @@ describe('transition reset helpers', () => {
       currentSpeed: 0,
       pathWaypoints: [],
       currentWaypointIndex: 0,
-      pendingPickupAfterMoveInstanceId: null,
     })
   })
 
@@ -30,7 +29,6 @@ describe('transition reset helpers', () => {
       currentSpeed: 0,
       pathWaypoints: [],
       currentWaypointIndex: 0,
-      pendingPickupAfterMoveInstanceId: null,
       playerRotation: 0,
     })
   })

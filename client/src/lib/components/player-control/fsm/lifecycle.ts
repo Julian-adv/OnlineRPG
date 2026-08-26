@@ -21,7 +21,6 @@ export interface ControlRuntimeState {
   currentSpeed: number
   pathWaypoints: PathWaypoint[]
   currentWaypointIndex: number
-  pendingPickupAfterMoveInstanceId: number | null
 }
 
 export function resetMovementRuntimeState(): ControlRuntimeState {
@@ -32,7 +31,6 @@ export function resetMovementRuntimeState(): ControlRuntimeState {
     currentSpeed: 0,
     pathWaypoints: [],
     currentWaypointIndex: 0,
-    pendingPickupAfterMoveInstanceId: null,
   }
 }
 

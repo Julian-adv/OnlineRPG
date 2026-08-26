@@ -1,4 +1,5 @@
 import type { MovementState, Position } from '../../../utils/movementUtils'
+import type { PendingApproach } from './approach'
 import type { PathWaypoint } from './movement-substrate'
 
 export type PlayerControlStateName =
@@ -39,8 +40,9 @@ export interface MovingStateData {
    *  Lives here so leaving the state — or a click starting a new path —
    *  invalidates it, the way the rest of this data works. */
   chaseGoal: Position | null
-  /** Item instance to pick up once this move arrives (far-pickup approach). */
-  pendingPickupAfterMove: number | null
+  /** Interaction to run when this walk ends (see fsm/approach.ts). Lives here
+   *  so leaving the state — death, a keyboard step, a fresh path — drops it. */
+  approach: PendingApproach | null
 }
 
 export interface PickingUpStateData {

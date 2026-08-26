@@ -1,11 +1,9 @@
 import type { Position } from '../../utils/movementUtils'
 import type { ClickIntent } from '../../managers/inputHandler'
-import type { WallDirection } from '../../utils/house-geometry'
-import {
-  PLAYER_ATTACK_RANGE_METERS,
-  PLAYER_PICKUP_RANGE_METERS,
-} from '../../data/combatTiming'
+import { PLAYER_ATTACK_RANGE_METERS } from '../../data/combatTiming'
 
+type DoorIntent = Extract<ClickIntent, { type: 'toggle_door' }>
+type DungeonDoorIntent = Extract<ClickIntent, { type: 'toggle_dungeon_door' }>
 type InteractIntent = Extract<ClickIntent, { type: 'interact_object' }>
 type PickupIntent = Extract<ClickIntent, { type: 'pickup_ground_item' }>
 type NpcIntent = Extract<ClickIntent, { type: 'interact_npc' }>
@@ -20,18 +18,16 @@ export interface CanvasClickActions {
   attackInRange(monsterId: string): void
   /** Out of range — chase the monster, attacking on arrival. */
   chaseAndAttack(monsterId: string, hitPoint: Position): void
-  toggleDoor(
-    houseId: string,
-    roomIndex: number,
-    wallDir: WallDirection,
-    segmentIndex: number
-  ): void
-  /** Open/close a dungeon door (entrance at depth 0, or an interior room door)
-   *  via the server, so the swing syncs to other players. */
-  toggleDungeonDoor(depth: number, doorId: number): void
-  enterInteraction(intent: InteractIntent): void
-  enterPickup(intent: PickupIntent): void
-  approachAndPickup(intent: PickupIntent): void
+  /** Walk up to a clicked house door, toggling it on arrival. */
+  toggleDoor(intent: DoorIntent): void
+  /** Walk up to a clicked dungeon door (entrance at depth 0, or an interior
+   *  room door), toggling it via the server on arrival so the swing syncs to
+   *  other players. */
+  toggleDungeonDoor(intent: DungeonDoorIntent): void
+  /** Walk up to a clicked chair/bench, sitting on arrival. */
+  interactObject(intent: InteractIntent): void
+  /** Walk up to a clicked ground item, picking it up on arrival. */
+  pickupItem(intent: PickupIntent): void
   interactNpc(intent: NpcIntent): void
   /** Walk up to a clicked barrel/crate, breaking it on arrival. */
   breakProp(intent: BreakPropIntent): void
@@ -40,9 +36,10 @@ export interface CanvasClickActions {
   moveToGround(position: Position, sprinting: boolean): void
   /** Stop, face the water, and cast the equipped rod (server validates). */
   castFishing(intent: CastFishingIntent): void
-  /** Open the tip dialog for a clicked hat, walking into range first. */
-  approachAndTip(intent: TipHatIntent): void
-  approachAndTradeAtStall(intent: StallIntent): void
+  /** Walk up to a clicked tip hat, opening its tip dialog on arrival. */
+  tipHat(intent: TipHatIntent): void
+  /** Walk up to a clicked stall, opening a trade with its owner on arrival. */
+  tradeAtStall(intent: StallIntent): void
 }
 
 export function dispatchCanvasClickIntent(
@@ -61,25 +58,16 @@ export function dispatchCanvasClickIntent(
       }
       return
     case 'toggle_door':
-      actions.toggleDoor(
-        intent.houseId,
-        intent.roomIndex,
-        intent.wallDir,
-        intent.segmentIndex
-      )
+      actions.toggleDoor(intent)
       return
     case 'toggle_dungeon_door':
-      actions.toggleDungeonDoor(intent.depth, intent.doorId)
+      actions.toggleDungeonDoor(intent)
       return
     case 'interact_object':
-      actions.enterInteraction(intent)
+      actions.interactObject(intent)
       return
     case 'pickup_ground_item':
-      if (intent.distance <= PLAYER_PICKUP_RANGE_METERS) {
-        actions.enterPickup(intent)
-      } else {
-        actions.approachAndPickup(intent)
-      }
+      actions.pickupItem(intent)
       return
     case 'interact_npc':
       actions.interactNpc(intent)
@@ -97,10 +85,10 @@ export function dispatchCanvasClickIntent(
       actions.castFishing(intent)
       return
     case 'tip_hat':
-      actions.approachAndTip(intent)
+      actions.tipHat(intent)
       return
     case 'stall':
-      actions.approachAndTradeAtStall(intent)
+      actions.tradeAtStall(intent)
       return
     case 'none':
       return

@@ -77,21 +77,26 @@ function makeActions() {
     chaseAndAttack: vi.fn(),
     toggleDoor: vi.fn(),
     toggleDungeonDoor: vi.fn(),
-    enterInteraction: vi.fn(),
-    enterPickup: vi.fn(),
-    approachAndPickup: vi.fn(),
+    interactObject: vi.fn(),
+    pickupItem: vi.fn(),
     interactNpc: vi.fn(),
     breakProp: vi.fn(),
     openProp: vi.fn(),
     moveToGround: vi.fn(),
     castFishing: vi.fn(),
-    approachAndTip: vi.fn(),
-    approachAndTradeAtStall: vi.fn(),
+    tipHat: vi.fn(),
+    tradeAtStall: vi.fn(),
     requestMove: vi.fn(),
     onInteractionFinished: vi.fn(),
     onPickupGrab: vi.fn(),
     onInteractionRejected: vi.fn(),
   } satisfies PlayerControlEventActions
+}
+
+const approach = {
+  spec: { position: { x: 1, y: 2, z: 3 }, range: 2, stopShort: 1 },
+  depth: 0,
+  act: () => {},
 }
 
 describe('dispatchPlayerControlEvent', () => {
@@ -100,14 +105,14 @@ describe('dispatchPlayerControlEvent', () => {
     const event: PlayerControlEvent = {
       type: 'request_move',
       position: { x: 1, y: 2, z: 3 },
-      pickupAfterArrival: 99,
+      approach,
     }
 
     dispatchPlayerControlEvent(event, actions)
 
     expect(actions.requestMove).toHaveBeenCalledWith(
       { x: 1, y: 2, z: 3 },
-      { pickupAfterArrival: 99 }
+      { approach }
     )
   })
 

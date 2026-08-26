@@ -384,7 +384,6 @@ export type BeginAttackOutcome =
   | {
       kind: 'started'
       nextPlayerState: PlayerState
-      pendingPickupAfterMoveInstanceId: null
     }
 
 export function beginAttack({
@@ -425,7 +424,6 @@ export function beginAttack({
       playerRotation,
       attackCounter
     ),
-    pendingPickupAfterMoveInstanceId: null,
   }
 }
 

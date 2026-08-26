@@ -15,8 +15,8 @@ export const FISHING_CAST_SWING_DELAY_MS = animTiming.fishing_cast_swing.delayMs
 // and the click-to-attack arrival check so the two never drift apart.
 export const PLAYER_ATTACK_RANGE_METERS = 2.0
 
-// Range within which a click picks an item up directly; beyond it the player
-// walks over first. Mirrors the server's MAX_PICKUP_DISTANCE (inventory.rs).
+// The server's pickup reach (MAX_PICKUP_DISTANCE, inventory.rs). The click
+// walk-up fires a little inside it — see PICKUP_APPROACH in approachRanges.ts.
 export const PLAYER_PICKUP_RANGE_METERS = 2.5
 
 export const DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS = 0

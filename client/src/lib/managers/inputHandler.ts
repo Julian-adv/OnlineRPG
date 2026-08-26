@@ -12,9 +12,6 @@ import {
 import type { Position } from '../utils/movementUtils'
 import type { WallDirection } from '../utils/house-geometry'
 
-const MAX_DOOR_INTERACT_DISTANCE = 2.0
-const MAX_OBJECT_INTERACT_DISTANCE = 3.0
-
 function hasAncestorBridge(obj: THREE.Object3D | null): boolean {
   for (let o = obj; o; o = o.parent) {
     if (o.userData?.objectKind === 'bridge') return true
@@ -76,8 +73,14 @@ export type ClickIntent =
       roomIndex: number
       wallDir: WallDirection
       segmentIndex: number
+      position: Position
     }
-  | { type: 'toggle_dungeon_door'; depth: number; doorId: number }
+  | {
+      type: 'toggle_dungeon_door'
+      depth: number
+      doorId: number
+      position: Position
+    }
   | {
       type: 'interact_object'
       objectId: number
@@ -91,27 +94,23 @@ export type ClickIntent =
       type: 'pickup_ground_item'
       instanceId: number
       position: Position
-      distance: number
     }
   | {
       /** Clicked someone's tip hat: opens the tip dialog once in range. */
       type: 'tip_hat'
       hatId: number
       position: Position
-      distance: number
     }
   | {
       /** Clicked a laid-out stall: opens a trade with its owner. */
       type: 'stall'
       stallId: number
       position: Position
-      distance: number
     }
   | {
       type: 'interact_npc'
       playerId: number
       position: Position
-      distance: number
     }
   | {
       type: 'break_prop'
@@ -380,8 +379,6 @@ class InputHandler {
 
           const npcPosition = new THREE.Vector3()
           owner.getWorldPosition(npcPosition)
-          const dx = npcPosition.x - context.playerPosition.x
-          const dz = npcPosition.z - context.playerPosition.z
           return {
             type: 'interact_npc',
             playerId: owner.userData.npcPlayerId as number,
@@ -390,7 +387,6 @@ class InputHandler {
               y: npcPosition.y,
               z: npcPosition.z,
             },
-            distance: Math.sqrt(dx * dx + dz * dz),
           }
         }
       )
@@ -404,84 +400,74 @@ class InputHandler {
     )
     raycaster.setFromCamera(centerNDC, context.camera)
 
-    // Check intersection with door meshes
+    // Check intersection with door meshes. No distance gate: the player walks
+    // up to a far door and opens it on arrival. The door face is vertical, so
+    // the walk-up target takes the player's own Y — the hit point's would
+    // resolve to the wrong floor.
     if (context.doorMeshes?.length > 0) {
       const doorHits = raycaster.intersectObjects(context.doorMeshes, true)
       if (doorHits.length > 0) {
         const hitPoint = doorHits[0].point
-        const pp = context.playerPosition
-        const dx = hitPoint.x - pp.x
-        const dz = hitPoint.z - pp.z
-        if (
-          dx * dx + dz * dz <=
-          MAX_DOOR_INTERACT_DISTANCE * MAX_DOOR_INTERACT_DISTANCE
-        ) {
-          let obj: THREE.Object3D | null = doorHits[0].object
-          while (obj) {
-            const d = obj.userData
-            if (d && d.dungeonDoorKey) {
-              return {
-                type: 'toggle_dungeon_door',
-                depth: d.dungeonDoorKey.depth,
-                doorId: d.dungeonDoorKey.doorId,
-              }
+        const position = {
+          x: hitPoint.x,
+          y: context.playerPosition.y,
+          z: hitPoint.z,
+        }
+        let obj: THREE.Object3D | null = doorHits[0].object
+        while (obj) {
+          const d = obj.userData
+          if (d && d.dungeonDoorKey) {
+            return {
+              type: 'toggle_dungeon_door',
+              depth: d.dungeonDoorKey.depth,
+              doorId: d.dungeonDoorKey.doorId,
+              position,
             }
-            if (
-              d &&
-              d.doorHouseId &&
-              d.doorFloorLevel === context.playerVisualFloorLevel
-            ) {
-              return {
-                type: 'toggle_door',
-                houseId: d.doorHouseId,
-                roomIndex: d.doorRoomIndex,
-                wallDir: d.doorWallDir,
-                segmentIndex: d.doorSegmentIndex,
-              }
-            }
-            obj = obj.parent
           }
+          if (
+            d &&
+            d.doorHouseId &&
+            d.doorFloorLevel === context.playerVisualFloorLevel
+          ) {
+            return {
+              type: 'toggle_door',
+              houseId: d.doorHouseId,
+              roomIndex: d.doorRoomIndex,
+              wallDir: d.doorWallDir,
+              segmentIndex: d.doorSegmentIndex,
+              position,
+            }
+          }
+          obj = obj.parent
         }
       }
     }
 
-    // Check intersection with object meshes
+    // Check intersection with object meshes. No distance gate: the player walks
+    // up to a far chair/bench and sits on arrival.
     if (context.objectMeshes.length > 0) {
       const objectHits = raycaster.intersectObjects(context.objectMeshes, true)
       if (objectHits.length > 0) {
         const hitPoint = objectHits[0].point
-        const pp = context.playerPosition
-        const dx = hitPoint.x - pp.x
-        const dz = hitPoint.z - pp.z
-        if (
-          dx * dx + dz * dz <=
-          MAX_OBJECT_INTERACT_DISTANCE * MAX_OBJECT_INTERACT_DISTANCE
-        ) {
-          let obj: THREE.Object3D | null = objectHits[0].object
-          while (obj) {
-            const d = obj.userData
-            if (
-              d &&
-              d.objectId != null &&
-              d.objectType &&
-              d.objectInteraction
-            ) {
-              return {
-                type: 'interact_object',
-                objectId: d.objectId as number,
-                objectType: d.objectType,
-                interaction: d.objectInteraction,
-                position: {
-                  x: obj.position.x,
-                  y: obj.position.y,
-                  z: obj.position.z,
-                },
-                rotation: obj.rotation.y,
-                interactOffset: d.objectInteractOffset,
-              }
+        let obj: THREE.Object3D | null = objectHits[0].object
+        while (obj) {
+          const d = obj.userData
+          if (d && d.objectId != null && d.objectType && d.objectInteraction) {
+            return {
+              type: 'interact_object',
+              objectId: d.objectId as number,
+              objectType: d.objectType,
+              interaction: d.objectInteraction,
+              position: {
+                x: obj.position.x,
+                y: obj.position.y,
+                z: obj.position.z,
+              },
+              rotation: obj.rotation.y,
+              interactOffset: d.objectInteractOffset,
             }
-            obj = obj.parent
           }
+          obj = obj.parent
         }
         const face = objectHits[0].face
         if (
@@ -531,15 +517,11 @@ class InputHandler {
         true
       )
       if (itemHits.length > 0) {
-        const pp = context.playerPosition
         let obj: THREE.Object3D | null = itemHits[0].object
         while (obj) {
           if (obj.userData && obj.userData.groundItemId != null) {
             const itemPosition = new THREE.Vector3()
             obj.getWorldPosition(itemPosition)
-            const dx = itemPosition.x - pp.x
-            const dz = itemPosition.z - pp.z
-            const distSq = dx * dx + dz * dz
             return {
               type: 'pickup_ground_item',
               instanceId: obj.userData.groundItemId as number,
@@ -548,7 +530,6 @@ class InputHandler {
                 y: itemPosition.y,
                 z: itemPosition.z,
               },
-              distance: Math.sqrt(distSq),
             }
           }
           obj = obj.parent
@@ -566,20 +547,16 @@ class InputHandler {
       if (owner) {
         const hatPosition = new THREE.Vector3()
         owner.getWorldPosition(hatPosition)
-        const pp = context.playerPosition
-        const dx = hatPosition.x - pp.x
-        const dz = hatPosition.z - pp.z
         return {
           type: 'tip_hat',
           hatId: owner.userData.tipHatId as number,
           position: { x: hatPosition.x, y: hatPosition.y, z: hatPosition.z },
-          distance: Math.sqrt(dx * dx + dz * dz),
         }
       }
     }
 
-    // Stalls, same shape as tip hats: click from anywhere, the server checks
-    // the distance to the table rather than to its owner.
+    // Stalls, same shape as tip hats. The walk-up targets the table, which is
+    // what the server checks too, rather than the owner behind it.
     if (context.stallMeshes.length > 0) {
       const stallHits = raycaster.intersectObjects(context.stallMeshes, true)
       const table = stallHits.length
@@ -588,9 +565,6 @@ class InputHandler {
       if (table) {
         const stallPosition = new THREE.Vector3()
         table.getWorldPosition(stallPosition)
-        const pp = context.playerPosition
-        const dx = stallPosition.x - pp.x
-        const dz = stallPosition.z - pp.z
         return {
           type: 'stall',
           stallId: table.userData.stallId as number,
@@ -599,7 +573,6 @@ class InputHandler {
             y: stallPosition.y,
             z: stallPosition.z,
           },
-          distance: Math.sqrt(dx * dx + dz * dz),
         }
       }
     }

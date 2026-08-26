@@ -5,7 +5,6 @@ import {
   applyObjectInteractionPosition,
   beginObjectInteraction,
   beginPickupInteraction,
-  decidePickupApproach,
   exitObjectInteraction,
   exitPickupInteraction,
   finishPendingPickup,
@@ -108,7 +107,6 @@ describe('beginObjectInteraction', () => {
     })
 
     expect(cancelCombat).toHaveBeenCalledOnce()
-    expect(result.pendingPickupAfterMoveInstanceId).toBeNull()
     expect(result.isMoving).toBe(false)
     expect(result.movementTarget).toBeNull()
     expect(result.playerRotation).toBe(1.5)
@@ -159,53 +157,6 @@ describe('interactionCounter', () => {
 
     expect(first.interactionCounter).toBe(1)
     expect(second.interactionCounter).toBe(2)
-  })
-})
-
-const approachIdleState: PlayerState = {
-  state: 'idle',
-  speed: 0,
-  rotation: 0,
-  position: { x: 0, y: 0, z: 0 },
-}
-
-describe('decidePickupApproach', () => {
-  it('ignores pickup approach while dead', () => {
-    expect(
-      decidePickupApproach({
-        playerState: { ...approachIdleState, state: 'dead' },
-        intent: { instanceId: 1, position: { x: 1, y: 0, z: 2 } },
-        getGroundItem: () => undefined,
-      })
-    ).toEqual({ kind: 'ignored_dead' })
-  })
-
-  it('uses live ground item position when available', () => {
-    expect(
-      decidePickupApproach({
-        playerState: approachIdleState,
-        intent: { instanceId: 1, position: { x: 1, y: 0, z: 2 } },
-        getGroundItem: () => ({ position: { x: 3, y: 0, z: 4 } }),
-      })
-    ).toEqual({
-      kind: 'approach',
-      target: { x: 3, y: 0, z: 4 },
-      pickupAfterArrival: 1,
-    })
-  })
-
-  it('falls back to intent position when the item is missing locally', () => {
-    expect(
-      decidePickupApproach({
-        playerState: approachIdleState,
-        intent: { instanceId: 1, position: { x: 1, y: 0, z: 2 } },
-        getGroundItem: () => undefined,
-      })
-    ).toEqual({
-      kind: 'approach',
-      target: { x: 1, y: 0, z: 2 },
-      pickupAfterArrival: 1,
-    })
   })
 })
 
@@ -264,7 +215,6 @@ describe('beginPickupInteraction', () => {
     if (result.kind !== 'started') return
     expect(beginPickup).toHaveBeenCalledWith(42)
     expect(cancelCombat).toHaveBeenCalledOnce()
-    expect(result.pendingPickupAfterMoveInstanceId).toBeNull()
     expect(result.pendingPickupInstanceId).toBe(42)
     expect(result.isMoving).toBe(false)
     expect(result.movementTarget).toBeNull()

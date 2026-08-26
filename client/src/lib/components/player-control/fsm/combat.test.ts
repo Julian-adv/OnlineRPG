@@ -451,7 +451,6 @@ describe('beginAttack', () => {
         rotation: 0.5,
         attackCounter: 1,
       },
-      pendingPickupAfterMoveInstanceId: null,
     })
   })
 
