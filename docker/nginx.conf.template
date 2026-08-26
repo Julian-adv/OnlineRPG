@@ -87,7 +87,9 @@ server {
         add_header Cache-Control "no-cache, no-store, must-revalidate";
     }
 
+    # The client has no client-side routing, so an unknown path is a typo or a
+    # scanner. Falling back to index.html answered credential sweeps with 200.
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ =404;
     }
 }
