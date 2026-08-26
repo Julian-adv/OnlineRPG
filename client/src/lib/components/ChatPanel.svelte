@@ -29,6 +29,7 @@
     translateChatText,
     isTranslatorApiSupported,
   } from '../translation/chatTranslator'
+  import { draggablePanel } from '../actions/draggablePanel'
 
   type Tab = 'all' | 'party' | 'combat'
   const TRANSCRIPT_FADE_DELAY_MS = 20_000
@@ -355,8 +356,10 @@
   class:transcript-faded={!transcriptVisible}
   onmouseenter={() => setHovering(true)}
   onmouseleave={() => setHovering(false)}
+  use:draggablePanel={'chat'}
 >
-  <div class="tabs">
+  <div class="tabs" data-drag-handle>
+    <span class="chat-title">Chat</span>
     <button
       class="tab"
       class:active={activeTab === 'all'}
@@ -533,11 +536,19 @@
 
 <style>
   .chat-panel {
-    /* Laid out by .bottom-hud (a flex row): take up to 450px on the left but
-       shrink toward the action cluster when the viewport is narrow. */
-    flex: 0 1 auto;
-    min-width: 0;
-    width: 450px;
+    /* Bottom-left by default, shrinking to stay clear of the action cluster;
+       draggablePanel overrides inset once the panel has been moved. */
+    position: fixed;
+    left: var(--hud-edge-left);
+    bottom: var(--hud-edge-bottom);
+    z-index: 30;
+    width: min(
+      450px,
+      calc(
+        100vw - var(--hud-edge-left) - var(--hud-edge-right) -
+          var(--hud-row-gap) - var(--cluster-width, 0px)
+      )
+    );
     height: 300px;
     background: rgba(0, 0, 0, 0.8);
     border: 1px solid #4a5568;
@@ -564,14 +575,28 @@
 
   .tabs {
     display: flex;
+    overflow: hidden;
     border-bottom: 1px solid #4a5568;
     flex-shrink: 0;
     transition: opacity 700ms ease;
   }
 
-  .tab {
+  .chat-title {
     flex: 1;
-    padding: 6px 0;
+    min-width: 0;
+    padding: 6px 10px;
+    color: #a0aec0;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .tab {
+    flex: 0 1 auto;
+    min-width: 0;
+    padding: 6px 12px;
     border: none;
     background: transparent;
     color: #718096;
@@ -586,6 +611,17 @@
 
   .tab:hover {
     color: #e2e8f0;
+  }
+
+  .tab:focus {
+    outline: none;
+  }
+
+  /* Inset so .tabs' overflow can't crop it, and accent-blue instead of the
+     white UA ring. */
+  .tab:focus-visible {
+    outline: 2px solid rgba(66, 153, 225, 0.9);
+    outline-offset: -2px;
   }
 
   .tab.active {
@@ -916,9 +952,8 @@
     border-radius: 3px;
   }
 
-  /* Phone / narrow: chat stays on the bottom row beside the action cluster and
-     just gets narrower (flex-shrink absorbs the squeeze); shrink its height and
-     round corners too. */
+  /* Phone / narrow: chat stays beside the action cluster and just gets
+     narrower; shrink its height and round corners too. */
   @media (max-width: 600px), (pointer: coarse) and (max-width: 900px) {
     .chat-panel {
       height: min(124px, 22dvh);
@@ -926,8 +961,13 @@
       border-radius: 6px;
     }
 
+    .chat-title {
+      padding: 4px 8px;
+      font-size: 10px;
+    }
+
     .tab {
-      padding: 4px 0;
+      padding: 4px 8px;
       font-size: 10px;
     }
 

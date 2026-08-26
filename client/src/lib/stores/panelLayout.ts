@@ -2,6 +2,7 @@ import { get, writable } from 'svelte/store'
 
 const STORAGE_KEY = 'hudPanelLayout'
 export const PANEL_IDS = [
+  'chat',
   'character',
   'inventory',
   'friends',
