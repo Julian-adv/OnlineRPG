@@ -5,6 +5,7 @@ import type {
   PlayerInventory,
 } from '../network/networkTypes'
 import { getItemDef } from '../data/itemDefs'
+import type { HungerSnapshot } from './hungerStore'
 
 export type { EquipSlot, ItemInstance, PlayerInventory }
 
@@ -35,6 +36,25 @@ export const localTorchEquipped = derived(inventoryStore, (inv) => {
   const id = inv.equipped.off_hand?.item_def_id
   return isTorchItemDefId(id)
 })
+
+function itemWeight(item: ItemInstance): number {
+  return (getItemDef(item.item_def_id)?.weight ?? 1) * item.quantity
+}
+
+export const carryWeight = derived(inventoryStore, (inv) => {
+  let total = 0
+  for (const item of inv.bag) total += itemWeight(item)
+  for (const item of Object.values(inv.equipped)) {
+    if (item) total += itemWeight(item)
+  }
+  return total
+})
+
+/** Mirrors the server's max_carry_weight: STR × 15 scaled by hunger. */
+export const maxCarryWeight = (str: number, hunger: HungerSnapshot | null) =>
+  str * 15 * (hunger?.carryMult ?? 1)
+
+export const formatKg = (weight: number) => (weight / 10).toFixed(1)
 
 /** The local player's first revive item (phoenix talisman), offered on the
  *  death dialog together with its def. */

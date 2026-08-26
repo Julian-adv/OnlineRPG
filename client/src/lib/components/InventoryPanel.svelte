@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { inventoryStore, playerGold } from '../stores/inventoryStore'
+  import {
+    inventoryStore,
+    playerGold,
+    carryWeight,
+    maxCarryWeight,
+    formatKg,
+  } from '../stores/inventoryStore'
+  import { hungerState } from '../stores/hungerStore'
   import type { ItemInstance } from '../stores/inventoryStore'
   import {
     getItemDef,
@@ -8,7 +15,7 @@
   } from '../data/itemDefs'
   import GoldAmount from './GoldAmount.svelte'
   import { networkManager } from '../network/socket'
-  import type { CharacterAttributes, EquipSlot } from '../network/networkTypes'
+  import type { EquipSlot } from '../network/networkTypes'
   import {
     dragMeta,
     startDrag,
@@ -28,30 +35,14 @@
 
   interface Props {
     visible: boolean
-    attributes: CharacterAttributes | null
+    str: number
     onClose: () => void
   }
 
-  let { visible, attributes, onClose }: Props = $props()
+  let { visible, str, onClose }: Props = $props()
 
-  const maxWeight = $derived(attributes ? attributes.str * 15 : 150)
-
-  function itemWeight(item: ItemInstance): number {
-    const def = getItemDef(item.item_def_id)
-    return (def?.weight ?? 1) * item.quantity
-  }
-
-  const currentWeight = $derived.by(() => {
-    const inv = $inventoryStore
-    let total = 0
-    for (const item of inv.bag) total += itemWeight(item)
-    for (const item of Object.values(inv.equipped)) {
-      if (item) total += itemWeight(item)
-    }
-    return total
-  })
-
-  const weightRatio = $derived(maxWeight > 0 ? currentWeight / maxWeight : 0)
+  const maxWeight = $derived(maxCarryWeight(str, $hungerState))
+  const weightRatio = $derived(maxWeight > 0 ? $carryWeight / maxWeight : 0)
 
   const slots = $derived(buildInventorySlots(sortBag($inventoryStore.bag)))
 
@@ -328,9 +319,9 @@
         class="weight-fill"
         style="width: {Math.min(weightRatio, 1) * 100}%"
       ></div>
-      <span class="weight-text">
-        {(currentWeight / 10).toFixed(1)} / {(maxWeight / 10).toFixed(1)} kg
-      </span>
+      <span class="weight-text"
+        >{formatKg($carryWeight)} / {formatKg(maxWeight)} kg</span
+      >
     </div>
   </div>
 {/if}

@@ -4,13 +4,30 @@
   import { cubicOut } from 'svelte/easing'
   import { characterPanelVisible } from '../stores/debugStore'
   import { levelProgress } from '../utils/xpProgress'
+  import {
+    playerGold,
+    carryWeight,
+    maxCarryWeight,
+    formatKg,
+  } from '../stores/inventoryStore'
+  import { hungerState } from '../stores/hungerStore'
+  import GoldAmount from './GoldAmount.svelte'
 
   let {
     level,
     xp,
     hp,
     maxHp,
-  }: { level: number; xp: number; hp: number; maxHp: number } = $props()
+    str,
+  }: {
+    level: number
+    xp: number
+    hp: number
+    maxHp: number
+    str: number
+  } = $props()
+
+  const maxWeight = $derived(maxCarryWeight(str, $hungerState))
 
   const xpInfo = $derived(levelProgress(level, xp))
   const ring = new Tween(0, { duration: 300, easing: cubicOut })
@@ -197,6 +214,11 @@
     <div>
       <strong class="hp">{Math.round(hp).toLocaleString()}</strong>
       <span> / {Math.round(maxHp).toLocaleString()} HP</span>
+    </div>
+    <div class="gold"><GoldAmount copper={$playerGold} /></div>
+    <div>
+      <strong class="weight">{formatKg($carryWeight)}</strong>
+      <span> / {formatKg(maxWeight)} kg</span>
     </div>
   </div>
 </button>
@@ -404,6 +426,14 @@
 
   .xp-tooltip strong.hp {
     color: #e05a4d;
+  }
+
+  .xp-tooltip strong.weight {
+    color: #6ba3d6;
+  }
+
+  .xp-tooltip .gold {
+    font-weight: 700;
   }
 
   .xp-tooltip em {
