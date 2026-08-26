@@ -1235,10 +1235,15 @@
   })
 
   function enterPickup(instanceId: number) {
+    // Face the item: an in-reach click never walks, and a blocked walk-up
+    // stops facing its travel direction.
+    const item = groundItemManager.items.get(instanceId)
+    if (item) faceTowards(item.position.x, item.position.z)
+
     const result = beginPickupInteraction({
       instanceId,
-      previousPlayerState: playerState,
-      hasGroundItem: (id) => groundItemManager.items.has(id),
+      previousPlayerState: { ...playerState, rotation: playerRotation },
+      hasGroundItem: () => item !== undefined,
       beginPickup: (id) => groundItemManager.beginPickup(id),
       cancelCombat: () => combatController.cancelCombat(),
     })
@@ -1248,6 +1253,7 @@
     // The picking_up state OWNS the instance id being grabbed; entering it drops
     // any moving data (the far-pickup approach that led here).
     currentSpeed = 0
+    if (currentPlayer) sendPlayerMove(currentPlayer.position, playerRotation) // others see the facing
     networkManager.sendPickupStarted()
     setPlayerState(result.nextPlayerState)
     playerControlMachine.transition({
