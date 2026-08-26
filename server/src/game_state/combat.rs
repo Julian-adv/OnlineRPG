@@ -249,7 +249,6 @@ impl super::GameState {
         else {
             return Err(AttackRejectReason::InvalidTarget);
         };
-
         let player_snapshot = {
             let players = self.players.read().await;
             players
@@ -273,23 +272,33 @@ impl super::GameState {
         // monsters on another floor, but gate here too so a stale monster
         // id can't drive a cross-floor hit (the original bug: a surface
         // guard striking a monster on the dungeon floor beneath it).
-        let Some(distance_sq) = reachable_dist_sq(
-            player_position,
-            player_floor,
-            monster_position,
-            monster_floor_level,
-        ) else {
+        let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_MELEE_RANGE_TOLERANCE_METERS;
+        let reach = |target: Position| {
+            reachable_dist_sq(player_position, player_floor, target, monster_floor_level)
+        };
+        let Some(mut distance_sq) = reach(monster_position) else {
             return Err(AttackRejectReason::InvalidTarget);
         };
+        // The registry trails a running monster by up to a sync interval, so
+        // a swing it refuses is re-judged where the brain has the monster.
+        let mut gate_position = monster_position;
+        if distance_sq > melee_range.powi(2) {
+            if let Some(now) = self.brain_position_now(monster_id).await {
+                let Some(d) = reach(now) else {
+                    return Err(AttackRejectReason::InvalidTarget);
+                };
+                gate_position = now;
+                distance_sq = d;
+            }
+        }
         let walled_off = || {
             wall_between(
                 &self.passability_read(),
                 player_position,
-                monster_position,
+                gate_position,
                 player_floor,
             )
         };
-        let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_MELEE_RANGE_TOLERANCE_METERS;
         if distance_sq > melee_range.powi(2) {
             // A swing at a monster behind a shut door must not reach it as
             // aggro either.

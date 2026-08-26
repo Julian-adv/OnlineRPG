@@ -222,7 +222,7 @@ async fn player_move_fanout_cost_at_scale() {
                 ..origin
             };
             game_state
-                .update_player_position(&mover, move_cmd(position, false), true, false)
+                .update_player_position(&mover, move_cmd(position, false), false)
                 .await;
         }
         let per_move = start.elapsed() / MOVES as u32;

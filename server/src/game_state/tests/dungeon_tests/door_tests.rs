@@ -118,7 +118,6 @@ async fn cross_floor_dungeon_door_toggle_is_rejected() {
                 ..move_cmd(to, false)
             },
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -434,7 +433,7 @@ async fn dungeon_door_blocks_movement_until_opened() {
 
     // Shut (boot default): the crossing is sealed.
     game_state
-        .update_player_position(&player_id, go(to), false, false)
+        .update_player_position(&player_id, go(to), false)
         .await;
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_xz(&game_state, &player_id).await, (from.x, from.z));
@@ -447,7 +446,7 @@ async fn dungeon_door_blocks_movement_until_opened() {
         Some(true)
     );
     game_state
-        .update_player_position(&player_id, go(to), false, false)
+        .update_player_position(&player_id, go(to), false)
         .await;
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_xz(&game_state, &player_id).await, (to.x, to.z));
@@ -460,7 +459,7 @@ async fn dungeon_door_blocks_movement_until_opened() {
         Some(false)
     );
     game_state
-        .update_player_position(&player_id, go(from), false, false)
+        .update_player_position(&player_id, go(from), false)
         .await;
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_xz(&game_state, &player_id).await, (to.x, to.z));
@@ -621,7 +620,6 @@ async fn furniture_removal_reopens_blocked_cells() {
                 },
                 false,
             ),
-            false,
             false,
         )
         .await;

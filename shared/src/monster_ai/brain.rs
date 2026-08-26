@@ -162,35 +162,18 @@ impl MonsterBrain {
         self.pending_bend_sync = true;
     }
 
-    /// Consume a pending bend without disturbing the sync timer, for states
-    /// that report only at bends rather than on an interval.
-    pub(super) fn take_path_bend(&mut self) -> bool {
-        std::mem::take(&mut self.pending_bend_sync)
-    }
-
-    /// Drop a pending bend for a caller that emits this pose itself, so the
-    /// bend isn't reported twice.
-    pub(super) fn clear_path_bend(&mut self) {
-        self.pending_bend_sync = false;
+    /// A sync the step must not precede: a new movement state or a path bend,
+    /// where a post-step pose would put the server's chord across the corner.
+    pub(super) fn sync_due_before_step(&self) -> bool {
+        self.pending_bend_sync || self.state != self.last_synced_state
     }
 
     /// Gate for the per-tick position emits of continuously-moving states
-    /// (chase/return/flee): true on entering a new movement state, on a path
-    /// bend, or once `NETWORK_SYNC_INTERVAL_MS` has elapsed. Resets the timer
-    /// when it fires so the brain simulates every frame but only syncs a couple
-    /// of times a second. Remote clients interpolate toward the command's
+    /// (chase/return/flee): a state change, a bend, or `NETWORK_SYNC_INTERVAL_MS`
+    /// elapsed. Remote clients interpolate toward the command's
     /// `target_position` between syncs — see [`Self::current_leg_target`].
-    pub(super) fn should_sync_move(&mut self) -> bool {
-        if self.take_path_bend()
-            || self.state != self.last_synced_state
-            || self.sync_elapsed_ms >= NETWORK_SYNC_INTERVAL_MS
-        {
-            self.sync_elapsed_ms = 0.0;
-            self.last_synced_state = self.state;
-            true
-        } else {
-            false
-        }
+    pub(super) fn should_sync_move(&self) -> bool {
+        self.sync_due_before_step() || self.sync_elapsed_ms >= NETWORK_SYNC_INTERVAL_MS
     }
 
     /// Snap to the position the server settled on and drop the current path, so
@@ -204,7 +187,7 @@ impl MonsterBrain {
         self.position = position;
         self.waypoints.clear();
         self.current_waypoint_idx = 0;
-        self.clear_path_bend();
+        self.pending_bend_sync = false;
     }
 
     pub fn state(&self) -> AiState {
@@ -222,6 +205,14 @@ impl MonsterBrain {
     // =========================================================================
     // Main tick
     // =========================================================================
+
+    pub(super) fn advance_timers(&mut self, delta_ms: f32) {
+        self.state_timer_ms += delta_ms;
+        self.path_elapsed_ms += delta_ms;
+        self.sync_elapsed_ms += delta_ms;
+        self.attack_cooldown_left_ms = (self.attack_cooldown_left_ms - delta_ms).max(0.0);
+        self.swing_left_ms = (self.swing_left_ms - delta_ms).max(0.0);
+    }
 
     /// Build a `TickResult` snapshot of the brain's current pose plus `commands`.
     fn tick_result(&self, commands: Vec<AiCommand>) -> TickResult {
@@ -264,16 +255,12 @@ impl MonsterBrain {
                 self.cell_yield = true;
             }
         }
-        if !matches!(self.state, AiState::Chase | AiState::Hold | AiState::Attack) {
+        if !self.state.is_engaged() {
             self.reslotting = false;
             self.detour_goal = None;
         }
 
-        self.state_timer_ms += delta_ms;
-        self.path_elapsed_ms += delta_ms;
-        self.sync_elapsed_ms += delta_ms;
-        self.attack_cooldown_left_ms = (self.attack_cooldown_left_ms - delta_ms).max(0.0);
-        self.swing_left_ms = (self.swing_left_ms - delta_ms).max(0.0);
+        self.advance_timers(delta_ms);
         let mut commands = Vec::new();
 
         if self.state == AiState::Hit {
@@ -334,6 +321,7 @@ impl MonsterBrain {
         hit: bool,
         damage: u32,
     ) -> Vec<AiCommand> {
+        let previous_target = self.target_player_id;
         if !self.apply_hit(attacker_id, hit, damage) {
             return vec![];
         }
@@ -341,8 +329,15 @@ impl MonsterBrain {
         if hit {
             self.state = AiState::Hit;
             self.state_timer_ms = 0.0;
-            self.clear_path_bend();
             vec![self.make_move_cmd()]
+        } else if self.state.is_engaged() {
+            // Already engaged: idling here stopped a charging monster and
+            // slid it back to the last tick's pose on every missed swing.
+            // A new attacker only needs the next repath aimed at them.
+            if previous_target != self.target_player_id {
+                self.last_known_target_pos = None;
+            }
+            vec![]
         } else {
             // A miss (and the server's out-of-range provoke event) still
             // acquires the attacker. Cancel any in-progress wander so the
@@ -386,7 +381,7 @@ impl MonsterBrain {
                     rng,
                 );
             }
-        } else if self.take_path_bend() {
+        } else if self.pending_bend_sync {
             // A wander leg is otherwise reported only at its ends, so the
             // server would see one chord across every corner of it. Bends alone
             // are enough — no interval sync, since a straight run between two
@@ -395,9 +390,13 @@ impl MonsterBrain {
         }
     }
 
-    /// The one `Move` literal: every sync goes out through here or
-    /// [`Self::make_chase_move_cmd`], which differ only in where they point.
-    pub(super) fn move_cmd_to(&self, target_position: Position) -> AiCommand {
+    /// The one `Move` literal, and the one place a sync is recorded: a later
+    /// state change syncs at once even when it returns to the state synced
+    /// before this one, and the bend this pose reports is consumed.
+    pub(super) fn move_cmd_to(&mut self, target_position: Position) -> AiCommand {
+        self.sync_elapsed_ms = 0.0;
+        self.last_synced_state = self.state;
+        self.pending_bend_sync = false;
         AiCommand::Move {
             monster_id: self.monster_id.clone(),
             position: self.position,
@@ -407,7 +406,8 @@ impl MonsterBrain {
         }
     }
 
-    pub(super) fn make_move_cmd(&self) -> AiCommand {
-        self.move_cmd_to(self.current_leg_target())
+    pub(super) fn make_move_cmd(&mut self) -> AiCommand {
+        let aim = self.current_leg_target();
+        self.move_cmd_to(aim)
     }
 }

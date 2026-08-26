@@ -193,7 +193,6 @@ async fn walk_player_to(game_state: &GameState, player_id: &PlayerId, x: f32, z:
                     sprinting: false,
                 },
                 false,
-                false,
             )
             .await;
         game_state.tick_player_movement(60.0).await;

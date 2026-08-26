@@ -1313,7 +1313,6 @@ async fn handle_client_message(
                             append,
                             sprinting,
                         },
-                        state.is_admin,
                         state.is_official_npc,
                     )
                     .await;

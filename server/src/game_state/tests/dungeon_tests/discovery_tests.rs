@@ -29,13 +29,9 @@ async fn stage_wanderer(
 
 async fn walk_to(game_state: &GameState, player_id: &PlayerId, x: f32, z: f32) {
     game_state
-        .update_player_position(
-            player_id,
-            move_cmd(Position { x, y: 0.0, z }, false),
-            true,
-            false,
-        )
+        .update_player_position(player_id, move_cmd(Position { x, y: 0.0, z }, false), false)
         .await;
+    game_state.tick_player_movement(30.0).await;
 }
 
 /// Walking into event-delivery range of an entrance announces it exactly

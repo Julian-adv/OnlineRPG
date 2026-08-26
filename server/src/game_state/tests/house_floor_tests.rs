@@ -95,7 +95,7 @@ async fn a_forged_height_cannot_pick_the_storey() {
 
     for y in [3.1, 1000.0] {
         game_state
-            .update_player_position(&player_id, move_to(12.5, y, 13.5, 0), false, false)
+            .update_player_position(&player_id, move_to(12.5, y, 13.5, 0), false)
             .await;
         let (target, _) = queued_target(&game_state, &player_id)
             .await
@@ -123,7 +123,7 @@ async fn a_storey_change_off_the_stairs_is_refused_and_snapped() {
     let mut rx = game_state.register_direct_channel(&player_id).await;
 
     game_state
-        .update_player_position(&player_id, move_to(12.5, 3.1, 13.5, 1), false, false)
+        .update_player_position(&player_id, move_to(12.5, 3.1, 13.5, 1), false)
         .await;
     assert!(queued_target(&game_state, &player_id).await.is_none());
     let (position, _, floor_level) = first_correction(&mut rx).expect("snapped back");
@@ -142,7 +142,7 @@ async fn a_storey_change_on_the_stairs_is_accepted_both_ways() {
     let mut rx = game_state.register_direct_channel(&player_id).await;
 
     game_state
-        .update_player_position(&player_id, move_to(10.5, 3.1, 13.5, 1), false, false)
+        .update_player_position(&player_id, move_to(10.5, 3.1, 13.5, 1), false)
         .await;
     let (target, floor) = queued_target(&game_state, &player_id)
         .await
@@ -190,7 +190,7 @@ async fn stairwell_height_is_derived_not_reported() {
     let (game_state, player_id) =
         house_with_player("storey_derived_y", "walker", 10.5, 10.5, 0).await;
     game_state
-        .update_player_position(&player_id, move_to(10.5, 1000.0, 12.0, 0), false, false)
+        .update_player_position(&player_id, move_to(10.5, 1000.0, 12.0, 0), false)
         .await;
     let (target, _) = queued_target(&game_state, &player_id)
         .await
@@ -207,7 +207,7 @@ async fn open_terrain_keeps_the_reported_height() {
     let (game_state, player_id) =
         house_with_player("terrain_reported_y", "rover", 50.5, 50.5, 0).await;
     game_state
-        .update_player_position(&player_id, move_to(51.5, 7.0, 50.5, 0), false, false)
+        .update_player_position(&player_id, move_to(51.5, 7.0, 50.5, 0), false)
         .await;
     let (target, _) = queued_target(&game_state, &player_id)
         .await
@@ -221,7 +221,7 @@ async fn open_terrain_keeps_the_reported_height() {
 async fn an_official_npc_changes_storey_off_the_stairs() {
     let (game_state, player_id) = house_with_player("storey_npc", "rica", 12.5, 11.5, 0).await;
     game_state
-        .update_player_position(&player_id, move_to(12.5, 3.1, 13.5, 1), false, true)
+        .update_player_position(&player_id, move_to(12.5, 3.1, 13.5, 1), true)
         .await;
     let (target, floor) = queued_target(&game_state, &player_id)
         .await

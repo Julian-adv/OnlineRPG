@@ -28,6 +28,15 @@ struct Entry {
     last_tick: Instant,
 }
 
+impl Entry {
+    /// Simulated time owed to the brain up to `now`, and mark it paid.
+    fn owed_ms(&mut self, now: Instant, forced: Option<f32>) -> f32 {
+        let delta = forced.unwrap_or_else(|| (now - self.last_tick).as_secs_f32() * 1000.0);
+        self.last_tick = now;
+        delta.min(MAX_BRAIN_DELTA_MS)
+    }
+}
+
 #[derive(Default)]
 struct Stats {
     ticks: u32,
@@ -293,10 +302,7 @@ impl super::GameState {
                 let Some(tree) = monster_ai::behavior_tree_for(trees, &entry.brain.behavior) else {
                     continue;
                 };
-                let now = Instant::now();
-                let delta_ms = forced_delta_ms
-                    .unwrap_or_else(|| (now - entry.last_tick).as_secs_f32() * 1000.0);
-                entry.last_tick = now;
+                let delta_ms = entry.owed_ms(Instant::now(), forced_delta_ms);
                 let monsters: Vec<NearbyMonster> =
                     super::SpatialCell::within_radius(&entry.brain.position, radius)
                         .filter_map(|cell| standing.get(&cell))
@@ -305,12 +311,7 @@ impl super::GameState {
                         .cloned()
                         .collect();
                 let result = entry.brain.tick_with_behavior_tree(
-                    delta_ms.min(MAX_BRAIN_DELTA_MS),
-                    &a.players,
-                    &monsters,
-                    tree,
-                    &path,
-                    &mut rng,
+                    delta_ms, &a.players, &monsters, tree, &path, &mut rng,
                 );
                 ticked += 1;
                 commands.extend(
@@ -487,6 +488,10 @@ impl super::GameState {
             let Some(entry) = brains.entries.get_mut(monster_id) else {
                 return;
             };
+            // A swing lands between ticks; the hit pose must not rewind the
+            // monster to the last tick's step.
+            let owed = entry.owed_ms(Instant::now(), None);
+            entry.brain.catch_up(owed);
             entry
                 .brain
                 .handle_hit_with_behavior_tree(attacker_id, hit, damage)
@@ -505,6 +510,19 @@ impl super::GameState {
             self.apply_ai_command(monster_id, floor_level, command)
                 .await;
         }
+    }
+
+    /// Where the brain has the monster right now; the registry trails it by
+    /// up to a sync interval while it runs.
+    pub(super) async fn brain_position_now(&self, monster_id: &str) -> Option<Position> {
+        if !self.server_monster_ai() {
+            return None;
+        }
+        let mut brains = self.monster_brains.lock().await;
+        let entry = brains.entries.get_mut(monster_id)?;
+        let owed = entry.owed_ms(Instant::now(), None);
+        entry.brain.catch_up(owed);
+        Some(entry.brain.position)
     }
 
     pub(super) async fn brain_death(&self, monster_id: &str) {

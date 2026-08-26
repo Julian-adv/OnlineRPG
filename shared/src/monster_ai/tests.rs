@@ -733,6 +733,79 @@ fn provocation_interrupts_an_in_progress_wander() {
     )));
 }
 
+/// A brain one tick into a chase of player 1, standing 5m away in +x.
+fn chasing_brain() -> (MonsterBrain, Vec<NearbyPlayer>) {
+    let mut brain = make_brain();
+    brain.target_player_id = Some(1.into());
+    let players = attacker_at(15.0, 10.0);
+    let mut rng = SmallRng::seed_from_u64(42);
+    brain.tick_with_behavior_tree(50.0, &players, &[], &chase_tree(), &DirectPath, &mut rng);
+    assert_eq!(brain.state(), AiState::Chase);
+    (brain, players)
+}
+
+#[test]
+fn a_missed_swing_keeps_a_chasing_brain_on_its_leg() {
+    let (mut brain, _) = chasing_brain();
+    let before = brain.position;
+
+    let commands = brain.handle_hit_with_behavior_tree(&1.into(), false, 0);
+
+    assert!(
+        commands.is_empty(),
+        "no idle pose to rewind the client: {commands:?}"
+    );
+    assert_eq!(brain.state(), AiState::Chase);
+    assert_eq!(brain.position, before);
+    assert!(!brain.waypoints.is_empty());
+}
+
+#[test]
+fn a_missed_swing_by_another_player_retargets_the_chase() {
+    let (mut brain, _) = chasing_brain();
+    assert!(brain.last_known_target_pos.is_some());
+
+    brain.handle_hit_with_behavior_tree(&2.into(), false, 0);
+
+    assert_eq!(brain.state(), AiState::Chase);
+    assert_eq!(brain.target_player_id, Some(PlayerId::from(2)));
+    assert!(
+        brain.last_known_target_pos.is_none(),
+        "the next tick must repath toward the new attacker"
+    );
+}
+
+#[test]
+fn catch_up_walks_the_leg_before_the_hit_pose_goes_out() {
+    let (mut brain, _) = chasing_brain();
+    let held = brain.position;
+
+    brain.catch_up(100.0);
+    let commands = brain.handle_hit_with_behavior_tree(&1.into(), true, 1);
+
+    let walked = held.dist_xz_sq(&brain.position).sqrt();
+    assert!(
+        (walked - 0.8).abs() < 1e-3,
+        "{:?} vs {held:?}",
+        brain.position
+    );
+    assert!(matches!(
+        commands.as_slice(),
+        [AiCommand::Move { state: MonsterState::Hit, position, .. }] if *position == brain.position
+    ));
+}
+
+#[test]
+fn catch_up_ends_at_the_leg_not_past_it() {
+    let (mut brain, players) = chasing_brain();
+
+    brain.catch_up(5_000.0);
+
+    assert!(brain.current_waypoint_idx >= brain.waypoints.len());
+    let d = brain.position.dist_xz_sq(&players[0].position).sqrt();
+    assert!(d <= DEFAULT_ATTACK_RANGE, "overran the target to {d}m");
+}
+
 #[test]
 fn attack_chases_nearby_player() {
     let mut brain = make_brain();
@@ -2274,4 +2347,71 @@ fn chase_syncs_land_the_client_where_the_attack_starts() {
         }
     }
     assert!(chased >= 5, "only {chased} seeds produced a chase");
+}
+
+#[test]
+fn a_chase_resumed_after_a_hit_syncs_before_its_first_step() {
+    let (mut brain, players) = chasing_brain();
+    let mut rng = SmallRng::seed_from_u64(42);
+    assert_eq!(
+        brain
+            .handle_hit_with_behavior_tree(&1.into(), true, 1)
+            .len(),
+        1
+    );
+    assert_eq!(brain.state(), AiState::Hit);
+    let held = brain.position;
+
+    let result = brain.tick_with_behavior_tree(
+        DEFAULT_HIT_STAGGER_MS,
+        &players,
+        &[],
+        &chase_tree(),
+        &DirectPath,
+        &mut rng,
+    );
+
+    assert_eq!(brain.state(), AiState::Chase);
+    // A post-step sync would report a pose a whole tick ahead of the hit
+    // pose the client is holding.
+    assert!(
+        result.commands.iter().any(|c| matches!(
+            c,
+            AiCommand::Move { state: MonsterState::Run, position, .. } if *position == held
+        )),
+        "{held:?} vs {:?}",
+        result.commands
+    );
+}
+
+#[test]
+fn a_repath_that_turns_mid_leg_reports_the_turn_point_not_the_next_step() {
+    let (mut brain, mut players) = chasing_brain();
+    let mut rng = SmallRng::seed_from_u64(42);
+    brain.tick_with_behavior_tree(200.0, &players, &[], &chase_tree(), &DirectPath, &mut rng);
+    assert!(
+        brain.current_waypoint_idx < brain.waypoints.len(),
+        "mid-leg"
+    );
+    // The target steps far enough sideways to force a repath at an angle.
+    players[0].position.z += 6.0;
+    let turn = brain.position;
+
+    let result =
+        brain.tick_with_behavior_tree(200.0, &players, &[], &chase_tree(), &DirectPath, &mut rng);
+
+    let moves: Vec<_> = result
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            AiCommand::Move { position, .. } => Some(*position),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(moves.len(), 1, "{:?}", result.commands);
+    assert_eq!(
+        moves[0], turn,
+        "a pose past the turn makes the chord from the last report cut the corner"
+    );
+    assert!(brain.position != turn, "the step still happens this tick");
 }

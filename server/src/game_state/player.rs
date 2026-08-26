@@ -1030,12 +1030,11 @@ impl super::GameState {
 
     /// Handle a client PlayerMove. The client sends destinations (waypoints),
     /// so the position becomes a MoveIntent that `tick_player_movement` walks
-    /// toward; trusted (admin) connections apply immediately.
+    /// toward.
     pub async fn update_player_position(
         &self,
         player_id: &PlayerId,
         cmd: MoveCommand,
-        trusted: bool,
         is_official_npc: bool,
     ) {
         let MoveCommand {
@@ -1070,35 +1069,6 @@ impl super::GameState {
                 }
             }
         };
-        if trusted {
-            let sprinting = sprinting && self.hunger_sprint_allowed(player_id).await;
-            self.apply_player_position(
-                player_id,
-                new_position,
-                new_rotation,
-                floor_level,
-                ServerMessage::PlayerMoved {
-                    player_id: *player_id,
-                    position: new_position,
-                    rotation: new_rotation,
-                    floor_level,
-                    sprinting,
-                },
-            )
-            .await;
-            // An admin's moves apply here and never reach the movement tick,
-            // so roll their displacement here or they would never meet an
-            // ambient monster.
-            self.spawn_along_movement(&[super::ambient_spawn::MoveStep {
-                player_id: *player_id,
-                from: current_position,
-                to: new_position,
-                floor_level,
-                is_official_npc,
-            }])
-            .await;
-            return;
-        }
 
         // Appended legs chain off the queue tail, so both the floor change and
         // the distance guard judge the new leg, not the path from the player.

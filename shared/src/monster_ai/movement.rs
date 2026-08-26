@@ -19,7 +19,6 @@ impl MonsterBrain {
         self.target_position = None;
         self.waypoints.clear();
         self.current_waypoint_idx = 0;
-        self.clear_path_bend();
         commands.push(self.make_move_cmd());
     }
 
@@ -65,7 +64,6 @@ impl MonsterBrain {
         }
 
         self.face_first_waypoint();
-        self.clear_path_bend();
 
         commands.push(self.make_move_cmd());
     }
@@ -89,7 +87,6 @@ impl MonsterBrain {
             return;
         }
 
-        self.clear_path_bend();
         commands.push(self.make_move_cmd());
     }
 
@@ -382,6 +379,23 @@ impl MonsterBrain {
         }
 
         (false, false)
+    }
+
+    /// Let `elapsed_ms` pass outside a tick — timers and the current leg, no
+    /// decisions — so a pose read or emitted between ticks is where the
+    /// monster is now, not where the last tick left it.
+    pub fn catch_up(&mut self, elapsed_ms: f32) {
+        self.advance_timers(elapsed_ms);
+        if !self.state.is_on_the_move() {
+            return;
+        }
+        if self.state == AiState::Chase {
+            if let Some(target) = self.last_known_target_pos {
+                self.follow_path_engaging(elapsed_ms, target, self.chase_stop_range());
+            }
+        } else {
+            self.follow_path(elapsed_ms);
+        }
     }
 
     pub(super) fn target_moved_significantly_by(

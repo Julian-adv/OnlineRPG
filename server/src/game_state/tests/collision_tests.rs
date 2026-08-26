@@ -23,7 +23,6 @@ async fn simulated_movement_is_blocked_by_solid_furniture() {
                 false,
             ),
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -41,7 +40,6 @@ async fn simulated_movement_is_blocked_by_solid_furniture() {
                 },
                 false,
             ),
-            false,
             false,
         )
         .await;
@@ -68,7 +66,7 @@ async fn a_forged_height_cannot_clear_solid_furniture() {
         z: 3.5,
     };
     game_state
-        .update_player_position(&player_id, move_cmd(perch, false), false, false)
+        .update_player_position(&player_id, move_cmd(perch, false), false)
         .await;
     game_state.tick_player_movement(60.0).await;
     assert_eq!(player_xz(&game_state, &player_id).await, (0.5, 3.5));
@@ -85,7 +83,6 @@ async fn a_forged_height_cannot_clear_solid_furniture() {
                 },
                 false,
             ),
-            false,
             false,
         )
         .await;
@@ -116,7 +113,6 @@ async fn queued_waypoints_route_around_furniture() {
                 &player_id,
                 move_cmd(Position { x, y: 0.0, z }, append),
                 false,
-                false,
             )
             .await;
     }
@@ -142,7 +138,6 @@ async fn blocked_leg_drops_remaining_queue() {
             .update_player_position(
                 &player_id,
                 move_cmd(Position { x, y: 0.0, z }, append),
-                false,
                 false,
             )
             .await;
@@ -182,7 +177,6 @@ async fn grazing_corner_slides_instead_of_stalling() {
                 false,
             ),
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -219,7 +213,6 @@ async fn repeated_beeline_past_a_wall_does_not_pin_the_shadow() {
                     false,
                 ),
                 false,
-                false,
             )
             .await;
         game_state.tick_player_movement(1.0).await;
@@ -252,7 +245,6 @@ async fn a_refused_step_snaps_the_client_back_to_the_server() {
                 false,
             ),
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -273,7 +265,6 @@ async fn a_refused_step_snaps_the_client_back_to_the_server() {
                 },
                 false,
             ),
-            false,
             false,
         )
         .await;
@@ -303,7 +294,6 @@ async fn a_slid_step_is_not_corrected() {
                 false,
             ),
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -332,7 +322,6 @@ async fn npc_movement_is_exempt_from_collision() {
                 },
                 false,
             ),
-            false,
             true,
         )
         .await;
@@ -405,7 +394,6 @@ async fn a_player_sealed_in_is_walked_out_instead_of_pinned() {
                 false,
             ),
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -462,7 +450,6 @@ async fn furniture_dropped_on_a_player_is_not_a_seal() {
                 },
                 false,
             ),
-            false,
             false,
         )
         .await;

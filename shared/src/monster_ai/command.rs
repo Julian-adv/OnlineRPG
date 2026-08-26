@@ -37,6 +37,19 @@ impl AiState {
             AiState::Hold => MonsterState::Idle,
         }
     }
+
+    /// Chasing, queued behind a stander, or swinging at a target.
+    pub fn is_engaged(self) -> bool {
+        matches!(self, AiState::Chase | AiState::Hold | AiState::Attack)
+    }
+
+    /// Walks a path between ticks.
+    pub fn is_on_the_move(self) -> bool {
+        matches!(
+            self,
+            AiState::Chase | AiState::Walk | AiState::Run | AiState::Flee | AiState::Return
+        )
+    }
 }
 
 /// Minimal player projection for behavior input.

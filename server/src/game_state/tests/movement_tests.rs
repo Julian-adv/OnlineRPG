@@ -71,7 +71,7 @@ async fn movement_into_aoi_sends_existing_monsters_and_ground_items() {
     }
 
     game_state
-        .update_player_position(&player_id, move_cmd(entity_position, false), false, false)
+        .update_player_position(&player_id, move_cmd(entity_position, false), false)
         .await;
     game_state.tick_player_movement(60.0).await;
 
@@ -167,7 +167,7 @@ async fn movement_into_aoi_sends_a_monster_that_walked_there() {
 
     let mut direct_rx = game_state.register_direct_channel(&walker_id).await;
     game_state
-        .update_player_position(&walker_id, move_cmd(pos(aoi - 3.0), false), false, false)
+        .update_player_position(&walker_id, move_cmd(pos(aoi - 3.0), false), false)
         .await;
     game_state.tick_player_movement(60.0).await;
 
@@ -207,7 +207,6 @@ async fn player_movement_wraps_across_east_world_edge() {
                 append: false,
                 sprinting: false,
             },
-            false,
             false,
         )
         .await;
@@ -254,7 +253,6 @@ async fn seam_crossing_movement_checks_destination_edge_collision() {
                 false,
             ),
             false,
-            false,
         )
         .await;
     game_state.tick_player_movement(60.0).await;
@@ -276,7 +274,7 @@ async fn server_caps_player_movement_speed() {
     game_state.add_player(make_player("runner", 0.0, 0.0)).await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(50.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(50.0), false), false)
         .await;
 
     assert_eq!(player_x(&game_state, &player_id).await, 0.0);
@@ -298,11 +296,11 @@ async fn one_tick_budget_spans_queued_legs() {
         .await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(1.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(1.0), false), false)
         .await;
     for x in [2.0, 3.0] {
         game_state
-            .update_player_position(&player_id, move_cmd(pos(x), true), false, false)
+            .update_player_position(&player_id, move_cmd(pos(x), true), false)
             .await;
     }
 
@@ -325,15 +323,15 @@ async fn append_distance_guard_measures_from_queue_tail() {
         .await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(50.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(50.0), false), false)
         .await;
     // 100 is >60m from the player but only 50m from the queue tail: accepted.
     game_state
-        .update_player_position(&player_id, move_cmd(pos(100.0), true), false, false)
+        .update_player_position(&player_id, move_cmd(pos(100.0), true), false)
         .await;
     // 70m from the new tail: rejected.
     game_state
-        .update_player_position(&player_id, move_cmd(pos(170.0), true), false, false)
+        .update_player_position(&player_id, move_cmd(pos(170.0), true), false)
         .await;
 
     game_state.tick_player_movement(600.0).await;
@@ -349,13 +347,13 @@ async fn replace_drops_queued_waypoints() {
         .await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(10.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(10.0), false), false)
         .await;
     game_state
-        .update_player_position(&player_id, move_cmd(pos(20.0), true), false, false)
+        .update_player_position(&player_id, move_cmd(pos(20.0), true), false)
         .await;
     game_state
-        .update_player_position(&player_id, move_cmd(pos(5.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(5.0), false), false)
         .await;
 
     game_state.tick_player_movement(60.0).await;
@@ -371,11 +369,11 @@ async fn full_waypoint_queue_drops_oldest_leg() {
         .await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(1.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(1.0), false), false)
         .await;
     for i in 2..=40 {
         game_state
-            .update_player_position(&player_id, move_cmd(pos(i as f32), true), false, false)
+            .update_player_position(&player_id, move_cmd(pos(i as f32), true), false)
             .await;
     }
 
@@ -396,7 +394,7 @@ async fn non_finite_move_is_rejected() {
 
     for (bad, _) in NON_FINITE {
         game_state
-            .update_player_position(&player_id, move_cmd(pos(bad), false), false, false)
+            .update_player_position(&player_id, move_cmd(pos(bad), false), false)
             .await;
     }
     game_state.tick_player_movement(60.0).await;
@@ -454,7 +452,6 @@ async fn player_move_cannot_bypass_positive_floor_limit() {
                 sprinting: false,
             },
             false,
-            false,
         )
         .await;
 
@@ -475,7 +472,7 @@ async fn player_move_cannot_bypass_positive_floor_limit() {
     ));
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(1.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(1.0), false), false)
         .await;
     game_state.tick_player_movement(1.0).await;
     let player = game_state.players.read().await[&player_id].clone();
@@ -509,7 +506,6 @@ async fn a_rejected_floor_change_snaps_the_client_back() {
                 ..move_cmd(pos(1.0), false)
             },
             false,
-            false,
         )
         .await;
     assert!(first_correction(&mut rx).is_none());
@@ -530,7 +526,6 @@ async fn a_rejected_move_floor_snaps_the_client_back() {
                 floor_level: max_floor + 1,
                 ..move_cmd(pos(1.0), false)
             },
-            false,
             false,
         )
         .await;
@@ -569,22 +564,10 @@ async fn far_move_target_is_rejected() {
     game_state.add_player(make_player("warper", 0.0, 0.0)).await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(100.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(100.0), false), false)
         .await;
     game_state.tick_player_movement(600.0).await;
     assert_eq!(player_x(&game_state, &player_id).await, 0.0);
-}
-
-#[tokio::test]
-async fn admin_move_applies_immediately() {
-    let game_state = make_test_game_state("movement_admin_bypass");
-    let player_id = pid("gm");
-    game_state.add_player(make_player("gm", 0.0, 0.0)).await;
-
-    game_state
-        .update_player_position(&player_id, move_cmd(pos(100.0), false), true, false)
-        .await;
-    assert_eq!(player_x(&game_state, &player_id).await, 100.0);
 }
 
 #[tokio::test]
@@ -596,7 +579,7 @@ async fn teleport_clears_pending_move_intent() {
         .await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(50.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(50.0), false), false)
         .await;
     game_state
         .teleport_player(
@@ -647,7 +630,7 @@ async fn rejected_far_move_snaps_client_back() {
     let mut direct_rx = game_state.register_direct_channel(&player_id).await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(100.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(100.0), false), false)
         .await;
 
     let corrections = |msgs: Vec<ServerMessage>| {
@@ -660,7 +643,7 @@ async fn rejected_far_move_snaps_client_back() {
     // A client that keeps predicting along a rejected path resends every
     // second; the snap rides the correction throttle instead of matching it.
     game_state
-        .update_player_position(&player_id, move_cmd(pos(101.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(101.0), false), false)
         .await;
     assert_eq!(corrections(drain(&mut direct_rx)), 0);
 }
@@ -681,7 +664,6 @@ async fn implausible_dungeon_floor_move_is_refused_and_snapped() {
                 floor_level: -1,
                 ..move_cmd(pos(1.0), false)
             },
-            false,
             false,
         )
         .await;
@@ -723,7 +705,6 @@ async fn plausible_dungeon_floor_move_is_not_snapped() {
                 floor_level: -1,
                 ..move_cmd(Position { x, y, z }, false)
             },
-            false,
             false,
         )
         .await;
@@ -775,7 +756,6 @@ async fn mid_ramp_descent_claim_is_not_snapped() {
                 ..move_cmd(Position { x, y, z }, false)
             },
             false,
-            false,
         )
         .await;
 
@@ -805,7 +785,7 @@ async fn dead_player_move_is_refused_and_snapped() {
     let mut direct_rx = game_state.register_direct_channel(&player_id).await;
 
     game_state
-        .update_player_position(&player_id, move_cmd(pos(10.0), false), false, false)
+        .update_player_position(&player_id, move_cmd(pos(10.0), false), false)
         .await;
 
     assert!(drain(&mut direct_rx)
@@ -991,7 +971,6 @@ mod dungeon_floor_gate {
                         floor_level,
                         ..move_cmd(position, false)
                     },
-                    false,
                     false,
                 )
                 .await;
@@ -1338,7 +1317,7 @@ async fn sim_tracks_nominal_progress_instead_of_racing_to_the_leg_end() {
         z: 30.0,
     };
     game_state
-        .update_player_position(&player_id, move_cmd(target, false), false, false)
+        .update_player_position(&player_id, move_cmd(target, false), false)
         .await;
     for _ in 0..5 {
         game_state.tick_player_movement(0.2).await;

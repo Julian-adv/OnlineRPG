@@ -191,51 +191,6 @@ async fn eligible_types_follow_the_distance_from_town() {
     );
 }
 
-/// Admin (trusted) moves apply straight away and never enter the movement
-/// queue, so they need their own roll — this is how a live admin run from town
-/// to the dungeon met nothing at all.
-#[tokio::test]
-async fn a_trusted_admin_walk_still_draws_monsters() {
-    let game_state = make_flat_world_game_state("ambient_trusted_walk");
-    let player_id = pid("gm");
-    game_state.add_player(make_player("gm", 200.0, 0.0)).await;
-    game_state.enable_ambient_spawns();
-
-    // Count every arrival: walking on releases the monsters left behind, so
-    // the tail of a straight run says nothing about what it drew.
-    let mut arrivals = 0usize;
-    let mut owned = 0usize;
-    let mut z = 0.0;
-    for _ in 0..100 {
-        z += 5.0;
-        game_state
-            .update_player_position(
-                &player_id,
-                crate::game_state::MoveCommand {
-                    position: Position {
-                        x: 200.0,
-                        y: 5.0,
-                        z,
-                    },
-                    rotation: 0.0,
-                    floor_level: 0,
-                    append: false,
-                    sprinting: false,
-                },
-                true,
-                false,
-            )
-            .await;
-        let now = owned_monster_count(&game_state, &player_id).await;
-        arrivals += now.saturating_sub(owned);
-        owned = now;
-    }
-    assert!(
-        arrivals > 0,
-        "500m of admin walking must draw monsters like anyone else's"
-    );
-}
-
 /// A teleport is not a walk: the jump must not cash in as a near-certain spawn.
 #[tokio::test]
 async fn a_teleport_is_not_a_walk() {

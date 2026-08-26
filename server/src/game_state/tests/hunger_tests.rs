@@ -371,7 +371,6 @@ async fn server_applies_sprint_speed_and_rejects_it_without_fuel() {
                     sprinting: true,
                 },
                 false,
-                false,
             )
             .await;
     }
@@ -642,7 +641,6 @@ async fn moving_cancels_the_grill_and_keeps_the_raw_fish() {
                 },
                 false,
             ),
-            false,
             false,
         )
         .await;

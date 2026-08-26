@@ -160,14 +160,6 @@ impl super::GameState {
         self.hunger_mults(player_id).await.1
     }
 
-    /// Untracked (NPC) movers never sprint.
-    pub(super) async fn hunger_sprint_allowed(&self, player_id: &PlayerId) -> bool {
-        let hunger = self.hunger.read().await;
-        hunger
-            .get(player_id)
-            .is_some_and(|d| can_sprint(d.satiation))
-    }
-
     /// Weak and `blocksRegen`-debuffed players never regen; Hungry players
     /// only when `include_hungry` (alternate regen ticks — the ×0.5).
     pub(super) async fn hunger_regen_ready(

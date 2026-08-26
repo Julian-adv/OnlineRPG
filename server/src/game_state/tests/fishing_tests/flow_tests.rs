@@ -319,10 +319,10 @@ async fn moving_aborts_the_session() {
                 },
                 false,
             ),
-            true,
             false,
         )
         .await;
+    game_state.tick_player_movement(1.0).await;
     assert!(drain(&mut rx).iter().any(|m| matches!(
         m,
         ServerMessage::FishingEnded {

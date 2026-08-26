@@ -345,14 +345,12 @@ impl MonsterBrain {
             self.state_timer_ms = 0.0;
             self.target_position = None;
             self.waypoints.clear();
-            self.clear_path_bend();
             commands.push(self.make_move_cmd());
         }
 
         if self.attack_cooldown_left_ms <= 0.0 {
             self.attack_cooldown_left_ms = self.attack_cooldown_ms;
             self.swing_left_ms = self.swing_commit_ms;
-            self.clear_path_bend();
             commands.push(self.make_move_cmd());
             commands.push(AiCommand::Attack {
                 monster_id: self.monster_id.clone(),
@@ -429,10 +427,9 @@ impl MonsterBrain {
             return BehaviorStatus::Running;
         }
 
-        // A chase transition syncs before its first step: remote clients
-        // still show the old motion, and a post-step sync jolts them a whole
-        // tick. It also stands in for this tick's interval sync.
-        let pre_synced = self.state == AiState::Chase && self.state != self.last_synced_state;
+        // A chase transition or a mid-leg repath syncs before the step; it
+        // also stands in for this tick's interval sync.
+        let pre_synced = self.state == AiState::Chase && self.sync_due_before_step();
         if pre_synced {
             self.sync_chase(target_pos, commands);
         }
@@ -472,7 +469,7 @@ impl MonsterBrain {
     /// cell, since stopping short leaves us mid-cell, in someone else's. Just
     /// inside `engage_limit` so the attack's range check is not a float
     /// coin-flip at the boundary.
-    fn chase_stop_range(&self) -> Option<f32> {
+    pub(super) fn chase_stop_range(&self) -> Option<f32> {
         if self.chase_goal_cell.is_some() {
             None
         } else {
@@ -507,9 +504,6 @@ impl MonsterBrain {
         self.state = AiState::Hold;
         self.state_timer_ms = 0.0;
         self.target_position = None;
-        // Consume the state-change sync trigger; the pose goes out with this
-        // command instead.
-        self.should_sync_move();
         commands.push(self.make_move_cmd());
     }
 
@@ -517,10 +511,11 @@ impl MonsterBrain {
     /// it must lie on the path, a couple of sync intervals ahead — aiming
     /// them at the target itself overshoots the standing cell the chase
     /// actually stops at, and every sync yanks the model back.
-    fn make_chase_move_cmd(&self, target_pos: crate::Position) -> AiCommand {
+    fn make_chase_move_cmd(&mut self, target_pos: crate::Position) -> AiCommand {
         let lookahead = self.move_speed * NETWORK_SYNC_INTERVAL_MS / 1000.0 * 2.0;
         let engage = self.chase_stop_range().map(|r| (target_pos, r));
-        self.move_cmd_to(self.path_lookahead(lookahead, engage))
+        let aim = self.path_lookahead(lookahead, engage);
+        self.move_cmd_to(aim)
     }
 
     /// A held chaser flows around the blocker NetHack-style: step into an

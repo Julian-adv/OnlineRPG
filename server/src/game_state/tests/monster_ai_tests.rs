@@ -169,3 +169,54 @@ async fn a_hit_monster_retaliates() {
     }
     assert!(attacked, "a poked brave goblin must swing back within 8s");
 }
+
+/// The registry learns a running monster's position only at each network
+/// sync, so between syncs it trails the brain. A swing must be judged on
+/// where the brain has the monster, or a charge is refused at contact.
+#[tokio::test]
+async fn a_swing_is_judged_on_the_brain_not_the_synced_registry() {
+    let game_state = make_flat_world_game_state("server_ai_swing_at_charger");
+    game_state.enable_server_monster_ai();
+    let player_id = pid("swinger");
+    game_state
+        .add_player(make_player("swinger", 0.0, 0.0))
+        .await;
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+    let goblin = spawn_goblin(&game_state, &player_id, 4.2).await;
+
+    // Melee reach is 2m + 1m tolerance: wait for a tick that leaves the brain
+    // inside it while the registry still holds a pose outside it.
+    let mut staggered = false;
+    for _ in 0..10 {
+        game_state.tick_monster_ai_by(200.0).await;
+        let brain_x = game_state
+            .brain_position_now(&goblin)
+            .await
+            .expect("the goblin has a brain")
+            .x;
+        let registry_x = monster_x(&game_state, &goblin).await;
+        if brain_x <= 2.9 && registry_x > 3.0 {
+            staggered = true;
+            break;
+        }
+    }
+    assert!(staggered, "the setup never produced a registry lag to test");
+    drain(&mut rx);
+
+    game_state
+        .broadcast_player_attack(&player_id, goblin.clone())
+        .await;
+
+    let msgs = drain(&mut rx);
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, ServerMessage::PlayerAttacked { .. })),
+        "the swing must land on the brain's position: {msgs:?}"
+    );
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::PlayerAttackRejected { .. })),
+        "{msgs:?}"
+    );
+}
