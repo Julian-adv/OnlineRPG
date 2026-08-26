@@ -690,14 +690,14 @@ impl super::GameState {
             )
             .await;
 
-            debug!(
-                "Player {} gained {} XP (total: {}, level: {}{})",
-                name,
-                xp_amount,
-                new_xp,
-                new_level,
-                if leveled_up { " LEVEL UP!" } else { "" }
-            );
+            if leveled_up {
+                info!("Player {} reached level {}", name, new_level);
+            } else {
+                debug!(
+                    "Player {} gained {} XP (total: {}, level: {})",
+                    name, xp_amount, new_xp, new_level
+                );
+            }
         }
     }
 

@@ -1,6 +1,7 @@
 use crate::types::{CharacterAttributes, GameDateTime};
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::xp;
 use onlinerpg_shared::{CharacterClass, Gender, VisibleEquipment};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
@@ -36,6 +37,34 @@ const RENAMED_ITEM_IDS: &[(&str, &str)] = &[
 ];
 
 /// Reserved account-name prefix for headless NPC/bot accounts.
+/// The level curve before doc/LEVEL_CURVE.md: 20 * 2^(n-2). Kept only for
+/// `migrate_level_curve`.
+fn legacy_xp_for_level(level: u32) -> u64 {
+    if level <= 1 {
+        return 0;
+    }
+    let shift = level - 2;
+    if shift >= 64 {
+        return u64::MAX;
+    }
+    20u64.saturating_mul(1u64 << shift)
+}
+
+/// Same level, same progress through the level band, on the new curve.
+fn migrate_legacy_xp(old_xp: u64) -> u64 {
+    let level = if old_xp < 20 {
+        1
+    } else {
+        ((old_xp / 20).ilog2() + 2).min(61)
+    };
+    let old_start = legacy_xp_for_level(level);
+    let old_band = legacy_xp_for_level(level + 1) - old_start;
+    let new_start = xp::xp_for_level(level);
+    let new_band = xp::xp_for_level(level + 1) - new_start;
+    let into = u128::from(old_xp - old_start);
+    new_start + (into * u128::from(new_band) / u128::from(old_band)) as u64
+}
+
 pub const NPC_ACCOUNT_PREFIX: &str = "npc_";
 
 const MAX_NAME_CHARS: usize = 32;
@@ -502,6 +531,8 @@ impl AuthService {
         Self::ensure_dungeon_chest_schema(&conn)?;
         Self::ensure_dungeon_discovery_schema(&conn)?;
         Self::ensure_trade_ledger_schema(&conn)?;
+        Self::ensure_migrations_schema(&conn)?;
+        Self::migrate_level_curve(&conn)?;
 
         Ok(Self {
             pool,
@@ -708,6 +739,48 @@ impl AuthService {
             )?;
         }
 
+        Ok(())
+    }
+
+    /// One-off data migrations that must not run twice, keyed by name.
+    fn ensure_migrations_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS migrations (
+                name TEXT PRIMARY KEY,
+                applied_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Moves stored XP from the 20 * 2^(n-2) curve onto doc/LEVEL_CURVE.md,
+    /// keeping every character's level and progress through its level band.
+    /// `level` is left alone: it already agrees with the XP.
+    fn migrate_level_curve(conn: &Connection) -> Result<(), rusqlite::Error> {
+        const NAME: &str = "level_curve_2026_08";
+        let done: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM migrations WHERE name = ?1)",
+            params![NAME],
+            |row| row.get(0),
+        )?;
+        if done {
+            return Ok(());
+        }
+        let tx = conn.unchecked_transaction()?;
+        let mut update = tx.prepare("UPDATE characters SET xp = ?1 WHERE id = ?2")?;
+        let mut migrated = 0;
+        for row in tx
+            .prepare("SELECT id, xp FROM characters WHERE xp > 0")?
+            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, u64>(1)?)))?
+        {
+            let (id, old_xp) = row?;
+            migrated += update.execute(params![migrate_legacy_xp(old_xp) as i64, id])?;
+        }
+        drop(update);
+        tx.execute("INSERT INTO migrations (name) VALUES (?1)", params![NAME])?;
+        tx.commit()?;
+        tracing::info!(migrated, "Migrated character XP to the new level curve");
         Ok(())
     }
 
@@ -2026,6 +2099,61 @@ mod tests {
             assert_eq!(rows[0].equip_slot.as_deref(), Some(slot));
             assert_eq!(rows[0].enchant, enchant);
         }
+    }
+
+    #[test]
+    fn legacy_xp_migrates_to_the_same_level_and_band_progress() {
+        assert_eq!(migrate_legacy_xp(0), 0);
+        // Lv1 halfway: 10/20 -> 8/17.
+        assert_eq!(migrate_legacy_xp(10), 8);
+        assert_eq!(migrate_legacy_xp(20), xp::xp_for_level(2));
+        // Lv10 halfway: 5120 + 2560 -> 9956 + 3600.
+        assert_eq!(migrate_legacy_xp(7680), 13556);
+        let mut prev = 0;
+        for old in (0u64..1 << 20)
+            .step_by(7)
+            .chain([1 << 30, 1 << 40, 1 << 50, 1 << 60])
+        {
+            let level = if old < 20 { 1 } else { (old / 20).ilog2() + 2 };
+            let new = migrate_legacy_xp(old);
+            assert_eq!(xp::level_from_xp(new), level, "old xp {old}");
+            assert!(new >= prev, "old xp {old}");
+            prev = new;
+        }
+    }
+
+    /// The curve migration runs once: a second startup must not re-map XP
+    /// that is already on the new table.
+    #[test]
+    fn startup_migrates_xp_to_the_new_curve_once() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_level_curve_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        drop(AuthService::new(db_path.clone()).unwrap());
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "DELETE FROM migrations;
+             INSERT INTO accounts (player_name) VALUES ('legacy');
+             INSERT INTO characters (id, account_name, character_name, level, xp)
+             VALUES (1, 'legacy', 'Halfway', 10, 7680);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let read_xp = || {
+            Connection::open(&db_path)
+                .unwrap()
+                .query_row("SELECT xp FROM characters WHERE id = 1", [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+        drop(AuthService::new(db_path.clone()).unwrap());
+        assert_eq!(read_xp(), 13556);
+        drop(AuthService::new(db_path.clone()).unwrap());
+        assert_eq!(read_xp(), 13556);
     }
 
     /// A typo'd rename target would silently hand players a ghost item:

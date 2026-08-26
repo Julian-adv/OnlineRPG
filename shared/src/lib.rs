@@ -93,7 +93,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v38: RenameCharacter + CharacterRenameRequired/CharacterRenamed, so a
 ///      character whose name later lands on the banned list is renamed at
 ///      character select instead of being let in.
-pub const PROTOCOL_VERSION: u32 = 38;
+/// v39: level thresholds moved to the doc/LEVEL_CURVE.md table. No message
+///      changed; a stale bundle would draw XP gauges on the old curve.
+pub const PROTOCOL_VERSION: u32 = 39;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
