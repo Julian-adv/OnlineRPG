@@ -14,8 +14,10 @@ export interface PresentedDebuff extends DebuffPresentation {
   remaining: string
 }
 
-const DEFS: Record<string, { name?: string; durationSecs?: number }> =
-  debuffsJson
+const DEFS: Record<
+  string,
+  { name?: string; durationSecs?: number; armorWeightMult?: number }
+> = debuffsJson
 
 const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
   food_poisoning: {
@@ -32,7 +34,7 @@ const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
   },
   wet: {
     icon: '💧',
-    note: 'Slowed by soaked clothes',
+    note: 'Slowed · armour weighs more',
     applied: 'You are soaked through — heavy going until you dry off.',
     expired: 'Your clothes are dry again.',
   },
@@ -53,6 +55,11 @@ export function debuffPresentation(id: string): DebuffPresentation {
 /** A debuff's full duration in ms, for effects that fade with what's left. */
 export function debuffDurationMs(id: string) {
   return (DEFS[id]?.durationSecs ?? 0) * 1_000
+}
+
+/** Combined `armor` weight factor of the debuffs currently up (doc/DEBUFF.md). */
+export function armorWeightMult(ids: string[]) {
+  return ids.reduce((mult, id) => mult * (DEFS[id]?.armorWeightMult ?? 1), 1)
 }
 
 export function formatRemaining(ms: number) {

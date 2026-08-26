@@ -611,9 +611,10 @@ impl super::GameState {
         }
         let price = buy_price(base_price, deal.as_ref().map_or(0, |d| d.modifier_pct));
 
-        let item_weight = self.item_defs.weight(item_def_id);
         let stackable = self.item_defs.stackable(item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
+        let armor_mult = self.armor_weight_mult(player_id).await;
+        let item_weight = self.item_defs.weight_with(item_def_id, armor_mult);
         let instance_id = self.next_instance_id().await;
 
         // Gold and inventory mutate under both write locks so a concurrent
@@ -648,7 +649,9 @@ impl super::GameState {
                     .fail_trade(player_id, &npc_name, item_def_id, DealKind::Buy, deal, None)
                     .await;
             };
-            if self.calc_total_weight(&inventories[player_id]) + item_weight > max_weight {
+            if self.calc_total_weight(&inventories[player_id], armor_mult) + item_weight
+                > max_weight
+            {
                 drop(inventories);
                 drop(gold_map);
                 return self
@@ -861,6 +864,7 @@ impl super::GameState {
             .reserve_instance_ids(plans.iter().map(|p| p.qty as u64).sum())
             .await;
         let max_weight = self.max_carry_weight(player_id).await;
+        let armor_mult = self.armor_weight_mult(player_id).await;
 
         let mut gold_map = self.player_gold.write().await;
         let mut inventories = self.inventories.write().await;
@@ -898,9 +902,9 @@ impl super::GameState {
 
         let added_weight: f32 = plans
             .iter()
-            .map(|p| self.item_defs.weight(&p.item_def_id) * p.qty as f32)
+            .map(|p| self.item_defs.weight_with(&p.item_def_id, armor_mult) * p.qty as f32)
             .sum();
-        if self.calc_total_weight(&inventories[player_id]) + added_weight > max_weight {
+        if self.calc_total_weight(&inventories[player_id], armor_mult) + added_weight > max_weight {
             drop(inventories);
             drop(gold_map);
             return self.send_trade_error(player_id, "Too heavy to carry").await;
@@ -1240,7 +1244,7 @@ impl super::GameState {
                         )
                         .await;
                 };
-                if self.calc_total_weight(npc_inv) + item_weight > npc_max_weight {
+                if self.calc_total_weight(npc_inv, 1.0) + item_weight > npc_max_weight {
                     drop(inventories);
                     drop(gold_map);
                     return self
@@ -1509,7 +1513,7 @@ impl super::GameState {
                 .iter()
                 .map(|p| self.item_defs.weight(&p.item_def_id) * p.qty as f32)
                 .sum();
-            if self.calc_total_weight(npc_inv) + added_weight > npc_max_weight {
+            if self.calc_total_weight(npc_inv, 1.0) + added_weight > npc_max_weight {
                 drop(inventories);
                 drop(gold_map);
                 return self
@@ -1808,8 +1812,9 @@ impl super::GameState {
                 .await;
         };
 
-        let item_weight = self.item_defs.weight(&entry.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
+        let armor_mult = self.armor_weight_mult(player_id).await;
+        let item_weight = self.item_defs.weight_with(&entry.item_def_id, armor_mult);
 
         let (snapshot, buyback) = {
             let mut gold_map = self.player_gold.write().await;
@@ -1828,7 +1833,9 @@ impl super::GameState {
                 drop(gold_map);
                 return;
             }
-            if self.calc_total_weight(&inventories[player_id]) + item_weight > max_weight {
+            if self.calc_total_weight(&inventories[player_id], armor_mult) + item_weight
+                > max_weight
+            {
                 drop(inventories);
                 drop(gold_map);
                 return self.send_trade_error(player_id, "Too heavy to carry").await;
@@ -1960,11 +1967,12 @@ impl super::GameState {
         };
 
         let total_price: i64 = entries.iter().map(|e| e.price).sum();
+        let max_weight = self.max_carry_weight(player_id).await;
+        let armor_mult = self.armor_weight_mult(player_id).await;
         let added_weight: f32 = entries
             .iter()
-            .map(|e| self.item_defs.weight(&e.item_def_id))
+            .map(|e| self.item_defs.weight_with(&e.item_def_id, armor_mult))
             .sum();
-        let max_weight = self.max_carry_weight(player_id).await;
 
         let (snapshot, buyback) = {
             let mut gold_map = self.player_gold.write().await;
@@ -1983,7 +1991,9 @@ impl super::GameState {
                 drop(gold_map);
                 return;
             }
-            if self.calc_total_weight(&inventories[player_id]) + added_weight > max_weight {
+            if self.calc_total_weight(&inventories[player_id], armor_mult) + added_weight
+                > max_weight
+            {
                 drop(inventories);
                 drop(gold_map);
                 return self.send_trade_error(player_id, "Too heavy to carry").await;

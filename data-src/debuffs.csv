@@ -1,4 +1,4 @@
-id,name,chance,durationSecs,dps,moveMult,attackMult,carryMult,drainMult,blocksRegen
-food_poisoning,Food Poisoning,70,300,,0.6,0.6,0.6,4,true
-bleed,Bleeding,35,8,1,,,,,true
-wet,Wet,100,450,,0.83,,,,
+id,name,chance,durationSecs,dps,moveMult,attackMult,carryMult,armorWeightMult,drainMult,blocksRegen
+food_poisoning,Food Poisoning,70,300,,0.6,0.6,0.6,,4,true
+bleed,Bleeding,35,8,1,,,,,,true
+wet,Wet,100,450,,0.83,,,1.5,,

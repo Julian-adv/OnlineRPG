@@ -327,17 +327,16 @@ impl super::GameState {
         base * self.hunger_carry_mult(player_id).await
     }
 
-    pub(super) fn calc_total_weight(&self, inventory: &PlayerInventory) -> f32 {
+    /// `armor_mult` soaks the armour, worn and packed alike (doc/DEBUFF.md);
+    /// the caller reads it before taking `inventories`.
+    pub(super) fn calc_total_weight(&self, inventory: &PlayerInventory, armor_mult: f32) -> f32 {
+        let weigh = |item: &ItemInstance| self.item_defs.weight_with(&item.item_def_id, armor_mult);
         let bag_weight: f32 = inventory
             .bag
             .iter()
-            .map(|item| self.item_defs.weight(&item.item_def_id) * item.quantity as f32)
+            .map(|item| weigh(item) * item.quantity as f32)
             .sum();
-        let equip_weight: f32 = inventory
-            .equipped
-            .values()
-            .map(|item| self.item_defs.weight(&item.item_def_id))
-            .sum();
+        let equip_weight: f32 = inventory.equipped.values().map(weigh).sum();
         bag_weight + equip_weight
     }
 
@@ -522,15 +521,13 @@ impl super::GameState {
     /// ground at the player's feet instead — an award is never silently lost.
     /// Fishing catches land here.
     pub async fn award_item(&self, player_id: &PlayerId, item_def_id: &str) {
-        let Some((def_weight, stackable)) = self
-            .item_defs
-            .get(item_def_id)
-            .map(|d| (d.weight, d.stackable))
-        else {
+        let Some(stackable) = self.item_defs.get(item_def_id).map(|d| d.stackable) else {
             warn!("award_item: unknown item_def_id {:?}", item_def_id);
             return;
         };
         let max_weight = self.max_carry_weight(player_id).await;
+        let armor_mult = self.armor_weight_mult(player_id).await;
+        let def_weight = self.item_defs.weight_with(item_def_id, armor_mult);
         // Reserved before the inventory lock; unused when the unit stacks
         // onto an existing entry. A skipped id is cheaper than lock nesting.
         let reserved_instance_id = self.next_instance_id().await;
@@ -544,7 +541,7 @@ impl super::GameState {
             let Some(inv) = inventories.get_mut(player_id) else {
                 return;
             };
-            if self.calc_total_weight(inv) + def_weight > max_weight {
+            if self.calc_total_weight(inv, armor_mult) + def_weight > max_weight {
                 Placement::Overweight
             } else {
                 stack_into_bag(
@@ -1837,9 +1834,12 @@ impl super::GameState {
             return;
         }
 
-        let item_weight = self.item_defs.weight(&ground_item.item_def_id);
         let stackable = self.item_defs.stackable(&ground_item.item_def_id);
         let max_weight = self.max_carry_weight(player_id).await;
+        let armor_mult = self.armor_weight_mult(player_id).await;
+        let item_weight = self
+            .item_defs
+            .weight_with(&ground_item.item_def_id, armor_mult);
         // For the bag entry — the pile that stays behind keeps its own id.
         // Reserved outside the locks like `drop_item`'s split id; unused when
         // the insert merges into an existing bag stack.
@@ -1866,7 +1866,7 @@ impl super::GameState {
             };
             // Carry what fits and leave the rest, so a heavy pile is never
             // stranded on the ground with no way to take any of it.
-            let headroom = max_weight - self.calc_total_weight(inv);
+            let headroom = max_weight - self.calc_total_weight(inv, armor_mult);
             let take = if item_weight <= 0.0 {
                 available
             } else {

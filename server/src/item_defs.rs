@@ -423,7 +423,18 @@ impl ItemDefs {
     }
 
     pub fn weight(&self, item_def_id: &str) -> f32 {
-        self.defs.get(item_def_id).map(|d| d.weight).unwrap_or(1.0)
+        self.weight_with(item_def_id, 1.0)
+    }
+
+    /// Weight with the carrier's armour factor applied (doc/DEBUFF.md). Every
+    /// weight that meets a carry cap goes through here, so a soaked total and
+    /// the item being added to it are always measured the same way.
+    pub fn weight_with(&self, item_def_id: &str, armor_mult: f32) -> f32 {
+        match self.defs.get(item_def_id) {
+            Some(def) if def.is_armor() => def.weight * armor_mult,
+            Some(def) => def.weight,
+            None => 1.0,
+        }
     }
 
     pub fn stackable(&self, item_def_id: &str) -> bool {

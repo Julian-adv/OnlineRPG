@@ -273,6 +273,72 @@ async fn death_drops_the_broadcast_soaking_too() {
     assert_eq!(wet_remaining(&game_state, &id).await, None);
 }
 
+async fn carry(game_state: &GameState, id: &PlayerId, inventory: PlayerInventory) {
+    game_state.inventories.write().await.insert(*id, inventory);
+}
+
+async fn carried_weight(game_state: &GameState, id: &PlayerId) -> f32 {
+    let armor_mult = game_state.armor_weight_mult(id).await;
+    let inventories = game_state.inventories.read().await;
+    game_state.calc_total_weight(&inventories[id], armor_mult)
+}
+
+#[tokio::test(start_paused = true)]
+async fn soaked_armour_drags_but_the_rest_of_the_pack_does_not() {
+    let game_state = make_test_game_state("wet_armour_weight");
+    let (id, _rx) = make_wader(&game_state, "porter").await;
+    // chain_mail (30) + wooden_shield (6) armour, plus a non-armour torch (1).
+    carry(
+        &game_state,
+        &id,
+        PlayerInventory {
+            bag: vec![bag_item(801, "chain_mail", 1), bag_item(802, "torch", 1)],
+            equipped: std::collections::HashMap::from([(
+                EquipSlot::OffHand,
+                bag_item(803, "wooden_shield", 1),
+            )]),
+        },
+    )
+    .await;
+
+    let dry = carried_weight(&game_state, &id).await;
+    assert!((dry - 37.0).abs() < 1e-3, "expected 30+6+1, got {dry}");
+
+    soak(&game_state, &[step_to(id, -100.0, 0)]).await;
+
+    // Only the 36 of armour scales; the torch is untouched. Derived from the
+    // constant so retuning it stays a one-line change.
+    let mult = crate::debuff_defs::debuff_def(WET)
+        .unwrap()
+        .armor_weight_mult;
+    let expected = 36.0 * mult + 1.0;
+    let soaked = carried_weight(&game_state, &id).await;
+    assert!(
+        (soaked - expected).abs() < 1e-3,
+        "expected {expected}, got {soaked}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unarmoured_player_carries_the_same_soaked_or_dry() {
+    let game_state = make_test_game_state("wet_no_armour_weight");
+    let (id, _rx) = make_wader(&game_state, "streaker").await;
+    carry(
+        &game_state,
+        &id,
+        PlayerInventory {
+            bag: vec![bag_item(811, "torch", 4)],
+            equipped: std::collections::HashMap::new(),
+        },
+    )
+    .await;
+
+    let dry = carried_weight(&game_state, &id).await;
+    soak(&game_state, &[step_to(id, -100.0, 0)]).await;
+
+    assert_eq!(carried_weight(&game_state, &id).await, dry);
+}
+
 /// Scale measurement for the wet path, sized against the 5,000 concurrent-user
 /// target. Not an assertion — run with --nocapture to read the timings.
 #[tokio::test]

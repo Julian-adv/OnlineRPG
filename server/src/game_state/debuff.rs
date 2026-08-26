@@ -71,6 +71,10 @@ impl HungerData {
             .map_or(Duration::ZERO, |d| d.until.saturating_duration_since(now))
     }
 
+    fn armor_weight_mult(&self, now: Instant) -> f32 {
+        self.active(now).map(|d| d.def.armor_weight_mult).product()
+    }
+
     fn carries(&self, id: &str, now: Instant) -> bool {
         self.active(now).any(|d| d.def.id == id)
     }
@@ -276,6 +280,18 @@ impl super::GameState {
         for player_id in soaked {
             self.inflict_debuff(&player_id, WET_DEBUFF_ID, None).await;
         }
+    }
+
+    /// The active debuffs' combined armour-weight factor, from the
+    /// authoritative hunger map rather than the broadcast mirror. Ranks with
+    /// `max_carry_weight`: read it before taking `inventories`, never under it.
+    pub(super) async fn armor_weight_mult(&self, player_id: &PlayerId) -> f32 {
+        let now = Instant::now();
+        self.hunger
+            .read()
+            .await
+            .get(player_id)
+            .map_or(1.0, |d| d.armor_weight_mult(now))
     }
 
     /// Mirror the soaking onto the broadcast `Player` so nearby clients can

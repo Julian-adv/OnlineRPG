@@ -267,11 +267,16 @@ fn resolve_offer(
     Ok(resolved)
 }
 
-/// Total weight of an offer, for the receiving side's carry check.
-fn offer_weight(items: &[PlayerTradeItem], item_defs: &crate::item_defs::ItemDefs) -> f32 {
+/// Total weight of an offer as `armor_mult`'s carrier feels it — the same
+/// factor their own total is measured with (doc/DEBUFF.md).
+fn offer_weight(
+    items: &[PlayerTradeItem],
+    item_defs: &crate::item_defs::ItemDefs,
+    armor_mult: f32,
+) -> f32 {
     items
         .iter()
-        .map(|item| item_defs.weight(&item.item_def_id) * item.quantity as f32)
+        .map(|item| item_defs.weight_with(&item.item_def_id, armor_mult) * item.quantity as f32)
         .sum()
 }
 
@@ -1103,6 +1108,8 @@ impl super::GameState {
         // next: they have to happen first.
         let a_capacity = self.max_carry_weight(&a_id).await;
         let b_capacity = self.max_carry_weight(&b_id).await;
+        let a_armor_mult = self.armor_weight_mult(&a_id).await;
+        let b_armor_mult = self.armor_weight_mult(&b_id).await;
         let characters = {
             let chars = self.player_characters.read().await;
             match (chars.get(&a_id), chars.get(&b_id)) {
@@ -1162,10 +1169,12 @@ impl super::GameState {
                 break 'swap Err("Someone no longer has what they offered.");
             }
             drop(tip_hats);
-            let a_out = offer_weight(&a_items, &self.item_defs);
-            let b_out = offer_weight(&b_items, &self.item_defs);
-            let a_after = self.calc_total_weight(&inventories[&a_id]) - a_out + b_out;
-            let b_after = self.calc_total_weight(&inventories[&b_id]) - b_out + a_out;
+            let a_after = self.calc_total_weight(&inventories[&a_id], a_armor_mult)
+                - offer_weight(&a_items, &self.item_defs, a_armor_mult)
+                + offer_weight(&b_items, &self.item_defs, a_armor_mult);
+            let b_after = self.calc_total_weight(&inventories[&b_id], b_armor_mult)
+                - offer_weight(&b_items, &self.item_defs, b_armor_mult)
+                + offer_weight(&a_items, &self.item_defs, b_armor_mult);
             if a_after > a_capacity || b_after > b_capacity {
                 break 'swap Err("Someone can't carry that much.");
             }

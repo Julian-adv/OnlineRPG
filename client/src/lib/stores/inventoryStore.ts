@@ -5,6 +5,8 @@ import type {
   PlayerInventory,
 } from '../network/networkTypes'
 import { getItemDef } from '../data/itemDefs'
+import { activeDebuffs } from './debuffStore'
+import { armorWeightMult } from '../data/debuffPresentation'
 import type { HungerSnapshot } from './hungerStore'
 
 export type { EquipSlot, ItemInstance, PlayerInventory }
@@ -37,18 +39,29 @@ export const localTorchEquipped = derived(inventoryStore, (inv) => {
   return isTorchItemDefId(id)
 })
 
-function itemWeight(item: ItemInstance): number {
-  return (getItemDef(item.item_def_id)?.weight ?? 1) * item.quantity
+function itemWeight(item: ItemInstance, armorMult: number): number {
+  const def = getItemDef(item.item_def_id)
+  const mult = def?.category === 'armor' ? armorMult : 1
+  return (def?.weight ?? 1) * mult * item.quantity
 }
 
-export const carryWeight = derived(inventoryStore, (inv) => {
-  let total = 0
-  for (const item of inv.bag) total += itemWeight(item)
-  for (const item of Object.values(inv.equipped)) {
-    if (item) total += itemWeight(item)
+/** Mirrors the server's `calc_total_weight`: soaked armour drags, worn and
+ *  packed alike (doc/DEBUFF.md). Per-item tooltips keep the dry weight. */
+export const carryWeight = derived(
+  [inventoryStore, activeDebuffs],
+  ([inv, debuffs]) => {
+    const now = Date.now()
+    const armorMult = armorWeightMult(
+      debuffs.filter((d) => d.until > now).map((d) => d.id)
+    )
+    let total = 0
+    for (const item of inv.bag) total += itemWeight(item, armorMult)
+    for (const item of Object.values(inv.equipped)) {
+      if (item) total += itemWeight(item, armorMult)
+    }
+    return total
   }
-  return total
-})
+)
 
 /** Mirrors the server's max_carry_weight: STR × 15 scaled by hunger. */
 export const maxCarryWeight = (str: number, hunger: HungerSnapshot | null) =>

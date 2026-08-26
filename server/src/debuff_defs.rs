@@ -24,6 +24,9 @@ pub struct DebuffDef {
     pub attack_mult: f32,
     #[serde(rename = "carryMult", default = "one")]
     pub carry_mult: f32,
+    /// Weight multiplier on `armor` items, worn and packed (doc/DEBUFF.md).
+    #[serde(rename = "armorWeightMult", default = "one")]
+    pub armor_weight_mult: f32,
     /// Satiation activity drain multiplier.
     #[serde(rename = "drainMult", default = "one")]
     pub drain_mult: f32,
@@ -61,6 +64,8 @@ mod tests {
         let wet = debuff_def(crate::game_state::WET_DEBUFF_ID).unwrap();
         assert_eq!((wet.chance, wet.duration_secs), (100, 450));
         assert!(wet.move_mult < 1.0 && wet.dps == 0 && !wet.blocks_regen);
+        assert!(wet.armor_weight_mult > 1.0);
+        assert_eq!(poison.armor_weight_mult, 1.0);
         let bleed = debuff_def("bleed").unwrap();
         assert_eq!((bleed.dps, bleed.duration_secs), (1, 8));
         assert_eq!(
