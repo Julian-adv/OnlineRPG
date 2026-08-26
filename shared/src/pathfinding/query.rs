@@ -141,7 +141,7 @@ fn blocking_entries<'a>(
             return None;
         }
 
-        let stair_mask = stairwell_floor_mask(rp, min_x, max_x, min_z, max_z, floor_level);
+        let stair_mask = stairwell_floor_mask_at(rp, from_x, from_z, floor_level);
         if stair_mask != 0 {
             let consulted = stairwell_consult(rp, stair_mask, |f| {
                 move_blocked_on_floor(rp, f, from_x, from_z, to_x, to_z)
@@ -303,8 +303,9 @@ fn obstacle_reaches_y(floor: &RuntimeFloorGrid, y: Option<f32>) -> bool {
 
 /// Run the stairwell two-floor consult: block only when every connected floor
 /// refuses. Returns how many floors were consulted, or `None` if any allowed
-/// the move. Both the edge check and the body-radius check route through here
-/// so the rule cannot be fixed in one and left stale in the other.
+/// the move. Both the edge check and the body-radius check route through here,
+/// so the rule itself lives in one place — they differ only in how they decide
+/// a stairwell applies (`stairwell_floor_mask_at` vs `stairwell_floor_mask`).
 ///
 /// Deliberately no `obstacle_reaches_y` filter: it is a *height* test, and
 /// dropping either partner leaves the survivor — the grid sealing the end
@@ -377,10 +378,13 @@ pub(super) fn segment_obstacles(
     }
 }
 
-/// Bitmask of floor levels connected by a stairwell this move touches that the
-/// mover is actually keyed to, or 0 otherwise. Touching (rather than
-/// containment) is what matters: stepping off a landing into the adjoining room
-/// is exactly the move the other floor's grid seals.
+/// Bitmask of floor levels connected by a stairwell whose footprint the box
+/// `[min, max]` touches and that the mover is keyed to, or 0 otherwise.
+///
+/// Touch, not containment, for the two callers that only know proximity: the
+/// smoothing classifier must fall back to A* on any contact, and the
+/// body-radius test must not seal a landing off from the floor whose mover
+/// stands with their radius over the other floor's seal.
 fn stairwell_floor_mask(
     rp: &super::RuntimePassability,
     min_x: f32,
@@ -388,6 +392,31 @@ fn stairwell_floor_mask(
     min_z: f32,
     max_z: f32,
     floor_level: u8,
+) -> u32 {
+    stairwell_mask_by(rp, floor_level, |sx0, sx1, sz0, sz1| {
+        max_x >= sx0 && min_x <= sx1 && max_z >= sz0 && min_z <= sz1
+    })
+}
+
+/// Bitmask of floor levels connected by a stairwell whose footprint *holds*
+/// `(x, z)`, or 0. What the move check keys the consult on: only a mover
+/// already standing on the run has an ambiguous floor.
+///
+/// The asymmetry is the point. Stepping *onto* a shaft is decided by the
+/// mover's own grid, so the landing each floor seals — the one belonging to
+/// the other floor — stays a wall rather than a side door onto a storey drop.
+/// Stepping *off* one still gets the consult, so nobody is trapped on a
+/// landing they could never have reached from the wrong side anyway.
+fn stairwell_floor_mask_at(rp: &super::RuntimePassability, x: f32, z: f32, floor_level: u8) -> u32 {
+    stairwell_mask_by(rp, floor_level, |sx0, sx1, sz0, sz1| {
+        x >= sx0 && x < sx1 && z >= sz0 && z < sz1
+    })
+}
+
+fn stairwell_mask_by(
+    rp: &super::RuntimePassability,
+    floor_level: u8,
+    mut hits: impl FnMut(f32, f32, f32, f32) -> bool,
 ) -> u32 {
     if rp.stairwells.is_empty() {
         return 0;
@@ -401,7 +430,7 @@ fn stairwell_floor_mask(
         let sx1 = rp.house_origin_x + stair.local_max_x as f32;
         let sz0 = rp.house_origin_z + stair.local_min_z as f32;
         let sz1 = rp.house_origin_z + stair.local_max_z as f32;
-        if max_x >= sx0 && min_x <= sx1 && max_z >= sz0 && min_z <= sz1 {
+        if hits(sx0, sx1, sz0, sz1) {
             mask |= floor_bit(stair.lower_floor) | floor_bit(stair.upper_floor);
         }
     }

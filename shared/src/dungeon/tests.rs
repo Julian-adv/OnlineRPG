@@ -233,6 +233,79 @@ fn passability_with_doors_open(entrance: &Position, floors: &[FloorLayout]) -> R
     rp
 }
 
+/// The runtime twin of `shaft_opens_to_room_only_at_its_landing`: the rule has
+/// to survive the stairwell consult, which lets a move through when *either*
+/// connected floor allows it. A shaft's far landing is open on the other
+/// floor's grid by design, so an unconditional consult turned those cells into
+/// a side door out of the room and onto a one-storey drop.
+#[test]
+fn a_room_cell_never_opens_onto_a_shaft_cell_of_another_floor() {
+    let entrance = test_entrance();
+    for seed in 0..40u64 {
+        let floors = generate_dungeon(seed);
+        let mut cache = PassabilityCache::new();
+        cache.insert(
+            dungeon_cache_key("t"),
+            passability_with_doors_open(&entrance, &floors),
+        );
+
+        for layout in &floors {
+            let floor = passability_floor_for_depth(layout.depth);
+            let y = floor_world_y(entrance.y, layout.depth);
+            let blocked = |a: (i32, i32), b: (i32, i32)| {
+                let from = cell_center(&entrance, layout.depth, a);
+                let to = cell_center(&entrance, layout.depth, b);
+                crate::pathfinding::is_movement_blocked(
+                    &cache,
+                    from.x,
+                    from.z,
+                    to.x,
+                    to.z,
+                    floor,
+                    Some(y),
+                )
+            };
+
+            let mut shafts = vec![(&layout.up_shaft, SHAFT_LEN - 1)];
+            if let Some(ref d) = layout.down_shaft {
+                shafts.push((d, 0));
+            }
+
+            for (shaft, own_step) in shafts {
+                // The landing row this floor stands on, SHAFT_W wide.
+                let own: Vec<_> = (0..SHAFT_W).map(|w| shaft.step_cell(own_step, w)).collect();
+                let footprint = shaft_footprint(shaft);
+                let mut reachable = false;
+
+                for &(x, z) in &footprint {
+                    for (dx, dz) in DIRS {
+                        let (nx, nz) = (x + dx, z + dz);
+                        if !layout.is_carved(nx, nz) || shaft.contains(nx, nz) {
+                            continue;
+                        }
+                        if own.contains(&(x, z)) {
+                            reachable |= !blocked((nx, nz), (x, z)) && !blocked((x, z), (nx, nz));
+                            continue;
+                        }
+                        assert!(
+                            blocked((nx, nz), (x, z)),
+                            "seed {seed} depth {}: room ({nx},{nz}) opens onto \
+                             shaft cell ({x},{z}) that belongs to another floor",
+                            layout.depth
+                        );
+                    }
+                }
+
+                assert!(
+                    reachable,
+                    "seed {seed} depth {}: shaft {shaft:?} landing sealed off from its own floor",
+                    layout.depth
+                );
+            }
+        }
+    }
+}
+
 /// End-to-end pathfinding through the real passability machinery: from
 /// the surface entrance, walk down every floor to the chest.
 #[test]
