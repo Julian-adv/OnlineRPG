@@ -36,6 +36,13 @@ export const PICKUP_APPROACH: ApproachRange = {
   stopShort: 0,
 }
 
+/** Barrels, crates and chests. The dungeon layer owns the trigger here, so
+ *  these only shape the walk-up — far enough back to clear the prop's solid
+ *  cell, and inside both PROP_INTERACT_TRIGGER_RANGE (GameSceneDungeonLayer)
+ *  and PROP_INTERACT_RANGE in server/src/game_state/dungeon.rs. Equal values
+ *  because `range` only feeds the already-close short-circuit. */
+export const PROP_APPROACH: ApproachRange = { range: 1.6, stopShort: 1.6 }
+
 export const NPC_TRADE_APPROACH = reach(NPC_TRADE_RANGE_METERS)
 export const TIP_HAT_APPROACH = reach(TIP_HAT_RANGE_METERS)
 export const STALL_TRADE_APPROACH = reach(STALL_TRADE_RANGE_METERS)

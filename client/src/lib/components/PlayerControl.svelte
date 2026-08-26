@@ -63,6 +63,7 @@
     NPC_TRADE_APPROACH,
     OBJECT_APPROACH,
     PICKUP_APPROACH,
+    PROP_APPROACH,
     STALL_TRADE_APPROACH,
     TIP_HAT_APPROACH,
   } from '../data/approachRanges'
@@ -117,6 +118,7 @@
     resolveApproach,
     type ApproachSpec,
     type PendingApproach,
+    type RouteQuality,
   } from './player-control/fsm/approach'
 
   import {
@@ -186,11 +188,6 @@
     attackCooldown,
     waterSurfaceAt,
   }: Props = $props()
-
-  /** How far from a clicked barrel/crate the player stops while walking up to
-   *  break it — comfortably inside the layer's break trigger and the server's
-   *  range, and clear of the prop's solid cell. */
-  const PROP_APPROACH_STOP = 1.6
 
   let floorOffset = 0
   playerFloorOffset.subscribe((v) => (floorOffset = v))
@@ -1259,6 +1256,24 @@
     })
   }
 
+  /** How A* rates a walk-up goal, so the plan can pick a goal the player can
+   *  actually get to. Deliberately re-runs the search the move itself will make
+   *  — same start, same floors — so the two agree on what is reachable; a click
+   *  is a rare enough event to pay for it twice. */
+  function routeQuality(target: Position): RouteQuality {
+    if (!currentPlayer) return 'none'
+    const result = findPath(
+      currentPlayer.position.x,
+      currentPlayer.position.z,
+      currentPassabilityFloor(),
+      target.x,
+      target.z,
+      getFloorAtForClick(target.x, target.z, target.y)
+    )
+    if (result.found) return 'found'
+    return result.waypoints.length > 0 ? 'partial' : 'none'
+  }
+
   /** `canActNow` is false while an interaction animation still has to be
    *  exited — the walk-up runs the exit, then fires the action on arrival. */
   function approachAndAct(
@@ -1268,7 +1283,13 @@
   ) {
     if (!currentPlayer || currentPlayer.health <= 0) return
 
-    const plan = planApproach(currentPlayer.position, spec, canActNow)
+    const plan = planApproach(
+      currentPlayer.position,
+      spec,
+      routeQuality,
+      canActNow
+    )
+    if (plan.kind === 'unreachable') return
     if (plan.kind === 'act_now') {
       act()
       return
@@ -1350,9 +1371,9 @@
     )
   }
 
-  /** Shared walk-up for a clicked interactive prop: cancel combat, move to
-   *  within reach if needed (it's a solid pillar, so stop just short), then arm
-   *  `setPending` so the dungeon layer fires the break/open on arrival. */
+  /** Shared walk-up for a clicked interactive prop: move to within reach if
+   *  needed (it's a solid pillar, so stop just short), then arm `setPending` so
+   *  the dungeon layer fires the break/open once the player is in range. */
   function approachProp(
     intent: { depth: number; propId: number; position: Position },
     setPending: (p: {
@@ -1363,17 +1384,15 @@
     }) => void
   ) {
     if (!currentPlayer) return
-    combatController.cancelCombat()
-    const dx = currentPlayer.position.x - intent.position.x
-    const dz = currentPlayer.position.z - intent.position.z
-    const dist = Math.sqrt(dx * dx + dz * dz)
-    if (dist > PROP_APPROACH_STOP) {
-      const d = dist || 1
-      handleClickToMove({
-        x: intent.position.x + (dx / d) * PROP_APPROACH_STOP,
-        y: intent.position.y,
-        z: intent.position.z + (dz / d) * PROP_APPROACH_STOP,
-      })
+    const plan = planApproach(
+      currentPlayer.position,
+      { position: intent.position, ...PROP_APPROACH },
+      routeQuality
+    )
+    if (plan.kind === 'unreachable') return
+    if (plan.kind === 'walk') {
+      combatController.cancelCombat()
+      handleClickToMove(plan.target)
     }
     setPending({
       depth: intent.depth,

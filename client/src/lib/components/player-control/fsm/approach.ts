@@ -26,13 +26,19 @@ export interface PendingApproach {
   act: () => void
 }
 
+/** What A* makes of a walk-up goal: a real route, a partial route that only
+ *  gets as close as the walls allow, or nothing at all. */
+export type RouteQuality = 'found' | 'partial' | 'none'
+
 export type ApproachPlan =
   | { kind: 'act_now' }
   | { kind: 'walk'; target: Position }
+  | { kind: 'unreachable' }
 
 export function planApproach(
   from: Pick<Position, 'x' | 'z'>,
   spec: ApproachSpec,
+  routeQuality: (target: Position) => RouteQuality,
   canActNow = true
 ): ApproachPlan {
   const dx = shortestWrappedDeltaX(from.x, spec.position.x)
@@ -42,14 +48,21 @@ export function planApproach(
 
   const walked =
     distance > 0 ? 1 - Math.min(spec.stopShort, distance) / distance : 0
-  return {
-    kind: 'walk',
-    target: {
-      x: wrapWorldX(from.x + dx * walked),
-      y: spec.position.y,
-      z: from.z + dz * walked,
-    },
+  const standSpot = {
+    x: wrapWorldX(from.x + dx * walked),
+    y: spec.position.y,
+    z: from.z + dz * walked,
   }
+  if (spec.stopShort > 0 && routeQuality(standSpot) === 'found') {
+    return { kind: 'walk', target: standSpot }
+  }
+
+  // The stand spot is trigonometry and knows nothing of walls. Aiming at the
+  // target instead lets A*'s partial route stop the player beside it, around
+  // the wall, rather than against the near face.
+  return routeQuality(spec.position) === 'none'
+    ? { kind: 'unreachable' }
+    : { kind: 'walk', target: spec.position }
 }
 
 /** Stopped in reach → fire; stopped short, or on another floor → drop. */
