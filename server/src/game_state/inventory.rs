@@ -941,6 +941,11 @@ impl super::GameState {
         let copper = crate::game::combat::roll_dice(dice);
         self.consume_one_and_sync(player_id, instance_id).await;
         self.award_copper(player_id, i64::from(copper)).await;
+        info!(
+            "Player {} opened a coin pouch: +{} copper",
+            self.player_name_of(player_id).await,
+            copper
+        );
         self.send_system_message(
             player_id,
             format!("You open the {name} — {copper} copper spills out."),

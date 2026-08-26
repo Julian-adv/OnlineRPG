@@ -1358,6 +1358,23 @@ impl super::GameState {
         };
         let a_gave = describe(a_items, a_copper);
         let b_gave = describe(b_items, b_copper);
+        // Def ids and raw copper, so an economy sweep of the journal can total
+        // player-to-player flow the same way it totals the merchant lines.
+        let logged = |items: &[PlayerTradeItem]| -> String {
+            if items.is_empty() {
+                return "-".to_string();
+            }
+            items
+                .iter()
+                .map(|item| format!("{}x{}", item.quantity, item.item_def_id))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        info!(
+            "Trade: {a_name} gave {} + {a_copper} copper to {b_name}, who gave {} + {b_copper} copper",
+            logged(a_items),
+            logged(b_items)
+        );
         self.send_system_message(
             a_id,
             &format!("Trade with {b_name}: you gave {a_gave}, you received {b_gave}."),
