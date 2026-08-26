@@ -2,6 +2,14 @@ import type { DungeonEntranceDef } from '../data/dungeonDefs'
 import type { HouseMapFootprint } from '../types/housing'
 import { unwrapWorldXNear } from '../terrain/world-wrap'
 
+/** Map rotation so screen-up matches walking up (tracks the camera's initial yaw). */
+export const MAP_ROTATE_ANGLE = -Math.PI / 4
+
+/** Player rotation = atan2(dx, dz), i.e. a compass heading; convert to a screen angle. */
+export function headingToMapAngle(heading: number): number {
+  return Math.PI / 2 - heading + MAP_ROTATE_ANGLE
+}
+
 export interface MapCanvasTransform {
   centerX: number
   viewLeft: number

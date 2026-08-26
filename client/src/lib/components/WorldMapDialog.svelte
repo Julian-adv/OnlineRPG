@@ -42,9 +42,8 @@
   }))
 
   // Matches the canvas's -45deg map rotation, applied to label screen positions.
-  const ROTATE_ANGLE = -Math.PI / 4
-  const COS_R = Math.cos(ROTATE_ANGLE)
-  const SIN_R = Math.sin(ROTATE_ANGLE)
+  const COS_R = Math.cos(MAP_ROTATE_ANGLE)
+  const SIN_R = Math.sin(MAP_ROTATE_ANGLE)
 
   /** Undo the canvas rotation: a screen-space offset in world units becomes a
    *  world-space offset. */
@@ -83,8 +82,13 @@
     WORLD_MAX_REGION_Z,
   } from '../terrain/world-wrap'
   import { mountOverlay } from '../stores/overlayStack'
-  import { drawHouseMapFootprints } from '../utils/map-structures'
+  import {
+    MAP_ROTATE_ANGLE,
+    drawHouseMapFootprints,
+    headingToMapAngle,
+  } from '../utils/map-structures'
   import { teleportLocalPlayer } from '../utils/teleport'
+  import SelfMarker from './SelfMarker.svelte'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
   const mobileMapBudget = $derived(graphicsPreset.renderBudget === 'mobile')
@@ -316,7 +320,7 @@
       ctx.fillRect(0, 0, cw, ch)
       ctx.save()
       ctx.translate(cw / 2, ch / 2)
-      ctx.rotate(ROTATE_ANGLE)
+      ctx.rotate(MAP_ROTATE_ANGLE)
       ctx.translate(-cw / 2, -ch / 2)
       ctx.drawImage(
         atlas,
@@ -352,7 +356,7 @@
   // World → overlay coords: unwrap x toward the camera (a point just across
   // the world seam renders near the edge instead of a full wrap away), scale
   // around the view center, then the same -45° rotation the canvas applies
-  // (ctx.rotate(ROTATE_ANGLE)).
+  // (ctx.rotate(MAP_ROTATE_ANGLE)).
   function worldToScreen(x: number, z: number, view: RenderedView) {
     x = unwrapWorldXNear(view.camX, x)
     const scale =
@@ -507,12 +511,9 @@
     if (!onScreen(p, view.width, view.height, 20)) return null
     return {
       ...p,
-      angle:
-        Math.atan2(Math.cos(playerHeading), Math.sin(playerHeading)) +
-        ROTATE_ANGLE,
+      angle: headingToMapAngle(playerHeading),
     }
   })
-
 
   // --- Zoom controls ---
   function zoomIn() {
@@ -810,19 +811,11 @@
           </div>
         {/each}
         {#if selfMarker}
-          <svg
-            class="self-marker"
-            style="left: {selfMarker.left}px; top: {selfMarker.top}px; transform: translate(-50%, -50%) rotate({selfMarker.angle}rad);"
-            viewBox="0 0 20 20"
-            aria-hidden="true"
-          >
-            <path class="self-marker-point" d="M 24.5 10 L 14 4.4 L 14 15.6 Z"
-            ></path>
-            <circle class="self-marker-rim" cx="10" cy="10" r="8"></circle>
-            <circle class="self-marker-core" cx="10" cy="10" r="5.4"></circle>
-            <circle class="self-marker-shine" cx="8.2" cy="7.8" r="1.6"
-            ></circle>
-          </svg>
+          <SelfMarker
+            left={selfMarker.left}
+            top={selfMarker.top}
+            angle={selfMarker.angle}
+          />
         {/if}
       </div>
     </div>
@@ -1228,41 +1221,6 @@
     background: #29272c;
     border: 2px solid #985246;
     box-shadow: 0 1px 3px rgba(62, 22, 18, 0.68);
-  }
-
-  .self-marker {
-    position: absolute;
-    z-index: 3;
-    width: 20px;
-    height: 20px;
-    overflow: visible;
-    transform: translate(-50%, -50%);
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.92))
-      drop-shadow(0 0 3px rgba(218, 50, 27, 0.72));
-  }
-
-  .self-marker-point {
-    fill: #f2cf62;
-    stroke: #35160c;
-    stroke-width: 1.2;
-    stroke-linejoin: round;
-  }
-
-  .self-marker-rim {
-    fill: #35160c;
-    stroke: #f2cf62;
-    stroke-width: 1.8;
-  }
-
-  .self-marker-core {
-    fill: #d92717;
-    stroke: #720f0a;
-    stroke-width: 0.8;
-  }
-
-  .self-marker-shine {
-    fill: #ffb37c;
-    opacity: 0.88;
   }
 
   .party-marker {
