@@ -19,12 +19,13 @@ use super::action::{
 };
 use super::combat::{
     approach_player, chase_monster, chest_arrive_range, follow_player, walk_to_ground_item,
-    walk_to_point, ChaseResult, LostReason,
+    walk_to_point, ChaseResult,
 };
 use super::movement::{execute_move, MoveResult};
 #[cfg(test)]
 use super::outcome::reports_failure;
 use super::outcome::{settle_action, ActionOutcome};
+use super::walk::LostReason;
 use super::MEMORY_LINES;
 
 /// Pause between the crouch broadcast and the actual pickup, approximating
