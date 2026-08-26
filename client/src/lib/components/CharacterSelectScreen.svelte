@@ -7,7 +7,7 @@
     selectedCharacterId: number | null
     onStartGame: (
       characterId: number
-    ) => Promise<{ ok: boolean; message?: string }>
+    ) => Promise<{ ok: boolean; message?: string; renameRequired?: boolean }>
     onDeleteCharacter: (
       characterId: number
     ) => Promise<{ ok: boolean; message?: string }>
@@ -43,7 +43,8 @@
     const result = await onStartGame(id)
     isStarting = false
 
-    if (!result.ok) {
+    // A rename-required refusal opens App's dialog instead.
+    if (!result.ok && !result.renameRequired) {
       errorMessage = result.message ?? 'Failed to enter game'
     }
   }

@@ -8,6 +8,7 @@
   import CharacterSelectScene from './lib/components/CharacterSelectScene.svelte'
   import CharacterCreateScreen from './lib/components/CharacterCreateScreen.svelte'
   import CharacterCreateScene from './lib/components/CharacterCreateScene.svelte'
+  import RenameCharacterDialog from './lib/components/RenameCharacterDialog.svelte'
   import RenderFrameLimiter from './lib/components/RenderFrameLimiter.svelte'
   import { gameStore } from './lib/stores/gameStore'
   import { createWebGPURenderer } from './lib/utils/renderer'
@@ -62,6 +63,10 @@
   let isCurrentPlayerLoading = $state(false)
   let isSceneCompiling = $state(true)
   let kickedMessage = $state('')
+
+  // Owned here, not by the select screen: entry starts both from its Start
+  // button and from a slot double-click on the Canvas.
+  let renameCharacterId = $state<number | null>(null)
 
   // Character create screen state
   let createSelectedClass = $state<CharacterClass>('knight')
@@ -166,9 +171,28 @@
     return networkManager.requestRollCharacterStats(cls, gender)
   }
 
+  async function handleRenameCharacter(newName: string) {
+    const characterId = renameCharacterId
+    if (characterId === null) return { ok: false, message: 'No character' }
+
+    const result = await networkManager.requestRenameCharacter(
+      characterId,
+      newName
+    )
+    if (!result.ok || !result.name) return result
+
+    const renamed = result.name
+    accountCharacters = accountCharacters.map((character) =>
+      character.id === characterId ? { ...character, name: renamed } : character
+    )
+    renameCharacterId = null
+    await handleStartGame(characterId)
+    return result
+  }
+
   async function handleStartGame(
     characterId: number
-  ): Promise<{ ok: boolean; message?: string }> {
+  ): Promise<{ ok: boolean; message?: string; renameRequired?: boolean }> {
     const result = await networkManager.requestEnterGame(characterId)
     if (result.ok) {
       // Fresh death tracking for the new session so an already-dead character
@@ -179,6 +203,10 @@
       hasObservedCurrentPlayerAlive = false
       isSceneCompiling = true
       screen = 'game'
+      return result
+    }
+    if (result.renameRequired) {
+      renameCharacterId = characterId
     }
     return result
   }
@@ -375,6 +403,12 @@
       onDeleteCharacter={handleDeleteCharacter}
       onLogout={handleLogoutToLogin}
     />
+    {#if renameCharacterId !== null}
+      <RenameCharacterDialog
+        onRename={handleRenameCharacter}
+        onCancel={() => (renameCharacterId = null)}
+      />
+    {/if}
   {:else if screen === 'character-create'}
     <CharacterCreateScreen
       {accountName}

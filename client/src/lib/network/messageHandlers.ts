@@ -308,6 +308,10 @@ export type MessageEvents = {
   characterCreated: NetworkEvent<(character: AccountCharacter) => void>
   characterStatsRolled: NetworkEvent<(result: CharacterRollResult) => void>
   characterDeleted: NetworkEvent<(characterId: number) => void>
+  characterRenameRequired: NetworkEvent<(characterId: number) => void>
+  characterRenamed: NetworkEvent<
+    (payload: { characterId: number; name: string }) => void
+  >
   characterError: NetworkEvent<(message: string) => void>
   kicked: NetworkEvent<(reason: string) => void>
   playerRespawned: NetworkEvent<(playerId: number) => void>
@@ -407,6 +411,19 @@ export function handleServerMessage(
 
     case 'CharacterDeleted': {
       events.characterDeleted.emit(data.character_id)
+      break
+    }
+
+    case 'CharacterRenameRequired': {
+      events.characterRenameRequired.emit(data.character_id)
+      break
+    }
+
+    case 'CharacterRenamed': {
+      events.characterRenamed.emit({
+        characterId: data.character_id,
+        name: data.name,
+      })
       break
     }
 

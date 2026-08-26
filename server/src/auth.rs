@@ -7,6 +7,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// New characters start with no gold: anything redeemable granted at creation
 /// would let abusers mint wealth by recycling characters (see doc/ECONOMY.md).
@@ -126,6 +127,9 @@ pub(crate) fn unix_now() -> i64 {
 #[derive(Debug, Clone)]
 pub struct AuthService {
     pool: r2d2::Pool<SqliteConnectionManager>,
+    /// Arc so cloning the service stays a handle copy: callers move clones
+    /// into blocking tasks all over the server.
+    banned_names: Arc<HashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -319,6 +323,7 @@ pub enum AuthError {
     InvalidCharacterName,
     CharacterLimitReached,
     CharacterNameAlreadyExists,
+    BannedCharacterName,
     CharacterNotFound,
     Database(String),
 }
@@ -335,6 +340,7 @@ impl AuthError {
                 "A maximum of 3 characters can be created per account"
             }
             AuthError::CharacterNameAlreadyExists => "Character name already exists",
+            AuthError::BannedCharacterName => "That name cannot be used. Please choose another",
             AuthError::CharacterNotFound => "Character not found",
             AuthError::Database(_) => "Server auth database error",
         }
@@ -497,7 +503,56 @@ impl AuthService {
         Self::ensure_dungeon_discovery_schema(&conn)?;
         Self::ensure_trade_ledger_schema(&conn)?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            banned_names: Arc::new(HashSet::new()),
+        })
+    }
+
+    pub fn with_banned_names(mut self, names: HashSet<String>) -> Self {
+        self.banned_names = Arc::new(names);
+        self
+    }
+
+    /// Whether an account is barred from using this name. Operator-run NPC
+    /// accounts are exempt: headless bots cannot answer a rename prompt.
+    pub fn is_name_banned_for(&self, account_name: &str, name: &str) -> bool {
+        !account_name.starts_with(NPC_ACCOUNT_PREFIX)
+            && self
+                .banned_names
+                .contains(&crate::banned_names::normalize(name))
+    }
+
+    /// The gate every new character name passes. `current_name` is the name
+    /// being replaced, so a rename that only changes case is not a conflict
+    /// with itself.
+    fn check_new_character_name(
+        &self,
+        conn: &Connection,
+        account_name: &str,
+        name: &str,
+        current_name: Option<&str>,
+    ) -> Result<(), AuthError> {
+        if !valid_character_name(name) {
+            return Err(AuthError::InvalidCharacterName);
+        }
+        if self.is_name_banned_for(account_name, name) {
+            return Err(AuthError::BannedCharacterName);
+        }
+        if current_name.is_some_and(|current| current.eq_ignore_ascii_case(name)) {
+            return Ok(());
+        }
+        let taken: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM characters WHERE character_name = ?1 COLLATE NOCASE",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if taken.is_some() {
+            return Err(AuthError::CharacterNameAlreadyExists);
+        }
+        Ok(())
     }
 
     /// Migrate pre-Google-auth databases: the FNV password hashes are dropped
@@ -1226,10 +1281,6 @@ impl AuthService {
             return Err(AuthError::InvalidInput("Account name is required"));
         }
 
-        if !valid_character_name(character_name) {
-            return Err(AuthError::InvalidCharacterName);
-        }
-
         let conn = self.open_connection()?;
 
         let account_exists: Option<String> = conn
@@ -1252,17 +1303,7 @@ impl AuthService {
             return Err(AuthError::CharacterLimitReached);
         }
 
-        let existing_character_name: Option<String> = conn
-            .query_row(
-                "SELECT character_name FROM characters \
-                 WHERE character_name = ?1 COLLATE NOCASE",
-                params![character_name],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if existing_character_name.is_some() {
-            return Err(AuthError::CharacterNameAlreadyExists);
-        }
+        self.check_new_character_name(&conn, account_name, character_name, None)?;
 
         let gender_str = match gender {
             Gender::Male => "male",
@@ -1357,6 +1398,52 @@ impl AuthService {
             admin_role: 0,
             satiation: onlinerpg_shared::hunger::SATIATION_START,
         })
+    }
+
+    /// Give one of an account's characters a new name — how a player whose
+    /// name later lands on the banned list gets back in.
+    pub fn rename_character(
+        &self,
+        account_name: &str,
+        character_id: i64,
+        new_name: &str,
+    ) -> Result<String, AuthError> {
+        let account_name = account_name.trim();
+        let new_name = new_name.trim();
+
+        if account_name.is_empty() {
+            return Err(AuthError::InvalidInput("Account name is required"));
+        }
+        if character_id <= 0 {
+            return Err(AuthError::CharacterNotFound);
+        }
+
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+
+        let old_name: String = tx
+            .query_row(
+                "SELECT character_name FROM characters WHERE id = ?1 AND account_name = ?2",
+                params![character_id, account_name],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(AuthError::CharacterNotFound)?;
+
+        self.check_new_character_name(&tx, account_name, new_name, Some(&old_name))?;
+
+        tx.execute(
+            "UPDATE characters SET character_name = ?1 WHERE id = ?2",
+            params![new_name, character_id],
+        )?;
+        // `/block` lists key on the name, so carry them across the rename.
+        tx.execute(
+            "UPDATE character_blocks SET blocked_name = ?1 WHERE blocked_name = ?2 COLLATE NOCASE",
+            params![new_name, old_name],
+        )?;
+        tx.commit()?;
+
+        Ok(new_name.to_string())
     }
 
     pub fn delete_character(&self, account_name: &str, character_id: i64) -> Result<(), AuthError> {
@@ -1599,6 +1686,95 @@ mod tests {
             .unwrap();
         let items = auth.load_inventory(knight.id).unwrap();
         assert!(items.iter().all(|r| r.item_def_id != "worn_mandolin"));
+    }
+
+    fn banned_name_auth(tag: &str) -> AuthService {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_{}_{}.db",
+            tag,
+            uuid::Uuid::new_v4()
+        ));
+        AuthService::new(db_path).unwrap().with_banned_names(
+            ["gm".to_string(), "운영자".to_string()]
+                .into_iter()
+                .collect(),
+        )
+    }
+
+    fn plain_attributes() -> CharacterAttributes {
+        CharacterAttributes {
+            r#str: 10,
+            dex: 10,
+            con: 10,
+            int: 10,
+            wis: 10,
+            cha: 10,
+            guard: 10,
+        }
+    }
+
+    fn create(auth: &AuthService, account: &str, name: &str) -> Result<CharacterRecord, AuthError> {
+        auth.create_character(
+            account,
+            name,
+            &plain_attributes(),
+            10,
+            CharacterClass::Knight,
+            Gender::Male,
+        )
+    }
+
+    #[test]
+    fn banned_names_are_refused_at_creation_but_not_for_npcs() {
+        let auth = banned_name_auth("banned_create");
+        let account = auth.login_google("sub-banned").unwrap();
+
+        assert!(matches!(
+            create(&auth, &account, "GM"),
+            Err(AuthError::BannedCharacterName)
+        ));
+        assert!(matches!(
+            create(&auth, &account, " 운영자 "),
+            Err(AuthError::BannedCharacterName)
+        ));
+        // Only exact matches are banned; "gm" inside a name is fine.
+        assert!(create(&auth, &account, "Sigmund").is_ok());
+
+        let npc = auth.login_npc("npc_banned_test").unwrap();
+        assert!(create(&auth, &npc, "gm").is_ok());
+    }
+
+    #[test]
+    fn renaming_runs_the_same_gate_as_creation_and_persists() {
+        let auth = banned_name_auth("banned_rename");
+        let account = auth.login_google("sub-rename").unwrap();
+        let character = create(&auth, &account, "Oldname").unwrap();
+        create(&auth, &account, "Taken").unwrap();
+
+        assert!(matches!(
+            auth.rename_character(&account, character.id, "gm"),
+            Err(AuthError::BannedCharacterName)
+        ));
+        assert!(matches!(
+            auth.rename_character(&account, character.id, "Taken"),
+            Err(AuthError::CharacterNameAlreadyExists)
+        ));
+        assert!(matches!(
+            auth.rename_character(&account, character.id, "9lives"),
+            Err(AuthError::InvalidCharacterName)
+        ));
+        assert!(matches!(
+            auth.rename_character("someone_else", character.id, "Newname"),
+            Err(AuthError::CharacterNotFound)
+        ));
+
+        auth.rename_character(&account, character.id, " Newname ")
+            .unwrap();
+        let reloaded = auth
+            .get_character_for_account(&account, character.id)
+            .unwrap();
+        assert_eq!(reloaded.name, "Newname");
+        assert!(create(&auth, &account, "Oldname").is_ok());
     }
 
     #[test]

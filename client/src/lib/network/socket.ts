@@ -123,6 +123,10 @@ class NetworkManager {
   readonly characterStatsRolled =
     createEvent<(result: CharacterRollResult) => void>()
   readonly characterDeleted = createEvent<(characterId: number) => void>()
+  readonly characterRenameRequired =
+    createEvent<(characterId: number) => void>()
+  readonly characterRenamed =
+    createEvent<(payload: { characterId: number; name: string }) => void>()
   readonly characterError = createEvent<(message: string) => void>()
   readonly kicked = createEvent<(reason: string) => void>()
   readonly interactionRejected = createEvent<(reason: string) => void>()
@@ -159,6 +163,8 @@ class NetworkManager {
       characterCreated: this.characterCreated,
       characterStatsRolled: this.characterStatsRolled,
       characterDeleted: this.characterDeleted,
+      characterRenameRequired: this.characterRenameRequired,
+      characterRenamed: this.characterRenamed,
       characterError: this.characterError,
       kicked: this.kicked,
       playerRespawned: this.playerRespawned,
@@ -1047,9 +1053,51 @@ class NetworkManager {
     )
   }
 
+  async requestRenameCharacter(
+    characterId: number,
+    newName: string
+  ): Promise<{ ok: boolean; message?: string; name?: string }> {
+    await this.ensureWasm()
+    if (!this.isConnected()) {
+      return { ok: false, message: 'Socket is not connected' }
+    }
+
+    return this.requestWithTimeout(
+      8000,
+      'Character rename timed out',
+      (settle, onCleanup) => {
+        onCleanup(
+          this.characterRenamed.on(({ name }) => {
+            settle({ ok: true, name })
+          })
+        )
+        onCleanup(
+          this.characterError.on((message) => {
+            settle({ ok: false, message })
+          })
+        )
+        onCleanup(
+          this.authError.on((message) => {
+            settle({ ok: false, message })
+          })
+        )
+        return {
+          send: () =>
+            this.sendAndSerialize({
+              RenameCharacter: {
+                character_id: characterId,
+                new_name: newName,
+              },
+            }),
+          notSentResult: { ok: false, message: 'Socket is not connected' },
+        }
+      }
+    )
+  }
+
   async requestEnterGame(
     characterId: number
-  ): Promise<{ ok: boolean; message?: string }> {
+  ): Promise<{ ok: boolean; message?: string; renameRequired?: boolean }> {
     await this.ensureWasm()
     if (!this.isConnected()) {
       return { ok: false, message: 'Socket is not connected' }
@@ -1063,6 +1111,11 @@ class NetworkManager {
         onCleanup(
           this.joinSuccess.on(() => {
             settle({ ok: true })
+          })
+        )
+        onCleanup(
+          this.characterRenameRequired.on(() => {
+            settle({ ok: false, renameRequired: true })
           })
         )
         onCleanup(

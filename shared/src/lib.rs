@@ -90,7 +90,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v37: SpawnMonsterRequest/RequestSpawnMonster are gone — the server places
 ///      ambient monsters itself, keyed to distance walked
 ///      (doc/REPEAT_FARMING.md).
-pub const PROTOCOL_VERSION: u32 = 37;
+/// v38: RenameCharacter + CharacterRenameRequired/CharacterRenamed, so a
+///      character whose name later lands on the banned list is renamed at
+///      character select instead of being let in.
+pub const PROTOCOL_VERSION: u32 = 38;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

@@ -1,6 +1,7 @@
 mod announcements;
 mod api_auth;
 mod auth;
+mod banned_names;
 mod bgm_defs;
 mod cape_texture;
 mod cape_texture_routes;
@@ -255,6 +256,7 @@ struct StatePaths {
     housing: PathBuf,
     announcements: PathBuf,
     cape_textures: PathBuf,
+    banned_names: PathBuf,
 }
 
 fn state_paths(state_dir: &Path) -> StatePaths {
@@ -264,6 +266,7 @@ fn state_paths(state_dir: &Path) -> StatePaths {
         housing: state_dir.join("housing"),
         announcements: state_dir.join("announcements"),
         cape_textures: state_dir.join("cape-textures"),
+        banned_names: state_dir.join("banned_names.txt"),
     }
 }
 
@@ -334,7 +337,7 @@ async fn main() -> ExitCode {
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);
     let paths = state_paths(&args.state_dir);
     let auth_service = match AuthService::new(paths.db.clone()) {
-        Ok(service) => Arc::new(service),
+        Ok(service) => Arc::new(service.with_banned_names(banned_names::load(&paths.banned_names))),
         Err(e) => {
             error!("Failed to initialize auth service: {}", e);
             return ExitCode::FAILURE;

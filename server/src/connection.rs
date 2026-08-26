@@ -969,6 +969,37 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::RenameCharacter {
+            character_id,
+            new_name,
+        } => {
+            if let Err(responses) = state.require_not_in_game("RenameCharacter") {
+                return Ok(responses);
+            }
+            let authed_account_name = match state.require_auth("RenameCharacter") {
+                Ok(name) => name,
+                Err(responses) => return Ok(responses),
+            };
+            match auth_service.rename_character(&authed_account_name, character_id, &new_name) {
+                Ok(name) => {
+                    info!(
+                        "Character id={} renamed to '{}' for account '{}'",
+                        character_id, name, authed_account_name
+                    );
+                    return Ok(vec![ServerMessage::CharacterRenamed { character_id, name }]);
+                }
+                Err(err) => {
+                    warn!(
+                        "Character rename failed for account '{}': {}",
+                        authed_account_name, err
+                    );
+                    return Ok(vec![ServerMessage::CharacterError {
+                        message: err.client_message().to_string(),
+                    }]);
+                }
+            }
+        }
+
         ClientMessage::RollCharacterStats {
             character_class,
             gender,
@@ -1026,6 +1057,18 @@ async fn handle_client_message(
                         }]);
                     }
                 };
+
+            // A name banned after the character was made stops it here, not
+            // at login: the client answers with RenameCharacter and retries.
+            if auth_service.is_name_banned_for(&authed_account_name, &selected_character.name) {
+                info!(
+                    "Refusing entry for banned character name '{}'",
+                    selected_character.name
+                );
+                return Ok(vec![ServerMessage::CharacterRenameRequired {
+                    character_id,
+                }]);
+            }
 
             state.is_admin = state.admin_eligible && selected_character.admin_role > 0;
             if state.is_admin {
