@@ -3,9 +3,10 @@
 //! There used to be two — one for a fixed place, one for a moving target —
 //! and each had grown its own answer to the same questions: what to do when
 //! A* finds no route, when the server snaps us back, when a shut door stands
-//! in the way. The answers disagreed, and the disagreements were nobody's
-//! decision: the chase ignored position corrections outright, and only the
-//! chase would unlatch a door it was standing at.
+//! in the way. Every disagreement was a bug. The chase ignored position
+//! corrections outright; the commute, given no route, sent nothing at all and
+//! froze the body, since the server only reconciles the two sims off a step
+//! it can refuse.
 //!
 //! What a walk is for now lives entirely in [`WalkTo`] and its [`Tuning`]
 //! row; the loop is the same one either way.
@@ -418,15 +419,16 @@ pub(super) async fn walk(
                 Walked::Lost(LostReason::NoPath)
             };
         }
-        if tuning.give_up_when_unreachable {
-            return Walked::Blocked;
-        }
-        // On the surface the ground may simply be un-pathable rather than
-        // walled, so inch toward it anyway.
+        // On the surface, inch toward it anyway. The ground may simply be
+        // un-pathable rather than walled, and either way the server needs a
+        // step it can refuse before it will tell us where we really are.
         match nudge(state, goal, tuning.step_stop_dist, background, sprint).await {
             Step::Sent(ms) => tokio::time::sleep(Duration::from_millis(ms.max(50))).await,
             Step::Error => return Walked::Error,
             Step::Nothing => tokio::time::sleep(Duration::from_millis(IDLE_TICK_MS)).await,
+        }
+        if tuning.give_up_when_unreachable {
+            return Walked::Blocked;
         }
     }
 }
@@ -678,4 +680,87 @@ fn closed_doors_on_our_floor(s: &SharedState) -> Vec<DoorCandidate> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::tests::{test_player, test_state};
+    use onlinerpg_shared::housing::{HouseData, PassabilityGrid};
+
+    /// A block of cells walled on every edge: A* will not leave one.
+    fn boxed_in(x: f32, z: f32, floor_level: u8) -> HouseData {
+        HouseData {
+            id: "box".to_string(),
+            owner_id: "test".to_string(),
+            origin: Position { x, y: 0.0, z },
+            rooms: Vec::new(),
+            passability: vec![PassabilityGrid {
+                floor_level,
+                origin_x: 0,
+                origin_z: 0,
+                width: 2,
+                depth: 2,
+                cells: vec![1 | 2 | 4 | 8; 4],
+            }],
+        }
+    }
+
+    async fn boxed_in_at(
+        x: f32,
+        z: f32,
+        floor_level: i8,
+    ) -> (
+        Arc<Mutex<SharedState>>,
+        tokio::sync::mpsc::Receiver<ClientMessage>,
+    ) {
+        let (mut s, rx) = test_state();
+        s.self_player = Some(test_player(x, z));
+        s.self_player_id = Some(PlayerId::from(1));
+        s.self_floor_level = floor_level;
+        let floor = s.passability_floor();
+        s.world_cache
+            .write()
+            .unwrap()
+            .add_house(boxed_in(x.floor() - 1.0, z.floor() - 1.0, floor));
+        assert!(
+            !s.find_path_to(x + 30.0, z, floor).found,
+            "A* has no leg here"
+        );
+        (Arc::new(Mutex::new(s)), rx)
+    }
+
+    /// A walk A* cannot route must still put a step on the wire: the server
+    /// reconciles the two sims off a step it refuses — its correction and its
+    /// sealed-cell rescue both need one — so silence freezes the body while
+    /// the caller reissues the same walk forever.
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_with_no_route_still_steps() {
+        let (state, mut rx) = boxed_in_at(0.5, 0.5, 0).await;
+        let floor = state.lock().await.passability_floor();
+        let to = WalkTo::Place {
+            x: 30.5,
+            z: 0.5,
+            floor,
+        };
+        assert_eq!(walk(&state, &to, false, Some(false)).await, Walked::Blocked);
+        assert!(
+            matches!(rx.try_recv(), Ok(ClientMessage::PlayerMove { .. })),
+            "a blocked walk must still tell the server where it wanted to go"
+        );
+    }
+
+    /// Underground a missing route is a wall, not un-pathable ground.
+    #[tokio::test(start_paused = true)]
+    async fn a_walk_with_no_route_underground_sends_nothing() {
+        let (state, mut rx) = boxed_in_at(0.5, 0.5, -1).await;
+        let floor = state.lock().await.passability_floor();
+        let to = WalkTo::Place {
+            x: 30.5,
+            z: 0.5,
+            floor,
+        };
+        walk(&state, &to, false, Some(false)).await;
+        assert!(rx.try_recv().is_err(), "no line walked through a dungeon");
+    }
 }
