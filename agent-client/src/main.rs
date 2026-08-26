@@ -454,6 +454,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::Kicked { .. } => "Kicked",
         ServerMessage::ServerNotice { .. } => "ServerNotice",
         ServerMessage::PlayerTorchToggled { .. } => "PlayerTorchToggled",
+        ServerMessage::PlayerWetToggled { .. } => "PlayerWetToggled",
         ServerMessage::PlayerMainHandChanged { .. } => "PlayerMainHandChanged",
         ServerMessage::PlayerBackChanged { .. } => "PlayerBackChanged",
         ServerMessage::CapeDyePrompt { .. } => "CapeDyePrompt",

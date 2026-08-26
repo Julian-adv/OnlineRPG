@@ -58,6 +58,9 @@ mod tests {
         assert_eq!((poison.chance, poison.dps), (70, 0));
         assert_eq!(poison.drain_mult, 4.0);
         assert!(poison.blocks_regen && poison.move_mult < 1.0);
+        let wet = debuff_def(crate::game_state::WET_DEBUFF_ID).unwrap();
+        assert_eq!((wet.chance, wet.duration_secs), (100, 450));
+        assert!(wet.move_mult < 1.0 && wet.dps == 0 && !wet.blocks_regen);
         let bleed = debuff_def("bleed").unwrap();
         assert_eq!((bleed.dps, bleed.duration_secs), (1, 8));
         assert_eq!(

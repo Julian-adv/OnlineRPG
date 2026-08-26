@@ -1359,6 +1359,7 @@ impl super::GameState {
         // fanout. Distance walked is what grants ambient monsters
         // (doc/REPEAT_FARMING.md).
         self.spawn_along_movement(&steps).await;
+        self.soak_movers(&steps).await;
     }
 
     /// Step players sealed into their own cell out to an adjoining one, and

@@ -40,6 +40,8 @@ export type ServerPlayer = {
   back?: string | null
   back_color?: string | null
   back_texture?: string | null
+  /** Carrying the `wet` soaking — drives the footprint trail (doc/DEBUFF.md). */
+  wet?: boolean
 }
 
 export type ServerMonster = {

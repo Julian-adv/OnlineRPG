@@ -95,7 +95,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      character select instead of being let in.
 /// v39: level thresholds moved to the doc/LEVEL_CURVE.md table. No message
 ///      changed; a stale bundle would draw XP gauges on the old curve.
-pub const PROTOCOL_VERSION: u32 = 39;
+/// v40: `Player.wet` + PlayerWetToggled, so nearby clients can draw wet
+///      footprints behind a soaked player (doc/DEBUFF.md).
+pub const PROTOCOL_VERSION: u32 = 40;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -246,6 +248,7 @@ mod tests {
             client_kind: Default::default(),
             back_color: None,
             back_texture: None,
+            wet: false,
         }];
         // A monster with every Option None guards the wire format itself:
         // rmp_serde encodes structs as positional arrays, so any field that

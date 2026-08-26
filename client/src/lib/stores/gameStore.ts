@@ -38,6 +38,8 @@ interface PlayerBase {
   characterClass: CharacterClass
   gender: Gender
   torchOn?: boolean
+  /** Soaked, so nearby clients draw wet footprints (doc/DEBUFF.md). */
+  wet?: boolean
   mainHand?: string | null
   back?: string | null
   /** Dye on that cape, as broadcast with it. */

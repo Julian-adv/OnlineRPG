@@ -14,7 +14,8 @@ export interface PresentedDebuff extends DebuffPresentation {
   remaining: string
 }
 
-const NAMES: Record<string, { name?: string }> = debuffsJson
+const DEFS: Record<string, { name?: string; durationSecs?: number }> =
+  debuffsJson
 
 const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
   food_poisoning: {
@@ -29,10 +30,16 @@ const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
     applied: 'You are bleeding!',
     expired: 'The bleeding stops.',
   },
+  wet: {
+    icon: '💧',
+    note: 'Slowed by soaked clothes',
+    applied: 'You are soaked through — heavy going until you dry off.',
+    expired: 'Your clothes are dry again.',
+  },
 }
 
 export function debuffPresentation(id: string): DebuffPresentation {
-  const label = NAMES[id]?.name ?? id
+  const label = DEFS[id]?.name ?? id
   return {
     label,
     icon: '⚠️',
@@ -41,6 +48,11 @@ export function debuffPresentation(id: string): DebuffPresentation {
     expired: `${label} wears off.`,
     ...PRESENTATION[id],
   }
+}
+
+/** A debuff's full duration in ms, for effects that fade with what's left. */
+export function debuffDurationMs(id: string) {
+  return (DEFS[id]?.durationSecs ?? 0) * 1_000
 }
 
 export function formatRemaining(ms: number) {

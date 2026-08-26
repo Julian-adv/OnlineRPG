@@ -184,6 +184,7 @@ function toRemotePlayer(sp: ServerPlayer): RemotePlayer {
     characterClass: sp.class,
     gender: sp.gender,
     torchOn: sp.torch_on,
+    wet: sp.wet ?? false,
     mainHand: sp.main_hand ?? null,
     back: sp.back ?? null,
     backColor: sp.back_color ?? null,
@@ -1093,6 +1094,15 @@ export function handleServerMessage(
         break
       }
       updatePlayer(data.player_id, { torchOn: data.enabled })
+      break
+    }
+
+    case 'PlayerWetToggled': {
+      const state = get(gameStore)
+      if (state.currentPlayer?.id === data.player_id) {
+        break
+      }
+      updatePlayer(data.player_id, { wet: data.wet })
       break
     }
 

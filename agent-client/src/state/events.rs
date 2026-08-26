@@ -199,6 +199,8 @@ impl SharedState {
             | ServerMessage::StallAppeared { .. }
             | ServerMessage::StallRemoved { .. }
             | ServerMessage::GrillStarted
+            // Cosmetic: only the browser's footprint trail reads it.
+            | ServerMessage::PlayerWetToggled { .. }
             // NPCs are refused player-to-player trades server-side, so these
             // should never arrive; classified rather than left to the default.
             | ServerMessage::PlayerTradeRequested { .. }

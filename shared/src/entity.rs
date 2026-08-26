@@ -85,6 +85,11 @@ pub struct Player {
     /// Texture hash on that cape; `None` leaves the cloth plain.
     #[serde(default)]
     pub back_texture: Option<String>,
+    /// Carrying the `wet` soaking (doc/DEBUFF.md). Only the flag travels, not
+    /// the remaining time: it exists so nearby clients can draw wet
+    /// footprints, and the owner's own countdown rides `DebuffUpdate`.
+    #[serde(default)]
+    pub wet: bool,
     #[serde(skip)]
     pub object_id: Option<u32>,
     #[serde(skip)]
@@ -313,6 +318,7 @@ mod tests {
             client_kind: ClientKind::default(),
             back_color: None,
             back_texture: None,
+            wet: false,
         };
         // rmp_serde writes the struct as a positional array, so `id` is the
         // first element — and 42 fits msgpack's single-byte positive fixint.
@@ -354,6 +360,7 @@ mod tests {
             client_kind: ClientKind::default(),
             back_color: None,
             back_texture: None,
+            wet: false,
         };
         let bytes = rmp_serde::to_vec(&player).unwrap();
         let decoded: Player = rmp_serde::from_slice(&bytes).unwrap();

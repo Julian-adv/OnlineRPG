@@ -32,6 +32,9 @@ export interface GraphicsPreset {
   treeInstanceLimit: number
   treeCastsShadow: boolean
   enableWindParticles: boolean
+  /** Footprints behind *other* soaked players. The local player's always
+   *  draw; the fan-out is what costs, so only `high` takes it. */
+  enableRemoteFootprints: boolean
   enableHousingLayer: boolean
   enableTorchEffects: boolean
   enableTorchShadows: boolean
@@ -80,6 +83,7 @@ const FULL_RENDER_SETTINGS = {
   | 'treeInstanceLimit'
   | 'treeCastsShadow'
   | 'enableWindParticles'
+  | 'enableRemoteFootprints'
   | 'worldMapImageCacheLimit'
 >
 
@@ -99,6 +103,7 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 1024,
     treeCastsShadow: true,
     enableWindParticles: true,
+    enableRemoteFootprints: true,
     worldMapImageCacheLimit: 256,
   },
   medium: {
@@ -116,6 +121,7 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 768,
     treeCastsShadow: true,
     enableWindParticles: true,
+    enableRemoteFootprints: false,
     worldMapImageCacheLimit: 256,
   },
   low: {
@@ -133,6 +139,7 @@ const PRESETS: Record<QualityLevel, GraphicsPreset> = {
     treeInstanceLimit: 512,
     treeCastsShadow: false,
     enableWindParticles: false,
+    enableRemoteFootprints: false,
     worldMapImageCacheLimit: 128,
   },
 }
@@ -209,6 +216,7 @@ function getMobileSafePreset(preset: GraphicsPreset): GraphicsPreset {
     treeInstanceLimit: 384,
     treeCastsShadow: false,
     enableWindParticles: false,
+    enableRemoteFootprints: false,
     enableHousingLayer: true,
     enableTorchEffects: true,
     enableTorchShadows: false,

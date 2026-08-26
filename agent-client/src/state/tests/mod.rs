@@ -106,6 +106,7 @@ pub(crate) fn test_player(x: f32, z: f32) -> Player {
         client_kind: Default::default(),
         back_color: None,
         back_texture: None,
+        wet: false,
     }
 }
 

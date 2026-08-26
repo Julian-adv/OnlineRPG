@@ -1095,6 +1095,12 @@ pub enum ServerMessage {
         player_id: PlayerId,
         enabled: bool,
     },
+    /// The `wet` soaking went up or came off this player (doc/DEBUFF.md).
+    /// Cosmetic — only the footprint trail reads it.
+    PlayerWetToggled {
+        player_id: PlayerId,
+        wet: bool,
+    },
     /// The client asked to use a cape dye and may open its colour picker:
     /// there is a cape on to dye and the dye is in the bag. The server keeps
     /// no pending state — `DyeCape` re-checks everything.

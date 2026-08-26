@@ -31,6 +31,7 @@
   import GameSceneWaterFieldLayer from './game-scene/GameSceneWaterFieldLayer.svelte'
   import GameSceneRiverRocksLayer from './game-scene/GameSceneRiverRocksLayer.svelte'
   import GameSceneShoreSprayLayer from './game-scene/GameSceneShoreSprayLayer.svelte'
+  import GameSceneFootprintsLayer from './game-scene/GameSceneFootprintsLayer.svelte'
   import GameSceneGrassLayer from './game-scene/GameSceneGrassLayer.svelte'
   import GameSceneTreeLayer from './game-scene/GameSceneTreeLayer.svelte'
   import GameSceneWindParticles from './game-scene/GameSceneWindParticles.svelte'
@@ -198,6 +199,9 @@
   let waterLayerRef = $state<GameSceneWaterFieldLayer | undefined>(undefined)
   let riverRocksRef = $state<GameSceneRiverRocksLayer | undefined>(undefined)
   let shoreSprayRef = $state<GameSceneShoreSprayLayer | undefined>(undefined)
+  const waterSurfaceAt = (x: number, z: number) =>
+    waterFieldManager.surfaceAt(x, z)
+  let footprintsRef = $state<GameSceneFootprintsLayer | undefined>(undefined)
   let grassLayerRef = $state<GameSceneGrassLayer | undefined>(undefined)
   let treeLayerRef = $state<GameSceneTreeLayer | undefined>(undefined)
   let windParticlesRef = $state<GameSceneWindParticles | undefined>(undefined)
@@ -377,6 +381,8 @@
     if (riverRocksGroup) riverRocksGroup.visible = !underground
     const shoreSprayGroup = shoreSprayRef?.getGroup?.()
     if (shoreSprayGroup) shoreSprayGroup.visible = !underground
+    const footprintsGroup = footprintsRef?.getGroup?.()
+    if (footprintsGroup) footprintsGroup.visible = !underground
     if (underground) {
       // The housing layer's per-frame detection is skipped underground;
       // clear its state so stale floor offsets can't leak into physics.
@@ -673,6 +679,9 @@
 
       // Update campfire flames
       campfiresLayerRef?.update(deltaTime, camera)
+
+      // Age the local player's wet footprints and stamp new ones
+      footprintsRef?.update(deltaTime)
 
       // Update camera with preserved offset
       const cameraUpdateStart = performance.now()
@@ -1194,6 +1203,15 @@
   />
 {/if}
 
+<GameSceneFootprintsLayer
+  bind:this={footprintsRef}
+  playerPosition={currentPlayer?.position ?? null}
+  remotePlayers={remotePlayerManager.players}
+  {otherPlayers}
+  enableRemote={graphicsPreset.enableRemoteFootprints}
+  {waterSurfaceAt}
+/>
+
 <T is={entityClipGroupObj} bind:ref={entityClipGroup}>
   <GameScenePlayersLayer
     bind:this={playersLayer}
@@ -1227,7 +1245,7 @@
     torchShadowMapSize={graphicsPreset.torchShadowMapSize}
     wallTorchPositions={() => dungeonLayerRef?.getWallTorchPositions() ?? []}
     heightManager={terrainHeightManager}
-    waterSurfaceAt={(x, z) => waterFieldManager.surfaceAt(x, z)}
+    {waterSurfaceAt}
     onStateChange={handlePlayerStateChange}
     onPlayerControlEvent={enqueuePlayerControlEvent}
     onAttackDuration={(duration) => (playerAttackDuration = duration)}
