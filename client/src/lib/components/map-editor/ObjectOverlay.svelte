@@ -291,6 +291,9 @@
     number,
     { system: FireParticles; pos: THREE.Vector3 }
   >()
+  /** Currently visible fire systems, refreshed by syncFires(); update() only
+   *  ticks these so paused (detached) systems cost nothing per frame. */
+  const _activeFires: FireParticles[] = []
   /** World positions of visible flames, refreshed by syncFires(): log-bed
    *  fires (hearths) take the unified light, torches feed the glow pool. */
   const firePositions: THREE.Vector3[] = []
@@ -309,9 +312,14 @@
     return out.add(_placementPos.set(p.x, p.y, p.z))
   }
 
+  /** Sync fire systems to the visible placements. Systems whose placement is
+   *  merely filtered out (other floor/house, per `_idShown`) are detached and
+   *  paused, not disposed — tearing them down and re-creating them on every
+   *  house entry churned garbage and GPU buffers, hitching the entry frame. */
   function syncFires(visible: ObjectPlacement[]) {
     firePositions.length = 0
     torchPositions.length = 0
+    _activeFires.length = 0
     _seenFires.clear()
     for (const p of visible) {
       const def = catalogById.get(p.type)
@@ -324,23 +332,27 @@
         const system = isTorch
           ? new TorchFireParticles()
           : new CampfireFireParticles()
-        fireRoot.add(system.group)
         entry = { system, pos: new THREE.Vector3() }
         fireSystems.set(p.id, entry)
       }
+      if (!entry.system.group.parent) fireRoot.add(entry.system.group)
       entry.system.setOrigin(fireWorldPos(p, fire, entry.pos))
+      _activeFires.push(entry.system)
       ;(isTorch ? torchPositions : firePositions).push(entry.pos)
     }
     for (const [id, entry] of fireSystems) {
-      if (!_seenFires.has(id)) {
-        entry.system.dispose()
-        fireSystems.delete(id)
+      if (_seenFires.has(id)) continue
+      if (_idShown.has(id)) {
+        fireRoot.remove(entry.system.group)
+        continue
       }
+      entry.system.dispose()
+      fireSystems.delete(id)
     }
   }
 
   export function update(deltaTime: number, camera: THREE.Camera | undefined) {
-    for (const e of fireSystems.values()) e.system.update(deltaTime, camera)
+    for (const s of _activeFires) s.update(deltaTime, camera)
   }
 
   export function getFirePositions(): THREE.Vector3[] {
@@ -420,53 +432,65 @@
     return clone
   }
 
+  /** id → currently shown, over every loaded placement. `has()` answers
+   *  "still loaded", `get()` answers "passes the floor/house filter". */
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const _visibleIds = new Set<number>()
+  const _idShown = new Map<number, boolean>()
 
-  /** Incremental sync of clones to the visible placements. Clones are only
-   *  torn down when they disappear or their struct key changes — crucial on
-   *  WebGPU, where re-instantiating meshes rebuilds pipelines and bind groups
-   *  (a full re-clone on house entry stalled a frame). */
+  /** Incremental sync of clones to the loaded placements. Every placement gets
+   *  a clone up front; ones filtered out (other floor/house) are detached from
+   *  the scene graph but kept in cloneById with their geometry, materials and
+   *  compiled GPU state alive — destroy/re-create on house entry churned
+   *  garbage and GPU bind groups, hitching the entry frame. Detached clones
+   *  cost no render traversal and no raycasts. Teardown only when the
+   *  placement is gone or its struct key changes. */
   function rebuild() {
+    _idShown.clear()
+    for (const p of placements) _idShown.set(p.id, false)
     const visible = visiblePlacements(currentFloor)
+    for (const p of visible) _idShown.set(p.id, true)
     syncFires(visible)
 
-    _visibleIds.clear()
-    for (const p of visible) _visibleIds.add(p.id)
     for (const [id, clone] of cloneById) {
-      if (_visibleIds.has(id)) continue
+      if (_idShown.has(id)) continue
       disposeClonedMaterials(clone)
       group.remove(clone)
       cloneById.delete(id)
     }
 
-    let added = false
-    for (const p of visible) {
-      const structKey = structKeyOf(p)
+    let attached = false
+    for (const p of placements) {
+      const show = _idShown.get(p.id)
       let clone = cloneById.get(p.id)
-      if (clone && clone.userData.structKey !== structKey) {
+      if (clone && show && clone.userData.structKey !== structKeyOf(p)) {
         disposeClonedMaterials(clone)
         group.remove(clone)
         cloneById.delete(p.id)
         clone = undefined
       }
-      if (clone) {
+      if (!clone) {
+        const template = modelCache.get(p.type)
+        if (!template) {
+          getModel(p.type)
+          continue
+        }
+        clone = buildClone(p, template, structKeyOf(p))
+        cloneById.set(p.id, clone)
+      } else if (show) {
         applyPlacementTransform(clone, p)
-        continue
       }
-      const template = modelCache.get(p.type)
-      if (!template) {
-        getModel(p.type)
-        continue
+      if (show) {
+        if (!clone.parent) {
+          group.add(clone)
+          attached = true
+        }
+      } else if (clone.parent) {
+        group.remove(clone)
       }
-      clone = buildClone(p, template, structKey)
-      cloneById.set(p.id, clone)
-      group.add(clone)
-      added = true
     }
-    // Fresh clones start opaque; the $effect will re-apply ghost next frame
-    // if the player is still under a bridge.
-    if (added) ghostBridgeId = null
+    // Freshly attached clones start opaque; the $effect will re-apply ghost
+    // next frame if the player is still under a bridge.
+    if (attached) ghostBridgeId = null
   }
 
   function updatePreview() {
@@ -527,8 +551,8 @@
   let ghostBridgeId: number | null = null
 
   function applyBridgeGhost(placementId: number, ghost: boolean) {
-    for (const child of group.children) {
-      if (child.userData.objectId !== placementId) continue
+    const child = cloneById.get(placementId)
+    if (child) {
       child.traverse((o) => {
         if (!(o instanceof THREE.Mesh)) return
         const m = o.material as THREE.Material
