@@ -34,7 +34,6 @@
   import { FishingAnimationName } from '../../types/animations'
   import { housingManager } from '../../managers/housingManager'
   import { campfireManager } from '../../managers/campfireManager'
-  import type { Position } from '../../network/networkTypes'
   import {
     shortestWrappedDeltaX,
     unwrapWorldXNear,
@@ -87,6 +86,10 @@
      *  world-positions (empty when not underground). Pulled fresh each frame —
      *  the array is swapped on floor rebuild, so it must not be cached. */
     wallTorchPositions?: () => THREE.Vector3[]
+    /** World positions of burning hearth flames (placed furniture). */
+    hearthFirePositions?: () => THREE.Vector3[]
+    /** Flame world-positions of wall torches placed in houses. */
+    houseTorchPositions?: () => THREE.Vector3[]
   }
 
   let {
@@ -122,6 +125,8 @@
     torchLightCastsShadow = true,
     torchShadowMapSize = TORCH_SHADOW_MAP_SIZE,
     wallTorchPositions,
+    hearthFirePositions,
+    houseTorchPositions,
   }: Props = $props()
 
   // Sync attack animation duration to remote player manager
@@ -215,23 +220,11 @@
   const _unifiedTorchTmp = new THREE.Vector3()
   const _torchOffsetTmp = new THREE.Vector3()
 
-  // Wall-torch light pool: a *fixed* set of non-shadow PointLights, each parked
-  // on one of the N nearest dungeon wall torches so the floor glows even with no
-  // lit player torch around. Mounted only while underground (below), so the
-  // scene's PointLight count steps 1->1+N on dungeon entry and back on exit.
-  // That deviates from the unified light's "always-mounted, constant 1" rule on
-  // purpose: the unified light stays constant because remote torch-bearers come
-  // and go *mid-play* (a recompile stall there is visible), whereas this pool's
-  // count only changes on a dungeon enter/exit — a hard scene transition that
-  // already loads/unloads all the floor geometry, so its one-time (then cached)
-  // pipeline recompile is masked. Always-mounting these N everywhere instead
-  // would tax the whole overworld with N dead point lights it never needs.
-  // Within the dungeon the count is fixed (unused slots idle at intensity 0), so
-  // moving between rooms/floors never churns the pipeline. Shadow casting stays
-  // on the *single* unified light (below): when no player torch is lit it
-  // relocates to the nearest wall torch and casts its shadow there, matching how
-  // a remote player's torch is treated; that torch is then skipped here so it
-  // isn't double-lit.
+  // Wall-torch light pool: N shadowless PointLights parked on the nearest wall
+  // torches (dungeon floors, house interiors). Always mounted so the scene's
+  // PointLight count never changes — mounting on house entry caused a visible
+  // pipeline-recompile stall. Unused slots idle at intensity 0. Shadows stay on
+  // the single unified light, which skips the torch it already occupies.
   const WALL_TORCH_POOL_SIZE = 6
   /** Wall torches glow a touch dimmer than a held/player torch. */
   const WALL_TORCH_INTENSITY_SCALE = 0.65
@@ -244,6 +237,7 @@
   const wallTorchFlickerTimes = wallTorchSlots.map((_, i) => i * 0.7)
   /** Scratch reused each frame to rank wall torches by distance to the player. */
   const _wallTorchRanking: { idx: number; dist: number }[] = []
+  let wallTorchPoolIdle = false
 
   // The bearer's y already resolves house/dungeon floors, so don't resample terrain
   function setTorchTargetFromPose(
@@ -267,26 +261,41 @@
   const CAMPFIRE_LIGHT_RANGE_SQ = CAMPFIRE_LIGHT_RANGE * CAMPFIRE_LIGHT_RANGE
   /** A fire throws more light than a torch in hand. */
   const CAMPFIRE_INTENSITY_SCALE = 1.25
+  /** A hearth's log bed sits inside the arch; its light hovers a little above
+   *  and in front of the bed so the shadow light isn't buried in stone. */
+  const HEARTH_LIGHT_HEIGHT = 0.4
+  const _fireLightTmp = new THREE.Vector3()
 
-  /** The burning campfire closest to the player, within range. Surface only —
-   *  the campfire layer hides underground, so its light must too. */
-  function nearestCampfire(playerPos: {
+  /** Light position of the closest burning fire (campfire or hearth) within
+   *  range. Surface only — the campfire layer hides underground. */
+  function nearestFireLight(playerPos: {
     x: number
     z: number
-  }): Position | null {
+  }): THREE.Vector3 | null {
     if (isUnderground) return null
-    let best: Position | null = null
     let bestDist = CAMPFIRE_LIGHT_RANGE_SQ
+    let found = false
     for (const fire of campfireManager.fires.values()) {
       const dx = shortestWrappedDeltaX(playerPos.x, fire.x)
       const dz = fire.z - playerPos.z
       const dist = dx * dx + dz * dz
       if (dist < bestDist) {
         bestDist = dist
-        best = fire
+        found = true
+        _fireLightTmp.set(fire.x, fire.y + CAMPFIRE_LIGHT_HEIGHT, fire.z)
       }
     }
-    return best
+    for (const fire of hearthFirePositions?.() ?? []) {
+      const dx = shortestWrappedDeltaX(playerPos.x, fire.x)
+      const dz = fire.z - playerPos.z
+      const dist = dx * dx + dz * dz
+      if (dist < bestDist) {
+        bestDist = dist
+        found = true
+        _fireLightTmp.set(fire.x, fire.y + HEARTH_LIGHT_HEIGHT, fire.z)
+      }
+    }
+    return found ? _fireLightTmp : null
   }
 
   /** Pick the unified shadow light's target. Returns the world position, the
@@ -299,12 +308,12 @@
     if (!currentPlayer) return null
     // A campfire outshines any torch, held or not: the one light goes to the
     // fire while the player is near it.
-    const fire = nearestCampfire(currentPlayer.position)
+    const fire = nearestFireLight(currentPlayer.position)
     if (fire) {
       return {
         target: _unifiedTorchTmp.set(
           unwrapWorldXNear(currentPlayer.position.x, fire.x),
-          fire.y + CAMPFIRE_LIGHT_HEIGHT,
+          fire.y,
           fire.z
         ),
         wallIdx: -1,
@@ -379,6 +388,8 @@
     occupiedIdx: number
   ) {
     if (wallTorchLights.length === 0) return
+    if (wallPositions.length === 0 && wallTorchPoolIdle) return
+    wallTorchPoolIdle = wallPositions.length === 0
     const playerPos = currentPlayer?.position
     _wallTorchRanking.length = 0
     if (playerPos) {
@@ -415,10 +426,12 @@
   }
 
   export function updateUnifiedTorchFlicker(deltaTime: number) {
-    const wallPositions =
-      isUnderground && !torchEffectsDisabled
-        ? (wallTorchPositions?.() ?? [])
-        : []
+    const torchSource = isUnderground
+      ? wallTorchPositions
+      : localHouseId != null
+        ? houseTorchPositions
+        : undefined
+    const wallPositions = torchEffectsDisabled ? [] : (torchSource?.() ?? [])
     let occupiedWallIdx = -1
     if (unifiedTorchLight) {
       const result = computeUnifiedTorchTarget(wallPositions)
@@ -601,21 +614,18 @@
     />
 
     <!-- Wall-torch glow pool: a fixed N of shadowless point lights, parked on the
-         nearest wall torches each frame (see updateWallTorchPool). Mounted only
-         underground; the slot count is constant so the light count never churns
-         mid-floor. -->
-    {#if isUnderground}
-      {#each wallTorchSlots as _slot, i (i)}
-        <T.PointLight
-          bind:ref={wallTorchLights[i]}
-          position={[0, 0, 0]}
-          color="#ffcc66"
-          intensity={0}
-          distance={TORCH_BASE_DISTANCE}
-          decay={TORCH_BASE_DECAY}
-          castShadow={false}
-        />
-      {/each}
-    {/if}
+         nearest wall torches each frame (see updateWallTorchPool). Always
+         mounted so the light count never churns. -->
+    {#each wallTorchSlots as _slot, i (i)}
+      <T.PointLight
+        bind:ref={wallTorchLights[i]}
+        position={[0, 0, 0]}
+        color="#ffcc66"
+        intensity={0}
+        distance={TORCH_BASE_DISTANCE}
+        decay={TORCH_BASE_DECAY}
+        castShadow={false}
+      />
+    {/each}
   {/if}
 {/if}

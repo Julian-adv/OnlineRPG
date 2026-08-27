@@ -679,6 +679,7 @@
 
       // Update campfire flames
       campfiresLayerRef?.update(deltaTime, camera)
+      objectOverlayRef?.update(deltaTime, camera)
 
       // Age the local player's wet footprints and stamp new ones
       footprintsRef?.update(deltaTime)
@@ -1244,6 +1245,8 @@
     torchLightCastsShadow={graphicsPreset.enableTorchShadows}
     torchShadowMapSize={graphicsPreset.torchShadowMapSize}
     wallTorchPositions={() => dungeonLayerRef?.getWallTorchPositions() ?? []}
+    hearthFirePositions={() => objectOverlayRef?.getFirePositions() ?? []}
+    houseTorchPositions={() => objectOverlayRef?.getTorchPositions() ?? []}
     heightManager={terrainHeightManager}
     {waterSurfaceAt}
     onStateChange={handlePlayerStateChange}

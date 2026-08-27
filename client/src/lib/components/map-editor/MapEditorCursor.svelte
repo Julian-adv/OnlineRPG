@@ -41,12 +41,17 @@
     EditorTool,
     ZoneSubTool,
     ObjectSubTool,
-    ObjectRegionData,
   } from '../../stores/editorStore'
   import { NpcScheduleManager } from '../../managers/npcScheduleManager'
   import type { NpcScheduleData } from '../../managers/npcScheduleManager'
   import { objectManager } from '../../managers/objectManager'
   import { furnitureManager } from '../../managers/furnitureManager'
+  import {
+    commitPlacements,
+    deleteSelectedPlacement,
+    duplicateSelectedPlacement,
+    nextPlacementId,
+  } from './object-edit'
   import { findAncestorWithUserData } from '../../managers/inputHandler'
   import { housingManager } from '../../managers/housingManager'
   import { playerVisualFloorLevel } from '../../stores/housingStore'
@@ -623,9 +628,8 @@
         : 0
       const y = objectSpawnY(currentObjectType, terrainY, currentPlayerFloor)
       const data = get(currentObjectData)
-      const maxId = data.placements.reduce((max, p) => Math.max(max, p.id), 0)
       const placement = {
-        id: maxId + 1,
+        id: nextPlacementId(data),
         type: currentObjectType,
         x: snapped.x,
         y,
@@ -636,15 +640,7 @@
         ),
         floorLevel: currentPlayerFloor,
       }
-      const updated: ObjectRegionData = {
-        placements: [...data.placements, placement],
-      }
-      currentObjectData.set(updated)
-
-      const region = get(currentEditorRegion)
-      if (region) {
-        await objectManager.saveObject(region.rx, region.rz, updated)
-      }
+      await commitPlacements([...data.placements, placement])
     } else {
       // Precise pick first: cast a ray at the actual object meshes so clicking
       // a small prop on top of a larger one selects the prop (and re-clicking
@@ -846,22 +842,6 @@
     flushVegetationRemoval()
   }
 
-  async function handleObjectDelete() {
-    const placementId = get(selectedObjectPlacementId)
-    if (placementId === null) return
-    const data = get(currentObjectData)
-    const updated: ObjectRegionData = {
-      placements: data.placements.filter((p) => p.id !== placementId),
-    }
-    currentObjectData.set(updated)
-    selectedObjectPlacementId.set(null)
-
-    const region = get(currentEditorRegion)
-    if (region) {
-      await objectManager.saveObject(region.rx, region.rz, updated)
-    }
-  }
-
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === 'Shift') {
       shiftHeld = true
@@ -882,7 +862,11 @@
         objectRotation.update((r) => (r + step) % 360)
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
-        handleObjectDelete()
+        deleteSelectedPlacement()
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'd') {
+        event.preventDefault()
+        duplicateSelectedPlacement()
       }
     }
     if (

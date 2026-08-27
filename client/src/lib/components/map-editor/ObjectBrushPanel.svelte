@@ -20,6 +20,10 @@
   import { objectManager } from '../../managers/objectManager'
   import { furnitureManager } from '../../managers/furnitureManager'
   import {
+    deleteSelectedPlacement,
+    duplicateSelectedPlacement,
+  } from './object-edit'
+  import {
     rotatedRectAabb,
     type FootprintRect,
   } from '../../utils/objectFootprint'
@@ -287,21 +291,6 @@
     }
   }
 
-  async function deletePlacement() {
-    if (selectedPlacementId === null) return
-    const data = get(currentObjectData)
-    const updated: ObjectRegionData = {
-      placements: data.placements.filter((p) => p.id !== selectedPlacementId),
-    }
-    currentObjectData.set(updated)
-    selectedObjectPlacementId.set(null)
-
-    const region = get(currentEditorRegion)
-    if (region) {
-      await objectManager.saveObject(region.rx, region.rz, updated)
-    }
-  }
-
   function formatPos(p: ObjectPlacement): string {
     return `${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`
   }
@@ -458,13 +447,18 @@
           </div>
         {/if}
         <button
-          class="flatten-btn"
+          class="panel-btn flatten-btn"
           onclick={flattenTerrain}
           disabled={flattening || !heightManager}
         >
           {flattening ? 'Flattening…' : 'Flatten Terrain'}
         </button>
-        <button class="delete-btn" onclick={deletePlacement}>Delete</button>
+        <button class="panel-btn dup-btn" onclick={duplicateSelectedPlacement}>
+          Duplicate (Ctrl+D)
+        </button>
+        <button class="panel-btn delete-btn" onclick={deleteSelectedPlacement}>
+          Delete
+        </button>
       </div>
     {:else}
       <div class="draw-hint">Click a placed object to select</div>
@@ -692,18 +686,22 @@
     color: #666;
   }
 
-  .flatten-btn {
+  .panel-btn {
     margin-top: 4px;
     width: 100%;
     padding: 5px;
-    background: rgba(68, 204, 255, 0.15);
-    border: 1px solid rgba(68, 204, 255, 0.4);
+    border: 1px solid transparent;
     border-radius: 4px;
-    color: #44ccff;
     cursor: pointer;
     font-family: inherit;
     font-size: 11px;
     font-weight: bold;
+  }
+
+  .flatten-btn {
+    background: rgba(68, 204, 255, 0.15);
+    border-color: rgba(68, 204, 255, 0.4);
+    color: #44ccff;
   }
 
   .flatten-btn:hover:not(:disabled) {
@@ -716,17 +714,19 @@
   }
 
   .delete-btn {
-    margin-top: 4px;
-    width: 100%;
-    padding: 5px;
     background: rgba(255, 60, 60, 0.2);
-    border: 1px solid rgba(255, 60, 60, 0.4);
-    border-radius: 4px;
+    border-color: rgba(255, 60, 60, 0.4);
     color: #ff6666;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: bold;
+  }
+
+  .dup-btn {
+    background: rgba(80, 160, 255, 0.2);
+    border-color: rgba(80, 160, 255, 0.4);
+    color: #7fb8ff;
+  }
+
+  .dup-btn:hover {
+    background: rgba(80, 160, 255, 0.35);
   }
 
   .delete-btn:hover {

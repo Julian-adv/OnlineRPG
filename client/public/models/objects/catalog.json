@@ -172,6 +172,13 @@
     "solid": true
   },
   {
+    "id": "stone_hearth",
+    "name": "Stone Hearth",
+    "model": "objects/stone_hearth.glb",
+    "fire": { "x": 0, "y": 0.3, "z": -0.02 },
+    "solid": true
+  },
+  {
     "id": "ammobox",
     "name": "Ammo Box",
     "model": "objects/ammobox.glb",
@@ -191,7 +198,9 @@
   {
     "id": "torch_wall",
     "name": "Wall Torch",
-    "model": "objects/torch_wall.glb"
+    "model": "objects/torch_wall.glb",
+    "fire": { "x": 0, "y": 0.6, "z": 0.25 },
+    "fireKind": "torch"
   },
   {
     "id": "health_potion",

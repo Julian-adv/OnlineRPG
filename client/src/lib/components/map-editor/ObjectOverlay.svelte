@@ -16,6 +16,7 @@
     ObjectDef,
     ObjectPlacement,
   } from '../../stores/editorStore'
+  import type { Position } from '../../network/networkTypes'
   import { playerDebugInfo } from '../../stores/debugStore'
   import type { PlayerDebugInfo } from '../../stores/debugStore'
   import { mapEditorMode } from '../../stores/debugStore'
@@ -30,6 +31,11 @@
   } from '../../stores/housingStore'
   import { housingManager } from '../../managers/housingManager'
   import { loadGLB } from '../../utils/gltfCache'
+  import {
+    CampfireFireParticles,
+    TorchFireParticles,
+    type FireParticles,
+  } from '../../effects/fire-particles'
   import { getObjectModelPath } from '../../utils/modelPaths'
   import { buildShopSignBoard, buildShopSignText } from '../../utils/shop-sign'
   import type { Unsubscriber } from 'svelte/store'
@@ -204,10 +210,6 @@
       box.getSize(size)
       modelBounds.set(objectId, { center, size })
       modelCache.set(objectId, model)
-      // Force a full rebuild (not the transform-only fast path) so the newly
-      // loaded template actually gets cloned into the scene.
-      lastBuildKey = ''
-      lastStructKey = ''
       rebuild()
       // If the user is currently previewing this object, build the preview now —
       // otherwise the cursor stays empty until the mouse moves again.
@@ -231,8 +233,10 @@
       // shop-sign.ts). The board reuses the shared housing door material, which
       // other houses depend on. Leave both for GC / shared ownership.
       if (child.userData?.isSignText || child.userData?.isSignBoard) return
-      if (child instanceof THREE.Mesh && child.material) {
-        child.material.dispose()
+      // Plain clones share the cached template's materials — disposing those
+      // would force every placement to re-upload textures on the next draw.
+      if (child instanceof THREE.Mesh && child.userData.ownsMaterial) {
+        ;(child.material as THREE.Material).dispose()
       } else if (child instanceof THREE.LineSegments) {
         child.geometry.dispose()
         ;(child.material as THREE.Material).dispose()
@@ -263,6 +267,7 @@
     obj.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.material = (child.material as THREE.Material).clone()
+        child.userData.ownsMaterial = true
         ;(child.material as THREE.Material).transparent = true
         ;(child.material as THREE.Material).opacity = opacity
         ;(child.material as THREE.Material).depthWrite = false
@@ -270,12 +275,81 @@
     })
   }
 
-  let lastBuildKey = ''
-  let lastStructKey = ''
   /** objectId → its placement clone in `group`, so the transform-only fast path
    *  can move an existing clone instead of tearing the whole region down. */
   const cloneById = new SvelteMap<number, THREE.Object3D>()
   const isEditing = () => isEditorMode && tool === 'object'
+
+  // Flames of placements whose catalog def has `fire` (hearths). Kept under a
+  // separate root: rebuild() sweeps `group`'s children through the material
+  // disposer, which must never touch the fire material shared scene-wide.
+  const Y_AXIS = new THREE.Vector3(0, 1, 0)
+  const fireRoot = new THREE.Group()
+  fireRoot.name = 'objectFires'
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const fireSystems = new Map<
+    number,
+    { system: FireParticles; pos: THREE.Vector3 }
+  >()
+  /** World positions of visible flames, refreshed by syncFires(): log-bed
+   *  fires (hearths) take the unified light, torches feed the glow pool. */
+  const firePositions: THREE.Vector3[] = []
+  const torchPositions: THREE.Vector3[] = []
+  const _placementPos = new THREE.Vector3()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const _seenFires = new Set<number>()
+
+  function fireWorldPos(
+    p: ObjectPlacement,
+    local: Position,
+    out: THREE.Vector3
+  ) {
+    out.set(local.x, local.y, local.z)
+    out.applyAxisAngle(Y_AXIS, (p.rotation * Math.PI) / 180)
+    return out.add(_placementPos.set(p.x, p.y, p.z))
+  }
+
+  function syncFires(visible: ObjectPlacement[]) {
+    firePositions.length = 0
+    torchPositions.length = 0
+    _seenFires.clear()
+    for (const p of visible) {
+      const def = catalogById.get(p.type)
+      const fire = def?.fire
+      if (!fire) continue
+      const isTorch = def?.fireKind === 'torch'
+      _seenFires.add(p.id)
+      let entry = fireSystems.get(p.id)
+      if (!entry) {
+        const system = isTorch
+          ? new TorchFireParticles()
+          : new CampfireFireParticles()
+        fireRoot.add(system.group)
+        entry = { system, pos: new THREE.Vector3() }
+        fireSystems.set(p.id, entry)
+      }
+      entry.system.setOrigin(fireWorldPos(p, fire, entry.pos))
+      ;(isTorch ? torchPositions : firePositions).push(entry.pos)
+    }
+    for (const [id, entry] of fireSystems) {
+      if (!_seenFires.has(id)) {
+        entry.system.dispose()
+        fireSystems.delete(id)
+      }
+    }
+  }
+
+  export function update(deltaTime: number, camera: THREE.Camera | undefined) {
+    for (const e of fireSystems.values()) e.system.update(deltaTime, camera)
+  }
+
+  export function getFirePositions(): THREE.Vector3[] {
+    return firePositions
+  }
+
+  export function getTorchPositions(): THREE.Vector3[] {
+    return torchPositions
+  }
 
   /** Apply a placement's position + rotation (yaw + pitch) to its clone. Single
    *  source of transform threading for both the full rebuild and fast path. */
@@ -297,93 +371,102 @@
     })
   }
 
+  /** Everything that decides how a placement's clone is built (vs. merely
+   *  where it sits). A changed key means teardown + re-clone of that one. */
+  function structKeyOf(p: ObjectPlacement): string {
+    const sel = isEditing() && p.id === selectedId ? 'S' : ''
+    return `${p.type}:${p.text ?? ''}:${sel}`
+  }
+
+  function buildClone(
+    p: ObjectPlacement,
+    template: THREE.Group,
+    structKey: string
+  ) {
+    const clone = template.clone()
+    applyPlacementTransform(clone, p)
+    if (isEditing() && p.id === selectedId) {
+      const bounds = modelBounds.get(p.type)
+      if (bounds) clone.add(createSelectionBox(bounds.center, bounds.size))
+    }
+    clone.userData.objectId = p.id
+    clone.userData.objectType = p.type
+    clone.userData.structKey = structKey
+    const catDef = catalogById.get(p.type)
+    if (p.text) {
+      if (catDef?.procedural === 'shopSign') {
+        // Persistent baked sign face — no hover bubble (so we skip objectText).
+        // Reuse a cached (undisposable) text mesh via clone so repeated
+        // rebuilds don't leak a fresh CanvasTexture each time.
+        clone.add(getSignText(p.type, p.text))
+      } else {
+        clone.userData.objectText = p.text
+      }
+    }
+    if (catDef?.interaction) {
+      clone.userData.objectInteraction = catDef.interaction
+      clone.userData.objectInteractOffset = catDef.interactOffset
+    }
+    if (catDef?.kind) clone.userData.objectKind = catDef.kind
+    // Per-instance material clone so the ghost toggle doesn't leak across placements.
+    if (catDef?.kind === 'bridge') {
+      clone.traverse((o) => {
+        if (o instanceof THREE.Mesh && o.material) {
+          o.material = (o.material as THREE.Material).clone()
+          o.userData.ownsMaterial = true
+        }
+      })
+    }
+    return clone
+  }
+
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const _visibleIds = new Set<number>()
+
+  /** Incremental sync of clones to the visible placements. Clones are only
+   *  torn down when they disappear or their struct key changes — crucial on
+   *  WebGPU, where re-instantiating meshes rebuilds pipelines and bind groups
+   *  (a full re-clone on house entry stalled a frame). */
   function rebuild() {
     const visible = visiblePlacements(currentFloor)
-    // Split the change signature: `structKey` is everything that changes WHICH
-    // clones exist (id/type/text set, selection, floor, house); `transformKey`
-    // is just each clone's position/rotation. When only transforms changed we
-    // move the existing clones in place instead of teardown + re-clone — crucial
-    // on WebGPU, where re-instantiating meshes/materials rebuilds pipelines and
-    // bind groups and tanks FPS during a slider/wheel drag.
-    const structKey =
-      visible.map((p) => `${p.id}:${p.type}:${p.text ?? ''}`).join('|') +
-      `|sel:${isEditing() ? selectedId : ''}|fl:${currentFloor}|h:${currentHouseId ?? ''}`
-    const transformKey = visible
-      .map(
-        (p) => `${p.id}:${p.x}:${p.y}:${p.z}:${p.rotation}:${p.rotationX ?? 0}`
-      )
-      .join('|')
-    const key = structKey + '||' + transformKey
-    if (key === lastBuildKey) return
-    const structUnchanged = structKey === lastStructKey && lastStructKey !== ''
-    lastBuildKey = key
-    lastStructKey = structKey
+    syncFires(visible)
 
-    if (structUnchanged) {
-      for (const p of visible) {
-        const clone = cloneById.get(p.id)
-        if (clone) applyPlacementTransform(clone, p)
-      }
-      return
+    _visibleIds.clear()
+    for (const p of visible) _visibleIds.add(p.id)
+    for (const [id, clone] of cloneById) {
+      if (_visibleIds.has(id)) continue
+      disposeClonedMaterials(clone)
+      group.remove(clone)
+      cloneById.delete(id)
     }
 
-    cloneById.clear()
-    for (let i = group.children.length - 1; i >= 0; i--) {
-      const child = group.children[i]
-      if (child !== previewGroup) {
-        disposeClonedMaterials(child)
-        group.remove(child)
-      }
-    }
-
+    let added = false
     for (const p of visible) {
+      const structKey = structKeyOf(p)
+      let clone = cloneById.get(p.id)
+      if (clone && clone.userData.structKey !== structKey) {
+        disposeClonedMaterials(clone)
+        group.remove(clone)
+        cloneById.delete(p.id)
+        clone = undefined
+      }
+      if (clone) {
+        applyPlacementTransform(clone, p)
+        continue
+      }
       const template = modelCache.get(p.type)
       if (!template) {
         getModel(p.type)
         continue
       }
-      const clone = template.clone()
-      applyPlacementTransform(clone, p)
-      if (isEditing() && p.id === selectedId) {
-        const bounds = modelBounds.get(p.type)
-        if (bounds) {
-          clone.add(createSelectionBox(bounds.center, bounds.size))
-        }
-      }
-      clone.userData.objectId = p.id
-      clone.userData.objectType = p.type
-      const catDef = catalogById.get(p.type)
-      if (p.text) {
-        if (catDef?.procedural === 'shopSign') {
-          // Persistent baked sign face — no hover bubble (so we skip objectText).
-          // Reuse a cached (undisposable) text mesh via clone so repeated
-          // rebuilds don't leak a fresh CanvasTexture each time.
-          clone.add(getSignText(p.type, p.text))
-        } else {
-          clone.userData.objectText = p.text
-        }
-      }
-      if (catDef?.interaction) {
-        clone.userData.objectInteraction = catDef.interaction
-        clone.userData.objectInteractOffset = catDef.interactOffset
-      }
-      if (catDef?.kind) {
-        clone.userData.objectKind = catDef.kind
-      }
-      // Per-instance material clone so the ghost toggle doesn't leak across placements.
-      if (catDef?.kind === 'bridge') {
-        clone.traverse((o) => {
-          if (o instanceof THREE.Mesh && o.material) {
-            o.material = (o.material as THREE.Material).clone()
-          }
-        })
-      }
+      clone = buildClone(p, template, structKey)
       cloneById.set(p.id, clone)
       group.add(clone)
+      added = true
     }
     // Fresh clones start opaque; the $effect will re-apply ghost next frame
     // if the player is still under a bridge.
-    ghostBridgeId = null
+    if (added) ghostBridgeId = null
   }
 
   function updatePreview() {
@@ -485,6 +568,8 @@
   }
 
   onDestroy(() => {
+    for (const e of fireSystems.values()) e.system.dispose()
+    fireSystems.clear()
     for (const child of [...group.children]) {
       disposeClonedMaterials(child)
     }
@@ -494,3 +579,4 @@
 </script>
 
 <T is={group} />
+<T is={fireRoot} />
