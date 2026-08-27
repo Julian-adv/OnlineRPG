@@ -3,7 +3,7 @@
 //! plus stairwell metadata. Built once per house from `HouseData`, then
 //! mutated via `update_door_edge` whenever a door opens or closes.
 
-use crate::housing::{HouseData, RoomData, RoomType, WallDirection, WallVariant};
+use crate::housing::{HouseData, RoomData, RoomType, WallDirection};
 
 use super::{
     PassabilityCache, RuntimeFloorGrid, RuntimePassability, StairwellInfo, EDGE_E, EDGE_N, EDGE_S,
@@ -280,7 +280,7 @@ pub fn apply_door_overlays(cache: &mut PassabilityCache, house: &HouseData) {
             (WallDirection::West, &room.wall_west),
         ] {
             for (i, seg) in segs.iter().enumerate() {
-                if seg.variant == WallVariant::WithDoor && seg.is_open {
+                if seg.variant.is_door() && seg.is_open {
                     update_door_edge(cache, &house.id, room, dir, i, true);
                 }
             }

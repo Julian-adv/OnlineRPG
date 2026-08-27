@@ -27,7 +27,12 @@ export interface WallVariants {
   west: WallVariant
 }
 
-export const WALL_VARIANT_OPTIONS: WallVariant[] = ['solid', 'door', 'window']
+export const WALL_VARIANT_OPTIONS: WallVariant[] = [
+  'solid',
+  'door',
+  'double-door',
+  'window',
+]
 
 export const STAIR_TEMPLATES: RoomTemplate[] = [
   {

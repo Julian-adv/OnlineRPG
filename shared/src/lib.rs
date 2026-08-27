@@ -105,7 +105,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v42: `PricingNotice` for NPC clients (price index, trend, next meeting)
 ///      and the `"meeting"` schedule condition.
 /// v43: `FriendEntry.class`, so the friend panel can draw class icons.
-pub const PROTOCOL_VERSION: u32 = 43;
+/// v44: `WallVariant::WithDoubleDoor` ("double-door"); stale clients cannot
+///      decode houses that use it.
+pub const PROTOCOL_VERSION: u32 = 44;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

@@ -11,7 +11,9 @@ import {
   ALL_WALL_DIRS,
   buildPassability,
   buildRuntimePassability,
+  doorPartnerRef,
   getWallByDir,
+  isDoorVariant,
   updateDoorEdge,
   type RuntimePassability,
 } from './housing-passability'
@@ -253,10 +255,22 @@ export class HousingManager {
     const wall = getWallByDir(room, wallDir)
     if (!wall[segmentIndex]) return
 
-    wall[segmentIndex].isOpen = isOpen
-    // Only update passability for doors (windows remain blocking when open)
-    if (wall[segmentIndex].variant === 'door') {
-      passability_update_door(houseId, room, wallDir, segmentIndex, isOpen)
+    const refs = [{ roomIndex, segmentIndex }]
+    const partner = doorPartnerRef(
+      house.rooms,
+      roomIndex,
+      wallDir,
+      segmentIndex
+    )
+    if (partner) refs.push(partner)
+    for (const ref of refs) {
+      const r = house.rooms[ref.roomIndex]
+      const seg = getWallByDir(r, wallDir)[ref.segmentIndex]
+      seg.isOpen = isOpen
+      // Windows stay blocking when open
+      if (isDoorVariant(seg.variant)) {
+        passability_update_door(houseId, r, wallDir, ref.segmentIndex, isOpen)
+      }
     }
     this.notifyChanged(false)
   }
@@ -375,7 +389,7 @@ export class HousingManager {
         for (const dir of ALL_WALL_DIRS) {
           const segs = getWallByDir(room, dir)
           for (let i = 0; i < segs.length; i++) {
-            if (segs[i].variant === 'door' && segs[i].isOpen) {
+            if (isDoorVariant(segs[i].variant) && segs[i].isOpen) {
               updateDoorEdge(map, house.id, room, dir, i, true)
             }
           }

@@ -3,6 +3,7 @@ import type {
   PassabilityGrid,
   RoomData,
   WallConfig,
+  WallVariant,
 } from '../types/housing'
 import { floorYBase, type WallDirection } from '../utils/house-geometry'
 
@@ -26,6 +27,146 @@ export const EDGE_S = 4 // +Z edge (south wall)
 export const EDGE_W = 8 // -X edge (west wall)
 
 export const ALL_WALL_DIRS: WallDirection[] = ['north', 'south', 'east', 'west']
+
+/** Partner of a double-door half: consecutive halves pair from the run start; a trailing odd one gets -1. */
+export function doubleDoorPartner(segs: WallConfig[], i: number): number {
+  if (segs[i]?.variant !== 'double-door') return -1
+  let r = i
+  while (r > 0 && segs[r - 1].variant === 'double-door') r--
+  const partner = (i - r) % 2 === 0 ? i + 1 : i - 1
+  return segs[partner]?.variant === 'double-door' ? partner : -1
+}
+
+export interface DoorRef {
+  roomIndex: number
+  segmentIndex: number
+}
+
+export function wallLineCoord(room: RoomData, dir: WallDirection): number {
+  switch (dir) {
+    case 'north':
+      return room.localZ
+    case 'south':
+      return room.localZ + room.sizeZ
+    case 'east':
+      return room.localX + room.sizeX
+    case 'west':
+      return room.localX
+  }
+}
+
+/** Segment of an adjacent same-floor room whose collinear wall touches this wall's end segment `i`. */
+export function crossRoomWallNeighbour(
+  rooms: RoomData[],
+  roomIndex: number,
+  dir: WallDirection,
+  i: number
+): DoorRef | null {
+  const room = rooms[roomIndex]
+  const segs = getWallByDir(room, dir)
+  if (segs.length === 0 || (i !== 0 && i !== segs.length - 1)) return null
+  const isNS = dir === 'north' || dir === 'south'
+  const a0 = isNS ? room.localX : room.localZ
+  const aLen = isNS ? room.sizeX : room.sizeZ
+  const edge = i === 0 ? a0 : a0 + aLen
+  const line = wallLineCoord(room, dir)
+  for (let ri = 0; ri < rooms.length; ri++) {
+    if (ri === roomIndex) continue
+    const o = rooms[ri]
+    if (o.floorLevel !== room.floorLevel || o.roomType === 'stairwell') continue
+    if (wallLineCoord(o, dir) !== line) continue
+    const oa0 = isNS ? o.localX : o.localZ
+    const oaLen = isNS ? o.sizeX : o.sizeZ
+    if ((i === 0 ? oa0 + oaLen : oa0) !== edge) continue
+    const oSegs = getWallByDir(o, dir)
+    if (oSegs.length === 0) continue
+    return { roomIndex: ri, segmentIndex: i === 0 ? oSegs.length - 1 : 0 }
+  }
+  return null
+}
+
+function isLoneHalf(segs: WallConfig[], i: number): boolean {
+  return segs[i]?.variant === 'double-door' && doubleDoorPartner(segs, i) < 0
+}
+
+/** Cross-room partner of a lone double-door half at a wall end, if the neighbour is one too. */
+export function crossRoomDoorPartner(
+  rooms: RoomData[],
+  roomIndex: number,
+  dir: WallDirection,
+  i: number
+): DoorRef | null {
+  if (!isLoneHalf(getWallByDir(rooms[roomIndex], dir), i)) return null
+  const n = crossRoomWallNeighbour(rooms, roomIndex, dir, i)
+  if (!n) return null
+  const oSegs = getWallByDir(rooms[n.roomIndex], dir)
+  return isLoneHalf(oSegs, n.segmentIndex) ? n : null
+}
+
+/** The other half of a double door (same wall, else adjacent room), or null. */
+export function doorPartnerRef(
+  rooms: RoomData[],
+  roomIndex: number,
+  dir: WallDirection,
+  i: number
+): DoorRef | null {
+  const p = doubleDoorPartner(getWallByDir(rooms[roomIndex], dir), i)
+  if (p >= 0) return { roomIndex, segmentIndex: p }
+  return crossRoomDoorPartner(rooms, roomIndex, dir, i)
+}
+
+/** Reset the partner half (if any) of segment `i` to solid. */
+export function clearDoorPair(
+  rooms: RoomData[],
+  roomIndex: number,
+  dir: WallDirection,
+  i: number
+) {
+  const p = doorPartnerRef(rooms, roomIndex, dir, i)
+  if (!p) return
+  const segs = getWallByDir(rooms[p.roomIndex], dir)
+  segs[p.segmentIndex] = { ...segs[p.segmentIndex], variant: 'solid' }
+}
+
+/**
+ * Mark a partner half for a new double door at segment `i`: across the room
+ * boundary when at a wall end, else the next free segment, else the previous.
+ * Returns false when no partner is available.
+ */
+export function pairDoubleDoor(
+  rooms: RoomData[],
+  roomIndex: number,
+  dir: WallDirection,
+  i: number
+): boolean {
+  const segs = getWallByDir(rooms[roomIndex], dir)
+  const free = (s: WallConfig[], j: number) =>
+    s[j] !== undefined &&
+    s[j].variant !== 'open' &&
+    s[j].variant !== 'double-door'
+  const n = crossRoomWallNeighbour(rooms, roomIndex, dir, i)
+  const target =
+    n && free(getWallByDir(rooms[n.roomIndex], dir), n.segmentIndex)
+      ? n
+      : free(segs, i + 1)
+        ? { roomIndex, segmentIndex: i + 1 }
+        : free(segs, i - 1)
+          ? { roomIndex, segmentIndex: i - 1 }
+          : null
+  if (!target) return false
+  const t = getWallByDir(rooms[target.roomIndex], dir)
+  t[target.segmentIndex] = { ...t[target.segmentIndex], variant: 'double-door' }
+  return true
+}
+
+export function isDoorVariant(v: WallVariant): boolean {
+  return v === 'door' || v === 'double-door'
+}
+
+/** Segments players can toggle (doors and window shutters). */
+export function isOpenable(v: WallVariant): boolean {
+  return isDoorVariant(v) || v === 'window'
+}
 
 function isWallBlocking(seg: WallConfig): boolean {
   return seg.variant !== 'open'

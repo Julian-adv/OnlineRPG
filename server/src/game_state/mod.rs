@@ -819,8 +819,13 @@ impl GameState {
             return None;
         }
 
-        // Toggle in-memory state
-        let key = DoorKey {
+        // Toggle in-memory state; both halves of a double door move together
+        // (the partner may sit in the adjacent room's wall)
+        let ri = room_index as usize;
+        let si = segment_index as usize;
+        let partner = onlinerpg_shared::housing::door_partner(&house.rooms, ri, wall_dir, si);
+        let refs = [Some((ri, si)), partner];
+        let mut key = DoorKey {
             house_id: house_id.to_string(),
             room_index,
             wall_dir,
@@ -828,25 +833,31 @@ impl GameState {
         };
         let is_open = {
             let mut open_doors = self.open_doors.write().await;
-            if open_doors.contains(&key) {
-                open_doors.remove(&key);
-                false
-            } else {
-                open_doors.insert(key);
-                true
+            let was_open = open_doors.contains(&key);
+            for (r, s) in refs.into_iter().flatten() {
+                key.room_index = r as u32;
+                key.segment_index = s as u32;
+                if was_open {
+                    open_doors.remove(&key);
+                } else {
+                    open_doors.insert(key.clone());
+                }
             }
+            !was_open
         };
 
         {
             let mut cache = self.passability_write();
-            onlinerpg_shared::pathfinding::update_door_edge(
-                &mut cache,
-                house_id,
-                room,
-                wall_dir,
-                segment_index as usize,
-                is_open,
-            );
+            for (r, s) in refs.into_iter().flatten() {
+                onlinerpg_shared::pathfinding::update_door_edge(
+                    &mut cache,
+                    house_id,
+                    &house.rooms[r],
+                    wall_dir,
+                    s,
+                    is_open,
+                );
+            }
         }
 
         Some(is_open)

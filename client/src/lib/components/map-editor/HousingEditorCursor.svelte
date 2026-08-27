@@ -926,7 +926,10 @@
       variant: base,
       texture,
     }))
-    if (variant === 'door' || variant === 'window') {
+    if (variant === 'door' && count % 2 === 0 && count >= 2) {
+      segs[count / 2 - 1] = { variant: 'double-door', texture }
+      segs[count / 2] = { variant: 'double-door', texture }
+    } else if (variant === 'door' || variant === 'window') {
       segs[Math.floor(count / 2)] = { variant, texture }
     }
     return segs

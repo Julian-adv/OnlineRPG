@@ -5,6 +5,12 @@ import * as THREE from 'three'
 import type { RoomData, WallConfig } from '../types/housing'
 import { getHousingMaterial } from './housing-textures'
 import {
+  crossRoomDoorPartner,
+  doubleDoorPartner,
+  getWallByDir,
+  isDoorVariant,
+} from '../managers/housing-passability'
+import {
   WALL_THICKNESS,
   FLOOR_THICKNESS,
   HOUSING_TEXTURES,
@@ -293,7 +299,8 @@ export function collectWallSegments(
   roomIndex: number,
   frontEntries: GeoEntry[],
   backEntries: GeoEntry[],
-  doors: DoorMeshInfo[]
+  doors: DoorMeshInfo[],
+  allRooms: RoomData[]
 ) {
   const dirInfo = WALL_DIR_INFO[dir]
   const target = dirInfo.isFront ? frontEntries : backEntries
@@ -312,10 +319,29 @@ export function collectWallSegments(
     const seg = segments[i]
     if (seg.variant === 'open') continue
 
+    // Double doors: the leader renders both segments; a lone half paired across
+    // the room boundary opens through that side, otherwise it is a plain door
+    let variant = seg.variant
+    let span = 1
+    let boundary: -1 | 0 | 1 = 0
+    if (variant === 'double-door') {
+      const partner = doubleDoorPartner(segments, i)
+      if (partner >= 0 && partner === i - 1) continue
+      if (partner >= 0) span = 2
+      else {
+        variant = 'door'
+        if (crossRoomDoorPartner(allRooms, roomIndex, dir, i))
+          boundary = i === 0 ? -1 : 1
+      }
+    }
+    const W = segW * span
+    const isDoor = isDoorVariant(variant)
+    const lastIdx = i + span - 1
+
     const texIdx = seg.texture % HOUSING_TEXTURES.length
 
     // Position: offset by halfT to center within the shortened span
-    const segCenter = i * segW + segW / 2
+    const segCenter = i * segW + W / 2
     let x: number, z: number, rotY: number
 
     switch (dir) {
@@ -347,10 +373,10 @@ export function collectWallSegments(
 
     // fitSegment: normalize UV to 0→1 per segment instead of world-space tiling
     const fit = HOUSING_TEXTURES[texIdx].fitSegment
-    const u = (v: number) => (fit ? v / segW : v)
+    const u = (v: number) => (fit ? v / W : v)
     const v = (h: number) => (fit ? h / wh : h)
 
-    if (seg.variant === 'solid') {
+    if (variant === 'solid') {
       const wallH = fit ? wh - 0.01 : wh
       target.push({
         geo: bakedGeo(
@@ -382,19 +408,26 @@ export function collectWallSegments(
         )
       }
     } else {
-      // door or window — opening centered in the segment
-      const openW = seg.variant === 'door' ? DOOR_WIDTH : WINDOW_WIDTH
-      const openH = seg.variant === 'door' ? DOOR_HEIGHT : WINDOW_HEIGHT
-      const openBot = seg.variant === 'door' ? 0 : WINDOW_BOTTOM
-      const sideW = (segW - openW) / 2
+      // Opening = segment span minus a jamb per side; a boundary side has a
+      // negative jamb so the opening runs through the shared wall end
+      const sideW = isDoor ? (segW - DOOR_WIDTH) / 2 : (W - WINDOW_WIDTH) / 2
+      const jambL = boundary === -1 ? -halfT : sideW
+      const jambR = boundary === 1 ? -halfT : sideW
+      const openW = W - jambL - jambR
+      const openOff = (jambL - jambR) / 2
+      const openH = isDoor ? DOOR_HEIGHT : WINDOW_HEIGHT
+      const openBot = isDoor ? 0 : WINDOW_BOTTOM
+      const ox = dirInfo.isNS ? x + openOff : x
+      const oz = dirInfo.isNS ? z : z + openOff
 
       // Left and right solid strips (skip for fitSegment — frame pillars cover them)
       if (sideW > 0.01 && !fit) {
         for (const sign of [-1, 1]) {
-          const offset = sign * (segW / 2 - sideW / 2)
+          if (sign === boundary) continue
+          const offset = sign * (W / 2 - sideW / 2)
           const sx = dirInfo.isNS ? x + offset : x
           const sz = !dirInfo.isNS ? z + offset : z
-          const uOffX = sign === -1 ? 0 : segW - sideW
+          const uOffX = sign === -1 ? 0 : W - sideW
           target.push({
             geo: bakedGeo(
               new THREE.BoxGeometry(sideW, wh, WALL_THICKNESS),
@@ -417,9 +450,9 @@ export function collectWallSegments(
         target.push({
           geo: bakedGeo(
             new THREE.BoxGeometry(openW, openBot, WALL_THICKNESS),
-            x,
+            ox,
             yBase + openBot / 2,
-            z,
+            oz,
             rotY,
             u(openW),
             v(openBot),
@@ -436,9 +469,9 @@ export function collectWallSegments(
         target.push({
           geo: bakedGeo(
             new THREE.BoxGeometry(openW, topH, WALL_THICKNESS),
-            x,
+            ox,
             yBase + openBot + openH + topH / 2,
-            z,
+            oz,
             rotY,
             u(openW),
             v(topH),
@@ -450,7 +483,7 @@ export function collectWallSegments(
       }
 
       // Window frame geometry
-      if (fit && seg.variant === 'window' && DOOR_TEXTURE_IDX >= 0) {
+      if (fit && variant === 'window' && DOOR_TEXTURE_IDX >= 0) {
         addWindowFrameGeometry(
           target,
           x,
@@ -469,27 +502,31 @@ export function collectWallSegments(
       }
 
       // Door frame: pillars + header beam
-      if (fit && seg.variant === 'door' && DOOR_TEXTURE_IDX >= 0) {
-        const innerW = segW - segW * FRAME_SIDE_FRAC * 2
+      if (fit && isDoor && DOOR_TEXTURE_IDX >= 0) {
+        const pillarW = W * FRAME_SIDE_FRAC
+        const pillarL = boundary === -1 ? -halfT : pillarW
+        const pillarR = boundary === 1 ? -halfT : pillarW
+        const innerW = W - pillarL - pillarR
+        const beamOff = (pillarL - pillarR) / 2
         addFramePillars(
           target,
           x,
           yBase,
           z,
           rotY,
-          segW,
+          W,
           wh,
           dirInfo.isNS,
-          i === 0,
-          i === segments.length - 1,
+          i === 0 || boundary === -1,
+          lastIdx === segments.length - 1 || boundary === 1,
           DOOR_TEXTURE_IDX
         )
         target.push({
           geo: bakedGeo(
             new THREE.BoxGeometry(innerW, FRAME_DIAG_THICKNESS, FRAME_DEPTH),
-            x,
+            dirInfo.isNS ? x + beamOff : x,
             yBase + DOOR_HEIGHT,
-            z,
+            dirInfo.isNS ? z : z + beamOff,
             rotY,
             innerW,
             FRAME_DIAG_THICKNESS
@@ -499,53 +536,60 @@ export function collectWallSegments(
       }
 
       // Shared panel setup for door / window hinged panels
-      if (seg.variant === 'door' || seg.variant === 'window') {
+      if (isDoor || variant === 'window') {
         const panelMat = getHousingMaterial(
           DOOR_TEXTURE_IDX >= 0 ? DOOR_TEXTURE_IDX : texIdx
         )
         const isOpen = seg.isOpen ?? false
-        const openW = seg.variant === 'door' ? DOOR_WIDTH : WINDOW_WIDTH
         // Inset hinge to clear frame pillar
-        const inset = Math.max(0, segW * FRAME_SIDE_FRAC - (segW - openW) / 2)
+        const inset = Math.max(0, W * FRAME_SIDE_FRAC - sideW)
 
-        if (seg.variant === 'door') {
+        if (isDoor) {
           const doorPanelH = DOOR_HEIGHT - FRAME_DIAG_THICKNESS / 2
+          const leafW = span === 2 ? openW / 2 : openW
           const panelGeo = new THREE.BoxGeometry(
-            DOOR_WIDTH,
+            leafW,
             doorPanelH,
             WALL_THICKNESS
           )
-          const panel = new THREE.Mesh(panelGeo, panelMat)
           // Interior-face offset
           const panelZ = (dirInfo.isFront ? -1 : 1) * (WALL_THICKNESS / 4)
           // E/W closes at -PI/2: panel local +X -> world +Z fills the opening
           const closedAngle = dirInfo.isNS ? 0 : -Math.PI / 2
-          panel.position.set(DOOR_WIDTH / 2 - inset, doorPanelH / 2, panelZ)
 
-          const pivot = new THREE.Group()
-          pivot.name = `door_r${roomIndex}_${dir}_${i}`
+          // Single door hinges on the low side (away from a boundary);
+          // double doors add a mirrored leaf
+          const hinges: (-1 | 1)[] =
+            span === 2 ? [-1, 1] : boundary === -1 ? [1] : [-1]
+          for (const h of hinges) {
+            const segIdx = h === -1 ? i : lastIdx
+            const panel = new THREE.Mesh(panelGeo, panelMat)
+            panel.position.set(-h * (leafW / 2 - inset), doorPanelH / 2, panelZ)
 
-          const hingeOffset = -(DOOR_WIDTH / 2 - inset)
-          const openAngle = closedAngle - Math.PI / 2
-          if (dirInfo.isNS) {
-            pivot.position.set(x + hingeOffset, yBase, z)
-          } else {
-            pivot.position.set(x, yBase, z + hingeOffset)
+            const pivot = new THREE.Group()
+            pivot.name = `door_r${roomIndex}_${dir}_${segIdx}`
+
+            const hingeOffset = openOff + h * (openW / 2 - inset)
+            const openAngle = closedAngle + (h * Math.PI) / 2
+            if (dirInfo.isNS) {
+              pivot.position.set(x + hingeOffset, yBase, z)
+            } else {
+              pivot.position.set(x, yBase, z + hingeOffset)
+            }
+            pivot.rotation.y = isOpen ? openAngle : closedAngle
+            pivot.add(panel)
+
+            doors.push({
+              pivot,
+              roomIndex,
+              wallDir: dir,
+              segmentIndex: segIdx,
+              floorLevel: room.floorLevel,
+              isOpen,
+              closedAngle,
+              openAngle,
+            })
           }
-          pivot.rotation.y = isOpen ? openAngle : closedAngle
-
-          pivot.add(panel)
-
-          doors.push({
-            pivot,
-            roomIndex,
-            wallDir: dir,
-            segmentIndex: i,
-            floorLevel: room.floorLevel,
-            isOpen,
-            closedAngle,
-            openAngle,
-          })
         } else {
           // Two hinged shutters per window: single box with composite texture
           // Interior-face Z offset
@@ -629,6 +673,16 @@ export function collectWallSegments(
     for (const end of [0, 1] as const) {
       const isFit = end === 0 ? firstFit : lastFit
       if (!isFit) continue
+      // No pillar where a boundary half-door meets the corner
+      const endSeg = end === 0 ? 0 : numSegs - 1
+      const perpDir: WallDirection = end === 0 ? 'west' : 'east'
+      const perpSeg =
+        dir === 'north' ? 0 : getWallByDir(room, perpDir).length - 1
+      if (
+        crossRoomDoorPartner(allRooms, roomIndex, dir, endSeg) ||
+        crossRoomDoorPartner(allRooms, roomIndex, perpDir, perpSeg)
+      )
+        continue
 
       // Place at the intersection of this wall's center and the perpendicular wall's center
       const sign = end === 0 ? -1 : 1

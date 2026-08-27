@@ -22,6 +22,12 @@
     type RoomTemplate,
     type HousingEditorTool,
   } from '../../stores/housingEditorStore'
+  import {
+    clearDoorPair,
+    getWallByDir,
+    pairDoubleDoor,
+  } from '../../managers/housing-passability'
+  import type { WallDirection } from '../../utils/house-geometry'
   import type {
     HouseData,
     RoofRidgeDir,
@@ -124,6 +130,7 @@
   const VARIANT_LABELS: Record<string, string> = {
     solid: '⬜',
     door: '🚪',
+    'double-door': '⛩',
     window: '⊞',
   }
 
@@ -132,14 +139,16 @@
   let editSaveTimer: ReturnType<typeof setTimeout> | null = null
   let pendingHouse: HouseData | null = null
 
-  function applyRoomEdit(mutateFn: (room: RoomData) => void) {
+  function applyRoomEdit(
+    mutateFn: (room: RoomData, house: HouseData, roomIndex: number) => void
+  ) {
     if (editHouseId == null || editRoomIdx == null) return
 
     const house = housingManager.getHouseById(editHouseId)
     if (!house || editRoomIdx >= house.rooms.length) return
 
     const updatedHouse: HouseData = structuredClone(house)
-    mutateFn(updatedHouse.rooms[editRoomIdx])
+    mutateFn(updatedHouse.rooms[editRoomIdx], updatedHouse, editRoomIdx)
 
     // Instant local update for visual feedback
     housingManager.updateLocalCache(updatedHouse)
@@ -156,22 +165,27 @@
     }, 300)
   }
 
-  type WallDirKey = 'wallNorth' | 'wallSouth' | 'wallEast' | 'wallWest'
-
-  const WALL_DIRS: { label: string; wallKey: WallDirKey }[] = [
-    { label: 'N', wallKey: 'wallNorth' },
-    { label: 'S', wallKey: 'wallSouth' },
-    { label: 'E', wallKey: 'wallEast' },
-    { label: 'W', wallKey: 'wallWest' },
+  const WALL_DIRS: { label: string; dir: WallDirection }[] = [
+    { label: 'N', dir: 'north' },
+    { label: 'S', dir: 'south' },
+    { label: 'E', dir: 'east' },
+    { label: 'W', dir: 'west' },
   ]
 
-  function cycleSegmentVariant(wallKey: WallDirKey, segIdx: number) {
-    applyRoomEdit((room) => {
-      const seg = room[wallKey][segIdx]
+  function cycleSegmentVariant(dir: WallDirection, segIdx: number) {
+    applyRoomEdit((room, house, roomIndex) => {
+      const segs = getWallByDir(room, dir)
+      const seg = segs[segIdx]
       if (seg.variant === 'open') return
       const idx = WALL_VARIANT_OPTIONS.indexOf(seg.variant)
-      const next = WALL_VARIANT_OPTIONS[(idx + 1) % WALL_VARIANT_OPTIONS.length]
-      room[wallKey][segIdx] = { ...seg, variant: next }
+      let next = WALL_VARIANT_OPTIONS[(idx + 1) % WALL_VARIANT_OPTIONS.length]
+      clearDoorPair(house.rooms, roomIndex, dir, segIdx)
+      if (
+        next === 'double-door' &&
+        !pairDoubleDoor(house.rooms, roomIndex, dir, segIdx)
+      )
+        next = 'window'
+      segs[segIdx] = { ...seg, variant: next }
     })
   }
 
@@ -185,8 +199,8 @@
     store.set(idx)
     applyRoomEdit((room) => {
       if (kind === 'wall') {
-        for (const { wallKey } of WALL_DIRS) {
-          for (const seg of room[wallKey]) {
+        for (const { dir } of WALL_DIRS) {
+          for (const seg of getWallByDir(room, dir)) {
             if (seg.variant !== 'open') seg.texture = idx
           }
         }
@@ -402,8 +416,8 @@
         Editing Room {editRoomIdx + 1} ({editRoom.sizeX}×{editRoom.sizeZ})
       </div>
 
-      {#each WALL_DIRS as dir (dir.wallKey)}
-        {@const wall = editRoom[dir.wallKey]}
+      {#each WALL_DIRS as dir (dir.dir)}
+        {@const wall = getWallByDir(editRoom, dir.dir)}
         <div class="section-title">{dir.label} Wall ({wall.length} seg)</div>
         <div class="segment-row">
           {#each wall as seg, segIdx (segIdx)}
@@ -411,7 +425,7 @@
               class="variant-btn"
               disabled={seg.variant === 'open'}
               title="Seg {segIdx + 1}: {seg.variant}"
-              onclick={() => cycleSegmentVariant(dir.wallKey, segIdx)}
+              onclick={() => cycleSegmentVariant(dir.dir, segIdx)}
               >{seg.variant === 'open'
                 ? '−'
                 : VARIANT_LABELS[seg.variant]}</button

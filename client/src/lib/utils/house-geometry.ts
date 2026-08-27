@@ -196,7 +196,8 @@ function collectRoomGeometries(
     roomIndex,
     frontEntries,
     backEntries,
-    doors
+    doors,
+    allRooms
   )
   collectWallSegments(
     room.wallSouth,
@@ -205,7 +206,8 @@ function collectRoomGeometries(
     roomIndex,
     frontEntries,
     backEntries,
-    doors
+    doors,
+    allRooms
   )
   collectWallSegments(
     room.wallEast,
@@ -214,7 +216,8 @@ function collectRoomGeometries(
     roomIndex,
     frontEntries,
     backEntries,
-    doors
+    doors,
+    allRooms
   )
   collectWallSegments(
     room.wallWest,
@@ -223,7 +226,8 @@ function collectRoomGeometries(
     roomIndex,
     frontEntries,
     backEntries,
-    doors
+    doors,
+    allRooms
   )
 }
 

@@ -63,13 +63,113 @@ pub enum WallVariant {
     WithWindow,
     #[serde(rename = "open")]
     Open,
+    #[serde(rename = "double-door")]
+    WithDoubleDoor,
 }
 
 impl WallVariant {
     /// Segments players can toggle open/closed (doors and window shutters).
     pub fn is_openable(self) -> bool {
-        matches!(self, WallVariant::WithDoor | WallVariant::WithWindow)
+        matches!(
+            self,
+            WallVariant::WithDoor | WallVariant::WithDoubleDoor | WallVariant::WithWindow
+        )
     }
+
+    pub fn is_door(self) -> bool {
+        matches!(self, WallVariant::WithDoor | WallVariant::WithDoubleDoor)
+    }
+}
+
+/// Partner of a double-door half: consecutive halves pair from the run start;
+/// a trailing odd one has none.
+pub fn double_door_partner(segs: &[WallConfig], i: usize) -> Option<usize> {
+    if segs.get(i)?.variant != WallVariant::WithDoubleDoor {
+        return None;
+    }
+    let mut r = i;
+    while r > 0 && segs[r - 1].variant == WallVariant::WithDoubleDoor {
+        r -= 1;
+    }
+    let partner = if (i - r) % 2 == 0 { i + 1 } else { i - 1 };
+    (segs.get(partner)?.variant == WallVariant::WithDoubleDoor).then_some(partner)
+}
+
+/// The other half of a double door as `(room_index, segment_index)`: same wall, else adjacent room.
+pub fn door_partner(
+    rooms: &[RoomData],
+    room_index: usize,
+    dir: WallDirection,
+    i: usize,
+) -> Option<(usize, usize)> {
+    double_door_partner(rooms.get(room_index)?.wall(dir), i)
+        .map(|p| (room_index, p))
+        .or_else(|| cross_room_door_partner(rooms, room_index, dir, i))
+}
+
+fn wall_line_coord(room: &RoomData, dir: WallDirection) -> i32 {
+    match dir {
+        WallDirection::North => room.local_z,
+        WallDirection::South => room.local_z + room.size_z as i32,
+        WallDirection::East => room.local_x + room.size_x as i32,
+        WallDirection::West => room.local_x,
+    }
+}
+
+/// Cross-room partner `(room_index, segment_index)` of a lone double-door
+/// half at a wall end: the adjacent same-floor room's collinear wall segment
+/// touching it, when that one is a lone double-door half too.
+pub fn cross_room_door_partner(
+    rooms: &[RoomData],
+    room_index: usize,
+    dir: WallDirection,
+    i: usize,
+) -> Option<(usize, usize)> {
+    let room = rooms.get(room_index)?;
+    let segs = room.wall(dir);
+    let is_lone = |segs: &[WallConfig], i: usize| {
+        segs.get(i).map(|s| s.variant) == Some(WallVariant::WithDoubleDoor)
+            && double_door_partner(segs, i).is_none()
+    };
+    if segs.is_empty() || !is_lone(segs, i) || (i != 0 && i != segs.len() - 1) {
+        return None;
+    }
+    let is_ns = matches!(dir, WallDirection::North | WallDirection::South);
+    let (a0, a_len) = if is_ns {
+        (room.local_x, room.size_x as i32)
+    } else {
+        (room.local_z, room.size_z as i32)
+    };
+    let edge = if i == 0 { a0 } else { a0 + a_len };
+    let line = wall_line_coord(room, dir);
+    for (ri, o) in rooms.iter().enumerate() {
+        if ri == room_index
+            || o.floor_level != room.floor_level
+            || o.room_type == RoomType::Stairwell
+        {
+            continue;
+        }
+        if wall_line_coord(o, dir) != line {
+            continue;
+        }
+        let (oa0, oa_len) = if is_ns {
+            (o.local_x, o.size_x as i32)
+        } else {
+            (o.local_z, o.size_z as i32)
+        };
+        if (if i == 0 { oa0 + oa_len } else { oa0 }) != edge {
+            continue;
+        }
+        let o_segs = o.wall(dir);
+        if o_segs.is_empty() {
+            continue;
+        }
+        let oi = if i == 0 { o_segs.len() - 1 } else { 0 };
+        if is_lone(o_segs, oi) {
+            return Some((ri, oi));
+        }
+    }
+    None
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

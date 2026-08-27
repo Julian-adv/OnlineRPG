@@ -1,6 +1,6 @@
 export type RoomType = 'normal' | 'stairwell'
 
-export type WallVariant = 'solid' | 'door' | 'window' | 'open'
+export type WallVariant = 'solid' | 'door' | 'double-door' | 'window' | 'open'
 
 export interface WallConfig {
   variant: WallVariant

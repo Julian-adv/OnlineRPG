@@ -5,7 +5,7 @@ import {
   getStairwellYOffset,
   type WallDirection,
 } from '../utils/house-geometry'
-import { getWallByDir } from './housing-passability'
+import { getWallByDir, isOpenable, wallLineCoord } from './housing-passability'
 
 /** Find the first room containing a world point (fast, no allocation). */
 export function findRoomAtPoint(
@@ -218,17 +218,11 @@ export function findNearestDoor(
       for (const [dir, axis] of dirs) {
         const segs = getWallByDir(room, dir)
         const wallCoord =
-          dir === 'north'
-            ? rz
-            : dir === 'south'
-              ? rz + room.sizeZ
-              : dir === 'east'
-                ? rx + room.sizeX
-                : rx
+          (axis === 0 ? house.origin.z : house.origin.x) +
+          wallLineCoord(room, dir)
 
         for (let si = 0; si < segs.length; si++) {
-          if (segs[si].variant !== 'door' && segs[si].variant !== 'window')
-            continue
+          if (!isOpenable(segs[si].variant)) continue
 
           const segCenter = si + 0.5
           const startB = axis === 0 ? rx : rz
