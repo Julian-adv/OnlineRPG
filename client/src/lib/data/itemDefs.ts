@@ -57,14 +57,30 @@ export function capeColorOf(
  *  tooltip line — +0 and +7 are otherwise identical, the cheapest scam there
  *  is. */
 export function itemDisplayName(itemDefId: string, enchant = 0): string {
-  const name = getItemDef(itemDefId)?.name ?? itemDefId
-  return enchant !== 0 ? `+${enchant} ${name}` : name
+  const def = getItemDef(itemDefId)
+  return def ? displayName(def, enchant) : itemDefId
+}
+
+export function displayName(def: ItemDefinition, enchant = 0): string {
+  return enchant !== 0 ? `+${enchant} ${def.name}` : def.name
+}
+
+/** Guard while equipped, with the armor enchant folded in as combat resolves it. */
+export function effectiveGuard(def: ItemDefinition, enchant = 0): number {
+  return (def.guard ?? 0) + (def.category === 'armor' ? enchant : 0)
+}
+
+/** Mean damage roll (dice + enchant); 0 for non-weapons. */
+export function averageDamage(def: ItemDefinition, enchant = 0): number {
+  const m = def.category === 'weapon' ? def.dice?.match(/^(\d+)d(\d+)$/) : null
+  if (!m) return 0
+  return (Number(m[1]) * (Number(m[2]) + 1)) / 2 + enchant
 }
 
 /** Tooltip lines for what an item does: `guard` (with any armor enchant folded
  *  in, as combat resolves it) then `effects`. */
 export function statLabels(def: ItemDefinition, enchant = 0): string[] {
-  const guard = (def.guard ?? 0) + (def.category === 'armor' ? enchant : 0)
+  const guard = effectiveGuard(def, enchant)
   const lines = guard ? [`Guard: +${guard}`] : []
   for (const raw of def.effects?.split(';') ?? []) {
     const token = raw.trim()
@@ -75,6 +91,38 @@ export function statLabels(def: ItemDefinition, enchant = 0): string[] {
     else lines.push(token)
   }
   return lines
+}
+
+export interface StatDelta {
+  label: string
+  /** Candidate minus equipped, in the stat's own unit. */
+  delta: number
+  better: boolean
+}
+
+/** Differences that matter when swapping `def` in for the equipped item:
+ *  weight, damage, guard. Equal stats are dropped. */
+export function compareStats(
+  def: ItemDefinition,
+  enchant: number,
+  equipped: ItemDefinition,
+  equippedEnchant: number
+): StatDelta[] {
+  const out: StatDelta[] = []
+  const push = (label: string, delta: number, lowerIsBetter = false) => {
+    if (Math.abs(delta) < 0.05) return
+    out.push({ label, delta, better: lowerIsBetter ? delta < 0 : delta > 0 })
+  }
+  push('Weight', def.weight - equipped.weight, true)
+  push(
+    'Damage',
+    averageDamage(def, enchant) - averageDamage(equipped, equippedEnchant)
+  )
+  push(
+    'Guard',
+    effectiveGuard(def, enchant) - effectiveGuard(equipped, equippedEnchant)
+  )
+  return out
 }
 
 export function isConsumable(def: ItemDefinition): boolean {

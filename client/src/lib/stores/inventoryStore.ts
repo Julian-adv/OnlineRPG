@@ -1,10 +1,10 @@
-import { derived, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 import type {
   EquipSlot,
   ItemInstance,
   PlayerInventory,
 } from '../network/networkTypes'
-import { getItemDef } from '../data/itemDefs'
+import { getItemDef, type ItemDefinition } from '../data/itemDefs'
 import { activeDebuffs } from './debuffStore'
 import { calendarVisible } from './debugStore'
 import { armorWeightMult } from '../data/debuffPresentation'
@@ -18,6 +18,32 @@ const initialState: PlayerInventory = {
 }
 
 export const inventoryStore = writable<PlayerInventory>({ ...initialState })
+
+/** Mirrors the server's equip-target rule (`EquipSlot::alternate`). */
+const ALTERNATE_SLOT: Partial<Record<EquipSlot, EquipSlot>> = {
+  ring: 'ring_left',
+  ring_left: 'ring',
+}
+
+/** The equipped item that equipping `def` from the bag would send back to
+ *  the bag, or undefined when nothing is displaced (empty slot, free
+ *  alternate slot, or `item` is already equipped). */
+export function displacedByEquip(
+  def: ItemDefinition,
+  item?: ItemInstance
+): ItemInstance | undefined {
+  const slot = def.equipSlot
+  if (!slot) return
+  const equipped = get(inventoryStore).equipped
+  if (
+    item &&
+    Object.values(equipped).some((e) => e.instance_id === item.instance_id)
+  )
+    return
+  const alt = ALTERNATE_SLOT[slot]
+  if (alt && !equipped[alt]) return
+  return equipped[slot]
+}
 
 /** The local player's gold in the smallest currency unit (copper). */
 export const playerGold = writable(0)

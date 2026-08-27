@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { statLabels, type ItemDefinition } from '../data/itemDefs'
+  import {
+    compareStats,
+    displayName,
+    statLabels,
+    type ItemDefinition,
+  } from '../data/itemDefs'
 
   interface Props {
     def: ItemDefinition
@@ -7,11 +12,18 @@
     enchant?: number
     side?: 'left' | 'right'
     anchor: DOMRect
+    /** The equipped item this one would replace. */
+    compare?: { def: ItemDefinition; enchant: number }
   }
 
   // Mounted at document.body by the itemTooltip action; sits beside the
   // anchor, clamped vertically and flipped sideways when it would overflow.
-  let { def, enchant = 0, side = 'right', anchor }: Props = $props()
+  let { def, enchant = 0, side = 'right', anchor, compare }: Props = $props()
+
+  const deltas = $derived(
+    compare ? compareStats(def, enchant, compare.def, compare.enchant) : []
+  )
+  const fmt = (n: number) => String(+Math.abs(n).toFixed(1))
 
   const GAP = 8
   // .tooltip rendered width: 160px + 2*8px padding + 2*1px border
@@ -39,7 +51,7 @@
   style="top: {top}px; {horizontal}"
   bind:clientHeight={height}
 >
-  <div class="tooltip-name">{enchant > 0 ? `+${enchant} ` : ''}{def.name}</div>
+  <div class="tooltip-name">{displayName(def, enchant)}</div>
   <div class="tooltip-desc">{def.description}</div>
   <div class="tooltip-stats">
     <span>Weight: {def.weight}</span>
@@ -55,6 +67,19 @@
       <span>{label}</span>
     {/each}
   </div>
+  {#if compare && deltas.length}
+    <div class="tooltip-compare">
+      <div class="compare-title">
+        vs {displayName(compare.def, compare.enchant)}
+      </div>
+      {#each deltas as d (d.label)}
+        <span class={d.better ? 'up' : 'down'}>
+          {d.label}: {d.delta > 0 ? '▲' : '▼'}
+          {fmt(d.delta)}
+        </span>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -84,6 +109,28 @@
     font-size: 13px;
     color: #9fb2c3;
     margin-bottom: 6px;
+  }
+
+  .tooltip-compare {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+    font-size: 13px;
+  }
+
+  .compare-title {
+    color: #9fb2c3;
+  }
+
+  .up {
+    color: #6cc8f0;
+  }
+
+  .down {
+    color: #e06a6a;
   }
 
   .tooltip-stats {
