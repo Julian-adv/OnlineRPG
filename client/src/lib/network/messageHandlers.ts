@@ -130,7 +130,7 @@ import type {
   PositionCorrection,
   ServerMonster,
   ServerPlayer,
-  type CharacterClass,
+  CharacterClass,
 } from './networkTypes'
 
 // A fatal blow arrives twice: as MonsterAttackedPlayer, which lines the cry up

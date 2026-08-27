@@ -106,9 +106,9 @@ describe('applyFriendList', () => {
 describe('sortFriends', () => {
   it('puts the online first, then sorts by name', () => {
     const friends: FriendEntry[] = [
-      { characterId: 1, name: 'zoe', level: 1 },
-      { characterId: 2, name: 'amy', level: 1 },
-      { characterId: 3, name: 'bob', level: 1 },
+      { characterId: 1, name: 'zoe', level: 1, class: 'knight' },
+      { characterId: 2, name: 'amy', level: 1, class: 'ranger' },
+      { characterId: 3, name: 'bob', level: 1, class: 'knight' },
     ]
     const online = new Map([[1, 1]])
     expect(sortFriends(friends, online).map((f) => f.name)).toEqual([
