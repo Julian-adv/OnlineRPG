@@ -40,3 +40,11 @@
 - `client/public/icons/party/class-rogue.svg` — original OpenMMO vector asset authored with OpenAI GPT Image 2, ChatGPT Pro tier, 2026-08-05; project-owned
 - `client/public/icons/party/class-bard.svg` — original OpenMMO mandolin vector asset authored with OpenAI Codex, workspace-provided tier (exact tier not exposed), 2026-08-06; project-owned
 - `client/public/icons/party/leader-crown.svg` — original OpenMMO vector asset authored with OpenAI Codex, workspace-provided tier (exact tier not exposed), 2026-08-05; project-owned
+
+## NPC 거래 초상화
+
+- `client/public/portraits/karl.webp` — 경비병 Karl 초상화; OpenAI ChatGPT 이미지 생성, ChatGPT Pro tier, 2026-06-12; project-owned. 원본(배경 있는 1122×1402 PNG)은 `../images/characters/karl-portrait.png`; 배포본은 커밋 edf3acd7의 배경 제거된 1122² PNG를 축소한 것 (원본에서 어떻게 정사각형으로 다듬었는지는 기록 없음)
+- `client/public/portraits/rica.webp` — 상인 Rica 초상화; OpenAI ChatGPT 이미지 생성, ChatGPT Pro tier, 2026-06-10; project-owned. 원본(배경 있는 1300×1210 PNG)은 `../images/characters/rica-portrait.png`, 배경 제거·정사각 크롭한 1210² PNG는 커밋 aa29e30f에 남아 있다 (비율 왜곡 없음)
+- `client/public/portraits/wick.webp` — 야간 상인 Wick의 거래 창 초상화; OpenAI ChatGPT 이미지 생성, ChatGPT Pro tier, 2026-08-27; project-owned. 원본(배경 있는 1122×1402 PNG)은 `../images/characters/wick-portrait.png`; 배포본은 그 위쪽 정사각 크롭(`crop=1122:1122:0:0`)을 배경 제거한 것
+
+세 장 모두 512² WebP q88(알파 유지)로 축소해 배포한다 (2026-08-27) — 비율은 건드리지 않고 크기만 줄인다. `TradeWindow.svelte`가 폭 160px로 그리므로 1122~1210² 원본은 3배 넘게 과했다. 합계 4.8MB → 194KB. 파일명이 곧 `traderId`라 `/portraits/{traderId}.webp` 규칙으로 자동 해석된다 (새 초상화 추가 시 코드 변경 불필요).

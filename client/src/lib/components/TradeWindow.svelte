@@ -78,7 +78,7 @@
   const portraitSrc = $derived.by(() => {
     if (!session) return null
     const traderId = getNpcCapabilities(session.merchantName).traderId
-    return traderId ? `/portraits/${traderId}.png` : null
+    return traderId ? `/portraits/${traderId}.webp` : null
   })
 
   /** Resident traders (wishlist, real stock) vs merchants (catalog). */
