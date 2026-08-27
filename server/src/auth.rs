@@ -146,6 +146,38 @@ pub fn ban_message(reason: Option<&str>, until_unix: Option<i64>) -> String {
     }
 }
 
+/// doc/PRICING.md; `m_prev` is the reading at the last meeting.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PricingState {
+    pub index_percent: u32,
+    pub last_meeting_day: Option<i64>,
+    pub m_prev: Option<f64>,
+}
+
+impl Default for PricingState {
+    fn default() -> Self {
+        Self {
+            index_percent: 100,
+            last_meeting_day: None,
+            m_prev: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PricingMeeting {
+    pub game_day: i64,
+    pub m_prev: f64,
+    pub m_now: f64,
+    pub growth: f64,
+    pub index_before: u32,
+    pub index_after: u32,
+}
+
+fn active_cutoff(now: i64, active_days: u32) -> i64 {
+    now - i64::from(active_days) * 86_400
+}
+
 pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -534,6 +566,7 @@ impl AuthService {
         Self::ensure_dungeon_discovery_schema(&conn)?;
         Self::ensure_trade_ledger_schema(&conn)?;
         Self::ensure_gold_snapshots_schema(&conn)?;
+        Self::ensure_pricing_schema(&conn)?;
         Self::ensure_migrations_schema(&conn)?;
         Self::migrate_level_curve(&conn)?;
 
@@ -916,6 +949,94 @@ impl AuthService {
         Ok(())
     }
 
+    fn ensure_pricing_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pricing_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                index_percent INTEGER NOT NULL,
+                last_meeting_day INTEGER,
+                m_prev REAL
+            );
+            CREATE TABLE IF NOT EXISTS pricing_history (
+                ts INTEGER NOT NULL,
+                game_day INTEGER NOT NULL,
+                m_prev REAL NOT NULL,
+                m_now REAL NOT NULL,
+                growth REAL NOT NULL,
+                index_before INTEGER NOT NULL,
+                index_after INTEGER NOT NULL
+            );",
+        )
+    }
+
+    pub fn load_pricing_state(&self) -> Result<PricingState, AuthError> {
+        let conn = self.open_connection()?;
+        Ok(conn
+            .query_row(
+                "SELECT index_percent, last_meeting_day, m_prev FROM pricing_state WHERE id = 1",
+                [],
+                |row| {
+                    Ok(PricingState {
+                        index_percent: row.get(0)?,
+                        last_meeting_day: row.get(1)?,
+                        m_prev: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?
+            .unwrap_or_default())
+    }
+
+    /// Persists the state and, for a meeting that moved the index, its
+    /// history row, atomically.
+    pub fn save_pricing_state(
+        &self,
+        state: &PricingState,
+        meeting: Option<&PricingMeeting>,
+    ) -> Result<(), AuthError> {
+        let mut conn = self.open_connection()?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT OR REPLACE INTO pricing_state (id, index_percent, last_meeting_day, m_prev) \
+             VALUES (1, ?1, ?2, ?3)",
+            params![state.index_percent, state.last_meeting_day, state.m_prev],
+        )?;
+        if let Some(m) = meeting {
+            tx.execute(
+                "INSERT INTO pricing_history \
+                 (ts, game_day, m_prev, m_now, growth, index_before, index_after) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    unix_now(),
+                    m.game_day,
+                    m.m_prev,
+                    m.m_now,
+                    m.growth,
+                    m.index_before,
+                    m.index_after
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Gold per active character, or None with no active characters.
+    pub fn active_gold_per_character(
+        &self,
+        now: i64,
+        active_days: u32,
+    ) -> Result<Option<f64>, AuthError> {
+        let cutoff = active_cutoff(now, active_days);
+        let conn = self.open_connection()?;
+        let (gold, count): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(gold), 0), COUNT(*) FROM characters WHERE last_seen_at >= ?1",
+            params![cutoff],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((count > 0).then(|| gold as f64 / count as f64))
+    }
+
     /// Inserts this hour's gold totals; returns the hour, or None if it
     /// already had a row. Active = seen within `active_days`.
     pub fn record_gold_snapshot(
@@ -924,7 +1045,7 @@ impl AuthService {
         active_days: u32,
     ) -> Result<Option<i64>, AuthError> {
         let ts = now - now.rem_euclid(3600);
-        let cutoff = now - i64::from(active_days) * 86_400;
+        let cutoff = active_cutoff(now, active_days);
         let conn = self.open_connection()?;
         let written = conn.execute(
             "INSERT OR IGNORE INTO gold_snapshots \
@@ -1799,6 +1920,37 @@ mod tests {
         assert_eq!(row, (157, 3, 7, 107, 2));
 
         assert_eq!(auth.record_gold_snapshot(now + 60, 30).unwrap(), None);
+        assert_eq!(auth.active_gold_per_character(now, 30).unwrap(), Some(53.5));
+    }
+
+    #[test]
+    fn pricing_state_round_trips_with_its_meeting_row() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_price_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        assert_eq!(auth.load_pricing_state().unwrap(), PricingState::default());
+
+        let state = PricingState {
+            index_percent: 104,
+            last_meeting_day: Some(34),
+            m_prev: Some(120.5),
+        };
+        let meeting = PricingMeeting {
+            game_day: 34,
+            m_prev: 100.0,
+            m_now: 120.5,
+            growth: 0.205,
+            index_before: 100,
+            index_after: 104,
+        };
+        auth.save_pricing_state(&state, Some(&meeting)).unwrap();
+        assert_eq!(auth.load_pricing_state().unwrap(), state);
+        let rows: i64 = auth
+            .open_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM pricing_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
     }
 
     #[test]

@@ -43,17 +43,19 @@ CREATE TABLE gold_snapshots (
 
 ## 조정: Serin의 삭이 되는 저녁
 
-배포 시점에 맞추면 배포가 없는 날은 조정이 멈추므로, 배포와 분리해 서버가 자동으로 한다. 시점은 실시간 하루(=게임 8일, 뜬금없는 숫자)가 아니라 **작은 달 Serin(주기 20게임일)의 삭이 되는 날 저녁** — 실시간 약 2.5일마다. 상인 회의(아래 연출)가 이 시각에 열리고, 회의 종료와 함께 새 가격이 적용된다. 실시간 시계 위를 미끄러지므로 어떤 회의는 낮에, 어떤 회의는 한밤에 열려 플레이어가 우연히 마주친다.
+배포 시점에 맞추면 배포가 없는 날은 조정이 멈추므로, 배포와 분리해 서버가 자동으로 한다. 시점은 실시간 하루(=게임 8일, 뜬금없는 숫자)가 아니라 **작은 달 Serin(주기 20게임일)이 하루 종일 어두운 날의 일몰 후** (`is_serin_dark_day`: 게임일 % 20 == 14, 클라이언트 위상 공식을 서버 `celestial.rs`에 이식해 테스트로 검증) — 실시간 약 2.5일마다. 상인 회의(아래 연출)가 이 시각에 열리고, 회의 종료와 함께 새 가격이 적용된다. 실시간 시계 위를 미끄러지므로 어떤 회의는 낮에, 어떤 회의는 한밤에 열려 플레이어가 우연히 마주친다.
 
-`tick_npc_salaries`의 롤오버 패턴을 그대로 쓴다 (부팅 직후 첫 틱은 기록만, 재시작은 조정 원인이 되지 않음). 달 위상 공식은 현재 클라이언트(`celestialSimulation.ts`)에만 있으므로 서버 `celestial.rs`에 옮긴다.
+`tick_npc_salaries`의 롤오버 패턴을 그대로 쓴다 (부팅 직후 첫 틱은 기록만, 재시작은 조정 원인이 되지 않음). 마지막 회의 날짜는 `pricing_state`에 저장해 재시작에도 같은 날 두 번 열리지 않는다.
 
 ```
 growth = (M_now - M_prev) / M_prev        -- M = active_gold / active_characters, 직전 회의 스냅샷 대비
-target = targetDailyGrowth × 20           -- 게임일 기준을 회의 간격으로 환산
+target = targetDailyGrowth × 경과 게임일    -- 서버가 꺼져 회의를 건너뛰면 그만큼 늘어난 목표
 P_new  = P * (1 + k * (growth - target))  -- k: 반응 계수 (초기 0.5)
 P_new  = clamp(P_new, P * 0.9, P * 1.1)   -- 회의당 최대 ±10%
 P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
 ```
+
+`P`는 정수 퍼센트(`index_percent`, 기본 100)로 저장·전송한다. 첫 회의(직전 측정값 없음)와 활성 캐릭터가 0명인 회의는 측정값만 기록한다.
 
 방향: **골드가 목표보다 많이 늘었으면 가격을 올린다** (싱크 강화), 적게 늘었거나 줄었으면 내린다.
 
@@ -74,11 +76,11 @@ P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
 
 ### 영속화
 
-`P`는 `pricing_state` 테이블(단일 행)에 저장하고, 조정마다 `pricing_history(ts, growth, index_before, index_after)`에 한 줄 남긴다. history는 튜닝 자료이자 아래 연출의 "회의록"이 된다.
+`P`는 `pricing_state` 테이블(단일 행: `index_percent`, `last_meeting_day`, `m_prev`)에 저장하고, 조정마다 `pricing_history(ts, game_day, m_prev, m_now, growth, index_before, index_after)`에 한 줄 남긴다. history는 튜닝 자료이자 아래 연출의 "회의록"이 된다.
 
 ## 적용 범위와 불변식
 
-- `P`는 **상인 구매가**, 그중 **소비재**(consumable, 물약·숫돌·음식·주문서 등)에만 곱한다. 장비·염료 같은 내구재는 고정.
+- `P`는 **상인 구매가**, 그중 **소비재**(consumable, 물약·숫돌·음식·주문서 등)에만 곱한다. 장비·염료 같은 내구재는 고정. 거주 NPC(Karl 등)의 재고 판매와 되사기(buyback, 받은 금액 그대로)도 지수 밖이다 — 거주 재고는 유한해서 차익이 캡 된다.
 - **판매가(`basePrice × sellRatePercent`)는 `P`를 곱하지 않는다.** 판매가에도 곱하면 싱크와 함께 파우셋이 커져 제어 효과가 상쇄된다.
 - 흥정 밴드([ECONOMY.md](ECONOMY.md#원칙-llm이-제안하고-서버가-집행한다))는 `P` 적용 **후** 가격에 계산한다.
 - 머니 펌프 불변식을 `P` 포함으로 다시 세운다: `basePrice × P_min × 밴드최저 > basePrice × sellRate × 밴드최고`. sellRate 40%, 밴드 ±25%p면 `P_min × 0.75 > 0.65` → `P_min > 0.87`. **따라서 `indexMin`은 0.9 이상**이어야 한다. 서버가 부팅 시 설정을 검증한다.
@@ -86,7 +88,7 @@ P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
 
 ## 프로토콜
 
-클라이언트는 상점가를 아이템 정의에서 계산하므로 `ShopState`에 `priceIndexPercent`(또는 품목별 최종 가격)를 추가한다. 서버 권위는 그대로 — 구매 검증은 서버가 `P`를 곱해 한다. 조정은 회의 때만이라 열린 거래창에는 다음 열 때 반영되면 충분하다.
+클라이언트는 상점가를 아이템 정의에서 계산하므로 `ShopState`에 `price_index_percent`를 추가했다(프로토콜 v41; 거주 NPC는 항상 100). 서버 권위는 그대로 — 구매 검증은 서버가 `buy_base_price`에서 `P`를 곱해 한다. agent-client가 LLM에게 알려주는 카탈로그 가격(`shop_info.rs`)은 아직 기본가라 연출 1단계에서 지수를 함께 주입한다. 조정은 회의 때만이라 열린 거래창에는 다음 열 때 반영되면 충분하다.
 
 ## 연출: 상인 회의
 
@@ -100,6 +102,6 @@ P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
 ## 구현 단계
 
 1. `gold_snapshots` + 매시 기록. 실측만 하고 `P`는 1.0 고정. — 몇 주 관측. — **구현 완료 (2026-08-27)**: `record_gold_snapshot`(auth.rs), `tick_gold_snapshot`(pricing.rs), `pricing.activeDays`(world.json).
-2. 설정, 서버 달 위상, 삭 조정 틱, `pricing_state/history`, `ShopState` 필드, 서버 구매 검증. 초기에는 `gain`을 낮게 두고 history로 튜닝.
+2. 설정, 서버 달 위상, 삭 조정 틱, `pricing_state/history`, `ShopState` 필드, 서버 구매 검증. — **구현 완료 (2026-08-27)**: `tick_pricing_meeting`·`next_index_percent`(pricing.rs), 불변식에 `indexMin` 반영(`band_invariant_holds`). `gain`은 history를 보며 튜닝.
 3. 연출 1단계(프롬프트 주입) → 2단계(회의 일과) → 3단계(다음 회의 힌트).
 4. 품목군(물약/음식/주문서)별 개별 `P` — 단일 `P`로 시작하고, 운영 상황을 보고 도입한다.

@@ -26,6 +26,8 @@ export interface ShopSession {
   merchantName: string
   catalog: string[]
   sellRatePercent: number
+  /** Scales consumable buy prices; 100 = base (doc/PRICING.md). */
+  priceIndexPercent: number
   /** Non-merchants only buy these item defs; empty = buys anything priced. */
   wishlist: string[]
   /** Non-merchant real-inventory stock; merchants use `catalog`. */

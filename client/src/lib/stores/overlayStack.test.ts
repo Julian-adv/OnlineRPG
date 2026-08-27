@@ -15,6 +15,7 @@ const SESSION: ShopSession = {
   merchantName: 'Rica',
   catalog: [],
   sellRatePercent: 50,
+  priceIndexPercent: 100,
   wishlist: [],
   stock: [],
   buyback: [],

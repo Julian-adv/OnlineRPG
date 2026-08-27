@@ -43,8 +43,9 @@ const PLAYER_DAILY_DISCOUNT_CAP: i64 = 4_000;
 /// Money-pump invariant: even at maximum band width, the cheapest possible
 /// buy must still cost more than the best possible sell pays out, so no
 /// sequence of LLM decisions can make buy→sell profitable.
-pub(crate) fn band_invariant_holds(sell_rate_percent: u32) -> bool {
-    let min_buy_pct_of_base = i64::from(100 - DEAL_MAX_HALF_BAND_PCT) * 100;
+pub(crate) fn band_invariant_holds(sell_rate_percent: u32, index_min_percent: u32) -> bool {
+    let min_buy_pct_of_base =
+        i64::from(100 - DEAL_MAX_HALF_BAND_PCT) * i64::from(index_min_percent);
     let max_sell_pct_of_base =
         i64::from(sell_rate_percent) * i64::from(100 + DEAL_MAX_HALF_BAND_PCT);
     min_buy_pct_of_base > max_sell_pct_of_base

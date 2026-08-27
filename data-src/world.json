@@ -7,7 +7,14 @@
   },
   "maxMonstersPerPlayer": 8,
   "serverMonsterAi": true,
-  "pricing": { "activeDays": 30 },
+  "pricing": {
+    "activeDays": 30,
+    "targetDailyGrowth": 0.002,
+    "gain": 0.5,
+    "maxStepPerMeeting": 0.1,
+    "indexMin": 0.9,
+    "indexMax": 2.0
+  },
   "ambientSpawns": [
     { "monsterType": "scp939" },
     { "monsterType": "kobold" },

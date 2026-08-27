@@ -453,6 +453,8 @@ pub struct GameState {
     /// Last game day NPC salaries were paid for; `None` until the first
     /// salary tick after boot.
     npc_salary_last_day: Arc<RwLock<Option<i64>>>,
+    /// Price index + meeting bookkeeping (doc/PRICING.md), mirrored in DB.
+    pricing: Arc<RwLock<crate::auth::PricingState>>,
     /// Last `night_epoch` the dungeons were reset on. `None` until the first
     /// tick after boot, which records without resetting.
     dungeon_reset_last_epoch: Arc<RwLock<Option<i64>>>,
@@ -696,6 +698,7 @@ impl GameState {
             deals: Arc::new(RwLock::new(HashMap::new())),
             deal_ledgers: Arc::new(RwLock::new(deals::DealLedgers::default())),
             npc_salary_last_day: Arc::new(RwLock::new(None)),
+            pricing: Arc::new(RwLock::new(Default::default())),
             dungeon_reset_last_epoch: Arc::new(RwLock::new(None)),
             dungeon_defs,
             dungeons: Arc::new(RwLock::new(HashMap::new())),

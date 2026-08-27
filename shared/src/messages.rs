@@ -1234,6 +1234,10 @@ pub enum ServerMessage {
         /// units stay visible in `stock`.
         #[serde(default)]
         buyback: Vec<BuybackEntry>,
+        /// Price index applied to this trader's consumable buy prices
+        /// (doc/PRICING.md); 100 = base price. Residents always send 100.
+        #[serde(default = "default_price_index_percent")]
+        price_index_percent: u32,
     },
     /// Direct message: the receiving player's current gold (smallest unit).
     GoldUpdate {
@@ -1408,4 +1412,8 @@ pub fn serialize_server_msg(msg: &ServerMessage) -> Result<Vec<u8>, rmp_serde::e
 #[inline]
 pub fn deserialize_server_msg(bytes: &[u8]) -> Result<ServerMessage, rmp_serde::decode::Error> {
     rmp_serde::from_slice(bytes)
+}
+
+fn default_price_index_percent() -> u32 {
+    100
 }

@@ -240,6 +240,7 @@ impl super::GameState {
                 wishlist: Vec::new(),
                 stock: Vec::new(),
                 buyback: self.buyback_list(player_id, &def.npc_name).await,
+                price_index_percent: self.price_index_percent().await,
             },
             // `stock` is written first: it borrows `active_deals`, which the
             // literal then moves.
@@ -252,6 +253,7 @@ impl super::GameState {
                 active_deals,
                 wishlist: def.wishlist.clone(),
                 buyback: Vec::new(),
+                price_index_percent: 100,
             },
         };
         self.send_direct_message(player_id, state).await;
@@ -554,6 +556,17 @@ impl super::GameState {
         self.mark_inventory_dirty(npc_player_id).await;
     }
 
+    /// Unit base for a purchase: merchant consumables carry the price index
+    /// (doc/PRICING.md); everything else is the plain base price.
+    fn buy_base_price(&self, def: &TraderDef, item_def_id: &str, index_pct: u32) -> Option<i64> {
+        let item = self.item_defs.get(item_def_id)?;
+        let base = item.base_price?;
+        if item.consumable && matches!(def, TraderDef::Merchant(_)) {
+            return Some(buy_price(base, index_pct as i32 - 100));
+        }
+        Some(base)
+    }
+
     /// Buy one unit of `item_def_id` from a trading NPC. Merchants create
     /// the item from its definition (unlimited stock); residents transfer
     /// a unit out of their real inventory and pocket the gold.
@@ -585,11 +598,8 @@ impl super::GameState {
             }
         }
 
-        let Some(base_price) = self
-            .item_defs
-            .get(item_def_id)
-            .and_then(|item| item.base_price)
-        else {
+        let index_pct = self.price_index_percent().await;
+        let Some(base_price) = self.buy_base_price(&def, item_def_id, index_pct) else {
             return self
                 .send_trade_error(player_id, "That item has no price")
                 .await;
@@ -817,6 +827,7 @@ impl super::GameState {
             cape_texture: Option<String>,
         }
 
+        let index_pct = self.price_index_percent().await;
         let mut plans: Vec<Plan> = Vec::with_capacity(items.len());
         for req in &items {
             match &def {
@@ -841,11 +852,7 @@ impl super::GameState {
                     }
                 }
             }
-            let Some(base_price) = self
-                .item_defs
-                .get(&req.item_def_id)
-                .and_then(|item| item.base_price)
-            else {
+            let Some(base_price) = self.buy_base_price(&def, &req.item_def_id, index_pct) else {
                 return self
                     .send_trade_error(player_id, "That item has no price")
                     .await;

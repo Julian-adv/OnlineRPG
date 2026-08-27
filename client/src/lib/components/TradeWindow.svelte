@@ -137,9 +137,15 @@
     return kind === 'buy' ? pct > 0 : pct < 0
   }
 
-  // Mirrors the server's integer price math (deals.rs).
+  // Mirrors the server's integer price math (deals.rs / buy_base_price).
+  function indexedBase(def: ItemDefinition): number {
+    const base = def.basePrice ?? 0
+    if (!session || !def.consumable) return base
+    return Math.max(1, Math.floor((base * session.priceIndexPercent) / 100))
+  }
+
   function buyPrice(def: ItemDefinition, pct: number): number {
-    return Math.max(1, Math.floor(((def.basePrice ?? 0) * (100 + pct)) / 100))
+    return Math.max(1, Math.floor((indexedBase(def) * (100 + pct)) / 100))
   }
 
   function sellPrice(def: ItemDefinition, pct: number): number {
@@ -196,7 +202,7 @@
       })
       return
     }
-    const unitPrice = def.basePrice ?? 0
+    const unitPrice = indexedBase(def)
     const max =
       stockMax !== undefined
         ? Math.max(1, stockMax - reservedBuyQty(itemDefId))

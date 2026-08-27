@@ -2,11 +2,14 @@ use super::*;
 
 #[test]
 fn haggling_band_invariant_boundary() {
-    // Rica's actual rate must satisfy the invariant; 60% is the first rate
-    // where max haggled sell (60% * 1.25) meets min haggled buy (75%).
-    assert!(deals::band_invariant_holds(40));
-    assert!(deals::band_invariant_holds(59));
-    assert!(!deals::band_invariant_holds(60));
+    // At index 100, 60% is the first rate where max haggled sell
+    // (60% * 1.25) meets min haggled buy (75%); the index floor of 90
+    // pulls that boundary down to 54%.
+    assert!(deals::band_invariant_holds(40, 100));
+    assert!(deals::band_invariant_holds(59, 100));
+    assert!(!deals::band_invariant_holds(60, 100));
+    assert!(deals::band_invariant_holds(53, 90));
+    assert!(!deals::band_invariant_holds(54, 90));
 }
 
 #[test]
@@ -551,4 +554,37 @@ async fn cross_floor_shop_actions_leave_economy_state_unchanged() {
             other => panic!("Expected cross-floor TradeError, got {other:?}"),
         }
     }
+}
+
+#[tokio::test]
+async fn the_price_index_scales_only_consumable_buys() {
+    let game_state = make_test_game_state("price_index_buys");
+    let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 1_000_000).await;
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("buyer"), Default::default());
+    game_state.set_price_index_percent(150).await;
+    let base = |id: &str| game_state.item_defs.get(id).unwrap().base_price.unwrap();
+
+    game_state
+        .buy_item(&pid("buyer"), &pid("npc_rica"), "healing_potion")
+        .await;
+    let msgs = drain(&mut buyer_rx);
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::TradeError { .. })),
+        "{msgs:?}"
+    );
+    let after_potion = game_state.get_player_gold(&pid("buyer")).await;
+    assert_eq!(1_000_000 - after_potion, base("healing_potion") * 150 / 100);
+
+    game_state
+        .buy_item(&pid("buyer"), &pid("npc_rica"), "wooden_shield")
+        .await;
+    drain(&mut buyer_rx);
+    let after_shield = game_state.get_player_gold(&pid("buyer")).await;
+    assert_eq!(after_potion - after_shield, base("wooden_shield"));
 }

@@ -1357,6 +1357,7 @@ export function handleServerMessage(
         merchantName: data.merchant_name,
         catalog: data.catalog ?? [],
         sellRatePercent: data.sell_rate_percent,
+        priceIndexPercent: data.price_index_percent ?? 100,
         wishlist: data.wishlist ?? [],
         stock: (data.stock ?? []).map(
           (entry: { item_def_id: string; quantity: number }) => ({

@@ -36,10 +36,14 @@ impl MerchantDefs {
             serde_json::from_str(data).expect("Failed to parse merchants.json");
 
         // Money-pump invariant: even with maximum haggling in both
-        // directions, buying must always cost more than selling pays.
+        // directions and the price index at its floor, buying must always
+        // cost more than selling pays.
+        let index_min = crate::world_config::world_config()
+            .pricing
+            .index_min_percent();
         for def in by_id.values() {
             assert!(
-                crate::game_state::band_invariant_holds(def.sell_rate_percent),
+                crate::game_state::band_invariant_holds(def.sell_rate_percent, index_min),
                 "merchant {} sellRatePercent {} breaks the haggling band invariant",
                 def.id,
                 def.sell_rate_percent

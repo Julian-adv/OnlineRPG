@@ -29,22 +29,35 @@ pub struct WorldConfig {
 
 /// doc/PRICING.md.
 #[derive(Debug, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct PricingConfig {
     /// A character seen within this many real days counts as active.
-    #[serde(rename = "activeDays", default = "default_active_days")]
     pub active_days: u32,
+    /// Wanted growth of per-active-character gold, per game day.
+    pub target_daily_growth: f64,
+    pub gain: f64,
+    pub max_step_per_meeting: f64,
+    pub index_min: f64,
+    pub index_max: f64,
+}
+
+impl PricingConfig {
+    pub fn index_min_percent(&self) -> u32 {
+        (self.index_min * 100.0).round() as u32
+    }
 }
 
 impl Default for PricingConfig {
     fn default() -> Self {
         Self {
-            active_days: default_active_days(),
+            active_days: 30,
+            target_daily_growth: 0.002,
+            gain: 0.5,
+            max_step_per_meeting: 0.1,
+            index_min: 0.9,
+            index_max: 2.0,
         }
     }
-}
-
-fn default_active_days() -> u32 {
-    30
 }
 
 /// A monster type that spawns dynamically near players, instead of within a

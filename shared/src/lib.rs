@@ -97,7 +97,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      changed; a stale bundle would draw XP gauges on the old curve.
 /// v40: `Player.wet` + PlayerWetToggled, so nearby clients can draw wet
 ///      footprints behind a soaked player (doc/DEBUFF.md).
-pub const PROTOCOL_VERSION: u32 = 40;
+/// v41: `ShopState.price_index_percent`, the merchant price index on
+///      consumable buy prices (doc/PRICING.md).
+pub const PROTOCOL_VERSION: u32 = 41;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
