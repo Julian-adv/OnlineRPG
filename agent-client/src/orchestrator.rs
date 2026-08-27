@@ -440,22 +440,25 @@ async fn run_npc_session(
     }
 
     let llm_enabled = npc.llm != LlmType::None;
-    let enter_char_id = if llm_enabled {
-        characters.first().map(|c| c.id)
-    } else {
-        None
-    };
+    let entering = llm_enabled
+        .then(|| characters.first())
+        .flatten()
+        .map(|c| (c.id, c.name.clone()));
 
-    if let Some(char_id) = enter_char_id {
-        ws::send(
-            &mut ws_tx,
-            &ClientMessage::EnterGame {
-                character_id: char_id,
-            },
-        )
-        .await?;
-        info!("[{}] Entering game with character {char_id}...", label);
-    }
+    let buffered = match entering {
+        Some((char_id, name)) => {
+            enter_game(
+                &mut ws_tx,
+                &mut ws_rx,
+                label,
+                char_id,
+                &name,
+                npc.character_name.as_deref(),
+            )
+            .await?
+        }
+        None => Vec::new(),
+    };
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<ClientMessage>(32);
     let state = Arc::new(Mutex::new(SharedState::new(
@@ -495,43 +498,12 @@ async fn run_npc_session(
     let state_for_rx = Arc::clone(&state);
     let account_for_rx = label.to_string();
     let rx_task = tokio::spawn(async move {
+        for msg in buffered {
+            handle_incoming(&state_for_rx, &account_for_rx, msg).await;
+        }
         loop {
             match ws::recv(&mut ws_rx).await {
-                Ok(msg) => {
-                    if matches!(msg, onlinerpg_shared::ServerMessage::GameTimeSync { .. }) {
-                        let mut s = state_for_rx.lock().await;
-                        let _ = s.send_background_command(ClientMessage::Heartbeat).await;
-                        s.push_event(msg);
-                        continue;
-                    }
-
-                    let mut s = state_for_rx.lock().await;
-
-                    // Relocations land on a configured Y, not the terrain's.
-                    // Asked before `push_event`, which is where `JoinSuccess`
-                    // sets `self_player_id`.
-                    let needs_height_sync = match &msg {
-                        ServerMessage::JoinSuccess { .. } => true,
-                        ServerMessage::PlayerRespawned { player } => {
-                            s.self_player_id == Some(player.id)
-                        }
-                        ServerMessage::PlayerTeleported { player_id, .. } => {
-                            s.self_player_id == Some(*player_id)
-                        }
-                        _ => false,
-                    };
-
-                    s.push_event(msg);
-
-                    if needs_height_sync {
-                        if let Err(e) = s.sync_height().await {
-                            warn!(
-                                "[{}] Failed to sync height after relocation: {e}",
-                                account_for_rx
-                            );
-                        }
-                    }
-                }
+                Ok(msg) => handle_incoming(&state_for_rx, &account_for_rx, msg).await,
                 Err(e) => {
                     error!("[{}] Connection lost: {e}", account_for_rx);
                     break;
@@ -628,6 +600,107 @@ async fn run_npc_session(
     }
 
     Ok(())
+}
+
+/// One server message into shared state. The entry handshake reads a few
+/// before the reader task starts, so both paths go through here.
+async fn handle_incoming(state: &Arc<Mutex<SharedState>>, label: &str, msg: ServerMessage) {
+    let mut s = state.lock().await;
+    if matches!(msg, ServerMessage::GameTimeSync { .. }) {
+        let _ = s.send_background_command(ClientMessage::Heartbeat).await;
+        s.push_event(msg);
+        return;
+    }
+
+    // Relocations land on a configured Y, not the terrain's. Asked before
+    // `push_event`, which is where `JoinSuccess` sets `self_player_id`.
+    let needs_height_sync = match &msg {
+        ServerMessage::JoinSuccess { .. } => true,
+        ServerMessage::PlayerRespawned { player } => s.self_player_id == Some(player.id),
+        ServerMessage::PlayerTeleported { player_id, .. } => s.self_player_id == Some(*player_id),
+        _ => false,
+    };
+
+    s.push_event(msg);
+
+    if needs_height_sync {
+        if let Err(e) = s.sync_height().await {
+            warn!("[{label}] Failed to sync height after relocation: {e}");
+        }
+    }
+}
+
+/// The name to answer a rename demand with. Deriving one from the refused name
+/// would only be a way around the ban, so the operator's configured
+/// `character_name` is the only answer — and None means there is none.
+fn rename_target<'a>(current: &str, configured: Option<&'a str>) -> Option<&'a str> {
+    configured.filter(|name| !name.eq_ignore_ascii_case(current))
+}
+
+/// Enter the game and settle what the server answers with: `JoinSuccess`, or a
+/// demand to rename a banned character first. Anything else that lands
+/// meanwhile belongs to the session, so it comes back buffered for the reader
+/// to replay in order rather than being dropped.
+async fn enter_game(
+    ws_tx: &mut ws::WsTx,
+    ws_rx: &mut ws::WsRx,
+    label: &str,
+    char_id: i64,
+    current_name: &str,
+    configured_name: Option<&str>,
+) -> anyhow::Result<Vec<ServerMessage>> {
+    let enter = ClientMessage::EnterGame {
+        character_id: char_id,
+    };
+    ws::send(ws_tx, &enter).await?;
+    info!("[{label}] Entering game with character {char_id}...");
+
+    let mut buffered = Vec::new();
+    let mut renamed = false;
+    loop {
+        let msg = ws::recv(ws_rx).await?;
+        match msg {
+            ServerMessage::JoinSuccess { .. } => {
+                buffered.push(msg);
+                return Ok(buffered);
+            }
+            ServerMessage::CharacterRenameRequired { character_id } => {
+                if renamed {
+                    // One rename per connection: a second demand means the new
+                    // name is refused too, and asking again would spin.
+                    return Err(ws::AuthRejected(
+                        "renamed the character, but entry was refused again".to_string(),
+                    )
+                    .into());
+                }
+                let Some(new_name) = rename_target(current_name, configured_name) else {
+                    return Err(ws::AuthRejected(format!(
+                        "'{current_name}' cannot be used on this server; set a different \
+                         character_name in config.toml and restart"
+                    ))
+                    .into());
+                };
+                warn!("[{label}] Entry refused as '{current_name}' — renaming to '{new_name}'");
+                ws::send(
+                    ws_tx,
+                    &ClientMessage::RenameCharacter {
+                        character_id,
+                        new_name: new_name.to_string(),
+                    },
+                )
+                .await?;
+                renamed = true;
+            }
+            ServerMessage::CharacterRenamed { name, .. } => {
+                info!("[{label}] Renamed to '{name}'");
+                ws::send(ws_tx, &enter).await?;
+            }
+            ServerMessage::CharacterError { message } => {
+                return Err(ws::AuthRejected(format!("entry refused: {message}")).into());
+            }
+            other => buffered.push(other),
+        }
+    }
 }
 
 impl NpcConfig {
@@ -1113,5 +1186,18 @@ mod tests {
             api_base_url("wss://openmmo.example:10006/ws"),
             "https://openmmo.example:10007"
         );
+    }
+
+    #[test]
+    fn a_rename_demand_is_answered_from_the_configured_name() {
+        assert_eq!(rename_target("시스템", Some("인공지능")), Some("인공지능"));
+    }
+
+    #[test]
+    fn a_config_that_cannot_answer_has_no_target() {
+        // Offering the refused name back — in any case — is refused again.
+        assert_eq!(rename_target("시스템", None), None);
+        assert_eq!(rename_target("시스템", Some("시스템")), None);
+        assert_eq!(rename_target("SYSTEM", Some("system")), None);
     }
 }

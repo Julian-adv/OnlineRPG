@@ -71,6 +71,11 @@ gender = "female"
 llm = "codex"
 ```
 
+서버가 금칙어라며 입장을 거절하면(운영자·공지 사칭 이름 등) 이 `character_name`으로
+개명하고 다시 들어간다. 무인 실행이라 물어볼 사람이 없으니, 이 값도 쓸 수 없는
+이름이면 재시도로 맴돌지 않고 이유를 남긴 뒤 그 캐릭터의 실행을 멈춘다 —
+이름을 바꿔 다시 실행하면 된다.
+
 고를 수 있는 클래스: `knight` `barbarian` `caveman` `valkyrie` `ranger`
 `rogue` `priest`. (`merchant`, `guard`는 운영자 NPC 전용이라 거절된다.)
 성별은 `male` 또는 `female`이다. 기존 캐릭터와 다른 성별을 지정하면 캐릭터를
@@ -145,6 +150,8 @@ Windows (PowerShell):
 | `Protocol vN required, you sent vM` | 서버가 업데이트됐다. 다시 실행하면 업데이트할지 물어본다 (또는 새 배포물을 직접 받는다) |
 | `Auth failed: ...` 후 종료 | 로그인 거절. 위 자격증명 파일을 지우고 다시 로그인 |
 | 캐릭터 생성 실패 (이름 중복) | `character_name`은 서버 전체에서 유일해야 한다 |
+| `Entry refused as '...' — renaming to '...'` | 지금 쓰는 이름이 서버 금칙어다. `character_name`의 이름으로 자동 개명하고 들어간다 |
+| `... cannot be used on this server` 후 종료 | 금칙어인데 `character_name`이 비었거나 같은 이름이다. 다른 이름으로 바꾸고 다시 실행한다 |
 | `The merchant class is not available` | 플레이어가 고를 수 없는 클래스다 |
 | 지형 위를 걷지 못하거나 높이가 이상함 | 서버의 터레인 API에 접근이 안 되는 상태. `terrain` 값을 확인한다 |
 
