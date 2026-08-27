@@ -378,6 +378,12 @@
   // ── Per-tile materials (SvelteMap for template reactivity) ──
   const materialMap = new SvelteMap<string, THREE.Material>()
 
+  // Keyed by tile id: an index-bound array drifts when streaming evicts tiles
+  const meshById = $state<Record<string, THREE.Mesh | undefined>>({})
+  $effect(() => {
+    terrainMeshes = terrainTiles.map((t) => meshById[t.id])
+  })
+
   function getTileCoords(tile: TerrainTile): {
     tileX: number
     tileZ: number
@@ -435,6 +441,7 @@
       if (!currentTileIds.has(id)) {
         releaseGeometry(geo)
         geoMap.delete(id)
+        delete meshById[id]
         const mat = materialMap.get(id)
         if (mat) releaseMaterial(mat)
         materialMap.delete(id)
@@ -494,7 +501,7 @@
 
 {#if terrainGeometry && materialsReady}
   <T.Group bind:ref={terrainGroup}>
-    {#each terrainTiles as tile, index (tile.id)}
+    {#each terrainTiles as tile (tile.id)}
       {@const geo = geoMap.get(tile.id) ?? null}
       {@const tileMat = materialMap.get(tile.id) ?? null}
       {#if geo && tileMat}
@@ -503,7 +510,7 @@
           material={tileMat}
           tileId={tile.id}
           position={tile.position}
-          bind:mesh={terrainMeshes[index]}
+          bind:mesh={meshById[tile.id]}
         />
       {/if}
     {/each}

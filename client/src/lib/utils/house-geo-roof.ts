@@ -62,6 +62,27 @@ export function collectRoofGeometry(
   }
 }
 
+/** True when `other`'s wall line meets `room`'s gable end at `end`. */
+function abutsAtEnd(
+  room: RoomData,
+  other: RoomData,
+  ridgeAlongX: boolean,
+  end: -1 | 1
+): boolean {
+  const aStart = ridgeAlongX ? room.localX : room.localZ
+  const aSize = ridgeAlongX ? room.sizeX : room.sizeZ
+  const bStart = ridgeAlongX ? room.localZ : room.localX
+  const bSize = ridgeAlongX ? room.sizeZ : room.sizeX
+  const oStartA = ridgeAlongX ? other.localX : other.localZ
+  const oSizeA = ridgeAlongX ? other.sizeX : other.sizeZ
+  const oStartB = ridgeAlongX ? other.localZ : other.localX
+  const oSizeB = ridgeAlongX ? other.sizeZ : other.sizeX
+  const myEdge = end === -1 ? aStart : aStart + aSize
+  const oEdge = end === -1 ? oStartA + oSizeA : oStartA
+  if (oEdge !== myEdge) return false
+  return oStartB + oSizeB > bStart && oStartB < bStart + bSize
+}
+
 /**
  * If an adjacent gabled room with a perpendicular ridge meets this room's
  * gable end, return how far to extend the ridge so it reaches the other
@@ -73,32 +94,36 @@ function gableExtension(
   end: -1 | 1,
   allRooms: RoomData[]
 ): number {
-  // a = ridge axis (gable sits at a fixed coord on it)
-  // b = perpendicular axis (gable spans a range on it)
-  const aStart = ridgeAlongX ? room.localX : room.localZ
-  const aSize = ridgeAlongX ? room.sizeX : room.sizeZ
-  const bStart = ridgeAlongX ? room.localZ : room.localX
-  const bSize = ridgeAlongX ? room.sizeZ : room.sizeX
-  const myEdge = end === -1 ? aStart : aStart + aSize
-
   for (const other of allRooms) {
     if (other === room) continue
     if (other.floorLevel !== room.floorLevel) continue
     if (!other.roofType || other.roofType === 'flat') continue
     if (gabledRoofDims(other).ridgeAlongX === ridgeAlongX) continue
+    if (!abutsAtEnd(room, other, ridgeAlongX, end)) continue
 
     const oStartA = ridgeAlongX ? other.localX : other.localZ
     const oSizeA = ridgeAlongX ? other.sizeX : other.sizeZ
-    const oStartB = ridgeAlongX ? other.localZ : other.localX
-    const oSizeB = ridgeAlongX ? other.sizeZ : other.sizeX
-
-    const oEdge = end === -1 ? oStartA + oSizeA : oStartA
-    if (oEdge !== myEdge) continue
-    if (oStartB + oSizeB <= bStart || oStartB >= bStart + bSize) continue
-
+    const aStart = ridgeAlongX ? room.localX : room.localZ
+    const aSize = ridgeAlongX ? room.sizeX : room.sizeZ
+    const myEdge = end === -1 ? aStart : aStart + aSize
     return Math.abs(oStartA + oSizeA / 2 - myEdge)
   }
   return 0
+}
+
+/** True when another same-floor room shares this gable end's wall line. */
+function gableEndAbuts(
+  room: RoomData,
+  ridgeAlongX: boolean,
+  end: -1 | 1,
+  allRooms: RoomData[]
+): boolean {
+  return allRooms.some(
+    (o) =>
+      o !== room &&
+      o.floorLevel === room.floorLevel &&
+      abutsAtEnd(room, o, ridgeAlongX, end)
+  )
 }
 
 function collectFlatRoof(room: RoomData, target: GeoEntry[]) {
@@ -227,6 +252,8 @@ function collectGabledRoof(
     // Extended ends merge into the adjacent room's roof — no gable triangle.
     const endExt = endSign === -1 ? extLow : extHigh
     if (endExt > 0) continue
+    const endHasWindow =
+      hasWindow && !gableEndAbuts(room, ridgeAlongX, endSign, allRooms)
 
     let wallSegs: WallConfig[]
     if (ridgeAlongX) {
@@ -249,7 +276,7 @@ function collectGabledRoof(
     // Build vertex list: simple triangle or triangle with window cutout
     let localVerts: [number, number][]
     let indices: number[]
-    if (!hasWindow) {
+    if (!endHasWindow) {
       localVerts = [
         [-halfShort, 0],
         [halfShort, 0],
@@ -306,7 +333,7 @@ function collectGabledRoof(
     const target = isFront ? frontTarget : backTarget
     target.push({ geo, textureIndex: gableTexIdx })
 
-    if (WOOD_TEXTURE_IDX >= 0 && hasWindow) {
+    if (WOOD_TEXTURE_IDX >= 0 && endHasWindow) {
       const faceX = cx + (ridgeAlongX ? endOffset : 0)
       const faceZ = cz + (ridgeAlongX ? 0 : endOffset)
       const beamRotY = ridgeAlongX ? Math.PI / 2 : 0

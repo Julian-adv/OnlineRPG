@@ -32,7 +32,6 @@
   import { currentDungeonDepth } from '../../stores/dungeonStore'
   import { myFishing } from '../../stores/fishingStore'
   import { FishingAnimationName } from '../../types/animations'
-  import { dungeonManager } from '../../managers/dungeonManager'
   import { housingManager } from '../../managers/housingManager'
   import { campfireManager } from '../../managers/campfireManager'
   import type { Position } from '../../network/networkTypes'
@@ -246,16 +245,13 @@
   /** Scratch reused each frame to rank wall torches by distance to the player. */
   const _wallTorchRanking: { idx: number; dist: number }[] = []
 
+  // The bearer's y already resolves house/dungeon floors, so don't resample terrain
   function setTorchTargetFromPose(
     x: number,
     z: number,
-    fallbackY: number,
+    y: number,
     rotation: number
   ): THREE.Vector3 {
-    const y =
-      dungeonManager.sampleHeightAt(x, z) ??
-      heightManager.getHeightAtWorldPosition(x, z) ??
-      fallbackY
     _torchOffsetTmp.copy(TORCH_OFFSET).applyAxisAngle(Y_AXIS, rotation)
     return _unifiedTorchTmp.set(
       x + _torchOffsetTmp.x,
