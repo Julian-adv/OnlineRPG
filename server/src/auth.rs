@@ -401,8 +401,9 @@ impl AuthService {
         let mut stmt = conn.prepare(
             "UPDATE characters SET last_x = ?1, last_y = ?2, last_z = ?3, last_rotation = ?4, \
              xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10, \
-             satiation = ?11 WHERE id = ?12",
+             satiation = ?11, last_seen_at = ?12 WHERE id = ?13",
         )?;
+        let now = unix_now();
         for d in data {
             stmt.execute(params![
                 f64::from(d.x),
@@ -416,6 +417,7 @@ impl AuthService {
                 i64::from(d.floor_level),
                 d.gold,
                 i64::from(d.satiation),
+                now,
                 d.character_id,
             ])?;
         }
@@ -531,6 +533,7 @@ impl AuthService {
         Self::ensure_dungeon_chest_schema(&conn)?;
         Self::ensure_dungeon_discovery_schema(&conn)?;
         Self::ensure_trade_ledger_schema(&conn)?;
+        Self::ensure_gold_snapshots_schema(&conn)?;
         Self::ensure_migrations_schema(&conn)?;
         Self::migrate_level_curve(&conn)?;
 
@@ -897,6 +900,45 @@ impl AuthService {
         Ok(())
     }
 
+    /// Hourly gold supply readings (doc/PRICING.md); `ts` is hour-aligned.
+    fn ensure_gold_snapshots_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS gold_snapshots (
+                ts INTEGER PRIMARY KEY,
+                total_gold INTEGER NOT NULL,
+                characters INTEGER NOT NULL,
+                npc_gold INTEGER NOT NULL,
+                active_gold INTEGER NOT NULL,
+                active_characters INTEGER NOT NULL
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Inserts this hour's gold totals; returns the hour, or None if it
+    /// already had a row. Active = seen within `active_days`.
+    pub fn record_gold_snapshot(
+        &self,
+        now: i64,
+        active_days: u32,
+    ) -> Result<Option<i64>, AuthError> {
+        let ts = now - now.rem_euclid(3600);
+        let cutoff = now - i64::from(active_days) * 86_400;
+        let conn = self.open_connection()?;
+        let written = conn.execute(
+            "INSERT OR IGNORE INTO gold_snapshots \
+             (ts, total_gold, characters, npc_gold, active_gold, active_characters) \
+             SELECT ?1, COALESCE(SUM(gold), 0), COUNT(*), \
+                COALESCE(SUM(CASE WHEN account_name LIKE ?3 THEN gold END), 0), \
+                COALESCE(SUM(CASE WHEN last_seen_at >= ?2 THEN gold END), 0), \
+                COUNT(CASE WHEN last_seen_at >= ?2 THEN 1 END) \
+             FROM characters",
+            params![ts, cutoff, format!("{NPC_ACCOUNT_PREFIX}%")],
+        )?;
+        Ok((written > 0).then_some(ts))
+    }
+
     fn ensure_world_time_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS world_time (
@@ -941,6 +983,8 @@ impl AuthService {
             ("gender", "TEXT NOT NULL DEFAULT 'male'".into()),
             ("gold", "INTEGER NOT NULL DEFAULT 0".into()),
             ("admin_role", "INTEGER NOT NULL DEFAULT 0".into()),
+            // Unix seconds, NULL until first seen since the column shipped.
+            ("last_seen_at", "INTEGER".into()),
             (
                 "satiation",
                 format!(
@@ -1716,6 +1760,46 @@ impl AuthService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gold_snapshot_splits_npc_and_active_gold_once_per_hour() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_snap_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let player = auth.login_google("sub-snap").unwrap();
+        let npc = auth.login_npc("npc_snap").unwrap();
+        let active = create(&auth, &player, "Active").unwrap().id;
+        let idle = create(&auth, &player, "Idle").unwrap().id;
+        let rica = create(&auth, &npc, "Rica").unwrap().id;
+
+        let now = 1_700_000_000;
+        let conn = auth.open_connection().unwrap();
+        for (id, gold, seen) in [
+            (active, 100, now - 3600),
+            (idle, 50, now - 40 * 86_400),
+            (rica, 7, now),
+        ] {
+            conn.execute(
+                "UPDATE characters SET gold = ?1, last_seen_at = ?2 WHERE id = ?3",
+                params![gold, seen, id],
+            )
+            .unwrap();
+        }
+
+        let ts = auth.record_gold_snapshot(now, 30).unwrap().unwrap();
+        assert_eq!(ts, now - now % 3600);
+        let row: (i64, i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT total_gold, characters, npc_gold, active_gold, active_characters \
+                 FROM gold_snapshots WHERE ts = ?1",
+                params![ts],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (157, 3, 7, 107, 2));
+
+        assert_eq!(auth.record_gold_snapshot(now + 60, 30).unwrap(), None);
+    }
 
     #[test]
     fn a_bard_starts_with_a_worn_mandolin_on_top_of_the_common_kit() {

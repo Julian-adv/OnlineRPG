@@ -1272,6 +1272,8 @@ async fn handle_client_message(
             let rejoin_floor = player.floor_level;
             let rejoin_pos = player.position;
             responses.extend(game_state.add_player(player).await);
+            // Stamps last_seen_at at the next flush.
+            game_state.mark_dirty(&id).await;
 
             // After the snapshot on purpose: the client treats `GameState` as
             // the start of a session and clears its friend stores there.

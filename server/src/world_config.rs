@@ -23,6 +23,28 @@ pub struct WorldConfig {
     /// (doc/SERVER_SIDE_MONSTER_AI.md).
     #[serde(rename = "serverMonsterAi", default = "default_true")]
     pub server_monster_ai: bool,
+    #[serde(default)]
+    pub pricing: PricingConfig,
+}
+
+/// doc/PRICING.md.
+#[derive(Debug, Deserialize)]
+pub struct PricingConfig {
+    /// A character seen within this many real days counts as active.
+    #[serde(rename = "activeDays", default = "default_active_days")]
+    pub active_days: u32,
+}
+
+impl Default for PricingConfig {
+    fn default() -> Self {
+        Self {
+            active_days: default_active_days(),
+        }
+    }
+}
+
+fn default_active_days() -> u32 {
+    30
 }
 
 /// A monster type that spawns dynamically near players, instead of within a

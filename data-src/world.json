@@ -7,6 +7,7 @@
   },
   "maxMonstersPerPlayer": 8,
   "serverMonsterAi": true,
+  "pricing": { "activeDays": 30 },
   "ambientSpawns": [
     { "monsterType": "scp939" },
     { "monsterType": "kobold" },

@@ -33,13 +33,12 @@ CREATE TABLE gold_snapshots (
   characters INTEGER NOT NULL,      -- 전체 캐릭터 수
   npc_gold   INTEGER NOT NULL,      -- 공식 NPC 지갑 합
   active_gold INTEGER NOT NULL,     -- 활성 캐릭터(30일 내 접속)의 지갑 합
-  active_characters INTEGER NOT NULL, -- 활성 캐릭터 수
-  price_index REAL NOT NULL         -- 그 시각의 P
+  active_characters INTEGER NOT NULL  -- 활성 캐릭터 수
 );
 ```
 
 - 주기 저장(flush) 직후에 찍어 메모리의 미저장 골드까지 반영한다. `SUM(gold)` 한 번은 동시 접속 5,000명(누적 캐릭터는 그 몇 배)에서도 무시할 비용이다.
-- 한 달 이상 접속하지 않은 캐릭터의 골드는 유통 골드가 아니다 — 떠난 유저의 지갑이 `M`을 부풀리고, 복귀하면 갑자기 늘어난 것처럼 보인다. `characters`에 `last_login_at` 컬럼을 추가(로그인 시 갱신)하고, 조정 지표는 `active_gold / active_characters`를 쓴다. 활성 기준(30일)은 설정값.
+- 한 달 이상 접속하지 않은 캐릭터의 골드는 유통 골드가 아니다 — 떠난 유저의 지갑이 `M`을 부풀리고, 복귀하면 갑자기 늘어난 것처럼 보인다. `characters`에 `last_seen_at` 컬럼을 추가(32초 주기 저장 시 갱신, 입장 직후 dirty 표시 — 마지막으로 온라인이었던 시각)하고, 조정 지표는 `active_gold / active_characters`를 쓴다. 활성 기준(30일)은 설정값.
 - 스냅샷은 물가 조정과 무관하게 **먼저 배포해 몇 주간 실측**한다. 목표 증가율은 실측치를 보고 정한다.
 
 ## 조정: Serin의 삭이 되는 저녁
@@ -100,7 +99,7 @@ P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
 
 ## 구현 단계
 
-1. `gold_snapshots` + 매시 기록. 실측만 하고 `P`는 1.0 고정. — 몇 주 관측.
+1. `gold_snapshots` + 매시 기록. 실측만 하고 `P`는 1.0 고정. — 몇 주 관측. — **구현 완료 (2026-08-27)**: `record_gold_snapshot`(auth.rs), `tick_gold_snapshot`(pricing.rs), `pricing.activeDays`(world.json).
 2. 설정, 서버 달 위상, 삭 조정 틱, `pricing_state/history`, `ShopState` 필드, 서버 구매 검증. 초기에는 `gain`을 낮게 두고 history로 튜닝.
 3. 연출 1단계(프롬프트 주입) → 2단계(회의 일과) → 3단계(다음 회의 힌트).
 4. 품목군(물약/음식/주문서)별 개별 `P` — 단일 `P`로 시작하고, 운영 상황을 보고 도입한다.

@@ -131,6 +131,7 @@ async fn time_sync_tick(game_state: &GameState, auth_service: &Arc<AuthService>,
     // Batch-save dirty character states and inventories every 4 ticks (32s)
     if tick_count.is_multiple_of(4) {
         game_state.flush_dirty_saves(auth_service).await;
+        game_state.tick_gold_snapshot(auth_service).await;
     }
 
     let datetime = game_state.broadcast_game_time();

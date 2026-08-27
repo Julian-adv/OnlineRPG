@@ -251,6 +251,7 @@ mod party;
 mod passability;
 mod player;
 mod player_trade;
+mod pricing;
 pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
