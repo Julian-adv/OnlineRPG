@@ -1,5 +1,34 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+/// Turns a merchant spends at the price meeting, the last one closing it.
+pub const MEETING_TURNS: u32 = 5;
+
+impl SharedState {
+    pub fn enter_meeting(&mut self, host: bool) {
+        self.meeting_turns = Some(0);
+        self.meeting_host = host;
+    }
+
+    /// Still talking: before the closing turn.
+    pub fn in_meeting_scene(&self) -> bool {
+        self.meeting_turns.is_some_and(|t| t + 1 < MEETING_TURNS)
+    }
+
+    /// Scene played out; the meeting entry stops resolving.
+    pub fn meeting_done(&self) -> bool {
+        self.meeting_turns.is_some_and(|t| t >= MEETING_TURNS)
+    }
+
+    /// Counts an LLM turn at the meeting; true when this turn must close it.
+    pub fn meeting_turn(&mut self) -> bool {
+        let Some(t) = self.meeting_turns.as_mut() else {
+            return false;
+        };
+        *t += 1;
+        *t + 1 == MEETING_TURNS
+    }
+}
+
 use crate::dungeon::Dungeon;
 use crate::monster_ai::MonsterAiManager;
 use onlinerpg_shared::dungeon::{
@@ -285,6 +314,10 @@ pub struct SharedState {
     pub is_night: Option<bool>,
     /// Serin's dark day (the merchants' meeting night), from the game date.
     pub is_serin_dark_day: Option<bool>,
+    /// LLM turns taken at the price meeting; None when not attending.
+    pub meeting_turns: Option<u32>,
+    /// We chair the meeting and announce the decision at its close.
+    pub meeting_host: bool,
     /// Latest market picture (doc/PRICING.md), merchants' roleplay context.
     pub pricing: Option<onlinerpg_shared::pricing::PricingNotice>,
     /// Current game hour (0-23)
@@ -395,6 +428,8 @@ impl SharedState {
             world_cache,
             is_night: None,
             is_serin_dark_day: None,
+            meeting_turns: None,
+            meeting_host: false,
             pricing: None,
             game_hour: None,
             game_minute: None,

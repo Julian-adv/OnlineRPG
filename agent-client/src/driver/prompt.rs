@@ -648,9 +648,8 @@ fn market_prompt(info: &PricingNotice, at_meeting: bool) -> String {
     match info.last_change_pct {
         0 => s.push_str(".\n"),
         d => s.push_str(&format!(
-            "; the merchants' guild {} them {}% at the last meeting.\n",
-            if d > 0 { "raised" } else { "lowered" },
-            d.abs()
+            "; the merchants' guild {} at the last meeting.\n",
+            price_change_phrase(d, true)
         )),
     }
     let hint = match info.trend {
@@ -660,7 +659,9 @@ fn market_prompt(info: &PricingNotice, at_meeting: bool) -> String {
     };
     if at_meeting {
         s.push_str(&format!(
-            "{hint} — and the meeting is happening right now. Talk it over with the other merchants in character; the decision is announced after.\n"
+            "{hint} — and the meeting is happening right now. Stay focused on it: talk prices \
+             and the market with the other merchants only. No selling, no shop talk to \
+             passers-by, no stall, no wandering off until the guild head closes the meeting.\n"
         ));
     } else {
         s.push_str(&format!(
@@ -674,6 +675,39 @@ fn market_prompt(info: &PricingNotice, at_meeting: bool) -> String {
         ));
     }
     s
+}
+
+/// "raised them 4%" / "lower consumable prices by 4%" / "hold …".
+fn price_change_phrase(pct: i32, past: bool) -> String {
+    match (pct.signum(), past) {
+        (0, true) => "held them".to_string(),
+        (0, false) => "hold consumable prices where they are".to_string(),
+        (1, true) => format!("raised them {pct}%"),
+        (1, false) => format!("raise consumable prices by {pct}%"),
+        (_, true) => format!("lowered them {}%", -pct),
+        (_, false) => format!("lower consumable prices by {}%", -pct),
+    }
+}
+
+pub(super) fn meeting_arrival_event() -> String {
+    "[Schedule] You have arrived at the merchants' price meeting. Greet the other \
+     merchants and open the talk about where prices should go."
+        .to_string()
+}
+
+/// The server already decided at sunset; the host reads it out, the rest
+/// say goodbye.
+pub(super) fn meeting_closing_event(host: bool, last_change_pct: i32) -> String {
+    if !host {
+        return "[Schedule] The price meeting is wrapping up. Thank the guild head, say your \
+                goodbyes, and head back to your business."
+            .to_string();
+    }
+    format!(
+        "[Schedule] As head of the merchants' guild, close the meeting now: announce that the \
+         guild has decided to {}, thank everyone, and send them home.",
+        price_change_phrase(last_change_pct, false)
+    )
 }
 
 fn format_schedule_context(
@@ -697,6 +731,13 @@ fn format_schedule_context(
 #[cfg(test)]
 mod tests {
     use super::{build_prompt, caught_line, format_event, record_conversation};
+
+    #[test]
+    fn the_host_closes_with_the_servers_decision() {
+        assert!(super::meeting_closing_event(true, -4).contains("lower consumable prices by 4%"));
+        assert!(super::meeting_closing_event(true, 0).contains("hold consumable prices"));
+        assert!(super::meeting_closing_event(false, 3).contains("say your goodbyes"));
+    }
     use crate::state::tests::{test_player, test_state};
     use crate::state::NPC_SIGHT_RADIUS;
     use onlinerpg_shared::{PlayerId, ServerMessage};

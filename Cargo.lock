@@ -17,6 +17,7 @@ dependencies = [
  "axum",
  "flate2",
  "futures-util",
+ "libc",
  "onlinerpg-shared",
  "onlinerpg-terrain",
  "rand 0.8.5",

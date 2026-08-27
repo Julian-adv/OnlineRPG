@@ -247,9 +247,17 @@ openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`
 
 시간이 지나면 안쪽 future를 drop하는 것으로 일이 실제로 멈춘다. reqwest는 요청을
 취소하고, stdio 백엔드(`claude.rs` / `codex.rs`)는 `kill_on_drop(true)`로 CLI를 띄우므로
-자식 프로세스가 살아남지 않는다. 다만 CLI가 또 띄운 손자 프로세스까지는 죽이지
-않는다(프로세스 그룹 kill이 아니다). `0`은 타임아웃 해제 — 디버거로 백엔드를
-따라갈 때 쓴다.
+자식 프로세스가 살아남지 않는다. npm `codex`/`claude`는 node 래퍼라 진짜 바이너리가
+손자 프로세스인데, unix에서는 프로세스 그룹으로 띄워 drop 시 그룹째 죽인다
+(`process_group.rs`; 2026-08-27, 타임아웃마다 고아 codex가 남아 API 호출을 계속하던 문제). `0`은 타임아웃
+해제 — 디버거로 백엔드를 따라갈 때 쓴다.
+
+### codex 추론 강도 (`[codex] reasoning_effort`, 기본 "low")
+
+`codex exec`는 사용자의 `~/.codex/config.toml`을 그대로 상속한다. 거기 `model_reasoning_effort =
+"xhigh"`가 있으면 NPC 한 턴이 200초를 넘겨 타임아웃만 반복한다(2026-08-27 실측: 같은
+상인 프롬프트가 xhigh 200초+, medium 11초, low 10초). 그래서 항상 `-c
+model_reasoning_effort=<값>`을 명시한다. 회의 대사처럼 짧은 롤플레이에는 low로 충분하다.
 
 ## 구현 우선순위
 

@@ -15,10 +15,16 @@ pub struct CodexConfig {
     /// Path to system prompt file (default: "data/system_prompt.txt")
     #[serde(default = "default_system_prompt_file")]
     pub system_prompt_file: String,
+    /// Overrides ~/.codex/config.toml's model_reasoning_effort (doc/AGENT_CLIENT.md).
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
 }
 
 fn default_model() -> String {
     "o4-mini".to_string()
+}
+fn default_reasoning_effort() -> String {
+    "low".to_string()
 }
 fn default_system_prompt_file() -> String {
     "data/system_prompt.txt".to_string()
@@ -29,6 +35,7 @@ impl Default for CodexConfig {
         Self {
             model: default_model(),
             system_prompt_file: default_system_prompt_file(),
+            reasoning_effort: default_reasoning_effort(),
         }
     }
 }
@@ -170,16 +177,17 @@ impl LlmBackend for CodexInvoker {
             .arg("--skip-git-repo-check")
             .arg("-m")
             .arg(&self.config.model)
+            .arg("-c")
+            .arg(format!(
+                "model_reasoning_effort={}",
+                self.config.reasoning_effort
+            ))
             .arg("-") // read prompt from stdin
             .current_dir(self.run_dir.path()) // empty per-run cwd, no AGENTS.md
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("Failed to spawn codex CLI: {e}"))?;
+            .stderr(std::process::Stdio::piped());
+        let (mut child, mut group) = crate::process_group::spawn_in_group(&mut cmd, "codex")?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(full_prompt.as_bytes()).await?;
@@ -240,6 +248,7 @@ impl LlmBackend for CodexInvoker {
         }
 
         let status = child.wait().await?;
+        group.disarm();
         if !status.success() {
             warn!("Codex process exited with status: {status}");
         }

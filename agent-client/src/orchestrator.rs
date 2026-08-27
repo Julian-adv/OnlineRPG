@@ -1037,14 +1037,7 @@ mod tests {
     fn schedule(at: &str) -> ScheduleEntry {
         ScheduleEntry {
             at: at.to_string(),
-            pos: [0.0; 3],
-            rotation: 0.0,
-            floor_level: 0,
-            label: None,
-            action: None,
-            object_id: None,
-            waypoints: Vec::new(),
-            condition: None,
+            ..Default::default()
         }
     }
 

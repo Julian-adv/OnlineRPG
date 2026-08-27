@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::geom::PlanarDelta;
 use crate::state::SharedState;
-use onlinerpg_shared::schedule::ScheduleEntry;
+use onlinerpg_shared::schedule::{ScheduleCondition, ScheduleEntry};
 
 use onlinerpg_shared::schedule::resolve_active_schedule;
 
@@ -91,6 +91,10 @@ pub(super) async fn check_schedule_transition(
     label: &str,
 ) -> (Option<usize>, Option<u32>) {
     if new != current {
+        let meeting = new
+            .0
+            .map(|i| &schedule[i])
+            .filter(|e| e.condition == Some(ScheduleCondition::Meeting));
         {
             let mut s = state.lock().await;
             // Stop interaction from previous schedule entry if it had an action
@@ -100,8 +104,10 @@ pub(super) async fn check_schedule_transition(
                 }
             }
             s.pack_up_placeables(label).await;
+            if let Some(entry) = meeting {
+                s.enter_meeting(entry.host);
+            }
         }
-
         if let Some(i) = new.0 {
             let entry = &schedule[i];
             info!(
@@ -114,6 +120,13 @@ pub(super) async fn check_schedule_transition(
                 info!("[{label}] Follow of {name} cancelled by a schedule transition");
             }
             execute_schedule_move(state, entry).await;
+            // Nothing else wakes an NPC at the meeting; the idle poll is an hour away.
+            if meeting.is_some() {
+                state
+                    .lock()
+                    .await
+                    .push_ambient_event(super::prompt::meeting_arrival_event());
+            }
         }
     }
     new

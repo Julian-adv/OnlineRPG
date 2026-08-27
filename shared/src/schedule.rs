@@ -45,6 +45,10 @@ pub struct ScheduleEntry {
     /// Object placement ID to interact with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_id: Option<u32>,
+    /// Hosts the gathering this entry attends (the guild head at the
+    /// price meeting closes it with the decision).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host: bool,
     /// Optional patrol route: waypoints to visit before going to `pos`.
     #[serde(default)]
     pub waypoints: Vec<[f32; 3]>,

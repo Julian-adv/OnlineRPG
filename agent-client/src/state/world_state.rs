@@ -7,7 +7,8 @@ impl SharedState {
             self.is_night,
             self.game_hour,
             self.game_minute,
-            self.is_serin_dark_day,
+            // A played-out meeting stops matching; the NPC goes home.
+            self.is_serin_dark_day.filter(|_| !self.meeting_done()),
         )
     }
 

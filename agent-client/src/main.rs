@@ -11,6 +11,7 @@ mod monster_ai;
 mod openai;
 mod openrouter;
 mod orchestrator;
+mod process_group;
 mod shop_info;
 mod splat;
 mod state;

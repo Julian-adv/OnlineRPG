@@ -48,7 +48,12 @@ impl SharedState {
                     .get(player_id)
                     .is_some_and(|p| p.is_official_npc)
                 {
-                    EventUrgency::Routine
+                    // The meeting banter is the scene; MEETING_TURNS bounds it.
+                    if self.in_meeting_scene() {
+                        EventUrgency::Urgent
+                    } else {
+                        EventUrgency::Routine
+                    }
                 } else {
                     EventUrgency::Urgent
                 }
@@ -1002,9 +1007,13 @@ impl SharedState {
                 return urgency;
             }
             ServerMessage::GameTimeSync { datetime, is_night } => {
-                self.is_serin_dark_day = Some(onlinerpg_shared::moon::is_serin_dark_day(
+                let dark = onlinerpg_shared::moon::is_serin_dark_day(
                     onlinerpg_shared::moon::game_day_index(datetime),
-                ));
+                );
+                if !dark {
+                    self.meeting_turns = None;
+                }
+                self.is_serin_dark_day = Some(dark);
                 let prev_night = self.is_night;
                 let prev_hour = self.game_hour;
                 let hour = datetime.hour as u32;

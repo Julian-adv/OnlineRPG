@@ -543,6 +543,14 @@ pub async fn llm_driver(
         let terrain = rendered_terrain_summary(&state).await;
         let prompt = {
             let mut s = state.lock().await;
+            // Armed one turn early so the closing turn reads it under EVENTS.
+            if s.meeting_turn() {
+                let closing = prompt::meeting_closing_event(
+                    s.meeting_host,
+                    s.pricing.as_ref().map_or(0, |p| p.last_change_pct),
+                );
+                s.push_ambient_event(closing);
+            }
             // History is recorded after the build: this prompt shows the
             // batch under EVENTS, the next one under RECENT CONVERSATION.
             let prompt = build_prompt(
@@ -731,6 +739,7 @@ async fn fetch_announcements(api_base_url: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::state::tests::{test_player, test_state};
 
