@@ -75,6 +75,34 @@ async fn a_step_into_the_sea_soaks_and_slows() {
     assert!((move_mult(&game_state, &id).await - 0.83).abs() < 1e-6);
 }
 
+/// The deck is the server's own index, so a client reporting a lofty Y in
+/// open water gains nothing: only the XZ footprint of a placed bridge counts.
+#[tokio::test(start_paused = true)]
+async fn a_bridge_deck_over_the_sea_stays_dry_beside_it_soaks() {
+    let game_state = make_test_game_state("wet_bridge_deck");
+    let (id, _rx) = make_wader(&game_state, "walker").await;
+    let bridge = onlinerpg_shared::furniture::FurniturePlacement {
+        type_id: "stone_bridge".into(),
+        x: -100.0,
+        y: 3.0,
+        z: 50.0,
+        rotation_deg: 90.0,
+        floor_level: 0,
+    };
+    game_state.sync_region_furniture(-1, 0, &[bridge]);
+
+    soak(&game_state, &[step_to(id, -92.0, 0)]).await;
+    assert_eq!(wet_remaining(&game_state, &id).await, None);
+
+    let mut beside = step_to(id, -112.0, 0);
+    beside.to.y = 9.0;
+    soak(&game_state, &[beside]).await;
+    assert_eq!(
+        wet_remaining(&game_state, &id).await,
+        Some(Duration::from_secs(450))
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn steps_on_dry_land_never_soak() {
     let game_state = make_test_game_state("wet_dry_step");

@@ -236,7 +236,8 @@ impl super::GameState {
     }
 
     /// Movement-coupled soaking: a step ending in water (sea or river)
-    /// applies `wet`, and wading refreshes it. Runs after
+    /// applies `wet`, and wading refreshes it. A step onto a bridge deck is
+    /// exempt by the server's own deck index, not the client's Y. Runs after
     /// `tick_player_movement` drops its locks — terrain sampling never
     /// happens under them — and skips anyone already soaked with time to
     /// spare, so only entries and near-expiry refreshes touch a tile.
@@ -251,6 +252,7 @@ impl super::GameState {
         let now = Instant::now();
         let candidates: Vec<(PlayerId, onlinerpg_shared::Position)> = {
             let hunger = self.hunger.read().await;
+            let decks = self.bridge_decks_read();
             steps
                 .iter()
                 .filter(|s| s.floor_level == 0 && s.player_id.get() % WATER_CHECK_TICKS == bucket)
@@ -260,6 +262,13 @@ impl super::GameState {
                     hunger
                         .get(&s.player_id)
                         .is_some_and(|d| d.remaining(WET_DEBUFF_ID, now) < WET_REFRESH_BELOW)
+                })
+                .filter(|s| {
+                    !super::passability::on_bridge_deck(
+                        &decks,
+                        onlinerpg_shared::wrap_world_x(s.to.x),
+                        s.to.z,
+                    )
                 })
                 .map(|s| (s.player_id, s.to))
                 .collect()

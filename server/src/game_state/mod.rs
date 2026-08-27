@@ -427,6 +427,9 @@ pub struct GameState {
     /// solid furniture, dungeons), used to collision-check simulated player
     /// movement. std RwLock: accesses are sync and short.
     passability: Arc<std::sync::RwLock<onlinerpg_shared::pathfinding::PassabilityCache>>,
+    /// Bridge decks by owning region, so wading checks can tell a crossing
+    /// from a swim without trusting the client's Y.
+    bridge_decks: Arc<std::sync::RwLock<passability::BridgeDeckIndex>>,
     /// When each player was last sent a `PositionCorrected`. Only touched when
     /// a correction is sent, and pruned on the refused-move path, so it needs
     /// no disconnect cleanup and stays empty in the normal case.
@@ -694,6 +697,7 @@ impl GameState {
             passability: Arc::new(std::sync::RwLock::new(
                 onlinerpg_shared::pathfinding::PassabilityCache::new(),
             )),
+            bridge_decks: Arc::new(std::sync::RwLock::new(HashMap::new())),
             no_spawn_zones,
             inventories: Arc::new(RwLock::new(HashMap::new())),
             ground_items: Arc::new(RwLock::new(HashMap::new())),

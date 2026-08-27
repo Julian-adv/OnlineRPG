@@ -14,7 +14,9 @@ use onlinerpg_shared::furniture::{self, FurniturePlacement};
 use onlinerpg_shared::housing::HouseData;
 use onlinerpg_shared::pathfinding;
 use onlinerpg_shared::{WORLD_MAX_X, WORLD_MIN_X, WORLD_WIDTH_X};
+use onlinerpg_terrain::coords::{tile_to_region, world_to_tile};
 use serde::Deserialize;
+use std::collections::HashMap;
 use tracing::{info, warn};
 
 /// Region object file shape (`data/terrain/objects/r{rx}_{rz}.json`).
@@ -389,6 +391,38 @@ impl super::GameState {
         Ok(count)
     }
 
+    fn sync_region_bridges(&self, rx: i32, rz: i32, placements: &[FurniturePlacement]) {
+        let decks = onlinerpg_shared::bridge::placed_decks(placements);
+        let mut index = self.bridge_decks.write().unwrap_or_else(|e| e.into_inner());
+        if decks.is_empty() {
+            index.remove(&(rx, rz));
+        } else {
+            index.insert((rx, rz), decks);
+        }
+    }
+
+    pub(super) fn bridge_decks_read(&self) -> std::sync::RwLockReadGuard<'_, BridgeDeckIndex> {
+        self.bridge_decks.read().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Bridge decks by owning region.
+pub(super) type BridgeDeckIndex = HashMap<(i32, i32), Vec<onlinerpg_shared::bridge::PlacedDeck>>;
+
+/// Whether a wrapped-x surface point lies on a bridge deck. Decks reach at
+/// most a few metres past their region's edge, so the 3×3 neighbourhood
+/// covers every candidate.
+pub(super) fn on_bridge_deck(index: &BridgeDeckIndex, wx: f32, z: f32) -> bool {
+    let rx = tile_to_region(world_to_tile(wx));
+    let rz = tile_to_region(world_to_tile(z));
+    (rx - 1..=rx + 1)
+        .flat_map(|x| (rz - 1..=rz + 1).map(move |zz| (x, zz)))
+        .filter_map(|key| index.get(&key))
+        .flatten()
+        .any(|d| d.contains(wx, z))
+}
+
+impl super::GameState {
     /// Insert or replace a house's cache entry: base grids plus the door
     /// overlays persisted in its data. The in-memory open-door state for the
     /// house is reset — the incoming data is authoritative after an edit.
@@ -415,6 +449,7 @@ impl super::GameState {
         rz: i32,
         placements: &[FurniturePlacement],
     ) -> bool {
+        self.sync_region_bridges(rx, rz, placements);
         let key = furniture::region_cache_key(rx, rz);
         let mut cache = self.passability_write();
         match furniture::build_furniture_passability_for_placements(placements) {

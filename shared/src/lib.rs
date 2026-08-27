@@ -4,6 +4,7 @@
 //! using flat `onlinerpg_shared::Position` paths regardless of where the
 //! type now lives.
 
+pub mod bridge;
 pub mod character;
 pub mod debuff;
 pub mod dungeon;
