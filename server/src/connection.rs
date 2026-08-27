@@ -1152,6 +1152,16 @@ async fn handle_client_message(
                     player.floor_level = 0;
                 }
             }
+            // The stored Y was the client's word at logout; re-ground it.
+            if player.floor_level >= 0 {
+                player.position.y = game_state
+                    .surface_ground_y(
+                        player.floor_level as u8,
+                        &player.position,
+                        player.position.y,
+                    )
+                    .await;
+            }
             let id = player.id;
 
             state.direct_rx = Some(game_state.register_connection_channel(&id).await);

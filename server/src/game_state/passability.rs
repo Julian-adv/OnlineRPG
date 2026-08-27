@@ -306,10 +306,18 @@ impl super::GameState {
     }
 
     /// The Y to store for a mover on surface floor `floor` at `to`: the
-    /// dungeon entrance ramp, house storey or stairwell the server can model.
-    /// Open terrain keeps the reported Y — the server holds no bridge decks,
-    /// and nothing server-side consumes Y where no floor grid stands.
-    pub(super) async fn surface_ground_y(&self, floor: u8, to: &crate::types::Position) -> f32 {
+    /// dungeon entrance ramp, house storey or stairwell, bridge deck or
+    /// terrain — all server-derived, so the reported Y only ever breaks ties.
+    /// `ref_y` is the mover's current server-side height: under a bridge it
+    /// decides deck versus river bed. Keeps the reported Y where
+    /// nothing can be derived (a sampler error, or an upper storey whose
+    /// room no longer exists).
+    pub async fn surface_ground_y(
+        &self,
+        floor: u8,
+        to: &crate::types::Position,
+        ref_y: f32,
+    ) -> f32 {
         if floor == 0 {
             if let Some(entrance) = self.dungeon_defs.entrance_at(to.x, to.z) {
                 let dungeons = self.dungeons.read().await;
@@ -327,8 +335,24 @@ impl super::GameState {
                 }
             }
         }
-        let cache = self.passability_read();
-        pathfinding::storey_ground_y(&cache, floor, to.x, to.z, to.y).unwrap_or(to.y)
+        let storey_y = {
+            let cache = self.passability_read();
+            pathfinding::storey_ground_y(&cache, floor, to.x, to.z, to.y)
+        };
+        if let Some(y) = storey_y {
+            return y;
+        }
+        if floor != 0 {
+            return to.y;
+        }
+        let wx = onlinerpg_shared::wrap_world_x(to.x);
+        if let Some(y) = bridge_deck_y(&self.bridge_decks_read(), wx, to.z, ref_y) {
+            return y;
+        }
+        self.height_sampler
+            .sample_height(wx, to.z)
+            .await
+            .unwrap_or(to.y)
     }
 
     /// Cache guards recover from poisoning: a panic mid-update at worst
@@ -409,17 +433,18 @@ impl super::GameState {
 /// Bridge decks by owning region.
 pub(super) type BridgeDeckIndex = HashMap<(i32, i32), Vec<onlinerpg_shared::bridge::PlacedDeck>>;
 
-/// Whether a wrapped-x surface point lies on a bridge deck. Decks reach at
+/// Deck-top Y for a mover at server height `ref_y` on a bridge over the
+/// wrapped-x surface point, if any (`PlacedDeck::stand_y`). Decks reach at
 /// most a few metres past their region's edge, so the 3×3 neighbourhood
 /// covers every candidate.
-pub(super) fn on_bridge_deck(index: &BridgeDeckIndex, wx: f32, z: f32) -> bool {
+pub(super) fn bridge_deck_y(index: &BridgeDeckIndex, wx: f32, z: f32, ref_y: f32) -> Option<f32> {
     let rx = tile_to_region(world_to_tile(wx));
     let rz = tile_to_region(world_to_tile(z));
     (rx - 1..=rx + 1)
         .flat_map(|x| (rz - 1..=rz + 1).map(move |zz| (x, zz)))
         .filter_map(|key| index.get(&key))
         .flatten()
-        .any(|d| d.contains(wx, z))
+        .find_map(|d| d.stand_y(wx, z, ref_y))
 }
 
 impl super::GameState {

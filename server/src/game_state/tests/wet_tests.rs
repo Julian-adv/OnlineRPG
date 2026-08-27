@@ -75,30 +75,34 @@ async fn a_step_into_the_sea_soaks_and_slows() {
     assert!((move_mult(&game_state, &id).await - 0.83).abs() < 1e-6);
 }
 
-/// The deck is the server's own index, so a client reporting a lofty Y in
-/// open water gains nothing: only the XZ footprint of a placed bridge counts.
+/// The deck is the server's own index and the mover's server-side Y, so a
+/// client claiming a lofty Y beside the bridge gains nothing, and a wader
+/// passing under the span still soaks.
 #[tokio::test(start_paused = true)]
-async fn a_bridge_deck_over_the_sea_stays_dry_beside_it_soaks() {
+async fn a_bridge_deck_over_the_sea_stays_dry_beside_and_under_it_soaks() {
     let game_state = make_test_game_state("wet_bridge_deck");
     let (id, _rx) = make_wader(&game_state, "walker").await;
-    let bridge = onlinerpg_shared::furniture::FurniturePlacement {
-        type_id: "stone_bridge".into(),
-        x: -100.0,
-        y: 3.0,
-        z: 50.0,
-        rotation_deg: 90.0,
-        floor_level: 0,
-    };
-    game_state.sync_region_furniture(-1, 0, &[bridge]);
+    game_state.sync_region_furniture(-1, 0, &[stone_bridge(-100.0, 3.0, 50.0)]);
 
-    soak(&game_state, &[step_to(id, -92.0, 0)]).await;
+    let mut on_deck = step_to(id, -92.0, 0);
+    on_deck.to.y = 4.0;
+    soak(&game_state, &[on_deck]).await;
     assert_eq!(wet_remaining(&game_state, &id).await, None);
 
-    let mut beside = step_to(id, -112.0, 0);
+    let mut under = step_to(id, -100.0, 0);
+    under.to.y = -5.0;
+    soak(&game_state, &[under]).await;
+    assert_eq!(
+        wet_remaining(&game_state, &id).await,
+        Some(Duration::from_secs(450))
+    );
+
+    let (id2, _rx2) = make_wader(&game_state, "flier").await;
+    let mut beside = step_to(id2, -112.0, 0);
     beside.to.y = 9.0;
     soak(&game_state, &[beside]).await;
     assert_eq!(
-        wet_remaining(&game_state, &id).await,
+        wet_remaining(&game_state, &id2).await,
         Some(Duration::from_secs(450))
     );
 }

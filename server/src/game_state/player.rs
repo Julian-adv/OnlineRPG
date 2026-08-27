@@ -1142,7 +1142,7 @@ impl super::GameState {
         }
         if floor_level >= 0 {
             new_position.y = self
-                .surface_ground_y(floor_level as u8, &new_position)
+                .surface_ground_y(floor_level as u8, &new_position, leg_start.y)
                 .await;
         }
         let mut queues = self.movement_intents.write().await;
@@ -1669,7 +1669,7 @@ impl super::GameState {
                     &position,
                 )
                 .await;
-            (verdict.floor, Some(verdict.y))
+            (verdict.floor, verdict.y)
         } else {
             let floor = self
                 .validated_house_floor(
@@ -1681,7 +1681,10 @@ impl super::GameState {
                     is_official_npc,
                 )
                 .await;
-            (floor, None)
+            let y = self
+                .surface_ground_y(floor as u8, &position, position.y)
+                .await;
+            (floor, y)
         };
         // Refused claims must be told, or the client re-announces forever.
         if settled_floor != floor_level {
@@ -1712,12 +1715,9 @@ impl super::GameState {
                 return;
             };
             player.floor_level = floor_level;
-            // A mid-transition accept snaps Y to the claimed floor's ground;
-            // leaving the departing floor's Y would misplace AOI and targeting
-            // until the next move lands.
-            if let Some(y) = snapped_y {
-                player.position.y = y;
-            }
+            // Snap Y to the claimed floor's ground: leaving the departing
+            // floor's Y would misplace AOI and targeting until the next move.
+            player.position.y = snapped_y;
             player.clone()
         };
 

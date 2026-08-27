@@ -202,8 +202,9 @@ async fn stairwell_height_is_derived_not_reported() {
     );
 }
 
+/// Off the house grid the reported height is replaced by the terrain's.
 #[tokio::test]
-async fn open_terrain_keeps_the_reported_height() {
+async fn open_terrain_grounds_to_the_heightmap() {
     let (game_state, player_id) =
         house_with_player("terrain_reported_y", "rover", 50.5, 50.5, 0).await;
     game_state
@@ -212,7 +213,7 @@ async fn open_terrain_keeps_the_reported_height() {
     let (target, _) = queued_target(&game_state, &player_id)
         .await
         .expect("queued");
-    assert_eq!(target.y, 7.0);
+    assert_eq!(target.y, 5.0);
 }
 
 /// Official NPCs walk their schedules across storeys (a force-move through a

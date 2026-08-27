@@ -1332,3 +1332,68 @@ async fn sim_tracks_nominal_progress_instead_of_racing_to_the_leg_end() {
     let z = game_state.players.read().await[&player_id].position.z;
     assert!((z - 30.0).abs() < 1e-3, "leg should still complete: {z}");
 }
+
+async fn move_to(game_state: &GameState, id: &PlayerId, x: f32, y: f32, z: f32) -> f32 {
+    game_state
+        .update_player_position(
+            id,
+            MoveCommand {
+                position: Position { x, y, z },
+                rotation: 0.0,
+                floor_level: 0,
+                append: false,
+                sprinting: false,
+            },
+            false,
+        )
+        .await;
+    game_state.tick_player_movement(60.0).await;
+    game_state.get_all_players().await[id].position.y
+}
+
+/// On open terrain the stored Y is the terrain's, not the client's — a
+/// forged height neither flies nor sinks the player.
+#[tokio::test]
+async fn open_terrain_y_comes_from_the_heightmap() {
+    let game_state = make_test_game_state("movement_ground_y");
+    let id = pid("grounded");
+    game_state
+        .add_player(make_player("grounded", 100.0, 50.0))
+        .await;
+
+    assert_eq!(move_to(&game_state, &id, 102.0, 40.0, 50.0).await, 5.0);
+    assert_eq!(move_to(&game_state, &id, 104.0, -40.0, 50.0).await, 5.0);
+}
+
+/// A bridge deck lifts the mover to the deck curve from the catalog.
+#[tokio::test]
+async fn bridge_deck_y_comes_from_the_deck_index() {
+    let game_state = make_test_game_state("movement_deck_y");
+    let id = pid("crosser");
+    game_state
+        .add_player(make_player("crosser", 100.0, 50.0))
+        .await;
+    game_state.sync_region_furniture(0, 0, &[stone_bridge(100.0, 5.0, 50.0)]);
+
+    assert_eq!(move_to(&game_state, &id, 112.0, 0.0, 50.0).await, 5.0);
+    let end = move_to(&game_state, &id, 109.5, 0.0, 50.0).await;
+    assert!(end > 5.0 && end < 6.0, "{end}");
+    let crown = move_to(&game_state, &id, 100.0, 0.0, 50.0).await;
+    assert!((crown - 7.4951).abs() < 1e-3, "{crown}");
+    assert_eq!(move_to(&game_state, &id, 112.0, 0.0, 50.0).await, 5.0);
+}
+
+/// A wader in the river under the span stays on the bed: the deck is only
+/// taken by a mover no lower than its abutments.
+#[tokio::test]
+async fn under_a_bridge_the_mover_keeps_the_river_bed() {
+    let game_state = make_test_game_state("movement_under_deck");
+    let id = pid("wader");
+    game_state
+        .add_player(make_player("wader", -100.0, 60.0))
+        .await;
+    game_state.sync_region_furniture(-1, 0, &[stone_bridge(-100.0, 3.0, 50.0)]);
+
+    assert_eq!(move_to(&game_state, &id, -100.0, 0.0, 55.0).await, -5.0);
+    assert_eq!(move_to(&game_state, &id, -100.0, 9.0, 50.0).await, -5.0);
+}
