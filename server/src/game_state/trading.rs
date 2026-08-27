@@ -556,15 +556,15 @@ impl super::GameState {
         self.mark_inventory_dirty(npc_player_id).await;
     }
 
-    /// Unit base for a purchase: merchant consumables carry the price index
-    /// (doc/PRICING.md); everything else is the plain base price.
+    /// Merchant consumables carry the price index (doc/PRICING.md).
     fn buy_base_price(&self, def: &TraderDef, item_def_id: &str, index_pct: u32) -> Option<i64> {
         let item = self.item_defs.get(item_def_id)?;
-        let base = item.base_price?;
-        if item.consumable && matches!(def, TraderDef::Merchant(_)) {
-            return Some(buy_price(base, index_pct as i32 - 100));
-        }
-        Some(base)
+        let indexed = item.consumable && matches!(def, TraderDef::Merchant(_));
+        Some(onlinerpg_shared::pricing::indexed_base_price(
+            item.base_price?,
+            indexed,
+            index_pct,
+        ))
     }
 
     /// Buy one unit of `item_def_id` from a trading NPC. Merchants create

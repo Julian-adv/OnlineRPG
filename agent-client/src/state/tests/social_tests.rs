@@ -156,6 +156,7 @@ fn a_pushed_trade_window_lapses_and_the_next_one_is_new() {
         wishlist: Vec::new(),
         stock: Vec::new(),
         buyback: Vec::new(),
+        price_index_percent: 100,
     };
 
     s.push_event(offer());

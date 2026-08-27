@@ -16,7 +16,9 @@ pub mod hunger;
 pub mod inventory;
 pub mod messages;
 pub mod monster_ai;
+pub mod moon;
 pub mod pathfinding;
+pub mod pricing;
 pub mod schedule;
 pub mod skills;
 pub mod stall;
@@ -99,7 +101,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      footprints behind a soaked player (doc/DEBUFF.md).
 /// v41: `ShopState.price_index_percent`, the merchant price index on
 ///      consumable buy prices (doc/PRICING.md).
-pub const PROTOCOL_VERSION: u32 = 41;
+/// v42: `PricingNotice` for NPC clients (price index, trend, next meeting)
+///      and the `"meeting"` schedule condition.
+pub const PROTOCOL_VERSION: u32 = 42;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

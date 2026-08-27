@@ -36,9 +36,13 @@ async fn set_floor(game_state: &GameState, name: &str, floor: i8) {
 
 /// One always-active schedule entry (`at: "0:00"`) with the given action.
 fn schedule_entry(action: &str) -> onlinerpg_shared::schedule::ScheduleEntry {
+    schedule_entry_at("0:00", Some(action))
+}
+
+fn schedule_entry_at(at: &str, action: Option<&str>) -> onlinerpg_shared::schedule::ScheduleEntry {
     onlinerpg_shared::schedule::ScheduleEntry {
-        at: "0:00".to_string(),
-        action: Some(action.to_string()),
+        at: at.to_string(),
+        action: action.map(str::to_string),
         ..Default::default()
     }
 }

@@ -13,6 +13,13 @@
       "rotation": 0.0,
       "floor_level": 0,
       "label": "off duty at the west edge of town"
+    },
+    {
+      "at": "meeting",
+      "pos": [-1473.3, 1.1, 4732.8],
+      "rotation": 0.0,
+      "floor_level": 0,
+      "label": "the merchants' price meeting at Rica's shop"
     }
   ]
 }

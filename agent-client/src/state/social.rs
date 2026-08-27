@@ -204,7 +204,7 @@ impl SharedState {
         let self_pos = self.self_player.as_ref().map(|p| p.position)?;
         self.players_on_my_floor()
             .filter(|(_, p)| {
-                p.is_official_npc && crate::shop_info::shop_line_for(&p.name).is_some()
+                p.is_official_npc && crate::shop_info::merchant_shop(&p.name).is_some()
             })
             // Only merchants the agent can actually see — the server
             // broadcasts players well beyond that, and "nearest" must not

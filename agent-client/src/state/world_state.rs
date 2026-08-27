@@ -2,8 +2,13 @@ use super::*;
 
 impl SharedState {
     /// Current game time snapshot for schedule resolution.
-    pub fn time_context(&self) -> (Option<bool>, Option<u32>, Option<u32>) {
-        (self.is_night, self.game_hour, self.game_minute)
+    pub fn time_context(&self) -> (Option<bool>, Option<u32>, Option<u32>, Option<bool>) {
+        (
+            self.is_night,
+            self.game_hour,
+            self.game_minute,
+            self.is_serin_dark_day,
+        )
     }
 
     /// This agent's own laid-out stall, if one is out.
@@ -152,6 +157,7 @@ impl SharedState {
         // Nearby players (exclude self and humans beyond the sight radius)
         let sp = self.self_player.as_ref();
         let sight_sq = NPC_SIGHT_RADIUS * NPC_SIGHT_RADIUS;
+        let index = self.pricing.as_ref().map_or(100, |p| p.index_percent);
         for (_, p) in self.players_on_my_floor() {
             if self.self_player_id.as_ref() == Some(&p.id) {
                 continue;
@@ -171,7 +177,7 @@ impl SharedState {
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
             if p.is_official_npc {
-                if let Some(shop) = crate::shop_info::shop_line_for(&p.name) {
+                if let Some(shop) = crate::shop_info::shop_line_for(&p.name, index) {
                     lines.push(shop);
                 }
             }

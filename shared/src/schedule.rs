@@ -18,12 +18,15 @@ pub enum ScheduleCondition {
     Recurring {
         minute: u32,
     },
+    /// After sunset on Serin's dark day (doc/PRICING.md).
+    Meeting,
 }
 
 /// A single schedule entry: go to a position at a specific time condition.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScheduleEntry {
-    /// When to activate: "day", "night", "H:MM" / "HH:MM", or "*:MM" (game time).
+    /// When to activate: "day", "night", "meeting", "H:MM" / "HH:MM", or
+    /// "*:MM" (game time).
     pub at: String,
     /// Target position [x, y, z] (final/rest position).
     pub pos: [f32; 3],
@@ -65,6 +68,7 @@ impl ScheduleEntry {
         self.condition = Some(match self.at.as_str() {
             "day" => ScheduleCondition::Day,
             "night" => ScheduleCondition::Night,
+            "meeting" => ScheduleCondition::Meeting,
             time_str => {
                 let (h, m) = time_str
                     .split_once(':')
@@ -112,6 +116,7 @@ pub fn resolve_active_schedule(
     is_night: Option<bool>,
     game_hour: Option<u32>,
     game_minute: Option<u32>,
+    is_serin_dark_day: Option<bool>,
 ) -> (Option<usize>, Option<u32>) {
     let mut best: Option<usize> = None;
 
@@ -134,6 +139,12 @@ pub fn resolve_active_schedule(
                 (Some(_), Some(gm)) => gm >= *em,
                 _ => false,
             },
+            // Sunset is always between noon and midnight.
+            ScheduleCondition::Meeting => {
+                is_serin_dark_day == Some(true)
+                    && is_night == Some(true)
+                    && game_hour.is_some_and(|h| h >= 12)
+            }
         };
 
         if matched {
@@ -152,4 +163,34 @@ pub fn resolve_active_schedule(
         }
     });
     (best, hour_for_recurring)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(at: &str) -> ScheduleEntry {
+        let mut e = ScheduleEntry {
+            at: at.to_string(),
+            ..Default::default()
+        };
+        e.parse_condition().unwrap();
+        e
+    }
+
+    #[test]
+    fn meeting_entry_needs_a_dark_day_evening() {
+        let schedule = [entry("day"), entry("night"), entry("meeting")];
+        let resolve = |night, hour, dark| {
+            resolve_active_schedule(&schedule, Some(night), Some(hour), Some(0), Some(dark)).0
+        };
+        assert_eq!(resolve(true, 20, true), Some(2));
+        assert_eq!(resolve(true, 20, false), Some(1));
+        assert_eq!(resolve(false, 15, true), Some(0));
+        assert_eq!(resolve(true, 3, true), Some(1));
+        assert_eq!(
+            resolve_active_schedule(&schedule, Some(true), Some(20), Some(0), None).0,
+            Some(1)
+        );
+    }
 }

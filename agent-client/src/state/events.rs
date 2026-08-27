@@ -179,6 +179,7 @@ impl SharedState {
             | ServerMessage::MonsterMoved { .. }
             | ServerMessage::PartyPositions { .. }
             | ServerMessage::GameTimeSync { .. }
+            | ServerMessage::PricingNotice(_)
             | ServerMessage::HouseSpawned { .. }
             | ServerMessage::HousesInArea { .. }
             | ServerMessage::HouseUpdated { .. }
@@ -996,7 +997,14 @@ impl SharedState {
             | ServerMessage::CampfireAppeared { .. }
             | ServerMessage::CampfireRemoved { .. }
             | ServerMessage::GrillStarted => return urgency,
+            ServerMessage::PricingNotice(notice) => {
+                self.pricing = Some(notice.clone());
+                return urgency;
+            }
             ServerMessage::GameTimeSync { datetime, is_night } => {
+                self.is_serin_dark_day = Some(onlinerpg_shared::moon::is_serin_dark_day(
+                    onlinerpg_shared::moon::game_day_index(datetime),
+                ));
                 let prev_night = self.is_night;
                 let prev_hour = self.game_hour;
                 let hour = datetime.hour as u32;

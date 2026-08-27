@@ -5,20 +5,27 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
+use onlinerpg_shared::moon::{days_until_serin_dark, is_serin_dark_day};
+use onlinerpg_shared::pricing::{PricingNotice, Trend};
+
 use crate::auth::{unix_now, AuthService, PricingMeeting};
-use crate::celestial::{is_after_sunset, is_serin_dark_day};
+use crate::celestial::is_after_sunset;
+use crate::types::{PlayerId, ServerMessage};
 use crate::world_config::{world_config, PricingConfig};
 
-/// doc/PRICING.md 조정 공식.
+/// Fractional step a meeting would take (doc/PRICING.md 조정 공식).
+fn index_step(growth: f64, elapsed_days: i64, cfg: &PricingConfig) -> f64 {
+    let target = cfg.target_daily_growth * elapsed_days.max(1) as f64;
+    (cfg.gain * (growth - target)).clamp(-cfg.max_step_per_meeting, cfg.max_step_per_meeting)
+}
+
 pub(crate) fn next_index_percent(
     current: u32,
     growth: f64,
     elapsed_days: i64,
     cfg: &PricingConfig,
 ) -> u32 {
-    let target = cfg.target_daily_growth * elapsed_days.max(1) as f64;
-    let step =
-        (cfg.gain * (growth - target)).clamp(-cfg.max_step_per_meeting, cfg.max_step_per_meeting);
+    let step = index_step(growth, elapsed_days, cfg);
     let index = (f64::from(current) / 100.0 * (1.0 + step)).clamp(cfg.index_min, cfg.index_max);
     (index * 100.0).round() as u32
 }
@@ -54,6 +61,62 @@ impl super::GameState {
             Ok(None) => {}
             Err(err) => warn!("gold snapshot: {err}"),
         }
+    }
+
+    /// The market picture for NPC roleplay; the trend projects the next
+    /// meeting's step from the latest hourly snapshot.
+    pub async fn pricing_notice(&self, auth: &Arc<AuthService>) -> ServerMessage {
+        let state = self.pricing.read().await.clone();
+        let game_day = self.current_game_day();
+        let reader = Arc::clone(auth);
+        let (last_change_pct, reading) = super::auth_db(move || reader.pricing_notice_inputs())
+            .await
+            .unwrap_or_else(|err| {
+                warn!("pricing: notice fell back to defaults: {err}");
+                (0, None)
+            });
+
+        let step = match (state.m_prev, state.last_meeting_day, reading) {
+            (Some(prev), Some(last), Some(now)) if prev > 0.0 => index_step(
+                (now - prev) / prev,
+                game_day - last,
+                &world_config().pricing,
+            ),
+            _ => 0.0,
+        };
+        let trend = if step > 0.01 {
+            Trend::Rising
+        } else if step < -0.01 {
+            Trend::Falling
+        } else {
+            Trend::Steady
+        };
+        let mut meeting_in_days = days_until_serin_dark(game_day);
+        if meeting_in_days == 0 && state.last_meeting_day == Some(game_day) {
+            meeting_in_days = days_until_serin_dark(game_day + 1) + 1;
+        }
+        ServerMessage::PricingNotice(PricingNotice {
+            index_percent: state.index_percent,
+            last_change_pct,
+            trend,
+            meeting_in_days,
+        })
+    }
+
+    async fn send_pricing_notice_to_npcs(&self, auth: &Arc<AuthService>) {
+        let npcs: Vec<PlayerId> = {
+            let players = self.players.read().await;
+            players
+                .values()
+                .filter(|p| p.is_official_npc)
+                .map(|p| p.id)
+                .collect()
+        };
+        if npcs.is_empty() {
+            return;
+        }
+        let notice = self.pricing_notice(auth).await;
+        self.send_direct_message_to_players(&npcs, notice).await;
     }
 
     /// Holds the merchants' price meeting once per Serin dark evening. The
@@ -113,12 +176,13 @@ impl super::GameState {
         let snapshot = state.clone();
         drop(state);
 
-        let auth = Arc::clone(auth);
+        let writer = Arc::clone(auth);
         if let Err(err) =
-            super::auth_db(move || auth.save_pricing_state(&snapshot, meeting.as_ref())).await
+            super::auth_db(move || writer.save_pricing_state(&snapshot, meeting.as_ref())).await
         {
             warn!("pricing: failed to persist meeting: {err}");
         }
+        self.send_pricing_notice_to_npcs(auth).await;
     }
 }
 

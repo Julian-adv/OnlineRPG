@@ -3,10 +3,8 @@ use crate::types::{GameDateTime, ServerMessage};
 pub const REAL_DAY_DURATION_SECONDS: f64 = 3.0 * 60.0 * 60.0;
 pub const GAME_HOURS_PER_DAY: i64 = 24;
 pub const GAME_MINUTES_PER_HOUR: i64 = 60;
-pub const GAME_DAYS_PER_MONTH: i64 = 30;
-pub const GAME_MONTHS_PER_YEAR: i64 = 12;
+pub use onlinerpg_shared::moon::{GAME_DAYS_PER_MONTH, GAME_MONTHS_PER_YEAR, GAME_START_YEAR};
 pub const GAME_DAYS_PER_YEAR: i64 = GAME_DAYS_PER_MONTH * GAME_MONTHS_PER_YEAR;
-pub const GAME_START_YEAR: i64 = 217;
 pub const GAME_SECONDS_PER_REAL_SECOND: f64 =
     (GAME_HOURS_PER_DAY as f64 * GAME_MINUTES_PER_HOUR as f64 * 60.0) / REAL_DAY_DURATION_SECONDS;
 pub const GAME_SECONDS_PER_DAY: i64 = GAME_HOURS_PER_DAY * GAME_MINUTES_PER_HOUR * 60;
@@ -35,15 +33,9 @@ impl super::GameState {
     }
 
     pub fn datetime_to_total_game_seconds(datetime: &GameDateTime) -> i64 {
-        let year = i64::from(datetime.year).max(GAME_START_YEAR);
-        let month = i64::from(datetime.month).clamp(1, GAME_MONTHS_PER_YEAR);
-        let day = i64::from(datetime.day).clamp(1, GAME_DAYS_PER_MONTH);
         let hour = i64::from(datetime.hour).clamp(0, GAME_HOURS_PER_DAY - 1);
         let minute = i64::from(datetime.minute).clamp(0, GAME_MINUTES_PER_HOUR - 1);
-
-        let years_since_start = year - GAME_START_YEAR;
-        let total_days =
-            years_since_start * GAME_DAYS_PER_YEAR + (month - 1) * GAME_DAYS_PER_MONTH + (day - 1);
+        let total_days = onlinerpg_shared::moon::game_day_index(datetime);
         let total_minutes = total_days * GAME_HOURS_PER_DAY * GAME_MINUTES_PER_HOUR
             + hour * GAME_MINUTES_PER_HOUR
             + minute;
@@ -106,6 +98,13 @@ impl super::GameState {
             clock.start_game_seconds = target;
         }
         self.broadcast_game_time()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_set_datetime(&self, datetime: &GameDateTime) {
+        let mut clock = self.game_clock.write().expect("game clock lock poisoned");
+        clock.start_real = std::time::Instant::now();
+        clock.start_game_seconds = Self::datetime_to_total_game_seconds(datetime);
     }
 
     pub fn current_game_datetime(&self) -> GameDateTime {

@@ -616,6 +616,9 @@ impl GameState {
             Some(Self::is_night(&datetime)),
             Some(u32::from(datetime.hour)),
             Some(u32::from(datetime.minute)),
+            Some(onlinerpg_shared::moon::is_serin_dark_day(
+                onlinerpg_shared::moon::game_day_index(&datetime),
+            )),
         );
         active.is_some_and(|i| schedule[i].is_sleeping())
     }

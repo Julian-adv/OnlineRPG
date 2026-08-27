@@ -588,3 +588,30 @@ async fn the_price_index_scales_only_consumable_buys() {
     let after_shield = game_state.get_player_gold(&pid("buyer")).await;
     assert_eq!(after_potion - after_shield, base("wooden_shield"));
 }
+
+/// On the meeting night the meeting entry outranks the bed entry, so the
+/// server must not refuse trades as "asleep" while Rica hosts it.
+#[test]
+fn the_meeting_entry_keeps_the_merchant_out_of_bed() {
+    let game_state = make_test_game_state("meeting_awake");
+    game_state.set_npc_schedule(
+        "Rica",
+        vec![
+            schedule_entry_at("night", Some(onlinerpg_shared::schedule::BED_OBJECT_TYPE)),
+            schedule_entry_at("meeting", None),
+        ],
+    );
+    let at = |day| crate::types::GameDateTime {
+        year: 217,
+        month: 1,
+        day,
+        hour: 22,
+        minute: 0,
+    };
+
+    // Day index 14 (Jan 15) is Serin's dark day.
+    game_state.debug_set_datetime(&at(15));
+    assert!(!game_state.is_npc_asleep("Rica"));
+    game_state.debug_set_datetime(&at(16));
+    assert!(game_state.is_npc_asleep("Rica"));
+}

@@ -1021,6 +1021,29 @@ impl AuthService {
         Ok(())
     }
 
+    /// Notice inputs: last meeting's index change (points) and gold per
+    /// active character from the latest hourly snapshot.
+    pub fn pricing_notice_inputs(&self) -> Result<(i32, Option<f64>), AuthError> {
+        let conn = self.open_connection()?;
+        let change = conn
+            .query_row(
+                "SELECT index_after - index_before FROM pricing_history ORDER BY ts DESC LIMIT 1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or(0) as i32;
+        let reading = conn
+            .query_row(
+                "SELECT active_gold, active_characters FROM gold_snapshots ORDER BY ts DESC LIMIT 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()?
+            .and_then(|(gold, count)| (count > 0).then(|| gold as f64 / count as f64));
+        Ok((change, reading))
+    }
+
     /// Gold per active character, or None with no active characters.
     pub fn active_gold_per_character(
         &self,

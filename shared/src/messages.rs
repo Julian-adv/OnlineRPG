@@ -953,6 +953,8 @@ pub enum ServerMessage {
         datetime: GameDateTime,
         is_night: bool,
     },
+    /// NPC clients only (doc/PRICING.md).
+    PricingNotice(crate::pricing::PricingNotice),
     MonsterSpawned {
         monster: Monster,
     },
@@ -1234,8 +1236,7 @@ pub enum ServerMessage {
         /// units stay visible in `stock`.
         #[serde(default)]
         buyback: Vec<BuybackEntry>,
-        /// Price index applied to this trader's consumable buy prices
-        /// (doc/PRICING.md); 100 = base price. Residents always send 100.
+        /// Consumable buy-price index, 100 = base; residents send 100.
         #[serde(default = "default_price_index_percent")]
         price_index_percent: u32,
     },

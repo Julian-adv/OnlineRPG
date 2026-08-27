@@ -114,12 +114,13 @@ fn id_list(field: &str) -> impl Iterator<Item = &str> {
 /// What a customer standing near a merchant sees: the shelf, with prices, and
 /// the rate they buy at. Without it the LLM has to guess item ids for `buy`,
 /// since a shop window is something only the web client opens.
-pub fn shop_line_for(npc_name: &str) -> Option<String> {
+pub fn shop_line_for(npc_name: &str, index_percent: u32) -> Option<String> {
     let (catalog, sell_rate_percent) = merchant_shop(npc_name)?;
     let stock: Vec<String> = catalog
         .iter()
         .filter_map(|id| {
-            let price = crate::item_defs::get(id)?.base_price?;
+            let def = crate::item_defs::get(id)?;
+            let price = indexed_price(def, index_percent)?;
             Some(format!("{id} {}", format_price(price)))
         })
         .collect();
@@ -129,6 +130,15 @@ pub fn shop_line_for(npc_name: &str) -> Option<String> {
     Some(format!(
         "{npc_name} sells: {} — and pays {sell_rate_percent}% of base for what you sell them.",
         stock.join(", ")
+    ))
+}
+
+/// Merchant shelf price, the server's formula (doc/PRICING.md).
+pub fn indexed_price(def: &crate::item_defs::ItemDef, index_percent: u32) -> Option<i64> {
+    Some(onlinerpg_shared::pricing::indexed_base_price(
+        def.base_price?,
+        def.is_consumable(),
+        index_percent,
     ))
 }
 
@@ -148,7 +158,9 @@ pub fn merchant_prompt_for(npc_name: &str) -> Option<String> {
         section.push_str(&format!("- {item_id} ({}): {price}\n", item.name));
     }
     section.push_str(&format!(
-        "You also buy any item that has a base price from players, paying {sell_rate_percent}% \
+        "Consumable prices move with the market index in the \"Market\" section; the other \
+         prices are fixed.\n\
+         You also buy any item that has a base price from players, paying {sell_rate_percent}% \
          of its base price.\n\
          Use the \"open_trade\" action to put your shop window on a nearby player's screen \
          when the conversation turns to trading.\n"
@@ -319,15 +331,27 @@ mod tests {
         assert!(merchant_prompt_for("Karl").is_none());
     }
 
+    #[test]
+    fn shelf_prices_carry_the_index_on_consumables_only() {
+        let base = |id: &str| crate::item_defs::get(id).unwrap().base_price.unwrap();
+        let line = shop_line_for("Rica", 150).unwrap();
+        let potion = format_price(base("healing_potion") * 3 / 2);
+        assert!(line.contains(&format!("healing_potion {potion}")), "{line}");
+        assert!(line.contains("dagger 25s"), "{line}");
+    }
+
     /// A customer sees the same shelf the shopkeeper does, with prices, so a
     /// `buy` action can name something real instead of a guessed item id.
     #[test]
     fn a_customer_sees_ricas_shelf_and_her_rate() {
-        let line = shop_line_for("rica").expect("case does not matter");
+        let line = shop_line_for("rica", 100).expect("case does not matter");
         assert!(line.contains("dagger 25s"), "{line}");
         assert!(line.contains("healing_potion"), "{line}");
         assert!(line.contains("40%"), "{line}");
-        assert!(shop_line_for("Karl").is_none(), "a resident keeps no shelf");
+        assert!(
+            shop_line_for("Karl", 100).is_none(),
+            "a resident keeps no shelf"
+        );
 
         let (catalog, rate) = merchant_shop("Rica").expect("Rica is a merchant");
         assert_eq!(rate, 40);

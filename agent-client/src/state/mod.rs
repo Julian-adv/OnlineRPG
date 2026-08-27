@@ -283,6 +283,10 @@ pub struct SharedState {
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     /// Current game time: is_night flag from server
     pub is_night: Option<bool>,
+    /// Serin's dark day (the merchants' meeting night), from the game date.
+    pub is_serin_dark_day: Option<bool>,
+    /// Latest market picture (doc/PRICING.md), merchants' roleplay context.
+    pub pricing: Option<onlinerpg_shared::pricing::PricingNotice>,
     /// Current game hour (0-23)
     pub game_hour: Option<u32>,
     /// Current game minute (0-59)
@@ -390,6 +394,8 @@ impl SharedState {
             splat_sampler,
             world_cache,
             is_night: None,
+            is_serin_dark_day: None,
+            pricing: None,
             game_hour: None,
             game_minute: None,
             self_floor_level: 0,

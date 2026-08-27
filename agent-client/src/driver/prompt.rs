@@ -3,6 +3,7 @@
 //! string suitable for sending to an LLM. Also resolves which schedule
 //! entry should currently be active based on game time.
 
+use onlinerpg_shared::pricing::{PricingNotice, Trend};
 use onlinerpg_shared::{PlayerId, ServerMessage};
 
 use crate::state::{SharedState, NPC_SIGHT_RADIUS};
@@ -98,6 +99,17 @@ pub(super) fn build_prompt(
         ) {
             prompt.push('\n');
             prompt.push_str(&section);
+        }
+    }
+
+    if let (Some(info), Some(p)) = (state.pricing.as_ref(), state.self_player.as_ref()) {
+        if crate::shop_info::merchant_shop(&p.name).is_some() {
+            let at_meeting = active_schedule_idx.is_some_and(|i| {
+                schedule[i].condition
+                    == Some(onlinerpg_shared::schedule::ScheduleCondition::Meeting)
+            });
+            prompt.push('\n');
+            prompt.push_str(&market_prompt(info, at_meeting));
         }
     }
 
@@ -627,6 +639,43 @@ pub(super) fn player_name(state: &SharedState, player_id: &PlayerId) -> String {
 }
 
 /// Format current schedule context for inclusion in LLM prompts.
+/// Per-turn merchant market section (doc/PRICING.md 연출).
+fn market_prompt(info: &PricingNotice, at_meeting: bool) -> String {
+    let mut s = format!(
+        "## Market\nConsumable prices (potions, food, scrolls, oil) are at {}% of base right now",
+        info.index_percent
+    );
+    match info.last_change_pct {
+        0 => s.push_str(".\n"),
+        d => s.push_str(&format!(
+            "; the merchants' guild {} them {}% at the last meeting.\n",
+            if d > 0 { "raised" } else { "lowered" },
+            d.abs()
+        )),
+    }
+    let hint = match info.trend {
+        Trend::Rising => "Gold has been piling up in adventurers' purses, so you expect the guild to raise prices next time",
+        Trend::Falling => "Gold has been scarce lately, so you expect the guild to lower prices next time",
+        Trend::Steady => "Gold has been flowing about as expected, so you expect prices to hold next time",
+    };
+    if at_meeting {
+        s.push_str(&format!(
+            "{hint} — and the meeting is happening right now. Talk it over with the other merchants in character; the decision is announced after.\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            "{hint}. The guild meets on the evening Serin goes dark, {}. \
+             You may drop hints about it, but never promise a price — it is only your hunch.\n",
+            match info.meeting_in_days {
+                0 => "tonight".to_string(),
+                1 => "tomorrow evening".to_string(),
+                n => format!("in {n} days"),
+            }
+        ));
+    }
+    s
+}
+
 fn format_schedule_context(
     schedule: &[ScheduleEntry],
     active_idx: Option<usize>,

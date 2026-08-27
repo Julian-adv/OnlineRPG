@@ -1268,6 +1268,9 @@ async fn handle_client_message(
                     message: Some(notice),
                 });
             }
+            if state.is_official_npc {
+                responses.push(game_state.pricing_notice(auth_service).await);
+            }
 
             let rejoin_floor = player.floor_level;
             let rejoin_pos = player.position;
