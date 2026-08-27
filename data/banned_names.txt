@@ -8,3 +8,4 @@ gm
 운영자
 admin
 관리자
+administrator
