@@ -1,4 +1,19 @@
 use crate::game::{character_hp, combat};
+
+#[derive(Debug, Clone, Copy)]
+pub struct EffectiveStats {
+    pub guard: i32,
+    pub cha: i32,
+}
+
+impl From<EffectiveStats> for ServerMessage {
+    fn from(s: EffectiveStats) -> Self {
+        ServerMessage::EffectiveStatsUpdated {
+            guard: s.guard,
+            cha: s.cha,
+        }
+    }
+}
 use crate::types::{AttackRejectReason, MonsterState, PlayerId, Position, ServerMessage};
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
 use onlinerpg_shared::xp;
@@ -173,8 +188,7 @@ impl super::GameState {
         self.equipped_pairs(inv).map(|(_, def)| def)
     }
 
-    /// Sum of one def stat over every equipped item. `effective_cha` adds it
-    /// to the base attribute.
+    /// Sum of one def stat over every equipped item.
     pub(super) fn equipped_bonus(
         &self,
         inv: &PlayerInventory,
@@ -193,26 +207,40 @@ impl super::GameState {
             .sum()
     }
 
-    /// A player's effective guard: base attribute plus equipped-gear bonuses.
-    /// This is exactly the target number an attacker must beat to land a hit,
-    /// and the value reported to the client so it never has to recompute the
-    /// formula itself.
-    pub async fn effective_guard(&self, player_id: &PlayerId) -> i32 {
-        let base = {
+    /// A player's effective stats (base attribute plus equipped-gear bonuses),
+    /// read under one pass of each lock. Guard is the target number an
+    /// attacker must beat; CHA drives haggling bands. Reported to the client
+    /// so it never recomputes the formula itself.
+    pub async fn effective_stats(&self, player_id: &PlayerId) -> EffectiveStats {
+        let (guard, cha) = {
             let chars = self.player_characters.read().await;
             chars
                 .get(player_id)
-                .map(|(_, _, attrs)| i32::from(attrs.guard))
-                .unwrap_or(10)
+                .map(|(_, _, a)| (i32::from(a.guard), i32::from(a.cha)))
+                .unwrap_or((10, 10))
         };
-        let bonus = {
-            let inventories = self.inventories.read().await;
-            inventories
-                .get(player_id)
-                .map(|inv| self.equipped_guard(inv))
-                .unwrap_or(0)
-        };
-        base + bonus
+        let inventories = self.inventories.read().await;
+        let (guard_bonus, cha_bonus) = inventories
+            .get(player_id)
+            .map(|inv| {
+                (
+                    self.equipped_guard(inv),
+                    self.equipped_bonus(inv, |d| d.cha_bonus()),
+                )
+            })
+            .unwrap_or((0, 0));
+        EffectiveStats {
+            guard: guard + guard_bonus,
+            cha: cha + cha_bonus,
+        }
+    }
+
+    pub async fn effective_guard(&self, player_id: &PlayerId) -> i32 {
+        self.effective_stats(player_id).await.guard
+    }
+
+    pub(super) async fn effective_cha(&self, player_id: &PlayerId) -> i32 {
+        self.effective_stats(player_id).await.cha
     }
 
     /// Runs every gate on a `PlayerAttack` request. `Err` is the coarse reason

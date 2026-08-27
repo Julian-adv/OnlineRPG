@@ -1,5 +1,6 @@
 import { derived, get, writable } from 'svelte/store'
 import type {
+  CharacterAttributes,
   EquipSlot,
   ItemInstance,
   PlayerInventory,
@@ -48,10 +49,13 @@ export function displacedByEquip(
 /** The local player's gold in the smallest currency unit (copper). */
 export const playerGold = writable(0)
 
-/** The local player's effective guard (base attribute + equipped-gear bonuses),
+/** The local player's effective stats (base attribute + equipped-gear bonuses),
  *  computed server-side and pushed on join and after each equipment change.
- *  `null` until the first GuardUpdated arrives. */
-export const playerGuard = writable<number | null>(null)
+ *  `null` until the first EffectiveStatsUpdated arrives. */
+export const playerEffectiveStats = writable<Pick<
+  CharacterAttributes,
+  'guard' | 'cha'
+> | null>(null)
 
 /** Item defs that act as a carried light source (mirrors shared TORCH_ITEM_IDS). */
 const TORCH_ITEM_IDS = ['torch', 'worn_torch']
@@ -113,7 +117,7 @@ export function setInventory(inventory: PlayerInventory) {
 export function resetInventoryStore() {
   inventoryStore.set({ bag: [], equipped: {} })
   playerGold.set(0)
-  playerGuard.set(null)
+  playerEffectiveStats.set(null)
 }
 
 const hasTimekeeper = derived(inventoryStore, (inv) =>

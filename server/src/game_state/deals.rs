@@ -161,26 +161,6 @@ impl DealLedgers {
 }
 
 impl super::GameState {
-    /// A player's effective CHA for haggling: base attribute plus equipped
-    /// `cha+N` effect items, mirroring `effective_guard`.
-    async fn effective_cha(&self, player_id: &PlayerId) -> i32 {
-        let base = {
-            let chars = self.player_characters.read().await;
-            chars
-                .get(player_id)
-                .map(|(_, _, attrs)| i32::from(attrs.cha))
-                .unwrap_or(10)
-        };
-        let bonus = {
-            let inventories = self.inventories.read().await;
-            inventories
-                .get(player_id)
-                .map(|inv| self.equipped_bonus(inv, |def| def.cha_bonus()))
-                .unwrap_or(0)
-        };
-        base + bonus
-    }
-
     /// Handle an NPC's `OfferDeal`: validate, clamp to the band, charge
     /// budgets, store the deal, and notify both sides. Every decision is
     /// logged under the `deal` target with the LLM's reason.

@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { inventoryStore, playerGuard } from '../stores/inventoryStore'
+  import {
+    inventoryStore,
+    playerEffectiveStats,
+  } from '../stores/inventoryStore'
   import type { EquipSlot } from '../stores/inventoryStore'
   import { getItemDef } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
@@ -64,13 +67,13 @@
       '/character_concepts/female_priest.png'
   )
 
-  // Effective guard is computed server-side (base attribute + equipped-gear
-  // bonuses) — the exact value combat uses — and pushed via GuardUpdated. We
-  // display that rather than recomputing it here so the number can never drift
-  // from the server's formula. Falls back to the base attribute until the
-  // first update arrives. The bonus is derived only for the "(+N)" hint.
-  const effectiveGuard = $derived($playerGuard ?? attributes.guard)
-  const equipGuardBonus = $derived(effectiveGuard - attributes.guard)
+  // Effective stats come from the server (EffectiveStatsUpdated) so they never
+  // drift from its formula; fall back to base until the first update arrives.
+  function withBonus(key: 'guard' | 'cha'): string {
+    const base = attributes[key]
+    const eff = $playerEffectiveStats?.[key] ?? base
+    return eff > base ? `${eff} (+${eff - base})` : `${eff}`
+  }
 
   const CLASS_LABELS: Record<CharacterClass, string> = {
     knight: 'Knight',
@@ -230,11 +233,7 @@
             </div>
             <div class="stat-row">
               <span class="stat-label">Guard</span>
-              <span class="stat-value guard-value"
-                >{effectiveGuard}{equipGuardBonus > 0
-                  ? ` (+${equipGuardBonus})`
-                  : ''}</span
-              >
+              <span class="stat-value guard-value">{withBonus('guard')}</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Str</span>
@@ -258,7 +257,7 @@
             </div>
             <div class="stat-row">
               <span class="stat-label">Cha</span>
-              <span class="stat-value">{attributes.cha}</span>
+              <span class="stat-value">{withBonus('cha')}</span>
             </div>
           </div>
           <div class="exp-block">

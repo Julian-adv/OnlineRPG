@@ -341,24 +341,15 @@ impl super::GameState {
     }
 
     /// Send the current inventory state directly to a player, then their
-    /// refreshed guard. Every equipped-gear mutation routes through here, so
-    /// pushing the guard (and the main-hand broadcast, which no-ops when
-    /// unchanged) from this one spot keeps everything in sync without each
-    /// mutation site having to remember to send it.
+    /// refreshed effective stats. Every equipped-gear mutation routes through
+    /// here so no mutation site has to remember to send them.
     async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
         self.set_player_gear(player_id, &inventory).await;
         self.refresh_hunger_gear_drain(player_id, &inventory).await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
             .await;
-        self.send_guard_update(player_id).await;
-    }
-
-    /// Recompute and push the player's effective guard to their client, so the
-    /// displayed value stays equal to the one combat resolves against.
-    async fn send_guard_update(&self, player_id: &PlayerId) {
-        let guard = self.effective_guard(player_id).await;
-        self.send_direct_message(player_id, ServerMessage::GuardUpdated { guard })
-            .await;
+        let stats = self.effective_stats(player_id).await;
+        self.send_direct_message(player_id, stats.into()).await;
     }
 
     /// Load a player's inventory from the database into memory.

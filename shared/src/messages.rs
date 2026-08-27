@@ -1244,12 +1244,13 @@ pub enum ServerMessage {
     GoldUpdate {
         gold: i64,
     },
-    /// Direct message: the receiving player's effective guard — base attribute
-    /// plus every equipped item's guard bonus, i.e. the exact number combat
-    /// uses to resolve hits. Sent on join and after any equipment change so the
-    /// client can display it without duplicating the server formula.
-    GuardUpdated {
+    /// Direct message: the receiving player's effective stats (base attribute
+    /// plus equipped-gear bonuses) — the exact numbers combat and haggling use.
+    /// Sent on join and after any equipment change so the client never
+    /// duplicates the server formula.
+    EffectiveStatsUpdated {
         guard: i32,
+        cha: i32,
     },
     /// Direct message: the receiving player gained loose currency from a
     /// pickup. `amount` is in the smallest unit (copper).

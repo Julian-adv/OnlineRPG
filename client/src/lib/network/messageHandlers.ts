@@ -30,7 +30,11 @@ import { objectManager } from '../managers/objectManager'
 import { groundItemManager } from '../managers/groundItemManager'
 import { dungeonManager } from '../managers/dungeonManager'
 import { queueXpArrival, releaseXpArrival } from '../managers/xpArrival'
-import { setInventory, playerGold, playerGuard } from '../stores/inventoryStore'
+import {
+  setInventory,
+  playerGold,
+  playerEffectiveStats,
+} from '../stores/inventoryStore'
 import { capeDyeDialog } from '../stores/capeDyeStore'
 import { capeTextureDialog } from '../stores/capeTextureStore'
 import { setCapeUploadToken } from '../utils/networkUtils'
@@ -1388,8 +1392,11 @@ export function handleServerMessage(
       playerGold.set(Number(data.gold))
       break
 
-    case 'GuardUpdated':
-      playerGuard.set(Number(data.guard))
+    case 'EffectiveStatsUpdated':
+      playerEffectiveStats.set({
+        guard: Number(data.guard),
+        cha: Number(data.cha),
+      })
       break
 
     case 'GoldGained': {
