@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store'
 import { persistedBoolean } from './persisted'
+import type { CharacterClass } from '../network/networkTypes'
 
 /** One friend from ServerMessage::FriendList. Keyed by character id: a
  *  friendship outlives both sessions, and offline friends have no player id. */
@@ -7,6 +8,7 @@ export interface FriendEntry {
   characterId: number
   name: string
   level: number
+  class: CharacterClass
 }
 
 /** A friend request the player hasn't answered yet. */

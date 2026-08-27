@@ -2,6 +2,7 @@ use super::auth_db;
 use super::consent::{answer_consent, PendingConsent};
 use crate::auth::AuthService;
 use crate::types::{PlayerId, ServerMessage};
+use onlinerpg_shared::character::CharacterClass;
 use onlinerpg_shared::messages::{FriendEntry, OnlineFriend, FRIEND_REQUEST_TTL};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub(crate) struct FriendSnapshot {
     /// Level as of this session's login. Only offline friends are shown with
     /// it — an online friend's live level rides `FriendsOnline`.
     level: u32,
+    class: CharacterClass,
 }
 
 /// All friend state behind one lock. The lists are per-session snapshots of
@@ -76,6 +78,7 @@ struct FriendParty {
     character_id: i64,
     name: String,
     level: u32,
+    class: CharacterClass,
 }
 
 impl FriendParty {
@@ -85,6 +88,7 @@ impl FriendParty {
             name: self.name.clone(),
             lower_name: self.name.to_ascii_lowercase().into(),
             level: self.level,
+            class: self.class.clone(),
         }
     }
 }
@@ -93,17 +97,18 @@ impl super::GameState {
     /// Install a character's persisted friends for this session. Empty lists
     /// are not stored, so the poll's fast path stays effective while nobody
     /// online has friends.
-    pub async fn set_player_friends(&self, player_id: &PlayerId, friends: Vec<(i64, String, u32)>) {
+    pub async fn set_player_friends(&self, player_id: &PlayerId, friends: Vec<FriendEntry>) {
         if friends.is_empty() {
             return;
         }
         let list = friends
             .into_iter()
-            .map(|(character_id, name, level)| FriendSnapshot {
-                character_id,
-                lower_name: name.to_ascii_lowercase().into(),
-                name,
-                level,
+            .map(|f| FriendSnapshot {
+                character_id: f.character_id,
+                lower_name: f.name.to_ascii_lowercase().into(),
+                name: f.name,
+                level: f.level,
+                class: f.class,
             })
             .collect();
         self.friends.write().await.lists.insert(*player_id, list);
@@ -131,6 +136,7 @@ impl super::GameState {
                     character_id: f.character_id,
                     name: f.name.clone(),
                     level: f.level,
+                    class: f.class.clone(),
                 })
                 .collect()
         };
@@ -241,15 +247,22 @@ impl super::GameState {
             let players = self.players.read().await;
             let requester = players
                 .get(requester_id)
-                .map(|p| (p.name.clone(), p.level, p.is_official_npc));
+                .map(|p| (p.name.clone(), p.level, p.class.clone(), p.is_official_npc));
             let target = target_id.and_then(|id| {
-                players
-                    .get(&id)
-                    .map(|p| (id, p.name.clone(), p.level, p.is_official_npc))
+                players.get(&id).map(|p| {
+                    (
+                        id,
+                        p.name.clone(),
+                        p.level,
+                        p.class.clone(),
+                        p.is_official_npc,
+                    )
+                })
             });
             (requester, target)
         };
-        let Some((requester_name, requester_level, requester_is_npc)) = requester else {
+        let Some((requester_name, requester_level, requester_class, requester_is_npc)) = requester
+        else {
             return;
         };
         if requester_is_npc {
@@ -257,7 +270,8 @@ impl super::GameState {
                 .await;
             return;
         }
-        let Some((target_id, target_name, target_level, target_is_npc)) = target else {
+        let Some((target_id, target_name, target_level, target_class, target_is_npc)) = target
+        else {
             self.send_system_message(
                 requester_id,
                 format!("Friend: no one called {target_name} is online."),
@@ -289,7 +303,12 @@ impl super::GameState {
             return;
         }
         let Some(requester_party) = self
-            .friend_party(requester_id, requester_name.clone(), requester_level)
+            .friend_party(
+                requester_id,
+                requester_name.clone(),
+                requester_level,
+                requester_class,
+            )
             .await
         else {
             warn!("/friend from player without a character: {requester_id}");
@@ -298,7 +317,7 @@ impl super::GameState {
             return;
         };
         let Some(target_party) = self
-            .friend_party(&target_id, target_name.clone(), target_level)
+            .friend_party(&target_id, target_name.clone(), target_level, target_class)
             .await
         else {
             self.send_system_message(requester_id, "Friend: server error, try again.")
@@ -426,14 +445,18 @@ impl super::GameState {
         }
         let (requester, target) = {
             let players = self.players.read().await;
-            let requester = players.get(requester_id).map(|p| (p.name.clone(), p.level));
-            let target = players.get(target_id).map(|p| (p.name.clone(), p.level));
+            let requester = players
+                .get(requester_id)
+                .map(|p| (p.name.clone(), p.level, p.class.clone()));
+            let target = players
+                .get(target_id)
+                .map(|p| (p.name.clone(), p.level, p.class.clone()));
             (requester, target)
         };
-        let Some((target_name, target_level)) = target else {
+        let Some((target_name, target_level, target_class)) = target else {
             return;
         };
-        let Some((requester_name, requester_level)) = requester else {
+        let Some((requester_name, requester_level, requester_class)) = requester else {
             self.send_system_message(target_id, "Friend: that request is no longer valid.")
                 .await;
             return;
@@ -447,7 +470,12 @@ impl super::GameState {
             return;
         }
         let Some(requester_party) = self
-            .friend_party(requester_id, requester_name, requester_level)
+            .friend_party(
+                requester_id,
+                requester_name,
+                requester_level,
+                requester_class,
+            )
             .await
         else {
             self.send_system_message(target_id, "Friend: that request is no longer valid.")
@@ -455,7 +483,7 @@ impl super::GameState {
             return;
         };
         let Some(target_party) = self
-            .friend_party(target_id, target_name, target_level)
+            .friend_party(target_id, target_name, target_level, target_class)
             .await
         else {
             self.send_system_message(target_id, "Friend: server error, try again.")
@@ -641,12 +669,14 @@ impl super::GameState {
         player_id: &PlayerId,
         name: String,
         level: u32,
+        class: CharacterClass,
     ) -> Option<FriendParty> {
         Some(FriendParty {
             player_id: *player_id,
             character_id: self.character_id_of(player_id).await?,
             name,
             level,
+            class,
         })
     }
 }

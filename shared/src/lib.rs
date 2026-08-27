@@ -104,7 +104,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      consumable buy prices (doc/PRICING.md).
 /// v42: `PricingNotice` for NPC clients (price index, trend, next meeting)
 ///      and the `"meeting"` schedule condition.
-pub const PROTOCOL_VERSION: u32 = 42;
+/// v43: `FriendEntry.class`, so the friend panel can draw class icons.
+pub const PROTOCOL_VERSION: u32 = 43;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

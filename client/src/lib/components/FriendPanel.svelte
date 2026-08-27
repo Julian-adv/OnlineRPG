@@ -12,6 +12,7 @@
   import { networkManager } from '../network/socket'
   import { requestChatDraft } from '../stores/npcMenuStore'
   import { draggablePanel } from '../actions/draggablePanel'
+  import { classIconPath } from '../stores/partyStore'
 
   const visible = $derived($friendPanelVisible)
   const friends = $derived(sortFriends($friendList, $onlineFriends))
@@ -38,6 +39,26 @@
   function whisper(friend: FriendEntry) {
     requestChatDraft(`/w ${friend.name} `)
   }
+
+  let adding = $state(false)
+  let addName = $state('')
+  const full = $derived(friends.length >= MAX_FRIENDS)
+
+  function submitAdd() {
+    const name = addName.trim()
+    if (name) networkManager.sendChatMessage(`/friend add ${name}`)
+    addName = ''
+    adding = false
+  }
+
+  function onAddKeydown(e: KeyboardEvent) {
+    e.stopPropagation()
+    if (e.key === 'Enter') submitAdd()
+    else if (e.key === 'Escape') {
+      addName = ''
+      adding = false
+    }
+  }
 </script>
 
 {#if visible}
@@ -53,10 +74,7 @@
     </div>
 
     {#if friends.length === 0}
-      <div class="empty">
-        No friends yet.<br />
-        <span class="hint">/friend add &lt;name&gt;</span>
-      </div>
+      <div class="empty">No friends yet.</div>
     {:else}
       <div class="friend-rows">
         {#each friends as friend (friend.characterId)}
@@ -66,6 +84,16 @@
               class:on={isOnline(friend)}
               title={isOnline(friend) ? 'Online' : 'Offline'}
             ></span>
+            {#if classIconPath(friend.class)}
+              <img
+                class="class-icon"
+                src={classIconPath(friend.class)}
+                alt={friend.class}
+                title={friend.class}
+                width="14"
+                height="14"
+              />
+            {/if}
             <span class="friend-name">{friend.name}</span>
             <span class="friend-level">L{levelOf(friend)}</span>
             <span class="row-actions">
@@ -91,6 +119,30 @@
             </span>
           </div>
         {/each}
+      </div>
+    {/if}
+
+    {#if adding}
+      <div class="add-row">
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          class="add-input"
+          placeholder="Player name"
+          maxlength="32"
+          autofocus
+          bind:value={addName}
+          onkeydown={onAddKeydown}
+        />
+        <button class="row-btn" title="Send request" onclick={submitAdd}
+          >✓</button
+        >
+      </div>
+    {:else}
+      <div class="add-hint">
+        <button class="add-btn" disabled={full} onclick={() => (adding = true)}
+          >+ Add</button
+        >
+        <span class="hint">or /friend add &lt;name&gt;</span>
       </div>
     {/if}
   </div>
@@ -153,6 +205,52 @@
     color: #fff;
   }
 
+  .add-btn {
+    background: none;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    color: #8fe08f;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1;
+    padding: 3px 6px;
+    cursor: pointer;
+  }
+
+  .add-btn:hover:not(:disabled) {
+    border-color: rgba(143, 224, 143, 0.6);
+  }
+
+  .add-btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .add-row,
+  .add-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .add-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    color: #e6edf3;
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+  }
+
+  .add-input:focus {
+    border-color: rgba(143, 224, 143, 0.6);
+  }
+
   .empty {
     padding: 6px 2px;
     color: #9fb2c3;
@@ -189,6 +287,10 @@
 
   .status-dot.on {
     background: #8fe08f;
+  }
+
+  .class-icon {
+    flex: none;
   }
 
   .friend-name {

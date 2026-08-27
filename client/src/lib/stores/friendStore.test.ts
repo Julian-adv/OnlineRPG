@@ -12,8 +12,8 @@ import {
 } from './friendStore'
 
 const roster: FriendEntry[] = [
-  { characterId: 1, name: 'alice', level: 12 },
-  { characterId: 2, name: 'bob', level: 8 },
+  { characterId: 1, name: 'alice', level: 12, class: 'knight' },
+  { characterId: 2, name: 'bob', level: 8, class: 'ranger' },
 ]
 
 describe('applyFriendsOnline', () => {

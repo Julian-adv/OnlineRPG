@@ -145,11 +145,12 @@ pub struct PartyMemberPosition {
 /// One friend as listed in `FriendList`. Keyed by character id, not the
 /// per-session `PlayerId`: a friendship outlives both sessions, and offline
 /// friends have no player id at all.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FriendEntry {
     pub character_id: i64,
     pub name: String,
     pub level: u32,
+    pub class: crate::character::CharacterClass,
 }
 
 /// One online friend as listed in `FriendsOnline`. No name — `FriendList`

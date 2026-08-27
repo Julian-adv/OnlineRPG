@@ -1,5 +1,6 @@
 use super::*;
 use crate::auth::{AuthService, CharacterRecord};
+use onlinerpg_shared::messages::FriendEntry;
 
 fn character(auth: &AuthService, name: &str) -> CharacterRecord {
     let account = auth.login_npc(&format!("npc_{name}")).unwrap();
@@ -98,11 +99,21 @@ async fn request_and_accept_forms_friendship_on_both_sides() {
     // Both rows, so either side's next login loads the friendship.
     assert_eq!(
         auth.load_friends(alice.id).unwrap(),
-        vec![(bob.id, "bob".to_string(), 1)]
+        vec![FriendEntry {
+            character_id: bob.id,
+            name: "bob".to_string(),
+            level: 1,
+            class: bob.class.clone(),
+        }]
     );
     assert_eq!(
         auth.load_friends(bob.id).unwrap(),
-        vec![(alice.id, "alice".to_string(), 1)]
+        vec![FriendEntry {
+            character_id: alice.id,
+            name: "alice".to_string(),
+            level: 1,
+            class: alice.class.clone(),
+        }]
     );
 }
 
@@ -332,7 +343,12 @@ async fn requests_are_capped_and_a_full_list_refuses() {
     // A full list refuses before the request is even recorded. Seeded
     // directly: what is under test is the cap, not 100 more DB rows.
     let filler = (0..super::super::friends::MAX_FRIENDS as i64)
-        .map(|i| (10_000 + i, format!("filler{i}"), 1))
+        .map(|i| FriendEntry {
+            character_id: 10_000 + i,
+            name: format!("filler{i}"),
+            level: 1,
+            class: CharacterClass::Knight,
+        })
         .collect();
     game_state.set_player_friends(&pid("alice"), filler).await;
     game_state

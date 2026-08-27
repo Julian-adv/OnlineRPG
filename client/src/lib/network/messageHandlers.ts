@@ -130,6 +130,7 @@ import type {
   PositionCorrection,
   ServerMonster,
   ServerPlayer,
+  type CharacterClass,
 } from './networkTypes'
 
 // A fatal blow arrives twice: as MonsterAttackedPlayer, which lines the cry up
@@ -699,11 +700,13 @@ export function handleServerMessage(
             character_id: number
             name: string
             level: number
+            class: CharacterClass
           }[]
         ).map((f) => ({
           characterId: f.character_id,
           name: f.name,
           level: f.level,
+          class: f.class,
         }))
       )
       break

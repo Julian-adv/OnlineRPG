@@ -1,6 +1,7 @@
 use crate::types::{CharacterAttributes, GameDateTime};
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::EquipSlot;
+use onlinerpg_shared::messages::FriendEntry;
 use onlinerpg_shared::xp;
 use onlinerpg_shared::{CharacterClass, Gender, VisibleEquipment};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -248,6 +249,17 @@ pub struct TradeLedgerEntry {
 /// Column list shared between queries that return full CharacterRecord rows.
 const CHARACTER_COLUMNS: &str = "id, character_name, created_at, level, xp, max_hp, attr_str, attr_dex, attr_con, attr_int, attr_wis, attr_cha, attr_guard, class, last_x, last_y, last_z, last_rotation, health, floor_level, gender, gold, admin_role, satiation";
 
+fn class_from_row(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<CharacterClass> {
+    let class_str: String = row.get(idx)?;
+    class_str.parse::<CharacterClass>().map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            idx,
+            rusqlite::types::Type::Text,
+            format!("unknown character class: {class_str}").into(),
+        )
+    })
+}
+
 fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterRecord> {
     Ok(CharacterRecord {
         id: row.get(0)?,
@@ -265,16 +277,7 @@ fn character_record_from_row(row: &rusqlite::Row) -> rusqlite::Result<CharacterR
             cha: row.get(11)?,
             guard: row.get(12)?,
         },
-        class: {
-            let class_str: String = row.get(13)?;
-            class_str.parse::<CharacterClass>().map_err(|_| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    13,
-                    rusqlite::types::Type::Text,
-                    format!("unknown character class: {class_str}").into(),
-                )
-            })?
-        },
+        class: class_from_row(row, 13)?,
         last_x: row.get::<_, f64>(14).unwrap_or(0.0) as f32,
         last_y: row.get::<_, f64>(15).unwrap_or(0.0) as f32,
         last_z: row.get::<_, f64>(16).unwrap_or(0.0) as f32,
@@ -1299,17 +1302,22 @@ impl AuthService {
 
     /// One character's friends as (id, name, level). The join is what makes
     /// storing ids affordable: offline friends still have a name to show.
-    pub fn load_friends(&self, character_id: i64) -> Result<Vec<(i64, String, u32)>, AuthError> {
+    pub fn load_friends(&self, character_id: i64) -> Result<Vec<FriendEntry>, AuthError> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT c.id, c.character_name, c.level
+            "SELECT c.id, c.character_name, c.level, c.class
              FROM character_friends f
              JOIN characters c ON c.id = f.friend_id
              WHERE f.character_id = ?1",
         )?;
         let friends = stmt
             .query_map(params![character_id], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok(FriendEntry {
+                    character_id: row.get(0)?,
+                    name: row.get(1)?,
+                    level: row.get(2)?,
+                    class: class_from_row(row, 3)?,
+                })
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(friends)
