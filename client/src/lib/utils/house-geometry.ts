@@ -12,8 +12,9 @@ import type { HouseData, RoomData } from '../types/housing'
 import {
   addMergedMeshes,
   collectFootprints,
-  computeHouseAABB,
   computeRoomAABBs,
+  roofSpanByRoom,
+  type RoofSpan,
   getOrCreateFloorEntries,
   OFFSCREEN_Y,
   WALL_DIR_INFO,
@@ -71,6 +72,14 @@ export function buildHouseGroup(
     }
   }
 
+  const suppressed = new Set(
+    house.rooms.filter((r) =>
+      shouldSuppressRoof(r, footprintsByFloor.get(r.floorLevel + 1) ?? [])
+    )
+  )
+  const allSpans = roofSpanByRoom(house.rooms)
+  const spanByRoom = roofSpanByRoom(house.rooms, (r) => suppressed.has(r))
+
   const perFloor = new Map<number, FloorEntries>()
 
   for (let ri = 0; ri < house.rooms.length; ri++) {
@@ -86,7 +95,8 @@ export function buildHouseGroup(
       entries.floor,
       entries.stair,
       entries.doors,
-      shouldSuppressRoof(room, footprintsByFloor.get(fl + 1) ?? []),
+      suppressed.has(room),
+      spanByRoom.get(room),
       house.rooms,
       stairwellFootprints
     )
@@ -145,11 +155,12 @@ export function buildHouseGroup(
     houseGroup.add(door.pivot)
   }
 
+  const roomAABBs = computeRoomAABBs(house, allSpans)
   return {
     houseGroup,
     floorGroups,
-    aabb: computeHouseAABB(house),
-    roomAABBs: computeRoomAABBs(house),
+    aabb: roomAABBs.reduce((b, r) => b.union(r), new THREE.Box3()),
+    roomAABBs,
     roomsHash: roomsHash ?? JSON.stringify(house.rooms),
     mergedMeshCount,
     doors: allDoors,
@@ -165,6 +176,7 @@ function collectRoomGeometries(
   stairEntries: GeoEntry[],
   doors: DoorMeshInfo[],
   suppressRoof: boolean,
+  roofSpan: RoofSpan | undefined,
   allRooms: RoomData[],
   stairwellFootprints: RoomFootprint[]
 ) {
@@ -175,7 +187,7 @@ function collectRoomGeometries(
 
   collectFloorGeometry(room, floorEntries, stairwellFootprints)
   if (!suppressRoof)
-    collectRoofGeometry(room, frontEntries, backEntries, allRooms)
+    collectRoofGeometry(room, roofSpan, frontEntries, backEntries, allRooms)
 
   collectWallSegments(
     room.wallNorth,

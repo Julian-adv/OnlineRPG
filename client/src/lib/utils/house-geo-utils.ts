@@ -238,19 +238,22 @@ export function computeHouseAABB(house: {
   return merged
 }
 
-export function computeRoomAABBs(house: {
-  origin: { x: number; y: number; z: number }
-  rooms: RoomData[]
-}): THREE.Box3[] {
+export function computeRoomAABBs(
+  house: {
+    origin: { x: number; y: number; z: number }
+    rooms: RoomData[]
+  },
+  spanByRoom = roofSpanByRoom(house.rooms)
+): THREE.Box3[] {
   return house.rooms.map((room) => {
     const yBase = floorYBase(room.floorLevel, room.wallHeight)
     const minX = house.origin.x + room.localX
     const minZ = house.origin.z + room.localZ
     let maxY = room.wallHeight
     let roofOh = 0
-    if (room.roofType && room.roofType !== 'flat') {
-      const { ridgeHeight } = gabledRoofDims(room)
-      maxY += ridgeHeight
+    const span = spanByRoom.get(room)
+    if (span) {
+      maxY += span.ridgeHeight
       roofOh = ROOF_OVERHANG
     }
     const oh = Math.max(roofOh, floorOverhang(room.floorLevel))
@@ -273,4 +276,130 @@ export function gabledRoofDims(room: RoomData) {
   const shortDim = ridgeAlongX ? room.sizeZ : room.sizeX
   const ridgeHeight = (shortDim / 2) * ROOF_PITCH[room.roofType!]
   return { ridgeAlongX, shortDim, ridgeHeight }
+}
+
+/** Max rooms a single gabled roof may bridge across its ridge; longer chains split into an M-shape. */
+export const MAX_ROOF_SPAN_ROOMS = 3
+
+export interface RoofSpan {
+  rooms: RoomData[]
+  localX: number
+  localZ: number
+  sizeX: number
+  sizeZ: number
+  ridgeAlongX: boolean
+  ridgeHeight: number
+  /** Across-ridge sides that meet another span (valley, no eave) */
+  innerLow: boolean
+  innerHigh: boolean
+}
+
+interface RoofRect {
+  rooms: RoomData[]
+  a0: number
+  aLen: number
+  b0: number
+  bLen: number
+}
+
+/**
+ * Merge adjacent gabled rooms with parallel ridges into roof spans:
+ * along the ridge when their across extents match, then across the ridge
+ * when their along extents match. Across chains longer than
+ * MAX_ROOF_SPAN_ROOMS split into evenly sized chunks.
+ */
+export function roofSpanByRoom(
+  rooms: RoomData[],
+  skip?: (room: RoomData) => boolean
+): Map<RoomData, RoofSpan> {
+  const map = new Map<RoomData, RoofSpan>()
+  for (const span of computeRoofSpans(rooms))
+    for (const r of span.rooms) if (!skip?.(r)) map.set(r, span)
+  return map
+}
+
+export function computeRoofSpans(
+  rooms: RoomData[],
+  skip?: (room: RoomData) => boolean
+): RoofSpan[] {
+  const groups = new Map<string, { ridgeAlongX: boolean; rects: RoofRect[] }>()
+  for (const room of rooms) {
+    if (!room.roofType || room.roofType === 'flat') continue
+    if (room.roomType === 'stairwell') continue
+    if (skip?.(room)) continue
+    const { ridgeAlongX } = gabledRoofDims(room)
+    const key = `${room.floorLevel}|${room.roofType}|${room.wallHeight}|${ridgeAlongX}`
+    let g = groups.get(key)
+    if (!g) groups.set(key, (g = { ridgeAlongX, rects: [] }))
+    g.rects.push({
+      rooms: [room],
+      a0: ridgeAlongX ? room.localX : room.localZ,
+      aLen: ridgeAlongX ? room.sizeX : room.sizeZ,
+      b0: ridgeAlongX ? room.localZ : room.localX,
+      bLen: ridgeAlongX ? room.sizeZ : room.sizeX,
+    })
+  }
+
+  const spans: RoofSpan[] = []
+  for (const { ridgeAlongX, rects } of groups.values()) {
+    rects.sort((p, q) => p.b0 - q.b0 || p.bLen - q.bLen || p.a0 - q.a0)
+    const alongMerged: RoofRect[] = []
+    for (const r of rects) {
+      const prev = alongMerged[alongMerged.length - 1]
+      if (
+        prev &&
+        prev.b0 === r.b0 &&
+        prev.bLen === r.bLen &&
+        prev.a0 + prev.aLen === r.a0
+      ) {
+        prev.aLen += r.aLen
+        prev.rooms.push(...r.rooms)
+      } else alongMerged.push(r)
+    }
+
+    alongMerged.sort((p, q) => p.a0 - q.a0 || p.aLen - q.aLen || p.b0 - q.b0)
+    const chains: RoofRect[][] = []
+    for (const r of alongMerged) {
+      const chain = chains[chains.length - 1]
+      const prev = chain?.[chain.length - 1]
+      if (
+        prev &&
+        prev.a0 === r.a0 &&
+        prev.aLen === r.aLen &&
+        prev.b0 + prev.bLen === r.b0
+      )
+        chain.push(r)
+      else chains.push([r])
+    }
+
+    for (const chain of chains) {
+      const n = chain.length
+      const k = Math.ceil(n / MAX_ROOF_SPAN_ROOMS)
+      const base = Math.floor(n / k)
+      const extra = n % k
+      let i = 0
+      for (let c = 0; c < k; c++) {
+        const cnt = base + (c < extra ? 1 : 0)
+        const chunk = chain.slice(i, i + cnt)
+        i += cnt
+        const a0 = chunk[0].a0
+        const aLen = chunk[0].aLen
+        const b0 = chunk[0].b0
+        const bLen = chunk.reduce((acc, r) => acc + r.bLen, 0)
+        const pitch = ROOF_PITCH[chunk[0].rooms[0].roofType!]
+        spans.push({
+          rooms: chunk.flatMap((r) => r.rooms),
+          localX: ridgeAlongX ? a0 : b0,
+          localZ: ridgeAlongX ? b0 : a0,
+          sizeX: ridgeAlongX ? aLen : bLen,
+          sizeZ: ridgeAlongX ? bLen : aLen,
+          ridgeAlongX,
+          ridgeHeight: (bLen / 2) * pitch,
+          innerLow: c > 0,
+          innerHigh: c < k - 1,
+        })
+      }
+    }
+  }
+  return spans
 }

@@ -17,6 +17,7 @@ import {
   floorOverhang,
   gabledRoofDims,
   type GeoEntry,
+  type RoofSpan,
   type RoomFootprint,
 } from './house-geo-utils'
 
@@ -43,23 +44,30 @@ export function shouldSuppressRoof(
   return true
 }
 
-/** Generate roof geometry for a room (flat or gabled). */
+/**
+ * Generate roof geometry for a room. Gabled rooms belong to a RoofSpan
+ * (possibly merged with neighbours); the span is emitted once, by its first room.
+ */
 export function collectRoofGeometry(
   room: RoomData,
+  span: RoofSpan | undefined,
   frontTarget: GeoEntry[],
-  backTarget?: GeoEntry[],
-  allRooms?: RoomData[]
+  backTarget: GeoEntry[],
+  allRooms: RoomData[]
 ) {
-  if (room.roofType && room.roofType !== 'flat') {
-    collectGabledRoof(
-      room,
-      frontTarget,
-      backTarget ?? frontTarget,
-      allRooms ?? [room]
-    )
-  } else {
+  if (!span) {
     collectFlatRoof(room, frontTarget)
+    return
   }
+  if (span.rooms[0] !== room) return
+  const spanRoom: RoomData = {
+    ...room,
+    localX: span.localX,
+    localZ: span.localZ,
+    sizeX: span.sizeX,
+    sizeZ: span.sizeZ,
+  }
+  collectGabledRoof(spanRoom, span, frontTarget, backTarget, allRooms)
 }
 
 /** True when `other`'s wall line meets `room`'s gable end at `end`. */
@@ -157,6 +165,7 @@ function collectFlatRoof(room: RoomData, target: GeoEntry[]) {
  */
 function collectGabledRoof(
   room: RoomData,
+  span: RoofSpan,
   frontTarget: GeoEntry[],
   backTarget: GeoEntry[],
   allRooms: RoomData[]
@@ -165,7 +174,8 @@ function collectGabledRoof(
   const yBase = floorYBase(room.floorLevel, wallHeight)
   const wallTopY = yBase + FLOOR_THICKNESS / 2 + wallHeight
   const roofIdx = room.roofTexture % HOUSING_TEXTURES.length
-  const { ridgeAlongX, shortDim, ridgeHeight } = gabledRoofDims(room)
+  const { ridgeAlongX, ridgeHeight } = span
+  const shortDim = ridgeAlongX ? sizeZ : sizeX
   const flOh = floorOverhang(room.floorLevel)
 
   const cx = localX + sizeX / 2
@@ -177,10 +187,7 @@ function collectGabledRoof(
   const halfLong = (ridgeAlongX ? sizeX / 2 : sizeZ / 2) + flOh
 
   const slopeAngle = Math.atan2(ridgeHeight, halfShort)
-  const eaveDropY = (oh * ridgeHeight) / halfShort
-  const slopeLen =
-    ((halfShort + oh) * Math.sqrt(halfShort ** 2 + ridgeHeight ** 2)) /
-    halfShort
+  const slopeUnit = Math.sqrt(halfShort ** 2 + ridgeHeight ** 2) / halfShort
 
   // If an adjacent room's perpendicular ridge meets a gable, extend our ridge
   // into the adjacent room to its ridge centerline instead of overhanging.
@@ -192,10 +199,12 @@ function collectGabledRoof(
   const ridgeShift = (endHigh - endLow) / 2
 
   const ridgeExt = (WALL_THICKNESS * ridgeHeight) / halfShort
-  const totalSlopeLen = slopeLen + ridgeExt
 
-  // Build two slope slabs
+  // Build two slope slabs; valley sides get no eave
   for (const side of [-1, 1] as const) {
+    const sideOh = (side === -1 ? span.innerLow : span.innerHigh) ? 0 : oh
+    const eaveDropY = (sideOh * ridgeHeight) / halfShort
+    const totalSlopeLen = (halfShort + sideOh) * slopeUnit + ridgeExt
     const geo = new THREE.BoxGeometry(ridgeLen, WALL_THICKNESS, totalSlopeLen)
 
     const uv = geo.getAttribute('uv')
@@ -226,7 +235,7 @@ function collectGabledRoof(
       geo.applyMatrix4(_roofMatrix)
     }
 
-    const perpCenter = (side * (halfShort + oh)) / 2
+    const perpCenter = (side * (halfShort + sideOh)) / 2
     const yCenter = wallTopY + (ridgeHeight - eaveDropY) / 2
     const tx = cx + (ridgeAlongX ? ridgeShift : perpCenter)
     const tz = cz + (ridgeAlongX ? perpCenter : ridgeShift)
