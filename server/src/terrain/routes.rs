@@ -255,18 +255,14 @@ async fn put_splatmap(
 
 async fn get_grass(
     Path((x, z)): Path<(i32, i32)>,
+    request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_grass(x, z).await.map_err(|e| {
-        error!("Failed to read grass ({}, {}): {}", x, z, e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    match data {
-        Some(bytes) => {
-            Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    serve_revalidated(
+        coords::grass_path(terrain.base_dir(), x, z),
+        &request_headers,
+    )
+    .await
 }
 
 async fn put_grass(
@@ -309,7 +305,7 @@ async fn get_minimap(
     let Some((tile, meta)) = found else {
         return Ok((StatusCode::NOT_FOUND, [MINIMAP_CACHE]).into_response());
     };
-    let etag = minimap_etag(&tile.path, &meta);
+    let etag = file_etag(&tile.path, &meta);
     let revalidated = request_headers
         .get(header::IF_NONE_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -335,9 +331,49 @@ async fn get_minimap(
         .into_response())
 }
 
-/// Cache tag for a minimap file: which file was picked, plus its mtime and
-/// size. A rebake or an editor save changes all three sources cheaply.
-fn minimap_etag(path: &std::path::Path, meta: &std::fs::Metadata) -> String {
+/// Terrain files a client refetches as it walks: serve them with an ETag so a
+/// repeat fetch costs headers instead of the body. Missing files cache
+/// briefly too, so clients near unbaked tiles stop hammering the route.
+async fn serve_revalidated(
+    path: std::path::PathBuf,
+    request_headers: &axum::http::HeaderMap,
+) -> Result<Response, StatusCode> {
+    const CACHE: (header::HeaderName, &str) = (header::CACHE_CONTROL, "public, max-age=300");
+    let meta = match tokio::fs::metadata(&path).await {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((StatusCode::NOT_FOUND, [CACHE]).into_response());
+        }
+        Err(e) => {
+            error!("Failed to stat {:?}: {}", path, e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    let etag = file_etag(&path, &meta);
+    let revalidated = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == etag);
+    if revalidated {
+        return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, etag)], [CACHE]).into_response());
+    }
+    let bytes = tokio::fs::read(&path).await.map_err(|e| {
+        error!("Failed to read {:?}: {}", path, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok((
+        [(header::ETAG, etag)],
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        [CACHE],
+        bytes,
+    )
+        .into_response())
+}
+
+/// Cache tag for a terrain file: its path, mtime and size. A rebake or an
+/// editor save changes all three sources cheaply, and none of them read the
+/// body.
+fn file_etag(path: &std::path::Path, meta: &std::fs::Metadata) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(meta.len().to_le_bytes());
@@ -432,50 +468,38 @@ async fn put_object(
 
 async fn get_trees(
     Path((x, z)): Path<(i32, i32)>,
+    request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_trees(x, z).await.map_err(|e| {
-        error!("Failed to read trees ({}, {}): {}", x, z, e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    match data {
-        Some(bytes) => {
-            Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    serve_revalidated(
+        coords::tree_path(terrain.base_dir(), x, z),
+        &request_headers,
+    )
+    .await
 }
 
 async fn get_river_field(
     Path((x, z)): Path<(i32, i32)>,
+    request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_river_field(x, z).await.map_err(|e| {
-        error!("Failed to read river field ({}, {}): {}", x, z, e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    match data {
-        Some(bytes) => {
-            Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    serve_revalidated(
+        coords::river_field_path(terrain.base_dir(), x, z),
+        &request_headers,
+    )
+    .await
 }
 
 async fn get_water_field(
     Path((x, z)): Path<(i32, i32)>,
+    request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_water_field(x, z).await.map_err(|e| {
-        error!("Failed to read water field ({}, {}): {}", x, z, e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    match data {
-        Some(bytes) => {
-            Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response())
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
+    serve_revalidated(
+        coords::water_field_path(terrain.base_dir(), x, z),
+        &request_headers,
+    )
+    .await
 }
 
 async fn delete_region_handler(
@@ -487,4 +511,61 @@ async fn delete_region_handler(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::unique_temp_dir;
+    use axum::http::HeaderMap;
+
+    fn etag_of(response: &Response) -> String {
+        response
+            .headers()
+            .get(header::ETAG)
+            .expect("served terrain files carry an ETag")
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn revalidation_turns_a_repeat_fetch_into_a_304() {
+        let dir = unique_temp_dir("terrain_revalidate");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tile.bin");
+        std::fs::write(&path, b"first").unwrap();
+
+        let first = serve_revalidated(path.clone(), &HeaderMap::new())
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let tag = etag_of(&first);
+
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_NONE_MATCH, tag.parse().unwrap());
+        let repeat = serve_revalidated(path.clone(), &headers).await.unwrap();
+        assert_eq!(repeat.status(), StatusCode::NOT_MODIFIED);
+
+        // A rewrite changes size and mtime, so the stale tag must miss.
+        std::fs::write(&path, b"second body").unwrap();
+        let after_edit = serve_revalidated(path.clone(), &headers).await.unwrap();
+        assert_eq!(after_edit.status(), StatusCode::OK);
+        assert_ne!(etag_of(&after_edit), tag);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn a_missing_tile_is_a_cacheable_404() {
+        let dir = unique_temp_dir("terrain_missing");
+        let response = serve_revalidated(dir.join("absent.bin"), &HeaderMap::new())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=300"
+        );
+    }
 }

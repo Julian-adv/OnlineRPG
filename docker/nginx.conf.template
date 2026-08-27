@@ -77,7 +77,10 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    location ~* \.(glb|mp3|m4a|wasm|png|jpg|svg|woff2)$ {
+    # Unhashed media. The name never changes, so expiry is time-based and the
+    # ETag settles the refetch after it — which only works while the build
+    # preserves public/ mtimes (client `keep:asset-times`).
+    location ~* \.(glb|mp3|m4a|ogg|wasm|png|jpg|webp|svg|woff2)$ {
         expires 30d;
         add_header Cache-Control "public";
     }

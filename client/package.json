@@ -6,7 +6,8 @@
   "scripts": {
     "build:wasm": "npm run generate:csv && npm run generate:footprints && npm run generate:monster-clips && npm run generate:animations && rm -rf src/lib/wasm && cd ../shared && wasm-pack build --target web --out-dir ../client/src/lib/wasm",
     "dev": "npm run build:wasm && vite",
-    "build": "npm run build:wasm && vite build",
+    "build": "npm run build:wasm && vite build && npm run keep:asset-times",
+    "keep:asset-times": "cp -a public/. dist/",
     "preview": "vite preview",
     "check": "npm run generate:csv && svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "format": "prettier --write .",
