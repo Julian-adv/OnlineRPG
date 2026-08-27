@@ -22,7 +22,7 @@
 </script>
 
 <script lang="ts">
-  import { calendarVisible } from '../stores/debugStore'
+  import { calendarShown } from '../stores/inventoryStore'
   import { currentDungeonDepth, isUnderground } from '../stores/dungeonStore'
   import { getSolarDaylightWindow } from '../utils/celestialSimulation'
   import {
@@ -313,8 +313,8 @@
   })
 </script>
 
-<div class="time-widget" class:compact={!$calendarVisible}>
-  {#if $calendarVisible}
+<div class="time-widget" class:compact={!$calendarShown}>
+  {#if $calendarShown}
     <div class="meta">
       <span class="date">{formatGameDate()}</span>
       <span class="time">{formatGameTime()}</span>

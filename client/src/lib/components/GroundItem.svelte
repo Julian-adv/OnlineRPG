@@ -88,11 +88,14 @@
   let groundParentRef: THREE.Group | undefined = $state()
   let terrainAlignedRef: THREE.Group | undefined = $state()
 
-  // Shields are authored upright (disc in XY, boss toward -Z) to sit on the
-  // arm; on the ground they lie face-up, lifted so the rim rests on the floor.
-  const SHIELD_REST_ROT_X = Math.PI / 2
-  const isShield = $derived(
-    def?.equipSlot === 'off_hand' && def?.category === 'armor'
+  // Upright-authored discs lie face-up on the ground, lifted so the rim rests
+  // on the floor. Shield boss faces -Z, the timekeeper dial faces +Z.
+  const flatRestRotX = $derived(
+    def?.category === 'timekeeper'
+      ? -Math.PI / 2
+      : def?.equipSlot === 'off_hand' && def?.category === 'armor'
+        ? Math.PI / 2
+        : null
   )
   let restPose = $state<{ rotX: number; y: number } | null>(null)
 
@@ -238,10 +241,10 @@
         measureSource = cloneGroundItemScene(gltf.scene)
         bindClipOnce(measureSource, clip, true)
       }
-      if (isShield) {
-        measureSource.rotation.set(SHIELD_REST_ROT_X, 0, 0)
+      if (flatRestRotX != null) {
+        measureSource.rotation.set(flatRestRotX, 0, 0)
         const rotated = new THREE.Box3().setFromObject(measureSource)
-        restPose = { rotX: SHIELD_REST_ROT_X, y: -rotated.min.y }
+        restPose = { rotX: flatRestRotX, y: -rotated.min.y }
         applyRestPose(measureSource, restPose)
       }
       const box = new THREE.Box3().setFromObject(measureSource)

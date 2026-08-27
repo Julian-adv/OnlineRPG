@@ -2,6 +2,7 @@
   import { gameStore } from '../stores/gameStore'
   import { worldMapVisible } from '../stores/debugStore'
   import { minimapVersion } from '../stores/editorStore'
+  import { calendarShown } from '../stores/inventoryStore'
   import {
     currentDungeonDepth,
     discoveredDungeonIds,
@@ -158,6 +159,7 @@
 {#if onSurface}
   <button
     class="minimap"
+    class:lowered={$calendarShown}
     title="Open world map (M)"
     aria-label="Open world map"
     onclick={() => worldMapVisible.set(true)}
@@ -184,6 +186,9 @@
     background: #000;
     opacity: 0.92;
     pointer-events: auto;
+  }
+  .minimap.lowered {
+    top: 58px;
   }
   .minimap:hover {
     border-color: rgba(255, 255, 255, 0.5);

@@ -6,6 +6,7 @@ import type {
 } from '../network/networkTypes'
 import { getItemDef } from '../data/itemDefs'
 import { activeDebuffs } from './debuffStore'
+import { calendarVisible } from './debugStore'
 import { armorWeightMult } from '../data/debuffPresentation'
 import type { HungerSnapshot } from './hungerStore'
 
@@ -88,3 +89,15 @@ export function resetInventoryStore() {
   playerGold.set(0)
   playerGuard.set(null)
 }
+
+const hasTimekeeper = derived(inventoryStore, (inv) =>
+  inv.bag.some(
+    (item) => getItemDef(item.item_def_id)?.category === 'timekeeper'
+  )
+)
+
+/** Hour and date beside the sky widget: debug CAL toggle or a carried timekeeper. */
+export const calendarShown = derived(
+  [calendarVisible, hasTimekeeper],
+  ([v, t]) => v || t
+)

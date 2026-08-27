@@ -68,3 +68,4 @@ grilled_salmon,Grilled Salmon,A salmon fillet seared over open flame.,2,,true,ob
 grilled_sturgeon,Grilled Sturgeon,A royal cut of sturgeon roasted on embers.,4,,true,objects/grilled_sturgeon.png,,food,,,1500,,,,,,,,,true,900,,,,,,
 campfire_kit,Campfire Kit,Firewood and tinder bundled for the road. Burns for ten minutes.,2,,true,objects/campfire_kit.png,objects/campfire_kit.glb,campfire_kit,,,30,,,,,,,,,true,,,,,,,
 tip_hat,Busker's Hat,A weathered feathered hat. Set it down before a performance and listeners drop coins in it. Use it again to pick it up.,1,,false,objects/tip_hat.png,objects/tip_hat.glb,tip_hat,,leather,200,,,,,,,,,true,,,,,,,
+celestial_timekeeper,Celestial Timekeeper,A brass astrolabe-watch whose dials track sun and moons. Carry it and the hour and date show beside the sky.,0.5,,false,objects/celestial_timekeeper.png,objects/celestial_timekeeper.glb,timekeeper,,metal,8000,,,,,,,,,,,,,,,,
