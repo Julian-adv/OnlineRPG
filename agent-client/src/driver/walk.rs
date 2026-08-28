@@ -248,6 +248,8 @@ pub(super) enum LostReason {
     Timeout,
     /// No route on this floor — walls or shut doors all the way around.
     NoPath,
+    /// The server kept refusing our steps: its layout disagrees with ours.
+    Desynced,
 }
 
 impl LostReason {
@@ -259,6 +261,7 @@ impl LostReason {
             Self::TooFar(d) => format!("your target is {d:.0}m away, beyond your reach"),
             Self::Timeout => "you ran out of time before arriving".to_string(),
             Self::NoPath => "no route leads there from here".to_string(),
+            Self::Desynced => "the ground kept refusing your steps".to_string(),
         }
     }
 }
@@ -267,8 +270,6 @@ impl LostReason {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Walked {
     Arrived,
-    /// No route, and no door left to open.
-    Blocked,
     /// The target stopped being worth walking to.
     Lost(LostReason),
     Error,
@@ -309,8 +310,10 @@ pub(super) async fn walk(
                 return Walked::Lost(LostReason::PlayerDied);
             };
             let to_target = PlanarDelta::between(&me.position, &target_pos);
+            let target_floor = to.floor(&s);
             let arrived = to_target.dist <= tuning.arrive_range
-                && !(tuning.needs_clear_line && s.attack_line_blocked(target_pos.x, target_pos.z));
+                && !(tuning.needs_clear_line && s.attack_line_blocked(target_pos.x, target_pos.z))
+                && !(matches!(to, WalkTo::Place { .. }) && s.passability_floor() != target_floor);
             if arrived {
                 return Walked::Arrived;
             }
@@ -333,7 +336,7 @@ pub(super) async fn walk(
                 (target_pos.x, target_pos.z)
             };
             let snapped = s.position_corrections != corrections;
-            (to.floor(&s), goal, snapped)
+            (target_floor, goal, snapped)
         };
 
         // The server snapped us back: whatever we were walking, it walks into
@@ -344,7 +347,7 @@ pub(super) async fn walk(
             repaths += 1;
             if repaths > MAX_CORRECTION_REPATHS {
                 info!("Walk to {to} gave up after {repaths} position corrections");
-                return Walked::Blocked;
+                return Walked::Lost(LostReason::Desynced);
             }
             debug!("Re-pathing after a server position correction ({repaths})");
             route.clear();
@@ -398,6 +401,7 @@ pub(super) async fn walk(
             if tuning.route_end_is_arrival {
                 return Walked::Arrived;
             }
+            repaths = 0;
             route.clear();
             tokio::time::sleep(Duration::from_millis(IDLE_TICK_MS)).await;
             continue;
@@ -413,11 +417,7 @@ pub(super) async fn walk(
         // open ground a straight line assumes.
         if state.lock().await.self_floor_level < 0 {
             info!("No route to {to} on this floor");
-            return if tuning.give_up_when_unreachable {
-                Walked::Blocked
-            } else {
-                Walked::Lost(LostReason::NoPath)
-            };
+            return Walked::Lost(LostReason::NoPath);
         }
         // On the surface, inch toward it anyway. The ground may simply be
         // un-pathable rather than walled, and either way the server needs a
@@ -428,7 +428,7 @@ pub(super) async fn walk(
             Step::Nothing => tokio::time::sleep(Duration::from_millis(IDLE_TICK_MS)).await,
         }
         if tuning.give_up_when_unreachable {
-            return Walked::Blocked;
+            return Walked::Lost(LostReason::NoPath);
         }
     }
 }
@@ -554,12 +554,17 @@ async fn open_blocking_door(
 
     // The probe already proved this route; walk the waypoints it found rather
     // than paying for the same search again.
+    let corrections = state.lock().await.position_corrections;
     let mut leg = 0usize;
     loop {
         match step_along(state, &route, &mut leg, background, sprint).await {
             Step::Sent(ms) => tokio::time::sleep(Duration::from_millis(ms.max(50))).await,
             Step::Nothing => break,
             Step::Error => return false,
+        }
+        if state.lock().await.position_corrections != corrections {
+            info!("Walk to {} refused by the server", door.label);
+            return false;
         }
     }
 
@@ -743,7 +748,10 @@ mod tests {
             z: 0.5,
             floor,
         };
-        assert_eq!(walk(&state, &to, false, Some(false)).await, Walked::Blocked);
+        assert_eq!(
+            walk(&state, &to, false, Some(false)).await,
+            Walked::Lost(LostReason::NoPath)
+        );
         assert!(
             matches!(rx.try_recv(), Ok(ClientMessage::PlayerMove { .. })),
             "a blocked walk must still tell the server where it wanted to go"

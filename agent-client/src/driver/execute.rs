@@ -223,6 +223,11 @@ fn unreachable_note(monster_id: &str, loss: &LostReason) -> String {
             "[Unreachable] No route leads to monster {monster_id} from here — it is \
              behind walls or on another floor. Pick a reachable monster."
         ),
+        LostReason::Desynced => format!(
+            "[Unreachable] You could not reach monster {monster_id} — {}. Move first, or \
+             pick a different target.",
+            loss.clause()
+        ),
     }
 }
 
@@ -455,7 +460,7 @@ pub(super) async fn handle_response(
                         // A chase that runs out of time while the target keeps
                         // walking is following working, not failing — only a
                         // deadline against a target that never moved is stuck.
-                        ChaseResult::Lost(LostReason::Timeout)
+                        ChaseResult::Lost(LostReason::Timeout | LostReason::Desynced)
                             if target_moved(&task_state, &target_id, before).await =>
                         {
                             None
@@ -1451,6 +1456,7 @@ pub(super) async fn handle_response(
                                      shut door stands in the way. Try a different goal."
                                 ));
                             }
+                            MoveResult::Died => warn!("Died on the way to ({gx:.1}, {gz:.1})"),
                             MoveResult::Error => {
                                 error!("Move error to ({gx:.1}, {gz:.1})");
                                 let mut s = state.lock().await;
@@ -1699,17 +1705,18 @@ async fn move_to_dungeon_floor(
     // Leg 1: get onto the dungeon's own grid on the surface.
     if outside || depth.is_none_or(|d| d == 0) {
         let entrance = dungeon.entrance;
-        if matches!(
-            execute_move(state, entrance.x, entrance.z, 0, sprint).await,
-            MoveResult::Blocked
-        ) {
-            warn!("Could not reach the {} entrance", dungeon.name);
-            let mut s = state.lock().await;
-            s.push_agent_event(format!(
-                "[MoveFailed] You could not reach the entrance of {}.",
-                dungeon.name
-            ));
-            return;
+        match execute_move(state, entrance.x, entrance.z, 0, sprint).await {
+            MoveResult::Blocked => {
+                warn!("Could not reach the {} entrance", dungeon.name);
+                let mut s = state.lock().await;
+                s.push_agent_event(format!(
+                    "[MoveFailed] You could not reach the entrance of {}.",
+                    dungeon.name
+                ));
+                return;
+            }
+            MoveResult::Died => return,
+            MoveResult::Arrived | MoveResult::Error => {}
         }
         state.lock().await.request_dungeon_doors_here();
         match depth {
@@ -1761,6 +1768,7 @@ async fn move_to_dungeon_floor(
                 dungeon.name
             ));
         }
+        MoveResult::Died => {}
         MoveResult::Error => {
             error!("Descent to {} floor {depth} errored", dungeon.name);
             let mut s = state.lock().await;

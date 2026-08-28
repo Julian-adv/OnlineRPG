@@ -139,9 +139,6 @@ impl From<Walked> for ChaseResult {
         match w {
             Walked::Arrived => Self::InRange,
             Walked::Lost(reason) => Self::Lost(reason),
-            // Only a fixed destination reports Blocked, and the only fixed
-            // one here is a point in a room.
-            Walked::Blocked => Self::Lost(LostReason::NoPath),
             Walked::Error => Self::Error,
         }
     }

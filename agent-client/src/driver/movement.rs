@@ -47,6 +47,7 @@ const HOUSING_CHUNK_SIZE: f32 = 64.0;
 pub(super) enum MoveResult {
     Arrived,
     Blocked,
+    Died,
     Error,
 }
 
@@ -142,6 +143,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
             MoveResult::Blocked => {
                 warn!("Patrol waypoint {i} blocked — skipping ({wx:.1}, {wz:.1})");
             }
+            MoveResult::Died => return,
             MoveResult::Error => {
                 error!("Patrol waypoint {i} error");
             }
@@ -180,6 +182,7 @@ async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &Schedule
             );
             true
         }
+        MoveResult::Died => false,
         MoveResult::Error => {
             error!("Schedule move error");
             false
@@ -262,7 +265,8 @@ pub(super) async fn execute_move(
     match walk::walk(state, &to, false, sprint).await {
         walk::Walked::Arrived => MoveResult::Arrived,
         walk::Walked::Error => MoveResult::Error,
-        walk::Walked::Blocked | walk::Walked::Lost(_) => MoveResult::Blocked,
+        walk::Walked::Lost(walk::LostReason::PlayerDied) => MoveResult::Died,
+        walk::Walked::Lost(_) => MoveResult::Blocked,
     }
 }
 
