@@ -13,6 +13,8 @@
   } from '../network/networkTypes'
   import { skill_xp_for_level, skill_level_cap } from '../wasm/onlinerpg_shared'
   import { levelProgress } from '../utils/xpProgress'
+  import { equipBgCandidates } from '../utils/equipBackground'
+  import { SvelteSet } from 'svelte/reactivity'
   import { skillsStore, SKILL_DISPLAY_NAMES } from '../stores/skillsStore'
   import type { SkillId, SkillProgress } from '../network/networkTypes'
   import {
@@ -57,14 +59,10 @@
     onClose,
   }: Props = $props()
 
-  const FEMALE_EQUIP_BG: Partial<Record<CharacterClass, string>> = {
-    caveman: '/character_concepts/cavewoman.png',
-    rogue: '/character_concepts/female_rogue.png',
-    bard: '/character_concepts/female_bard.png',
-  }
+  const equipBgList = $derived(equipBgCandidates(characterClass, gender))
+  const failedEquipBgs = new SvelteSet<string>()
   const equipBg = $derived(
-    (gender === 'female' && FEMALE_EQUIP_BG[characterClass]) ||
-      '/character_concepts/female_priest.png'
+    equipBgList.find((path) => !failedEquipBgs.has(path)) ?? equipBgList.at(-1)
   )
 
   // Effective stats come from the server (EffectiveStatsUpdated) so they never
@@ -279,7 +277,15 @@
             </div>
           </div>
           <div class="equip-section">
-            <img class="equip-bg" src={equipBg} alt="" draggable="false" />
+            <img
+              class="equip-bg"
+              src={equipBg}
+              alt=""
+              draggable="false"
+              onerror={() => {
+                if (equipBg) failedEquipBgs.add(equipBg)
+              }}
+            />
             {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
               {@const item = $inventoryStore.equipped[slot]}
               {@const def = item ? getItemDef(item.item_def_id) : null}
