@@ -11,6 +11,9 @@ export interface ItemTooltipParams {
   /** The hovered instance, when one exists — supplies per-instance display
    * data such as the +N enchant. Omit for def-only surfaces (shop catalog). */
   item?: ItemInstance
+  /** Enchant to show when no instance backs the surface (e.g. a quickslot
+   * whose bound item is depleted). Ignored when `item` is present. */
+  enchant?: number
   side?: 'left' | 'right'
 }
 
@@ -38,7 +41,7 @@ export function itemTooltip(
       target: document.body,
       props: {
         def: params.def,
-        enchant: params.item?.enchant,
+        enchant: params.item?.enchant ?? params.enchant,
         compare: displacedDef
           ? { def: displacedDef, enchant: displaced.enchant }
           : undefined,

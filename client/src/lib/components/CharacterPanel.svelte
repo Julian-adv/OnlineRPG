@@ -163,7 +163,7 @@
   function onEquipPointerDown(
     e: PointerEvent,
     slot: EquipSlot,
-    item: { instance_id: number; item_def_id: string }
+    item: { instance_id: number; item_def_id: string; enchant: number }
   ) {
     if (e.button !== 0) return
     e.preventDefault()
@@ -174,6 +174,7 @@
       {
         instanceId: item.instance_id,
         defId: item.item_def_id,
+        enchant: item.enchant,
         equipSlot: def?.equipSlot ?? null,
         source: { type: 'equipped', slot },
         icon: def?.icon ?? FALLBACK_ICON,

@@ -7,6 +7,7 @@ export const FALLBACK_ICON = 'icon_frame.png'
 export type DragMeta = {
   instanceId: number
   defId: string
+  enchant: number
   equipSlot: EquipSlot | null
   source: { type: 'bag' } | { type: 'equipped'; slot: EquipSlot }
   icon: string
@@ -135,7 +136,7 @@ export function startDrag(
         if (qsIndex < 0) {
           onDrop(ue.clientX, ue.clientY)
         } else if (meta.groupItems === undefined) {
-          assignQuickslot(qsIndex, meta.defId)
+          assignQuickslot(qsIndex, { defId: meta.defId, enchant: meta.enchant })
         }
       } else {
         onClick?.()
