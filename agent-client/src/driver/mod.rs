@@ -8,10 +8,11 @@
 //!   `ClientMessage`.
 //! - `prompt`: format server events and the active schedule context into
 //!   the prompt string sent to the LLM.
-//! - `combat`: chase a monster (A* + repath on monster shift), face it,
-//!   send the attack tick.
-//! - `movement`: A*-driven walks, schedule transitions, and the
-//!   housing-data prefetch that lets pathfinding avoid buildings.
+//! - `combat`: face the monster and send the attack tick.
+//! - `walk`: the one walker — A* to a place or a moving target, doors,
+//!   position corrections, and the step pacing they all share.
+//! - `movement`: schedule transitions and the housing-data prefetch that
+//!   lets pathfinding avoid buildings.
 //! - `execute`: parse a response and run each action; returns the
 //!   monster_id of the final attack so the loop can take over chasing it.
 
@@ -21,6 +22,7 @@ mod execute;
 mod movement;
 mod outcome;
 mod prompt;
+mod walk;
 
 pub(crate) use prompt::format_event;
 
