@@ -39,6 +39,7 @@ mod stall_tests;
 mod tip_hat_tests;
 mod trading_tests;
 mod wet_tests;
+mod world_ready_tests;
 
 /// Stable numeric id derived from a fixture's name, so tests keep naming
 /// players ("owner", "buyer") instead of carrying opaque integers. Only needs
@@ -75,6 +76,7 @@ fn make_player(id: &str, x: f32, z: f32) -> Player {
         client_kind: Default::default(),
         back_color: None,
         back_texture: None,
+        ready_at: 0,
     }
 }
 

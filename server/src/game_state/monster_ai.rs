@@ -196,9 +196,15 @@ impl super::GameState {
         }
         let started = Instant::now();
         let roster: Roster = {
+            let now = Self::now_ms();
             let players = self.players.read().await;
             let mut roster = Roster::default();
             for (id, p) in players.iter() {
+                // Still drawing the world: invisible to the brains, so nothing
+                // is already mid-swing the moment the loading screen lifts.
+                if !p.is_ready(now) {
+                    continue;
+                }
                 roster
                     .entry(super::SpatialCell::from_position(&p.position))
                     .or_default()

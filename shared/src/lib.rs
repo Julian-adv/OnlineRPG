@@ -256,6 +256,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: Default::default(),
+            ready_at: 0,
             back_color: None,
             back_texture: None,
             wet: false,

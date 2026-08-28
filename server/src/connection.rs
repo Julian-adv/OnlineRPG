@@ -1123,6 +1123,9 @@ async fn handle_client_message(
                 state.client_kind.unwrap_or_default(),
             );
 
+            player.ready_at =
+                GameState::now_ms() + onlinerpg_shared::entity::WORLD_LOADING_GRACE_MS;
+
             // Restore saved health (if available) and floor_level from DB
             if let Some(saved_health) = selected_character.health {
                 player.health = saved_health.min(max_hp);
@@ -1339,6 +1342,14 @@ async fn handle_client_message(
                 game_state.update_player_floor(id, floor_level).await;
             } else {
                 warn!("Received floor change from client that is not in game");
+            }
+        }
+
+        ClientMessage::WorldReady => {
+            if let Some(id) = &state.player_id {
+                game_state.mark_world_ready(id).await;
+            } else {
+                warn!("Received world ready from client that is not in game");
             }
         }
 

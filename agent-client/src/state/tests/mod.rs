@@ -104,6 +104,7 @@ pub(crate) fn test_player(x: f32, z: f32) -> Player {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        ready_at: 0,
         back_color: None,
         back_texture: None,
         wet: false,

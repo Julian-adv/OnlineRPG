@@ -193,6 +193,7 @@ async fn respawn_player_revives_dead_player_only() {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        ready_at: 0,
         back_color: None,
         back_texture: None,
     };
@@ -265,6 +266,7 @@ async fn respawn_player_ignores_alive_player() {
         object_id: None,
         last_combat_at: 0,
         client_kind: Default::default(),
+        ready_at: 0,
         back_color: None,
         back_texture: None,
     };

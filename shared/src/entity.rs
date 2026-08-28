@@ -99,6 +99,22 @@ pub struct Player {
     /// broadcasting it would let clients label individual players.
     #[serde(skip)]
     pub client_kind: ClientKind,
+    /// Wall-clock ms (unix time) at which the player becomes damageable.
+    /// While the client is still building the world, this sits in the future;
+    /// `WorldReady` zeroes it early, and the deadline is the backstop for a
+    /// client that never reports ready. 0 = ready.
+    #[serde(skip)]
+    pub ready_at: u64,
+}
+
+/// Longest a client may claim to still be loading the world. Entering next to
+/// an aggroed monster otherwise kills the player before the scene is drawn.
+pub const WORLD_LOADING_GRACE_MS: u64 = 30_000;
+
+impl Player {
+    pub fn is_ready(&self, now_ms: u64) -> bool {
+        now_ms >= self.ready_at
+    }
 }
 
 /// Client program on the other end of a connection. Self-reported, so it may
@@ -316,6 +332,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
+            ready_at: 0,
             back_color: None,
             back_texture: None,
             wet: false,
@@ -358,6 +375,7 @@ mod tests {
             object_id: None,
             last_combat_at: 0,
             client_kind: ClientKind::default(),
+            ready_at: 0,
             back_color: None,
             back_texture: None,
             wet: false,
