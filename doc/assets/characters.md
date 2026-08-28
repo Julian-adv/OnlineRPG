@@ -16,7 +16,7 @@
 ## Female Knight
 
 - (초기) ComfyUI에서 jibMixZIT_v10.safetensors로 원화 생성 ![원화](../images/characters/female-knight-concept.png)
-- 현재 원화 ![원화](../../client/public/character_concepts/female_knight.png) (그리기: ComfyUI jibMixZIT_v10, A포즈 변경만 Qwen Image Edit)
+- 현재 원화 ![원화](../../client/public/character_concepts/female_knight.webp) (그리기: ComfyUI jibMixZIT_v10, A포즈 변경만 Qwen Image Edit; ChatGPT Pro 20x로 배경 투명화·키 약간 축소, 2026-08-28; WebP q85)
 - Tripo(유료 등급)에서 3d 모델로 변환 -> 10k 모델로 리매쉬
 - mixamo.com에서 리깅 및 애니메이션 부착
 - blender에서 스케일/위치 조정(rest pose 원점 발 밑에 오게) -> 매터리얼 조정 (Shader Editor에서 Alpha 끊기) -> .glb 내보내기
@@ -27,31 +27,31 @@
 `female_thief.glb`가 `female_rogue.glb`로 개명됨 (클래스 Thief → Rogue, 커밋 7eebc39). 현재 사용 중.
 
 - female_knight와 같은 workflow (3D 생성은 meshy.ai)
-- 원화 ![원화](../../client/public/character_concepts/female_rogue.png) (캐릭터 선택 UI 원화; 초기 thief 원화 `../images/characters/thief-concept.png`에서 교체)
+- 원화 ![원화](../../client/public/character_concepts/female_rogue.webp) (캐릭터 선택 UI 원화; WebP q85 변환 2026-08-28; 초기 thief 원화 `../images/characters/thief-concept.png`에서 교체)
 
 ## Knight
 
 - female_knight와 같은 workflow (3D 생성은 meshy.ai)
 - 원화 ![원화](../images/characters/knight-concept.png)
 - nano banana2로 A 포즈 ![T-pose](../images/characters/knight-A-pose.png)
-- character_concepts 원화 `character_concepts/knight.png` (Gemini)
+- character_concepts 원화 `character_concepts/knight.webp` (Gemini 원본을 ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85)
 
 ## Other Classes
 
 아래 플레이어 클래스는 female_knight와 같은 AI 워크플로우 (ComfyUI 원화 → Nano Banana/Grok 포즈 → 3D 생성 → Mixamo 리깅). 3D 도구는 캐릭터별로 다름(Meshy/Tripo) — License 섹션의 3D 도구 매핑 참조.
 
-- barbarian / female_barbarian — Warrior 대체; 원화: barbarian(남) `character_concepts/barbarian.png` (Gemini), female_barbarian `character_concepts/female_barbarian.png`
-- caveman / cavewoman — 원화: caveman(남) `character_concepts/caveman.png` (Qwen Image Edit), cavewoman `character_concepts/cavewoman.png`
-- priest / female_priest — 원화: priest(남) `character_concepts/priest.png` (Gemini), female_priest `character_concepts/female_priest.png`
-- ranger — 남성 ranger; 원화 `character_concepts/ranger.png` (Gemini)
-- valkyrie — 단일 성별; 원화 `character_concepts/valkyrie.jpg`
-- rogue (남) — 남성 rogue 모델; 원화 `character_concepts/rogue.png` (Gemini/Nano Banana); female_rogue는 [Thief → Rogue](#thief--rogue) 참고
+- barbarian / female_barbarian — Warrior 대체; 원화: barbarian(남) `character_concepts/barbarian.webp` (Gemini 원본을 ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85), female_barbarian `character_concepts/female_barbarian.webp` (ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85)
+- caveman / cavewoman — 원화: caveman(남) `character_concepts/caveman.webp` (ChatGPT Pro 20x 생성, 2026-08-28; WebP q85. 이전 Qwen Image Edit 원화는 **[미사용]**), cavewoman `character_concepts/cavewoman.webp` (ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85)
+- priest / female_priest — 원화: priest(남) `character_concepts/priest.webp` (Gemini 원본을 ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85), female_priest `character_concepts/female_priest.webp` (ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85)
+- ranger — 남성 ranger; 원화 `character_concepts/ranger.webp` (Gemini 원본을 ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85)
+- valkyrie — 단일 성별; 원화 `character_concepts/valkyrie.webp` (ChatGPT Pro 20x로 배경 투명화, 2026-08-29; WebP q85)
+- rogue (남) — 남성 rogue 모델; 원화 `character_concepts/rogue.webp` (Gemini/Nano Banana 원본을 ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85); female_rogue는 [Thief → Rogue](#thief--rogue) 참고
 
 ## Bard
 
 `female_bard.glb` — 단일 성별(female). Meshy.ai Premium 등급, 생성 2026-08-05 (프롬프트명 "Crimson Vanguard").
 
-- 원화 ![원화](../../client/public/character_concepts/female_bard.png)
+- 원화 ![원화](../../client/public/character_concepts/female_bard.webp) (ChatGPT Pro 20x로 배경 투명화, 2026-08-28; WebP q85)
 
 기존 워크플로우와 다른 점: Meshy 출력이 63개 분리 셸에 뒤집힌 면 403개, 열린 경계 1,093개라 Mixamo 업로드가 실패했다. Blender에서 커스텀 스플릿 노멀 제거 → Recalculate Outside → 8변 이하 구멍만 메움으로 정리 후 업로드 성공. 큰 개구부는 다른 조각에 가려 보이지 않아 남겼다(머티리얼 `doubleSided`).
 

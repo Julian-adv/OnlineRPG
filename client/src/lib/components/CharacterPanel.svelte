@@ -13,7 +13,7 @@
   } from '../network/networkTypes'
   import { skill_xp_for_level, skill_level_cap } from '../wasm/onlinerpg_shared'
   import { levelProgress } from '../utils/xpProgress'
-  import { equipBgCandidates } from '../utils/equipBackground'
+  import { equipBgCandidates, equipBgFilter } from '../utils/equipBackground'
   import { SvelteSet } from 'svelte/reactivity'
   import { skillsStore, SKILL_DISPLAY_NAMES } from '../stores/skillsStore'
   import type { SkillId, SkillProgress } from '../network/networkTypes'
@@ -282,6 +282,7 @@
               src={equipBg}
               alt=""
               draggable="false"
+              style:filter={equipBgFilter(equipBg)}
               onerror={() => {
                 if (equipBg) failedEquipBgs.add(equipBg)
               }}

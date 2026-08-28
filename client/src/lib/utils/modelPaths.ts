@@ -83,6 +83,11 @@ export function getNpcModelPath(npcName: string): string | undefined {
   return NPC_MODEL_OVERRIDES[npcName]
 }
 
+const NPC_CLASSES: CharacterClass[] = ['merchant', 'guard']
+export const PLAYER_CLASSES = (
+  Object.keys(CLASS_GENDER_MODELS) as CharacterClass[]
+).filter((cls) => !NPC_CLASSES.includes(cls))
+
 export function getAvailableGenders(characterClass: CharacterClass): Gender[] {
   const genders = CLASS_GENDER_MODELS[characterClass]
   if (!genders) return ['male', 'female']
