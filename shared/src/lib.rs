@@ -107,7 +107,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v43: `FriendEntry.class`, so the friend panel can draw class icons.
 /// v44: `WallVariant::WithDoubleDoor` ("double-door"); stale clients cannot
 ///      decode houses that use it.
-pub const PROTOCOL_VERSION: u32 = 44;
+/// v45: `ClientMessage::WorldReady` ends the entry grace that shields a
+///      player until their scene is drawn; an older server cannot decode it.
+pub const PROTOCOL_VERSION: u32 = 45;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
