@@ -1,7 +1,7 @@
 # Dungeon System — 층과 Y의 권위 모델
 
 던전에서 **누가 층을 정하고 누가 Y를 정하는가**를 다룬다. 지형 생성과 맵 포맷은
-[MAP_DESIGN.md](MAP_DESIGN.md), 몬스터 배치는 [NPC_MONSTER_AI.md](NPC_MONSTER_AI.md)에 있다.
+[MAP_DESIGN.md](MAP_DESIGN.md), 몬스터 배치는 [NPC_MONSTER_AI.md](NPC_MONSTER_AI.md), 보스 상자 규칙은 [DUNGEON_REWARD.md](DUNGEON_REWARD.md)에 있다.
 
 ## 모델
 
