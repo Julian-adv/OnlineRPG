@@ -191,8 +191,10 @@
         model = gltf.scene.clone()
         model.traverse((child) => {
           if (child instanceof THREE.Mesh) {
-            child.castShadow = true
-            child.receiveShadow = true
+            // The alpha=0 collision plane sits on the deck and would shadow it
+            const shadows = !isCollisionMaterial(child.material)
+            child.castShadow = shadows
+            child.receiveShadow = shadows
           }
         })
       }
@@ -552,13 +554,16 @@
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const solidOf = new Map<THREE.Material, THREE.Material>()
 
+  /** Alpha=0 planes baked into bridge GLBs to fill deck holes for collision. */
+  function isCollisionMaterial(m: THREE.Material | THREE.Material[]) {
+    return !Array.isArray(m) && m.name?.startsWith('DeckCollisionInvisible')
+  }
+
   function buildGhostMaterials(scene: THREE.Object3D) {
     scene.traverse((o) => {
       if (!(o instanceof THREE.Mesh)) return
       const m = o.material as THREE.Material
-      // Collision-only materials baked into a bridge GLB to fill deck holes
-      // are authored alpha=0 and stay as they are.
-      if (ghostOf.has(m) || m.name?.startsWith('DeckCollisionInvisible')) return
+      if (ghostOf.has(m) || isCollisionMaterial(m)) return
       const g = translucentClone(m, GHOST_OPACITY)
       ghostOf.set(m, g)
       solidOf.set(g, m)
