@@ -9,3 +9,7 @@ gm
 admin
 관리자
 administrator
+김정주
+송재경
+Jake
+JakeSong
