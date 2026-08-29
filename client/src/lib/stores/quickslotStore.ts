@@ -1,14 +1,12 @@
 import { writable } from 'svelte/store'
-import type { EquipSlot } from '../network/networkTypes'
+import type { EquipSlot, ItemInstance } from '../network/networkTypes'
+import { isConsumable, type ItemDefinition } from '../data/itemDefs'
+import { wornOfDef } from './inventoryStore'
 
 export const QUICKSLOT_COUNT = 10
 
-/**
- * One quickslot binding: an item *definition* id plus an enchant level. Not an
- * instance id — those are reissued every login, so a binding must survive on
- * def + enchant alone. `enchant: null` means "any level": bindings saved
- * before enchant levels were stored carry no level intent.
- */
+/** A binding is def + enchant level, never an instance id (reissued each
+ *  login). `enchant: null` = any level (entries saved before levels existed). */
 export type QuickslotEntry = {
   defId: string
   enchant: number | null
@@ -19,79 +17,56 @@ export const quickslots = writable<(QuickslotEntry | null)[]>(
   new Array(QUICKSLOT_COUNT).fill(null)
 )
 
-/** The inventory fields quickslot resolution reads. */
-export type CarriedItem = {
-  instance_id: number
-  item_def_id: string
-  enchant: number
-  quantity: number
-}
+export type CarriedItem = Pick<
+  ItemInstance,
+  'instance_id' | 'item_def_id' | 'enchant' | 'quantity'
+>
 
-/**
- * The bag copy a binding equips or consumes: the bound level while a copy at
- * that level is in the bag — that is what keeps a "+3 shield" binding off the
- * plain shield — then the level closest to the bound one (ties to the
- * higher), so a binding whose level no longer exists degrades to the nearest
- * copy instead of an unrelated spare. Any-level bindings take the best copy.
- */
+type QuickslotDef = Pick<ItemDefinition, 'equipSlot' | 'consumable'>
+
+/** Bound level if carried, else the nearest (ties high); null bound = highest. */
 function pickBagLevel(bound: number | null, levels: number[]): number | null {
   if (levels.length === 0) return null
-  if (bound !== null && levels.includes(bound)) return bound
-  if (bound === null) return Math.max(...levels)
+  const target = bound ?? Infinity
   return levels.reduce((a, b) => {
-    const da = Math.abs(a - bound)
-    const db = Math.abs(b - bound)
+    const da = Math.abs(a - target)
+    const db = Math.abs(b - target)
     return db < da || (db === da && b > a) ? b : a
   })
 }
 
 export type ResolvedQuickslot = {
-  /** Level the slot displays and acts on; the stored intent (possibly null)
-   *  when nothing of the def is carried. */
+  /** Level shown and acted on; the stored intent when nothing is carried. */
   enchant: number | null
-  /** Pressing the slot unequips the worn item (toggle off). */
-  unequip: boolean
-  /** Bag item a press equips or consumes, when not unequipping. */
+  /** Slot the bound def is worn in — a press toggles it off. */
+  wornSlot: EquipSlot | null
+  /** Bag item a press equips or consumes, when nothing is worn. */
   bagItem: CarriedItem | undefined
   /** Bag quantity at the resolved level. */
   qty: number
 }
 
-/**
- * What a quickslot press acts on. `worn` is the occupant of the bound def's
- * own equip slot (undefined for consumables or an empty slot).
- *
- * A `worn` item of the bound def always resolves to a toggle-off at its own
- * level, whatever level is stored: enchant scrolls raise a worn item's level
- * in place, so the worn copy IS the bound item after it drifts — and with one
- * binding per def, "unequip what I'm wearing" is the only consistent meaning
- * for the key. The bound level picks which bag copy to equip, nothing more.
- */
+/** A worn copy of the bound def always toggles off at its own level (enchant
+ *  scrolls raise it in place); the bound level only picks which bag copy to equip. */
 export function resolveQuickslot(
   entry: QuickslotEntry,
-  worn: CarriedItem | undefined,
+  def: QuickslotDef,
+  equipped: Partial<Record<EquipSlot, CarriedItem>>,
   bag: CarriedItem[]
 ): ResolvedQuickslot {
   const bagMatches = bag.filter((i) => i.item_def_id === entry.defId)
-  const wornMatch = worn?.item_def_id === entry.defId ? worn : undefined
-  const level = wornMatch
-    ? wornMatch.enchant
+  const worn = wornOfDef(entry.defId, def.equipSlot, equipped)
+  const level = worn
+    ? worn.item.enchant
     : pickBagLevel(
         entry.enchant,
         bagMatches.map((i) => i.enchant)
       )
-  if (level === null)
-    return {
-      enchant: entry.enchant,
-      unequip: false,
-      bagItem: undefined,
-      qty: 0,
-    }
   const atLevel = bagMatches.filter((i) => i.enchant === level)
   return {
-    enchant: level,
-    unequip: wornMatch !== undefined,
-    bagItem: wornMatch ? undefined : atLevel[0],
+    enchant: level ?? entry.enchant,
+    wornSlot: worn?.slot ?? null,
+    bagItem: worn ? undefined : atLevel[0],
     qty: atLevel.reduce((total, i) => total + i.quantity, 0),
   }
 }
@@ -104,15 +79,14 @@ export type QuickslotAction =
 
 /** The network action a quickslot press dispatches, if any. */
 export function quickslotAction(
-  def: { equipSlot?: EquipSlot | null; consumable?: boolean },
+  def: QuickslotDef,
   resolved: ResolvedQuickslot
 ): QuickslotAction {
-  const slot = def.equipSlot
-  if (slot && resolved.unequip) return { kind: 'unequip', slot }
+  if (resolved.wornSlot) return { kind: 'unequip', slot: resolved.wornSlot }
   if (!resolved.bagItem) return null
-  if (slot) return { kind: 'equip', instanceId: resolved.bagItem.instance_id }
-  if (def.consumable === true)
-    return { kind: 'use', instanceId: resolved.bagItem.instance_id }
+  const instanceId = resolved.bagItem.instance_id
+  if (def.equipSlot) return { kind: 'equip', instanceId }
+  if (isConsumable(def)) return { kind: 'use', instanceId }
   return null
 }
 
@@ -162,13 +136,11 @@ export function assignQuickslot(index: number, entry: QuickslotEntry) {
   if (index < 0 || index >= QUICKSLOT_COUNT) return
   quickslots.update((slots) => {
     const next = [...slots]
-    // One binding per item type: level fallbacks make two bindings of the
-    // same def collapse into indistinguishable slots, so re-dragging a def
-    // moves its binding instead.
+    // One binding per item type; re-dragging a def moves it.
     for (let i = 0; i < next.length; i++) {
       if (next[i]?.defId === entry.defId) next[i] = null
     }
-    next[index] = { defId: entry.defId, enchant: entry.enchant }
+    next[index] = entry
     persist(next)
     return next
   })

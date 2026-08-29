@@ -26,6 +26,19 @@ const ALTERNATE_SLOT: Partial<Record<EquipSlot, EquipSlot>> = {
   ring_left: 'ring',
 }
 
+/** Where an item of `defId` is worn, checking the def's slot and its alternate. */
+export function wornOfDef<T extends Pick<ItemInstance, 'item_def_id'>>(
+  defId: string,
+  slot: EquipSlot | null | undefined,
+  equipped: Partial<Record<EquipSlot, T>>
+): { slot: EquipSlot; item: T } | undefined {
+  if (!slot) return
+  for (const s of [slot, ALTERNATE_SLOT[slot]]) {
+    const item = s && equipped[s]
+    if (s && item?.item_def_id === defId) return { slot: s, item }
+  }
+}
+
 /** The equipped item that equipping `def` from the bag would send back to
  *  the bag, or undefined when nothing is displaced (empty slot, free
  *  alternate slot, or `item` is already equipped). */

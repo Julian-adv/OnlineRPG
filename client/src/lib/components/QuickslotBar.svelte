@@ -30,8 +30,7 @@
       if (!entry) return null
       const def = getItemDef(entry.defId)
       if (!def) return null
-      const worn = def.equipSlot ? equipped[def.equipSlot] : undefined
-      return { def, ...resolveQuickslot(entry, worn, bag) }
+      return { def, ...resolveQuickslot(entry, def, equipped, bag) }
     })
   })
 
@@ -197,14 +196,7 @@
 
   /* Top-right: the key label owns the top-left corner. */
   .item-enchant {
-    position: absolute;
-    top: 2px;
     right: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    color: #7ec8ff;
-    text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
-    pointer-events: none;
   }
 
   .item-qty.zero {

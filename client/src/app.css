@@ -74,3 +74,14 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+/* +N enchant badge on item slots; each surface sets its corner. */
+.item-enchant {
+  position: absolute;
+  top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7ec8ff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}

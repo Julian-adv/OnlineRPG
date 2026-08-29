@@ -644,14 +644,7 @@
   }
 
   .item-enchant {
-    position: absolute;
-    top: 2px;
     left: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    color: #7ec8ff;
-    text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
-    pointer-events: none;
   }
 
   @media (max-width: 600px), (pointer: coarse) {

@@ -31,12 +31,18 @@ function item(
   return { instance_id, item_def_id, enchant, quantity }
 }
 
+const SHIELD = { equipSlot: 'off_hand' as const }
+const SWORD = { equipSlot: 'main_hand' as const }
+const MAIL = { equipSlot: 'chest' as const }
+const POTION = { consumable: true }
+
 describe('resolveQuickslot', () => {
   it('acts on exactly the bound level when it is carried (#148)', () => {
     const bag = [item(1, 'shield', 0), item(2, 'shield', 3)]
     const plus3 = resolveQuickslot(
       { defId: 'shield', enchant: 3 },
-      undefined,
+      SHIELD,
+      {},
       bag
     )
     expect(plus3.enchant).toBe(3)
@@ -44,7 +50,8 @@ describe('resolveQuickslot', () => {
     expect(plus3.qty).toBe(1)
     const plain = resolveQuickslot(
       { defId: 'shield', enchant: 0 },
-      undefined,
+      SHIELD,
+      {},
       bag
     )
     expect(plain.enchant).toBe(0)
@@ -54,38 +61,42 @@ describe('resolveQuickslot', () => {
   it('toggles off the worn item at the bound level', () => {
     const resolved = resolveQuickslot(
       { defId: 'shield', enchant: 3 },
-      item(2, 'shield', 3),
+      SHIELD,
+      { off_hand: item(2, 'shield', 3) },
       [item(1, 'shield', 0)]
     )
-    expect(resolved.unequip).toBe(true)
+    expect(resolved.wornSlot).not.toBeNull()
     expect(resolved.bagItem).toBeUndefined()
   })
 
   it('follows the worn copy when it was enchanted in place, even past a stronger spare', () => {
     const resolved = resolveQuickslot(
       { defId: 'iron_sword', enchant: 2 },
-      item(9, 'iron_sword', 3),
+      SWORD,
+      { main_hand: item(9, 'iron_sword', 3) },
       [item(5, 'iron_sword', 5)]
     )
     expect(resolved.enchant).toBe(3)
-    expect(resolved.unequip).toBe(true)
+    expect(resolved.wornSlot).not.toBeNull()
   })
 
   it('still toggles off a drifted worn copy when a bag spare sits at the bound level', () => {
     const resolved = resolveQuickslot(
       { defId: 'iron_sword', enchant: 3 },
-      item(9, 'iron_sword', 4),
+      SWORD,
+      { main_hand: item(9, 'iron_sword', 4) },
       [item(5, 'iron_sword', 3)]
     )
     expect(resolved.enchant).toBe(4)
-    expect(resolved.unequip).toBe(true)
+    expect(resolved.wornSlot).not.toBeNull()
     expect(resolved.bagItem).toBeUndefined()
   })
 
   it('picks the bag copy closest to the bound level, not the strongest', () => {
     const resolved = resolveQuickslot(
       { defId: 'iron_sword', enchant: 2 },
-      undefined,
+      SWORD,
+      {},
       [item(5, 'iron_sword', 5), item(9, 'iron_sword', 3)]
     )
     expect(resolved.enchant).toBe(3)
@@ -95,17 +106,19 @@ describe('resolveQuickslot', () => {
   it('keeps an any-level binding on the worn copy over a fresh plain spare', () => {
     const resolved = resolveQuickslot(
       { defId: 'chain_mail', enchant: null },
-      item(9, 'chain_mail', 4),
+      MAIL,
+      { chest: item(9, 'chain_mail', 4) },
       [item(5, 'chain_mail', 0)]
     )
     expect(resolved.enchant).toBe(4)
-    expect(resolved.unequip).toBe(true)
+    expect(resolved.wornSlot).not.toBeNull()
   })
 
   it('sends an any-level binding to the best bag copy when nothing is worn', () => {
     const resolved = resolveQuickslot(
       { defId: 'iron_sword', enchant: null },
-      undefined,
+      SWORD,
+      {},
       [item(5, 'iron_sword', 1), item(9, 'iron_sword', 4)]
     )
     expect(resolved.enchant).toBe(4)
@@ -115,12 +128,13 @@ describe('resolveQuickslot', () => {
   it('goes inert but keeps the bound level when the def is gone entirely', () => {
     const resolved = resolveQuickslot(
       { defId: 'iron_sword', enchant: 2 },
-      undefined,
+      SWORD,
+      {},
       [item(1, 'shield', 2)]
     )
     expect(resolved).toEqual({
       enchant: 2,
-      unequip: false,
+      wornSlot: null,
       bagItem: undefined,
       qty: 0,
     })
@@ -129,7 +143,8 @@ describe('resolveQuickslot', () => {
   it('sums bag quantity only at the resolved level', () => {
     const resolved = resolveQuickslot(
       { defId: 'healing_potion', enchant: 0 },
-      undefined,
+      POTION,
+      {},
       [item(1, 'healing_potion', 0, 5), item(2, 'healing_potion', 0, 2)]
     )
     expect(resolved.qty).toBe(7)
@@ -137,16 +152,14 @@ describe('resolveQuickslot', () => {
 })
 
 describe('quickslotAction', () => {
-  const sword = { equipSlot: 'main_hand' as const }
-  const potion = { consumable: true }
-
   it('unequips the worn copy even when a bag spare matches the bound level', () => {
     const resolved = resolveQuickslot(
       { defId: 'iron_sword', enchant: 3 },
-      item(9, 'iron_sword', 4),
+      SWORD,
+      { main_hand: item(9, 'iron_sword', 4) },
       [item(5, 'iron_sword', 3)]
     )
-    expect(quickslotAction(sword, resolved)).toEqual({
+    expect(quickslotAction(SWORD, resolved)).toEqual({
       kind: 'unequip',
       slot: 'main_hand',
     })
@@ -155,10 +168,11 @@ describe('quickslotAction', () => {
   it('equips exactly the bound instance (#148)', () => {
     const resolved = resolveQuickslot(
       { defId: 'shield', enchant: 3 },
-      undefined,
+      SHIELD,
+      {},
       [item(1, 'shield', 0), item(2, 'shield', 3)]
     )
-    expect(quickslotAction({ equipSlot: 'off_hand' }, resolved)).toEqual({
+    expect(quickslotAction(SHIELD, resolved)).toEqual({
       kind: 'equip',
       instanceId: 2,
     })
@@ -167,19 +181,21 @@ describe('quickslotAction', () => {
   it('consumes from the bag and goes inert when nothing is carried', () => {
     const resolved = resolveQuickslot(
       { defId: 'healing_potion', enchant: 0 },
-      undefined,
+      POTION,
+      {},
       [item(1, 'healing_potion', 0, 5)]
     )
-    expect(quickslotAction(potion, resolved)).toEqual({
+    expect(quickslotAction(POTION, resolved)).toEqual({
       kind: 'use',
       instanceId: 1,
     })
     const empty = resolveQuickslot(
       { defId: 'healing_potion', enchant: 0 },
-      undefined,
+      POTION,
+      {},
       []
     )
-    expect(quickslotAction(potion, empty)).toBeNull()
+    expect(quickslotAction(POTION, empty)).toBeNull()
   })
 })
 

@@ -125,7 +125,7 @@ export function compareStats(
   return out
 }
 
-export function isConsumable(def: ItemDefinition): boolean {
+export function isConsumable(def: Pick<ItemDefinition, 'consumable'>): boolean {
   return def.consumable === true
 }
 
