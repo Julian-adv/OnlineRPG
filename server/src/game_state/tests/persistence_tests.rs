@@ -212,11 +212,38 @@ async fn open_door_state_is_stamped_onto_served_house_data() {
     game_state.apply_open_door_state(&mut served).await;
     assert!(!served[0].rooms[0].wall_north[0].is_open);
 
-    // A house edit (passability reinstall) forgets its open doors.
+    // A house edit re-seeds door state from the file (closed there).
     game_state
         .toggle_door(&toggler, &house.id, 0, WallDirection::North, 0)
         .await;
     game_state.passability_add_house(&house).await;
+    let mut served = vec![house.clone()];
+    game_state.apply_open_door_state(&mut served).await;
+    assert!(!served[0].rooms[0].wall_north[0].is_open);
+}
+
+#[tokio::test]
+async fn door_saved_open_is_served_open_and_first_toggle_closes_it() {
+    let game_state = make_test_game_state("door_saved_open");
+    let mut house = make_door_test_house();
+    house.rooms[0].wall_north[0].is_open = true;
+    game_state.housing_io.write_house(&house).await.unwrap();
+    game_state.passability_add_house(&house).await;
+
+    let mut served = vec![house.clone()];
+    game_state.apply_open_door_state(&mut served).await;
+    assert!(served[0].rooms[0].wall_north[0].is_open);
+
+    let toggler = pid("toggler");
+    game_state
+        .add_player(make_player("toggler", 10.5, 10.5))
+        .await;
+    let toggled = game_state
+        .toggle_door(&toggler, &house.id, 0, WallDirection::North, 0)
+        .await;
+    assert_eq!(toggled, Some(false));
+
+    // The file still says open; a client fetching it must see the live state.
     let mut served = vec![house.clone()];
     game_state.apply_open_door_state(&mut served).await;
     assert!(!served[0].rooms[0].wall_north[0].is_open);

@@ -273,13 +273,8 @@ pub fn build_furniture_passability(pieces: &[FurniturePiece]) -> Option<RuntimeP
 /// Should be called after build_runtime_passability to reflect doors that are already open.
 pub fn apply_door_overlays(cache: &mut PassabilityCache, house: &HouseData) {
     for room in &house.rooms {
-        for (dir, segs) in [
-            (WallDirection::North, &room.wall_north),
-            (WallDirection::South, &room.wall_south),
-            (WallDirection::East, &room.wall_east),
-            (WallDirection::West, &room.wall_west),
-        ] {
-            for (i, seg) in segs.iter().enumerate() {
+        for dir in WallDirection::ALL {
+            for (i, seg) in room.wall(dir).iter().enumerate() {
                 if seg.variant.is_door() && seg.is_open {
                     update_door_edge(cache, &house.id, room, dir, i, true);
                 }

@@ -863,43 +863,58 @@ impl GameState {
         Some(is_open)
     }
 
-    /// Stamp in-memory open-door state onto house data before sending it to a
-    /// client, so reconnecting players see doors others left open.
+    /// Served house data carries the live door state, not the file's.
     pub async fn apply_open_door_state(&self, houses: &mut [HouseData]) {
         let open_doors = self.open_doors.read().await;
-        if open_doors.is_empty() {
-            return;
-        }
-        let mut keys_by_house: HashMap<&str, Vec<&DoorKey>> = HashMap::new();
-        for key in open_doors.iter() {
-            keys_by_house
-                .entry(key.house_id.as_str())
-                .or_default()
-                .push(key);
-        }
         for house in houses.iter_mut() {
-            let Some(keys) = keys_by_house.get(house.id.as_str()) else {
+            for room in house.rooms.iter_mut() {
+                for wall_dir in WallDirection::ALL {
+                    for seg in room.wall_mut(wall_dir) {
+                        if seg.variant.is_openable() {
+                            seg.is_open = false;
+                        }
+                    }
+                }
+            }
+        }
+        for key in open_doors.iter() {
+            let Some(house) = houses.iter_mut().find(|h| h.id == key.house_id) else {
                 continue;
             };
-            for key in keys {
-                let Some(room) = house.rooms.get_mut(key.room_index as usize) else {
-                    continue;
-                };
-                let Some(seg) = room
-                    .wall_mut(key.wall_dir)
-                    .get_mut(key.segment_index as usize)
-                else {
-                    continue;
-                };
-                if seg.variant.is_openable() {
-                    seg.is_open = true;
+            let Some(room) = house.rooms.get_mut(key.room_index as usize) else {
+                continue;
+            };
+            if let Some(seg) = room
+                .wall_mut(key.wall_dir)
+                .get_mut(key.segment_index as usize)
+            {
+                seg.is_open = seg.variant.is_openable();
+            }
+        }
+    }
+
+    /// Re-seed the house's live open-door set from its persisted `is_open` flags.
+    pub(crate) async fn reset_open_doors_for_house(&self, house: &HouseData) {
+        let mut open_doors = self.open_doors.write().await;
+        open_doors.retain(|k| k.house_id != house.id);
+        for (ri, room) in house.rooms.iter().enumerate() {
+            for wall_dir in WallDirection::ALL {
+                for (si, seg) in room.wall(wall_dir).iter().enumerate() {
+                    if seg.variant.is_openable() && seg.is_open {
+                        open_doors.insert(DoorKey {
+                            house_id: house.id.clone(),
+                            room_index: ri as u32,
+                            wall_dir,
+                            segment_index: si as u32,
+                        });
+                    }
                 }
             }
         }
     }
 
-    /// Forget open-door state for a house whose passability entry is being
-    /// installed or removed; stale keys must not outlive the segment layout.
+    /// Forget open-door state for a removed house; stale keys must not
+    /// outlive the segment layout.
     pub(crate) async fn clear_open_doors_for_house(&self, house_id: &str) {
         self.open_doors
             .write()

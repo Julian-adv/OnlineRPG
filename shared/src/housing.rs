@@ -53,6 +53,15 @@ pub enum WallDirection {
     West,
 }
 
+impl WallDirection {
+    pub const ALL: [WallDirection; 4] = [
+        WallDirection::North,
+        WallDirection::South,
+        WallDirection::East,
+        WallDirection::West,
+    ];
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum WallVariant {
     #[serde(rename = "solid")]

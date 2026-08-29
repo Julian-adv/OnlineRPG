@@ -449,10 +449,10 @@ pub(super) fn bridge_deck_y(index: &BridgeDeckIndex, wx: f32, z: f32, ref_y: f32
 
 impl super::GameState {
     /// Insert or replace a house's cache entry: base grids plus the door
-    /// overlays persisted in its data. The in-memory open-door state for the
-    /// house is reset — the incoming data is authoritative after an edit.
+    /// overlays persisted in its data. The house's live door state is re-seeded
+    /// from the data's `is_open` flags.
     pub async fn passability_add_house(&self, house: &HouseData) {
-        self.clear_open_doors_for_house(&house.id).await;
+        self.reset_open_doors_for_house(house).await;
         let rp = pathfinding::build_runtime_passability(house);
         let mut cache = self.passability_write();
         cache.insert(house.id.clone(), rp);
