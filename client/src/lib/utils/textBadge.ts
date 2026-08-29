@@ -25,6 +25,25 @@ export interface TextBadge {
  *  lifetime. Cached textures are shared — never dispose them. */
 const cache = new Map<string, TextBadge>()
 
+/** Stroke-then-fill `text` centred on (cx, cy) with the context's current font. */
+export function drawOutlinedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cx: number,
+  cy: number,
+  style: { color: string; outlineColor: string; outlineWidth: number }
+) {
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  ctx.strokeStyle = style.outlineColor
+  ctx.lineWidth = style.outlineWidth
+  ctx.strokeText(text, cx, cy)
+  ctx.fillStyle = style.color
+  ctx.fillText(text, cx, cy)
+}
+
 export function makeTextBadge(text: string, style: BadgeStyle): TextBadge {
   const key = `${style.id}|${text}`
   const cached = cache.get(key)
@@ -39,15 +58,7 @@ export function makeTextBadge(text: string, style: BadgeStyle): TextBadge {
   c.height = Math.ceil(style.fontPx * 1.25) + pad * 2
   // Resizing the canvas reset the context state, font included.
   ctx.font = font
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.lineJoin = 'round'
-  ctx.lineCap = 'round'
-  ctx.strokeStyle = style.outlineColor
-  ctx.lineWidth = style.outlineWidth
-  ctx.strokeText(text, c.width / 2, c.height / 2)
-  ctx.fillStyle = style.color
-  ctx.fillText(text, c.width / 2, c.height / 2)
+  drawOutlinedText(ctx, text, c.width / 2, c.height / 2, style)
 
   const texture = new THREE.CanvasTexture(c)
   texture.minFilter = THREE.LinearFilter

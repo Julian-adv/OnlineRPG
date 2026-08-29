@@ -50,7 +50,7 @@
   import TextLabel from './TextLabel.svelte'
   import type { Vector3 } from 'three'
   import type { GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js'
-  import { onMount, untrack } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import { SvelteMap } from 'svelte/reactivity'
   import { get } from 'svelte/store'
   import { timeScale } from '../stores/timeStore'
@@ -112,7 +112,7 @@
   } from '../utils/movementUtils'
   import { TorchFireParticles } from '../effects/fire-particles'
   import ChatBubble from './ChatBubble.svelte'
-  import DamageText from './DamageText.svelte'
+  import { DamageTextEmitter } from '../effects/damage-text-pool'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
   import { hoveredPlayerId } from '../stores/gameStore'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
@@ -227,8 +227,8 @@
   let chatBubbleInstance = $state<ChatBubble | null>(null)
   let animDebugInfo = $state('')
 
-  // Floating damage text
-  let damageTextRef = $state<ReturnType<typeof DamageText>>()
+  const damageText = new DamageTextEmitter()
+  onDestroy(() => damageText.dispose())
 
   // svelte-ignore state_referenced_locally
   let displayedHealth = $state(health)
@@ -1036,14 +1036,15 @@
       nametagGroup.quaternion.copy(camera.quaternion)
     }
 
-    // Update floating damage texts
-    if (camera) {
-      damageTextRef?.update(
+    if (camera && isCurrentPlayer) {
+      damageText.update(
         deltaTime,
         position.x,
         position.y,
         position.z,
-        camera
+        camera,
+        { damage: lastDamageInfo, regen: lastRegenInfo, gold: lastGoldInfo },
+        nametagHeight + 0.04
       )
     }
 
@@ -1266,16 +1267,5 @@
     {position}
     {camera}
     message={chatBubble}
-  />
-{/if}
-
-<!-- Floating Damage Text -->
-{#if isCurrentPlayer}
-  <DamageText
-    bind:this={damageTextRef}
-    {lastDamageInfo}
-    {lastRegenInfo}
-    {lastGoldInfo}
-    startYOffset={nametagHeight + 0.04}
   />
 {/if}

@@ -20,9 +20,9 @@
   import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js'
   import * as THREE from 'three'
   import { get } from 'svelte/store'
-  import { untrack } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import { timeScale } from '../stores/timeStore'
-  import DamageText from './DamageText.svelte'
+  import { DamageTextEmitter } from '../effects/damage-text-pool'
 
   import type { MonsterData } from '../types/Monster'
   import {
@@ -175,7 +175,8 @@
   let lastAttackAnimFinished = $state(true)
   let lastAttackCounter = $state<number | undefined>(undefined)
   let lastHitCounter = $state<number | undefined>(undefined)
-  let damageTextRef = $state<ReturnType<typeof DamageText>>()
+  const damageText = new DamageTextEmitter()
+  onDestroy(() => damageText.dispose())
   let lastAppliedOpacity = 1
   let materialsCloned = false
   let deadGroundApplied = false
@@ -382,14 +383,17 @@
       )
     }
 
-    // 2. Update damage texts
+    // 2. Update damage texts; bosses spawn them above the nameplate so the
+    // number isn't drawn behind the name (both are transparent billboards).
     if (camera) {
-      damageTextRef?.update(
+      damageText.update(
         deltaTime,
         position.x,
         position.y,
         position.z,
-        camera
+        camera,
+        { damage: lastDamageInfo },
+        isBoss ? nametagHeight + 0.3 : 1.8 * initialScale
       )
     }
 
@@ -673,11 +677,3 @@
     />
   {/if}
 </T.Group>
-
-<!-- Floating Damage Text; bosses spawn it above the nameplate so the number
-     isn't drawn behind the name (both are transparent billboards). -->
-<DamageText
-  bind:this={damageTextRef}
-  {lastDamageInfo}
-  startYOffset={isBoss ? nametagHeight + 0.3 : 1.8 * initialScale}
-/>

@@ -38,6 +38,7 @@
   import GameSceneHousingLayer from './game-scene/GameSceneHousingLayer.svelte'
   import GameSceneDungeonLayer from './game-scene/GameSceneDungeonLayer.svelte'
   import { isUnderground } from '../stores/dungeonStore'
+  import { damageTextPool } from '../effects/damage-text-pool'
   import {
     playerFloorOffset,
     playerInsideHouseId,
@@ -1215,6 +1216,8 @@
 />
 
 <T is={entityClipGroupObj} bind:ref={entityClipGroup}>
+  <!-- Under the clip group so labels are hidden with entities in the water passes -->
+  <T is={damageTextPool.group} />
   <!-- Hidden surface meshes still raycast, so drop them from the click lists underground -->
   <GameScenePlayersLayer
     bind:this={playersLayer}
