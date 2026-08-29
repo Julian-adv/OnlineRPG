@@ -16,6 +16,7 @@ mod shop_info;
 mod splat;
 mod state;
 mod terrain_http;
+mod transcript;
 mod update;
 mod watch;
 mod ws;
@@ -87,6 +88,12 @@ struct Config {
     /// Check GitHub releases at startup and self-update (default on).
     #[serde(default = "default_true")]
     auto_update: bool,
+
+    /// Full prompt/response transcripts, one file per NPC per day ("" = off).
+    #[serde(default = "default_transcript_dir")]
+    transcript_dir: String,
+    #[serde(default = "default_transcript_keep_days")]
+    transcript_keep_days: u64,
 
     /// Claude CLI integration config (shared across NPCs that don't override)
     #[serde(default)]
@@ -165,6 +172,14 @@ fn default_request_timeout_secs() -> u64 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_transcript_dir() -> String {
+    "logs/transcripts".into()
+}
+
+fn default_transcript_keep_days() -> u64 {
+    3
 }
 
 const CONFIG_PATH: &str = "data/config.toml";
@@ -290,6 +305,10 @@ async fn main() -> anyhow::Result<()> {
         scheduler: llm_scheduler::LlmScheduler::new(
             config.max_concurrent,
             Duration::from_secs(config.request_timeout_secs),
+        ),
+        transcript: transcript::Transcript::start(
+            &config.transcript_dir,
+            config.transcript_keep_days,
         ),
         auth: match config.auth.mode {
             AuthMode::NpcToken => AuthSource::NpcToken(resolve_npc_token(config.npc_token)?),

@@ -164,7 +164,7 @@ fn codex_command() -> Command {
 #[async_trait]
 impl LlmBackend for CodexInvoker {
     async fn send_message(&self, content: &str) -> anyhow::Result<String> {
-        info!(">>> TO CODEX ({} bytes):\n{}", content.len(), content);
+        debug!(">>> TO CODEX ({} bytes):\n{}", content.len(), content);
 
         let full_prompt = format!("{}\n\n{}", self.system_prompt, content);
 
@@ -262,7 +262,7 @@ impl LlmBackend for CodexInvoker {
                 "Codex produced no agent_message (exit: {status})"
             ));
         }
-        info!("<<< FROM CODEX ({} bytes):\n{}", response.len(), response);
+        debug!("<<< FROM CODEX ({} bytes):\n{}", response.len(), response);
         Ok(response)
     }
 }

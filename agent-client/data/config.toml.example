@@ -60,6 +60,11 @@ max_concurrent = 2                          # Max simultaneous LLM calls (min 1,
 request_timeout_secs = 120                  # Give up on one call (0 = never); applies to every
                                             # backend, so a hung CLI or endpoint cannot hold a slot
 
+# Full LLM prompt/response text goes to <transcript_dir>/<npc>/<YYYY-MM-DD>.log
+# instead of the journal (which keeps one "llm turn" summary line per call).
+# transcript_dir = "logs/transcripts"       # "" turns transcripts off
+# transcript_keep_days = 3                  # older daily files are deleted
+
 # How this client authenticates to the game server.
 #   npc_token — shared secret from the server's data/npc_token (default)
 #   google    — the runner's own Google account, via the device flow: the

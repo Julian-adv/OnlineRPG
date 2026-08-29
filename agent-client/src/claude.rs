@@ -66,7 +66,7 @@ impl ClaudeInvoker {
 #[async_trait]
 impl LlmBackend for ClaudeInvoker {
     async fn send_message(&self, content: &str) -> anyhow::Result<String> {
-        info!(">>> TO CLAUDE ({} bytes):\n{}", content.len(), content);
+        debug!(">>> TO CLAUDE ({} bytes):\n{}", content.len(), content);
 
         let session_id = self.session_id.lock().await.clone();
 
@@ -143,7 +143,7 @@ impl LlmBackend for ClaudeInvoker {
             }
         }
 
-        info!(
+        debug!(
             "<<< FROM CLAUDE ({} bytes):\n{}",
             full_text.len(),
             full_text

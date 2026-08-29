@@ -39,6 +39,7 @@ OnlineRPG/
 │   │   ├── dungeon.rs         # 던전 레이아웃/계단 Y/문 (shared 생성기 사용)
 │   │   ├── driver/            # LLM 드라이버 (프롬프트, 행동, 이동, 전투)
 │   │   ├── llm_scheduler.rs   # 우선순위 큐 + 동시 호출 제한
+│   │   ├── transcript.rs      # LLM 턴 요약 로그 + 전문 파일 기록
 │   │   └── watch.rs           # 로컬 관전 패널 (읽기 전용)
 │   └── Cargo.toml
 ├── server/               # 게임 서버
@@ -232,6 +233,27 @@ openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`
   넘치면 system 프롬프트와 최근 턴만 남긴다. 3 미만은 3으로 올려 받는다 — 그 아래면
   트림이 system이나 지금 보내는 턴을 잘라내고 usize 언더플로로 패닉한다. 이 설정은
   `openai` 백엔드 전용이고, openrouter는 기본값 고정이다.
+
+### LLM 트랜스크립트 (`transcript_dir`, `transcript_keep_days`)
+
+프롬프트·응답 전문은 저널에 찍지 않는다. `transcript.rs`의 `TranscriptBackend`가
+`build_llm_backend()`에서 모든 백엔드를 감싸(`TimeoutBackend` 바깥, `WatchedBackend`
+안쪽) 호출마다 저널에 한 줄만 남기고
+(`llm turn npc=Rica prompt=3211B reply=210B wait=0.0s latency=1.83s`, 실패는 `error`),
+전문은 `transcript_dir`(기본 `logs/transcripts`, CWD 기준) 아래
+`<npc>/<YYYY-MM-DD>.log`에 UTC 일자별로 이어 쓴다. `transcript_keep_days`(기본 3)보다
+오래된 파일은 한 시간에 한 번 지운다. 플레이어 채팅이 그대로 담기므로 보관 기간은
+짧게 둔다. `transcript_dir = ""`이면 끈다.
+
+전문을 저널에서 바로 보고 싶으면 백엔드 타깃만 debug로 올린다(`agent_client=debug`는
+스케줄러 잡음까지 켠다):
+
+```
+RUST_LOG=info,agent_client::codex=debug,agent_client::claude=debug
+```
+
+prod 유닛은 `/etc/openmmo/agent-client.env`를 읽으므로 거기에 넣고
+`systemctl restart openmmo-agent-client`.
 
 ### 호출 타임아웃 (`request_timeout_secs`, 기본 120)
 

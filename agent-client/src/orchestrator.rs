@@ -150,6 +150,8 @@ pub struct SharedResources {
     pub type_mapping: Arc<HashMap<String, String>>,
     pub movement_speeds: Arc<HashMap<String, crate::monster_ai::MonsterMovement>>,
     pub scheduler: LlmScheduler,
+    /// `None` when `transcript_dir` is empty; the summary line is logged either way.
+    pub transcript: Option<Arc<crate::transcript::Transcript>>,
     pub auth: AuthSource,
     /// `None` when the spectator panel is off, so nothing is recorded for it.
     pub watch: Option<Arc<crate::watch::WatchHub>>,
@@ -393,7 +395,7 @@ async fn run_npc_session(
             let agent = npc
                 .id
                 .is_none()
-                .then(|| build_llm_backend(npc, watch.clone(), shared.scheduler.request_timeout()))
+                .then(|| build_llm_backend(npc, watch.clone(), shared))
                 .flatten();
             roll_stats_with_agent(
                 &mut ws_tx,
@@ -512,7 +514,7 @@ async fn run_npc_session(
         }
     });
 
-    let llm_task = spawn_llm_task(npc, &state, &shared.scheduler, server_url, watch.clone());
+    let llm_task = spawn_llm_task(npc, &state, shared, server_url, watch.clone());
 
     // Monster AI tick task (1Hz)
     let state_for_ai = Arc::clone(&state);
@@ -886,7 +888,7 @@ fn build_system_prompt(npc: &NpcConfig) -> anyhow::Result<String> {
 fn build_llm_backend(
     npc: &NpcConfig,
     watch: Option<Arc<crate::watch::NpcWatch>>,
-    request_timeout: Duration,
+    shared: &SharedResources,
 ) -> Option<Arc<dyn driver::LlmBackend>> {
     let label = npc.label();
     let system_prompt = match build_system_prompt(npc) {
@@ -932,7 +934,9 @@ fn build_llm_backend(
             info!("[{label}] {provider} integration enabled (model={model})");
             // Timeout under the watcher, so a giving-up call still lands on the
             // panel as an error instead of a prompt with no answer.
-            let inv = TimeoutBackend::wrap(inv, request_timeout);
+            let inv = TimeoutBackend::wrap(inv, shared.scheduler.request_timeout());
+            let inv =
+                crate::transcript::TranscriptBackend::wrap(inv, shared.transcript.clone(), label);
             Some(crate::watch::WatchedBackend::wrap(inv, watch))
         }
         Err(e) => {
@@ -961,10 +965,11 @@ fn api_base_url(server_url: &str) -> String {
 fn spawn_llm_task(
     npc: &NpcConfig,
     state: &Arc<Mutex<SharedState>>,
-    scheduler: &LlmScheduler,
+    shared: &SharedResources,
     server_url: &str,
     watch: Option<Arc<crate::watch::NpcWatch>>,
 ) -> Option<tokio::task::JoinHandle<()>> {
+    let scheduler = &shared.scheduler;
     let label = npc.label();
     let min_interval = Duration::from_secs(npc.min_interval_secs);
     let urgent_min_interval = Duration::from_secs(npc.urgent_min_interval_secs);
@@ -972,7 +977,7 @@ fn spawn_llm_task(
     let idle_interval = Duration::from_secs(npc.idle_interval_secs);
     let activity_window = Duration::from_secs(npc.activity_window_secs);
 
-    let invoker = build_llm_backend(npc, watch, scheduler.request_timeout())?;
+    let invoker = build_llm_backend(npc, watch, shared)?;
 
     let state = Arc::clone(state);
     let scheduler = scheduler.clone();
