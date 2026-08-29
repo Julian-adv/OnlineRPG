@@ -526,8 +526,11 @@ mod tests {
         assert_eq!(debut("wool_cape"), Some(3));
         // Accessories fill the low tiers' empty neck/ring lanes.
         assert_eq!(debut("silver_necklace"), Some(2));
-        // Weapons and consumables stay out of chests entirely.
-        for id in ["iron_sword", "healing_potion"] {
+        // Boss weapons are chest signatures; other weapons and consumables stay out.
+        assert_eq!(debut("goblin_sword"), Some(1));
+        assert_eq!(debut("iron_sword"), Some(2));
+        assert_eq!(debut("steel_longsword"), Some(3));
+        for id in ["small_sword", "healing_potion"] {
             assert_eq!(debut(id), None, "{id} must stay out of chest pools");
         }
     }
@@ -559,12 +562,12 @@ mod tests {
             expectation
         }
 
-        // Old Crypt (tier 1): signature leather_helmet is guaranteed; the
-        // remaining set pieces must land in ~5 runs.
+        // Old Crypt (tier 1): signatures are guaranteed; the remaining set
+        // pieces must land in ~5 runs.
         let t1: Vec<f32> = defs
             .chest_roll_table(1)
             .into_iter()
-            .filter(|(id, _)| id != "leather_helmet")
+            .filter(|(id, _)| id != "leather_helmet" && id != "goblin_sword")
             .map(|(_, chance)| chance)
             .collect();
         let opens = expected_opens_to_collect(&t1);
