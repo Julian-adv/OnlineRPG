@@ -65,18 +65,7 @@ export function runRenderPasses(ctx: RenderPassesContext): void {
         hasWater: ctx.hasWater,
         waterGroup: ctx.waterGroup,
         terrainMeshes: ctx.terrainMeshes,
-        hiddenGroups: [
-          ctx.entityClipGroup,
-          ctx.grassLayerRef?.getGroup(),
-          ctx.treeLayerRef?.getGroup(),
-          ctx.windParticlesRef?.getGroup(),
-          // Rocks straddle the surface — leaving them in paints a ghost
-          // "sunken rock" into the refracted bed image.
-          ctx.riverRocksRef?.getGroup(),
-          // Spray droplets are above-surface billboards; keep them out of
-          // the refracted bed and the mirror.
-          ctx.shoreSprayRef?.getGroup(),
-        ],
+        hiddenGroups: aboveWaterGroups(ctx),
       },
       ctx.loopProfiler
     )
@@ -92,21 +81,28 @@ export function runRenderPasses(ctx: RenderPassesContext): void {
         waterGroup: ctx.waterGroup,
         terrainGroup: ctx.terrainGroup,
         housingGroup: ctx.housingLayerRef?.getGroup(),
-        hiddenGroups: [
-          ctx.grassLayerRef?.getGroup(),
-          ctx.treeLayerRef?.getGroup(),
-          ctx.windParticlesRef?.getGroup(),
-          ctx.objectOverlayRef?.getGroup(),
-          ctx.entityClipGroup,
-          // Same policy as trees: no rock mirror image on the water.
-          ctx.riverRocksRef?.getGroup(),
-          ctx.shoreSprayRef?.getGroup(),
-        ],
+        hiddenGroups: aboveWaterGroups(ctx),
         getNametagGroups: () => collectNametagGroups(ctx),
       },
       ctx.loopProfiler
     )
   })
+}
+
+/** Everything above the water surface: neither refracted into the bed image
+ *  nor mirrored, and every group left in costs a pipeline per material. */
+function aboveWaterGroups(
+  ctx: RenderPassesContext
+): (THREE.Group | undefined)[] {
+  return [
+    ctx.entityClipGroup,
+    ctx.grassLayerRef?.getGroup(),
+    ctx.treeLayerRef?.getGroup(),
+    ctx.windParticlesRef?.getGroup(),
+    ctx.objectOverlayRef?.getGroup(),
+    ctx.riverRocksRef?.getGroup(),
+    ctx.shoreSprayRef?.getGroup(),
+  ]
 }
 
 function collectNametagGroups(ctx: RenderPassesContext): THREE.Group[] {

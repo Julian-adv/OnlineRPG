@@ -67,18 +67,14 @@
     currentObjectData.subscribe((v) => {
       placements = v.placements
       // Re-sync bridge + furniture collision so newly placed/edited objects
-      // take effect immediately. Guard for the initial empty-state fire before
-      // catalog loads (and before any region has been loaded).
+      // take effect immediately. Skip the initial empty-state fire before any
+      // region has been loaded.
+      const { rx, rz } = lastLoadedRegion
+      if (Number.isNaN(rx)) return
       if (catalogById.size > 0) {
-        bridgeManager.syncRegion(v.placements, catalogById)
+        bridgeManager.syncRegion(rx, rz, v.placements, catalogById)
       }
-      if (!Number.isNaN(lastLoadedRegion.rx)) {
-        furnitureManager.syncRegion(
-          lastLoadedRegion.rx,
-          lastLoadedRegion.rz,
-          v.placements
-        )
-      }
+      furnitureManager.syncRegion(rx, rz, v.placements)
     }),
     objectCatalog.subscribe((v) => {
       // Keep catalogById in sync with whoever populated the store
@@ -113,12 +109,12 @@
     // this region's cells under the wrong region — and shows stale objects.
     if (rx !== lastLoadedRegion.rx || rz !== lastLoadedRegion.rz) return
     // currentObjectData.set fires the subscription above synchronously, which
-    // syncs furniture for lastLoadedRegion (== rx,rz here) — no direct call needed.
+    // syncs bridges + furniture for lastLoadedRegion (== rx,rz here).
     currentObjectData.set(data)
-    bridgeManager.syncRegion(data.placements, catalogById)
     // Sync first, evict after: the new region is in place before its distant
     // neighbours go, so collision is never momentarily absent underfoot.
     furnitureManager.evictDistant(rx, rz)
+    bridgeManager.evictDistant(rx, rz)
   }
 
   $effect(() => {
@@ -188,10 +184,9 @@
       } else {
         if (!def.model) return null
         const gltf = await loadGLB(getObjectModelPath(def.model))
-        // Bridges ray-cast against the cached, untransformed scene at runtime
-        // so the player Y tracks the actual deck curve precisely.
-        if (def.kind === 'bridge') {
-          bridgeManager.registerBridgeMesh(objectId, gltf.scene)
+        if (def.kind === 'bridge' && def.bridge) {
+          bridgeManager.registerBridgeMesh(objectId, gltf.scene, def.bridge)
+          buildGhostMaterials(gltf.scene)
         }
         model = gltf.scene.clone()
         model.traverse((child) => {
@@ -263,14 +258,22 @@
     return lines
   }
 
+  function translucentClone(m: THREE.Material, opacity: number) {
+    const t = m.clone()
+    t.transparent = true
+    t.opacity = opacity
+    t.depthWrite = false
+    return t
+  }
+
   function setPreviewMaterial(obj: THREE.Object3D, opacity: number) {
     obj.traverse((child) => {
       if (child instanceof THREE.Mesh) {
-        child.material = (child.material as THREE.Material).clone()
+        child.material = translucentClone(
+          child.material as THREE.Material,
+          opacity
+        )
         child.userData.ownsMaterial = true
-        ;(child.material as THREE.Material).transparent = true
-        ;(child.material as THREE.Material).opacity = opacity
-        ;(child.material as THREE.Material).depthWrite = false
       }
     })
   }
@@ -420,15 +423,6 @@
       clone.userData.objectInteractOffset = catDef.interactOffset
     }
     if (catDef?.kind) clone.userData.objectKind = catDef.kind
-    // Per-instance material clone so the ghost toggle doesn't leak across placements.
-    if (catDef?.kind === 'bridge') {
-      clone.traverse((o) => {
-        if (o instanceof THREE.Mesh && o.material) {
-          o.material = (o.material as THREE.Material).clone()
-          o.userData.ownsMaterial = true
-        }
-      })
-    }
     return clone
   }
 
@@ -550,28 +544,39 @@
 
   let ghostBridgeId: number | null = null
 
+  /** Ghost twins of each bridge model's materials, built once per model so
+   *  every placement shares the same two material sets and the ghost toggle
+   *  is a reference swap — no per-placement clones, no needsUpdate recompiles. */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const ghostOf = new Map<THREE.Material, THREE.Material>()
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const solidOf = new Map<THREE.Material, THREE.Material>()
+
+  function buildGhostMaterials(scene: THREE.Object3D) {
+    scene.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return
+      const m = o.material as THREE.Material
+      // Collision-only materials baked into a bridge GLB to fill deck holes
+      // are authored alpha=0 and stay as they are.
+      if (ghostOf.has(m) || m.name?.startsWith('DeckCollisionInvisible')) return
+      const g = translucentClone(m, GHOST_OPACITY)
+      ghostOf.set(m, g)
+      solidOf.set(g, m)
+    })
+  }
+
   function applyBridgeGhost(placementId: number, ghost: boolean) {
-    const child = cloneById.get(placementId)
-    if (child) {
-      child.traverse((o) => {
-        if (!(o instanceof THREE.Mesh)) return
-        const m = o.material as THREE.Material
-        // Skip collision-only materials baked into a bridge GLB to fill deck
-        // holes — they're authored alpha=0 and must stay invisible even when
-        // ghost mode ends (otherwise the un-ghost restore turns them into a
-        // visible white plane on the deck).
-        if (m.name?.startsWith('DeckCollisionInvisible')) return
-        m.transparent = ghost
-        m.opacity = ghost ? GHOST_OPACITY : 1
-        m.depthWrite = !ghost
-        // Toggling `transparent` changes blend state — without needsUpdate
-        // the shader isn't recompiled and opacity is silently ignored.
-        m.needsUpdate = true
-        // Draw after the river ribbon (renderOrder=1) so alpha-blended deck
-        // sorts above water consistently.
-        o.renderOrder = ghost ? 2 : 0
-      })
-    }
+    cloneById.get(placementId)?.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return
+      const swapped = (ghost ? ghostOf : solidOf).get(
+        o.material as THREE.Material
+      )
+      if (!swapped) return
+      o.material = swapped
+      // Draw after the river ribbon (renderOrder=1) so alpha-blended deck
+      // sorts above water consistently.
+      o.renderOrder = ghost ? 2 : 0
+    })
   }
 
   $effect(() => {
@@ -599,6 +604,9 @@
     }
     group.clear()
     modelCache.clear()
+    for (const g of ghostOf.values()) g.dispose()
+    ghostOf.clear()
+    solidOf.clear()
   })
 </script>
 

@@ -1,4 +1,5 @@
 import type { ObjectPlacement } from '../stores/editorStore'
+import { isNeighbourRegion } from '../terrain/terrain-constants'
 import {
   passability_set_furniture,
   passability_remove_furniture,
@@ -83,8 +84,7 @@ class FurnitureManager {
   evictDistant(rx: number, rz: number): void {
     let removed = false
     for (const [key, region] of this.regions) {
-      if (Math.abs(region.rx - rx) <= 1 && Math.abs(region.rz - rz) <= 1)
-        continue
+      if (isNeighbourRegion(region.rx, region.rz, rx, rz)) continue
       passability_remove_furniture(key)
       this.regions.delete(key)
       removed = true

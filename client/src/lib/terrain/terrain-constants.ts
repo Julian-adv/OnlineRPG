@@ -31,6 +31,16 @@ export function regionKey(rx: number, rz: number): string {
   return `${rx},${rz}`
 }
 
+/** True when (ax, az) is within the 3×3 block of regions around (bx, bz). */
+export function isNeighbourRegion(
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number
+): boolean {
+  return Math.abs(ax - bx) <= 1 && Math.abs(az - bz) <= 1
+}
+
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
