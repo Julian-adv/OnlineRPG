@@ -84,6 +84,12 @@
   })
   let debugPassDirty = false
 
+  // Server floor syncs (join/teleport/correction) also write the store; follow
+  // them so stacked rooms resolve to that storey.
+  const unsubFloor = playerVisualFloorLevel.subscribe((v) => {
+    playerInsideFloor = v
+  })
+
   const unsubPassDebug = passabilityDebugVisible.subscribe((v) => {
     debugPassGroup.visible = v
     if (v) debugPassDirty = true
@@ -178,6 +184,7 @@
   })
 
   onDestroy(() => {
+    unsubFloor()
     unsubHouses()
     unsubPassDebug()
     unsubFurniture()

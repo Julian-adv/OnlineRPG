@@ -11,6 +11,7 @@ import { resetFishingStore } from './fishingStore'
 import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
 import { resetDebuffStore } from './debuffStore'
+import { resetHousingStore } from './housingStore'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
 import { stallManager } from '../managers/stallManager'
@@ -168,6 +169,7 @@ export const resetGameStore = () => {
   resetDiscoveredDungeons()
   resetHungerStore()
   resetDebuffStore()
+  resetHousingStore()
   groundItemManager.reset()
   campfireManager.reset()
   stallManager.reset()

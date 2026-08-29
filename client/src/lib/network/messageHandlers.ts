@@ -105,6 +105,7 @@ import { discoveredDungeonIds } from '../stores/dungeonStore'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
+import { playerVisualFloorLevel } from '../stores/housingStore'
 import {
   startMusicPerformance,
   stopMusicPerformance,
@@ -353,6 +354,14 @@ function announceGroundItem(
   })
 }
 
+/** Server-driven floor for our own player: dungeon depth and house storey
+ *  (the housing layer only rewrites the storey when its own view changes). */
+function syncOwnFloor(floorLevel: number | undefined, x: number, z: number) {
+  const floor = floorLevel ?? 0
+  dungeonManager.syncFromFloorLevel(floor, x, z)
+  playerVisualFloorLevel.set(Math.max(0, floor))
+}
+
 export function handleServerMessage(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   raw: any,
@@ -391,8 +400,8 @@ export function handleServerMessage(
         currentPlayer: player,
       }))
       // Players who logged out inside a dungeon reconnect there.
-      dungeonManager.syncFromFloorLevel(
-        serverPlayer.floor_level ?? 0,
+      syncOwnFloor(
+        serverPlayer.floor_level,
         serverPlayer.position.x,
         serverPlayer.position.z
       )
@@ -530,11 +539,7 @@ export function handleServerMessage(
       // No id to match: it only ever goes to the player it corrects.
       dungeonManager.requestDoorResyncAfterCorrection()
       // A correction is how a refused floor claim comes back.
-      dungeonManager.syncFromFloorLevel(
-        data.floor_level ?? 0,
-        data.position.x,
-        data.position.z
-      )
+      syncOwnFloor(data.floor_level, data.position.x, data.position.z)
       events.positionCorrected.emit({
         x: data.position.x,
         y: data.position.y,
@@ -557,11 +562,7 @@ export function handleServerMessage(
           )
           return s
         })
-        dungeonManager.syncFromFloorLevel(
-          data.floor_level ?? 0,
-          data.position.x,
-          data.position.z
-        )
+        syncOwnFloor(data.floor_level, data.position.x, data.position.z)
         requestCameraReset()
         // Any teleport settles the summon toast — an accepted one succeeded,
         // and one surviving the player's own departure would mislead.
@@ -1043,8 +1044,8 @@ export function handleServerMessage(
           maxHealth: serverPlayer.max_health,
         })
         // Town respawn surfaces; a talisman revive stays on the same floor.
-        dungeonManager.syncFromFloorLevel(
-          serverPlayer.floor_level ?? 0,
+        syncOwnFloor(
+          serverPlayer.floor_level,
           serverPlayer.position.x,
           serverPlayer.position.z
         )
