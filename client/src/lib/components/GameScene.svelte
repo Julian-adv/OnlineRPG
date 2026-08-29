@@ -1215,6 +1215,7 @@
 />
 
 <T is={entityClipGroupObj} bind:ref={entityClipGroup}>
+  <!-- Hidden surface meshes still raycast, so drop them from the click lists underground -->
   <GameScenePlayersLayer
     bind:this={playersLayer}
     {camera}
@@ -1228,10 +1229,12 @@
     housingGroup={housingLayerRef?.getGroup() ?? null}
     dungeonGroup={dungeonLayerRef?.getFloorGroup() ?? null}
     doorMeshes={[
-      ...(housingLayerRef?.getDoorMeshes() ?? []),
+      ...($isUnderground ? [] : (housingLayerRef?.getDoorMeshes() ?? [])),
       ...(dungeonLayerRef?.getDoorMeshes() ?? []),
     ]}
-    objectMeshes={objectOverlayRef ? [objectOverlayRef.getGroup()] : []}
+    objectMeshes={objectOverlayRef && !$isUnderground
+      ? [objectOverlayRef.getGroup()]
+      : []}
     propMeshes={dungeonLayerRef?.getPropMeshes() ?? []}
     groundItemMeshes={groundItemsLayerRef?.getGroup()
       ? [groundItemsLayerRef.getGroup()!]
