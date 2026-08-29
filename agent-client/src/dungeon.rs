@@ -286,7 +286,7 @@ pub fn build_all() -> Vec<Dungeon> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn crypt() -> Dungeon {
@@ -316,6 +316,30 @@ mod tests {
 
     /// The deepest floor of old_crypt: its treasure chest cell, the room that
     /// holds it, and a spot at that room's center to look from.
+    /// A dungeon whose chest room holds a clutter chest and a breakable.
+    /// Which one that is depends on the generated layouts; the tests that
+    /// need both look it up rather than assuming old_crypt has them.
+    pub(crate) fn cluttered_chest_room_dungeon() -> Dungeon {
+        build_all()
+            .into_iter()
+            .find(|d| {
+                let last = d.layouts().last().unwrap();
+                let cell = last.chest.unwrap();
+                let room = last.room_at(cell.0, cell.1).unwrap();
+                let kinds: Vec<PropKind> = last
+                    .props
+                    .iter()
+                    .filter(|p| room.contains(p.x, p.z))
+                    .map(|p| p.kind)
+                    .collect();
+                kinds.contains(&PropKind::Chest)
+                    && kinds
+                        .iter()
+                        .any(|k| matches!(k, PropKind::Barrel | PropKind::Crate))
+            })
+            .expect("a registry dungeon with clutter in its chest room")
+    }
+
     fn chest_room(d: &Dungeon) -> (u8, (i32, i32), Room, Position) {
         let depth = d.max_depth();
         let layout = d.layouts().last().expect("old_crypt has floors");
@@ -419,7 +443,7 @@ mod tests {
     /// and drop out of sight once opened.
     #[test]
     fn clutter_chests_are_sighted_like_the_treasure_and_hidden_once_opened() {
-        let d = crypt();
+        let d = cluttered_chest_room_dungeon();
         let (depth, _, room, stand) = chest_room(&d);
         let prop = d
             .layouts()
@@ -430,7 +454,7 @@ mod tests {
             .enumerate()
             .find(|(_, p)| matches!(p.kind, PropKind::Chest) && room.contains(p.x, p.z))
             .map(|(i, _)| i as u32)
-            .expect("old_crypt's chest room also holds a clutter chest");
+            .expect("the chest room holds a clutter chest");
 
         let sighted = d.chests_in_room_of(depth, &stand, &HashSet::new(), carved_only(&d, depth));
         assert!(sighted.iter().any(|c| c.kind == ChestKind::Prop(prop)));

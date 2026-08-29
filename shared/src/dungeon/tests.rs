@@ -123,7 +123,11 @@ fn per_dungeon_boss_floors_and_entrance_dir() {
 // Re-blessed when floors whose corridors hug a room wall (a mouth wider than
 // `CORRIDOR_MOUTH_MAX`) started being rejected and redrawn: the first
 // re-bless that moves rooms, corridors and shafts, not just spawns/props.
-const GOLDEN_OLD_CRYPT_HASH: u64 = 0xb13d_97b2_a65a_6424;
+// Re-blessed for dungeon keys (doc/DUNGEON_REWARD.md): stair rooms no longer
+// host spawns (the 3-cell exit clearance became a whole-room exclusion), and
+// every 5th floor's stair room keeps a single, always-doored exit — corridors
+// there route around it and floors that can't are redrawn.
+const GOLDEN_OLD_CRYPT_HASH: u64 = 0xf2b4_1519_88a6_a4ba;
 
 #[test]
 fn structure_invariants_many_seeds() {
@@ -206,6 +210,56 @@ fn structure_invariants_many_seeds() {
             "seed {seed}: entrance entry cell {entry:?}"
         );
     }
+}
+
+/// Locked floors (every 5th) keep their stair room behind exactly one door
+/// that only the key works; no other floor has a locked door, and no floor
+/// spawns monsters in a room with stairs. A fallback floor is one room, so
+/// it has no exit to lock and is skipped.
+#[test]
+fn locked_floors_have_one_keyed_exit_and_stair_rooms_stay_quiet() {
+    for seed in 0..200u64 {
+        for f in generate_dungeon(seed) {
+            for s in f.spawns.iter().filter(|s| !s.is_boss) {
+                assert!(
+                    !gen::cell_in_stair_room(&f, s.x, s.z),
+                    "seed {seed} depth {}: spawn in a stair room",
+                    f.depth
+                );
+            }
+            let locked = locked_door_ids(&f);
+            if !is_locked_depth(f.depth) || f.rooms.len() == 1 {
+                assert!(locked.is_empty(), "seed {seed} depth {}", f.depth);
+                continue;
+            }
+            assert_eq!(locked.len(), 1, "seed {seed} depth {}", f.depth);
+            let doors = interior_doors(&f);
+            let door = doors
+                .iter()
+                .find(|d| d.door_id == locked[0])
+                .expect("the locked exit is always doored");
+            assert!(door.locked && door.room == 0);
+            assert_eq!(
+                doors.iter().filter(|d| d.room == 0).count(),
+                1,
+                "seed {seed} depth {}: the stair room has a second exit",
+                f.depth
+            );
+        }
+    }
+}
+
+#[test]
+fn key_depths_follow_the_locked_floors() {
+    assert_eq!(locked_depths(15).collect::<Vec<_>>(), [5, 10, 15]);
+    assert_eq!(locked_depths(7).collect::<Vec<_>>(), [5]);
+    assert_eq!(last_locked_depth(10), Some(10));
+    assert_eq!(last_locked_depth(4), None);
+    assert_eq!(key_depth_for(1, 5), Some(5));
+    assert_eq!(key_depth_for(4, 5), Some(5));
+    assert_eq!(key_depth_for(5, 10), None, "a locked floor drops no key");
+    assert_eq!(key_depth_for(6, 10), Some(10));
+    assert_eq!(key_depth_for(11, 12), None, "nothing locked below");
 }
 
 fn shaft_footprint(s: &StairShaft) -> Vec<(i32, i32)> {

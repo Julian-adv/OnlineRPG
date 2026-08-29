@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use serde::Serialize;
 
-use super::{gen, FloorLayout};
+use super::{gen, is_locked_depth, FloorLayout};
 
 /// Percent chance a qualifying corridor mouth gets a door.
 const INTERIOR_DOOR_PCT: u32 = 30;
@@ -41,6 +41,11 @@ pub struct InteriorDoorSpec {
     /// Stable id used by toggle packets and the open-door state maps:
     /// `wall * 0x10000 + lat0 * 0x100 + wall_line` (grid < 256, no overlap).
     pub door_id: u32,
+    /// Index into `layout.rooms` of the room whose wall this is.
+    #[serde(skip)]
+    pub room: usize,
+    /// Only the floor's key works it, and it shuts itself again.
+    pub locked: bool,
 }
 
 impl InteriorDoorSpec {
@@ -85,7 +90,8 @@ fn door_hash(a: i32, b: i32, c: i32, d: i32) -> u32 {
 /// outward neighbour is corridor, as door candidates.
 pub(super) fn wall_openings(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
     let mut openings = Vec::new();
-    for room in &layout.rooms {
+    let locked_floor = is_locked_depth(layout.depth);
+    for (room_idx, room) in layout.rooms.iter().enumerate() {
         for wall in [WALL_N, WALL_E, WALL_S, WALL_W] {
             let spans_x = wall == WALL_N || wall == WALL_S;
             let outer_low = wall == WALL_N || wall == WALL_W;
@@ -126,6 +132,8 @@ pub(super) fn wall_openings(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
                         door_id: (wall as u32) * 0x10000
                             + (start as u32) * 0x100
                             + wall_line as u32,
+                        room: room_idx,
+                        locked: locked_floor && room_idx == 0,
                     });
                     start = -1;
                 }
@@ -136,14 +144,25 @@ pub(super) fn wall_openings(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
 }
 
 /// Give each corridor mouth a door with `INTERIOR_DOOR_PCT`% chance, hashed
-/// from the opening's coordinates so the list is stable per layout.
+/// from the opening's coordinates so the list is stable per layout. A locked
+/// floor's stair-room exit always gets one.
 pub fn interior_doors(layout: &FloorLayout) -> Vec<InteriorDoorSpec> {
     wall_openings(layout)
         .into_iter()
         .filter(|d| {
-            door_hash(layout.depth as i32, d.wall as i32, d.lat0, d.wall_line)
-                < INTERIOR_DOOR_PCT * 10
+            d.locked
+                || door_hash(layout.depth as i32, d.wall as i32, d.lat0, d.wall_line)
+                    < INTERIOR_DOOR_PCT * 10
         })
+        .collect()
+}
+
+/// Ids of the doors on `layout` that need the floor's key.
+pub fn locked_door_ids(layout: &FloorLayout) -> Vec<u32> {
+    wall_openings(layout)
+        .into_iter()
+        .filter(|d| d.locked)
+        .map(|d| d.door_id)
         .collect()
 }
 

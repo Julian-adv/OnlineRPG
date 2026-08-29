@@ -32,7 +32,9 @@ mod stairs;
 #[cfg(test)]
 mod tests;
 
-pub use doors::{closed_door_segs, interior_doors, InteriorDoorSpec, ENTRANCE_DOOR_ID};
+pub use doors::{
+    closed_door_segs, interior_doors, locked_door_ids, InteriorDoorSpec, ENTRANCE_DOOR_ID,
+};
 pub use registry::{entrance, entrance_at, entrances, footprint_contains, DungeonEntranceDef};
 pub use stairs::{
     entrance_ramp_height_at, floor_height_at, ground_y_for_floor, leg_touches_shaft,
@@ -76,6 +78,33 @@ pub const MAX_DEPTH: u8 = 20;
 /// `FLOOR_SCALE = 16` slots between two regular floors.
 pub const SHAFT_W: i32 = 2;
 pub const SHAFT_LEN: i32 = 8;
+
+/// Every `LOCKED_FLOOR_INTERVAL`th floor keeps its stair room shut behind a
+/// door that only that floor's key opens (doc/DUNGEON_REWARD.md).
+pub const LOCKED_FLOOR_INTERVAL: u8 = 5;
+
+pub fn is_locked_depth(depth: u8) -> bool {
+    depth > 0 && depth.is_multiple_of(LOCKED_FLOOR_INTERVAL)
+}
+
+/// Locked depths of a `total`-floor dungeon, shallowest first.
+pub fn locked_depths(total: u8) -> impl Iterator<Item = u8> {
+    (1..=total).filter(|d| is_locked_depth(*d))
+}
+
+/// The deepest locked floor — its key is what the treasure chest takes.
+pub fn last_locked_depth(total: u8) -> Option<u8> {
+    locked_depths(total).last()
+}
+
+/// The locked floor whose key the monsters of `depth` carry: the next locked
+/// floor down, unless `depth` is itself locked (or nothing is locked below).
+pub fn key_depth_for(depth: u8, total: u8) -> Option<u8> {
+    if is_locked_depth(depth) {
+        return None;
+    }
+    locked_depths(total).find(|&l| l > depth)
+}
 
 /// Default final-floor boss, used when a dungeons.csv row leaves its `boss`
 /// column blank and by seed-only property tests.
@@ -121,7 +150,7 @@ impl Room {
         }
     }
 
-    fn intersects(&self, other: &Room) -> bool {
+    pub fn intersects(&self, other: &Room) -> bool {
         self.x < other.x + other.w
             && self.x + self.w > other.x
             && self.z < other.z + other.d

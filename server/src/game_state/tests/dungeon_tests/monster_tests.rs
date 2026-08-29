@@ -333,8 +333,6 @@ async fn a_slain_boss_does_not_return_when_the_floor_empties() {
             respawn_at_ms: super::dungeon::BOSS_RESPAWN_NEVER,
             is_boss: true,
         });
-        floor.boss_defeated = true;
-        floor.chest_claimants.insert(7);
     }
 
     leave_floor(&game_state, &player_id, &entrance).await;
@@ -349,10 +347,5 @@ async fn a_slain_boss_does_not_return_when_the_floor_empties() {
         boss.respawn_at_ms,
         super::dungeon::BOSS_RESPAWN_NEVER,
         "an empty floor must not free the guardian's slot"
-    );
-    assert!(floor.boss_defeated, "the guardian stays down");
-    assert!(
-        floor.chest_claimants.contains(&7),
-        "and the claim it earned stays with it"
     );
 }

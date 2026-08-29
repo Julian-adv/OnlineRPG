@@ -92,13 +92,15 @@ export const ENTRANCE_DOOR_ID = 0
 export const TREASURE_CHEST_PROP_ID = -1
 
 /** One interior door placement from wasm `dungeon_interior_doors`. `wall` is
- *  0/1/2/3 for the room's N/E/S/W wall; `doorId` is the toggle-packet id. */
+ *  0/1/2/3 for the room's N/E/S/W wall; `doorId` is the toggle-packet id.
+ *  `locked` doors take the floor's key (server-checked) and shut themselves. */
 export interface InteriorDoorSpec {
   wall: DungeonWall
   lat0: number
   len: number
   wallLine: number
   doorId: number
+  locked: boolean
 }
 
 export interface DungeonFloorLayout {

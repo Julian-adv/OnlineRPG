@@ -11,7 +11,9 @@
 use tracing::info;
 
 pub use onlinerpg_shared::dungeon::DungeonEntranceDef;
-use onlinerpg_shared::dungeon::{entrance, entrance_at, entrances};
+use onlinerpg_shared::dungeon::{
+    entrance, entrance_at, entrances, generate_dungeon_for, locked_depths,
+};
 use onlinerpg_shared::Position;
 
 #[derive(Debug, Clone)]
@@ -53,6 +55,16 @@ impl DungeonDefs {
                 def.id,
                 def.boss
             );
+            // Generated depth: a dead-end floor can cut a dungeon short.
+            let total = generate_dungeon_for(&def.id).len() as u8;
+            for depth in locked_depths(total) {
+                assert!(
+                    item_defs.get(&def.key_item_id(depth)).is_some(),
+                    "dungeon '{}' locks floor {depth} but has no key item '{}'",
+                    def.id,
+                    def.key_item_id(depth)
+                );
+            }
         }
 
         // An opted-in item at or below the deepest built dungeon must drop

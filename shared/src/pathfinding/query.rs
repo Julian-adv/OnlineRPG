@@ -131,44 +131,71 @@ fn blocking_entries<'a>(
     floor_level: u8,
     y: Option<f32>,
 ) -> impl Iterator<Item = (&'a super::RuntimePassability, BlockInfo<'a>)> {
-    let min_x = from_x.min(to_x);
-    let max_x = from_x.max(to_x);
-    let min_z = from_z.min(to_z);
-    let max_z = from_z.max(to_z);
-
     cache.iter().filter_map(move |(key, rp)| {
-        if max_x < rp.min_x || min_x > rp.max_x || max_z < rp.min_z || min_z > rp.max_z {
-            return None;
-        }
+        entry_blocks(key, rp, from_x, from_z, to_x, to_z, floor_level, y).map(|info| (rp, info))
+    })
+}
 
-        let stair_mask = stairwell_floor_mask_at(rp, from_x, from_z, floor_level);
-        if stair_mask != 0 {
-            let consulted = stairwell_consult(rp, stair_mask, |f| {
-                move_blocked_on_floor(rp, f, from_x, from_z, to_x, to_z)
-            })?;
-            let info = BlockInfo {
-                key,
-                stairwell: true,
-                consulted,
-            };
-            return Some((rp, info));
-        }
+/// One cache entry's verdict on a move.
+#[allow(clippy::too_many_arguments)]
+fn entry_blocks<'a>(
+    key: &'a str,
+    rp: &'a super::RuntimePassability,
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
+    floor_level: u8,
+    y: Option<f32>,
+) -> Option<BlockInfo<'a>> {
+    let (min_x, max_x) = (from_x.min(to_x), from_x.max(to_x));
+    let (min_z, max_z) = (from_z.min(to_z), from_z.max(to_z));
+    if max_x < rp.min_x || min_x > rp.max_x || max_z < rp.min_z || min_z > rp.max_z {
+        return None;
+    }
 
-        rp.floors
-            .iter()
-            .find(|floor| {
-                floor.floor_level == floor_level
-                    && obstacle_reaches_y(floor, y)
-                    && move_blocked_on_floor(rp, floor, from_x, from_z, to_x, to_z)
-            })
-            .map(|_| {
-                let info = BlockInfo {
-                    key,
-                    stairwell: false,
-                    consulted: 1,
-                };
-                (rp, info)
-            })
+    let stair_mask = stairwell_floor_mask_at(rp, from_x, from_z, floor_level);
+    if stair_mask != 0 {
+        let consulted = stairwell_consult(rp, stair_mask, |f| {
+            move_blocked_on_floor(rp, f, from_x, from_z, to_x, to_z)
+        })?;
+        return Some(BlockInfo {
+            key,
+            stairwell: true,
+            consulted,
+        });
+    }
+
+    rp.floors
+        .iter()
+        .find(|floor| {
+            floor.floor_level == floor_level
+                && obstacle_reaches_y(floor, y)
+                && move_blocked_on_floor(rp, floor, from_x, from_z, to_x, to_z)
+        })
+        .map(|_| BlockInfo {
+            key,
+            stairwell: false,
+            consulted: 1,
+        })
+}
+
+/// [`attack_line_blocked`] against one named cache entry instead of the
+/// whole cache — for dungeon sight checks, where the floor's own grid is the
+/// only entry that can stand in the way and the check runs per monster per
+/// tick.
+pub fn attack_line_blocked_in(
+    cache: &PassabilityCache,
+    key: &str,
+    from_x: f32,
+    from_z: f32,
+    to_x: f32,
+    to_z: f32,
+    floor_level: u8,
+) -> bool {
+    let to_x = from_x + crate::world::shortest_world_delta_x(from_x, to_x);
+    cache.get(key).is_some_and(|rp| {
+        entry_blocks(key, rp, from_x, from_z, to_x, to_z, floor_level, None).is_some()
     })
 }
 

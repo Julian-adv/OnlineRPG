@@ -349,6 +349,10 @@ impl MonsterBrain {
         }
     }
 
+    pub fn target_player_id(&self) -> Option<PlayerId> {
+        self.target_player_id
+    }
+
     pub fn handle_death(&mut self) {
         self.state = AiState::Dead;
         self.health = 0;

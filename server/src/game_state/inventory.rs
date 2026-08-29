@@ -343,7 +343,11 @@ impl super::GameState {
     /// Send the current inventory state directly to a player, then their
     /// refreshed effective stats. Every equipped-gear mutation routes through
     /// here so no mutation site has to remember to send them.
-    async fn send_inventory_snapshot(&self, player_id: &PlayerId, inventory: PlayerInventory) {
+    pub(super) async fn send_inventory_snapshot(
+        &self,
+        player_id: &PlayerId,
+        inventory: PlayerInventory,
+    ) {
         self.set_player_gear(player_id, &inventory).await;
         self.refresh_hunger_gear_drain(player_id, &inventory).await;
         self.send_direct_message(player_id, ServerMessage::InventoryUpdated { inventory })
@@ -1383,6 +1387,15 @@ impl super::GameState {
     /// Remove one unit of `instance_id` from the player's bag (dropping the
     /// instance when the stack empties), persist, and push the fresh snapshot
     /// to the client.
+    /// Whether the player carries at least one `item_def_id`, bag or worn.
+    pub(super) async fn holds_item(&self, player_id: &PlayerId, item_def_id: &str) -> bool {
+        self.inventories
+            .read()
+            .await
+            .get(player_id)
+            .is_some_and(|inv| inv.has_item(item_def_id))
+    }
+
     pub(super) async fn consume_one_and_sync(&self, player_id: &PlayerId, instance_id: u64) {
         let (snapshot, item_def_id) = {
             let mut inventories = self.inventories.write().await;

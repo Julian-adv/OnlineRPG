@@ -26,7 +26,7 @@ fn declared_floor_tracks_height() {
 /// is a sealed pillar, and aiming at it strands the agent every time.
 #[test]
 fn a_sighted_chest_is_approached_from_a_cell_a_path_can_reach() {
-    let (mut s, dungeon, _rx) = dungeon_state();
+    let (mut s, dungeon, _rx) = cluttered_dungeon_state();
     let depth = in_the_chest_room(&mut s, &dungeon);
     let floor = dungeon.passability_floor(depth);
 
@@ -39,7 +39,7 @@ fn a_sighted_chest_is_approached_from_a_cell_a_path_can_reach() {
     );
     assert!(
         chests.len() > 1,
-        "old_crypt's chest room also holds a clutter chest"
+        "the chest room also holds a clutter chest"
     );
     for chest in chests {
         let a = chest.approach;
@@ -144,7 +144,7 @@ fn the_floor_map_only_names_cells_the_agent_can_stand_on() {
 /// are, and a smashed one drops out of the listing.
 #[tokio::test]
 async fn a_smashed_prop_stops_being_offered() {
-    let (mut s, dungeon, _rx) = dungeon_state();
+    let (mut s, dungeon, _rx) = cluttered_dungeon_state();
     let depth = in_the_chest_room(&mut s, &dungeon);
     let floor = dungeon.passability_floor(depth);
     let prop = s
@@ -175,7 +175,7 @@ async fn a_smashed_prop_stops_being_offered() {
 /// merely stood too far from is invisible for the rest of the floor.
 #[tokio::test]
 async fn a_rejected_prop_open_becomes_visible_again() {
-    let (mut s, dungeon, _rx) = dungeon_state();
+    let (mut s, dungeon, _rx) = cluttered_dungeon_state();
     let depth = in_the_chest_room(&mut s, &dungeon);
     let prop = match s
         .chests_in_sight()

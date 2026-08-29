@@ -116,10 +116,31 @@ fn dungeon_state() -> (
     Arc<crate::dungeon::Dungeon>,
     mpsc::Receiver<ClientMessage>,
 ) {
+    dungeon_state_at(-1450.0, 4720.0)
+}
+
+/// Like `dungeon_state`, in the dungeon whose chest room holds clutter.
+fn cluttered_dungeon_state() -> (
+    SharedState,
+    Arc<crate::dungeon::Dungeon>,
+    mpsc::Receiver<ClientMessage>,
+) {
+    let d = crate::dungeon::tests::cluttered_chest_room_dungeon();
+    dungeon_state_at(d.entrance.x, d.entrance.z)
+}
+
+fn dungeon_state_at(
+    x: f32,
+    z: f32,
+) -> (
+    SharedState,
+    Arc<crate::dungeon::Dungeon>,
+    mpsc::Receiver<ClientMessage>,
+) {
     let mut cache = WorldCache::new();
     cache.register_dungeons();
     let world = Arc::new(std::sync::RwLock::new(cache));
-    let dungeon = world.read().unwrap().dungeon_at(-1450.0, 4720.0).unwrap();
+    let dungeon = world.read().unwrap().dungeon_at(x, z).unwrap();
     let (tx, rx) = mpsc::channel(64);
     let mut state = SharedState::new(
         Vec::new(),

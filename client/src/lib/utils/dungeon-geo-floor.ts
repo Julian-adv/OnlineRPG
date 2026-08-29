@@ -59,6 +59,19 @@ export interface DungeonFloorGroup {
   doors: InteriorDoor[]
 }
 
+/** Plain door material tinted toward iron so a keyed door reads as locked. */
+let lockedDoorMaterial: THREE.MeshStandardMaterial | null = null
+function getLockedDoorMaterial(
+  base: THREE.MeshStandardMaterial
+): THREE.Material {
+  if (!lockedDoorMaterial) {
+    lockedDoorMaterial = base.clone()
+    lockedDoorMaterial.color.setRGB(0.45, 0.42, 0.42)
+    lockedDoorMaterial.metalness = 0.5
+  }
+  return lockedDoorMaterial
+}
+
 /**
  * Build the renderable group for one dungeon floor. The caller positions
  * it at (originX, floorY(depth), originZ) in world space. `doorSpecs` is the
@@ -380,7 +393,13 @@ export function buildDungeonFloorGroup(
   const doorMat = getHousingMaterial(DUNGEON_DOOR_TEXTURE_IDX)
   const archEntries: GeoEntry[] = []
   const doors: InteriorDoor[] = doorSpecs.map((spec) =>
-    buildInteriorDoor(layout.depth, spec, ctx.wallHeight, doorMat, archEntries)
+    buildInteriorDoor(
+      layout.depth,
+      spec,
+      ctx.wallHeight,
+      spec.locked ? getLockedDoorMaterial(doorMat) : doorMat,
+      archEntries
+    )
   )
   // Arches merge into the floor group but stay non-pickable, so a ground click
   // near a doorway falls through to the floor. The door leaves are NOT added

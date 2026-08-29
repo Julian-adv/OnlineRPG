@@ -9,8 +9,8 @@ use rand_chacha::ChaCha8Rng;
 
 use super::doors::wall_openings;
 use super::{
-    FloorLayout, PropKind, PropSpec, Room, SpawnSpec, StairShaft, BOSS_MONSTER_TYPE, GRID,
-    MAX_DEPTH, MIN_DEPTH, SHAFT_LEN, SHAFT_W,
+    is_locked_depth, FloorLayout, PropKind, PropSpec, Room, SpawnSpec, StairShaft,
+    BOSS_MONSTER_TYPE, GRID, MAX_DEPTH, MIN_DEPTH, SHAFT_LEN, SHAFT_W,
 };
 use crate::housing::WallDirection;
 
@@ -20,7 +20,6 @@ const ROOM_MAX: i32 = 17;
 const SHAFT_ROOM_AXIAL: i32 = SHAFT_LEN + 2;
 const FLOOR_ATTEMPTS: u32 = 30;
 const ROOM_PLACE_ATTEMPTS: u32 = 60;
-const SPAWN_CLEAR_RADIUS: i32 = 3;
 /// Widest corridor mouth a room wall may have: a 2-wide corridor plus
 /// corner slop. A longer run is a corridor hugging the wall, which tears
 /// the wall open along its length; such floors are rejected and redrawn.
@@ -182,8 +181,17 @@ fn try_generate_floor(
     if let Some(ref down) = down_shaft {
         carve_rect(&mut carved, &down.rect());
     }
+    // A locked floor's stair room keeps a single exit: no later corridor may
+    // pass through or hug it, or the locked door would have a way around.
+    let keep_out = is_locked_depth(depth).then(|| rooms[0].expanded(1));
     for i in 0..rooms.len() - 1 {
-        carve_corridor(&mut carved, rooms[i].center(), rooms[i + 1].center());
+        let (from, to) = (rooms[i].center(), rooms[i + 1].center());
+        let avoid = keep_out.filter(|_| i > 0);
+        let x_first = avoid.is_none_or(|r| !corridor_intersects(from, to, true, &r));
+        if !x_first && avoid.is_some_and(|r| corridor_intersects(from, to, false, &r)) {
+            return None;
+        }
+        carve_corridor(&mut carved, from, to, x_first);
     }
 
     let chest = if is_last {
@@ -203,11 +211,11 @@ fn try_generate_floor(
         props: Vec::new(),
     };
 
-    if wall_openings(&layout)
-        .iter()
-        .any(|o| o.len > CORRIDOR_MOUTH_MAX)
-        || !floor_is_connected(&layout)
-    {
+    let openings = wall_openings(&layout);
+    if openings.iter().any(|o| o.len > CORRIDOR_MOUTH_MAX) || !floor_is_connected(&layout) {
+        return None;
+    }
+    if is_locked_depth(depth) && openings.iter().filter(|o| o.room == 0).count() != 1 {
         return None;
     }
 
@@ -294,23 +302,46 @@ fn carve_rect(carved: &mut [bool], r: &Room) {
     }
 }
 
-/// 2-cell-wide L corridor, X leg first then Z leg.
-fn carve_corridor(carved: &mut [bool], from: (i32, i32), to: (i32, i32)) {
-    let carve2 = |carved: &mut [bool], x: i32, z: i32, lateral_x: bool| {
-        let (x2, z2) = if lateral_x { (x + 1, z) } else { (x, z + 1) };
-        for (cx, cz) in [(x, z), (x2, z2)] {
-            if (1..GRID - 1).contains(&cx) && (1..GRID - 1).contains(&cz) {
-                carved[(cx + cz * GRID) as usize] = true;
-            }
-        }
-    };
+/// The two 2-wide legs of an L corridor: X leg then Z leg (`x_first`), or
+/// Z leg then X leg.
+fn corridor_legs(from: (i32, i32), to: (i32, i32), x_first: bool) -> [Room; 2] {
     let (x0, z0) = from;
     let (x1, z1) = to;
-    for x in x0.min(x1)..=x0.max(x1) {
-        carve2(carved, x, z0, false);
+    let x_leg = |z: i32| Room {
+        x: x0.min(x1),
+        z,
+        w: (x0 - x1).abs() + 1,
+        d: 2,
+    };
+    let z_leg = |x: i32| Room {
+        x,
+        z: z0.min(z1),
+        w: 2,
+        d: (z0 - z1).abs() + 1,
+    };
+    if x_first {
+        [x_leg(z0), z_leg(x1)]
+    } else {
+        [z_leg(x0), x_leg(z1)]
     }
-    for z in z0.min(z1)..=z0.max(z1) {
-        carve2(carved, x1, z, true);
+}
+
+fn corridor_intersects(from: (i32, i32), to: (i32, i32), x_first: bool, rect: &Room) -> bool {
+    corridor_legs(from, to, x_first)
+        .iter()
+        .any(|leg| leg.intersects(rect))
+}
+
+/// 2-cell-wide L corridor.
+fn carve_corridor(carved: &mut [bool], from: (i32, i32), to: (i32, i32), x_first: bool) {
+    for leg in corridor_legs(from, to, x_first) {
+        for z in leg.z..leg.z + leg.d {
+            for x in leg.x..leg.x + leg.w {
+                if (1..GRID - 1).contains(&x) && (1..GRID - 1).contains(&z) {
+                    carved[(x + z * GRID) as usize] = true;
+                }
+            }
+        }
     }
 }
 
@@ -435,7 +466,6 @@ fn floor_is_connected(layout: &FloorLayout) -> bool {
 }
 
 fn roll_spawns(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<SpawnSpec> {
-    let exit = layout.up_shaft.exit_cell();
     let in_shaft = |x: i32, z: i32| cell_in_any_shaft(layout, x, z);
 
     // Deterministic candidate order: row-major scan.
@@ -445,7 +475,8 @@ fn roll_spawns(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<SpawnSpec> {
             if !layout.carved[(x + z * GRID) as usize] || in_shaft(x, z) {
                 continue;
             }
-            if (x - exit.0).abs().max((z - exit.1).abs()) <= SPAWN_CLEAR_RADIUS {
+            // Arrivals get a quiet room: nothing spawns where stairs land.
+            if cell_in_stair_room(layout, x, z) {
                 continue;
             }
             if layout.chest == Some((x, z)) {
@@ -515,6 +546,18 @@ fn roll_spawns(rng: &mut ChaCha8Rng, layout: &FloorLayout) -> Vec<SpawnSpec> {
 
 pub(super) fn cell_in_any_room(layout: &FloorLayout, x: i32, z: i32) -> bool {
     layout.rooms.iter().any(|r| r.contains(x, z))
+}
+
+/// Whether the cell lies in a room holding a stair shaft (up or down).
+pub(super) fn cell_in_stair_room(layout: &FloorLayout, x: i32, z: i32) -> bool {
+    layout.rooms.iter().any(|r| {
+        r.contains(x, z)
+            && (r.intersects(&layout.up_shaft.rect())
+                || layout
+                    .down_shaft
+                    .as_ref()
+                    .is_some_and(|s| r.intersects(&s.rect())))
+    })
 }
 
 pub(super) fn cell_in_any_shaft(layout: &FloorLayout, x: i32, z: i32) -> bool {

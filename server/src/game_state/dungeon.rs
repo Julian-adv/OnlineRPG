@@ -4,16 +4,18 @@
 //! slots. That state is in-memory — after a restart, reconnecting players
 //! rehydrate from the generator plus their persisted position/floor_level.
 //! The one exception is the treasure-chest claim, which is DB-backed
-//! (`GameState::chest_opens`) because a lost claim is free loot.
+//! (`GameState::chest_opens`) because a lost claim is free loot. Locked
+//! floors, keys and the keyed chest: doc/DUNGEON_REWARD.md.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use onlinerpg_shared::dungeon::{
     cell_center, dungeon_origin, floor_height_at, floor_level_for_passability, floor_world_y,
-    generate_dungeon_for, interior_doors, leg_touches_shaft, monster_level_for_depth,
-    on_stair_shaft, world_to_cell, FloorLayout, PropKind, DUNGEON_FLOOR_HEIGHT, ENTRANCE_DOOR_ID,
-    FLOOR_CHANGE_LEG_MAX, GRID, SHAFT_CHANGE_MARGIN,
+    generate_dungeon_for, interior_doors, key_depth_for, last_locked_depth, leg_touches_shaft,
+    locked_depths, locked_door_ids, monster_level_for_depth, on_stair_shaft, world_to_cell,
+    FloorLayout, PropKind, DUNGEON_FLOOR_HEIGHT, ENTRANCE_DOOR_ID, FLOOR_CHANGE_LEG_MAX, GRID,
+    SHAFT_CHANGE_MARGIN,
 };
 use onlinerpg_shared::inventory::GroundItem;
 use onlinerpg_shared::{wrap_world_x, Position, ServerMessage};
@@ -26,10 +28,16 @@ use super::monster::Handoff;
 use super::GameState;
 
 const MONSTER_RESPAWN_MS: u64 = 5 * 60 * 1000;
-/// Held until `reset_dungeons`: one guardian, and one chest window, per night.
+/// Held until `reset_dungeons`: one guardian per night.
 pub(super) const BOSS_RESPAWN_NEVER: u64 = u64::MAX;
-/// Chest claim range at the boss's death: a whole room plus a corridor pull.
-const CHEST_CLAIM_RADIUS: f32 = 20.0;
+/// Per-kill chance that a monster in the section above a locked floor drops
+/// that floor's key (doc/DUNGEON_REWARD.md — a starting value).
+const KEY_DROP_CHANCE: f64 = 0.05;
+/// A door opened with a key shuts itself again after this.
+pub(super) const LOCKED_DOOR_OPEN_DURATION: Duration = Duration::from_secs(30);
+/// How long after arriving on a floor a player in its stair room stays out
+/// of monster sight — the floor's loading hitch, not a hideout.
+pub(super) const STAIR_ROOM_ARRIVAL_GRACE_MS: u64 = 10_000;
 /// Retry delay when a spawn attempt failed (e.g. global monster cap).
 const SPAWN_RETRY_MS: u64 = 10 * 1000;
 /// Ejected treasure-chest loot lands this far from the chest, scattered at a
@@ -117,19 +125,19 @@ pub(super) struct DungeonRuntime {
     /// `toggle_dungeon_door` only admits ids that resolve, so this stays
     /// bounded by the layout. Same lifetime as `broken_props`.
     pub open_doors: HashMap<u8, HashSet<u32>>,
+    /// Key-gated door ids per floor (index = depth - 1); empty on unlocked floors.
+    pub locked_doors: Vec<Vec<u32>>,
+    /// Which opening each open locked door is on, so the timed close can
+    /// tell its own opening from a later one.
+    pub locked_door_opens: HashMap<(u8, u32), u64>,
+    pub locked_door_generation: u64,
 }
 
 pub(super) struct FloorRuntime {
     /// One slot per layout SpawnSpec, same order.
     pub slots: Vec<SpawnSlot>,
-    pub players: HashSet<PlayerId>,
-    /// Whether this floor's boss has been killed and not yet respawned. Kept
-    /// explicit: a slot also reads as empty while a spawn is pending or was
-    /// refused by the monster cap, which would open the chest for a boss
-    /// nobody fought.
-    pub boss_defeated: bool,
-    /// Characters near the boss when it fell; only they may open the chest.
-    pub chest_claimants: HashSet<i64>,
+    /// Occupants, with when each stepped onto the floor (arrival grace).
+    pub players: HashMap<PlayerId, u64>,
 }
 
 pub(super) struct SpawnSlot {
@@ -196,6 +204,7 @@ impl GameState {
             }
         }
         let layouts = generate_dungeon_for(entrance_id);
+        let locked_doors = layouts.iter().map(locked_door_ids).collect();
         info!(
             "Dungeon '{}' runtime created ({} floors)",
             entrance_id,
@@ -210,6 +219,9 @@ impl GameState {
                 broken_props: HashMap::new(),
                 opened_props: HashMap::new(),
                 open_doors: HashMap::new(),
+                locked_doors,
+                locked_door_opens: HashMap::new(),
+                locked_door_generation: 0,
             });
     }
 
@@ -220,7 +232,10 @@ impl GameState {
     /// `interior_doors`.
     ///
     /// The door is shared state, so nothing changes until the request is
-    /// authorized against the floor, the door, and the reach to it.
+    /// authorized against the floor, the door, and the reach to it. A locked
+    /// door also wants the floor's key in the bag, from either side and in
+    /// either direction; the key is not spent, and an opened locked door shuts
+    /// itself after `LOCKED_DOOR_OPEN_DURATION`.
     pub async fn toggle_dungeon_door(
         &self,
         player_id: &PlayerId,
@@ -254,6 +269,7 @@ impl GameState {
             }
         }
         self.ensure_dungeon_runtime(entrance_id).await;
+        let mut locked = false;
         if depth > 0 {
             // Needs the cached layouts, so this gate runs after the ensure;
             // layouts are immutable, so the scan holds only the read lock.
@@ -276,19 +292,43 @@ impl GameState {
                 );
                 return None;
             }
+            locked = door.locked;
+            if locked && !self.require_key(player_id, entrance, depth, "door").await {
+                return None;
+            }
         }
 
-        let is_open = {
+        let (is_open, opening) = {
             let mut dungeons = self.dungeons.write().await;
             let rt = dungeons.get_mut(entrance_id)?;
             let set = rt.open_doors.entry(depth).or_default();
-            if set.remove(&door_id) {
+            let is_open = if set.remove(&door_id) {
                 false
             } else {
                 set.insert(door_id);
                 true
+            };
+            let opening = (locked && is_open).then(|| {
+                rt.locked_door_generation += 1;
+                rt.locked_door_opens
+                    .insert((depth, door_id), rt.locked_door_generation);
+                rt.locked_door_generation
+            });
+            if locked && !is_open {
+                rt.locked_door_opens.remove(&(depth, door_id));
             }
+            (is_open, opening)
         };
+        if let Some(opening) = opening {
+            let game_state = self.clone();
+            let entrance_id = entrance_id.to_string();
+            tokio::spawn(async move {
+                tokio::time::sleep(LOCKED_DOOR_OPEN_DURATION).await;
+                game_state
+                    .close_locked_door(&entrance_id, depth, door_id, opening)
+                    .await;
+            });
+        }
         self.rebuild_dungeon_floor_passability(entrance_id, depth)
             .await;
         info!(
@@ -298,6 +338,138 @@ impl GameState {
             player_pos.z
         );
         Some(is_open)
+    }
+
+    /// Shut a locked door `LOCKED_DOOR_OPEN_DURATION` after `opening`, unless
+    /// it was closed and reopened since (a later opening), and tell the
+    /// floor's occupants. Anyone who slipped through without a key is now on
+    /// the far side for good — that is the tailgater's own choice.
+    async fn close_locked_door(&self, entrance_id: &str, depth: u8, door_id: u32, opening: u64) {
+        let occupants: Vec<PlayerId> = {
+            let mut dungeons = self.dungeons.write().await;
+            let Some(rt) = dungeons.get_mut(entrance_id) else {
+                return;
+            };
+            if rt.locked_door_opens.get(&(depth, door_id)) != Some(&opening) {
+                return;
+            }
+            rt.locked_door_opens.remove(&(depth, door_id));
+            if !rt
+                .open_doors
+                .get_mut(&depth)
+                .is_some_and(|set| set.remove(&door_id))
+            {
+                return;
+            }
+            rt.floors
+                .get(&depth)
+                .map(|fr| fr.players.keys().copied().collect())
+                .unwrap_or_default()
+        };
+        self.rebuild_dungeon_floor_passability(entrance_id, depth)
+            .await;
+        info!("'{entrance_id}' depth {depth} door {door_id} locked itself again");
+        self.send_direct_message_to_players(
+            &occupants,
+            ServerMessage::DungeonDoorToggled {
+                entrance_id: entrance_id.to_string(),
+                depth,
+                door_id,
+                is_open: false,
+            },
+        )
+        .await;
+    }
+
+    /// The key gate: whether the player carries the key to `entrance`'s
+    /// locked floor `depth`; a refusal tells them which key `what` takes.
+    async fn require_key(
+        &self,
+        player_id: &PlayerId,
+        entrance: &crate::dungeon_defs::DungeonEntranceDef,
+        depth: u8,
+        what: &str,
+    ) -> bool {
+        let key = entrance.key_item_id(depth);
+        if self.holds_item(player_id, &key).await {
+            return true;
+        }
+        self.send_direct_message(
+            player_id,
+            ServerMessage::InteractionRejected {
+                reason: format!("The {what} is locked. It takes a {}.", self.item_name(&key)),
+            },
+        )
+        .await;
+        false
+    }
+
+    /// Spend one of each of the dungeon's floor keys the player carries and
+    /// push the bag. The deepest one is required (checked by the caller); the
+    /// shallower ones just go with it.
+    async fn take_dungeon_keys(
+        &self,
+        player_id: &PlayerId,
+        entrance: &crate::dungeon_defs::DungeonEntranceDef,
+        total: u8,
+    ) {
+        let snapshot = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            for depth in locked_depths(total) {
+                super::inventory::draw_from_bag(&mut inv.bag, &entrance.key_item_id(depth), 1);
+            }
+            inv.clone()
+        };
+        self.mark_dirty(player_id).await;
+        self.mark_inventory_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, snapshot).await;
+    }
+
+    /// Players in a floor's arrival stair room (`rooms[0]`) that monster AI
+    /// must not see: fresh arrivals (`STAIR_ROOM_ARRIVAL_GRACE_MS`) and anyone
+    /// behind shut locked doors (doc/DUNGEON_REWARD.md §4).
+    pub(super) async fn players_hidden_in_stair_rooms(
+        &self,
+        underground: &[(PlayerId, Position, i8)],
+    ) -> HashSet<PlayerId> {
+        let mut hidden = HashSet::new();
+        if underground.is_empty() {
+            return hidden;
+        }
+        let now = Self::now_ms();
+        let dungeons = self.dungeons.read().await;
+        for (id, pos, floor) in underground {
+            let depth = floor.unsigned_abs();
+            let Some(entrance) = self.dungeon_defs.entrance_at(pos.x, pos.z) else {
+                continue;
+            };
+            let Some(rt) = dungeons.get(&entrance.id) else {
+                continue;
+            };
+            let Some(layout) = rt.layouts.get(depth as usize - 1) else {
+                continue;
+            };
+            let (cx, cz) = world_to_cell(&entrance.position(), pos.x, pos.z);
+            if !layout.rooms.first().is_some_and(|r| r.contains(cx, cz)) {
+                continue;
+            }
+            let just_arrived = rt
+                .floors
+                .get(&depth)
+                .and_then(|fr| fr.players.get(id))
+                .is_some_and(|&at| now.saturating_sub(at) < STAIR_ROOM_ARRIVAL_GRACE_MS);
+            let open = rt.open_doors.get(&depth);
+            let sealed = rt.locked_doors.get(depth as usize - 1).is_some_and(|ids| {
+                !ids.is_empty() && !ids.iter().any(|d| open.is_some_and(|o| o.contains(d)))
+            });
+            if just_arrived || sealed {
+                hidden.insert(*id);
+            }
+        }
+        hidden
     }
 
     /// Deliver a toggle to players near the door on the door's own floor.
@@ -455,15 +627,17 @@ impl GameState {
         let tonight = Self::night_epoch(now_seconds);
         let key = (character_id, entrance_id.to_string());
         let mut chest_opens = self.chest_opens.write().await;
-        if chest_opens
-            .get(&key)
-            .is_some_and(|&opened| Self::night_epoch(opened) >= tonight)
-        {
+        if Self::opened_since(chest_opens.get(&key), tonight) {
             return false;
         }
         chest_opens.retain(|_, &mut opened| Self::night_epoch(opened) >= tonight);
         chest_opens.insert(key, now_seconds);
         true
+    }
+
+    /// Whether a recorded chest open falls on or after the night `epoch`.
+    fn opened_since(opened: Option<&i64>, epoch: i64) -> bool {
+        opened.is_some_and(|&opened| Self::night_epoch(opened) >= epoch)
     }
 
     /// Release a claim whose DB write failed, so a repaired storage layer can
@@ -484,12 +658,14 @@ impl GameState {
     }
 
     /// Open the final-floor treasure chest: next to it on the deepest floor,
-    /// boss dead, opener among its claimants, one open per character per
-    /// night. The rolled items burst out of the chest as ground drops
+    /// carrying the deepest locked floor's key, one open per character per
+    /// night. The open spends one of each of the dungeon's keys the opener
+    /// holds. The rolled items burst out of the chest as ground drops
     /// scattered around it (anyone nearby may grab them); the depth-scaled
     /// gold goes straight to the opener. The open is broadcast nearby.
     /// Re-opening an already-claimed chest still swings the lid: the clicker
-    /// alone gets an item-less `DungeonChestOpened` showing an empty box.
+    /// alone gets an item-less `DungeonChestOpened` showing an empty box, and
+    /// keeps the keys.
     pub async fn open_dungeon_chest(
         &self,
         player_id: &PlayerId,
@@ -530,22 +706,11 @@ impl GameState {
             } else {
                 let dx = onlinerpg_shared::shortest_world_delta_x(chest_pos.x, player_pos.x);
                 let dz = player_pos.z - chest_pos.z;
-                if dx * dx + dz * dz > PROP_INTERACT_RANGE * PROP_INTERACT_RANGE {
-                    Some("Too far from the chest")
-                } else {
-                    let fr = rt.floors.get(&total);
-                    if !fr.is_some_and(|fr| fr.boss_defeated) {
-                        Some("The guardian still lives")
-                    } else if !fr.is_some_and(|fr| fr.chest_claimants.contains(&character_id)) {
-                        Some("Only those who felled the guardian may open this")
-                    } else {
-                        None
-                    }
-                }
+                (dx * dx + dz * dz > PROP_INTERACT_RANGE * PROP_INTERACT_RANGE)
+                    .then_some("Too far from the chest")
             };
             (chest_pos, total, check)
         };
-
         if let Some(reason) = position_check {
             self.send_direct_message(
                 player_id,
@@ -555,6 +720,11 @@ impl GameState {
             )
             .await;
             return;
+        }
+        if let Some(depth) = last_locked_depth(total) {
+            if !self.require_key(player_id, entrance, depth, "chest").await {
+                return;
+            }
         }
         let now_seconds = self.current_total_game_seconds();
         if !self
@@ -596,6 +766,8 @@ impl GameState {
             .await;
             return;
         }
+
+        self.take_dungeon_keys(player_id, entrance, total).await;
 
         // Roll loot: guaranteed signature drops, then an independent chance
         // roll per pool item (doc/ITEM_TIERS.md — 던전당 기대 ~5회).
@@ -961,7 +1133,7 @@ impl GameState {
                 rt.layouts.len() as u8,
                 rt.floors
                     .iter()
-                    .map(|(depth, floor)| (*depth, floor.players.iter().cloned().collect()))
+                    .map(|(depth, floor)| (*depth, floor.players.keys().cloned().collect()))
                     .collect(),
             )
         };
@@ -1040,12 +1212,10 @@ impl GameState {
                 .entry(depth)
                 .or_insert_with(|| FloorRuntime {
                     slots,
-                    players: HashSet::new(),
-                    boss_defeated: false,
-                    chest_claimants: HashSet::new(),
+                    players: HashMap::new(),
                 })
                 .players
-                .insert(*player_id);
+                .insert(*player_id, Self::now_ms());
             let broken = rt
                 .broken_props
                 .get(&depth)
@@ -1193,8 +1363,7 @@ impl GameState {
 
     /// Sunset closes the dungeon day: everyone inside is put out at the
     /// entrance and the guardians rise again. Tied to `night_epoch` because
-    /// the chest's one-open-per-character already runs on that clock, so the
-    /// two can never drift apart.
+    /// the chest's one-open-per-character runs on that clock too.
     pub async fn tick_dungeon_reset(&self) {
         let epoch = Self::night_epoch(self.current_total_game_seconds());
         {
@@ -1226,7 +1395,7 @@ impl GameState {
             dungeons
                 .values()
                 .flat_map(|rt| rt.floors.values())
-                .flat_map(|fr| fr.players.iter().copied())
+                .flat_map(|fr| fr.players.keys().copied())
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect()
@@ -1249,7 +1418,7 @@ impl GameState {
                     .flat_map(|(at, rt)| {
                         rt.floors
                             .values()
-                            .flat_map(move |fr| fr.players.iter().map(move |id| (*id, at)))
+                            .flat_map(move |fr| fr.players.keys().map(move |id| (*id, at)))
                     })
                     .collect()
             };
@@ -1282,8 +1451,6 @@ impl GameState {
                     slot.alive_monster_id = None;
                     slot.respawn_at_ms = 0;
                 }
-                fr.boss_defeated = false;
-                fr.chest_claimants.clear();
             }
         }
         info!(
@@ -1303,7 +1470,7 @@ impl GameState {
                 return;
             };
             fr.players.remove(player_id);
-            let remaining = fr.players.iter().next().cloned();
+            let remaining = fr.players.keys().next().cloned();
             let alive: Vec<String> = fr
                 .slots
                 .iter()
@@ -1369,7 +1536,7 @@ impl GameState {
                 .iter()
                 .flat_map(|(id, rt)| {
                     rt.floors.iter().filter_map(|(depth, fr)| {
-                        fr.players.iter().next().map(|p| (id.clone(), *depth, *p))
+                        fr.players.keys().next().map(|p| (id.clone(), *depth, *p))
                     })
                 })
                 .collect()
@@ -1440,74 +1607,82 @@ impl GameState {
         })
     }
 
-    /// Mark a dungeon monster's slot for respawn after it dies. Called
-    /// from the combat death path; no-op for non-dungeon monsters.
+    /// Mark a dungeon monster's slot for respawn after it dies, and roll the
+    /// floor key the monster may carry (returned for the killer's loot
+    /// scatter). Called from the combat death path; `None` for non-dungeon
+    /// monsters, bosses and locked floors.
     pub(super) async fn on_dungeon_monster_dead(
         &self,
         monster_id: &str,
-        position: Position,
-        floor_level: i8,
-    ) {
+        killer: &PlayerId,
+    ) -> Option<String> {
         let entry = {
             let mut index = self.dungeon_monsters.write().await;
             index.remove(monster_id)
         };
-        let Some(entry) = entry else { return };
+        let entry = entry?;
         let now = Self::now_ms();
-        // Read before taking the dungeons write lock.
-        let claimants = if entry.is_boss {
-            Some(
-                self.characters_near(position, floor_level, CHEST_CLAIM_RADIUS)
-                    .await,
-            )
-        } else {
-            None
-        };
 
-        let mut dungeons = self.dungeons.write().await;
-        let Some(fr) = dungeons
-            .get_mut(&entry.entrance_id)
-            .and_then(|rt| rt.floors.get_mut(&entry.depth))
-        else {
-            return;
-        };
-        let Some(slot) = fr.slots.get_mut(entry.slot) else {
-            return;
-        };
-        slot.alive_monster_id = None;
-        match claimants {
-            Some(claimants) => {
+        let total = {
+            let mut dungeons = self.dungeons.write().await;
+            let rt = dungeons.get_mut(&entry.entrance_id)?;
+            let total = rt.layouts.len() as u8;
+            let slot = rt.floors.get_mut(&entry.depth)?.slots.get_mut(entry.slot)?;
+            slot.alive_monster_id = None;
+            if entry.is_boss {
                 slot.respawn_at_ms = BOSS_RESPAWN_NEVER;
-                fr.boss_defeated = true;
-                fr.chest_claimants = claimants;
                 info!(
-                    "Guardian of '{}' fell at depth {}; {} character(s) earned the chest",
-                    entry.entrance_id,
-                    entry.depth,
-                    fr.chest_claimants.len()
+                    "Guardian of '{}' fell at depth {}",
+                    entry.entrance_id, entry.depth
                 );
+                return None;
             }
-            None => slot.respawn_at_ms = now + MONSTER_RESPAWN_MS,
-        }
+            slot.respawn_at_ms = now + MONSTER_RESPAWN_MS;
+            total
+        };
+        self.roll_dungeon_key_drop(killer, &entry.entrance_id, entry.depth, total)
+            .await
     }
 
-    /// Character ids of live players within `radius` on `floor_level`.
-    async fn characters_near(
+    /// The key a kill at `depth` drops, if any: `KEY_DROP_CHANCE` for the
+    /// next locked floor's key, skipped when the killer already carries it or
+    /// has opened this dungeon's chest tonight (the key would be dead weight).
+    async fn roll_dungeon_key_drop(
         &self,
-        position: Position,
-        floor_level: i8,
-        radius: f32,
-    ) -> HashSet<i64> {
-        let nearby = self
-            .player_ids_within_position(&position, floor_level, radius)
-            .await;
-        let players = self.players.read().await;
-        let characters = self.player_characters.read().await;
-        nearby
-            .iter()
-            .filter(|id| players.get(id).is_some_and(|p| p.health > 0))
-            .filter_map(|id| characters.get(id).map(|(char_id, _, _)| *char_id))
-            .collect()
+        killer: &PlayerId,
+        entrance_id: &str,
+        depth: u8,
+        total: u8,
+    ) -> Option<String> {
+        let key = self
+            .dungeon_key_candidate(killer, entrance_id, depth, total)
+            .await?;
+        rand::thread_rng().gen_bool(KEY_DROP_CHANCE).then_some(key)
+    }
+
+    /// The key a kill at `depth` is eligible to drop, before the chance roll.
+    pub(super) async fn dungeon_key_candidate(
+        &self,
+        killer: &PlayerId,
+        entrance_id: &str,
+        depth: u8,
+        total: u8,
+    ) -> Option<String> {
+        let entrance = self.dungeon_defs.get(entrance_id)?;
+        let key = entrance.key_item_id(key_depth_for(depth, total)?);
+        if self.holds_item(killer, &key).await {
+            return None;
+        }
+        let character_id = self.character_id_of(killer).await?;
+        let tonight = Self::night_epoch(self.current_total_game_seconds());
+        let opened_tonight = Self::opened_since(
+            self.chest_opens
+                .read()
+                .await
+                .get(&(character_id, entrance_id.to_string())),
+            tonight,
+        );
+        (!opened_tonight).then_some(key)
     }
 
     /// Validate a client-declared floor for the move leg `from`→`to`

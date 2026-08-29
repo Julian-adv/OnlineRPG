@@ -44,6 +44,9 @@ pub struct DungeonEntranceDef {
     pub chest_tier: u8,
     /// Side the entrance door opens toward (n/s/e/w); blank = seed-derived.
     pub entrance_dir: Option<WallDirection>,
+    /// Item id stem of this dungeon's floor keys: `{key_prefix}_{depth}`
+    /// (doc/DUNGEON_REWARD.md). Validated by the server on load.
+    pub key_prefix: String,
 }
 
 impl DungeonEntranceDef {
@@ -58,6 +61,11 @@ impl DungeonEntranceDef {
     /// Whether (x, z) lies inside this dungeon's grid footprint.
     pub fn footprint_contains(&self, x: f32, z: f32) -> bool {
         footprint_contains(self.x, self.z, x, z)
+    }
+
+    /// Item id of the key that works this dungeon's locked floor `depth`.
+    pub fn key_item_id(&self, depth: u8) -> String {
+        format!("{}_{depth}", self.key_prefix)
     }
 }
 
@@ -135,6 +143,7 @@ fn parse_entrances(csv: &str) -> Vec<DungeonEntranceDef> {
                     "w" => Some(WallDirection::West),
                     d => panic!("dungeon '{id}' has an invalid entranceDir '{d}'"),
                 },
+                key_prefix: field("keyPrefix").to_string(),
             })
         })
         .collect()
@@ -160,9 +169,9 @@ mod tests {
 
     #[test]
     fn parses_drops_lists_and_optional_floor_override() {
-        let csv = "id,name,x,y,z,chestDrops,floors,boss,chestTier,entranceDir\n\
-                   a,A Place,-1450,0.7,4720,shield;armor,5,orc_boss,2,s\n\
-                   b,B Place,10,0,20,,,,,\n";
+        let csv = "id,name,x,y,z,chestDrops,floors,boss,chestTier,entranceDir,keyPrefix\n\
+                   a,A Place,-1450,0.7,4720,shield;armor,5,orc_boss,2,s,a_key\n\
+                   b,B Place,10,0,20,,,,,,\n";
         let defs = parse_entrances(csv);
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].chest_drops, ["shield", "armor"]);
@@ -170,6 +179,7 @@ mod tests {
         assert_eq!(defs[0].boss, "orc_boss");
         assert_eq!(defs[0].chest_tier, 2);
         assert_eq!(defs[0].entrance_dir, Some(WallDirection::South));
+        assert_eq!(defs[0].key_item_id(5), "a_key_5");
         assert!(defs[1].chest_drops.is_empty());
         assert_eq!(defs[1].floors, None, "blank floors = seed-derived depth");
         assert_eq!(defs[1].boss, super::super::BOSS_MONSTER_TYPE);

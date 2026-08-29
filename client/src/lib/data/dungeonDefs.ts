@@ -24,6 +24,8 @@ export interface DungeonEntranceDef {
   chestTier?: number
   /** Entrance door side (n/s/e/w); blank = seed-derived. INERT here, like `floors`. */
   entranceDir?: string
+  /** Floor-key item id stem (`{keyPrefix}_{depth}`); server-side only. */
+  keyPrefix?: string
 }
 
 export const DUNGEON_ENTRANCES: DungeonEntranceDef[] = Object.values(

@@ -120,6 +120,7 @@ type Roster = HashMap<super::SpatialCell, Vec<(PlayerId, Position, u32, i8)>>;
 struct Active {
     id: String,
     floor_level: i8,
+    position: Position,
     players: Vec<NearbyPlayer>,
 }
 
@@ -127,6 +128,15 @@ impl super::GameState {
     pub(crate) fn server_monster_ai(&self) -> bool {
         self.server_monster_ai
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn brain_target(&self, monster_id: &str) -> Option<PlayerId> {
+        let brains = self.monster_brains.lock().await;
+        brains
+            .entries
+            .get(monster_id)
+            .and_then(|e| e.brain.target_player_id())
     }
 
     #[cfg(test)]
@@ -195,21 +205,30 @@ impl super::GameState {
             return;
         }
         let started = Instant::now();
-        let roster: Roster = {
+        let (mut roster, underground) = {
             let now = Self::now_ms();
             let players = self.players.read().await;
             let mut roster = Roster::default();
+            let mut underground = Vec::new();
             for (id, p) in players.iter() {
                 if !p.is_ready(now) {
                     continue;
+                }
+                if p.floor_level < 0 {
+                    underground.push((*id, p.position, p.floor_level));
                 }
                 roster
                     .entry(super::SpatialCell::from_position(&p.position))
                     .or_default()
                     .push((*id, p.position, p.health, p.floor_level));
             }
-            roster
+            (roster, underground)
         };
+        // Just arrived, or behind a shut locked door: out of every monster's sight.
+        let sealed = self.players_hidden_in_stair_rooms(&underground).await;
+        for entries in roster.values_mut() {
+            entries.retain(|(id, ..)| !sealed.contains(id));
+        }
         let radius = super::EVENT_DELIVERY_RADIUS;
         let radius_sq = radius * radius;
         let players_near = |position: &Position, floor: i8| -> Vec<NearbyPlayer> {
@@ -231,7 +250,7 @@ impl super::GameState {
         let mut brains = self.monster_brains.lock().await;
         // Reconcile against the registry and snapshot what to tick, in one
         // pass under the read lock.
-        let (active, standing) = {
+        let (mut active, standing) = {
             let monsters = self.monsters.read().await;
             brains.entries.retain(|id, _| {
                 monsters
@@ -271,11 +290,38 @@ impl super::GameState {
                 active.push(Active {
                     id: m.id.clone(),
                     floor_level: m.floor_level,
+                    position: m.position,
                     players,
                 });
             }
             (active, standing)
         };
+        // Underground only (houses stay see-through, by budget): sight stops
+        // at walls and shut doors like a swing does, tested against the one
+        // dungeon grid that can be in the way.
+        {
+            let cache = self.passability_read();
+            for a in active.iter_mut().filter(|a| a.floor_level < 0) {
+                let Some(entrance) = self.dungeon_defs.entrance_at(a.position.x, a.position.z)
+                else {
+                    continue;
+                };
+                let key = onlinerpg_shared::dungeon::dungeon_cache_key(&entrance.id);
+                let floor = passability_floor_for_level(a.floor_level);
+                a.players.retain(|p| {
+                    !onlinerpg_shared::pathfinding::attack_line_blocked_in(
+                        &cache,
+                        &key,
+                        a.position.x,
+                        a.position.z,
+                        p.position.x,
+                        p.position.z,
+                        floor,
+                    )
+                });
+            }
+            active.retain(|a| !a.players.is_empty());
+        }
         if active.is_empty() {
             return;
         }

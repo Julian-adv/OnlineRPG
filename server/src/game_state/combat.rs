@@ -554,12 +554,13 @@ impl super::GameState {
                 } else {
                     None
                 };
-                let monster_drops = def.map_or_else(Vec::new, |def| {
+                let mut monster_drops = def.map_or_else(Vec::new, |def| {
                     crate::world_drop_defs::roll_independent(
                         def.drop_entries().iter().map(|(id, c)| (id.as_str(), *c)),
                         &mut rand::thread_rng(),
                     )
                 });
+                monster_drops.extend(self.on_dungeon_monster_dead(&monster_id, player_id).await);
                 // All kill loot waits for the blow to land.
                 self.spawn_kill_loot_after_impact(
                     weapon_drop,
@@ -568,10 +569,6 @@ impl super::GameState {
                     monster_floor_level,
                     effective_level,
                 );
-
-                // Dungeon monsters: free their spawn slot for respawn.
-                self.on_dungeon_monster_dead(&monster_id, monster_position, monster_floor_level)
-                    .await;
 
                 self.drain_hunger_for_kill(player_id).await;
                 if let (Some(def), Some(effective_level)) = (def, effective_level) {
