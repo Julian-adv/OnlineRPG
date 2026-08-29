@@ -887,13 +887,13 @@ export function handleServerMessage(
     }
 
     case 'PlayerAttackRejected': {
-      // The server sees a target we don't: stop the auto-attack loop instead
-      // of swinging at it once per cooldown forever.
-      if (
-        data.reason === 'invalid_target' &&
-        combatController.targetMonsterId === data.monster_id
-      ) {
-        combatController.cancelCombat()
+      // The server no longer has this monster: drop our ghost copy so nothing
+      // (auto-attack, re-click, local AI) can swing at it again.
+      if (data.reason === 'invalid_target') {
+        if (combatController.targetMonsterId === data.monster_id) {
+          combatController.cancelCombat()
+        }
+        monsterManager.remove(data.monster_id)
       }
       const reasonText: Record<string, string> = {
         invalid_target: 'target is gone',
