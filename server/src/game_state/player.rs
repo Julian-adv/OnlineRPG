@@ -1028,8 +1028,6 @@ impl super::GameState {
         }
     }
 
-    /// End the entry grace early: the client says its scene is drawn, so it is
-    /// a damageable target again.
     pub async fn mark_world_ready(&self, player_id: &PlayerId) {
         let mut players = self.players.write().await;
         if let Some(player) = players.get_mut(player_id) {

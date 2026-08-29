@@ -10,21 +10,6 @@ impl onlinerpg_terrain::height::HeightTiles for SteppedHeightTiles {
     }
 }
 
-/// The next direct message must be the rejection ack for `expected_id`.
-fn expect_attack_rejected(
-    rx: &mut DirectRx,
-    expected_id: &str,
-    expected_reason: AttackRejectReason,
-) {
-    match rx.try_recv() {
-        Ok(ServerMessage::PlayerAttackRejected { monster_id, reason }) => {
-            assert_eq!(monster_id, expected_id);
-            assert_eq!(reason, expected_reason);
-        }
-        other => panic!("Expected a {expected_reason} rejection ack, got {other:?}"),
-    }
-}
-
 /// `base` with one component replaced by each non-finite value, labelled.
 fn non_finite_positions(base: Position) -> Vec<(String, Position)> {
     let mut out = Vec::new();

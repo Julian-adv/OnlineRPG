@@ -1,4 +1,5 @@
 pub use onlinerpg_shared::entity::ClientKind;
+use onlinerpg_shared::entity::WORLD_LOADING_GRACE_MS;
 pub use onlinerpg_shared::{
     AttackRejectReason, Character, CharacterAttributes, CharacterClass, ClientMessage,
     GameDateTime, Gender, Monster, MonsterLifecycle, MonsterState, Player, PlayerId, Position,
@@ -53,6 +54,6 @@ pub fn new_player(
         last_combat_at: 0,
         client_kind,
         back_color: None,
-        ready_at: 0,
+        ready_at: crate::game_state::GameState::now_ms() + WORLD_LOADING_GRACE_MS,
     }
 }

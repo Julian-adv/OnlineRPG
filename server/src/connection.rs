@@ -1123,9 +1123,6 @@ async fn handle_client_message(
                 state.client_kind.unwrap_or_default(),
             );
 
-            player.ready_at =
-                GameState::now_ms() + onlinerpg_shared::entity::WORLD_LOADING_GRACE_MS;
-
             // Restore saved health (if available) and floor_level from DB
             if let Some(saved_health) = selected_character.health {
                 player.health = saved_health.min(max_hp);

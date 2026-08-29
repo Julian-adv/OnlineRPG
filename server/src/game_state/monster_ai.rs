@@ -200,8 +200,6 @@ impl super::GameState {
             let players = self.players.read().await;
             let mut roster = Roster::default();
             for (id, p) in players.iter() {
-                // Still drawing the world: invisible to the brains, so nothing
-                // is already mid-swing the moment the loading screen lifts.
                 if !p.is_ready(now) {
                     continue;
                 }

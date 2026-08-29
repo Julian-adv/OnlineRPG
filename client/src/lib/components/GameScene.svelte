@@ -773,7 +773,6 @@
           currentTime - initialDataReadyAt > SMOOTH_FRAME_TIMEOUT_MS
         ) {
           isSceneCompiling = false
-          // Ends the server's entry grace: monsters can land hits again.
           networkManager.sendWorldReady()
         }
       }

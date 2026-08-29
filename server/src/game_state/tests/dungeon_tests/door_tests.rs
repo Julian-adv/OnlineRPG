@@ -547,12 +547,11 @@ async fn dungeon_door_blocks_attacks_until_opened() {
         10,
         "a swing through a shut door must not damage the monster"
     );
-    match delver_rx.try_recv() {
-        Ok(ServerMessage::PlayerAttackRejected { reason, .. }) => {
-            assert_eq!(reason, AttackRejectReason::OutOfRange)
-        }
-        other => panic!("a walled-off swing must be rejected, got {other:?}"),
-    }
+    expect_attack_rejected(
+        &mut delver_rx,
+        "shut_door_monster",
+        AttackRejectReason::OutOfRange,
+    );
 
     game_state
         .broadcast_monster_attack(&player_id, "shut_door_monster", &player_id)

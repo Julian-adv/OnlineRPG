@@ -445,13 +445,14 @@ impl super::GameState {
             health: u32,
             max_health: u32,
         }
+        let now = Self::now_ms();
         let hits: Vec<Hit> = {
             let mut players = self.players.write().await;
             damage
                 .into_iter()
                 .filter_map(|(pid, amount, cause)| {
                     let player = players.get_mut(&pid)?;
-                    if player.health == 0 {
+                    if !player.is_damageable(now) {
                         return None;
                     }
                     player.health = player.health.saturating_sub(amount);

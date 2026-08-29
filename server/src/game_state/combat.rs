@@ -277,37 +277,23 @@ impl super::GameState {
         else {
             return Err(AttackRejectReason::InvalidTarget);
         };
+        let now = Self::now_ms();
         let player_snapshot = {
             let players = self.players.read().await;
-            players.get(player_id).map(|p| {
-                (
-                    p.name.clone(),
-                    p.level,
-                    p.floor_level,
-                    p.position,
-                    p.health,
-                    p.is_ready(Self::now_ms()),
-                )
-            })
+            players
+                .get(player_id)
+                .filter(|p| p.is_ready(now))
+                .map(|p| (p.name.clone(), p.level, p.floor_level, p.position, p.health))
         };
-        let Some((
-            player_name,
-            player_level,
-            player_floor,
-            player_position,
-            player_health,
-            player_ready,
-        )) = player_snapshot
+        let Some((player_name, player_level, player_floor, player_position, player_health)) =
+            player_snapshot
         else {
-            warn!("Attack from non-existent player: {}", player_id);
+            warn!(
+                "Attack from player not in game or still loading: {}",
+                player_id
+            );
             return Err(AttackRejectReason::NotInGame);
         };
-
-        // Untouchable during the entry grace, so untouching too: a client that
-        // withholds `WorldReady` gets no free swings out of it.
-        if !player_ready {
-            return Err(AttackRejectReason::NotInGame);
-        }
 
         // A dead attacker deals no damage. The monster-attack path already
         // gates on the target's HP; mirror it here so a 0-HP player can't
@@ -850,14 +836,12 @@ impl super::GameState {
             return;
         };
 
-        // 2. Check if target player exists, is alive, and is done loading.
-        // Every damage path — owning client or the server's own brain — runs
-        // through here, so the entry grace only needs gating once.
+        // 2. Check if target player exists and can take damage
         let (target_player_name, target_position, target_floor_level);
         {
             let players = self.players.read().await;
             match players.get(target_player_id) {
-                Some(player) if player.health > 0 && player.is_ready(now) => {
+                Some(player) if player.is_damageable(now) => {
                     target_player_name = player.name.clone();
                     target_position = player.position;
                     target_floor_level = player.floor_level;

@@ -441,8 +441,6 @@ class NetworkManager {
 
   // --- Public send methods ---
 
-  // Lifts the server's entry grace, which keeps the player undamageable
-  // until the scene is drawn.
   sendWorldReady() {
     this.sendMessage('WorldReady')
   }

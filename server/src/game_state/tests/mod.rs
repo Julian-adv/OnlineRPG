@@ -53,6 +53,21 @@ fn pid(name: &str) -> PlayerId {
     PlayerId::from((hasher.finish() & 0xFFFF_FFFF).max(1))
 }
 
+/// The next direct message must be the rejection ack for `expected_id`.
+fn expect_attack_rejected(
+    rx: &mut DirectRx,
+    expected_id: &str,
+    expected_reason: AttackRejectReason,
+) {
+    match rx.try_recv() {
+        Ok(ServerMessage::PlayerAttackRejected { monster_id, reason }) => {
+            assert_eq!(monster_id, expected_id);
+            assert_eq!(reason, expected_reason);
+        }
+        other => panic!("Expected a {expected_reason} rejection ack, got {other:?}"),
+    }
+}
+
 fn make_player(id: &str, x: f32, z: f32) -> Player {
     Player {
         id: pid(id),
