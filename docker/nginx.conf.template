@@ -77,6 +77,15 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
+    # /models/ is fetched by fixed path (objects/catalog.json and the GLBs it
+    # names). A time-based expiry let a stale catalog silently hide new
+    # furniture (2026-08-29), so revalidate every request; ETag keeps it cheap.
+    # `^~` so the media regex below does not claim the GLBs here.
+    location ^~ /models/ {
+        add_header Cache-Control "no-cache";
+        try_files $uri =404;
+    }
+
     # Unhashed media. The name never changes, so expiry is time-based and the
     # ETag settles the refetch after it — which only works while the build
     # preserves public/ mtimes (client `keep:asset-times`).
