@@ -693,7 +693,7 @@ impl Semantic {
         let shallow_water = proximity(pixel, [100, 160, 220], 28.0);
         let river_blue = ((pixel[2] as f32 - pixel[0] as f32 - 35.0) / 75.0).clamp(0.0, 1.0)
             * ((pixel[2] as f32 - pixel[1] as f32 - 12.0) / 55.0).clamp(0.0, 1.0);
-        let land = deep_water < 0.58 && !(shallow_water > 0.65 && !sample.land);
+        let land = deep_water < 0.58 && (shallow_water <= 0.65 || sample.land);
         let spread = *pixel.iter().max().unwrap() as f32 - *pixel.iter().min().unwrap() as f32;
         let neutral = (1.0 - smoothstep(18.0, 42.0, spread)).clamp(0.0, 1.0);
         let road = proximity(pixel, [140, 135, 125], 38.0).max(

@@ -100,7 +100,11 @@ pub fn double_door_partner(segs: &[WallConfig], i: usize) -> Option<usize> {
     while r > 0 && segs[r - 1].variant == WallVariant::WithDoubleDoor {
         r -= 1;
     }
-    let partner = if (i - r) % 2 == 0 { i + 1 } else { i - 1 };
+    let partner = if (i - r).is_multiple_of(2) {
+        i + 1
+    } else {
+        i - 1
+    };
     (segs.get(partner)?.variant == WallVariant::WithDoubleDoor).then_some(partner)
 }
 

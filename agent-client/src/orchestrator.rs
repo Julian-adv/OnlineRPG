@@ -663,6 +663,8 @@ async fn enter_game(
         let msg = ws::recv(ws_rx).await?;
         match msg {
             ServerMessage::JoinSuccess { .. } => {
+                // No scene to compile here, so the entry grace ends at once.
+                ws::send(ws_tx, &ClientMessage::WorldReady).await?;
                 buffered.push(msg);
                 return Ok(buffered);
             }

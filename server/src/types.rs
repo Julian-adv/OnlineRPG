@@ -53,5 +53,6 @@ pub fn new_player(
         last_combat_at: 0,
         client_kind,
         back_color: None,
+        ready_at: 0,
     }
 }

@@ -337,6 +337,9 @@ pub enum ClientMessage {
     EnterGame {
         character_id: i64,
     },
+    /// The scene has finished compiling, so the player can be hit again. See
+    /// `entity::WORLD_LOADING_GRACE_MS`.
+    WorldReady,
     PlayerMove {
         position: Position,
         rotation: f32,

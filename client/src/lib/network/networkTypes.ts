@@ -136,6 +136,7 @@ export type ClientMessage =
   | { RenameCharacter: { character_id: number; new_name: string } }
   | { RollCharacterStats: { character_class: CharacterClass; gender: Gender } }
   | { EnterGame: { character_id: number } }
+  | 'WorldReady'
   | {
       PlayerMove: {
         position: Position

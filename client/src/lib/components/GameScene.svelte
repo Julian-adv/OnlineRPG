@@ -765,14 +765,16 @@
       if (isSceneCompiling && initialDataReadyAt > 0) {
         if (rawDeltaTime < SMOOTH_FRAME_TIME_MS) {
           smoothFrameCount++
-          if (smoothFrameCount >= SMOOTH_FRAME_THRESHOLD) {
-            isSceneCompiling = false
-          }
         } else {
           smoothFrameCount = 0
         }
-        if (currentTime - initialDataReadyAt > SMOOTH_FRAME_TIMEOUT_MS) {
+        if (
+          smoothFrameCount >= SMOOTH_FRAME_THRESHOLD ||
+          currentTime - initialDataReadyAt > SMOOTH_FRAME_TIMEOUT_MS
+        ) {
           isSceneCompiling = false
+          // Ends the server's entry grace: monsters can land hits again.
+          networkManager.sendWorldReady()
         }
       }
 
