@@ -22,10 +22,20 @@ const TICK_BUDGET: Duration = Duration::from_millis(40);
 /// with at most this much simulated time, so it can't leap a whole path.
 const MAX_BRAIN_DELTA_MS: f32 = 1000.0;
 const STATS_LOG_PERIOD: Duration = Duration::from_secs(30);
+/// How long a brain keeps its target after a wall last hid them, so a chase
+/// survives the doorway corner clipping the sight line for a tick.
+const SIGHT_MEMORY: Duration = Duration::from_secs(5);
+/// Within this a monster senses a player regardless of walls — scent and
+/// footfall, not sight.
+const SENSE_RANGE: f32 = 5.0;
 
 struct Entry {
     brain: MonsterBrain,
     last_tick: Instant,
+    /// Tick generation this brain last had a player in view.
+    watched_gen: u64,
+    /// When the brain's current target was last in plain sight.
+    target_seen: Option<(PlayerId, Instant)>,
 }
 
 impl Entry {
@@ -34,6 +44,22 @@ impl Entry {
         let delta = forced.unwrap_or_else(|| (now - self.last_tick).as_secs_f32() * 1000.0);
         self.last_tick = now;
         delta.min(MAX_BRAIN_DELTA_MS)
+    }
+
+    /// Mark the brain watched this tick. A brain nobody watched last tick
+    /// owes nothing: paying that time back is a teleport to whoever looks.
+    fn watch(&mut self, gen: u64, now: Instant) {
+        if self.watched_gen + 1 != gen {
+            self.last_tick = now;
+        }
+        self.watched_gen = gen;
+    }
+
+    /// The target still in view on memory alone.
+    fn remembered(&self, target: Option<PlayerId>, now: Instant) -> Option<PlayerId> {
+        self.target_seen
+            .filter(|(id, at)| Some(*id) == target && now - *at < SIGHT_MEMORY)
+            .map(|(id, _)| id)
     }
 }
 
@@ -53,6 +79,8 @@ pub(crate) struct ServerBrains {
     /// Round-robin start so budget starvation rotates instead of always
     /// hitting the same tail.
     cursor: usize,
+    /// Counts ticks, for `Entry::watch`.
+    tick_gen: u64,
     stats: Stats,
     stats_since: Instant,
 }
@@ -66,6 +94,7 @@ impl ServerBrains {
             entries: HashMap::new(),
             trees,
             cursor: 0,
+            tick_gen: 0,
             stats: Stats::default(),
             stats_since: Instant::now(),
         }
@@ -284,6 +313,8 @@ impl super::GameState {
                         Entry {
                             brain: self.new_brain(m),
                             last_tick: started,
+                            watched_gen: 0,
+                            target_seen: None,
                         },
                     );
                 }
@@ -296,9 +327,9 @@ impl super::GameState {
             }
             (active, standing)
         };
-        // Underground only (houses stay see-through, by budget): sight stops
-        // at walls and shut doors like a swing does, tested against the one
-        // dungeon grid that can be in the way.
+        // Underground, walls and shut doors block sight (houses stay
+        // see-through, by budget). Sight memory keeps a chase alive through
+        // the tick where the doorway corner clips the line.
         {
             let cache = self.passability_read();
             for a in active.iter_mut().filter(|a| a.floor_level < 0) {
@@ -306,21 +337,39 @@ impl super::GameState {
                 else {
                     continue;
                 };
+                let Some(entry) = brains.entries.get_mut(&a.id) else {
+                    continue;
+                };
                 let key = onlinerpg_shared::dungeon::dungeon_cache_key(&entrance.id);
                 let floor = passability_floor_for_level(a.floor_level);
+                let from = a.position;
+                let target = entry.brain.target_player_id();
+                let remembered = entry.remembered(target, started);
                 a.players.retain(|p| {
-                    !onlinerpg_shared::pathfinding::attack_line_blocked_in(
-                        &cache,
-                        &key,
-                        a.position.x,
-                        a.position.z,
-                        p.position.x,
-                        p.position.z,
-                        floor,
-                    )
+                    let visible = from.dist_xz_sq(&p.position) <= SENSE_RANGE * SENSE_RANGE
+                        || !onlinerpg_shared::pathfinding::attack_line_blocked_in(
+                            &cache,
+                            &key,
+                            from.x,
+                            from.z,
+                            p.position.x,
+                            p.position.z,
+                            floor,
+                        );
+                    if visible && Some(p.id) == target {
+                        entry.target_seen = Some((p.id, started));
+                    }
+                    visible || Some(p.id) == remembered
                 });
             }
             active.retain(|a| !a.players.is_empty());
+        }
+        brains.tick_gen += 1;
+        let gen = brains.tick_gen;
+        for a in &active {
+            if let Some(entry) = brains.entries.get_mut(&a.id) {
+                entry.watch(gen, started);
+            }
         }
         if active.is_empty() {
             return;

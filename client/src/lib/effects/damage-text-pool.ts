@@ -65,10 +65,11 @@ class DamageTextPool {
     material.map = texture
     material.transparent = true
     material.depthWrite = false
-    material.polygonOffset = true
-    material.polygonOffsetFactor = -1
-    material.polygonOffsetUnits = -1
+    // Drawn over walls like name labels: a number rising behind a pillar
+    // would otherwise vanish mid-flight.
+    material.depthTest = false
     const mesh = new THREE.Mesh(this.geometry, material)
+    mesh.renderOrder = 4
     mesh.visible = false
     mesh.frustumCulled = false
     this.group.add(mesh)

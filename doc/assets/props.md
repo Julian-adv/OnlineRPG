@@ -47,6 +47,7 @@ Poly Haven에서 받은 .gltf를 Blender에서 .glb로 다시 export
 - beige_wall_001.glb -> https://polyhaven.com/a/beige_wall_001
 - rough_linen.glb -> https://polyhaven.com/a/rough_linen
 - wooden_garage_door_1k.glb -> https://polyhaven.com/a/wooden_garage_door (던전 입구 문)
+- rusty_metal_grid_1k.glb -> https://polyhaven.com/a/rusty_metal_grid (CC0, 2026-08-30) — 열쇠가 있어야 열리는 잠긴 층 문(doc/DUNGEON_REWARD.md). Poly Haven glTF zip을 Blender로 임포트해 GLB로 export(원본 zip은 assets/rusty_metal_grid_1k.gltf.zip)
 - grey_stone_path_1k.glb -> https://polyhaven.com/a/grey_stone_path (던전 바닥/계단)
 
 ## Dungeon Textures

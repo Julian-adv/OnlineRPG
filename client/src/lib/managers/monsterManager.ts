@@ -868,7 +868,8 @@ class MonsterManager {
       monster,
       { x: wrapWorldX(p.x + c.x), y: p.y, z: p.z + c.z },
       deltaTime,
-      rate
+      rate,
+      false
     )
     if (done) {
       monster.syncCorrection = undefined
@@ -880,17 +881,23 @@ class MonsterManager {
     return true
   }
 
+  // Server rotation arrives only per sync, so the step sets the heading;
+  // a sync-correction nudge must not (`face`), it is not where it's going.
   private moveTowards(
     monster: MonsterData,
     target: { x: number; y: number; z: number },
     deltaTime: number, // in ms
-    speed = monster.moveSpeed
+    speed = monster.moveSpeed,
+    face = true
   ): boolean {
     // Positions are canonical, so a step toward a target across the seam has
     // to take the periodic short path and stay canonical afterwards.
     const dx = shortestWrappedDeltaX(monster.position.x, target.x)
     const dz = target.z - monster.position.z
     const distance = Math.sqrt(dx * dx + dz * dz)
+    if (face && distance > MONSTER_POSITION_EPSILON) {
+      monster.rotation = Math.atan2(dx, dz)
+    }
 
     const moveStep = (speed * deltaTime) / 1000
     const onUpperFloor = (monster.currentFloor ?? 0) > 0

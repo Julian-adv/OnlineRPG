@@ -26,6 +26,7 @@ import {
   DUNGEON_WALL_TEXTURE_IDX,
   DUNGEON_CORRIDOR_WALL_TEXTURE_IDX,
   DUNGEON_DOOR_TEXTURE_IDX,
+  DUNGEON_LOCKED_DOOR_TEXTURE_IDX,
   SLAB_THICKNESS,
   DUNGEON_FLOOR_UV_SCALE,
   SHADOW_CONTACT_LIFT,
@@ -57,19 +58,6 @@ export interface DungeonFloorGroup {
   wallRuns: WallRun[]
   /** Interior room doors at corridor mouths, animated by the layer. */
   doors: InteriorDoor[]
-}
-
-/** Plain door material tinted toward iron so a keyed door reads as locked. */
-let lockedDoorMaterial: THREE.MeshStandardMaterial | null = null
-function getLockedDoorMaterial(
-  base: THREE.MeshStandardMaterial
-): THREE.Material {
-  if (!lockedDoorMaterial) {
-    lockedDoorMaterial = base.clone()
-    lockedDoorMaterial.color.setRGB(0.45, 0.42, 0.42)
-    lockedDoorMaterial.metalness = 0.5
-  }
-  return lockedDoorMaterial
 }
 
 /**
@@ -391,13 +379,14 @@ export function buildDungeonFloorGroup(
   // `dungeon::doors` module doc). Arches merge statically; the swinging
   // leaves are returned for the layer to animate.
   const doorMat = getHousingMaterial(DUNGEON_DOOR_TEXTURE_IDX)
+  const lockedDoorMat = getHousingMaterial(DUNGEON_LOCKED_DOOR_TEXTURE_IDX)
   const archEntries: GeoEntry[] = []
   const doors: InteriorDoor[] = doorSpecs.map((spec) =>
     buildInteriorDoor(
       layout.depth,
       spec,
       ctx.wallHeight,
-      spec.locked ? getLockedDoorMaterial(doorMat) : doorMat,
+      spec.locked ? lockedDoorMat : doorMat,
       archEntries
     )
   )

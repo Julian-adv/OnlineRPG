@@ -13,6 +13,8 @@ export interface HousingTextureEntry {
   fallbackColor: number
   /** UV scale multiplier — smaller = larger tiles. Default 1.0 */
   uvScale?: number
+  /** UV offset in texture space (0..1 = one image), e.g. to centre a grid. */
+  uvOffset?: [number, number]
   /** UI display order — lower values appear first. Defaults to array index. */
   sortOrder?: number
   /** Map UV 0→1 per wall segment (no tiling). Default false. */
@@ -192,6 +194,16 @@ export const HOUSING_TEXTURES: HousingTextureEntry[] = [
     internal: true,
   },
   {
+    // Keyed dungeon door (DUNGEON_LOCKED_DOOR_TEXTURE_IDX). Door UVs run 0→1
+    // across the opening; >1 tightens the grid so the bars read as bars.
+    label: 'Rusty Metal Grid',
+    glb: 'dungeon/rusty_metal_grid_1k',
+    fallbackColor: 0x4a4038,
+    uvScale: 1.5,
+    uvOffset: [0, 0.16],
+    internal: true,
+  },
+  {
     // Rock wall 10 — underground dungeon corridor walls
     // (DUNGEON_CORRIDOR_WALL_TEXTURE_IDX). Dungeon-only, kept out of the picker.
     label: 'Rock Wall 10',
@@ -273,11 +285,15 @@ export function initHousingTextures(): Promise<void> {
         const scale = entry.uvScale ?? 1.0
         const applyWrap = (tex: THREE.Texture) => {
           if (scale !== 1.0) tex.repeat.set(scale, scale)
-          if (entry.fitSegment) {
-            tex.wrapS = THREE.ClampToEdgeWrapping
-            tex.wrapT = THREE.ClampToEdgeWrapping
-            tex.needsUpdate = true
-          }
+          if (entry.uvOffset) tex.offset.set(...entry.uvOffset)
+          // Set both ways: the loader caches textures, so an entry edited
+          // under HMR must not inherit the wrap it had before.
+          const wrap = entry.fitSegment
+            ? THREE.ClampToEdgeWrapping
+            : THREE.RepeatWrapping
+          tex.wrapS = wrap
+          tex.wrapT = wrap
+          tex.needsUpdate = true
         }
 
         mat.map = layer.map

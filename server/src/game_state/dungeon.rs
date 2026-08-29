@@ -33,6 +33,8 @@ pub(super) const BOSS_RESPAWN_NEVER: u64 = u64::MAX;
 /// Per-kill chance that a monster in the section above a locked floor drops
 /// that floor's key (doc/DUNGEON_REWARD.md — a starting value).
 const KEY_DROP_CHANCE: f64 = 0.05;
+/// Same, for a barrel, crate or clutter chest cracked open.
+const PROP_KEY_DROP_CHANCE: f64 = 0.01;
 /// A door opened with a key shuts itself again after this.
 pub(super) const LOCKED_DOOR_OPEN_DURATION: Duration = Duration::from_secs(30);
 /// How long after arriving on a floor a player in its stair room stays out
@@ -923,8 +925,8 @@ impl GameState {
                     .await;
                 self.spawn_dungeon_coin_pile(drop_pos, -(depth as i8)).await;
             }
-            // Rare bonus world drops, independent of the coin roll.
-            self.spawn_world_drops(prop_pos, -(depth as i8), None, Vec::new())
+            let key = self.roll_prop_key_drop(player_id, entrance_id, depth).await;
+            self.spawn_world_drops(prop_pos, -(depth as i8), None, key.into_iter().collect())
                 .await;
         }
     }
@@ -964,8 +966,8 @@ impl GameState {
                 .prop_wall_opposite_drop_position(entrance_id, depth, prop_id, chest_pos)
                 .await;
             self.spawn_dungeon_coin_pile(drop_pos, -(depth as i8)).await;
-            // Rare bonus world drops, in addition to the coin pile.
-            self.spawn_world_drops(chest_pos, -(depth as i8), None, Vec::new())
+            let key = self.roll_prop_key_drop(player_id, entrance_id, depth).await;
+            self.spawn_world_drops(chest_pos, -(depth as i8), None, key.into_iter().collect())
                 .await;
         }
     }
@@ -1640,24 +1642,47 @@ impl GameState {
             slot.respawn_at_ms = now + MONSTER_RESPAWN_MS;
             total
         };
-        self.roll_dungeon_key_drop(killer, &entry.entrance_id, entry.depth, total)
-            .await
+        self.roll_dungeon_key_drop(
+            killer,
+            &entry.entrance_id,
+            entry.depth,
+            total,
+            KEY_DROP_CHANCE,
+        )
+        .await
     }
 
-    /// The key a kill at `depth` drops, if any: `KEY_DROP_CHANCE` for the
-    /// next locked floor's key, skipped when the killer already carries it or
-    /// has opened this dungeon's chest tonight (the key would be dead weight).
+    /// The key a loot event at `depth` drops, if any: `chance` for the next
+    /// locked floor's key, skipped when the finder already carries it or has
+    /// opened this dungeon's chest tonight (the key would be dead weight).
+    /// The dice go first — the candidate check takes three locks.
     async fn roll_dungeon_key_drop(
         &self,
-        killer: &PlayerId,
+        finder: &PlayerId,
         entrance_id: &str,
         depth: u8,
         total: u8,
+        chance: f64,
     ) -> Option<String> {
-        let key = self
-            .dungeon_key_candidate(killer, entrance_id, depth, total)
-            .await?;
-        rand::thread_rng().gen_bool(KEY_DROP_CHANCE).then_some(key)
+        if !rand::thread_rng().gen_bool(chance) {
+            return None;
+        }
+        self.dungeon_key_candidate(finder, entrance_id, depth, total)
+            .await
+    }
+
+    async fn roll_prop_key_drop(
+        &self,
+        finder: &PlayerId,
+        entrance_id: &str,
+        depth: u8,
+    ) -> Option<String> {
+        if !rand::thread_rng().gen_bool(PROP_KEY_DROP_CHANCE) {
+            return None;
+        }
+        let total = self.dungeons.read().await.get(entrance_id)?.layouts.len() as u8;
+        self.dungeon_key_candidate(finder, entrance_id, depth, total)
+            .await
     }
 
     /// The key a kill at `depth` is eligible to drop, before the chance roll.

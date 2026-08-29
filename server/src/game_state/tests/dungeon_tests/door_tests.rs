@@ -777,8 +777,9 @@ async fn locked_door_shuts_itself_again() {
     );
 }
 
-/// A monster on the far side of a shut door cannot see the player, so it
-/// neither acquires nor keeps them as a target; the open doorway lets it.
+/// A monster on the far side of a shut door cannot see a player beyond
+/// scent range, so it neither acquires nor keeps them as a target; the open
+/// doorway lets it.
 #[tokio::test]
 async fn monster_brains_do_not_see_through_a_shut_door() {
     let game_state = make_test_game_state("dungeon_door_blocks_sight");
@@ -791,8 +792,37 @@ async fn monster_brains_do_not_see_through_a_shut_door() {
         .await
         .expect("init passability");
 
-    let (inside, outside) = door_side_positions(&entrance, depth, &door, false);
-    let player_id = add_delver(&game_state, "delver", inside, depth).await;
+    let (by_door, outside) = door_side_positions(&entrance, depth, &door, false);
+    // Six cells into the room, past `SENSE_RANGE`, where only sight applies.
+    let deep = Position {
+        x: by_door.x + (by_door.x - outside.x) * 6.0,
+        z: by_door.z + (by_door.z - outside.z) * 6.0,
+        ..by_door
+    };
+    let player_id = add_delver(&game_state, "delver", deep, depth).await;
+    // The door is worked from beside it, then the delver steps back deep.
+    let toggle = |gs: &GameState| {
+        let gs = gs.clone();
+        let entrance_id = entrance.id.clone();
+        async move {
+            gs.players
+                .write()
+                .await
+                .get_mut(&player_id)
+                .unwrap()
+                .position = by_door;
+            let r = gs
+                .toggle_dungeon_door(&player_id, &entrance_id, depth, door.door_id)
+                .await;
+            gs.players
+                .write()
+                .await
+                .get_mut(&player_id)
+                .unwrap()
+                .position = deep;
+            r
+        }
+    };
     let monster = game_state
         .spawn_monster(
             "goblin".to_string(),
@@ -817,12 +847,7 @@ async fn monster_brains_do_not_see_through_a_shut_door() {
         "a shut door hides the player"
     );
 
-    assert_eq!(
-        game_state
-            .toggle_dungeon_door(&player_id, &entrance.id, depth, door.door_id)
-            .await,
-        Some(true)
-    );
+    assert_eq!(toggle(&game_state).await, Some(true));
     for _ in 0..10 {
         game_state.tick_monster_ai_by(200.0).await;
     }
@@ -830,5 +855,15 @@ async fn monster_brains_do_not_see_through_a_shut_door() {
         game_state.brain_target(&monster).await,
         Some(player_id),
         "the open doorway shows the player"
+    );
+
+    // Shut again: a target seen moments ago is remembered, so a wall clipping
+    // the sight line for a tick does not end the chase.
+    assert_eq!(toggle(&game_state).await, Some(false));
+    game_state.tick_monster_ai_by(200.0).await;
+    assert_eq!(
+        game_state.brain_target(&monster).await,
+        Some(player_id),
+        "a just-seen target survives a blocked tick"
     );
 }

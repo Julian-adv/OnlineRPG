@@ -38,6 +38,10 @@ export const DUNGEON_PILLAR_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
 export const DUNGEON_DOOR_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
   (e) => e.glb === 'dungeon/wooden_garage_door_1k'
 )
+/** Rusty grid for doors that take a floor key (doc/DUNGEON_REWARD.md). */
+export const DUNGEON_LOCKED_DOOR_TEXTURE_IDX = HOUSING_TEXTURES.findIndex(
+  (e) => e.glb === 'dungeon/rusty_metal_grid_1k'
+)
 
 // Dungeon stone needs no explicit shadowSide: the housing materials are
 // `side: FrontSide`, so three.js derives BackSide, and each solid's own thickness

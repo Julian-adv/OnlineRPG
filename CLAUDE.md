@@ -1,4 +1,4 @@
-- Avoid comments in code where possible; only write them when truly necessary, keeping them short and concise.
+- Avoid comments in code where possible. Write one only when it adds something the code itself cannot show — the *why* (intent, constraint, non-obvious trade-off), never the *what*. Keep it short and concise.
 - If you find long or verbose comments in existing code, rewrite them to be short and concise, or remove them where possible.
 - When adding a new asset, record its source in the matching `doc/assets/` file, with the license (and for AI/paid tools, the tier + generation date). Mark entries that fall out of use with **[미사용]**.
 - Ensure the system is optimized to handle 5,000 simultaneous users without performance problems.
