@@ -223,7 +223,7 @@ fn unreachable_note(monster_id: &str, loss: &LostReason) -> String {
             "[Unreachable] No route leads to monster {monster_id} from here — it is \
              behind walls or on another floor. Pick a reachable monster."
         ),
-        LostReason::Desynced => format!(
+        LostReason::LockedDoor | LostReason::Desynced => format!(
             "[Unreachable] You could not reach monster {monster_id} — {}. Move first, or \
              pick a different target.",
             loss.clause()

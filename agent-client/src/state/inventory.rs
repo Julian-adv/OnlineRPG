@@ -55,6 +55,14 @@ impl SharedState {
         }
     }
 
+    /// Whether we carry `item_def_id`, bag or worn — the server's own test.
+    pub fn holds_item(&self, item_def_id: &str) -> bool {
+        self.self_bag
+            .iter()
+            .chain(self.self_equipped.values())
+            .any(|i| i.item_def_id == item_def_id)
+    }
+
     /// Find the item the agent named among the ones we carry, and where it
     /// sits. Matching is forgiving about the exact id (see
     /// `item_defs::resolve_named`) but never reaches past what we hold.

@@ -28,6 +28,7 @@ pub struct Dungeon {
     pub name: String,
     pub entrance: Position,
     layouts: Vec<FloorLayout>,
+    def: DungeonEntranceDef,
 }
 
 /// A shut interior door standing between the agent and where it wants to go,
@@ -35,6 +36,8 @@ pub struct Dungeon {
 pub struct DoorApproach {
     pub door_id: u32,
     pub sides: [(f32, f32); 2],
+    /// Opens only with the floor's key (`Dungeon::key_item_id`).
+    pub locked: bool,
 }
 
 /// Which chest a sighting is. The two render differently, so the agent is
@@ -79,7 +82,12 @@ impl Dungeon {
             name: def.name.clone(),
             entrance: def.position(),
             layouts: generate_dungeon_for(&def.id),
+            def: def.clone(),
         }
+    }
+
+    pub fn key_item_id(&self, depth: u8) -> String {
+        self.def.key_item_id(depth)
     }
 
     /// Deepest floor of this dungeon (1-based).
@@ -269,6 +277,7 @@ impl Dungeon {
             .map(|d| DoorApproach {
                 door_id: d.door_id,
                 sides: self.door_sides(d),
+                locked: d.locked,
             })
             .collect()
     }
@@ -294,6 +303,22 @@ pub(crate) mod tests {
             .into_iter()
             .find(|d| d.id == "old_crypt")
             .expect("old_crypt is in the shared entrance registry")
+    }
+
+    #[test]
+    fn locked_floors_expose_their_door_and_key() {
+        let d = crypt();
+        let depth = d.max_depth();
+        let doors = d.closed_doors(depth, &HashSet::new());
+        assert!(
+            doors.iter().any(|door| door.locked),
+            "floor {depth} has a locked door"
+        );
+        assert!(!d
+            .closed_doors(1, &HashSet::new())
+            .iter()
+            .any(|door| door.locked));
+        assert_eq!(d.key_item_id(depth), format!("crypt_key_{depth}"));
     }
 
     /// Every floor above the last has stairs down, and they start shut behind

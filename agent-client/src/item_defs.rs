@@ -38,6 +38,11 @@ impl ItemDef {
     pub fn is_tip_hat(&self) -> bool {
         self.category.as_deref() == Some("tip_hat")
     }
+
+    /// A dungeon floor key (doc/DUNGEON_REWARD.md): worth grabbing on sight.
+    pub fn is_dungeon_key(&self) -> bool {
+        self.category.as_deref() == Some("dungeon_key")
+    }
 }
 
 fn defs() -> &'static HashMap<String, ItemDef> {

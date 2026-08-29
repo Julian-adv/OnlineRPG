@@ -21,6 +21,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use super::movement::{travel_ms, MAX_STEP_DIST};
+use crate::dungeon::{DoorApproach, Dungeon};
 use crate::geom::PlanarDelta;
 use crate::state::SharedState;
 
@@ -248,6 +249,8 @@ pub(super) enum LostReason {
     Timeout,
     /// No route on this floor — walls or shut doors all the way around.
     NoPath,
+    /// The only way on is a locked door and we hold no key for it.
+    LockedDoor,
     /// The server kept refusing our steps: its layout disagrees with ours.
     Desynced,
 }
@@ -261,6 +264,9 @@ impl LostReason {
             Self::TooFar(d) => format!("your target is {d:.0}m away, beyond your reach"),
             Self::Timeout => "you ran out of time before arriving".to_string(),
             Self::NoPath => "no route leads there from here".to_string(),
+            Self::LockedDoor => {
+                "the way on is a locked door and you hold no key for it".to_string()
+            }
             Self::Desynced => "the ground kept refusing your steps".to_string(),
         }
     }
@@ -415,9 +421,16 @@ pub(super) async fn walk(
         }
         // Underground a missing route is a wall or a shut door, never the
         // open ground a straight line assumes.
-        if state.lock().await.self_floor_level < 0 {
-            info!("No route to {to} on this floor");
-            return Walked::Lost(LostReason::NoPath);
+        {
+            let s = state.lock().await;
+            if s.self_floor_level < 0 {
+                info!("No route to {to} on this floor");
+                return Walked::Lost(if locked_door_without_key(&s) {
+                    LostReason::LockedDoor
+                } else {
+                    LostReason::NoPath
+                });
+            }
         }
         // On the surface, inch toward it anyway. The ground may simply be
         // un-pathable rather than walled, and either way the server needs a
@@ -614,22 +627,38 @@ async fn pick_reachable_door(
     None
 }
 
+/// The shut doors on our dungeon floor and whether we hold the floor's key.
+fn dungeon_doors_here(s: &SharedState) -> Option<(Arc<Dungeon>, u8, Vec<DoorApproach>, bool)> {
+    let dungeon = s.dungeon_here()?;
+    let depth = s.self_floor_level.unsigned_abs();
+    let open = s
+        .world_cache
+        .read()
+        .unwrap()
+        .open_dungeon_doors(&dungeon.id, depth);
+    let doors = dungeon.closed_doors(depth, &open);
+    let has_key = s.holds_item(&dungeon.key_item_id(depth));
+    Some((dungeon, depth, doors, has_key))
+}
+
+/// Whether the way on is a shut locked door we hold no key for — the one
+/// wall a walk cannot open.
+fn locked_door_without_key(s: &SharedState) -> bool {
+    dungeon_doors_here(s)
+        .is_some_and(|(_, _, doors, has_key)| !has_key && doors.iter().any(|d| d.locked))
+}
+
 /// Every shut door on the floor we stand on: dungeon corridor doors when we
-/// are underground, house doors when we are not.
+/// are underground, house doors when we are not. The server refuses a locked
+/// door's toggle without the key, so those are left out.
 fn closed_doors_on_our_floor(s: &SharedState) -> Vec<DoorCandidate> {
     if s.self_floor_level < 0 {
-        let Some(dungeon) = s.dungeon_here() else {
+        let Some((dungeon, depth, doors, has_key)) = dungeon_doors_here(s) else {
             return Vec::new();
         };
-        let depth = s.self_floor_level.unsigned_abs();
-        let open = s
-            .world_cache
-            .read()
-            .unwrap()
-            .open_dungeon_doors(&dungeon.id, depth);
-        return dungeon
-            .closed_doors(depth, &open)
+        return doors
             .into_iter()
+            .filter(|d| !d.locked || has_key)
             .map(|d| DoorCandidate {
                 label: format!("dungeon door {} on floor {depth}", d.door_id),
                 toggle: ClientMessage::ToggleDungeonDoor {

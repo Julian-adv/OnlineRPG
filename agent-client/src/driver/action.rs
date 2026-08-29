@@ -411,7 +411,12 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   Without a name the nearest dungeon is used:
   {"type": "move", "depth": 1}
   Deeper floors hold stronger monsters, so descend one floor at a time and
-  only while you can still win your fights. To come back up to the surface:
+  only while you can still win your fights. Every fifth floor's stair room is
+  locked: its key drops from monsters and clutter on the floors above it, and
+  the deepest key also opens the great chest. A key on the ground is the most
+  important thing in the dungeon — pick it up before anything else, anyone
+  may take it first. The world state says which key you need and whether you
+  have it. To come back up to the surface:
   {"type": "move", "depth": 0}"#,
     },
     ActionSpec {

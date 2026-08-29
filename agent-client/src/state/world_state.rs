@@ -221,8 +221,14 @@ impl SharedState {
             } else {
                 String::new()
             };
+            let key_note =
+                if crate::item_defs::get(&i.item_def_id).is_some_and(|d| d.is_dungeon_key()) {
+                    " — DUNGEON KEY, pick it up first"
+                } else {
+                    ""
+                };
             lines.push(format!(
-                "Item on ground: {}{amount} ({:.1}m away) [id {}]{dropped_by}",
+                "Item on ground: {}{amount} ({:.1}m away) [id {}]{dropped_by}{key_note}",
                 i.item_def_id,
                 d_sq.sqrt(),
                 i.instance_id

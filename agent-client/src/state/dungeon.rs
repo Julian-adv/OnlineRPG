@@ -82,6 +82,38 @@ impl SharedState {
         (self.self_floor_level < 0).then(|| (p.position, self.self_floor_level.unsigned_abs()))
     }
 
+    /// Which key this floor turns on and whether we carry it, so the LLM
+    /// knows what to hunt for before it walks into a locked door.
+    fn format_key_state(&self, d: &crate::dungeon::Dungeon, depth: u8) -> String {
+        use onlinerpg_shared::dungeon::{key_drop_floors, last_locked_depth, relevant_key_depth};
+        let total = d.max_depth();
+        let Some(key_depth) = relevant_key_depth(depth, total) else {
+            return String::new();
+        };
+        let key = d.key_item_id(key_depth);
+        let name = crate::item_defs::get(&key).map_or(key.as_str(), |i| i.name.as_str());
+        let chest = if last_locked_depth(total) == Some(key_depth) {
+            " and the great chest takes it too"
+        } else {
+            ""
+        };
+        let drops = key_drop_floors(key_depth);
+        let have = if self.holds_item(&key) {
+            "you carry it".to_string()
+        } else {
+            format!(
+                "you have none — it drops from monsters and clutter on floors {}–{}",
+                drops.start(),
+                drops.end()
+            )
+        };
+        if key_depth == depth {
+            format!("\nThe stair room's door here is locked: it takes a {name}{chest}; {have}")
+        } else {
+            format!("\nFloor {key_depth}'s stair room is locked: it takes a {name}{chest}; {have}")
+        }
+    }
+
     /// Where we stand relative to the dungeons: the floor we are on when
     /// underground, or the nearest entrance when we are not. Monsters get
     /// stronger with depth, so the LLM needs both to decide whether to dive.
@@ -98,6 +130,9 @@ impl SharedState {
                 "You are underground: {name}floor {depth} (deeper floors hold stronger \
                  monsters; move with \"depth\" to change floors, 0 to leave)"
             );
+            if let Some(d) = dungeon.as_ref() {
+                line.push_str(&self.format_key_state(d, depth));
+            }
             // Chests in our own room, described the way they render so the
             // agent can go for the one it wants. No coordinates — walking
             // over is the action's job.

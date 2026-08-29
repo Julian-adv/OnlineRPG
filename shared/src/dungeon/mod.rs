@@ -106,6 +106,21 @@ pub fn key_depth_for(depth: u8, total: u8) -> Option<u8> {
     locked_depths(total).find(|&l| l > depth)
 }
 
+/// The locked floor that matters on `depth`: itself when locked, else the
+/// next one down.
+pub fn relevant_key_depth(depth: u8, total: u8) -> Option<u8> {
+    if is_locked_depth(depth) {
+        Some(depth)
+    } else {
+        key_depth_for(depth, total)
+    }
+}
+
+/// The floors whose kills and clutter drop `key_depth`'s key.
+pub fn key_drop_floors(key_depth: u8) -> std::ops::RangeInclusive<u8> {
+    key_depth + 1 - LOCKED_FLOOR_INTERVAL..=key_depth - 1
+}
+
 /// Default final-floor boss, used when a dungeons.csv row leaves its `boss`
 /// column blank and by seed-only property tests.
 pub const BOSS_MONSTER_TYPE: &str = "goblin_boss";

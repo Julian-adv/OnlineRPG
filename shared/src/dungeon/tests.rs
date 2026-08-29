@@ -260,6 +260,9 @@ fn key_depths_follow_the_locked_floors() {
     assert_eq!(key_depth_for(5, 10), None, "a locked floor drops no key");
     assert_eq!(key_depth_for(6, 10), Some(10));
     assert_eq!(key_depth_for(11, 12), None, "nothing locked below");
+    assert_eq!(relevant_key_depth(5, 10), Some(5));
+    assert_eq!(relevant_key_depth(6, 10), Some(10));
+    assert_eq!(key_drop_floors(10), 6..=9);
 }
 
 fn shaft_footprint(s: &StairShaft) -> Vec<(i32, i32)> {
