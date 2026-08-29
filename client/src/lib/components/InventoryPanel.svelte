@@ -166,6 +166,7 @@
       {
         instanceId: slot.instance_id,
         defId: slot.item_def_id,
+        enchant: slot.enchant,
         // Group drags never equip, regardless of drop position.
         equipSlot: null,
         source: { type: 'bag' },
@@ -207,6 +208,7 @@
       {
         instanceId: slot.instance_id,
         defId: slot.item_def_id,
+        enchant: slot.enchant,
         equipSlot: def?.equipSlot ?? null,
         source: { type: 'bag' },
         icon: def?.icon ?? FALLBACK_ICON,

@@ -1,12 +1,14 @@
 <script lang="ts">
   import { inventoryStore } from '../stores/inventoryStore'
-  import { getItemDef, isConsumable } from '../data/itemDefs'
+  import { getItemDef } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
   import {
     quickslots,
     QUICKSLOT_COUNT,
     loadQuickslots,
     clearQuickslot,
+    resolveQuickslot,
+    quickslotAction,
   } from '../stores/quickslotStore'
   import { dragMeta, dragPos, quickslotAt } from '../stores/dragStore'
   import { itemTooltip } from '../actions/itemTooltip'
@@ -22,23 +24,16 @@
     if (characterId != null) loadQuickslots(characterId)
   })
 
-  /** Total quantity of an item def currently sitting in the bag. */
-  function bagQuantity(defId: string): number {
-    let total = 0
-    for (const item of $inventoryStore.bag) {
-      if (item.item_def_id === defId) total += item.quantity
-    }
-    return total
-  }
-
-  const slots = $derived(
-    $quickslots.map((defId) => {
-      if (!defId) return null
-      const def = getItemDef(defId)
+  const slots = $derived.by(() => {
+    const { bag, equipped } = $inventoryStore
+    return $quickslots.map((entry) => {
+      if (!entry) return null
+      const def = getItemDef(entry.defId)
       if (!def) return null
-      return { defId, def, qty: bagQuantity(defId) }
+      const worn = def.equipSlot ? equipped[def.equipSlot] : undefined
+      return { def, ...resolveQuickslot(entry, worn, bag) }
     })
-  )
+  })
 
   // While an item is dragged, the slot it would drop into (-1 otherwise).
   // Uses the same snap logic as the drop handler so highlight and drop agree.
@@ -56,17 +51,12 @@
   function useSlot(index: number) {
     const entry = slots[index]
     if (!entry) return
-    const slot = entry.def.equipSlot
-    // Already wearing this exact item in its slot → unequip (toggle off).
-    if (slot && $inventoryStore.equipped[slot]?.item_def_id === entry.defId) {
-      networkManager.sendUnequipItem(slot)
-      return
-    }
-    const inst = $inventoryStore.bag.find((b) => b.item_def_id === entry.defId)
-    if (!inst) return // none left in bag
-    if (slot) networkManager.sendEquipItem(inst.instance_id)
-    else if (isConsumable(entry.def))
-      networkManager.sendUseItem(inst.instance_id)
+    const action = quickslotAction(entry.def, entry)
+    if (!action) return
+    if (action.kind === 'unequip') networkManager.sendUnequipItem(action.slot)
+    else if (action.kind === 'equip')
+      networkManager.sendEquipItem(action.instanceId)
+    else networkManager.sendUseItem(action.instanceId)
   }
 
   // Digit1..Digit9 → slots 0..8, Digit0 → slot 9.
@@ -100,7 +90,9 @@
       class:empty={!entry}
       class:drop-target={i === dropIndex}
       data-quickslot={i}
-      use:itemTooltip={entry ? { def: entry.def, side: 'right' } : null}
+      use:itemTooltip={entry
+        ? { def: entry.def, enchant: entry.enchant ?? undefined, side: 'right' }
+        : null}
       onclick={() => useSlot(i)}
       oncontextmenu={(e) => {
         e.preventDefault()
@@ -116,6 +108,9 @@
           alt=""
           draggable="false"
         />
+        {#if entry.enchant !== null && entry.enchant > 0}
+          <span class="item-enchant">+{entry.enchant}</span>
+        {/if}
         {#if entry.qty !== 1}
           <span class="item-qty" class:zero={entry.qty === 0}>{entry.qty}</span>
         {/if}
@@ -198,6 +193,18 @@
     font-weight: 700;
     color: #fff;
     text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  }
+
+  /* Top-right: the key label owns the top-left corner. */
+  .item-enchant {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #7ec8ff;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
   }
 
   .item-qty.zero {
