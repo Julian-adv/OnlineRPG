@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createTextTexture } from './text-label-pool'
 
 /** Outlined text drawn on a canvas cut to fit the glyphs, so it stays sharp
  *  once scaled down to world size. `pixelsPerUnit` sets that scale: the badge
@@ -60,10 +61,7 @@ export function makeTextBadge(text: string, style: BadgeStyle): TextBadge {
   ctx.font = font
   drawOutlinedText(ctx, text, c.width / 2, c.height / 2, style)
 
-  const texture = new THREE.CanvasTexture(c)
-  texture.minFilter = THREE.LinearFilter
-  texture.magFilter = THREE.LinearFilter
-  texture.colorSpace = THREE.SRGBColorSpace
+  const texture = createTextTexture(c)
   const badge = {
     texture,
     width: c.width / style.pixelsPerUnit,

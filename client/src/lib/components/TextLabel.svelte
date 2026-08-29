@@ -4,6 +4,13 @@
   import { MeshBasicNodeMaterial } from 'three/webgpu'
   import { onDestroy } from 'svelte'
   import { wrapLines } from '../utils/textWrap'
+  import {
+    fitLabelCanvas,
+    labelPlane,
+    measureCtx,
+    releaseLabelCanvas,
+    type LabelCanvas,
+  } from '../utils/text-label-pool'
 
   interface Props {
     text: string
@@ -48,26 +55,7 @@
   // Exported for ChatBubble compatibility (bind:this → ref.textRenderInfo.blockBounds)
   export const textRenderInfo = { blockBounds: [0, 0, 0, 0] as number[] }
 
-  function createTexture(source: HTMLCanvasElement) {
-    const t = new THREE.CanvasTexture(source)
-    t.colorSpace = THREE.SRGBColorSpace
-    t.minFilter = THREE.LinearFilter
-    t.magFilter = THREE.LinearFilter
-    return t
-  }
-
-  let canvas = document.createElement('canvas')
-  let ctx = canvas.getContext('2d')!
-
-  let texture = createTexture(canvas)
-
-  // Track previous canvas dimensions. When they change we must create a
-  // new canvas + CanvasTexture so the WebGPU backend allocates a GPUTexture
-  // with the correct size (it only creates the GPUTexture once per Texture).
-  // A new canvas is needed because the old texture still references the old
-  // canvas — resizing a shared canvas would corrupt the old GPUTexture.
-  let prevCanvasW = 0
-  let prevCanvasH = 0
+  let label: LabelCanvas | null = null
 
   let worldWidth = $state(0.01)
   let worldHeight = $state(0.01)
@@ -75,7 +63,6 @@
   let anchorOffsetY = $state(0)
 
   const material = new MeshBasicNodeMaterial()
-  material.map = texture
   material.transparent = true
   material.depthWrite = false
   $effect(() => {
@@ -86,48 +73,31 @@
   function renderCanvas() {
     const pxFont = fontSize * PIXELS_PER_UNIT
     const font = `${pxFont}px sans-serif`
-    ctx.font = font
+    measureCtx.font = font
 
     const lines =
       maxWidth && whiteSpace !== 'nowrap'
         ? wrapLines(
             text,
             maxWidth * PIXELS_PER_UNIT,
-            (s) => ctx.measureText(s).width
+            (s) => measureCtx.measureText(s).width
           )
         : text.split('\n')
     const lineHeight = pxFont * 1.2
 
-    let maxLineWidth = 0
-    for (const line of lines) {
-      maxLineWidth = Math.max(maxLineWidth, ctx.measureText(line).width)
-    }
+    const widths = lines.map((line) => measureCtx.measureText(line).width)
+    const maxLineWidth = Math.max(...widths)
 
     const totalTextHeight = lines.length * lineHeight
     const outlinePad = Math.max(0, outlineWidth)
     const pad = 4 + outlinePad
     const cw = Math.max(1, Math.ceil(maxLineWidth + pad * 2))
     const ch = Math.max(1, Math.ceil(totalTextHeight + pad * 2))
+    label = fitLabelCanvas(label, cw, ch)
+    const { ctx, texture } = label
+    material.map = texture
 
-    // WebGPU allocates a GPUTexture once per THREE.Texture and never resizes
-    // it. If canvas dimensions change we must create a fresh canvas + texture
-    // so the backend allocates a new GPUTexture with the correct size.
-    // A new canvas is needed because the old texture still references the old one.
-    if (cw !== prevCanvasW || ch !== prevCanvasH) {
-      prevCanvasW = cw
-      prevCanvasH = ch
-
-      canvas = document.createElement('canvas')
-      canvas.width = cw
-      canvas.height = ch
-      ctx = canvas.getContext('2d')!
-
-      // Do NOT dispose the old texture (see onDestroy comment).
-      texture = createTexture(canvas)
-      material.map = texture
-    }
-
-    ctx.clearRect(0, 0, cw, ch)
+    ctx.clearRect(0, 0, cw + 1, ch + 1)
     ctx.font = font
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
@@ -136,9 +106,9 @@
     for (let i = 0; i < lines.length; i++) {
       let x = pad
       if (anchorX === 'center') {
-        x = (cw - ctx.measureText(lines[i]).width) / 2
+        x = (cw - widths[i]) / 2
       } else if (anchorX === 'right') {
-        x = cw - ctx.measureText(lines[i]).width - pad
+        x = cw - widths[i] - pad
       }
       if (outlineColor && outlineWidth > 0) {
         ctx.strokeStyle = outlineColor
@@ -163,27 +133,23 @@
     else anchorOffsetY = 0
 
     // Troika-compatible blockBounds: [minX, minY, maxX, maxY] relative to anchor
-    textRenderInfo.blockBounds = [
-      -worldWidth / 2 + anchorOffsetX,
-      -worldHeight / 2 + anchorOffsetY,
-      worldWidth / 2 + anchorOffsetX,
-      worldHeight / 2 + anchorOffsetY,
-    ]
+    const b = textRenderInfo.blockBounds
+    b[0] = -worldWidth / 2 + anchorOffsetX
+    b[1] = -worldHeight / 2 + anchorOffsetY
+    b[2] = worldWidth / 2 + anchorOffsetX
+    b[3] = worldHeight / 2 + anchorOffsetY
 
     onsync?.()
   }
 
-  // Re-render canvas when visual properties change
   $effect(() => {
     renderCanvas()
   })
 
-  // Update material opacity without re-rendering canvas
   $effect(() => {
     material.opacity = fillOpacity
   })
 
-  // Update depth offset
   $effect(() => {
     if (depthOffset !== undefined) {
       material.polygonOffset = true
@@ -195,16 +161,10 @@
   let meshRef = $state<THREE.Mesh | undefined>(undefined)
 
   onDestroy(() => {
-    // Hide mesh immediately so the renderer won't try to draw it.
     if (meshRef) meshRef.visible = false
-    // Do NOT call texture.dispose() or material.dispose() here.
-    // All MeshBasicNodeMaterial+CanvasTexture instances share a NodeBuilderState
-    // whose original Sampler bindings hold a dispose listener on the texture.
-    // Disposing the texture sets the original Sampler._texture = null, and
-    // Binding.clone() copies _texture via Object.assign (bypassing the setter),
-    // so all future cloned bindings inherit null — crashing createBindGroup
-    // with "Invalid value used as weak map key".
-    // Let GC reclaim the texture and material instead.
+    // Never dispose the texture: the shared NodeBuilderState sampler binding
+    // would null its _texture and crash later createBindGroup calls.
+    if (label) releaseLabelCanvas(label)
   })
 </script>
 
@@ -216,7 +176,8 @@
     (positionY ?? position[1] ?? 0) + anchorOffsetY,
     position[2] ?? 0,
   ]}
+  scale={[worldWidth, worldHeight, 1]}
 >
-  <T.PlaneGeometry args={[worldWidth, worldHeight]} />
+  <T is={labelPlane} dispose={false} />
   <T is={material} />
 </T.Mesh>

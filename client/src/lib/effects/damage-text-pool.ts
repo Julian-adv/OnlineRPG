@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
 import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
 import { drawOutlinedText } from '../utils/textBadge'
+import { createTextTexture } from '../utils/text-label-pool'
 
 const CANVAS_W = 512
 const CANVAS_H = 128
@@ -23,9 +24,7 @@ interface Slot {
 }
 
 /** Shared billboard label pool; fixed-size canvases so textures upload in
- *  place and nothing is allocated per hit. `group` is mounted by GameScene.
- *  (TextLabel still reallocates per resize and never disposes — see its
- *  onDestroy.) */
+ *  place and nothing is allocated per hit. `group` is mounted by GameScene. */
 class DamageTextPool {
   readonly group = new THREE.Group()
   private readonly geometry = new THREE.PlaneGeometry(
@@ -61,10 +60,7 @@ class DamageTextPool {
     const canvas = document.createElement('canvas')
     canvas.width = CANVAS_W
     canvas.height = CANVAS_H
-    const texture = new THREE.CanvasTexture(canvas)
-    texture.colorSpace = THREE.SRGBColorSpace
-    texture.minFilter = THREE.LinearFilter
-    texture.magFilter = THREE.LinearFilter
+    const texture = createTextTexture(canvas)
     const material = new MeshBasicNodeMaterial()
     material.map = texture
     material.transparent = true
