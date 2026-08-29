@@ -48,8 +48,6 @@ const CHEST_LOOT_SCATTER_MIN: f32 = 0.8;
 const CHEST_LOOT_SCATTER_MAX: f32 = 3.0;
 pub(super) const DUNGEON_RESET_WARNING_DURATION: Duration = Duration::from_millis(4_640);
 
-/// Loot-pickup grace before a chest opener is sent back to town.
-const CHEST_RETURN_DELAY: Duration = Duration::from_secs(60);
 /// How close a player must stand to a prop to break (barrel/crate) or open
 /// (chest, the treasure chest included) it.
 const PROP_INTERACT_RANGE: f32 = 2.5;
@@ -322,6 +320,15 @@ impl GameState {
             (is_open, opening)
         };
         if let Some(opening) = opening {
+            self.send_system_message(
+                player_id,
+                format!(
+                    "You unlock the door with your {}. It will lock again in {} seconds.",
+                    self.item_name(&entrance.key_item_id(depth)),
+                    LOCKED_DOOR_OPEN_DURATION.as_secs()
+                ),
+            )
+            .await;
             let game_state = self.clone();
             let entrance_id = entrance_id.to_string();
             tokio::spawn(async move {
@@ -791,7 +798,6 @@ impl GameState {
         };
 
         self.eject_chest_loot(item_def_ids.clone(), chest_pos, player_floor);
-        self.schedule_chest_return(player_id).await;
         let new_gold = {
             let mut gold_map = self.player_gold.write().await;
             let wallet = gold_map.entry(*player_id).or_insert(0);
@@ -822,45 +828,6 @@ impl GameState {
             None,
         )
         .await;
-    }
-
-    /// Arm the vault's return: `CHEST_RETURN_DELAY` after a real open the
-    /// opener is carried back to town unless they already left the dungeon.
-    /// A disconnect in between runs it first (`cleanup_player_session`), so
-    /// the deepest floor cannot be a parking spot between refills.
-    async fn schedule_chest_return(&self, player_id: &PlayerId) {
-        if !self.chest_returns.write().await.insert(*player_id) {
-            return;
-        }
-        self.send_system_message(
-            player_id,
-            "The vault's magic stirs — you will be carried back to town in a minute.",
-        )
-        .await;
-        let game_state = self.clone();
-        let player_id = *player_id;
-        tokio::spawn(async move {
-            tokio::time::sleep(CHEST_RETURN_DELAY).await;
-            game_state.fire_chest_return(&player_id).await;
-        });
-    }
-
-    /// Run a pending chest return now; no-op without one or once back on
-    /// the surface.
-    pub(super) async fn fire_chest_return(&self, player_id: &PlayerId) {
-        if !self.chest_returns.write().await.remove(player_id) {
-            return;
-        }
-        let in_dungeon = {
-            let players = self.players.read().await;
-            players.get(player_id).is_some_and(|p| p.floor_level < 0)
-        };
-        if !in_dungeon {
-            return;
-        }
-        self.teleport_to_town(player_id).await;
-        self.send_system_message(player_id, "The vault's magic carries you back to town.")
-            .await;
     }
 
     /// Burst a treasure chest's loot out as scattered ground items once the

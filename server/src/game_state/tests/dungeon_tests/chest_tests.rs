@@ -435,59 +435,6 @@ async fn session_replacement_keeps_the_live_session_chest_claim() {
     assert_eq!(game_state.get_player_gold(&second_id).await, 0);
 }
 
-/// A real open arms the vault's return: firing it carries the opener to town;
-/// the empty re-open arms nothing; and once fired (or pre-empted by a
-/// disconnect) it does not fire again.
-#[tokio::test]
-async fn dungeon_chest_open_arms_a_town_return() {
-    let auth = make_test_auth("chest_return");
-    let account = auth.login_npc("npc_chest_return").unwrap();
-    let character = create_test_character(&auth, &account, "Homeward");
-
-    let game_state = make_test_game_state("chest_return");
-    let player_id = stage_chest_opener(&game_state, "Homeward", character.id).await;
-    let mut rx = game_state.register_direct_channel(&player_id).await;
-
-    game_state
-        .open_dungeon_chest(&player_id, CRYPT_ID, &auth)
-        .await;
-    assert!(
-        game_state.chest_returns.read().await.contains(&player_id),
-        "a real open should arm the return"
-    );
-
-    game_state.fire_chest_return(&player_id).await;
-    let (position, _, floor, _) = game_state.player_pose(&player_id).await.unwrap();
-    let spawn = &crate::world_config::world_config().spawn_position;
-    assert_eq!(floor, 0, "the return lands on the surface");
-    assert!(
-        (position.x - spawn.position().x).abs() < 0.01
-            && (position.z - spawn.position().z).abs() < 0.01,
-        "the return lands at the town spawn, got {position:?}"
-    );
-    assert!(
-        !game_state.chest_returns.read().await.contains(&player_id),
-        "a fired return is spent"
-    );
-
-    // Back on the deepest floor with another key: the same-night re-open is
-    // empty and arms nothing.
-    let (deepest, chest_pos) = crypt_chest_spot(&game_state).await;
-    game_state
-        .teleport_player(&player_id, chest_pos, 0.0, -(deepest as i8))
-        .await;
-    assert!(game_state.give_item(&player_id, CRYPT_CHEST_KEY).await);
-    while rx.try_recv().is_ok() {}
-    game_state
-        .open_dungeon_chest(&player_id, CRYPT_ID, &auth)
-        .await;
-    assert_chest_empty_opened(&mut rx);
-    assert!(
-        !game_state.chest_returns.read().await.contains(&player_id),
-        "an empty open must not arm a return"
-    );
-}
-
 /// The key outlives leaving the floor — a party that steps out to rest can
 /// come back for the chest.
 #[tokio::test]

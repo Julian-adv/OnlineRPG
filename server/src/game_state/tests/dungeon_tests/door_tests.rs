@@ -681,11 +681,19 @@ async fn locked_door_needs_the_floor_key_and_keeps_it() {
 
     let holder = add_delver(&game_state, "holder", outside, depth).await;
     give_bag(&game_state, &holder, Some(&key)).await;
+    let mut holder_rx = game_state.register_direct_channel(&holder).await;
     assert_eq!(
         game_state
             .toggle_dungeon_door(&holder, &entrance.id, depth, door.door_id)
             .await,
         Some(true)
+    );
+    assert!(
+        drain(&mut holder_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::SystemMessage { message } if message.contains("unlock the door with your Crypt Key")
+        )),
+        "the opener is told which key they used"
     );
     assert!(
         game_state.inventories.read().await[&holder]

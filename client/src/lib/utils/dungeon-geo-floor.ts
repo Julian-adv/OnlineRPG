@@ -25,8 +25,6 @@ import {
   DUNGEON_FLOOR_TEXTURE_IDX,
   DUNGEON_WALL_TEXTURE_IDX,
   DUNGEON_CORRIDOR_WALL_TEXTURE_IDX,
-  DUNGEON_DOOR_TEXTURE_IDX,
-  DUNGEON_LOCKED_DOOR_TEXTURE_IDX,
   SLAB_THICKNESS,
   DUNGEON_FLOOR_UV_SCALE,
   SHADOW_CONTACT_LIFT,
@@ -47,6 +45,9 @@ export interface WallRun {
   mesh: THREE.Mesh
   /** Group-local AABB; the layer adds the floor group's world position. */
   localAABB: THREE.Box3
+  /** Room whose camera-facing (south/west) wall this is, else -1. The two
+   *  fade together: standing at one edge the other still hides the room. */
+  fadeRoom: number
 }
 
 export interface DungeonFloorGroup {
@@ -207,7 +208,8 @@ export function buildDungeonFloorGroup(
     d: number,
     cx: number,
     cy: number,
-    cz: number
+    cz: number,
+    fadeRoom = -1
   ) => {
     const e: GeoEntry[] = []
     addBox(e, texIdx, w, h, d, cx, cy, cz)
@@ -219,14 +221,15 @@ export function buildDungeonFloorGroup(
     mesh.userData.textureIndex = texIdx
     geo.computeBoundingBox()
     wallRunGroup.add(mesh)
-    wallRuns.push({ mesh, localAABB: geo.boundingBox!.clone() })
+    wallRuns.push({ mesh, localAABB: geo.boundingBox!.clone(), fadeRoom })
   }
   // Room cells keep the medieval-stone wall; carved cells in no room are
   // corridors and get the rock-wall corridor texture. Matches the Rust
   // `cell_in_any_room` convention (half-open rectangles). Shaft cells emit no
   // wall (filtered by `inAnyShaft`), so they need no classification here.
-  const roomAt = (x: number, z: number) =>
-    layout.rooms.some((r) => rectContains(r, x, z))
+  const roomIndexAt = (x: number, z: number) =>
+    layout.rooms.findIndex((r) => rectContains(r, x, z))
+  const roomAt = (x: number, z: number) => roomIndexAt(x, z) >= 0
   const wallTexAt = (x: number, z: number) =>
     roomAt(x, z) ? DUNGEON_WALL_TEXTURE_IDX : DUNGEON_CORRIDOR_WALL_TEXTURE_IDX
   // Pull a corridor run in by the wall thickness at each end where a perpendicular
@@ -301,7 +304,8 @@ export function buildDungeonFloorGroup(
           WALL_THICKNESS,
           lo + len / 2,
           ctx.wallHeight / 2 + SHADOW_CONTACT_LIFT,
-          z + 1 + WALL_HALF_THICKNESS
+          z + 1 + WALL_HALF_THICKNESS,
+          roomIndexAt(southStart, z)
         )
         southStart = -1
       }
@@ -363,7 +367,8 @@ export function buildDungeonFloorGroup(
           len,
           x - WALL_HALF_THICKNESS,
           ctx.wallHeight / 2 + SHADOW_CONTACT_LIFT,
-          lo + len / 2
+          lo + len / 2,
+          roomIndexAt(x, westStart)
         )
         westStart = -1
       }
@@ -378,17 +383,9 @@ export function buildDungeonFloorGroup(
   // --- Interior room doors, placed by the shared wasm scan (see the Rust
   // `dungeon::doors` module doc). Arches merge statically; the swinging
   // leaves are returned for the layer to animate.
-  const doorMat = getHousingMaterial(DUNGEON_DOOR_TEXTURE_IDX)
-  const lockedDoorMat = getHousingMaterial(DUNGEON_LOCKED_DOOR_TEXTURE_IDX)
   const archEntries: GeoEntry[] = []
   const doors: InteriorDoor[] = doorSpecs.map((spec) =>
-    buildInteriorDoor(
-      layout.depth,
-      spec,
-      ctx.wallHeight,
-      spec.locked ? lockedDoorMat : doorMat,
-      archEntries
-    )
+    buildInteriorDoor(layout.depth, spec, ctx.wallHeight, archEntries)
   )
   // Arches merge into the floor group but stay non-pickable, so a ground click
   // near a doorway falls through to the floor. The door leaves are NOT added

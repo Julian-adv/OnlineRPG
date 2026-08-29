@@ -8,7 +8,7 @@
 import * as THREE from 'three'
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import type { GeoEntry } from './house-geo-utils'
-import { getHousingMaterial } from './housing-textures'
+import { getGhostHousingMaterial, getHousingMaterial } from './housing-textures'
 import {
   ENTRANCE_WALL_T,
   ENTRANCE_DOOR_DEPTH,
@@ -20,6 +20,7 @@ import {
   WALL_THICKNESS,
   WALL_HALF_THICKNESS,
   DUNGEON_DOOR_TEXTURE_IDX,
+  DUNGEON_LOCKED_DOOR_TEXTURE_IDX,
   DUNGEON_ENTRANCE_WALL_TEXTURE_IDX,
   DUNGEON_WALL_TEXTURE_IDX,
   WALL_N,
@@ -184,6 +185,7 @@ export function addEntranceArch(
 
 export interface DoorLeaf {
   pivot: THREE.Group
+  mesh: THREE.Mesh
   /** rotation.y when shut (leaf flush across its half of the doorway). */
   closedAngle: number
   /** rotation.y when fully open (swung outward); within ±90° of closed. */
@@ -273,9 +275,11 @@ function makeDoorLeaf(
   const pivot = new THREE.Group()
   pivot.position.set(spec.hingeX, 0, spec.hingeZ)
   pivot.rotation.y = spec.closedAngle
-  pivot.add(new THREE.Mesh(geo, mat))
+  const mesh = new THREE.Mesh(geo, mat)
+  pivot.add(mesh)
   return {
     pivot,
+    mesh,
     closedAngle: spec.closedAngle,
     openAngle: leafOpenAngle(spec.closedAngle, outX, outZ),
   }
@@ -339,6 +343,11 @@ export interface InteriorDoor {
   /** Eased open fraction (0 shut .. 1 open); the layer advances it toward the
    *  click-toggled, server-synced open state. */
   open: number
+  /** Leaf materials for the occlusion fade, like a wall run's. */
+  base: THREE.Material
+  ghost: THREE.Material
+  /** World AABB of the leaves; the layer refreshes it while they swing. */
+  aabb: THREE.Box3
 }
 
 /**
@@ -407,9 +416,12 @@ export function buildInteriorDoor(
   depth: number,
   spec: InteriorDoorSpec,
   wallTop: number,
-  mat: THREE.Material,
   archEntries: GeoEntry[]
 ): InteriorDoor {
+  const textureIndex = spec.locked
+    ? DUNGEON_LOCKED_DOOR_TEXTURE_IDX
+    : DUNGEON_DOOR_TEXTURE_IDX
+  const mat = getHousingMaterial(textureIndex)
   const { lat0, len, wallLine, doorId } = spec
   const halfW = len / 2
   const { spansX, outerLow, outX, outZ } = DOOR_WALL_INFO[spec.wall]
@@ -424,5 +436,13 @@ export function buildInteriorDoor(
   const leaves = leafSpecs.map((s) => makeDoorLeaf(s, halfW, outX, outZ, mat))
   tagDoorLeaves(leaves, depth, doorId)
   addInteriorDoorArch(archEntries, spansX, lat0, len, wallPlane, wallTop)
-  return { depth, doorId, leaves, open: 0 }
+  return {
+    depth,
+    doorId,
+    leaves,
+    open: 0,
+    base: mat,
+    ghost: getGhostHousingMaterial(textureIndex),
+    aabb: new THREE.Box3(),
+  }
 }

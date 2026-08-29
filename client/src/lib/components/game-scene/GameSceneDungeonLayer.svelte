@@ -181,8 +181,13 @@
     base: THREE.Material
     ghost: THREE.Material
     aabb: THREE.Box3
+    fadeRoom: number
+    occluded?: boolean
   }
   let wallRuns: WallRunFade[] = []
+  // Per-frame scratch, never rendered from.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
+  const fadedRooms = new Set<number>()
   const WALL_RUN_MIN_OCCLUSION = 0.05
 
   // ── Interior room doors ──────────────────────────────────
@@ -194,6 +199,12 @@
   let interiorDoors: InteriorDoor[] = []
   const interiorDoorGroup = new THREE.Group()
   root.add(interiorDoorGroup)
+
+  /** World box of a door's leaves, taken after they moved. */
+  function refreshDoorBox(door: InteriorDoor) {
+    door.aabb.makeEmpty()
+    for (const leaf of door.leaves) door.aabb.expandByObject(leaf.pivot)
+  }
 
   function clearGroup() {
     if (currentGroup) {
@@ -761,6 +772,7 @@
         base: r.mesh.material as THREE.Material,
         ghost: getGhostHousingMaterial(idx),
         aabb: r.localAABB.clone().translate(group.position),
+        fadeRoom: r.fadeRoom,
       })
     }
   }
@@ -937,8 +949,10 @@
     // floor); collision comes from the wasm passability cells.
     interiorDoors = built.doors
     interiorDoorGroup.position.copy(currentGroup.position)
-    for (const door of built.doors)
+    for (const door of built.doors) {
       for (const leaf of door.leaves) interiorDoorGroup.add(leaf.pivot)
+      refreshDoorBox(door)
+    }
     void buildProps(layout, key, depth)
   })
 
@@ -1027,16 +1041,22 @@
       }
     }
 
-    // Fade each wall run that occludes the player to a ghost. The mesh's current
-    // material is the single source of truth for its occluded state.
+    // Fade each wall run that occludes the player to a ghost, and a room's
+    // south and west walls as a pair. The mesh's current material is the
+    // single source of truth for its occluded state.
+    fadedRooms.clear()
     for (const w of wallRuns) {
-      const occ = isoCameraOccludesPlayer(
+      w.occluded = isoCameraOccludesPlayer(
         w.aabb,
         playerX,
         playerY,
         playerZ,
         WALL_RUN_MIN_OCCLUSION
       )
+      if (w.occluded && w.fadeRoom >= 0) fadedRooms.add(w.fadeRoom)
+    }
+    for (const w of wallRuns) {
+      const occ = w.occluded || fadedRooms.has(w.fadeRoom)
       if (occ !== (w.mesh.material === w.ghost)) {
         w.mesh.material = occ ? w.ghost : w.base
       }
@@ -1060,12 +1080,26 @@
     // (the common case) snap and skip, so we don't re-write rotations forever.
     for (const door of interiorDoors) {
       const target = dungeonManager.isDoorOpen(door.depth, door.doorId) ? 1 : 0
-      if (door.open === target) continue
-      door.open += (target - door.open) * 0.12
-      if (Math.abs(target - door.open) < 1e-3) door.open = target
-      for (const leaf of door.leaves)
-        leaf.pivot.rotation.y =
-          leaf.closedAngle + (leaf.openAngle - leaf.closedAngle) * door.open
+      if (door.open !== target) {
+        door.open += (target - door.open) * 0.12
+        if (Math.abs(target - door.open) < 1e-3) door.open = target
+        for (const leaf of door.leaves)
+          leaf.pivot.rotation.y =
+            leaf.closedAngle + (leaf.openAngle - leaf.closedAngle) * door.open
+        refreshDoorBox(door)
+      }
+      const occ = isoCameraOccludesPlayer(
+        door.aabb,
+        playerX,
+        playerY,
+        playerZ,
+        WALL_RUN_MIN_OCCLUSION
+      )
+      for (const leaf of door.leaves) {
+        if (occ !== (leaf.mesh.material === door.ghost)) {
+          leaf.mesh.material = occ ? door.ghost : door.base
+        }
+      }
     }
 
     if (!dungeonManager.active) return

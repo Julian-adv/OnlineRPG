@@ -505,8 +505,6 @@ pub struct GameState {
     /// would race the session replacement that clears it.
     #[allow(clippy::type_complexity)]
     chest_opens: Arc<RwLock<HashMap<(i64, String), i64>>>,
-    /// Pending chest town-returns; the timer or a disconnect fires each once.
-    chest_returns: Arc<RwLock<HashSet<PlayerId>>>,
     /// player_id → dungeon entrance ids this character has discovered
     /// (world-map markers). Seeded from the DB at login, dropped on logout;
     /// new discoveries queue in `pending_discovery_saves`.
@@ -718,7 +716,6 @@ impl GameState {
             whisper_partners: Arc::new(RwLock::new(HashMap::new())),
             muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
-            chest_returns: Arc::new(RwLock::new(HashSet::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
             dungeon_discovery_cells,

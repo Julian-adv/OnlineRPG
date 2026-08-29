@@ -580,8 +580,6 @@ impl super::GameState {
 
     async fn cleanup_player_session(&self, player_id: &PlayerId, auth: &AuthService) {
         self.cancel_concentration_if_active(player_id).await;
-        // Before the save, so the character is stored in town.
-        self.fire_chest_return(player_id).await;
         self.persist_and_detach_player(player_id, auth).await;
         self.unregister_connection_channel(player_id).await;
         self.unregister_player_character(player_id).await;
