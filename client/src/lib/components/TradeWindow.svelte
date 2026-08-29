@@ -1,5 +1,6 @@
 <script lang="ts">
   import { get } from 'svelte/store'
+  import { assetUrl } from '../utils/assetUrl'
   import {
     shopSession,
     shopDeals,
@@ -78,7 +79,7 @@
   const portraitSrc = $derived.by(() => {
     if (!session) return null
     const traderId = getNpcCapabilities(session.merchantName).traderId
-    return traderId ? `/portraits/${traderId}.webp` : null
+    return traderId ? assetUrl(`/portraits/${traderId}.webp`) : null
   })
 
   /** Resident traders (wishlist, real stock) vs merchants (catalog). */

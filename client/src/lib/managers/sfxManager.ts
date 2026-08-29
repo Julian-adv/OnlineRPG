@@ -1,4 +1,5 @@
 import { get, writable } from 'svelte/store'
+import { assetUrl } from '../utils/assetUrl'
 import {
   DEFAULT_MATERIAL_HIT_SOUND_URL,
   DEFAULT_MATERIAL_MISS_SOUND_URL,
@@ -119,7 +120,7 @@ function canUseAudio(): boolean {
 }
 
 function createAudio(url: string, volume: number): HTMLAudioElement {
-  const audio = new Audio(url)
+  const audio = new Audio(assetUrl(url))
   audio.preload = 'auto'
   audio.volume = volume
   return audio

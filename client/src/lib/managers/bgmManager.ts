@@ -1,5 +1,8 @@
 import { get, writable } from 'svelte/store'
 import { BGM_TRACKS, bgmFileFor } from '../data/bgmTracks'
+import { assetUrl } from '../utils/assetUrl'
+
+const bgmSrc = (file: string) => assetUrl(`/bgm/${file}`)
 
 const BATTLE_BGM_FILES = [
   'Blood and Bronze.mp3',
@@ -86,6 +89,7 @@ function applyAudioSettings(
 }
 
 let battleAudio: HTMLAudioElement | null = null
+const battleAudioByFile = new Map<string, HTMLAudioElement>()
 
 /** Walk `el.volume` toward `target` over `ms`, then `onDone(arrived)` —
  *  `arrived` is false when `abort()` cut the fade short. Callers keep the
@@ -167,7 +171,7 @@ function playTrack() {
 
   applyAudioSettings(audio)
   audio.dataset.trackName = trackName
-  audio.src = `/bgm/${file}`
+  audio.src = bgmSrc(file)
   audio.play().catch(() => {})
 }
 
@@ -213,20 +217,25 @@ export function startBattleMusic() {
     BATTLE_BGM_FILES[Math.floor(Math.random() * BATTLE_BGM_FILES.length)]
   const trackName = file.replace(/\.(mp3|m4a)$/, '')
 
-  if (!battleAudio) {
-    battleAudio = new Audio()
-    battleAudio.loop = true
-    battleAudio.addEventListener('playing', () => {
-      currentBgmTrack.set(battleAudio!.dataset.trackName ?? '')
+  // One element per track, kept for the session: reassigning src on a
+  // shared element re-downloaded the file on every fight.
+  let el = battleAudioByFile.get(file)
+  if (!el) {
+    el = new Audio(bgmSrc(file))
+    el.loop = true
+    el.dataset.trackName = trackName
+    el.addEventListener('playing', () => {
+      currentBgmTrack.set(trackName)
     })
+    battleAudioByFile.set(file, el)
   }
+  if (battleAudio && battleAudio !== el) battleAudio.pause()
+  battleAudio = el
 
-  applyAudioSettings(battleAudio)
-  battleAudio.dataset.trackName = trackName
-  battleAudio.currentTime = 0
-  battleAudio.src = `/bgm/${file}`
+  applyAudioSettings(el)
+  el.currentTime = 0
   if (!get(bgmMuted)) {
-    battleAudio.play().catch(() => {})
+    el.play().catch(() => {})
   }
 
   endedCallback?.()
@@ -511,7 +520,7 @@ export function playPerformance(
   el.addEventListener('ended', finish)
   el.addEventListener('error', finish)
   el.dataset.trackName = track
-  el.src = `/bgm/${file}`
+  el.src = bgmSrc(file)
   if (offsetSecs > 0) {
     el.addEventListener(
       'loadedmetadata',

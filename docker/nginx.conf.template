@@ -84,6 +84,20 @@ server {
     location ^~ /models/ {
         add_header Cache-Control "no-cache";
         try_files $uri =404;
+
+        # Hashed copies (client scripts/hash-assets.mjs) are immutable; the
+        # prefix match above would otherwise hide the regex block below.
+        location ~* "\.[0-9a-f]{8}\.(glb|png|jpe?g|webp|mp3|m4a|ogg)$" {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+
+    # Content-hashed runtime assets (textures, bgm, sounds, portraits): the
+    # name changes with the bytes, so a cached copy can never be stale.
+    location ~* "\.[0-9a-f]{8}\.(glb|png|jpe?g|webp|mp3|m4a|ogg)$" {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
     }
 
     # Unhashed media. The name never changes, so expiry is time-based and the

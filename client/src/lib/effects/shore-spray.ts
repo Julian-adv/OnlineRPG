@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
+import { assetUrl } from '../utils/assetUrl'
 import {
   attribute,
   texture,
@@ -137,7 +138,7 @@ let noiseLoading = false
 function ensureShoreNoiseLoaded(): void {
   if (noisePixels || noiseLoading) return
   noiseLoading = true
-  fetch('/textures/value-noise.jpg')
+  fetch(assetUrl('/textures/value-noise.jpg'))
     .then((r) => r.blob())
     .then((b) => createImageBitmap(b))
     .then((img) => {
