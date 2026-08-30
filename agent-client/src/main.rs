@@ -519,6 +519,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::PartyVitals { .. } => "PartyVitals",
         ServerMessage::FriendList { .. } => "FriendList",
         ServerMessage::FriendsOnline { .. } => "FriendsOnline",
+        ServerMessage::RecentEncounters { .. } => "RecentEncounters",
         ServerMessage::FriendRequestReceived { .. } => "FriendRequestReceived",
         ServerMessage::HungerUpdate { .. } => "HungerUpdate",
         ServerMessage::DebuffUpdate { .. } => "DebuffUpdate",
