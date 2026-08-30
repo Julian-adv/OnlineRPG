@@ -51,6 +51,10 @@ EXPORT_PACKS = {
         "twist",
         "macarena",
         "chicken",
+        "sit_idle",
+        "sit_talk",
+        "stand_to_sit",
+        "sit_to_stand",
     ],
     "offhand": [
         "torch_idle1",

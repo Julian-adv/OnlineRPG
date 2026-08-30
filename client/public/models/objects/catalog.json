@@ -163,6 +163,8 @@
     "id": "chair",
     "name": "Chair",
     "model": "objects/chair.glb",
+    "interaction": "sit",
+    "interactOffset": { "x": 0, "y": 0.08, "z": 0 },
     "solid": true
   },
   {

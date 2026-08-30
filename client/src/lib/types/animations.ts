@@ -48,4 +48,17 @@ export const FishingAnimationName = {
   IDLE: 'fishing_idle',
 } as const
 
+/** Chair interaction. `SIT` is the catalog name the FSM holds; PlayerModel
+ *  expands it into the enter clip, the seated loop (with the occasional
+ *  talk), and `SIT_TO_STAND` is what the exit swaps in. */
+export const SitAnimationName = {
+  SIT: 'sit',
+  STAND_TO_SIT: 'stand_to_sit',
+  IDLE: 'sit_idle',
+  TALK: 'sit_talk',
+  SIT_TO_STAND: 'sit_to_stand',
+} as const
+
+export const SIT_TALK_CHANCE = 0.3
+
 export type OffhandAnimationKey = keyof typeof OffhandAnimationName

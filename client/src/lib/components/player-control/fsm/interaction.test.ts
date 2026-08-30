@@ -11,6 +11,7 @@ import {
   getInteractionExitKind,
   getObjectInteractionEntryPosition,
   getObjectInteractionExitPosition,
+  pickObjectExitPosition,
   handleInteractKey,
   handlePickupGrab,
   shouldFinishPendingPickup,
@@ -44,6 +45,42 @@ describe('getObjectInteractionExitPosition', () => {
 
     expect(result.x).toBeCloseTo(1.7)
     expect(result.z).toBeCloseTo(2)
+  })
+})
+
+describe('pickObjectExitPosition', () => {
+  const seat = { x: 0, y: 0, z: 0 }
+
+  it('prefers the cell beside the seat', () => {
+    const result = pickObjectExitPosition(seat, 0, () => false)
+
+    expect(result.x).toBeCloseTo(1)
+    expect(result.z).toBeCloseTo(0)
+  })
+
+  it('starts with the side nearer the click destination', () => {
+    const result = pickObjectExitPosition(seat, 0, () => false, {
+      x: -5,
+      z: 2,
+    })
+
+    expect(result.x).toBeCloseTo(-1)
+  })
+
+  it('tries the other side, then the front, skipping blocked cells', () => {
+    const blocked = (x: number) => x > 0.5
+    const result = pickObjectExitPosition(seat, 0, blocked)
+    expect(result.x).toBeCloseTo(-1)
+
+    const front = pickObjectExitPosition(seat, 0, (x) => Math.abs(x) > 0.5)
+    expect(front.z).toBeCloseTo(1)
+  })
+
+  it('falls back to the front when everything is blocked', () => {
+    const result = pickObjectExitPosition(seat, 0, () => true)
+
+    expect(result.x).toBeCloseTo(0)
+    expect(result.z).toBeCloseTo(1)
   })
 })
 

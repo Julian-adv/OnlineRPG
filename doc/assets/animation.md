@@ -72,6 +72,17 @@
     social.glb를 타겟 armature로 임포트해 retarget bake 후 `graft-glb-clip.py`로 이식.
     작업 blend: `~/assets_original/excited_social_work.blend`.
 
+- Stand To Sit / Sitting Idle / Sitting Talking / Sit To Stand https://www.mixamo.com/#/?query=sit&type=Motion%2CMotionPack
+  (social pack, `stand_to_sit` / `sit_idle` / `sit_talk` / `sit_to_stand` — 의자 `interaction: "sit"`)
+  - 2026-08-30 Mixamo, Without Skin(65본)/30fps, `assets/Stand To Sit.fbx` 등 4개를
+    `import_mixamo_animation`으로 `Armature`에 bake(fake user)한 뒤 `all_animation.blend`에서
+    손봤다: `stand_to_sit`는 끝 자세가 `sit_idle`보다 0.58m 뒤라 Hips를 -Y 0.58 이동(끝 = `sit_idle`
+    첫 프레임), 네 클립 모두 Hips를 +Y 0.10 옮겨 등받이 쪽으로 붙였고, `sit_talk`는 44초짜리를 `sit_idle`과 가장 가까운 자세인 1–301f(10초)로 잘랐다.
+    도너는 `export_animations.py`를 임시 팩으로 돌려 뽑고 `graft-glb-clip.py`로 4개를 이식했다
+    (blend에 twist/macarena/chicken이 없어 social 팩 전체 재export는 막힌다).
+  - 앉은 Hips 높이 0.584m, 의자 좌석 0.56m. 카탈로그 `interactOffset.y`는 눈으로 맞춘 값(0.03은
+    엉덩이가 10cm 묻혔다) — 발끝은 그만큼 뜬다.
+
 ## Mixamo Animation Export Workflow
 
 새 Mixamo 애니메이션을 offhand/locomotion 등의 pack에 추가할 때:

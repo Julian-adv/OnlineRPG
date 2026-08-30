@@ -61,7 +61,7 @@
     DUNGEON_DOOR_APPROACH,
     HOUSE_DOOR_APPROACH,
     NPC_TRADE_APPROACH,
-    OBJECT_APPROACH,
+    approachForInteraction,
     PICKUP_APPROACH,
     PROP_APPROACH,
     STALL_TRADE_APPROACH,
@@ -106,7 +106,7 @@
     exitPickupInteraction as buildExitPickupInteraction,
     handlePickupGrab,
     applyObjectInteractionPosition,
-    getObjectInteractionExitPosition,
+    pickObjectExitPosition,
     beginPickupInteraction,
     beginObjectInteraction,
     exitObjectInteraction as buildExitObjectInteraction,
@@ -128,7 +128,10 @@
     type ChaseMovement,
   } from './player-control/fsm/combat'
   import type { Pathing } from './player-control/fsm/movement-substrate'
-  import { buildAttackState } from './player-control/player-state-builders'
+  import {
+    buildAttackState,
+    buildInteractState,
+  } from './player-control/player-state-builders'
   import type {
     MovingControlState,
     PickingUpControlState,
@@ -144,6 +147,7 @@
     HELD_EMOTE_ANIMS,
     ONE_SHOT_EMOTE_ANIMS,
   } from '../stores/emoteStore'
+  import { SitAnimationName } from '../types/animations'
 
   interface Props {
     onStateChange: (state: PlayerState) => void
@@ -281,6 +285,13 @@
     standUpTimer = null
   }
 
+  /** A seat exit waiting on the stand-up clip: where the player is heading
+   *  (steers which side of the seat to step to) and what to do afterwards. */
+  let pendingExit: {
+    toward: Position | null
+    then: (() => void) | null
+  } | null = null
+
   const JUMP_FEEDBACK_DURATION_MS = 1500
   const JUMP_FEEDBACK_COOLDOWN_MS = 1000
   let jumpFeedbackTimer: ReturnType<typeof setTimeout> | null = null
@@ -368,14 +379,18 @@
     // A one-shot emote ends itself; notify so the server drops the stored
     // pose and remotes clear it. Held poses (bench, forge) stay until the
     // player moves, and pickup has its own exit below.
-    if (
-      playerState.state === 'interact' &&
-      ONE_SHOT_EMOTE_ANIMS.has(playerState.interactionAnim ?? '')
-    ) {
+    if (playerState.state !== 'interact') return exitPickupInteraction()
+    const anim = playerState.interactionAnim ?? ''
+    if (ONE_SHOT_EMOTE_ANIMS.has(anim)) {
       exitObjectInteraction()
-      return
+    } else if (anim === SitAnimationName.SIT_TO_STAND) {
+      const exit = pendingExit
+      pendingExit = null
+      completeObjectExit(false, exit?.toward ?? undefined)
+      exit?.then?.()
+    } else {
+      exitPickupInteraction()
     }
-    exitPickupInteraction()
   }
 
   function onPickupGrab() {
@@ -388,7 +403,40 @@
     })
   }
 
-  function exitObjectInteraction(notify = true) {
+  /** Leave the current object/emote. A seated player first plays the
+   *  stand-up clip; the real exit (and `then`) runs from
+   *  onInteractionFinished when it ends. A rejected sit (notify=false) never
+   *  sat, so it skips straight out. */
+  function exitObjectInteraction(
+    notify = true,
+    then?: () => void,
+    toward?: Position
+  ) {
+    const anim =
+      playerState.state === 'interact' ? playerState.interactionAnim : undefined
+    if (anim === SitAnimationName.SIT_TO_STAND) {
+      pendingExit = { toward: toward ?? null, then: then ?? null }
+      return
+    }
+    if (notify && anim === SitAnimationName.SIT) {
+      setPlayerState(
+        buildInteractState(
+          playerState,
+          playerState.position,
+          playerState.rotation,
+          SitAnimationName.SIT_TO_STAND,
+          playerState.interactOffsetY ?? 0
+        )
+      )
+      networkManager.sendStopInteraction()
+      pendingExit = { toward: toward ?? null, then: then ?? null }
+      return
+    }
+    completeObjectExit(notify, toward)
+    then?.()
+  }
+
+  function completeObjectExit(notify: boolean, toward?: Position) {
     // Stepping out walks the player off the seat they were using. An emote
     // claims no object — it plays where the player stands — so every exit
     // path leaves an emote in place.
@@ -396,15 +444,18 @@
       playerState.state !== 'interact' ||
       !EMOTE_ANIMS.has(playerState.interactionAnim ?? '')
     if (stepOut && currentPlayer) {
+      const seat = {
+        x: currentPlayer.position.x,
+        y: currentPlayer.position.y,
+        z: currentPlayer.position.z,
+      }
       applyObjectInteractionPosition(
         currentPlayer,
-        getObjectInteractionExitPosition(
-          {
-            x: currentPlayer.position.x,
-            y: currentPlayer.position.y,
-            z: currentPlayer.position.z,
-          },
-          playerRotation
+        pickObjectExitPosition(
+          seat,
+          playerRotation,
+          (x, z) => isMovementBlocked(seat.x, seat.z, x, z, seat.y),
+          toward
         ),
         {
           hasHeightData: (x, z) => heightManager.hasHeightData(x, z),
@@ -730,6 +781,7 @@
     combatController.cancelCombat()
     inputHandler.clearTransientInput()
     clearStandUpTimer()
+    pendingExit = null
     clearJumpFeedbackTimer()
     clearPropSwingTimers()
     currentSpeed = transition.runtime.currentSpeed
@@ -1009,17 +1061,21 @@
         handleClickToMove(clickPosition, options)
       },
       exitObjectAndDelay: () => {
-        exitObjectInteraction()
-
-        clearStandUpTimer()
-        standUpTimer = setTimeout(() => {
-          standUpTimer = null
-          enqueuePlayerControlEvent({
-            type: 'delayed_request_move',
-            position: { ...clickPosition },
-            approach: options.approach ?? null,
-          })
-        }, STAND_UP_DURATION)
+        exitObjectInteraction(
+          true,
+          () => {
+            clearStandUpTimer()
+            standUpTimer = setTimeout(() => {
+              standUpTimer = null
+              enqueuePlayerControlEvent({
+                type: 'delayed_request_move',
+                position: { ...clickPosition },
+                approach: options.approach ?? null,
+              })
+            }, STAND_UP_DURATION)
+          },
+          clickPosition
+        )
       },
       applyStartedMovement: (started) => {
         playerRotation = started.playerRotation
@@ -1158,6 +1214,9 @@
       finishPendingPickup()
     }
 
+    // Re-sitting mid stand-up must not let the old exit's continuation fire.
+    pendingExit = null
+
     const result = beginObjectInteraction({
       intent,
       previousPlayerState: playerState,
@@ -1191,6 +1250,7 @@
     // Leftover deceleration would let the movement tick's resetStoppedSpeed
     // project the fresh interact state back to idle one frame later.
     currentSpeed = 0
+    pendingExit = null
 
     const result = beginObjectInteraction({
       intent: {
@@ -1325,8 +1385,12 @@
   function interactObject(
     intent: Extract<ClickIntent, { type: 'interact_object' }>
   ) {
-    approachAndAct({ position: intent.position, ...OBJECT_APPROACH }, () =>
-      enterInteraction(intent)
+    approachAndAct(
+      {
+        position: intent.position,
+        ...approachForInteraction(intent.interaction),
+      },
+      () => enterInteraction(intent)
     )
   }
 

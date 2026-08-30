@@ -16,7 +16,7 @@ import {
   type PlayerState,
 } from '../utils/movementUtils'
 import { entityGroundY } from './entity-ground'
-import { FishingAnimationName } from '../types/animations'
+import { FishingAnimationName, SitAnimationName } from '../types/animations'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import type { TerrainHeightManager } from './terrainHeightManager'
 
@@ -360,6 +360,16 @@ class PlayerStateManager {
   handleStopInteraction(playerId: number) {
     const player = this.players.get(playerId)
     if (!player || player.state !== 'interact') return
+
+    // A seated player stands up first; that clip's finish lands back here.
+    if (player.interactionAnim === SitAnimationName.SIT) {
+      this.handleInteraction(
+        playerId,
+        SitAnimationName.SIT_TO_STAND,
+        player.interactOffsetY ?? 0
+      )
+      return
+    }
 
     this.players.set(playerId, {
       ...player,

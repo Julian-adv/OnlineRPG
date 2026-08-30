@@ -1,4 +1,5 @@
 import type { ApproachSpec } from '../components/player-control/fsm/approach'
+import { SitAnimationName } from '../types/animations'
 import { PLAYER_PICKUP_RANGE_METERS } from './combatTiming'
 import {
   NPC_TRADE_RANGE_METERS,
@@ -28,8 +29,16 @@ export const DUNGEON_DOOR_APPROACH: ApproachRange = {
   stopShort: 1.4,
 }
 
-/** Sitting/sleeping furniture. The server validates no range of its own. */
+/** Furniture with a pose (bed). The server validates no range of its own. */
 export const OBJECT_APPROACH: ApproachRange = { range: 3.0, stopShort: 1.5 }
+
+/** Chairs: the sit-down clip starts ~0.6m in front of the seat, so walk up
+ *  close enough that the snap onto it is barely visible. */
+const SIT_APPROACH: ApproachRange = { range: 1.5, stopShort: 0.8 }
+
+export function approachForInteraction(interaction: string): ApproachRange {
+  return interaction === SitAnimationName.SIT ? SIT_APPROACH : OBJECT_APPROACH
+}
 
 export const PICKUP_APPROACH: ApproachRange = {
   range: PLAYER_PICKUP_RANGE_METERS - 0.3,

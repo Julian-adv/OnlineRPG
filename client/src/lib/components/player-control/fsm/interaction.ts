@@ -42,6 +42,28 @@ export function getObjectInteractionExitPosition(
   }
 }
 
+/** Where to stand after leaving an object: one cell to the side (the side
+ *  nearer `toward`, the click destination, first), then one cell ahead — a
+ *  chair usually faces a table, and stepping out into its solid cell left
+ *  the player wedged on the passability grid. Straight ahead when every
+ *  candidate is blocked. */
+export function pickObjectExitPosition(
+  currentPosition: Position,
+  rotation: number,
+  isBlocked: (x: number, z: number) => boolean,
+  toward?: Pick<Position, 'x' | 'z'>
+): Pick<Position, 'x' | 'z'> {
+  const at = (r: number) =>
+    getObjectInteractionExitPosition(currentPosition, r, 1.0)
+  const left = at(rotation + Math.PI / 2)
+  const right = at(rotation - Math.PI / 2)
+  const forward = at(rotation)
+  const dist2 = (p: Pick<Position, 'x' | 'z'>) =>
+    toward ? (toward.x - p.x) ** 2 + (toward.z - p.z) ** 2 : 0
+  const sides = dist2(left) <= dist2(right) ? [left, right] : [right, left]
+  return [...sides, forward].find((c) => !isBlocked(c.x, c.z)) ?? forward
+}
+
 interface ObjectInteractionPlayer {
   position: Position
 }

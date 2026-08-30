@@ -60,6 +60,8 @@
     AnimationName,
     FishingAnimationName,
     OffhandAnimationName,
+    SIT_TALK_CHANCE,
+    SitAnimationName,
     TORCH_IDLE_CLIP_NAMES,
   } from '../types/animations'
   import {
@@ -309,6 +311,7 @@
   let socialLoadPromise: Promise<void> | null = null
   let lastAnimKey: string | undefined
   let hitAction: THREE.AnimationAction | null = null
+  let sitIdleLastTime = 0
   // False when the pack lacked the clip: the ordered array substitutes
   // slash1 there, and layering a swing on every blow is worse than nothing.
   let hitClipLoaded = false
@@ -753,9 +756,11 @@
     } else if (playerState === 'interact') {
       interactionFinishedNotified = false
       pickupGrabNotified = false
-      clip = interactionAnim
-        ? socialClipsByName.get(interactionAnim)
-        : undefined
+      const clipName =
+        interactionAnim === SitAnimationName.SIT
+          ? SitAnimationName.STAND_TO_SIT
+          : interactionAnim
+      clip = clipName ? socialClipsByName.get(clipName) : undefined
       if (!clip) {
         loadSocialAnimations()
         // While the packs load, keep the change pending so the frame loop
@@ -769,8 +774,6 @@
 
     if (!clip) return
 
-    const newAction = mixer.clipAction(clip)
-
     // The fishing idle, the music emote and the dances are stances held for
     // the whole state, not one-shot gestures like pickup — they loop until it
     // ends. Clamping instead would freeze the performance mid-strum.
@@ -778,25 +781,51 @@
       playerState !== 'moving' &&
       interactionAnim !== FishingAnimationName.IDLE &&
       !HELD_EMOTE_ANIMS.has(interactionAnim ?? '')
+    startAction(clip, playOnce)
+  }
+
+  function startAction(clip: THREE.AnimationClip, playOnce: boolean) {
+    if (!mixer) return
+    const newAction = mixer.clipAction(clip)
     newAction.reset()
     newAction.loop = playOnce ? THREE.LoopOnce : THREE.LoopRepeat
     newAction.clampWhenFinished = playOnce
     newAction.paused = false
 
-    // If there's a current action and it's different, crossfade to the new one
     if (currentAction && newAction !== currentAction) {
-      const crossfadeDuration = 0.3 // 300ms crossfade
-
-      // Use THREE.js built-in crossfade. warp=false: do NOT time-scale the
-      // incoming clip to match the outgoing clip's length — that made a long
-      // idle ("look around") whip past at several-times speed when blending in
-      // from a short walk/attack clip.
-      newAction.crossFadeFrom(currentAction, crossfadeDuration, false)
+      // warp=false: do NOT time-scale the incoming clip to match the outgoing
+      // clip's length — that made a long idle ("look around") whip past at
+      // several-times speed when blending in from a short walk/attack clip.
+      newAction.crossFadeFrom(currentAction, 0.3, false)
     }
 
-    // Play the new action
     newAction.play()
     currentAction = newAction
+  }
+
+  function switchSitClip(name: string, loop: boolean) {
+    const clip = socialClipsByName.get(name)
+    if (!clip) return
+    startAction(clip, !loop)
+    sitIdleLastTime = 0
+  }
+
+  /** Seated sequence: sit down → idle loop, each loop occasionally handing
+   *  off to the talk clip once. Runs off the frame loop since the anim key
+   *  doesn't change while the player stays seated. */
+  function advanceSitSequence() {
+    if (!currentAction) return
+    const clip = currentAction.getClip()
+    const finished = currentAction.time >= clip.duration - 0.001
+    if (clip.name === SitAnimationName.IDLE) {
+      const wrapped = currentAction.time < sitIdleLastTime
+      sitIdleLastTime = currentAction.time
+      if (wrapped && Math.random() < SIT_TALK_CHANCE) {
+        switchSitClip(SitAnimationName.TALK, false)
+      }
+    } else if (finished) {
+      switchSitClip(SitAnimationName.IDLE, true)
+    }
   }
 
   async function setupRealAnimation() {
@@ -1107,6 +1136,8 @@
     if (playerState !== 'interact') {
       interactionFinishedNotified = false
       pickupGrabNotified = false
+    } else if (interactionAnim === SitAnimationName.SIT) {
+      advanceSitSequence()
     } else if (
       currentAction &&
       interactionAnim &&
@@ -1119,6 +1150,7 @@
       (isCurrentPlayer ||
         interactionAnim === 'pickup' ||
         interactionAnim === FishingAnimationName.CAST ||
+        interactionAnim === SitAnimationName.SIT_TO_STAND ||
         ONE_SHOT_EMOTE_ANIMS.has(interactionAnim))
     ) {
       const clip = currentAction.getClip()
