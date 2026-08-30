@@ -519,6 +519,7 @@
     movementMode={currentPlayerState.movementMode}
     {camera}
     chatBubble={chatBubbles.get(currentPlayer.id)?.message}
+    chatBubbleAt={chatBubbles.get(currentPlayer.id)?.timestamp}
     characterClass={currentPlayer.characterClass}
     gender={currentPlayer.gender}
     health={currentPlayer.health}
@@ -573,6 +574,7 @@
         movementMode={remotePlayer.movementMode}
         {camera}
         chatBubble={chatBubbles.get(player.id)?.message}
+        chatBubbleAt={chatBubbles.get(player.id)?.timestamp}
         characterClass={player.characterClass}
         gender={player.gender}
         health={player.health}

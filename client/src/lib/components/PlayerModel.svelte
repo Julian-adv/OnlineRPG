@@ -142,6 +142,7 @@
     movementMode?: MovementMode
     camera: THREE.Camera | undefined
     chatBubble?: string
+    chatBubbleAt?: number
     characterClass: CharacterClass
     gender: Gender
     health: number
@@ -194,6 +195,7 @@
     movementMode,
     camera,
     chatBubble,
+    chatBubbleAt,
     characterClass,
     gender,
     health,
@@ -809,6 +811,20 @@
     startAction(clip, !loop)
     sitIdleLastTime = 0
   }
+
+  /** A new chat message while seated plays the talk clip right away. */
+  $effect(() => {
+    if (chatBubbleAt === undefined) return
+    untrack(() => {
+      if (
+        playerState !== 'interact' ||
+        interactionAnim !== SitAnimationName.SIT
+      )
+        return
+      if (currentAction?.getClip().name !== SitAnimationName.IDLE) return
+      switchSitClip(SitAnimationName.TALK, false)
+    })
+  })
 
   /** Seated sequence: sit down → idle loop, each loop occasionally handing
    *  off to the talk clip once. Runs off the frame loop since the anim key
