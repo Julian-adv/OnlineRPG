@@ -208,15 +208,6 @@ pub struct BroadcastMessage {
 pub type GameStateSender = broadcast::Sender<BroadcastMessage>;
 pub type GameStateReceiver = broadcast::Receiver<BroadcastMessage>;
 
-/// Payload of a player's direct channel. Fanout helpers serialize once and
-/// share the bytes across recipients; single-recipient sends stay typed so
-/// the connection can still inspect them (e.g. `Kicked`).
-#[derive(Debug, Clone)]
-pub enum DirectMessage {
-    Typed(ServerMessage),
-    Shared(Bytes),
-}
-
 /// The one wire-encode path every outbound message shares; logs and returns
 /// `None` on failure.
 pub(crate) fn encode_server_msg(msg: &ServerMessage) -> Option<Bytes> {
@@ -365,7 +356,7 @@ pub struct GameState {
     id_state: Arc<RwLock<IdState>>,
     account_sessions: Arc<RwLock<HashMap<String, AccountSession>>>,
     next_account_session: Arc<std::sync::atomic::AtomicU64>,
-    direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<DirectMessage>>>>,
+    direct_channels: Arc<RwLock<HashMap<PlayerId, mpsc::UnboundedSender<Bytes>>>>,
     // player_id → (character_id, current_xp, attributes)
     #[allow(clippy::type_complexity)]
     player_characters: Arc<RwLock<HashMap<PlayerId, (i64, u64, CharacterAttributes)>>>,

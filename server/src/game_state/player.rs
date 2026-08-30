@@ -2,6 +2,7 @@ use super::KickNotice;
 use crate::auth::{AuthError, AuthService, CharacterSaveData, ItemRow};
 use crate::types::{CharacterAttributes, Player, PlayerId, Position, ServerMessage};
 use crate::world_config::world_config;
+use bytes::Bytes;
 use onlinerpg_shared::housing::MAX_FLOOR_LEVEL;
 use onlinerpg_shared::inventory::{EquipSlot, PlayerInventory};
 use onlinerpg_shared::{
@@ -286,7 +287,7 @@ impl super::GameState {
     pub async fn register_connection_channel(
         &self,
         player_id: &PlayerId,
-    ) -> mpsc::UnboundedReceiver<super::DirectMessage> {
+    ) -> mpsc::UnboundedReceiver<Bytes> {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut channels = self.direct_channels.write().await;
         channels.insert(*player_id, tx);
@@ -299,9 +300,12 @@ impl super::GameState {
     }
 
     pub async fn send_direct_message(&self, player_id: &PlayerId, msg: ServerMessage) {
+        let Some(bytes) = super::encode_server_msg(&msg) else {
+            return;
+        };
         let channels = self.direct_channels.read().await;
         if let Some(tx) = channels.get(player_id) {
-            let _ = tx.send(super::DirectMessage::Typed(msg));
+            let _ = tx.send(bytes);
         }
     }
 
@@ -347,7 +351,7 @@ impl super::GameState {
                 continue;
             }
             if let Some(tx) = channels.get(player_id) {
-                let _ = tx.send(super::DirectMessage::Shared(bytes.clone()));
+                let _ = tx.send(bytes.clone());
             }
         }
     }

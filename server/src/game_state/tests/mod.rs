@@ -162,16 +162,14 @@ async fn player_xz(game_state: &GameState, player_id: &PlayerId) -> (f32, f32) {
     (player.position.x, player.position.z)
 }
 
-/// Decodes `Shared` payloads back into `ServerMessage`, mirroring the
+/// Decodes direct payloads back into `ServerMessage`, mirroring the
 /// receiver API so tests assert on exactly what a client would decode.
-struct DirectRx(tokio::sync::mpsc::UnboundedReceiver<DirectMessage>);
+struct DirectRx(tokio::sync::mpsc::UnboundedReceiver<Bytes>);
 
 impl DirectRx {
     fn try_recv(&mut self) -> Result<ServerMessage, MpscTryRecvError> {
-        self.0.try_recv().map(|payload| match payload {
-            DirectMessage::Typed(msg) => msg,
-            DirectMessage::Shared(bytes) => onlinerpg_shared::deserialize_server_msg(&bytes)
-                .expect("shared direct payload decodes"),
+        self.0.try_recv().map(|bytes| {
+            onlinerpg_shared::deserialize_server_msg(&bytes).expect("direct payload decodes")
         })
     }
 }

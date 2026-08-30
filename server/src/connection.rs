@@ -3,8 +3,8 @@ use crate::conn_limit::{resolve_client_ip, ConnectLimiter};
 use crate::game::character_attributes::roll_character_attributes;
 use crate::game::character_hp::{level_one_max_hp, DEFAULT_CHARACTER_RACE};
 use crate::game_state::{
-    encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level,
-    DirectMessage, GameState, KickNotice,
+    encode_server_msg, parse_admin_command, parse_notice_command, restored_floor_level, GameState,
+    KickNotice,
 };
 use crate::google_auth::GoogleAuthVerifier;
 use crate::types::{
@@ -154,7 +154,7 @@ struct ConnectionState {
     /// Entered character's name, kept here so disconnect-path logs can name the
     /// player after `GameState` has already dropped the record.
     character_name: Option<String>,
-    direct_rx: Option<mpsc::UnboundedReceiver<DirectMessage>>,
+    direct_rx: Option<mpsc::UnboundedReceiver<Bytes>>,
     pending_character_attributes: Option<CharacterAttributes>,
     connected_at: std::time::Instant,
     last_heartbeat: std::time::Instant,
@@ -538,21 +538,8 @@ pub async fn handle_connection(
                     None => std::future::pending().await,
                 }
             } => {
-                match direct_msg {
-                    Some(DirectMessage::Shared(bytes)) => {
-                        let _ = ws_sender.send(Message::Binary(bytes)).await;
-                    }
-                    Some(DirectMessage::Typed(msg)) => {
-                        let is_kicked = matches!(msg, ServerMessage::Kicked { .. });
-                        if let Some(bytes) = encode_server_msg(&msg) {
-                            let _ = ws_sender.send(Message::Binary(bytes)).await;
-                        }
-                        if is_kicked {
-                            info!("Player {:?} kicked", state.character_name);
-                            break;
-                        }
-                    }
-                    None => {}
+                if let Some(bytes) = direct_msg {
+                    let _ = ws_sender.send(Message::Binary(bytes)).await;
                 }
             }
         }
