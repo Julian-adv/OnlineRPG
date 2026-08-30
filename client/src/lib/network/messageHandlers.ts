@@ -595,7 +595,6 @@ export function handleServerMessage(
         text: data.message,
         sender: isLocal ? 'local' : 'remote',
         name: speaker?.name ?? 'Unknown',
-        title: speaker?.title ?? null,
       })
       addChatBubble(data.player_id, data.message)
       break

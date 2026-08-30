@@ -79,8 +79,6 @@ export interface ChatEntry {
   text: string
   sender: ChatSender
   name?: string
-  /** The speaker's shown title at the time, drawn above the name. */
-  title?: string | null
   hit?: boolean
 }
 

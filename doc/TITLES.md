@@ -103,7 +103,7 @@ ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러�
 | 자리 | 표시 | 비고 |
 |---|---|---|
 | 머리 위 이름표(`PlayerModel`의 `TextLabel`) | `이름` 위에 작은 글씨로 전체 칭호 | 칭호 없는 사람은 지금과 동일 |
-| 채팅(`ChatPanel`) | 두 줄 — 윗줄에 작은 글씨로 칭호, 아랫줄에 `이름: 메시지` | 로컬 채팅만. 귓속말·파티·친구 패널은 이름만 |
+| 채팅(`ChatPanel`) | 이름만 | 칭호는 붙이지 않는다(2026-08-30) |
 | 캐릭터 선택 | 이름 아래 한 줄 | `active_title` |
 | 캐릭터 창(본인) | `titles` 탭 — 칭호 목록 + 라디오로 선택, "없음" 포함 | `SetActiveTitle` |
 
