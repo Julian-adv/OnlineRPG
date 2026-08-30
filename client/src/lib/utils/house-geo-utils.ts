@@ -14,6 +14,7 @@ export const LANDING_DEPTH = 0.5
 // from the Rust value; only this housing-UI copy needs manual bumping).
 export const MAX_FLOOR_LEVEL = 3
 export const ROOF_OVERHANG = 0.3
+// Keep in sync with shared housing::FLOOR_OVERHANG_PER_LEVEL.
 export const FLOOR_OVERHANG_PER_LEVEL = 0.15
 export const ROOF_PITCH: Record<string, number> = {
   gabled: 0.8,

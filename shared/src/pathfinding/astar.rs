@@ -8,7 +8,7 @@
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
-use super::query::{is_cardinal_move_blocked, is_movement_blocked_for_mover};
+use super::query::{is_cardinal_move_blocked, is_movement_blocked_for_mover, snap_goal_into_floor};
 use super::stair::{build_stair_cells, floor_to_key, is_regular_key, key_to_floor, AStarKey};
 use super::{PassabilityCache, PathResult, PathWaypoint, DIRS};
 use crate::world::wrap_world_x;
@@ -119,6 +119,7 @@ pub fn find_path_avoiding(
     max_nodes: usize,
     blocked: &[(i32, i32)],
 ) -> PathResult {
+    let (goal_x, goal_z) = snap_goal_into_floor(cache, goal_x, goal_z, goal_floor);
     let sx = start_x.floor() as i32;
     let sz = start_z.floor() as i32;
     let gx = goal_x.floor() as i32;

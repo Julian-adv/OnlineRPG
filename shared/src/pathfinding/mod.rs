@@ -31,7 +31,8 @@ pub use query::{
     attack_line_blocked, attack_line_blocked_in, blocking_entry_for_mover, get_floor_at_position,
     get_floor_y_base, in_stairwell_span, is_cardinal_move_blocked, is_cell_sealed,
     is_circle_blocked_on_floor, is_movement_blocked, is_movement_blocked_for_mover,
-    leg_touches_stairwell, start_floor_at, storey_ground_y, supporting_floor_y, BlockInfo,
+    leg_touches_stairwell, snap_goal_into_floor, start_floor_at, storey_ground_y,
+    supporting_floor_y, BlockInfo,
 };
 pub(crate) use query::{ramp_fraction, segment_touches_box};
 pub use smooth::{find_and_smooth_path, find_and_smooth_path_avoiding};
@@ -163,6 +164,39 @@ mod tests {
 
     fn make_simple_house() -> (String, RuntimePassability) {
         make_rect_room(3, 3)
+    }
+
+    /// Two-storey house: the 2F grid matches the 1F one, 3.15m up.
+    fn make_two_storey_house() -> (String, RuntimePassability) {
+        let (id, mut rp) = make_rect_room(6, 8);
+        let mut upper = rp.floors[0].clone();
+        upper.floor_level = 1;
+        upper.y_base = 3.15;
+        rp.floors.push(upper);
+        (id, rp)
+    }
+
+    #[test]
+    fn click_on_upper_floor_jetty_overhang_stays_on_that_floor() {
+        let (id, rp) = make_two_storey_house();
+        let mut cache = PassabilityCache::new();
+        cache.insert(id, rp);
+        // Grid spans z∈[10,18); the drawn 2F floor extends 0.15 past it.
+        assert_eq!(get_floor_at_position(&cache, 13.3, 18.1, 3.2), 1);
+        assert_eq!(get_floor_at_position(&cache, 13.3, 17.8, 3.2), 1);
+        // Ground next to the house is still outdoors.
+        assert_eq!(get_floor_at_position(&cache, 13.3, 18.1, 0.0), 0);
+        assert_eq!(get_floor_at_position(&cache, 13.3, 19.0, 3.2), 0);
+
+        let result = find_path(13.3, 15.8, 1, 13.3, 18.1, 1, &cache, 10_000);
+        assert!(result.found);
+        let last = result.waypoints.last().unwrap();
+        assert_eq!(last.floor, 1);
+        assert!(
+            last.z < 18.0,
+            "goal snapped inside the grid, got z={}",
+            last.z
+        );
     }
 
     /// 8×5 room with a short interior wall stub jutting from the interior: an

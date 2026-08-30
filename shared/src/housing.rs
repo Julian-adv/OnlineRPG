@@ -10,6 +10,10 @@ use crate::Position;
 /// automatically.
 pub const MAX_FLOOR_LEVEL: u8 = 3;
 
+/// Jetty overhang of an upper storey's drawn floor past its grid, per level.
+/// Mirrored in client `house-geo-utils.ts` FLOOR_OVERHANG_PER_LEVEL.
+pub const FLOOR_OVERHANG_PER_LEVEL: f32 = 0.15;
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum RoomType {
     #[serde(rename = "normal")]

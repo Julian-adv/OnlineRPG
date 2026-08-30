@@ -8,6 +8,7 @@ use super::stair::{stair_dims, stair_step};
 use super::{
     PassabilityCache, RuntimeFloorGrid, RuntimePassability, EDGE_E, EDGE_N, EDGE_S, EDGE_W,
 };
+use crate::housing::{FLOOR_OVERHANG_PER_LEVEL, MAX_FLOOR_LEVEL};
 
 /// Check if a cardinal (1-cell) move is blocked on a specific floor level.
 /// Matches by `floor_level` only — no Y-range check, no proximity buffer.
@@ -671,58 +672,115 @@ fn edge_blocks_axis(
 /// grid contains the cell — handles mid-stairwell clicks and overlapping
 /// floor ranges at stairwell landings.
 pub fn get_floor_at_position(cache: &PassabilityCache, x: f32, z: f32, y: f32) -> u8 {
-    let cx = x.floor() as i32;
-    let cz = z.floor() as i32;
-    let mut best_floor: u8 = 0;
-    let mut best_dist = f32::INFINITY;
-    let mut found = false;
-
+    let mut exact: Option<(f32, u8)> = None;
+    let mut near: Option<(f32, u8)> = None;
     for rp in cache.values() {
-        if x < rp.min_x || x > rp.max_x || z < rp.min_z || z > rp.max_z {
+        if !within(x, rp.min_x, rp.max_x, GRID_EDGE_MARGIN)
+            || !within(z, rp.min_z, rp.max_z, GRID_EDGE_MARGIN)
+        {
             continue;
         }
-        let house_ox = rp.house_origin_x.floor() as i32;
-        let house_oz = rp.house_origin_z.floor() as i32;
         for floor in &rp.floors {
-            let gx = cx - house_ox - floor.origin_x;
-            let gz = cz - house_oz - floor.origin_z;
-            if gx < 0 || gx >= floor.width as i32 || gz < 0 || gz >= floor.depth as i32 {
+            let b = grid_world_bounds(rp, floor);
+            if !b.contains(x, z, GRID_EDGE_MARGIN) {
                 continue;
             }
-            // Cell is inside this floor's grid — pick the closest y_base
             let dist = (y - floor.y_base).abs();
-            if dist < best_dist {
-                best_dist = dist;
-                best_floor = floor.floor_level;
-                found = true;
+            let slot = if b.contains(x, z, 0.0) {
+                &mut exact
+            } else {
+                &mut near
+            };
+            if slot.is_none_or(|(d, _)| dist < d) {
+                *slot = Some((dist, floor.floor_level));
             }
         }
     }
+    exact.or(near).map_or(0, |(_, f)| f)
+}
 
-    if found {
-        best_floor
-    } else {
-        0
+/// How far past a floor grid a point still counts as that floor: the widest
+/// jetty overhang, so a click on the drawn strip beyond an upper storey's grid
+/// does not fall through to floor 0 and route the player downstairs.
+const GRID_EDGE_MARGIN: f32 = FLOOR_OVERHANG_PER_LEVEL * MAX_FLOOR_LEVEL as f32;
+/// Snapped goals stop this far inside the grid edge.
+const GRID_EDGE_INSET: f32 = 0.25;
+
+fn within(v: f32, min: f32, max: f32, margin: f32) -> bool {
+    v >= min - margin && v < max + margin
+}
+
+/// World-space bounds of a floor grid, [min, max) on each axis.
+struct GridBounds {
+    min_x: f32,
+    max_x: f32,
+    min_z: f32,
+    max_z: f32,
+}
+
+impl GridBounds {
+    fn contains(&self, x: f32, z: f32, margin: f32) -> bool {
+        within(x, self.min_x, self.max_x, margin) && within(z, self.min_z, self.max_z, margin)
     }
+}
+
+fn grid_world_bounds(rp: &RuntimePassability, floor: &RuntimeFloorGrid) -> GridBounds {
+    let min_x = (rp.house_origin_x.floor() as i32 + floor.origin_x) as f32;
+    let min_z = (rp.house_origin_z.floor() as i32 + floor.origin_z) as f32;
+    GridBounds {
+        min_x,
+        max_x: min_x + floor.width as f32,
+        min_z,
+        max_z: min_z + floor.depth as f32,
+    }
+}
+
+/// Clamp an upper-floor goal in the overhang strip onto its grid so A* has a
+/// reachable cell. On-grid goals and floor 0 (open terrain) are unchanged.
+pub fn snap_goal_into_floor(
+    cache: &PassabilityCache,
+    x: f32,
+    z: f32,
+    floor_level: u8,
+) -> (f32, f32) {
+    if floor_level == 0 {
+        return (x, z);
+    }
+    let mut nearest: Option<(f32, (f32, f32))> = None;
+    for rp in cache.values() {
+        if !within(x, rp.min_x, rp.max_x, GRID_EDGE_MARGIN)
+            || !within(z, rp.min_z, rp.max_z, GRID_EDGE_MARGIN)
+        {
+            continue;
+        }
+        for floor in rp.floors.iter().filter(|f| f.floor_level == floor_level) {
+            let b = grid_world_bounds(rp, floor);
+            if !b.contains(x, z, GRID_EDGE_MARGIN) {
+                continue;
+            }
+            if b.contains(x, z, 0.0) {
+                return (x, z);
+            }
+            let sx = x.clamp(b.min_x + GRID_EDGE_INSET, b.max_x - GRID_EDGE_INSET);
+            let sz = z.clamp(b.min_z + GRID_EDGE_INSET, b.max_z - GRID_EDGE_INSET);
+            let d = (sx - x).abs() + (sz - z).abs();
+            if nearest.is_none_or(|(nd, _)| d < nd) {
+                nearest = Some((d, (sx, sz)));
+            }
+        }
+    }
+    nearest.map_or((x, z), |(_, p)| p)
 }
 
 /// Get the yBase for a given floor level at a world position.
 pub fn get_floor_y_base(cache: &PassabilityCache, x: f32, z: f32, floor_level: u8) -> Option<f32> {
-    let cx = x.floor() as i32;
-    let cz = z.floor() as i32;
     for rp in cache.values() {
         if x < rp.min_x || x > rp.max_x || z < rp.min_z || z > rp.max_z {
             continue;
         }
-        let house_ox = rp.house_origin_x.floor() as i32;
-        let house_oz = rp.house_origin_z.floor() as i32;
         for floor in &rp.floors {
-            if floor.floor_level != floor_level {
-                continue;
-            }
-            let gx = cx - house_ox - floor.origin_x;
-            let gz = cz - house_oz - floor.origin_z;
-            if gx >= 0 && gx < floor.width as i32 && gz >= 0 && gz < floor.depth as i32 {
+            if floor.floor_level == floor_level && grid_world_bounds(rp, floor).contains(x, z, 0.0)
+            {
                 return Some(floor.y_base);
             }
         }
