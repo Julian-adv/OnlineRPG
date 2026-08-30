@@ -24,6 +24,7 @@
   import FriendRequestToast from './FriendRequestToast.svelte'
   import FriendPanel from './FriendPanel.svelte'
   import EmotePanel from './EmotePanel.svelte'
+  import InstrumentPanel from './InstrumentPanel.svelte'
   import NpcContextMenu from './NpcContextMenu.svelte'
   import DragGhost from './DragGhost.svelte'
   import LoadingDialog from './LoadingDialog.svelte'
@@ -190,6 +191,7 @@
          online notice whether or not the list is on screen. -->
     <FriendPanel />
     <EmotePanel />
+    <InstrumentPanel />
     <NpcContextMenu />
     <FishingPrompt />
   {/if}

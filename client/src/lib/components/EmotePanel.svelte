@@ -3,6 +3,7 @@
     emotePanelVisible,
     emoteStopRequest,
     localEmoteAnim,
+    MUSIC_EMOTE_ANIM,
   } from '../stores/emoteStore'
   import {
     EMOTE_LIST,
@@ -95,6 +96,18 @@
     networkManager.sendChatMessage(`/emote ${emote.anim}`)
     intent = { anim: emote.anim, at: performance.now() }
   }
+
+  // Rendered as one more row, but it opens the live performance panel
+  // rather than sending /emote; the preview reuses the strum pose.
+  const INSTRUMENT_ROW: EmoteMeta = {
+    anim: MUSIC_EMOTE_ANIM,
+    label: 'Play Instrument',
+    loops: true,
+  }
+
+  function playInstrument() {
+    networkManager.sendStartInstrument()
+  }
 </script>
 
 {#if visible}
@@ -127,6 +140,19 @@
           {/if}
         </button>
       {/each}
+
+      <button
+        class="emote-row instrument-row"
+        class:active={active === MUSIC_EMOTE_ANIM}
+        disabled={!usable}
+        title="/play_instrument"
+        onclick={playInstrument}
+        onpointerenter={() => (previewed = INSTRUMENT_ROW)}
+        onfocus={() => (previewed = INSTRUMENT_ROW)}
+      >
+        <span class="instrument-mark" aria-hidden="true">♪</span>
+        <span class="emote-label">Play Instrument</span>
+      </button>
     </div>
 
     <div class="panel-hint">/emote &lt;name&gt; · dances stop on move</div>
@@ -262,5 +288,21 @@
     color: #7f8f9f;
     font-size: 10px;
     text-align: center;
+  }
+
+  .instrument-row {
+    border-color: rgba(77, 238, 220, 0.3);
+    color: #a9fff5;
+  }
+
+  .instrument-row:hover:not(:disabled) {
+    border-color: rgba(77, 238, 220, 0.7);
+    background: rgba(38, 168, 156, 0.15);
+    color: #d9fffa;
+  }
+
+  .instrument-mark {
+    font-size: 13px;
+    line-height: 1;
   }
 </style>

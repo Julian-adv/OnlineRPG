@@ -326,6 +326,11 @@ impl super::GameState {
             return;
         }
 
+        if message.trim() == "/play_instrument" {
+            self.start_live_instrument(player_id).await;
+            return;
+        }
+
         if let Some(track) = strip_command(&message, "/play_music") {
             self.play_music(player_id, track).await;
             return;
@@ -508,6 +513,7 @@ impl super::GameState {
             return;
         };
 
+        self.live_instrument_players.write().await.remove(player_id);
         self.set_player_interaction(
             player_id,
             Some(onlinerpg_shared::messages::MUSIC_EMOTE.to_string()),
@@ -552,7 +558,7 @@ impl super::GameState {
 
     /// An instrument anywhere in the inventory — bag or hands — is what
     /// turns the strum emote into a performance.
-    async fn holds_instrument(&self, player_id: &PlayerId) -> bool {
+    pub(super) async fn holds_instrument(&self, player_id: &PlayerId) -> bool {
         let inventories = self.inventories.read().await;
         inventories.get(player_id).is_some_and(|inv| {
             inv.items().any(|item| {

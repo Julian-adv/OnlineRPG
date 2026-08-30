@@ -109,6 +109,7 @@ import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
 import { combatController } from '../managers/combatController'
 import { playerVisualFloorLevel } from '../stores/housingStore'
+import { currentDungeonDepth } from '../stores/dungeonStore'
 import {
   startMusicPerformance,
   stopMusicPerformance,
@@ -118,11 +119,25 @@ import {
 import { refreshBardZone } from '../managers/bardZone'
 import {
   emoteRequest,
+  emotePanelVisible,
+  emoteStopRequest,
   isEmoteAnim,
   MUSIC_EMOTE_ANIM,
   SLASH_EMOTE_ANIMS,
 } from '../stores/emoteStore'
 import { respawnPoseRequest } from '../stores/respawnPoseStore'
+import {
+  closeInstrumentPanel,
+  openInstrumentPanel,
+} from '../stores/instrumentStore'
+import { inputHandler } from '../managers/inputHandler'
+import {
+  instrumentDistanceGain,
+  playInstrumentNote,
+  stopAllInstrumentAudio,
+  stopInstrumentPerformer,
+} from '../managers/instrumentAudio'
+import { shortestWrappedDeltaX } from '../terrain/world-wrap'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
@@ -354,6 +369,72 @@ function isSelfPlayer(playerId: number): boolean {
   return get(gameStore).currentPlayer?.id === playerId
 }
 
+const instrumentNoteTimers = new Map<
+  number,
+  Set<ReturnType<typeof globalThis.setTimeout>>
+>()
+
+function clearInstrumentNoteTimers(playerId: number) {
+  const timers = instrumentNoteTimers.get(playerId)
+  if (!timers) return
+  for (const timer of timers) globalThis.clearTimeout(timer)
+  instrumentNoteTimers.delete(playerId)
+}
+
+function stopPlayerInstrument(playerId: number) {
+  clearInstrumentNoteTimers(playerId)
+  stopInstrumentPerformer(playerId)
+  if (!isSelfPlayer(playerId)) return
+  closeInstrumentPanel()
+  inputHandler.clearTransientInput()
+}
+
+function localFloorLevel(): number {
+  const depth = get(currentDungeonDepth)
+  return depth >= 1 ? -depth : get(playerVisualFloorLevel)
+}
+
+function playRemoteInstrumentNotes(
+  playerId: number,
+  position: { x: number; y: number; z: number },
+  floorLevel: number,
+  events: { note: number; offset_ms: number }[]
+) {
+  if (isSelfPlayer(playerId) || !position || !Array.isArray(events)) return
+
+  const play = (note: number) => {
+    const listener = get(gameStore).currentPlayer
+    if (!listener || floorLevel !== localFloorLevel()) return
+    const dx = shortestWrappedDeltaX(listener.position.x, position.x)
+    const dz = position.z - listener.position.z
+    const gain = instrumentDistanceGain(Math.hypot(dx, dz))
+    playInstrumentNote(note, playerId, gain)
+  }
+
+  let timers = instrumentNoteTimers.get(playerId)
+  if (!timers) {
+    timers = new Set()
+    instrumentNoteTimers.set(playerId, timers)
+  }
+
+  for (const event of events) {
+    if (!Number.isInteger(event.note) || !Number.isFinite(event.offset_ms)) {
+      continue
+    }
+    const delay = Math.max(0, Math.min(1000, event.offset_ms))
+    if (delay === 0) {
+      play(event.note)
+      continue
+    }
+    const timer = globalThis.setTimeout(() => {
+      timers?.delete(timer)
+      if (timers?.size === 0) instrumentNoteTimers.delete(playerId)
+      play(event.note)
+    }, delay)
+    timers.add(timer)
+  }
+}
+
 /// Who did it, for a chat line: "You" for us, their name for anyone else.
 function actorName(playerId: number): string {
   const state = get(gameStore)
@@ -507,6 +588,7 @@ export function handleServerMessage(
 
     case 'PlayerLeft': {
       stopMusicPerformance(data.player_id)
+      stopPlayerInstrument(data.player_id)
       let leftName: string | null = null
       gameStore.update((state) => {
         const player = state.otherPlayers.get(data.player_id)
@@ -525,6 +607,7 @@ export function handleServerMessage(
     case 'PlayerDisappeared': {
       // Out of earshot by distance: their tune fades rather than cuts.
       fadeOutMusicPerformance(data.player_id)
+      stopPlayerInstrument(data.player_id)
       gameStore.update((state) => {
         removeRemotePlayerFromState(state, data.player_id)
         return state
@@ -1016,6 +1099,7 @@ export function handleServerMessage(
 
     case 'PlayerDead': {
       console.log('Player dead:', data.player_id)
+      stopPlayerInstrument(data.player_id)
       const gameState = get(gameStore)
       const isDeadCurrentPlayer = gameState.currentPlayer?.id === data.player_id
       const deadPlayer = isDeadCurrentPlayer
@@ -1040,6 +1124,8 @@ export function handleServerMessage(
 
     case 'Kicked': {
       console.warn('Kicked from server:', data.reason)
+      stopAllInstrumentAudio()
+      closeInstrumentPanel()
       events.kicked.emit(data.reason)
       resetGameStore()
       monsterManager.reset()
@@ -1055,6 +1141,7 @@ export function handleServerMessage(
 
     case 'PlayerRespawned': {
       const serverPlayer: ServerPlayer = data.player
+      stopPlayerInstrument(serverPlayer.id)
       console.log('Player respawned:', serverPlayer.id)
       const gameState = get(gameStore)
       const isCurrentPlayerRespawned =
@@ -1211,6 +1298,7 @@ export function handleServerMessage(
 
     case 'PlayerMusicStarted': {
       const isMe = isSelfPlayer(data.player_id)
+      stopPlayerInstrument(data.player_id)
       startMusicPerformance(data.player_id, data.track, isMe, data.elapsed_secs)
       // Our own /play_music went to the server unresolved; its reply names
       // the track and is what strikes up our emote.
@@ -1227,11 +1315,38 @@ export function handleServerMessage(
       break
     }
 
+    case 'PlayerInstrumentStarted': {
+      stopMusicPerformance(data.player_id)
+      clearInstrumentNoteTimers(data.player_id)
+      stopInstrumentPerformer(data.player_id)
+      if (isSelfPlayer(data.player_id)) {
+        emotePanelVisible.set(false)
+        inputHandler.clearTransientInput()
+        openInstrumentPanel()
+        emoteRequest.set(MUSIC_EMOTE_ANIM)
+      }
+      break
+    }
+
+    case 'PlayerInstrumentNotes': {
+      playRemoteInstrumentNotes(
+        data.player_id,
+        data.position,
+        data.floor_level,
+        data.events
+      )
+      break
+    }
+
     case 'PlayerInteractionChanged': {
       // Leaving the strum ends the tune, for the performer too.
       applyInteractionChange(data.player_id, data.object_type ?? null)
+      if (data.object_type !== MUSIC_EMOTE_ANIM) {
+        stopPlayerInstrument(data.player_id)
+      }
       const state = get(gameStore)
       if (state.currentPlayer?.id === data.player_id) {
+        if (!data.object_type) emoteStopRequest.set(true)
         // Our own /emote went to the server unresolved; this broadcast is
         // its reply, the way PlayerMusicStarted starts /play_music.
         if (data.object_type && SLASH_EMOTE_ANIMS.has(data.object_type)) {

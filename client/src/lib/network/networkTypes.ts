@@ -170,6 +170,8 @@ export type ClientMessage =
   | { FishingCast: { position: Position } }
   | { FishingRespond: { action: FishingAction } }
   | 'FishingStop'
+  | 'StartInstrument'
+  | { InstrumentNotes: { events: InstrumentNoteWireEvent[] } }
   | { PlayerTradeRequest: { target_name: string } }
   | { PlayerTradeAtStall: { stall_id: number } }
   | { PlayerTradeRespond: { requester_id: number; accept: boolean } }
@@ -248,6 +250,11 @@ export type ClientMessage =
   | { SellItems: { merchant_player_id: number; items: BagLineItem[] } }
   | { BuybackItems: { merchant_player_id: number; entry_ids: number[] } }
   | { EnvReport: ClientEnvReport }
+
+export type InstrumentNoteWireEvent = {
+  note: number
+  offset_ms: number
+}
 
 /** One line of a batched `BuyItems` request: buy `qty` units of one item def. */
 export type TradeLineItem = {

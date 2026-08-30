@@ -124,7 +124,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v51: table meals — `Meal`, `ServeMeal`/`EatMeal`/`ClearMeal`,
 ///      `MealPlaced/Appeared/Eaten/Removed`, `GameState.meals` (doc/HUNGER.md);
 ///      an older client cannot decode a served plate.
-pub const PROTOCOL_VERSION: u32 = 51;
+/// v52: live instrument performance (`StartInstrument`/`InstrumentNotes` and
+///      the corresponding nearby-player start/note broadcasts).
+pub const PROTOCOL_VERSION: u32 = 52;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -195,7 +197,8 @@ pub use character::{Character, CharacterAttributes, CharacterClass, Gender, Visi
 pub use entity::{Monster, MonsterLifecycle, MonsterState, Player, PlayerId};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
-    ActiveDeal, AttackRejectReason, ClientMessage, DealKind, ServerMessage,
+    ActiveDeal, AttackRejectReason, ClientMessage, DealKind, InstrumentNoteEvent, ServerMessage,
+    INSTRUMENT_BATCH_MS, INSTRUMENT_NOTE_COUNT,
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,
@@ -246,6 +249,55 @@ mod tests {
         let bytes = serialize_client_msg(&msg).unwrap();
         let decoded = deserialize_client_msg(&bytes).unwrap();
         assert!(matches!(decoded, ClientMessage::RequestRespawn));
+    }
+
+    #[test]
+    fn roundtrip_live_instrument_messages() {
+        let events = vec![
+            InstrumentNoteEvent {
+                note: 0,
+                offset_ms: 0,
+            },
+            InstrumentNoteEvent {
+                note: 21,
+                offset_ms: 249,
+            },
+        ];
+
+        let bytes = serialize_client_msg(&ClientMessage::InstrumentNotes {
+            events: events.clone(),
+        })
+        .unwrap();
+        match deserialize_client_msg(&bytes).unwrap() {
+            ClientMessage::InstrumentNotes { events: decoded } => assert_eq!(decoded, events),
+            other => panic!("Wrong variant: {other:?}"),
+        }
+
+        let bytes = serialize_server_msg(&ServerMessage::PlayerInstrumentNotes {
+            player_id: PlayerId::from(7),
+            position: Position {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+            floor_level: -2,
+            events: events.clone(),
+        })
+        .unwrap();
+        match deserialize_server_msg(&bytes).unwrap() {
+            ServerMessage::PlayerInstrumentNotes {
+                player_id,
+                position,
+                floor_level,
+                events: decoded,
+            } => {
+                assert_eq!(player_id, PlayerId::from(7));
+                assert_eq!((position.x, position.y, position.z), (1.0, 2.0, 3.0));
+                assert_eq!(floor_level, -2);
+                assert_eq!(decoded, events);
+            }
+            other => panic!("Wrong variant: {other:?}"),
+        }
     }
 
     #[test]

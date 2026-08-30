@@ -41,6 +41,7 @@ import type {
   RollCharacterStatsResult,
 } from './networkTypes'
 import type { ClientEnvReport } from '../utils/clientEnvReport'
+import type { InstrumentNoteEvent } from '../managers/instrumentInput'
 
 export type {
   AccountCharacter,
@@ -523,6 +524,22 @@ class NetworkManager {
 
   sendFishingStop() {
     this.sendMessage('FishingStop')
+  }
+
+  sendStartInstrument() {
+    this.sendMessage('StartInstrument')
+  }
+
+  sendInstrumentNotes(events: readonly InstrumentNoteEvent[]) {
+    if (events.length === 0) return
+    this.sendMessage({
+      InstrumentNotes: {
+        events: events.map((event) => ({
+          note: event.note,
+          offset_ms: event.offsetMs,
+        })),
+      },
+    })
   }
 
   sendBreakDungeonProp(entranceId: string, depth: number, propId: number) {

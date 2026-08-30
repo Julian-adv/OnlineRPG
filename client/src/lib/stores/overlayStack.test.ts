@@ -225,6 +225,18 @@ describe('closeTopOverlay', () => {
     expect(get(openOverlays)).toEqual([])
   })
 
+  it('uses the instrument session closer ahead of side panels', () => {
+    inventoryVisible.set(true)
+    let instrumentStops = 0
+    const unmount = mountOverlay('instrument', () => instrumentStops++)
+
+    expect(closeTopOverlay()).toBe('closed')
+    expect(instrumentStops).toBe(1)
+    expect(get(inventoryVisible)).toBe(true)
+
+    unmount()
+  })
+
   it('closes the social menu before the emote panel behind it', () => {
     emotePanelVisible.set(true)
     let menuCloses = 0

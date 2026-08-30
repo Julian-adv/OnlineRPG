@@ -14,6 +14,11 @@
 - `client/public/textures/ui/world-map/ornate-frame.webp` — OpenAI Codex built-in ImageGen edit, workspace-provided tier (exact tier not exposed), 2026-08-24; user target image used as the style reference, then ffmpeg color-keyed to restore real alpha transparency; project-owned generated asset. Shipped as 1254² WebP q90 (2026-08-26), same resolution as the 1.3 MB source PNG
 - Settlement crest marker + player self-marker — hand-authored inline SVG in WorldMapDialog.svelte (OpenAI Codex, 2026-08-24), original shapes with no external source
 
+## Instrument UI
+
+- `client/public/textures/ui/instrument/mandolin-ornament.webp` — OpenAI Codex built-in ImageGen, workspace-provided tier (exact tier not exposed), 2026-08-30; project-owned generated asset. Source 1983×793 PNG, color-keyed, cropped, and scaled to a transparent 1600×323 WebP for the free-play HUD
+- **[미사용·삭제]** `client/public/textures/ui/instrument/mandolin-emblem.webp` — OpenAI Codex built-in ImageGen using the mandolin ornament as a material and palette reference, workspace-provided tier (exact tier not exposed), 2026-08-30; project-owned generated asset. Source 1254² PNG, background-keyed and scaled to a transparent 256² WebP; removed from the free-play HUD in favor of clean negative space, then deleted from the repository on 2026-08-30
+
 ## Party UI design mockups
 
 - `doc/design/party-ui/openmmo-current-game.jpg` — local OpenMMO gameplay capture from `localhost:10004`, 2026-08-05

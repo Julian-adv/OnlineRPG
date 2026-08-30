@@ -973,6 +973,8 @@ impl super::GameState {
         }
 
         if result.hit {
+            self.cancel_live_instrument_if_active(target_player_id)
+                .await;
             self.cancel_food_regeneration(target_player_id).await;
             self.mark_dirty(target_player_id).await;
             self.mark_party_vitals_dirty(target_player_id).await;

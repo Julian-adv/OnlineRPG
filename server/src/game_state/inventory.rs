@@ -632,6 +632,7 @@ impl super::GameState {
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
+        self.cancel_live_instrument_if_active(player_id).await;
         if let Some(torch_on) = torch_on {
             self.set_player_torch(player_id, torch_on).await;
         }
@@ -662,6 +663,7 @@ impl super::GameState {
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
+        self.cancel_live_instrument_if_active(player_id).await;
         if slot == EquipSlot::OffHand {
             self.set_player_torch(player_id, false).await;
         }
