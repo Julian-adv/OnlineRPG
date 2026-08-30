@@ -246,6 +246,14 @@ export function getHousingMaterial(
   return mat
 }
 
+/** Swap a merged/door mesh between its opaque and ghost material by the
+ *  texture index recorded on it at build time. */
+export function setMeshGhost(mesh: THREE.Mesh, ghost: boolean) {
+  const idx = mesh.userData.textureIndex
+  if (typeof idx !== 'number') return
+  mesh.material = ghost ? getGhostHousingMaterial(idx) : getHousingMaterial(idx)
+}
+
 /**
  * Get or create a semi-transparent ghost material for the given texture index.
  * Used when doors/windows should appear semi-transparent inside a house.

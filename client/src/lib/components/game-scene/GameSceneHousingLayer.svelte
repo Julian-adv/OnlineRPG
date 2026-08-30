@@ -9,6 +9,7 @@
     disposeHouseGroup,
     applyDoorGhostMaterials,
     resetDoorGhostMaterials,
+    applyInteriorGhosts,
     DEFAULT_WALL_HEIGHT,
     FLOOR_THICKNESS,
     MAX_FLOOR_LEVEL,
@@ -445,6 +446,19 @@
       playerFloorOffset.set(newOffset)
     }
 
+    if (currentInsideHouseId) {
+      const curr = houses.get(currentInsideHouseId)
+      if (curr) {
+        const o = curr.houseGroup.position
+        applyInteriorGhosts(
+          curr,
+          playerInsideFloor,
+          playerPosition.x - o.x,
+          playerPosition.z - o.z
+        )
+      }
+    }
+
     // Animate door pivots
     const dt = _deltaTime / 1000
     for (const [, result] of houses) {
@@ -499,6 +513,7 @@
         groups.front.position.y = OFFSCREEN_Y
         groups.back.position.y = OFFSCREEN_Y
         groups.floor.position.y = OFFSCREEN_Y
+        for (const w of groups.interior) w.group.position.y = OFFSCREEN_Y
       }
     }
     applyDoorGhostMaterials(result, floor)
@@ -510,12 +525,14 @@
       groups.back.position.y = 0
       groups.floor.position.y = 0
       groups.stair.position.y = 0
+      for (const w of groups.interior) w.group.position.y = 0
     }
   }
 
   function resetFloorVisibility(result: HouseGroupResult) {
     resetAllFloorGroupPositions(result)
     resetDoorGhostMaterials(result)
+    applyInteriorGhosts(result, null)
   }
 
   /**
@@ -583,6 +600,7 @@
       groups.front.visible = false
       groups.back.visible = false
       groups.stair.visible = false
+      for (const w of groups.interior) w.group.visible = false
       if (fl !== 0) {
         groups.floor.visible = false
       }
@@ -599,6 +617,7 @@
       groups.back.visible = true
       groups.floor.visible = true
       groups.stair.visible = true
+      for (const w of groups.interior) w.group.visible = true
     }
     for (const door of result.doors) {
       door.pivot.visible = true

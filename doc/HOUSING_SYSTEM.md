@@ -371,6 +371,7 @@ floorYBase(level) = level × (wallHeight + FLOOR_THICKNESS)
 |-------|----------|-------------------|
 | `front` | 남벽, 서벽, 지붕 | Y를 OFFSCREEN_Y로 이동 |
 | `back` | 북벽, 동벽, 바닥 | 항상 표시 |
+| `interior` | 인접 방과 공유하는 벽 (벽선별 그룹) | 벽이 실제로 플레이어를 가릴 때만 반투명: 카메라 방향 시선은 남/서로 1m 갈 때 1m 오르므로 `0 < 거리 < 벽높이`이고 교차점이 벽 세그먼트 범위(±0.6m) 안일 때 (`interiorWallOccludes`). 반투명 시 나무 기둥·빔·X 브레이스(`decor`)는 숨김 |
 
 멀티패스 렌더링(refraction/reflection) 시에는 모든 벽 visible 유지.
 

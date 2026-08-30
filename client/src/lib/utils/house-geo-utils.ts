@@ -72,6 +72,8 @@ export interface DoorMeshInfo {
   closedAngle: number
   /** rotation.y when open */
   openAngle: number
+  /** Set for doors in walls shared by two rooms */
+  interior?: InteriorWall
 }
 
 export interface HouseGroupResult {
@@ -84,6 +86,8 @@ export interface HouseGroupResult {
       back: THREE.Group
       floor: THREE.Group
       stair: THREE.Group
+      /** One group per shared wall line, ghosted when it hides the player */
+      interior: InteriorWallGroup[]
     }
   >
   aabb: THREE.Box3
@@ -100,6 +104,8 @@ export interface HouseGroupResult {
 export interface GeoEntry {
   geo: THREE.BufferGeometry
   textureIndex: number
+  /** Timber trim (pillars, beams, braces) — hidden when the wall is ghosted */
+  decor?: boolean
 }
 
 export interface RoomFootprint {
@@ -110,12 +116,70 @@ export interface RoomFootprint {
   fl: number
 }
 
+/** A wall line shared by two rooms, with the 1m spans it actually covers. */
+export interface InteriorWall {
+  isNS: boolean
+  /** Room-local wall line coordinate (z for N/S walls, x for E/W) */
+  line: number
+  height: number
+  /** [start, end) along the wall in room-local coordinates */
+  spans: [number, number][]
+}
+
+export interface InteriorWallEntries {
+  wall: InteriorWall
+  entries: GeoEntry[]
+}
+
+export interface InteriorWallGroup {
+  wall: InteriorWall
+  group: THREE.Group
+  ghost: boolean
+}
+
 export type FloorEntries = {
   front: GeoEntry[]
   back: GeoEntry[]
   floor: GeoEntry[]
   stair: GeoEntry[]
   doors: DoorMeshInfo[]
+  interior: Map<number, InteriorWallEntries>
+}
+
+/** Bucket for a shared wall line, registering the segment [a0, a1) on it. */
+export function interiorWall(
+  entries: FloorEntries,
+  isNS: boolean,
+  line: number,
+  height: number,
+  a0: number,
+  a1: number
+): InteriorWallEntries {
+  const key = line * 2 + (isNS ? 1 : 0)
+  let bucket = entries.interior.get(key)
+  if (!bucket) {
+    bucket = { wall: { isNS, line, height, spans: [] }, entries: [] }
+    entries.interior.set(key, bucket)
+  }
+  bucket.wall.height = Math.max(bucket.wall.height, height)
+  bucket.wall.spans.push([a0, a1])
+  return bucket
+}
+
+/** True when `wall` stands between the isometric SW camera and a player at
+ *  room-local (px, pz): the view ray toward the camera climbs 1m per 1m of
+ *  north→south (or east→west) travel, so the wall hides the player only
+ *  within `height` metres, and only where a span covers the crossing. */
+export function interiorWallOccludes(
+  wall: InteriorWall,
+  px: number,
+  pz: number
+): boolean {
+  const d = wall.isNS ? wall.line - pz : px - wall.line
+  if (d <= 0 || d >= wall.height) return false
+  const a = wall.isNS ? px - d : pz + d
+  const margin = 0.6
+  return wall.spans.some(([s0, s1]) => a >= s0 - margin && a <= s1 + margin)
 }
 
 const _tmpMatrix = new THREE.Matrix4()
@@ -165,16 +229,19 @@ export function addMergedMeshes(
 
   const byTex = new Map<number, THREE.BufferGeometry[]>()
   for (const e of entries) {
-    const list = byTex.get(e.textureIndex)
+    const key = e.textureIndex * 2 + (e.decor ? 1 : 0)
+    const list = byTex.get(key)
     if (list) {
       list.push(e.geo)
     } else {
-      byTex.set(e.textureIndex, [e.geo])
+      byTex.set(key, [e.geo])
     }
   }
 
   let count = 0
-  for (const [texIdx, geos] of byTex) {
+  for (const [key, geos] of byTex) {
+    const texIdx = key >> 1
+    const decor = (key & 1) === 1
     const merged = mergeGeometries(geos, false)
     for (const g of geos) g.dispose()
     if (merged) {
@@ -184,6 +251,7 @@ export function addMergedMeshes(
       // Record the source texture index so any caller can look up a matching
       // material variant for this mesh (e.g. a ghost material for fading).
       mesh.userData.textureIndex = texIdx
+      mesh.userData.decor = decor
       group.add(mesh)
       count++
     }
@@ -224,7 +292,14 @@ export function getOrCreateFloorEntries(
 ): FloorEntries {
   let entries = perFloor.get(fl)
   if (!entries) {
-    entries = { front: [], back: [], floor: [], stair: [], doors: [] }
+    entries = {
+      front: [],
+      back: [],
+      floor: [],
+      stair: [],
+      doors: [],
+      interior: new Map(),
+    }
     perFloor.set(fl, entries)
   }
   return entries

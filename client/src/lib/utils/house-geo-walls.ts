@@ -10,6 +10,7 @@ import {
   facingSegmentRef,
   getWallByDir,
   isDoorVariant,
+  wallLineCoord,
 } from '../managers/housing-passability'
 import {
   WALL_THICKNESS,
@@ -23,8 +24,9 @@ import {
   floorYBase,
   floorOverhang,
   type WallDirection,
+  interiorWall,
   type GeoEntry,
-  type DoorMeshInfo,
+  type FloorEntries,
 } from './house-geo-utils'
 
 const DOOR_TEXTURE_IDX = WOOD_TEXTURE_IDX
@@ -73,6 +75,7 @@ function addFramePillars(
         sideW,
         wh
       ),
+      decor: true,
       textureIndex: texIdx,
     })
   }
@@ -122,7 +125,7 @@ function addFrameXDiagonals(
       }
     }
 
-    target.push({ geo, textureIndex: texIdx })
+    target.push({ geo, textureIndex: texIdx, decor: true })
   }
 }
 
@@ -173,6 +176,7 @@ function addWindowFrameGeometry(
       segW,
       bottomH
     ),
+    decor: true,
     textureIndex: woodTexIdx,
   })
 
@@ -187,6 +191,7 @@ function addWindowFrameGeometry(
       innerW,
       FRAME_DIAG_THICKNESS
     ),
+    decor: true,
     textureIndex: woodTexIdx,
   })
 
@@ -201,6 +206,7 @@ function addWindowFrameGeometry(
       innerW,
       beamH
     ),
+    decor: true,
     textureIndex: woodTexIdx,
   })
 
@@ -248,6 +254,7 @@ function addFrameGeometry(
       segW,
       beamH
     ),
+    decor: true,
     textureIndex: woodTexIdx,
   })
 
@@ -276,6 +283,7 @@ function addFrameGeometry(
       segW,
       bottomH
     ),
+    decor: true,
     textureIndex: woodTexIdx,
   })
 
@@ -298,13 +306,13 @@ export function collectWallSegments(
   dir: WallDirection,
   room: RoomData,
   roomIndex: number,
-  frontEntries: GeoEntry[],
-  backEntries: GeoEntry[],
-  doors: DoorMeshInfo[],
+  entries: FloorEntries,
   allRooms: RoomData[]
 ) {
   const dirInfo = WALL_DIR_INFO[dir]
-  const target = dirInfo.isFront ? frontEntries : backEntries
+  const { doors } = entries
+  const outerTarget = dirInfo.isFront ? entries.front : entries.back
+  const line = wallLineCoord(room, dir)
   const wh = room.wallHeight
   const yBase = floorYBase(room.floorLevel, wh) + FLOOR_THICKNESS / 2
   const { localX, localZ, sizeX, sizeZ } = room
@@ -315,6 +323,7 @@ export function collectWallSegments(
   const numSegs = segments.length
   const wallSpan = (dirInfo.isNS ? sizeX : sizeZ) + oh * 2 - WALL_THICKNESS
   const segW = numSegs > 0 ? wallSpan / numSegs : 1
+  const along0 = dirInfo.isNS ? localX : localZ
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
@@ -344,7 +353,18 @@ export function collectWallSegments(
     // Position: offset by halfT to center within the shortened span. An
     // interior wall sits on the shared line, not pushed out by the jetty.
     const segCenter = i * segW + W / 2
-    const ohOut = facingSegmentRef(allRooms, roomIndex, dir, i) ? 0 : oh
+    const interior = facingSegmentRef(allRooms, roomIndex, dir, i)
+      ? interiorWall(
+          entries,
+          dirInfo.isNS,
+          line,
+          wh,
+          along0 + i,
+          along0 + i + span
+        )
+      : undefined
+    const target = interior ? interior.entries : outerTarget
+    const ohOut = interior ? 0 : oh
     let x: number, z: number, rotY: number
 
     switch (dir) {
@@ -534,15 +554,15 @@ export function collectWallSegments(
             innerW,
             FRAME_DIAG_THICKNESS
           ),
+          decor: true,
           textureIndex: DOOR_TEXTURE_IDX,
         })
       }
 
       // Shared panel setup for door / window hinged panels
       if (isDoor || variant === 'window') {
-        const panelMat = getHousingMaterial(
-          DOOR_TEXTURE_IDX >= 0 ? DOOR_TEXTURE_IDX : texIdx
-        )
+        const panelTexIdx = DOOR_TEXTURE_IDX >= 0 ? DOOR_TEXTURE_IDX : texIdx
+        const panelMat = getHousingMaterial(panelTexIdx)
         const isOpen = seg.isOpen ?? false
         // Inset hinge to clear frame pillar
         const inset = Math.max(0, W * FRAME_SIDE_FRAC - sideW)
@@ -567,6 +587,7 @@ export function collectWallSegments(
           for (const h of hinges) {
             const segIdx = h === -1 ? i : lastIdx
             const panel = new THREE.Mesh(panelGeo, panelMat)
+            panel.userData.textureIndex = panelTexIdx
             panel.position.set(-h * (leafW / 2 - inset), doorPanelH / 2, panelZ)
 
             const pivot = new THREE.Group()
@@ -591,6 +612,7 @@ export function collectWallSegments(
               isOpen,
               closedAngle,
               openAngle,
+              interior: interior?.wall,
             })
           }
         } else {
@@ -630,6 +652,7 @@ export function collectWallSegments(
             const panelX = (dirInfo.isNS ? -side : side) * (halfW / 2 - inset)
 
             const shutter = new THREE.Mesh(shutterGeo, shutterMat)
+            shutter.userData.textureIndex = SHUTTER_PANEL_TEXTURE_IDX
             shutter.position.set(panelX, panelYOff, panelZ)
 
             const pivot = new THREE.Group()
@@ -656,6 +679,7 @@ export function collectWallSegments(
               isOpen,
               closedAngle,
               openAngle,
+              interior: interior?.wall,
             })
           }
         }
@@ -695,7 +719,7 @@ export function collectWallSegments(
       const cz =
         dir === 'north' ? localZ - oh + halfT : localZ + sizeZ + oh - halfT
 
-      target.push({
+      outerTarget.push({
         geo: bakedGeo(
           new THREE.BoxGeometry(cornerSize, wh, cornerSize),
           cx,
