@@ -164,12 +164,12 @@ pub struct OnlineFriend {
 
 /// One remembered meeting as listed in `RecentEncounters`. Keyed by
 /// character id like `FriendEntry`: the memory outlives both sessions.
+/// No level: the game shows no stranger's level anywhere else.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EncounterEntry {
     pub character_id: i64,
-    /// Name and level as of the last meeting.
+    /// Name as of the last meeting.
     pub name: String,
-    pub level: u32,
     pub last_met_unix: i64,
     pub met_count: u32,
 }

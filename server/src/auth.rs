@@ -791,16 +791,15 @@ impl AuthService {
         Ok(())
     }
 
-    /// Recently-met players (`doc` in `game_state/encounters.rs`). Name and
-    /// level are snapshots from the last meeting, not joins: the list must
-    /// keep showing someone whose character was since deleted.
+    /// Recently-met players (`doc` in `game_state/encounters.rs`). The name
+    /// is a snapshot from the last meeting, not a join: the list must keep
+    /// showing someone whose character was since deleted.
     fn ensure_encounters_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS character_encounters (
                 owner_character_id INTEGER NOT NULL,
                 other_character_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
-                level INTEGER NOT NULL,
                 last_met INTEGER NOT NULL,
                 met_count INTEGER NOT NULL,
                 PRIMARY KEY (owner_character_id, other_character_id),
@@ -1485,7 +1484,7 @@ impl AuthService {
     pub fn load_encounters(&self, character_id: i64) -> Result<Vec<EncounterEntry>, AuthError> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT other_character_id, name, level, last_met, met_count
+            "SELECT other_character_id, name, last_met, met_count
              FROM character_encounters
              WHERE owner_character_id = ?1
              ORDER BY last_met ASC",
@@ -1495,9 +1494,8 @@ impl AuthService {
                 Ok(EncounterEntry {
                     character_id: row.get(0)?,
                     name: row.get(1)?,
-                    level: row.get(2)?,
-                    last_met_unix: row.get(3)?,
-                    met_count: row.get(4)?,
+                    last_met_unix: row.get(2)?,
+                    met_count: row.get(3)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -1517,15 +1515,14 @@ impl AuthService {
             )?;
             let mut insert = tx.prepare_cached(
                 "INSERT INTO character_encounters
-                 (owner_character_id, other_character_id, name, level, last_met, met_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (owner_character_id, other_character_id, name, last_met, met_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
             for e in entries {
                 insert.execute(params![
                     owner_id,
                     e.character_id,
                     e.name,
-                    e.level,
                     e.last_met_unix,
                     e.met_count
                 ])?;
@@ -2711,7 +2708,6 @@ mod tests {
         let entry = |cid: i64, last_met: i64| EncounterEntry {
             character_id: cid,
             name: format!("p{cid}"),
-            level: 3,
             last_met_unix: last_met,
             met_count: 1,
         };

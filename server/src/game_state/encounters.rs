@@ -19,13 +19,7 @@ const ENCOUNTER_COOLDOWN_SECS: i64 = 600;
 
 /// Record one seen player into an owner's queue: refresh and move to the
 /// back if known, append (evicting the oldest over cap) if new.
-fn add_encounter(
-    q: &mut VecDeque<EncounterEntry>,
-    character_id: i64,
-    name: &str,
-    level: u32,
-    now_unix: i64,
-) {
+fn add_encounter(q: &mut VecDeque<EncounterEntry>, character_id: i64, name: &str, now_unix: i64) {
     if let Some(pos) = q.iter().position(|e| e.character_id == character_id) {
         let Some(mut entry) = q.remove(pos) else {
             return;
@@ -35,7 +29,6 @@ fn add_encounter(
         }
         entry.last_met_unix = now_unix;
         entry.name = name.to_string();
-        entry.level = level;
         q.push_back(entry);
     } else {
         if q.len() >= ENCOUNTER_CAP {
@@ -44,7 +37,6 @@ fn add_encounter(
         q.push_back(EncounterEntry {
             character_id,
             name: name.to_string(),
-            level,
             last_met_unix: now_unix,
             met_count: 1,
         });
@@ -70,22 +62,10 @@ impl GameState {
                 continue;
             }
             if let Some(cid) = character_id_of(&other.id) {
-                add_encounter(
-                    map.entry(me.id).or_default(),
-                    cid,
-                    &other.name,
-                    other.level,
-                    now,
-                );
+                add_encounter(map.entry(me.id).or_default(), cid, &other.name, now);
             }
             if let Some(cid) = my_character_id {
-                add_encounter(
-                    map.entry(other.id).or_default(),
-                    cid,
-                    &me.name,
-                    me.level,
-                    now,
-                );
+                add_encounter(map.entry(other.id).or_default(), cid, &me.name, now);
             }
         }
     }
@@ -159,7 +139,7 @@ mod tests {
     use super::*;
 
     fn note(q: &mut VecDeque<EncounterEntry>, cid: i64, now: i64) {
-        add_encounter(q, cid, &format!("p{cid}"), 1, now);
+        add_encounter(q, cid, &format!("p{cid}"), now);
     }
 
     #[test]
@@ -189,12 +169,11 @@ mod tests {
     #[test]
     fn a_later_re_meeting_counts_and_updates_the_snapshot() {
         let mut q = VecDeque::new();
-        add_encounter(&mut q, 1, "old_name", 3, 0);
-        add_encounter(&mut q, 1, "new_name", 4, ENCOUNTER_COOLDOWN_SECS);
+        add_encounter(&mut q, 1, "old_name", 0);
+        add_encounter(&mut q, 1, "new_name", ENCOUNTER_COOLDOWN_SECS);
         assert_eq!(q.len(), 1);
         let e = q.back().unwrap();
         assert_eq!(e.met_count, 2);
         assert_eq!(e.name, "new_name");
-        assert_eq!(e.level, 4);
     }
 }

@@ -116,7 +116,6 @@
           {#each $recentEncounters as met (met.characterId)}
             <div class="friend-row">
               <span class="friend-name" title={met.name}>{met.name}</span>
-              <span class="friend-level">L{met.level}</span>
               {#if met.metCount > 1}
                 <span class="met-count" title="Times met">×{met.metCount}</span>
               {/if}

@@ -11,12 +11,11 @@ export interface FriendEntry {
   class: CharacterClass
 }
 
-/** One remembered meeting from ServerMessage::RecentEncounters. Name and
- *  level are snapshots from the last meeting. */
+/** One remembered meeting from ServerMessage::RecentEncounters. The name is
+ *  a snapshot from the last meeting. */
 export interface EncounterEntry {
   characterId: number
   name: string
-  level: number
   lastMetUnix: number
   metCount: number
 }

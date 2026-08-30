@@ -722,14 +722,12 @@ export function handleServerMessage(
           data.entries as {
             character_id: number
             name: string
-            level: number
             last_met_unix: number
             met_count: number
           }[]
         ).map((e) => ({
           characterId: e.character_id,
           name: e.name,
-          level: e.level,
           lastMetUnix: e.last_met_unix,
           metCount: e.met_count,
         }))
