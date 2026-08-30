@@ -816,9 +816,12 @@
         y: currentPlayer.position.y,
         z: currentPlayer.position.z + pan.z,
       }
-      // Always use fixed CAMERA_OFFSET in editor mode (OrbitControls is disabled,
-      // so we must not feed back the computed offset which includes the pan).
-      if (camera.zoom < 1) {
+      // Editors pin CAMERA_OFFSET (the pan would feed back into the computed
+      // offset) unless CAM ROT owns the orbit; then only the target follows.
+      if ($cameraRotationEnabled) {
+        camera.lookAt(panPos.x, panPos.y, panPos.z)
+        cameraTarget = [panPos.x, panPos.y, panPos.z]
+      } else if (camera.zoom < 1) {
         const maxBelow = INITIAL_DISTANCE / Math.SQRT2
         const scale = Math.max(
           1,
@@ -1061,15 +1064,13 @@
   zoom={ORTHOGRAPHIC_DEFAULT_ZOOM}
 >
   <OrbitControls
-    enableRotate={$mapEditorMode || $housingEditorMode
-      ? false
-      : $cameraRotationEnabled}
+    enableRotate={$cameraRotationEnabled}
     enablePan={false}
     enableZoom={!$mapEditorMode &&
       !$housingEditorMode &&
       $myFishing.phase !== 'bite' &&
       $myFishing.phase !== 'fight'}
-    enabled={!$mapEditorMode && !$housingEditorMode}
+    enabled={(!$mapEditorMode && !$housingEditorMode) || $cameraRotationEnabled}
     target={cameraTarget}
     minZoom={$debugSpeedMode ? 0.15 : 1}
     maxZoom={2}

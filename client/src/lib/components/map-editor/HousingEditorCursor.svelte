@@ -3,6 +3,7 @@
   import * as THREE from 'three'
   import { onDestroy } from 'svelte'
   import { get } from 'svelte/store'
+  import { cameraRotationEnabled } from '../../stores/debugStore'
   import {
     selectedRoomTemplate,
     placementRotation,
@@ -414,7 +415,7 @@
       lastPanY = event.clientY
       return
     }
-    if (event.button !== 0) return
+    if (event.button !== 0 || get(cameraRotationEnabled)) return
     event.preventDefault()
 
     if (currentTool === 'select') {

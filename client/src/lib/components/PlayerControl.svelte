@@ -34,6 +34,7 @@
     housingEditorMode,
     debugSpeedMode,
     torchLightEnabled,
+    cameraRotationEnabled,
   } from '../stores/debugStore'
   import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
   import { hungerState, SPRINT_MIN_SATIATION } from '../stores/hungerStore'
@@ -1647,6 +1648,7 @@
   }
 
   function handleCanvasClickIntent(event: MouseEvent) {
+    if (event.button === 0 && $cameraRotationEnabled) return
     const editorMode = $mapEditorMode || $housingEditorMode
     if (event.button === 2 && !editorMode) {
       handleNpcContextMenu(event)

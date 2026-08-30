@@ -59,6 +59,7 @@
   import { TERRAIN_TILE_SIZE } from '../game-scene/terrain-utils'
   import { ORTHOGRAPHIC_FRUSTUM_HEIGHT } from '../game-scene/camera-utils'
   import { get } from 'svelte/store'
+  import { cameraRotationEnabled } from '../../stores/debugStore'
   import type { TerrainTile } from '../game-scene/terrain-utils'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { TerrainSplatManager } from '../../managers/terrainSplatManager'
@@ -794,7 +795,7 @@
       lastPanY = event.clientY
       return
     }
-    if (event.button !== 0) return
+    if (event.button !== 0 || get(cameraRotationEnabled)) return
     event.preventDefault()
     const hit = raycastTerrain(event)
     if (!hit) return
