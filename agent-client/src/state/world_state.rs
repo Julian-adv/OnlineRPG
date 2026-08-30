@@ -102,6 +102,26 @@ impl SharedState {
             worn.sort();
             lines.push(format!("You are wearing: {}", worn.join(", ")));
         }
+        if !self.self_titles.is_empty() {
+            let shown = self.self_player.as_ref().and_then(|me| me.title.as_deref());
+            let list: Vec<String> = self
+                .self_titles
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    let mark = if shown == Some(id.as_str()) {
+                        " (shown)"
+                    } else {
+                        ""
+                    };
+                    format!("{}. {}{mark}", i + 1, crate::title_defs::title_name(id))
+                })
+                .collect();
+            lines.push(format!(
+                "Your titles: {} — say \"/title N\" to show one, \"/title off\" to hide",
+                list.join("; ")
+            ));
+        }
         // Data only — what to do with the list is the role template's call
         // (bard.txt: prefer something fresh, unless a listener asks again).
         if self.plays_music && !self.recent_songs.is_empty() {
@@ -169,12 +189,17 @@ impl SharedState {
                 }
             }
             let npc_tag = if p.is_official_npc { " (NPC)" } else { "" };
+            let title_tag = p
+                .title
+                .as_deref()
+                .map(|t| format!(" \"{}\"", crate::title_defs::title_name(t)))
+                .unwrap_or_default();
             let favor_tag = match self.favor.get(&p.name) {
                 Some(v) if !p.is_official_npc && *v != 0 => format!(" (favor {v:+})"),
                 _ => String::new(),
             };
             lines.push(format!(
-                "Player: {}{npc_tag}{favor_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
+                "Player: {}{title_tag}{npc_tag}{favor_tag} Lv.{} HP {}/{} at ({:.1}, {:.1}, {:.1})",
                 p.name, p.level, p.health, p.max_health, p.position.x, p.position.y, p.position.z
             ));
             if p.is_official_npc {

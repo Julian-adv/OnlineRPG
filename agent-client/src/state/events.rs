@@ -144,7 +144,10 @@ impl SharedState {
             | ServerMessage::PlayerHealthUpdate { .. }
             | ServerMessage::PlayerTorchToggled { .. }
             | ServerMessage::PlayerMainHandChanged { .. }
-            | ServerMessage::PlayerBackChanged { .. } => EventUrgency::Routine,
+            | ServerMessage::PlayerBackChanged { .. }
+            | ServerMessage::PlayerTitleChanged { .. }
+            | ServerMessage::TitleEarned { .. }
+            | ServerMessage::PlayerTitles { .. } => EventUrgency::Routine,
 
             // Being relocated invalidates our walk targets and floor
             // assumptions; someone else being relocated does not.
@@ -540,6 +543,20 @@ impl SharedState {
             }
             ServerMessage::PlayerJoined { player } | ServerMessage::PlayerAppeared { player } => {
                 self.nearby_players.insert(player.id, player.clone());
+            }
+            ServerMessage::PlayerTitleChanged { player_id, title } => {
+                if let Some(p) = self.nearby_players.get_mut(player_id) {
+                    p.title = title.clone();
+                }
+                if let Some(me) = self.self_player.as_mut().filter(|me| me.id == *player_id) {
+                    me.title = title.clone();
+                }
+            }
+            ServerMessage::PlayerTitles { titles, active } => {
+                self.self_titles = titles.clone();
+                if let Some(me) = self.self_player.as_mut() {
+                    me.title = active.clone();
+                }
             }
             ServerMessage::PlayerLeft { player_id }
             | ServerMessage::PlayerDisappeared { player_id } => {

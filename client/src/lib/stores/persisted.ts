@@ -23,3 +23,28 @@ export function persistedBoolean(
   })
   return store
 }
+
+/** A string store persisted per browser; `accept` guards against a stale or
+ *  hand-edited value so the app never starts on an unknown option. */
+export function persistedString<T extends string>(
+  key: string,
+  defaultValue: T,
+  accept: (value: string) => value is T
+): Writable<T> {
+  let initial = defaultValue
+  try {
+    const stored = localStorage.getItem(key)
+    if (stored !== null && accept(stored)) initial = stored
+  } catch {
+    // unavailable storage; fall back to the default
+  }
+  const store = writable<T>(initial)
+  store.subscribe((value) => {
+    try {
+      localStorage.setItem(key, value)
+    } catch {
+      // unavailable storage; the preference just won't persist
+    }
+  })
+  return store
+}

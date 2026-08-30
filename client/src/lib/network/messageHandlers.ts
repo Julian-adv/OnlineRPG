@@ -46,6 +46,8 @@ import { stallManager } from '../managers/stallManager'
 import { tipHatManager } from '../managers/tipHatManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
+import { earnedTitles } from '../stores/titleStore'
+import { titleNameNow } from '../data/titleDefs'
 import {
   skillsStore,
   applySkillXp,
@@ -191,6 +193,7 @@ function toRemotePlayer(sp: ServerPlayer): RemotePlayer {
     gender: sp.gender,
     torchOn: sp.torch_on,
     wet: sp.wet ?? false,
+    title: sp.title ?? null,
     mainHand: sp.main_hand ?? null,
     back: sp.back ?? null,
     backColor: sp.back_color ?? null,
@@ -585,13 +588,14 @@ export function handleServerMessage(
     case 'ChatMessage': {
       const state = get(gameStore)
       const isLocal = state.currentPlayer?.id === data.player_id
-      const playerName = isLocal
-        ? state.currentPlayer?.name
-        : (state.otherPlayers.get(data.player_id)?.name ?? 'Unknown')
+      const speaker = isLocal
+        ? state.currentPlayer
+        : state.otherPlayers.get(data.player_id)
       addChatMessage({
         text: data.message,
         sender: isLocal ? 'local' : 'remote',
-        name: playerName,
+        name: speaker?.name ?? 'Unknown',
+        title: speaker?.title ?? null,
       })
       addChatBubble(data.player_id, data.message)
       break
@@ -1111,6 +1115,28 @@ export function handleServerMessage(
         break
       }
       updatePlayer(data.player_id, { wet: data.wet })
+      break
+    }
+
+    case 'PlayerTitleChanged': {
+      updatePlayer(data.player_id, { title: data.title ?? null })
+      break
+    }
+
+    case 'PlayerTitles': {
+      earnedTitles.set(data.titles ?? [])
+      const state = get(gameStore)
+      if (state.currentPlayer) {
+        updatePlayer(state.currentPlayer.id, { title: data.active ?? null })
+      }
+      break
+    }
+
+    case 'TitleEarned': {
+      addChatMessage({
+        text: `You earned the title "${titleNameNow(data.title)}"`,
+        sender: 'system',
+      })
       break
     }
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { T, useTask } from '@threlte/core'
   import TextLabel from './TextLabel.svelte'
+  import { titleName } from '../data/titleDefs'
   import * as THREE from 'three'
   import type { AccountCharacter } from '../network/socket'
 
@@ -134,9 +135,24 @@
     />
 
     {#if !compact}
+      {#if character.active_title}
+        <TextLabel
+          text={$titleName(character.active_title)}
+          position={[0, panelHeight / 2 - 0.235, 0.02]}
+          fontSize={0.07}
+          color="#d6bcfa"
+          anchorX="center"
+          anchorY="middle"
+          depthOffset={-1}
+        />
+      {/if}
       <TextLabel
         text={`Lv. ${character.level}  HP ${character.max_hp}`}
-        position={[0, panelHeight / 2 - 0.27, 0.02]}
+        position={[
+          0,
+          panelHeight / 2 - (character.active_title ? 0.34 : 0.27),
+          0.02,
+        ]}
         fontSize={0.1}
         color="#f0c040"
         anchorX="center"

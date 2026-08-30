@@ -109,7 +109,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      decode houses that use it.
 /// v45: `ClientMessage::WorldReady` ends the entry grace that shields a
 ///      player until their scene is drawn; an older server cannot decode it.
-pub const PROTOCOL_VERSION: u32 = 45;
+/// v46: titles — `Player.title`, `Character.titles`/`active_title`,
+///      `ClientMessage::SetActiveTitle`; an older server cannot decode it.
+pub const PROTOCOL_VERSION: u32 = 46;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -262,6 +264,7 @@ mod tests {
             back_color: None,
             back_texture: None,
             wet: false,
+            title: None,
         }];
         // A monster with every Option None guards the wire format itself:
         // rmp_serde encodes structs as positional arrays, so any field that

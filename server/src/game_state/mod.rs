@@ -259,6 +259,7 @@ pub(crate) use skills::skills_from_rows;
 mod stall;
 mod time;
 mod tip_hat;
+mod titles;
 mod trading;
 pub use trading::BUYBACK_SWEEP_PERIOD;
 
@@ -505,6 +506,11 @@ pub struct GameState {
     /// would race the session replacement that clears it.
     #[allow(clippy::type_complexity)]
     chest_opens: Arc<RwLock<HashMap<(i64, String), i64>>>,
+    /// Dungeon boss monster id → character id → damage dealt (doc/TITLES.md).
+    boss_damage: Arc<RwLock<HashMap<String, HashMap<i64, u64>>>>,
+    /// player_id → earned title ids in definition order; the shown one is
+    /// `Player.title`.
+    player_titles: Arc<RwLock<HashMap<PlayerId, Vec<String>>>>,
     /// player_id → dungeon entrance ids this character has discovered
     /// (world-map markers). Seeded from the DB at login, dropped on logout;
     /// new discoveries queue in `pending_discovery_saves`.
@@ -716,6 +722,8 @@ impl GameState {
             whisper_partners: Arc::new(RwLock::new(HashMap::new())),
             muted_until: Arc::new(RwLock::new(HashMap::new())),
             chest_opens: Arc::new(RwLock::new(HashMap::new())),
+            boss_damage: Arc::new(RwLock::new(HashMap::new())),
+            player_titles: Arc::new(RwLock::new(HashMap::new())),
             dungeon_discoveries: Arc::new(RwLock::new(HashMap::new())),
             pending_discovery_saves: Arc::new(RwLock::new(Vec::new())),
             dungeon_discovery_cells,

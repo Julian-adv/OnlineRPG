@@ -318,6 +318,10 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             // performer moves or the track runs out.
             Some(format!("[PlayMusic] {who} started playing \"{track}\"."))
         }
+        ServerMessage::TitleEarned { title } => Some(format!(
+            "[TitleEarned] You earned the title \"{}\".",
+            crate::title_defs::title_name(title)
+        )),
         ServerMessage::PlayerJoined { player } => {
             if !within_event_range(state, player.position.x, player.position.z) {
                 return None;

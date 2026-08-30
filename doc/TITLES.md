@@ -44,13 +44,13 @@
 ## 정의 — `data-src/titles.csv`
 
 ```
-id,name,nameKo,source,bossId,solo,order
-goblin_slayer,Slayer of the Goblin Chief,고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,false,10
-goblin_slayer_solo,Who Slew the Goblin Chief Alone,홀로 고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,true,11
-orc_slayer,Slayer of the Orc Warlord,오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,false,20
-orc_slayer_solo,Who Slew the Orc Warlord Alone,홀로 오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,true,21
-ogre_slayer,Slayer of the Ogre Warlord,오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,false,30
-ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,true,31
+id,name,nameKo,source,bossId,solo,order,supersedes
+goblin_slayer,Slayer of the Goblin Chief,고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,false,10,
+goblin_slayer_solo,Who Slew the Goblin Chief Alone,홀로 고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,true,11,goblin_slayer
+orc_slayer,Slayer of the Orc Warlord,오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,false,20,
+orc_slayer_solo,Who Slew the Orc Warlord Alone,홀로 오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,true,21,orc_slayer
+ogre_slayer,Slayer of the Ogre Warlord,오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,false,30,
+ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,true,31,ogre_slayer
 ```
 
 칭호는 등급 이름이 아니라 **한 줄짜리 이야기**다("홀로 오거 군주를 쓰러뜨린 자"). 몬스터
@@ -58,6 +58,8 @@ ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러�
 
 - `source`는 부여 경로. 지금은 `boss_kill` 하나고 `bossId`·`solo`가 그 조건이다. 나중에
   낚시 기록·누적 처치 같은 경로가 생기면 열이 늘지 행이 바뀌지 않는다.
+- `supersedes`는 이 칭호가 대신하는 칭호. 그 칭호를 보이고 있던 사람이 이걸 얻으면 자동으로
+  바뀐다. 코드가 "같은 보스의 홀로"를 추론하지 않고 데이터가 말한다.
 - `order`는 목록 정렬용. 가치의 서열은 아니다.
 - 다른 데이터와 같이 `node tools/convert.mjs`로 `data/titles.json`을 만들고 서버·클라이언트가
   같은 파일을 읽는다. 필드에 쉼표 금지.
@@ -95,18 +97,19 @@ ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러�
 
 ## 표시
 
-이름이 보이는 자리는 지금 두 곳뿐이다. 상시 이름표는 만들지 않는다 — 없어서 화면이 깨끗한
-것이고, 칭호 때문에 그걸 바꿀 이유는 없다. 칭호는 한 문장이라 이름 옆에 붙이면 길어지므로,
-어디서나 **이름 위 한 줄**로 둔다. 줄이지 않는다.
+칭호는 한 문장이라 이름 옆에 붙이면 길어지므로, 어디서나 **이름 위 한 줄**로 둔다.
+줄이지 않는다.
 
 | 자리 | 표시 | 비고 |
 |---|---|---|
-| 마우스 오버 이름표(`HoverNameLabel`) | `이름` 위에 작은 글씨로 전체 칭호 | 칭호 없는 사람은 지금과 동일 |
+| 머리 위 이름표(`PlayerModel`의 `TextLabel`) | `이름` 위에 작은 글씨로 전체 칭호 | 칭호 없는 사람은 지금과 동일 |
 | 채팅(`ChatPanel`) | 두 줄 — 윗줄에 작은 글씨로 칭호, 아랫줄에 `이름: 메시지` | 로컬 채팅만. 귓속말·파티·친구 패널은 이름만 |
 | 캐릭터 선택 | 이름 아래 한 줄 | `active_title` |
-| 캐릭터 창(본인) | 칭호 목록 + 라디오로 선택, "없음" 포함 | `SetActiveTitle` |
+| 캐릭터 창(본인) | `titles` 탭 — 칭호 목록 + 라디오로 선택, "없음" 포함 | `SetActiveTitle` |
 
-- 언어는 클라이언트 로케일 설정을 따른다(`name`/`nameKo`). 서버는 id만 다룬다.
+- 언어는 설정 창의 "Title Language"(Auto/한국어/English, 브라우저별 저장)로 고른다. Auto는
+  브라우저 로케일(`navigator.language`가 `ko`면 한국어). 서버는 id만 다루므로 남의 칭호도 내
+  설정대로 보인다. `/title` 응답과 봇 프롬프트는 영어 `name`이다.
 - 색·아이콘 같은 등급 표현은 두지 않는다. 문장 자체가 서열을 말한다("홀로"가 붙었는가).
   등급을 넣기 시작하면 그 자체가 또 하나의 수집 시스템이 된다.
 
@@ -119,8 +122,8 @@ ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러�
   뒤 `characters.active_title`에 쓰고 `PlayerTitleChanged`를 주변에 뿌린다.
 - 채팅 명령 `/title`도 둔다 — 인자 없이 치면 가진 칭호를 번호와 함께 보여주고, `/title 2`로
   고르고, `/title off`로 뗀다. 봇(agent-client)은 이 경로를 쓴다.
-- 자동 선택은 두 경우뿐이다: 칭호가 하나도 없다가 처음 얻었을 때, 그리고 활성 칭호와 같은
-  보스의 홀로 칭호를 새로 얻었을 때. 그 외에는 새 칭호를 얻어도 활성은 바꾸지 않는다 —
+- 자동 선택은 두 경우뿐이다: 칭호가 하나도 없다가 처음 얻었을 때, 그리고 활성 칭호를
+  `supersedes`하는 칭호를 새로 얻었을 때. 그 외에는 새 칭호를 얻어도 활성은 바꾸지 않는다 —
   본인이 고른 것을 서버가 멋대로 갈아치우지 않는다.
 - 활성 칭호는 캐릭터에 붙어 로그아웃해도 남는다.
 
@@ -141,6 +144,16 @@ ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러�
 - `auth.rs`: 테이블·컬럼, `load/grant/set_active`.
 - `Player`에 `title` 실어 보내는 곳(`PlayerJoined`/`PlayerAppeared`) 채우기.
 - 클라이언트: 위 표시 네 곳 + 토스트.
+
+## 구현 메모 (2026-08-30)
+
+- 서버: `title_defs.rs`(정의·부팅 검증), `game_state/titles.rs`(피해 로그·부여·활성 선택·`/title`),
+  `auth.rs`(`character_titles`, `characters.active_title`). 보스 판정은 `dungeon_monsters`
+  인덱스의 `is_boss`. 피해는 실제로 깎인 HP만 센다(오버킬 제외).
+- 봇(agent-client)은 상태 줄에 자기 칭호 목록을, 주변 플레이어 줄에 상대 칭호를 싣는다.
+- 오프라인 캐릭터도 보스 사망 시점의 피해 로그에 있으면 DB에 부여된다. 다음 접속 때 목록에
+  보이지만 자동으로 활성되지는 않는다 — DB의 NULL은 "처음"과 "/title off"를 구분하지 못한다.
+  본인이 고르면 된다.
 
 ## 열어둔 것
 

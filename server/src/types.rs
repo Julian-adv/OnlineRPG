@@ -45,6 +45,7 @@ pub fn new_player(
         is_official_npc,
         torch_on: false,
         wet: false,
+        title: None,
         floor_level: 0,
         object_type: None,
         main_hand: None,

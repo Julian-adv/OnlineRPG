@@ -196,4 +196,9 @@ pub struct Character {
     pub gender: Gender,
     #[serde(default)]
     pub equipment: VisibleEquipment,
+    /// Earned title ids, in definition order (doc/TITLES.md).
+    #[serde(default)]
+    pub titles: Vec<String>,
+    #[serde(default)]
+    pub active_title: Option<String>,
 }

@@ -1086,6 +1086,8 @@ mod tests {
             class,
             gender,
             equipment: Default::default(),
+            titles: Vec::new(),
+            active_title: None,
         }
     }
 

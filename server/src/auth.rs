@@ -194,6 +194,26 @@ pub struct AuthService {
     banned_names: Arc<HashSet<String>>,
 }
 
+/// One character-select row: the record plus what the preview shows.
+pub struct CharacterListing {
+    pub record: CharacterRecord,
+    pub worn: VisibleEquipment,
+    pub titles: Vec<String>,
+    pub active_title: Option<String>,
+}
+
+impl CharacterListing {
+    /// A character with nothing earned yet — the one just created.
+    pub fn fresh(record: CharacterRecord, worn: VisibleEquipment) -> Self {
+        Self {
+            record,
+            worn,
+            titles: Vec::new(),
+            active_title: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CharacterRecord {
     pub id: i64,
@@ -334,6 +354,53 @@ const PREVIEW_EQUIP_SLOTS: [EquipSlot; 3] =
 
 /// The preview's gear for a whole account in one query rather than one per
 /// character.
+/// A character's earned title ids and the shown one (doc/TITLES.md).
+pub type TitleSet = (Vec<String>, Option<String>);
+
+/// Earned titles (in definition order) and the shown one, per character.
+fn read_titles(
+    conn: &Connection,
+    character_ids: &[i64],
+) -> Result<HashMap<i64, TitleSet>, AuthError> {
+    if character_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = vec!["?"; character_ids.len()].join(",");
+    let mut out: HashMap<i64, TitleSet> = HashMap::new();
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT character_id, title_id FROM character_titles \
+         WHERE character_id IN ({placeholders})"
+    ))?;
+    let rows = stmt.query_map(params_from_iter(character_ids), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (character_id, title) = row?;
+        out.entry(character_id).or_default().0.push(title);
+    }
+    for (titles, _) in out.values_mut() {
+        crate::title_defs::sort_ids(titles);
+    }
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, active_title FROM characters \
+         WHERE id IN ({placeholders}) AND active_title IS NOT NULL"
+    ))?;
+    let rows = stmt.query_map(params_from_iter(character_ids), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (character_id, active) = row?;
+        let entry = out.entry(character_id).or_default();
+        // A stale pick (title row gone) shows nothing rather than a ghost.
+        if entry.0.contains(&active) {
+            entry.1 = Some(active);
+        }
+    }
+    Ok(out)
+}
+
 fn read_visible_equipment(
     conn: &Connection,
     character_ids: &[i64],
@@ -567,6 +634,7 @@ impl AuthService {
         Self::ensure_world_time_schema(&conn)?;
         Self::ensure_dungeon_chest_schema(&conn)?;
         Self::ensure_dungeon_discovery_schema(&conn)?;
+        Self::ensure_titles_schema(&conn)?;
         Self::ensure_trade_ledger_schema(&conn)?;
         Self::ensure_gold_snapshots_schema(&conn)?;
         Self::ensure_pricing_schema(&conn)?;
@@ -855,6 +923,65 @@ impl AuthService {
         Ok(())
     }
 
+    fn ensure_titles_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_titles (
+                character_id INTEGER NOT NULL,
+                title_id TEXT NOT NULL,
+                earned_at INTEGER NOT NULL,
+                PRIMARY KEY (character_id, title_id),
+                FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Earned title ids (in definition order) and the shown one (doc/TITLES.md).
+    pub fn load_titles(
+        &self,
+        character_id: i64,
+    ) -> Result<(Vec<String>, Option<String>), AuthError> {
+        let conn = self.open_connection()?;
+        Ok(read_titles(&conn, &[character_id])?
+            .remove(&character_id)
+            .unwrap_or_default())
+    }
+
+    /// Record a title; false when the character already had it.
+    pub fn grant_title(&self, character_id: i64, title_id: &str) -> Result<bool, AuthError> {
+        let conn = self.open_connection()?;
+        let inserted = conn.execute(
+            "INSERT OR IGNORE INTO character_titles (character_id, title_id, earned_at) \
+             VALUES (?1, ?2, ?3)",
+            params![character_id, title_id, unix_now()],
+        )?;
+        Ok(inserted == 1)
+    }
+
+    /// Set the shown title. `Some` must be an earned title; otherwise the
+    /// row is left alone and false comes back.
+    pub fn set_active_title(
+        &self,
+        character_id: i64,
+        title_id: Option<&str>,
+    ) -> Result<bool, AuthError> {
+        let conn = self.open_connection()?;
+        let changed = match title_id {
+            None => conn.execute(
+                "UPDATE characters SET active_title = NULL WHERE id = ?1",
+                params![character_id],
+            )?,
+            Some(title) => conn.execute(
+                "UPDATE characters SET active_title = ?2 WHERE id = ?1 AND EXISTS (\
+                     SELECT 1 FROM character_titles \
+                     WHERE character_id = ?1 AND title_id = ?2)",
+                params![character_id, title],
+            )?,
+        };
+        Ok(changed == 1)
+    }
+
     /// Bans key on the account, not the character: a banned player can delete
     /// and recreate characters, but the Google subject stays put. `until_unix`
     /// is NULL for a permanent ban and an epoch second for a timed one —
@@ -1132,6 +1259,8 @@ impl AuthService {
             ("admin_role", "INTEGER NOT NULL DEFAULT 0".into()),
             // Unix seconds, NULL until first seen since the column shipped.
             ("last_seen_at", "INTEGER".into()),
+            // Shown title id, NULL for none (doc/TITLES.md).
+            ("active_title", "TEXT".into()),
             (
                 "satiation",
                 format!(
@@ -1259,16 +1388,23 @@ impl AuthService {
     pub fn list_characters_with_equipment(
         &self,
         account_name: &str,
-    ) -> Result<Vec<(CharacterRecord, VisibleEquipment)>, AuthError> {
+    ) -> Result<Vec<CharacterListing>, AuthError> {
         let conn = self.open_connection()?;
         let characters = read_characters(&conn, account_name)?;
         let ids = characters.iter().map(|c| c.id).collect::<Vec<_>>();
         let mut equipment = read_visible_equipment(&conn, &ids)?;
+        let mut titles = read_titles(&conn, &ids)?;
         Ok(characters
             .into_iter()
             .map(|record| {
                 let worn = equipment.remove(&record.id).unwrap_or_default();
-                (record, worn)
+                let (titles, active_title) = titles.remove(&record.id).unwrap_or_default();
+                CharacterListing {
+                    record,
+                    worn,
+                    titles,
+                    active_title,
+                }
             })
             .collect())
     }
@@ -1952,6 +2088,37 @@ mod tests {
 
         assert_eq!(auth.record_gold_snapshot(now + 60, 30).unwrap(), None);
         assert_eq!(auth.active_gold_per_character(now, 30).unwrap(), Some(53.5));
+    }
+
+    #[test]
+    fn titles_persist_and_only_an_earned_one_can_be_shown() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_titles_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let player = auth.login_google("sub-titles").unwrap();
+        let id = create(&auth, &player, "Slayer").unwrap().id;
+
+        assert_eq!(auth.load_titles(id).unwrap(), (vec![], None));
+        assert!(auth.grant_title(id, "orc_slayer").unwrap());
+        assert!(!auth.grant_title(id, "orc_slayer").unwrap(), "already held");
+        assert!(auth.grant_title(id, "goblin_slayer").unwrap());
+
+        assert!(!auth.set_active_title(id, Some("ogre_slayer")).unwrap());
+        assert_eq!(auth.load_titles(id).unwrap().1, None);
+        assert!(auth.set_active_title(id, Some("orc_slayer")).unwrap());
+        assert_eq!(
+            auth.load_titles(id).unwrap(),
+            (
+                vec!["goblin_slayer".into(), "orc_slayer".into()],
+                Some("orc_slayer".into())
+            )
+        );
+        assert!(auth.set_active_title(id, None).unwrap());
+        assert_eq!(auth.load_titles(id).unwrap().1, None);
+
+        let listed = auth.list_characters_with_equipment(&player).unwrap();
+        assert_eq!(listed[0].titles.len(), 2);
+        assert_eq!(listed[0].active_title, None);
     }
 
     #[test]

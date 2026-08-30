@@ -506,6 +506,7 @@
     bind:this={currentPlayerModel}
     position={currentPlayer.position}
     name={currentPlayer.name}
+    title={currentPlayer.title}
     isCurrentPlayer={true}
     playerState={effectivePlayerState}
     interactionAnim={effectiveInteractionAnim}
@@ -559,6 +560,7 @@
           remotePlayer.position.z
         )}
         name={player.name}
+        title={player.title}
         isCurrentPlayer={false}
         playerState={remotePlayer.state}
         interactionAnim={remotePlayer.interactionAnim}

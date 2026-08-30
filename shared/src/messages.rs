@@ -512,6 +512,11 @@ pub enum ClientMessage {
         hat_id: u64,
         amount: i64,
     },
+    /// Show `title` above the name, or nothing. Ignored unless the character
+    /// has earned it (doc/TITLES.md).
+    SetActiveTitle {
+        title: Option<String>,
+    },
     /// Ask a merchant NPC to open its shop.
     OpenShop {
         merchant_player_id: PlayerId,
@@ -1106,6 +1111,21 @@ pub enum ServerMessage {
     PlayerWetToggled {
         player_id: PlayerId,
         wet: bool,
+    },
+    /// A nearby player's shown title changed (doc/TITLES.md).
+    PlayerTitleChanged {
+        player_id: PlayerId,
+        title: Option<String>,
+    },
+    /// The recipient earned a title; sent to them alone.
+    TitleEarned {
+        title: String,
+    },
+    /// The recipient's own title list and active pick, on entry and after
+    /// every change.
+    PlayerTitles {
+        titles: Vec<String>,
+        active: Option<String>,
     },
     /// The client asked to use a cape dye and may open its colour picker:
     /// there is a cape on to dye and the dye is in the bag. The server keeps

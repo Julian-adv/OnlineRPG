@@ -636,7 +636,7 @@ async fn finish_auth(
     let characters = match listed {
         Ok(records) => records
             .into_iter()
-            .map(|(record, worn)| character_record_to_shared(record, worn))
+            .map(character_listing_to_shared)
             .collect::<Vec<Character>>(),
         Err(err) => {
             warn!(
@@ -914,7 +914,9 @@ async fn handle_client_message(
                     );
                     let worn = visible_equipment_of(auth_service, character.id).await;
                     return Ok(vec![ServerMessage::CharacterCreated {
-                        character: character_record_to_shared(character, worn),
+                        character: character_listing_to_shared(
+                            crate::auth::CharacterListing::fresh(character, worn),
+                        ),
                     }]);
                 }
                 Err(err) => {
@@ -1081,17 +1083,18 @@ async fn handle_client_message(
             // Skills and dungeon history load before any registration: a failed
             // read must refuse the session, or an empty fallback would overwrite
             // trained skills on save and re-grant already-opened chest rewards.
-            let (skill_rows, chest_opens, discovered_dungeons) = {
+            let (skill_rows, chest_opens, discovered_dungeons, titles) = {
                 let auth = Arc::clone(auth_service);
                 let loaded = crate::game_state::auth_db(move || {
                     Ok((
                         auth.load_skills(character_id)?,
                         auth.load_dungeon_history(character_id)?,
+                        auth.load_titles(character_id)?,
                     ))
                 })
                 .await;
                 match loaded {
-                    Ok((rows, (opens, ids))) => (rows, opens, ids),
+                    Ok((rows, (opens, ids), titles)) => (rows, opens, ids, titles),
                     Err(err) => {
                         warn!(
                             "Failed to load required state for character {}: {} — refusing session",
@@ -1122,6 +1125,7 @@ async fn handle_client_message(
                 state.is_official_npc,
                 state.client_kind.unwrap_or_default(),
             );
+            player.title = titles.1.clone();
 
             // Restore saved health (if available) and floor_level from DB
             if let Some(saved_health) = selected_character.health {
@@ -1205,6 +1209,8 @@ async fn handle_client_message(
             }
 
             game_state.set_chest_opens(character_id, chest_opens).await;
+            game_state.set_player_titles(&id, titles.0).await;
+            game_state.send_player_titles(&id).await;
             game_state
                 .set_dungeon_discoveries(&id, discovered_dungeons.clone())
                 .await;
@@ -1385,7 +1391,9 @@ async fn handle_client_message(
 
         ClientMessage::PlayerAttack { monster_id } => {
             if let Some(id) = &state.player_id {
-                game_state.broadcast_player_attack(id, monster_id).await;
+                game_state
+                    .player_attack(id, monster_id, Some(auth_service))
+                    .await;
             } else {
                 warn!("Received attack from client that is not in game");
             }
@@ -1730,6 +1738,14 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::SetActiveTitle { title } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .set_active_title(id, title, Some(auth_service))
+                    .await;
+            }
+        }
+
         ClientMessage::OpenShop { merchant_player_id } => {
             if let Some(id) = &state.player_id {
                 game_state.open_shop(id, &merchant_player_id, true).await;
@@ -1980,10 +1996,13 @@ async fn handle_client_message(
     Ok(vec![])
 }
 
-fn character_record_to_shared(
-    record: crate::auth::CharacterRecord,
-    equipment: VisibleEquipment,
-) -> Character {
+fn character_listing_to_shared(listing: crate::auth::CharacterListing) -> Character {
+    let crate::auth::CharacterListing {
+        record,
+        worn,
+        titles,
+        active_title,
+    } = listing;
     Character {
         id: record.id,
         name: record.name,
@@ -1994,7 +2013,9 @@ fn character_record_to_shared(
         attributes: record.attributes,
         class: record.class,
         gender: record.gender,
-        equipment,
+        equipment: worn,
+        titles,
+        active_title,
     }
 }
 

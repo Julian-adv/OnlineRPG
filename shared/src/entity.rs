@@ -90,6 +90,9 @@ pub struct Player {
     /// footprints, and the owner's own countdown rides `DebuffUpdate`.
     #[serde(default)]
     pub wet: bool,
+    /// Active title id (doc/TITLES.md); the clients look the text up.
+    #[serde(default)]
+    pub title: Option<String>,
     #[serde(skip)]
     pub object_id: Option<u32>,
     #[serde(skip)]
@@ -337,6 +340,7 @@ mod tests {
             back_color: None,
             back_texture: None,
             wet: false,
+            title: None,
         };
         // rmp_serde writes the struct as a positional array, so `id` is the
         // first element — and 42 fits msgpack's single-byte positive fixint.
@@ -380,6 +384,7 @@ mod tests {
             back_color: None,
             back_texture: None,
             wet: false,
+            title: None,
         };
         let bytes = rmp_serde::to_vec(&player).unwrap();
         let decoded: Player = rmp_serde::from_slice(&bytes).unwrap();

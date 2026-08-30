@@ -108,6 +108,7 @@ pub(crate) fn test_player(x: f32, z: f32) -> Player {
         back_color: None,
         back_texture: None,
         wet: false,
+        title: None,
     }
 }
 

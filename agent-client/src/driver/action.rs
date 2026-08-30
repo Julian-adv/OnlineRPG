@@ -348,6 +348,8 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   distance, prefix "/w " and their name (a [Whisper] event means someone
   whispered to you; answer the same way):
   {"type": "say", "message": "/w PlayerName hello"}
+  "/title" lists your titles, "/title N" shows one above your name,
+  "/title off" hides it.
   Players speak many languages; answer each message in the language it
   was written in. Remember each player's language (a memory_update
   note), and use it when speaking to them first."#,

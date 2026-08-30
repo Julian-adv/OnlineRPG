@@ -23,6 +23,7 @@ mod semicolon_list;
 mod terrain;
 #[cfg(test)]
 mod test_util;
+mod title_defs;
 mod types;
 mod world_config;
 mod world_drop_defs;
@@ -336,6 +337,7 @@ async fn main() -> ExitCode {
     let args = Args::parse();
     world_config::log_world_config();
     let monster_defs = monster_defs::MonsterDefs::load();
+    title_defs::validate(&monster_defs);
     let item_defs = item_defs::item_defs().clone();
     let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);

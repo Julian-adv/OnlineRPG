@@ -365,7 +365,19 @@ impl super::GameState {
         })
     }
 
+    #[cfg(test)]
     pub async fn broadcast_player_attack(&self, player_id: &PlayerId, monster_id: String) {
+        self.player_attack(player_id, monster_id, None).await;
+    }
+
+    /// `auth` persists boss-kill titles; tests pass None and keep them in
+    /// memory.
+    pub async fn player_attack(
+        &self,
+        player_id: &PlayerId,
+        monster_id: String,
+        auth: Option<&crate::auth::AuthService>,
+    ) {
         let PlayerAttackContext {
             monster_type,
             monster_position,
@@ -466,6 +478,7 @@ impl super::GameState {
         } else {
             // Damage and the kill claim share one guard, so a second attacker
             // landing at the same instant sees Dead and stops.
+            let mut dealt = 0;
             let is_dead = {
                 let mut monsters = self.monsters.write().await;
                 let mut died = false;
@@ -475,6 +488,7 @@ impl super::GameState {
                         return; // Already dead
                     }
 
+                    dealt = result_damage.min(monster.health);
                     monster.health = monster.health.saturating_sub(result_damage);
                     debug!(
                         "Monster {} HP: {}/{}",
@@ -490,6 +504,9 @@ impl super::GameState {
                 }
                 died
             };
+            if monster_floor_level < 0 {
+                self.record_boss_damage(&monster_id, player_id, dealt).await;
+            }
             if !is_dead {
                 self.brain_hit(&monster_id, player_id, true, result_damage)
                     .await;
@@ -560,7 +577,10 @@ impl super::GameState {
                         &mut rand::thread_rng(),
                     )
                 });
-                monster_drops.extend(self.on_dungeon_monster_dead(&monster_id, player_id).await);
+                monster_drops.extend(
+                    self.on_dungeon_monster_dead(&monster_id, player_id, auth)
+                        .await,
+                );
                 // All kill loot waits for the blow to land.
                 self.spawn_kill_loot_after_impact(
                     weapon_drop,

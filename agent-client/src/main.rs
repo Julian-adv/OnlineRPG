@@ -16,6 +16,7 @@ mod shop_info;
 mod splat;
 mod state;
 mod terrain_http;
+mod title_defs;
 mod transcript;
 mod update;
 mod watch;
@@ -476,6 +477,9 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::ServerNotice { .. } => "ServerNotice",
         ServerMessage::PlayerTorchToggled { .. } => "PlayerTorchToggled",
         ServerMessage::PlayerWetToggled { .. } => "PlayerWetToggled",
+        ServerMessage::PlayerTitleChanged { .. } => "PlayerTitleChanged",
+        ServerMessage::TitleEarned { .. } => "TitleEarned",
+        ServerMessage::PlayerTitles { .. } => "PlayerTitles",
         ServerMessage::PlayerMainHandChanged { .. } => "PlayerMainHandChanged",
         ServerMessage::PlayerBackChanged { .. } => "PlayerBackChanged",
         ServerMessage::CapeDyePrompt { .. } => "CapeDyePrompt",

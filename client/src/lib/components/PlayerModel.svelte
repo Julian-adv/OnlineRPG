@@ -46,6 +46,7 @@
 </script>
 
 <script lang="ts">
+  import { titleName } from '../data/titleDefs'
   import { T } from '@threlte/core'
   import TextLabel from './TextLabel.svelte'
   import type { Vector3 } from 'three'
@@ -169,6 +170,8 @@
     /** Set for every remote player, NPC or not. Only the right-click menu
      *  reads it, so tagging everyone leaves left-click behaviour alone. */
     remotePlayerId?: number
+    /** Shown title id, drawn in smaller text above the name. */
+    title?: string | null
     /** Remote player's floor (negative = dungeon depth), for the hover ring. */
     floorLevel?: number
     heightManager?: TerrainHeightManager | null
@@ -209,6 +212,7 @@
     torchEffectsDisabled = false,
     npcPlayerId,
     remotePlayerId,
+    title = null,
     floorLevel = 0,
     heightManager = null,
   }: Props = $props()
@@ -1218,6 +1222,18 @@
 
 <!-- Name tag (separate from character to avoid rotation inheritance) -->
 <T.Group bind:ref={nametagGroup}>
+  {#if title}
+    <TextLabel
+      text={$titleName(title)}
+      fontSize={0.17}
+      color="#d6bcfa"
+      outlineColor="#000000"
+      outlineWidth={7}
+      anchorX="center"
+      anchorY="middle"
+      position={[0, 0.3, 0]}
+    />
+  {/if}
   <TextLabel
     text={name}
     fontSize={0.3}

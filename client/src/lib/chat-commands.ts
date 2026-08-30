@@ -69,6 +69,9 @@ const COMMANDS: Record<string, Command> = {
   },
 
   '/who': { desc: 'Show how many players are online' },
+  '/title': {
+    desc: 'Show a title above your name: /title, /title N, /title off',
+  },
   '/escape': { desc: 'Return to the starting point when you get stuck' },
   '/w': { desc: 'Send a private message: /w <player> <message>' },
   '/whisper': { desc: 'Send a private message: /whisper <player> <message>' },

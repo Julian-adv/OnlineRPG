@@ -1413,6 +1413,7 @@ impl GameState {
         )
         .await;
 
+        self.clear_boss_damage().await;
         let mut dungeons = self.dungeons.write().await;
         for rt in dungeons.values_mut() {
             for fr in rt.floors.values_mut().filter(|fr| fr.players.is_empty()) {
@@ -1584,6 +1585,7 @@ impl GameState {
         &self,
         monster_id: &str,
         killer: &PlayerId,
+        auth: Option<&crate::auth::AuthService>,
     ) -> Option<String> {
         let entry = {
             let mut index = self.dungeon_monsters.write().await;
@@ -1598,17 +1600,33 @@ impl GameState {
             let total = rt.layouts.len() as u8;
             let slot = rt.floors.get_mut(&entry.depth)?.slots.get_mut(entry.slot)?;
             slot.alive_monster_id = None;
-            if entry.is_boss {
-                slot.respawn_at_ms = BOSS_RESPAWN_NEVER;
-                info!(
-                    "Guardian of '{}' fell at depth {}",
-                    entry.entrance_id, entry.depth
-                );
-                return None;
-            }
-            slot.respawn_at_ms = now + MONSTER_RESPAWN_MS;
+            slot.respawn_at_ms = if entry.is_boss {
+                BOSS_RESPAWN_NEVER
+            } else {
+                now + MONSTER_RESPAWN_MS
+            };
             total
         };
+        if entry.is_boss {
+            info!(
+                "Guardian of '{}' fell at depth {}",
+                entry.entrance_id, entry.depth
+            );
+            if let Some(def) = self.dungeon_defs.get(&entry.entrance_id) {
+                // Off the kill path: the killer's loot and XP don't wait on
+                // the title writes.
+                let game_state = self.clone();
+                let monster_id = monster_id.to_string();
+                let boss = def.boss.clone();
+                let auth = auth.cloned();
+                tokio::spawn(async move {
+                    game_state
+                        .grant_boss_kill_titles(&monster_id, &boss, auth.as_ref())
+                        .await;
+                });
+            }
+            return None;
+        }
         self.roll_dungeon_key_drop(
             killer,
             &entry.entrance_id,

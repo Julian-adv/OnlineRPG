@@ -1,0 +1,7 @@
+id,name,nameKo,source,bossId,solo,order,supersedes
+goblin_slayer,Slayer of the Goblin Chief,고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,false,10,
+goblin_slayer_solo,Who Slew the Goblin Chief Alone,홀로 고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,true,11,goblin_slayer
+orc_slayer,Slayer of the Orc Warlord,오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,false,20,
+orc_slayer_solo,Who Slew the Orc Warlord Alone,홀로 오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,true,21,orc_slayer
+ogre_slayer,Slayer of the Ogre Warlord,오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,false,30,
+ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,true,31,ogre_slayer

@@ -28,6 +28,9 @@
   import { itemTooltip } from '../actions/itemTooltip'
   import { draggablePanel } from '../actions/draggablePanel'
   import CharacterStatusPane from './CharacterStatusPane.svelte'
+  import { earnedTitles } from '../stores/titleStore'
+  import { gameStore } from '../stores/gameStore'
+  import { titleName } from '../data/titleDefs'
   import {
     characterPanelTab,
     type CharacterPanelTab,
@@ -92,7 +95,7 @@
       : CLASS_LABELS[characterClass]
   )
 
-  const TABS: CharacterPanelTab[] = ['stats', 'skills', 'status']
+  const TABS: CharacterPanelTab[] = ['stats', 'skills', 'status', 'titles']
 
   const trainedSkills = $derived(
     (Object.entries($skillsStore.map) as [SkillId, SkillProgress][]).sort(
@@ -360,6 +363,36 @@
             <CharacterStatusPane />
           </div>
         {/if}
+        {#if $characterPanelTab === 'titles'}
+          <div class="pane-titles">
+            {#if $earnedTitles.length > 0}
+              <div class="titles-list" role="radiogroup" aria-label="Title">
+                <label class="title-row">
+                  <input
+                    type="radio"
+                    name="active-title"
+                    checked={!$gameStore.currentPlayer?.title}
+                    onchange={() => networkManager.sendSetActiveTitle(null)}
+                  />
+                  <span class="title-none">None</span>
+                </label>
+                {#each $earnedTitles as id (id)}
+                  <label class="title-row">
+                    <input
+                      type="radio"
+                      name="active-title"
+                      checked={$gameStore.currentPlayer?.title === id}
+                      onchange={() => networkManager.sendSetActiveTitle(id)}
+                    />
+                    <span>{$titleName(id)}</span>
+                  </label>
+                {/each}
+              </div>
+            {:else}
+              <div class="skills-empty">No titles yet</div>
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -445,10 +478,30 @@
   }
 
   .pane-skills,
-  .pane-status {
+  .pane-status,
+  .pane-titles {
     position: absolute;
     inset: 0;
     overflow-y: auto;
+  }
+
+  .titles-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #d5e5f6;
+    cursor: pointer;
+  }
+
+  .title-none {
+    color: #9fb2c3;
   }
 
   .tab-row {

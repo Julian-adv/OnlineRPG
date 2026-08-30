@@ -351,6 +351,11 @@ impl super::GameState {
             return;
         }
 
+        if let Some(args) = strip_command(&message, "/title") {
+            self.handle_title_command(player_id, args, Some(auth)).await;
+            return;
+        }
+
         if message.trim() == "/who" {
             let counts = {
                 let players = self.players.read().await;

@@ -181,7 +181,7 @@ async fn a_completed_trade_moves_items_and_coin_once() {
         .list_characters_with_equipment(&pair.account)
         .unwrap()
         .into_iter()
-        .map(|(record, _)| record)
+        .map(|listing| listing.record)
         .find(|c| c.id == pair.a_record.id)
         .unwrap();
     assert_eq!(reloaded.gold, 400);

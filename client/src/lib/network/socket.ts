@@ -567,6 +567,10 @@ class NetworkManager {
     this.sendMessage({ TorchToggle: { enabled } })
   }
 
+  sendSetActiveTitle(title: string | null) {
+    this.sendMessage({ SetActiveTitle: { title } })
+  }
+
   /** Returns whether the report actually went out, so the caller only
    *  records a send that happened. */
   sendEnvReport(report: ClientEnvReport): boolean {

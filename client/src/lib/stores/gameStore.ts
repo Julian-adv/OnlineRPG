@@ -41,6 +41,8 @@ interface PlayerBase {
   torchOn?: boolean
   /** Soaked, so nearby clients draw wet footprints (doc/DEBUFF.md). */
   wet?: boolean
+  /** Shown title id (doc/TITLES.md). */
+  title?: string | null
   mainHand?: string | null
   back?: string | null
   /** Dye on that cape, as broadcast with it. */
@@ -77,6 +79,8 @@ export interface ChatEntry {
   text: string
   sender: ChatSender
   name?: string
+  /** The speaker's shown title at the time, drawn above the name. */
+  title?: string | null
   hit?: boolean
 }
 

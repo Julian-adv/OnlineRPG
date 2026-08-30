@@ -42,6 +42,8 @@ export type ServerPlayer = {
   back_texture?: string | null
   /** Carrying the `wet` soaking — drives the footprint trail (doc/DEBUFF.md). */
   wet?: boolean
+  /** Shown title id (doc/TITLES.md). */
+  title?: string | null
 }
 
 export type ServerMonster = {
@@ -72,6 +74,8 @@ export type AccountCharacter = {
   class: CharacterClass
   gender: Gender
   equipment?: VisibleEquipment
+  titles?: string[]
+  active_title?: string | null
 }
 
 /** Equipped item def ids the character-select preview renders. */
@@ -207,6 +211,7 @@ export type ClientMessage =
   | { DebugSetTime: { hour: number; minute: number } }
   | { DebugResetDungeonProps: { entrance_id: string } }
   | { TorchToggle: { enabled: boolean } }
+  | { SetActiveTitle: { title: string | null } }
   | {
       ToggleDoor: {
         house_id: string

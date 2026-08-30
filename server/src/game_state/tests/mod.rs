@@ -37,6 +37,7 @@ mod spawn_scale_tests;
 mod spawn_soak_tests;
 mod stall_tests;
 mod tip_hat_tests;
+mod title_tests;
 mod trading_tests;
 mod wet_tests;
 mod world_ready_tests;
@@ -82,6 +83,7 @@ fn make_player(id: &str, x: f32, z: f32) -> Player {
         is_official_npc: false,
         torch_on: false,
         wet: false,
+        title: None,
         floor_level: 0,
         object_type: None,
         main_hand: None,

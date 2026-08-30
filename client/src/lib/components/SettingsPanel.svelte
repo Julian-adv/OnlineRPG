@@ -15,6 +15,7 @@
   import { friendOnlineNoticeEnabled } from '../stores/friendStore'
   import { mountOverlay } from '../stores/overlayStack'
   import { resetPanelLayout } from '../stores/panelLayout'
+  import { titleLanguage, TITLE_LANGUAGES } from '../data/titleDefs'
 
   interface Props {
     onClose: () => void
@@ -81,6 +82,24 @@
         >
       </div>
     {/if}
+
+    <div class="setting-row">
+      <span class="setting-label">
+        Title Language
+        <span class="setting-hint">Auto follows the browser</span>
+      </span>
+      <div class="quality-row">
+        {#each TITLE_LANGUAGES as opt (opt.value)}
+          <button
+            class="quality-btn"
+            class:active={$titleLanguage === opt.value}
+            onclick={() => titleLanguage.set(opt.value)}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
 
     <div class="setting-row">
       <span class="setting-label">

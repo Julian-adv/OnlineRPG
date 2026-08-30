@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { titleName } from '../data/titleDefs'
   import { tick, untrack } from 'svelte'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { addChatMessage, gameStore } from '../stores/gameStore'
@@ -408,6 +409,9 @@
         class:party={entry.sender === 'party'}
       >
         {#if entry.name}
+          {#if entry.title}
+            <div class="title">{$titleName(entry.title)}</div>
+          {/if}
           {#if entry.sender === 'party'}
             <span class="party-tag">[Party]</span>
           {/if}
@@ -694,6 +698,13 @@
     overflow-wrap: break-word;
     text-align: left;
     max-width: 100%;
+  }
+
+  .title {
+    font-size: 10px;
+    line-height: 1.2;
+    color: #d6bcfa;
+    opacity: 0.9;
   }
 
   .name.local {
