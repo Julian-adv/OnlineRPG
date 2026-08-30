@@ -6,6 +6,7 @@ import type {
   WallVariant,
 } from '../types/housing'
 import { floorYBase, type WallDirection } from '../utils/house-geometry'
+import { WALL_DIR_INFO } from '../utils/house-geo-utils'
 
 export function getWallByDir(room: RoomData, dir: WallDirection): WallConfig[] {
   switch (dir) {
@@ -101,6 +102,37 @@ export function crossRoomDoorPartner(
   if (!n) return null
   const oSegs = getWallByDir(rooms[n.roomIndex], dir)
   return isLoneHalf(oSegs, n.segmentIndex) ? n : null
+}
+
+export function oppositeDir(dir: WallDirection): WallDirection {
+  return WALL_DIR_INFO[dir].opposite
+}
+
+/** The same-floor room segment on the far side of segment `i` (an interior
+ *  wall shared with a neighbour), or null on an exterior face. */
+export function facingSegmentRef(
+  rooms: RoomData[],
+  roomIndex: number,
+  dir: WallDirection,
+  i: number
+): DoorRef | null {
+  const room = rooms[roomIndex]
+  if (room.roomType === 'stairwell') return null
+  const isNS = WALL_DIR_INFO[dir].isNS
+  const pos = (isNS ? room.localX : room.localZ) + i
+  const line = wallLineCoord(room, dir)
+  const back = oppositeDir(dir)
+  for (let ri = 0; ri < rooms.length; ri++) {
+    if (ri === roomIndex) continue
+    const o = rooms[ri]
+    if (o.floorLevel !== room.floorLevel || o.roomType === 'stairwell') continue
+    if (wallLineCoord(o, back) !== line) continue
+    const oa0 = isNS ? o.localX : o.localZ
+    const oaLen = isNS ? o.sizeX : o.sizeZ
+    if (pos < oa0 || pos >= oa0 + oaLen) continue
+    return { roomIndex: ri, segmentIndex: pos - oa0 }
+  }
+  return null
 }
 
 /** The other half of a double door (same wall, else adjacent room), or null. */

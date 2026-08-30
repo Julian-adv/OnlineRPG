@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use tokio::fs;
 use tracing::info;
 
-const MIN_ROOM_SIZE: u8 = 3;
+const MIN_ROOM_SIZE: u8 = 1;
 const MAX_ROOM_SIZE: u8 = 6;
 const MAX_ROOMS: usize = 32;
 /// Max room distance from house origin. Kept near `CHUNK_SIZE` so a validated

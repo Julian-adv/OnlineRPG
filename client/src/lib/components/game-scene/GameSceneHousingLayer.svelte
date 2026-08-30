@@ -44,6 +44,7 @@
   } from '../../stores/housingStore'
   import {
     debugVisible,
+    housingEditorMode,
     passabilityDebugVisible,
   } from '../../stores/debugStore'
   import { pushPassabilityEdges } from '../../utils/passability-wireframe'
@@ -183,9 +184,18 @@
     if (debugPassGroup.visible) debugPassDirty = true
   })
 
+  // Roofs hide the interior while editing; the flag is part of the house
+  // hash so the toggle flows through the normal rebuild path.
+  let roofs = true
+  const unsubEditor = housingEditorMode.subscribe((v) => {
+    roofs = !v
+    syncHouses(housingManager.getAllHouses())
+  })
+
   onDestroy(() => {
     unsubFloor()
     unsubHouses()
+    unsubEditor()
     unsubPassDebug()
     unsubFurniture()
     for (const [, result] of houses) {
@@ -213,7 +223,7 @@
     // Add or rebuild changed houses
     for (const data of allHouses) {
       const existing = houses.get(data.id)
-      const newHash = JSON.stringify(data.rooms)
+      const newHash = JSON.stringify({ roofs, rooms: data.rooms })
 
       // Fast path: if only door isOpen changed, sync door states without rebuild
       if (existing && existing.roomsHash === newHash) continue
@@ -223,7 +233,7 @@
         housingGroup.remove(existing.houseGroup)
         disposeHouseGroup(existing.houseGroup)
       }
-      const result = buildHouseGroup(data, newHash)
+      const result = buildHouseGroup(data, newHash, { roofs })
       houses.set(data.id, result)
       housingGroup.add(result.houseGroup)
 

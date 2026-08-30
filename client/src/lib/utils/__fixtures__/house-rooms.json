@@ -1,0 +1,284 @@
+[
+  {
+    "id": "r+20_+44_1",
+    "rooms": [
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 2,
+        "localZ": 4,
+        "sizeX": 4,
+        "sizeZ": 6,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      }
+    ]
+  },
+  {
+    "id": "r+35_+29_1",
+    "rooms": [
+      {
+        "roomType": "normal",
+        "roofType": "gabled",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": -6,
+        "sizeX": 4,
+        "sizeZ": 6,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "gabled",
+        "roofRidgeDir": "auto",
+        "localX": -2,
+        "localZ": -10,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "gabled",
+        "roofRidgeDir": "auto",
+        "localX": -6,
+        "localZ": -10,
+        "sizeX": 4,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      }
+    ]
+  },
+  {
+    "id": "r-23_+73_1",
+    "rooms": [
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": -6,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 4,
+        "sizeZ": 6,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": -6,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 1,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 4,
+        "sizeZ": 6,
+        "floorLevel": 1,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "stairwell",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 3,
+        "localZ": 0,
+        "sizeX": 1,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      }
+    ]
+  },
+  {
+    "id": "r-23_+73_2",
+    "rooms": [
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      }
+    ]
+  },
+  {
+    "id": "r-23_+74_1",
+    "rooms": [
+      {
+        "roomType": "normal",
+        "roofType": "gabled",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 4,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      }
+    ]
+  },
+  {
+    "id": "r-23_+74_2",
+    "rooms": [
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 4,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 6,
+        "localZ": 4,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 6,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 1,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 6,
+        "localZ": 0,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 1,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 6,
+        "localZ": 4,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 1,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "normal",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 0,
+        "localZ": 4,
+        "sizeX": 6,
+        "sizeZ": 4,
+        "floorLevel": 1,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      },
+      {
+        "roomType": "stairwell",
+        "roofType": "steep",
+        "roofRidgeDir": "auto",
+        "localX": 11,
+        "localZ": 0,
+        "sizeX": 1,
+        "sizeZ": 4,
+        "floorLevel": 0,
+        "wallHeight": 3.0,
+        "roofTexture": 10
+      }
+    ]
+  }
+]

@@ -1,0 +1,206 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`computeRoofSpans on live house data > matches the recorded spans for r+20_+44_1 1`] = `
+[
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      0,
+    ],
+    "sx": 6,
+    "sz": 4,
+    "x": 0,
+    "z": 0,
+  },
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": false,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      1,
+    ],
+    "sx": 4,
+    "sz": 6,
+    "x": 2,
+    "z": 4,
+  },
+]
+`;
+
+exports[`computeRoofSpans on live house data > matches the recorded spans for r+35_+29_1 1`] = `
+[
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 1.6,
+    "rooms": [
+      1,
+      2,
+    ],
+    "sx": 10,
+    "sz": 4,
+    "x": -6,
+    "z": -10,
+  },
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": false,
+    "ridgeHeight": 1.6,
+    "rooms": [
+      0,
+    ],
+    "sx": 4,
+    "sz": 6,
+    "x": 0,
+    "z": -6,
+  },
+]
+`;
+
+exports[`computeRoofSpans on live house data > matches the recorded spans for r-23_+73_1 1`] = `
+[
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      0,
+    ],
+    "sx": 6,
+    "sz": 4,
+    "x": -6,
+    "z": 0,
+  },
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": false,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      1,
+    ],
+    "sx": 4,
+    "sz": 6,
+    "x": 0,
+    "z": 0,
+  },
+  {
+    "floor": 1,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      2,
+    ],
+    "sx": 6,
+    "sz": 4,
+    "x": -6,
+    "z": 0,
+  },
+  {
+    "floor": 1,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": false,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      3,
+    ],
+    "sx": 4,
+    "sz": 6,
+    "x": 0,
+    "z": 0,
+  },
+]
+`;
+
+exports[`computeRoofSpans on live house data > matches the recorded spans for r-23_+73_2 1`] = `
+[
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 2.8,
+    "rooms": [
+      0,
+    ],
+    "sx": 6,
+    "sz": 4,
+    "x": 0,
+    "z": 0,
+  },
+]
+`;
+
+exports[`computeRoofSpans on live house data > matches the recorded spans for r-23_+74_1 1`] = `
+[
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 1.6,
+    "rooms": [
+      0,
+    ],
+    "sx": 4,
+    "sz": 4,
+    "x": 0,
+    "z": 0,
+  },
+]
+`;
+
+exports[`computeRoofSpans on live house data > matches the recorded spans for r-23_+74_2 1`] = `
+[
+  {
+    "floor": 0,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 5.6,
+    "rooms": [
+      0,
+      1,
+      2,
+      3,
+    ],
+    "sx": 12,
+    "sz": 8,
+    "x": 0,
+    "z": 0,
+  },
+  {
+    "floor": 1,
+    "innerHigh": false,
+    "innerLow": false,
+    "ridgeAlongX": true,
+    "ridgeHeight": 5.6,
+    "rooms": [
+      4,
+      5,
+      6,
+      7,
+    ],
+    "sx": 12,
+    "sz": 8,
+    "x": 0,
+    "z": 0,
+  },
+]
+`;

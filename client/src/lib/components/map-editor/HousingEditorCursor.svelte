@@ -865,8 +865,7 @@
       newRoom.localZ = pos.z - targetHouse.origin.z
 
       const updatedRooms = [...targetHouse.rooms, newRoom]
-      // Only set shared walls open for same-floor rooms
-      setSharedWallsOpen(updatedRooms)
+      setSharedWallsOpen(updatedRooms, newRoom)
 
       const updatedHouse: HouseData = {
         ...targetHouse,
@@ -963,40 +962,28 @@
   }
 
   /**
-   * Auto-set overlapping 1m wall segments to 'open' where two rooms touch.
-   * e.g. 6x4 + 3x3 on its south wall: 3 of the 6 south segments → open,
-   *      and all 3 of the 3x3's north segments → open.
+   * Auto-set overlapping 1m wall segments to 'open' where `added` touches
+   * another room. Only pairs involving the new room are touched so interior
+   * walls edited on existing rooms survive later placements.
    */
-  function setSharedWallsOpen(rooms: RoomData[]) {
-    for (let i = 0; i < rooms.length; i++) {
-      const a = rooms[i]
-      for (let j = i + 1; j < rooms.length; j++) {
-        const b = rooms[j]
-        // Open walls between rooms on the same floor,
-        // AND between stairwells and rooms on the floor above
-        const sameFloor = a.floorLevel === b.floorLevel
-        const stairwellCrossFloor =
-          (a.roomType === 'stairwell' && b.floorLevel === a.floorLevel + 1) ||
-          (b.roomType === 'stairwell' && a.floorLevel === b.floorLevel + 1)
-        if (!sameFloor && !stairwellCrossFloor) continue
+  function setSharedWallsOpen(rooms: RoomData[], a: RoomData) {
+    for (const b of rooms) {
+      if (b === a) continue
+      // Same floor, or a stairwell and the room on the floor above it
+      const sameFloor = a.floorLevel === b.floorLevel
+      const stairwellCrossFloor =
+        (a.roomType === 'stairwell' && b.floorLevel === a.floorLevel + 1) ||
+        (b.roomType === 'stairwell' && a.floorLevel === b.floorLevel + 1)
+      if (!sameFloor && !stairwellCrossFloor) continue
 
-        // N/S: a's south touches b's north
-        if (a.localZ + a.sizeZ === b.localZ) {
-          openOverlappingSegments(a, 'wallSouth', b, 'wallNorth', 'x')
-        }
-        // N/S: b's south touches a's north
-        if (b.localZ + b.sizeZ === a.localZ) {
-          openOverlappingSegments(b, 'wallSouth', a, 'wallNorth', 'x')
-        }
-        // E/W: a's east touches b's west
-        if (a.localX + a.sizeX === b.localX) {
-          openOverlappingSegments(a, 'wallEast', b, 'wallWest', 'z')
-        }
-        // E/W: b's east touches a's west
-        if (b.localX + b.sizeX === a.localX) {
-          openOverlappingSegments(b, 'wallEast', a, 'wallWest', 'z')
-        }
-      }
+      if (a.localZ + a.sizeZ === b.localZ)
+        openOverlappingSegments(a, 'wallSouth', b, 'wallNorth', 'x')
+      if (b.localZ + b.sizeZ === a.localZ)
+        openOverlappingSegments(b, 'wallSouth', a, 'wallNorth', 'x')
+      if (a.localX + a.sizeX === b.localX)
+        openOverlappingSegments(a, 'wallEast', b, 'wallWest', 'z')
+      if (b.localX + b.sizeX === a.localX)
+        openOverlappingSegments(b, 'wallEast', a, 'wallWest', 'z')
     }
   }
 

@@ -3,6 +3,7 @@
   import {
     ROOM_TEMPLATES,
     STAIR_TEMPLATES,
+    INTERIOR_VARIANT_OPTIONS,
     selectedRoomTemplate,
     placementRotation,
     placementFloorLevel,
@@ -24,7 +25,9 @@
   } from '../../stores/housingEditorStore'
   import {
     clearDoorPair,
+    facingSegmentRef,
     getWallByDir,
+    oppositeDir,
     pairDoubleDoor,
   } from '../../managers/housing-passability'
   import type { WallDirection } from '../../utils/house-geometry'
@@ -79,13 +82,13 @@
   let reinstalling = $state(false)
 
   // Derived: the room being edited (editVersion forces recompute after local edits)
-  let editRoom = $derived.by(() => {
+  let editHouse = $derived.by(() => {
     void editVersion
-    if (editHouseId == null || editRoomIdx == null) return null
-    const house = housingManager.getHouseById(editHouseId)
-    if (!house || editRoomIdx >= house.rooms.length) return null
-    return house.rooms[editRoomIdx]
+    return editHouseId == null ? null : housingManager.getHouseById(editHouseId)
   })
+  let editRoom = $derived(
+    editRoomIdx == null ? null : (editHouse?.rooms[editRoomIdx] ?? null)
+  )
 
   const unsubs = [
     placementRotation.subscribe((v) => (rotation = v)),
@@ -176,9 +179,11 @@
     applyRoomEdit((room, house, roomIndex) => {
       const segs = getWallByDir(room, dir)
       const seg = segs[segIdx]
-      if (seg.variant === 'open') return
-      const idx = WALL_VARIANT_OPTIONS.indexOf(seg.variant)
-      let next = WALL_VARIANT_OPTIONS[(idx + 1) % WALL_VARIANT_OPTIONS.length]
+      const facing = facingSegmentRef(house.rooms, roomIndex, dir, segIdx)
+      const options = facing ? INTERIOR_VARIANT_OPTIONS : WALL_VARIANT_OPTIONS
+      const idx = options.indexOf(seg.variant)
+      if (idx < 0 && !facing) return
+      let next = options[(idx + 1) % options.length]
       clearDoorPair(house.rooms, roomIndex, dir, segIdx)
       if (
         next === 'double-door' &&
@@ -186,6 +191,17 @@
       )
         next = 'window'
       segs[segIdx] = { ...seg, variant: next }
+      if (facing) {
+        // Interior wall: this side owns it, the far side stays open
+        const far = getWallByDir(
+          house.rooms[facing.roomIndex],
+          oppositeDir(dir)
+        )
+        far[facing.segmentIndex] = {
+          ...far[facing.segmentIndex],
+          variant: 'open',
+        }
+      }
     })
   }
 
@@ -411,7 +427,7 @@
       </div>
     {/if}
 
-    {#if tool === 'select' && editRoom && editRoomIdx != null}
+    {#if tool === 'select' && editHouse && editRoom && editRoomIdx != null}
       <div class="section-title">
         Editing Room {editRoomIdx + 1} ({editRoom.sizeX}×{editRoom.sizeZ})
       </div>
@@ -423,7 +439,13 @@
           {#each wall as seg, segIdx (segIdx)}
             <button
               class="variant-btn"
-              disabled={seg.variant === 'open'}
+              disabled={seg.variant === 'open' &&
+                !facingSegmentRef(
+                  editHouse.rooms,
+                  editRoomIdx,
+                  dir.dir,
+                  segIdx
+                )}
               title="Seg {segIdx + 1}: {seg.variant}"
               onclick={() => cycleSegmentVariant(dir.dir, segIdx)}
               >{seg.variant === 'open'

@@ -50,7 +50,8 @@ export { getStairwellYOffset } from './house-geo-stairwell'
 
 export function buildHouseGroup(
   house: HouseData,
-  roomsHash?: string
+  roomsHash?: string,
+  opts?: { roofs?: boolean }
 ): HouseGroupResult {
   const houseGroup = new THREE.Group()
   houseGroup.position.set(house.origin.x, house.origin.y, house.origin.z)
@@ -73,9 +74,11 @@ export function buildHouseGroup(
   }
 
   const suppressed = new Set(
-    house.rooms.filter((r) =>
-      shouldSuppressRoof(r, footprintsByFloor.get(r.floorLevel + 1) ?? [])
-    )
+    opts?.roofs === false
+      ? house.rooms
+      : house.rooms.filter((r) =>
+          shouldSuppressRoof(r, footprintsByFloor.get(r.floorLevel + 1) ?? [])
+        )
   )
   const allSpans = roofSpanByRoom(house.rooms)
   const spanByRoom = roofSpanByRoom(house.rooms, (r) => suppressed.has(r))

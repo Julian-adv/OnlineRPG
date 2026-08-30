@@ -7,6 +7,7 @@ import { getHousingMaterial } from './housing-textures'
 import {
   crossRoomDoorPartner,
   doubleDoorPartner,
+  facingSegmentRef,
   getWallByDir,
   isDoorVariant,
 } from '../managers/housing-passability'
@@ -340,31 +341,33 @@ export function collectWallSegments(
 
     const texIdx = seg.texture % HOUSING_TEXTURES.length
 
-    // Position: offset by halfT to center within the shortened span
+    // Position: offset by halfT to center within the shortened span. An
+    // interior wall sits on the shared line, not pushed out by the jetty.
     const segCenter = i * segW + W / 2
+    const ohOut = facingSegmentRef(allRooms, roomIndex, dir, i) ? 0 : oh
     let x: number, z: number, rotY: number
 
     switch (dir) {
       case 'north': {
         x = localX - oh + halfT + segCenter
-        z = localZ - oh + halfT
+        z = localZ - ohOut + halfT
         rotY = 0
         break
       }
       case 'south': {
         x = localX - oh + halfT + segCenter
-        z = localZ + sizeZ + oh - halfT
+        z = localZ + sizeZ + ohOut - halfT
         rotY = 0
         break
       }
       case 'east': {
-        x = localX + sizeX + oh - halfT
+        x = localX + sizeX + ohOut - halfT
         z = localZ - oh + halfT + segCenter
         rotY = Math.PI / 2
         break
       }
       case 'west': {
-        x = localX - oh + halfT
+        x = localX - ohOut + halfT
         z = localZ - oh + halfT + segCenter
         rotY = Math.PI / 2
         break

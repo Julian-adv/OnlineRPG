@@ -34,8 +34,8 @@ pub struct RoomData {
     pub stair_reversed: bool,       // 계단 오름 방향 반전
     pub local_x: i32,              // house origin 기준 오프셋 (미터)
     pub local_z: i32,
-    pub size_x: u8,                // 3~6m
-    pub size_z: u8,                // 3~6m
+    pub size_x: u8,                // 1~6m (1~2m는 복도/벽장용)
+    pub size_z: u8,                // 1~6m
     pub floor_level: u8,           // 0~3 (1층~4층)
     pub floor_texture: u8,         // 텍스쳐 카탈로그 인덱스
     pub roof_texture: u8,
@@ -78,9 +78,9 @@ pub struct PassabilityGrid {
 }
 ```
 
-- 방 크기: 3~6m (정해진 세트), 배치 그리드: 1m 단위 스냅
+- 방 크기: 1~6m (템플릿 세트, 복도 6×1·6×2 포함), 배치 그리드: 1m 단위 스냅
 - 벽은 1m 세그먼트 단위: 5m 북벽 → `wall_north` 길이 5
-- 인접 방 공유 면: 양쪽 모두 `Open`이어야 함 (서버 검증)
+- 인접 방 공유 면: 배치 시 양쪽 `Open`으로 자동 설정. 내부 벽을 세우려면 한쪽만 `Solid`/`WithDoor`로 바꾸고 맞은편은 `Open` 유지 (에디터가 강제, 벽 한 겹). 서버는 검증하지 않음
 - N층 y 오프셋 = N × (wall_height + FLOOR_THICKNESS)
 
 ## Wall System
@@ -230,6 +230,12 @@ floorOverhang(floorLevel) = floorLevel × 0.15
 - 단순 평면: `(sizeX + overhang×2) × (sizeZ + overhang×2)` + `ROOF_OVERHANG(0.3m)` 처마
 
 ### Gabled Roof (맞배지붕)
+
+지붕 스팬은 방 단위가 아니라 **footprint** 단위로 계산 (`computeRoofSpans`): 같은 `층|지붕타입|벽높이|용마루방향` 방들을 1m 셀로 래스터화한 뒤 최대 직사각형으로 재구성. 내부를 여러 방으로 쪼개도 지붕은 방 하나일 때와 같다.
+
+- 용마루 방향: 명시값 > 직사각형 footprint를 이루는 방들은 면적 가중 다수결로 통일 > 그 외 방은 자기 긴 축, 폭 ≤ 2m 방(복도)은 가장 긴 변을 공유하는 이웃 방향
+- 용마루 직각 방향 깊이가 `MAX_ROOF_SPAN_DEPTH`(12m)를 넘으면 M자로 분할 (분할선은 3m 이내의 방 경계에 스냅)
+- 회귀 테스트 `house-geo-roof-spans.test.ts`: 실서버 하우스 스냅샷과 동일한 출력 보장
 
 - **두 경사면**: 용마루에서 만남, 두께 `WALL_THICKNESS`
 - **용마루 방향**: `roofRidgeDir` (auto = 긴 축 방향)
