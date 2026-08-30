@@ -19,7 +19,7 @@ const ENCOUNTER_COOLDOWN_SECS: i64 = 600;
 
 /// Record one seen player into an owner's queue: refresh and move to the
 /// back if known, append (evicting the oldest over cap) if new.
-fn note_encounter(
+fn add_encounter(
     q: &mut VecDeque<EncounterEntry>,
     character_id: i64,
     name: &str,
@@ -70,7 +70,7 @@ impl GameState {
                 continue;
             }
             if let Some(cid) = character_id_of(&other.id) {
-                note_encounter(
+                add_encounter(
                     map.entry(me.id).or_default(),
                     cid,
                     &other.name,
@@ -79,7 +79,7 @@ impl GameState {
                 );
             }
             if let Some(cid) = my_character_id {
-                note_encounter(
+                add_encounter(
                     map.entry(other.id).or_default(),
                     cid,
                     &me.name,
@@ -159,7 +159,7 @@ mod tests {
     use super::*;
 
     fn note(q: &mut VecDeque<EncounterEntry>, cid: i64, now: i64) {
-        note_encounter(q, cid, &format!("p{cid}"), 1, now);
+        add_encounter(q, cid, &format!("p{cid}"), 1, now);
     }
 
     #[test]
@@ -189,8 +189,8 @@ mod tests {
     #[test]
     fn a_later_re_meeting_counts_and_updates_the_snapshot() {
         let mut q = VecDeque::new();
-        note_encounter(&mut q, 1, "old_name", 3, 0);
-        note_encounter(&mut q, 1, "new_name", 4, ENCOUNTER_COOLDOWN_SECS);
+        add_encounter(&mut q, 1, "old_name", 3, 0);
+        add_encounter(&mut q, 1, "new_name", 4, ENCOUNTER_COOLDOWN_SECS);
         assert_eq!(q.len(), 1);
         let e = q.back().unwrap();
         assert_eq!(e.met_count, 2);
