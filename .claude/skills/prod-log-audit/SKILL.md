@@ -65,6 +65,20 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/gol
 - 대형 P2P 이전(`Trade:` 한쪽 ≥ 20g)은 계정·IP를 묶어 본다. 같은 IP·여러 계정·직후 캐릭터 삭제면 리롤용 자산 이전(위반 아님, 기록만).
 - 직전 노트의 순증감과 비교해 방향(인플레/디플레)을 적는다.
 
+## 5-1. 인챈트
+
+로그 문구(모두 `game_state::inventory` / `combat`):
+- 드롭: `Bonus drops ["scroll_of_enchant_weapon", …] at (x,z) PLACE` — 플레이어명 없음, 한 줄에 여러 아이템 가능하니 **장 수는 id 등장 횟수**로 센다.
+- 처치: `Player NAME killed TYPE (lvl N) at (x,z) PLACE; weapon drop: …` — `lvl`은 유효레벨. `world_drop.csv`는 ≤8 0.5%, >8 1%(종류당)이므로 기대 드롭 = 0.005×(≤8 킬) + 0.01×(>8 킬), 종류당 하나씩.
+- 시도: `NAME consumed scroll_of_enchant_(weapon|armor) at PLACE`. 결과: `NAME enchanted ITEM to +N` / `NAME destroyed ITEM enchanting at +N`(+N은 시도 전 값).
+
+적을 것: 처치 수(장소별), 드롭 장 수(종류·장소별)와 킬당 실측률 대 설정 기대값, 시도 수와 성공/파괴 비율, 개인별 시도 상위, 파괴 목록(누가 무엇을 +몇에서), 창 안 최고 도달값, 상인 판매·P2P 건수.
+
+DB(`character_items(item_def_id, enchant, equip_slot, quantity)` + `characters`):
+- 최고 인챈트 무기·방어구(장착/가방 구분, 방어구 id는 `data-src/items.csv`의 `armor` 카테고리로 거른다), +5·+7 이상 개수.
+- 주문서 재고 합계와 보유 상위 — 드롭/일 대 시도/일과 비교해 축적률을 적는다.
+- 같은 캐릭이 +9 무기를 여러 자루 갖는 식의 이상치는 이전 창 시도 로그와 대조해 출처를 적는다.
+
 ## 6. DB (`/home/ubuntu/work/OnlineRPG/data/game_data.db`, SQLite)
 
 - 같은 디렉터리에 `game_data-backup-*.db`가 있다. `find … -name "*.db" | head -1`로 잡지 말고 경로를 고정한다.
@@ -83,6 +97,6 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/gol
 
 ## 9. 노트 구성
 
-1. 창·재시작 이력 → 2. 전체 상태 → 3. 플레이어에게 보였던 문제 → 4. 수상하지만 무해 → 5. 사소 → 6. 대역폭 → 7. 경제 → 8. 상위/액티브 플레이어 → 9. 봇 → 10. 직전 점검표 대조 → 11. 후속 후보 → 12. 조회 메모(이번에 새로 알게 된 경로·문구·함정).
+1. 창·재시작 이력 → 2. 전체 상태 → 3. 플레이어에게 보였던 문제 → 4. 수상하지만 무해 → 5. 사소 → 6. 대역폭 → 7. 경제 → 8. 인챈트 → 9. 상위/액티브 플레이어 → 10. 봇 → 11. 직전 점검표 대조 → 12. 후속 후보 → 13. 조회 메모(이번에 새로 알게 된 경로·문구·함정).
 
 사용자에게는 표 위주로 짧게 보고한다. 숫자는 사용자가 툴 출력을 못 보므로 본문에 직접 적는다. 추정은 추정이라고 쓰고, 나중에 틀린 게 드러나면 정정한다.
