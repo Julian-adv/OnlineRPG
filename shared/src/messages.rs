@@ -162,6 +162,18 @@ pub struct OnlineFriend {
     pub level: u32,
 }
 
+/// One remembered meeting as listed in `RecentEncounters`. Keyed by
+/// character id like `FriendEntry`: the memory outlives both sessions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncounterEntry {
+    pub character_id: i64,
+    /// Name and level as of the last meeting.
+    pub name: String,
+    pub level: u32,
+    pub last_met_unix: i64,
+    pub met_count: u32,
+}
+
 /// How long a friend request stays answerable. Four times
 /// `PARTY_INVITE_TTL`: a party invite is an offer to play *now*, a friend
 /// request can wait out the fight the target is in. The web client mirrors it
@@ -664,6 +676,8 @@ pub enum ClientMessage {
     /// Ask which of the sender's friends are online right now. Polled by the
     /// client (faster while the panel is open); there is no presence push.
     RequestFriendsOnline,
+    /// Ask for the sender's recently-met-players list (social panel open).
+    RequestRecentEncounters,
     /// Ask where the sender's party members are right now (map open). A
     /// one-shot snapshot: steady-state updates are pushed by the server's
     /// party-position tick whenever a member relocates.
@@ -921,6 +935,11 @@ pub enum ServerMessage {
     /// no separate message.
     FriendsOnline {
         friends: Vec<OnlineFriend>,
+    },
+    /// Answer to `RequestRecentEncounters`: the last players the sender was
+    /// near, most recent first, capped server-side.
+    RecentEncounters {
+        entries: Vec<EncounterEntry>,
     },
     /// Direct to the target: a friend request to answer with `FriendRespond`
     /// before it expires server-side.

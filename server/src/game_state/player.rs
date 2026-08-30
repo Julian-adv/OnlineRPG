@@ -407,6 +407,7 @@ impl super::GameState {
         }
         self.remove_player_blocks(player_id).await;
         self.remove_player_friends(player_id).await;
+        self.remove_player_encounters(player_id).await;
         self.remove_player_titles(player_id).await;
         self.forget_whisper_partner(player_id).await;
         self.forget_player_skills(player_id).await;
@@ -844,12 +845,15 @@ impl super::GameState {
         .await;
 
         // Return visible game_state to be sent directly to the new player only
-        let current_players = self.players.read().await;
-        let other_players: Vec<Player> = current_players
-            .iter()
-            .filter(|(id, _)| nearby_player_set.contains(*id) && *id != &player_id)
-            .map(|(_, player)| player.clone())
-            .collect();
+        let other_players: Vec<Player> = {
+            let current_players = self.players.read().await;
+            current_players
+                .iter()
+                .filter(|(id, _)| nearby_player_set.contains(*id) && *id != &player_id)
+                .map(|(_, player)| player.clone())
+                .collect()
+        };
+        self.record_encounters(&player, &other_players).await;
 
         let monsters: HashMap<String, crate::types::Monster> = self
             .monsters
@@ -2195,6 +2199,7 @@ impl super::GameState {
             msgs
         };
 
+        self.record_encounters(player, &entered_players).await;
         for other in entered_players {
             self.send_direct_message(
                 player_id,

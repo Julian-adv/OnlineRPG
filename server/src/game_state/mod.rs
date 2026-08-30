@@ -5,7 +5,7 @@ use crate::types::{CharacterAttributes, Player, PlayerId, ServerMessage};
 use bytes::Bytes;
 use onlinerpg_shared::housing::{HouseData, RoomData, WallDirection};
 use onlinerpg_shared::inventory::PlayerInventory;
-use onlinerpg_shared::messages::BuybackEntry;
+use onlinerpg_shared::messages::{BuybackEntry, EncounterEntry};
 use onlinerpg_shared::schedule::{parse_conditions, resolve_active_schedule, ScheduleEntry};
 
 /// A buyback entry plus the wall-clock deadline after which it is dropped.
@@ -242,6 +242,7 @@ pub(crate) use deals::band_invariant_holds;
 #[cfg(test)]
 pub(crate) use debuff::WET_DEBUFF_ID;
 mod dungeon;
+mod encounters;
 mod friends;
 pub(crate) mod hunger;
 mod inventory;
@@ -377,6 +378,9 @@ pub struct GameState {
     player_skills: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::skills::Skills>>>,
     /// Players whose skills changed since the last periodic save.
     dirty_skills: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Recently-met players per online player, oldest first, capped at
+    /// `encounters::ENCOUNTER_CAP`. Session-lived: dropped on disconnect.
+    recent_encounters: Arc<RwLock<HashMap<PlayerId, std::collections::VecDeque<EncounterEntry>>>>,
     /// Live fishing sessions, one per player, advanced by `tick_fishing`.
     fishing_sessions: Arc<RwLock<HashMap<PlayerId, fishing::FishingSession>>>,
     /// Session count mirror, so the per-move cancel check costs one atomic
@@ -673,6 +677,7 @@ impl GameState {
             player_gold: Arc::new(RwLock::new(HashMap::new())),
             player_skills: Arc::new(RwLock::new(HashMap::new())),
             dirty_skills: Arc::new(RwLock::new(HashSet::new())),
+            recent_encounters: Arc::new(RwLock::new(HashMap::new())),
             fishing_sessions: Arc::new(RwLock::new(HashMap::new())),
             fishing_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             water_check_tick: Arc::new(std::sync::atomic::AtomicU64::new(0)),
