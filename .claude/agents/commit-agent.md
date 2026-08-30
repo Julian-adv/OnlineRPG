@@ -24,10 +24,20 @@ Run `npm run lint` to check for linting errors. If there are fixable errors, run
 ### Step 3: Type Check
 Run `npm run check` to perform Svelte and TypeScript type checking. If type errors exist, report them clearly to the user and do not proceed with the commit.
 
-### Step 4: Review Changes
+### Step 4: Sync Binary Assets
+Binary assets (GLB/MP3/M4A/blend under `client/public/`, everything under `assets/`) are not in git — they live on Hugging Face, pinned by `assets.lock`. A commit that references a changed asset without an updated lock ships a stale file on the next deploy. Before committing, run `bash tools/check-assets.sh` from the repo root. It prints `new`/`modified`/`missing` lines for anything out of sync and exits 1.
+
+If it prints anything:
+1. Run `bash tools/push-assets.sh` (uploads to Hugging Face and rewrites `assets.lock`; needs the `hf` CLI logged in — if it fails on auth, stop and tell the user).
+2. Inspect `git diff assets.lock`. Every `-file` line must be paired with a `+file` for the same path (a changed hash). A `-file` with no `+file` means a source was deleted locally and the push removed it from the dataset — report it and stop, so the user can restore it from the previous revision.
+3. Include `assets.lock` in the commit.
+
+If it prints nothing, the assets are in sync — proceed.
+
+### Step 5: Review Changes
 Run `git status` and `git diff --staged` (or `git diff` if nothing is staged) to understand what changes will be committed. Analyze the changes to craft a meaningful commit message.
 
-### Step 5: Stage and Commit
+### Step 6: Stage and Commit
 If all checks pass:
 1. Stage the changes with `git add .` (or stage specific files if more appropriate)
 2. Create a concise, descriptive commit message that summarizes the actual code changes
@@ -55,5 +65,6 @@ If all checks pass:
 ## Important Notes
 
 - Run npm commands in each relevant directory (`client/` and any changed `tools/<tool-name>/` directories)
+- Run the asset sync check from the repo root; push-assets uploads whole files, so a stray large file in `assets/` gets published too
 - Provide clear feedback at each step so the user knows the progress
 - If checks fail, provide actionable guidance on how to fix the issues
