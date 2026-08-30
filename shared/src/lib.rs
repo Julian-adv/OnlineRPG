@@ -111,7 +111,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      player until their scene is drawn; an older server cannot decode it.
 /// v46: titles — `Player.title`, `Character.titles`/`active_title`,
 ///      `ClientMessage::SetActiveTitle`; an older server cannot decode it.
-pub const PROTOCOL_VERSION: u32 = 46;
+/// v47: recently-met players — `EncounterEntry`,
+///      `ClientMessage::RequestRecentEncounters`,
+///      `ServerMessage::RecentEncounters`; an older server cannot decode it.
+pub const PROTOCOL_VERSION: u32 = 47;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
