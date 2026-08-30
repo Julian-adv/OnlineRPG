@@ -106,6 +106,52 @@ impl GameState {
     pub(super) async fn remove_player_encounters(&self, player_id: &PlayerId) {
         self.recent_encounters.write().await.remove(player_id);
     }
+
+    /// Seed a fresh session's queue from the DB rows (oldest first, as
+    /// `load_encounters` returns them). Called on login, before any meeting
+    /// can fire, so plain insert-over is safe.
+    pub async fn set_player_encounters(&self, player_id: &PlayerId, rows: Vec<EncounterEntry>) {
+        self.recent_encounters
+            .write()
+            .await
+            .insert(*player_id, rows.into());
+    }
+
+    /// Detach the queue for a logout save: `(owner character id, oldest
+    /// first)`. Must run while `player_characters` still has the player —
+    /// i.e. before `unregister_player_character` — or the memory is dropped
+    /// unsaved.
+    pub(super) async fn take_player_encounters(
+        &self,
+        player_id: &PlayerId,
+    ) -> Vec<(i64, Vec<EncounterEntry>)> {
+        let Some(queue) = self.recent_encounters.write().await.remove(player_id) else {
+            return Vec::new();
+        };
+        let characters = self.player_characters.read().await;
+        match characters.get(player_id) {
+            Some((character_id, _, _)) => vec![(*character_id, queue.into())],
+            None => Vec::new(),
+        }
+    }
+
+    /// Every online player's queue for the shutdown snapshot, keyed by
+    /// character id. Leaves the map intact: shutdown doesn't tear sessions
+    /// down one by one.
+    pub(super) async fn collect_all_encounter_states(&self) -> Vec<(i64, Vec<EncounterEntry>)> {
+        let encounters = self.recent_encounters.read().await;
+        let characters = self.player_characters.read().await;
+        let mut out: Vec<(i64, Vec<EncounterEntry>)> = encounters
+            .iter()
+            .filter_map(|(player_id, queue)| {
+                characters
+                    .get(player_id)
+                    .map(|(cid, _, _)| (*cid, queue.iter().cloned().collect()))
+            })
+            .collect();
+        out.sort_by_key(|(cid, _)| *cid);
+        out
+    }
 }
 
 #[cfg(test)]

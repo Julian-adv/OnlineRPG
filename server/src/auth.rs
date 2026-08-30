@@ -1,7 +1,7 @@
 use crate::types::{CharacterAttributes, GameDateTime};
 use crate::world_config::world_config;
 use onlinerpg_shared::inventory::EquipSlot;
-use onlinerpg_shared::messages::FriendEntry;
+use onlinerpg_shared::messages::{EncounterEntry, FriendEntry};
 use onlinerpg_shared::xp;
 use onlinerpg_shared::{CharacterClass, Gender, VisibleEquipment};
 use r2d2_sqlite::SqliteConnectionManager;
@@ -629,6 +629,7 @@ impl AuthService {
         Self::migrate_item_definition_ids(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
         Self::ensure_friends_schema(&conn)?;
+        Self::ensure_encounters_schema(&conn)?;
         Self::ensure_bans_schema(&conn)?;
         Self::ensure_character_skills_schema(&conn)?;
         Self::ensure_world_time_schema(&conn)?;
@@ -785,6 +786,26 @@ impl AuthService {
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_character_friends_friend_id \
              ON character_friends(friend_id)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Recently-met players (`doc` in `game_state/encounters.rs`). Name and
+    /// level are snapshots from the last meeting, not joins: the list must
+    /// keep showing someone whose character was since deleted.
+    fn ensure_encounters_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS character_encounters (
+                owner_character_id INTEGER NOT NULL,
+                other_character_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                level INTEGER NOT NULL,
+                last_met INTEGER NOT NULL,
+                met_count INTEGER NOT NULL,
+                PRIMARY KEY (owner_character_id, other_character_id),
+                FOREIGN KEY (owner_character_id) REFERENCES characters(id) ON DELETE CASCADE
+            )",
             [],
         )?;
         Ok(())
@@ -1459,6 +1480,60 @@ impl AuthService {
         Ok(friends)
     }
 
+    /// Remembered meetings for one character, oldest first — the order the
+    /// in-memory queue wants them pushed back in.
+    pub fn load_encounters(&self, character_id: i64) -> Result<Vec<EncounterEntry>, AuthError> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT other_character_id, name, level, last_met, met_count
+             FROM character_encounters
+             WHERE owner_character_id = ?1
+             ORDER BY last_met ASC",
+        )?;
+        let entries = stmt
+            .query_map(params![character_id], |row| {
+                Ok(EncounterEntry {
+                    character_id: row.get(0)?,
+                    name: row.get(1)?,
+                    level: row.get(2)?,
+                    last_met_unix: row.get(3)?,
+                    met_count: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(entries)
+    }
+
+    /// Replace each owner's remembered meetings wholesale — the in-memory
+    /// queue is the whole truth (capped, deduped), so no merge is needed.
+    fn write_encounters(
+        tx: &rusqlite::Transaction,
+        encounters: &[(i64, Vec<EncounterEntry>)],
+    ) -> Result<(), rusqlite::Error> {
+        for (owner_id, entries) in encounters {
+            tx.execute(
+                "DELETE FROM character_encounters WHERE owner_character_id = ?1",
+                params![owner_id],
+            )?;
+            let mut insert = tx.prepare_cached(
+                "INSERT INTO character_encounters
+                 (owner_character_id, other_character_id, name, level, last_met, met_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for e in entries {
+                insert.execute(params![
+                    owner_id,
+                    e.character_id,
+                    e.name,
+                    e.level,
+                    e.last_met_unix,
+                    e.met_count
+                ])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Both directions in one transaction, so no crash can leave a one-sided
     /// friendship the callers never expect to see.
     pub fn add_friend(&self, character_id: i64, friend_id: i64) -> Result<(), AuthError> {
@@ -1912,12 +1987,14 @@ impl AuthService {
         inventories: &[(i64, Vec<ItemRow>)],
         skills: &[(i64, Vec<SkillRow>)],
         discoveries: &[(i64, String)],
+        encounters: &[(i64, Vec<EncounterEntry>)],
         world_time: Option<&GameDateTime>,
     ) -> Result<(), AuthError> {
         if characters.is_empty()
             && inventories.is_empty()
             && skills.is_empty()
             && discoveries.is_empty()
+            && encounters.is_empty()
             && world_time.is_none()
         {
             return Ok(());
@@ -1925,6 +2002,7 @@ impl AuthService {
         let conn = self.open_connection()?;
         let tx = conn.unchecked_transaction()?;
         Self::write_character_states(&tx, characters)?;
+        Self::write_encounters(&tx, encounters)?;
         Self::replace_inventories(
             &tx,
             inventories
@@ -2601,6 +2679,71 @@ mod tests {
     }
 
     #[test]
+    fn encounters_round_trip_and_replace_wholesale() {
+        let db_path = std::env::temp_dir().join(format!(
+            "onlinerpg_auth_encounters_{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let auth = AuthService::new(db_path).unwrap();
+        let account = auth.login_npc("npc_encounters_test").unwrap();
+        let attributes = CharacterAttributes {
+            r#str: 12,
+            dex: 12,
+            con: 12,
+            int: 12,
+            wis: 12,
+            cha: 12,
+            guard: 10,
+        };
+        let record = auth
+            .create_character(
+                &account,
+                "Hermit",
+                &attributes,
+                16,
+                CharacterClass::Ranger,
+                Gender::Male,
+            )
+            .unwrap();
+
+        assert!(auth.load_encounters(record.id).unwrap().is_empty());
+
+        let entry = |cid: i64, last_met: i64| EncounterEntry {
+            character_id: cid,
+            name: format!("p{cid}"),
+            level: 3,
+            last_met_unix: last_met,
+            met_count: 1,
+        };
+        auth.save_batch(
+            &[],
+            &[],
+            &[],
+            &[],
+            &[(record.id, vec![entry(101, 10), entry(102, 20)])],
+            None,
+        )
+        .unwrap();
+        let loaded = auth.load_encounters(record.id).unwrap();
+        assert_eq!(loaded, vec![entry(101, 10), entry(102, 20)], "oldest first");
+
+        // The next save replaces wholesale: dropped entries stay dropped.
+        auth.save_batch(
+            &[],
+            &[],
+            &[],
+            &[],
+            &[(record.id, vec![entry(102, 30)])],
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            auth.load_encounters(record.id).unwrap(),
+            vec![entry(102, 30)]
+        );
+    }
+
+    #[test]
     fn skills_round_trip_and_upsert_preserves_unknown_rows() {
         let db_path =
             std::env::temp_dir().join(format!("onlinerpg_auth_skills_{}.db", uuid::Uuid::new_v4()));
@@ -2642,6 +2785,7 @@ mod tests {
                 }],
             )],
             &[],
+            &[],
             None,
         )
         .unwrap();
@@ -2657,6 +2801,7 @@ mod tests {
                     xp: 500,
                 }],
             )],
+            &[],
             &[],
             None,
         )
@@ -2683,6 +2828,7 @@ mod tests {
                     xp: 1400,
                 }],
             )],
+            &[],
             &[],
             None,
         )

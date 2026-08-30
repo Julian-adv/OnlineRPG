@@ -118,6 +118,7 @@ async fn kick_flushes_dropped_inventory_before_replacement_load() {
         )],
         &[],
         &[],
+        &[],
         None,
     )
     .unwrap();
@@ -274,7 +275,7 @@ async fn load_saved_inventory(
     let auth = make_test_auth(name);
     let account = auth.login_npc(&format!("npc_{name}")).unwrap();
     let record = create_test_character(&auth, &account, "Loader");
-    auth.save_batch(&[], &[(record.id, rows)], &[], &[], None)
+    auth.save_batch(&[], &[(record.id, rows)], &[], &[], &[], None)
         .unwrap();
 
     let game_state = make_test_game_state(name);

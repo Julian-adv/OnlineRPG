@@ -677,10 +677,11 @@ impl super::GameState {
         }
         let inventories = Vec::from_iter(self.take_player_inventory(player_id).await);
         let skills = Vec::from_iter(self.take_player_skills(player_id).await);
+        let encounters = self.take_player_encounters(player_id).await;
 
         let auth = auth.clone();
         flush_save(
-            move || auth.save_batch(&characters, &inventories, &skills, &[], None),
+            move || auth.save_batch(&characters, &inventories, &skills, &[], &encounters, None),
             "player state",
         )
         .await;
@@ -693,6 +694,7 @@ impl super::GameState {
         let (characters, inventories) = self.collect_shutdown_snapshot().await;
         let skills = self.collect_all_skill_states().await;
         let discoveries = self.take_pending_discovery_saves().await;
+        let encounters = self.collect_all_encounter_states().await;
         let character_count = characters.len();
         let inventory_count = inventories.len();
         let datetime = self.current_game_datetime();
@@ -704,6 +706,7 @@ impl super::GameState {
                     &inventories,
                     &skills,
                     &discoveries,
+                    &encounters,
                     Some(&datetime),
                 )?;
                 info!(
@@ -777,11 +780,14 @@ impl super::GameState {
         let discoveries = dirty_discoveries.clone();
         let saved = flush_save(
             move || {
+                // Encounters have no dirty tracking; they save on logout and
+                // shutdown only.
                 auth.save_batch(
                     &dirty_states,
                     &dirty_inventories,
                     &dirty_skills,
                     &discoveries,
+                    &[],
                     None,
                 )?;
                 info!(

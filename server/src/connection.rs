@@ -1194,16 +1194,18 @@ async fn handle_client_message(
                 Ok((
                     auth.load_blocked_names(character_id)?,
                     auth.load_friends(character_id)?,
+                    auth.load_encounters(character_id)?,
                 ))
             })
             .await
             {
-                Ok((blocked, friends)) => {
+                Ok((blocked, friends, encounters)) => {
                     game_state.set_player_blocks(&id, blocked).await;
                     game_state.set_player_friends(&id, friends).await;
+                    game_state.set_player_encounters(&id, encounters).await;
                 }
                 Err(err) => warn!(
-                    "Failed to load block/friend lists for character {}: {}",
+                    "Failed to load block/friend/encounter lists for character {}: {}",
                     character_id, err
                 ),
             }
