@@ -239,7 +239,10 @@ impl ConnectionState {
         match &self.account_name {
             Some(name) => Ok(name.clone()),
             None => {
-                warn!("{} requested by unauthenticated client", action);
+                warn!(
+                    "{} requested by unauthenticated client ip={}",
+                    action, self.client_ip
+                );
                 Err(vec![ServerMessage::CharacterError {
                     message: "Authenticate first".to_string(),
                 }])
@@ -406,7 +409,7 @@ pub async fn handle_connection(
                 if state.account_name.is_none()
                     && state.connected_at.elapsed().as_secs() > UNAUTH_TIMEOUT_SECS
                 {
-                    warn!("Dropping connection: unauthenticated after {}s", UNAUTH_TIMEOUT_SECS);
+                    warn!("Dropping connection: unauthenticated after {}s ip={}", UNAUTH_TIMEOUT_SECS, state.client_ip);
                     let _ = ws_sender.send(close_frame(
                         onlinerpg_shared::CLOSE_CODE_IDLE_TIMEOUT,
                         "login did not complete in time",
@@ -443,9 +446,10 @@ pub async fn handle_connection(
                             || unauth_message_count > UNAUTH_MAX_MESSAGES
                         {
                             warn!(
-                                "Dropping unauthenticated connection: pre-auth limits exceeded ({} bytes, message #{})",
+                                "Dropping unauthenticated connection: pre-auth limits exceeded ({} bytes, message #{}) ip={}",
                                 m.len(),
-                                unauth_message_count
+                                unauth_message_count,
+                                state.client_ip
                             );
                             break;
                         }
