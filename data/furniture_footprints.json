@@ -41,6 +41,18 @@
     "minZ": -0.487,
     "maxZ": 0.487
   },
+  "rustic_bed": {
+    "minX": -0.453,
+    "maxX": 0.453,
+    "minZ": -2.05,
+    "maxZ": 0.15
+  },
+  "stone_hearth": {
+    "minX": -0.965,
+    "maxX": 0.965,
+    "minZ": -0.348,
+    "maxZ": 0.348
+  },
   "ammobox": {
     "minX": -0.3,
     "maxX": 0.3,

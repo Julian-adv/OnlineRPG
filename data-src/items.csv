@@ -44,6 +44,7 @@ scroll_of_party_summon,Scroll of Party Summon,Reading the runes calls your whole
 phoenix_talisman,Phoenix Talisman,A stone tablet etched with a sunfire phoenix. Carry it and when you fall the bird stirs — you rise where you fell and the talisman crumbles to dust.,0.3,,true,objects/phoenix_talisman.png,objects/phoenix_talisman.glb,phoenix_talisman,,,5000,,,,,,,,,true,,,,,,,70
 table,Table,A sturdy wooden table.,20,,false,objects/table_icon.png,objects/table.glb,furniture,,wood,3000,,,,,,,,,,,,,,,,
 stone_hearth,Stone Hearth,An ancient stone fireplace with a carved shield crest. Reaches the ceiling.,400,,false,objects/stone_hearth.png,objects/stone_hearth.glb,furniture,,stone,12000,,,,,,,,,,,,,,,,
+rustic_bed,Rustic Bed,A simple wooden single bed with a woollen blanket.,60,,false,objects/rustic_bed.png,objects/rustic_bed.glb,furniture,,wood,4000,,,,,,,,,,,,,,,,
 leather_armor,Leather Armor,Supple leather chest armor crossed with straps and buckles.,8,chest,false,armor/leather_armor.png,armor/leather_armor.glb,armor,,leather,6000,2,,,,,,2,,,,,,,,,
 mandolin,Mandolin,A round-backed mandolin with gilded fretwork. Strum up a tune with /play_music.,2,main_hand,false,weapons/mandolin.png,weapons/mandolin.glb,instrument,,wood,4000,,,,,,,,,,,,,,,,
 worn_mandolin,Worn Mandolin,A road-worn mandolin that still sings true. Strum up a tune with /play_music. Merchants won't pay for it.,2,main_hand,false,weapons/mandolin.png,weapons/mandolin.glb,instrument,,wood,,,,,,,,,,,,,,,true,,
