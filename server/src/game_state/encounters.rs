@@ -10,16 +10,16 @@ use super::GameState;
 use crate::types::{Player, PlayerId, ServerMessage};
 
 /// Most meetings remembered per player; the oldest falls off first.
-pub(crate) const ENCOUNTER_CAP: usize = 100;
+const ENCOUNTER_CAP: usize = 100;
 
 /// Re-meeting the same player within this window refreshes `last_met` but
 /// does not count as a new meeting — AOI flicker in a crowd is not "met
 /// them 50 times".
-pub(crate) const ENCOUNTER_DEDUP_SECS: i64 = 600;
+const ENCOUNTER_COOLDOWN_SECS: i64 = 600;
 
 /// Record one seen player into an owner's queue: refresh and move to the
 /// back if known, append (evicting the oldest over cap) if new.
-pub(crate) fn note_encounter(
+fn note_encounter(
     q: &mut VecDeque<EncounterEntry>,
     character_id: i64,
     name: &str,
@@ -30,7 +30,7 @@ pub(crate) fn note_encounter(
         let Some(mut entry) = q.remove(pos) else {
             return;
         };
-        if now_unix - entry.last_met_unix >= ENCOUNTER_DEDUP_SECS {
+        if now_unix - entry.last_met_unix >= ENCOUNTER_COOLDOWN_SECS {
             entry.met_count += 1;
         }
         entry.last_met_unix = now_unix;
@@ -178,19 +178,19 @@ mod tests {
         let mut q = VecDeque::new();
         note(&mut q, 1, 0);
         note(&mut q, 2, 1);
-        note(&mut q, 1, ENCOUNTER_DEDUP_SECS - 1);
+        note(&mut q, 1, ENCOUNTER_COOLDOWN_SECS - 1);
         assert_eq!(q.len(), 2);
         let e = q.back().unwrap();
         assert_eq!(e.character_id, 1, "refreshed entry moves to the back");
         assert_eq!(e.met_count, 1, "AOI flicker is not a new meeting");
-        assert_eq!(e.last_met_unix, ENCOUNTER_DEDUP_SECS - 1);
+        assert_eq!(e.last_met_unix, ENCOUNTER_COOLDOWN_SECS - 1);
     }
 
     #[test]
     fn a_later_re_meeting_counts_and_updates_the_snapshot() {
         let mut q = VecDeque::new();
         note_encounter(&mut q, 1, "old_name", 3, 0);
-        note_encounter(&mut q, 1, "new_name", 4, ENCOUNTER_DEDUP_SECS);
+        note_encounter(&mut q, 1, "new_name", 4, ENCOUNTER_COOLDOWN_SECS);
         assert_eq!(q.len(), 1);
         let e = q.back().unwrap();
         assert_eq!(e.met_count, 2);
