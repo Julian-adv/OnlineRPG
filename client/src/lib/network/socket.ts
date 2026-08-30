@@ -811,6 +811,11 @@ class NetworkManager {
     this.sendMessage('RequestFriendsOnline')
   }
 
+  /** Ask for the recently-met players list (the panel's Met tab). */
+  sendRequestRecentEncounters() {
+    this.sendMessage('RequestRecentEncounters')
+  }
+
   sendBuyItem(merchantPlayerId: number, itemDefId: string) {
     this.sendMessage({
       BuyItem: { merchant_player_id: merchantPlayerId, item_def_id: itemDefId },

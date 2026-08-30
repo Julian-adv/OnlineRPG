@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { get } from 'svelte/store'
 import {
+  metAgo,
   applyFriendList,
   applyFriendsOnline,
   friendList,
@@ -122,5 +123,23 @@ describe('sortFriends', () => {
     const friends = [...roster]
     sortFriends(friends, new Map([[2, 8]]))
     expect(friends.map((f) => f.name)).toEqual(['alice', 'bob'])
+  })
+})
+
+describe('metAgo', () => {
+  const now = 1_700_000_000_000
+
+  it('buckets seconds, minutes, hours and days', () => {
+    const at = (secondsAgo: number) => now / 1000 - secondsAgo
+    expect(metAgo(at(0), now)).toBe('just now')
+    expect(metAgo(at(59), now)).toBe('just now')
+    expect(metAgo(at(60), now)).toBe('1m ago')
+    expect(metAgo(at(3599), now)).toBe('59m ago')
+    expect(metAgo(at(3600), now)).toBe('1h ago')
+    expect(metAgo(at(86400 * 3), now)).toBe('3d ago')
+  })
+
+  it('treats a future timestamp (clock skew) as just now', () => {
+    expect(metAgo(now / 1000 + 120, now)).toBe('just now')
   })
 })

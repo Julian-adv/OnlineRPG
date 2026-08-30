@@ -11,6 +11,16 @@ export interface FriendEntry {
   class: CharacterClass
 }
 
+/** One remembered meeting from ServerMessage::RecentEncounters. Name and
+ *  level are snapshots from the last meeting. */
+export interface EncounterEntry {
+  characterId: number
+  name: string
+  level: number
+  lastMetUnix: number
+  metCount: number
+}
+
 /** A friend request the player hasn't answered yet. */
 export interface PendingFriendRequest {
   requesterId: number
@@ -44,6 +54,19 @@ export const onlineFriends = writable<Map<number, number>>(new Map())
 export const pendingFriendRequests = writable<PendingFriendRequest[]>([])
 
 export const friendPanelVisible = writable(false)
+
+/** The last RecentEncounters answer, newest first — server order, kept as
+ *  delivered. */
+export const recentEncounters = writable<EncounterEntry[]>([])
+
+/** "just now" / "5m ago" / "3h ago" / "2d ago" for the Met tab. */
+export function metAgo(lastMetUnix: number, nowMs: number): string {
+  const seconds = Math.max(0, Math.floor(nowMs / 1000) - lastMetUnix)
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`
+  return `${Math.floor(seconds / 86400)}d ago`
+}
 
 /** Whether a friend coming online prints a chat line. Client-side only: the
  *  server pushes nothing either way, so this hides a notice rather than
@@ -102,6 +125,7 @@ export function resetFriendStores() {
   onlineFriends.set(new Map())
   pendingFriendRequests.set([])
   friendPanelVisible.set(false)
+  recentEncounters.set([])
   lastOnlineIds = null
 }
 

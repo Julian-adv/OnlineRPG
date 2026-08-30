@@ -2,7 +2,9 @@
   import {
     friendList,
     friendPanelVisible,
+    metAgo,
     onlineFriends,
+    recentEncounters,
     sortFriends,
     FRIENDS_POLL_OPEN_MS,
     FRIENDS_POLL_CLOSED_MS,
@@ -36,9 +38,30 @@
     return () => clearInterval(timer)
   })
 
-  function whisper(friend: FriendEntry) {
-    requestChatDraft(`/w ${friend.name} `)
+  function whisper(name: string) {
+    requestChatDraft(`/w ${name} `)
   }
+
+  let tab = $state<'friends' | 'met'>('friends')
+  const friendNames = $derived(new Set($friendList.map((f) => f.name)))
+
+  // The list is a snapshot, so ask again whenever the Met tab comes into
+  // view — switching to it, or reopening the panel on it.
+  $effect(() => {
+    if (visible && tab === 'met') {
+      networkManager.sendRequestRecentEncounters()
+    }
+  })
+
+  // Ticks while the Met tab shows, so "5m ago" doesn't freeze at its
+  // render-time value.
+  let nowMs = $state(Date.now())
+  $effect(() => {
+    if (!visible || tab !== 'met') return
+    nowMs = Date.now()
+    const timer = setInterval(() => (nowMs = Date.now()), 30_000)
+    return () => clearInterval(timer)
+  })
 
   let adding = $state(false)
   let addName = $state('')
@@ -64,8 +87,20 @@
 {#if visible}
   <div class="friend-panel" aria-label="Friends" use:draggablePanel={'friends'}>
     <div class="panel-header" data-drag-handle>
-      <span class="panel-title">Friends</span>
-      <span class="friend-count">{friends.length}/{MAX_FRIENDS}</span>
+      <button
+        class="tab-btn"
+        class:active={tab === 'friends'}
+        onclick={() => (tab = 'friends')}>Friends</button
+      >
+      <button
+        class="tab-btn"
+        class:active={tab === 'met'}
+        onclick={() => (tab = 'met')}>Met</button
+      >
+      <span class="spacer"></span>
+      {#if tab === 'friends'}
+        <span class="friend-count">{friends.length}/{MAX_FRIENDS}</span>
+      {/if}
       <button
         class="close-btn"
         title="Close"
@@ -73,7 +108,39 @@
       >
     </div>
 
-    {#if friends.length === 0}
+    {#if tab === 'met'}
+      {#if $recentEncounters.length === 0}
+        <div class="empty">No one met yet.</div>
+      {:else}
+        <div class="friend-rows">
+          {#each $recentEncounters as met (met.characterId)}
+            <div class="friend-row">
+              <span class="friend-name" title={met.name}>{met.name}</span>
+              <span class="friend-level">L{met.level}</span>
+              {#if met.metCount > 1}
+                <span class="met-count" title="Times met">×{met.metCount}</span>
+              {/if}
+              <span class="met-when">{metAgo(met.lastMetUnix, nowMs)}</span>
+              <span class="row-actions">
+                <button
+                  class="row-btn"
+                  title="Whisper"
+                  onclick={() => whisper(met.name)}>W</button
+                >
+                <button
+                  class="row-btn"
+                  title="Send friend request"
+                  disabled={friendNames.has(met.name)}
+                  onclick={() =>
+                    networkManager.sendChatMessage(`/friend add ${met.name}`)}
+                  >+</button
+                >
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {:else if friends.length === 0}
       <div class="empty">No friends yet.</div>
     {:else}
       <div class="friend-rows">
@@ -101,7 +168,7 @@
                 class="row-btn"
                 title="Whisper"
                 disabled={!isOnline(friend)}
-                onclick={() => whisper(friend)}>W</button
+                onclick={() => whisper(friend.name)}>W</button
               >
               <button
                 class="row-btn"
@@ -122,7 +189,9 @@
       </div>
     {/if}
 
-    {#if adding}
+    {#if tab === 'met'}
+      <!-- The Met tab has no footer; requests ride the row buttons. -->
+    {:else if adding}
       <div class="add-row">
         <!-- svelte-ignore a11y_autofocus -->
         <input
@@ -179,11 +248,38 @@
     margin-bottom: 8px;
   }
 
-  .panel-title {
-    flex: 1;
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 0 2px;
+    font-family: inherit;
     font-size: 14px;
     font-weight: 700;
+    color: #7f8f9f;
+    cursor: pointer;
+  }
+
+  .tab-btn.active {
     color: #8fe08f;
+    cursor: default;
+  }
+
+  .tab-btn:hover:not(.active) {
+    color: #b8c6d3;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+
+  .met-count {
+    color: #d9c27a;
+    font-size: 10px;
+  }
+
+  .met-when {
+    color: #7f8f9f;
+    font-size: 10px;
   }
 
   .friend-count {

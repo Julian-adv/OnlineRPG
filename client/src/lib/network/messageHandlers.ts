@@ -98,6 +98,7 @@ import {
   friendList,
   friendOnlineNoticeEnabled,
   pendingFriendRequests,
+  recentEncounters,
   resetFriendStores,
   MAX_PENDING_FRIEND_REQUESTS,
 } from '../stores/friendStore'
@@ -711,6 +712,26 @@ export function handleServerMessage(
           name: f.name,
           level: f.level,
           class: f.class,
+        }))
+      )
+      break
+
+    case 'RecentEncounters':
+      recentEncounters.set(
+        (
+          data.entries as {
+            character_id: number
+            name: string
+            level: number
+            last_met_unix: number
+            met_count: number
+          }[]
+        ).map((e) => ({
+          characterId: e.character_id,
+          name: e.name,
+          level: e.level,
+          lastMetUnix: e.last_met_unix,
+          metCount: e.met_count,
         }))
       )
       break

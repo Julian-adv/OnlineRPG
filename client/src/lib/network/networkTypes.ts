@@ -191,6 +191,7 @@ export type ClientMessage =
   | { FriendRespond: { requester_id: number; accept: boolean } }
   | { FriendRemove: { name: string } }
   | 'RequestFriendsOnline'
+  | 'RequestRecentEncounters'
   | { OpenDungeonChest: { entrance_id: string } }
   | {
       BreakDungeonProp: { entrance_id: string; depth: number; prop_id: number }
