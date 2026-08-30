@@ -8,6 +8,10 @@ use tracing::info;
 pub struct WorldConfig {
     #[serde(rename = "spawnPosition")]
     pub spawn_position: SpawnPosition,
+    /// Where death returns a player: the inn's sick room. `bed_ids` are the
+    /// room's beds in the region-object file covering `(x, z)`; a free one is
+    /// taken lying down, otherwise the player stands at `(x, y, z)`.
+    pub respawn: RespawnConfig,
     /// Live ambient monsters one player may own at once, across every type.
     /// Kept small so the field stays sparse now that dungeons carry the dense
     /// fights. The only server-wide bound there is: no global ceiling is
@@ -86,6 +90,37 @@ impl SpawnPosition {
             y: self.y,
             z: self.z,
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RespawnConfig {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub rotation_deg: f32,
+    pub floor_level: i8,
+    #[serde(default)]
+    pub bed_ids: Vec<u32>,
+}
+
+impl RespawnConfig {
+    pub fn position(&self) -> crate::types::Position {
+        crate::types::Position {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+        }
+    }
+
+    /// Region-object file holding the beds.
+    pub fn region(&self) -> (i32, i32) {
+        use onlinerpg_terrain::coords::{tile_to_region, world_to_tile};
+        (
+            tile_to_region(world_to_tile(self.x)),
+            tile_to_region(world_to_tile(self.z)),
+        )
     }
 }
 

@@ -5,6 +5,14 @@
     "z": 4741.6,
     "rotation": 158.8
   },
+  "respawn": {
+    "x": -1446.7,
+    "y": 4.4,
+    "z": 4754.9,
+    "rotationDeg": 180,
+    "floorLevel": 1,
+    "bedIds": [52, 53, 54, 55]
+  },
   "maxMonstersPerPlayer": 8,
   "serverMonsterAi": true,
   "pricing": {

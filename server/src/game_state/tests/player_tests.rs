@@ -209,12 +209,15 @@ async fn respawn_player_revives_dead_player_only() {
     let revived = players
         .get(&player_id)
         .expect("Player should still exist after respawn");
-    let spawn = &world_config().spawn_position;
+    // No region objects are loaded, so there is no bed: stand at the spot.
+    let respawn = &world_config().respawn;
     assert_eq!(revived.health, revived.max_health);
-    assert_eq!(revived.position.x, spawn.x);
-    assert_eq!(revived.position.y, spawn.y);
-    assert_eq!(revived.position.z, spawn.z);
-    assert_eq!(revived.rotation, spawn.rotation);
+    assert_eq!(revived.position.x, respawn.x);
+    assert_eq!(revived.position.y, respawn.y);
+    assert_eq!(revived.position.z, respawn.z);
+    assert_eq!(revived.rotation, respawn.rotation_deg.to_radians());
+    assert_eq!(revived.floor_level, respawn.floor_level);
+    assert_eq!(revived.object_type, None);
 
     // The spawn point sits within discovery range of a dungeon entrance, so
     // an unseeded respawner may receive DungeonDiscoveries alongside this.
@@ -237,6 +240,80 @@ async fn respawn_player_revives_dead_player_only() {
         }
         Err(err) => panic!("Expected empty broadcast channel, got {:?}", err),
     }
+}
+
+fn respawn_bed(id: u32, x: f32) -> onlinerpg_shared::furniture::FurniturePlacement {
+    let respawn = &world_config().respawn;
+    onlinerpg_shared::furniture::FurniturePlacement {
+        id,
+        type_id: "rustic_bed".to_string(),
+        x,
+        y: respawn.y,
+        z: respawn.z,
+        rotation_deg: 180.0,
+        floor_level: respawn.floor_level as u8,
+    }
+}
+
+async fn kill(game_state: &GameState, id: &PlayerId) {
+    game_state.players.write().await.get_mut(id).unwrap().health = 0;
+}
+
+#[tokio::test]
+async fn respawn_takes_the_first_free_bed_then_stands_beside_them() {
+    let game_state = make_test_game_state("respawn_beds");
+    let respawn = &world_config().respawn;
+    let (rx, rz) = respawn.region();
+    let ids = &respawn.bed_ids;
+    assert!(ids.len() >= 2, "config must list several beds");
+    let beds: Vec<_> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| respawn_bed(*id, respawn.x + i as f32 * 2.0))
+        .collect();
+    game_state.sync_region_furniture(rx, rz, &beds);
+
+    let mut sleepers = Vec::new();
+    for i in 0..ids.len() {
+        let name = format!("sleeper{i}");
+        let mut player = make_player(&name, 0.0, 0.0);
+        // Died mid-sit: the stale pose must not survive the respawn.
+        player.object_type = Some("chair".to_string());
+        player.object_id = Some(999);
+        game_state.add_player(player).await;
+        kill(&game_state, &pid(&name)).await;
+        game_state.respawn_player(&pid(&name)).await;
+        sleepers.push(pid(&name));
+    }
+    let players = game_state.get_all_players().await;
+    for (i, id) in sleepers.iter().enumerate() {
+        let p = &players[id];
+        assert_eq!(p.object_type.as_deref(), Some("rustic_bed"));
+        assert_eq!(p.object_id, Some(ids[i]));
+        assert_eq!(p.position.x, beds[i].x);
+        assert_eq!(p.rotation, 180f32.to_radians());
+        assert_eq!(p.floor_level, respawn.floor_level);
+    }
+
+    game_state
+        .add_player(make_player("latecomer", 0.0, 0.0))
+        .await;
+    kill(&game_state, &pid("latecomer")).await;
+    game_state.respawn_player(&pid("latecomer")).await;
+    let players = game_state.get_all_players().await;
+    let p = &players[&pid("latecomer")];
+    assert_eq!(p.object_type, None);
+    assert_eq!(p.object_id, None);
+    assert_eq!(p.position.x, respawn.x);
+
+    // A sleeper getting up frees the bed for the next death.
+    game_state
+        .set_player_interaction(&sleepers[0], None, None)
+        .await;
+    kill(&game_state, &pid("latecomer")).await;
+    game_state.respawn_player(&pid("latecomer")).await;
+    let players = game_state.get_all_players().await;
+    assert_eq!(players[&pid("latecomer")].object_id, Some(ids[0]));
 }
 
 #[tokio::test]

@@ -422,6 +422,8 @@ pub struct GameState {
     /// Bridge decks by owning region, so wading checks can tell a crossing
     /// from a swim without trusting the client's Y.
     bridge_decks: Arc<std::sync::RwLock<passability::BridgeDeckIndex>>,
+    /// The configured respawn beds, refreshed with their region's objects.
+    respawn_beds: Arc<std::sync::RwLock<Vec<onlinerpg_shared::furniture::FurniturePlacement>>>,
     /// When each player was last sent a `PositionCorrected`. Only touched when
     /// a correction is sent, and pruned on the refused-move path, so it needs
     /// no disconnect cleanup and stays empty in the normal case.
@@ -693,6 +695,7 @@ impl GameState {
                 onlinerpg_shared::pathfinding::PassabilityCache::new(),
             )),
             bridge_decks: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            respawn_beds: Arc::new(std::sync::RwLock::new(Vec::new())),
             no_spawn_zones,
             inventories: Arc::new(RwLock::new(HashMap::new())),
             ground_items: Arc::new(RwLock::new(HashMap::new())),

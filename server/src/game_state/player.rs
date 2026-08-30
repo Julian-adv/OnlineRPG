@@ -1816,45 +1816,65 @@ impl super::GameState {
             .await;
     }
 
+    /// Wake the dead in the inn's sick room: lying in the first free bed, or
+    /// standing beside them when every bed is taken.
     pub async fn respawn_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
-        let respawned_player = {
+        let respawn = &world_config().respawn;
+        let (old_floor, old_position, player) = {
             let mut players = self.players.write().await;
-            if let Some(player) = players.get_mut(player_id) {
-                if player.health > 0 {
-                    info!(
-                        "Ignored respawn request for alive player {} ({}) HP: {}/{}",
-                        player.name, player.id, player.health, player.max_health
-                    );
-                    return;
-                }
-                player.health = player.max_health;
-                let old_floor = player.floor_level;
-                let old_position = player.position;
-                let spawn = &world_config().spawn_position;
-                player.position = spawn.position();
-                player.rotation = spawn.rotation;
-                // Death always returns to the surface — clears dungeon
-                // depths and stale housing floors alike.
-                player.floor_level = 0;
-                Some((old_floor, old_position, player.clone()))
-            } else {
-                None
+            let Some(player) = players.get(player_id) else {
+                warn!("Attempted to respawn non-existent player: {}", player_id);
+                return;
+            };
+            if player.health > 0 {
+                info!(
+                    "Ignored respawn request for alive player {} ({}) HP: {}/{}",
+                    player.name, player.id, player.health, player.max_health
+                );
+                return;
             }
+            let beds = self.respawn_beds();
+            let taken: Vec<u32> = players
+                .values()
+                .filter(|p| p.id != *player_id)
+                .filter_map(|p| p.object_id)
+                .collect();
+            let free_bed = beds.iter().find(|bed| !taken.contains(&bed.id));
+            let player = players.get_mut(player_id).expect("looked up above");
+            player.health = player.max_health;
+            let old_floor = player.floor_level;
+            let old_position = player.position;
+            player.floor_level = respawn.floor_level;
+            match free_bed {
+                Some(bed) => {
+                    player.position = Position {
+                        x: bed.x,
+                        y: bed.y,
+                        z: bed.z,
+                    };
+                    player.rotation = bed.rotation_deg.to_radians();
+                    player.object_type = Some(bed.type_id.clone());
+                    player.object_id = Some(bed.id);
+                }
+                None => {
+                    player.position = respawn.position();
+                    player.rotation = respawn.rotation_deg.to_radians();
+                    player.object_type = None;
+                    player.object_id = None;
+                }
+            }
+            (old_floor, old_position, player.clone())
         };
 
-        if let Some((old_floor, old_position, player)) = respawned_player {
-            info!("Player {} ({}) respawned", player.name, player.id);
-            let update_msg = ServerMessage::PlayerRespawned {
-                player: player.clone(),
-            };
-            self.finish_position_update(player_id, old_position, old_floor, player, update_msg)
-                .await;
-            self.reset_hunger_on_respawn(player_id).await;
-            self.mark_party_vitals_dirty(player_id).await;
-        } else {
-            warn!("Attempted to respawn non-existent player: {}", player_id);
-        }
+        info!("Player {} ({}) respawned", player.name, player.id);
+        let update_msg = ServerMessage::PlayerRespawned {
+            player: player.clone(),
+        };
+        self.finish_position_update(player_id, old_position, old_floor, player, update_msg)
+            .await;
+        self.reset_hunger_on_respawn(player_id).await;
+        self.mark_party_vitals_dirty(player_id).await;
     }
 
     /// Revive a defeated player where they fell with `hp_percent` of their

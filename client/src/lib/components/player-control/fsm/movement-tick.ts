@@ -32,21 +32,23 @@ interface TerrainSyncPlayer {
 }
 
 interface SyncTerrainHeightInput {
-  playerStateName: PlayerStateName
   player: TerrainSyncPlayer | null
   hasHeightData: (x: number, z: number) => boolean
   sampleHeight: (x: number, z: number) => number
   epsilon?: number
 }
 
+/** `position.y` is always the ground (furniture height rides
+ *  `interactOffsetY`), so a pose follows the house floor offset too — the
+ *  housing layer derives the floor from `y - offset`, and a stale y there
+ *  spirals it onto the wrong storey. */
 export function syncPlayerTerrainHeight({
-  playerStateName,
   player,
   hasHeightData,
   sampleHeight,
   epsilon = 0.001,
 }: SyncTerrainHeightInput): boolean {
-  if (playerStateName === 'interact' || !player) return false
+  if (!player) return false
 
   const { x, y, z } = player.position
   if (!hasHeightData(x, z)) return false
@@ -258,7 +260,6 @@ export function runPlayerMovementTick({
   }
 
   syncPlayerTerrainHeight({
-    playerStateName,
     player: currentPlayer,
     hasHeightData,
     sampleHeight,

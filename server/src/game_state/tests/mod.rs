@@ -137,6 +137,7 @@ fn move_cmd(position: Position, append: bool) -> MoveCommand {
 /// A stone bridge spanning x across `z`, its abutments at `y`.
 fn stone_bridge(x: f32, y: f32, z: f32) -> onlinerpg_shared::furniture::FurniturePlacement {
     onlinerpg_shared::furniture::FurniturePlacement {
+        id: 0,
         type_id: "stone_bridge".into(),
         x,
         y,
@@ -148,6 +149,7 @@ fn stone_bridge(x: f32, y: f32, z: f32) -> onlinerpg_shared::furniture::Furnitur
 
 fn table_placement(x: f32, z: f32) -> onlinerpg_shared::furniture::FurniturePlacement {
     onlinerpg_shared::furniture::FurniturePlacement {
+        id: 0,
         type_id: "table".to_string(),
         x,
         y: 0.0,

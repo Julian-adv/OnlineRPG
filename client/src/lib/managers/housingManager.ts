@@ -84,17 +84,33 @@ export class HousingManager {
     this.evictDistantChunks(wx, wz)
   }
 
-  /** Load houses for chunks around a world position. */
-  loadChunksAround(wx: number, wz: number, radius: number = LOAD_RADIUS) {
+  /** Chunks in the `LOAD_RADIUS` block around a world position. */
+  private chunksAround(wx: number, wz: number): [number, number][] {
     const { x: ccx, z: ccz } = getTerrainChunkFromPosition(
       { x: wx, y: 0, z: wz },
       TERRAIN_TILE_SIZE
     )
-    for (let dx = -radius; dx <= radius; dx++) {
-      for (let dz = -radius; dz <= radius; dz++) {
-        this.ensureChunkLoaded(ccx + dx, ccz + dz)
+    const chunks: [number, number][] = []
+    for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx++) {
+      for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz++) {
+        chunks.push([ccx + dx, ccz + dz])
       }
     }
+    return chunks
+  }
+
+  /** Load houses for chunks around a world position. */
+  loadChunksAround(wx: number, wz: number) {
+    for (const [cx, cz] of this.chunksAround(wx, wz)) {
+      this.ensureChunkLoaded(cx, cz)
+    }
+  }
+
+  /** Whether every chunk `loadChunksAround` wants at (wx, wz) has arrived. */
+  isLoadedAround(wx: number, wz: number) {
+    return this.chunksAround(wx, wz).every(([cx, cz]) =>
+      this.chunkCache.has(chunkKey(cx, cz))
+    )
   }
 
   /**
@@ -159,6 +175,8 @@ export class HousingManager {
         return
       }
       const houses: HouseData[] = await resp.json()
+      // Record the chunk even when empty, so `isLoadedAround` can see it.
+      if (!this.chunkCache.has(key)) this.chunkCache.set(key, [])
       for (const h of houses) this.addToCache(h)
       this.notifyChanged()
     } catch {

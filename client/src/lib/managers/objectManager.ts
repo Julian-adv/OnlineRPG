@@ -1,9 +1,11 @@
+import { MathUtils } from 'three'
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import type {
   ObjectDef,
   ObjectPlacement,
   ObjectRegionData,
 } from '../stores/editorStore'
+import type { Position } from '../network/networkTypes'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
 import { regionKey, tileToRegion } from '../terrain/terrain-constants'
 import { loadGLB } from '../utils/gltfCache'
@@ -113,6 +115,33 @@ export class ObjectManager {
   }
 
   /** Like findNearestPlacement but fetches the region first if not cached. */
+  /** Resolve the pose for a player interacting with `objectType` near
+   *  (wx, wz): the clip, the seat offset, and the placement's position and
+   *  yaw. Placements store degrees while a player's rotation is radians
+   *  everywhere else (a bed at 270° once laid its sleeper out crosswise). */
+  async resolvePose(
+    objectType: string,
+    wx: number,
+    wz: number
+  ): Promise<{
+    anim: string
+    interactOffset?: Position
+    placement: ObjectPlacement | null
+    rotation?: number
+  }> {
+    const [, placement] = await Promise.all([
+      this.fetchCatalog(),
+      this.findNearestPlacementAsync(objectType, wx, wz),
+    ])
+    const def = this.getCatalogEntry(objectType)
+    return {
+      anim: def?.interaction ?? objectType,
+      interactOffset: def?.interactOffset,
+      placement,
+      rotation: placement ? MathUtils.degToRad(placement.rotation) : undefined,
+    }
+  }
+
   async findNearestPlacementAsync(
     objectType: string,
     wx: number,

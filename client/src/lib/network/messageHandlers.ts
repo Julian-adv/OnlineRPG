@@ -10,7 +10,7 @@ import {
   serverNotice,
 } from '../stores/gameStore'
 import type { GameState, LocalPlayer, RemotePlayer } from '../stores/gameStore'
-import { MathUtils, Vector3 } from 'three'
+import { Vector3 } from 'three'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { FishingAnimationName } from '../types/animations'
 import {
@@ -121,6 +121,7 @@ import {
   MUSIC_EMOTE_ANIM,
   SLASH_EMOTE_ANIMS,
 } from '../stores/emoteStore'
+import { respawnPoseRequest } from '../stores/respawnPoseStore'
 import { whisperChatEntry, partyChatEntry } from '../chat-format'
 import { fishing_cast_ms } from '../wasm/onlinerpg_shared'
 import type { NetworkEvent } from './networkEvents'
@@ -273,23 +274,18 @@ async function applyObjectInteraction(
     return
   }
 
-  await objectManager.fetchCatalog()
-  const def = objectManager.getCatalogEntry(objectType)
-  const anim = def?.interaction ?? objectType
-  const offsetY = def?.interactOffset?.y ?? 0
-  const placement = await objectManager.findNearestPlacementAsync(
-    objectType,
-    wx,
-    wz
-  )
+  const { anim, interactOffset, placement, rotation } =
+    await objectManager.resolvePose(objectType, wx, wz)
   const pos = placement
     ? { x: placement.x, y: placement.y, z: placement.z }
     : undefined
-  // Placements store degrees (the mesh converts on the way in); a player's
-  // rotation is radians everywhere else, so a bed at 270° laid the sleeper
-  // out crosswise.
-  const rot = placement ? MathUtils.degToRad(placement.rotation) : undefined
-  remotePlayerManager.handleInteraction(playerId, anim, offsetY, pos, rot)
+  remotePlayerManager.handleInteraction(
+    playerId,
+    anim,
+    interactOffset?.y ?? 0,
+    pos,
+    rotation
+  )
 }
 
 /** Spawn a remote player's visual, apply any object interaction, and store it in game state. */
@@ -1046,7 +1042,7 @@ export function handleServerMessage(
           health: serverPlayer.health,
           maxHealth: serverPlayer.max_health,
         })
-        // Town respawn surfaces; a talisman revive stays on the same floor.
+        // A death lands on the inn's floor; a talisman revive stays put.
         syncOwnFloor(
           serverPlayer.floor_level,
           serverPlayer.position.x,
@@ -1068,8 +1064,20 @@ export function handleServerMessage(
           serverPlayer.position,
           serverPlayer.rotation
         )
+        if (serverPlayer.object_type) {
+          applyObjectInteraction(
+            serverPlayer.id,
+            serverPlayer.object_type,
+            serverPlayer.position.x,
+            serverPlayer.position.z
+          )
+        }
       }
       events.playerRespawned.emit(serverPlayer.id)
+      // After the idle transition the emit triggers, so it keeps the pose.
+      if (isCurrentPlayerRespawned && serverPlayer.object_type) {
+        respawnPoseRequest.set(serverPlayer.object_type)
+      }
       break
     }
 

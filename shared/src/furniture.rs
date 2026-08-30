@@ -72,6 +72,9 @@ pub fn solid_occupancy(type_id: &str) -> Option<OccupancyRect> {
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FurniturePlacement {
+    /// Editor object id, unique within its region file.
+    #[serde(default)]
+    pub id: u32,
     #[serde(rename = "type")]
     pub type_id: String,
     pub x: f32,

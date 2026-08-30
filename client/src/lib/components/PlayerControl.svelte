@@ -148,6 +148,8 @@
     HELD_EMOTE_ANIMS,
     ONE_SHOT_EMOTE_ANIMS,
   } from '../stores/emoteStore'
+  import { respawnPoseRequest } from '../stores/respawnPoseStore'
+  import { objectManager } from '../managers/objectManager'
   import { SitAnimationName } from '../types/animations'
 
   interface Props {
@@ -1208,8 +1210,10 @@
     if (playerControlMachine.stateName !== 'moving') clickSprinting = false
   }
 
+  /** `claim` is false when the server already holds the object for us. */
   function enterInteraction(
-    intent: Extract<ClickIntent, { type: 'interact_object' }>
+    intent: Extract<ClickIntent, { type: 'interact_object' }>,
+    claim = true
   ) {
     if (getInteractionExitKind(playerState) === 'pickup') {
       finishPendingPickup()
@@ -1236,7 +1240,30 @@
       })
     }
 
-    networkManager.sendInteractObject(intent.objectType, intent.objectId)
+    if (claim) {
+      networkManager.sendInteractObject(intent.objectType, intent.objectId)
+    }
+  }
+
+  /** Lie down on the bed the server respawned us on. */
+  async function enterRespawnPose(objectType: string) {
+    if (!currentPlayer) return
+    const { x, z } = currentPlayer.position
+    const { anim, interactOffset, placement, rotation } =
+      await objectManager.resolvePose(objectType, x, z)
+    if (!placement || rotation === undefined || !currentPlayer) return
+    enterInteraction(
+      {
+        type: 'interact_object',
+        objectId: placement.id,
+        objectType,
+        interaction: anim,
+        position: { x: placement.x, y: placement.y, z: placement.z },
+        rotation,
+        interactOffset,
+      },
+      false
+    )
   }
 
   /** Enter an emote clip in place. Unlike enterInteraction there is no object
@@ -1279,6 +1306,13 @@
     if (!anim) return
     emoteRequest.set(null)
     startEmote(anim)
+  })
+
+  $effect(() => {
+    const objectType = $respawnPoseRequest
+    if (!objectType) return
+    respawnPoseRequest.set(null)
+    void enterRespawnPose(objectType)
   })
 
   $effect(() => {

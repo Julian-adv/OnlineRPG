@@ -23,7 +23,6 @@ describe('syncPlayerTerrainHeight', () => {
     const player = { position: { x: 1, y: 2, z: 3 } }
 
     const changed = syncPlayerTerrainHeight({
-      playerStateName: 'moving',
       player,
       hasHeightData: () => true,
       sampleHeight: () => 4,
@@ -33,20 +32,17 @@ describe('syncPlayerTerrainHeight', () => {
     expect(player.position.y).toBe(4)
   })
 
-  it('does not touch object or pickup interaction height', () => {
-    const sampleHeight = vi.fn(() => 4)
+  it('keeps a posed player on the ground too, so a house floor offset that settles after the pose is followed', () => {
     const player = { position: { x: 1, y: 2, z: 3 } }
 
     const changed = syncPlayerTerrainHeight({
-      playerStateName: 'interact',
       player,
       hasHeightData: () => true,
-      sampleHeight,
+      sampleHeight: () => 4,
     })
 
-    expect(changed).toBe(false)
-    expect(sampleHeight).not.toHaveBeenCalled()
-    expect(player.position.y).toBe(2)
+    expect(changed).toBe(true)
+    expect(player.position.y).toBe(4)
   })
 
   it('does nothing without height data or meaningful y drift', () => {
@@ -54,7 +50,6 @@ describe('syncPlayerTerrainHeight', () => {
 
     expect(
       syncPlayerTerrainHeight({
-        playerStateName: 'idle',
         player,
         hasHeightData: () => false,
         sampleHeight: () => 4,
@@ -63,7 +58,6 @@ describe('syncPlayerTerrainHeight', () => {
 
     expect(
       syncPlayerTerrainHeight({
-        playerStateName: 'idle',
         player,
         hasHeightData: () => true,
         sampleHeight: () => 2.0005,

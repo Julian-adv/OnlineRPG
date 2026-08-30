@@ -402,8 +402,10 @@ NetHack의 AC를 반전시킨 방어 수치이자 명중 목표값. **높을수�
 ### 리스폰
 
 - 클라이언트가 `RequestRespawn` 전송
-- 서버에서 HP 0 확인 후 최대 HP로 회복, 원점(0,0,0)으로 이동
-- `PlayerRespawned { player }` 브로드캐스트
+- 서버에서 HP 0 확인 후 최대 HP로 회복, 여관 병실(`data-src/world.json`의 `respawn`)로 이동
+- `respawn.bedIds`의 침대 중 다른 플레이어가 차지하지 않은 첫 침대에 누운 상태로 (`object_type`/`object_id` 설정). 침대 위치·회전은 해당 지역 오브젝트 파일에서 읽으므로 에디터로 옮겨도 따라간다
+- 침대가 모두 차 있으면 `respawn` 좌표에 서서 부활
+- `PlayerRespawned { player }` 브로드캐스트. `player.object_type`이 있으면 클라이언트는 그 침대에 눕는다 (본인은 `InteractObject`를 다시 보내지 않음)
 
 ### 제자리 부활 (불사조의 부적)
 

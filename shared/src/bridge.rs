@@ -156,6 +156,7 @@ mod tests {
 
     fn place(type_id: &str, x: f32, z: f32, rotation_deg: f32) -> FurniturePlacement {
         FurniturePlacement {
+            id: 0,
             type_id: type_id.into(),
             x,
             y: 0.0,

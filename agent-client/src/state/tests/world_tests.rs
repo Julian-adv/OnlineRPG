@@ -8,6 +8,7 @@ use super::*;
 fn walkable_near_steps_off_sealed_furniture() {
     let (s, _rx) = test_state();
     let bed = onlinerpg_shared::furniture::FurniturePlacement {
+        id: 0,
         type_id: "bed".to_string(),
         x: 10.5,
         y: 0.0,

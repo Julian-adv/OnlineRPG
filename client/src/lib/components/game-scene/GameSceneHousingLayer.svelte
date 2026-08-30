@@ -70,6 +70,8 @@
   const _seenRooms = new Set<string>()
   let lastChunkX = NaN
   let lastChunkZ = NaN
+  // Whether the houses around the player have all arrived — see update().
+  let housesLoadedHere = false
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const occludedHouseIds = new Set<string>()
 
@@ -182,6 +184,12 @@
   // Listen for housing data changes from the manager
   const unsubHouses = housingManager.onHousesChanged((allHouses) => {
     syncHouses(allHouses)
+    if (playerPosition) {
+      housesLoadedHere = housingManager.isLoadedAround(
+        playerPosition.x,
+        playerPosition.z
+      )
+    }
     if (debugPassGroup.visible) debugPassDirty = true
   })
 
@@ -297,7 +305,15 @@
       lastChunkX = cx
       lastChunkZ = cz
       housingManager.updateStreaming(playerPosition.x, playerPosition.z)
+      housesLoadedHere = housingManager.isLoadedAround(
+        playerPosition.x,
+        playerPosition.z
+      )
     }
+
+    // A respawn/teleport lands before its houses arrive; judging "outdoors"
+    // from an empty chunk would clobber the server-synced floor.
+    if (!housesLoadedHere) return
 
     // Player-inside detection (per-room, floor-aware)
     // Use ground-level Y for AABB check, then try multiple floor levels

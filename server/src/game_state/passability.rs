@@ -425,6 +425,34 @@ impl super::GameState {
         }
     }
 
+    fn sync_respawn_beds(&self, rx: i32, rz: i32, placements: &[FurniturePlacement]) {
+        let respawn = &crate::world_config::world_config().respawn;
+        if respawn.region() != (rx, rz) {
+            return;
+        }
+        let beds: Vec<FurniturePlacement> = respawn
+            .bed_ids
+            .iter()
+            .filter_map(|id| placements.iter().find(|p| p.id == *id))
+            .cloned()
+            .collect();
+        if beds.len() != respawn.bed_ids.len() {
+            warn!(
+                "Respawn beds: {} of {} configured ids found in r{rx:+03}_{rz:+03}",
+                beds.len(),
+                respawn.bed_ids.len()
+            );
+        }
+        *self.respawn_beds.write().unwrap_or_else(|e| e.into_inner()) = beds;
+    }
+
+    pub(super) fn respawn_beds(&self) -> Vec<FurniturePlacement> {
+        self.respawn_beds
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
     pub(super) fn bridge_decks_read(&self) -> std::sync::RwLockReadGuard<'_, BridgeDeckIndex> {
         self.bridge_decks.read().unwrap_or_else(|e| e.into_inner())
     }
@@ -475,6 +503,7 @@ impl super::GameState {
         placements: &[FurniturePlacement],
     ) -> bool {
         self.sync_region_bridges(rx, rz, placements);
+        self.sync_respawn_beds(rx, rz, placements);
         let key = furniture::region_cache_key(rx, rz);
         let mut cache = self.passability_write();
         match furniture::build_furniture_passability_for_placements(placements) {
