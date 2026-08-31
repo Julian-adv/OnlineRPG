@@ -1024,7 +1024,11 @@
         transitionToRespawned,
         resetStoppedSpeed: () => {
           currentSpeed = 0
-          updatePlayerState()
+          // The projection can only say idle/moving: emitting it over a
+          // fresh interact/attack state would wipe that state.
+          if (playerState.state === 'idle' || playerState.state === 'moving') {
+            updatePlayerState()
+          }
         },
         combat: combatTickActions,
         movement: movementTickActions,
@@ -1219,8 +1223,12 @@
       finishPendingPickup()
     }
 
-    // Re-sitting mid stand-up must not let the old exit's continuation fire.
+    // An in-range click mid-walk acts immediately; the pose starts from rest.
+    currentSpeed = 0
+    // Re-sitting mid stand-up must not let the old exit's continuation fire,
+    // and an armed stand-up move must not un-sit us right after.
     pendingExit = null
+    clearStandUpTimer()
 
     const result = beginObjectInteraction({
       intent,
