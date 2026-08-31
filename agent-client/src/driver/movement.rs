@@ -364,7 +364,7 @@ pub(super) async fn fetch_furniture_around(
     let mut synced_regions = 0usize;
     for (rx, rz, resp) in results {
         let Some(resp) = resp else { continue };
-        world.sync_furniture(rx, rz, &resp.placements);
+        world.sync_furniture(rx, rz, resp.placements);
         world.mark_furniture_fetched((rx, rz));
         synced_regions += 1;
     }

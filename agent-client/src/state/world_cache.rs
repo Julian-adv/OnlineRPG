@@ -21,6 +21,10 @@ pub struct WorldCache {
     /// cache: what one agent fetched, none of the others ask for again.
     fetched_house_chunks: HashSet<(i32, i32)>,
     fetched_furniture_regions: HashSet<(i32, i32)>,
+    /// Raw placements per region, kept so interactions can be resolved back
+    /// to the furniture piece (a seated guest's broadcast position is where
+    /// they stood when they clicked the chair, not the chair itself).
+    furniture_placements: HashMap<(i32, i32), Vec<FurniturePlacement>>,
 }
 
 impl WorldCache {
@@ -34,6 +38,7 @@ impl WorldCache {
             dungeon_opened_props: HashMap::new(),
             fetched_house_chunks: HashSet::new(),
             fetched_furniture_regions: HashSet::new(),
+            furniture_placements: HashMap::new(),
         }
     }
 
@@ -178,10 +183,11 @@ impl WorldCache {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// Whether a mover can stand in the cell holding `pos` on `floor`. What the
-    /// in-room sighting queries use to decide where a prop can be opened from.
-    pub fn is_walkable(&self, pos: &Position, floor: u8) -> bool {
-        !pathfinding::is_cell_sealed(self.passability_cache(), pos.x, pos.z, floor, None)
+    /// Whether a mover can stand in the cell holding `(x, z)` on `floor`. What
+    /// the in-room sighting queries use to decide where a prop can be opened
+    /// from.
+    pub fn is_walkable(&self, x: f32, z: f32, floor: u8) -> bool {
+        !pathfinding::is_cell_sealed(self.passability_cache(), x, z, floor, None)
     }
 
     /// Recompute one dungeon floor's cells from the live door/prop state
@@ -244,9 +250,9 @@ impl WorldCache {
     /// so the bot paths around it, mirroring the browser's
     /// `passability_set_furniture` (same `furniture:rx,rz` key + shared
     /// `furniture` resolution). Empty/non-solid regions clear the entry.
-    pub fn sync_furniture(&mut self, rx: i32, rz: i32, placements: &[FurniturePlacement]) {
+    pub fn sync_furniture(&mut self, rx: i32, rz: i32, placements: Vec<FurniturePlacement>) {
         let key = furniture::region_cache_key(rx, rz);
-        match furniture::build_furniture_passability_for_placements(placements) {
+        match furniture::build_furniture_passability_for_placements(&placements) {
             Some(rp) => {
                 self.passability_cache.insert(key, rp);
             }
@@ -254,6 +260,27 @@ impl WorldCache {
                 self.passability_cache.remove(&key);
             }
         }
+        self.furniture_placements.insert((rx, rz), placements);
+    }
+
+    /// The `type_id` placement with editor id `object_id` nearest `(x, z)`,
+    /// within `max_dist`. Ids are unique only within their region file, so
+    /// the type and distance bound are what disambiguate.
+    pub fn furniture_placement_near(
+        &self,
+        type_id: &str,
+        object_id: u32,
+        x: f32,
+        z: f32,
+        max_dist: f32,
+    ) -> Option<&FurniturePlacement> {
+        let max_d2 = max_dist * max_dist;
+        let d2 = |p: &FurniturePlacement| (p.x - x).powi(2) + (p.z - z).powi(2);
+        self.furniture_placements
+            .values()
+            .flatten()
+            .filter(|p| p.id == object_id && p.type_id == type_id && d2(p) <= max_d2)
+            .min_by(|a, b| d2(a).total_cmp(&d2(b)))
     }
 
     pub fn update_door(

@@ -16,7 +16,10 @@ fn walkable_near_steps_off_sealed_furniture() {
         rotation_deg: 0.0,
         floor_level: 0,
     };
-    s.world_cache.write().unwrap().sync_furniture(0, 0, &[bed]);
+    s.world_cache
+        .write()
+        .unwrap()
+        .sync_furniture(0, 0, vec![bed]);
 
     let (x, z) = s.walkable_near(10.5, 10.5, 0);
     assert_ne!((x, z), (10.5, 10.5), "the on-bed goal must be nudged");

@@ -44,7 +44,7 @@ fn a_sighted_chest_is_approached_from_a_cell_a_path_can_reach() {
     for chest in chests {
         let a = chest.approach;
         assert!(
-            s.world_cache.read().unwrap().is_walkable(&a, floor),
+            s.world_cache.read().unwrap().is_walkable(a.x, a.z, floor),
             "{:?} is approached from a sealed cell",
             chest.kind
         );
@@ -117,7 +117,7 @@ fn the_floor_map_only_names_cells_the_agent_can_stand_on() {
                     centre.z
                 );
                 assert!(
-                    s.world_cache.read().unwrap().is_walkable(&p, floor),
+                    s.world_cache.read().unwrap().is_walkable(p.x, p.z, floor),
                     "{where_} points the agent at ({x}, {z}), which is solid rock\n{line}"
                 );
                 // A shaft's interior is carved but walled off from this

@@ -72,7 +72,7 @@ impl SharedState {
             .opened_dungeon_props(&dungeon.id, depth)
             .unwrap_or(&empty);
         let floor = dungeon.passability_floor(depth);
-        dungeon.chests_in_room_of(depth, &pos, opened, |c| world.is_walkable(c, floor))
+        dungeon.chests_in_room_of(depth, &pos, opened, |c| world.is_walkable(c.x, c.z, floor))
     }
 
     /// Where we stand when we are underground in a dungeon, and how deep.
@@ -271,7 +271,7 @@ impl SharedState {
         };
         let broken = world.dungeon_broken_props(&dungeon.id, depth);
         let floor = dungeon.passability_floor(depth);
-        dungeon.breakables_in_room_of(depth, &pos, broken, |c| world.is_walkable(c, floor))
+        dungeon.breakables_in_room_of(depth, &pos, broken, |c| world.is_walkable(c.x, c.z, floor))
     }
 
     /// The breakable clutter in the agent's room, for the world state.

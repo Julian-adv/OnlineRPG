@@ -529,6 +529,28 @@ impl SharedState {
         }
     }
 
+    /// Whether the cell holding `(x, z)` leaves a mover a legal step out.
+    pub fn cell_open(&self, x: f32, z: f32, floor: u8) -> bool {
+        self.world_cache.read().unwrap().is_walkable(x, z, floor)
+    }
+
+    /// World XZ of the `(type_id, object_id)` furniture placement near `(x, z)`.
+    pub fn furniture_position(
+        &self,
+        type_id: &str,
+        object_id: u32,
+        x: f32,
+        z: f32,
+    ) -> Option<(f32, f32)> {
+        // Covers the gap between a piece and whoever interacts with it, and
+        // disambiguates same-id placements from other regions.
+        const RESOLVE_RADIUS: f32 = 3.0;
+        let world = self.world_cache.read().unwrap();
+        world
+            .furniture_placement_near(type_id, object_id, x, z, RESOLVE_RADIUS)
+            .map(|p| (p.x, p.z))
+    }
+
     /// A goal for walking toward `(x, z)`: the point itself, or — when its
     /// cell is sealed (furniture swallows the cell a bed pose is authored
     /// on) — the centre of the nearest open neighbouring cell.

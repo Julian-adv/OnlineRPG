@@ -173,8 +173,21 @@ fn table_entry(
     {
         return None;
     }
-    let seat = p.position;
-    let to_seat = crate::geom::PlanarDelta::between(&me.position, &seat);
+    // The broadcast position is where the guest stood when they clicked the
+    // chair (the sit never re-sends a move), so the chair itself comes from
+    // the placement.
+    let (seat_x, seat_z) = p
+        .object_id
+        .and_then(|id| {
+            s.furniture_position(
+                crate::state::SIT_OBJECT_TYPE,
+                id,
+                p.position.x,
+                p.position.z,
+            )
+        })
+        .unwrap_or((p.position.x, p.position.z));
+    let to_seat = crate::geom::PlanarDelta::to_xz(&me.position, seat_x, seat_z);
     if to_seat.dist > TABLE_SERVICE_RADIUS {
         return None;
     }
@@ -183,24 +196,23 @@ fn table_entry(
     if let Some(t) = tables.iter().find(|t| p.object_id == Some(t.object_id)) {
         return Some((p.name.clone(), visit_entry(t, label)));
     }
-    // Stand a step short of the chair, on the side we approach from; the
-    // chair itself is solid, so let walkable_near settle the exact cell.
-    let (dx, dz) = if to_seat.dist > 0.1 {
-        (to_seat.dx / to_seat.dist, to_seat.dz / to_seat.dist)
-    } else {
-        (1.0, 0.0)
-    };
+    // The nearest open cell of the four flanking the chair; solid
+    // neighbours (the table, sibling chairs) are sealed and drop out.
     let floor = p.floor_level as u8;
-    let (x, z) = s.walkable_near(
-        seat.x - dx * TABLE_STAND_OFF,
-        seat.z - dz * TABLE_STAND_OFF,
-        floor,
-    );
-    let rotation = crate::geom::PlanarDelta::xz(x, z, seat.x, seat.z)
+    let (ccx, ccz) = (seat_x.floor() + 0.5, seat_z.floor() + 0.5);
+    let d2 = |(x, z): (f32, f32)| (x - me.position.x).powi(2) + (z - me.position.z).powi(2);
+    let (x, z) = onlinerpg_shared::pathfinding::DIRS
+        .iter()
+        .map(|&(dx, dz)| (ccx + dx as f32, ccz + dz as f32))
+        .filter(|&(x, z)| s.cell_open(x, z, floor))
+        .min_by(|&a, &b| d2(a).total_cmp(&d2(b)))
+        // Every flank is solid: the nearest open neighbour of the seat.
+        .unwrap_or_else(|| s.walkable_near(seat_x, seat_z, floor));
+    let rotation = crate::geom::PlanarDelta::xz(x, z, seat_x, seat_z)
         .rotation()
         .to_degrees();
     let entry = ScheduleEntry {
-        pos: [x, seat.y, z],
+        pos: [x, p.position.y, z],
         rotation,
         floor_level: floor,
         label: Some(label.to_string()),
@@ -803,9 +815,6 @@ const VISIT_DWELL: Duration = Duration::from_secs(90);
 /// tables. Same floor only.
 const TABLE_SERVICE_RADIUS: f32 = 10.0;
 
-/// How far from the chair the NPC stands while taking the order.
-const TABLE_STAND_OFF: f32 = 1.2;
-
 /// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
 /// so a lost request is retried after another delay. Revival clears it.
 fn respawn_due(dead: bool, dead_since: &mut Option<Instant>, now: Instant) -> bool {
@@ -1175,5 +1184,41 @@ mod tests {
         // A seat away from every curated chair falls back to a computed spot.
         let (_, entry) = table_entry(&s, &guest_id, &[]).expect("fallback still serves");
         assert_ne!(entry.pos, [-1446.4, 1.3, 4752.5]);
+    }
+
+    #[tokio::test]
+    async fn the_computed_spot_flanks_the_chair_placement_not_the_stale_position() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(-1443.9, 4748.9);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        // The guest's broadcast position is where they stood when they
+        // clicked the chair — one cell east of it.
+        let mut guest = test_player(-1449.3, 4749.4);
+        guest.id = onlinerpg_shared::PlayerId::from(8);
+        guest.object_type = Some(crate::state::SIT_OBJECT_TYPE.to_string());
+        guest.object_id = Some(39);
+        let guest_id = guest.id;
+        s.nearby_players.insert(guest_id, guest);
+
+        let chair = onlinerpg_shared::furniture::FurniturePlacement {
+            id: 39,
+            type_id: "chair".to_string(),
+            x: -1450.3,
+            y: 1.3,
+            z: 4749.05,
+            rotation_deg: 0.0,
+            floor_level: 0,
+        };
+        s.world_cache
+            .write()
+            .unwrap()
+            .sync_furniture(-2, 4, vec![chair]);
+
+        let (_, entry) = table_entry(&s, &guest_id, &[]).expect("guest is seated in range");
+        // The chair cell's east flank — not the standing cell's.
+        assert_eq!(entry.pos[0], -1449.5);
+        assert_eq!(entry.pos[2], 4749.5);
     }
 }
