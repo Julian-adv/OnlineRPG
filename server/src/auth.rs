@@ -627,6 +627,7 @@ impl AuthService {
         Self::ensure_accounts_columns(&conn)?;
         Self::ensure_characters_schema(&conn)?;
         Self::migrate_item_definition_ids(&conn)?;
+        Self::strip_npc_starter_weapons(&conn)?;
         Self::ensure_blocks_schema(&conn)?;
         Self::ensure_friends_schema(&conn)?;
         Self::ensure_bans_schema(&conn)?;
@@ -900,6 +901,29 @@ impl AuthService {
         }
         if migrated > 0 {
             tracing::info!(migrated, "Migrated legacy item definition ids");
+        }
+        Ok(())
+    }
+
+    /// Registry NPCs created before they skipped the starter kit still carry
+    /// its worn sword (some equipped, in plain sight). Drop it; the torch
+    /// stays — it is harmless in the bag and useful at night. Scoped to the
+    /// registry, the same predicate as the skip: a free `npc_` agent account
+    /// keeps its starter weapon.
+    fn strip_npc_starter_weapons(conn: &Connection) -> Result<(), rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "DELETE FROM character_items WHERE item_def_id = 'worn_iron_sword' \
+             AND character_id IN \
+             (SELECT id FROM characters WHERE character_name = ?1 \
+              AND account_name GLOB ?2)",
+        )?;
+        let pattern = format!("{NPC_ACCOUNT_PREFIX}*");
+        let mut stripped = 0;
+        for name in crate::npc_defs::npc_defs().npc_names() {
+            stripped += stmt.execute(params![name, pattern])?;
+        }
+        if stripped > 0 {
+            tracing::info!(stripped, "Removed starter swords from NPC characters");
         }
         Ok(())
     }
@@ -1759,14 +1783,15 @@ impl AuthService {
 
         let id = conn.last_insert_rowid();
 
-        // A registry NPC with an issued loadout skips the starter kit —
-        // otherwise the worn starter sword would occupy main_hand. The gear
-        // itself is granted and worn by `seed_npc_loadout` on every join.
-        let issued = account_name.starts_with(NPC_ACCOUNT_PREFIX)
+        // Registry NPCs skip the starter kit: town residents are not
+        // adventurers, and the worn sword would sit visibly in main_hand.
+        // Working gear comes from the registry loadout instead, granted and
+        // worn by `seed_npc_loadout` on every join.
+        let registry_npc = account_name.starts_with(NPC_ACCOUNT_PREFIX)
             && crate::npc_defs::npc_defs()
                 .get_by_npc_name(character_name)
-                .is_some_and(|def| !def.loadout.is_empty());
-        if !issued {
+                .is_some();
+        if !registry_npc {
             let mut stmt = conn.prepare(
                 "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot) \
                  VALUES (?1, ?2, ?3, ?4)",
@@ -2193,6 +2218,41 @@ mod tests {
             .unwrap();
         let items = auth.load_inventory(knight.id).unwrap();
         assert!(items.iter().all(|r| r.item_def_id != "worn_mandolin"));
+    }
+
+    #[test]
+    fn a_registry_npc_starts_bare_and_loses_a_legacy_starter_sword() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_npc_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path.clone()).unwrap();
+        let account = auth.login_npc("npc_merchant").unwrap();
+        let rica = auth
+            .create_character(
+                &account,
+                "Rica",
+                &plain_attributes(),
+                10,
+                CharacterClass::Merchant,
+                Gender::Female,
+            )
+            .unwrap();
+        assert!(
+            auth.load_inventory(rica.id).unwrap().is_empty(),
+            "registry NPCs must not receive the starter kit"
+        );
+
+        // A sword from before the skip is stripped on the next boot.
+        auth.open_connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO character_items (character_id, item_def_id, quantity, equip_slot) \
+                 VALUES (?1, 'worn_iron_sword', 1, 'main_hand')",
+                params![rica.id],
+            )
+            .unwrap();
+        drop(auth);
+        let auth = AuthService::new(db_path).unwrap();
+        assert!(auth.load_inventory(rica.id).unwrap().is_empty());
     }
 
     fn banned_name_auth(tag: &str) -> AuthService {

@@ -17,6 +17,11 @@ use std::ops::RangeInclusive;
 use std::time::Duration;
 
 impl SharedState {
+    /// Hand the queued sick-room respawns to the driver, emptying the queue.
+    pub fn drain_recent_respawns(&mut self) -> Vec<(String, u32)> {
+        self.recent_respawns.drain(..).collect()
+    }
+
     /// Classify how urgent a server event is for LLM processing.
     pub fn classify_event(&self, msg: &ServerMessage) -> EventUrgency {
         let self_id = self.self_player_id.as_ref();
@@ -340,9 +345,22 @@ impl SharedState {
                 if self.self_player_id.as_ref() == Some(&player.id) {
                     self.self_player = Some(player.clone());
                     self.relocate_self(player.position, player.rotation, player.floor_level);
-                }
-                if let Some(p) = self.nearby_players.get_mut(&player.id) {
-                    *p = player.clone();
+                } else {
+                    // The server delivers respawns across floors; who is in
+                    // sight stays the AOI's call (PlayerAppeared/Left), so
+                    // only note the woken sleeper for the sick-room visit.
+                    if !player.is_official_npc {
+                        if let Some(bed_id) = player.object_id {
+                            push_capped(
+                                &mut self.recent_respawns,
+                                (player.name.clone(), bed_id),
+                                MAX_RECENT_RESPAWNS,
+                            );
+                        }
+                    }
+                    if let Some(p) = self.nearby_players.get_mut(&player.id) {
+                        *p = player.clone();
+                    }
                 }
                 self.latest_player_moves.remove(&player.id);
             }

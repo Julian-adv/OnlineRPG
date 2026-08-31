@@ -87,6 +87,7 @@
     bard: 'Bard',
     merchant: 'Merchant',
     guard: 'Guard',
+    maid: 'Maid',
   }
 
   const classLabel = $derived(

@@ -1,3 +1,4 @@
 id,npcName,sellRatePercent,catalog
 rica,Rica,40,torch;dagger;spear;fishing_rod;wooden_shield;leather_belt;leather_pants;healing_potion;greater_healing_potion;scroll_of_return;scroll_of_party_summon;whetstone_oil;apple;bread;cheese;jerky;lembas_wafer;campfire_kit;tip_hat;cape_dye;cape_transfer_kit;phoenix_talisman;celestial_timekeeper
 wick,Wick,30,torch;healing_potion;campfire_kit;bread;jerky;scroll_of_return
+mira,Mira,35,apple;bread;cheese;jerky;lembas_wafer;grilled_minnow;grilled_perch;grilled_trout

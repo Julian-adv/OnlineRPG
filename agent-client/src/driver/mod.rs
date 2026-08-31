@@ -101,6 +101,18 @@ impl Drop for RunDir {
     }
 }
 
+/// A standing spot beside one sick-room bed, keyed by the bed's furniture
+/// placement id (arrives as `object_id` on the respawned player).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SickroomSpot {
+    pub bed_object_id: u32,
+    pub pos: [f32; 3],
+    #[serde(default)]
+    pub rotation: f32,
+    #[serde(default)]
+    pub floor_level: u8,
+}
+
 /// Configuration for the LLM driver loop.
 pub struct DriverConfig {
     pub label: String,
@@ -119,8 +131,23 @@ pub struct DriverConfig {
     /// NPCs, whose LLM calls come out of the project's budget.
     pub always_active: bool,
     pub schedule: Vec<ScheduleEntry>,
+    /// Bedside spots in the inn's sick room; a respawn in one of these beds
+    /// sends the NPC to stand at the matching spot and greet the woken.
+    pub sickroom: Vec<SickroomSpot>,
     /// HTTP base URL for the game server API (e.g. "http://127.0.0.1:10007").
     pub api_base_url: String,
+}
+
+/// Synthetic schedule entry for a bedside visit — reuses the schedule walk
+/// (waypointless, exact final rotation, cross-floor force move).
+fn bedside_entry(spot: &SickroomSpot) -> ScheduleEntry {
+    ScheduleEntry {
+        pos: spot.pos,
+        rotation: spot.rotation,
+        floor_level: spot.floor_level,
+        label: Some("the sick-room bedside".to_string()),
+        ..Default::default()
+    }
 }
 
 /// The main LLM agent driver loop. Runs as a tokio task.
@@ -145,6 +172,7 @@ pub async fn llm_driver(
         activity_window,
         always_active,
         schedule,
+        sickroom,
         api_base_url,
     } = config;
     let urgent_notify = {
@@ -214,6 +242,9 @@ pub async fn llm_driver(
     // bool marks that a prompt containing the wrap-up notice was submitted.
     let mut wrapup: Option<(Instant, bool)> = None;
     let mut dead_since: Option<Instant> = None;
+    // Bedside visit in progress: when to give the spot up and resume the
+    // schedule.
+    let mut bedside_until: Option<Instant> = None;
 
     // Fetch housing + furniture data so pathfinding avoids buildings and solid
     // props the same way the browser client does. An agent without a schedule
@@ -406,8 +437,43 @@ pub async fn llm_driver(
             }
         }
 
+        // === Sick-room bedside visits ===
+        if !sickroom.is_empty() && attack_target.is_none() {
+            let sleeping_now = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
+            // Drain even while asleep so stale respawns don't pile up.
+            let respawns = { state.lock().await.drain_recent_respawns() };
+            let visit = respawns.into_iter().rev().find_map(|(name, bed_id)| {
+                sickroom
+                    .iter()
+                    .find(|s| s.bed_object_id == bed_id)
+                    .map(|s| (name, s.clone()))
+            });
+            if let (Some((name, spot)), false) = (visit, sleeping_now) {
+                info!("[{label}] {name} woke in the sick room — going to the bedside");
+                // The same leave-taking a schedule transition does: a visit
+                // must not walk off mid-follow or leave a stall behind.
+                movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
+                let entry = bedside_entry(&spot);
+                movement::execute_schedule_move(&state, &entry).await;
+                state.lock().await.push_ambient_event(format!(
+                    "[SickRoom] {name} just came back to their senses in the bed \
+                     beside you — they fell out there and were carried up to the \
+                     sick room. Welcome them back with warm relief in your own \
+                     words and offer something hot to eat. If they have already \
+                     left the room, let them go — don't shout after them."
+                ));
+                bedside_until = Some(Instant::now() + BEDSIDE_DWELL);
+            }
+            if bedside_until.is_some_and(|until| Instant::now() >= until) {
+                // Visit over: forget the active entry so the schedule walks
+                // us back to our regular post.
+                bedside_until = None;
+                active_schedule = (None, None);
+            }
+        }
+
         // === Check schedule transitions ===
-        if !schedule.is_empty() && attack_target.is_none() {
+        if !schedule.is_empty() && attack_target.is_none() && bedside_until.is_none() {
             let due = resolve_due_schedule(&state, &schedule).await;
             if due == active_schedule {
                 wrapup = None;
@@ -594,6 +660,10 @@ const RESPAWN_DELAY: Duration = Duration::from_secs(5);
 /// turn lands, so the full grace is only spent when the LLM stays silent.
 /// 30 real seconds ≈ 4 game minutes.
 const SCHEDULE_WRAPUP_GRACE: Duration = Duration::from_secs(30);
+
+/// How long a sick-room bedside visit holds the NPC there before the regular
+/// schedule pulls it back.
+const BEDSIDE_DWELL: Duration = Duration::from_secs(90);
 
 /// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
 /// so a lost request is retried after another delay. Revival clears it.

@@ -242,6 +242,70 @@ async fn respawn_player_revives_dead_player_only() {
     }
 }
 
+#[tokio::test]
+async fn respawn_reaches_observers_on_other_floors() {
+    let game_state = make_test_game_state("respawn_cross_floor");
+    let respawn = &world_config().respawn;
+
+    let mut dead = Player {
+        id: pid("cross_floor_dead"),
+        name: "DeadPlayer".to_string(),
+        position: Position {
+            x: 12.0,
+            y: 0.0,
+            z: -4.0,
+        },
+        rotation: 1.25,
+        level: 3,
+        health: 0,
+        max_health: 30,
+        class: CharacterClass::Knight,
+        gender: Gender::default(),
+        is_official_npc: false,
+        torch_on: false,
+        wet: false,
+        title: None,
+        floor_level: 0,
+        object_type: None,
+        main_hand: None,
+        back: None,
+        object_id: None,
+        last_combat_at: 0,
+        client_kind: Default::default(),
+        ready_at: 0,
+        back_color: None,
+        back_texture: None,
+    };
+    let dead_id = dead.id;
+
+    // The maid downstairs: same spot as the sick room, one floor below.
+    let mut maid = dead.clone();
+    maid.id = pid("cross_floor_maid");
+    maid.name = "Maid".to_string();
+    maid.health = 30;
+    maid.position = Position {
+        x: respawn.x,
+        y: 1.3,
+        z: respawn.z,
+    };
+    maid.floor_level = respawn.floor_level - 1;
+
+    dead.health = 0;
+    game_state.add_player(dead).await;
+    game_state.add_player(maid.clone()).await;
+
+    let mut maid_rx = game_state.register_direct_channel(&maid.id).await;
+    game_state.respawn_player(&dead_id).await;
+
+    let heard = drain(&mut maid_rx).into_iter().any(
+        |msg| matches!(msg, ServerMessage::PlayerRespawned { player } if player.id == dead_id),
+    );
+    assert!(
+        heard,
+        "an observer on another floor near the sick room must hear the respawn"
+    );
+}
+
 fn respawn_bed(id: u32, x: f32) -> onlinerpg_shared::furniture::FurniturePlacement {
     let respawn = &world_config().respawn;
     onlinerpg_shared::furniture::FurniturePlacement {

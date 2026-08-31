@@ -337,6 +337,7 @@ mod tests {
         CharacterClass::Bard,
         CharacterClass::Merchant,
         CharacterClass::Guard,
+        CharacterClass::Maid,
     ];
 
     #[test]
@@ -358,7 +359,10 @@ mod tests {
     #[test]
     fn only_operator_classes_are_unselectable() {
         for class in ALL_CLASSES {
-            let expected = !matches!(class, CharacterClass::Merchant | CharacterClass::Guard);
+            let expected = !matches!(
+                class,
+                CharacterClass::Merchant | CharacterClass::Guard | CharacterClass::Maid
+            );
             assert_eq!(
                 class.is_player_selectable(),
                 expected,

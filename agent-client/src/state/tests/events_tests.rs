@@ -375,3 +375,32 @@ fn monster_damage_and_death_update_local_health() {
     });
     assert_eq!(s.nearby_players[&PlayerId::from(2)].health, 0);
 }
+
+/// A respawn into a sick-room bed must queue the bed for the bedside visit
+/// (introductions stay the AOI's job — PlayerAppeared handles those).
+#[test]
+fn a_respawn_records_the_bed_for_the_sickroom_visit() {
+    let (mut s, _rx) = test_state();
+    let me = test_player(-1450.0, 4753.0);
+    s.self_player_id = Some(me.id);
+    s.self_player = Some(me);
+
+    let mut woken = test_player(-1445.6, 4754.0);
+    woken.id = PlayerId::from(7);
+    woken.name = "Hero".to_string();
+    woken.floor_level = 1;
+    woken.object_id = Some(53);
+    s.push_event(ServerMessage::PlayerRespawned {
+        player: woken.clone(),
+    });
+
+    assert_eq!(s.drain_recent_respawns(), vec![("Hero".to_string(), 53)]);
+    assert!(s.drain_recent_respawns().is_empty(), "drain must consume");
+
+    // An official NPC respawning queues no visit.
+    let mut npc = woken;
+    npc.id = PlayerId::from(8);
+    npc.is_official_npc = true;
+    s.push_event(ServerMessage::PlayerRespawned { player: npc });
+    assert!(s.drain_recent_respawns().is_empty());
+}

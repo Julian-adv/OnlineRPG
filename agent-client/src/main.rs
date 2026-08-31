@@ -420,6 +420,12 @@ fn resolve_from_registry(npc: &mut NpcConfig) -> anyhow::Result<()> {
             npc.schedule_file = Some(path);
         }
     }
+    if npc.sickroom_file.is_none() {
+        let path = format!("data/npcs/{id}/sickroom.json");
+        if std::path::Path::new(&path).exists() {
+            npc.sickroom_file = Some(path);
+        }
+    }
     Ok(())
 }
 

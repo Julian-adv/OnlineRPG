@@ -2264,6 +2264,9 @@ mod tests {
             .require_selectable_class(&CharacterClass::Guard)
             .is_err());
         assert!(state
+            .require_selectable_class(&CharacterClass::Maid)
+            .is_err());
+        assert!(state
             .require_selectable_class(&CharacterClass::Ranger)
             .is_ok());
 

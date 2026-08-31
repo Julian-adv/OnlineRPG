@@ -1871,7 +1871,26 @@ impl super::GameState {
         let update_msg = ServerMessage::PlayerRespawned {
             player: player.clone(),
         };
-        self.finish_position_update(player_id, old_position, old_floor, player, update_msg)
+        let (respawn_pos, respawn_floor) = (player.position, player.floor_level);
+        self.finish_position_update(
+            player_id,
+            old_position,
+            old_floor,
+            player.clone(),
+            update_msg,
+        )
+        .await;
+        // Per-floor AOI never tells the floor below — but the inn's maid
+        // stands there, and waking her guests is her job. Same-floor
+        // observers already heard it through the fanout.
+        let downstairs = self
+            .player_ids_near_on_other_floors(
+                &respawn_pos,
+                respawn_floor,
+                super::EVENT_DELIVERY_RADIUS,
+            )
+            .await;
+        self.send_direct_message_to_players(&downstairs, ServerMessage::PlayerRespawned { player })
             .await;
         self.reset_hunger_on_respawn(player_id).await;
         self.mark_party_vitals_dirty(player_id).await;
@@ -2406,11 +2425,37 @@ impl super::GameState {
         }
 
         // The mover hears its own update through the same fanout, so the
-        // message is serialized once for everyone.
+        // message is serialized once for everyone. Entered observers hear it
+        // too — after their PlayerAppeared — so a respawn or teleport is an
+        // event to them, not just a body that showed up.
         let mut recipients = stayed;
+        recipients.extend(entered);
         recipients.push(*player_id);
         self.send_direct_message_to_players(&recipients, update_msg)
             .await;
+    }
+
+    /// Players within `radius` of `position` on any floor BUT `floor_level` —
+    /// what a cross-floor event announcement needs on top of the per-floor
+    /// AOI sets.
+    async fn player_ids_near_on_other_floors(
+        &self,
+        position: &Position,
+        floor_level: i8,
+        radius: f32,
+    ) -> Vec<PlayerId> {
+        let radius_sq = radius * radius;
+        let players = self.players.read().await;
+        let cells = self.player_spatial_cells.read().await;
+        cells
+            .keys_near(position, radius)
+            .filter(|id| {
+                players.get(id).is_some_and(|p| {
+                    p.floor_level != floor_level && position.dist_xz_sq(&p.position) <= radius_sq
+                })
+            })
+            .copied()
+            .collect()
     }
 
     pub async fn player_ids_within_position(

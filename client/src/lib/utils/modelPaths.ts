@@ -22,6 +22,7 @@ export const FEMALE_BARD_CHARACTER_MODEL_PATH =
   '/models/characters/female_bard.glb'
 export const NIGHT_MERCHANT_CHARACTER_MODEL_PATH =
   '/models/characters/night_merchant.glb'
+export const MAID_CHARACTER_MODEL_PATH = '/models/characters/maid.glb'
 
 export const CHARACTER_ANIMATION_PACK_PATHS = {
   locomotion: '/models/animations/locomotion.glb',
@@ -71,6 +72,7 @@ const CLASS_GENDER_MODELS: Partial<
   bard: { female: FEMALE_BARD_CHARACTER_MODEL_PATH },
   merchant: { female: MERCHANT_CHARACTER_MODEL_PATH },
   guard: { male: GUARD_CHARACTER_MODEL_PATH },
+  maid: { female: MAID_CHARACTER_MODEL_PATH },
 }
 
 /** Dedicated looks for named official NPCs, overriding the class model.
@@ -83,7 +85,7 @@ export function getNpcModelPath(npcName: string): string | undefined {
   return NPC_MODEL_OVERRIDES[npcName]
 }
 
-const NPC_CLASSES: CharacterClass[] = ['merchant', 'guard']
+const NPC_CLASSES: CharacterClass[] = ['merchant', 'guard', 'maid']
 export const PLAYER_CLASSES = (
   Object.keys(CLASS_GENDER_MODELS) as CharacterClass[]
 ).filter((cls) => !NPC_CLASSES.includes(cls))

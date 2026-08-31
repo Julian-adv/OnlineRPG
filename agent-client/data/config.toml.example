@@ -173,8 +173,18 @@ llm = "codex"
 
 # Night merchant. Opens the stall after dark and sells only what a night
 # traveller needs; off duty in the day, when Rica is awake to sell the rest.
-# Driven by the schedule alone, so no LLM backend is required.
+# Would run on the schedule alone with llm = "none" (no chat or haggling).
 [[npcs]]
 id = "wick"
 account = "npc_night_merchant"
-llm = "none"
+llm = "codex"
+
+# Inn maid. Serves food and drink on the inn's ground floor, and looks in on
+# the sick room upstairs. With data/npcs/mira/sickroom.json present (bedside
+# spots keyed by bed placement id), she walks up to greet whoever respawns
+# there.
+[[npcs]]
+id = "mira"
+account = "npc_inn_maid"
+gender = "female"
+llm = "codex"

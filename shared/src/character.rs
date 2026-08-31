@@ -50,6 +50,8 @@ pub enum CharacterClass {
     Merchant,
     #[serde(rename = "guard")]
     Guard,
+    #[serde(rename = "maid")]
+    Maid,
 }
 
 impl CharacterClass {
@@ -71,16 +73,21 @@ impl CharacterClass {
             CharacterClass::Bard => "bard",
             CharacterClass::Merchant => "merchant",
             CharacterClass::Guard => "guard",
+            CharacterClass::Maid => "maid",
         }
     }
 
-    /// Whether a player may create a character of this class. Merchant and
-    /// Guard belong to operator-run NPCs: Merchant's CHA +3 widens the
-    /// haggling band and Guard is a d10 hit die with STR/CON +2, so both are
-    /// balance decisions rather than security ones — the same rule applies to
-    /// human and agent players alike (`doc/REMOTE_AGENT_CLIENT.md`).
+    /// Whether a player may create a character of this class. Merchant,
+    /// Guard and Maid belong to operator-run NPCs: Merchant's CHA +3 widens
+    /// the haggling band, Guard is a d10 hit die with STR/CON +2, and Maid is
+    /// a town-role class with no player niche — balance decisions rather than
+    /// security ones; the same rule applies to human and agent players alike
+    /// (`doc/REMOTE_AGENT_CLIENT.md`).
     pub fn is_player_selectable(&self) -> bool {
-        !matches!(self, CharacterClass::Merchant | CharacterClass::Guard)
+        !matches!(
+            self,
+            CharacterClass::Merchant | CharacterClass::Guard | CharacterClass::Maid
+        )
     }
 
     pub fn hit_die(&self) -> u8 {
@@ -98,7 +105,7 @@ impl CharacterClass {
             | CharacterClass::Rogue
             | CharacterClass::Wizard
             | CharacterClass::Bard => 6,
-            CharacterClass::Tourist | CharacterClass::Merchant => 4,
+            CharacterClass::Tourist | CharacterClass::Merchant | CharacterClass::Maid => 4,
             CharacterClass::Guard => 10,
         }
     }
@@ -127,6 +134,7 @@ impl CharacterClass {
             (CharacterClass::Bard, _) => [-2, 2, -1, 0, -1, 2],
             (CharacterClass::Merchant, _) => [-2, 0, -1, 1, -1, 3],
             (CharacterClass::Guard, _) => [2, 0, 2, -2, -1, -1],
+            (CharacterClass::Maid, _) => [-2, 1, -1, -1, 1, 2],
         }
     }
 }
@@ -152,6 +160,7 @@ impl std::str::FromStr for CharacterClass {
             "bard" => Ok(CharacterClass::Bard),
             "merchant" => Ok(CharacterClass::Merchant),
             "guard" => Ok(CharacterClass::Guard),
+            "maid" => Ok(CharacterClass::Maid),
             _ => Err(()),
         }
     }

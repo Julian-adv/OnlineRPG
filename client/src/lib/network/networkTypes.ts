@@ -19,6 +19,7 @@ export type CharacterClass =
   | 'bard'
   | 'merchant'
   | 'guard'
+  | 'maid'
 
 export type Gender = 'male' | 'female'
 

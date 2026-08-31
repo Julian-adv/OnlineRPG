@@ -1051,6 +1051,9 @@ export function handleServerMessage(
         requestCameraReset()
         addChatMessage({ text: 'You have been revived.', sender: 'system' })
       } else {
+        // Respawns now travel across floors (for NPCs tending the sick
+        // room); a player this client doesn't render is not ours to move.
+        if (!gameState.otherPlayers.has(serverPlayer.id)) break
         updatePlayer(serverPlayer.id, {
           health: serverPlayer.health,
           maxHealth: serverPlayer.max_health,

@@ -1,0 +1,8 @@
+{
+  "spots": [
+    { "bed_object_id": 53, "pos": [-1446.3, 4.4, 4754.6], "rotation": 88.9, "floor_level": 1 },
+    { "bed_object_id": 54, "pos": [-1447.2, 4.4, 4754.6], "rotation": -121.5, "floor_level": 1 },
+    { "bed_object_id": 52, "pos": [-1450.3, 4.4, 4754.7], "rotation": -104.6, "floor_level": 1 },
+    { "bed_object_id": 55, "pos": [-1452.7, 4.4, 4754.7], "rotation": -98.9, "floor_level": 1 }
+  ]
+}

@@ -140,6 +140,11 @@ impl NpcDefs {
         self.by_npc_name.get(npc_name)
     }
 
+    /// Every registry NPC's character name.
+    pub fn npc_names(&self) -> impl Iterator<Item = &str> {
+        self.by_npc_name.keys().map(String::as_str)
+    }
+
     /// Character name for a registry id (the schedule directory name).
     pub fn npc_name_by_id(&self, id: &str) -> Option<&str> {
         self.npc_name_by_id.get(id).map(String::as_str)

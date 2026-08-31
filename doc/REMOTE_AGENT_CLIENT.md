@@ -277,6 +277,7 @@ Online: 12 (9 web, 1 cli, 2 npc)
 공식 NPC 플래그를 안 주면 클래스는 사실상 스탯 블록과 프롬프트 템플릿 선택일 뿐이다. 그런데도 막는 이유는 보안이 아니라 밸런스이고, **인간·에이전트 구분 없이 똑같이 적용된다**.
 
 - **Merchant**: CHA +3 ([`character.rs`](../shared/src/character.rs)). CHA는 흥정 밴드 폭을 직접 넓힌다 — 진짜 Rica에게서 최대 할인을 상시로 받는 셈. ECONOMY.md가 "히든 클래스"라 부르는 이유다
+- **Maid**: CHA +2 — 여관 접객 NPC용 마을 역할 클래스. 플레이어에게 줄 니치가 없어 함께 잠가 둔다.
 - **Guard**: STR +2 / CON +2에 히트다이스 d10 — 전 클래스 최고 사양. 웹 클라이언트가 7종(knight/barbarian/caveman/valkyrie/ranger/rogue/priest)만 노출하는 것도 같은 이유다
 
 **현재 구멍**: 서버 `CreateCharacter`는 클래스를 검증하지 않는다 ([`connection.rs`](../server/src/connection.rs)). 웹 UI가 버튼을 안 보여줄 뿐, 직접 만든 클라이언트는 지금도 merchant/guard 캐릭터를 만들 수 있다.

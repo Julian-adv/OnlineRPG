@@ -36,6 +36,31 @@ struct ScheduleFile {
     schedule: Vec<ScheduleEntry>,
 }
 
+#[derive(Debug, Deserialize)]
+struct SickroomFile {
+    spots: Vec<driver::SickroomSpot>,
+}
+
+/// Read and parse one optional JSON data file. A missing path yields None
+/// silently; an unreadable or malformed file logs and yields None, so the
+/// NPC still runs without it.
+fn load_json_file<T: serde::de::DeserializeOwned>(path: Option<&str>, label: &str) -> Option<T> {
+    let path = path?;
+    match std::fs::read_to_string(path) {
+        Ok(content) => match serde_json::from_str::<T>(&content) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                error!("[{label}] Failed to parse {path}: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            error!("[{label}] Failed to read {path}: {e}");
+            None
+        }
+    }
+}
+
 /// Per-NPC configuration. Deployment-only values (account, llm backend,
 /// timing) live here; everything describing *who the NPC is* comes from the
 /// game-data registry via `id` and can merely be overridden here.
@@ -106,6 +131,8 @@ pub struct NpcConfig {
     pub favor_file: Option<String>,
     /// Path to schedule file (time-based positioning).
     pub schedule_file: Option<String>,
+    /// Path to sick-room file (bedside spots for respawn greetings).
+    pub sickroom_file: Option<String>,
 }
 
 impl NpcConfig {
@@ -983,38 +1010,24 @@ fn spawn_llm_task(
 
     let state = Arc::clone(state);
     let scheduler = scheduler.clone();
-    let schedule = if let Some(ref path) = npc.schedule_file {
-        match std::fs::read_to_string(path) {
-            Ok(content) => match serde_json::from_str::<ScheduleFile>(&content) {
-                Ok(mut f) => {
-                    let errors = parse_conditions(&mut f.schedule);
-                    for e in &errors {
-                        error!("[{}] Schedule entry error: {e}", label);
-                    }
-                    if errors.is_empty() {
-                        info!(
-                            "[{}] Loaded {} schedule entries from {path}",
-                            label,
-                            f.schedule.len()
-                        );
-                        f.schedule
-                    } else {
-                        Vec::new()
-                    }
-                }
-                Err(e) => {
-                    error!("[{}] Failed to parse schedule file {path}: {e}", label);
-                    Vec::new()
-                }
-            },
-            Err(e) => {
-                error!("[{}] Failed to read schedule file {path}: {e}", label);
+    let schedule = load_json_file::<ScheduleFile>(npc.schedule_file.as_deref(), label)
+        .map(|mut f| {
+            let errors = parse_conditions(&mut f.schedule);
+            for e in &errors {
+                error!("[{label}] Schedule entry error: {e}");
+            }
+            if errors.is_empty() {
+                info!("[{label}] Loaded {} schedule entries", f.schedule.len());
+                f.schedule
+            } else {
                 Vec::new()
             }
-        }
-    } else {
-        Vec::new()
-    };
+        })
+        .unwrap_or_default();
+
+    let sickroom = load_json_file::<SickroomFile>(npc.sickroom_file.as_deref(), label)
+        .map(|f| f.spots)
+        .unwrap_or_default();
 
     let api_base_url = api_base_url(server_url);
 
@@ -1029,6 +1042,7 @@ fn spawn_llm_task(
         activity_window,
         always_active: npc.always_active(),
         schedule,
+        sickroom,
         api_base_url,
     };
     Some(tokio::spawn(async move {

@@ -74,18 +74,9 @@ pub(super) async fn check_schedule_transition(
             .0
             .map(|i| &schedule[i])
             .filter(|e| e.condition == Some(ScheduleCondition::Meeting));
-        {
-            let mut s = state.lock().await;
-            // Stop interaction from previous schedule entry if it had an action
-            if current.0.is_some_and(|i| schedule[i].action.is_some()) {
-                if let Err(e) = s.send_command(ClientMessage::StopInteraction).await {
-                    error!("[{label}] Failed to send StopInteraction: {e}");
-                }
-            }
-            s.pack_up_placeables(label).await;
-            if let Some(entry) = meeting {
-                s.enter_meeting(entry.host);
-            }
+        stop_current_entry(state, schedule, current.0, label).await;
+        if let Some(entry) = meeting {
+            state.lock().await.enter_meeting(entry.host);
         }
         if let Some(i) = new.0 {
             let entry = &schedule[i];
@@ -111,6 +102,24 @@ pub(super) async fn check_schedule_transition(
     new
 }
 
+/// Leave-taking before any driven walk: stop the current entry's
+/// interaction and pack up placeables. Shared by schedule transitions and
+/// sick-room bedside visits.
+pub(super) async fn stop_current_entry(
+    state: &Arc<Mutex<SharedState>>,
+    schedule: &[ScheduleEntry],
+    current: Option<usize>,
+    label: &str,
+) {
+    let mut s = state.lock().await;
+    if current.is_some_and(|i| schedule[i].action.is_some()) {
+        if let Err(e) = s.send_command(ClientMessage::StopInteraction).await {
+            error!("[{label}] Failed to send StopInteraction: {e}");
+        }
+    }
+    s.pack_up_placeables(label).await;
+}
+
 /// Send InteractObject if the schedule entry has an action and object_id.
 async fn send_interact_if_needed(s: &mut SharedState, entry: &ScheduleEntry) {
     if let (Some(ref object_type), Some(object_id)) = (&entry.action, entry.object_id) {
@@ -127,7 +136,7 @@ async fn send_interact_if_needed(s: &mut SharedState, entry: &ScheduleEntry) {
 
 /// Walk to a schedule entry's position and set the final rotation. If the
 /// entry has waypoints, visits each one in order before going to `pos`.
-async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &ScheduleEntry) {
+pub(super) async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry: &ScheduleEntry) {
     // Walk through patrol waypoints first (if any)
     for (i, wp) in entry.waypoints.iter().enumerate() {
         let (wx, wz) = (wp[0], wp[2]);

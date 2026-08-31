@@ -58,6 +58,7 @@ const MAX_CHAT_HISTORY: usize = 30;
 /// How many of our own recent song titles the world state lists, so a bard
 /// can favor tunes it has not played lately.
 const MAX_RECENT_SONGS: usize = 8;
+const MAX_RECENT_RESPAWNS: usize = 8;
 /// Accumulated favor a player can hold with this NPC, in either direction.
 const FAVOR_MIN: i32 = -5;
 const FAVOR_MAX: i32 = 5;
@@ -67,7 +68,7 @@ const FAVOR_MAX: i32 = 5;
 const TRADE_FAVOR_THRESHOLD: i32 = 3;
 
 /// Push onto a capped ring: the oldest entry falls off past `cap`.
-fn push_capped(q: &mut VecDeque<String>, item: String, cap: usize) {
+fn push_capped<T>(q: &mut VecDeque<T>, item: T, cap: usize) {
     q.push_back(item);
     if q.len() > cap {
         q.pop_front();
@@ -274,6 +275,9 @@ pub struct SharedState {
     latest_monster_moves: HashMap<String, ServerMessage>,
     /// Latest position per player -- deduplicates high-frequency PlayerMoved events
     latest_player_moves: HashMap<PlayerId, ServerMessage>,
+    /// Players seen respawning nearby: (name, bed object id). Drained by the
+    /// driver's sick-room visits; capped so NPCs without one never grow it.
+    recent_respawns: VecDeque<(String, u32)>,
     /// Latest game time -- only the most recent matters
     latest_time: Option<ServerMessage>,
     /// Players we've already seen within NEARBY_PLAYER_RADIUS -- prevents duplicate events
@@ -414,6 +418,7 @@ impl SharedState {
             favor: BTreeMap::new(),
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
+            recent_respawns: VecDeque::new(),
             latest_time: None,
             seen_nearby_players: HashSet::new(),
             music_performers: HashMap::new(),
