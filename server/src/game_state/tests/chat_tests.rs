@@ -1353,6 +1353,7 @@ async fn play_music_hands_the_track_to_neighbours() {
         Ok(ServerMessage::PlayerInteractionChanged {
             player_id,
             object_type,
+            ..
         }) => {
             assert_eq!(player_id, bard_id);
             assert_eq!(object_type.as_deref(), Some("guitar_playing"));
@@ -1432,6 +1433,7 @@ async fn assert_emote_broadcast(tag: &str, emote: &str) {
             Ok(ServerMessage::PlayerInteractionChanged {
                 player_id,
                 object_type,
+                ..
             }) => {
                 assert_eq!(player_id, performer_id);
                 assert_eq!(object_type.as_deref(), Some(emote));

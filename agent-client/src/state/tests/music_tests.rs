@@ -85,6 +85,7 @@ fn a_song_is_followed_by_a_quiet_spell_before_the_next() {
         elapsed_secs: 0.0,
     });
     s.push_event(ServerMessage::PlayerInteractionChanged {
+        object_id: None,
         player_id: PlayerId::from(1),
         object_type: None,
     });
@@ -118,6 +119,7 @@ fn a_song_is_followed_by_a_quiet_spell_before_the_next() {
     // In bed on the night schedule: playing would drop the sleeping pose
     // and nothing would put it back until morning.
     s.push_event(ServerMessage::PlayerInteractionChanged {
+        object_id: None,
         player_id: PlayerId::from(1),
         object_type: Some("bed".to_string()),
     });
@@ -163,6 +165,7 @@ fn a_tune_is_announced_at_both_ends_and_our_own_stops_itself() {
 
     // The server clears the interaction; that is what the LLM reads.
     s.push_event(ServerMessage::PlayerInteractionChanged {
+        object_id: None,
         player_id: PlayerId::from(1),
         object_type: None,
     });
@@ -267,6 +270,7 @@ fn tips_left_during_a_song_are_announced_when_it_ends() {
     );
 
     s.push_event(ServerMessage::PlayerInteractionChanged {
+        object_id: None,
         player_id: PlayerId::from(1),
         object_type: None,
     });
@@ -298,6 +302,7 @@ fn tips_left_during_a_song_are_announced_when_it_ends() {
 
     // Once the schedule has put it to bed, a tip is not worth getting up.
     s.push_event(ServerMessage::PlayerInteractionChanged {
+        object_id: None,
         player_id: PlayerId::from(1),
         object_type: Some("bed".to_string()),
     });
@@ -362,6 +367,7 @@ fn a_tip_taken_before_the_song_ends_is_forgotten() {
     });
     assert_eq!(s.take_wake_urgency(), EventUrgency::Noise, "not mid-song");
     s.push_event(ServerMessage::PlayerInteractionChanged {
+        object_id: None,
         player_id: PlayerId::from(1),
         object_type: None,
     });

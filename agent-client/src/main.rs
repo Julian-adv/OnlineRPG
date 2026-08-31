@@ -151,8 +151,12 @@ pub fn default_urgent_min_interval_secs() -> u64 {
     2
 }
 
+// No debounce by default: the pacing floors already batch a stream of
+// events (and an in-flight call batches whatever lands during it), so a
+// leading debounce only delayed the first response. Set debounce_secs per
+// NPC to re-merge sub-second bursts if an NPC ever needs it.
 pub fn default_debounce_secs() -> u64 {
-    2
+    0
 }
 
 pub fn default_idle_interval_secs() -> u64 {
@@ -412,19 +416,20 @@ fn resolve_from_registry(npc: &mut NpcConfig) -> anyhow::Result<()> {
         .get_or_insert_with(|| format!("data/npcs/{id}/memory.txt"));
     npc.favor_file
         .get_or_insert_with(|| format!("data/npcs/{id}/favor.json"));
+    // These files are optional, and a missing path is logged as an error
+    // downstream — only derive one when the conventional file exists.
+    let data_file = |name: &str| {
+        let path = format!("data/npcs/{id}/{name}");
+        std::path::Path::new(&path).exists().then_some(path)
+    };
     if npc.schedule_file.is_none() {
-        // Schedules are optional, and a missing path is logged as an error
-        // downstream — only derive it when the conventional file exists.
-        let path = format!("data/npcs/{id}/schedule.json");
-        if std::path::Path::new(&path).exists() {
-            npc.schedule_file = Some(path);
-        }
+        npc.schedule_file = data_file("schedule.json");
     }
     if npc.sickroom_file.is_none() {
-        let path = format!("data/npcs/{id}/sickroom.json");
-        if std::path::Path::new(&path).exists() {
-            npc.sickroom_file = Some(path);
-        }
+        npc.sickroom_file = data_file("sickroom.json");
+    }
+    if npc.tables_file.is_none() {
+        npc.tables_file = data_file("tables.json");
     }
     Ok(())
 }

@@ -114,7 +114,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v47: `Player.object_id` rides the wire (bed occupied on respawn, for the
 ///      inn maid's bedside visit); the array grew, so older builds cannot
 ///      decode `Player`.
-pub const PROTOCOL_VERSION: u32 = 47;
+/// v48: `PlayerInteractionChanged.object_id` — which chair/bed was taken,
+///      so the maid's table spots key on the placement id; the array grew,
+///      so older builds cannot decode it.
+pub const PROTOCOL_VERSION: u32 = 48;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

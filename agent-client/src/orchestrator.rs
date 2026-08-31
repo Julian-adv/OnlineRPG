@@ -36,9 +36,10 @@ struct ScheduleFile {
     schedule: Vec<ScheduleEntry>,
 }
 
+/// Wrapper for deserializing a visit-spot file (sickroom.json, tables.json).
 #[derive(Debug, Deserialize)]
-struct SickroomFile {
-    spots: Vec<driver::SickroomSpot>,
+struct SpotsFile {
+    spots: Vec<driver::VisitSpot>,
 }
 
 /// Read and parse one optional JSON data file. A missing path yields None
@@ -133,6 +134,11 @@ pub struct NpcConfig {
     pub schedule_file: Option<String>,
     /// Path to sick-room file (bedside spots for respawn greetings).
     pub sickroom_file: Option<String>,
+    /// Walk over to guests who sit down on a nearby chair and take their
+    /// order (the inn maid). Defaults to false.
+    pub serve_tables: Option<bool>,
+    /// Path to tables file (curated order-taking spots per chair).
+    pub tables_file: Option<String>,
 }
 
 impl NpcConfig {
@@ -1025,7 +1031,11 @@ fn spawn_llm_task(
         })
         .unwrap_or_default();
 
-    let sickroom = load_json_file::<SickroomFile>(npc.sickroom_file.as_deref(), label)
+    let sickroom = load_json_file::<SpotsFile>(npc.sickroom_file.as_deref(), label)
+        .map(|f| f.spots)
+        .unwrap_or_default();
+
+    let tables = load_json_file::<SpotsFile>(npc.tables_file.as_deref(), label)
         .map(|f| f.spots)
         .unwrap_or_default();
 
@@ -1043,6 +1053,8 @@ fn spawn_llm_task(
         always_active: npc.always_active(),
         schedule,
         sickroom,
+        serve_tables: npc.serve_tables.unwrap_or(false),
+        tables,
         api_base_url,
     };
     Some(tokio::spawn(async move {

@@ -59,6 +59,10 @@ const MAX_CHAT_HISTORY: usize = 30;
 /// can favor tunes it has not played lately.
 const MAX_RECENT_SONGS: usize = 8;
 const MAX_RECENT_RESPAWNS: usize = 8;
+const MAX_RECENT_SEATINGS: usize = 8;
+/// The one furniture type the object catalog marks `interaction: "sit"`.
+/// Emotes ride the same interaction field, hence the exact match.
+pub(crate) const SIT_OBJECT_TYPE: &str = "chair";
 /// Accumulated favor a player can hold with this NPC, in either direction.
 const FAVOR_MIN: i32 = -5;
 const FAVOR_MAX: i32 = 5;
@@ -278,6 +282,11 @@ pub struct SharedState {
     /// Players seen respawning nearby: (name, bed object id). Drained by the
     /// driver's sick-room visits; capped so NPCs without one never grow it.
     recent_respawns: VecDeque<(String, u32)>,
+    /// Players seen sitting down on a chair nearby. Drained by the driver's
+    /// table-service visits; capped like respawns. Ids only — unlike a
+    /// respawn, a seating only matters while the player is still nearby,
+    /// so the name is looked up at drain time.
+    recent_seatings: VecDeque<PlayerId>,
     /// Latest game time -- only the most recent matters
     latest_time: Option<ServerMessage>,
     /// Players we've already seen within NEARBY_PLAYER_RADIUS -- prevents duplicate events
@@ -419,6 +428,7 @@ impl SharedState {
             latest_monster_moves: HashMap::new(),
             latest_player_moves: HashMap::new(),
             recent_respawns: VecDeque::new(),
+            recent_seatings: VecDeque::new(),
             latest_time: None,
             seen_nearby_players: HashSet::new(),
             music_performers: HashMap::new(),

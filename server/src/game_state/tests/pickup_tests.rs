@@ -47,6 +47,7 @@ async fn pickup_broadcasts_the_pickup_animation() {
         if let ServerMessage::PlayerInteractionChanged {
             player_id,
             object_type,
+            ..
         } = msg
         {
             assert_eq!(player_id, pid("picker"));

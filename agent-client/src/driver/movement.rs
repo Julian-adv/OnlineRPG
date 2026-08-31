@@ -162,39 +162,45 @@ pub(super) async fn execute_schedule_move(state: &Arc<Mutex<SharedState>>, entry
     // Go to final position
     let (x, y, z) = (entry.pos[0], entry.pos[1], entry.pos[2]);
 
-    // Check if we're already near the target (including floor level)
-    let (walk_x, walk_z) = {
-        let mut s = state.lock().await;
-        if let Some(ref p) = s.self_player {
-            let to_target = PlanarDelta::to_xz(&p.position, x, z);
-            let same_floor = s.passability_floor() == entry.floor_level;
-            if same_floor && to_target.dist < SCHEDULE_ARRIVAL_RADIUS {
-                debug!("Already near schedule target — skipping movement");
-                send_interact_if_needed(&mut s, entry).await;
-                return;
-            }
-        }
+    // Already near the target (same floor)? Skip the walk but still fall
+    // through to the exact-position send — the entry's spot and rotation
+    // apply even without a walk (a maid already standing at the table must
+    // still turn to face the guest).
+    let already_near = {
+        let s = state.lock().await;
+        s.self_player.as_ref().is_some_and(|p| {
+            s.passability_floor() == entry.floor_level
+                && PlanarDelta::to_xz(&p.position, x, z).dist < SCHEDULE_ARRIVAL_RADIUS
+        })
+    };
+
+    let arrived = if already_near {
+        debug!("Already near schedule target — skipping the walk");
+        true
+    } else {
         // A pose position may sit on the furniture itself (a bed swallows its
         // own cells); walk beside it and let the exact-position send below
         // cross the last metre.
-        s.walkable_near(x, z, entry.floor_level)
-    };
-
-    let arrived = match execute_move(state, walk_x, walk_z, entry.floor_level, Some(false)).await {
-        MoveResult::Arrived => true,
-        MoveResult::Blocked => {
-            // Force-move to schedule position (e.g. cross-floor moves through
-            // closed doors). NPCs must follow their schedules.
-            warn!(
-                "Schedule move blocked — force-moving to ({x:.1}, {z:.1}) floor {}",
-                entry.floor_level
-            );
-            true
-        }
-        MoveResult::Died => false,
-        MoveResult::Error => {
-            error!("Schedule move error");
-            false
+        let (walk_x, walk_z) = {
+            let s = state.lock().await;
+            s.walkable_near(x, z, entry.floor_level)
+        };
+        match execute_move(state, walk_x, walk_z, entry.floor_level, Some(false)).await {
+            MoveResult::Arrived => true,
+            MoveResult::Blocked => {
+                // Force-move to schedule position (e.g. cross-floor moves through
+                // closed doors). NPCs must follow their schedules.
+                warn!(
+                    "Schedule move blocked — force-moving to ({x:.1}, {z:.1}) floor {}",
+                    entry.floor_level
+                );
+                true
+            }
+            MoveResult::Died => false,
+            MoveResult::Error => {
+                error!("Schedule move error");
+                false
+            }
         }
     };
 

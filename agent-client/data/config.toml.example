@@ -37,7 +37,7 @@ llm = "none"
 # LLM timing (seconds)
 min_interval_secs = 5                       # Minimum seconds between prompts (active mode)
 urgent_min_interval_secs = 2                # Same floor while an urgent event waits (player chat, being hit)
-debounce_secs = 2                           # Extra wait to batch events after trigger
+debounce_secs = 0                           # Extra wait to batch events after trigger (0 = respond at once)
 idle_interval_secs = 3600                   # Interval when no chat/combat activity (idle mode)
 activity_window_secs = 30                   # How long after last activity to stay in active mode
 
@@ -92,7 +92,7 @@ temperature = 0.7
 # Codex CLI settings (used when llm = "codex")
 # Requires `codex` CLI installed (npm i -g @openai/codex) and OPENAI_API_KEY set.
 [codex]
-model = "gpt-5.4-mini"                                # Any OpenAI model ID
+model = "gpt-5.6-luna"                                # Any OpenAI model ID
 system_prompt_file = "data/system_prompt.txt"
 
 # Generic OpenAI-compatible endpoint settings (used when llm = "openai")
@@ -154,7 +154,7 @@ llm = "codex"
 # Per-NPC timing overrides (optional, defaults shown above)
 # min_interval_secs = 5
 # urgent_min_interval_secs = 2
-# debounce_secs = 2
+# debounce_secs = 0
 # idle_interval_secs = 3600
 # activity_window_secs = 30
 # always_active = false                      # registry NPCs default to this
@@ -182,9 +182,12 @@ llm = "codex"
 # Inn maid. Serves food and drink on the inn's ground floor, and looks in on
 # the sick room upstairs. With data/npcs/mira/sickroom.json present (bedside
 # spots keyed by bed placement id), she walks up to greet whoever respawns
-# there.
+# there. serve_tables makes her walk over to guests who sit down on a chair
+# nearby and take their order; data/npcs/mira/tables.json can pin the exact
+# standing spot per chair.
 [[npcs]]
 id = "mira"
 account = "npc_inn_maid"
 gender = "female"
 llm = "codex"
+serve_tables = true

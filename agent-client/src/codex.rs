@@ -21,7 +21,7 @@ pub struct CodexConfig {
 }
 
 fn default_model() -> String {
-    "o4-mini".to_string()
+    "gpt-5.6-luna".to_string()
 }
 fn default_reasoning_effort() -> String {
     "low".to_string()

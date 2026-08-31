@@ -1963,6 +1963,7 @@ impl super::GameState {
             ServerMessage::PlayerInteractionChanged {
                 player_id: *player_id,
                 object_type: Some("pickup".to_string()),
+                object_id: None,
             },
             Some(player_id),
         )

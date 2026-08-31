@@ -22,6 +22,11 @@ impl SharedState {
         self.recent_respawns.drain(..).collect()
     }
 
+    /// Hand the queued chair seatings to the driver, emptying the queue.
+    pub fn drain_recent_seatings(&mut self) -> Vec<PlayerId> {
+        self.recent_seatings.drain(..).collect()
+    }
+
     /// Classify how urgent a server event is for LLM processing.
     pub fn classify_event(&self, msg: &ServerMessage) -> EventUrgency {
         let self_id = self.self_player_id.as_ref();
@@ -609,9 +614,23 @@ impl SharedState {
             ServerMessage::PlayerInteractionChanged {
                 player_id,
                 object_type,
+                object_id,
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
                     self.set_self_pose(object_type.clone());
+                } else if let Some(p) = self.nearby_players.get_mut(player_id) {
+                    // Emotes ride this field too, so only the exact chair
+                    // type counts as taking a seat — and only on the
+                    // transition, so a re-broadcast can't re-summon the maid.
+                    let was_seated = p.object_type.as_deref() == Some(SIT_OBJECT_TYPE);
+                    p.object_type = object_type.clone();
+                    p.object_id = *object_id;
+                    if !was_seated
+                        && !p.is_official_npc
+                        && object_type.as_deref() == Some(SIT_OBJECT_TYPE)
+                    {
+                        push_capped(&mut self.recent_seatings, *player_id, MAX_RECENT_SEATINGS);
+                    }
                 }
                 if object_type.as_deref() != Some(MUSIC_EMOTE) {
                     self.finish_music(player_id);

@@ -101,11 +101,13 @@ impl Drop for RunDir {
     }
 }
 
-/// A standing spot beside one sick-room bed, keyed by the bed's furniture
-/// placement id (arrives as `object_id` on the respawned player).
+/// A curated standing spot beside one furniture piece — a sick-room bed, a
+/// dining chair — keyed by the piece's placement id (arrives as `object_id`
+/// on the respawn / sitting broadcast).
 #[derive(Debug, Clone, serde::Deserialize)]
-pub struct SickroomSpot {
-    pub bed_object_id: u32,
+pub struct VisitSpot {
+    #[serde(alias = "bed_object_id", alias = "chair_object_id")]
+    pub object_id: u32,
     pub pos: [f32; 3],
     #[serde(default)]
     pub rotation: f32,
@@ -133,21 +135,78 @@ pub struct DriverConfig {
     pub schedule: Vec<ScheduleEntry>,
     /// Bedside spots in the inn's sick room; a respawn in one of these beds
     /// sends the NPC to stand at the matching spot and greet the woken.
-    pub sickroom: Vec<SickroomSpot>,
+    pub sickroom: Vec<VisitSpot>,
+    /// Walk over to guests who sit down on a chair nearby and take their
+    /// order. For NPCs that wait tables (the inn maid).
+    pub serve_tables: bool,
+    /// Curated order-taking spots for known chairs.
+    pub tables: Vec<VisitSpot>,
     /// HTTP base URL for the game server API (e.g. "http://127.0.0.1:10007").
     pub api_base_url: String,
 }
 
-/// Synthetic schedule entry for a bedside visit — reuses the schedule walk
+/// Synthetic schedule entry for a visit — reuses the schedule walk
 /// (waypointless, exact final rotation, cross-floor force move).
-fn bedside_entry(spot: &SickroomSpot) -> ScheduleEntry {
+fn visit_entry(spot: &VisitSpot, label: &str) -> ScheduleEntry {
     ScheduleEntry {
         pos: spot.pos,
         rotation: spot.rotation,
         floor_level: spot.floor_level,
-        label: Some("the sick-room bedside".to_string()),
+        label: Some(label.to_string()),
         ..Default::default()
     }
+}
+
+/// The seated guest's name and a schedule entry standing beside them,
+/// facing the seat. `None` when the guest is gone, off their chair, on
+/// another floor, or beyond serving range.
+fn table_entry(
+    s: &SharedState,
+    guest_id: &onlinerpg_shared::PlayerId,
+    tables: &[VisitSpot],
+) -> Option<(String, ScheduleEntry)> {
+    let me = s.self_player.as_ref()?;
+    let p = s.nearby_players.get(guest_id)?;
+    if p.object_type.as_deref() != Some(crate::state::SIT_OBJECT_TYPE)
+        || p.floor_level != me.floor_level
+        || p.floor_level < 0
+    {
+        return None;
+    }
+    let seat = p.position;
+    let to_seat = crate::geom::PlanarDelta::between(&me.position, &seat);
+    if to_seat.dist > TABLE_SERVICE_RADIUS {
+        return None;
+    }
+    let label = "the guest's table";
+    // A curated spot for this chair wins over the computed one.
+    if let Some(t) = tables.iter().find(|t| p.object_id == Some(t.object_id)) {
+        return Some((p.name.clone(), visit_entry(t, label)));
+    }
+    // Stand a step short of the chair, on the side we approach from; the
+    // chair itself is solid, so let walkable_near settle the exact cell.
+    let (dx, dz) = if to_seat.dist > 0.1 {
+        (to_seat.dx / to_seat.dist, to_seat.dz / to_seat.dist)
+    } else {
+        (1.0, 0.0)
+    };
+    let floor = p.floor_level as u8;
+    let (x, z) = s.walkable_near(
+        seat.x - dx * TABLE_STAND_OFF,
+        seat.z - dz * TABLE_STAND_OFF,
+        floor,
+    );
+    let rotation = crate::geom::PlanarDelta::xz(x, z, seat.x, seat.z)
+        .rotation()
+        .to_degrees();
+    let entry = ScheduleEntry {
+        pos: [x, seat.y, z],
+        rotation,
+        floor_level: floor,
+        label: Some(label.to_string()),
+        ..Default::default()
+    };
+    Some((p.name.clone(), entry))
 }
 
 /// The main LLM agent driver loop. Runs as a tokio task.
@@ -173,6 +232,8 @@ pub async fn llm_driver(
         always_active,
         schedule,
         sickroom,
+        serve_tables,
+        tables,
         api_base_url,
     } = config;
     let urgent_notify = {
@@ -242,9 +303,16 @@ pub async fn llm_driver(
     // bool marks that a prompt containing the wrap-up notice was submitted.
     let mut wrapup: Option<(Instant, bool)> = None;
     let mut dead_since: Option<Instant> = None;
-    // Bedside visit in progress: when to give the spot up and resume the
-    // schedule.
-    let mut bedside_until: Option<Instant> = None;
+    // Visit (bedside or guest's table) in progress: when to give the spot
+    // up and resume the schedule.
+    let mut visit_until: Option<Instant> = None;
+    // Submit the pending prompt without waiting out the debounce or the
+    // pacing floor — a single human-facing event (a guest sitting down)
+    // that must not queue behind batching heuristics. Cleared on submit.
+    let mut force_prompt = false;
+    // A table walk runs as a background task so the [Guest] prompt's LLM
+    // round trip overlaps the walk instead of waiting for arrival.
+    let mut visit_walk: Option<tokio::task::JoinHandle<()>> = None;
 
     // Fetch housing + furniture data so pathfinding avoids buildings and solid
     // props the same way the browser client does. An agent without a schedule
@@ -437,23 +505,28 @@ pub async fn llm_driver(
             }
         }
 
+        let sleeping_now = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
+
         // === Sick-room bedside visits ===
         if !sickroom.is_empty() && attack_target.is_none() {
-            let sleeping_now = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
             // Drain even while asleep so stale respawns don't pile up.
             let respawns = { state.lock().await.drain_recent_respawns() };
             let visit = respawns.into_iter().rev().find_map(|(name, bed_id)| {
                 sickroom
                     .iter()
-                    .find(|s| s.bed_object_id == bed_id)
+                    .find(|s| s.object_id == bed_id)
                     .map(|s| (name, s.clone()))
             });
             if let (Some((name, spot)), false) = (visit, sleeping_now) {
                 info!("[{label}] {name} woke in the sick room — going to the bedside");
+                // A table walk still in flight would fight this one for the body.
+                if let Some(h) = visit_walk.take() {
+                    h.abort();
+                }
                 // The same leave-taking a schedule transition does: a visit
                 // must not walk off mid-follow or leave a stall behind.
                 movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
-                let entry = bedside_entry(&spot);
+                let entry = visit_entry(&spot, "the sick-room bedside");
                 movement::execute_schedule_move(&state, &entry).await;
                 state.lock().await.push_ambient_event(format!(
                     "[SickRoom] {name} just came back to their senses in the bed \
@@ -462,18 +535,65 @@ pub async fn llm_driver(
                      words and offer something hot to eat. If they have already \
                      left the room, let them go — don't shout after them."
                 ));
-                bedside_until = Some(Instant::now() + BEDSIDE_DWELL);
-            }
-            if bedside_until.is_some_and(|until| Instant::now() >= until) {
-                // Visit over: forget the active entry so the schedule walks
-                // us back to our regular post.
-                bedside_until = None;
-                active_schedule = (None, None);
+                visit_until = Some(Instant::now() + VISIT_DWELL);
             }
         }
 
+        // === Table-service visits ===
+        if serve_tables && attack_target.is_none() {
+            // Drain every tick so stale seatings don't pile up.
+            let visit = {
+                let mut s = state.lock().await;
+                let seatings = s.drain_recent_seatings();
+                if sleeping_now || visit_until.is_some() {
+                    None
+                } else {
+                    seatings
+                        .into_iter()
+                        .rev()
+                        .find_map(|pid| table_entry(&s, &pid, &tables))
+                }
+            };
+            if let Some((name, entry)) = visit {
+                info!("[{label}] {name} took a seat nearby — going over for the order");
+                movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
+                // Event before the walk, and the walk in the background: the
+                // LLM round trip then overlaps the walk, so the greeting
+                // lands around arrival instead of a full round trip after.
+                state.lock().await.push_ambient_event_quiet(format!(
+                    "[Guest] {name} just took a seat at one of your tables and \
+                     you are on your way over — no move action needed. Greet \
+                     them in your own words and take their order — they buy by \
+                     clicking you to open your shop. If they have already left \
+                     the seat, let it go."
+                ));
+                // One event, not a burst: submit this very tick (or as soon
+                // as an in-flight turn lands), skipping the debounce and the
+                // pacing floor — a guest at the table must not wait them out.
+                prompt_pending_since = Some(Instant::now());
+                pending_urgency = LlmPriority::Urgent;
+                force_prompt = true;
+                last_activity_at = Instant::now();
+                let walk_state = Arc::clone(&state);
+                visit_walk = Some(tokio::spawn(async move {
+                    movement::execute_schedule_move(&walk_state, &entry).await;
+                }));
+                visit_until = Some(Instant::now() + VISIT_DWELL);
+            }
+        }
+
+        if visit_until.is_some_and(|until| Instant::now() >= until) {
+            // Visit over: forget the active entry so the schedule walks
+            // us back to our regular post.
+            visit_until = None;
+            if let Some(h) = visit_walk.take() {
+                h.abort();
+            }
+            active_schedule = (None, None);
+        }
+
         // === Check schedule transitions ===
-        if !schedule.is_empty() && attack_target.is_none() && bedside_until.is_none() {
+        if !schedule.is_empty() && attack_target.is_none() && visit_until.is_none() {
             let due = resolve_due_schedule(&state, &schedule).await;
             if due == active_schedule {
                 wrapup = None;
@@ -527,9 +647,12 @@ pub async fn llm_driver(
             let handle = llm_in_flight.take().unwrap();
             last_prompt_at = Instant::now();
             if let Some(response) = await_llm_response(handle, &label).await {
+                // A live visit walk owns the body; the LLM turn it triggered
+                // may talk but not move.
+                let walking_to_visit = visit_walk.as_ref().is_some_and(|h| !h.is_finished());
                 let skip_movement = {
                     let s = state.lock().await;
-                    has_scheduled_action || s.trade_busy || s.self_fishing
+                    has_scheduled_action || s.trade_busy || s.self_fishing || walking_to_visit
                 };
                 let new_target =
                     handle_response(&state, &response, &memory_file, &favor_file, skip_movement)
@@ -563,17 +686,19 @@ pub async fn llm_driver(
         }
 
         // Debounce: wait at least `debounce` after the trigger before actually prompting
-        let ready_to_prompt = prompt_pending_since.is_some_and(|t| t.elapsed() >= debounce);
+        let ready_to_prompt =
+            prompt_pending_since.is_some_and(|t| force_prompt || t.elapsed() >= debounce);
 
         if !ready_to_prompt {
             continue;
         }
 
         // Also ensure the floor since last prompt (keep pending state so we retry next tick)
-        if last_prompt_at.elapsed() < floor {
+        if !force_prompt && last_prompt_at.elapsed() < floor {
             continue;
         }
         prompt_pending_since = None;
+        force_prompt = false;
 
         // Drain first; the prompt build (and its memory-file read) only
         // happens when something actually needs answering.
@@ -661,9 +786,16 @@ const RESPAWN_DELAY: Duration = Duration::from_secs(5);
 /// 30 real seconds ≈ 4 game minutes.
 const SCHEDULE_WRAPUP_GRACE: Duration = Duration::from_secs(30);
 
-/// How long a sick-room bedside visit holds the NPC there before the regular
-/// schedule pulls it back.
-const BEDSIDE_DWELL: Duration = Duration::from_secs(90);
+/// How long a visit (sick-room bedside, guest's table) holds the NPC there
+/// before the regular schedule pulls it back.
+const VISIT_DWELL: Duration = Duration::from_secs(90);
+
+/// A guest sitting down within this range of the NPC counts as one of its
+/// tables. Same floor only.
+const TABLE_SERVICE_RADIUS: f32 = 10.0;
+
+/// How far from the chair the NPC stands while taking the order.
+const TABLE_STAND_OFF: f32 = 1.2;
 
 /// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
 /// so a lost request is retried after another delay. Revival clears it.
@@ -899,12 +1031,14 @@ mod tests {
             activity_window: never,
             always_active: false,
             schedule: vec![entry],
-            sickroom: vec![SickroomSpot {
-                bed_object_id: 52,
+            sickroom: vec![VisitSpot {
+                object_id: 52,
                 pos: [-1450.3, 4.4, 4754.7],
                 rotation: -104.6,
                 floor_level: 1,
             }],
+            serve_tables: false,
+            tables: Vec::new(),
             api_base_url: "http://127.0.0.1:9".to_string(),
         };
         let scheduler = LlmScheduler::new(1, Duration::from_secs(5));
@@ -927,5 +1061,120 @@ mod tests {
         .await
         .expect("bedside visit never pushed the [SickRoom] event");
         driver.abort();
+    }
+
+    #[tokio::test]
+    async fn a_seated_guest_sends_the_npc_to_the_table() {
+        let (mut s, mut rx) = test_state();
+        let me = test_player(-1443.9, 4748.9);
+        s.in_game = true;
+        s.is_night = Some(true);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        // A guest in sight sits down before the driver starts: the seating
+        // buffer must survive startup like the respawn one does.
+        let mut guest = test_player(-1447.0, 4750.5);
+        guest.id = onlinerpg_shared::PlayerId::from(8);
+        guest.name = "Jake".to_string();
+        let guest_id = guest.id;
+        s.nearby_players.insert(guest_id, guest);
+        s.push_event(onlinerpg_shared::ServerMessage::PlayerInteractionChanged {
+            player_id: guest_id,
+            object_type: Some(crate::state::SIT_OBJECT_TYPE.to_string()),
+            object_id: Some(46),
+        });
+
+        let state = Arc::new(Mutex::new(s));
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+        // The guest submit bypasses debounce and the pacing floor, so the
+        // driver consumes the [Guest] event into a real prompt — capture
+        // prompts instead of watching the event queue.
+        let prompts: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        struct Capture(Arc<std::sync::Mutex<Vec<String>>>);
+        #[async_trait]
+        impl LlmBackend for Capture {
+            async fn send_message(&self, p: &str) -> anyhow::Result<String> {
+                self.0.lock().unwrap().push(p.to_string());
+                Ok("{}".to_string())
+            }
+        }
+
+        let never = Duration::from_secs(3600);
+        let config = DriverConfig {
+            label: "test_maid".to_string(),
+            memory_file: None,
+            favor_file: None,
+            min_interval: never,
+            urgent_min_interval: never,
+            debounce: never,
+            idle_interval: never,
+            activity_window: never,
+            always_active: false,
+            schedule: Vec::new(),
+            sickroom: Vec::new(),
+            serve_tables: true,
+            tables: Vec::new(),
+            api_base_url: "http://127.0.0.1:9".to_string(),
+        };
+        let scheduler = LlmScheduler::new(1, Duration::from_secs(5));
+        let driver = tokio::spawn(llm_driver(
+            Arc::clone(&state),
+            Arc::new(Capture(Arc::clone(&prompts))),
+            scheduler,
+            config,
+        ));
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                // The event normally reaches the captured prompt; the drain
+                // arm covers a race where this loop grabs it first.
+                let drained = state.lock().await.drain_agent_events();
+                if drained.iter().any(|e| e.contains("[Guest] Jake"))
+                    || prompts
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|p| p.contains("[Guest] Jake"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("table visit never surfaced the [Guest] event");
+        driver.abort();
+    }
+
+    #[tokio::test]
+    async fn a_curated_table_spot_wins_over_the_computed_one() {
+        let (mut s, _rx) = test_state();
+        let me = test_player(-1443.9, 4748.9);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        let mut guest = test_player(-1446.75, 4751.75);
+        guest.id = onlinerpg_shared::PlayerId::from(8);
+        guest.object_type = Some(crate::state::SIT_OBJECT_TYPE.to_string());
+        guest.object_id = Some(46);
+        let guest_id = guest.id;
+        s.nearby_players.insert(guest_id, guest);
+
+        let tables = vec![VisitSpot {
+            object_id: 46,
+            pos: [-1446.4, 1.3, 4752.5],
+            rotation: 145.9,
+            floor_level: 0,
+        }];
+        let (name, entry) = table_entry(&s, &guest_id, &tables).expect("guest is seated in range");
+        assert_eq!(name, "Me");
+        assert_eq!(entry.pos, [-1446.4, 1.3, 4752.5]);
+        assert_eq!(entry.rotation, 145.9);
+
+        // A seat away from every curated chair falls back to a computed spot.
+        let (_, entry) = table_entry(&s, &guest_id, &[]).expect("fallback still serves");
+        assert_ne!(entry.pos, [-1446.4, 1.3, 4752.5]);
     }
 }

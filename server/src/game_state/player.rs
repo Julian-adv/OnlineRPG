@@ -2063,6 +2063,7 @@ impl super::GameState {
                 ServerMessage::PlayerInteractionChanged {
                     player_id: *player_id,
                     object_type,
+                    object_id,
                 },
                 None,
             )
