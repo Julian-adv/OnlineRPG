@@ -111,7 +111,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      player until their scene is drawn; an older server cannot decode it.
 /// v46: titles — `Player.title`, `Character.titles`/`active_title`,
 ///      `ClientMessage::SetActiveTitle`; an older server cannot decode it.
-pub const PROTOCOL_VERSION: u32 = 46;
+/// v47: `Player.object_id` rides the wire (bed occupied on respawn, for the
+///      inn maid's bedside visit); the array grew, so older builds cannot
+///      decode `Player`.
+pub const PROTOCOL_VERSION: u32 = 47;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

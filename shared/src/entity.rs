@@ -93,7 +93,10 @@ pub struct Player {
     /// Active title id (doc/TITLES.md); the clients look the text up.
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(skip)]
+    /// Id half of the `(object_type, object_id)` interaction pair: the
+    /// furniture placement the player occupies. Consumers include the inn
+    /// maid's bedside match on respawn.
+    #[serde(default)]
     pub object_id: Option<u32>,
     #[serde(skip)]
     pub last_combat_at: u64,
@@ -377,7 +380,7 @@ mod tests {
             object_type: None,
             main_hand: None,
             back: None,
-            object_id: None,
+            object_id: Some(52),
             last_combat_at: 0,
             client_kind: ClientKind::default(),
             ready_at: 0,
@@ -390,5 +393,8 @@ mod tests {
         let decoded: Player = rmp_serde::from_slice(&bytes).unwrap();
         assert_eq!(decoded.object_type, None);
         assert!(decoded.torch_on);
+        // The occupied bed must survive the wire: a `#[serde(skip)]` here
+        // once silently broke the maid's bedside visits.
+        assert_eq!(decoded.object_id, Some(52));
     }
 }

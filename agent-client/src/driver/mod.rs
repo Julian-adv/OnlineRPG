@@ -845,4 +845,87 @@ mod tests {
             .unwrap()
             .contains("I was killed"));
     }
+
+    #[tokio::test]
+    async fn a_sickroom_respawn_sends_the_npc_to_the_bedside() {
+        let (mut s, mut rx) = test_state();
+        let me = test_player(-1443.9, 4748.9);
+        s.in_game = true;
+        s.is_night = Some(true);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+
+        // Queued before the driver starts: the respawn buffer must survive
+        // startup and be picked up by the loop's first drain.
+        let mut woken = test_player(-1451.5, 4754.05);
+        woken.id = onlinerpg_shared::PlayerId::from(7);
+        woken.object_id = Some(52);
+        s.push_event(onlinerpg_shared::ServerMessage::PlayerRespawned { player: woken });
+
+        let state = Arc::new(Mutex::new(s));
+
+        // Keep the outgoing command channel drained so walking can't block.
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+
+        struct Silent;
+        #[async_trait]
+        impl LlmBackend for Silent {
+            async fn send_message(&self, _p: &str) -> anyhow::Result<String> {
+                Ok("{}".to_string())
+            }
+        }
+
+        // One live entry on the NPC's serving spot, so the visit leaves a
+        // real active schedule the way Mira's does.
+        let mut entry = ScheduleEntry {
+            at: "night".to_string(),
+            pos: [-1443.9, 1.3, 4748.9],
+            rotation: -40.9,
+            floor_level: 0,
+            label: Some("serving tables".to_string()),
+            ..Default::default()
+        };
+        entry.parse_condition().unwrap();
+
+        let never = Duration::from_secs(3600);
+        let config = DriverConfig {
+            label: "test_maid".to_string(),
+            memory_file: None,
+            favor_file: None,
+            min_interval: never,
+            urgent_min_interval: never,
+            debounce: never,
+            idle_interval: never,
+            activity_window: never,
+            always_active: false,
+            schedule: vec![entry],
+            sickroom: vec![SickroomSpot {
+                bed_object_id: 52,
+                pos: [-1450.3, 4.4, 4754.7],
+                rotation: -104.6,
+                floor_level: 1,
+            }],
+            api_base_url: "http://127.0.0.1:9".to_string(),
+        };
+        let scheduler = LlmScheduler::new(1, Duration::from_secs(5));
+        let driver = tokio::spawn(llm_driver(
+            Arc::clone(&state),
+            Arc::new(Silent),
+            scheduler,
+            config,
+        ));
+
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let seen = state.lock().await.drain_agent_events();
+                if seen.iter().any(|e| e.contains("[SickRoom]")) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("bedside visit never pushed the [SickRoom] event");
+        driver.abort();
+    }
 }
