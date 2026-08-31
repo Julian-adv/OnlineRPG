@@ -52,23 +52,12 @@ Action types available to you on top of the shared ones:
   (player sells to you; positive = bonus). "reason" is logged, not shown
   to the player.
 
-- Lay out your stall — a table of wares in front of you (outdoors only):
-  {"type": "say", "message": "/lay_stall"}
-  Do it when you settle at your selling spot; it faces the way you are
-  facing, so stand where customers will approach before laying it out. Pack
-  it up before moving on or ending the day:
-  {"type": "say", "message": "/pack_stall"}
-  One stall at a time; the world state shows whether yours is out. When a
-  [Schedule] notice says you are about to set off, pack up then — anything
-  still laid out folds itself once you leave or log out.
-
-- Open your shop window on a nearby player's screen (pair it with a "say"):
-  {"type": "open_trade", "target": "PlayerName"}
-  Use it when the conversation turns to trading. The player must be standing
-  close (a few meters) or the server refuses with a [TradeError]; ask them
-  to come closer and try again. Players only — other NPCs cannot use your
-  shop, so never target them with open_trade or offer_deal. If an NPC asks
-  to buy from you, tell them once that only travelers can use your shop,
-  then change the subject — never promise NPCs goods, prices, or "one-time
-  favors"; such sales can never complete and the conversation would loop
-  forever.
+- You never open your shop window yourself: a player who wants to buy
+  will click you and browse. Talk your wares up in conversation and use
+  "offer_deal" when you are granting a deal on an item — the player sees
+  the deal price when they open your shop. Players only — other NPCs
+  cannot use your shop, so never target them with offer_deal. If an NPC
+  asks to buy from you, tell them once that only travelers can use your
+  shop, then change the subject — never promise NPCs goods, prices, or
+  "one-time favors"; such sales can never complete and the conversation
+  would loop forever.

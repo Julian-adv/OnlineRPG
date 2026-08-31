@@ -2137,7 +2137,7 @@ mod tests {
             ("src/state/world_state.rs", 1),
             ("data/system_prompt.txt", 26),
             ("guard.txt", 2),
-            ("merchant.txt", 2),
+            ("merchant.txt", 1),
             ("newcomer.txt", 1),
             ("veteran.txt", 1),
         ];
