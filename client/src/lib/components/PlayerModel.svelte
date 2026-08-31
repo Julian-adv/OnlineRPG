@@ -58,6 +58,7 @@
   import {
     AnimationIndex,
     AnimationName,
+    CLASS_IDLE_CLIP_NAMES,
     FishingAnimationName,
     OffhandAnimationName,
     SIT_TALK_CHANCE,
@@ -676,6 +677,35 @@
     return socialLoadPromise
   }
 
+  const clipsNamed = (
+    map: Map<string, THREE.AnimationClip>,
+    names: readonly string[]
+  ) =>
+    names
+      .map((n) => map.get(n))
+      .filter((c): c is THREE.AnimationClip => c !== undefined)
+
+  let classIdleClips: THREE.AnimationClip[] = []
+
+  /** Random per-class idle from the social pack, avoiding an immediate
+   *  repeat — two static poses in a row read as a 12s freeze. The first miss
+   *  starts the pack load; default idles fill in until it lands and the
+   *  idle re-pick comes back here. */
+  function pickClassIdleClip(): THREE.AnimationClip | undefined {
+    const names = CLASS_IDLE_CLIP_NAMES[characterClass]
+    if (!names) return undefined
+    if (classIdleClips.length === 0) {
+      classIdleClips = clipsNamed(socialClipsByName, names)
+      if (classIdleClips.length === 0) {
+        loadSocialAnimations()
+        return undefined
+      }
+    }
+    const current = currentAction?.getClip()
+    const pool = classIdleClips.filter((c) => c !== current)
+    return pickRandom(pool.length > 0 ? pool : classIdleClips)
+  }
+
   let offhandLoadPromise: Promise<void> | null = null
 
   function loadOffhandAnimations(): Promise<void> {
@@ -724,11 +754,7 @@
 
     const hasTorch = isTorchItemDefId(attachedOffhandItemId)
     const torchIdle = hasTorch
-      ? pickRandom(
-          TORCH_IDLE_CLIP_NAMES.map((name) => offhandClips.get(name)).filter(
-            (c): c is THREE.AnimationClip => c !== undefined
-          )
-        )
+      ? pickRandom(clipsNamed(offhandClips, TORCH_IDLE_CLIP_NAMES))
       : undefined
     const torchWalk = hasTorch
       ? offhandClips.get(OffhandAnimationName.TORCH_WALK)
@@ -740,6 +766,7 @@
     if (playerState === 'idle') {
       clip =
         torchIdle ??
+        pickClassIdleClip() ??
         pickRandom(DEFAULT_IDLE_INDICES.map((i) => validAnimations[i]))
     } else if (playerState === 'moving') {
       const torchMoveClip = movementMode === 'run' ? torchRun : torchWalk

@@ -1,3 +1,5 @@
+import type { CharacterClass } from '../network/networkTypes'
+
 export enum AnimationName {
   IDLE1 = 'idle1',
   IDLE2 = 'idle2',
@@ -60,5 +62,13 @@ export const SitAnimationName = {
 } as const
 
 export const SIT_TALK_CHANCE = 0.3
+
+/** Social-pack idle clips a class plays instead of the default idles.
+ *  The maid's three poses are static holds stretched to 6s. */
+export const CLASS_IDLE_CLIP_NAMES: Partial<
+  Record<CharacterClass, readonly string[]>
+> = {
+  maid: ['stand_pose2', 'stand_pose3', 'stand_pose4', 'weight_shift', 'yawn'],
+}
 
 export type OffhandAnimationKey = keyof typeof OffhandAnimationName

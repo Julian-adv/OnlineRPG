@@ -25,11 +25,19 @@ export const MUSIC_EMOTE_ANIM = 'guitar_playing'
 
 /** One-shot clips `/emote <name>` plays. Must match `ONE_SHOT_EMOTES` in
  *  `shared/src/messages.rs` — the server validates the command against it. */
-export const ONE_SHOT_EMOTE_ANIMS = new Set(['excited', 'clap'])
+export const ONE_SHOT_EMOTE_ANIMS = new Set(['excited', 'clap', 'yawn'])
 
 /** Clips `/emote <name>` loops until the player moves or presses Escape.
  *  Must match `LOOPING_EMOTES` in `shared/src/messages.rs`. */
-export const LOOPING_EMOTE_ANIMS = new Set(['twist', 'macarena', 'chicken'])
+export const LOOPING_EMOTE_ANIMS = new Set([
+  'twist',
+  'macarena',
+  'chicken',
+  'stand_pose2',
+  'stand_pose3',
+  'stand_pose4',
+  'weight_shift',
+])
 
 /** Everything `/emote` accepts — the server's validation list. */
 export const SLASH_EMOTE_ANIMS = new Set([

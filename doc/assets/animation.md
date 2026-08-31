@@ -83,6 +83,19 @@
   - 앉은 Hips 높이 0.584m, 의자 좌석 0.56m. 카탈로그 `interactOffset.y`는 눈으로 맞춘 값(0.03은
     엉덩이가 10cm 묻혔다) — 발끝은 그만큼 뜬다.
 
+- Female Standing Pose ×3 https://www.mixamo.com/#/?query=standing+pose&type=Motion%2CMotionPack
+  (social pack, `stand_pose2`/`stand_pose3`/`stand_pose4` — 메이드 클래스 idle + `/emote stand_pose2` 등 루프 이모트)
+- Weight Shift https://www.mixamo.com/#/?query=weight+shift&type=Motion%2CMotionPack
+  (social pack, `weight_shift`, `/emote weight_shift` — 루프 이모트)
+- Yawn https://www.mixamo.com/#/?query=yawn&type=Motion%2CMotionPack (social pack, `yawn`, `/emote yawn` — 원샷 이모트)
+  - 2026-08-31 Mixamo, Without Skin(65본)/30fps. `assets/Female Standing Pose (2).fbx`→`stand_pose2` 식으로
+    FBX 번호를 클립 이름에 유지. `import_mixamo_animation`으로 `Armature`에 bake(fake user).
+    Standing Pose 3개는 2프레임짜리 정지 포즈라 두 번째 키를 180f로 밀어 6초 홀드로 늘렸다.
+    도너는 임시 팩으로 export 후 `graft-glb-clip.py`로 5개를 social.glb에 이식 (sit 클립과 동일 절차).
+  - 메이드 클래스는 기본 idle1–5 대신 이 5개를 랜덤 재생한다 (`animations.ts`의
+    `CLASS_IDLE_CLIP_NAMES` 클래스→클립 테이블, `PlayerModel.svelte`의 `pickClassIdleClip` —
+    같은 클립 연속 재생은 피하고, 첫 miss에 social 팩 로드를 시작한다).
+
 ## Mixamo Animation Export Workflow
 
 새 Mixamo 애니메이션을 offhand/locomotion 등의 pack에 추가할 때:

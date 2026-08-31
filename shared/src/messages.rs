@@ -253,13 +253,21 @@ pub const MUSIC_EMOTE: &str = "guitar_playing";
 /// contract as [`MUSIC_EMOTE`]: the server validates against this list, and
 /// clients start the clip off the broadcast and send `StopInteraction` when
 /// it ends. Clip names live in `social.glb`.
-pub const ONE_SHOT_EMOTES: &[&str] = &["excited", "clap"];
+pub const ONE_SHOT_EMOTES: &[&str] = &["excited", "clap", "yawn"];
 
 /// Clips `/emote <name>` loops instead of playing once: the dancer's client
 /// repeats the clip until the player moves or presses Escape, then sends
 /// `StopInteraction` — the held-pose contract of [`MUSIC_EMOTE`], minus the
 /// music. Clip names live in `social.glb`.
-pub const LOOPING_EMOTES: &[&str] = &["twist", "macarena", "chicken"];
+pub const LOOPING_EMOTES: &[&str] = &[
+    "twist",
+    "macarena",
+    "chicken",
+    "stand_pose2",
+    "stand_pose3",
+    "stand_pose4",
+    "weight_shift",
+];
 
 /// `message` is `prefix` as a whole slash-command word; returns the trimmed
 /// remainder. Shared because the agent-client types the commands this parses —

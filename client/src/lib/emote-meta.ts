@@ -10,11 +10,21 @@ export interface EmoteMeta {
   loops: boolean
 }
 
+/** Anims whose mechanical label reads badly (`stand_pose2` → "Stand Pose2"). */
+const LABEL_OVERRIDES: Record<string, string> = {
+  stand_pose2: 'Pose 2',
+  stand_pose3: 'Pose 3',
+  stand_pose4: 'Pose 4',
+}
+
 function labelFor(anim: string): string {
-  return anim
-    .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
+  return (
+    LABEL_OVERRIDES[anim] ??
+    anim
+      .split('_')
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+  )
 }
 
 export const EMOTE_LIST: EmoteMeta[] = [...SLASH_EMOTE_ANIMS].map((anim) => ({

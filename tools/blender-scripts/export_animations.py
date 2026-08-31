@@ -55,6 +55,11 @@ EXPORT_PACKS = {
         "sit_talk",
         "stand_to_sit",
         "sit_to_stand",
+        "stand_pose2",
+        "stand_pose3",
+        "stand_pose4",
+        "weight_shift",
+        "yawn",
     ],
     "offhand": [
         "torch_idle1",
