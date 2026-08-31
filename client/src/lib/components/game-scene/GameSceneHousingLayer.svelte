@@ -91,6 +91,10 @@
   // Server floor syncs (join/teleport/correction) also write the store; follow
   // them so stacked rooms resolve to that storey.
   const unsubFloor = playerVisualFloorLevel.subscribe((v) => {
+    if (playerInsideFloor !== v && debugPassGroup.visible) {
+      // The overlay draws only the player's floor; redraw on floor change.
+      debugPassDirty = true
+    }
     playerInsideFloor = v
   })
 
@@ -132,7 +136,10 @@
 
       const vertices: number[] = []
 
+      // Only the player's floor: drawing every storey at once stacks the
+      // grids into an unreadable tangle.
       for (const floor of rp.floors) {
+        if (floor.floorLevel !== playerInsideFloor) continue
         pushPassabilityEdges(
           vertices,
           floor.cells,
@@ -152,6 +159,7 @@
     const EDGE_ALL = 15
     const furnitureVerts: number[] = []
     for (const piece of furnitureManager.getDebugPieces()) {
+      if (piece.floorLevel !== playerInsideFloor) continue
       for (const [cellX, cellZ] of piece.cells) {
         pushPassabilityEdges(
           furnitureVerts,

@@ -7,10 +7,12 @@ import {
 } from '../wasm/onlinerpg_shared'
 
 /** One sealed furniture piece, as returned by the wasm setter for the debug
- *  overlay: the world grid cells it occupies and the floor Y it sits on. */
+ *  overlay: the world grid cells it occupies, the floor Y it sits on, and
+ *  its floor level (the overlay draws only the player's floor). */
 export interface FurnitureDebugPiece {
   cells: [number, number][]
   yBase: number
+  floorLevel: number
 }
 
 /**

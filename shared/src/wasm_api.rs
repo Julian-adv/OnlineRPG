@@ -155,6 +155,7 @@ pub fn passability_remove_house(house_id: &str) {
 struct FurnitureDebugPieceJs {
     cells: Vec<(i32, i32)>,
     y_base: f32,
+    floor_level: u8,
 }
 
 /// Region object placements (the client's `ObjectPlacement[]`) → the shared
@@ -181,6 +182,7 @@ pub fn passability_set_furniture(key: &str, val: JsValue) -> Result<JsValue, JsE
         .map(|p| FurnitureDebugPieceJs {
             cells: p.cells.clone(),
             y_base: p.y_base,
+            floor_level: p.floor_level,
         })
         .collect();
     with_cache_mut(
