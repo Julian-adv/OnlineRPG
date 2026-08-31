@@ -20,6 +20,9 @@ export enum AnimationName {
   ATTACK4 = 'attack4',
   DYING = 'dying',
   HIT = 'hit',
+  // Between-swing cooldown breather (and /emote debug); appended after the
+  // other combat_melee clips to keep that block contiguous.
+  COMBAT_IDLE = 'combat_idle',
 }
 
 /** Position of each clip in the ordered `validAnimations` array, which is

@@ -122,9 +122,10 @@
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import TargetRing from './TargetRing.svelte'
   import {
+    DEBUG_EMOTE_ANIMS,
     HELD_EMOTE_ANIMS,
     MUSIC_EMOTE_ANIM,
-    ONE_SHOT_EMOTE_ANIMS,
+    SELF_ENDING_EMOTE_ANIMS,
   } from '../stores/emoteStore'
   import { billboardScale, billboardZoomT } from '../utils/billboardScale'
 
@@ -318,6 +319,7 @@
   // False when the pack lacked the clip: the ordered array substitutes
   // slash1 there, and layering a swing on every blow is worse than nothing.
   let hitClipLoaded = false
+  let combatIdleClipLoaded = false
   let lastHitCounter = hitCounter
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
@@ -790,6 +792,10 @@
           ? SitAnimationName.STAND_TO_SIT
           : interactionAnim
       clip = clipName ? socialClipsByName.get(clipName) : undefined
+      // The debug idle emotes live in the already-loaded ordered array.
+      if (!clip && clipName && DEBUG_EMOTE_ANIMS.has(clipName)) {
+        clip = validAnimations.find((c) => c.name === clipName)
+      }
       if (!clip) {
         loadSocialAnimations()
         // While the packs load, keep the change pending so the frame loop
@@ -941,6 +947,10 @@
 
         if (selection.name === AnimationName.HIT) {
           hitClipLoaded = !selection.fromFallback
+        }
+
+        if (selection.name === AnimationName.COMBAT_IDLE) {
+          combatIdleClipLoaded = !selection.fromFallback
         }
 
         if (selection.name === AnimationName.SLASH1 && onAttackDuration) {
@@ -1155,6 +1165,20 @@
           playAnimationForState()
           return // Early return to prevent duplicate calls below
         }
+
+        // A finished swing used to park on its last frame for the rest of
+        // the cooldown; breathe with combat_idle instead. The next attack
+        // cycle's animKey change crossfades back into the slash.
+        if (
+          playerState === 'attack' &&
+          remainingTime <= OVERLAP_BEFORE_END &&
+          clip.name === AnimationName.SLASH1 &&
+          // When the pack lacked the clip the ordered array substituted a
+          // fallback there — clamping is better than looping a swing.
+          combatIdleClipLoaded
+        ) {
+          startAction(validAnimations[AnimationIndex.COMBAT_IDLE], false)
+        }
       }
     }
 
@@ -1194,7 +1218,7 @@
         interactionAnim === 'pickup' ||
         interactionAnim === FishingAnimationName.CAST ||
         interactionAnim === SitAnimationName.SIT_TO_STAND ||
-        ONE_SHOT_EMOTE_ANIMS.has(interactionAnim))
+        SELF_ENDING_EMOTE_ANIMS.has(interactionAnim))
     ) {
       const clip = currentAction.getClip()
       if (clip.name === interactionAnim) {

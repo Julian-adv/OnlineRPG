@@ -269,6 +269,13 @@ pub const LOOPING_EMOTES: &[&str] = &[
     "weight_shift",
 ];
 
+/// Idle clips `/emote <name>` also accepts, for eyeballing clips in-game.
+/// One-shot like [`ONE_SHOT_EMOTES`], but not advertised: the server's
+/// emote-list reply and the client's panel leave them out. Clip names live
+/// in `locomotion.glb` / `combat_melee.glb`.
+pub const DEBUG_EMOTES: &[&str] =
+    &["idle1", "idle2", "idle3", "idle4", "idle5", "combat_idle"];
+
 /// `message` is `prefix` as a whole slash-command word; returns the trimmed
 /// remainder. Shared because the agent-client types the commands this parses —
 /// the two sides must agree on what counts as the command word.

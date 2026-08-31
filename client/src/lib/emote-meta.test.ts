@@ -6,7 +6,11 @@ import {
   EMOTE_LIST,
   emoteClickCommand,
 } from './emote-meta'
-import { LOOPING_EMOTE_ANIMS, ONE_SHOT_EMOTE_ANIMS } from './stores/emoteStore'
+import {
+  DEBUG_EMOTE_ANIMS,
+  LOOPING_EMOTE_ANIMS,
+  ONE_SHOT_EMOTE_ANIMS,
+} from './stores/emoteStore'
 
 // The wire contract lives in shared/src/messages.rs; emoteStore mirrors it by
 // hand. Parse the Rust source so drift fails here instead of shipping a panel
@@ -35,6 +39,10 @@ describe('emote panel metadata', () => {
     expect(new Set(rustEmoteList('LOOPING_EMOTES'))).toEqual(
       LOOPING_EMOTE_ANIMS
     )
+  })
+
+  it('mirrors DEBUG_EMOTES from shared/src/messages.rs', () => {
+    expect(new Set(rustEmoteList('DEBUG_EMOTES'))).toEqual(DEBUG_EMOTE_ANIMS)
   })
 
   it('derives one labelled entry per accepted emote', () => {

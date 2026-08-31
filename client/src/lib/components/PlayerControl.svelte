@@ -146,7 +146,7 @@
     localEmoteAnim,
     EMOTE_ANIMS,
     HELD_EMOTE_ANIMS,
-    ONE_SHOT_EMOTE_ANIMS,
+    SELF_ENDING_EMOTE_ANIMS,
   } from '../stores/emoteStore'
   import { respawnPoseRequest } from '../stores/respawnPoseStore'
   import { objectManager } from '../managers/objectManager'
@@ -384,7 +384,7 @@
     // player moves, and pickup has its own exit below.
     if (playerState.state !== 'interact') return exitPickupInteraction()
     const anim = playerState.interactionAnim ?? ''
-    if (ONE_SHOT_EMOTE_ANIMS.has(anim)) {
+    if (SELF_ENDING_EMOTE_ANIMS.has(anim)) {
       exitObjectInteraction()
     } else if (anim === SitAnimationName.SIT_TO_STAND) {
       const exit = pendingExit

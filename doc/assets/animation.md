@@ -20,7 +20,7 @@
 - Happy Idle
 - Dwarf Idle
 - Offensive Idle https://www.mixamo.com/#/?page=2&query=idle&type=Motion%2CMotionPack
-- Sword And Shield Idle (combat_melee pack, `combat_idle`, 몬스터 `animAttackIdle`)
+- Sword And Shield Idle (combat_melee pack, `combat_idle`, 몬스터 `animAttackIdle` + 플레이어 스윙 사이 쿨다운)
   - 2026-08-15에 gnoll 스킨째 받은 FBX(`assets/Sword And Shield Idle.fbx`, 57본, 새끼손가락 없음)를
     `import_mixamo_animation(..., target_armature_name="Armature_combat")`로 bake하고
     `export_animations.py -- --packs combat_melee`로 재export. 힙 흔들림 포함(bake_root_location 기본값).

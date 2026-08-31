@@ -39,10 +39,31 @@ export const LOOPING_EMOTE_ANIMS = new Set([
   'weight_shift',
 ])
 
+/** Idle clips `/emote` also accepts for eyeballing clips in-game — one-shot,
+ *  but hidden from the panel and the advertised lists. Must match
+ *  `DEBUG_EMOTES` in `shared/src/messages.rs`. Clips come from the
+ *  locomotion/combat packs, not `social.glb`. */
+export const DEBUG_EMOTE_ANIMS = new Set([
+  'idle1',
+  'idle2',
+  'idle3',
+  'idle4',
+  'idle5',
+  'combat_idle',
+])
+
 /** Everything `/emote` accepts — the server's validation list. */
 export const SLASH_EMOTE_ANIMS = new Set([
   ...ONE_SHOT_EMOTE_ANIMS,
   ...LOOPING_EMOTE_ANIMS,
+  ...DEBUG_EMOTE_ANIMS,
+])
+
+/** Emotes that play once and end on their own — the advertised one-shots
+ *  plus the hidden debug clips. The complement of the held poses. */
+export const SELF_ENDING_EMOTE_ANIMS = new Set([
+  ...ONE_SHOT_EMOTE_ANIMS,
+  ...DEBUG_EMOTE_ANIMS,
 ])
 
 /** Performances held until the player moves or presses Escape. */

@@ -1449,6 +1449,13 @@ async fn emote_shows_the_pose_to_neighbours_and_performer() {
     assert_emote_broadcast("emote", "excited").await;
 }
 
+/// The debug idle emotes are accepted like any emote, but the advertised
+/// list stays without them.
+#[tokio::test]
+async fn a_debug_idle_emote_plays_but_is_not_advertised() {
+    assert_emote_broadcast("emote_debug_idle", "idle3").await;
+}
+
 /// A typo or a bare `/emote` sets no pose; the sender alone gets the list of
 /// emotes back.
 #[tokio::test]
@@ -1474,6 +1481,7 @@ async fn an_unknown_emote_lists_the_available_ones() {
         Ok(ServerMessage::SystemMessage { message }) => {
             assert!(message.contains("excited"), "the list names each emote");
             assert!(message.contains("twist"), "the list names looping emotes");
+            assert!(!message.contains("idle"), "debug emotes stay unadvertised");
         }
         other => panic!("Expected the emote list, got {other:?}"),
     }

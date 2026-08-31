@@ -1,4 +1,7 @@
-import { LOOPING_EMOTE_ANIMS, SLASH_EMOTE_ANIMS } from './stores/emoteStore'
+import {
+  LOOPING_EMOTE_ANIMS,
+  ONE_SHOT_EMOTE_ANIMS,
+} from './stores/emoteStore'
 
 /** Panel entries derived from the wire contract's anim lists (emoteStore
  *  mirrors shared/src/messages.rs), so a new server emote appears here with
@@ -27,7 +30,10 @@ function labelFor(anim: string): string {
   )
 }
 
-export const EMOTE_LIST: EmoteMeta[] = [...SLASH_EMOTE_ANIMS].map((anim) => ({
+export const EMOTE_LIST: EmoteMeta[] = [
+  ...ONE_SHOT_EMOTE_ANIMS,
+  ...LOOPING_EMOTE_ANIMS,
+].map((anim) => ({
   anim,
   label: labelFor(anim),
   loops: LOOPING_EMOTE_ANIMS.has(anim),

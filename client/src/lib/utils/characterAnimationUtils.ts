@@ -39,6 +39,7 @@ const ANIMATION_SOURCE_BY_NAME: Record<AnimationName, AnimationSource> = {
   [AnimationName.ATTACK4]: 'combat_melee',
   [AnimationName.DYING]: 'combat_melee',
   [AnimationName.HIT]: 'combat_melee',
+  [AnimationName.COMBAT_IDLE]: 'combat_melee',
 }
 
 const RETARGET_TRACK_NAME_PATTERN = /^\.bones\[(.+?)\]\.(position|quaternion)$/
