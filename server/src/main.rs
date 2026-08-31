@@ -337,8 +337,8 @@ async fn main() -> ExitCode {
     let args = Args::parse();
     world_config::log_world_config();
     let monster_defs = monster_defs::MonsterDefs::load();
-    title_defs::validate(&monster_defs);
     let item_defs = item_defs::item_defs().clone();
+    title_defs::validate(&monster_defs, &item_defs);
     let dungeon_defs = dungeon_defs::DungeonDefs::load(&item_defs, &monster_defs);
     let world_drop_defs = world_drop_defs::WorldDropDefs::load(&item_defs);
     let paths = state_paths(&args.state_dir);
@@ -608,13 +608,15 @@ async fn main() -> ExitCode {
     // Fishing session timers (cast → wait → bite → expiry). 250 ms is far
     // inside every player-facing window; deadlines carry their own grace.
     let game_state_for_fishing = Arc::clone(&game_state);
+    let auth_for_fishing = Arc::clone(&auth_service);
     background.spawn(run_ticks(
         "fishing",
         Duration::from_millis(250),
         drain_shutdown.clone(),
         move || {
             let game_state = Arc::clone(&game_state_for_fishing);
-            async move { game_state.tick_fishing().await }
+            let auth = Arc::clone(&auth_for_fishing);
+            async move { game_state.tick_fishing(Some(&auth)).await }
         },
     ));
 

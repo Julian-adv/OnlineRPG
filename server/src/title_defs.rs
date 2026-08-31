@@ -11,6 +11,8 @@ pub struct TitleDef {
     pub source: String,
     #[serde(rename = "bossId", default)]
     pub boss_id: Option<String>,
+    #[serde(rename = "itemId", default)]
+    pub item_id: Option<String>,
     #[serde(default)]
     pub solo: bool,
     #[serde(default)]
@@ -45,13 +47,23 @@ pub fn boss_kill_titles(boss_type: &str) -> (Option<&'static TitleDef>, Option<&
     (shared, solo)
 }
 
+/// The title for catching `item_id`, if any.
+pub fn fishing_catch_title(item_id: &str) -> Option<&'static TitleDef> {
+    DEFS.values()
+        .find(|def| def.source == "fishing" && def.item_id.as_deref() == Some(item_id))
+}
+
 /// Order earned title ids as the definitions list them.
 pub fn sort_ids(ids: &mut [String]) {
     ids.sort_by_key(|id| (title_def(id).map_or(u32::MAX, |d| d.order), id.clone()));
 }
 
-/// Boot-time check: every boss_kill title names a real monster.
-pub fn validate(monster_defs: &crate::monster_defs::MonsterDefs) {
+/// Boot-time check: every boss_kill title names a real monster, every
+/// fishing title a real item.
+pub fn validate(
+    monster_defs: &crate::monster_defs::MonsterDefs,
+    item_defs: &crate::item_defs::ItemDefs,
+) {
     for def in DEFS.values() {
         if let Some(over) = &def.supersedes {
             assert!(
@@ -72,6 +84,18 @@ pub fn validate(monster_defs: &crate::monster_defs::MonsterDefs) {
                     "title '{}' names unknown boss '{}'",
                     def.id,
                     boss
+                );
+            }
+            "fishing" => {
+                let item = def
+                    .item_id
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("title '{}' has no itemId", def.id));
+                assert!(
+                    item_defs.get(item).is_some(),
+                    "title '{}' names unknown item '{}'",
+                    def.id,
+                    item
                 );
             }
             other => panic!("title '{}' has unknown source '{}'", def.id, other),
@@ -98,7 +122,17 @@ mod tests {
     }
 
     #[test]
-    fn titles_validate_against_the_monster_table() {
-        validate(&crate::monster_defs::MonsterDefs::load());
+    fn the_golden_sturgeon_has_a_catch_title() {
+        let def = fishing_catch_title("golden_sturgeon").expect("sturgeon title");
+        assert!(!def.solo);
+        assert!(fishing_catch_title("raw_minnow").is_none());
+    }
+
+    #[test]
+    fn titles_validate_against_the_monster_and_item_tables() {
+        validate(
+            &crate::monster_defs::MonsterDefs::load(),
+            crate::item_defs::item_defs(),
+        );
     }
 }

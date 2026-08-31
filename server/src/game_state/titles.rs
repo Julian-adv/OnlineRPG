@@ -1,5 +1,6 @@
-//! Boss-kill titles (doc/TITLES.md): a per-boss damage log, the grant on
-//! death, and which earned title a player shows (`Player.title`).
+//! Titles (doc/TITLES.md): the per-boss damage log and its grant on death,
+//! the fishing-catch grant, and which earned title a player shows
+//! (`Player.title`).
 
 use std::collections::HashMap;
 
@@ -99,6 +100,32 @@ impl GameState {
                 self.grant_title(character_id, &def.id, auth).await;
             }
         }
+    }
+
+    /// A landed catch of a title-worthy fish. Official NPCs are scenery,
+    /// not contenders, here as on the boss log.
+    pub(super) async fn grant_fishing_catch_title(
+        &self,
+        player_id: &PlayerId,
+        item_def_id: &str,
+        auth: Option<&AuthService>,
+    ) {
+        let Some(def) = title_defs::fishing_catch_title(item_def_id) else {
+            return;
+        };
+        let official = self
+            .players
+            .read()
+            .await
+            .get(player_id)
+            .is_none_or(|p| p.is_official_npc);
+        if official {
+            return;
+        }
+        let Some(character_id) = self.character_id_of(player_id).await else {
+            return;
+        };
+        self.grant_title(character_id, &def.id, auth).await;
     }
 
     async fn grant_title(&self, character_id: i64, title: &str, auth: Option<&AuthService>) {

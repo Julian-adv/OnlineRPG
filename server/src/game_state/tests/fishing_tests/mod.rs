@@ -1,6 +1,6 @@
 // ---- Fishing (doc/FISHING.md) ----------------------------------------------
 // Paused-time tests: tokio's clock is frozen, `time::advance` moves it, and
-// `tick_fishing()` is driven by hand — the state machine runs deterministically.
+// `tick_fishing` is driven by hand — the state machine runs deterministically.
 
 use super::*;
 use onlinerpg_shared::fishing::{
@@ -96,7 +96,7 @@ async fn advance_with_ticks(game_state: &GameState, total_ms: u64) {
     while remaining > 0 {
         let step = remaining.min(250);
         advance(Duration::from_millis(step)).await;
-        game_state.tick_fishing().await;
+        game_state.tick_fishing(None).await;
         remaining -= step;
     }
 }
@@ -110,7 +110,7 @@ async fn advance_until_bite(game_state: &GameState, rx: &mut DirectRx) {
     let mut elapsed = 0;
     while elapsed < budget_ms {
         advance(Duration::from_millis(250)).await;
-        game_state.tick_fishing().await;
+        game_state.tick_fishing(None).await;
         elapsed += 250;
         if drain(rx)
             .iter()

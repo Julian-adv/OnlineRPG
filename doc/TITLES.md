@@ -44,27 +44,29 @@
 ## 정의 — `data-src/titles.csv`
 
 ```
-id,name,nameKo,source,bossId,solo,order,supersedes
-goblin_slayer,Slayer of the Goblin Chief,고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,false,10,
-goblin_slayer_solo,Who Slew the Goblin Chief Alone,홀로 고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,true,11,goblin_slayer
-orc_slayer,Slayer of the Orc Warlord,오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,false,20,
-orc_slayer_solo,Who Slew the Orc Warlord Alone,홀로 오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,true,21,orc_slayer
-ogre_slayer,Slayer of the Ogre Warlord,오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,false,30,
-ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,true,31,ogre_slayer
+id,name,nameKo,source,bossId,itemId,solo,order,supersedes
+goblin_slayer,Slayer of the Goblin Chief,고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,,false,10,
+goblin_slayer_solo,Who Slew the Goblin Chief Alone,홀로 고블린 족장을 쓰러뜨린 자,boss_kill,goblin_boss,,true,11,goblin_slayer
+orc_slayer,Slayer of the Orc Warlord,오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,,false,20,
+orc_slayer_solo,Who Slew the Orc Warlord Alone,홀로 오크 군주를 쓰러뜨린 자,boss_kill,orc_boss,,true,21,orc_slayer
+ogre_slayer,Slayer of the Ogre Warlord,오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,,false,30,
+ogre_slayer_solo,Who Slew the Ogre Warlord Alone,홀로 오거 군주를 쓰러뜨린 자,boss_kill,ogre_boss,,true,31,ogre_slayer
+sturgeon_angler,Who Landed the Golden Sturgeon,황금 철갑상어를 낚은 자,fishing,,golden_sturgeon,false,40,
 ```
 
 칭호는 등급 이름이 아니라 **한 줄짜리 이야기**다("홀로 오거 군주를 쓰러뜨린 자"). 몬스터
 이름을 그대로 써서 어느 보스인지 바로 읽히고, "홀로"가 위 90% 조건에 대응한다.
 
-- `source`는 부여 경로. 지금은 `boss_kill` 하나고 `bossId`·`solo`가 그 조건이다. 나중에
-  낚시 기록·누적 처치 같은 경로가 생기면 열이 늘지 행이 바뀌지 않는다.
+- `source`는 부여 경로. `boss_kill`은 `bossId`·`solo`가, `fishing`(2026-08-31)은
+  `itemId` — 그 물고기를 낚아 올리면 부여 — 가 그 조건이다. 경로가 더 생기면 열이 늘지
+  행이 바뀌지 않는다.
 - `supersedes`는 이 칭호가 대신하는 칭호. 그 칭호를 보이고 있던 사람이 이걸 얻으면 자동으로
   바뀐다. 코드가 "같은 보스의 홀로"를 추론하지 않고 데이터가 말한다.
 - `order`는 목록 정렬용. 가치의 서열은 아니다.
 - 다른 데이터와 같이 `node tools/convert.mjs`로 `data/titles.json`을 만들고 서버·클라이언트가
   같은 파일을 읽는다. 필드에 쉼표 금지.
-- 서버는 시작할 때 `bossId`를 `MonsterDefs`와 대조해 없는 보스면 패닉한다
-  (`dungeon_defs.rs`가 `chestDrops`를 검증하는 것과 같은 자세).
+- 서버는 시작할 때 `bossId`를 `MonsterDefs`와, `itemId`를 `ItemDefs`와 대조해 없으면
+  패닉한다(`dungeon_defs.rs`가 `chestDrops`를 검증하는 것과 같은 자세).
 
 첫 세트는 보스당 둘(쓰러뜨린 자·홀로)로 시작한다. **누적 처치**(10회·100회)와 **서버 최초 처치**는 후보로만
 둔다. 서버 최초는 "이미 누가 잡았는가"를 재시작 너머로 기억해야 하므로 영속 마커가 하나 더
