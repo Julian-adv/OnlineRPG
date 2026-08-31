@@ -308,7 +308,9 @@ pub async fn llm_driver(
     let mut visit_until: Option<Instant> = None;
     // Submit the pending prompt without waiting out the debounce or the
     // pacing floor — a single human-facing event (a guest sitting down)
-    // that must not queue behind batching heuristics. Cleared on submit.
+    // that must not queue behind batching heuristics. Also exempts that
+    // prompt from the audience check: the visit's human (a sleeper woken
+    // upstairs) may not be on our floor yet. Cleared on submit.
     let mut force_prompt = false;
     // A table walk runs as a background task so the [Guest] prompt's LLM
     // round trip overlaps the walk instead of waiting for arrival.
@@ -507,45 +509,43 @@ pub async fn llm_driver(
 
         let sleeping_now = active_schedule.0.is_some_and(|i| schedule[i].is_sleeping());
 
-        // === Sick-room bedside visits ===
+        // === Visits: sick-room bedsides and guest tables ===
+        // Both queue the same shape: the ambient event goes out before the
+        // walk, the walk runs in the background, and the prompt is forced
+        // out at once — the LLM round trip overlaps the walk, so the
+        // greeting lands around arrival instead of a full round trip after.
+        let mut visit: Option<(String, ScheduleEntry)> = None;
         if !sickroom.is_empty() && attack_target.is_none() {
             // Drain even while asleep so stale respawns don't pile up.
             let respawns = { state.lock().await.drain_recent_respawns() };
-            let visit = respawns.into_iter().rev().find_map(|(name, bed_id)| {
+            let woken = respawns.into_iter().rev().find_map(|(name, bed_id)| {
                 sickroom
                     .iter()
                     .find(|s| s.object_id == bed_id)
                     .map(|s| (name, s.clone()))
             });
-            if let (Some((name, spot)), false) = (visit, sleeping_now) {
+            if let (Some((name, spot)), false) = (woken, sleeping_now) {
                 info!("[{label}] {name} woke in the sick room — going to the bedside");
-                // A table walk still in flight would fight this one for the body.
-                if let Some(h) = visit_walk.take() {
-                    h.abort();
-                }
-                // The same leave-taking a schedule transition does: a visit
-                // must not walk off mid-follow or leave a stall behind.
-                movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
-                let entry = visit_entry(&spot, "the sick-room bedside");
-                movement::execute_schedule_move(&state, &entry).await;
-                state.lock().await.push_ambient_event(format!(
-                    "[SickRoom] {name} just came back to their senses in the bed \
-                     beside you — they fell out there and were carried up to the \
-                     sick room. Welcome them back with warm relief in your own \
-                     words and offer something hot to eat. If they have already \
-                     left the room, let them go — don't shout after them."
+                visit = Some((
+                    format!(
+                        "[SickRoom] {name} just came back to their senses in the \
+                         sick room — they fell out there and were carried up. You \
+                         are on your way to their bedside; no move action needed. \
+                         Welcome them back with warm relief in your own words and \
+                         offer something hot to eat. If they have already left \
+                         the room, let them go — don't shout after them."
+                    ),
+                    visit_entry(&spot, "the sick-room bedside"),
                 ));
-                visit_until = Some(Instant::now() + VISIT_DWELL);
             }
         }
-
-        // === Table-service visits ===
         if serve_tables && attack_target.is_none() {
-            // Drain every tick so stale seatings don't pile up.
-            let visit = {
+            // Drain every tick so stale seatings don't pile up. A bedside
+            // visit outranks table service; an ongoing visit keeps its spot.
+            let seated = {
                 let mut s = state.lock().await;
                 let seatings = s.drain_recent_seatings();
-                if sleeping_now || visit_until.is_some() {
+                if visit.is_some() || sleeping_now || visit_until.is_some() {
                     None
                 } else {
                     seatings
@@ -554,32 +554,39 @@ pub async fn llm_driver(
                         .find_map(|pid| table_entry(&s, &pid, &tables))
                 }
             };
-            if let Some((name, entry)) = visit {
+            if let Some((name, entry)) = seated {
                 info!("[{label}] {name} took a seat nearby — going over for the order");
-                movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
-                // Event before the walk, and the walk in the background: the
-                // LLM round trip then overlaps the walk, so the greeting
-                // lands around arrival instead of a full round trip after.
-                state.lock().await.push_ambient_event_quiet(format!(
-                    "[Guest] {name} just took a seat at one of your tables and \
-                     you are on your way over — no move action needed. Greet \
-                     them in your own words and take their order — they buy by \
-                     clicking you to open your shop. If they have already left \
-                     the seat, let it go."
+                visit = Some((
+                    format!(
+                        "[Guest] {name} just took a seat at one of your tables and \
+                         you are on your way over — no move action needed. Greet \
+                         them in your own words and take their order — they buy by \
+                         clicking you to open your shop. If they have already left \
+                         the seat, let it go."
+                    ),
+                    entry,
                 ));
-                // One event, not a burst: submit this very tick (or as soon
-                // as an in-flight turn lands), skipping the debounce and the
-                // pacing floor — a guest at the table must not wait them out.
-                prompt_pending_since = Some(Instant::now());
-                pending_urgency = LlmPriority::Urgent;
-                force_prompt = true;
-                last_activity_at = Instant::now();
-                let walk_state = Arc::clone(&state);
-                visit_walk = Some(tokio::spawn(async move {
-                    movement::execute_schedule_move(&walk_state, &entry).await;
-                }));
-                visit_until = Some(Instant::now() + VISIT_DWELL);
             }
+        }
+        if let Some((event, entry)) = visit {
+            // A visit walk still in flight would fight this one for the body.
+            if let Some(h) = visit_walk.take() {
+                h.abort();
+            }
+            // The same leave-taking a schedule transition does: a visit
+            // must not walk off mid-follow or leave a stall behind.
+            movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
+            state.lock().await.push_ambient_event_quiet(event);
+            // One event, not a burst: no debounce, no pacing floor.
+            prompt_pending_since = Some(Instant::now());
+            pending_urgency = LlmPriority::Urgent;
+            force_prompt = true;
+            last_activity_at = Instant::now();
+            let walk_state = Arc::clone(&state);
+            visit_walk = Some(tokio::spawn(async move {
+                movement::execute_schedule_move(&walk_state, &entry).await;
+            }));
+            visit_until = Some(Instant::now() + VISIT_DWELL);
         }
 
         if visit_until.is_some_and(|until| Instant::now() >= until) {
@@ -698,7 +705,7 @@ pub async fn llm_driver(
             continue;
         }
         prompt_pending_since = None;
-        force_prompt = false;
+        let forced = std::mem::take(&mut force_prompt);
 
         // Drain first; the prompt build (and its memory-file read) only
         // happens when something actually needs answering.
@@ -708,8 +715,10 @@ pub async fn llm_driver(
             // Skip the LLM while asleep, and — for an operator-run NPC — while
             // nobody is around to see it. Events still drain so they can't pile
             // up unbounded; what was said still lands in the conversation
-            // history, so a waking NPC knows what it heard.
-            if is_sleeping || !(always_active || s.has_nearby_human_players()) {
+            // history, so a waking NPC knows what it heard. A forced visit
+            // prompt is exempt from the audience check: its human (a sleeper
+            // woken upstairs) may not be on our floor yet.
+            if is_sleeping || !(always_active || forced || s.has_nearby_human_players()) {
                 discard_turn(&mut s);
                 pending_urgency = LlmPriority::Idle;
                 continue;
@@ -947,6 +956,41 @@ mod tests {
     use super::*;
     use crate::state::tests::{test_player, test_state};
 
+    /// A visit forces its prompt out at once, so the driver consumes the
+    /// ambient event into a real prompt — the backend captures prompts for
+    /// the tests to scan.
+    struct Capture(Arc<std::sync::Mutex<Vec<String>>>);
+    #[async_trait]
+    impl LlmBackend for Capture {
+        async fn send_message(&self, p: &str) -> anyhow::Result<String> {
+            self.0.lock().unwrap().push(p.to_string());
+            Ok("{}".to_string())
+        }
+    }
+
+    /// Wait until `marker` shows up in a captured prompt — or in the event
+    /// queue, covering the race where this loop drains the event before the
+    /// driver does.
+    async fn await_marker(
+        state: &Arc<Mutex<SharedState>>,
+        prompts: &Arc<std::sync::Mutex<Vec<String>>>,
+        marker: &str,
+    ) {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let drained = state.lock().await.drain_agent_events();
+                if drained.iter().any(|e| e.contains(marker))
+                    || prompts.lock().unwrap().iter().any(|p| p.contains(marker))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the visit never surfaced the {marker} event"));
+    }
+
     #[test]
     fn respawn_fires_only_after_the_delay_and_rearms_while_still_dead() {
         let mut since = None;
@@ -999,13 +1043,7 @@ mod tests {
         // Keep the outgoing command channel drained so walking can't block.
         tokio::spawn(async move { while rx.recv().await.is_some() {} });
 
-        struct Silent;
-        #[async_trait]
-        impl LlmBackend for Silent {
-            async fn send_message(&self, _p: &str) -> anyhow::Result<String> {
-                Ok("{}".to_string())
-            }
-        }
+        let prompts: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
 
         // One live entry on the NPC's serving spot, so the visit leaves a
         // real active schedule the way Mira's does.
@@ -1044,22 +1082,12 @@ mod tests {
         let scheduler = LlmScheduler::new(1, Duration::from_secs(5));
         let driver = tokio::spawn(llm_driver(
             Arc::clone(&state),
-            Arc::new(Silent),
+            Arc::new(Capture(Arc::clone(&prompts))),
             scheduler,
             config,
         ));
 
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let seen = state.lock().await.drain_agent_events();
-                if seen.iter().any(|e| e.contains("[SickRoom]")) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("bedside visit never pushed the [SickRoom] event");
+        await_marker(&state, &prompts, "[SickRoom]").await;
         driver.abort();
     }
 
@@ -1088,18 +1116,7 @@ mod tests {
         let state = Arc::new(Mutex::new(s));
         tokio::spawn(async move { while rx.recv().await.is_some() {} });
 
-        // The guest submit bypasses debounce and the pacing floor, so the
-        // driver consumes the [Guest] event into a real prompt — capture
-        // prompts instead of watching the event queue.
         let prompts: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
-        struct Capture(Arc<std::sync::Mutex<Vec<String>>>);
-        #[async_trait]
-        impl LlmBackend for Capture {
-            async fn send_message(&self, p: &str) -> anyhow::Result<String> {
-                self.0.lock().unwrap().push(p.to_string());
-                Ok("{}".to_string())
-            }
-        }
 
         let never = Duration::from_secs(3600);
         let config = DriverConfig {
@@ -1126,25 +1143,7 @@ mod tests {
             config,
         ));
 
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                // The event normally reaches the captured prompt; the drain
-                // arm covers a race where this loop grabs it first.
-                let drained = state.lock().await.drain_agent_events();
-                if drained.iter().any(|e| e.contains("[Guest] Jake"))
-                    || prompts
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .any(|p| p.contains("[Guest] Jake"))
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        })
-        .await
-        .expect("table visit never surfaced the [Guest] event");
+        await_marker(&state, &prompts, "[Guest] Jake").await;
         driver.abort();
     }
 
