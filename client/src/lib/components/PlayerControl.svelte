@@ -144,9 +144,9 @@
     emoteRequest,
     emoteStopRequest,
     localEmoteAnim,
-    EMOTE_ANIMS,
     HELD_EMOTE_ANIMS,
-    SELF_ENDING_EMOTE_ANIMS,
+    isEmoteAnim,
+    isSelfEndingEmote,
   } from '../stores/emoteStore'
   import { respawnPoseRequest } from '../stores/respawnPoseStore'
   import { objectManager } from '../managers/objectManager'
@@ -384,7 +384,7 @@
     // player moves, and pickup has its own exit below.
     if (playerState.state !== 'interact') return exitPickupInteraction()
     const anim = playerState.interactionAnim ?? ''
-    if (SELF_ENDING_EMOTE_ANIMS.has(anim)) {
+    if (isSelfEndingEmote(anim)) {
       exitObjectInteraction()
     } else if (anim === SitAnimationName.SIT_TO_STAND) {
       const exit = pendingExit
@@ -445,7 +445,7 @@
     // path leaves an emote in place.
     const stepOut =
       playerState.state !== 'interact' ||
-      !EMOTE_ANIMS.has(playerState.interactionAnim ?? '')
+      !isEmoteAnim(playerState.interactionAnim ?? '')
     if (stepOut && currentPlayer) {
       const seat = {
         x: currentPlayer.position.x,
@@ -615,7 +615,7 @@
   let lastEmoteSync: string | null = null
   function syncLocalEmote(next: PlayerState) {
     const anim =
-      next.state === 'interact' && EMOTE_ANIMS.has(next.interactionAnim ?? '')
+      next.state === 'interact' && isEmoteAnim(next.interactionAnim ?? '')
         ? (next.interactionAnim ?? null)
         : null
     if (anim === lastEmoteSync) return

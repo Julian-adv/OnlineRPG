@@ -39,32 +39,23 @@ export const LOOPING_EMOTE_ANIMS = new Set([
   'weight_shift',
 ])
 
-/** Idle clips `/emote` also accepts for eyeballing clips in-game — one-shot,
- *  but hidden from the panel and the advertised lists. Must match
- *  `DEBUG_EMOTES` in `shared/src/messages.rs`. Clips come from the
- *  locomotion/combat packs, not `social.glb`. */
-export const DEBUG_EMOTE_ANIMS = new Set([
-  'idle1',
-  'idle2',
-  'idle3',
-  'idle4',
-  'idle5',
-  'combat_idle',
-])
+/** Clip names the admin `/anim <clip>` debug command has requested this
+ *  session. Client-local: the command never reaches the server, so any clip
+ *  in any pack can be eyeballed. Kept out of the emote sets — the predicates
+ *  below overlay it, so the sets stay pure mirrors of the Rust lists. */
+export const DEBUG_ANIM_NAMES = new Set<string>()
 
 /** Everything `/emote` accepts — the server's validation list. */
 export const SLASH_EMOTE_ANIMS = new Set([
   ...ONE_SHOT_EMOTE_ANIMS,
   ...LOOPING_EMOTE_ANIMS,
-  ...DEBUG_EMOTE_ANIMS,
 ])
 
-/** Emotes that play once and end on their own — the advertised one-shots
- *  plus the hidden debug clips. The complement of the held poses. */
-export const SELF_ENDING_EMOTE_ANIMS = new Set([
-  ...ONE_SHOT_EMOTE_ANIMS,
-  ...DEBUG_EMOTE_ANIMS,
-])
+/** Plays once and ends on its own — the complement of the held poses.
+ *  `/anim` clips behave as hidden one-shots. */
+export function isSelfEndingEmote(anim: string): boolean {
+  return ONE_SHOT_EMOTE_ANIMS.has(anim) || DEBUG_ANIM_NAMES.has(anim)
+}
 
 /** Performances held until the player moves or presses Escape. */
 export const HELD_EMOTE_ANIMS = new Set([
@@ -75,3 +66,8 @@ export const HELD_EMOTE_ANIMS = new Set([
 /** Every emote clip. Unlike placed-object interactions, these play where the
  *  player stands. */
 export const EMOTE_ANIMS = new Set([MUSIC_EMOTE_ANIM, ...SLASH_EMOTE_ANIMS])
+
+/** [`EMOTE_ANIMS`] plus the session's `/anim` clips. */
+export function isEmoteAnim(anim: string): boolean {
+  return EMOTE_ANIMS.has(anim) || DEBUG_ANIM_NAMES.has(anim)
+}

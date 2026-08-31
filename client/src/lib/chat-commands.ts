@@ -25,6 +25,7 @@ import { dungeonManager } from './managers/dungeonManager'
 import { chatChannel } from './stores/chatChannelStore'
 import { partyRoster } from './stores/partyStore'
 import { EMOTE_LIST } from './emote-meta'
+import { DEBUG_ANIM_NAMES, emoteRequest } from './stores/emoteStore'
 
 function teleportTo(x: number, y: number, z: number) {
   const wrappedX = teleportLocalPlayer(x, y, z)
@@ -133,6 +134,21 @@ const COMMANDS: Record<string, Command> = {
         text: 'Dances loop until you move. Social menu: G',
         sender: 'system',
       })
+    },
+  },
+  // Client-local on purpose: clip names live in the animation packs, which
+  // only the client can resolve, and a debug clip needs no broadcast.
+  '/anim': {
+    desc: 'Play any animation clip by name where you stand: /anim <clip>',
+    admin: true,
+    run: (args) => {
+      const name = args.trim()
+      if (!name) {
+        addChatMessage({ text: 'Anim: /anim <clip>', sender: 'system' })
+        return
+      }
+      DEBUG_ANIM_NAMES.add(name)
+      emoteRequest.set(name)
     },
   },
   '/give': { desc: 'Give yourself an item: /give <item_id>', admin: true },

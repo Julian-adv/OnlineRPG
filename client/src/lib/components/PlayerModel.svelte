@@ -118,14 +118,14 @@
   import ChatBubble from './ChatBubble.svelte'
   import { DamageTextEmitter } from '../effects/damage-text-pool'
   import type { PlayerDamageInfo, PlayerGoldInfo } from '../stores/gameStore'
-  import { hoveredPlayerId } from '../stores/gameStore'
+  import { addChatMessage, hoveredPlayerId } from '../stores/gameStore'
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import TargetRing from './TargetRing.svelte'
   import {
-    DEBUG_EMOTE_ANIMS,
+    DEBUG_ANIM_NAMES,
     HELD_EMOTE_ANIMS,
+    isSelfEndingEmote,
     MUSIC_EMOTE_ANIM,
-    SELF_ENDING_EMOTE_ANIMS,
   } from '../stores/emoteStore'
   import { billboardScale, billboardZoomT } from '../utils/billboardScale'
 
@@ -310,6 +310,11 @@
 
   let clonedScene: THREE.Object3D | null = null
   let validAnimations = $state<THREE.AnimationClip[]>([])
+  const validAnimationsByName = $derived(
+    new Map<string, THREE.AnimationClip>(
+      validAnimations.map((c) => [c.name, c])
+    )
+  )
   let offhandClips = new SvelteMap<string, THREE.AnimationClip>()
   let socialClipsByName = new SvelteMap<string, THREE.AnimationClip>()
   let socialLoadPromise: Promise<void> | null = null
@@ -321,6 +326,9 @@
   let hitClipLoaded = false
   let combatIdleClipLoaded = false
   let lastHitCounter = hitCounter
+  // Once every pack is loaded, a `/anim` name that still resolves to no
+  // clip is a typo, not a pending load.
+  let debugPacksSearched = false
   let dyingFinishedNotified = $state(false)
   let interactionFinishedNotified = $state(false)
   let pickupGrabNotified = $state(false)
@@ -680,28 +688,36 @@
   }
 
   const clipsNamed = (
-    map: Map<string, THREE.AnimationClip>,
+    resolve: (name: string) => THREE.AnimationClip | undefined,
     names: readonly string[]
   ) =>
     names
-      .map((n) => map.get(n))
+      .map(resolve)
       .filter((c): c is THREE.AnimationClip => c !== undefined)
 
-  let classIdleClips: THREE.AnimationClip[] = []
+  /** One clip-name lookup across every loaded pack. */
+  const resolveClipByName = (name: string) =>
+    socialClipsByName.get(name) ??
+    validAnimationsByName.get(name) ??
+    offhandClips.get(name)
 
-  /** Random per-class idle from the social pack, avoiding an immediate
-   *  repeat — two static poses in a row read as a 12s freeze. The first miss
-   *  starts the pack load; default idles fill in until it lands and the
-   *  idle re-pick comes back here. */
+  let classIdleClips: THREE.AnimationClip[] = []
+  let classIdleClipsResolved = false
+
+  /** Random per-class idle, avoiding an immediate repeat — two static poses
+   *  in a row read as a 12s freeze. Names may span packs; until the social
+   *  pack lands, whatever already resolved (or the default idles) fills in. */
   function pickClassIdleClip(): THREE.AnimationClip | undefined {
     const names = CLASS_IDLE_CLIP_NAMES[characterClass]
     if (!names) return undefined
-    if (classIdleClips.length === 0) {
-      classIdleClips = clipsNamed(socialClipsByName, names)
-      if (classIdleClips.length === 0) {
-        loadSocialAnimations()
-        return undefined
-      }
+    if (!classIdleClipsResolved) {
+      classIdleClips = clipsNamed(resolveClipByName, names)
+      // A loaded social pack that still leaves gaps means missing names,
+      // not a pending load — stop rebuilding.
+      classIdleClipsResolved =
+        classIdleClips.length === names.length || socialClipsByName.size > 0
+      if (!classIdleClipsResolved) loadSocialAnimations()
+      if (classIdleClips.length === 0) return undefined
     }
     const current = currentAction?.getClip()
     const pool = classIdleClips.filter((c) => c !== current)
@@ -756,7 +772,7 @@
 
     const hasTorch = isTorchItemDefId(attachedOffhandItemId)
     const torchIdle = hasTorch
-      ? pickRandom(clipsNamed(offhandClips, TORCH_IDLE_CLIP_NAMES))
+      ? pickRandom(clipsNamed((n) => offhandClips.get(n), TORCH_IDLE_CLIP_NAMES))
       : undefined
     const torchWalk = hasTorch
       ? offhandClips.get(OffhandAnimationName.TORCH_WALK)
@@ -792,9 +808,30 @@
           ? SitAnimationName.STAND_TO_SIT
           : interactionAnim
       clip = clipName ? socialClipsByName.get(clipName) : undefined
-      // The debug idle emotes live in the already-loaded ordered array.
-      if (!clip && clipName && DEBUG_EMOTE_ANIMS.has(clipName)) {
-        clip = validAnimations.find((c) => c.name === clipName)
+      // `/anim` may name a clip from any pack.
+      if (!clip && clipName && DEBUG_ANIM_NAMES.has(clipName)) {
+        clip = resolveClipByName(clipName)
+        if (!clip) {
+          if (debugPacksSearched) {
+            // Every pack is loaded and none answers to the name: exit the
+            // interact state instead of holding the pose forever.
+            addChatMessage({
+              text: `Anim: no clip named "${clipName}"`,
+              sender: 'system',
+            })
+            interactionFinishedNotified = true
+            onInteractionFinished?.()
+            return
+          }
+          void Promise.all([
+            loadSocialAnimations(),
+            loadOffhandAnimations(),
+          ]).then(() => {
+            debugPacksSearched = true
+            if (mixer && playerState === 'interact') playAnimationForState()
+          })
+          return
+        }
       }
       if (!clip) {
         loadSocialAnimations()
@@ -1218,7 +1255,7 @@
         interactionAnim === 'pickup' ||
         interactionAnim === FishingAnimationName.CAST ||
         interactionAnim === SitAnimationName.SIT_TO_STAND ||
-        SELF_ENDING_EMOTE_ANIMS.has(interactionAnim))
+        isSelfEndingEmote(interactionAnim))
     ) {
       const clip = currentAction.getClip()
       if (clip.name === interactionAnim) {

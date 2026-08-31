@@ -117,7 +117,7 @@ import {
 import { refreshBardZone } from '../managers/bardZone'
 import {
   emoteRequest,
-  EMOTE_ANIMS,
+  isEmoteAnim,
   MUSIC_EMOTE_ANIM,
   SLASH_EMOTE_ANIMS,
 } from '../stores/emoteStore'
@@ -269,7 +269,7 @@ async function applyObjectInteraction(
   // wherever the player is standing, so the placement search can only ever
   // find nothing. Skipping them drops two awaits and a scan of every cached
   // region before the clip starts.
-  if (objectType === 'pickup' || EMOTE_ANIMS.has(objectType)) {
+  if (objectType === 'pickup' || isEmoteAnim(objectType)) {
     remotePlayerManager.handleInteraction(playerId, objectType, 0)
     return
   }

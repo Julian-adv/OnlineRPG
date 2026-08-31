@@ -7,7 +7,6 @@ import {
   emoteClickCommand,
 } from './emote-meta'
 import {
-  DEBUG_EMOTE_ANIMS,
   LOOPING_EMOTE_ANIMS,
   ONE_SHOT_EMOTE_ANIMS,
 } from './stores/emoteStore'
@@ -39,10 +38,6 @@ describe('emote panel metadata', () => {
     expect(new Set(rustEmoteList('LOOPING_EMOTES'))).toEqual(
       LOOPING_EMOTE_ANIMS
     )
-  })
-
-  it('mirrors DEBUG_EMOTES from shared/src/messages.rs', () => {
-    expect(new Set(rustEmoteList('DEBUG_EMOTES'))).toEqual(DEBUG_EMOTE_ANIMS)
   })
 
   it('derives one labelled entry per accepted emote', () => {

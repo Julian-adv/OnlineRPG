@@ -533,8 +533,7 @@ impl super::GameState {
     async fn play_emote(&self, player_id: &PlayerId, name: &str) {
         let one_shot = onlinerpg_shared::messages::ONE_SHOT_EMOTES;
         let looping = onlinerpg_shared::messages::LOOPING_EMOTES;
-        let debug = onlinerpg_shared::messages::DEBUG_EMOTES;
-        if !one_shot.contains(&name) && !looping.contains(&name) && !debug.contains(&name) {
+        if !one_shot.contains(&name) && !looping.contains(&name) {
             let list = [one_shot, looping].concat().join(", ");
             self.send_system_message(player_id, format!("Emotes: {list}"))
                 .await;

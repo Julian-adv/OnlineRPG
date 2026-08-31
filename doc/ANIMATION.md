@@ -102,9 +102,11 @@ OnlineRPG 클라이언트의 캐릭터 애니메이션 로딩/매핑 규칙 문�
 9. 실행 검증
    - `cd client && npm run lint`
    - `cd client && npm run check`
+   - 게임 내에서 `/anim <클립이름>` (admin 전용, 클라이언트 로컬)으로 클립 단독 재생 확인
 
 ## 7. 버전 로그
 
+- `v0.9` (2026-08-31): 클립 검증용 admin 명령 `/anim <클립이름>` 추가 (기존 `/emote` 숨김 디버그 클립 대체)
 - `v0.8` (2026-02-21): 표준 클립 표에 `Animation Pack` 컬럼 추가
 - `v0.7` (2026-02-21): 본 계층 구조 표를 SVG 이미지 첨부 방식으로 변경 (`doc/images/diagrams/animation-bone-hierarchy.svg`)
 - `v0.6` (2026-02-21): VSCode 프리뷰 가독성을 위해 본 계층 구조를 Mermaid에서 테이블+인덴트 형식으로 변경

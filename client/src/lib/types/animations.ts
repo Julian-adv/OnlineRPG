@@ -66,12 +66,23 @@ export const SitAnimationName = {
 
 export const SIT_TALK_CHANCE = 0.3
 
-/** Social-pack idle clips a class plays instead of the default idles.
- *  The maid's three poses are static holds stretched to 6s. */
+/** Idle clips a class plays instead of the default idles. May mix packs:
+ *  the maid holds social poses (static, stretched to 6s) between the shared
+ *  locomotion idles. */
 export const CLASS_IDLE_CLIP_NAMES: Partial<
   Record<CharacterClass, readonly string[]>
 > = {
-  maid: ['stand_pose2', 'stand_pose3', 'stand_pose4', 'weight_shift', 'yawn'],
+  maid: [
+    'stand_pose2',
+    'stand_pose3',
+    'stand_pose4',
+    'weight_shift',
+    'yawn',
+    AnimationName.IDLE1,
+    AnimationName.IDLE2,
+    AnimationName.IDLE3,
+    AnimationName.IDLE4,
+  ],
 }
 
 export type OffhandAnimationKey = keyof typeof OffhandAnimationName
