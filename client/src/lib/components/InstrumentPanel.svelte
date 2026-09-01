@@ -433,7 +433,7 @@
     margin-bottom: 1px;
     color: rgba(116, 246, 212, 0.8);
     font-family: 'Courier New', monospace;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.27em;
   }
@@ -457,7 +457,7 @@
   .subtitle {
     color: rgba(242, 227, 193, 0.64);
     font-family: 'Courier New', monospace;
-    font-size: 9px;
+    font-size: 10px;
     letter-spacing: 0.11em;
   }
 
@@ -561,13 +561,13 @@
   }
 
   .register-copy strong {
-    font-size: 9px;
+    font-size: 11px;
     letter-spacing: 0.13em;
   }
 
   .register-copy small {
     color: rgba(244, 230, 197, 0.6);
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 0.03em;
   }
 
@@ -722,7 +722,7 @@
     bottom: 8px;
     color: rgba(250, 236, 204, 0.87);
     font-family: 'Courier New', monospace;
-    font-size: clamp(7px, 0.78vw, 9px);
+    font-size: clamp(9px, 0.9vw, 11px);
     font-weight: 700;
     letter-spacing: 0.07em;
   }
@@ -730,9 +730,9 @@
   .note-name {
     right: 1px;
     bottom: -1px;
-    color: rgba(var(--accent), 0.7);
+    color: rgba(var(--accent), 0.9);
     font-family: 'Courier New', monospace;
-    font-size: 7px;
+    font-size: 9px;
   }
 
   .pressed .degree,
@@ -807,8 +807,8 @@
   .note-cell > kbd {
     position: relative;
     z-index: 4;
-    min-width: 19px;
-    height: 15px;
+    min-width: 22px;
+    height: 17px;
     box-sizing: border-box;
     padding: 1px 5px 0;
     border: 1px solid rgba(244, 228, 191, 0.38);
@@ -818,10 +818,10 @@
     box-shadow:
       0 2px 0 rgba(0, 0, 0, 0.46),
       inset 0 1px rgba(255, 255, 255, 0.05);
-    color: rgba(255, 240, 207, 0.86);
+    color: rgba(255, 240, 207, 0.95);
     font-family: 'Courier New', monospace;
-    font-size: 9px;
-    line-height: 11px;
+    font-size: 11px;
+    line-height: 13px;
     text-align: center;
     transition: 90ms ease;
   }
@@ -841,7 +841,7 @@
     padding: 5px 8px 0;
     color: rgba(245, 230, 196, 0.64);
     font-family: 'Courier New', monospace;
-    font-size: 9px;
+    font-size: 10px;
     letter-spacing: 0.06em;
   }
 
@@ -981,7 +981,7 @@
 
     .solfege {
       bottom: 7px;
-      font-size: 7px;
+      font-size: 9px;
     }
 
     .note-cell > kbd {
@@ -1112,7 +1112,7 @@
 
     .solfege {
       bottom: 7px;
-      font-size: 7px;
+      font-size: 9px;
     }
 
     .panel-foot {
