@@ -63,6 +63,8 @@ const BATTLE_BGM_FILES = [
 const BATTLE_LINGER_MS = 5000
 const FADE_OUT_MS = 3000
 const FADE_STEP_MS = 50
+/** How long heard live notes keep the playlist quiet past the last one. */
+const LIVE_NOTES_QUIET_HOLD_MS = 10_000
 const BATTLE_QUIET_MIN_SEC = 5
 const BATTLE_QUIET_MAX_SEC = 20
 
@@ -195,7 +197,7 @@ function playNext() {
 
 function playTrack() {
   if (mode !== 'normal') return
-  if (get(bgmMuted) || inBardZone) {
+  if (get(bgmMuted) || playlistQuiet()) {
     currentBgmTrack.set('')
     return
   }
@@ -321,10 +323,11 @@ function scheduleNormalBgmResume() {
 }
 
 function resumeNormalBgm() {
+  if (!started) return
   if (mode !== 'normal') return
   if (get(bgmMuted)) return
   if (takePerformanceFloor()) return
-  if (inBardZone) return
+  if (playlistQuiet()) return
   if (!audio) {
     playTrack()
     return
@@ -339,7 +342,7 @@ function resumeNormalBgm() {
 }
 
 function pauseForMute() {
-  cancelBardFade()
+  cancelPlaylistFade()
   audio?.pause()
   battleAudio?.pause()
   // The performer's own track keeps running, silenced: its `ended` is what
@@ -389,25 +392,28 @@ const performanceElapsedSecs = () =>
 /** Inside a bard NPC's earshot the playlist stays silent — performing or not —
  *  so a performance never has to land on top of the BGM. */
 let inBardZone = false
-let bardFadeTimer: ReturnType<typeof setInterval> | undefined
+/** Live free play holds the playlist the same way: the local player's own
+ *  open panel, and notes heard from a nearby performer. */
+let livePanelQuiet = false
+let liveNotesQuiet = false
+let liveNotesTimer: ReturnType<typeof setTimeout> | undefined
+let playlistFadeTimer: ReturnType<typeof setInterval> | undefined
+
+function playlistQuiet(): boolean {
+  return inBardZone || livePanelQuiet || liveNotesQuiet
+}
 
 /** Stop the playlist fade and put its volume back where the settings say. */
-function cancelBardFade() {
-  if (bardFadeTimer === undefined) return
-  clearInterval(bardFadeTimer)
-  bardFadeTimer = undefined
+function cancelPlaylistFade() {
+  if (playlistFadeTimer === undefined) return
+  clearInterval(playlistFadeTimer)
+  playlistFadeTimer = undefined
   applyAudioSettings(audio)
 }
 
-export function setBardZone(inside: boolean) {
-  if (inBardZone === inside) return
-  inBardZone = inside
-  if (!inside) {
-    cancelBardFade()
-    resumeNormalBgm()
-    return
-  }
+function enterPlaylistQuiet() {
   if (mode !== 'normal') return
+  if (playlistFadeTimer !== undefined) return
   clearTimeout(quietTimer)
   if (!audio || audio.paused) {
     currentBgmTrack.set('')
@@ -415,7 +421,7 @@ export function setBardZone(inside: boolean) {
   }
 
   const el = audio
-  bardFadeTimer = fadeVolume(
+  playlistFadeTimer = fadeVolume(
     el,
     0,
     FADE_OUT_MS,
@@ -423,7 +429,7 @@ export function setBardZone(inside: boolean) {
     // `currentBgmTrack` now — back out without touching it.
     () => mode !== 'normal',
     (arrived) => {
-      bardFadeTimer = undefined
+      playlistFadeTimer = undefined
       if (arrived) {
         el.pause()
         currentBgmTrack.set('')
@@ -431,6 +437,42 @@ export function setBardZone(inside: boolean) {
       applyAudioSettings(el)
     }
   )
+}
+
+function leavePlaylistQuiet() {
+  if (playlistQuiet()) return
+  cancelPlaylistFade()
+  resumeNormalBgm()
+}
+
+export function setBardZone(inside: boolean) {
+  if (inBardZone === inside) return
+  inBardZone = inside
+  if (inside) enterPlaylistQuiet()
+  else leavePlaylistQuiet()
+}
+
+/** The local player's own free-play panel: quiet while it stays open. */
+export function setLiveInstrumentQuiet(active: boolean) {
+  if (livePanelQuiet === active) return
+  livePanelQuiet = active
+  if (active) enterPlaylistQuiet()
+  else leavePlaylistQuiet()
+}
+
+/** A note heard from a nearby live performer: quiet now, release after the
+ *  hold. Keying on heard notes rather than a start message also covers
+ *  listeners who walked into earshot mid-performance. */
+export function holdLiveInstrumentQuiet(holdMs = LIVE_NOTES_QUIET_HOLD_MS) {
+  clearTimeout(liveNotesTimer)
+  liveNotesTimer = setTimeout(() => {
+    liveNotesQuiet = false
+    leavePlaylistQuiet()
+  }, holdMs)
+  if (!liveNotesQuiet) {
+    liveNotesQuiet = true
+    enterPlaylistQuiet()
+  }
 }
 
 function applyPerformanceVolume() {
@@ -616,7 +658,7 @@ bgmVolume.subscribe((v) => {
     () => storageSet(STORAGE_KEY_VOLUME, String(v)),
     300
   )
-  if (bardFadeTimer === undefined) applyAudioSettings(audio)
+  if (playlistFadeTimer === undefined) applyAudioSettings(audio)
   if (battleFadeTimer === undefined) applyAudioSettings(battleAudio)
   applyPerformanceVolume()
   if (getTargetVolume() <= 0) {

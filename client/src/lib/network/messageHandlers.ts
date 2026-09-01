@@ -117,6 +117,7 @@ import {
   applyInteractionChange,
 } from '../managers/musicPerformance'
 import { refreshBardZone } from '../managers/bardZone'
+import { holdLiveInstrumentQuiet } from '../managers/bgmManager'
 import {
   emoteRequest,
   emotePanelVisible,
@@ -408,6 +409,7 @@ function playRemoteInstrumentNotes(
     const dx = shortestWrappedDeltaX(listener.position.x, position.x)
     const dz = position.z - listener.position.z
     const gain = instrumentDistanceGain(Math.hypot(dx, dz))
+    if (gain > 0) holdLiveInstrumentQuiet()
     playInstrumentNote(note, playerId, gain)
   }
 
