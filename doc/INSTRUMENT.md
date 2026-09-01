@@ -16,7 +16,7 @@ A key sounds once per press and rearms on release. Mouse and touch use the same 
 
 The 22 notes use twelve-tone equal temperament at A4 = 440 Hz. Their measured one-shot durations live in `client/src/lib/data/instrumentNotes.ts`. Audio is synthesized locally with a damped plucked-string model and procedural room impulse, so the feature adds no third-party sound assets.
 
-Local notes sound immediately. The client groups audience events for 250 ms and sends note indexes with offsets from the first event. The server validates the batch, snapshots the authoritative performer position and relays it only to players on the same floor within 30 m. Receivers replay the relative offsets and apply the distance curve in `instrumentAudio.ts`.
+Local notes sound immediately. The client groups audience events for 250 ms and sends note indexes with offsets from the first event. The server validates the batch (at most 16 notes), snapshots the authoritative performer position and relays it only to players on the same floor within 30 m — skipping listeners who blocked the performer. Receivers replay the relative offsets and apply the distance curve in `instrumentAudio.ts`.
 
 ## Session rules
 

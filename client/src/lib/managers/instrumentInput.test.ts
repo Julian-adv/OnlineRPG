@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  INSTRUMENT_BATCH_MAX_EVENTS,
   INSTRUMENT_BATCH_MS,
   INSTRUMENT_NOTE_BY_CODE,
   InstrumentKeyLatch,
@@ -100,5 +101,22 @@ describe('instrument input', () => {
     batcher.dispose()
     expect(batcher.pendingCount).toBe(0)
     expect(onFlush).not.toHaveBeenCalled()
+  })
+
+  it('flushes early at the server batch cap instead of overflowing it', () => {
+    const onFlush = vi.fn()
+    const batcher = new InstrumentNoteBatcher(onFlush, {
+      now: () => 1000,
+      schedule: () => 1 as unknown as ReturnType<typeof setTimeout>,
+      cancel: () => {},
+    })
+
+    for (let i = 0; i < INSTRUMENT_BATCH_MAX_EVENTS + 1; i++) {
+      batcher.add(i % 22)
+    }
+
+    expect(onFlush).toHaveBeenCalledOnce()
+    expect(onFlush.mock.calls[0][0]).toHaveLength(INSTRUMENT_BATCH_MAX_EVENTS)
+    expect(batcher.pendingCount).toBe(1)
   })
 })

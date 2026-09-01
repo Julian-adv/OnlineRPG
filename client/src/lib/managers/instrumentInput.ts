@@ -1,6 +1,9 @@
 import { INSTRUMENT_NOTES, getInstrumentNote } from '../data/instrumentNotes'
 
 export const INSTRUMENT_BATCH_MS = 250
+// The server drops any batch above its cap, so flush early instead of
+// letting a keyboard mash grow one past it.
+export const INSTRUMENT_BATCH_MAX_EVENTS = 16
 
 export const INSTRUMENT_NOTE_BY_CODE: ReadonlyMap<string, number> = new Map(
   INSTRUMENT_NOTES.map((note) => [note.keyCode, note.index])
@@ -90,6 +93,7 @@ export class InstrumentNoteBatcher {
         Math.max(0, Math.round(atMs - this.startedAt))
       ),
     })
+    if (this.events.length >= INSTRUMENT_BATCH_MAX_EVENTS) this.flush()
     return true
   }
 

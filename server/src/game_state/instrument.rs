@@ -4,7 +4,9 @@ use onlinerpg_shared::messages::{
 };
 
 pub(super) const INSTRUMENT_AUDIBLE_RADIUS: f32 = 30.0;
-pub(super) const MAX_INSTRUMENT_EVENTS_PER_BATCH: usize = 64;
+/// Hands top out near ten notes per 250 ms; slack beyond that only serves
+/// clients flooding listeners, who build audio nodes per note received.
+pub(super) const MAX_INSTRUMENT_EVENTS_PER_BATCH: usize = 16;
 
 pub(super) fn valid_instrument_batch(events: &[InstrumentNoteEvent]) -> bool {
     if events.is_empty()
@@ -90,19 +92,34 @@ impl super::GameState {
         let pose = {
             let players = self.players.read().await;
             players.get(player_id).and_then(|player| {
-                (player.health > 0 && player.is_ready(Self::now_ms()))
-                    .then_some((player.position, player.floor_level))
+                (player.health > 0 && player.is_ready(Self::now_ms())).then_some((
+                    player.position,
+                    player.floor_level,
+                    player.name.clone(),
+                ))
             })
         };
-        let Some((position, floor_level)) = pose else {
+        let Some((position, floor_level, performer_name)) = pose else {
             self.cancel_live_instrument_if_active(player_id).await;
             return;
         };
 
-        self.send_direct_message_to_players_within_position(
-            &position,
-            floor_level,
-            INSTRUMENT_AUDIBLE_RADIUS,
+        let mut recipients = self
+            .player_ids_within_position(&position, floor_level, INSTRUMENT_AUDIBLE_RADIUS)
+            .await;
+        // Same rule as chat: a blocked player's output does not reach you.
+        {
+            let blocked = self.blocked_names.read().await;
+            if !blocked.is_empty() {
+                recipients.retain(|id| {
+                    !blocked
+                        .get(id)
+                        .is_some_and(|names| names.contains(&performer_name))
+                });
+            }
+        }
+        self.send_direct_message_to_players_except(
+            &recipients,
             ServerMessage::PlayerInstrumentNotes {
                 player_id: *player_id,
                 position,

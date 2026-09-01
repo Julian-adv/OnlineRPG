@@ -38,9 +38,12 @@ fn instrument_batch_validation_covers_every_wire_bound() {
             note: 0,
             offset_ms: 0,
         };
-        65
+        17
     ];
     assert!(!super::super::instrument::valid_instrument_batch(&too_many));
+    assert!(super::super::instrument::valid_instrument_batch(
+        &too_many[..16]
+    ));
 
     let mut invalid_note = notes();
     invalid_note[1].note = 22;
@@ -338,4 +341,38 @@ async fn changing_equipment_ends_the_live_session() {
         .read()
         .await
         .contains(&instrumentist));
+}
+
+#[tokio::test]
+async fn listeners_who_blocked_the_performer_hear_no_notes() {
+    let game_state = make_test_game_state("live_instrument_blocked");
+    let performer = pid("performer");
+    let fan = pid("fan");
+    let hater = pid("hater");
+
+    game_state
+        .add_player(make_player("performer", 4.0, 6.0))
+        .await;
+    game_state.add_player(make_player("fan", 6.0, 6.0)).await;
+    game_state.add_player(make_player("hater", 8.0, 6.0)).await;
+    hand_instrument(&game_state, "performer").await;
+    game_state
+        .set_player_blocks(&hater, vec!["performer".to_string()])
+        .await;
+
+    let mut fan_rx = game_state.register_direct_channel(&fan).await;
+    let mut hater_rx = game_state.register_direct_channel(&hater).await;
+
+    game_state.start_live_instrument(&performer).await;
+    drain(&mut fan_rx);
+    drain(&mut hater_rx);
+
+    game_state
+        .play_live_instrument_notes(&performer, notes())
+        .await;
+
+    assert!(drain(&mut fan_rx)
+        .iter()
+        .any(|message| matches!(message, ServerMessage::PlayerInstrumentNotes { .. })));
+    assert!(drain(&mut hater_rx).is_empty());
 }
