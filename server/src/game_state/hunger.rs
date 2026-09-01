@@ -228,8 +228,7 @@ impl super::GameState {
                 if *sprinting && can_sprint(data.satiation) {
                     data.sprint_seconds += drained_seconds;
                 }
-                // Sprint drain floors at the Normal minimum: sprinting alone
-                // never pushes a player into Hungry.
+                // Sprint drain stops at the hunger threshold.
                 let sprint_points =
                     take_points(&mut data.sprint_seconds, SPRINT_DRAIN_INTERVAL_SECS)
                         .min(data.satiation.saturating_sub(NORMAL_MIN));
@@ -237,11 +236,7 @@ impl super::GameState {
                 data.satiation = data.satiation.saturating_sub(movement_points);
 
                 let new_state = hunger_state(data.satiation);
-                // A sprint-gate flip inside the Normal band (satiation
-                // reaching exactly NORMAL_MIN) is invisible to the band check
-                // but changes whether steps sprint — clients mirror the gate.
-                if old_state != new_state || can_sprint(old_satiation) != can_sprint(data.satiation)
-                {
+                if old_state != new_state {
                     updates.push((*pid, data.hunger_msg(now)));
                     dirty.push(*pid);
                 }

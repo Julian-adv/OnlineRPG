@@ -51,7 +51,7 @@ pub fn sprint_move_mult(sprinting: bool) -> f32 {
 }
 
 pub fn hunger_state(satiation: u32) -> HungerState {
-    if satiation >= NORMAL_MIN {
+    if satiation > NORMAL_MIN {
         HungerState::Normal
     } else if satiation >= HUNGRY_MIN {
         HungerState::Hungry
@@ -102,7 +102,8 @@ mod tests {
         assert_eq!(hunger_state(99), HungerState::Weak);
         assert_eq!(hunger_state(100), HungerState::Hungry);
         assert_eq!(hunger_state(299), HungerState::Hungry);
-        assert_eq!(hunger_state(300), HungerState::Normal);
+        assert_eq!(hunger_state(300), HungerState::Hungry);
+        assert_eq!(hunger_state(301), HungerState::Normal);
         assert_eq!(hunger_state(1000), HungerState::Normal);
     }
 
