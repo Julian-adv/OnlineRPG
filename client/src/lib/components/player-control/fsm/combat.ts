@@ -380,7 +380,7 @@ interface BeginAttackInput {
 }
 
 export type BeginAttackOutcome =
-  | { kind: 'ignored_dead_target' }
+  | { kind: 'ignored_unattackable_target' }
   | {
       kind: 'started'
       nextPlayerState: PlayerState
@@ -397,8 +397,14 @@ export function beginAttack({
   sendPlayerMove,
   sendPlayerAttack,
 }: BeginAttackInput): BeginAttackOutcome {
-  if (monsterInfo?.state === 'dead' || monsterInfo?.isDeadPending) {
-    return { kind: 'ignored_dead_target' }
+  // No local data means the monster is gone (removed/desynced): a swing at it
+  // can only be rejected, so treat it like a dead target.
+  if (
+    !monsterInfo ||
+    monsterInfo.state === 'dead' ||
+    monsterInfo.isDeadPending
+  ) {
+    return { kind: 'ignored_unattackable_target' }
   }
 
   const attackCounter = beginCombat(monsterId, true)

@@ -244,39 +244,34 @@ impl super::GameState {
     }
 
     /// Runs every gate on a `PlayerAttack` request. `Err` is the coarse reason
-    /// acked back to the attacker at the single call site, so a new gate can
-    /// never silently drop a request. Side effect: an out-of-range swing
-    /// within provoke range still aggros the monster onto the attacker.
+    /// acked back to the attacker plus the gate detail the single call site
+    /// logs, so a new gate can never silently drop a request. Side effect: an
+    /// out-of-range swing within provoke range still aggros the monster onto
+    /// the attacker.
     async fn validate_player_attack(
         &self,
         player_id: &PlayerId,
         monster_id: &str,
-    ) -> Result<PlayerAttackContext, AttackRejectReason> {
-        let monster_snapshot = {
+    ) -> Result<PlayerAttackContext, (AttackRejectReason, String)> {
+        let monster = {
             let monsters = self.monsters.read().await;
-            monsters
-                .get(monster_id)
-                .filter(|m| m.state != MonsterState::Dead)
-                .map(|m| {
-                    (
-                        m.monster_type.clone(),
-                        m.position,
-                        m.floor_level,
-                        m.level_override,
-                        m.owner_id,
-                    )
-                })
+            monsters.get(monster_id).cloned()
         };
-        let Some((
-            monster_type,
-            monster_position,
-            monster_floor_level,
-            monster_level_override,
-            monster_owner_id,
-        )) = monster_snapshot
-        else {
-            return Err(AttackRejectReason::InvalidTarget);
+        let Some(monster) = monster else {
+            return Err((
+                AttackRejectReason::InvalidTarget,
+                "absent from registry".into(),
+            ));
         };
+        if monster.state == MonsterState::Dead {
+            return Err((
+                AttackRejectReason::InvalidTarget,
+                format!(
+                    "corpse ({}, floor {})",
+                    monster.monster_type, monster.floor_level
+                ),
+            ));
+        }
         let now = Self::now_ms();
         let player_snapshot = {
             let players = self.players.read().await;
@@ -288,18 +283,17 @@ impl super::GameState {
         let Some((player_name, player_level, player_floor, player_position, player_health)) =
             player_snapshot
         else {
-            warn!(
-                "Attack from player not in game or still loading: {}",
-                player_id
-            );
-            return Err(AttackRejectReason::NotInGame);
+            return Err((
+                AttackRejectReason::NotInGame,
+                "not in game or still loading".into(),
+            ));
         };
 
         // A dead attacker deals no damage. The monster-attack path already
         // gates on the target's HP; mirror it here so a 0-HP player can't
         // keep swinging while awaiting respawn.
         if player_health == 0 {
-            return Err(AttackRejectReason::AttackerDead);
+            return Err((AttackRejectReason::AttackerDead, "attacker hp 0".into()));
         }
         // Delivery filtering keeps a player from ever learning about
         // monsters on another floor, but gate here too so a stale monster
@@ -307,18 +301,30 @@ impl super::GameState {
         // guard striking a monster on the dungeon floor beneath it).
         let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_MELEE_RANGE_TOLERANCE_METERS;
         let reach = |target: Position| {
-            reachable_dist_sq(player_position, player_floor, target, monster_floor_level)
+            reachable_dist_sq(player_position, player_floor, target, monster.floor_level)
         };
-        let Some(mut distance_sq) = reach(monster_position) else {
-            return Err(AttackRejectReason::InvalidTarget);
+        let unreachable_detail = |label: &str, target: Position| {
+            format!(
+                "{} alive but unreachable ({label}): player floor {player_floor} at ({:.1},{:.1}), monster floor {} at ({:.1},{:.1})",
+                monster.monster_type, player_position.x, player_position.z, monster.floor_level, target.x, target.z
+            )
+        };
+        let Some(mut distance_sq) = reach(monster.position) else {
+            return Err((
+                AttackRejectReason::InvalidTarget,
+                unreachable_detail("registry", monster.position),
+            ));
         };
         // The registry trails a running monster by up to a sync interval, so
         // a swing it refuses is re-judged where the brain has the monster.
-        let mut gate_position = monster_position;
+        let mut gate_position = monster.position;
         if distance_sq > melee_range.powi(2) {
             if let Some(now) = self.brain_position_now(monster_id).await {
                 let Some(d) = reach(now) else {
-                    return Err(AttackRejectReason::InvalidTarget);
+                    return Err((
+                        AttackRejectReason::InvalidTarget,
+                        unreachable_detail("brain", now),
+                    ));
                 };
                 gate_position = now;
                 distance_sq = d;
@@ -338,7 +344,7 @@ impl super::GameState {
             if distance_sq <= PLAYER_ATTACK_PROVOKE_RANGE_METERS.powi(2) && !walled_off() {
                 if self.server_monster_ai() {
                     self.brain_hit(monster_id, player_id, false, 0).await;
-                } else if let Some(owner_id) = monster_owner_id {
+                } else if let Some(owner_id) = monster.owner_id {
                     self.send_direct_message(
                         &owner_id,
                         ServerMessage::MonsterProvoked {
@@ -349,17 +355,20 @@ impl super::GameState {
                     .await;
                 }
             }
-            return Err(AttackRejectReason::OutOfRange);
+            return Err((
+                AttackRejectReason::OutOfRange,
+                format!("dist {:.1}m > {:.1}m", distance_sq.sqrt(), melee_range),
+            ));
         }
         if walled_off() {
-            return Err(AttackRejectReason::OutOfRange);
+            return Err((AttackRejectReason::OutOfRange, "walled off".into()));
         }
 
         Ok(PlayerAttackContext {
-            monster_type,
-            monster_position,
-            monster_floor_level,
-            monster_level_override,
+            monster_type: monster.monster_type,
+            monster_position: monster.position,
+            monster_floor_level: monster.floor_level,
+            monster_level_override: monster.level_override,
             player_name,
             player_level,
         })
@@ -387,10 +396,10 @@ impl super::GameState {
             player_level,
         } = match self.validate_player_attack(player_id, &monster_id).await {
             Ok(ctx) => ctx,
-            Err(reason) => {
+            Err((reason, detail)) => {
                 warn!(
-                    "Rejected player attack: {} -> {} ({:?})",
-                    player_id, monster_id, reason
+                    "Rejected player attack: {} -> {} ({:?}: {})",
+                    player_id, monster_id, reason, detail
                 );
                 self.send_direct_message(
                     player_id,

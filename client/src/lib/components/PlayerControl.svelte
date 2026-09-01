@@ -742,7 +742,7 @@
       sendPlayerAttack: (id) => networkManager.sendPlayerAttack(id),
     })
 
-    if (result.kind === 'ignored_dead_target') return
+    if (result.kind === 'ignored_unattackable_target') return
 
     // Entering attacking drops any moving-state data (the chase that brought us
     // here), so there is nothing else to reset.

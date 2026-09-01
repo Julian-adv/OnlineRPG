@@ -431,8 +431,18 @@ describe('beginAttack', () => {
       monsterInfo: { state: 'dead' },
     })
 
-    expect(result.kind).toBe('ignored_dead_target')
+    expect(result.kind).toBe('ignored_unattackable_target')
     expect(beginCombat).not.toHaveBeenCalled()
+  })
+
+  it('ignores targets with no local data', () => {
+    const { beginCombat, sendPlayerAttack, result } = runBeginAttack({
+      monsterInfo: undefined,
+    })
+
+    expect(result.kind).toBe('ignored_unattackable_target')
+    expect(beginCombat).not.toHaveBeenCalled()
+    expect(sendPlayerAttack).not.toHaveBeenCalled()
   })
 
   it('starts combat, syncs position, sends attack, and returns attack state', () => {

@@ -34,7 +34,7 @@ journalctl -u openmmo-server --since "3 days ago" -o short-iso | grep -E "Starte
 ## 3. WARN/ERROR 분류
 
 숫자·해시를 `N`/`H`로 치환해 `sort | uniq -c | sort -rn`. 상위 항목마다 "누가·언제·최대 빈도"를 본다:
-- `Rejected player attack … (InvalidTarget|OutOfRange)`: 공격자 id별 count → id는 `Player NAME (id) joined`로 이름 매핑. **분당 고정 빈도로 수 시간 평탄**하면 클라 재시도 루프(과거 사례). 분산돼 있고 최대 10/s 이하이면 정상.
+- `Rejected player attack … (InvalidTarget|OutOfRange)`: 공격자 id별 count → id는 `Player NAME (id) joined`로 이름 매핑. **분당 고정 빈도로 수 시간 평탄**하면 클라 재시도 루프(과거 사례). 분산돼 있고 최대 10/s 이하이면 정상. 총량은 킬 수에 비례(막타 후 인플라이트 스윙 경합, 대략 3~7킬당 1건)이므로 ` killed ` 총량과 비율로 판단. reason 뒤 상세(corpse/absent from registry/alive but unreachable+층·좌표, OutOfRange는 거리)로 게이트 구분 가능 — 같은 (공격자, 몬스터) 페어가 쿨다운 간격으로 장시간 반복되면 붙박이 루프 버그(9/1 별이→m97_10 사례).
 - `Refusing client: protocol vN … ip= kind= version=`: ip/kind/version별. `[+N more in the last 60s]` 억제분이 있으니 "로그 줄 수"로 표기. 같은 /24에 IP가 3개 이상이면 프록시 풀.
 - `Blocked move … by r-X_+Y_N`: 집 콜라이더에 끼임. 같은 집에 여러 명이면 배치 문제.
 - `storey change|floor change … off the stairs`: 계단 밖 층 변경 거부. 시간당 비율을 직전 노트와 비교.
