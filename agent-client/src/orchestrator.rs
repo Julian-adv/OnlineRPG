@@ -183,6 +183,9 @@ pub struct SharedResources {
     pub type_mapping: Arc<HashMap<String, String>>,
     pub movement_speeds: Arc<HashMap<String, crate::monster_ai::MonsterMovement>>,
     pub scheduler: LlmScheduler,
+    /// One claim board for the process, so co-located NPCs (the two inn
+    /// maids) don't both answer the same bedside or table call.
+    pub claims: Arc<driver::VisitClaims>,
     /// `None` when `transcript_dir` is empty; the summary line is logged either way.
     pub transcript: Option<Arc<crate::transcript::Transcript>>,
     pub auth: AuthSource,
@@ -1055,6 +1058,7 @@ fn spawn_llm_task(
         sickroom,
         serve_tables: npc.serve_tables.unwrap_or(false),
         tables,
+        claims: Arc::clone(&shared.claims),
         api_base_url,
     };
     Some(tokio::spawn(async move {

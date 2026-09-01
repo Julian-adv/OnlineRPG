@@ -115,6 +115,37 @@ pub struct VisitSpot {
     pub floor_level: u8,
 }
 
+/// One answerable call: a sick-room bed or a seated guest.
+#[derive(PartialEq, Eq, Hash)]
+pub enum ClaimKey {
+    Bed(u32),
+    Guest(onlinerpg_shared::PlayerId),
+}
+
+/// Process-wide claim board so two maids sharing an inn don't answer the
+/// same call — the first to claim a bedside or a seated guest wins, the
+/// other falls through to the next pending event. Best effort: a lost
+/// race sending both is acceptable.
+#[derive(Default)]
+pub struct VisitClaims(std::sync::Mutex<std::collections::HashMap<ClaimKey, (String, Instant)>>);
+
+impl VisitClaims {
+    /// True when `who` may hold `key` for `ttl`: unclaimed, expired, or
+    /// already theirs (which refreshes the hold).
+    pub fn try_claim(&self, key: ClaimKey, who: &str, ttl: Duration) -> bool {
+        let now = Instant::now();
+        let mut m = self.0.lock().unwrap();
+        m.retain(|_, (_, until)| now < *until);
+        match m.get(&key) {
+            Some((owner, _)) if owner != who => false,
+            _ => {
+                m.insert(key, (who.to_string(), now + ttl));
+                true
+            }
+        }
+    }
+}
+
 /// Configuration for the LLM driver loop.
 pub struct DriverConfig {
     pub label: String,
@@ -141,6 +172,8 @@ pub struct DriverConfig {
     pub serve_tables: bool,
     /// Curated order-taking spots for known chairs.
     pub tables: Vec<VisitSpot>,
+    /// Shared with the process's other NPCs so only one answers each call.
+    pub claims: Arc<VisitClaims>,
     /// HTTP base URL for the game server API (e.g. "http://127.0.0.1:10007").
     pub api_base_url: String,
 }
@@ -246,6 +279,7 @@ pub async fn llm_driver(
         sickroom,
         serve_tables,
         tables,
+        claims,
         api_base_url,
     } = config;
     let urgent_notify = {
@@ -530,13 +564,19 @@ pub async fn llm_driver(
         if !sickroom.is_empty() && attack_target.is_none() {
             // Drain even while asleep so stale respawns don't pile up.
             let respawns = { state.lock().await.drain_recent_respawns() };
-            let woken = respawns.into_iter().rev().find_map(|(name, bed_id)| {
-                sickroom
-                    .iter()
-                    .find(|s| s.object_id == bed_id)
-                    .map(|s| (name, s.clone()))
-            });
-            if let (Some((name, spot)), false) = (woken, sleeping_now) {
+            // Claiming while asleep would leave the bed unanswered.
+            let woken = if sleeping_now {
+                None
+            } else {
+                respawns.into_iter().rev().find_map(|(name, bed_id)| {
+                    sickroom
+                        .iter()
+                        .find(|s| s.object_id == bed_id)
+                        .filter(|_| claims.try_claim(ClaimKey::Bed(bed_id), &label, VISIT_DWELL))
+                        .map(|s| (name, s.clone()))
+                })
+            };
+            if let Some((name, spot)) = woken {
                 info!("[{label}] {name} woke in the sick room — going to the bedside");
                 visit = Some((
                     format!(
@@ -560,10 +600,10 @@ pub async fn llm_driver(
                 if visit.is_some() || sleeping_now || visit_until.is_some() {
                     None
                 } else {
-                    seatings
-                        .into_iter()
-                        .rev()
-                        .find_map(|pid| table_entry(&s, &pid, &tables))
+                    seatings.into_iter().rev().find_map(|pid| {
+                        table_entry(&s, &pid, &tables)
+                            .filter(|_| claims.try_claim(ClaimKey::Guest(pid), &label, VISIT_DWELL))
+                    })
                 }
             };
             if let Some((name, entry)) = seated {
@@ -1086,6 +1126,7 @@ mod tests {
             }],
             serve_tables: false,
             tables: Vec::new(),
+            claims: Arc::default(),
             api_base_url: "http://127.0.0.1:9".to_string(),
         };
         let scheduler = LlmScheduler::new(1, Duration::from_secs(5));
@@ -1098,6 +1139,15 @@ mod tests {
 
         await_marker(&state, &prompts, "[SickRoom]").await;
         driver.abort();
+    }
+
+    #[test]
+    fn first_claimant_holds_a_visit_claim() {
+        let c = VisitClaims::default();
+        assert!(c.try_claim(ClaimKey::Bed(52), "mira", VISIT_DWELL));
+        assert!(!c.try_claim(ClaimKey::Bed(52), "coco", VISIT_DWELL));
+        assert!(c.try_claim(ClaimKey::Bed(52), "mira", VISIT_DWELL));
+        assert!(c.try_claim(ClaimKey::Bed(53), "coco", VISIT_DWELL));
     }
 
     #[tokio::test]
@@ -1142,6 +1192,7 @@ mod tests {
             sickroom: Vec::new(),
             serve_tables: true,
             tables: Vec::new(),
+            claims: Arc::default(),
             api_base_url: "http://127.0.0.1:9".to_string(),
         };
         let scheduler = LlmScheduler::new(1, Duration::from_secs(5));
