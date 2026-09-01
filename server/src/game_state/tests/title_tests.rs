@@ -108,6 +108,36 @@ async fn an_even_split_earns_nobody_a_title_and_a_regular_monster_logs_nothing()
 }
 
 #[tokio::test]
+async fn landing_the_golden_sturgeon_earns_the_angler_title_once() {
+    let game_state = make_test_game_state("titles_fishing");
+    let mut ann = enter(&game_state, "Ann", 1).await;
+    drain(&mut ann);
+
+    game_state
+        .grant_fishing_catch_title(&pid("Ann"), "golden_sturgeon", None)
+        .await;
+    let (titles, active) = titles_of(&game_state, "Ann").await;
+    assert_eq!(titles, ["sturgeon_angler"]);
+    // A first-ever title auto-shows.
+    assert_eq!(active.as_deref(), Some("sturgeon_angler"));
+    assert!(drain(&mut ann)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::TitleEarned { title } if title == "sturgeon_angler")));
+
+    // A repeat catch and an untitled fish grant nothing.
+    game_state
+        .grant_fishing_catch_title(&pid("Ann"), "golden_sturgeon", None)
+        .await;
+    game_state
+        .grant_fishing_catch_title(&pid("Ann"), "raw_minnow", None)
+        .await;
+    assert_eq!(titles_of(&game_state, "Ann").await.0, ["sturgeon_angler"]);
+    assert!(drain(&mut ann)
+        .iter()
+        .all(|m| !matches!(m, ServerMessage::TitleEarned { .. })));
+}
+
+#[tokio::test]
 async fn a_player_picks_among_earned_titles_and_cannot_show_an_unearned_one() {
     let game_state = make_test_game_state("titles_pick");
     let mut ann = enter(&game_state, "Ann", 1).await;

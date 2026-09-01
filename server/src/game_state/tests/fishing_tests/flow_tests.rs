@@ -33,7 +33,7 @@ async fn fight_to_the_end(
             }
         }
         advance(Duration::from_millis(250)).await;
-        game_state.tick_fishing().await;
+        game_state.tick_fishing(None).await;
     }
     panic!("the fight never ended");
 }
@@ -181,6 +181,47 @@ async fn fishing_works_in_a_river_above_sea_level() {
         matches!(outcome, FishingOutcome::Caught { .. }),
         "perfect play should land a river fish, got {outcome:?}"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn landing_a_golden_sturgeon_earns_the_angler_title() {
+    let game_state = make_test_game_state("fishing_title_flow");
+    let (id, mut rx) = make_angler(&game_state, "angler_title").await;
+    game_state.set_player_titles(&id, Vec::new()).await;
+
+    game_state.start_fishing(&id, water_target()).await;
+    advance_until_bite(&game_state, &mut rx).await;
+    // Which species bites is random; the title is not. Force the roll.
+    game_state
+        .fishing_sessions
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .rolled_fish
+        .as_mut()
+        .unwrap()
+        .item_def_id = "golden_sturgeon".to_string();
+
+    game_state.respond_fishing(&id, FishingAction::Hook).await;
+    let (outcome, _) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
+    assert!(matches!(outcome, FishingOutcome::Caught { .. }));
+
+    // The grant runs off the tick; let the spawned task finish.
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    let titles = game_state
+        .player_titles
+        .read()
+        .await
+        .get(&id)
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(titles, ["sturgeon_angler"]);
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::TitleEarned { title } if title == "sturgeon_angler")));
 }
 
 #[tokio::test(start_paused = true)]
@@ -446,7 +487,7 @@ async fn ignoring_the_fight_escapes_the_fish() {
             msgs.push(msg);
         }
         advance(Duration::from_millis(250)).await;
-        game_state.tick_fishing().await;
+        game_state.tick_fishing(None).await;
     }
     assert_eq!(outcome, Some(FishingOutcome::Escaped));
     assert!(msgs.iter().any(|m| matches!(
@@ -509,7 +550,7 @@ async fn two_anglers_fish_independently() {
             }
         }
         advance(Duration::from_millis(250)).await;
-        game_state.tick_fishing().await;
+        game_state.tick_fishing(None).await;
     }
 
     assert_eq!(ended.len(), 2, "both anglers must finish their sessions");

@@ -632,7 +632,7 @@ impl GameState {
 
     /// The 250 ms fishing tick: advances casts to waits, waits to bites, and
     /// expires bites the angler slept through.
-    pub async fn tick_fishing(&self) {
+    pub async fn tick_fishing(&self, auth: Option<&crate::auth::AuthService>) {
         if self.no_fishing_anywhere() {
             return;
         }
@@ -814,7 +814,7 @@ impl GameState {
         for (player_id, sid, after) in results {
             match after {
                 After::Beat(bobber, msg) => self.broadcast_fishing(&bobber, *msg).await,
-                After::Landed => self.finish_fishing_caught(&player_id, sid).await,
+                After::Landed => self.finish_fishing_caught(&player_id, sid, auth).await,
                 After::Escaped => {
                     self.end_fishing_if(&player_id, Some(sid), FishingOutcome::Escaped, ESCAPE_XP)
                         .await;
@@ -920,7 +920,12 @@ impl GameState {
     /// overweight), grant skill XP, end the session with the full catch
     /// details. `sid` guards against a session cancelled and re-cast between
     /// the tick's scan and this call.
-    async fn finish_fishing_caught(&self, player_id: &PlayerId, sid: u64) {
+    async fn finish_fishing_caught(
+        &self,
+        player_id: &PlayerId,
+        sid: u64,
+        auth: Option<&crate::auth::AuthService>,
+    ) {
         let Some(fish) = ({
             let mut sessions = self.fishing_sessions.write().await;
             sessions
@@ -938,6 +943,18 @@ impl GameState {
         // (`use_item`) for its copper. Junk is rarityTier 0, so the XP
         // formula below grants nothing for it naturally.
         self.award_item(player_id, &fish.item_def_id).await;
+        // Off the tick path: the catch doesn't wait on the title writes.
+        if crate::title_defs::fishing_catch_title(&fish.item_def_id).is_some() {
+            let game_state = self.clone();
+            let player_id = *player_id;
+            let item = fish.item_def_id.clone();
+            let auth = auth.cloned();
+            tokio::spawn(async move {
+                game_state
+                    .grant_fishing_catch_title(&player_id, &item, auth.as_ref())
+                    .await;
+            });
+        }
         let xp = CATCH_XP_PER_RARITY_SQ * u64::from(fish.rarity) * u64::from(fish.rarity);
         self.add_skill_xp(player_id, SkillId::Fishing, xp).await;
         self.end_fishing(
