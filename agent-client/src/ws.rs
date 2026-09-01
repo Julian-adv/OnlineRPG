@@ -153,6 +153,12 @@ pub async fn send(tx: &mut WsTx, msg: &ClientMessage) -> anyhow::Result<()> {
 /// already spreads out the reconnects.
 const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// In-game uptime below which a session's end must not reset the retry
+/// backoff (enforced in `run_npc_loop`). Kept above `READ_IDLE_TIMEOUT`:
+/// a half-open death is only noticed after that long, and the detection
+/// lag alone must not count as a healthy session.
+pub const HEALTHY_SESSION: Duration = Duration::from_secs(READ_IDLE_TIMEOUT.as_secs() + 30);
+
 pub async fn recv(rx: &mut WsRx) -> anyhow::Result<ServerMessage> {
     loop {
         let frame = tokio::time::timeout(READ_IDLE_TIMEOUT, rx.next())

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use onlinerpg_shared::monster_ai::BehaviorTree;
@@ -294,10 +294,13 @@ async fn run_npc_loop(server_url: &str, index: usize, npc: &NpcConfig, shared: &
     let mut attempt = 0u32;
     loop {
         match run_npc_session(server_url, npc, shared, watch.as_ref()).await {
-            Ok(()) => {
-                // A session that ran to completion proves the server healthy,
-                // so the next retry starts over at the base delay.
-                attempt = 0;
+            Ok(uptime) => {
+                // A kicked session (duplicate login) ends "cleanly" seconds
+                // after entry; resetting on it pins the delay at the base and
+                // two clients on one account kick each other forever.
+                if uptime >= ws::HEALTHY_SESSION {
+                    attempt = 0;
+                }
                 info!("[{label}] Session ended cleanly.");
             }
             Err(e) => {
@@ -329,13 +332,15 @@ async fn run_npc_loop(server_url: &str, index: usize, npc: &NpcConfig, shared: &
     }
 }
 
-/// Run a single game session for one NPC: connect, authenticate, enter game, run until disconnected.
+/// Run a single game session for one NPC: connect, authenticate, enter game,
+/// run until disconnected. Returns the in-game uptime — time spent connecting
+/// or authenticating (with their own retries) doesn't count as session health.
 async fn run_npc_session(
     server_url: &str,
     npc: &NpcConfig,
     shared: &SharedResources,
     watch: Option<&Arc<crate::watch::NpcWatch>>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Duration> {
     let label = npc.label();
     let watch = watch.cloned();
     let ws_stream = ws::connect_ws(server_url, label).await;
@@ -498,6 +503,7 @@ async fn run_npc_session(
         None => Vec::new(),
     };
 
+    let entered = Instant::now();
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<ClientMessage>(32);
     let state = Arc::new(Mutex::new(SharedState::new(
         characters,
@@ -637,7 +643,7 @@ async fn run_npc_session(
         w.set_disconnected();
     }
 
-    Ok(())
+    Ok(entered.elapsed())
 }
 
 /// One server message into shared state. The entry handshake reads a few
