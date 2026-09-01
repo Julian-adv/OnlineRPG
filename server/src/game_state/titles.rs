@@ -36,6 +36,19 @@ pub(super) fn qualifying(damage: &HashMap<i64, u64>) -> Vec<(i64, bool)> {
 }
 
 impl GameState {
+    async fn eligible_title_character_id(&self, player_id: &PlayerId) -> Option<i64> {
+        if self
+            .players
+            .read()
+            .await
+            .get(player_id)
+            .is_none_or(|p| p.is_official_npc)
+        {
+            return None;
+        }
+        self.character_id_of(player_id).await
+    }
+
     /// Log damage a player dealt to a dungeon boss. Callers gate on the
     /// floor, so surface combat never reaches the dungeon index.
     pub(super) async fn record_boss_damage(
@@ -56,17 +69,7 @@ impl GameState {
         if !is_boss {
             return;
         }
-        // Official NPCs are scenery, not contenders.
-        let official = self
-            .players
-            .read()
-            .await
-            .get(player_id)
-            .is_none_or(|p| p.is_official_npc);
-        if official {
-            return;
-        }
-        let Some(character_id) = self.character_id_of(player_id).await else {
+        let Some(character_id) = self.eligible_title_character_id(player_id).await else {
             return;
         };
         let mut log = self.boss_damage.write().await;
@@ -113,16 +116,7 @@ impl GameState {
         let Some(def) = title_defs::fishing_catch_title(item_def_id) else {
             return;
         };
-        let official = self
-            .players
-            .read()
-            .await
-            .get(player_id)
-            .is_none_or(|p| p.is_official_npc);
-        if official {
-            return;
-        }
-        let Some(character_id) = self.character_id_of(player_id).await else {
+        let Some(character_id) = self.eligible_title_character_id(player_id).await else {
             return;
         };
         self.grant_title(character_id, &def.id, auth).await;

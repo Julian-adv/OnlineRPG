@@ -10,6 +10,16 @@ async fn fight_to_the_end(
     rx: &mut DirectRx,
     policy: impl Fn(FishState, u32) -> FishingAction,
 ) -> (FishingOutcome, Vec<ServerMessage>) {
+    fight_to_the_end_with_auth(game_state, id, rx, policy, None).await
+}
+
+async fn fight_to_the_end_with_auth(
+    game_state: &GameState,
+    id: &PlayerId,
+    rx: &mut DirectRx,
+    policy: impl Fn(FishState, u32) -> FishingAction,
+    auth: Option<&crate::auth::AuthService>,
+) -> (FishingOutcome, Vec<ServerMessage>) {
     let mut seen = Vec::new();
     // Budget: the fight timeout plus slack, in 250 ms ticks.
     for _ in 0..(FIGHT_TIMEOUT_MS / 250 + 40) {
@@ -33,9 +43,30 @@ async fn fight_to_the_end(
             }
         }
         advance(Duration::from_millis(250)).await;
-        game_state.tick_fishing(None).await;
+        game_state.tick_fishing(auth).await;
     }
     panic!("the fight never ended");
+}
+
+async fn hook_forced_fish(
+    game_state: &GameState,
+    id: &PlayerId,
+    rx: &mut DirectRx,
+    item_def_id: &str,
+) {
+    game_state.start_fishing(id, water_target()).await;
+    advance_until_bite(game_state, rx).await;
+    game_state
+        .fishing_sessions
+        .write()
+        .await
+        .get_mut(id)
+        .unwrap()
+        .rolled_fish
+        .as_mut()
+        .unwrap()
+        .item_def_id = item_def_id.to_string();
+    game_state.respond_fishing(id, FishingAction::Hook).await;
 }
 
 /// The wait roll is pure given an RNG: level 0 spans the shared range,
@@ -189,28 +220,10 @@ async fn landing_a_golden_sturgeon_earns_the_angler_title() {
     let (id, mut rx) = make_angler(&game_state, "angler_title").await;
     game_state.set_player_titles(&id, Vec::new()).await;
 
-    game_state.start_fishing(&id, water_target()).await;
-    advance_until_bite(&game_state, &mut rx).await;
-    // Which species bites is random; the title is not. Force the roll.
-    game_state
-        .fishing_sessions
-        .write()
-        .await
-        .get_mut(&id)
-        .unwrap()
-        .rolled_fish
-        .as_mut()
-        .unwrap()
-        .item_def_id = "golden_sturgeon".to_string();
-
-    game_state.respond_fishing(&id, FishingAction::Hook).await;
-    let (outcome, _) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
+    hook_forced_fish(&game_state, &id, &mut rx, "golden_sturgeon").await;
+    let (outcome, msgs) = fight_to_the_end(&game_state, &id, &mut rx, auto_stance).await;
     assert!(matches!(outcome, FishingOutcome::Caught { .. }));
 
-    // The grant runs off the tick; let the spawned task finish.
-    for _ in 0..16 {
-        tokio::task::yield_now().await;
-    }
     let titles = game_state
         .player_titles
         .read()
@@ -219,9 +232,33 @@ async fn landing_a_golden_sturgeon_earns_the_angler_title() {
         .cloned()
         .unwrap_or_default();
     assert_eq!(titles, ["sturgeon_angler"]);
-    assert!(drain(&mut rx)
+    assert!(msgs
         .iter()
         .any(|m| matches!(m, ServerMessage::TitleEarned { title } if title == "sturgeon_angler")));
+}
+
+#[tokio::test(start_paused = true)]
+async fn golden_sturgeon_title_is_persisted_before_disconnect() {
+    let auth = make_test_auth("fishing_title_disconnect");
+    let account = auth.login_npc("npc_fishing_title_disconnect").unwrap();
+    let character = create_test_character(&auth, &account, "Sturgeon");
+    let game_state = make_test_game_state("fishing_title_disconnect");
+    let (id, mut rx) = make_angler(&game_state, "Sturgeon").await;
+    game_state
+        .register_player_character(&id, character.id, 0, attrs_with_cha(10), 0, None)
+        .await;
+    game_state.set_player_titles(&id, Vec::new()).await;
+
+    hook_forced_fish(&game_state, &id, &mut rx, "golden_sturgeon").await;
+    let (outcome, _) =
+        fight_to_the_end_with_auth(&game_state, &id, &mut rx, auto_stance, Some(&auth)).await;
+    assert!(matches!(outcome, FishingOutcome::Caught { .. }));
+
+    game_state.unregister_player_character(&id).await;
+    assert_eq!(
+        auth.load_titles(character.id).unwrap().0,
+        ["sturgeon_angler"]
+    );
 }
 
 #[tokio::test(start_paused = true)]
