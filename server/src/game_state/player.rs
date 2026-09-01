@@ -545,6 +545,7 @@ impl super::GameState {
             return Ok(false);
         }
         auth.delete_character(account_name, character_id)?;
+        self.discard_pending_discovery_saves(character_id).await;
         Ok(true)
     }
 

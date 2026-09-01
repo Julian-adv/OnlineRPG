@@ -1684,9 +1684,12 @@ impl AuthService {
         if rows.is_empty() {
             return Ok(());
         }
+        // OR IGNORE does not cover FOREIGN KEY violations: a row queued for a
+        // since-deleted character must not fail the whole batch, so skip it.
         let mut insert = conn.prepare(
             "INSERT OR IGNORE INTO character_dungeon_discoveries \
-                 (character_id, entrance_id) VALUES (?1, ?2)",
+                 (character_id, entrance_id) \
+                 SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM characters WHERE id = ?1)",
         )?;
         for (character_id, entrance_id) in rows {
             insert.execute(params![character_id, entrance_id])?;
@@ -2144,6 +2147,33 @@ mod tests {
         let listed = auth.list_characters_with_equipment(&player).unwrap();
         assert_eq!(listed[0].titles.len(), 2);
         assert_eq!(listed[0].active_title, None);
+    }
+
+    #[test]
+    fn save_batch_skips_discovery_rows_for_deleted_characters() {
+        let db_path =
+            std::env::temp_dir().join(format!("onlinerpg_auth_disc_{}.db", uuid::Uuid::new_v4()));
+        let auth = AuthService::new(db_path).unwrap();
+        let player = auth.login_google("sub-disc").unwrap();
+        let kept = create(&auth, &player, "Kept").unwrap().id;
+        let deleted = create(&auth, &player, "Doomed").unwrap().id;
+        auth.delete_character(&player, deleted).unwrap();
+
+        let discoveries = vec![
+            (deleted, "old_crypt".to_string()),
+            (kept, "old_crypt".to_string()),
+        ];
+        auth.save_batch(&[], &[], &[], &discoveries, None).unwrap();
+
+        let conn = auth.open_connection().unwrap();
+        let rows: Vec<i64> = conn
+            .prepare("SELECT character_id FROM character_dungeon_discoveries")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows, vec![kept]);
     }
 
     #[test]

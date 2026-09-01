@@ -619,6 +619,16 @@ impl GameState {
         self.pending_discovery_saves.write().await.extend(rows);
     }
 
+    /// Drop queued rows for a deleted character. The insert's EXISTS guard
+    /// already skips them, but a row left queued until SQLite reuses the rowid
+    /// would credit the discovery to an unrelated new character.
+    pub(super) async fn discard_pending_discovery_saves(&self, character_id: i64) {
+        self.pending_discovery_saves
+            .write()
+            .await
+            .retain(|(id, _)| *id != character_id);
+    }
+
     /// Claim this character's chest open for the current night, returning
     /// false when they already took it. The chest refills at nightfall, so
     /// two opens are only ever a night apart.
