@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Commit Agent"
-  short_description: "Run project checks and prepare safe commits"
-  default_prompt: "Use $codex-commit-agent to validate changed areas and prepare a commit."
+  short_description: "Run checks and commit requested changes safely"
+  default_prompt: "Use $codex-commit-agent to validate and commit the current changes."

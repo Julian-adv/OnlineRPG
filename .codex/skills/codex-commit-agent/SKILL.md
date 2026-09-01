@@ -1,14 +1,14 @@
 ---
 name: codex-commit-agent
-description: Run the repository commit workflow safely and consistently. Use when the user asks to commit changes, says work is complete, or requests save-point commits. This skill detects changed project areas, runs required quality checks (`npm run format/lint/check`, `cargo fmt/check`), summarizes results, drafts an imperative English commit message, and asks for explicit user confirmation before running `git commit`.
+description: Run the repository commit workflow safely and consistently when the user explicitly asks to commit changes or create a save-point commit. Detect changed project areas, run required quality checks, draft an imperative English commit message, and commit immediately without asking for duplicate message approval.
 ---
 
 # Codex Commit Agent
 
 ## Overview
 
-Validate changed areas, stage the intended files, and create a clean commit only after required checks pass.
-Follow repository policy from `AGENTS.md`: always ask for explicit user confirmation before commit.
+Validate changed areas, stage the intended files, and create a clean commit after required checks pass.
+Treat an explicit user request to commit as authorization for `git commit`; do not ask again solely to approve an assistant-drafted message. A statement that work is complete is not authorization unless it also asks for a commit.
 
 ## Workflow
 
@@ -34,15 +34,13 @@ Follow repository policy from `AGENTS.md`: always ask for explicit user confirma
 - Review `git diff --staged` (or `git diff` if nothing is staged yet).
 - Stage intended files with `git add ...` (avoid staging unrelated changes).
 
-5. Draft and confirm.
+5. Draft and commit.
 - Draft a concise English commit message in imperative present tense.
 - Keep the title under 72 characters.
-- Show the proposed message and staged files to the user.
-- Ask for explicit approval before running `git commit`.
-
-6. Commit.
-- After user approval, run `git commit -m "<message>"`.
+- Use a user-provided message when one was supplied; otherwise choose the message from the staged diff.
+- Once checks pass and the staged files match the requested scope, run `git commit -m "<message>"` immediately.
 - If commit fails, report the exact failure and next action.
+- Push only when the user also requested a push, publish, or remote workflow.
 
 ## Commit Message Rules
 
@@ -54,5 +52,5 @@ Follow repository policy from `AGENTS.md`: always ask for explicit user confirma
 ## Failure Handling
 
 - Never commit when required checks fail.
-- Never skip user confirmation.
+- Ask before committing only when the staged scope is ambiguous, includes unrelated changes, or the user explicitly requested message review.
 - If formatting updates files, include those changes in the reviewed/staged set before commit.
