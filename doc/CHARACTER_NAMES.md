@@ -6,12 +6,14 @@
 
 `<state_dir>/banned_names.txt` (개발 환경 기본값은 `data/banned_names.txt`). 한 줄에 이름 하나, `#`으로 시작하는 줄은 주석이다. 로딩은 `server/src/banned_names.rs`.
 
+목록은 실명을 포함할 수 있으므로 git에 올리지 않는다(gitignore). 마스터 사본은 개발 머신의 `data/banned_names.txt`이고, 배포 preflight에서 prod로 복사한다(`.claude/commands/deploy.md`).
+
 - 앞뒤 공백과 대소문자만 무시하고 **정확히 일치**하는 이름을 막는다. 부분 일치는 쓰지 않는다 — "Sigmund"가 "gm"에 걸리는 오탐이 생긴다. 변형(`GM_`, `운영자1` 등)을 막으려면 줄을 추가한다.
 - 파일이 없거나 읽히지 않으면 목록은 빈 상태가 되고 서버는 그대로 뜬다. 보안 장치가 아니라 운영 장치다.
 - 목록은 서버 재시작 시점에만 읽는다. 재배포는 필요 없다.
 - 운영자가 돌리는 NPC 계정(`npc_` 접두사)은 이 검사를 건너뛴다. 헤드리스 봇은 이름 변경 창에 답할 수 없기 때문이다.
 
-도커에서는 이미지의 `data/banned_names.txt`가 상태 볼륨으로 시드된다(`docker/server-entrypoint.sh`). 볼륨에 이미 파일이 있으면 덮어쓰지 않으므로 운영자 수정본이 살아남는다.
+도커에서도 시드하지 않는다 — 상태 볼륨에 `banned_names.txt`를 직접 넣으면 된다.
 
 ## 생성 시점
 

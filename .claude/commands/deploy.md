@@ -12,6 +12,10 @@ the reference.
 
 ## 1. Preflight — before touching prod
 
+Gitignored operator data (announcements, banned names, terrain, housing) does
+not ride the deploy — sync it **before** launching so the deploy's restart
+loads it; syncing after costs prod a second restart.
+
 - **Push first.** The script pulls `master` on prod, so anything not on
   `origin/master` will not deploy. Run `git status` and `git log origin/master..HEAD`;
   if HEAD is ahead of origin or the tree is dirty, stop and get it committed and
@@ -31,6 +35,15 @@ the reference.
   ```
   A pure internal change (logging, refactor with no player-visible effect) needs
   no announcement — say so and skip it.
+- **Banned names.** `data/banned_names.txt` is gitignored too (real names);
+  the local copy on this host is the master. Diff against prod first — a
+  prod-only line is an operator edit to merge locally, not overwrite — then
+  push:
+  ```bash
+  ssh prod 'cat ~/work/OnlineRPG/data/banned_names.txt' | diff - data/banned_names.txt
+  scp data/banned_names.txt prod:~/work/OnlineRPG/data/banned_names.txt
+  ```
+  Identical files → say so and skip the scp.
 - **Terrain or housing edited on this host?** `data/terrain/` and
   `data/housing/` are not in git, so the deploy does not carry them. Sync
   **before** launching so the deploy's restart loads them — syncing after
@@ -77,7 +90,7 @@ ssh prod 'last=0; while :; do
   n=$(wc -l < ~/deploy-latest.log 2>/dev/null || echo "$last")
   if [ "$n" -gt "$last" ]; then
     sed -n "$((last+1)),${n}p" ~/deploy-latest.log \
-      | grep -E "==>|error|Error|error\[|failed|FAILED|panic|Killed|No space|fatal"
+      | grep -E "==>|warning|error|Error|error\[|failed|FAILED|panic|Killed|No space|fatal"
     last=$n
   fi
   tail -5 ~/deploy-latest.log | grep -q "==> deployed" && exit 0

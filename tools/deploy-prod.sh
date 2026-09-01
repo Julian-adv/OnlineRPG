@@ -26,6 +26,12 @@ git pull --ff-only
 echo "==> assets"
 bash tools/fetch-assets.sh
 
+# Untracked (real names): synced from the dev host in the /deploy preflight.
+# The server logs "Loaded N banned character name(s)" at restart.
+if [[ ! -f data/banned_names.txt ]]; then
+    echo "warning: data/banned_names.txt missing — restart loads an empty list" >&2
+fi
+
 echo "==> server (release)"
 cargo build --release -p onlinerpg-server
 

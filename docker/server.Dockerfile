@@ -60,7 +60,6 @@ RUN chmod +x /usr/local/bin/server-entrypoint.sh /usr/local/bin/terrain-bake.sh
 # generate them; NPC schedules and personas drive the official NPCs.
 COPY data/terrain/zones/ /opt/openmmo/seed/terrain/zones/
 COPY data/announcements/_README.md /opt/openmmo/seed/announcements/
-COPY data/banned_names.txt /opt/openmmo/seed/state/
 COPY agent-client/data/npcs/ /opt/openmmo/seed/npcs/
 
 ENV STATE_DIR=/state \

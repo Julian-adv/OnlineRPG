@@ -85,6 +85,9 @@ server/data/game_data.db
 data/announcements/*.md
 !data/announcements/_README.md
 
+# Banned character names: contains real names, kept out of the public repo
+data/banned_names.txt
+
 # Terrain generator preview output
 preview_out/
 preview_out*/
