@@ -1,7 +1,4 @@
-import {
-  LOOPING_EMOTE_ANIMS,
-  ONE_SHOT_EMOTE_ANIMS,
-} from './stores/emoteStore'
+import { LOOPING_EMOTE_ANIMS, ONE_SHOT_EMOTE_ANIMS } from './stores/emoteStore'
 
 /** Panel entries derived from the wire contract's anim lists (emoteStore
  *  mirrors shared/src/messages.rs), so a new server emote appears here with

@@ -6,10 +6,7 @@ import {
   EMOTE_LIST,
   emoteClickCommand,
 } from './emote-meta'
-import {
-  LOOPING_EMOTE_ANIMS,
-  ONE_SHOT_EMOTE_ANIMS,
-} from './stores/emoteStore'
+import { LOOPING_EMOTE_ANIMS, ONE_SHOT_EMOTE_ANIMS } from './stores/emoteStore'
 
 // The wire contract lives in shared/src/messages.rs; emoteStore mirrors it by
 // hand. Parse the Rust source so drift fails here instead of shipping a panel

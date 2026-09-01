@@ -691,9 +691,7 @@
     resolve: (name: string) => THREE.AnimationClip | undefined,
     names: readonly string[]
   ) =>
-    names
-      .map(resolve)
-      .filter((c): c is THREE.AnimationClip => c !== undefined)
+    names.map(resolve).filter((c): c is THREE.AnimationClip => c !== undefined)
 
   /** One clip-name lookup across every loaded pack. */
   const resolveClipByName = (name: string) =>
@@ -772,7 +770,9 @@
 
     const hasTorch = isTorchItemDefId(attachedOffhandItemId)
     const torchIdle = hasTorch
-      ? pickRandom(clipsNamed((n) => offhandClips.get(n), TORCH_IDLE_CLIP_NAMES))
+      ? pickRandom(
+          clipsNamed((n) => offhandClips.get(n), TORCH_IDLE_CLIP_NAMES)
+        )
       : undefined
     const torchWalk = hasTorch
       ? offhandClips.get(OffhandAnimationName.TORCH_WALK)
