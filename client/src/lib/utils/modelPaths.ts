@@ -23,8 +23,7 @@ export const FEMALE_BARD_CHARACTER_MODEL_PATH =
 export const NIGHT_MERCHANT_CHARACTER_MODEL_PATH =
   '/models/characters/night_merchant.glb'
 export const MAID_CHARACTER_MODEL_PATH = '/models/characters/maid.glb'
-export const PINK_MAID_CHARACTER_MODEL_PATH =
-  '/models/characters/pink_maid.glb'
+export const PINK_MAID_CHARACTER_MODEL_PATH = '/models/characters/pink_maid.glb'
 
 export const CHARACTER_ANIMATION_PACK_PATHS = {
   locomotion: '/models/animations/locomotion.glb',
@@ -81,7 +80,7 @@ const CLASS_GENDER_MODELS: Partial<
  *  Keyed by NPC character name, same as getMerchantByNpcName. */
 const NPC_MODEL_OVERRIDES: Record<string, string> = {
   Wick: NIGHT_MERCHANT_CHARACTER_MODEL_PATH,
-  Coco: PINK_MAID_CHARACTER_MODEL_PATH,
+  Cocoly: PINK_MAID_CHARACTER_MODEL_PATH,
 }
 
 export function getNpcModelPath(npcName: string): string | undefined {
