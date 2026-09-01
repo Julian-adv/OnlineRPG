@@ -112,6 +112,7 @@ pub fn parse_conditions(entries: &mut [ScheduleEntry]) -> Vec<String> {
 }
 
 /// Resolve which schedule entry is currently active based on game time.
+/// Before the day's first timed entry, the previous day's last one remains active.
 /// Returns `(entry_index, game_hour)` — the hour component ensures recurring
 /// entries re-trigger each hour even though the index stays the same.
 /// Conditions are pre-validated at load time via `ScheduleEntry::parse_condition`.
@@ -156,6 +157,20 @@ pub fn resolve_active_schedule(
         }
     }
 
+    if best.is_none() && game_hour.is_some() && game_minute.is_some() {
+        best = schedule
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| match entry.condition.as_ref() {
+                Some(ScheduleCondition::Time { hour, minute }) => {
+                    Some((hour * 60 + minute, i))
+                }
+                _ => None,
+            })
+            .max_by_key(|(minute, _)| *minute)
+            .map(|(_, i)| i);
+    }
+
     let hour_for_recurring = best.and_then(|i| {
         if matches!(
             schedule[i].condition,
@@ -196,5 +211,17 @@ mod tests {
             resolve_active_schedule(&schedule, Some(true), Some(20), Some(0), None).0,
             Some(1)
         );
+    }
+
+    #[test]
+    fn timed_schedule_wraps_to_the_previous_days_last_entry() {
+        let schedule = [entry("4:30"), entry("11:00"), entry("19:00")];
+        let resolve = |hour, minute| {
+            resolve_active_schedule(&schedule, None, Some(hour), Some(minute), None).0
+        };
+
+        assert_eq!(resolve(0, 0), Some(2));
+        assert_eq!(resolve(4, 29), Some(2));
+        assert_eq!(resolve(4, 30), Some(0));
     }
 }

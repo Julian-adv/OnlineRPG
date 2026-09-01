@@ -21,6 +21,7 @@ import {
   dungeon_rebuild_floor,
   dungeon_interior_doors,
   dungeon_floor_height_at,
+  dungeon_floor_level_for_passability,
   dungeon_entrance_ramp_height_at,
   dungeon_shaft_run_pos,
   passability_start_floor_at,
@@ -449,6 +450,10 @@ class DungeonManager {
   /** Passability floor index for path queries at a given depth. */
   passabilityFloor(depth: number): number {
     return constants().floorIndexBase + depth - 1
+  }
+
+  floorLevelForPassability(floor: number): number {
+    return dungeon_floor_level_for_passability(floor)
   }
 
   /**

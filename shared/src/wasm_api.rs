@@ -346,6 +346,11 @@ pub fn passability_get_floor_y_base(x: f32, z: f32, floor_level: u8) -> f32 {
 
 // --- Dungeon (procedural, seed-deterministic) ---
 
+#[wasm_bindgen]
+pub fn dungeon_floor_level_for_passability(floor: u8) -> i8 {
+    crate::dungeon::floor_level_for_passability(floor)
+}
+
 thread_local! {
     static DUNGEON_LAYOUTS: RefCell<HashMap<String, Rc<Vec<crate::dungeon::FloorLayout>>>> =
         RefCell::new(HashMap::new());

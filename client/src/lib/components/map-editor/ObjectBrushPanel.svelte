@@ -361,6 +361,10 @@
           <span class="info-value">{selectedPlacement.type}</span>
         </div>
         <div class="coord-row">
+          <span class="info-label">ID:</span>
+          <span class="info-value">{selectedPlacement.id}</span>
+        </div>
+        <div class="coord-row">
           <span class="info-label">Pos:</span>
           <span class="info-value">{formatPos(selectedPlacement)}</span>
         </div>

@@ -446,18 +446,19 @@ describe('createKeyboardMoveSender', () => {
     const sender = createKeyboardMoveSender(send)
 
     sender.step({ x: 0.025, y: 0, z: 0 }, 1)
-    expect(send).toHaveBeenCalledExactlyOnceWith(
-      { x: 0.025, y: 0, z: 0 },
-      1,
-      false
-    )
+    expect(send).toHaveBeenCalledExactlyOnceWith({ x: 0.025, y: 0, z: 0 }, 1)
 
     sender.step({ x: 0.2, y: 0, z: 0 }, 1)
     expect(send).toHaveBeenCalledOnce()
 
     sender.step({ x: 0.6, y: 0, z: 0 }, 1.2)
     expect(send).toHaveBeenCalledTimes(2)
-    expect(send).toHaveBeenLastCalledWith({ x: 0.6, y: 0, z: 0 }, 1.2, true)
+    expect(send).toHaveBeenLastCalledWith(
+      { x: 0.6, y: 0, z: 0 },
+      1.2,
+      undefined,
+      true
+    )
   })
 
   it('flush appends the resting position once and ends the session', () => {
@@ -469,7 +470,12 @@ describe('createKeyboardMoveSender', () => {
     sender.flush({ x: 0.3, y: 0, z: 0 })
 
     expect(send).toHaveBeenCalledTimes(2)
-    expect(send).toHaveBeenLastCalledWith({ x: 0.3, y: 0, z: 0 }, 1, true)
+    expect(send).toHaveBeenLastCalledWith(
+      { x: 0.3, y: 0, z: 0 },
+      1,
+      undefined,
+      true
+    )
 
     sender.flush({ x: 0.3, y: 0, z: 0 })
     expect(send).toHaveBeenCalledTimes(2)
@@ -495,7 +501,7 @@ describe('createKeyboardMoveSender', () => {
 
     sender.step({ x: 0.05, y: 0, z: 0 }, 1)
     expect(send).toHaveBeenCalledTimes(2)
-    expect(send).toHaveBeenLastCalledWith({ x: 0.05, y: 0, z: 0 }, 1, false)
+    expect(send).toHaveBeenLastCalledWith({ x: 0.05, y: 0, z: 0 }, 1)
   })
 })
 

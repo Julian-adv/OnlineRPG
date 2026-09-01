@@ -109,17 +109,14 @@ describe('applyChaseTargetUpdate', () => {
 
     expect(outcome.kind).toBe('updated')
     if (outcome.kind !== 'updated') return
-    // The player heads for the detour corner, not straight at the monster.
     expect(outcome.movementTarget).toEqual({ x: 3, y: 0, z: 0 })
     expect(outcome.pathWaypoints).toHaveLength(2)
     expect(outcome.chaseGoal).toEqual({ x: 3, y: 0, z: 4 })
     expect(outcome.movementState.currentSpeed).toBe(1.25)
-    // append=false: a fresh path replaces the queue rather than detouring
-    // through whatever the server was still walking toward.
     expect(sendPlayerMove).toHaveBeenCalledWith(
       { x: 3, y: 0, z: 0 },
       Math.atan2(3, 0),
-      false
+      0
     )
   })
 
@@ -251,7 +248,7 @@ describe('tickCombat', () => {
     expect(sendPlayerMove).toHaveBeenCalledWith(
       { x: 3, y: 0, z: 4 },
       Math.atan2(3, 4),
-      false
+      0
     )
   })
 })

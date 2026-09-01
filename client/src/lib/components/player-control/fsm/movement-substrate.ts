@@ -13,11 +13,11 @@ export interface PathWaypoint {
   floor: number
 }
 
-/** Network move sender: omitted/false `append` replaces the server's waypoint
- *  queue, true extends it (see PlayerMove in shared messages). */
+/** Sends a move with the waypoint's passability floor. */
 export type SendPlayerMove = (
   position: Position,
   rotation: number,
+  passabilityFloor?: number,
   append?: boolean
 ) => void
 
@@ -81,7 +81,7 @@ export function routeFirstLeg(
     shortestWrappedDeltaX(currentPos.x, movementTarget.x),
     movementTarget.z - currentPos.z
   )
-  sendPlayerMove(movementTarget, playerRotation, false)
+  sendPlayerMove(movementTarget, playerRotation, firstWp.floor)
 
   return { pathWaypoints, movementTarget, playerRotation }
 }
@@ -187,6 +187,7 @@ export function stepMovementSubstrate({
   writePlayerPosition,
   sendPlayerMove,
 }: MovementSubstrateInput): MovementSubstrateOutcome {
+  const currentWaypointFloor = pathWaypoints[currentWaypointIndex]?.floor
   const result = calculateMovementStep(
     currentPos,
     movementState,
@@ -210,7 +211,7 @@ export function stepMovementSubstrate({
     ) {
       // Blocked stops replace the server's queue with the stop point so it
       // doesn't keep walking to an already-sent waypoint.
-      sendPlayerMove(currentPos, playerRotation)
+      sendPlayerMove(currentPos, playerRotation, currentWaypointFloor)
       return { kind: 'blocked' }
     }
 
@@ -244,7 +245,7 @@ export function stepMovementSubstrate({
         movementState.currentSpeed
       )
 
-      sendPlayerMove(wpPos, nextRotation, true)
+      sendPlayerMove(wpPos, nextRotation, nextWp.floor, true)
 
       return {
         kind: 'next_waypoint',
@@ -256,7 +257,7 @@ export function stepMovementSubstrate({
       }
     }
 
-    sendPlayerMove(arrivedPos, playerRotation, true)
+    sendPlayerMove(arrivedPos, playerRotation, currentWaypointFloor, true)
     return { kind: 'arrived', currentSpeed, playerRotation }
   }
 
@@ -272,7 +273,7 @@ export function stepMovementSubstrate({
   ) {
     const slid = resolveWallSlide(currentPos, stepPos, isMovementBlocked)
     if (!slid) {
-      sendPlayerMove(currentPos, playerRotation)
+      sendPlayerMove(currentPos, playerRotation, currentWaypointFloor)
       return { kind: 'blocked' }
     }
     stepPos = slid
@@ -281,7 +282,7 @@ export function stepMovementSubstrate({
   const dirX = Math.sin(result.rotation)
   const dirZ = Math.cos(result.rotation)
   if (isUphillTooSteep(currentPos.x, currentPos.z, currentPos.y, dirX, dirZ)) {
-    sendPlayerMove(currentPos, playerRotation)
+    sendPlayerMove(currentPos, playerRotation, currentWaypointFloor)
     return { kind: 'slope_blocked' }
   }
 

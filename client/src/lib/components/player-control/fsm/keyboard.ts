@@ -31,7 +31,7 @@ export function createKeyboardMoveSender(
     step(position, rotation) {
       lastRotation = rotation
       if (lastSent === null) {
-        send(position, rotation, false)
+        send(position, rotation)
         lastSent = { ...position }
         return
       }
@@ -41,14 +41,14 @@ export function createKeyboardMoveSender(
         dx * dx + dz * dz >=
         KEYBOARD_SEND_INTERVAL * KEYBOARD_SEND_INTERVAL
       ) {
-        send(position, rotation, true)
+        send(position, rotation, undefined, true)
         lastSent = { ...position }
       }
     },
     flush(position) {
       if (lastSent === null) return
       if (position.x !== lastSent.x || position.z !== lastSent.z) {
-        send(position, lastRotation, true)
+        send(position, lastRotation, undefined, true)
       }
       lastSent = null
     },

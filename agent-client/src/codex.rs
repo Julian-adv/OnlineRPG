@@ -272,6 +272,12 @@ impl AppServerSession {
     }
 
     fn handle_notification(self: &Arc<Self>, method: &str, params: Option<Value>) {
+        if !matches!(
+            method,
+            "turn/started" | "item/completed" | "turn/completed"
+        ) {
+            return;
+        }
         let Some(params) = params else {
             return;
         };
@@ -328,9 +334,16 @@ impl AppServerSession {
             finished: false,
         };
 
-        let turn_result = self
+        let turn_result = match self
             .request("turn/start", turn_start_params(config, &thread_id, prompt))
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                guard.finish();
+                return Err(error);
+            }
+        };
         if let Some(turn_id) = turn_result.pointer("/turn/id").and_then(Value::as_str) {
             guard.route.set_turn_id(turn_id);
         }
@@ -765,6 +778,52 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response, "answer");
+        fake_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_turn_start_removes_its_route() {
+        let (client, server) = duplex(16 * 1024);
+        let session = test_session(client);
+        let (server_input, mut server_output) = split(server);
+        let mut requests = BufReader::new(server_input).lines();
+
+        let fake_server = tokio::spawn(async move {
+            let thread = read_request(&mut requests).await;
+            write_message(
+                &mut server_output,
+                json!({
+                    "id": thread["id"].clone(),
+                    "result": { "thread": { "id": "thread-failed" } }
+                }),
+            )
+            .await;
+
+            let turn = read_request(&mut requests).await;
+            write_message(
+                &mut server_output,
+                json!({
+                    "id": turn["id"].clone(),
+                    "error": { "message": "turn rejected" }
+                }),
+            )
+            .await;
+        });
+
+        let error = session
+            .run_turn(
+                &CodexConfig::default(),
+                std::path::Path::new("/tmp"),
+                "event".to_string(),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "Codex app-server turn/start failed: turn rejected"
+        );
+        assert!(lock(&session.turns).is_empty());
         fake_server.await.unwrap();
     }
 

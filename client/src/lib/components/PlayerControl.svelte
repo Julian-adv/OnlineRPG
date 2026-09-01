@@ -202,7 +202,10 @@
   let currentPlayer = $state<LocalPlayer | null>(null)
 
   /** Floor as broadcast to others. See `playerVisualFloorLevel`. */
-  function wireFloorLevel(): number {
+  function wireFloorLevel(passabilityFloor?: number): number {
+    if (passabilityFloor !== undefined) {
+      return dungeonManager.floorLevelForPassability(passabilityFloor)
+    }
     const depth = get(currentDungeonDepth)
     return depth >= 1 ? -depth : get(playerVisualFloorLevel)
   }
@@ -536,10 +539,11 @@
   function sendPlayerMove(
     position: Position,
     rotation: number,
+    passabilityFloor?: number,
     append = false
   ) {
     const wrappedPosition = { ...position, x: wrapWorldX(position.x) }
-    const floorLevel = wireFloorLevel()
+    const floorLevel = wireFloorLevel(passabilityFloor)
     // The server checks the declared dungeon floor against Y: send the Y of
     // the floor we claim, whatever the caller sampled.
     if (floorLevel < 0) {
@@ -1173,7 +1177,7 @@
     // heuristic so the player isn't routed back down into the dungeon.
     const inDungeonView = depth >= 1 || dungeonManager.isOnEntranceShaft(x, z)
     if (inDungeonView) return floor
-    const depthOfFloor = floor - fib + 1
+    const depthOfFloor = -dungeonManager.floorLevelForPassability(floor)
     const surfaceDist = Math.abs(y - ent.y)
     const floorDist = Math.abs(y - dungeonManager.floorY(depthOfFloor))
     return surfaceDist <= floorDist ? 0 : floor

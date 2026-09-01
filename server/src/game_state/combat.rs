@@ -119,6 +119,15 @@ struct PlayerAttackContext {
     player_level: u32,
 }
 
+struct PlayerAttackTarget {
+    state: MonsterState,
+    monster_type: String,
+    position: Position,
+    floor_level: i8,
+    level_override: Option<u8>,
+    owner_id: Option<PlayerId>,
+}
+
 impl super::GameState {
     /// Put a kill's loot — the weapon drop and any rare world drops — on the
     /// ground once the killing blow lands. The wait lives server-side: a
@@ -255,7 +264,14 @@ impl super::GameState {
     ) -> Result<PlayerAttackContext, (AttackRejectReason, String)> {
         let monster = {
             let monsters = self.monsters.read().await;
-            monsters.get(monster_id).cloned()
+            monsters.get(monster_id).map(|monster| PlayerAttackTarget {
+                state: monster.state,
+                monster_type: monster.monster_type.clone(),
+                position: monster.position,
+                floor_level: monster.floor_level,
+                level_override: monster.level_override,
+                owner_id: monster.owner_id,
+            })
         };
         let Some(monster) = monster else {
             return Err((

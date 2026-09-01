@@ -1,0 +1,4 @@
+interface:
+  display_name: "Simplify Small"
+  short_description: "Review changes and apply minimal safe refactors"
+  default_prompt: "Use $simplify-small to review these changes, apply only minimal behavior-preserving refactors, and run relevant tests."

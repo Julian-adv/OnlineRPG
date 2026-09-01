@@ -104,14 +104,11 @@ describe('startClickMovement', () => {
     expect(sendPlayerMove).toHaveBeenCalledWith(
       { x: 2, y: 5, z: 3 },
       expect.any(Number),
-      false
+      1
     )
   })
 
-  // The sent Y is the server's authoritative collision height. Deriving it
-  // from the walker's current floor put a climber's waypoint a storey low and
-  // sealed them under furniture on the floor below, so it must key off the
-  // waypoint's own floor.
+  // Collision height must use the waypoint's floor.
   it("resolves the waypoint's height on the waypoint's floor, not the walker's", () => {
     const waypointHeight = vi.fn(() => 7)
 

@@ -1,5 +1,5 @@
 ---
-name: simplify
+name: simplify-small
 description: Review a working-tree diff, commit range, pull request, or other specified code changes for duplicated code, unnecessary abstractions, avoidable performance waste, and overly complex conditionals; then apply only minimal behavior-preserving refactors and run relevant tests. Use when the user asks to simplify, clean up, or safely refactor existing changes without altering behavior.
 ---
 
