@@ -8,6 +8,7 @@ export interface MonsterData {
   targetPosition?: { x: number; y: number; z: number }
   syncCorrection?: { x: number; z: number } // server offset still to absorb
   targetPlayerId?: number // Who the monster is attacking
+  chaseAim?: { playerId: number; stopRange: number } // engage-ring chase leg from the last Move sync
   moveSpeed: number
   stateTimer: number
   attackCounter?: number

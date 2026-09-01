@@ -297,6 +297,7 @@ fn command_to_client_msg(cmd: AiCommand) -> ClientMessage {
             rotation,
             state,
             target_position,
+            chasing: _,
         } => ClientMessage::MonsterMove {
             monster_id,
             position,

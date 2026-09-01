@@ -844,7 +844,8 @@ export function handleServerMessage(
         data.rotation,
         data.state,
         data.target_position,
-        data.owner_id
+        data.owner_id,
+        data.chasing
       )
       break
 

@@ -117,7 +117,7 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v48: `PlayerInteractionChanged.object_id` — which chair/bed was taken,
 ///      so the maid's table spots key on the placement id; the array grew,
 ///      so older builds cannot decode it.
-pub const PROTOCOL_VERSION: u32 = 48;
+pub const PROTOCOL_VERSION: u32 = 49;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

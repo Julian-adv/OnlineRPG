@@ -422,6 +422,7 @@ impl super::GameState {
             state: monster.state,
             target_position: monster.position,
             owner_id: monster.owner_id,
+            chasing: None,
         }
     }
 
@@ -669,6 +670,9 @@ impl super::GameState {
                 state,
                 target_position,
                 owner_id,
+                // Client-simulated AI relays no chase intent (the field only
+                // flows from server brains); live aim is off in that mode.
+                chasing: None,
             },
             owner_id.as_ref(),
         )

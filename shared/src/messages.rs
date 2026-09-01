@@ -990,6 +990,10 @@ pub enum ServerMessage {
         /// goes around. See `MonsterBrain::current_leg_target`.
         target_position: Position,
         owner_id: Option<PlayerId>,
+        /// Set on chase legs; viewers aim the walk at the chased player's
+        /// live local position instead of the sync-old `target_position`,
+        /// stopping at the carried radius.
+        chasing: Option<crate::monster_ai::ChaseAim>,
     },
     MonsterRemoved {
         monster_id: String,

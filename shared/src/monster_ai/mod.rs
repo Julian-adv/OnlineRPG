@@ -25,7 +25,7 @@ mod tree;
 mod tests;
 
 pub use brain::MonsterBrain;
-pub use command::{AiCommand, AiState, NearbyMonster, NearbyPlayer, TickResult};
+pub use command::{AiCommand, AiState, ChaseAim, NearbyMonster, NearbyPlayer, TickResult};
 pub use path::{CachePathProvider, PathProvider};
 pub use tree::{behavior_tree_for, load_behavior_trees, BehaviorNode, BehaviorTree};
 

@@ -5,7 +5,7 @@
 
 use super::tree::BehaviorStatus;
 use super::{
-    cell_of, AiCommand, AiState, BehaviorTree, NearbyMonster, NearbyPlayer, PathProvider,
+    cell_of, AiCommand, AiState, BehaviorTree, ChaseAim, NearbyMonster, NearbyPlayer, PathProvider,
     TickResult, DEFAULT_ATTACK_RANGE, DEFAULT_CHASE_RANGE, DEFAULT_HIT_STAGGER_MS,
     DEFAULT_MAX_MOVE_DIST, DEFAULT_MIN_MOVE_DIST, NETWORK_SYNC_INTERVAL_MS,
 };
@@ -401,12 +401,24 @@ impl MonsterBrain {
         self.sync_elapsed_ms = 0.0;
         self.last_synced_state = self.state;
         self.pending_bend_sync = false;
+        // Derived here, not threaded in: every chase leg carries its live aim.
+        // Standing-cell legs end near the ring too, so the sync correction
+        // absorbs the cell-vs-ring difference.
+        let chasing = if self.state == AiState::Chase {
+            self.target_player_id.map(|player_id| ChaseAim {
+                player_id,
+                stop_range: self.engage_stop_range(),
+            })
+        } else {
+            None
+        };
         AiCommand::Move {
             monster_id: self.monster_id.clone(),
             position: self.position,
             rotation: self.rotation,
             state: self.state.to_monster_state(),
             target_position,
+            chasing,
         }
     }
 

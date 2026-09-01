@@ -6,8 +6,8 @@
 use crate::types::{Monster, MonsterState, PlayerId, Position, ServerMessage};
 use onlinerpg_shared::dungeon::passability_floor_for_level;
 use onlinerpg_shared::monster_ai::{
-    self, AiCommand, BehaviorTree, CachePathProvider, MonsterBrain, NearbyMonster, NearbyPlayer,
-    PathProvider, AGGRESSIVE_BEHAVIOR, DEFAULT_BEHAVIOR,
+    self, AiCommand, BehaviorTree, CachePathProvider, ChaseAim, MonsterBrain, NearbyMonster,
+    NearbyPlayer, PathProvider, AGGRESSIVE_BEHAVIOR, DEFAULT_BEHAVIOR,
 };
 use onlinerpg_shared::pathfinding::{is_movement_blocked, PathResult};
 use onlinerpg_shared::shortest_world_delta_x;
@@ -463,6 +463,7 @@ impl super::GameState {
                 rotation,
                 state,
                 target_position,
+                chasing,
                 ..
             } => {
                 self.apply_ai_move(
@@ -472,6 +473,7 @@ impl super::GameState {
                     rotation,
                     state,
                     target_position,
+                    chasing,
                 )
                 .await
             }
@@ -492,6 +494,7 @@ impl super::GameState {
         rotation: f32,
         state: MonsterState,
         target_position: Position,
+        chasing: Option<ChaseAim>,
     ) {
         if !position.is_finite() || !rotation.is_finite() || state == MonsterState::Dead {
             warn!("Brain emitted a bad move for {monster_id}: {position:?} {state:?}");
@@ -564,6 +567,7 @@ impl super::GameState {
                     ..target_position
                 },
                 owner_id: self.wire_owner(owner_id),
+                chasing,
             },
             None,
         )

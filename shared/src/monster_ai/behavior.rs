@@ -473,8 +473,14 @@ impl MonsterBrain {
         if self.chase_goal_cell.is_some() {
             None
         } else {
-            Some(engage_limit(self.attack_range) - ENGAGE_INSET_METERS)
+            Some(self.engage_stop_range())
         }
+    }
+
+    /// Radius the chase means to fight at, independent of whether this leg
+    /// walks the ring or a standing cell near it.
+    pub(super) fn engage_stop_range(&self) -> f32 {
+        engage_limit(self.attack_range) - ENGAGE_INSET_METERS
     }
 
     /// No closer approach is coming — standing at the cell the separation grid

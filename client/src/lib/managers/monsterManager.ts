@@ -15,6 +15,8 @@ import {
   getMaterialMissSoundUrl,
 } from '../data/materialImpactSounds'
 import { dungeonManager } from './dungeonManager'
+import { housingManager } from './housingManager'
+import { computeChaseAim } from './chase-aim'
 import type { Position } from '../utils/movementUtils'
 import type { TerrainHeightManager } from './terrainHeightManager'
 import {
@@ -73,6 +75,10 @@ const MONSTER_POSITION_EPSILON = 0.001
 const SYNC_BLEND_MAX_METERS = 2.5
 const SYNC_CATCHUP_FRACTION = 0.5 // of move speed, while moving
 const SYNC_IDLE_ABSORB_MPS = 2.0
+// Engagement corrections (hit/attack) absorb fast: the model is already in a
+// combat pose, so lingering meters from where it fights reads worse than a
+// quick slide.
+const SYNC_COMBAT_ABSORB_MPS = 5.0
 // Backstop for a pending death whose hit clip never reports completion.
 const DEAD_PENDING_TIMEOUT_MS = 2000
 
@@ -605,7 +611,9 @@ class MonsterManager {
           this.isMovementState(monster.state) &&
           monster.targetPosition
         ) {
-          this.moveTowards(monster, monster.targetPosition, deltaTime)
+          const aim =
+            this.liveChaseAim(monster, gameState) ?? monster.targetPosition
+          this.moveTowards(monster, aim, deltaTime)
           this.monsters.set(monster.id, { ...monster })
         } else if (blended || impactJustExpired || damageTextFired) {
           this.monsters.set(monster.id, { ...monster })
@@ -794,7 +802,8 @@ class MonsterManager {
     rotation: number,
     state: MonsterData['state'],
     targetPosition: { x: number; y: number; z: number },
-    ownerId?: number
+    ownerId?: number,
+    chasing?: { player_id: number; stop_range: number } | null
   ) {
     const monster = this.monsters.get(id)
     if (monster) {
@@ -802,6 +811,9 @@ class MonsterManager {
       if (monster.state === 'dead' && state !== 'dead') {
         return
       }
+      monster.chaseAim = chasing
+        ? { playerId: chasing.player_id, stopRange: chasing.stop_range }
+        : undefined
 
       // The fanout names the current owner; a mismatch means we missed a
       // handoff and would fight the real owner's stream with a stale brain.
@@ -824,7 +836,6 @@ class MonsterManager {
         jump > MONSTER_POSITION_EPSILON &&
         jump < SYNC_BLEND_MAX_METERS &&
         state !== 'dead' &&
-        state !== 'hit' &&
         monster.state !== 'dead'
       monster.syncCorrection = soften ? { x: jumpDx, z: jumpDz } : undefined
       const snappedPosition = soften
@@ -855,12 +866,47 @@ class MonsterManager {
     }
   }
 
+  // A chasing monster walks at its target's live local position — exact for
+  // the current player, interpolated for remotes — instead of the sync-old
+  // leg target, so a head-on engagement starts where both actually stand.
+  private liveChaseAim(
+    monster: MonsterData,
+    gameState: GameState
+  ): { x: number; y: number; z: number } | undefined {
+    const chase = monster.chaseAim
+    const legTarget = monster.targetPosition
+    if (!chase || !legTarget) return undefined
+    const live =
+      gameState.currentPlayer?.id === chase.playerId
+        ? gameState.currentPlayer.position
+        : remotePlayerManager.players.get(chase.playerId)?.position
+    if (!live) return undefined
+    const pathFloor = this.pathFloorFor(monster)
+    return computeChaseAim(
+      monster.position,
+      legTarget,
+      live,
+      chase.stopRange,
+      (fromX, fromZ, toX, toZ) =>
+        housingManager.isMovementBlocked(
+          fromX,
+          fromZ,
+          toX,
+          toZ,
+          pathFloor,
+          monster.position.y
+        )
+    )
+  }
+
   private absorbSyncCorrection(monster: MonsterData, deltaTime: number) {
     const c = monster.syncCorrection
     if (!c) return false
     const rate = this.isMovementState(monster.state)
       ? monster.moveSpeed * SYNC_CATCHUP_FRACTION
-      : SYNC_IDLE_ABSORB_MPS
+      : monster.state === 'hit' || monster.state === 'attack'
+        ? SYNC_COMBAT_ABSORB_MPS
+        : SYNC_IDLE_ABSORB_MPS
     const remaining = Math.hypot(c.x, c.z)
     const step = (rate * deltaTime) / 1000
     const p = monster.position

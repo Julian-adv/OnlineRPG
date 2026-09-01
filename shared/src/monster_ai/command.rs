@@ -75,6 +75,14 @@ pub struct NearbyMonster {
     pub path_floor: u8,
 }
 
+/// The chased player and the radius the chase stops and swings at, so a
+/// viewer's live aim lands where the server's attack transition will.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ChaseAim {
+    pub player_id: PlayerId,
+    pub stop_range: f32,
+}
+
 /// Behavior output — translated by the caller into network messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -89,6 +97,10 @@ pub enum AiCommand {
         /// line at the destination walks the model through the walls the path
         /// goes around. See `MonsterBrain::current_leg_target`.
         target_position: Position,
+        /// Set on chase legs; a viewer can aim the walk at the chased
+        /// player's live local position instead of the sync-old point above,
+        /// stopping at the carried radius.
+        chasing: Option<ChaseAim>,
     },
     Attack {
         monster_id: String,

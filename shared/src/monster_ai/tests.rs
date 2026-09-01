@@ -2247,6 +2247,38 @@ fn chase_move_targets_a_point_on_the_path_not_the_player() {
 }
 
 #[test]
+fn chase_move_names_the_chased_player_and_other_moves_do_not() {
+    let mut brain = make_brain();
+    brain.target_player_id = Some(1.into());
+    let tree = BehaviorTree {
+        description: None,
+        root: BehaviorNode::Action {
+            name: "chase_target".into(),
+            params: HashMap::new(),
+        },
+    };
+    let mut rng = SmallRng::seed_from_u64(42);
+    let players = attacker_at(10.0, 40.0);
+    let result = brain.tick_with_behavior_tree(16.0, &players, &[], &tree, &DirectPath, &mut rng);
+    let chasing = result
+        .commands
+        .iter()
+        .find_map(|c| match c {
+            AiCommand::Move { chasing, .. } => Some(*chasing),
+            _ => None,
+        })
+        .expect("entering the chase syncs a move")
+        .expect("a chase leg carries its live aim");
+    assert_eq!(chasing.player_id, 1.into());
+    assert!((chasing.stop_range - brain.engage_stop_range()).abs() < 1e-6);
+
+    let hit_moves = brain.handle_hit_with_behavior_tree(&2.into(), true, 1);
+    assert!(hit_moves
+        .iter()
+        .all(|c| matches!(c, AiCommand::Move { chasing: None, .. })));
+}
+
+#[test]
 fn chase_lookahead_stops_where_the_attack_engages() {
     let mut brain = make_brain();
     brain.install_path(vec![PathWaypoint {
