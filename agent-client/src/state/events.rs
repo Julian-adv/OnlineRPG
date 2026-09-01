@@ -1074,8 +1074,7 @@ impl SharedState {
                 let minute = datetime.minute as u32;
                 let night = *is_night;
                 self.is_night = Some(night);
-                self.schedule_period =
-                    Some(onlinerpg_shared::schedule::schedule_period(datetime));
+                self.schedule_period = Some(onlinerpg_shared::schedule::schedule_period(datetime));
                 self.game_hour = Some(hour);
                 self.game_minute = Some(minute);
                 self.latest_time = Some(msg);

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Object type an NPC occupies while asleep.
 pub const BED_OBJECT_TYPE: &str = "bed";
-const MEAL_DURATION_HOURS: f64 = 1.0;
+const MEAL_DURATION_HOURS: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedulePeriod {
@@ -261,9 +261,7 @@ pub fn resolve_active_schedule(
             .iter()
             .enumerate()
             .filter_map(|(i, entry)| match entry.condition.as_ref() {
-                Some(ScheduleCondition::Time { hour, minute }) => {
-                    Some((hour * 60 + minute, i))
-                }
+                Some(ScheduleCondition::Time { hour, minute }) => Some((hour * 60 + minute, i)),
                 _ => None,
             })
             .max_by_key(|(minute, _)| *minute)
@@ -331,10 +329,12 @@ mod tests {
             })
         };
 
+        assert_eq!(period(5, 29), SchedulePeriod::Night);
+        assert_eq!(period(5, 30), SchedulePeriod::Breakfast);
         assert_eq!(period(6, 0), SchedulePeriod::Day);
-        assert_eq!(period(17, 0), SchedulePeriod::Dinner);
+        assert_eq!(period(17, 29), SchedulePeriod::Day);
+        assert_eq!(period(17, 30), SchedulePeriod::Dinner);
         assert_eq!(period(18, 0), SchedulePeriod::Night);
-        assert_eq!(period(5, 0), SchedulePeriod::Breakfast);
     }
 
     #[test]
@@ -345,9 +345,8 @@ mod tests {
             entry("night"),
             entry("breakfast"),
         ];
-        let resolve = |period| {
-            resolve_active_schedule(&schedule, Some(period), Some(12), Some(0), None).0
-        };
+        let resolve =
+            |period| resolve_active_schedule(&schedule, Some(period), Some(12), Some(0), None).0;
 
         assert_eq!(resolve(SchedulePeriod::Day), Some(0));
         assert_eq!(resolve(SchedulePeriod::Dinner), Some(1));
@@ -400,14 +399,7 @@ mod tests {
             entry("breakfast"),
         ];
         let resolve = |period, hour, minute| {
-            resolve_active_schedule(
-                &schedule,
-                Some(period),
-                Some(hour),
-                Some(minute),
-                None,
-            )
-            .0
+            resolve_active_schedule(&schedule, Some(period), Some(hour), Some(minute), None).0
         };
 
         assert_eq!(resolve(SchedulePeriod::Night, 2, 59), Some(2));
@@ -419,9 +411,7 @@ mod tests {
     #[test]
     fn time_range_can_cross_midnight() {
         let schedule = [entry("22:00-2:00")];
-        let resolve = |hour| {
-            resolve_active_schedule(&schedule, None, Some(hour), Some(0), None).0
-        };
+        let resolve = |hour| resolve_active_schedule(&schedule, None, Some(hour), Some(0), None).0;
 
         assert_eq!(resolve(23), Some(0));
         assert_eq!(resolve(1), Some(0));

@@ -11,15 +11,15 @@
     "hit": 0.8
   },
   "locomotion": {
-    "idle1": 8.367,
-    "idle2": 9.967,
-    "idle3": 2.033,
-    "idle4": 11.5,
-    "idle5": 3.7,
-    "walk": 1,
-    "jog": 2.6,
-    "run": 0.733,
-    "jump": 2.633
+    "idle1": 8.333,
+    "idle2": 8.767,
+    "idle3": 1.967,
+    "idle4": 11.467,
+    "idle5": 7.533,
+    "walk": 1.033,
+    "jog": 0.833,
+    "run": 0.633,
+    "jump": 1.9
   },
   "female_knight": {}
 }

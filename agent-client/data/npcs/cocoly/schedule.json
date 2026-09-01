@@ -14,7 +14,7 @@
       "floor_level": 0,
       "label": "eating dinner on the inn's ground floor",
       "action": "chair",
-      "object_id": 43
+      "object_id": 45
     },
     {
       "at": "night",
@@ -30,10 +30,10 @@
       "floor_level": 0,
       "label": "eating breakfast on the inn's ground floor",
       "action": "chair",
-      "object_id": 43
+      "object_id": 45
     },
     {
-      "at": "14:00-17:00",
+      "at": "13:00-16:00",
       "pos": [-1442.64, 4.35, 4753.8],
       "rotation": 180.0,
       "floor_level": 1,

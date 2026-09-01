@@ -272,10 +272,7 @@ impl AppServerSession {
     }
 
     fn handle_notification(self: &Arc<Self>, method: &str, params: Option<Value>) {
-        if !matches!(
-            method,
-            "turn/started" | "item/completed" | "turn/completed"
-        ) {
+        if !matches!(method, "turn/started" | "item/completed" | "turn/completed") {
             return;
         }
         let Some(params) = params else {
