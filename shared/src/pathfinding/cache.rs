@@ -127,6 +127,7 @@ pub fn door_cells(
 }
 
 /// Update passability edge bits when a door is opened or closed.
+/// Non-door segments are ignored: an open window shutter still blocks.
 pub fn update_door_edge(
     cache: &mut PassabilityCache,
     house_id: &str,
@@ -135,6 +136,13 @@ pub fn update_door_edge(
     segment_index: usize,
     is_open: bool,
 ) {
+    if !room
+        .wall(wall_dir)
+        .get(segment_index)
+        .is_some_and(|seg| seg.variant.is_door())
+    {
+        return;
+    }
     let rp = match cache.get_mut(house_id) {
         Some(rp) => rp,
         None => return,
@@ -280,5 +288,66 @@ pub fn apply_door_overlays(cache: &mut PassabilityCache, house: &HouseData) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2×2 room whose south wall is [door, window].
+    fn house_with_door_and_window() -> HouseData {
+        serde_json::from_value(serde_json::json!({
+            "id": "h",
+            "ownerId": "test",
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "rooms": [{
+                "localX": 0, "localZ": 0, "sizeX": 2, "sizeZ": 2,
+                "floorLevel": 0, "floorTexture": 0, "roofTexture": 0, "wallHeight": 3.0,
+                "wallNorth": [{"variant": "solid", "texture": 0}, {"variant": "solid", "texture": 0}],
+                "wallSouth": [{"variant": "door", "texture": 0}, {"variant": "window", "texture": 0}],
+                "wallEast": [{"variant": "solid", "texture": 0}, {"variant": "solid", "texture": 0}],
+                "wallWest": [{"variant": "solid", "texture": 0}, {"variant": "solid", "texture": 0}]
+            }],
+            "passability": [{
+                "floorLevel": 0, "originX": 0, "originZ": 0, "width": 2, "depth": 2,
+                "cells": [9, 3, 12, 6]
+            }]
+        }))
+        .unwrap()
+    }
+
+    fn south_edge_open(cache: &PassabilityCache, x: usize) -> bool {
+        cache.get("h").unwrap().floors[0].cells[x + 2] & EDGE_S == 0
+    }
+
+    #[test]
+    fn open_door_clears_edge_but_open_window_keeps_blocking() {
+        let house = house_with_door_and_window();
+        let mut cache = PassabilityCache::new();
+        cache.insert(house.id.clone(), build_runtime_passability(&house));
+
+        update_door_edge(
+            &mut cache,
+            "h",
+            &house.rooms[0],
+            WallDirection::South,
+            0,
+            true,
+        );
+        assert!(south_edge_open(&cache, 0), "open door is a way through");
+
+        update_door_edge(
+            &mut cache,
+            "h",
+            &house.rooms[0],
+            WallDirection::South,
+            1,
+            true,
+        );
+        assert!(
+            !south_edge_open(&cache, 1),
+            "open window shutter still blocks"
+        );
     }
 }
