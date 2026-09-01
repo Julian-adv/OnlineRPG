@@ -20,4 +20,4 @@ Local notes sound immediately. The client groups audience events for 250 ms and 
 
 ## Session rules
 
-Live instrument state is separate from `/play_music`, although both reuse the same visual pose. Starting either mode replaces the other. Movement, attacking, a landed hit, death, equipment changes, Escape and disconnect end the live performance. The playable panel also locks movement, scene clicks and camera controls while it is open.
+Live instrument state is separate from `/play_music`, although both reuse the same visual pose. Starting either mode replaces the other. Movement, attacking, a landed hit, death, equipment changes, an opened trade, Escape and disconnect end the live performance. The playable panel also locks movement, scene clicks and camera controls while it is open.

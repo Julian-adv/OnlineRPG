@@ -745,7 +745,11 @@ impl super::GameState {
         };
         match opened {
             Err(reason) => self.send_system_message(player_id, reason).await,
-            Ok(id) => self.broadcast_trade(id).await,
+            Ok(id) => {
+                self.cancel_live_instrument_if_active(player_id).await;
+                self.cancel_live_instrument_if_active(&owner).await;
+                self.broadcast_trade(id).await;
+            }
         }
     }
 
@@ -812,6 +816,10 @@ impl super::GameState {
                 .await;
             }
             Some(Ok(session_id)) => {
+                // An open table takes both hands — it ends either side's
+                // live performance.
+                self.cancel_live_instrument_if_active(requester_id).await;
+                self.cancel_live_instrument_if_active(target_id).await;
                 self.send_direct_message(
                     requester_id,
                     ServerMessage::PlayerTradeRequestResult {

@@ -376,3 +376,27 @@ async fn listeners_who_blocked_the_performer_hear_no_notes() {
         .any(|message| matches!(message, ServerMessage::PlayerInstrumentNotes { .. })));
     assert!(drain(&mut hater_rx).is_empty());
 }
+
+#[tokio::test]
+async fn an_accepted_trade_ends_the_live_performance() {
+    let game_state = make_test_game_state("live_instrument_trade");
+    let performer = pid("performer");
+    let trader = pid("trader");
+    game_state
+        .add_player(make_player("performer", 0.0, 0.0))
+        .await;
+    game_state.add_player(make_player("trader", 2.0, 0.0)).await;
+    hand_instrument(&game_state, "performer").await;
+
+    game_state.start_live_instrument(&performer).await;
+    game_state.request_player_trade(&trader, "performer").await;
+    game_state
+        .respond_player_trade(&performer, &trader, true)
+        .await;
+
+    assert!(!game_state
+        .live_instrument_players
+        .read()
+        .await
+        .contains(&performer));
+}
