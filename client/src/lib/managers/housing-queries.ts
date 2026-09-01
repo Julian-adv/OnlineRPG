@@ -1,4 +1,4 @@
-import type { HouseData } from '../types/housing'
+import type { HouseData, RoomData } from '../types/housing'
 import {
   FLOOR_THICKNESS,
   floorYBase,
@@ -6,6 +6,24 @@ import {
   type WallDirection,
 } from '../utils/house-geometry'
 import { getWallByDir, isOpenable, wallLineCoord } from './housing-passability'
+
+/** Whether (x, z) lies within a room's footprint, optionally inset by margin. */
+export function roomContainsXZ(
+  house: HouseData,
+  room: RoomData,
+  x: number,
+  z: number,
+  margin = 0
+): boolean {
+  const rx = house.origin.x + room.localX
+  const rz = house.origin.z + room.localZ
+  return (
+    x >= rx + margin &&
+    x <= rx + room.sizeX - margin &&
+    z >= rz + margin &&
+    z <= rz + room.sizeZ - margin
+  )
+}
 
 /** Find the first room containing a world point (fast, no allocation). */
 export function findRoomAtPoint(
@@ -17,15 +35,10 @@ export function findRoomAtPoint(
   for (const house of housesById.values()) {
     for (let i = 0; i < house.rooms.length; i++) {
       const room = house.rooms[i]
-      const rx = house.origin.x + room.localX
-      const rz = house.origin.z + room.localZ
       const ryBase =
         house.origin.y + floorYBase(room.floorLevel, room.wallHeight)
       if (
-        x >= rx &&
-        x <= rx + room.sizeX &&
-        z >= rz &&
-        z <= rz + room.sizeZ &&
+        roomContainsXZ(house, room, x, z) &&
         y >= ryBase - 1 &&
         y <= ryBase + room.wallHeight + 1
       ) {
@@ -44,9 +57,7 @@ export function isPointUnderHouseXZ(
 ): boolean {
   for (const house of housesById.values()) {
     for (const room of house.rooms) {
-      const rx = house.origin.x + room.localX
-      const rz = house.origin.z + room.localZ
-      if (x >= rx && x <= rx + room.sizeX && z >= rz && z <= rz + room.sizeZ) {
+      if (roomContainsXZ(house, room, x, z)) {
         return true
       }
     }
@@ -77,9 +88,7 @@ export function houseFloorHeightAt(
 
   for (const house of housesById.values()) {
     for (const room of house.rooms) {
-      const rx = house.origin.x + room.localX
-      const rz = house.origin.z + room.localZ
-      if (x < rx || x > rx + room.sizeX || z < rz || z > rz + room.sizeZ) {
+      if (!roomContainsXZ(house, room, x, z)) {
         continue
       }
 
@@ -152,15 +161,10 @@ export function findAllRoomsAtPoint(
   for (const house of housesById.values()) {
     for (let i = 0; i < house.rooms.length; i++) {
       const room = house.rooms[i]
-      const rx = house.origin.x + room.localX
-      const rz = house.origin.z + room.localZ
       const ryBase =
         house.origin.y + floorYBase(room.floorLevel, room.wallHeight)
       if (
-        x >= rx &&
-        x <= rx + room.sizeX &&
-        z >= rz &&
-        z <= rz + room.sizeZ &&
+        roomContainsXZ(house, room, x, z) &&
         y >= ryBase - 1 &&
         y <= ryBase + room.wallHeight + 1
       ) {

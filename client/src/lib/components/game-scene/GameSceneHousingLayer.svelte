@@ -33,6 +33,7 @@
   } from '../../utils/house-geo-utils'
   import { getWallByDir } from '../../managers/housingManager'
   import { housingManager } from '../../managers/housingManager'
+  import { roomContainsXZ } from '../../managers/housing-queries'
   import { furnitureManager } from '../../managers/furnitureManager'
   import {
     TERRAIN_TILE_SIZE,
@@ -64,6 +65,8 @@
   let currentInsideHouseId: string | null = null
   let playerInsideFloor = 0
   let lastFloorOffset = 0
+  /** Whether last frame resolved onto a stairwell (acquire/release hysteresis). */
+  let wasOnStairs = false
   // Preallocated for per-frame room detection (avoid GC)
   const _allRooms: { house: HouseData; roomIndex: number }[] = []
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
@@ -297,6 +300,10 @@
 
   const DOOR_SWING_SPEED = Math.PI // radians per second (~0.5s for 90°)
 
+  // How far inside the shaft footprint the player must be to acquire the
+  // stairs; release uses the full footprint.
+  const STAIR_ACQUIRE_MARGIN = 0.1
+
   /** Called from game loop — loads chunks + checks player inside state */
   export function update(_deltaTime: number) {
     if (!playerPosition) return
@@ -330,6 +337,7 @@
     let insideId: string | null = null
     let newOffset = 0
     let effectiveFloor = 0
+    let onStairsNow = false
 
     for (const [id, result] of houses) {
       // XZ-only broad-phase: player.y is forced to terrainY each frame
@@ -383,6 +391,21 @@
               playerInsideFloor < room.floorLevel)
           )
             continue
+          // The room test is boundary-inclusive, so grazing the shaft's edge
+          // line from beside it would otherwise snap the player onto the
+          // ramp. Acquire the stairs only clearly inside; once on them the
+          // full footprint applies, so hugging the shaft wall doesn't flicker.
+          if (
+            !wasOnStairs &&
+            !roomContainsXZ(
+              roomResult.house,
+              room,
+              playerPosition.x,
+              playerPosition.z,
+              STAIR_ACQUIRE_MARGIN
+            )
+          )
+            continue
           const offset = getStairwellYOffset(
             room,
             roomResult.house.origin.x,
@@ -391,6 +414,12 @@
             playerPosition.z
           )
           const dist = Math.abs(offset - lastFloorOffset)
+          // Stairs are entered by stepping onto the ramp, never by a snap of
+          // half a storey or more: an upper room can overlap the shaft's low
+          // end, and dropping there desyncs the storey the server holds.
+          // Outside a house (login/teleport) the prior offset means nothing.
+          const maxEntryRise = (room.wallHeight + FLOOR_THICKNESS) / 2
+          if (currentInsideHouseId !== null && dist > maxEntryRise) continue
           if (dist < bestStairDist) {
             bestStairDist = dist
             bestStairOffset = offset
@@ -411,6 +440,7 @@
       if (stairResult) {
         const room = stairResult.house.rooms[stairResult.roomIndex]
         insideId = id
+        onStairsNow = true
         newOffset = terrainComp + bestStairOffset
         const entryFloor = room.floorLevel
         const exitFloor = room.floorLevel + 1
@@ -437,6 +467,7 @@
       }
       if (insideId) break
     }
+    wasOnStairs = onStairsNow
 
     // Update visibility when house or floor changes
     if (
