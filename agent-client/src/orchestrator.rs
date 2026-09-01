@@ -183,6 +183,7 @@ pub struct SharedResources {
     pub type_mapping: Arc<HashMap<String, String>>,
     pub movement_speeds: Arc<HashMap<String, crate::monster_ai::MonsterMovement>>,
     pub scheduler: LlmScheduler,
+    pub codex_app_server: codex::CodexAppServer,
     /// One claim board for the process, so co-located NPCs (the two inn
     /// maids) don't both answer the same bedside or table call.
     pub claims: Arc<driver::VisitClaims>,
@@ -957,9 +958,9 @@ fn build_llm_backend(
                 .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
         ),
         LlmType::Codex => (
-            "Codex CLI",
+            "Codex app-server",
             &npc.codex.model,
-            codex::CodexInvoker::new(&npc.codex, system_prompt)
+            codex::CodexInvoker::new(&npc.codex, system_prompt, shared.codex_app_server.clone())
                 .map(|i| Arc::new(i) as Arc<dyn driver::LlmBackend>),
         ),
         LlmType::Openai => (

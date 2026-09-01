@@ -52,8 +52,8 @@ pub(crate) use onlinerpg_shared::messages::MUSIC_EMOTE;
 
 const MAX_EVENTS: usize = 200;
 /// Rolling window of conversation lines kept as prompt context. Stateless
-/// backends (one `codex exec` per prompt) see only this window, so it is
-/// the NPC's entire short-term memory of who said what.
+/// backends (one ephemeral Codex thread per prompt) see only this window, so
+/// it is the NPC's entire short-term memory of who said what.
 const MAX_CHAT_HISTORY: usize = 30;
 /// How many of our own recent song titles the world state lists, so a bard
 /// can favor tunes it has not played lately.

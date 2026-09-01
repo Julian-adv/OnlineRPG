@@ -311,6 +311,7 @@ async fn main() -> anyhow::Result<()> {
             config.max_concurrent,
             Duration::from_secs(config.request_timeout_secs),
         ),
+        codex_app_server: codex::CodexAppServer::new(),
         claims: Arc::default(),
         transcript: transcript::Transcript::start(
             &config.transcript_dir,

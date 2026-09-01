@@ -234,6 +234,19 @@ openrouter와 openai는 같은 chat completions 호출부를 쓴다. `openai.rs`
   트림이 system이나 지금 보내는 턴을 잘라내고 usize 언더플로로 패닉한다. 이 설정은
   `openai` 백엔드 전용이고, openrouter는 기본값 고정이다.
 
+### Codex app-server (`codex.rs`)
+
+agent-client 프로세스 안의 모든 Codex NPC가 `codex app-server` 자식 프로세스 하나를
+공유한다. stdio는 newline-delimited JSON이고, request ID로 RPC 응답을, thread ID로
+동시에 실행 중인 NPC 턴의 알림을 나눈다. app-server가 종료되거나 pipe가 끊기면 진행
+중인 호출을 모두 실패시키고 다음 호출에서 새 프로세스를 띄운다.
+
+대화 상태는 공유하지 않는다. 매 LLM 호출마다 `thread/start`를 `ephemeral = true`,
+`sandbox = "read-only"`, `approvalPolicy = "never"`로 보내고 그 thread에서 정확히 한
+`turn/start`만 실행한다. 기존과 같이 system prompt와 이번 이벤트를 전부 그 한 턴에
+실으며, CWD도 NPC별 빈 임시 디렉터리라 저장소의 `AGENTS.md`나 파일을 보지 않는다.
+따라서 프로세스 기동·초기화 비용만 공유하고 NPC의 단기 기억 범위와 격리는 그대로다.
+
 ### LLM 트랜스크립트 (`transcript_dir`, `transcript_keep_days`)
 
 프롬프트·응답 전문은 저널에 찍지 않는다. `transcript.rs`의 `TranscriptBackend`가
@@ -268,18 +281,19 @@ prod 유닛은 `/etc/openmmo/agent-client.env`를 읽으므로 거기에 넣고
 에러로 올라와 패널에 `llm-error`로 남는다.
 
 시간이 지나면 안쪽 future를 drop하는 것으로 일이 실제로 멈춘다. reqwest는 요청을
-취소하고, stdio 백엔드(`claude.rs` / `codex.rs`)는 `kill_on_drop(true)`로 CLI를 띄우므로
-자식 프로세스가 살아남지 않는다. npm `codex`/`claude`는 node 래퍼라 진짜 바이너리가
-손자 프로세스인데, unix에서는 프로세스 그룹으로 띄워 drop 시 그룹째 죽인다
-(`process_group.rs`; 2026-08-27, 타임아웃마다 고아 codex가 남아 API 호출을 계속하던 문제). `0`은 타임아웃
-해제 — 디버거로 백엔드를 따라갈 때 쓴다.
+취소하고, Claude stdio 백엔드는 `kill_on_drop(true)`와 unix 프로세스 그룹으로 해당
+호출의 CLI를 손자 프로세스까지 종료한다. 공유 Codex app-server는 프로세스를 죽이지
+않고 그 thread의 `turn/interrupt`만 보내므로 다른 NPC의 동시 호출은 계속된다. app-server
+자체가 끊기면 진행 중인 Codex 호출을 모두 실패시키고 다음 호출에서 재기동한다.
+`process_group.rs`는 agent-client 종료 시 app-server의 npm/node 자식까지 남지 않게 한다.
+`0`은 타임아웃 해제 — 디버거로 백엔드를 따라갈 때 쓴다.
 
 ### codex 추론 강도 (`[codex] reasoning_effort`, 기본 "low")
 
-`codex exec`는 사용자의 `~/.codex/config.toml`을 그대로 상속한다. 거기 `model_reasoning_effort =
-"xhigh"`가 있으면 NPC 한 턴이 200초를 넘겨 타임아웃만 반복한다(2026-08-27 실측: 같은
-상인 프롬프트가 xhigh 200초+, medium 11초, low 10초). 그래서 항상 `-c
-model_reasoning_effort=<값>`을 명시한다. 회의 대사처럼 짧은 롤플레이에는 low로 충분하다.
+Codex app-server도 사용자의 `~/.codex/config.toml`을 상속하지만 각 `turn/start`에
+`effort`를 명시해 전역값을 덮는다. `xhigh`면 NPC 한 턴이 200초를 넘겨 타임아웃만
+반복할 수 있다(2026-08-27 실측: 같은 상인 프롬프트가 xhigh 200초+, medium 11초,
+low 10초). 회의 대사처럼 짧은 롤플레이에는 low로 충분하다.
 
 ## 구현 우선순위
 
