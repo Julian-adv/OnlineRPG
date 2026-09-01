@@ -27,6 +27,8 @@ Run `npm run check` to perform Svelte and TypeScript type checking. If type erro
 ### Step 4: Sync Binary Assets
 Binary assets (GLB/MP3/M4A/blend under `client/public/`, everything under `assets/`) are not in git — they live on Hugging Face, pinned by `assets.lock`. A commit that references a changed asset without an updated lock ships a stale file on the next deploy. Before committing, run `bash tools/check-assets.sh` from the repo root. It prints `new`/`modified`/`missing` lines for anything out of sync and exits 1.
 
+This step is NOT optional and is independent of commit scope: run it even when your launch prompt restricts the commit to specific files or says assets are handled elsewhere. If out-of-sync assets are unrelated to the requested commit and you are unsure they should be published, stop and report them instead of silently skipping the sync.
+
 If it prints anything:
 1. Run `bash tools/push-assets.sh` (uploads to Hugging Face and rewrites `assets.lock`; needs the `hf` CLI logged in — if it fails on auth, stop and tell the user).
 2. Inspect `git diff assets.lock`. Every `-file` line must be paired with a `+file` for the same path (a changed hash). A `-file` with no `+file` means a source was deleted locally and the push removed it from the dataset — report it and stop, so the user can restore it from the previous revision.
@@ -42,6 +44,10 @@ If all checks pass:
 1. Stage the changes with `git add .` (or stage specific files if more appropriate)
 2. Create a concise, descriptive commit message that summarizes the actual code changes
 3. Run `git commit -m "<your message>"`
+
+## Commit Granularity
+
+Batch all pending changes into ONE commit by default, even when they span unrelated topics — the user prefers a short history over logically separated commits. Split into multiple commits only when the user explicitly asks for it.
 
 ## Commit Message Guidelines
 
