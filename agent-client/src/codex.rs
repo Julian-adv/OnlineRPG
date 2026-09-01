@@ -214,7 +214,7 @@ impl AppServerSession {
             let _ = route.events.send(TurnEvent::Disconnected(reason.clone()));
         }
 
-        if let Some((child, group)) = lock(&self.process).as_mut() {
+        if let Some((mut child, mut group)) = lock(&self.process).take() {
             if let Ok(Some(status)) = child.try_wait() {
                 group.disarm();
                 debug!("Codex app-server exited with status {status}");
@@ -445,13 +445,13 @@ impl Drop for TurnGuard {
             return;
         }
 
-        let session = Arc::clone(&self.session);
         let thread_id = self.thread_id.clone();
         let route = Arc::clone(&self.route);
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            session.remove_route(&thread_id);
+            self.session.remove_route(&thread_id);
             return;
         };
+        let session = Arc::downgrade(&self.session);
         runtime.spawn(async move {
             let turn_id = match route.turn_id() {
                 Some(turn_id) => Some(turn_id),
@@ -462,15 +462,17 @@ impl Drop for TurnGuard {
                     }
                 }
             };
-            if let Some(turn_id) = turn_id {
-                let _ = session
-                    .request(
-                        "turn/interrupt",
-                        json!({ "threadId": thread_id, "turnId": turn_id }),
-                    )
-                    .await;
+            if let Some(session) = session.upgrade() {
+                if let Some(turn_id) = turn_id {
+                    let _ = session
+                        .request(
+                            "turn/interrupt",
+                            json!({ "threadId": thread_id, "turnId": turn_id }),
+                        )
+                        .await;
+                }
+                session.remove_route(&thread_id);
             }
-            session.remove_route(&thread_id);
         });
     }
 }

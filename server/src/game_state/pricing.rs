@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use tracing::{info, warn};
 
+use onlinerpg_shared::celestial::is_after_sunset;
 use onlinerpg_shared::moon::{days_until_serin_dark, is_serin_dark_day};
 use onlinerpg_shared::pricing::{PricingNotice, Trend};
 
 use crate::auth::{unix_now, AuthService, PricingMeeting};
-use crate::celestial::is_after_sunset;
 use crate::types::{PlayerId, ServerMessage};
 use crate::world_config::{world_config, PricingConfig};
 

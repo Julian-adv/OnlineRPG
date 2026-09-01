@@ -389,7 +389,7 @@ pub async fn llm_driver(
     if !schedule.is_empty() {
         // Wait for first GameTimeSync to arrive (up to 10s)
         for _ in 0..20 {
-            let has_time = { state.lock().await.is_night.is_some() };
+            let has_time = { state.lock().await.schedule_period.is_some() };
             if has_time {
                 break;
             }
@@ -1077,6 +1077,7 @@ mod tests {
         let me = test_player(-1443.9, 4748.9);
         s.in_game = true;
         s.is_night = Some(true);
+        s.schedule_period = Some(onlinerpg_shared::schedule::SchedulePeriod::Night);
         s.self_player_id = Some(me.id);
         s.self_player = Some(me);
 
@@ -1095,7 +1096,7 @@ mod tests {
         let prompts: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
 
         // One live entry on the NPC's serving spot, so the visit leaves a
-        // real active schedule the way Mira's does.
+        // real active schedule the way Miriel's does.
         let mut entry = ScheduleEntry {
             at: "night".to_string(),
             pos: [-1443.9, 1.3, 4748.9],
@@ -1144,10 +1145,10 @@ mod tests {
     #[test]
     fn first_claimant_holds_a_visit_claim() {
         let c = VisitClaims::default();
-        assert!(c.try_claim(ClaimKey::Bed(52), "mira", VISIT_DWELL));
-        assert!(!c.try_claim(ClaimKey::Bed(52), "coco", VISIT_DWELL));
-        assert!(c.try_claim(ClaimKey::Bed(52), "mira", VISIT_DWELL));
-        assert!(c.try_claim(ClaimKey::Bed(53), "coco", VISIT_DWELL));
+        assert!(c.try_claim(ClaimKey::Bed(52), "miriel", VISIT_DWELL));
+        assert!(!c.try_claim(ClaimKey::Bed(52), "cocoly", VISIT_DWELL));
+        assert!(c.try_claim(ClaimKey::Bed(52), "miriel", VISIT_DWELL));
+        assert!(c.try_claim(ClaimKey::Bed(53), "cocoly", VISIT_DWELL));
     }
 
     #[tokio::test]
@@ -1156,6 +1157,7 @@ mod tests {
         let me = test_player(-1443.9, 4748.9);
         s.in_game = true;
         s.is_night = Some(true);
+        s.schedule_period = Some(onlinerpg_shared::schedule::SchedulePeriod::Night);
         s.self_player_id = Some(me.id);
         s.self_player = Some(me);
 

@@ -1,5 +1,8 @@
-import { shortestWrappedDeltaX, wrapWorldX } from '../../../terrain/world-wrap'
-import type { Position } from '../../../utils/movementUtils'
+import { shortestWrappedDeltaX } from '../../../terrain/world-wrap'
+import {
+  positionShortOfTarget,
+  type Position,
+} from '../../../utils/movementUtils'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Click → walk up → act
@@ -46,13 +49,7 @@ export function planApproach(
   const distance = Math.sqrt(dx * dx + dz * dz)
   if (canActNow && distance <= spec.range) return { kind: 'act_now' }
 
-  const walked =
-    distance > 0 ? 1 - Math.min(spec.stopShort, distance) / distance : 0
-  const standSpot = {
-    x: wrapWorldX(from.x + dx * walked),
-    y: spec.position.y,
-    z: from.z + dz * walked,
-  }
+  const standSpot = positionShortOfTarget(from, spec.position, spec.stopShort)
   if (spec.stopShort > 0 && routeQuality(standSpot) === 'found') {
     return { kind: 'walk', target: standSpot }
   }

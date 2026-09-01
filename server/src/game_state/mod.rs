@@ -613,7 +613,7 @@ impl GameState {
         };
         let (active, _) = resolve_active_schedule(
             schedule,
-            Some(Self::is_night(&datetime)),
+            Some(onlinerpg_shared::schedule::schedule_period(&datetime)),
             Some(u32::from(datetime.hour)),
             Some(u32::from(datetime.minute)),
             Some(onlinerpg_shared::moon::is_serin_dark_day(

@@ -391,10 +391,7 @@
               playerInsideFloor < room.floorLevel)
           )
             continue
-          // The room test is boundary-inclusive, so grazing the shaft's edge
-          // line from beside it would otherwise snap the player onto the
-          // ramp. Acquire the stairs only clearly inside; once on them the
-          // full footprint applies, so hugging the shaft wall doesn't flicker.
+          // Require an inset only when acquiring stairs to prevent edge snaps.
           if (
             !wasOnStairs &&
             !roomContainsXZ(
@@ -414,10 +411,7 @@
             playerPosition.z
           )
           const dist = Math.abs(offset - lastFloorOffset)
-          // Stairs are entered by stepping onto the ramp, never by a snap of
-          // half a storey or more: an upper room can overlap the shaft's low
-          // end, and dropping there desyncs the storey the server holds.
-          // Outside a house (login/teleport) the prior offset means nothing.
+          // Reject half-storey entry snaps while already inside a house.
           const maxEntryRise = (room.wallHeight + FLOOR_THICKNESS) / 2
           if (currentInsideHouseId !== null && dist > maxEntryRise) continue
           if (dist < bestStairDist) {

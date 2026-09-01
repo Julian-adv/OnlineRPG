@@ -327,6 +327,7 @@ pub struct SharedState {
     pub world_cache: Arc<std::sync::RwLock<WorldCache>>,
     /// Current game time: is_night flag from server
     pub is_night: Option<bool>,
+    pub schedule_period: Option<onlinerpg_shared::schedule::SchedulePeriod>,
     /// Serin's dark day (the merchants' meeting night), from the game date.
     pub is_serin_dark_day: Option<bool>,
     /// LLM turns taken at the price meeting; None when not attending.
@@ -445,6 +446,7 @@ impl SharedState {
             splat_sampler,
             world_cache,
             is_night: None,
+            schedule_period: None,
             is_serin_dark_day: None,
             meeting_turns: None,
             meeting_host: false,

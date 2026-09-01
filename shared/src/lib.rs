@@ -5,6 +5,7 @@
 //! type now lives.
 
 pub mod bridge;
+pub mod celestial;
 pub mod character;
 pub mod debuff;
 pub mod dungeon;

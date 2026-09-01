@@ -1,6 +1,10 @@
 // Common movement calculation utilities shared between local and remote players
 
-import { shortestWrappedDeltaX, unwrapWorldXNear } from '../terrain/world-wrap'
+import {
+  shortestWrappedDeltaX,
+  unwrapWorldXNear,
+  wrapWorldX,
+} from '../terrain/world-wrap'
 
 export type MovementMode = 'walk' | 'jog' | 'run'
 
@@ -8,6 +12,23 @@ export interface Position {
   x: number
   y: number
   z: number
+}
+
+export function positionShortOfTarget(
+  from: Pick<Position, 'x' | 'z'>,
+  target: Position,
+  stopDistance: number
+): Position {
+  const dx = shortestWrappedDeltaX(from.x, target.x)
+  const dz = target.z - from.z
+  const distance = Math.hypot(dx, dz)
+  const fraction =
+    distance > 0 ? 1 - Math.min(stopDistance, distance) / distance : 0
+  return {
+    x: wrapWorldX(from.x + dx * fraction),
+    y: target.y,
+    z: from.z + dz * fraction,
+  }
 }
 
 export interface MovementConfig {

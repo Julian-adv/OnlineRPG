@@ -467,7 +467,7 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   first, like a web player clicking it. Give the id shown in the world
   state ("Item on ground: ... [id 6043]"), or its name:
   {"type": "pickup", "target": 6043}
-  The world state marks who put an item down ("dropped by Mira"); a
+  The world state marks who put an item down ("dropped by Miriel"); a
   [GroundItem] event tells you when someone collects such an item, and an
   item that is no longer listed is gone — don't reach for bare ground.
   A few steps rarely justify the hunger; add "sprint": false to walk:
@@ -1525,7 +1525,7 @@ mod tests {
     fn favor_deltas_tolerate_llm_spellings() {
         let turn = parse_turn_tolerant(
             r#"{"actions": [{"type": "wait"}],
-                "favor": {"jake1": 1, "mira": "+1", "tom": 3.7, "bad": "warm"}}"#,
+                "favor": {"jake1": 1, "miriel": "+1", "tom": 3.7, "bad": "warm"}}"#,
         )
         .unwrap();
         let mut deltas = turn.favor_deltas();
@@ -1534,7 +1534,7 @@ mod tests {
             deltas,
             [
                 ("jake1".to_string(), 1),
-                ("mira".to_string(), 1),
+                ("miriel".to_string(), 1),
                 ("tom".to_string(), 4)
             ],
             "floats round, strings parse, the unparseable entry is dropped"

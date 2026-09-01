@@ -1,4 +1,4 @@
-use crate::types::GameDateTime;
+use crate::world::GameDateTime;
 use std::f64::consts::PI;
 
 const DAYS_PER_MONTH: u32 = 30;
@@ -9,7 +9,6 @@ const LATITUDE_DEG: f64 = 40.0;
 const AXIAL_TILT_DEG: f64 = 24.0;
 const HOURS_PER_DAY: f64 = 24.0;
 
-#[allow(dead_code)]
 pub struct SolarDaylightWindow {
     pub sunrise_hour: f64,
     pub sunset_hour: f64,
@@ -61,7 +60,7 @@ pub fn get_solar_daylight_window(month: u8, day: u8) -> SolarDaylightWindow {
     }
 }
 
-fn hour_of_day(datetime: &GameDateTime) -> f64 {
+pub fn hour_of_day(datetime: &GameDateTime) -> f64 {
     f64::from(datetime.hour) + f64::from(datetime.minute) / 60.0
 }
 
@@ -70,9 +69,6 @@ pub fn is_night(datetime: &GameDateTime) -> bool {
     hour_of_day(datetime) < window.sunrise_hour || is_after_sunset(datetime)
 }
 
-/// Whether the day's night has already begun. Split out from `is_night` so
-/// callers that key off the nightfall boundary alone (rather than "is it dark
-/// right now") don't re-derive solar time.
 pub fn is_after_sunset(datetime: &GameDateTime) -> bool {
     hour_of_day(datetime) >= get_solar_daylight_window(datetime.month, datetime.day).sunset_hour
 }

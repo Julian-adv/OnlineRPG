@@ -180,13 +180,12 @@ account = "npc_night_merchant"
 llm = "codex"
 
 # Inn maid. Serves food and drink on the inn's ground floor, and looks in on
-# the sick room upstairs. With data/npcs/mira/sickroom.json present (bedside
+# the sick room upstairs. With data/npcs/miriel/sickroom.json present (bedside
 # spots keyed by bed placement id), she walks up to greet whoever respawns
 # there. serve_tables makes her walk over to guests who sit down on a chair
-# nearby and take their order; data/npcs/mira/tables.json can pin the exact
-# standing spot per chair.
+# nearby and take their order.
 [[npcs]]
-id = "mira"
+id = "miriel"
 account = "npc_inn_maid"
 gender = "female"
 llm = "codex"

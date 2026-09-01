@@ -2,9 +2,16 @@ use super::*;
 
 impl SharedState {
     /// Current game time snapshot for schedule resolution.
-    pub fn time_context(&self) -> (Option<bool>, Option<u32>, Option<u32>, Option<bool>) {
+    pub fn time_context(
+        &self,
+    ) -> (
+        Option<onlinerpg_shared::schedule::SchedulePeriod>,
+        Option<u32>,
+        Option<u32>,
+        Option<bool>,
+    ) {
         (
-            self.is_night,
+            self.schedule_period,
             self.game_hour,
             self.game_minute,
             // A played-out meeting stops matching; the NPC goes home.

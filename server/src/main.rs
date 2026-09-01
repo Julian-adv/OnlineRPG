@@ -5,7 +5,6 @@ mod banned_names;
 mod bgm_defs;
 mod cape_texture;
 mod cape_texture_routes;
-mod celestial;
 mod conn_limit;
 mod connection;
 mod debuff_defs;

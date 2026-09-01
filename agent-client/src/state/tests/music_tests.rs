@@ -221,7 +221,7 @@ fn tips_left_during_a_song_are_announced_when_it_ends() {
     s.in_game = true;
     let mut listener = test_player(1.0, 0.0);
     listener.id = PlayerId::from(2);
-    listener.name = "Mira".to_string();
+    listener.name = "Miriel".to_string();
     s.nearby_players.insert(listener.id, listener);
     let tipper = PlayerId::from(2);
 
@@ -234,7 +234,7 @@ fn tips_left_during_a_song_are_announced_when_it_ends() {
     assert!(
         events
             .iter()
-            .any(|e| e.contains("[Tip] Mira left old_boot")),
+            .any(|e| e.contains("[Tip] Miriel left old_boot")),
         "{events:?}"
     );
 
@@ -278,14 +278,14 @@ fn tips_left_during_a_song_are_announced_when_it_ends() {
     assert!(
         events
             .last()
-            .is_some_and(|e| e.contains("[Tip] Mira left coin_pile") && e.contains("[id 2]")),
+            .is_some_and(|e| e.contains("[Tip] Miriel left coin_pile") && e.contains("[id 2]")),
         "{events:?}"
     );
     assert_eq!(s.take_wake_urgency(), EventUrgency::Routine);
-    // Still on the ground, and still remembered as Mira's.
+    // Still on the ground, and still remembered as Miriel's.
     assert!(
         s.format_world_state()
-            .contains("Item on ground: coin_pile (1.0m away) [id 2], dropped by Mira"),
+            .contains("Item on ground: coin_pile (1.0m away) [id 2], dropped by Miriel"),
         "{}",
         s.format_world_state()
     );

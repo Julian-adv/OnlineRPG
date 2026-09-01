@@ -56,8 +56,8 @@ pub(super) async fn resolve_due_schedule(
     state: &Arc<Mutex<SharedState>>,
     schedule: &[ScheduleEntry],
 ) -> (Option<usize>, Option<u32>) {
-    let (is_night, game_hour, game_minute, dark_day) = { state.lock().await.time_context() };
-    resolve_active_schedule(schedule, is_night, game_hour, game_minute, dark_day)
+    let (period, game_hour, game_minute, dark_day) = { state.lock().await.time_context() };
+    resolve_active_schedule(schedule, period, game_hour, game_minute, dark_day)
 }
 
 /// Execute the move to a newly due schedule entry (from

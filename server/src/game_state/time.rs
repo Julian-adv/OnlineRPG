@@ -112,7 +112,7 @@ impl super::GameState {
     }
 
     pub fn is_night(datetime: &GameDateTime) -> bool {
-        crate::celestial::is_night(datetime)
+        onlinerpg_shared::celestial::is_night(datetime)
     }
 
     /// Real milliseconds until the next sunrise — how long a fire meant to last
@@ -121,7 +121,8 @@ impl super::GameState {
     pub fn real_ms_until_sunrise(&self) -> u64 {
         let current = self.current_total_game_seconds();
         let datetime = Self::total_game_seconds_to_datetime(current);
-        let window = crate::celestial::get_solar_daylight_window(datetime.month, datetime.day);
+        let window =
+            onlinerpg_shared::celestial::get_solar_daylight_window(datetime.month, datetime.day);
         let into_day = (window.sunrise_hour * (GAME_MINUTES_PER_HOUR * 60) as f64).round() as i64;
         let sunrise = next_game_seconds_at(current, into_day);
         ((sunrise - current) as f64 / GAME_SECONDS_PER_REAL_SECOND * 1000.0) as u64
@@ -146,7 +147,8 @@ impl super::GameState {
     /// (the world clock is persisted, wall time spent offline is not).
     pub fn night_epoch(total_game_seconds: i64) -> i64 {
         let datetime = Self::total_game_seconds_to_datetime(total_game_seconds);
-        Self::game_day(total_game_seconds) + i64::from(crate::celestial::is_after_sunset(&datetime))
+        Self::game_day(total_game_seconds)
+            + i64::from(onlinerpg_shared::celestial::is_after_sunset(&datetime))
     }
 
     #[cfg(test)]

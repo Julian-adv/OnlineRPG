@@ -8,6 +8,15 @@
       "label": "ground floor inside the house"
     },
     {
+      "at": "dinner",
+      "pos": [-1449.0, 1.3, 4753.35],
+      "rotation": 270.0,
+      "floor_level": 0,
+      "label": "eating dinner on the inn's ground floor",
+      "action": "chair",
+      "object_id": 40
+    },
+    {
       "at": "night",
       "pos": [-1474.6, 4.2, 4735.4],
       "rotation": -70.0,
@@ -15,6 +24,15 @@
       "label": "bedroom on 2nd floor",
       "action": "bed",
       "object_id": 3
+    },
+    {
+      "at": "breakfast",
+      "pos": [-1449.0, 1.3, 4753.35],
+      "rotation": 270.0,
+      "floor_level": 0,
+      "label": "eating breakfast on the inn's ground floor",
+      "action": "chair",
+      "object_id": 40
     },
     {
       "at": "meeting",

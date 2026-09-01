@@ -25,7 +25,11 @@ import {
   playSwordMissSound,
 } from './sfxManager'
 import { clearXpArrival, releaseXpArrival } from './xpArrival'
-import { shortestWrappedDeltaX, wrapWorldX } from '../terrain/world-wrap'
+import {
+  shortestWrappedDeltaX,
+  unwrapWorldXNear,
+  wrapWorldX,
+} from '../terrain/world-wrap'
 import {
   PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS,
@@ -881,22 +885,23 @@ class MonsterManager {
         ? gameState.currentPlayer.position
         : remotePlayerManager.players.get(chase.playerId)?.position
     if (!live) return undefined
-    const pathFloor = this.pathFloorFor(monster)
-    return computeChaseAim(
+    const aim = computeChaseAim(
       monster.position,
       legTarget,
       live,
-      chase.stopRange,
-      (fromX, fromZ, toX, toZ) =>
-        housingManager.isMovementBlocked(
-          fromX,
-          fromZ,
-          toX,
-          toZ,
-          pathFloor,
-          monster.position.y
-        )
+      chase.stopRange
     )
+    if (!aim || aim === monster.position) return aim
+    return housingManager.isMovementBlocked(
+      monster.position.x,
+      monster.position.z,
+      unwrapWorldXNear(monster.position.x, aim.x),
+      aim.z,
+      this.pathFloorFor(monster),
+      monster.position.y
+    )
+      ? undefined
+      : aim
   }
 
   private absorbSyncCorrection(monster: MonsterData, deltaTime: number) {
