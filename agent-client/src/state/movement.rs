@@ -523,9 +523,10 @@ impl SharedState {
     /// Our own pose mirror. `send_command` writes it optimistically on
     /// InteractObject/StopInteraction; the server echo and rejection
     /// converge it.
-    pub(super) fn set_self_pose(&mut self, object_type: Option<String>) {
+    pub(super) fn set_self_pose(&mut self, object_type: Option<String>, object_id: Option<u32>) {
         if let Some(p) = self.self_player.as_mut() {
             p.object_type = object_type;
+            p.object_id = object_id;
         }
     }
 

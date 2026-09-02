@@ -25,6 +25,7 @@ mod friend_tests;
 mod house_floor_tests;
 mod hunger_tests;
 mod inventory_tests;
+mod meal_tests;
 mod monster_ai_tests;
 mod movement_tests;
 mod party_tests;

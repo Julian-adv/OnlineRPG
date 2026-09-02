@@ -520,6 +520,20 @@ pub enum ClientMessage {
         hat_id: u64,
         amount: i64,
     },
+    /// Official NPC only: set `item_def_id` on the table in front of the
+    /// occupied chair `chair_object_id`. The server resolves the table top.
+    ServeMeal {
+        chair_object_id: u32,
+        item_def_id: String,
+    },
+    /// Eat the plate served to the chair the sender is sitting on.
+    EatMeal {
+        meal_id: u64,
+    },
+    /// Official NPC only: take an abandoned plate away.
+    ClearMeal {
+        meal_id: u64,
+    },
     /// Show `title` above the name, or nothing. Ignored unless the character
     /// has earned it (doc/TITLES.md).
     SetActiveTitle {
@@ -974,6 +988,8 @@ pub enum ServerMessage {
         stalls: Vec<crate::stall::Stall>,
         #[serde(default)]
         tip_hats: Vec<crate::tip_hat::TipHat>,
+        #[serde(default)]
+        meals: Vec<crate::meal::Meal>,
     },
     GameTimeSync {
         datetime: GameDateTime,
@@ -1427,6 +1443,22 @@ pub enum ServerMessage {
     /// Picked up, left behind by its owner, or left the receiver's AOI.
     TipHatRemoved {
         tip_hat_id: u64,
+    },
+    /// A maid just set a dish down on a table nearby.
+    MealPlaced {
+        meal: crate::meal::Meal,
+    },
+    /// An already-served dish entered the receiver's AOI.
+    MealAppeared {
+        meal: crate::meal::Meal,
+    },
+    /// The guest finished it; the empty plate stays until cleared.
+    MealEaten {
+        meal_id: u64,
+    },
+    /// Cleared, expired, or left the receiver's AOI.
+    MealRemoved {
+        meal_id: u64,
     },
     /// Direct to the griller: the 3s grill cast began.
     GrillStarted,

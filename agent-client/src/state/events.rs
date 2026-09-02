@@ -217,6 +217,10 @@ impl SharedState {
             | ServerMessage::StallPlaced { .. }
             | ServerMessage::StallAppeared { .. }
             | ServerMessage::StallRemoved { .. }
+            | ServerMessage::MealPlaced { .. }
+            | ServerMessage::MealAppeared { .. }
+            | ServerMessage::MealEaten { .. }
+            | ServerMessage::MealRemoved { .. }
             | ServerMessage::GrillStarted
             // Cosmetic: only the browser's footprint trail reads it.
             | ServerMessage::PlayerWetToggled { .. }
@@ -442,7 +446,7 @@ impl SharedState {
                         crate::dungeon::ChestKind::Treasure => {}
                     }
                 } else if self.held_pose().is_some() {
-                    self.set_self_pose(None);
+                    self.set_self_pose(None, None);
                 }
             }
             ServerMessage::DungeonPropBroken {
@@ -500,6 +504,7 @@ impl SharedState {
                 campfires,
                 stalls,
                 tip_hats,
+                meals,
             } => {
                 self.nearby_players = players.iter().map(|p| (p.id, p.clone())).collect();
                 self.nearby_monsters = monsters.clone();
@@ -518,6 +523,10 @@ impl SharedState {
                 self.tip_hats.clear();
                 for hat in tip_hats {
                     self.tip_hats.insert(hat.id, hat.clone());
+                }
+                self.meals.clear();
+                for meal in meals {
+                    self.meals.insert(meal.id, meal.clone());
                 }
                 // Update self_player from game state
                 if let Some(self_id) = self.self_player_id {
@@ -618,7 +627,7 @@ impl SharedState {
                 object_id,
             } => {
                 if self.self_player_id.as_ref() == Some(player_id) {
-                    self.set_self_pose(object_type.clone());
+                    self.set_self_pose(object_type.clone(), *object_id);
                 } else if let Some(p) = self.nearby_players.get_mut(player_id) {
                     // Emotes ride this field too, so only the exact chair
                     // type counts as taking a seat — and only on the
@@ -817,6 +826,17 @@ impl SharedState {
             }
             ServerMessage::TipHatRemoved { tip_hat_id } => {
                 self.tip_hats.remove(tip_hat_id);
+            }
+            ServerMessage::MealPlaced { ref meal } | ServerMessage::MealAppeared { ref meal } => {
+                self.meals.insert(meal.id, meal.clone());
+            }
+            ServerMessage::MealEaten { meal_id } => {
+                if let Some(m) = self.meals.get_mut(meal_id) {
+                    m.eaten = true;
+                }
+            }
+            ServerMessage::MealRemoved { meal_id } => {
+                self.meals.remove(meal_id);
             }
             ServerMessage::PartyState {
                 leader_id,

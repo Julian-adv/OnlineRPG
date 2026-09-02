@@ -37,6 +37,9 @@
     radius: number
     floorLevel?: number
     fallbackY?: number
+    /** How far vertices may follow the ground away from `fallbackY`. 0 draws
+     *  the ring flat at `fallbackY` — a thing standing on a table top. */
+    drape?: number
     color?: string
   }
 
@@ -47,6 +50,7 @@
     radius,
     floorLevel = 0,
     fallbackY = 0,
+    drape,
     color = '#ff4d4d',
   }: Props = $props()
 
@@ -63,7 +67,7 @@
   $effect(() => {
     const width = Math.max(0.08, radius * 0.12)
     const inner = Math.max(0.05, radius - width)
-    const maxStep = Math.max(0.4, radius * 0.6)
+    const maxStep = drape ?? Math.max(0.4, radius * 0.6)
     const attr = geometry.getAttribute('position')
     for (let i = 0; i < SEGMENTS; i++) {
       const cos = UNIT_COS[i]

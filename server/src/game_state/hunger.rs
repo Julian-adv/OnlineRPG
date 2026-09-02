@@ -276,6 +276,22 @@ impl super::GameState {
         (Some(data.hunger_msg(now)), data.satiation - before)
     }
 
+    /// What follows any meal once its satiation is applied: HP regeneration
+    /// scaled to what was actually gained, and the hunger state pushed.
+    pub(super) async fn settle_meal(
+        &self,
+        player_id: &PlayerId,
+        outcome: Option<ServerMessage>,
+        gained: u32,
+    ) {
+        self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(gained))
+            .await;
+        if let Some(msg) = outcome {
+            self.mark_dirty(player_id).await;
+            self.send_direct_message(player_id, msg).await;
+        }
+    }
+
     pub(super) async fn start_food_regeneration(&self, player_id: &PlayerId, amount: u32) {
         if amount == 0 {
             return;

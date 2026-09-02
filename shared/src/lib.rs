@@ -16,6 +16,7 @@ pub mod furniture;
 pub mod housing;
 pub mod hunger;
 pub mod inventory;
+pub mod meal;
 pub mod messages;
 pub mod monster_ai;
 pub mod moon;
@@ -120,7 +121,10 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      so older builds cannot decode it.
 /// v50: `ServerMessage::Recital` (`/recite` verses shown as a bubble only,
 ///      doc/HEROIC_TALES.md); an older client cannot decode it.
-pub const PROTOCOL_VERSION: u32 = 50;
+/// v51: table meals — `Meal`, `ServeMeal`/`EatMeal`/`ClearMeal`,
+///      `MealPlaced/Appeared/Eaten/Removed`, `GameState.meals` (doc/HUNGER.md);
+///      an older client cannot decode a served plate.
+pub const PROTOCOL_VERSION: u32 = 51;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -312,6 +316,7 @@ mod tests {
             campfires: Vec::new(),
             stalls: Vec::new(),
             tip_hats: Vec::new(),
+            meals: Vec::new(),
         };
         let bytes = serialize_server_msg(&msg).unwrap();
         let decoded = deserialize_server_msg(&bytes).unwrap();

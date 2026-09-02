@@ -917,6 +917,19 @@ impl super::GameState {
             .cloned()
             .collect();
 
+        let meals: Vec<_> = self
+            .meals
+            .read()
+            .await
+            .values()
+            .filter(|e| {
+                e.meal.floor_level == player_floor
+                    && e.meal.position.dist_xz_sq(&player_position)
+                        <= super::EVENT_DELIVERY_RADIUS * super::EVENT_DELIVERY_RADIUS
+            })
+            .map(|e| e.meal.clone())
+            .collect();
+
         let mut msgs = Vec::new();
         if !other_players.is_empty()
             || !monsters.is_empty()
@@ -924,6 +937,7 @@ impl super::GameState {
             || !campfires.is_empty()
             || !stalls.is_empty()
             || !tip_hats.is_empty()
+            || !meals.is_empty()
         {
             msgs.push(ServerMessage::GameState {
                 players: other_players,
@@ -932,6 +946,7 @@ impl super::GameState {
                 campfires,
                 stalls,
                 tip_hats,
+                meals,
             });
         }
 
@@ -2424,6 +2439,31 @@ impl super::GameState {
         }
         if strayed {
             self.pack_up_strayed_tip_hat(player_id).await;
+        }
+
+        let (meals_left, meals_entered) = {
+            let meals = self.meals.read().await;
+            let (left, entered) = aoi_diff(
+                meals.values(),
+                |e| (e.meal.position, e.meal.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            (
+                left.into_iter().map(|e| e.meal.id).collect::<Vec<_>>(),
+                entered
+                    .into_iter()
+                    .map(|e| e.meal.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for meal_id in meals_left {
+            self.send_direct_message(player_id, ServerMessage::MealRemoved { meal_id })
+                .await;
+        }
+        for meal in meals_entered {
+            self.send_direct_message(player_id, ServerMessage::MealAppeared { meal })
+                .await;
         }
 
         // The mover hears its own update through the same fanout, so the

@@ -635,6 +635,7 @@ async fn main() -> ExitCode {
                 game_state.tick_grills().await;
                 if count.is_multiple_of(4) {
                     game_state.tick_campfires().await;
+                    game_state.tick_meals().await;
                     game_state
                         .tick_campfire_drying(Duration::from_secs(1))
                         .await;

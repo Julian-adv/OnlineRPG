@@ -53,6 +53,7 @@
   import GameSceneGroundItemsLayer from './game-scene/GameSceneGroundItemsLayer.svelte'
   import GameSceneCampfiresLayer from './game-scene/GameSceneCampfiresLayer.svelte'
   import GameSceneStallsLayer from './game-scene/GameSceneStallsLayer.svelte'
+  import GameSceneMealsLayer from './game-scene/GameSceneMealsLayer.svelte'
   import GameSceneTipHatsLayer from './game-scene/GameSceneTipHatsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
@@ -214,6 +215,7 @@
   let campfiresLayerRef = $state<GameSceneCampfiresLayer | undefined>(undefined)
   let tipHatsLayerRef = $state<GameSceneTipHatsLayer | undefined>(undefined)
   let stallsLayerRef = $state<GameSceneStallsLayer | undefined>(undefined)
+  let mealsLayerRef = $state<GameSceneMealsLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
   let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
   let hoverNameLabelRef = $state<HoverNameLabel | undefined>(undefined)
@@ -1247,6 +1249,7 @@
       ? [tipHatsLayerRef.getGroup()!]
       : []}
     stallMeshes={stallsLayerRef?.getGroup() ? [stallsLayerRef.getGroup()!] : []}
+    mealMeshes={mealsLayerRef?.getGroup() ? [mealsLayerRef.getGroup()!] : []}
     {monsterModels}
     {playerAttackDuration}
     torchEffectsDisabled={!graphicsPreset.enableTorchEffects}
@@ -1282,6 +1285,7 @@
 
   <GameSceneCampfiresLayer bind:this={campfiresLayerRef} />
   <GameSceneStallsLayer bind:this={stallsLayerRef} />
+  <GameSceneMealsLayer bind:this={mealsLayerRef} />
   <GameSceneTipHatsLayer bind:this={tipHatsLayerRef} />
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
@@ -1341,6 +1345,7 @@
     radius={$hoveredNameLabel.ringRadius}
     floorLevel={$hoveredNameLabel.floorLevel}
     fallbackY={$hoveredNameLabel.position.y}
+    drape={$hoveredNameLabel.drape}
     color="#ffd166"
   />
 {/if}

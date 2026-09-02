@@ -292,6 +292,27 @@ impl SharedState {
                     d_sq.sqrt()
                 ));
             }
+            for meal in self.meals.values() {
+                if meal.floor_level != sp.floor_level {
+                    continue;
+                }
+                let d_sq = meal.position.dist_xz_sq(&sp.position);
+                if d_sq > sight_sq {
+                    continue;
+                }
+                let whose = if Some(meal.for_player) == self.self_player_id {
+                    "served to you — you eat it on your own once settled in the chair".to_string()
+                } else {
+                    format!("served to {}", self.visible_name(&meal.for_player))
+                };
+                let state = if meal.eaten { "Empty plate" } else { "Plate" };
+                lines.push(format!(
+                    "{state} of {} [id {}] on the table {:.1}m away: {whose}",
+                    meal.item_def_id,
+                    meal.id,
+                    d_sq.sqrt()
+                ));
+            }
         }
 
         if lines.is_empty() {

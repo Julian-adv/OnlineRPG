@@ -120,6 +120,7 @@ pub struct VisitSpot {
 pub enum ClaimKey {
     Bed(u32),
     Guest(onlinerpg_shared::PlayerId),
+    Meal(u64),
 }
 
 /// Process-wide claim board so two maids sharing an inn don't answer the
@@ -143,6 +144,23 @@ impl VisitClaims {
                 true
             }
         }
+    }
+
+    /// Give `key` up if `who` holds it, so the next call can go elsewhere.
+    pub fn release(&self, key: &ClaimKey, who: &str) {
+        let mut m = self.0.lock().unwrap();
+        if m.get(key).is_some_and(|(owner, _)| owner == who) {
+            m.remove(key);
+        }
+    }
+
+    /// Honours the TTL, unlike `release`, so an expired hold reads as free.
+    pub fn holder(&self, key: &ClaimKey) -> Option<String> {
+        let now = Instant::now();
+        let m = self.0.lock().unwrap();
+        m.get(key)
+            .filter(|(_, until)| now < *until)
+            .map(|(owner, _)| owner.clone())
     }
 }
 
@@ -229,11 +247,27 @@ fn table_entry(
     if let Some(t) = tables.iter().find(|t| p.object_id == Some(t.object_id)) {
         return Some((p.name.clone(), visit_entry(t, label)));
     }
-    // The nearest open cell of the four flanking the chair; solid
-    // neighbours (the table, sibling chairs) are sealed and drop out.
-    let floor = p.floor_level as u8;
+    let entry = chair_flank_entry(s, seat_x, seat_z, p.floor_level as u8, p.position.y, label);
+    Some((p.name.clone(), entry))
+}
+
+/// A standing spot beside the chair at `(seat_x, seat_z)`, facing it: the
+/// nearest open cell of the four flanking it — solid neighbours (the table,
+/// sibling chairs) are sealed and drop out.
+fn chair_flank_entry(
+    s: &SharedState,
+    seat_x: f32,
+    seat_z: f32,
+    floor: u8,
+    y: f32,
+    label: &str,
+) -> ScheduleEntry {
+    let (mx, mz) = s
+        .self_player
+        .as_ref()
+        .map_or((seat_x, seat_z), |p| (p.position.x, p.position.z));
     let (ccx, ccz) = (seat_x.floor() + 0.5, seat_z.floor() + 0.5);
-    let d2 = |(x, z): (f32, f32)| (x - me.position.x).powi(2) + (z - me.position.z).powi(2);
+    let d2 = |(x, z): (f32, f32)| (x - mx).powi(2) + (z - mz).powi(2);
     let (x, z) = onlinerpg_shared::pathfinding::DIRS
         .iter()
         .map(|&(dx, dz)| (ccx + dx as f32, ccz + dz as f32))
@@ -244,14 +278,58 @@ fn table_entry(
     let rotation = crate::geom::PlanarDelta::xz(x, z, seat_x, seat_z)
         .rotation()
         .to_degrees();
-    let entry = ScheduleEntry {
-        pos: [x, p.position.y, z],
+    ScheduleEntry {
+        pos: [x, y, z],
         rotation,
         floor_level: floor,
         label: Some(label.to_string()),
         ..Default::default()
+    }
+}
+
+/// Plates within serving range whose guest is no longer on the chair they
+/// were served to (stood up, walked off, or logged out). Our own plate is
+/// never ours to clear.
+fn abandoned_plates(s: &SharedState) -> Vec<&onlinerpg_shared::meal::Meal> {
+    let Some(me) = s.self_player.as_ref() else {
+        return Vec::new();
     };
-    Some((p.name.clone(), entry))
+    s.meals
+        .values()
+        .filter(|m| m.floor_level == me.floor_level && Some(m.for_player) != s.self_player_id)
+        .filter(|m| {
+            crate::geom::PlanarDelta::to_xz(&me.position, m.position.x, m.position.z).dist
+                <= TABLE_SERVICE_RADIUS
+        })
+        .filter(|m| {
+            s.nearby_players.get(&m.for_player).is_none_or(|p| {
+                p.object_type.as_deref() != Some(crate::state::SIT_OBJECT_TYPE)
+                    || p.object_id != Some(m.chair_object_id)
+            })
+        })
+        .collect()
+}
+
+/// The standing spot to clear `meal` from: beside its chair.
+fn clear_entry(s: &SharedState, meal: &onlinerpg_shared::meal::Meal) -> Option<ScheduleEntry> {
+    let me = s.self_player.as_ref()?;
+    let floor = u8::try_from(me.floor_level).ok()?;
+    let (sx, sz) = s
+        .furniture_position(
+            crate::state::SIT_OBJECT_TYPE,
+            meal.chair_object_id,
+            meal.position.x,
+            meal.position.z,
+        )
+        .unwrap_or((meal.position.x, meal.position.z));
+    Some(chair_flank_entry(
+        s,
+        sx,
+        sz,
+        floor,
+        me.position.y,
+        "the emptied table",
+    ))
 }
 
 /// The main LLM agent driver loop. Runs as a tokio task.
@@ -365,6 +443,18 @@ pub async fn llm_driver(
     // A table walk runs as a background task so the [Guest] prompt's LLM
     // round trip overlaps the walk instead of waiting for arrival.
     let mut visit_walk: Option<tokio::task::JoinHandle<()>> = None;
+    // When each abandoned plate was first seen, so the maid gives the guest
+    // a moment before clearing; plates served to us and when we ate them.
+    let mut abandoned_since: std::collections::HashMap<u64, Instant> =
+        std::collections::HashMap::new();
+    // Plates served to us: `Some(since)` while waiting to eat, `None` once
+    // the eat is sent and the `MealEaten` echo is awaited.
+    let mut my_plates: std::collections::HashMap<u64, Option<Instant>> =
+        std::collections::HashMap::new();
+    // Guests this maid holds the claim on; released the moment they leave
+    // the chair so a returning guest can be anyone's.
+    let mut my_guests: std::collections::HashSet<onlinerpg_shared::PlayerId> =
+        std::collections::HashSet::new();
 
     // Fetch housing + furniture data so pathfinding avoids buildings and solid
     // props the same way the browser client does. An agent without a schedule
@@ -613,10 +703,27 @@ pub async fn llm_driver(
                 if visit.is_some() || sleeping_now || visit_until.is_some() {
                     None
                 } else {
-                    seatings.into_iter().rev().find_map(|pid| {
-                        table_entry(&s, &pid, &tables)
-                            .filter(|_| claims.try_claim(ClaimKey::Guest(pid), &label, VISIT_DWELL))
-                    })
+                    let mut won = None;
+                    for pid in seatings.into_iter().rev() {
+                        let Some((name, entry)) = table_entry(&s, &pid, &tables) else {
+                            continue;
+                        };
+                        if claims.try_claim(ClaimKey::Guest(pid), &label, GUEST_CLAIM_TTL) {
+                            my_guests.insert(pid);
+                            won = Some((name, entry));
+                            break;
+                        }
+                        // The other maid has them: hearing the order later must
+                        // not turn into a second greeting and a second plate.
+                        if let Some(holder) = claims.holder(&ClaimKey::Guest(pid)) {
+                            s.push_ambient_event_quiet(format!(
+                                "[Guest] {name} took a seat, but {holder} is looking after \
+                                 them — leave their table and their orders to her; don't \
+                                 answer what they ask her for."
+                            ));
+                        }
+                    }
+                    won
                 }
             };
             if let Some((name, entry)) = seated {
@@ -625,9 +732,10 @@ pub async fn llm_driver(
                     format!(
                         "[Guest] {name} just took a seat at one of your tables and \
                          you are on your way over — no move action needed. Greet \
-                         them in your own words and take their order — they buy by \
-                         clicking you to open your shop. If they have already left \
-                         the seat, let it go."
+                         them in your own words and take their order. A dish they \
+                         ask for, you bring with the serve action; other goods they \
+                         buy by clicking you to open your shop. If they have already \
+                         left the seat, let it go."
                     ),
                     entry,
                 ));
@@ -652,6 +760,177 @@ pub async fn llm_driver(
                 movement::execute_schedule_move(&walk_state, &entry).await;
             }));
             visit_until = Some(Instant::now() + VISIT_DWELL);
+        }
+
+        // === Serving: a taken order, walked as a kitchen round trip ===
+        // Drained whoever we are, so a non-maid's stray `serve` is answered
+        // instead of sitting queued behind a gate that never opens.
+        if attack_target.is_none() {
+            let pending = { state.lock().await.pending_serve.take() };
+            if let Some(req) = pending {
+                if !serve_tables {
+                    state.lock().await.push_agent_event(format!(
+                        "[ServeFailed] You don't serve tables here — {} will have to buy the \
+                         {} or ask the inn staff.",
+                        req.guest_name, req.dish
+                    ));
+                    continue;
+                }
+                if claims.try_claim(ClaimKey::Guest(req.guest_id), &label, GUEST_CLAIM_TTL) {
+                    my_guests.insert(req.guest_id);
+                } else {
+                    let holder = claims
+                        .holder(&ClaimKey::Guest(req.guest_id))
+                        .unwrap_or_else(|| "the other maid".to_string());
+                    state.lock().await.push_agent_event(format!(
+                        "[ServeFailed] {} is {holder}'s guest — she brings their order. Stay \
+                         out of it; nothing was served.",
+                        req.guest_name
+                    ));
+                    continue;
+                }
+                // The kitchen is the regular post; a due sit or sleep entry
+                // is no kitchen, so the plate then comes straight over.
+                let due = movement::resolve_due_schedule(&state, &schedule).await;
+                let kitchen = due
+                    .0
+                    .map(|i| &schedule[i])
+                    .filter(|e| e.action.is_none())
+                    .cloned();
+                let table = {
+                    let s = state.lock().await;
+                    table_entry(&s, &req.guest_id, &tables).map(|(_, entry)| entry)
+                };
+                match table {
+                    None => {
+                        state.lock().await.push_agent_event(format!(
+                            "[ServeFailed] {} left the seat before the {} was ready.",
+                            req.guest_name, req.dish
+                        ));
+                    }
+                    Some(table) => {
+                        info!("[{label}] fetching {} for {}", req.dish, req.guest_name);
+                        if let Some(h) = visit_walk.take() {
+                            h.abort();
+                        }
+                        movement::stop_current_entry(&state, &schedule, active_schedule.0, &label)
+                            .await;
+                        let walk_state = Arc::clone(&state);
+                        visit_walk = Some(tokio::spawn(async move {
+                            if let Some(kitchen) = kitchen {
+                                movement::execute_schedule_move(&walk_state, &kitchen).await;
+                            }
+                            movement::execute_schedule_move(&walk_state, &table).await;
+                            let mut s = walk_state.lock().await;
+                            let cmd = onlinerpg_shared::ClientMessage::ServeMeal {
+                                chair_object_id: req.chair_object_id,
+                                item_def_id: req.dish.clone(),
+                            };
+                            if let Err(e) = s.send_command(cmd).await {
+                                error!("Failed to send serve: {e}");
+                            }
+                            s.push_ambient_event(format!(
+                                "[Served] You set the {} down in front of {}. A word to them \
+                                 in your own voice, then leave them to eat.",
+                                req.dish, req.guest_name
+                            ));
+                        }));
+                        visit_until = Some(Instant::now() + SERVE_DWELL);
+                    }
+                }
+            }
+        }
+
+        // === Guests who left their chair are nobody's now ===
+        if !my_guests.is_empty() {
+            let s = state.lock().await;
+            my_guests.retain(|pid| {
+                let seated = s.nearby_players.get(pid).is_some_and(|p| {
+                    p.object_type.as_deref() == Some(crate::state::SIT_OBJECT_TYPE)
+                });
+                if !seated {
+                    claims.release(&ClaimKey::Guest(*pid), &label);
+                }
+                seated
+            });
+        }
+
+        // === Clearing: a plate whose guest has left, after a moment ===
+        if serve_tables && attack_target.is_none() && visit_until.is_none() && !sleeping_now {
+            let now = Instant::now();
+            let clear = {
+                let s = state.lock().await;
+                let plates = abandoned_plates(&s);
+                abandoned_since.retain(|id, _| plates.iter().any(|m| m.id == *id));
+                plates.into_iter().find_map(|m| {
+                    let since = *abandoned_since.entry(m.id).or_insert(now);
+                    (now.duration_since(since) >= CLEAR_DELAY
+                        && claims.try_claim(ClaimKey::Meal(m.id), &label, CLEAR_DWELL))
+                    .then(|| clear_entry(&s, m).map(|e| (m.id, m.item_def_id.clone(), e)))
+                    .flatten()
+                })
+            };
+            if let Some((meal_id, dish, entry)) = clear {
+                info!("[{label}] clearing the {dish} plate {meal_id}");
+                if let Some(h) = visit_walk.take() {
+                    h.abort();
+                }
+                movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
+                let walk_state = Arc::clone(&state);
+                visit_walk = Some(tokio::spawn(async move {
+                    movement::execute_schedule_move(&walk_state, &entry).await;
+                    let mut s = walk_state.lock().await;
+                    let cmd = onlinerpg_shared::ClientMessage::ClearMeal { meal_id };
+                    if let Err(e) = s.send_command(cmd).await {
+                        error!("Failed to send clear: {e}");
+                    }
+                    s.push_ambient_event_quiet(format!(
+                        "[Cleared] You took the {dish} plate away."
+                    ));
+                }));
+                visit_until = Some(Instant::now() + CLEAR_DWELL);
+            }
+        }
+
+        // === A plate served to us: eat it once settled in the chair ===
+        {
+            let mut s = state.lock().await;
+            let mine = s
+                .self_player
+                .as_ref()
+                .filter(|p| p.object_type.as_deref() == Some(crate::state::SIT_OBJECT_TYPE))
+                .and_then(|p| p.object_id)
+                .and_then(|chair| {
+                    s.meals
+                        .values()
+                        .find(|m| {
+                            Some(m.for_player) == s.self_player_id
+                                && m.chair_object_id == chair
+                                && !m.eaten
+                        })
+                        .map(|m| (m.id, m.item_def_id.clone()))
+                });
+            my_plates.retain(|id, _| s.meals.contains_key(id));
+            if let Some((meal_id, dish)) = mine {
+                match my_plates.get(&meal_id) {
+                    None => {
+                        my_plates.insert(meal_id, Some(Instant::now()));
+                        s.push_ambient_event(format!(
+                            "[Meal] A plate of {dish} was set in front of you. Thank whoever \
+                             brought it in your own words; you eat it by yourself in a \
+                             moment — no action needed."
+                        ));
+                    }
+                    Some(Some(since)) if since.elapsed() >= EAT_DELAY => {
+                        my_plates.insert(meal_id, None);
+                        let cmd = onlinerpg_shared::ClientMessage::EatMeal { meal_id };
+                        if let Err(e) = s.send_command(cmd).await {
+                            error!("Failed to send eat: {e}");
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
 
         if visit_until.is_some_and(|until| Instant::now() >= until) {
@@ -940,6 +1219,19 @@ const VISIT_DWELL: Duration = Duration::from_secs(90);
 /// A guest sitting down within this range of the NPC counts as one of its
 /// tables. Same floor only.
 const TABLE_SERVICE_RADIUS: f32 = 10.0;
+
+/// One maid keeps a guest — greeting, order, plate — while they stay seated
+/// (released when they stand); this is only the fallback expiry.
+const GUEST_CLAIM_TTL: Duration = Duration::from_secs(5 * 60);
+/// How long a serving keeps the maid at the table after the round trip
+/// before the schedule pulls her back to her post.
+const SERVE_DWELL: Duration = Duration::from_secs(60);
+/// The moment a guest gets after standing before their plate is cleared.
+const CLEAR_DELAY: Duration = Duration::from_secs(8);
+/// How long clearing holds the maid off her post (also the claim's TTL).
+const CLEAR_DWELL: Duration = Duration::from_secs(30);
+/// A seated NPC guest eats its plate this long after it lands.
+const EAT_DELAY: Duration = Duration::from_secs(6);
 
 /// Death watch: fires once `dead` has held for RESPAWN_DELAY, then re-arms
 /// so a lost request is retried after another delay. Revival clears it.

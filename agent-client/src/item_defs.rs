@@ -22,11 +22,24 @@ pub struct ItemDef {
     /// validates against its `use_effect` dispatch at boot.
     #[serde(default)]
     pub consumable: bool,
+    #[serde(rename = "worldModel", default)]
+    pub world_model: Option<String>,
+    #[serde(default)]
+    pub nutrition: Option<u32>,
 }
 
 impl ItemDef {
     pub fn is_consumable(&self) -> bool {
         self.consumable
+    }
+
+    /// Food an inn maid can set on a table (the server's `meal::is_servable`).
+    pub fn is_dish(&self) -> bool {
+        onlinerpg_shared::meal::is_servable(
+            self.category.as_deref(),
+            self.world_model.as_deref(),
+            self.nutrition,
+        )
     }
 
     /// What `/play_music` requires the performer to carry.
@@ -58,6 +71,22 @@ pub fn all_ids() -> Vec<&'static str> {
 
 pub fn get(item_def_id: &str) -> Option<&'static ItemDef> {
     defs().get(item_def_id)
+}
+
+/// Everything an inn maid may set on a table.
+pub fn dish_ids() -> Vec<&'static str> {
+    let mut ids: Vec<&str> = defs()
+        .iter()
+        .filter(|(_, d)| d.is_dish())
+        .map(|(id, _)| id.as_str())
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
+/// The dish id an LLM named — by id or display name — among servable food.
+pub fn resolve_dish(asked: &str) -> Option<&'static str> {
+    resolve_named(&dish_ids(), asked)
 }
 
 /// Pick the item the agent meant out of a candidate list — what it carries,

@@ -247,6 +247,7 @@ pub(crate) use player::{restored_floor_level, MoveCommand};
 mod salary;
 mod skills;
 pub(crate) use skills::skills_from_rows;
+mod meal;
 mod stall;
 mod time;
 mod tip_hat;
@@ -424,6 +425,8 @@ pub struct GameState {
     bridge_decks: Arc<std::sync::RwLock<passability::BridgeDeckIndex>>,
     /// The configured respawn beds, refreshed with their region's objects.
     respawn_beds: Arc<std::sync::RwLock<Vec<onlinerpg_shared::furniture::FurniturePlacement>>>,
+    /// Chairs and tables by region, so a served plate lands on a table top.
+    dining: Arc<std::sync::RwLock<meal::DiningIndex>>,
     /// When each player was last sent a `PositionCorrected`. Only touched when
     /// a correction is sent, and pruned on the refused-move path, so it needs
     /// no disconnect cleanup and stays empty in the normal case.
@@ -534,6 +537,8 @@ pub struct GameState {
     /// Standing tip hats keyed by owner: every owner move checks the leash,
     /// so the lookup has to be O(1) rather than a scan.
     tip_hats: Arc<RwLock<HashMap<PlayerId, onlinerpg_shared::tip_hat::TipHat>>>,
+    /// Served table meals keyed by id, expired by `tick_meals`.
+    meals: Arc<RwLock<HashMap<u64, meal::MealEntry>>>,
     /// Live player-to-player trade sessions and pending requests
     /// (doc/TRADE.md). Ranked above `player_gold`/`inventories`.
     player_trades: Arc<RwLock<player_trade::PlayerTrades>>,
@@ -696,6 +701,7 @@ impl GameState {
             )),
             bridge_decks: Arc::new(std::sync::RwLock::new(HashMap::new())),
             respawn_beds: Arc::new(std::sync::RwLock::new(Vec::new())),
+            dining: Arc::new(std::sync::RwLock::new(HashMap::new())),
             no_spawn_zones,
             inventories: Arc::new(RwLock::new(HashMap::new())),
             ground_items: Arc::new(RwLock::new(HashMap::new())),
@@ -728,6 +734,7 @@ impl GameState {
             grill_sessions: Arc::new(RwLock::new(HashMap::new())),
             stalls: Arc::new(RwLock::new(HashMap::new())),
             tip_hats: Arc::new(RwLock::new(HashMap::new())),
+            meals: Arc::new(RwLock::new(HashMap::new())),
             player_trades: Arc::new(RwLock::new(player_trade::PlayerTrades::default())),
         }
     }

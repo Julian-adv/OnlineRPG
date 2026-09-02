@@ -12,6 +12,7 @@ type OpenPropIntent = Extract<ClickIntent, { type: 'open_prop' }>
 type CastFishingIntent = Extract<ClickIntent, { type: 'cast_fishing' }>
 type TipHatIntent = Extract<ClickIntent, { type: 'tip_hat' }>
 type StallIntent = Extract<ClickIntent, { type: 'stall' }>
+type MealIntent = Extract<ClickIntent, { type: 'meal' }>
 
 export interface CanvasClickActions {
   /** Player is at melee range — start the attack swing immediately. */
@@ -40,6 +41,8 @@ export interface CanvasClickActions {
   tipHat(intent: TipHatIntent): void
   /** Walk up to a clicked stall, opening a trade with its owner on arrival. */
   tradeAtStall(intent: StallIntent): void
+  /** Eat a served plate without moving — only from the chair it was served to. */
+  eatMeal(intent: MealIntent): void
 }
 
 export function dispatchCanvasClickIntent(
@@ -89,6 +92,9 @@ export function dispatchCanvasClickIntent(
       return
     case 'stall':
       actions.tradeAtStall(intent)
+      return
+    case 'meal':
+      actions.eatMeal(intent)
       return
     case 'none':
       return

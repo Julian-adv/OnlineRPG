@@ -699,6 +699,10 @@ class NetworkManager {
     this.sendMessage({ TipHat: { hat_id: hatId, amount } })
   }
 
+  sendEatMeal(mealId: number) {
+    this.sendMessage({ EatMeal: { meal_id: mealId } })
+  }
+
   sendOpenShop(merchantPlayerId: number) {
     markShopRequested(merchantPlayerId)
     this.sendMessage({ OpenShop: { merchant_player_id: merchantPlayerId } })

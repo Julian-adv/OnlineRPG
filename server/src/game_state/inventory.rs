@@ -1023,17 +1023,10 @@ impl super::GameState {
             return;
         }
         self.consume_one_and_sync(player_id, instance_id).await;
-        // Healing scales with the satiation actually gained, so a nearly
-        // full stomach heals proportionally less.
-        self.start_food_regeneration(player_id, onlinerpg_shared::hunger::food_healing(gained))
-            .await;
         let name = self.item_name(&def_id);
         self.send_system_message(player_id, format!("You eat the {name}."))
             .await;
-        if let Some(msg) = outcome {
-            self.mark_dirty(player_id).await;
-            self.send_direct_message(player_id, msg).await;
-        }
+        self.settle_meal(player_id, outcome, gained).await;
         if let Some(debuff) = debuff {
             self.inflict_debuff(player_id, debuff, force_debuff).await;
         }

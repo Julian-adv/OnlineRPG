@@ -458,6 +458,13 @@ impl super::GameState {
     }
 }
 
+/// The 3×3 region neighbourhood around a world point.
+pub(super) fn regions_around(wx: f32, z: f32) -> impl Iterator<Item = (i32, i32)> {
+    let rx = tile_to_region(world_to_tile(wx));
+    let rz = tile_to_region(world_to_tile(z));
+    (rx - 1..=rx + 1).flat_map(move |x| (rz - 1..=rz + 1).map(move |zz| (x, zz)))
+}
+
 /// Bridge decks by owning region.
 pub(super) type BridgeDeckIndex = HashMap<(i32, i32), Vec<onlinerpg_shared::bridge::PlacedDeck>>;
 
@@ -466,10 +473,7 @@ pub(super) type BridgeDeckIndex = HashMap<(i32, i32), Vec<onlinerpg_shared::brid
 /// most a few metres past their region's edge, so the 3×3 neighbourhood
 /// covers every candidate.
 pub(super) fn bridge_deck_y(index: &BridgeDeckIndex, wx: f32, z: f32, ref_y: f32) -> Option<f32> {
-    let rx = tile_to_region(world_to_tile(wx));
-    let rz = tile_to_region(world_to_tile(z));
-    (rx - 1..=rx + 1)
-        .flat_map(|x| (rz - 1..=rz + 1).map(move |zz| (x, zz)))
+    regions_around(wx, z)
         .filter_map(|key| index.get(&key))
         .flatten()
         .find_map(|d| d.stand_y(wx, z, ref_y))
@@ -504,6 +508,7 @@ impl super::GameState {
     ) -> bool {
         self.sync_region_bridges(rx, rz, placements);
         self.sync_respawn_beds(rx, rz, placements);
+        self.sync_dining(rx, rz, placements);
         let key = furniture::region_cache_key(rx, rz);
         let mut cache = self.passability_write();
         match furniture::build_furniture_passability_for_placements(placements) {

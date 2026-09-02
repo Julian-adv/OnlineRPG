@@ -66,6 +66,7 @@
     groundItemMeshes: THREE.Object3D[]
     tipHatMeshes: THREE.Object3D[]
     stallMeshes: THREE.Object3D[]
+    mealMeshes: THREE.Object3D[]
     monsterModels: (Monster | undefined)[]
     playerAttackDuration: number
     heightManager: TerrainHeightManager
@@ -109,6 +110,7 @@
     groundItemMeshes,
     tipHatMeshes,
     stallMeshes,
+    mealMeshes,
     monsterModels,
     playerAttackDuration,
     heightManager,
@@ -497,6 +499,7 @@
     {groundItemMeshes}
     {tipHatMeshes}
     {stallMeshes}
+    {mealMeshes}
     attackCooldown={playerAttackDuration}
   />
 {/if}

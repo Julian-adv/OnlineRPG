@@ -237,6 +237,7 @@ export type ClientMessage =
   | { ApplyCapeTexture: { instance_id: number; texture: string } }
   | { ReportCapeTexture: { player_id: number } }
   | { TipHat: { hat_id: number; amount: number } }
+  | { EatMeal: { meal_id: number } }
   | { OpenShop: { merchant_player_id: number } }
   | { CloseShop: { merchant_player_id: number } }
   | { DeclineTrade: { merchant_player_id: number } }
@@ -358,6 +359,18 @@ export type ServerTipHat = {
   position: Position
   rotation: number
   floor_level: number
+}
+
+/** A dish the inn maid set on a table in front of a seated guest. */
+export type ServerMeal = {
+  id: number
+  item_def_id: string
+  chair_object_id: number
+  for_player: number
+  position: Position
+  rotation: number
+  floor_level: number
+  eaten: boolean
 }
 
 export type AuthSuccessPayload = {

@@ -177,6 +177,15 @@ pub(super) enum AgentAction {
         #[serde(alias = "gold", alias = "copper", alias = "coins")]
         amount: i64,
     },
+    /// Inn staff: fetch a dish from the kitchen and set it on the table in
+    /// front of a seated guest. The driver walks the round trip.
+    #[serde(rename = "serve", alias = "serve_meal", alias = "bring_food")]
+    Serve {
+        #[serde(alias = "target", alias = "guest", alias = "player_name")]
+        player: String,
+        #[serde(alias = "item", alias = "meal", alias = "food")]
+        dish: String,
+    },
     /// Wave off the trade window an NPC pushed onto our screen ("Not now"
     /// on the web client's offer toast).
     #[serde(
@@ -644,6 +653,17 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   {"type": "tip_hat", "target": 7, "amount": 20}"#,
     },
     ActionSpec {
+        names: &["serve"],
+        aliases: &["serve_meal", "bring_food"],
+        doc: r#"- Inn staff only: a seated guest ordered food — fetch it from the kitchen
+  and set it on the table in front of them. You walk the round trip
+  yourself, no move action needed; say something when it lands. The
+  kitchen's plates: chicken_rice, chicken_curry, fried_rice,
+  vegetable_rice; also bread, cheese, jerky, apple. Steer an order for
+  anything else toward the nearest of these:
+  {"type": "serve", "player": "darkcocoa", "dish": "chicken_curry"}"#,
+    },
+    ActionSpec {
         names: &["decline_trade"],
         aliases: &["wave_off_trade", "refuse_trade"],
         doc: r#"- Wave off the trade window a merchant pushed onto your screen (the
@@ -709,6 +729,7 @@ impl AgentAction {
             | Self::FriendRemove { .. }
             | Self::FriendsOnline
             | Self::TipHat { .. }
+            | Self::Serve { .. }
             | Self::DeclineTrade
             | Self::Use { .. }
             | Self::Drop { .. }
@@ -772,6 +793,7 @@ impl AgentAction {
             | Self::FriendRemove { .. }
             | Self::FriendsOnline
             | Self::TipHat { .. }
+            | Self::Serve { .. }
             | Self::DeclineTrade
             | Self::Use { .. }
             | Self::Drop { .. }
@@ -805,6 +827,7 @@ impl AgentAction {
             Self::FriendRemove { .. } => "friend_remove",
             Self::FriendsOnline => "friends_online",
             Self::TipHat { .. } => "tip_hat",
+            Self::Serve { .. } => "serve",
             Self::DeclineTrade => "decline_trade",
             Self::PartySay { .. } => "party_say",
             Self::Use { .. } => "use",
@@ -1274,6 +1297,7 @@ pub(super) fn action_to_command(
         | AgentAction::FriendDecline { .. }
         | AgentAction::FriendRemove { .. }
         | AgentAction::TipHat { .. }
+        | AgentAction::Serve { .. }
         | AgentAction::DeclineTrade => None,
         // Need player-name → id resolution from SharedState; handled in
         // `execute::handle_response`, not here.

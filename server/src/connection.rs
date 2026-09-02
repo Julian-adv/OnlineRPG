@@ -1729,6 +1729,29 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::ServeMeal {
+            chair_object_id,
+            item_def_id,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .serve_meal(id, chair_object_id, &item_def_id)
+                    .await;
+            }
+        }
+
+        ClientMessage::EatMeal { meal_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.eat_meal(id, meal_id).await;
+            }
+        }
+
+        ClientMessage::ClearMeal { meal_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.clear_meal(id, meal_id).await;
+            }
+        }
+
         ClientMessage::SetActiveTitle { title } => {
             if let Some(id) = &state.player_id {
                 game_state

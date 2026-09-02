@@ -44,6 +44,7 @@ import { debuffPresentation } from '../data/debuffPresentation'
 import { campfireManager } from '../managers/campfireManager'
 import { stallManager } from '../managers/stallManager'
 import { tipHatManager } from '../managers/tipHatManager'
+import { mealManager } from '../managers/mealManager'
 import { catchMessage } from './fishingMessages'
 import type { SkillId } from '../stores/skillsStore'
 import { earnedTitles } from '../stores/titleStore'
@@ -833,6 +834,10 @@ export function handleServerMessage(
       tipHatManager.reset()
       if (data.tip_hats) {
         for (const hat of data.tip_hats) tipHatManager.spawn(hat)
+      }
+      mealManager.reset()
+      if (data.meals) {
+        for (const meal of data.meals) mealManager.spawn(meal)
       }
       break
 
@@ -1781,6 +1786,19 @@ export function handleServerMessage(
 
     case 'TipHatRemoved':
       tipHatManager.remove(data.tip_hat_id)
+      break
+
+    case 'MealPlaced':
+    case 'MealAppeared':
+      mealManager.spawn(data.meal)
+      break
+
+    case 'MealEaten':
+      mealManager.markEaten(data.meal_id)
+      break
+
+    case 'MealRemoved':
+      mealManager.remove(data.meal_id)
       break
 
     case 'GrillStarted':

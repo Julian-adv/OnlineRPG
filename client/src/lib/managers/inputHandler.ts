@@ -108,6 +108,12 @@ export type ClickIntent =
       position: Position
     }
   | {
+      /** Clicked a served plate: eaten in place when sitting at its chair. */
+      type: 'meal'
+      mealId: number
+      position: Position
+    }
+  | {
       type: 'interact_npc'
       playerId: number
       position: Position
@@ -146,6 +152,7 @@ export interface RaycastContext {
   groundItemMeshes: THREE.Object3D[]
   tipHatMeshes: THREE.Object3D[]
   stallMeshes: THREE.Object3D[]
+  mealMeshes: THREE.Object3D[]
   groundMeshes: THREE.Object3D[]
   playerPosition: Position
   /** Gates house door clicks to the door's own floor (0 = ground/outdoors). */
@@ -173,6 +180,8 @@ export type HoverTarget =
       labelY: number
       ringRadius: number
       floorLevel: number
+      /** Ring drape amplitude override; 0 for a thing on a table top. */
+      drape?: number
     }
   | { kind: 'groundItem'; instanceId: number }
   | { kind: 'monster'; monsterId: string }
@@ -203,6 +212,7 @@ export interface HoverContext {
   objectMeshes: THREE.Object3D[]
   tipHatMeshes: THREE.Object3D[]
   stallMeshes: THREE.Object3D[]
+  mealMeshes: THREE.Object3D[]
   propMeshes: THREE.Object3D[]
   groundItemMeshes: THREE.Object3D[]
   monsterMeshes: THREE.Object3D[]
@@ -443,6 +453,28 @@ class InputHandler {
       }
     }
 
+    // Plates stand inside their table's hit volume, so they go before
+    // furniture or the table would swallow the click.
+    if (context.mealMeshes.length > 0) {
+      const mealHits = raycaster.intersectObjects(context.mealMeshes, true)
+      const plate = mealHits.length
+        ? findAncestorWithUserData(mealHits[0].object, 'mealId')
+        : null
+      if (plate) {
+        const platePosition = new THREE.Vector3()
+        plate.getWorldPosition(platePosition)
+        return {
+          type: 'meal',
+          mealId: plate.userData.mealId as number,
+          position: {
+            x: platePosition.x,
+            y: platePosition.y,
+            z: platePosition.z,
+          },
+        }
+      }
+    }
+
     // Check intersection with object meshes. No distance gate: the player walks
     // up to a far chair/bench and sits on arrival.
     if (context.objectMeshes.length > 0) {
@@ -666,6 +698,7 @@ class InputHandler {
       ...context.objectMeshes,
       ...context.tipHatMeshes,
       ...context.stallMeshes,
+      ...context.mealMeshes,
       ...context.propMeshes,
       ...context.groundItemMeshes,
       ...context.monsterMeshes,
@@ -732,6 +765,7 @@ class InputHandler {
           labelY: data.hoverLabelY as number,
           ringRadius: data.hoverRingRadius as number,
           floorLevel: data.hoverFloorLevel as number,
+          drape: data.hoverDrape as number | undefined,
         }
       }
       if (data?.objectText) {

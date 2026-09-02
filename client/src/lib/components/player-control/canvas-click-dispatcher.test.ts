@@ -20,6 +20,7 @@ function makeActions() {
     castFishing: vi.fn(),
     tipHat: vi.fn(),
     tradeAtStall: vi.fn(),
+    eatMeal: vi.fn(),
   } satisfies CanvasClickActions
 }
 
@@ -101,5 +102,20 @@ describe('dispatchCanvasClickIntent walk-up interactions', () => {
 
     expect(actions.toggleDoor).toHaveBeenCalledWith(intent)
     expect(actions.moveToGround).not.toHaveBeenCalled()
+  })
+})
+
+describe('dispatchCanvasClickIntent meals', () => {
+  it('routes a meal intent to eatMeal', () => {
+    const actions = makeActions()
+    const intent: ClickIntent = {
+      type: 'meal',
+      mealId: 3,
+      position: { x: 1, y: 0.75, z: 2 },
+    }
+
+    dispatchCanvasClickIntent(intent, false, actions)
+
+    expect(actions.eatMeal).toHaveBeenCalledWith(intent)
   })
 })

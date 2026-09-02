@@ -801,6 +801,48 @@ pub(super) async fn handle_response(
             continue;
         }
 
+        // An order taken: the driver walks the kitchen round trip and sets
+        // the plate down, so only the guest and the dish are checked here.
+        if let AgentAction::Serve { player, dish } = action {
+            let mut s = state.lock().await;
+            let Some((guest_id, _)) = s.resolve_nearby_player(player) else {
+                s.push_agent_event(format!(
+                    "[ServeFailed] No one named '{player}' is nearby; nothing was served."
+                ));
+                continue;
+            };
+            let seat = s
+                .nearby_players
+                .get(&guest_id)
+                .filter(|p| p.object_type.as_deref() == Some(crate::state::SIT_OBJECT_TYPE))
+                .and_then(|p| p.object_id.map(|id| (id, p.name.clone())));
+            let Some((chair_object_id, guest_name)) = seat else {
+                s.push_agent_event(format!(
+                    "[ServeFailed] {player} is not sitting at a table — ask them to take a \
+                     seat first, then serve."
+                ));
+                continue;
+            };
+            let Some(dish_id) = crate::item_defs::resolve_dish(dish) else {
+                s.push_agent_event(format!(
+                    "[ServeFailed] '{dish}' is not on the menu: {}.",
+                    crate::item_defs::dish_ids().join(", ")
+                ));
+                continue;
+            };
+            s.pending_serve = Some(crate::state::ServeRequest {
+                guest_id,
+                guest_name: guest_name.clone(),
+                chair_object_id,
+                dish: dish_id.to_string(),
+            });
+            s.push_agent_event_quiet(format!(
+                "[Serve] You go to fetch the {dish_id} and bring it to {guest_name}'s table \
+                 — no move action needed."
+            ));
+            continue;
+        }
+
         // Wave off a pushed trade window. The offer is stored when ShopState
         // arrives; the server relays the decline to the merchant's agent.
         if matches!(action, AgentAction::DeclineTrade) {

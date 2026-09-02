@@ -27,6 +27,7 @@
   } from '../managers/inputHandler'
   import { getNpcCapabilities } from '../data/traderDefs'
   import { tipHatManager } from '../managers/tipHatManager'
+  import { mealManager } from '../managers/mealManager'
   import { tipHatDialog } from '../stores/tipHatStore'
   import { npcContextMenu, requestChatFocus } from '../stores/npcMenuStore'
   import {
@@ -160,6 +161,7 @@
     groundItemMeshes: THREE.Object3D[]
     tipHatMeshes: THREE.Object3D[]
     stallMeshes: THREE.Object3D[]
+    mealMeshes: THREE.Object3D[]
     monsterMeshes: THREE.Group[]
     /** Invisible bind-pose boxes, one per monster — the 20 Hz hover raycast
      *  tests these instead of the skinned triangles. */
@@ -184,6 +186,7 @@
     groundItemMeshes,
     tipHatMeshes,
     stallMeshes,
+    mealMeshes,
     monsterMeshes,
     monsterHoverMeshes,
     npcMeshes = [],
@@ -1481,6 +1484,13 @@
     })
   }
 
+  /** No walk-up: the server checks that we sit at the plate's chair. */
+  function eatMeal(intent: Extract<ClickIntent, { type: 'meal' }>) {
+    if (mealManager.meals.get(intent.mealId)?.eaten === false) {
+      networkManager.sendEatMeal(intent.mealId)
+    }
+  }
+
   /** The stall standing there is its owner's consent, so there is no request. */
   function tradeAtStall(intent: Extract<ClickIntent, { type: 'stall' }>) {
     approachAndAct({ position: intent.position, ...STALL_TRADE_APPROACH }, () =>
@@ -1627,6 +1637,7 @@
       groundItemMeshes,
       tipHatMeshes,
       stallMeshes,
+      mealMeshes,
       groundMeshes,
       playerPosition: {
         x: currentPlayer!.position.x,
@@ -1737,6 +1748,7 @@
       },
       tipHat,
       tradeAtStall,
+      eatMeal,
       breakProp,
       openProp,
       moveToGround: (position, sprinting) => {
@@ -1849,6 +1861,7 @@
       objectMeshes,
       tipHatMeshes,
       stallMeshes,
+      mealMeshes,
       propMeshes,
       groundItemMeshes,
       monsterMeshes: monsterHoverMeshes,
