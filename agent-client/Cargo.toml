@@ -1,6 +1,6 @@
 [package]
 name = "agent-client"
-version = "0.39.0"
+version = "0.40.0"
 edition = "2021"
 repository = "https://github.com/Julian-adv/OpenMMO"
 
