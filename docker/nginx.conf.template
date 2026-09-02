@@ -15,7 +15,14 @@ proxy_cache_path /var/cache/nginx/cape-textures levels=1:2
                  keys_zone=cape_textures:1m max_size=512m inactive=30d
                  use_temp_path=off;
 
+# Request Cache-Control tells hard reloads (no-cache) apart from cache
+# eviction when immutable assets show up as repeat 200s.
+log_format combined_cc '$remote_addr - $remote_user [$time_local] "$request" '
+    '$status $body_bytes_sent "$http_referer" "$http_user_agent" '
+    'cc="$http_cache_control"';
+
 server {
+    access_log /dev/stdout combined_cc;
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
