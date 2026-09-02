@@ -9,6 +9,16 @@ use onlinerpg_shared::hunger::{
 };
 use tokio::time::{advance, Duration};
 
+/// A raw fish's eat effect at `nutrition`, food poisoning attached.
+fn raw_fish(nutrition: u32) -> crate::item_defs::EatEffect {
+    crate::item_defs::EatEffect {
+        nutrition,
+        raw_fish: true,
+        debuff: Some("food_poisoning".to_string()),
+        alcohol: None,
+    }
+}
+
 /// Player on dry land (positive x) with hunger tracked at `satiation`.
 async fn make_eater(game_state: &GameState, name: &str, satiation: u32) -> (PlayerId, DirectRx) {
     let id = pid(name);
@@ -139,7 +149,7 @@ async fn raw_fish_poisoning_drains_four_times_faster_and_expires() {
     let poison = crate::debuff_defs::debuff_def("food_poisoning").unwrap();
     // Forced poison keeps the 70% roll out of the assertion.
     game_state
-        .use_eat_item(&id, 1, 40, true, Some("food_poisoning"), Some(true))
+        .use_eat_item(&id, 1, &raw_fish(40), Some(true))
         .await;
     let msgs = drain(&mut rx);
     let (satiation, _, move_mult) = last_hunger_update(&msgs).unwrap();
@@ -252,7 +262,7 @@ async fn an_unpoisoned_raw_fish_still_feeds_a_little() {
     put_in_bag(&game_state, &id, 1, "raw_minnow").await;
 
     game_state
-        .use_eat_item(&id, 1, 40, true, Some("food_poisoning"), Some(false))
+        .use_eat_item(&id, 1, &raw_fish(40), Some(false))
         .await;
 
     assert_eq!(game_state.hunger_satiation(&id).await, Some(540));

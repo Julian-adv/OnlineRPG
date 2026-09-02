@@ -830,12 +830,19 @@ pub(super) async fn handle_response(
                 ));
                 continue;
             };
-            s.pending_serve = Some(crate::state::ServeRequest {
-                guest_id,
-                guest_name: guest_name.clone(),
-                chair_object_id,
-                dish: dish_id.to_string(),
-            });
+            match s
+                .pending_serve
+                .iter_mut()
+                .find(|r| r.guest_id == guest_id && r.chair_object_id == chair_object_id)
+            {
+                Some(r) => r.dishes.push(dish_id.to_string()),
+                None => s.pending_serve.push(crate::state::ServeRequest {
+                    guest_id,
+                    guest_name: guest_name.clone(),
+                    chair_object_id,
+                    dishes: vec![dish_id.to_string()],
+                }),
+            }
             s.push_agent_event_quiet(format!(
                 "[Serve] You go to fetch the {dish_id} and bring it to {guest_name}'s table \
                  — no move action needed."

@@ -16,6 +16,11 @@ use tokio::time::Instant;
 use super::hunger::HungerData;
 
 pub(crate) const WET_DEBUFF_ID: &str = "wet";
+/// Drinks within this window count together toward the next stage.
+const ALCOHOL_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// One unit lifts, two slow, three and beyond stagger — a beer is one unit,
+/// a wine two (`items.csv` `alcohol`).
+const ALCOHOL_STAGES: [&str; 3] = ["tipsy", "drunk", "wasted"];
 /// Water this deep at a step's end soaks the walker: ankle-deep puddles and
 /// the shallowest river margins don't count.
 const WET_DEPTH_M: f32 = 0.4;
@@ -139,6 +144,9 @@ impl super::GameState {
                     vec![data.debuff_msg(now)]
                 }
                 None => {
+                    if let Some(group) = &def.group {
+                        data.debuffs.retain(|d| d.def.group.as_ref() != Some(group));
+                    }
                     data.debuffs.push(ActiveDebuff { def, until });
                     data.status_msgs(now).into()
                 }
@@ -154,6 +162,28 @@ impl super::GameState {
             self.set_player_wet(player_id, true).await;
         }
         true
+    }
+
+    /// `units` of drink just went down: add them to the recent ones and move
+    /// the player to that stage (the `alcohol` group makes it exclusive).
+    /// No hunger entry (official NPC) means no drinking either.
+    pub(crate) async fn apply_alcohol(&self, player_id: &PlayerId, units: u32) {
+        if units == 0 {
+            return;
+        }
+        let now = Instant::now();
+        let total: u32 = {
+            let mut hunger = self.hunger.write().await;
+            let Some(data) = hunger.get_mut(player_id) else {
+                return;
+            };
+            data.recent_drinks
+                .retain(|(at, _)| now.duration_since(*at) < ALCOHOL_WINDOW);
+            data.recent_drinks.push((now, units));
+            data.recent_drinks.iter().map(|(_, u)| u).sum()
+        };
+        let stage = ALCOHOL_STAGES[(total as usize).min(ALCOHOL_STAGES.len()) - 1];
+        self.inflict_debuff(player_id, stage, Some(true)).await;
     }
 
     /// Death drops every debuff.

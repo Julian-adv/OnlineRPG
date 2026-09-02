@@ -4,6 +4,7 @@ use super::*;
 use crate::game_state::meal::plate_spot;
 use onlinerpg_shared::furniture::FurniturePlacement;
 use onlinerpg_shared::hunger::SATIATION_MAX;
+use onlinerpg_shared::meal::MealSlot;
 
 fn placement(id: u32, type_id: &str, x: f32, z: f32, rotation_deg: f32) -> FurniturePlacement {
     FurniturePlacement {
@@ -74,14 +75,78 @@ async fn meals(game_state: &GameState) -> Vec<onlinerpg_shared::meal::Meal> {
 #[test]
 fn two_chairs_on_one_rotated_table_get_two_edge_spots() {
     let t = inn_table();
-    let (east, _) = plate_spot(&t[1], &t[0]);
-    let (west, _) = plate_spot(&t[2], &t[0]);
+    let (east, _) = plate_spot(&t[1], &t[0], MealSlot::Dish);
+    let (west, _) = plate_spot(&t[2], &t[0], MealSlot::Dish);
     // The chairs sit on the long sides of a table turned 90°, so the plates
-    // land at the short-axis edge inset, one each side, in front of each seat.
+    // land at the short-axis edge inset, one each side, in front of each
+    // seat — nudged to each guest's left (facing -x, left is +z; facing +x,
+    // left is -z).
     assert!((east.x - 100.257).abs() < 0.01, "east plate x {}", east.x);
     assert!((west.x - 99.743).abs() < 0.01, "west plate x {}", west.x);
-    assert!((east.z - 50.10).abs() < 0.01 && (west.z - 50.10).abs() < 0.01);
+    assert!((east.z - 50.20).abs() < 0.01, "east plate z {}", east.z);
+    assert!((west.z - 50.00).abs() < 0.01, "west plate z {}", west.z);
     assert!((east.y - 0.761).abs() < 1e-5, "table-top height");
+
+    // The cup goes to the guest's right, clear of the plate.
+    let (cup, _) = plate_spot(&t[1], &t[0], MealSlot::Drink);
+    assert!((cup.x - 100.257).abs() < 0.01);
+    assert!((cup.z - 49.85).abs() < 0.01, "east cup z {}", cup.z);
+}
+
+#[tokio::test]
+async fn a_plate_and_a_cup_share_a_chair_and_each_replaces_only_its_own_kind() {
+    let game_state = make_test_game_state("meal_slots");
+    game_state.sync_region_furniture(0, 0, &inn_table());
+    let guest = make_guest(&game_state, "guest", 101.5, 50.0, 300).await;
+    let maid = make_maid(&game_state, "miriel", 101.0, 51.0).await;
+    sit(&game_state, &guest, 43).await;
+    let served = || async {
+        let mut ids: Vec<String> = meals(&game_state)
+            .await
+            .into_iter()
+            .map(|m| m.item_def_id)
+            .collect();
+        ids.sort();
+        ids
+    };
+
+    game_state.serve_meal(&maid, 43, "chicken_rice").await;
+    game_state.serve_meal(&maid, 43, "beer").await;
+    assert_eq!(served().await, ["beer", "chicken_rice"]);
+
+    game_state.serve_meal(&maid, 43, "wine").await;
+    assert_eq!(
+        served().await,
+        ["chicken_rice", "wine"],
+        "the cup swaps, the plate stays"
+    );
+}
+
+#[tokio::test]
+async fn drinks_climb_the_stages_one_at_a_time() {
+    let game_state = make_test_game_state("meal_alcohol");
+    game_state.sync_region_furniture(0, 0, &inn_table());
+    let guest = make_guest(&game_state, "guest", 101.5, 50.0, 300).await;
+    let maid = make_maid(&game_state, "miriel", 101.0, 51.0).await;
+    sit(&game_state, &guest, 43).await;
+
+    // A beer is one unit, a wine two: beer, wine, beer climbs tipsy → wasted
+    // in three cups and stays there.
+    for (cup, expected) in [("beer", "tipsy"), ("wine", "wasted"), ("beer", "wasted")] {
+        game_state.serve_meal(&maid, 43, cup).await;
+        let fresh = meals(&game_state)
+            .await
+            .into_iter()
+            .find(|m| !m.eaten)
+            .expect("a fresh cup");
+        game_state.eat_meal(&guest, fresh.id).await;
+        let stages: Vec<String> = game_state.hunger.read().await[&guest]
+            .debuffs
+            .iter()
+            .map(|d| d.def.id.clone())
+            .collect();
+        assert_eq!(stages, [expected], "one stage at a time");
+    }
 }
 
 #[tokio::test]
@@ -203,4 +268,19 @@ async fn a_plate_lingers_after_the_guest_stands_then_expires_or_is_cleared() {
         .expires_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
     game_state.tick_meals().await;
     assert!(meals(&game_state).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_drink_adds_only_its_own_nutrition() {
+    let game_state = make_test_game_state("meal_drink");
+    game_state.sync_region_furniture(0, 0, &inn_table());
+    let guest = make_guest(&game_state, "guest", 101.5, 50.0, 300).await;
+    let maid = make_maid(&game_state, "miriel", 101.0, 51.0).await;
+    sit(&game_state, &guest, 43).await;
+    game_state.serve_meal(&maid, 43, "wine").await;
+    let meal_id = meals(&game_state).await[0].id;
+
+    game_state.eat_meal(&guest, meal_id).await;
+    assert_eq!(game_state.hunger.read().await[&guest].satiation, 420);
+    assert!(meals(&game_state).await[0].eaten, "the cup stays, emptied");
 }

@@ -71,13 +71,14 @@ const FAVOR_MAX: i32 = 5;
 /// strangers get small talk, not personal business.
 const TRADE_FAVOR_THRESHOLD: i32 = 3;
 
-/// An order the LLM accepted: who gets which dish, at which chair.
+/// An order the LLM accepted: who gets what, at which chair. A meal and a
+/// drink ordered together merge into one request and ride one trip.
 #[derive(Debug, Clone)]
 pub struct ServeRequest {
     pub guest_id: PlayerId,
     pub guest_name: String,
     pub chair_object_id: u32,
-    pub dish: String,
+    pub dishes: Vec<String>,
 }
 
 /// Push onto a capped ring: the oldest entry falls off past `cap`.
@@ -262,8 +263,9 @@ pub struct SharedState {
     pub tip_hats: HashMap<u64, onlinerpg_shared::tip_hat::TipHat>,
     /// Served plates in our AOI: ours to eat when seated, or to clear.
     pub meals: HashMap<u64, onlinerpg_shared::meal::Meal>,
-    /// A `serve` action waiting for the driver to walk the kitchen round trip.
-    pub pending_serve: Option<ServeRequest>,
+    /// `serve` actions waiting for the driver's kitchen round trip — a meal
+    /// and a drink ordered together ride one trip.
+    pub pending_serve: Vec<ServeRequest>,
     /// An NPC-pushed trade window not yet acted on (`ShopState` arrives
     /// unrequested — the agent never sends `OpenShop`). `decline_trade`
     /// answers it, buying or selling clears it, and an untouched one lapses
@@ -445,7 +447,7 @@ impl SharedState {
             friends: Vec::new(),
             tip_hats: HashMap::new(),
             meals: HashMap::new(),
-            pending_serve: None,
+            pending_serve: Vec::new(),
             pushed_trade: None,
             party_members: Vec::new(),
             party_leader: None,

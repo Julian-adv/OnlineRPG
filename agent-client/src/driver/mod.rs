@@ -34,6 +34,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::llm_scheduler::{LlmPriority, LlmScheduler};
+use crate::state::ServeRequest;
 use crate::state::SharedState;
 use onlinerpg_shared::schedule::ScheduleEntry;
 use onlinerpg_shared::ClientMessage;
@@ -762,82 +763,88 @@ pub async fn llm_driver(
             visit_until = Some(Instant::now() + VISIT_DWELL);
         }
 
-        // === Serving: a taken order, walked as a kitchen round trip ===
+        // === Serving: taken orders, walked as one kitchen round trip ===
         // Drained whoever we are, so a non-maid's stray `serve` is answered
         // instead of sitting queued behind a gate that never opens.
         if attack_target.is_none() {
-            let pending = { state.lock().await.pending_serve.take() };
-            if let Some(req) = pending {
-                if !serve_tables {
-                    state.lock().await.push_agent_event(format!(
-                        "[ServeFailed] You don't serve tables here — {} will have to buy the \
-                         {} or ask the inn staff.",
-                        req.guest_name, req.dish
-                    ));
-                    continue;
+            let trips: Vec<(ServeRequest, ScheduleEntry)> = {
+                let mut s = state.lock().await;
+                let pending = std::mem::take(&mut s.pending_serve);
+                let mut trips = Vec::new();
+                for req in pending {
+                    let order = req.dishes.join(" and ");
+                    if !serve_tables {
+                        s.push_agent_event(format!(
+                            "[ServeFailed] You don't serve tables here — {} will have to buy \
+                             the {order} or ask the inn staff.",
+                            req.guest_name
+                        ));
+                    } else if !claims.try_claim(
+                        ClaimKey::Guest(req.guest_id),
+                        &label,
+                        GUEST_CLAIM_TTL,
+                    ) {
+                        let holder = claims
+                            .holder(&ClaimKey::Guest(req.guest_id))
+                            .unwrap_or_else(|| "the other maid".to_string());
+                        s.push_agent_event(format!(
+                            "[ServeFailed] {} is {holder}'s guest — she brings their order. \
+                             Stay out of it; nothing was served.",
+                            req.guest_name
+                        ));
+                    } else if let Some((_, entry)) = table_entry(&s, &req.guest_id, &tables) {
+                        my_guests.insert(req.guest_id);
+                        trips.push((req, entry));
+                    } else {
+                        s.push_agent_event(format!(
+                            "[ServeFailed] {} left the seat before the {order} was ready.",
+                            req.guest_name
+                        ));
+                    }
                 }
-                if claims.try_claim(ClaimKey::Guest(req.guest_id), &label, GUEST_CLAIM_TTL) {
-                    my_guests.insert(req.guest_id);
-                } else {
-                    let holder = claims
-                        .holder(&ClaimKey::Guest(req.guest_id))
-                        .unwrap_or_else(|| "the other maid".to_string());
-                    state.lock().await.push_agent_event(format!(
-                        "[ServeFailed] {} is {holder}'s guest — she brings their order. Stay \
-                         out of it; nothing was served.",
-                        req.guest_name
-                    ));
-                    continue;
-                }
+                trips
+            };
+            if !trips.is_empty() {
                 // The kitchen is the regular post; a due sit or sleep entry
-                // is no kitchen, so the plate then comes straight over.
+                // is no kitchen, so the plates then come straight over.
                 let due = movement::resolve_due_schedule(&state, &schedule).await;
                 let kitchen = due
                     .0
                     .map(|i| &schedule[i])
                     .filter(|e| e.action.is_none())
                     .cloned();
-                let table = {
-                    let s = state.lock().await;
-                    table_entry(&s, &req.guest_id, &tables).map(|(_, entry)| entry)
-                };
-                match table {
-                    None => {
-                        state.lock().await.push_agent_event(format!(
-                            "[ServeFailed] {} left the seat before the {} was ready.",
-                            req.guest_name, req.dish
-                        ));
+                if let Some(h) = visit_walk.take() {
+                    h.abort();
+                }
+                movement::stop_current_entry(&state, &schedule, active_schedule.0, &label).await;
+                let walk_state = Arc::clone(&state);
+                let log_label = label.clone();
+                visit_walk = Some(tokio::spawn(async move {
+                    if let Some(kitchen) = kitchen {
+                        movement::execute_schedule_move(&walk_state, &kitchen).await;
                     }
-                    Some(table) => {
-                        info!("[{label}] fetching {} for {}", req.dish, req.guest_name);
-                        if let Some(h) = visit_walk.take() {
-                            h.abort();
-                        }
-                        movement::stop_current_entry(&state, &schedule, active_schedule.0, &label)
-                            .await;
-                        let walk_state = Arc::clone(&state);
-                        visit_walk = Some(tokio::spawn(async move {
-                            if let Some(kitchen) = kitchen {
-                                movement::execute_schedule_move(&walk_state, &kitchen).await;
-                            }
-                            movement::execute_schedule_move(&walk_state, &table).await;
-                            let mut s = walk_state.lock().await;
+                    for (req, table) in trips {
+                        let order = req.dishes.join(" and ");
+                        info!("[{log_label}] bringing {order} to {}", req.guest_name);
+                        movement::execute_schedule_move(&walk_state, &table).await;
+                        let mut s = walk_state.lock().await;
+                        for dish in &req.dishes {
                             let cmd = onlinerpg_shared::ClientMessage::ServeMeal {
                                 chair_object_id: req.chair_object_id,
-                                item_def_id: req.dish.clone(),
+                                item_def_id: dish.clone(),
                             };
                             if let Err(e) = s.send_command(cmd).await {
                                 error!("Failed to send serve: {e}");
                             }
-                            s.push_ambient_event(format!(
-                                "[Served] You set the {} down in front of {}. A word to them \
-                                 in your own voice, then leave them to eat.",
-                                req.dish, req.guest_name
-                            ));
-                        }));
-                        visit_until = Some(Instant::now() + SERVE_DWELL);
+                        }
+                        s.push_ambient_event(format!(
+                            "[Served] You set the {order} down in front of {}. A word to them \
+                             in your own voice, then leave them to eat.",
+                            req.guest_name
+                        ));
                     }
-                }
+                }));
+                visit_until = Some(Instant::now() + SERVE_DWELL);
             }
         }
 

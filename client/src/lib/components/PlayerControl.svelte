@@ -28,6 +28,8 @@
   import { getNpcCapabilities } from '../data/traderDefs'
   import { tipHatManager } from '../managers/tipHatManager'
   import { mealManager } from '../managers/mealManager'
+  import { activeDebuffs } from '../stores/debuffStore'
+  import { staggerRadius, staggerTarget } from './player-control/stagger'
   import { tipHatDialog } from '../stores/tipHatStore'
   import { npcContextMenu, requestChatFocus } from '../stores/npcMenuStore'
   import {
@@ -1197,6 +1199,12 @@
     // Approach moves (chase, walk-up) carry no modifier: follow the preference.
     clickSprinting =
       (options.sprinting ?? sprintRequested(false)) && sprintAvailable()
+    // A drunk walker weaves on free moves only; a walk-up still has to
+    // arrive where its target is.
+    if (!options.approach) {
+      const radius = staggerRadius(get(activeDebuffs), Date.now())
+      if (radius > 0) clickPosition = staggerTarget(clickPosition, radius)
+    }
 
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /

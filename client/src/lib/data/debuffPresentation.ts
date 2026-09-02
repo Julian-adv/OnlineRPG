@@ -16,7 +16,12 @@ export interface PresentedDebuff extends DebuffPresentation {
 
 const DEFS: Record<
   string,
-  { name?: string; durationSecs?: number; armorWeightMult?: number }
+  {
+    name?: string
+    durationSecs?: number
+    armorWeightMult?: number
+    staggerM?: number
+  }
 > = debuffsJson
 
 const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
@@ -38,6 +43,24 @@ const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
     applied: 'You are soaked through — heavy going until you dry off.',
     expired: 'Your clothes are dry again.',
   },
+  tipsy: {
+    icon: '🍺',
+    note: 'A little quicker on your feet',
+    applied: 'A warm glow spreads through you. Just the one, mind.',
+    expired: 'The glow fades.',
+  },
+  drunk: {
+    icon: '🍻',
+    note: 'Slowed · weaker swings',
+    applied: 'The room tilts a little. Maybe that was one too many.',
+    expired: 'Your head clears.',
+  },
+  wasted: {
+    icon: '🥴',
+    note: 'Heavy penalties · your feet go where they like',
+    applied: 'The floor keeps moving. Walking is going to be an adventure.',
+    expired: 'You sober up, more or less.',
+  },
 }
 
 export function debuffPresentation(id: string): DebuffPresentation {
@@ -50,6 +73,11 @@ export function debuffPresentation(id: string): DebuffPresentation {
     expired: `${label} wears off.`,
     ...PRESENTATION[id],
   }
+}
+
+/** How far off a click a walker under this debuff may land (doc/DEBUFF.md). */
+export function debuffStaggerM(id: string) {
+  return DEFS[id]?.staggerM ?? 0
 }
 
 /** A debuff's full duration in ms, for effects that fade with what's left. */

@@ -710,21 +710,7 @@ impl super::GameState {
 
         match effect {
             UseEffect::Heal(dice) => self.use_healing_item(player_id, instance_id, &dice).await,
-            UseEffect::Eat {
-                nutrition,
-                raw_fish,
-                debuff,
-            } => {
-                self.use_eat_item(
-                    player_id,
-                    instance_id,
-                    nutrition,
-                    raw_fish,
-                    debuff.as_deref(),
-                    None,
-                )
-                .await
-            }
+            UseEffect::Eat(eat) => self.use_eat_item(player_id, instance_id, &eat, None).await,
             UseEffect::PlaceCampfire => self.use_campfire_kit(player_id, instance_id).await,
             UseEffect::TeleportTown => self.use_return_scroll(player_id, instance_id).await,
             UseEffect::EnchantWeapon => {
@@ -977,11 +963,16 @@ impl super::GameState {
         &self,
         player_id: &PlayerId,
         instance_id: u64,
-        nutrition: u32,
-        raw_fish: bool,
-        debuff: Option<&str>,
+        eat: &crate::item_defs::EatEffect,
         force_debuff: Option<bool>,
     ) {
+        let crate::item_defs::EatEffect {
+            nutrition,
+            raw_fish,
+            debuff,
+            alcohol,
+        } = eat;
+        let (nutrition, raw_fish, alcohol) = (*nutrition, *raw_fish, *alcohol);
         if self
             .reject_if_defeated(player_id, "You can't eat while defeated")
             .await
@@ -1029,6 +1020,9 @@ impl super::GameState {
         self.settle_meal(player_id, outcome, gained).await;
         if let Some(debuff) = debuff {
             self.inflict_debuff(player_id, debuff, force_debuff).await;
+        }
+        if let Some(units) = alcohol {
+            self.apply_alcohol(player_id, units).await;
         }
     }
 

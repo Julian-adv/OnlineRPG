@@ -32,6 +32,10 @@ pub struct DebuffDef {
     pub drain_mult: f32,
     #[serde(rename = "blocksRegen", default)]
     pub blocks_regen: bool,
+    /// Debuffs sharing a group are exclusive: applying one drops the others
+    /// (the tipsy → drunk → wasted ladder).
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 static DEFS: LazyLock<HashMap<String, DebuffDef>> = LazyLock::new(|| {

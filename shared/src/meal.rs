@@ -35,12 +35,41 @@ pub const CHAIR_TABLE_RADIUS_M: f32 = 2.0;
 /// How close the maid must stand to the chair to serve or clear.
 pub const MEAL_SERVICE_RADIUS_M: f32 = 4.0;
 
-/// Wire-facing list of what a maid may put on a table: food that has a world
-/// model. Everything else is refused server-side.
+/// A chair holds one of each: the plate to the guest's left, the cup to
+/// their right, so an order of both never overlaps. A dish fills the guest
+/// whatever they had; a drink only adds its own nutrition and keeps its
+/// model when finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MealSlot {
+    Dish,
+    Drink,
+}
+
+impl MealSlot {
+    pub fn for_category(category: Option<&str>) -> MealSlot {
+        if category == Some("drink") {
+            MealSlot::Drink
+        } else {
+            MealSlot::Dish
+        }
+    }
+
+    /// Sideways shift along the table edge, positive toward the guest's
+    /// left. The cup goes further out than the plate so both fit.
+    pub fn lateral_m(self) -> f32 {
+        match self {
+            MealSlot::Dish => 0.10,
+            MealSlot::Drink => -0.25,
+        }
+    }
+}
+
+/// What a maid may put on a table: food or drink that has a world model.
+/// Everything else is refused server-side.
 pub fn is_servable(
     category: Option<&str>,
     world_model: Option<&str>,
     nutrition: Option<u32>,
 ) -> bool {
-    category == Some("food") && world_model.is_some() && nutrition.is_some()
+    matches!(category, Some("food" | "drink")) && world_model.is_some() && nutrition.is_some()
 }

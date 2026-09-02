@@ -16,11 +16,19 @@
   const dishes = new SvelteMap<string, DishModel>()
   const loading = new SvelteSet<string>()
 
-  /** A finished plate turns into the same empty plate whatever it held. */
-  function modelPathFor(meal: ServerMeal): string | undefined {
-    if (meal.eaten) return '/models/objects/empty_plate.glb'
-    const worldModel = getItemDef(meal.item_def_id)?.worldModel
-    return worldModel && `/models/${worldModel}`
+  /** A finished dish turns into the same empty plate whatever it held; a
+   *  drink keeps its cup. */
+  function mealLook(meal: ServerMeal): {
+    path: string | undefined
+    hoverName: string
+  } {
+    const def = getItemDef(meal.item_def_id)
+    const name = def?.name ?? meal.item_def_id
+    const own = def?.worldModel && `/models/${def.worldModel}`
+    if (!meal.eaten) return { path: own, hoverName: name }
+    return def?.category === 'drink'
+      ? { path: own, hoverName: `Empty ${name} cup` }
+      : { path: '/models/objects/empty_plate.glb', hoverName: 'Empty plate' }
   }
 
   // Meals stand on inn tables only; hide them while underground.
@@ -30,7 +38,7 @@
 
   $effect(() => {
     for (const [, meal] of mealEntries) {
-      const path = modelPathFor(meal)
+      const { path } = mealLook(meal)
       if (path) ensureDish(path)
     }
   })
@@ -62,16 +70,15 @@
 
 <T.Group bind:ref={group}>
   {#each mealEntries as [id, meal] (id)}
-    {@const dish = dishes.get(modelPathFor(meal) ?? '')}
+    {@const look = mealLook(meal)}
+    {@const dish = dishes.get(look.path ?? '')}
     {#if dish}
       <T.Group
         position={[meal.position.x, meal.position.y, meal.position.z]}
         rotation={[0, meal.rotation, 0]}
         userData={{
           mealId: id,
-          hoverName: meal.eaten
-            ? 'Empty plate'
-            : (getItemDef(meal.item_def_id)?.name ?? meal.item_def_id),
+          hoverName: look.hoverName,
           hoverLabelY: dish.hover.topY,
           hoverRingRadius: dish.hover.ringRadius,
           hoverCenter: { x: dish.hover.center.x, y: 0, z: dish.hover.center.z },

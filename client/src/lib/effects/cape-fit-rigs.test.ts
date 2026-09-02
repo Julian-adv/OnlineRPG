@@ -60,15 +60,19 @@ function loadGltf(path: string): Promise<{
   })
 }
 
-/** Deepest back-surface depth within a band of `y`, skinned through the pose the
- *  rig is in — the surface a player actually sees. */
+/** Deepest back-surface depth within a band of the collar's height, skinned
+ *  through the pose the rig is in — the surface a player actually sees. Only
+ *  the torso column counts: an arm swung behind the back mid-stride sits in
+ *  the same height band but is not what the collar hangs over. */
 function posedSurfaceDepth(
   root: THREE.Object3D,
   back: THREE.Vector3,
-  y: number,
+  right: THREE.Vector3,
+  collar: THREE.Vector3,
   skip: THREE.Object3D
 ): number {
   const band = 0.06
+  const halfWidth = 0.12
   const v = new THREE.Vector3()
   let deepest = -Infinity
   root.traverse((obj) => {
@@ -79,8 +83,9 @@ function posedSurfaceDepth(
       v.fromBufferAttribute(position, i)
       obj.applyBoneTransform(i, v)
       obj.localToWorld(v)
-      if (Math.abs(v.y - y) > band) continue
-      deepest = Math.max(deepest, v.dot(back))
+      if (Math.abs(v.y - collar.y) > band) continue
+      if (Math.abs(v.sub(collar).dot(right)) > halfWidth) continue
+      deepest = Math.max(deepest, v.add(collar).dot(back))
     }
   })
   return deepest
@@ -129,13 +134,16 @@ describe.skipIf(MODELS.some((path) => !fs.existsSync(path)))(
           cape.update(1 / 60, null)
 
           const collar = cape.root.getWorldPosition(new THREE.Vector3())
-          const back = new THREE.Vector3(0, 0, 1).applyQuaternion(
-            cape.root.getWorldQuaternion(new THREE.Quaternion())
+          const rootRotation = cape.root.getWorldQuaternion(
+            new THREE.Quaternion()
           )
+          const back = new THREE.Vector3(0, 0, 1).applyQuaternion(rootRotation)
+          const right = new THREE.Vector3(1, 0, 0).applyQuaternion(rootRotation)
           const surface = posedSurfaceDepth(
             modelRoot,
             back,
-            collar.y,
+            right,
+            collar,
             cape.mesh
           )
           const gap = collar.dot(back) - surface

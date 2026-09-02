@@ -110,6 +110,10 @@ pub struct ItemDefinition {
     /// Debuff id rolled when eaten (raw fish → food poisoning, doc/DEBUFF.md).
     #[serde(rename = "useDebuff", default)]
     pub use_debuff: Option<String>,
+    /// Drinks only — how many units count toward the tipsy/drunk/wasted
+    /// stages (doc/DEBUFF.md 취기). Absent or 0: no effect.
+    #[serde(default)]
+    pub alcohol: Option<u32>,
     /// Blocks player-to-player trading (doc/TRADE.md).
     #[serde(default)]
     pub untradeable: bool,
@@ -122,6 +126,16 @@ pub struct ItemDefinition {
     pub revive_hp_percent: Option<u32>,
 }
 
+/// Eating food or fish: what it feeds, whether it grills first, and what
+/// it may inflict (doc/HUNGER.md, doc/DEBUFF.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EatEffect {
+    pub nutrition: u32,
+    pub raw_fish: bool,
+    pub debuff: Option<String>,
+    pub alcohol: Option<u32>,
+}
+
 /// The effect produced by consuming a usable item via `use_item`, decided by
 /// the item's `category`. One place to extend when a new consumable lands.
 pub enum UseEffect {
@@ -129,11 +143,7 @@ pub enum UseEffect {
     Heal(String),
     /// Restore satiation and regenerate HP from nutrition; `debuff` is
     /// rolled afterwards. Raw fish grills instead near a campfire.
-    Eat {
-        nutrition: u32,
-        raw_fish: bool,
-        debuff: Option<String>,
-    },
+    Eat(EatEffect),
     /// Light a campfire near the user.
     PlaceCampfire,
     /// Teleport the user back to the town spawn point.
@@ -243,17 +253,21 @@ impl ItemDefinition {
     pub fn use_effect(&self) -> Option<UseEffect> {
         match self.category.as_deref()? {
             "healing_potion" => self.dice.clone().map(UseEffect::Heal),
-            "fish" => Some(UseEffect::Eat {
+            "fish" => Some(UseEffect::Eat(EatEffect {
                 nutrition: self
                     .nutrition
                     .unwrap_or(onlinerpg_shared::hunger::RAW_FISH_NUTRITION),
                 raw_fish: true,
                 debuff: self.use_debuff.clone(),
-            }),
-            "food" => self.nutrition.map(|nutrition| UseEffect::Eat {
-                nutrition,
-                raw_fish: false,
-                debuff: self.use_debuff.clone(),
+                alcohol: None,
+            })),
+            "food" | "drink" => self.nutrition.map(|nutrition| {
+                UseEffect::Eat(EatEffect {
+                    nutrition,
+                    raw_fish: false,
+                    debuff: self.use_debuff.clone(),
+                    alcohol: self.alcohol,
+                })
             }),
             "campfire_kit" => Some(UseEffect::PlaceCampfire),
             "return_scroll" => Some(UseEffect::TeleportTown),

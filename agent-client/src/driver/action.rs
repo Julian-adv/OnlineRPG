@@ -659,9 +659,12 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   and set it on the table in front of them. You walk the round trip
   yourself, no move action needed; say something when it lands. The
   kitchen's plates: chicken_rice, chicken_curry, fried_rice,
-  vegetable_rice; also bread, cheese, jerky, apple. Steer an order for
+  vegetable_rice; also bread, cheese, jerky, apple. Drinks: beer, wine.
+  One serve per item — a meal and a drink ordered together are two serve
+  actions in the same reply, carried over in one trip. Steer an order for
   anything else toward the nearest of these:
-  {"type": "serve", "player": "darkcocoa", "dish": "chicken_curry"}"#,
+  {"type": "serve", "player": "darkcocoa", "dish": "chicken_curry"}
+  {"type": "serve", "player": "darkcocoa", "dish": "beer"}"#,
     },
     ActionSpec {
         names: &["decline_trade"],

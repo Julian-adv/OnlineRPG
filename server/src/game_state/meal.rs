@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use onlinerpg_shared::furniture::{solid_occupancy, FurniturePlacement};
 use onlinerpg_shared::meal::{
-    is_servable, Meal, CHAIR_TABLE_RADIUS_M, MEAL_EDGE_INSET_M, MEAL_SERVICE_RADIUS_M,
+    is_servable, Meal, MealSlot, CHAIR_TABLE_RADIUS_M, MEAL_EDGE_INSET_M, MEAL_SERVICE_RADIUS_M,
     TABLE_SURFACE_Y,
 };
 use onlinerpg_shared::{Player, PlayerId, ServerMessage};
@@ -29,6 +29,7 @@ const TABLE: &str = "table";
 
 pub(crate) struct MealEntry {
     pub meal: Meal,
+    pub slot: MealSlot,
     pub expires_at: Instant,
 }
 
@@ -42,17 +43,28 @@ fn seated_on(p: &Player, chair_object_id: u32, floor_level: i8) -> bool {
         && p.floor_level == floor_level
 }
 
-/// Table-top point in front of `chair` on `table`, and the yaw facing the
-/// chair. The chair is mapped into the table's local frame, clamped inside
-/// the edge, and mapped back — so two chairs on one table get two spots.
+/// Table-top point in front of `chair` on `table` for `slot`, and the yaw
+/// facing the chair. The chair, shifted sideways for the slot, is mapped
+/// into the table's local frame, clamped inside the edge, and mapped back —
+/// so two chairs on one table get two spots, and a plate and a cup for one
+/// chair sit side by side.
 pub(crate) fn plate_spot(
     chair: &FurniturePlacement,
     table: &FurniturePlacement,
+    slot: MealSlot,
 ) -> (Position, f32) {
     let occ = solid_occupancy(TABLE).expect("table footprint");
     let (s, c) = table.rotation_deg.to_radians().sin_cos();
-    let dx = chair.x - table.x;
-    let dz = chair.z - table.z;
+    // The guest faces the table; their left is the forward vector turned
+    // a quarter turn (rotation 0 faces +Z, so facing +Z puts left at +X).
+    let (fx, fz) = {
+        let (dx, dz) = (table.x - chair.x, table.z - chair.z);
+        let len = (dx * dx + dz * dz).sqrt().max(1e-3);
+        (dx / len, dz / len)
+    };
+    let lateral = slot.lateral_m();
+    let dx = chair.x + fz * lateral - table.x;
+    let dz = chair.z - fx * lateral - table.z;
     let lx = (dx * c - dz * s).clamp(occ.min_x + MEAL_EDGE_INSET_M, occ.max_x - MEAL_EDGE_INSET_M);
     let lz = (dx * s + dz * c).clamp(occ.min_z + MEAL_EDGE_INSET_M, occ.max_z - MEAL_EDGE_INSET_M);
     let x = table.x + (lx * c + lz * s);
@@ -120,17 +132,19 @@ impl GameState {
     /// An official NPC sets `item_def_id` on the table in front of the guest
     /// sitting on `chair_object_id`.
     pub async fn serve_meal(&self, player_id: &PlayerId, chair_object_id: u32, item_def_id: &str) {
-        let servable = self.item_defs.get(item_def_id).is_some_and(|d| {
-            is_servable(d.category.as_deref(), d.world_model.as_deref(), d.nutrition)
-        });
-        if !servable {
+        let Some(def) = self
+            .item_defs
+            .get(item_def_id)
+            .filter(|d| is_servable(d.category.as_deref(), d.world_model.as_deref(), d.nutrition))
+        else {
             self.send_system_message(
                 player_id,
                 format!("{item_def_id} is not a dish you can serve."),
             )
             .await;
             return;
-        }
+        };
+        let slot = MealSlot::for_category(def.category.as_deref());
         let Some((maid_name, maid_position, floor_level)) = ({
             let players = self.players.read().await;
             players
@@ -167,7 +181,7 @@ impl GameState {
                 .await;
             return;
         };
-        let (position, rotation) = plate_spot(&chair, &table);
+        let (position, rotation) = plate_spot(&chair, &table, slot);
         let meal = Meal {
             id: self.next_instance_id().await,
             item_def_id: item_def_id.to_string(),
@@ -179,12 +193,13 @@ impl GameState {
             eaten: false,
         };
 
-        // A second plate for the same chair replaces the first.
+        // A second plate (or cup) for the same chair replaces the first.
         let replaced: Vec<Meal> = {
             let mut meals = self.meals.write().await;
             let replaced = meals
                 .extract_if(|_, e| {
-                    e.meal.chair_object_id == chair_object_id
+                    e.slot == slot
+                        && e.meal.chair_object_id == chair_object_id
                         && e.meal.floor_level == floor_level
                         && e.meal.position.dist_xz_sq(&position) <= CHAIR_TABLE_RADIUS_M.powi(2)
                 })
@@ -194,6 +209,7 @@ impl GameState {
                 meal.id,
                 MealEntry {
                     meal: meal.clone(),
+                    slot,
                     expires_at: Instant::now() + MEAL_MAX_AGE,
                 },
             );
@@ -272,16 +288,25 @@ impl GameState {
             None,
         )
         .await;
-        let (outcome, gained) = self
-            .apply_eat(player_id, onlinerpg_shared::hunger::SATIATION_MAX)
-            .await;
         let name = self.item_name(&meal.item_def_id);
-        self.send_system_message(
-            player_id,
-            format!("You eat the {name}. You couldn't eat another bite."),
-        )
-        .await;
+        let (amount, said, alcohol) = match self.item_defs.get(&meal.item_def_id) {
+            Some(d) if MealSlot::for_category(d.category.as_deref()) == MealSlot::Drink => (
+                d.nutrition.unwrap_or(0),
+                format!("You drink the {name}."),
+                d.alcohol,
+            ),
+            _ => (
+                onlinerpg_shared::hunger::SATIATION_MAX,
+                format!("You eat the {name}. You couldn't eat another bite."),
+                None,
+            ),
+        };
+        let (outcome, gained) = self.apply_eat(player_id, amount).await;
+        self.send_system_message(player_id, said).await;
         self.settle_meal(player_id, outcome, gained).await;
+        if let Some(units) = alcohol {
+            self.apply_alcohol(player_id, units).await;
+        }
     }
 
     /// An official NPC takes a plate away.

@@ -20,6 +20,8 @@ use tokio::time::Instant;
 pub(crate) struct HungerData {
     pub satiation: u32,
     pub debuffs: Vec<super::debuff::ActiveDebuff>,
+    /// Recent drinks as (when, units), pruned to the alcohol window.
+    pub recent_drinks: Vec<(Instant, u32)>,
     movement_seconds: f32,
     sprint_seconds: f32,
     /// Equipment's drain factor, cached so the movement tick never has to
@@ -82,6 +84,7 @@ impl super::GameState {
             HungerData {
                 satiation,
                 debuffs: Vec::new(),
+                recent_drinks: Vec::new(),
                 movement_seconds: 0.0,
                 sprint_seconds: 0.0,
                 gear_drain_mult: 1.0,
