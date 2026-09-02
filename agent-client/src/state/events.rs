@@ -597,6 +597,7 @@ impl SharedState {
                     self.bad_song_title_refused = false;
                     self.tips_noticed = 0;
                     push_capped(&mut self.recent_songs, track.clone(), MAX_RECENT_SONGS);
+                    self.self_songs_started += 1;
                     self.self_performance = self.self_player.as_ref().map(|me| SelfPerformance {
                         ends_at: std::time::Instant::now() + crate::bgm_defs::duration(track),
                         from: me.position,

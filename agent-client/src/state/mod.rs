@@ -310,6 +310,8 @@ pub struct SharedState {
     music_performers: HashMap<PlayerId, String>,
     /// Our own running performance (`check_music_finished` is its clock).
     self_performance: Option<SelfPerformance>,
+    /// Songs we have started this session; paces the tales.
+    pub self_songs_started: usize,
     recital: Option<Recital>,
     /// Until when the square stays quiet after our own song (`MUSIC_REST_*`).
     self_music_rest_until: Option<std::time::Instant>,
@@ -451,6 +453,7 @@ impl SharedState {
             seen_nearby_players: HashSet::new(),
             music_performers: HashMap::new(),
             self_performance: None,
+            self_songs_started: 0,
             recital: None,
             self_music_rest_until: None,
             pending_tips: Vec::new(),

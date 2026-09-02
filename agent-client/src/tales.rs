@@ -213,14 +213,20 @@ pub fn parse_ledger(content: &str) -> Vec<Deed> {
         .collect()
 }
 
+/// Plain songs between one tale and the next, so late arrivals still hear
+/// one and the set is not all stories.
+pub const SONGS_BETWEEN_TALES: usize = 2;
+
 /// Tonight's set: a few deeds, one per hero, newer lines favoured, sung in
-/// turn and round again.
+/// turn and round again, a couple of songs apart.
 #[derive(Debug, Default)]
 pub struct TonightsTales {
     picks: Vec<Deed>,
     /// Tales told so far tonight: picks the current one and paces the
     /// language alternation.
     sung: usize,
+    /// Our song count at which the next tale is due; 0 until the first.
+    next_tale_at: usize,
 }
 
 impl TonightsTales {
@@ -236,7 +242,10 @@ impl TonightsTales {
             pool.retain(|(_, d)| d.name != deed.name);
             picks.push(deed);
         }
-        TonightsTales { picks, sung: 0 }
+        TonightsTales {
+            picks,
+            ..Default::default()
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -247,8 +256,18 @@ impl TonightsTales {
         self.picks.get(self.sung % self.picks.len().max(1))
     }
 
-    pub fn advance(&mut self) {
+    /// The tale to tell now, once our song count has reached its turn.
+    pub fn due(&self, songs_started: usize) -> Option<&Deed> {
+        if songs_started < self.next_tale_at {
+            return None;
+        }
+        self.current()
+    }
+
+    /// Told: the next one waits for this tale's own song plus the gap.
+    pub fn advance(&mut self, songs_started: usize) {
         self.sung += 1;
+        self.next_tale_at = songs_started + SONGS_BETWEEN_TALES + 1;
     }
 
     pub fn sung(&self) -> usize {
@@ -473,13 +492,27 @@ garbage
         let mut night = TonightsTales::draw(&deeds, 2, &mut rng);
         let first = night.current().cloned().unwrap();
         assert_eq!(night.sung(), 0);
-        night.advance();
+        night.advance(0);
         assert_eq!(night.sung(), 1);
         assert_ne!(night.current(), Some(&first));
-        night.advance();
+        night.advance(0);
         assert_eq!(night.current(), Some(&first));
         let mut empty = TonightsTales::default();
-        empty.advance();
+        empty.advance(0);
         assert!(empty.current().is_none());
+    }
+
+    /// A tale, its song, two plain songs, the next tale.
+    #[test]
+    fn tales_come_two_songs_apart() {
+        let deeds = parse_ledger(LEDGER);
+        let mut rng = StdRng::seed_from_u64(3);
+        let mut night = TonightsTales::draw(&deeds, 2, &mut rng);
+        assert!(night.due(5).is_some(), "the first tale waits for nothing");
+        night.advance(5);
+        assert!(night.due(6).is_none(), "the tale's own song");
+        assert!(night.due(7).is_none(), "one plain song");
+        assert!(night.due(8).is_some(), "two plain songs");
+        assert!(TonightsTales::default().due(9).is_none());
     }
 }

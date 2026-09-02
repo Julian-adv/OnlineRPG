@@ -346,6 +346,9 @@ pub async fn llm_driver(
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
     let mut tales = crate::tales::TonightsTales::default();
+    // Our song count when the pending prompt offered a tale, so the gap is
+    // measured from the offer rather than from whenever the reply lands.
+    let mut tale_offered_at: Option<usize> = None;
     // Deadline for the LLM's wrap-up turn before a due schedule move; the
     // bool marks that a prompt containing the wrap-up notice was submitted.
     let mut wrapup: Option<(Instant, bool)> = None;
@@ -426,7 +429,13 @@ pub async fn llm_driver(
                 active_schedule.0,
                 memory.as_deref(),
                 terrain.as_deref(),
-                tale_for(&tales, &schedule, active_schedule.0, &s),
+                tale_for(
+                    &tales,
+                    &schedule,
+                    active_schedule.0,
+                    &s,
+                    &mut tale_offered_at,
+                ),
             );
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
@@ -455,7 +464,7 @@ pub async fn llm_driver(
                         skip_movement,
                     )
                     .await;
-                    advance_tale_if_sung(&state, &mut tales).await;
+                    advance_tale_if_sung(&state, &mut tales, &mut tale_offered_at).await;
                     last_prompt_at = Instant::now();
                 }
                 Err(e) => {
@@ -721,7 +730,7 @@ pub async fn llm_driver(
                 let new_target =
                     handle_response(&state, &response, &memory_file, &favor_file, skip_movement)
                         .await;
-                advance_tale_if_sung(&state, &mut tales).await;
+                advance_tale_if_sung(&state, &mut tales, &mut tale_offered_at).await;
                 if new_target.is_some() {
                     attack_target = new_target;
                 }
@@ -821,7 +830,13 @@ pub async fn llm_driver(
                 active_schedule.0,
                 memory.as_deref(),
                 terrain.as_deref(),
-                tale_for(&tales, &schedule, active_schedule.0, &s),
+                tale_for(
+                    &tales,
+                    &schedule,
+                    active_schedule.0,
+                    &s,
+                    &mut tale_offered_at,
+                ),
             );
             record_conversation(&mut s, &events);
             prompt
@@ -885,23 +900,27 @@ fn tale_for(
     schedule: &[ScheduleEntry],
     active: Option<usize>,
     state: &SharedState,
+    offered_at: &mut Option<usize>,
 ) -> Option<String> {
-    let deed = tales.current()?;
+    *offered_at = None;
+    let deed = tales.due(state.self_songs_started)?;
     active.filter(|&i| schedule[i].tales)?;
+    *offered_at = Some(state.self_songs_started);
     let self_name = state.self_player.as_ref().map_or("", |p| p.name.as_str());
     let room = crate::tales::audience_lang(state.chat_history(), self_name);
     let lang = crate::tales::tale_lang(room, tales.sung());
     Some(crate::tales::prompt_section(deed, lang))
 }
 
-/// A recital while a tale was up is it being sung: move to the next one.
+/// A recital in the turn that offered a tale is it being sung: move on.
 async fn advance_tale_if_sung(
     state: &Arc<Mutex<SharedState>>,
     tales: &mut crate::tales::TonightsTales,
+    offered_at: &mut Option<usize>,
 ) {
     let recited = std::mem::take(&mut state.lock().await.recited_this_turn);
-    if recited && tales.current().is_some() {
-        tales.advance();
+    if let Some(at) = offered_at.take().filter(|_| recited) {
+        tales.advance(at);
     }
 }
 
