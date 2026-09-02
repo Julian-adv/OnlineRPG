@@ -471,3 +471,74 @@ fn a_joining_bard_takes_up_the_worn_mandolin() {
         "only buskers reach for an instrument"
     );
 }
+
+/// The verses go out one `/recite` at a time, paced from the start so the
+/// announcement keeps its bubble, cycling; and they stop with our song.
+#[test]
+fn a_recital_is_paced_and_ends_with_the_song() {
+    let (mut s, _rx) = test_state();
+    let me = test_player(0.0, 0.0);
+    s.self_player_id = Some(me.id);
+    s.self_player = Some(me);
+    s.in_game = true;
+
+    assert!(
+        s.begin_recital(&["  ".to_string()]).is_err(),
+        "nothing to say"
+    );
+    s.begin_recital(&["one".to_string(), " two ".to_string(), "".to_string()])
+        .unwrap();
+
+    s.check_music_finished();
+    assert!(
+        s.drain_pending_commands().is_empty(),
+        "the first verse waits its turn behind the announcement"
+    );
+    s.recital.as_mut().unwrap().next_at = std::time::Instant::now();
+    s.check_music_finished();
+    let sent = s.drain_pending_commands();
+    assert!(
+        matches!(&sent[..], [ClientMessage::ChatMessage { message }] if message == "/recite one"),
+        "{sent:?}"
+    );
+    s.check_music_finished();
+    assert!(
+        s.drain_pending_commands().is_empty(),
+        "the next verse waits its turn"
+    );
+
+    // Skip ahead: the next verse is due, then the cycle wraps to the first.
+    let recital = s.recital.as_mut().unwrap();
+    recital.next_at = std::time::Instant::now();
+    s.check_music_finished();
+    assert!(
+        matches!(&s.drain_pending_commands()[..], [ClientMessage::ChatMessage { message }] if message == "/recite two")
+    );
+    let recital = s.recital.as_mut().unwrap();
+    recital.next_at = std::time::Instant::now();
+    s.check_music_finished();
+    assert!(
+        matches!(&s.drain_pending_commands()[..], [ClientMessage::ChatMessage { message }] if message == "/recite_quiet one")
+    );
+
+    // Our song starts: the recital now lives as long as the song does.
+    s.push_event(ServerMessage::PlayerMusicStarted {
+        player_id: s.self_player_id.unwrap(),
+        track: "Twilight Fields".to_string(),
+        elapsed_secs: 0.0,
+    });
+    s.check_music_finished();
+    assert!(s.recital.is_some());
+    s.push_event(ServerMessage::PlayerInteractionChanged {
+        player_id: s.self_player_id.unwrap(),
+        object_type: None,
+        object_id: None,
+    });
+    assert!(s.recital.is_none(), "the song ended, so did the verses");
+
+    // Without a song, the grace runs out.
+    s.begin_recital(&["alone".to_string()]).unwrap();
+    s.recital.as_mut().unwrap().until = std::time::Instant::now();
+    s.check_music_finished();
+    assert!(s.recital.is_none());
+}

@@ -345,6 +345,7 @@ pub async fn llm_driver(
     // Track the highest urgency since the last prompt
     let mut pending_urgency = LlmPriority::Idle;
     let mut active_schedule: (Option<usize>, Option<u32>) = (None, None);
+    let mut tales = crate::tales::TonightsTales::default();
     // Deadline for the LLM's wrap-up turn before a due schedule move; the
     // bool marks that a prompt containing the wrap-up notice was submitted.
     let mut wrapup: Option<(Instant, bool)> = None;
@@ -399,6 +400,7 @@ pub async fn llm_driver(
         let due = resolve_due_schedule(&state, &schedule).await;
         active_schedule =
             check_schedule_transition(&state, &schedule, active_schedule, due, &label).await;
+        sync_tales(&mut tales, &schedule, active_schedule.0, &label);
     }
 
     // Send initial world state unless the NPC is asleep, or it only thinks
@@ -424,6 +426,7 @@ pub async fn llm_driver(
                 active_schedule.0,
                 memory.as_deref(),
                 terrain.as_deref(),
+                tale_for(&tales, &schedule, active_schedule.0, &s),
             );
             drop(s);
             info!("[{label}] LLM driver: sending initial world state");
@@ -452,6 +455,7 @@ pub async fn llm_driver(
                         skip_movement,
                     )
                     .await;
+                    advance_tale_if_sung(&state, &mut tales).await;
                     last_prompt_at = Instant::now();
                 }
                 Err(e) => {
@@ -693,6 +697,7 @@ pub async fn llm_driver(
                     active_schedule =
                         check_schedule_transition(&state, &schedule, active_schedule, due, &label)
                             .await;
+                    sync_tales(&mut tales, &schedule, active_schedule.0, &label);
                 }
             }
         }
@@ -716,6 +721,7 @@ pub async fn llm_driver(
                 let new_target =
                     handle_response(&state, &response, &memory_file, &favor_file, skip_movement)
                         .await;
+                advance_tale_if_sung(&state, &mut tales).await;
                 if new_target.is_some() {
                     attack_target = new_target;
                 }
@@ -815,6 +821,7 @@ pub async fn llm_driver(
                 active_schedule.0,
                 memory.as_deref(),
                 terrain.as_deref(),
+                tale_for(&tales, &schedule, active_schedule.0, &s),
             );
             record_conversation(&mut s, &events);
             prompt
@@ -835,6 +842,66 @@ pub async fn llm_driver(
         if let Some((_, prompted)) = &mut wrapup {
             *prompted = true;
         }
+    }
+}
+
+/// Keep tonight's set in step with the schedule: draw it when a `tales`
+/// entry begins, keep it through visits (no entry), drop it on any other
+/// entry so the next evening draws afresh. An agent restarted mid-set
+/// draws on its first transition, like any other.
+fn sync_tales(
+    tales: &mut crate::tales::TonightsTales,
+    schedule: &[ScheduleEntry],
+    active: Option<usize>,
+    label: &str,
+) {
+    let Some(i) = active else {
+        return;
+    };
+    if !schedule[i].tales {
+        *tales = crate::tales::TonightsTales::default();
+        return;
+    }
+    if tales.current().is_some() {
+        return;
+    }
+    let ledger = crate::tales::load_ledger(crate::tales::LEDGER_PATH);
+    *tales = crate::tales::TonightsTales::draw(
+        &ledger,
+        crate::tales::PICKS_PER_NIGHT,
+        &mut rand::thread_rng(),
+    );
+    info!(
+        "[{label}] Tonight's tales: {} of {} ledger lines",
+        tales.len(),
+        ledger.len()
+    );
+}
+
+/// The deed to hand the LLM this turn, only while the bard is at a `tales`
+/// entry, in the language the room has been speaking.
+fn tale_for(
+    tales: &crate::tales::TonightsTales,
+    schedule: &[ScheduleEntry],
+    active: Option<usize>,
+    state: &SharedState,
+) -> Option<String> {
+    let deed = tales.current()?;
+    active.filter(|&i| schedule[i].tales)?;
+    let self_name = state.self_player.as_ref().map_or("", |p| p.name.as_str());
+    let room = crate::tales::audience_lang(state.chat_history(), self_name);
+    let lang = crate::tales::tale_lang(room, tales.sung());
+    Some(crate::tales::prompt_section(deed, lang))
+}
+
+/// A recital while a tale was up is it being sung: move to the next one.
+async fn advance_tale_if_sung(
+    state: &Arc<Mutex<SharedState>>,
+    tales: &mut crate::tales::TonightsTales,
+) {
+    let recited = std::mem::take(&mut state.lock().await.recited_this_turn);
+    if recited && tales.current().is_some() {
+        tales.advance();
     }
 }
 

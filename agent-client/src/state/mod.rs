@@ -170,6 +170,18 @@ struct SelfPerformance {
     from: Position,
 }
 
+/// Verses going out one `/recite` at a time. `until` starts as a short
+/// grace (the recite lands before the song does) and follows the song's
+/// clock once one is playing.
+pub struct Recital {
+    lines: Vec<String>,
+    /// Verses sent so far: picks the next line, and the first time through
+    /// (`sent < lines.len()`) goes to the chat log.
+    sent: usize,
+    next_at: std::time::Instant,
+    until: std::time::Instant,
+}
+
 pub struct SharedState {
     pub characters: Vec<Character>,
     pub in_game: bool,
@@ -216,6 +228,9 @@ pub struct SharedState {
     /// movement (like `trade_busy`) and adds a stay-put prompt line;
     /// `stop_fishing` stays the deliberate exit.
     pub self_fishing: bool,
+    /// A recital began this turn; the driver takes it to move tonight's
+    /// tale along.
+    pub recited_this_turn: bool,
     /// Last stance the fight reflex committed to, so each `FishingFight` beat
     /// only reacts on change.
     fishing_stance: Option<onlinerpg_shared::fishing::FishingAction>,
@@ -295,6 +310,7 @@ pub struct SharedState {
     music_performers: HashMap<PlayerId, String>,
     /// Our own running performance (`check_music_finished` is its clock).
     self_performance: Option<SelfPerformance>,
+    recital: Option<Recital>,
     /// Until when the square stays quiet after our own song (`MUSIC_REST_*`).
     self_music_rest_until: Option<std::time::Instant>,
     /// Tips left while we were still playing, as (instance id, event line).
@@ -405,6 +421,7 @@ impl SharedState {
             trade_busy: false,
             trade_declined_until: HashMap::new(),
             self_fishing: false,
+            recited_this_turn: false,
             fishing_stance: None,
             fishing_reaction: None,
             pending_party_invites: Vec::new(),
@@ -434,6 +451,7 @@ impl SharedState {
             seen_nearby_players: HashSet::new(),
             music_performers: HashMap::new(),
             self_performance: None,
+            recital: None,
             self_music_rest_until: None,
             pending_tips: Vec::new(),
             tips_noticed: 0,

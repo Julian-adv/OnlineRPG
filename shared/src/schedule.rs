@@ -66,6 +66,9 @@ pub struct ScheduleEntry {
     /// price meeting closes it with the decision).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub host: bool,
+    /// The bard sings heroic tales here (doc/HEROIC_TALES.md).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tales: bool,
     /// Optional patrol route: waypoints to visit before going to `pos`.
     #[serde(default)]
     pub waypoints: Vec<[f32; 3]>,

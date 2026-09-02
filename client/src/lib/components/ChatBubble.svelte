@@ -126,7 +126,7 @@
     <T.ShapeGeometry args={[bubbleShape]} />
     <T.MeshBasicMaterial
       color="#000000"
-      opacity={0.7}
+      opacity={0.85}
       transparent={true}
       depthTest={false}
     />
@@ -148,6 +148,8 @@
     position={[0, bubbleCenterY + cornerRadius, 0.01]}
     fontSize={0.25}
     color="#ffffff"
+    outlineColor="#000000"
+    outlineWidth={7}
     anchorX="center"
     anchorY="middle"
     maxWidth={MAX_TEXT_WIDTH}

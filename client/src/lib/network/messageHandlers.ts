@@ -137,6 +137,9 @@ import type {
   CharacterClass,
 } from './networkTypes'
 
+/** A recited verse stays up until the next one lands (the bard sends one every ~9s). */
+const RECITAL_BUBBLE_MS = 12000
+
 // A fatal blow arrives twice: as MonsterAttackedPlayer, which lines the cry up
 // with the impact frame, and again as PlayerDead. First claim wins so the
 // scream never doubles; deaths with no blow behind them (debuff ticks) still
@@ -263,7 +266,8 @@ async function applyObjectInteraction(
   playerId: number,
   objectType: string,
   wx: number,
-  wz: number
+  wz: number,
+  objectId?: number | null
 ) {
   // Pickup and the emotes are animations, not placed objects: they happen
   // wherever the player is standing, so the placement search can only ever
@@ -275,7 +279,7 @@ async function applyObjectInteraction(
   }
 
   const { anim, interactOffset, placement, rotation } =
-    await objectManager.resolvePose(objectType, wx, wz)
+    await objectManager.resolvePose(objectType, wx, wz, objectId)
   const pos = placement
     ? { x: placement.x, y: placement.y, z: placement.z }
     : undefined
@@ -288,11 +292,31 @@ async function applyObjectInteraction(
   )
 }
 
+/** A player's spoken line into the chat log, under their name. */
+function logSpokenLine(playerId: number, text: string) {
+  const state = get(gameStore)
+  const isLocal = state.currentPlayer?.id === playerId
+  const speaker = isLocal
+    ? state.currentPlayer
+    : state.otherPlayers.get(playerId)
+  addChatMessage({
+    text,
+    sender: isLocal ? 'local' : 'remote',
+    name: speaker?.name ?? 'Unknown',
+  })
+}
+
 /** Spawn a remote player's visual, apply any object interaction, and store it in game state. */
 function addRemotePlayerToState(state: GameState, sp: ServerPlayer) {
   remotePlayerManager.initPlayer(sp.id, sp.position, sp.rotation)
   if (sp.object_type) {
-    applyObjectInteraction(sp.id, sp.object_type, sp.position.x, sp.position.z)
+    applyObjectInteraction(
+      sp.id,
+      sp.object_type,
+      sp.position.x,
+      sp.position.z,
+      sp.object_id
+    )
   }
   state.otherPlayers.set(sp.id, toRemotePlayer(sp))
   refreshBardZone(state.otherPlayers)
@@ -582,17 +606,15 @@ export function handleServerMessage(
     }
 
     case 'ChatMessage': {
-      const state = get(gameStore)
-      const isLocal = state.currentPlayer?.id === data.player_id
-      const speaker = isLocal
-        ? state.currentPlayer
-        : state.otherPlayers.get(data.player_id)
-      addChatMessage({
-        text: data.message,
-        sender: isLocal ? 'local' : 'remote',
-        name: speaker?.name ?? 'Unknown',
-      })
+      logSpokenLine(data.player_id, data.message)
       addChatBubble(data.player_id, data.message)
+      break
+    }
+
+    case 'Recital': {
+      if (data.logged) logSpokenLine(data.player_id, data.line)
+      // Held until the next verse replaces it.
+      addChatBubble(data.player_id, data.line, RECITAL_BUBBLE_MS)
       break
     }
 
@@ -775,7 +797,8 @@ export function handleServerMessage(
                 serverPlayer.id,
                 serverPlayer.object_type,
                 serverPlayer.position.x,
-                serverPlayer.position.z
+                serverPlayer.position.z,
+                serverPlayer.object_id
               )
             }
             state.otherPlayers.set(serverPlayer.id, player)
@@ -1073,7 +1096,8 @@ export function handleServerMessage(
             serverPlayer.id,
             serverPlayer.object_type,
             serverPlayer.position.x,
-            serverPlayer.position.z
+            serverPlayer.position.z,
+            serverPlayer.object_id
           )
         }
       }
@@ -1215,7 +1239,7 @@ export function handleServerMessage(
         const rp = remotePlayerManager.players.get(data.player_id)
         const wx = rp?.position.x ?? 0
         const wz = rp?.position.z ?? 0
-        applyObjectInteraction(data.player_id, ft, wx, wz)
+        applyObjectInteraction(data.player_id, ft, wx, wz, data.object_id)
       } else {
         remotePlayerManager.handleStopInteraction(data.player_id)
       }

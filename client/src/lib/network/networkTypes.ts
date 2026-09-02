@@ -37,6 +37,8 @@ export type ServerPlayer = {
   torch_on: boolean
   floor_level: number
   object_type?: string
+  /** Placement id of the occupied chair/bed (v47); absent for emotes. */
+  object_id?: number | null
   main_hand?: string | null
   back?: string | null
   back_color?: string | null

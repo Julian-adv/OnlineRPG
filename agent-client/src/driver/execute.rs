@@ -1497,6 +1497,13 @@ pub(super) async fn handle_response(
                     continue;
                 }
             }
+            if let AgentAction::Recite { verses } = action {
+                match s.begin_recital(verses) {
+                    Ok(()) => s.recited_this_turn = true,
+                    Err(reason) => s.push_agent_event(format!("[ActionFailed] recite: {reason}")),
+                }
+                continue;
+            }
             // The server answers a friendless player with nothing at all, so
             // asking would leave the LLM waiting on an event that never comes.
             if matches!(action, AgentAction::FriendsOnline) && s.friends.is_empty() {

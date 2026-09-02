@@ -331,6 +331,13 @@ impl super::GameState {
             return;
         }
 
+        for (command, logged) in [("/recite", true), ("/recite_quiet", false)] {
+            if let Some(line) = strip_command(&message, command) {
+                self.recite(player_id, line, logged).await;
+                return;
+            }
+        }
+
         if message.trim() == "/light_campfire" {
             self.light_npc_campfire(player_id).await;
             return;
@@ -601,41 +608,56 @@ impl super::GameState {
     /// spoken, never run behind `requires_admin`'s back, and `/s /p x` is
     /// spoken, never rerouted to the party.
     async fn speak_locally(&self, player_id: &PlayerId, message: String) {
+        let len = message.len();
+        let msg = ServerMessage::ChatMessage {
+            player_id: *player_id,
+            message,
+        };
+        self.send_speech(player_id, len, msg).await;
+    }
+
+    /// `/recite <line>` (logged) and `/recite_quiet <line>` (bubble only) —
+    /// a verse with speech's reach, mute and block rules.
+    async fn recite(&self, player_id: &PlayerId, line: &str, logged: bool) {
+        if line.is_empty() {
+            return;
+        }
+        let msg = ServerMessage::Recital {
+            player_id: *player_id,
+            line: line.to_string(),
+            logged,
+        };
+        self.send_speech(player_id, line.len(), msg).await;
+    }
+
+    /// Deliver a spoken message to everyone in range who has not blocked
+    /// the speaker; dropped when the speaker is muted or gone.
+    async fn send_speech(&self, player_id: &PlayerId, len: usize, msg: ServerMessage) {
         let player_name = {
             let players = self.players.read().await;
             players.get(player_id).map(|player| player.name.clone())
         };
-
-        if let Some(player_name) = player_name {
-            if self.refuse_if_muted(player_id, &player_name, "chat").await {
-                return;
-            }
-            // Chat content stays out of logs on purpose (privacy, F-012).
-            info!(from = %player_name, len = message.len(), "chat message");
-            let mut recipients = self
-                .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
-                .await;
-            {
-                let blocked = self.blocked_names.read().await;
-                if !blocked.is_empty() {
-                    recipients.retain(|id| {
-                        !blocked
-                            .get(id)
-                            .is_some_and(|names| names.contains(&player_name))
-                    });
-                }
-            }
-            self.send_direct_message_to_players(
-                &recipients,
-                ServerMessage::ChatMessage {
-                    player_id: *player_id,
-                    message,
-                },
-            )
-            .await;
-        } else {
+        let Some(player_name) = player_name else {
             warn!("Chat message from non-existent player: {}", player_id);
+            return;
+        };
+        if self.refuse_if_muted(player_id, &player_name, "chat").await {
+            return;
         }
+        // Chat content stays out of logs on purpose (privacy, F-012).
+        info!(from = %player_name, len, "chat message");
+        let mut recipients = self
+            .player_ids_within(player_id, super::EVENT_DELIVERY_RADIUS)
+            .await;
+        let blocked = self.blocked_names.read().await;
+        if !blocked.is_empty() {
+            recipients.retain(|id| {
+                !blocked
+                    .get(id)
+                    .is_some_and(|names| names.contains(&player_name))
+            });
+        }
+        self.send_direct_message_to_players(&recipients, msg).await;
     }
 
     /// Deliver a whisper to the named player, wherever they are, and echo it

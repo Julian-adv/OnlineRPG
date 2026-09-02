@@ -59,6 +59,65 @@ async fn chat_uses_direct_spatial_fanout_instead_of_global_broadcast() {
     }
 }
 
+/// A verse reaches the same ears as speech but as a bubble-only message,
+/// so a lyric paced over a whole song never lands in the chat log.
+#[tokio::test]
+async fn a_recited_verse_is_logged_once_and_bubbled_always() {
+    let game_state = make_test_game_state("recite_bubble");
+    let auth = make_test_auth("recite_bubble");
+    let bard_id = pid("bard");
+    let near_id = pid("near");
+    let far_id = pid("far");
+    game_state.add_player(make_player("bard", 0.0, 0.0)).await;
+    game_state.add_player(make_player("near", 10.0, 0.0)).await;
+    game_state.add_player(make_player("far", 100.0, 0.0)).await;
+    let mut near_rx = game_state.register_direct_channel(&near_id).await;
+    let mut far_rx = game_state.register_direct_channel(&far_id).await;
+
+    game_state
+        .send_chat_message(
+            &bard_id,
+            "/recite  Of Silvana's blade, the tale is told ".to_string(),
+            &auth,
+        )
+        .await;
+    match near_rx.try_recv() {
+        Ok(ServerMessage::Recital {
+            player_id,
+            line,
+            logged,
+        }) => {
+            assert_eq!(player_id, bard_id);
+            assert_eq!(line, "Of Silvana's blade, the tale is told");
+            assert!(logged, "the first pass reaches the chat log");
+        }
+        other => panic!(
+            "Expected a recital for the nearby listener, got {:?}",
+            other
+        ),
+    }
+    assert!(matches!(far_rx.try_recv(), Err(MpscTryRecvError::Empty)));
+
+    game_state
+        .send_chat_message(&bard_id, "/recite_quiet again".to_string(), &auth)
+        .await;
+    assert!(
+        matches!(
+            near_rx.try_recv(),
+            Ok(ServerMessage::Recital { logged: false, .. })
+        ),
+        "a repeat is bubble-only"
+    );
+
+    game_state
+        .send_chat_message(&bard_id, "/recite   ".to_string(), &auth)
+        .await;
+    assert!(
+        matches!(near_rx.try_recv(), Err(MpscTryRecvError::Empty)),
+        "an empty verse is dropped"
+    );
+}
+
 #[tokio::test]
 async fn who_command_reports_online_counts_only_to_the_requester() {
     let game_state = make_test_game_state("who_command");

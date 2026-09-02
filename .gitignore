@@ -95,6 +95,8 @@ agent-client/data/config.toml
 agent-client/data/prompts/memory/
 agent-client/data/npcs/**/memory.txt
 agent-client/data/npcs/**/favor.json
+# Heroic-tale ledger (doc/HEROIC_TALES.md): real player names, lives on prod
+agent-client/data/tales/
 # Heightmap tiles fetched from the server (regenerable cache)
 agent-client/data/cache/
 # agent-client release archives (tools/package-agent-client.sh, .ps1)

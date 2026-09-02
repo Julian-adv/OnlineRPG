@@ -91,17 +91,22 @@ export class ObjectManager {
     return this.catalogCache.find((d) => d.id === objectType) ?? null
   }
 
-  /** Find the nearest object placement of the given type to a world position, searching all cached regions. */
+  /** The placement a player occupies: the one with `objectId` when the
+   *  server named it, else the nearest of that type — two chairs at one
+   *  table are closer to each other than a sitter's stored position is to
+   *  either, so distance alone seats neighbours on the same chair. */
   findNearestPlacement(
     objectType: string,
     wx: number,
-    wz: number
+    wz: number,
+    objectId?: number | null
   ): ObjectPlacement | null {
     let best: ObjectPlacement | null = null
     let bestDist = Infinity
     for (const region of this.cache.values()) {
       for (const p of region.placements) {
         if (p.type !== objectType) continue
+        if (objectId != null && p.id === objectId) return p
         const dx = p.x - wx
         const dz = p.z - wz
         const dist = dx * dx + dz * dz
@@ -122,7 +127,8 @@ export class ObjectManager {
   async resolvePose(
     objectType: string,
     wx: number,
-    wz: number
+    wz: number,
+    objectId?: number | null
   ): Promise<{
     anim: string
     interactOffset?: Position
@@ -131,7 +137,7 @@ export class ObjectManager {
   }> {
     const [, placement] = await Promise.all([
       this.fetchCatalog(),
-      this.findNearestPlacementAsync(objectType, wx, wz),
+      this.findNearestPlacementAsync(objectType, wx, wz, objectId),
     ])
     const def = this.getCatalogEntry(objectType)
     return {
@@ -145,7 +151,8 @@ export class ObjectManager {
   async findNearestPlacementAsync(
     objectType: string,
     wx: number,
-    wz: number
+    wz: number,
+    objectId?: number | null
   ): Promise<ObjectPlacement | null> {
     // Ensure the region containing this position is loaded
     const tileX = Math.floor(wx / TERRAIN_TILE_SIZE)
@@ -153,7 +160,7 @@ export class ObjectManager {
     const rx = tileToRegion(tileX)
     const rz = tileToRegion(tileZ)
     await this.fetchObject(rx, rz)
-    return this.findNearestPlacement(objectType, wx, wz)
+    return this.findNearestPlacement(objectType, wx, wz, objectId)
   }
 }
 

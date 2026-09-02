@@ -95,8 +95,21 @@ DB(`character_items(item_def_id, enchant, equip_slot, quantity)` + `characters`)
 
 직전 노트의 `## 요약 — 조치 후보`/`## 후속 후보`/"내일 재측정" 항목을 **하나씩** 이번 창에서 재측정해 표로 남긴다(항목 / 이번 결과 / 판정: 해소·개선·미해결·악화). 빠뜨리기 쉬우니 노트 작성 전 마지막에 한다.
 
+## 8-1. 영웅담 원장 (doc/HEROIC_TALES.md)
+
+바드 Signe가 저녁 여관 공연에서 부를 사실 원장. `tales.py`가 창 안 저널에서 **후보**만 뽑는다:
+```
+scp .claude/skills/prod-log-audit/tales.py prod:/tmp/ && \
+ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/tales.py YYYY-MM-DD'
+```
+- 후보를 읽고 노래감인 것만 사용자에게 보인 뒤 prod의 `~/work/OnlineRPG/agent-client/data/tales/ledger.txt`에 **append**한다(리포 밖, gitignore). 형식은 `DATE KIND NAME args key=value`. 스크립트는 절대 직접 쓰지 않는다.
+- `solo=`/`first=`는 원장에 같은 보스가 이미 있는지, `record=`는 DB 최고 인챈트, `level_record`는 DB 최고 레벨과 대조해 채운다.
+- `most_xp`: DB `SELECT character_name, level, xp FROM characters WHERE level >= 5`를 `~/work/notes/openmmo-YYYY-MM-DD-xp.tsv`로 남기고 직전 tsv와 xp 차이 1위를 적는다. 같은 사람이 이어지면 새 줄 대신 `streak=N` 줄 하나.
+- 같은 사람의 같은 종류 사건은 첫 번과 스트릭만. 개명(`renamed to`)·삭제(`Character id=N deleted`)가 보이면 원장의 그 이름을 고치거나 줄을 지운다 — 원장을 고쳐 쓰는 유일한 경우.
+- 봇도 동일하게 오른다. `npc_` 계정만 제외. 금액·IP·계정명은 원장에 넣지 않는다.
+
 ## 9. 노트 구성
 
-1. 창·재시작 이력 → 2. 전체 상태 → 3. 플레이어에게 보였던 문제 → 4. 수상하지만 무해 → 5. 사소 → 6. 대역폭 → 7. 경제 → 8. 인챈트 → 9. 상위/액티브 플레이어 → 10. 봇 → 11. 직전 점검표 대조 → 12. 후속 후보 → 13. 조회 메모(이번에 새로 알게 된 경로·문구·함정).
+1. 창·재시작 이력 → 2. 전체 상태 → 3. 플레이어에게 보였던 문제 → 4. 수상하지만 무해 → 5. 사소 → 6. 대역폭 → 7. 경제 → 8. 인챈트 → 8-1. 영웅담 후보(원장에 붙인 줄) → 9. 상위/액티브 플레이어 → 10. 봇 → 11. 직전 점검표 대조 → 12. 후속 후보 → 13. 조회 메모(이번에 새로 알게 된 경로·문구·함정).
 
 사용자에게는 표 위주로 짧게 보고한다. 숫자는 사용자가 툴 출력을 못 보므로 본문에 직접 적는다. 추정은 추정이라고 쓰고, 나중에 틀린 게 드러나면 정정한다.

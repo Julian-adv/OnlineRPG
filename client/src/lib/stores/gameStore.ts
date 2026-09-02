@@ -226,13 +226,19 @@ export const addCombatMessage = (entry: ChatEntry) =>
 const MIN_BUBBLE_DURATION = 5000
 const MAX_BUBBLE_DURATION = 10000
 
-export const addChatBubble = (playerId: number, message: string) => {
+export const addChatBubble = (
+  playerId: number,
+  message: string,
+  holdMs?: number
+) => {
   gameStore.update((state) => {
     const newChatBubbles = new Map(state.chatBubbles)
-    const duration = Math.min(
-      MAX_BUBBLE_DURATION,
-      Math.max(MIN_BUBBLE_DURATION, MIN_BUBBLE_DURATION + message.length * 50)
-    )
+    const duration =
+      holdMs ??
+      Math.min(
+        MAX_BUBBLE_DURATION,
+        Math.max(MIN_BUBBLE_DURATION, MIN_BUBBLE_DURATION + message.length * 50)
+      )
     newChatBubbles.set(playerId, {
       playerId,
       message,

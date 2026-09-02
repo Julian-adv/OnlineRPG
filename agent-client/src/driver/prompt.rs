@@ -38,6 +38,7 @@ fn monster_within_event_range(state: &SharedState, monster_id: &str) -> bool {
 /// tail of the NPC's memory file, re-read per prompt so notes written this
 /// session reach a stateless backend without a restart; `terrain` is
 /// the surface summary a `TerrainSummaryJob` rendered outside the state lock.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_prompt(
     state: &SharedState,
     events: &[ServerMessage],
@@ -46,6 +47,7 @@ pub(super) fn build_prompt(
     active_schedule_idx: Option<usize>,
     memory: Option<&str>,
     terrain: Option<&str>,
+    tale: Option<String>,
 ) -> String {
     let mut prompt = String::new();
 
@@ -116,6 +118,10 @@ pub(super) fn build_prompt(
     if let Some(ctx) = format_schedule_context(schedule, active_schedule_idx) {
         prompt.push_str(&ctx);
         prompt.push('\n');
+    }
+
+    if let Some(tale) = tale {
+        prompt.push_str(&tale);
     }
 
     if !state.chat_history().is_empty() {
@@ -772,7 +778,7 @@ mod tests {
         ];
         record_conversation(&mut state, &heard);
 
-        let prompt = build_prompt(&state, &[], &[], &[], None, None, None);
+        let prompt = build_prompt(&state, &[], &[], &[], None, None, None, None);
         assert!(prompt.contains("RECENT CONVERSATION"), "{prompt}");
         assert!(
             prompt.contains("[Chat] jake1: first song please"),
@@ -787,9 +793,34 @@ mod tests {
             "no memories, no section: {prompt}"
         );
 
-        let prompt = build_prompt(&state, &[], &[], &[], None, Some("jake1 tips well"), None);
+        let prompt = build_prompt(
+            &state,
+            &[],
+            &[],
+            &[],
+            None,
+            Some("jake1 tips well"),
+            None,
+            None,
+        );
         assert!(prompt.contains("=== YOUR MEMORIES"), "{prompt}");
         assert!(prompt.contains("jake1 tips well"), "{prompt}");
+    }
+
+    /// The evening's deed rides in as its own section; with none handed
+    /// over there is no section to sing from.
+    #[test]
+    fn a_tale_is_a_section_of_its_own() {
+        let (state, _rx) = test_state();
+        let deed = crate::tales::Deed::parse("2026-09-02 boss_kill Alder ogre_boss").unwrap();
+        let section = crate::tales::prompt_section(&deed, crate::tales::Lang::Korean);
+        let prompt = build_prompt(&state, &[], &[], &[], None, None, None, Some(section));
+        assert!(prompt.contains("=== TONIGHT'S TALE"), "{prompt}");
+        assert!(prompt.contains("Alder slew the Ogre Warlord"), "{prompt}");
+        assert!(prompt.contains("Hero: Alder"), "{prompt}");
+        assert!(prompt.contains("Language: Korean"), "{prompt}");
+        let prompt = build_prompt(&state, &[], &[], &[], None, None, None, None);
+        assert!(!prompt.contains("TONIGHT'S TALE"), "{prompt}");
     }
 
     /// A tune someone strikes up nearby is worth a prompt line — the title is

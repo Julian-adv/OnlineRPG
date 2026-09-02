@@ -20,6 +20,7 @@ impl SharedState {
         let is_self = self.self_player_id.as_ref() == Some(player_id);
         let who = if is_self {
             self.self_performance = None;
+            self.recital = None;
             let rest = rand::thread_rng().gen_range(MUSIC_REST_MIN_SECS..=MUSIC_REST_MAX_SECS);
             self.self_music_rest_until =
                 Some(std::time::Instant::now() + std::time::Duration::from_secs(rest));
@@ -164,6 +165,7 @@ impl SharedState {
     /// we have no audio, so this tick is our equivalent — without it an NPC
     /// bard plays one tune forever, or one unbroken stream of them.
     pub fn check_music_finished(&mut self) {
+        self.tick_recital();
         if let Some(rest_until) = self.self_music_rest_until {
             if std::time::Instant::now() >= rest_until {
                 self.self_music_rest_until = None;
@@ -183,6 +185,7 @@ impl SharedState {
             return;
         }
         self.self_performance = None;
+        self.recital = None;
         // A schedule pose (a bed at 2:00) may have replaced the strum before
         // the song's clock ran out; a StopInteraction would only stand us up.
         if self.held_pose().is_none() {
@@ -228,5 +231,70 @@ impl SharedState {
         let instance_id = workhorse.instance_id;
         self.pending_commands
             .push(ClientMessage::EquipItem { instance_id });
+    }
+}
+
+/// Seconds each verse stays up before the next replaces it.
+const RECITE_LINE_SECS: u64 = 9;
+/// How long a recital runs with no song of ours playing yet.
+const RECITE_GRACE_SECS: u64 = 25;
+const MAX_RECITE_LINES: usize = 12;
+/// The web client's bubble truncates past 300 characters.
+const MAX_RECITE_LINE_CHARS: usize = 280;
+
+impl SharedState {
+    /// Start reciting: the first verse waits one interval so the opening
+    /// line and the song announcement keep their bubbles, then the verses
+    /// follow every `RECITE_LINE_SECS`, cycling until our song ends. A new
+    /// recital replaces one still running.
+    pub fn begin_recital(&mut self, verses: &[String]) -> Result<(), String> {
+        let lines: Vec<String> = verses
+            .iter()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.chars().take(MAX_RECITE_LINE_CHARS).collect())
+            .take(MAX_RECITE_LINES)
+            .collect();
+        if lines.is_empty() {
+            return Err("no verses to recite".to_string());
+        }
+        let now = std::time::Instant::now();
+        self.recital = Some(Recital {
+            lines,
+            sent: 0,
+            next_at: now + std::time::Duration::from_secs(RECITE_LINE_SECS),
+            until: now + std::time::Duration::from_secs(RECITE_GRACE_SECS),
+        });
+        Ok(())
+    }
+
+    fn tick_recital(&mut self) {
+        let ends_at = self.self_performance.as_ref().map(|p| p.ends_at);
+        let Some(recital) = self.recital.as_mut() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if let Some(ends_at) = ends_at {
+            recital.until = ends_at;
+        }
+        if now >= recital.until {
+            self.recital = None;
+            return;
+        }
+        if now < recital.next_at {
+            return;
+        }
+        let first_pass = recital.sent < recital.lines.len();
+        let command = if first_pass {
+            "/recite"
+        } else {
+            "/recite_quiet"
+        };
+        let line = &recital.lines[recital.sent % recital.lines.len()];
+        let message = format!("{command} {line}");
+        recital.sent += 1;
+        recital.next_at = now + std::time::Duration::from_secs(RECITE_LINE_SECS);
+        self.pending_commands
+            .push(ClientMessage::ChatMessage { message });
     }
 }

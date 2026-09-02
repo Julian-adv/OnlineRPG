@@ -15,6 +15,7 @@ mod process_group;
 mod shop_info;
 mod splat;
 mod state;
+mod tales;
 mod terrain_http;
 mod title_defs;
 mod transcript;
@@ -461,6 +462,7 @@ pub fn msg_name(msg: &onlinerpg_shared::ServerMessage) -> &'static str {
         ServerMessage::DungeonDoorsState { .. } => "DungeonDoorsState",
         ServerMessage::DungeonDiscoveries { .. } => "DungeonDiscoveries",
         ServerMessage::ChatMessage { .. } => "ChatMessage",
+        ServerMessage::Recital { .. } => "Recital",
         ServerMessage::WhisperMessage { .. } => "WhisperMessage",
         ServerMessage::PartyChatMessage { .. } => "PartyChatMessage",
         ServerMessage::SystemMessage { .. } => "SystemMessage",

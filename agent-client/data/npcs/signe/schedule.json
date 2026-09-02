@@ -39,7 +39,8 @@
       "pos": [-1443.3, 1.3, 4755.0],
       "rotation": -100.0,
       "floor_level": 0,
-      "label": "evening performance spot"
+      "label": "evening performance spot",
+      "tales": true
     }
   ]
 }

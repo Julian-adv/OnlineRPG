@@ -13,6 +13,8 @@ use serde::Deserialize;
 pub(super) enum AgentAction {
     #[serde(rename = "say", alias = "chat")]
     Say { message: String },
+    #[serde(rename = "recite")]
+    Recite { verses: Vec<String> },
     #[serde(rename = "attack")]
     Attack {
         #[serde(
@@ -355,6 +357,15 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   note), and use it when speaking to them first."#,
     },
     ActionSpec {
+        names: &["recite"],
+        aliases: &[],
+        doc: r#"- Recite verses (bards): shown one at a time above your head, paced to
+  the song you play next; the chat log gets each verse once, repeats do
+  not flood it:
+  {"type": "recite", "verses": ["first line", "second line", "third line"]}
+  One sentence per verse. The verses cycle until your song ends."#,
+    },
+    ActionSpec {
         names: &["attack"],
         aliases: &[],
         doc: r#"- Attack a monster:
@@ -680,6 +691,7 @@ impl AgentAction {
             | Self::Fish { .. }
             | Self::Respawn => true,
             Self::Say { .. }
+            | Self::Recite { .. }
             | Self::StopFishing
             | Self::OfferDeal { .. }
             | Self::OpenTrade { .. }
@@ -732,7 +744,7 @@ impl AgentAction {
     /// Whether the action needs no additional outcome event.
     pub(super) fn outcome_speaks_for_itself(&self) -> bool {
         match self {
-            Self::Say { .. } | Self::PartySay { .. } | Self::Wait => true,
+            Self::Say { .. } | Self::Recite { .. } | Self::PartySay { .. } | Self::Wait => true,
             Self::Move { .. }
             | Self::Attack { .. }
             | Self::Follow { .. }
@@ -771,6 +783,7 @@ impl AgentAction {
     pub(super) fn label(&self) -> &'static str {
         match self {
             Self::Say { .. } => "say",
+            Self::Recite { .. } => "recite",
             Self::Attack { .. } => "attack",
             Self::Move { .. } => "move",
             Self::Follow { .. } => "follow",
@@ -1182,6 +1195,8 @@ pub(super) fn action_to_command(
         // Handled in `execute::handle_response` (needs name resolution and a
         // background chase task).
         AgentAction::Follow { .. } => None,
+        // Paced out by the state's recital tick, one `/recite` per verse.
+        AgentAction::Recite { .. } => None,
         AgentAction::Say { message } => Some(ClientMessage::ChatMessage {
             message: message.clone(),
         }),

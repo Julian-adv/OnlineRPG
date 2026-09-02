@@ -864,6 +864,15 @@ pub enum ServerMessage {
         from: String,
         message: String,
     },
+    /// One verse of a recital, paced over a song. `logged` (`/recite`) puts
+    /// it in the chat log as well as the bubble — the first pass of a lyric;
+    /// `/recite_quiet` repeats are bubble-only so the loop does not flood
+    /// the log. Same reach as speech.
+    Recital {
+        player_id: PlayerId,
+        line: String,
+        logged: bool,
+    },
     /// Direct to the invitee: a party invite to answer with `PartyRespond`
     /// before it expires server-side.
     PartyInviteReceived {
