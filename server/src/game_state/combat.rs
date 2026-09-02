@@ -456,10 +456,13 @@ impl super::GameState {
                 .unwrap_or(0)
         };
 
+        let hit_mod = self.hunger_hit_mod(player_id).await;
+
         let (result_hit, result_roll, result_damage) = {
             let def = self.monster_defs.get(&monster_type);
             let target_guard = def.map(|d| i32::from(d.guard)).unwrap_or(10);
-            let attack_bonus = combat::level_attack_bonus(player_level) + str_mod + weapon_enchant;
+            let attack_bonus =
+                combat::level_attack_bonus(player_level) + str_mod + weapon_enchant + hit_mod;
             let result = combat::roll_attack(
                 attack_bonus,
                 target_guard,

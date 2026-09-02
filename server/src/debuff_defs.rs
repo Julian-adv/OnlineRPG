@@ -36,6 +36,9 @@ pub struct DebuffDef {
     /// (the tipsy → drunk → wasted ladder).
     #[serde(default)]
     pub group: Option<String>,
+    /// Flat change to the player's attack bonus on the hit roll (doc/COMBAT.md).
+    #[serde(rename = "hitMod", default)]
+    pub hit_mod: i32,
 }
 
 static DEFS: LazyLock<HashMap<String, DebuffDef>> = LazyLock::new(|| {

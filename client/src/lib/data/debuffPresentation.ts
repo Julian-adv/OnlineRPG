@@ -51,7 +51,7 @@ const PRESENTATION: Record<string, Partial<DebuffPresentation>> = {
   },
   drunk: {
     icon: '🍻',
-    note: 'Slowed · weaker swings',
+    note: 'Slowed · swings miss more',
     applied: 'The room tilts a little. Maybe that was one too many.',
     expired: 'Your head clears.',
   },

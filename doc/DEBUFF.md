@@ -26,17 +26,18 @@
 | `blocksRegen` | true면 HP 자연 회복이 멈춘다 |
 | `group` | 같은 그룹의 디버프는 하나만 유지된다. 새로 걸리면 그룹의 다른 것을 지운다 (취기 단계) |
 | `staggerM` | 클라이언트가 바닥 클릭 목표를 이 거리(m)까지 무작위로 빗나가게 한다. 비어 있으면 0 |
+| `hitMod` | 플레이어 히트 롤의 `attack_bonus`에 더하는 값 ([COMBAT.md](COMBAT.md)). 비어 있으면 0 |
 
 현재 값:
 
-| id | name | chance | durationSecs | dps | moveMult | attackMult | carryMult | armorWeightMult | drainMult | blocksRegen | group | staggerM |
-|----|------|--------|------------|-----|----------|------------|-----------|-----------------|-----------|-------------|-------|----------|
-| food_poisoning | Food Poisoning | 70 | 300 | | 0.6 | 0.6 | 0.6 | | 4 | true | | |
-| bleed | Bleeding | 35 | 8 | 1 | | | | | | true | | |
-| wet | Wet | 100 | 450 | | 0.83 | | | 1.5 | | | | |
-| tipsy | Tipsy | 100 | 300 | | 1.1 | 1.1 | | | | | alcohol | |
-| drunk | Drunk | 100 | 300 | | 0.85 | 0.85 | 0.85 | | | | alcohol | |
-| wasted | Wasted | 100 | 300 | | 0.6 | 0.6 | 0.6 | | | | alcohol | 2.5 |
+| id | name | chance | durationSecs | dps | moveMult | attackMult | carryMult | armorWeightMult | drainMult | blocksRegen | group | staggerM | hitMod |
+|----|------|--------|------------|-----|----------|------------|-----------|-----------------|-----------|-------------|-------|----------|--------|
+| food_poisoning | Food Poisoning | 70 | 300 | | 0.6 | 0.6 | 0.6 | | 4 | true | | | |
+| bleed | Bleeding | 35 | 8 | 1 | | | | | | true | | | |
+| wet | Wet | 100 | 450 | | 0.83 | | | 1.5 | | | | | |
+| tipsy | Tipsy | 100 | 300 | | 1.1 | 1.1 | | | | | alcohol | | |
+| drunk | Drunk | 100 | 300 | | 0.85 | 0.85 | 0.85 | | | | alcohol | | -2 |
+| wasted | Wasted | 100 | 300 | | 0.6 | 0.6 | 0.6 | | | | alcohol | 2.5 | -5 |
 
 아이콘과 문구는 클라이언트의 `debuffPresentation.ts`에 둔다. CSV에는 게임 수치만 적는다 (쉼표 금지, `data/debuffs.json`은 생성물).
 
@@ -126,8 +127,8 @@
 | 단위 합 | 단계 | 효과 |
 |------|------|------|
 | 1 | tipsy | 이동·공격 속도 ×1.1 — 한 잔의 기운 |
-| 2 | drunk | 이동·공격·하중 ×0.85 |
-| 3+ | wasted | 이동·공격·하중 ×0.6, 그리고 클릭한 자리에서 1~2.5m 빗나간 곳으로 걷는다 |
+| 2 | drunk | 이동·공격·하중 ×0.85, 히트 롤 −2 |
+| 3+ | wasted | 이동·공격·하중 ×0.6, 히트 롤 −5, 그리고 클릭한 자리에서 1~2.5m 빗나간 곳으로 걷는다 |
 
 빗나가기는 클라이언트가 한다(`player-control/stagger.ts`): 켜진 디버프 중 가장 큰 `staggerM`만큼(40~100%) 자유 이동 목표를 무작위 방향으로 밀어 보낸다. 다가가기(의자·NPC·상자 등)는 정확히 도착해야 하니 제외한다. 서버는 이동 검증에서 배수만 본다. 잔 기록은 `HungerData.recent_drinks`에 (시각, 단위)로 쌓이며 접속 종료 시 함께 사라진다. 공식 NPC는 hunger 항목이 없어 취하지 않는다. 술은 [HUNGER.md](HUNGER.md) "여관 식사" 참고.
 

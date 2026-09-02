@@ -147,6 +147,11 @@ async fn drinks_climb_the_stages_one_at_a_time() {
             .collect();
         assert_eq!(stages, [expected], "one stage at a time");
     }
+    assert_eq!(
+        game_state.hunger_hit_mod(&guest).await,
+        -5,
+        "wasted swings wide"
+    );
 }
 
 #[tokio::test]

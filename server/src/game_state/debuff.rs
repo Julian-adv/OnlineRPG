@@ -61,6 +61,10 @@ impl HungerData {
         })
     }
 
+    pub(super) fn debuff_hit_mod(&self, now: Instant) -> i32 {
+        self.active(now).map(|d| d.def.hit_mod).sum()
+    }
+
     pub(super) fn debuff_drain_mult(&self, now: Instant) -> f32 {
         self.active(now).map(|d| d.def.drain_mult).product()
     }

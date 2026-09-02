@@ -189,7 +189,7 @@ max_hp += hp_gain
 ```
 
 - `guard`가 곧 명중 목표값이다.
-- 플레이어 `attack_bonus = level / 2`(내림) + STR modifier + 무기 인챈트
+- 플레이어 `attack_bonus = level / 2`(내림) + STR modifier + 무기 인챈트 + 디버프 `hitMod` 합(취기, [DEBUFF.md](DEBUFF.md))
 - 몬스터 `attack_bonus = level` — 플레이어보다 가파르다. 플레이어 guard는
   레벨이 아니라 장비로 오르기 때문이다(아래 "장소 명중 보너스").
   `attackBonus`를 monsters.csv에 적으면 그 값이 우선하고, 던전 깊이

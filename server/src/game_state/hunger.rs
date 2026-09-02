@@ -163,6 +163,14 @@ impl super::GameState {
         self.hunger_mults(player_id).await.1
     }
 
+    /// Flat hit-roll change from the player's debuffs; 0 for the exempt.
+    pub(super) async fn hunger_hit_mod(&self, player_id: &PlayerId) -> i32 {
+        let hunger = self.hunger.read().await;
+        hunger
+            .get(player_id)
+            .map_or(0, |data| data.debuff_hit_mod(Instant::now()))
+    }
+
     /// Weak and `blocksRegen`-debuffed players never regen; Hungry players
     /// only when `include_hungry` (alternate regen ticks — the ×0.5).
     pub(super) async fn hunger_regen_ready(

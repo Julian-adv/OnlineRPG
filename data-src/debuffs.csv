@@ -1,7 +1,7 @@
-id,name,chance,durationSecs,dps,moveMult,attackMult,carryMult,armorWeightMult,drainMult,blocksRegen,group,staggerM
-food_poisoning,Food Poisoning,70,300,,0.6,0.6,0.6,,4,true,,
-bleed,Bleeding,35,8,1,,,,,,true,,
-wet,Wet,100,450,,0.83,,,1.5,,,,
-tipsy,Tipsy,100,300,,1.1,1.1,,,,,alcohol,
-drunk,Drunk,100,300,,0.85,0.85,0.85,,,,alcohol,
-wasted,Wasted,100,300,,0.6,0.6,0.6,,,,alcohol,2.5
+id,name,chance,durationSecs,dps,moveMult,attackMult,carryMult,armorWeightMult,drainMult,blocksRegen,group,staggerM,hitMod
+food_poisoning,Food Poisoning,70,300,,0.6,0.6,0.6,,4,true,,,
+bleed,Bleeding,35,8,1,,,,,,true,,,
+wet,Wet,100,450,,0.83,,,1.5,,,,,
+tipsy,Tipsy,100,300,,1.1,1.1,,,,,alcohol,,
+drunk,Drunk,100,300,,0.85,0.85,0.85,,,,alcohol,,-2
+wasted,Wasted,100,300,,0.6,0.6,0.6,,,,alcohol,2.5,-5
