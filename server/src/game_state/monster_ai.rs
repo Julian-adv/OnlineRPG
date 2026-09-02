@@ -486,6 +486,7 @@ impl super::GameState {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply_ai_move(
         &self,
         monster_id: &str,
