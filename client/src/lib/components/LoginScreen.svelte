@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { assetUrl } from '../utils/assetUrl'
   import { onMount } from 'svelte'
   import { getDefaultServerUrl } from '../utils/networkUtils'
   import AnnouncementsPanel from './AnnouncementsPanel.svelte'
@@ -127,7 +128,11 @@
           width="256"
           height="256"
         >
-          <image href="/textures/flowerx4.png" width="256" height="256" />
+          <image
+            href={assetUrl('/textures/flowerx4.png')}
+            width="256"
+            height="256"
+          />
         </pattern>
       </defs>
       <text stroke="white" stroke-width="3" paint-order="stroke">
