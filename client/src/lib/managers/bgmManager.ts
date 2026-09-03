@@ -4,6 +4,53 @@ import { assetUrl } from '../utils/assetUrl'
 
 const bgmSrc = (file: string) => assetUrl(`/bgm/${file}`)
 
+/** `<audio>` streams with Range requests, which browsers don't reuse across
+ *  page loads even under `immutable`; fetching the whole file first lands a
+ *  200 in the HTTP cache, so each browser downloads a track once. */
+async function loadBgmSrc(file: string): Promise<string> {
+  const url = bgmSrc(file)
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return url
+    return URL.createObjectURL(await res.blob())
+  } catch {
+    return url
+  }
+}
+
+function releaseSrc(src: string) {
+  if (src.startsWith('blob:')) URL.revokeObjectURL(src)
+}
+
+/** Drop the media resource; the element itself waits for GC, but a blob or a
+ *  half-buffered track should not. */
+function releaseElement(el: HTMLAudioElement) {
+  releaseSrc(el.src)
+  el.removeAttribute('src')
+  el.load()
+}
+
+const loads = new WeakMap<HTMLAudioElement, number>()
+
+/** Load `file` into `el` and play it, unless a newer load on the same element
+ *  or `stillWanted()` says the moment has passed. */
+async function attachTrack(
+  el: HTMLAudioElement,
+  file: string,
+  stillWanted: () => boolean
+) {
+  const seq = (loads.get(el) ?? 0) + 1
+  loads.set(el, seq)
+  const src = await loadBgmSrc(file)
+  if (loads.get(el) !== seq || !stillWanted()) {
+    releaseSrc(src)
+    return
+  }
+  releaseSrc(el.src)
+  el.src = src
+  el.play().catch(() => {})
+}
+
 const BATTLE_BGM_FILES = [
   'Blood and Bronze.mp3',
   'Blood and Bronze (1).mp3',
@@ -89,7 +136,6 @@ function applyAudioSettings(
 }
 
 let battleAudio: HTMLAudioElement | null = null
-const battleAudioByFile = new Map<string, HTMLAudioElement>()
 
 /** Walk `el.volume` toward `target` over `ms`, then `onDone(arrived)` —
  *  `arrived` is false when `abort()` cut the fade short. Callers keep the
@@ -133,6 +179,7 @@ let quietTimer: ReturnType<typeof setTimeout> | undefined
 let isFirstTrack = true
 
 function playNext() {
+  if (audio) releaseElement(audio)
   if (mode !== 'normal') return
   if (!isFirstTrack) {
     const delaySec =
@@ -171,8 +218,7 @@ function playTrack() {
 
   applyAudioSettings(audio)
   audio.dataset.trackName = trackName
-  audio.src = bgmSrc(file)
-  audio.play().catch(() => {})
+  void attachTrack(audio, file, () => mode === 'normal' && !get(bgmMuted))
 }
 
 let started = false
@@ -217,26 +263,16 @@ export function startBattleMusic() {
     BATTLE_BGM_FILES[Math.floor(Math.random() * BATTLE_BGM_FILES.length)]
   const trackName = file.replace(/\.(mp3|m4a)$/, '')
 
-  // One element per track, kept for the session: reassigning src on a
-  // shared element re-downloaded the file on every fight.
-  let el = battleAudioByFile.get(file)
-  if (!el) {
-    el = new Audio(bgmSrc(file))
-    el.loop = true
-    el.dataset.trackName = trackName
-    el.addEventListener('playing', () => {
-      currentBgmTrack.set(trackName)
+  if (!battleAudio) {
+    battleAudio = new Audio()
+    battleAudio.loop = true
+    battleAudio.addEventListener('playing', () => {
+      currentBgmTrack.set(battleAudio?.dataset.trackName ?? '')
     })
-    battleAudioByFile.set(file, el)
   }
-  if (battleAudio && battleAudio !== el) battleAudio.pause()
-  battleAudio = el
-
-  applyAudioSettings(el)
-  el.currentTime = 0
-  if (!get(bgmMuted)) {
-    el.play().catch(() => {})
-  }
+  battleAudio.dataset.trackName = trackName
+  applyAudioSettings(battleAudio)
+  void attachTrack(battleAudio, file, () => mode === 'battle' && !get(bgmMuted))
 
   endedCallback?.()
 }
@@ -440,10 +476,7 @@ function releasePerformance(): (() => void) | null {
   const onEnded = performanceEnded
   performanceEnded = null
   performanceAudio.pause()
-  // Drop the media resource too; the element itself waits for GC, but a
-  // half-buffered track should not.
-  performanceAudio.removeAttribute('src')
-  performanceAudio.load()
+  releaseElement(performanceAudio)
   performanceAudio = null
   if (mode === 'performance') {
     mode = 'normal'
@@ -520,8 +553,14 @@ export function playPerformance(
   el.addEventListener('ended', finish)
   el.addEventListener('error', finish)
   el.dataset.trackName = track
-  el.src = bgmSrc(file)
+  if (audible) {
+    mode = 'performance'
+    currentBgmTrack.set(track)
+  }
+  applyPerformanceVolume()
   if (offsetSecs > 0) {
+    // A late listener should hear the tune now, and a blob only plays once
+    // the whole file is down: stream it and seek instead.
     el.addEventListener(
       'loadedmetadata',
       () => {
@@ -531,14 +570,12 @@ export function playPerformance(
       },
       { once: true }
     )
+    el.src = bgmSrc(file)
+    if (audible) startPerformanceFadeIn(el)
+    el.play().catch(() => {})
+  } else {
+    void attachTrack(el, file, () => performanceAudio === el)
   }
-  if (audible) {
-    mode = 'performance'
-    currentBgmTrack.set(track)
-  }
-  applyPerformanceVolume()
-  if (audible && offsetSecs > 0) startPerformanceFadeIn(el)
-  el.play().catch(() => {})
 
   // Whoever was playing lost the floor — tell them, so a performer whose track
   // was cut short leaves the emote instead of strumming in silence.
