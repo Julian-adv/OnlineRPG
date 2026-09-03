@@ -301,7 +301,13 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(std::sync::RwLock::new(cache))
     };
 
+    let maid_names = npcs
+        .iter()
+        .filter(|n| n.serve_tables.unwrap_or(false))
+        .filter_map(|n| n.character_name.clone())
+        .collect();
     let shared = Arc::new(SharedResources {
+        maid_names,
         height_sampler,
         splat_sampler,
         world_cache,

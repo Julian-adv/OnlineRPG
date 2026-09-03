@@ -84,6 +84,10 @@ pub fn dish_ids() -> Vec<&'static str> {
     ids
 }
 
+pub fn menu_line() -> String {
+    dish_ids().join(", ")
+}
+
 /// The dish id an LLM named — by id or display name — among servable food.
 pub fn resolve_dish(asked: &str) -> Option<&'static str> {
     resolve_named(&dish_ids(), asked)

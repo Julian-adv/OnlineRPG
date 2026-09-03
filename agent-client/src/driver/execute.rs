@@ -805,28 +805,42 @@ pub(super) async fn handle_response(
         // the plate down, so only the guest and the dish are checked here.
         if let AgentAction::Serve { player, dish } = action {
             let mut s = state.lock().await;
-            let Some((guest_id, _)) = s.resolve_nearby_player(player) else {
+            let Some(dish_id) = crate::item_defs::resolve_dish(dish) else {
+                s.push_agent_event(format!(
+                    "[ServeFailed] '{dish}' is not on the menu: {}.",
+                    crate::item_defs::menu_line()
+                ));
+                continue;
+            };
+            // We are never in nearby_players, so a plate for ourselves resolves here.
+            let seat = if s.names_self(player) {
+                s.self_player_id.map(|id| {
+                    let me = s.self_player.as_ref();
+                    (
+                        id,
+                        s.own_chair(),
+                        me.map_or(String::new(), |p| p.name.clone()),
+                    )
+                })
+            } else {
+                s.resolve_nearby_player(player).map(|(id, _)| {
+                    let p = &s.nearby_players[&id];
+                    let chair = (p.object_type.as_deref() == Some(crate::state::SIT_OBJECT_TYPE))
+                        .then_some(p.object_id)
+                        .flatten();
+                    (id, chair, p.name.clone())
+                })
+            };
+            let Some((guest_id, chair, guest_name)) = seat else {
                 s.push_agent_event(format!(
                     "[ServeFailed] No one named '{player}' is nearby; nothing was served."
                 ));
                 continue;
             };
-            let seat = s
-                .nearby_players
-                .get(&guest_id)
-                .filter(|p| p.object_type.as_deref() == Some(crate::state::SIT_OBJECT_TYPE))
-                .and_then(|p| p.object_id.map(|id| (id, p.name.clone())));
-            let Some((chair_object_id, guest_name)) = seat else {
+            let Some(chair_object_id) = chair else {
                 s.push_agent_event(format!(
-                    "[ServeFailed] {player} is not sitting at a table — ask them to take a \
-                     seat first, then serve."
-                ));
-                continue;
-            };
-            let Some(dish_id) = crate::item_defs::resolve_dish(dish) else {
-                s.push_agent_event(format!(
-                    "[ServeFailed] '{dish}' is not on the menu: {}.",
-                    crate::item_defs::dish_ids().join(", ")
+                    "[ServeFailed] {guest_name} is not sitting at a table — a seat first, then \
+                     serve."
                 ));
                 continue;
             };
@@ -2248,5 +2262,32 @@ mod tests {
             rx.try_recv(),
             Ok(onlinerpg_shared::ClientMessage::RequestFriendsOnline)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_seated_maid_serves_herself_without_a_trip() {
+        let (mut s, mut rx) = test_state();
+        let mut me = crate::state::tests::test_player(-1450.0, 4754.0);
+        me.name = "Miriel".to_string();
+        me.object_type = Some(crate::state::SIT_OBJECT_TYPE.to_string());
+        me.object_id = Some(41);
+        s.self_player_id = Some(me.id);
+        s.self_player = Some(me);
+        let state = Arc::new(Mutex::new(s));
+        handle_response(
+            &state,
+            r#"{"actions": [{"type": "serve", "player": "Miriel", "dish": "chicken_rice"}]}"#,
+            &None,
+            &None,
+            true,
+        )
+        .await;
+
+        assert!(rx.try_recv().is_err(), "the driver loop sends the plate");
+        let s = state.lock().await;
+        let req = &s.pending_serve[0];
+        assert_eq!(req.guest_id, s.self_player_id.unwrap());
+        assert_eq!(req.chair_object_id, 41);
+        assert_eq!(req.dishes, vec!["chicken_rice".to_string()]);
     }
 }

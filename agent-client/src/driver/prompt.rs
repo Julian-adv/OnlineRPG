@@ -699,6 +699,22 @@ fn price_change_phrase(pct: i32, past: bool) -> String {
     }
 }
 
+pub(super) fn dining_arrival_event(label: &str, serves_self: bool) -> String {
+    let order = if serves_self {
+        "your own meal, once every guest has theirs. The kitchen is yours: serve yourself one \
+         dish and one drink with your own name as the player"
+    } else {
+        "call your order to the inn maid in your own words — one dish and one drink from the \
+         kitchen"
+    };
+    format!(
+        "[Schedule] You have sat down for {label} — {order} ({}). The house feeds its \
+         regulars: no coins, no haggling, nothing from your own bag. Stay seated; the plate \
+         is eaten by itself once it lands.",
+        crate::item_defs::menu_line()
+    )
+}
+
 pub(super) fn meeting_arrival_event() -> String {
     "[Schedule] You have arrived at the merchants' price meeting. Greet the other \
      merchants and open the talk about where prices should go."
@@ -741,6 +757,19 @@ fn format_schedule_context(
 #[cfg(test)]
 mod tests {
     use super::{build_prompt, caught_line, format_event, record_conversation};
+
+    #[test]
+    fn the_dining_cue_names_the_meal_and_the_menu() {
+        let cue = super::dining_arrival_event("eating dinner on the inn's ground floor", false);
+        assert!(cue.contains("sat down for eating dinner"), "{cue}");
+        assert!(
+            cue.contains("chicken_curry") && cue.contains("beer"),
+            "{cue}"
+        );
+        assert!(cue.contains("inn maid"), "{cue}");
+        let own = super::dining_arrival_event("eating dinner on the inn's ground floor", true);
+        assert!(own.contains("your own name"), "{own}");
+    }
 
     #[test]
     fn the_host_closes_with_the_servers_decision() {

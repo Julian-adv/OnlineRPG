@@ -635,10 +635,7 @@ impl SharedState {
                     let was_seated = p.object_type.as_deref() == Some(SIT_OBJECT_TYPE);
                     p.object_type = object_type.clone();
                     p.object_id = *object_id;
-                    if !was_seated
-                        && !p.is_official_npc
-                        && object_type.as_deref() == Some(SIT_OBJECT_TYPE)
-                    {
+                    if !was_seated && object_type.as_deref() == Some(SIT_OBJECT_TYPE) {
                         push_capped(&mut self.recent_seatings, *player_id, MAX_RECENT_SEATINGS);
                     }
                 }

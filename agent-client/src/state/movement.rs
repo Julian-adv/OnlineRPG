@@ -523,6 +523,14 @@ impl SharedState {
     /// Our own pose mirror. `send_command` writes it optimistically on
     /// InteractObject/StopInteraction; the server echo and rejection
     /// converge it.
+    /// The chair we are sitting on, if any.
+    pub fn own_chair(&self) -> Option<u32> {
+        self.self_player
+            .as_ref()
+            .filter(|p| p.object_type.as_deref() == Some(SIT_OBJECT_TYPE))
+            .and_then(|p| p.object_id)
+    }
+
     pub(super) fn set_self_pose(&mut self, object_type: Option<String>, object_id: Option<u32>) {
         if let Some(p) = self.self_player.as_mut() {
             p.object_type = object_type;

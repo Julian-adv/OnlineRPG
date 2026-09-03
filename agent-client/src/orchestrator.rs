@@ -3,7 +3,7 @@
 //! Each NPC gets its own WebSocket connection and session loop, but they share
 //! terrain data (HeightSampler) and world cache (PassabilityCache + houses).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -187,6 +187,9 @@ pub struct SharedResources {
     /// One claim board for the process, so co-located NPCs (the two inn
     /// maids) don't both answer the same bedside or table call.
     pub claims: Arc<driver::VisitClaims>,
+    /// Character names of the NPCs that wait tables: staff feed themselves,
+    /// so they never count as anyone's guest.
+    pub maid_names: HashSet<String>,
     /// `None` when `transcript_dir` is empty; the summary line is logged either way.
     pub transcript: Option<Arc<crate::transcript::Transcript>>,
     pub auth: AuthSource,
@@ -1064,6 +1067,7 @@ fn spawn_llm_task(
         schedule,
         sickroom,
         serve_tables: npc.serve_tables.unwrap_or(false),
+        maid_names: shared.maid_names.clone(),
         tables,
         claims: Arc::clone(&shared.claims),
         api_base_url,
