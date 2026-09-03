@@ -18,7 +18,7 @@
     type CharacterClass,
     type Gender,
   } from './lib/network/socket'
-  import { startBgm } from './lib/managers/bgmManager'
+  import { bgmMuted, startBgm } from './lib/managers/bgmManager'
   import SettingsPanel from './lib/components/SettingsPanel.svelte'
   import { runGpuBenchmark } from './lib/utils/gpuBenchmark'
   import {
@@ -83,6 +83,16 @@
   // applied and would raise "restart required" on a first launch. The probe
   // caps itself at 3s and normally finishes long before login completes.
   let showCanvas = $derived(screen !== 'login' && !gpuProbePending)
+
+  // Bound here so it works on the login and character screens too, ahead of
+  // Edge's own Ctrl+M tab mute. `code` keeps it working under the Korean IME;
+  // Shift is excluded so the browser keeps Ctrl+Shift+M (profile menu).
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.ctrlKey && !event.shiftKey && event.code === 'KeyM') {
+      event.preventDefault()
+      bgmMuted.update((m) => !m)
+    }
+  }
 
   onMount(() => {
     if (!gpuProbePending) return
@@ -323,6 +333,8 @@
     wasPlayerDead = deadNow
   })
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->

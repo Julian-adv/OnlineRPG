@@ -117,6 +117,7 @@
         label="BGM Volume"
         volume={bgmVolume}
         muted={bgmMuted}
+        shortcut="Ctrl+M"
       />
     </div>
 

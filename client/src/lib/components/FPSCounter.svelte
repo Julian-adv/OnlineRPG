@@ -78,15 +78,10 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    // Debug shortcuts follow the panel; Escape and M/I/C/F below are ordinary
-    // gameplay keys, which is why this component still renders for non-admins.
+    // Escape and M/I/C/F are gameplay keys, so this renders for non-admins too.
     if ($isAdminUser && event.ctrlKey && event.key === 'd') {
       event.preventDefault()
       debugVisible.update((v) => !v)
-    }
-    if ($isAdminUser && event.ctrlKey && event.key === 'm') {
-      event.preventDefault()
-      mapEditorMode.update((v) => !v)
     }
     // Claim Escape only when it actually closed an overlay. With nothing
     // open at all, Escape ends a running emote performance instead (dance,
@@ -346,7 +341,7 @@
             class="action-btn map-editor-btn"
             class:active={$mapEditorMode}
             onclick={toggleMapEditor}
-            title="Toggle Map Editor (Ctrl+M)"
+            title="Toggle Map Editor"
           >
             MAP EDIT
           </button>

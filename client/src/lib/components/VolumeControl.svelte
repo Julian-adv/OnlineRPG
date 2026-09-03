@@ -6,9 +6,13 @@
     label: string
     volume: Writable<number>
     muted: Writable<boolean>
+    shortcut?: string
   }
 
-  let { id, label, volume, muted }: Props = $props()
+  let { id, label, volume, muted, shortcut }: Props = $props()
+  const muteTitle = $derived(
+    ($muted ? 'Unmute' : 'Mute') + (shortcut ? ` (${shortcut})` : '')
+  )
 
   function handleChange(e: Event) {
     const target = e.target as HTMLInputElement
@@ -30,7 +34,7 @@
     class="mute-btn"
     class:muted={$muted}
     onclick={() => muted.update((m) => !m)}
-    title={$muted ? 'Unmute' : 'Mute'}
+    title={muteTitle}
   >
     {#if $muted}
       <svg
