@@ -218,7 +218,6 @@
   let stallsLayerRef = $state<GameSceneStallsLayer | undefined>(undefined)
   let mealsLayerRef = $state<GameSceneMealsLayer | undefined>(undefined)
   let objectOverlayRef = $state<ObjectOverlay | undefined>(undefined)
-  let signpostBubbleRef = $state<SignpostBubble | undefined>(undefined)
   let hoverNameLabelRef = $state<HoverNameLabel | undefined>(undefined)
   let signpostBubblePos = $derived(
     $hoveredSignpost
@@ -599,8 +598,6 @@
         performance.now() - otherPlayerAnimationStart
       )
 
-      // Keep the signpost hover bubble facing the camera
-      signpostBubbleRef?.update()
       // Keep the prop hover name label a steady on-screen size
       hoverNameLabelRef?.update()
 
@@ -1333,7 +1330,6 @@
 
 {#if $hoveredSignpost && camera}
   <SignpostBubble
-    bind:this={signpostBubbleRef}
     position={signpostBubblePos}
     {camera}
     message={$hoveredSignpost.text}

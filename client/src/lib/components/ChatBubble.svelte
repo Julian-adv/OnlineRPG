@@ -1,160 +1,149 @@
 <script lang="ts">
-  import { T } from '@threlte/core'
-  import TextLabel from './TextLabel.svelte'
+  import { useTask, useThrelte } from '@threlte/core'
+  import * as THREE from 'three'
   import { truncateGraphemes } from '../utils/textWrap'
   import { billboardScale, billboardZoomT } from '../utils/billboardScale'
-  import type { Vector3 } from 'three'
-  import * as THREE from 'three'
+  import { bubbleLayer } from '../stores/bubbleLayerStore'
 
   interface Props {
-    position: Vector3
-    camera: THREE.Camera | undefined
+    position: THREE.Vector3
+    camera: THREE.OrthographicCamera | undefined
     message: string
   }
 
   let { position, camera, message }: Props = $props()
 
-  const _scratchVec = new THREE.Vector3()
-  const OVERLAY_RENDER_ORDER = 9999
+  const { size, renderStage } = useThrelte()
 
-  const PADDING_X = 0.6
-  const PADDING_Y = 0.3
-  const MAX_TEXT_WIDTH = 5
-  const MAX_BUBBLE_WIDTH = MAX_TEXT_WIDTH + PADDING_X
+  // DOM rather than a mesh so it can paint over the minimap. CSS is authored
+  // at this many px per world unit; --s scales sizes (not a transform, so the
+  // 1px outline stays crisp) to the projected size.
+  const PX_PER_UNIT = 64
   const MAX_DISPLAY_CHARS = 300
+  const RADIUS = 6
+  const TAIL = 7
+  const MIN_HEIGHT = 1.9
+  const MAX_HEIGHT = 2.6
 
-  let textBounds = $state({ width: 1, height: 0.3 })
+  const _anchor = new THREE.Vector3()
+  let el = $state<HTMLDivElement>()
+  let boxEl = $state<HTMLDivElement>()
+  let scale = $state(1)
+  let boxW = $state(0)
+  let boxH = $state(0)
+  let lastX = NaN
+  let lastY = NaN
 
-  let textRef = $state<TextLabel | null>(null)
-  let bubbleGroup = $state<THREE.Group | undefined>(undefined)
+  const tailH = $derived(Math.round(TAIL * scale))
 
-  function handleTextSync() {
-    if (textRef?.textRenderInfo?.blockBounds) {
-      const [minX, minY, maxX, maxY] = textRef.textRenderInfo.blockBounds
-      textBounds = {
-        width: maxX - minX,
-        height: maxY - minY,
-      }
-    }
-  }
-
-  export function update() {
-    if (!bubbleGroup || !camera) return
-
-    // Use a fixed approximate height to avoid circular dependency
-    _scratchVec.set(position.x, position.y + 2.0, position.z)
-    const dist = camera.position.distanceTo(_scratchVec)
-
-    const minHeight = 1.9
-    const maxHeight = 2.6
-
-    const currentScale = billboardScale(dist)
-    const heightOffset =
-      minHeight + billboardZoomT(dist) * (maxHeight - minHeight)
-
-    bubbleGroup.scale.set(currentScale, currentScale, currentScale)
-    bubbleGroup.position.set(position.x, position.y + heightOffset, position.z)
-
-    // Update Rotation
-    // Make the bubble parallel to the camera screen plane
-    // This handles X, Y, and Z rotations automatically and prevents distortion at screen edges
-    bubbleGroup.quaternion.copy(camera.quaternion)
-  }
-
-  // Create rounded rectangle shape for chat bubble with tail
-  function createRoundedRectShape(
-    width: number,
-    height: number,
-    radius: number
-  ): THREE.Shape {
-    const shape = new THREE.Shape()
-    const x = -width / 2
-    const y = radius
-
-    shape.moveTo(x + radius, y)
-    // Bottom edge with curved tail in the center
-    shape.lineTo(-radius, y)
-    shape.quadraticCurveTo(0, y, 0, y - radius)
-    shape.quadraticCurveTo(0, y, radius, y)
-    shape.lineTo(x + width - radius, y)
-    // Right edge
-    shape.quadraticCurveTo(x + width, y, x + width, y + radius)
-    shape.lineTo(x + width, y + height - radius)
-    // Top edge
-    shape.quadraticCurveTo(
-      x + width,
-      y + height,
-      x + width - radius,
-      y + height
-    )
-    shape.lineTo(x + radius, y + height)
-    // Left edge
-    shape.quadraticCurveTo(x, y + height, x, y + height - radius)
-    shape.lineTo(x, y + radius)
-    shape.quadraticCurveTo(x, y, x + radius, y)
-
-    return shape
-  }
-
-  // Create line geometry from shape for border (closed loop)
-  function createBorderGeometry(shape: THREE.Shape): THREE.BufferGeometry {
-    const points = shape.getPoints(32)
-    points.push(points[0]) // close the loop
-    const geometry = new THREE.BufferGeometry().setFromPoints(points)
-    return geometry
-  }
-
-  const bubbleWidth = $derived(
-    Math.min(textBounds.width + PADDING_X, MAX_BUBBLE_WIDTH)
-  )
-  const bubbleHeight = $derived(textBounds.height + PADDING_Y)
-  const cornerRadius = 0.1
-  const bubbleShape = $derived(
-    createRoundedRectShape(bubbleWidth, bubbleHeight, cornerRadius)
-  )
-  const bubbleBorderGeometry = $derived(createBorderGeometry(bubbleShape))
-  const bubbleCenterY = $derived(cornerRadius + bubbleHeight / 2)
   const displayText = $derived.by(() => {
     const truncated = truncateGraphemes(message, MAX_DISPLAY_CHARS)
     return truncated.length < message.length ? truncated + '...' : message
   })
+
+  // Outline and tail are one path so both edges rasterize identically.
+  const shapePath = $derived.by(() => {
+    const r = RADIUS * scale
+    const half = TAIL * scale
+    const cx = boxW / 2
+    const x1 = boxW - 0.5
+    const y1 = boxH - 0.5
+    return (
+      `M${0.5 + r} 0.5H${x1 - r}Q${x1} 0.5 ${x1} ${0.5 + r}V${y1 - r}` +
+      `Q${x1} ${y1} ${x1 - r} ${y1}H${cx + half}` +
+      `Q${cx} ${y1} ${cx} ${y1 + tailH}Q${cx} ${y1} ${cx - half} ${y1}` +
+      `H${0.5 + r}Q0.5 ${y1} 0.5 ${y1 - r}V${0.5 + r}Q0.5 0.5 ${0.5 + r} 0.5Z`
+    )
+  })
+
+  // Reparented into the HUD layer, so .bubble must stay this component's
+  // only root node: Svelte tears down by walking siblings between its roots.
+  $effect(() => {
+    const layer = $bubbleLayer
+    const node = el
+    if (!layer || !node) return
+    layer.append(node)
+    return () => node.remove()
+  })
+
+  $effect(() => {
+    if (!boxEl) return
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry.borderBoxSize[0]
+      boxW = box.inlineSize
+      boxH = box.blockSize
+    })
+    observer.observe(boxEl)
+    return () => observer.disconnect()
+  })
+
+  useTask(
+    () => {
+      if (!el || !camera) return
+      _anchor.set(position.x, position.y + 2.0, position.z)
+      const dist = camera.position.distanceTo(_anchor)
+      _anchor.y =
+        position.y +
+        MIN_HEIGHT +
+        billboardZoomT(dist) * (MAX_HEIGHT - MIN_HEIGHT)
+      camera.updateMatrixWorld()
+      _anchor.project(camera)
+      const { width, height } = size.current
+      const x = Math.round(((_anchor.x + 1) * width) / 2)
+      const y = Math.round(((1 - _anchor.y) * height) / 2) - tailH
+      if (x !== lastX || y !== lastY) {
+        el.style.translate = `${x}px ${y}px`
+        lastX = x
+        lastY = y
+      }
+      const pxPerUnit = (camera.projectionMatrix.elements[5] * height) / 2
+      // Quantized so text reflows only on real zoom steps, not every frame.
+      scale =
+        Math.round(((billboardScale(dist) * pxPerUnit) / PX_PER_UNIT) * 32) / 32
+    },
+    { stage: renderStage, autoInvalidate: false }
+  )
 </script>
 
-<!-- Chat bubble background -->
-<T.Group bind:ref={bubbleGroup}>
-  <T.Mesh position={[0, cornerRadius, 0]} renderOrder={OVERLAY_RENDER_ORDER}>
-    <T.ShapeGeometry args={[bubbleShape]} />
-    <T.MeshBasicMaterial
-      color="#000000"
-      opacity={0.85}
-      transparent={true}
-      depthTest={false}
-    />
-  </T.Mesh>
+<div class="bubble" bind:this={el} style:--s={scale}>
+  <svg class="shape"><path d={shapePath} /></svg>
+  <div class="box" bind:this={boxEl}>{displayText}</div>
+</div>
 
-  <!-- Chat bubble border (white line) -->
-  <T.Line
-    position={[0, cornerRadius, 0.001]}
-    renderOrder={OVERLAY_RENDER_ORDER}
-  >
-    <T is={bubbleBorderGeometry} />
-    <T.LineBasicMaterial color="#ffffff" depthTest={false} />
-  </T.Line>
+<style>
+  .bubble {
+    --s: 1;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: max-content;
+    transform: translate(-50%, -100%);
+  }
 
-  <!-- Chat bubble text -->
-  <TextLabel
-    bind:this={textRef}
-    text={displayText}
-    position={[0, bubbleCenterY + cornerRadius, 0.01]}
-    fontSize={0.25}
-    color="#ffffff"
-    outlineColor="#000000"
-    outlineWidth={7}
-    anchorX="center"
-    anchorY="middle"
-    maxWidth={MAX_TEXT_WIDTH}
-    onsync={handleTextSync}
-    depthTest={false}
-    renderOrder={OVERLAY_RENDER_ORDER}
-  />
-</T.Group>
+  .shape {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    fill: rgba(0, 0, 0, 0.55);
+    stroke: #fff;
+    stroke-width: 1;
+  }
+
+  .box {
+    position: relative;
+    max-width: calc(320px * var(--s));
+    padding: calc(round(8px * var(--s), 1px) + 1px)
+      calc(round(16px * var(--s), 1px) + 1px);
+    color: #fff;
+    font-family: sans-serif;
+    font-size: calc(16px * var(--s));
+    line-height: round(19.2px * var(--s), 1px);
+    text-align: center;
+    text-shadow: 0 0 calc(2px * var(--s)) #000;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+</style>

@@ -45,6 +45,7 @@
     housingEditorMode,
   } from '../stores/debugStore'
   import { minimapEnabled } from '../stores/minimapStore'
+  import { bubbleLayer } from '../stores/bubbleLayerStore'
   import { friendPanelVisible } from '../stores/friendStore'
   import { emotePanelVisible } from '../stores/emoteStore'
   import { mountOverlay } from '../stores/overlayStack'
@@ -153,6 +154,10 @@
   {#if $minimapEnabled && !$mapEditorMode}
     <Minimap />
   {/if}
+  <div
+    class="bubble-layer"
+    bind:this={() => $bubbleLayer, (node) => bubbleLayer.set(node)}
+  ></div>
   <DragGhost />
   <CelestialDebugDialog />
   {#if $mapEditorMode}
@@ -437,6 +442,19 @@
   /* Allow pointer events on interactive HUD children */
   .game-hud :global(*) {
     pointer-events: auto;
+  }
+
+  /* Chat bubbles portal here. No z-index: DOM order puts it over the minimap
+     and under every later sibling. Declared after the :global(*) rule above
+     so bubbles never swallow clicks. */
+  .bubble-layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+  .bubble-layer,
+  .bubble-layer :global(*) {
+    pointer-events: none;
   }
 
   /* Quickslots + menu, bottom-right. Layout-only, so it stays click-through

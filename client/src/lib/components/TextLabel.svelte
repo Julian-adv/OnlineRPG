@@ -26,7 +26,6 @@
     depthOffset?: number
     depthTest?: boolean
     renderOrder?: number
-    onsync?: () => void
     position?: [number, number, number]
     'position.y'?: number
   }
@@ -45,15 +44,11 @@
     depthOffset,
     depthTest = true,
     renderOrder,
-    onsync,
     position = [0, 0, 0],
     'position.y': positionY,
   }: Props = $props()
 
   const PIXELS_PER_UNIT = 256
-
-  // Exported for ChatBubble compatibility (bind:this → ref.textRenderInfo.blockBounds)
-  export const textRenderInfo = { blockBounds: [0, 0, 0, 0] as number[] }
 
   let label: LabelCanvas | null = null
 
@@ -131,15 +126,6 @@
     if (anchorY === 'top') anchorOffsetY = -worldHeight / 2
     else if (anchorY === 'bottom') anchorOffsetY = worldHeight / 2
     else anchorOffsetY = 0
-
-    // Troika-compatible blockBounds: [minX, minY, maxX, maxY] relative to anchor
-    const b = textRenderInfo.blockBounds
-    b[0] = -worldWidth / 2 + anchorOffsetX
-    b[1] = -worldHeight / 2 + anchorOffsetY
-    b[2] = worldWidth / 2 + anchorOffsetX
-    b[3] = worldHeight / 2 + anchorOffsetY
-
-    onsync?.()
   }
 
   $effect(() => {

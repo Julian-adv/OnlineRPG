@@ -234,7 +234,6 @@
   let nametagScale = $state(1)
   let nametagHeight = $state(2.7)
   let nametagGroup = $state<THREE.Group | undefined>(undefined)
-  let chatBubbleInstance = $state<ChatBubble | null>(null)
   let animDebugInfo = $state('')
 
   const damageText = new DamageTextEmitter()
@@ -1171,10 +1170,6 @@
       )
     }
 
-    if (chatBubbleInstance) {
-      chatBubbleInstance.update()
-    }
-
     if (!mixer) return
 
     // Update debug info for slow mode
@@ -1414,10 +1409,5 @@
 
 <!-- Chat bubble (appears above player when they send a message) -->
 {#if chatBubble}
-  <ChatBubble
-    bind:this={chatBubbleInstance}
-    {position}
-    {camera}
-    message={chatBubble}
-  />
+  <ChatBubble {position} {camera} message={chatBubble} />
 {/if}
