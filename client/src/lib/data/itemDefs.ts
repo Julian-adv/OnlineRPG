@@ -1,6 +1,22 @@
 import itemsJson from '../../../../data/items.json'
 import type { EquipSlot } from '../network/networkTypes'
 
+export const WEAPON_TYPE_LABELS = {
+  sword: 'Sword',
+  short_sword: 'Short Sword',
+  dagger: 'Dagger',
+  axe: 'Axe',
+  staff: 'Staff',
+  spear: 'Spear',
+  mace: 'Mace',
+  club: 'Club',
+  bow: 'Bow',
+  crossbow: 'Crossbow',
+  torch: 'Torch',
+} as const
+
+export type WeaponType = keyof typeof WEAPON_TYPE_LABELS
+
 export interface ItemDefinition {
   id: string
   name: string
@@ -13,6 +29,7 @@ export interface ItemDefinition {
   worldModel?: string
   /** Item kind that decides how `dice` is read: "weapon" → damage, "consumable" → healing. */
   category?: string
+  weaponType?: WeaponType
   /** Dice notation (e.g. "1d8", "6d4") whose meaning depends on `category`. */
   dice?: string
   material?: string
@@ -38,6 +55,10 @@ const itemDefs = itemsJson as Record<string, ItemDefinition>
 
 export function getItemDef(itemDefId: string): ItemDefinition | undefined {
   return itemDefs[itemDefId]
+}
+
+export function weaponTypeLabel(weaponType: WeaponType): string {
+  return WEAPON_TYPE_LABELS[weaponType]
 }
 
 /** Cloth colour to render the cape in, or undefined when the back-slot item

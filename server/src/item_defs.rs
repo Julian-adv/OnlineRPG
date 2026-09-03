@@ -31,6 +31,22 @@ impl ItemEffect {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeaponType {
+    Sword,
+    ShortSword,
+    Dagger,
+    Axe,
+    Staff,
+    Spear,
+    Mace,
+    Club,
+    Bow,
+    Crossbow,
+    Torch,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct ItemDefinition {
@@ -49,6 +65,8 @@ pub struct ItemDefinition {
     /// currency).
     #[serde(default)]
     pub category: Option<String>,
+    #[serde(rename = "weaponType", default)]
+    pub weapon_type: Option<WeaponType>,
     /// Dice notation whose meaning depends on `category`.
     #[serde(default)]
     pub dice: Option<String>,
@@ -345,6 +363,12 @@ impl ItemDefs {
             assert!(
                 !(def.stackable && def.equip_slot.is_some()),
                 "item '{}' is both stackable and equippable",
+                def.id
+            );
+            assert_eq!(
+                def.is_weapon(),
+                def.weapon_type.is_some(),
+                "item '{}': category weapon and weaponType must be set together",
                 def.id
             );
         }
@@ -769,5 +793,50 @@ mod tests {
         let rod = defs.get("fishing_rod").expect("fishing_rod def");
         assert!(rod.is_fishing_rod());
         assert!(!rod.is_weapon(), "the rod must not deal weapon damage");
+    }
+
+    #[test]
+    fn weapon_types_cover_the_current_arsenal() {
+        let defs = ItemDefs::load();
+        let expected = [
+            ("iron_sword", WeaponType::Sword),
+            ("worn_iron_sword", WeaponType::Sword),
+            ("notched_iron_sword", WeaponType::Sword),
+            ("steel_longsword", WeaponType::Sword),
+            ("goblin_sword", WeaponType::ShortSword),
+            ("small_sword", WeaponType::ShortSword),
+            ("dagger", WeaponType::Dagger),
+            ("morningstar", WeaponType::Mace),
+            ("greatclub", WeaponType::Club),
+            ("spear", WeaponType::Spear),
+            ("torch", WeaponType::Torch),
+            ("worn_torch", WeaponType::Torch),
+        ];
+
+        for (id, weapon_type) in expected {
+            assert_eq!(defs.get(id).unwrap().weapon_type, Some(weapon_type), "{id}");
+        }
+    }
+
+    #[test]
+    fn weapon_type_wire_names_are_snake_case() {
+        let cases = [
+            ("sword", WeaponType::Sword),
+            ("short_sword", WeaponType::ShortSword),
+            ("dagger", WeaponType::Dagger),
+            ("axe", WeaponType::Axe),
+            ("staff", WeaponType::Staff),
+            ("spear", WeaponType::Spear),
+            ("mace", WeaponType::Mace),
+            ("club", WeaponType::Club),
+            ("bow", WeaponType::Bow),
+            ("crossbow", WeaponType::Crossbow),
+            ("torch", WeaponType::Torch),
+        ];
+
+        for (wire, expected) in cases {
+            let json = format!("\"{wire}\"");
+            assert_eq!(serde_json::from_str::<WeaponType>(&json).unwrap(), expected);
+        }
     }
 }

@@ -4,6 +4,7 @@
     displayName,
     statLabels,
     type ItemDefinition,
+    weaponTypeLabel,
   } from '../data/itemDefs'
 
   interface Props {
@@ -57,6 +58,9 @@
     <span>Weight: {def.weight}</span>
     {#if def.equipSlot}
       <span>Slot: {def.equipSlot.replace(/_/g, ' ')}</span>
+    {/if}
+    {#if def.weaponType}
+      <span>Type: {weaponTypeLabel(def.weaponType)}</span>
     {/if}
     {#if def.category === 'weapon' && def.dice}
       <span>Damage: {def.dice}{enchant > 0 ? `+${enchant}` : ''}</span>
