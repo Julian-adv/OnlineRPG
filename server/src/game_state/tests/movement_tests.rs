@@ -1397,3 +1397,46 @@ async fn under_a_bridge_the_mover_keeps_the_river_bed() {
     assert_eq!(move_to(&game_state, &id, -100.0, 0.0, 55.0).await, -5.0);
     assert_eq!(move_to(&game_state, &id, -100.0, 9.0, 50.0).await, -5.0);
 }
+
+#[tokio::test]
+async fn a_move_drops_a_pose_the_client_never_ended() {
+    let game_state = make_test_game_state("move_drops_pose");
+    let sleeper_id = pid("sleeper");
+    let watcher_id = pid("watcher");
+    game_state
+        .add_player(make_player("sleeper", 0.0, 0.0))
+        .await;
+    game_state
+        .add_player(make_player("watcher", 5.0, 0.0))
+        .await;
+    game_state
+        .set_player_interaction(&sleeper_id, Some("rustic_bed".to_string()), Some(52))
+        .await;
+    let mut watcher_rx = game_state.register_direct_channel(&watcher_id).await;
+
+    game_state
+        .update_player_position(&sleeper_id, move_cmd(pos(3.0), false), false)
+        .await;
+
+    let sleeper = &game_state.get_all_players().await[&sleeper_id];
+    assert_eq!(sleeper.object_type, None);
+    assert_eq!(sleeper.object_id, None);
+    assert!(
+        drain(&mut watcher_rx).iter().any(|m| matches!(
+            m,
+            ServerMessage::PlayerInteractionChanged { player_id, object_type: None, .. }
+                if *player_id == sleeper_id
+        )),
+        "the watcher must be told the pose ended"
+    );
+
+    game_state
+        .update_player_position(&sleeper_id, move_cmd(pos(6.0), false), false)
+        .await;
+    assert!(
+        !drain(&mut watcher_rx)
+            .iter()
+            .any(|m| matches!(m, ServerMessage::PlayerInteractionChanged { .. })),
+        "the pose end must not repeat"
+    );
+}

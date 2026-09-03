@@ -1085,10 +1085,10 @@ impl super::GameState {
             return;
         }
         new_position.x = wrap_world_x(new_position.x);
-        let (current_floor, current_position, health) = {
+        let (current_floor, current_position, health, posed) = {
             let players = self.players.read().await;
             match players.get(player_id) {
-                Some(p) => (p.floor_level, p.position, p.health),
+                Some(p) => (p.floor_level, p.position, p.health, p.object_type.is_some()),
                 None => {
                     warn!("Attempted to move non-existent player: {}", player_id);
                     return;
@@ -1170,6 +1170,10 @@ impl super::GameState {
             new_position.y = self
                 .surface_ground_y(floor_level as u8, &new_position, leg_start.y)
                 .await;
+        }
+        // Pre-read: the write lock is only worth taking for a posed mover.
+        if posed {
+            self.clear_pose_on_move(player_id, "move").await;
         }
         let mut queues = self.movement_intents.write().await;
         let queue = queues.entry(*player_id).or_default();
@@ -1599,6 +1603,7 @@ impl super::GameState {
         update_msg: ServerMessage,
     ) {
         self.movement_intents.write().await.remove(player_id);
+        self.clear_pose_on_move(player_id, "teleport").await;
         let (old_position, old_floor, moved_player) = {
             let mut players = self.players.write().await;
             let Some(player) = players.get_mut(player_id) else {
@@ -2033,6 +2038,24 @@ impl super::GameState {
             )
             .await;
         }
+    }
+
+    /// Clients send StopInteraction before moving; a third-party one that
+    /// skips it would leave late joiners seeing the mover frozen in the pose.
+    /// Not in the position funnel: respawn writes pose and position together,
+    /// and the tick walks the residual leg after InteractObject arrives.
+    async fn clear_pose_on_move(&self, player_id: &PlayerId, source: &str) {
+        let posed = {
+            let players = self.players.read().await;
+            players
+                .get(player_id)
+                .and_then(|p| Some((p.object_type.clone()?, p.name.clone(), p.client_kind)))
+        };
+        let Some((object_type, name, client_kind)) = posed else {
+            return;
+        };
+        info!("Player {name} ({client_kind:?}) left pose {object_type} on {source}");
+        self.set_player_interaction(player_id, None, None).await;
     }
 
     pub async fn set_player_interaction(
