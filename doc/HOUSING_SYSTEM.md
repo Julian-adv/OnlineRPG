@@ -10,6 +10,8 @@
   - https://www.youtube.com/watch?v=5jvJUPrmS18&t=5s
   - https://www.youtube.com/watch?v=zBVPcr7VjyQ
 
+플레이어가 설계도로 집을 짓는 흐름은 [HOUSE_BUILDING.md](HOUSE_BUILDING.md).
+
 ## Data Model
 
 ### HouseData

@@ -210,7 +210,7 @@ Edit `agent-client/data/config.toml` to set the correct port numbers, then run:
 
 ```bash
 cd agent-client
-cargo watch -i "data/prompts/memory/" -x run
+cargo watch -i "data/npcs/**/memory.txt" -i "data/npcs/**/favor.json" -x run
 ```
 
 ### 7. Automatic WASM Rebuild on Shared Code Changes (Recommended)

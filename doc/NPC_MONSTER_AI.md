@@ -84,20 +84,17 @@ Memory는 LLM 응답에 `memory_update` 필드를 추가하여 자동 갱신 (ap
 ```toml
 server = "ws://localhost:10006"
 
+# id는 data-src/npcs.csv의 레지스트리 항목. 이름·클래스와 프롬프트 경로
+# (data/templates/{class}.txt, data/npcs/{id}/instance.txt|memory.txt|favor.json)는
+# 거기서 유도되고, template_prompt/instance_prompt/memory_file/favor_file로 덮어쓸 수 있다.
 [[npcs]]
+id = "karl"
 account = "npc_guard"
-character_name = "경비병 카렌"
-template_prompt = "data/prompts/templates/guard.txt"
-instance_prompt = "data/prompts/instances/karl.txt"
-memory_file = "data/prompts/memory/karl.txt"
 llm = "openrouter"
 
 [[npcs]]
+id = "rica"
 account = "npc_merchant"
-character_name = "상인 리카"
-template_prompt = "data/prompts/templates/merchant.txt"
-instance_prompt = "data/prompts/instances/rica.txt"
-memory_file = "data/prompts/memory/rica.txt"
 llm = "openrouter"
 
 # 몬스터 스폰은 서버가 결정 — 클라이언트 config에서 제거
