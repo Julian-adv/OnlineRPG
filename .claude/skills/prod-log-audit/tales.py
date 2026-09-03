@@ -39,8 +39,7 @@ min_break = 7
 if "--min-break" in sys.argv:
     min_break = int(sys.argv[sys.argv.index("--min-break") + 1])
 
-levels = collections.Counter()
-top_level = {}
+levels = collections.defaultdict(set)
 boss_kills = []
 boss_deaths = []
 enchants = []
@@ -58,8 +57,7 @@ for raw in sys.stdin:
     line = ANSI.sub("", raw).rstrip()
     m = LEVEL.search(line)
     if m:
-        levels[m[1]] += 1
-        top_level[m[1]] = max(top_level.get(m[1], 0), int(m[2]))
+        levels[m[1]].add(int(m[2]))
         continue
     m = KILL.search(line)
     if m:
@@ -113,9 +111,10 @@ for plus, name, item in sorted(breaks, reverse=True):
     if plus >= min_break:
         out("enchant_break", name, item, f"+{plus}")
 if levels:
-    name, gained = levels.most_common(1)[0]
-    out("most_levels", name, f"+{gained}", f"reached={top_level[name]}")
-    print("# level_record: compare", name, "at", top_level[name], "with the DB max level")
+    name = max(levels, key=lambda n: len(levels[n]))
+    top = max(levels[name])
+    out("most_levels", name, f"+{len(levels[name])}", f"reached={top}")
+    print("# level_record: compare", name, "at", top, "with the DB max level")
 if farthest:
     name, (d, x, z) = max(farthest.items(), key=lambda kv: kv[1][0])
     near = min(LABELS, key=lambda k: math.hypot(x - LABELS[k][0], z - LABELS[k][1]), default="?")

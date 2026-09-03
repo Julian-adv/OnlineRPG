@@ -217,13 +217,25 @@ impl AppServerSession {
         if let Some((mut child, mut group)) = lock(&self.process).take() {
             if let Ok(Some(status)) = child.try_wait() {
                 group.disarm();
-                debug!("Codex app-server exited with status {status}");
+                warn!("Codex app-server exited with status {status}");
             }
         }
     }
 
     fn route(&self, thread_id: &str) -> Option<Arc<TurnRoute>> {
         lock(&self.turns).get(thread_id).cloned()
+    }
+
+    async fn delete_thread(self: &Arc<Self>, thread_id: &str) {
+        if self.is_dead() {
+            return;
+        }
+        if let Err(error) = self
+            .request("thread/delete", json!({ "threadId": thread_id }))
+            .await
+        {
+            warn!("Codex app-server kept thread {thread_id}: {error}");
+        }
     }
 
     fn remove_route(&self, thread_id: &str) {
@@ -328,7 +340,7 @@ impl AppServerSession {
             session: Arc::clone(self),
             thread_id: thread_id.clone(),
             route,
-            finished: false,
+            completed: false,
         };
 
         let turn_result = match self
@@ -426,22 +438,17 @@ struct TurnGuard {
     session: Arc<AppServerSession>,
     thread_id: String,
     route: Arc<TurnRoute>,
-    finished: bool,
+    completed: bool,
 }
 
 impl TurnGuard {
     fn finish(&mut self) {
-        self.finished = true;
-        self.session.remove_route(&self.thread_id);
+        self.completed = true;
     }
 }
 
 impl Drop for TurnGuard {
     fn drop(&mut self) {
-        if self.finished {
-            return;
-        }
-
         let thread_id = self.thread_id.clone();
         let route = Arc::clone(&self.route);
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
@@ -449,13 +456,18 @@ impl Drop for TurnGuard {
             return;
         };
         let session = Arc::downgrade(&self.session);
+        let completed = self.completed;
         runtime.spawn(async move {
-            let turn_id = match route.turn_id() {
-                Some(turn_id) => Some(turn_id),
-                None => {
-                    tokio::select! {
-                        _ = route.turn_ready.notified() => route.turn_id(),
-                        _ = tokio::time::sleep(Duration::from_secs(30)) => None,
+            let turn_id = if completed {
+                None
+            } else {
+                match route.turn_id() {
+                    Some(turn_id) => Some(turn_id),
+                    None => {
+                        tokio::select! {
+                            _ = route.turn_ready.notified() => route.turn_id(),
+                            _ = tokio::time::sleep(Duration::from_secs(30)) => None,
+                        }
                     }
                 }
             };
@@ -469,6 +481,7 @@ impl Drop for TurnGuard {
                         .await;
                 }
                 session.remove_route(&thread_id);
+                session.delete_thread(&thread_id).await;
             }
         });
     }
@@ -514,7 +527,9 @@ fn thread_start_params(config: &CodexConfig, cwd: &std::path::Path) -> Value {
         "cwd": cwd.to_string_lossy(),
         "approvalPolicy": "never",
         "sandbox": "read-only",
-        "ephemeral": true,
+        // Ephemeral threads can't be deleted and the app-server keeps ~12 MB each
+        // (OOM every 4h); persisted ones are deleted after the turn instead.
+        "ephemeral": false,
         "serviceName": "openmmo-agent-client"
     })
 }
@@ -689,16 +704,24 @@ mod tests {
         session
     }
 
-    async fn read_request(
-        lines: &mut tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>,
-    ) -> Value {
-        serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap()
+    type Requests = tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>;
+    type Output = tokio::io::WriteHalf<tokio::io::DuplexStream>;
+
+    async fn read_request(lines: &mut Requests) -> Value {
+        let line = tokio::time::timeout(Duration::from_secs(1), lines.next_line())
+            .await
+            .unwrap();
+        serde_json::from_str(&line.unwrap().unwrap()).unwrap()
     }
 
-    async fn write_message(
-        output: &mut tokio::io::WriteHalf<tokio::io::DuplexStream>,
-        message: Value,
-    ) {
+    async fn expect_delete(requests: &mut Requests, output: &mut Output, thread_id: &str) {
+        let delete = read_request(requests).await;
+        assert_eq!(delete["method"], "thread/delete");
+        assert_eq!(delete["params"]["threadId"], thread_id);
+        write_message(output, json!({ "id": delete["id"].clone(), "result": {} })).await;
+    }
+
+    async fn write_message(output: &mut Output, message: Value) {
         output
             .write_all(format!("{message}\n").as_bytes())
             .await
@@ -706,7 +729,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runs_each_turn_in_an_ephemeral_thread() {
+    async fn runs_each_turn_in_a_fresh_thread_then_deletes_it() {
         let (client, server) = duplex(64 * 1024);
         let session = test_session(client);
         let (server_input, mut server_output) = split(server);
@@ -715,7 +738,7 @@ mod tests {
         let fake_server = tokio::spawn(async move {
             let thread = read_request(&mut requests).await;
             assert_eq!(thread["method"], "thread/start");
-            assert_eq!(thread["params"]["ephemeral"], true);
+            assert_eq!(thread["params"]["ephemeral"], false);
             assert_eq!(thread["params"]["sandbox"], "read-only");
             assert_eq!(thread["params"]["approvalPolicy"], "never");
             write_message(
@@ -765,6 +788,8 @@ mod tests {
                 }),
             )
             .await;
+
+            expect_delete(&mut requests, &mut server_output, "thread-1").await;
         });
 
         let config = CodexConfig::default();
@@ -781,7 +806,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_turn_start_removes_its_route() {
+    async fn failed_turn_start_releases_its_thread() {
         let (client, server) = duplex(16 * 1024);
         let session = test_session(client);
         let (server_input, mut server_output) = split(server);
@@ -807,6 +832,8 @@ mod tests {
                 }),
             )
             .await;
+
+            expect_delete(&mut requests, &mut server_output, "thread-failed").await;
         });
 
         let error = session
@@ -822,8 +849,8 @@ mod tests {
             error.to_string(),
             "Codex app-server turn/start failed: turn rejected"
         );
-        assert!(lock(&session.turns).is_empty());
         fake_server.await.unwrap();
+        assert!(lock(&session.turns).is_empty());
     }
 
     #[tokio::test]
@@ -844,12 +871,10 @@ mod tests {
             session: Arc::clone(&session),
             thread_id: "thread-9".to_string(),
             route,
-            finished: false,
+            completed: false,
         });
 
-        let interrupt = tokio::time::timeout(Duration::from_secs(1), read_request(&mut requests))
-            .await
-            .unwrap();
+        let interrupt = read_request(&mut requests).await;
         assert_eq!(interrupt["method"], "turn/interrupt");
         assert_eq!(interrupt["params"]["threadId"], "thread-9");
         assert_eq!(interrupt["params"]["turnId"], "turn-9");
@@ -858,6 +883,8 @@ mod tests {
             json!({ "id": interrupt["id"].clone(), "result": {} }),
         )
         .await;
+
+        expect_delete(&mut requests, &mut server_output, "thread-9").await;
     }
 
     #[test]

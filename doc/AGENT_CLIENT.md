@@ -241,9 +241,10 @@ agent-client 프로세스 안의 모든 Codex NPC가 `codex app-server` 자식 �
 동시에 실행 중인 NPC 턴의 알림을 나눈다. app-server가 종료되거나 pipe가 끊기면 진행
 중인 호출을 모두 실패시키고 다음 호출에서 새 프로세스를 띄운다.
 
-대화 상태는 공유하지 않는다. 매 LLM 호출마다 `thread/start`를 `ephemeral = true`,
+대화 상태는 공유하지 않는다. 매 LLM 호출마다 `thread/start`를 `ephemeral = false`,
 `sandbox = "read-only"`, `approvalPolicy = "never"`로 보내고 그 thread에서 정확히 한
-`turn/start`만 실행한다. 기존과 같이 system prompt와 이번 이벤트를 전부 그 한 턴에
+`turn/start`만 실행한 뒤 `thread/delete`로 지운다. ephemeral thread는 지울 수 없고
+app-server가 thread당 ~12 MB를 붙들어 4시간마다 OOM으로 죽었다(2026-09-03). 기존과 같이 system prompt와 이번 이벤트를 전부 그 한 턴에
 실으며, CWD도 NPC별 빈 임시 디렉터리라 저장소의 `AGENTS.md`나 파일을 보지 않는다.
 따라서 프로세스 기동·초기화 비용만 공유하고 NPC의 단기 기억 범위와 격리는 그대로다.
 
