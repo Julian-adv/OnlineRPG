@@ -94,6 +94,7 @@ temperature = 0.7
 [codex]
 model = "gpt-5.6-luna"                                # Any OpenAI model ID
 system_prompt_file = "data/system_prompt.txt"
+# reasoning_effort = "medium"                        # low ignores conditional rules (torch off by day / indoors); medium follows them
 
 # Generic OpenAI-compatible endpoint settings (used when llm = "openai")
 # Any self-hosted or third-party gateway that speaks the OpenAI chat

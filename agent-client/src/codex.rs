@@ -30,7 +30,7 @@ fn default_model() -> String {
 }
 
 fn default_reasoning_effort() -> String {
-    "low".to_string()
+    "medium".to_string()
 }
 
 fn default_system_prompt_file() -> String {
@@ -756,7 +756,7 @@ mod tests {
             let turn = read_request(&mut requests).await;
             assert_eq!(turn["method"], "turn/start");
             assert_eq!(turn["params"]["threadId"], "thread-1");
-            assert_eq!(turn["params"]["effort"], "low");
+            assert_eq!(turn["params"]["effort"], "medium");
             assert_eq!(turn["params"]["input"][0]["text"], "system\n\nevent");
             write_message(
                 &mut server_output,
