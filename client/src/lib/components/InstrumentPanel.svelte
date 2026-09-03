@@ -26,6 +26,10 @@
     type InstrumentNoteEvent,
   } from '../managers/instrumentInput'
   import { networkManager } from '../network/socket'
+  import {
+    instrument_batch_ms,
+    instrument_max_events_per_batch,
+  } from '../wasm/onlinerpg_shared'
   import { isTypingTarget } from '../utils/dom'
   import { emoteStopRequest } from '../stores/emoteStore'
 
@@ -146,18 +150,16 @@
     if (!$instrumentPanelVisible) return
     batcher?.flush()
     stopInstrumentPerformer(performerId())
-    inputHandler.clearTransientInput()
+    // PlayerControl sends the one StopInteraction when it leaves the emote.
     emoteStopRequest.set(true)
-    networkManager.sendStopInteraction()
     closeInstrumentPanel()
   }
 
+  // Escape is left to the overlay stack, which closes whatever is on top.
   function claimGameplayKey(event: KeyboardEvent): boolean {
     if (event.ctrlKey || event.altKey || event.metaKey) return false
     if (isTypingTarget(event.target)) return false
-    if (event.code !== 'Escape' && !INSTRUMENT_NOTE_BY_CODE.has(event.code)) {
-      return false
-    }
+    if (!INSTRUMENT_NOTE_BY_CODE.has(event.code)) return false
     event.preventDefault()
     event.stopImmediatePropagation()
     return true
@@ -167,17 +169,15 @@
     if (!$instrumentPanelVisible) return
 
     const sessionLatch = new InstrumentKeyLatch()
-    const sessionBatcher = new InstrumentNoteBatcher(sendBatch)
+    const sessionBatcher = new InstrumentNoteBatcher(sendBatch, {
+      batchMs: instrument_batch_ms(),
+      maxEvents: instrument_max_events_per_batch(),
+    })
     latch = sessionLatch
     batcher = sessionBatcher
-    inputHandler.clearTransientInput()
 
     const onKeydown = (event: KeyboardEvent) => {
       if (!claimGameplayKey(event)) return
-      if (event.code === 'Escape') {
-        stop()
-        return
-      }
       strike(event.code, event.repeat)
     }
     const onKeyup = (event: KeyboardEvent) => {
@@ -208,7 +208,6 @@
       stopInstrumentPerformer(performerId())
       clearInstrumentPressedNotes()
       clearStrikeBursts()
-      inputHandler.clearTransientInput()
     }
   })
 </script>

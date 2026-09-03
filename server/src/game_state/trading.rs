@@ -1348,6 +1348,7 @@ impl super::GameState {
         )
         .await;
         self.send_gold_update(player_id).await;
+        self.abort_instrument_if_lost(player_id).await;
 
         if let Some(npc_snapshot) = npc_snapshot {
             self.mark_dirty(npc_player_id).await;
@@ -1677,6 +1678,7 @@ impl super::GameState {
         )
         .await;
         self.send_gold_update(player_id).await;
+        self.abort_instrument_if_lost(player_id).await;
 
         if let Some(npc_snapshot) = npc_snapshot {
             self.mark_dirty(npc_player_id).await;

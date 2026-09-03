@@ -131,11 +131,9 @@ import {
   closeInstrumentPanel,
   openInstrumentPanel,
 } from '../stores/instrumentStore'
-import { inputHandler } from '../managers/inputHandler'
 import {
   instrumentDistanceGain,
   playInstrumentNote,
-  stopAllInstrumentAudio,
   stopInstrumentPerformer,
 } from '../managers/instrumentAudio'
 import { shortestWrappedDeltaX } from '../terrain/world-wrap'
@@ -385,9 +383,7 @@ function clearInstrumentNoteTimers(playerId: number) {
 function stopPlayerInstrument(playerId: number) {
   clearInstrumentNoteTimers(playerId)
   stopInstrumentPerformer(playerId)
-  if (!isSelfPlayer(playerId)) return
-  closeInstrumentPanel()
-  inputHandler.clearTransientInput()
+  if (isSelfPlayer(playerId)) closeInstrumentPanel()
 }
 
 function localFloorLevel(): number {
@@ -1126,8 +1122,6 @@ export function handleServerMessage(
 
     case 'Kicked': {
       console.warn('Kicked from server:', data.reason)
-      stopAllInstrumentAudio()
-      closeInstrumentPanel()
       events.kicked.emit(data.reason)
       resetGameStore()
       monsterManager.reset()
@@ -1318,15 +1312,18 @@ export function handleServerMessage(
     }
 
     case 'PlayerInstrumentStarted': {
-      stopMusicPerformance(data.player_id)
       clearInstrumentNoteTimers(data.player_id)
       stopInstrumentPerformer(data.player_id)
       if (isSelfPlayer(data.player_id)) {
         emotePanelVisible.set(false)
-        inputHandler.clearTransientInput()
         openInstrumentPanel()
         emoteRequest.set(MUSIC_EMOTE_ANIM)
+      } else {
+        holdLiveInstrumentQuiet()
       }
+      // Quiet the playlist first, or stopMusicPerformance restarts it under
+      // the live session.
+      stopMusicPerformance(data.player_id)
       break
     }
 

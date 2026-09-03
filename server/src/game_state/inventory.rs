@@ -632,7 +632,6 @@ impl super::GameState {
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
-        self.cancel_live_instrument_if_active(player_id).await;
         if let Some(torch_on) = torch_on {
             self.set_player_torch(player_id, torch_on).await;
         }
@@ -663,7 +662,6 @@ impl super::GameState {
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
-        self.cancel_live_instrument_if_active(player_id).await;
         if slot == EquipSlot::OffHand {
             self.set_player_torch(player_id, false).await;
         }
@@ -1617,6 +1615,7 @@ impl super::GameState {
         // Dropping the equipped rod is as much "putting it away" as
         // unequipping it — same mid-session abort.
         self.abort_fishing_if_rod_lost(player_id).await;
+        self.abort_instrument_if_lost(player_id).await;
     }
 
     /// Drop multiple bag stacks (partial quantities allowed) in one
@@ -1710,6 +1709,7 @@ impl super::GameState {
 
         self.mark_inventory_dirty(player_id).await;
         self.send_inventory_snapshot(player_id, snapshot).await;
+        self.abort_instrument_if_lost(player_id).await;
 
         // A stackable line lands as a single N-unit pile, a non-stackable one
         // scatters unit by unit since those units are distinct objects. One

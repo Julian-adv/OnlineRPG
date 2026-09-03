@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  INSTRUMENT_BATCH_MAX_EVENTS,
-  INSTRUMENT_BATCH_MS,
   INSTRUMENT_NOTE_BY_CODE,
   InstrumentKeyLatch,
   InstrumentNoteBatcher,
 } from './instrumentInput'
+
+const INSTRUMENT_BATCH_MS = 250
+const INSTRUMENT_BATCH_MAX_EVENTS = 16
+const LIMITS = {
+  batchMs: INSTRUMENT_BATCH_MS,
+  maxEvents: INSTRUMENT_BATCH_MAX_EVENTS,
+}
 
 describe('instrument input', () => {
   it('maps all 22 physical keys to note indexes', () => {
@@ -28,7 +33,7 @@ describe('instrument input', () => {
     let now = 1000
     let scheduled: (() => void) | null = null
     const onFlush = vi.fn()
-    const batcher = new InstrumentNoteBatcher(onFlush, {
+    const batcher = new InstrumentNoteBatcher(onFlush, LIMITS, {
       now: () => now,
       schedule: (callback, delay) => {
         expect(delay).toBe(INSTRUMENT_BATCH_MS)
@@ -56,6 +61,7 @@ describe('instrument input', () => {
     const flushed: unknown[] = []
     const batcher = new InstrumentNoteBatcher(
       (events) => flushed.push(events),
+      LIMITS,
       {
         now: () => now,
         schedule: () => 1 as unknown as ReturnType<typeof setTimeout>,
@@ -73,7 +79,7 @@ describe('instrument input', () => {
 
   it('keeps a rounded offset below the server batch limit', () => {
     let now = 1000
-    const batcher = new InstrumentNoteBatcher(() => {}, {
+    const batcher = new InstrumentNoteBatcher(() => {}, LIMITS, {
       now: () => now,
       schedule: () => 1 as unknown as ReturnType<typeof setTimeout>,
       cancel: () => {},
@@ -91,7 +97,7 @@ describe('instrument input', () => {
 
   it('rejects invalid notes and can discard pending input', () => {
     const onFlush = vi.fn()
-    const batcher = new InstrumentNoteBatcher(onFlush, {
+    const batcher = new InstrumentNoteBatcher(onFlush, LIMITS, {
       schedule: () => 1 as unknown as ReturnType<typeof setTimeout>,
       cancel: () => {},
     })
@@ -105,7 +111,7 @@ describe('instrument input', () => {
 
   it('flushes early at the server batch cap instead of overflowing it', () => {
     const onFlush = vi.fn()
-    const batcher = new InstrumentNoteBatcher(onFlush, {
+    const batcher = new InstrumentNoteBatcher(onFlush, LIMITS, {
       now: () => 1000,
       schedule: () => 1 as unknown as ReturnType<typeof setTimeout>,
       cancel: () => {},

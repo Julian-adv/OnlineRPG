@@ -513,7 +513,7 @@ impl super::GameState {
             return;
         };
 
-        self.live_instrument_players.write().await.remove(player_id);
+        self.remove_live_instrument(player_id).await;
         self.set_player_interaction(
             player_id,
             Some(onlinerpg_shared::messages::MUSIC_EMOTE.to_string()),

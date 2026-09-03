@@ -347,6 +347,8 @@ pub struct GameState {
     /// cleared with the `MUSIC_EMOTE` interaction.
     music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
     live_instrument_players: Arc<RwLock<HashSet<PlayerId>>>,
+    /// Mirrors `live_instrument_players.len()` so move packets skip the lock.
+    live_instruments_active: Arc<std::sync::atomic::AtomicUsize>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -657,6 +659,7 @@ impl GameState {
             monsters: Arc::new(RwLock::new(monster::MonsterRegistry::default())),
             music_performances: Arc::new(RwLock::new(HashMap::new())),
             live_instrument_players: Arc::new(RwLock::new(HashSet::new())),
+            live_instruments_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {

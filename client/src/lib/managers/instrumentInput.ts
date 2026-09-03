@@ -1,10 +1,5 @@
 import { INSTRUMENT_NOTES, getInstrumentNote } from '../data/instrumentNotes'
 
-export const INSTRUMENT_BATCH_MS = 250
-// The server drops any batch above its cap, so flush early instead of
-// letting a keyboard mash grow one past it.
-export const INSTRUMENT_BATCH_MAX_EVENTS = 16
-
 export const INSTRUMENT_NOTE_BY_CODE: ReadonlyMap<string, number> = new Map(
   INSTRUMENT_NOTES.map((note) => [note.keyCode, note.index])
 )
@@ -35,6 +30,13 @@ export class InstrumentKeyLatch {
 
 type TimerHandle = ReturnType<typeof setTimeout>
 
+/** The server's wire limits (`instrument_batch_ms`,
+ *  `instrument_max_events_per_batch`); a batch past either is dropped. */
+export interface InstrumentBatchLimits {
+  batchMs: number
+  maxEvents: number
+}
+
 interface InstrumentNoteBatcherOptions {
   now?: () => number
   schedule?: (callback: () => void, delayMs: number) => TimerHandle
@@ -52,15 +54,18 @@ export class InstrumentNoteBatcher {
   ) => TimerHandle
   private readonly cancel: (timer: TimerHandle) => void
   private readonly onFlush: (events: readonly InstrumentNoteEvent[]) => void
+  private readonly limits: InstrumentBatchLimits
   private events: InstrumentNoteEvent[] = []
   private startedAt: number | null = null
   private timer: TimerHandle | null = null
 
   constructor(
     onFlush: (events: readonly InstrumentNoteEvent[]) => void,
+    limits: InstrumentBatchLimits,
     options: InstrumentNoteBatcherOptions = {}
   ) {
     this.onFlush = onFlush
+    this.limits = limits
     this.now = options.now ?? defaultNow
     this.schedule =
       options.schedule ?? ((callback, delay) => setTimeout(callback, delay))
@@ -74,26 +79,24 @@ export class InstrumentNoteBatcher {
   add(note: number, atMs = this.now()): boolean {
     if (!getInstrumentNote(note) || !Number.isFinite(atMs)) return false
 
-    if (
-      this.startedAt !== null &&
-      atMs - this.startedAt >= INSTRUMENT_BATCH_MS
-    ) {
+    const { batchMs, maxEvents } = this.limits
+    if (this.startedAt !== null && atMs - this.startedAt >= batchMs) {
       this.flush()
     }
 
     if (this.startedAt === null) {
       this.startedAt = atMs
-      this.timer = this.schedule(() => this.flush(), INSTRUMENT_BATCH_MS)
+      this.timer = this.schedule(() => this.flush(), batchMs)
     }
 
     this.events.push({
       note,
       offsetMs: Math.min(
-        INSTRUMENT_BATCH_MS - 1,
+        batchMs - 1,
         Math.max(0, Math.round(atMs - this.startedAt))
       ),
     })
-    if (this.events.length >= INSTRUMENT_BATCH_MAX_EVENTS) this.flush()
+    if (this.events.length >= maxEvents) this.flush()
     return true
   }
 

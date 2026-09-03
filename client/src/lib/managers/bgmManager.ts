@@ -220,7 +220,11 @@ function playTrack() {
 
   applyAudioSettings(audio)
   audio.dataset.trackName = trackName
-  void attachTrack(audio, file, () => mode === 'normal' && !get(bgmMuted))
+  void attachTrack(
+    audio,
+    file,
+    () => mode === 'normal' && !get(bgmMuted) && !playlistQuiet()
+  )
 }
 
 let started = false

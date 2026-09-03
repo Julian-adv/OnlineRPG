@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import { setLiveInstrumentQuiet } from '../managers/bgmManager'
 
 export const instrumentPanelVisible = writable(false)
@@ -11,6 +11,7 @@ export function openInstrumentPanel() {
 }
 
 export function closeInstrumentPanel() {
+  if (!get(instrumentPanelVisible)) return
   instrumentPanelVisible.set(false)
   instrumentPressedNotes.set(new Set())
   setLiveInstrumentQuiet(false)

@@ -104,6 +104,18 @@ pub fn fishing_cast_ms() -> u32 {
     crate::fishing::CAST_MS
 }
 
+/// Live instrument batch window, so the client flushes on the server's clock.
+#[wasm_bindgen]
+pub fn instrument_batch_ms() -> u32 {
+    u32::from(crate::messages::INSTRUMENT_BATCH_MS)
+}
+
+/// Notes per batch the server accepts; the client flushes early at this size.
+#[wasm_bindgen]
+pub fn instrument_max_events_per_batch() -> u32 {
+    crate::messages::INSTRUMENT_MAX_EVENTS_PER_BATCH as u32
+}
+
 /// Cast-vs-walk depth threshold (`MIN_FISHABLE_DEPTH_M`), so the client's
 /// click test uses the server's exact water test.
 #[wasm_bindgen]

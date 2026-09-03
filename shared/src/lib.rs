@@ -198,7 +198,7 @@ pub use entity::{Monster, MonsterLifecycle, MonsterState, Player, PlayerId};
 pub use messages::{
     deserialize_client_msg, deserialize_server_msg, serialize_client_msg, serialize_server_msg,
     ActiveDeal, AttackRejectReason, ClientMessage, DealKind, InstrumentNoteEvent, ServerMessage,
-    INSTRUMENT_BATCH_MS, INSTRUMENT_NOTE_COUNT,
+    INSTRUMENT_BATCH_MS, INSTRUMENT_MAX_EVENTS_PER_BATCH, INSTRUMENT_NOTE_COUNT,
 };
 pub use world::{
     shortest_world_delta_x, wrap_world_x, GameDateTime, NoSpawnZone, Position,

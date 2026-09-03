@@ -793,8 +793,8 @@ class InputHandler {
     if (isTypingTarget(event.target)) {
       return false
     }
-    if (get(instrumentPanelVisible)) return true
     if (event.ctrlKey) return false
+    if (get(instrumentPanelVisible)) return true
 
     // SPACE and S belong to the fishing minigame during a bite/fight;
     // treating S as backward movement would abort the session server-side.
@@ -823,7 +823,6 @@ class InputHandler {
     if (isTypingTarget(event.target)) {
       return false
     }
-    if (get(instrumentPanelVisible)) return true
     return true
   }
 

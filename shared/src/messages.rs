@@ -251,6 +251,9 @@ pub const MUSIC_EMOTE: &str = "guitar_playing";
 
 pub const INSTRUMENT_NOTE_COUNT: u8 = 22;
 pub const INSTRUMENT_BATCH_MS: u16 = 250;
+/// Hands top out near ten notes per 250 ms; slack beyond that only serves
+/// clients flooding listeners, who build audio nodes per note received.
+pub const INSTRUMENT_MAX_EVENTS_PER_BATCH: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstrumentNoteEvent {

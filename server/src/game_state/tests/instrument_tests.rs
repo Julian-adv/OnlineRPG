@@ -71,6 +71,7 @@ async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() 
     let game_state = make_test_game_state("live_instrument_aoi");
     let instrumentist = pid("instrumentist");
     let near = pid("near");
+    let mid = pid("mid");
     let far = pid("far");
     let upstairs_id = pid("upstairs");
 
@@ -78,7 +79,9 @@ async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() 
         .add_player(make_player("instrumentist", 4.0, 6.0))
         .await;
     game_state.add_player(make_player("near", 33.9, 6.0)).await;
-    game_state.add_player(make_player("far", 34.1, 6.0)).await;
+    // Hears the start (32 m event circle) but no notes (30 m).
+    game_state.add_player(make_player("mid", 35.0, 6.0)).await;
+    game_state.add_player(make_player("far", 36.1, 6.0)).await;
     let mut upstairs = make_player("upstairs", 5.0, 6.0);
     upstairs.floor_level = 1;
     game_state.add_player(upstairs).await;
@@ -86,6 +89,7 @@ async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() 
 
     let mut instrumentist_rx = game_state.register_direct_channel(&instrumentist).await;
     let mut near_rx = game_state.register_direct_channel(&near).await;
+    let mut mid_rx = game_state.register_direct_channel(&mid).await;
     let mut far_rx = game_state.register_direct_channel(&far).await;
     let mut upstairs_rx = game_state.register_direct_channel(&upstairs_id).await;
 
@@ -104,6 +108,10 @@ async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() 
 
     let near_start = drain(&mut near_rx);
     assert!(near_start.iter().any(|message| matches!(
+        message,
+        ServerMessage::PlayerInstrumentStarted { player_id } if *player_id == instrumentist
+    )));
+    assert!(drain(&mut mid_rx).iter().any(|message| matches!(
         message,
         ServerMessage::PlayerInstrumentStarted { player_id } if *player_id == instrumentist
     )));
@@ -132,6 +140,7 @@ async fn instrument_notes_use_thirty_meter_same_floor_aoi_and_skip_the_player() 
         }
         other => panic!("Expected nearby instrument notes, got {other:?}"),
     }
+    assert!(drain(&mut mid_rx).is_empty());
     assert!(drain(&mut far_rx).is_empty());
     assert!(drain(&mut upstairs_rx).is_empty());
 }
@@ -308,10 +317,16 @@ async fn play_instrument_command_and_song_playback_are_mutually_exclusive() {
         .read()
         .await
         .contains(&instrumentist));
+    assert_eq!(
+        game_state
+            .live_instruments_active
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
 }
 
 #[tokio::test]
-async fn changing_equipment_ends_the_live_session() {
+async fn losing_the_instrument_ends_the_live_session_but_gear_changes_do_not() {
     let game_state = make_test_game_state("live_instrument_equip");
     let instrumentist = pid("instrumentist");
     game_state
@@ -329,14 +344,52 @@ async fn changing_equipment_ends_the_live_session() {
     );
 
     game_state.start_live_instrument(&instrumentist).await;
+    game_state.equip_item(&instrumentist, 2).await;
+    game_state
+        .unequip_item(&instrumentist, EquipSlot::MainHand)
+        .await;
     assert!(game_state
         .live_instrument_players
         .read()
         .await
         .contains(&instrumentist));
 
-    game_state.equip_item(&instrumentist, 2).await;
+    game_state.drop_item(&instrumentist, 2).await;
+    assert!(game_state
+        .live_instrument_players
+        .read()
+        .await
+        .contains(&instrumentist));
+
+    game_state.drop_item(&instrumentist, 1).await;
     assert!(!game_state
+        .live_instrument_players
+        .read()
+        .await
+        .contains(&instrumentist));
+    assert_eq!(
+        game_state
+            .live_instruments_active
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+#[tokio::test]
+async fn starting_while_walking_drops_the_queued_walk() {
+    let game_state = make_test_game_state("live_instrument_walking_start");
+    let instrumentist = pid("instrumentist");
+    game_state
+        .add_player(make_player("instrumentist", 0.0, 0.0))
+        .await;
+    hand_instrument(&game_state, "instrumentist").await;
+
+    game_state
+        .update_player_position(&instrumentist, move_cmd(pos(1.0), false), false)
+        .await;
+    game_state.start_live_instrument(&instrumentist).await;
+    game_state.tick_player_movement(1.0).await;
+    assert!(game_state
         .live_instrument_players
         .read()
         .await

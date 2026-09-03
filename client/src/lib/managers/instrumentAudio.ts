@@ -1,6 +1,7 @@
 import { get } from 'svelte/store'
 import { getInstrumentNote, type InstrumentNote } from '../data/instrumentNotes'
 import { sfxMuted, sfxVolume } from './sfxManager'
+import { createRng } from '../utils/simplex-noise'
 
 export const INSTRUMENT_MAX_VOICES = 4
 
@@ -99,9 +100,11 @@ export class InstrumentVoicePool {
 interface InstrumentAudioState {
   context: AudioContext
   master: GainNode
-  limiter: DynamicsCompressorNode
+  /** Shared dry and room buses: convolution is linear, and a convolver per
+   *  note is what a crowded plaza cannot afford. */
+  dry: GainNode
+  reverb: ConvolverNode
   buffers: Map<number, AudioBuffer>
-  impulse: AudioBuffer
 }
 
 let audioState: InstrumentAudioState | null = null
@@ -131,15 +134,10 @@ function createReverbImpulse(context: AudioContext): AudioBuffer {
 
   for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
     const samples = impulse.getChannelData(channel)
-    let seed = 0x51f15e ^ (channel * 0x9e3779b9)
+    const random = createRng(0x51f15e ^ (channel * 0x9e3779b9))
     for (let i = 0; i < frames; i++) {
-      seed ^= seed << 13
-      seed ^= seed >>> 17
-      seed ^= seed << 5
-      const noise = ((seed >>> 0) / 0xffffffff) * 2 - 1
       const time = i / context.sampleRate
-      const decay = Math.exp(-12 * time)
-      samples[i] = noise * decay
+      samples[i] = (random() * 2 - 1) * Math.exp(-12 * time)
     }
   }
 
@@ -162,12 +160,21 @@ function ensureAudioState(): InstrumentAudioState | null {
   limiter.release.value = 0.15
   master.connect(limiter)
   limiter.connect(context.destination)
+  const dry = context.createGain()
+  const reverb = context.createConvolver()
+  const wet = context.createGain()
+  dry.gain.value = 0.72
+  reverb.buffer = createReverbImpulse(context)
+  wet.gain.value = 0.065
+  dry.connect(master)
+  reverb.connect(wet)
+  wet.connect(master)
   audioState = {
     context,
     master,
-    limiter,
+    dry,
+    reverb,
     buffers: new Map(),
-    impulse: createReverbImpulse(context),
   }
   sfxVolume.subscribe(() => {
     if (audioState) setMasterGain(audioState)
@@ -176,16 +183,6 @@ function ensureAudioState(): InstrumentAudioState | null {
     if (audioState) setMasterGain(audioState)
   })
   return audioState
-}
-
-function randomSequence(seedValue: number) {
-  let seed = seedValue | 0
-  return () => {
-    seed ^= seed << 13
-    seed ^= seed >>> 17
-    seed ^= seed << 5
-    return ((seed >>> 0) / 0xffffffff) * 2 - 1
-  }
 }
 
 function instrumentPlaybackRate(
@@ -207,11 +204,11 @@ function createPluckedStringBuffer(
   )
   const buffer = context.createBuffer(2, frames, context.sampleRate)
   const ring = new Float32Array(period)
-  const random = randomSequence(0x6d2b79f5 ^ (note.index * 0x45d9f3b))
+  const random = createRng(0x6d2b79f5 ^ (note.index * 0x45d9f3b))
 
   let previousNoise = 0
   for (let i = 0; i < period; i++) {
-    const noise = random()
+    const noise = random() * 2 - 1
     ring[i] = noise - previousNoise * 0.35
     previousNoise = noise
   }
@@ -266,9 +263,6 @@ export function playInstrumentNote(
 
   const source = context.createBufferSource()
   const body = context.createBiquadFilter()
-  const dry = context.createGain()
-  const convolver = context.createConvolver()
-  const wet = context.createGain()
   const output = context.createGain()
   const level = Math.min(1, volume)
 
@@ -277,26 +271,17 @@ export function playInstrumentNote(
   body.type = 'lowpass'
   body.frequency.value = Math.min(7200, note.frequencyHz * 18)
   body.Q.value = 0.45
-  dry.gain.value = 0.72 * level
-  convolver.buffer = state.impulse
-  wet.gain.value = 0.065 * level
-  output.gain.value = 1
+  output.gain.value = level
 
   source.connect(body)
-  body.connect(dry)
-  body.connect(convolver)
-  dry.connect(output)
-  convolver.connect(wet)
-  wet.connect(output)
-  output.connect(state.master)
+  body.connect(output)
+  output.connect(state.dry)
+  output.connect(state.reverb)
 
   let stopped = false
   const disconnect = () => {
     source.disconnect()
     body.disconnect()
-    dry.disconnect()
-    convolver.disconnect()
-    wet.disconnect()
     output.disconnect()
   }
   const stop = () => {

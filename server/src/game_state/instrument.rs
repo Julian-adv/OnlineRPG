@@ -1,16 +1,15 @@
 use crate::types::{PlayerId, ServerMessage};
 use onlinerpg_shared::messages::{
-    InstrumentNoteEvent, INSTRUMENT_BATCH_MS, INSTRUMENT_NOTE_COUNT, MUSIC_EMOTE,
+    InstrumentNoteEvent, INSTRUMENT_BATCH_MS, INSTRUMENT_MAX_EVENTS_PER_BATCH,
+    INSTRUMENT_NOTE_COUNT, MUSIC_EMOTE,
 };
+use std::sync::atomic::Ordering;
 
 pub(super) const INSTRUMENT_AUDIBLE_RADIUS: f32 = 30.0;
-/// Hands top out near ten notes per 250 ms; slack beyond that only serves
-/// clients flooding listeners, who build audio nodes per note received.
-pub(super) const MAX_INSTRUMENT_EVENTS_PER_BATCH: usize = 16;
 
 pub(super) fn valid_instrument_batch(events: &[InstrumentNoteEvent]) -> bool {
     if events.is_empty()
-        || events.len() > MAX_INSTRUMENT_EVENTS_PER_BATCH
+        || events.len() > INSTRUMENT_MAX_EVENTS_PER_BATCH
         || events[0].offset_ms != 0
     {
         return false;
@@ -47,6 +46,8 @@ impl super::GameState {
 
         self.cancel_fishing_if_active(player_id).await;
         self.cancel_grill_if_active(player_id).await;
+        // A queued walk would cancel the session on the next movement tick.
+        self.movement_intents.write().await.remove(player_id);
         // Release the guard before calling out: `set_player_interaction` takes
         // the same lock and tokio's RwLock is not reentrant.
         {
@@ -54,20 +55,34 @@ impl super::GameState {
             if !live_players.insert(*player_id) {
                 return;
             }
+            self.live_instruments_active.fetch_add(1, Ordering::Relaxed);
         }
         self.music_performances.write().await.remove(player_id);
         self.set_player_interaction(player_id, Some(MUSIC_EMOTE.to_string()), None)
             .await;
+        // Same circle as PlayerMusicStarted: a listener who was hearing the
+        // old tune from 31 m must be told it ended.
         self.send_direct_message_to_players_within_position(
             &position,
             floor_level,
-            INSTRUMENT_AUDIBLE_RADIUS,
+            super::EVENT_DELIVERY_RADIUS,
             ServerMessage::PlayerInstrumentStarted {
                 player_id: *player_id,
             },
             None,
         )
         .await;
+        // A cancel (hit, trade, move tick) landing between the insert and the
+        // broadcasts above already sent its None; ours must trail it or the
+        // client keeps the panel open with nothing behind it.
+        if !self
+            .live_instrument_players
+            .read()
+            .await
+            .contains(player_id)
+        {
+            self.set_player_interaction(player_id, None, None).await;
+        }
     }
 
     pub(crate) async fn play_live_instrument_notes(
@@ -131,9 +146,52 @@ impl super::GameState {
         .await;
     }
 
+    /// Lock-free "nobody is performing" check for hot paths (every move packet).
+    fn no_live_instrument_anywhere(&self) -> bool {
+        self.live_instruments_active.load(Ordering::Relaxed) == 0
+    }
+
+    /// The one removal path, so the counter never drifts from the set.
+    pub(super) async fn remove_live_instrument(&self, player_id: &PlayerId) -> bool {
+        let removed = self.live_instrument_players.write().await.remove(player_id);
+        if removed {
+            self.live_instruments_active.fetch_sub(1, Ordering::Relaxed);
+        }
+        removed
+    }
+
     pub(crate) async fn cancel_live_instrument_if_active(&self, player_id: &PlayerId) {
-        if self.live_instrument_players.write().await.remove(player_id) {
+        if self.no_live_instrument_anywhere()
+            || !self
+                .live_instrument_players
+                .read()
+                .await
+                .contains(player_id)
+        {
+            return;
+        }
+        if self.remove_live_instrument(player_id).await {
             self.set_player_interaction(player_id, None, None).await;
+        }
+    }
+
+    /// After an item leaves the bag: the session ends only if the instrument
+    /// went with it. Gear changes never touch it (`holds_instrument` scans
+    /// bag and hands alike).
+    pub(super) async fn abort_instrument_if_lost(&self, player_id: &PlayerId) {
+        if self.no_live_instrument_anywhere() {
+            return;
+        }
+        if !self
+            .live_instrument_players
+            .read()
+            .await
+            .contains(player_id)
+        {
+            return;
+        }
+        if !self.holds_instrument(player_id).await {
+            self.cancel_live_instrument_if_active(player_id).await;
         }
     }
 }
