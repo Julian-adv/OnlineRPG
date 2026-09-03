@@ -15,6 +15,10 @@ import {
   type RaycastContext,
 } from './inputHandler'
 import { resetFishingStore } from '../stores/fishingStore'
+import {
+  closeInstrumentPanel,
+  openInstrumentPanel,
+} from '../stores/instrumentStore'
 import { alwaysRun } from '../stores/movementSettings'
 
 const RECT = { left: 0, top: 0, width: 100, height: 100 }
@@ -68,8 +72,19 @@ function contextWith(overrides: Partial<RaycastContext> = {}): RaycastContext {
 describe('processCanvasClick cast-vs-walk', () => {
   beforeEach(() => {
     resetFishingStore()
+    closeInstrumentPanel()
     inputHandler.clearTransientInput()
     alwaysRun.set(false)
+  })
+
+  it('ignores canvas movement while the instrument keyboard owns input', () => {
+    openInstrumentPanel()
+
+    expect(
+      inputHandler.processCanvasClick(centerClick(), contextWith())
+    ).toEqual({
+      type: 'none',
+    })
   })
 
   it('casts when a rod is equipped and the click lands on deep enough water', () => {

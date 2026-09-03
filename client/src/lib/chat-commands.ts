@@ -115,6 +115,10 @@ const COMMANDS: Record<string, Command> = {
   '/play_music': {
     desc: 'Play a tune where you stand (needs an instrument): /play_music [song]',
   },
+  '/play_instrument': {
+    desc: 'Open the live performance keyboard (needs an instrument)',
+    run: () => networkManager.sendStartInstrument(),
+  },
   '/emote': {
     desc: 'Play an emote where you stand: /emote twist — bare /emote lists them',
     run: (args) => {

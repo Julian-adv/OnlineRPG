@@ -83,6 +83,8 @@ const WS_READ_BUFFER_BYTES: usize = 16 * 1024;
 /// Tighter caps until auth succeeds; legit pre-auth traffic is just auth attempts.
 const UNAUTH_MAX_MESSAGE_BYTES: usize = 8 * 1024;
 const UNAUTH_MAX_MESSAGES: u32 = 30;
+const INSTRUMENT_BATCHES_PER_SEC: f32 = 4.0;
+const INSTRUMENT_BATCH_BURST: f32 = 4.0;
 
 /// A refused client retries, so one stale build can bury the log in identical
 /// lines. Log the first of each window in full and fold the rest into its tail.
@@ -91,6 +93,36 @@ const REFUSAL_LOG_WINDOW: Duration = Duration::from_secs(60);
 struct LogWindow {
     started: Instant,
     suppressed: u32,
+}
+
+struct InstrumentBatchLimiter {
+    tokens: f32,
+    last: Instant,
+}
+
+impl InstrumentBatchLimiter {
+    fn new() -> Self {
+        Self {
+            tokens: INSTRUMENT_BATCH_BURST,
+            last: Instant::now(),
+        }
+    }
+
+    fn allow(&mut self) -> bool {
+        self.allow_at(Instant::now())
+    }
+
+    fn allow_at(&mut self, now: Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.last).as_secs_f32();
+        self.tokens =
+            (self.tokens + elapsed * INSTRUMENT_BATCHES_PER_SEC).min(INSTRUMENT_BATCH_BURST);
+        self.last = now;
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
 }
 
 /// One throttle per reason, so a flood of one kind can't hide the first
@@ -173,6 +205,7 @@ struct ConnectionState {
     /// as long as the connection, which is what saves the store from having
     /// to expire anything.
     cape_upload_token: Option<String>,
+    instrument_batch_limiter: InstrumentBatchLimiter,
 }
 
 /// Positions snapshot requests inside this window are dropped. Steady-state
@@ -218,6 +251,7 @@ impl ConnectionState {
             last_friends_online_poll: None,
             env_reported: false,
             cape_upload_token: None,
+            instrument_batch_limiter: InstrumentBatchLimiter::new(),
         }
     }
 
@@ -1566,6 +1600,24 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::StartInstrument => {
+            if let Some(id) = state.player_id {
+                game_state.start_live_instrument(&id).await;
+            } else {
+                warn!("Received instrument start from client that is not in game");
+            }
+        }
+
+        ClientMessage::InstrumentNotes { events } => {
+            if let Some(id) = state.player_id {
+                if state.instrument_batch_limiter.allow() {
+                    game_state.play_live_instrument_notes(&id, events).await;
+                }
+            } else {
+                warn!("Received instrument notes from client that is not in game");
+            }
+        }
+
         ClientMessage::StopInteraction => {
             if let Some(id) = &state.player_id {
                 game_state.set_player_interaction(id, None, None).await;
@@ -2169,6 +2221,24 @@ mod tests {
         for _ in 0..5 {
             assert_eq!(throttle.claim(), None);
         }
+    }
+
+    #[test]
+    fn instrument_batch_limiter_allows_four_per_second_with_a_four_batch_burst() {
+        let start = Instant::now();
+        let mut limiter = InstrumentBatchLimiter {
+            tokens: INSTRUMENT_BATCH_BURST,
+            last: start,
+        };
+
+        for _ in 0..4 {
+            assert!(limiter.allow_at(start));
+        }
+        assert!(!limiter.allow_at(start));
+        assert!(!limiter.allow_at(start + Duration::from_millis(249)));
+        assert!(limiter.allow_at(start + Duration::from_millis(250)));
+        assert!(!limiter.allow_at(start + Duration::from_millis(250)));
+        assert!(limiter.allow_at(start + Duration::from_millis(500)));
     }
 
     fn client_info(protocol_version: u32, kind: &str) -> ClientMessage {

@@ -2,6 +2,7 @@ import { Vector2, Raycaster } from 'three'
 import * as THREE from 'three'
 import { get } from 'svelte/store'
 import { myFishing } from '../stores/fishingStore'
+import { instrumentPanelVisible } from '../stores/instrumentStore'
 import { pointInRect } from '../stores/dragStore'
 import { sprintRequested } from '../stores/movementSettings'
 import { isTypingTarget } from '../utils/dom'
@@ -243,6 +244,7 @@ class InputHandler {
         this.clearTransientInput()
       }
     })
+    instrumentPanelVisible.subscribe(() => this.clearTransientInput())
   }
 
   get hasKeysPressed(): boolean {
@@ -343,6 +345,7 @@ class InputHandler {
   }
 
   processCanvasClick(event: MouseEvent, context: RaycastContext): ClickIntent {
+    if (get(instrumentPanelVisible)) return { type: 'none' }
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
 
     // Check intersection with monsters
@@ -790,6 +793,7 @@ class InputHandler {
     if (isTypingTarget(event.target)) {
       return false
     }
+    if (get(instrumentPanelVisible)) return true
     if (event.ctrlKey) return false
 
     // SPACE and S belong to the fishing minigame during a bite/fight;
@@ -819,6 +823,7 @@ class InputHandler {
     if (isTypingTarget(event.target)) {
       return false
     }
+    if (get(instrumentPanelVisible)) return true
     return true
   }
 

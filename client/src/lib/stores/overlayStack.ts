@@ -10,6 +10,7 @@ export type OverlayId =
   | 'character'
   | 'friends'
   | 'emotes'
+  | 'instrument'
   | 'inventory'
   | 'trade'
   | 'playerTrade'
@@ -32,6 +33,7 @@ const OVERLAYS: Record<OverlayId, { layer: number; close?: () => void }> = {
   inventory: { layer: 0, close: () => inventoryVisible.set(false) },
   friends: { layer: 0, close: () => friendPanelVisible.set(false) },
   emotes: { layer: 0, close: () => emotePanelVisible.set(false) },
+  instrument: { layer: 1 },
   trade: { layer: 1, close: () => shopSession.set(null) },
   // Closer registered by the window: once a side is locked Escape
   // must not throw the negotiation away.

@@ -235,6 +235,7 @@ pub(crate) use debuff::WET_DEBUFF_ID;
 mod dungeon;
 mod friends;
 pub(crate) mod hunger;
+mod instrument;
 mod inventory;
 mod monster;
 mod monster_ai;
@@ -345,6 +346,7 @@ pub struct GameState {
     /// `elapsed_secs` sent to players entering earshot mid-performance;
     /// cleared with the `MUSIC_EMOTE` interaction.
     music_performances: Arc<RwLock<HashMap<PlayerId, (String, Instant)>>>,
+    live_instrument_players: Arc<RwLock<HashSet<PlayerId>>>,
     broadcast_tx: GameStateSender,
     server_notice: Arc<RwLock<Option<String>>>,
     game_clock: Arc<std::sync::RwLock<GameClock>>,
@@ -555,6 +557,7 @@ impl GameState {
     pub(crate) async fn cancel_concentration_if_active(&self, player_id: &PlayerId) {
         self.cancel_fishing_if_active(player_id).await;
         self.cancel_grill_if_active(player_id).await;
+        self.cancel_live_instrument_if_active(player_id).await;
     }
 
     /// Replace `npc_name`'s schedule, parsing each entry's `at` condition.
@@ -653,6 +656,7 @@ impl GameState {
             player_spatial_cells: Arc::new(RwLock::new(SpatialIndex::default())),
             monsters: Arc::new(RwLock::new(monster::MonsterRegistry::default())),
             music_performances: Arc::new(RwLock::new(HashMap::new())),
+            live_instrument_players: Arc::new(RwLock::new(HashSet::new())),
             broadcast_tx,
             server_notice: Arc::new(RwLock::new(None)),
             game_clock: Arc::new(std::sync::RwLock::new(GameClock {

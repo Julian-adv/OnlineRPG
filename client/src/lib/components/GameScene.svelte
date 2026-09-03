@@ -57,6 +57,7 @@
   import GameSceneTipHatsLayer from './game-scene/GameSceneTipHatsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
+  import { instrumentPanelVisible } from '../stores/instrumentStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
   import ZoneOverlay from './map-editor/ZoneOverlay.svelte'
   import RoadOverlay from './map-editor/RoadOverlay.svelte'
@@ -345,6 +346,13 @@
     if (!currentPlayer || !camera) return
     cameraTarget = resetCameraRotationToDefault(camera, currentPlayer.position)
   }
+
+  let prevInstrumentVisible = $state(false)
+  $effect(() => {
+    const visible = $instrumentPanelVisible
+    if (visible && !prevInstrumentVisible) resetCameraToInitialState()
+    prevInstrumentVisible = visible
+  })
 
   // Reset camera and pan offset when entering/leaving map editor mode
   let prevMapEditorMode = $state(false)
@@ -1066,13 +1074,15 @@
   zoom={ORTHOGRAPHIC_DEFAULT_ZOOM}
 >
   <OrbitControls
-    enableRotate={$cameraRotationEnabled}
+    enableRotate={!$instrumentPanelVisible && $cameraRotationEnabled}
     enablePan={false}
     enableZoom={!$mapEditorMode &&
       !$housingEditorMode &&
+      !$instrumentPanelVisible &&
       $myFishing.phase !== 'bite' &&
       $myFishing.phase !== 'fight'}
-    enabled={(!$mapEditorMode && !$housingEditorMode) || $cameraRotationEnabled}
+    enabled={!$instrumentPanelVisible &&
+      ((!$mapEditorMode && !$housingEditorMode) || $cameraRotationEnabled)}
     target={cameraTarget}
     minZoom={$debugSpeedMode ? 0.15 : 1}
     maxZoom={2}

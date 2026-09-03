@@ -24,6 +24,7 @@ mod fishing_tests;
 mod friend_tests;
 mod house_floor_tests;
 mod hunger_tests;
+mod instrument_tests;
 mod inventory_tests;
 mod meal_tests;
 mod monster_ai_tests;

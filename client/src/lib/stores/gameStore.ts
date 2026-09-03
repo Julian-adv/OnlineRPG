@@ -12,6 +12,8 @@ import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
 import { resetDebuffStore } from './debuffStore'
 import { resetHousingStore } from './housingStore'
+import { resetInstrumentStore } from './instrumentStore'
+import { stopAllInstrumentAudio } from '../managers/instrumentAudio'
 import { groundItemManager } from '../managers/groundItemManager'
 import { campfireManager } from '../managers/campfireManager'
 import { stallManager } from '../managers/stallManager'
@@ -172,6 +174,8 @@ export const resetGameStore = () => {
   resetHungerStore()
   resetDebuffStore()
   resetHousingStore()
+  resetInstrumentStore()
+  stopAllInstrumentAudio()
   groundItemManager.reset()
   campfireManager.reset()
   stallManager.reset()

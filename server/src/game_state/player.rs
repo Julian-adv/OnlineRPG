@@ -967,6 +967,7 @@ impl super::GameState {
     pub async fn remove_player(&self, player_id: &PlayerId) {
         self.movement_intents.write().await.remove(player_id);
         self.music_performances.write().await.remove(player_id);
+        self.live_instrument_players.write().await.remove(player_id);
         self.remove_player_stall(player_id).await;
         self.remove_player_tip_hat(player_id).await;
         self.drop_player_trade(player_id, "They left.").await;
@@ -2094,6 +2095,7 @@ impl super::GameState {
         } else if let Ok(Some((position, floor_level))) = rejected_or_position {
             if object_type.as_deref() != Some(onlinerpg_shared::messages::MUSIC_EMOTE) {
                 self.music_performances.write().await.remove(player_id);
+                self.live_instrument_players.write().await.remove(player_id);
             }
             self.send_direct_message_to_players_within_position(
                 &position,

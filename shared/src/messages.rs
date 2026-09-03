@@ -249,6 +249,15 @@ pub struct ClientEnvReport {
 /// compare `PlayerInteractionChanged` against it to know a tune is over.
 pub const MUSIC_EMOTE: &str = "guitar_playing";
 
+pub const INSTRUMENT_NOTE_COUNT: u8 = 22;
+pub const INSTRUMENT_BATCH_MS: u16 = 250;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InstrumentNoteEvent {
+    pub note: u8,
+    pub offset_ms: u16,
+}
+
 /// One-shot clips `/emote <name>` may store as the interaction. Same wire
 /// contract as [`MUSIC_EMOTE`]: the server validates against this list, and
 /// clients start the clip off the broadcast and send `StopInteraction` when
@@ -449,6 +458,10 @@ pub enum ClientMessage {
     InteractObject {
         object_type: String,
         object_id: u32,
+    },
+    StartInstrument,
+    InstrumentNotes {
+        events: Vec<InstrumentNoteEvent>,
     },
     StopInteraction,
     Heartbeat,
@@ -1213,6 +1226,15 @@ pub enum ServerMessage {
         track: String,
         #[serde(default)]
         elapsed_secs: f32,
+    },
+    PlayerInstrumentStarted {
+        player_id: PlayerId,
+    },
+    PlayerInstrumentNotes {
+        player_id: PlayerId,
+        position: Position,
+        floor_level: i8,
+        events: Vec<InstrumentNoteEvent>,
     },
     InteractionRejected {
         reason: String,
