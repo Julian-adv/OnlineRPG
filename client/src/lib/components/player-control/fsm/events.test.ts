@@ -86,6 +86,7 @@ function makeActions() {
     castFishing: vi.fn(),
     tipHat: vi.fn(),
     tradeAtStall: vi.fn(),
+    eatMeal: vi.fn(),
     requestMove: vi.fn(),
     onInteractionFinished: vi.fn(),
     onPickupGrab: vi.fn(),
