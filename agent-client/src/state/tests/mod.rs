@@ -7,6 +7,7 @@ mod social_tests;
 mod world_tests;
 
 use super::*;
+use onlinerpg_shared::housing::{RoomData, RoomType};
 
 struct NoTiles;
 
@@ -218,3 +219,34 @@ fn mid_shaft_point(dungeon: &crate::dungeon::Dungeon) -> (f32, f32, f32) {
 
 /// The server overwrites Y; this only guards our own pose model.
 const FLOOR_Y_SANITY: f32 = 2.5;
+
+pub(crate) fn room(local_x: i32, floor_level: u8, room_type: RoomType) -> RoomData {
+    RoomData {
+        room_type,
+        roof_type: Default::default(),
+        roof_ridge_dir: Default::default(),
+        stair_reversed: false,
+        local_x,
+        local_z: 0,
+        size_x: 4,
+        size_z: 4,
+        floor_level,
+        floor_texture: 0,
+        roof_texture: 0,
+        wall_height: 3.0,
+        wall_north: Vec::new(),
+        wall_south: Vec::new(),
+        wall_east: Vec::new(),
+        wall_west: Vec::new(),
+    }
+}
+
+pub(crate) fn house(id: &str, origin: Position, rooms: Vec<RoomData>) -> HouseData {
+    HouseData {
+        id: id.to_string(),
+        owner_id: "test".to_string(),
+        origin,
+        rooms,
+        passability: Vec::new(),
+    }
+}

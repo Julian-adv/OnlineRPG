@@ -475,10 +475,10 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
         aliases: &["use_item", "equip", "eat"],
         doc: r#"- Use an item you are carrying — wear a piece of gear, drink a potion, read
   a scroll, eat food. Name it as it appears in your bag. Using gear you
-  already wear takes it off; wearing a torch is how you light your way at
-  night (it lights on equip, so other players see your light too, and goes
-  out when you take it off):
-  {"type": "use", "target": "worn_torch"}"#,
+  already wear takes it off; wearing a torch is how you light your way
+  outside at night (it lights on equip, so other players see your light too,
+  and goes out when you take it off):
+  {"type": "use", "target": "torch"}"#,
     },
     ActionSpec {
         names: &["pickup"],

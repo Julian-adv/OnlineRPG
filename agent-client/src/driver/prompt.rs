@@ -6,7 +6,7 @@
 use onlinerpg_shared::pricing::{PricingNotice, Trend};
 use onlinerpg_shared::{PlayerId, ServerMessage};
 
-use crate::state::{SharedState, NPC_SIGHT_RADIUS};
+use crate::state::{storey_name, SharedState, NPC_SIGHT_RADIUS};
 use onlinerpg_shared::schedule::ScheduleEntry;
 
 fn within_event_range(state: &SharedState, x: f32, z: f32) -> bool {
@@ -362,7 +362,7 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             let floor = match *floor_level {
                 0 => "the surface".to_string(),
                 f if f < 0 => format!("dungeon floor {}", f.unsigned_abs()),
-                f => format!("floor {f}"),
+                f => format!("the {}", storey_name(f as u8)),
             };
             Some(format!(
                 "[Teleported] You were teleported to ({:.0}, {:.0}) on {floor}. Your old \

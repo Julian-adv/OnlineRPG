@@ -216,6 +216,12 @@ impl WorldCache {
         &self.houses
     }
 
+    pub fn is_indoors(&self, x: f32, z: f32, floor: u8) -> bool {
+        self.houses
+            .values()
+            .any(|h| h.room_at(x, z, floor).is_some())
+    }
+
     pub fn add_house(&mut self, house: HouseData) {
         let rp = pathfinding::build_runtime_passability(&house);
         self.passability_cache.insert(house.id.clone(), rp);

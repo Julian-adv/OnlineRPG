@@ -229,6 +229,18 @@ pub struct RoomData {
 }
 
 impl RoomData {
+    /// A stairwell is walked on from both the floor it sits on and the one above.
+    pub fn spans_floor(&self, floor: u8) -> bool {
+        self.floor_level == floor
+            || (self.room_type == RoomType::Stairwell && self.floor_level + 1 == floor)
+    }
+
+    pub fn contains_xz(&self, origin: &Position, x: f32, z: f32) -> bool {
+        let rx = origin.x + self.local_x as f32;
+        let rz = origin.z + self.local_z as f32;
+        x >= rx && x <= rx + self.size_x as f32 && z >= rz && z <= rz + self.size_z as f32
+    }
+
     pub fn wall(&self, dir: WallDirection) -> &[WallConfig] {
         match dir {
             WallDirection::North => &self.wall_north,
@@ -269,4 +281,12 @@ pub struct HouseData {
     pub rooms: Vec<RoomData>,
     #[serde(default)]
     pub passability: Vec<PassabilityGrid>,
+}
+
+impl HouseData {
+    pub fn room_at(&self, x: f32, z: f32, floor: u8) -> Option<&RoomData> {
+        self.rooms
+            .iter()
+            .find(|r| r.spans_floor(floor) && r.contains_xz(&self.origin, x, z))
+    }
 }

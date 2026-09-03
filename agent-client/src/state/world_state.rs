@@ -25,6 +25,14 @@ impl SharedState {
             .and_then(|id| self.stalls.values().find(|s| s.owner == id))
     }
 
+    fn indoor_floor(&self, position: &Position) -> Option<&'static str> {
+        let floor = u8::try_from(self.self_floor_level).ok()?;
+        let world = self.world_cache.read().unwrap();
+        world
+            .is_indoors(position.x, position.z, floor)
+            .then(|| storey_name(floor))
+    }
+
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -40,6 +48,9 @@ impl SharedState {
                 p.position.y,
                 p.position.z
             ));
+            if let Some(floor) = self.indoor_floor(&p.position) {
+                lines.push(format!("You are indoors ({floor})"));
+            }
             if p.health == 0 {
                 lines.push(
                     "You are DEFEATED (HP 0). You do NOT recover on your own and most \
@@ -320,5 +331,14 @@ impl SharedState {
         } else {
             lines.join("\n")
         }
+    }
+}
+
+pub fn storey_name(floor: u8) -> &'static str {
+    match floor {
+        0 => "ground floor",
+        1 => "2nd floor",
+        2 => "3rd floor",
+        _ => "an upper floor",
     }
 }

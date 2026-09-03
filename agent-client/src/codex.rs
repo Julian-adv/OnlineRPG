@@ -614,7 +614,10 @@ impl CodexInvoker {
         system_prompt: String,
         app_server: CodexAppServer,
     ) -> anyhow::Result<Self> {
-        info!("Codex invoker ready (model={})", config.model);
+        info!(
+            "Codex invoker ready (model={}, effort={})",
+            config.model, config.reasoning_effort
+        );
         Ok(Self {
             config: config.clone(),
             system_prompt,

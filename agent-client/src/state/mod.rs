@@ -170,6 +170,7 @@ pub use inventory::{Carried, CarriedBagCopies};
 pub use movement::{MoveTarget, MoveTargetError};
 pub use social::{PendingFriendRequest, PendingPartyInvite, PendingPartySummon, PushedTrade};
 pub use world_cache::WorldCache;
+pub(crate) use world_state::storey_name;
 
 /// Shared state between WebSocket reader and Claude driver tasks.
 /// Our own `/play_music` performance in flight. We have no audio to end it
