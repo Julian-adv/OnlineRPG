@@ -34,9 +34,9 @@ describe('landPlots', () => {
     expect(plotAddress(16 * 1024 - 32, 0).rx).toBe(-16)
   })
 
-  it('cycles grades prime → pioneer → nobuild → prime', () => {
-    expect(nextGrade(LandGrade.Prime)).toBe(LandGrade.Pioneer)
-    expect(nextGrade(LandGrade.Pioneer)).toBe(LandGrade.NoBuild)
-    expect(nextGrade(LandGrade.NoBuild)).toBe(LandGrade.Prime)
+  it('cycles grades crown → homestead → reserved → crown', () => {
+    expect(nextGrade(LandGrade.Crown)).toBe(LandGrade.Homestead)
+    expect(nextGrade(LandGrade.Homestead)).toBe(LandGrade.Reserved)
+    expect(nextGrade(LandGrade.Reserved)).toBe(LandGrade.Crown)
   })
 })

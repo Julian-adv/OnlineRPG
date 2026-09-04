@@ -1,8 +1,8 @@
 import type { DungeonEntranceDef } from '../data/dungeonDefs'
 import type { HouseMapFootprint } from '../types/housing'
 import { unwrapWorldXNear } from '../terrain/world-wrap'
-import { LAND_PLOT_SIZE } from '../terrain/terrain-constants'
-import { plotOrigin, REGION_PLOTS } from '../terrain/landPlots'
+import { LAND_PLOT_SIZE, REGION_SIZE } from '../terrain/terrain-constants'
+import { LandGrade, plotOrigin, REGION_PLOTS } from '../terrain/landPlots'
 
 /** Map rotation so screen-up matches walking up (tracks the camera's initial yaw). */
 export const MAP_ROTATE_ANGLE = -Math.PI / 4
@@ -49,12 +49,10 @@ export function drawHouseMapFootprints(
   ctx.restore()
 }
 
-export /** Indexed by grade; pioneer plots show only as grid lines. */
-const PLOT_GRADE_FILL: (string | null)[] = [
-  'rgba(40, 40, 40, 0.55)',
-  null,
-  'rgba(255, 196, 64, 0.5)',
-]
+const PLOT_GRADE_FILL: (string | null)[] = []
+PLOT_GRADE_FILL[LandGrade.Reserved] = 'rgba(40, 40, 40, 0.55)'
+PLOT_GRADE_FILL[LandGrade.Homestead] = null
+PLOT_GRADE_FILL[LandGrade.Crown] = 'rgba(255, 196, 64, 0.5)'
 
 export interface LandGradeRegion {
   rx: number
@@ -79,13 +77,16 @@ export function drawLandPlotCells(
   ctx.save()
   let fillStyle: string | null = null
   for (const region of regions) {
+    const origin = plotOrigin(region.rx, region.rz, 0)
+    const base = worldToCanvas(origin.x, origin.z, transform)
     for (let i = 0; i < REGION_PLOTS; i++) {
       const fill = PLOT_GRADE_FILL[region.grades[i]]
       if (!fill) continue
       if (fill !== fillStyle) ctx.fillStyle = fillStyle = fill
-      const o = plotOrigin(region.rx, region.rz, i)
-      const p = worldToCanvas(o.x, o.z, transform)
-      ctx.fillRect(p.x, p.y, cellPx, cellPx)
+      const tile = i >> 2
+      const col = (tile % REGION_SIZE) * 2 + (i & 1)
+      const row = Math.floor(tile / REGION_SIZE) * 2 + ((i >> 1) & 1)
+      ctx.fillRect(base.x + col * cellPx, base.y + row * cellPx, cellPx, cellPx)
     }
   }
   ctx.restore()

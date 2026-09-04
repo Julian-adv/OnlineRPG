@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { drawLandPlotGrid } from './map-structures'
+import { drawLandPlotCells, drawLandPlotGrid } from './map-structures'
+import {
+  LandGrade,
+  plotAddress,
+  plotOrigin,
+  REGION_PLOTS,
+} from '../terrain/landPlots'
 
 function stubCtx() {
   const lines: {
@@ -54,5 +60,23 @@ describe('drawLandPlotGrid', () => {
     const { ctx, lines } = stubCtx()
     drawLandPlotGrid(ctx, 1024, { ...transform, scale: 0.1 })
     expect(lines).toHaveLength(0)
+  })
+
+  it('fills graded plots at their world origin', () => {
+    const rects: number[][] = []
+    const ctx = {
+      save() {},
+      restore() {},
+      fillStyle: '',
+      fillRect(x: number, y: number, w: number, h: number) {
+        rects.push([x, y, w, h])
+      },
+    } as unknown as CanvasRenderingContext2D
+    const grades = new Uint8Array(REGION_PLOTS).fill(LandGrade.Homestead)
+    const addr = plotAddress(1000, 500)
+    grades[addr.index] = LandGrade.Crown
+    drawLandPlotCells(ctx, [{ rx: addr.rx, rz: addr.rz, grades }], transform)
+    const o = plotOrigin(addr.rx, addr.rz, addr.index)
+    expect(rects).toEqual([[o.x, o.z, 32, 32]])
   })
 })

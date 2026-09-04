@@ -561,11 +561,13 @@ impl TerrainIO {
 
     pub async fn write_land_grades(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {
         if data.len() != crate::land::REGION_PLOTS
-            || data.iter().any(|&g| g > crate::land::GRADE_PRIME)
+            || data
+                .iter()
+                .any(|&g| crate::land::LandGrade::try_from(g).is_err())
         {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "land grades: expected 1024 bytes of grades 0..=2",
+                "land grades: expected one valid grade byte per plot",
             ));
         }
         write_terrain_file(&coords::land_grade_path(&self.base_dir, rx, rz), data).await

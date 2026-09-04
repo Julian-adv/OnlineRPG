@@ -7,12 +7,11 @@ import {
 import { wrapWorldX } from './world-wrap'
 
 /** Mirrors terrain/src/land.rs: one grade byte per plot, 1,024 per region. */
-export const LandGrade = { NoBuild: 0, Pioneer: 1, Prime: 2 } as const
+export const LandGrade = { Reserved: 0, Homestead: 1, Crown: 2 } as const
 export const REGION_PLOTS = REGION_SIZE * REGION_SIZE * 4
 
-/** Admin click order: prime → pioneer → nobuild → prime. */
 export function nextGrade(grade: number): number {
-  return grade === LandGrade.NoBuild ? LandGrade.Prime : grade - 1
+  return grade === LandGrade.Reserved ? LandGrade.Crown : grade - 1
 }
 
 export interface PlotAddr {

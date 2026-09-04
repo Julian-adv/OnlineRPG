@@ -8,9 +8,26 @@ use crate::defaults::TILE_DIM;
 pub const PLOT_SIZE: i32 = TILE_DIM as i32 / 2;
 pub const REGION_PLOTS: usize = 16 * 16 * 4;
 
-pub const GRADE_NOBUILD: u8 = 0;
-pub const GRADE_PIONEER: u8 = 1;
-pub const GRADE_PRIME: u8 = 2;
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LandGrade {
+    Reserved = 0,
+    Homestead = 1,
+    Crown = 2,
+}
+
+impl TryFrom<u8> for LandGrade {
+    type Error = u8;
+
+    fn try_from(byte: u8) -> Result<Self, u8> {
+        match byte {
+            0 => Ok(Self::Reserved),
+            1 => Ok(Self::Homestead),
+            2 => Ok(Self::Crown),
+            other => Err(other),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlotAddr {

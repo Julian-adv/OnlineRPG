@@ -1,15 +1,16 @@
-//! Default plot grades: rings around settlements and dungeon entrances. Inside
-//! `inner` is no-build, `inner..outer` is prime, the rest pioneer. Served when
-//! a region has no edited grade file (doc/LAND_SYSTEM.md).
+//! Default plot grades: rings around settlements and dungeon entrances.
+//! Inside `inner` is reserved, `inner..outer` is crown, the rest homestead.
+//! Served when a region has no edited grade file (doc/LAND_SYSTEM.md).
 
 use std::sync::LazyLock;
 
 use onlinerpg_shared::dungeon::entrances;
 use onlinerpg_shared::shortest_world_delta_x;
-use onlinerpg_terrain::land::{
-    plot_origin, GRADE_NOBUILD, GRADE_PIONEER, GRADE_PRIME, PLOT_SIZE, REGION_PLOTS,
-};
+use onlinerpg_terrain::defaults::TILE_DIM;
+use onlinerpg_terrain::land::{plot_origin, LandGrade, PLOT_SIZE, REGION_PLOTS};
 use serde::Deserialize;
+
+const REGION_METERS: f32 = 16.0 * TILE_DIM as f32;
 
 #[derive(Deserialize)]
 struct MapLabel {
@@ -54,27 +55,44 @@ static ANCHORS: LazyLock<Vec<Anchor>> = LazyLock::new(|| {
         .collect()
 });
 
-fn grade_at(cx: f32, cz: f32) -> u8 {
-    let mut grade = GRADE_PIONEER;
-    for a in ANCHORS.iter() {
+fn grade_at(anchors: &[&Anchor], cx: f32, cz: f32) -> LandGrade {
+    let mut grade = LandGrade::Homestead;
+    for a in anchors {
         let dx = shortest_world_delta_x(a.x, cx);
-        let d = (dx * dx + (cz - a.z) * (cz - a.z)).sqrt();
-        if d < a.inner {
-            return GRADE_NOBUILD;
+        let dz = cz - a.z;
+        let d2 = dx * dx + dz * dz;
+        if d2 < a.inner * a.inner {
+            return LandGrade::Reserved;
         }
-        if d <= a.outer {
-            grade = GRADE_PRIME;
+        if d2 <= a.outer * a.outer {
+            grade = LandGrade::Crown;
         }
     }
     grade
 }
 
 pub fn default_grades(rx: i32, rz: i32) -> Vec<u8> {
+    let (ox, oz) = plot_origin(rx, rz, 0);
+    let (cx, cz) = (
+        ox as f32 + REGION_METERS / 2.0,
+        oz as f32 + REGION_METERS / 2.0,
+    );
+    // Only anchors whose outer ring can reach this region matter.
+    let near: Vec<&Anchor> = ANCHORS
+        .iter()
+        .filter(|a| {
+            let reach = REGION_METERS / 2.0 + a.outer;
+            shortest_world_delta_x(a.x, cx).abs() <= reach && (a.z - cz).abs() <= reach
+        })
+        .collect();
+    if near.is_empty() {
+        return vec![LandGrade::Homestead as u8; REGION_PLOTS];
+    }
     let half = PLOT_SIZE as f32 / 2.0;
     (0..REGION_PLOTS)
         .map(|i| {
-            let (ox, oz) = plot_origin(rx, rz, i);
-            grade_at(ox as f32 + half, oz as f32 + half)
+            let (px, pz) = plot_origin(rx, rz, i);
+            grade_at(&near, px as f32 + half, pz as f32 + half) as u8
         })
         .collect()
 }
@@ -85,13 +103,29 @@ mod tests {
     use onlinerpg_terrain::land::plot_addr;
 
     #[test]
-    fn aldermark_core_is_nobuild_and_ring_is_prime() {
+    fn aldermark_rings_are_reserved_crown_homestead() {
         let town = (-1475.2_f32, 4741.6_f32);
         let core = plot_addr(town.0, town.1);
-        assert_eq!(default_grades(core.rx, core.rz)[core.index], GRADE_NOBUILD);
+        assert_eq!(
+            default_grades(core.rx, core.rz)[core.index],
+            LandGrade::Reserved as u8
+        );
         let ring = plot_addr(town.0 + 150.0, town.1);
-        assert_eq!(default_grades(ring.rx, ring.rz)[ring.index], GRADE_PRIME);
+        assert_eq!(
+            default_grades(ring.rx, ring.rz)[ring.index],
+            LandGrade::Crown as u8
+        );
         let far = plot_addr(town.0 + 600.0, town.1);
-        assert_eq!(default_grades(far.rx, far.rz)[far.index], GRADE_PIONEER);
+        assert_eq!(
+            default_grades(far.rx, far.rz)[far.index],
+            LandGrade::Homestead as u8
+        );
+    }
+
+    #[test]
+    fn empty_ocean_region_is_all_homestead() {
+        assert!(default_grades(10, -10)
+            .iter()
+            .all(|&g| g == LandGrade::Homestead as u8));
     }
 }
