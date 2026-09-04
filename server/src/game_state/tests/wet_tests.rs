@@ -324,6 +324,7 @@ async fn soaked_armour_drags_but_the_rest_of_the_pack_does_not() {
         &game_state,
         &id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![bag_item(801, "chain_mail", 1), bag_item(802, "torch", 1)],
             equipped: std::collections::HashMap::from([(
                 EquipSlot::OffHand,
@@ -359,6 +360,7 @@ async fn an_unarmoured_player_carries_the_same_soaked_or_dry() {
         &game_state,
         &id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![bag_item(811, "torch", 4)],
             equipped: std::collections::HashMap::new(),
         },

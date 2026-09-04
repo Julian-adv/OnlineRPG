@@ -2,9 +2,11 @@
   import {
     compareStats,
     displayName,
+    getItemDef,
     statLabels,
     type ItemDefinition,
   } from '../data/itemDefs'
+  import { inventoryStore } from '../stores/inventoryStore'
 
   interface Props {
     def: ItemDefinition
@@ -20,8 +22,22 @@
   // anchor, clamped vertically and flipped sideways when it would overflow.
   let { def, enchant = 0, side = 'right', anchor, compare }: Props = $props()
 
+  // A bow's own die is a token: what it hurts for depends on the round it
+  // draws, so the comparison is made against that rather than the bow alone.
+  const chosenAmmo = $derived(
+    $inventoryStore.active_ammo
+      ? getItemDef($inventoryStore.active_ammo)
+      : undefined
+  )
+  /** The round this weapon would actually draw, or undefined when it draws
+   *  none — either it is not a ranged weapon or the quiver is empty. */
+  const drawnRound = $derived(
+    def.ammoKind && chosenAmmo?.ammoKind === def.ammoKind ? chosenAmmo : undefined
+  )
   const deltas = $derived(
-    compare ? compareStats(def, enchant, compare.def, compare.enchant) : []
+    compare
+      ? compareStats(def, enchant, compare.def, compare.enchant, chosenAmmo)
+      : []
   )
   const fmt = (n: number) => String(+Math.abs(n).toFixed(1))
 
@@ -59,7 +75,21 @@
       <span>Slot: {def.equipSlot.replace(/_/g, ' ')}</span>
     {/if}
     {#if def.category === 'weapon' && def.dice}
-      <span>Damage: {def.dice}{enchant > 0 ? `+${enchant}` : ''}</span>
+      <!-- A bow's own die is a token; the round it draws carries the rest, so
+           quoting the bow alone reads as worthless. Both are shown, and where
+           each comes from stays visible. -->
+      <span>
+        Damage: {def.dice}{drawnRound ? `+${drawnRound.dice}` : ''}{enchant > 0
+          ? `+${enchant}`
+          : ''}
+      </span>
+      {#if def.ammoKind && !drawnRound}
+        <span class="tooltip-warn">No {def.ammoKind}s</span>
+      {/if}
+    {:else if def.ammoKind && def.dice}
+      <!-- Ammunition adds its die to the weapon's rather than replacing it,
+           so the sign says which. -->
+      <span>Damage: +{def.dice}</span>
     {:else if def.category === 'healing_potion' && def.dice}
       <span>Heals: {def.dice}</span>
     {/if}
@@ -139,5 +169,10 @@
     gap: 2px;
     font-size: 13px;
     color: #c8d6e0;
+  }
+
+  /* An empty quiver: the bow reads as its token die alone until it is fixed. */
+  .tooltip-warn {
+    color: #e08a8a;
   }
 </style>

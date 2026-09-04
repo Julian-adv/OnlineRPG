@@ -18,6 +18,8 @@ export interface ArrowShot {
   /** `performance.now()` at release, so a late frame lands it in one step
    *  rather than replaying the flight. */
   launchedAt: number
+  /** The round spent, which decides the model drawn. */
+  ammoItemDefId?: string | null
 }
 
 /** Metres per second. Fixed rather than a fixed flight time: the delay it
@@ -53,6 +55,8 @@ export interface ArrowRequest {
   monsterId: string
   hit: boolean
   flightMs: number
+  /** The round spent, which decides the model drawn. */
+  ammoItemDefId?: string | null
 }
 
 let pending: ArrowRequest[] = []

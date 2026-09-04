@@ -417,6 +417,7 @@ fn a_joining_bard_takes_up_the_worn_mandolin() {
     let mut inventory = PlayerInventory {
         bag: vec![item(1, "worn_mandolin"), item(2, "mandolin")],
         equipped: HashMap::from([(EquipSlot::MainHand, item(3, "worn_iron_sword"))]),
+        active_ammo: None,
     };
 
     let (mut s, _rx) = test_state();

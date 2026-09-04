@@ -1174,12 +1174,23 @@ async fn stale_monster_attack_is_rejected_as_invalid_target() {
 
 // --- Ranged attacks (doc/COMBAT.md 원거리 전투) ---
 
-/// An archer at the origin: `weapon` in hand and the given attribute spread,
-/// with a direct channel to read the attack broadcast off.
+/// An archer at the origin: `weapon` in hand, a full quiver, and the given
+/// attribute spread, with a direct channel to read the attack broadcast off.
 async fn setup_archer(
     game_state: &GameState,
     weapon: &str,
     attrs: CharacterAttributes,
+) -> DirectRx {
+    setup_archer_with_ammo(game_state, weapon, attrs, &[("iron_arrow", 20)]).await
+}
+
+/// `setup_archer` with the quiver spelled out — `(item_def_id, quantity)`
+/// stacks, or none at all.
+async fn setup_archer_with_ammo(
+    game_state: &GameState,
+    weapon: &str,
+    attrs: CharacterAttributes,
+    quiver: &[(&str, u32)],
 ) -> DirectRx {
     let player_id = pid("archer");
     game_state.add_player(make_player("archer", 0.0, 0.5)).await;
@@ -1195,6 +1206,10 @@ async fn setup_archer(
             cape_texture: None,
         },
     );
+    for (index, (item_def_id, quantity)) in quiver.iter().enumerate() {
+        inv.bag
+            .push(bag_item(index as u64 + 10, item_def_id, *quantity));
+    }
     game_state.inventories.write().await.insert(player_id, inv);
     game_state
         .player_characters
@@ -1222,20 +1237,24 @@ fn at(x: f32) -> Position {
     Position { x, y: 0.0, z: 0.5 }
 }
 
-/// The next broadcast must be this monster's attack result.
+/// This monster's attack result, skipping whatever else the swing sent first
+/// — spending a round pushes an inventory update ahead of the broadcast.
 fn expect_attacked(rx: &mut DirectRx, expected_id: &str) -> (bool, u32) {
-    match rx.try_recv() {
-        Ok(ServerMessage::PlayerAttacked {
+    let mut seen = Vec::new();
+    while let Ok(message) = rx.try_recv() {
+        if let ServerMessage::PlayerAttacked {
             monster_id,
             hit,
             damage,
             ..
-        }) => {
+        } = &message
+        {
             assert_eq!(monster_id, expected_id);
-            (hit, damage)
+            return (*hit, *damage);
         }
-        other => panic!("Expected a PlayerAttacked broadcast, got {other:?}"),
+        seen.push(message);
     }
+    panic!("Expected a PlayerAttacked broadcast, got {seen:?}")
 }
 
 #[tokio::test]
@@ -1350,7 +1369,7 @@ async fn a_ranged_hit_rolls_on_the_weapons_ability() {
 
     let (hit, damage) = expect_attacked(&mut rx, "far");
     assert!(hit);
-    assert!(damage >= 11, "1d6 + DEX(+10), got {damage}");
+    assert!(damage >= 11, "1d1 + 1d6 arrow + DEX(+10), got {damage}");
 }
 
 /// The mirror image: STR 30 (+10) with DEX 10 (+0) on a melee weapon.
@@ -1404,4 +1423,281 @@ async fn a_landed_shot_from_range_provokes_the_target() {
         )
     });
     assert!(provoked, "a landed shot from 8m must aggro the target");
+}
+
+// --- Ammunition (doc/COMBAT.md 원거리 전투) ---
+
+#[tokio::test]
+async fn a_shot_spends_a_round() {
+    let game_state = make_test_game_state("bow_spends_ammo");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(8.0), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    expect_attacked(&mut rx, "far");
+    let inventories = game_state.inventories.read().await;
+    let quiver = inventories[&pid("archer")]
+        .bag
+        .iter()
+        .find(|item| item.item_def_id == "iron_arrow")
+        .expect("the quiver survives one shot");
+    assert_eq!(quiver.quantity, 19);
+}
+
+/// An empty quiver reads as its own refusal, not as an unreachable target —
+/// the client has to be able to tell the player why nothing happened.
+#[tokio::test]
+async fn an_empty_quiver_refuses_the_shot() {
+    let game_state = make_test_game_state("bow_out_of_ammo");
+    let mut rx = setup_archer_with_ammo(&game_state, "bow", attrs_with(10, 30), &[]).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(8.0), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    expect_attack_rejected(&mut rx, "far", AttackRejectReason::OutOfAmmo);
+    assert_eq!(
+        game_state.monsters.read().await["far"].health,
+        10,
+        "a shot with nothing to fire must not damage the target"
+    );
+}
+
+/// A melee weapon declares no `ammoKind`, so an empty bag never stops a swing.
+#[tokio::test]
+async fn a_melee_swing_needs_no_ammunition() {
+    let game_state = make_test_game_state("melee_needs_no_ammo");
+    let mut rx = setup_archer_with_ammo(&game_state, "dagger", attrs_with(30, 10), &[]).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("near".to_string(), make_monster("near", at(1.5), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "near".to_string())
+        .await;
+
+    let (hit, _) = expect_attacked(&mut rx, "near");
+    assert!(hit);
+}
+
+/// The strongest round of the right kind goes first, so buying better arrows
+/// is the whole of using them.
+#[tokio::test]
+async fn the_strongest_round_is_the_one_spent() {
+    let game_state = make_test_game_state("bow_picks_best_ammo");
+    let mut rx = setup_archer_with_ammo(
+        &game_state,
+        "bow",
+        attrs_with(10, 30),
+        &[("iron_arrow", 5), ("steel_arrow", 5)],
+    )
+    .await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(8.0), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    expect_attacked(&mut rx, "far");
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("archer")].bag;
+    let count = |id: &str| {
+        bag.iter()
+            .find(|item| item.item_def_id == id)
+            .map_or(0, |item| item.quantity)
+    };
+    assert_eq!(count("steel_arrow"), 4, "the steel arrow is spent first");
+    assert_eq!(count("iron_arrow"), 5, "the iron stack is left alone");
+}
+
+/// A round refused before the roll is a round still in the quiver — the gates
+/// run first, and the cooldown claim after them.
+#[tokio::test]
+async fn a_refused_shot_keeps_its_round() {
+    let game_state = make_test_game_state("bow_refused_keeps_ammo");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("beyond".to_string(), make_monster("beyond", at(11.5), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "beyond".to_string())
+        .await;
+
+    expect_attack_rejected(&mut rx, "beyond", AttackRejectReason::OutOfRange);
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(
+        inventories[&pid("archer")]
+            .bag
+            .iter()
+            .find(|item| item.item_def_id == "iron_arrow")
+            .map(|item| item.quantity),
+        Some(20)
+    );
+}
+
+/// The archer's own choice outranks the strongest — dropping to the cheaper
+/// arrow is the whole point of being able to choose.
+#[tokio::test]
+async fn a_chosen_round_outranks_the_strongest() {
+    let game_state = make_test_game_state("bow_honours_choice");
+    let mut rx = setup_archer_with_ammo(
+        &game_state,
+        "bow",
+        attrs_with(10, 30),
+        &[("iron_arrow", 5), ("steel_arrow", 5)],
+    )
+    .await;
+    game_state
+        .select_ammo(&pid("archer"), Some("iron_arrow".to_string()))
+        .await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(8.0), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    expect_attacked(&mut rx, "far");
+    let inventories = game_state.inventories.read().await;
+    let bag = &inventories[&pid("archer")].bag;
+    let count = |id: &str| {
+        bag.iter()
+            .find(|item| item.item_def_id == id)
+            .map_or(0, |item| item.quantity)
+    };
+    assert_eq!(count("iron_arrow"), 4, "the chosen pile is the one spent");
+    assert_eq!(count("steel_arrow"), 5);
+}
+
+/// Running the chosen pile dry drops to the next round rather than reading as
+/// an empty quiver, which would be a lie with arrows still in the bag.
+#[tokio::test]
+async fn an_exhausted_choice_falls_to_the_next_round() {
+    let game_state = make_test_game_state("bow_falls_back");
+    let mut rx = setup_archer_with_ammo(
+        &game_state,
+        "bow",
+        attrs_with(10, 30),
+        &[("iron_arrow", 1), ("steel_arrow", 5)],
+    )
+    .await;
+    game_state
+        .select_ammo(&pid("archer"), Some("iron_arrow".to_string()))
+        .await;
+    {
+        let mut monsters = game_state.monsters.write().await;
+        monsters.insert("far".to_string(), make_monster("far", at(8.0), 0));
+        monsters.get_mut("far").unwrap().health = 500;
+    }
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+    expect_attacked(&mut rx, "far");
+    // The cooldown is per player, so the second shot has to wait it out.
+    tokio::time::sleep(std::time::Duration::from_millis(
+        *super::combat::PLAYER_ATTACK_INTERVAL_MS + 20,
+    ))
+    .await;
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+    expect_attacked(&mut rx, "far");
+
+    let inventories = game_state.inventories.read().await;
+    let inv = &inventories[&pid("archer")];
+    assert!(
+        !inv.bag.iter().any(|item| item.item_def_id == "iron_arrow"),
+        "the iron stack is gone"
+    );
+    assert_eq!(
+        inv.bag
+            .iter()
+            .find(|item| item.item_def_id == "steel_arrow")
+            .map(|item| item.quantity),
+        Some(4),
+        "the second shot came from the steel stack"
+    );
+    assert_eq!(inv.active_ammo.as_deref(), Some("steel_arrow"));
+}
+
+/// Equipping a bow chooses for an archer who has never chosen, so the first
+/// shot does not need a trip through the panel.
+#[tokio::test]
+async fn equipping_a_bow_loads_the_strongest_round() {
+    let game_state = make_test_game_state("bow_equip_loads_ammo");
+    game_state.add_player(make_player("archer", 0.0, 0.5)).await;
+    let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+    inv.bag.push(bag_item(1, "bow", 1));
+    inv.bag.push(bag_item(2, "iron_arrow", 5));
+    inv.bag.push(bag_item(3, "steel_arrow", 5));
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("archer"), inv);
+
+    game_state.equip_item(&pid("archer"), 1).await;
+
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(
+        inventories[&pid("archer")].active_ammo.as_deref(),
+        Some("steel_arrow")
+    );
+}
+
+/// A deliberate choice survives an unequip — otherwise "use the cheaper
+/// arrow" would be undone by any gear change.
+#[tokio::test]
+async fn re_equipping_a_bow_keeps_the_chosen_round() {
+    let game_state = make_test_game_state("bow_keeps_choice");
+    game_state.add_player(make_player("archer", 0.0, 0.5)).await;
+    let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+    inv.bag.push(bag_item(1, "bow", 1));
+    inv.bag.push(bag_item(2, "iron_arrow", 5));
+    inv.bag.push(bag_item(3, "steel_arrow", 5));
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("archer"), inv);
+
+    game_state.equip_item(&pid("archer"), 1).await;
+    game_state
+        .select_ammo(&pid("archer"), Some("iron_arrow".to_string()))
+        .await;
+    game_state
+        .unequip_item(&pid("archer"), EquipSlot::MainHand)
+        .await;
+    game_state.equip_item(&pid("archer"), 1).await;
+
+    let inventories = game_state.inventories.read().await;
+    assert_eq!(
+        inventories[&pid("archer")].active_ammo.as_deref(),
+        Some("iron_arrow")
+    );
 }

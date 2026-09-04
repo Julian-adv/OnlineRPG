@@ -140,6 +140,7 @@ async fn cast_requires_rod_water_and_range() {
     game_state.inventories.write().await.insert(
         bare,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![],
             equipped: Default::default(),
         },

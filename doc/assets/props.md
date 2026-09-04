@@ -8,7 +8,6 @@
 
 - empty_plate.glb — Meshy AI "Sunlit Ceramic Plate" (Pro 요금제, 2026-09-02 생성, 소스 `assets/Meshy_AI_Sunlit_Ceramic_Plate_0902163541_texture.glb`). 완전 소유권·상업 OK (characters.md License 참조). 여관 테이블에서 손님이 다 먹은 접시 — `Meal.eaten`이면 클라이언트가 요리 모델 대신 이걸 그린다 (HUNGER.md "여관 식사"). Blender에서 chicken_rice.glb와 같은 지름 0.35m로 스케일 적용(0.35×0.03×0.35 W×H×D), 원점=바닥 중심, 텍스처 2048→512 축소, 검은 emissive 제거 (2026-09-03). 아이콘 없음(월드 전용)
     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, 2026-09-03) ![원화](../images/props/empty_plate.png)
-- arrow.glb — Meshy.ai (유료 생성, 2026-09-04, 프롬프트명 "Rustic Spear on Stone" — 실제 산출물은 화살이다). 완전 소유권·상업 OK (characters.md License 참조). 활을 쏠 때 날아가는 화살, 월드 전용이라 items.csv 항목도 아이콘도 없다 ([COMBAT.md](../COMBAT.md) 원거리 전투). FBX를 Blender로 임포트해 비스듬히 누워 있던 축을 정점 주축으로 찾아 +X로 회전(다른 무기와 같은 방향, 화살촉이 +X), 전장 0.8m로 스케일 적용(0.80×0.07×0.06 W×H×D — 원본 1.22m는 활 1.4m 대비 너무 길어 2m 근거리 사격에서 사람과 몬스터 사이를 다리처럼 이었다), 원점=자루 중앙(비행 중 중심을 축으로 방향을 맞추므로), 텍스처 4장 2048²→512² 축소, emissive 제거. 원본은 `assets/Meshy_AI_Rustic_Spear_on_Stone_0904125147_texture_fbx/`. 원화 없음
 - stone bridge https://sketchfab.com/3d-models/stone-bridge-a5d380cd08654b508b4b643056038605
 - bridge wood https://sketchfab.com/3d-models/bridge-wood-20c090db0a7345898e20e2621fc2ba4c
 - big bridge https://sketchfab.com/3d-models/bridge-9328bbfc04a84202a6a97bd59408473a

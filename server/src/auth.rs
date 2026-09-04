@@ -250,6 +250,9 @@ pub struct CharacterSaveData {
     pub floor_level: i8,
     pub gold: i64,
     pub satiation: u32,
+    /// The archer's chosen pile; rides the periodic save so a relog resumes
+    /// the same arrows (doc/COMBAT.md 원거리 전투).
+    pub active_ammo: Option<String>,
 }
 
 /// One row of the player-trade ledger. `*_items` are JSON arrays of
@@ -503,7 +506,7 @@ impl AuthService {
         let mut stmt = conn.prepare(
             "UPDATE characters SET last_x = ?1, last_y = ?2, last_z = ?3, last_rotation = ?4, \
              xp = ?5, level = ?6, max_hp = ?7, health = ?8, floor_level = ?9, gold = ?10, \
-             satiation = ?11, last_seen_at = ?12 WHERE id = ?13",
+             satiation = ?11, last_seen_at = ?12, active_ammo = ?14 WHERE id = ?13",
         )?;
         let now = unix_now();
         for d in data {
@@ -521,6 +524,7 @@ impl AuthService {
                 i64::from(d.satiation),
                 now,
                 d.character_id,
+                d.active_ammo.as_deref(),
             ])?;
         }
         Ok(())
@@ -985,6 +989,35 @@ impl AuthService {
 
     /// Set the shown title. `Some` must be an earned title; otherwise the
     /// row is left alone and false comes back.
+    /// Which pile the archer draws from. `None` clears the choice, which puts
+    /// the next shot back on the strongest round in the bag.
+    pub fn set_active_ammo(
+        &self,
+        character_id: i64,
+        item_def_id: Option<&str>,
+    ) -> Result<(), AuthError> {
+        let conn = self.open_connection()?;
+        conn.execute(
+            "UPDATE characters SET active_ammo = ?2 WHERE id = ?1",
+            params![character_id, item_def_id],
+        )?;
+        Ok(())
+    }
+
+    /// The saved choice, or `None` when the character has never made one.
+    pub fn active_ammo(&self, character_id: i64) -> Result<Option<String>, AuthError> {
+        let conn = self.open_connection()?;
+        let value = conn
+            .query_row(
+                "SELECT active_ammo FROM characters WHERE id = ?1",
+                params![character_id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten();
+        Ok(value)
+    }
+
     pub fn set_active_title(
         &self,
         character_id: i64,
@@ -1285,6 +1318,9 @@ impl AuthService {
             ("last_seen_at", "INTEGER".into()),
             // Shown title id, NULL for none (doc/TITLES.md).
             ("active_title", "TEXT".into()),
+            // Ammunition the next shot draws from, NULL to take the strongest
+            // of the kind (doc/COMBAT.md 원거리 전투).
+            ("active_ammo", "TEXT".into()),
             (
                 "satiation",
                 format!(

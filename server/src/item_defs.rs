@@ -135,6 +135,12 @@ pub struct ItemDefinition {
     /// Hands the weapon occupies. Absent = 1; 2 locks the off-hand slot.
     #[serde(default)]
     pub hands: Option<u8>,
+    /// What a ranged weapon spends, and what a piece of ammunition feeds.
+    /// Both sides name the same kind ("arrow"), so a crossbow can want bolts
+    /// without either knowing about the other. Absent on a weapon means it
+    /// costs nothing to fire.
+    #[serde(rename = "ammoKind", default)]
+    pub ammo_kind: Option<String>,
 }
 
 /// The attribute a weapon's attack and damage bonus is read from.
@@ -319,6 +325,23 @@ impl ItemDefinition {
         self.hands.unwrap_or(1) >= 2
     }
 
+    pub fn is_ammo(&self) -> bool {
+        self.category.as_deref() == Some("ammo")
+    }
+
+    /// Mean roll of this item's `dice`, for ranking ammunition. Ranked from
+    /// the dice rather than a tier column so the order can never disagree
+    /// with the damage it stands for.
+    pub fn average_damage(&self) -> f32 {
+        let Some(dice) = self.dice.as_deref() else {
+            return 0.0;
+        };
+        let (count, sides) = dice.split_once('d').unwrap_or(("1", "6"));
+        let count: f32 = count.parse().unwrap_or(1.0);
+        let sides: f32 = sides.parse().unwrap_or(6.0);
+        count * (sides + 1.0) / 2.0
+    }
+
     /// The effect of using this item from the bag, or `None` if it isn't a
     /// consumable.
     pub fn use_effect(&self) -> Option<UseEffect> {
@@ -428,6 +451,13 @@ impl ItemDefs {
             assert!(
                 def.hands.is_none_or(|hands| (1..=2).contains(&hands)),
                 "item '{}': hands must be 1 or 2",
+                def.id
+            );
+            // Ammunition is spent a unit at a time out of the bag and rolls
+            // its own damage die, so a piece missing either is inert.
+            assert!(
+                !def.is_ammo() || (def.stackable && def.dice.is_some() && def.ammo_kind.is_some()),
+                "item '{}': ammo must be stackable with dice and an ammoKind",
                 def.id
             );
         }

@@ -100,6 +100,13 @@ pub struct ItemInstance {
 pub struct PlayerInventory {
     pub bag: Vec<ItemInstance>,
     pub equipped: HashMap<EquipSlot, ItemInstance>,
+    /// Which ammunition the next shot spends. Stackable items cannot sit in
+    /// an equip slot — a slot persists one unit and the rest of the stack
+    /// would be lost — so the quiver stays in the bag and this names the pile
+    /// to draw from. `None` picks the strongest of the weapon's kind and
+    /// records it here (doc/COMBAT.md 원거리 전투).
+    #[serde(default)]
+    pub active_ammo: Option<String>,
 }
 
 impl PlayerInventory {
@@ -138,6 +145,13 @@ impl PlayerInventory {
     }
 
     /// Everything the player carries: bag and worn gear alike.
+    /// The chosen stack, if the bag still holds one — the choice outlives an
+    /// empty quiver so refilling the same kind resumes it.
+    pub fn active_ammo_stack(&self) -> Option<&ItemInstance> {
+        let chosen = self.active_ammo.as_deref()?;
+        self.bag.iter().find(|item| item.item_def_id == chosen)
+    }
+
     pub fn items(&self) -> impl Iterator<Item = &ItemInstance> {
         self.bag.iter().chain(self.equipped.values())
     }

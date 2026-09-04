@@ -1247,6 +1247,12 @@ impl super::GameState {
         let save_data = {
             let players = self.players.read().await;
             let hunger = self.hunger.read().await;
+            let inventories = self.inventories.read().await;
+            let ammo_of = |id| {
+                inventories
+                    .get(id)
+                    .and_then(|inv: &PlayerInventory| inv.active_ammo.clone())
+            };
             match (players.get(&a_id), players.get(&b_id)) {
                 (Some(a), Some(b)) => Some(vec![
                     build_save_data(
@@ -1255,6 +1261,7 @@ impl super::GameState {
                         a_xp,
                         a_gold_after,
                         super::hunger::satiation_for_save(&hunger, &a_id),
+                        ammo_of(&a_id),
                     ),
                     build_save_data(
                         b,
@@ -1262,6 +1269,7 @@ impl super::GameState {
                         b_xp,
                         b_gold_after,
                         super::hunger::satiation_for_save(&hunger, &b_id),
+                        ammo_of(&b_id),
                     ),
                 ]),
                 _ => None,

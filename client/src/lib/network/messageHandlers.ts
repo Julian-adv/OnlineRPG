@@ -991,7 +991,8 @@ export function handleServerMessage(
         data.monster_id,
         data.player_id,
         data.hit,
-        data.damage
+        data.damage,
+        data.ammo_item_def_id
       )
       break
     }
@@ -1005,10 +1006,17 @@ export function handleServerMessage(
         }
         monsterManager.remove(data.monster_id)
       }
+      // An empty quiver does not fix itself between swings, so the auto-attack
+      // loop would just refuse once a second forever. Stop, as a dead target
+      // does — the target itself is still there, so it stays on screen.
+      if (data.reason === 'out_of_ammo') {
+        combatController.cancelCombat()
+      }
       const reasonText: Record<string, string> = {
         invalid_target: 'target is gone',
         out_of_range: 'too far away',
         attacker_dead: 'you are dead',
+        out_of_ammo: 'out of arrows',
       }
       addCombatMessage({
         text: `attack rejected: ${reasonText[data.reason] ?? data.reason}`,

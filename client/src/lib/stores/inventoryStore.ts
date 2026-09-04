@@ -5,7 +5,11 @@ import type {
   ItemInstance,
   PlayerInventory,
 } from '../network/networkTypes'
-import { getItemDef, type ItemDefinition } from '../data/itemDefs'
+import {
+  getItemDef,
+  isRangedWeapon,
+  type ItemDefinition,
+} from '../data/itemDefs'
 import { activeDebuffs } from './debuffStore'
 import { calendarVisible } from './debugStore'
 import { armorWeightMult } from '../data/debuffPresentation'
@@ -72,6 +76,21 @@ export const playerEffectiveStats = writable<Pick<
 
 /** Item defs that act as a carried light source (mirrors shared TORCH_ITEM_IDS). */
 const TORCH_ITEM_IDS = ['torch', 'worn_torch']
+
+/** The round the paperdoll is showing, or undefined when none is. Worn
+ *  ammunition is a stack in the bag rather than a slotted item — a stackable
+ *  cannot hold a slot — so the bag has to hide the very stack the hand cell
+ *  is drawing, and only while it is drawing it. Both panels read this so
+ *  they cannot disagree and leave a quiver in neither place. */
+export function wornAmmoDefId(
+  inv: Pick<PlayerInventory, 'bag' | 'equipped' | 'active_ammo'>
+): string | undefined {
+  if (!inv.active_ammo) return undefined
+  if (!isRangedWeapon(inv.equipped.main_hand?.item_def_id)) return undefined
+  return inv.bag.some((item) => item.item_def_id === inv.active_ammo)
+    ? inv.active_ammo
+    : undefined
+}
 
 export function isTorchItemDefId(id: string | null | undefined): boolean {
   return id != null && TORCH_ITEM_IDS.includes(id)

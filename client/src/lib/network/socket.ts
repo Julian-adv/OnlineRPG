@@ -627,6 +627,11 @@ class NetworkManager {
     })
   }
 
+  /** Draw from this pile from now on; `null` goes back to the strongest. */
+  sendSelectAmmo(itemDefId: string | null) {
+    this.sendMessage({ SelectAmmo: { item_def_id: itemDefId } })
+  }
+
   sendEquipItem(instanceId: number) {
     if (!this.isNetworkableInstanceId(instanceId, 'equip')) return
     this.sendMessage({ EquipItem: { instance_id: instanceId } })

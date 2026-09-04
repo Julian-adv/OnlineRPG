@@ -343,7 +343,10 @@ class MonsterManager {
     monsterId: string,
     playerId: number,
     hit: boolean,
-    damage: number
+    damage: number,
+    /** The round the server spent, so the arrow drawn is the one that left
+     *  the quiver — a remote shooter's bag is not visible from here. */
+    ammoItemDefId?: string | null
   ) {
     const monster = this.monsters.get(monsterId)
     if (!monster || monster.state === 'dead') return
@@ -403,7 +406,7 @@ class MonsterManager {
       // Asked for at the release frame so the scene reads the bow where the
       // draw ends. GameScene owns the launch: it has the player models.
       window.setTimeout(
-        () => requestArrow({ playerId, monsterId, hit, flightMs }),
+        () => requestArrow({ playerId, monsterId, hit, flightMs, ammoItemDefId }),
         PLAYER_RANGED_IMPACT_DELAY_MS
       )
     } else if (!hit) {

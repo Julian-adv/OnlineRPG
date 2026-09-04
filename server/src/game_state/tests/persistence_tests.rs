@@ -26,6 +26,7 @@ async fn dirty_save_is_retried_after_failure() {
     game_state.inventories.write().await.insert(
         player_id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![bag_item(1, "torch", 1)],
             equipped: Default::default(),
         },

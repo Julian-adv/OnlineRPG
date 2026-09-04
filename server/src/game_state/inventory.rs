@@ -364,14 +364,17 @@ impl super::GameState {
         auth: &AuthService,
     ) {
         let auth = auth.clone();
-        let loaded = tokio::task::spawn_blocking(move || auth.load_inventory(character_id))
-            .await
-            .unwrap_or_else(|e| {
-                warn!("spawn_blocking panicked loading inventory: {}", e);
-                Err(crate::auth::AuthError::Database(e.to_string()))
-            });
+        let loaded = tokio::task::spawn_blocking(move || {
+            auth.load_inventory(character_id)
+                .map(|rows| (rows, auth.active_ammo(character_id).ok().flatten()))
+        })
+        .await
+        .unwrap_or_else(|e| {
+            warn!("spawn_blocking panicked loading inventory: {}", e);
+            Err(crate::auth::AuthError::Database(e.to_string()))
+        });
 
-        let rows = match loaded {
+        let (rows, active_ammo) = match loaded {
             Ok(data) => data,
             Err(e) => {
                 warn!(
@@ -382,7 +385,10 @@ impl super::GameState {
             }
         };
 
-        let mut inventory = PlayerInventory::default();
+        let mut inventory = PlayerInventory {
+            active_ammo,
+            ..Default::default()
+        };
 
         if !rows.is_empty() {
             // A non-stackable row saved with quantity N unfolds into N slots,
@@ -578,6 +584,26 @@ impl super::GameState {
         }
     }
 
+    /// The strongest round the bag holds for whatever now sits in `slot`, or
+    /// `None` when that is not a weapon that spends any. Ranked on the mean
+    /// roll of the dice so the order cannot disagree with the damage.
+    fn best_ammo_in_bag(&self, inv: &PlayerInventory, slot: EquipSlot) -> Option<String> {
+        let kind = inv
+            .equipped
+            .get(&slot)
+            .and_then(|item| self.item_defs.get(&item.item_def_id))
+            .and_then(|def| def.ammo_kind.clone())?;
+        inv.bag
+            .iter()
+            .filter_map(|item| {
+                let def = self.item_defs.get(&item.item_def_id)?;
+                (def.is_ammo() && def.ammo_kind.as_deref() == Some(kind.as_str()))
+                    .then(|| (item.item_def_id.clone(), def.average_damage()))
+            })
+            .max_by(|(a_id, a), (b_id, b)| a.total_cmp(b).then_with(|| b_id.cmp(a_id)))
+            .map(|(id, _)| id)
+    }
+
     /// Whether the wielded main-hand weapon claims both hands, sealing the
     /// off-hand slot.
     fn main_hand_is_two_handed(&self, inv: &PlayerInventory) -> bool {
@@ -655,6 +681,13 @@ impl super::GameState {
                     off_hand_cleared = true;
                 }
             }
+            // Picking up a bow should not also mean picking an arrow, so the
+            // strongest is chosen here — but only when nothing valid already
+            // is. An archer who deliberately dropped to the cheaper arrow
+            // keeps that across an unequip.
+            if inv.active_ammo_stack().is_none() {
+                inv.active_ammo = self.best_ammo_in_bag(inv, target_slot);
+            }
             let torch_on =
                 (target_slot == EquipSlot::OffHand || off_hand_cleared).then(|| inv.is_torch_lit());
             (inv.clone(), torch_on)
@@ -666,6 +699,34 @@ impl super::GameState {
             self.set_player_torch(player_id, torch_on).await;
         }
         self.abort_fishing_if_rod_lost(player_id).await;
+    }
+
+    /// Draw from `item_def_id` from now on. Refuses anything that is not
+    /// ammunition the player is carrying, so a stale or hostile id cannot
+    /// leave the quiver pointing at nothing.
+    pub async fn select_ammo(&self, player_id: &PlayerId, item_def_id: Option<String>) {
+        let snapshot = {
+            let mut inventories = self.inventories.write().await;
+            let Some(inv) = inventories.get_mut(player_id) else {
+                return;
+            };
+            if let Some(chosen) = &item_def_id {
+                let carried = inv.bag.iter().any(|item| {
+                    item.item_def_id == *chosen
+                        && self.item_defs.get(chosen).is_some_and(|def| def.is_ammo())
+                });
+                if !carried {
+                    return;
+                }
+            }
+            if inv.active_ammo == item_def_id {
+                return;
+            }
+            inv.active_ammo = item_def_id;
+            inv.clone()
+        };
+        self.mark_dirty(player_id).await;
+        self.send_inventory_snapshot(player_id, snapshot).await;
     }
 
     pub async fn unequip_item(&self, player_id: &PlayerId, slot: EquipSlot) {

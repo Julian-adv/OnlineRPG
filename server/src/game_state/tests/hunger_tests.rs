@@ -26,6 +26,7 @@ async fn make_eater(game_state: &GameState, name: &str, satiation: u32) -> (Play
     game_state.inventories.write().await.insert(
         id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![],
             equipped: std::collections::HashMap::new(),
         },
@@ -782,6 +783,7 @@ async fn npcs_are_exempt_from_hunger_but_can_still_eat() {
     game_state.inventories.write().await.insert(
         id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![bag_item(1, "bread", 1)],
             equipped: std::collections::HashMap::new(),
         },
@@ -827,6 +829,7 @@ fn satiation_survives_a_save_and_reload() {
         floor_level: 0,
         gold: 0,
         satiation: 123,
+        active_ammo: None,
     };
     auth.save_batch(&[save], &[], &[], &[], None).unwrap();
 

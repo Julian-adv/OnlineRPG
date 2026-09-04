@@ -5,6 +5,7 @@
     carryWeight,
     maxCarryWeight,
     formatKg,
+    wornAmmoDefId,
   } from '../stores/inventoryStore'
   import { hungerState } from '../stores/hungerStore'
   import type { ItemInstance } from '../stores/inventoryStore'
@@ -44,7 +45,14 @@
   const maxWeight = $derived(maxCarryWeight(str, $hungerState))
   const weightRatio = $derived(maxWeight > 0 ? $carryWeight / maxWeight : 0)
 
-  const slots = $derived(buildInventorySlots(sortBag($inventoryStore.bag)))
+  // The worn quiver is drawn in the paperdoll's hand cell, so showing it here
+  // too would put one stack in two places.
+  const worn = $derived(wornAmmoDefId($inventoryStore))
+  const slots = $derived(
+    buildInventorySlots(
+      sortBag($inventoryStore.bag.filter((item) => item.item_def_id !== worn))
+    )
+  )
 
   let panelEl = $state<HTMLDivElement | null>(null)
   let pendingDrop = $state<{ slot: ItemInstance; def: ItemDefinition } | null>(
@@ -127,6 +135,10 @@
       networkManager.sendEquipItem(slot.instance_id)
     } else if (def && isConsumable(def)) {
       networkManager.sendUseItem(slot.instance_id)
+    } else if (def?.ammoKind) {
+      // Ammunition has no `equipSlot` — a stackable cannot hold one — so it
+      // gets its own branch rather than a slot. Same gesture either way.
+      networkManager.sendSelectAmmo(slot.item_def_id)
     }
   }
 
@@ -223,6 +235,20 @@
               networkManager.sendEquipItem(slot.instance_id)
               return
             }
+          }
+        }
+        // The quiver cell is not an equip slot — a stackable cannot hold one —
+        // so it advertises the kind it takes instead of a slot name.
+        for (const cell of document.querySelectorAll<HTMLElement>(
+          '[data-ammo-kind]'
+        )) {
+          if (
+            pointInRect(x, y, cell.getBoundingClientRect()) &&
+            def?.ammoKind &&
+            def.ammoKind === cell.dataset.ammoKind
+          ) {
+            networkManager.sendSelectAmmo(slot.item_def_id)
+            return
           }
         }
         if (

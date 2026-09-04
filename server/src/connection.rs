@@ -1710,6 +1710,11 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::SelectAmmo { item_def_id } => {
+            if let Some(id) = &state.player_id {
+                game_state.select_ammo(id, item_def_id).await;
+            }
+        }
         ClientMessage::EquipItem { instance_id } => {
             if let Some(id) = &state.player_id {
                 game_state.equip_item(id, instance_id).await;

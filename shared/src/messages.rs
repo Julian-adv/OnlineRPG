@@ -34,6 +34,8 @@ pub enum AttackRejectReason {
     OutOfRange,
     AttackerDead,
     NotInGame,
+    /// The wielded weapon spends ammunition and the bag has none of its kind.
+    OutOfAmmo,
 }
 
 impl std::fmt::Display for AttackRejectReason {
@@ -43,6 +45,7 @@ impl std::fmt::Display for AttackRejectReason {
             Self::OutOfRange => "out_of_range",
             Self::AttackerDead => "attacker_dead",
             Self::NotInGame => "not_in_game",
+            Self::OutOfAmmo => "out_of_ammo",
         })
     }
 }
@@ -490,6 +493,13 @@ pub enum ClientMessage {
     },
     UnequipItem {
         slot: inventory::EquipSlot,
+    },
+    /// Draw from this pile instead of the strongest. `None` clears the choice
+    /// and puts the next shot back on the best round in the bag. Ammunition
+    /// is stackable and so cannot occupy an equip slot; this is how it is
+    /// "equipped" (doc/COMBAT.md 원거리 전투).
+    SelectAmmo {
+        item_def_id: Option<String>,
     },
     DropItem {
         instance_id: u64,
@@ -1049,6 +1059,10 @@ pub enum ServerMessage {
         hit: bool,
         roll: u8,
         damage: u32,
+        /// The round spent, for a weapon that spends one — the clients draw
+        /// this arrow rather than guessing from the shooter's bag, which they
+        /// cannot see for anyone but themselves.
+        ammo_item_def_id: Option<String>,
     },
     /// A valid attack attempt made outside melee range. No attack roll or
     /// damage is applied, but the managed monster should acquire the player.

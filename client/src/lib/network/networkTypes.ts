@@ -229,6 +229,7 @@ export type ClientMessage =
   | 'StopInteraction'
   | 'Heartbeat'
   | { EquipItem: { instance_id: number } }
+  | { SelectAmmo: { item_def_id: string | null } }
   | { UnequipItem: { slot: EquipSlot } }
   | { DropItem: { instance_id: number } }
   | { DropItems: { items: BagLineItem[] } }
@@ -300,6 +301,9 @@ export type ItemInstance = {
 export type PlayerInventory = {
   bag: ItemInstance[]
   equipped: Partial<Record<EquipSlot, ItemInstance>>
+  /** Which bag stack the next shot draws from. Ammunition is stackable and
+   *  so cannot sit in an equip slot; this names the pile instead. */
+  active_ammo?: string | null
 }
 
 /** Trained-skill ids (shared `SkillId` wire strings). */

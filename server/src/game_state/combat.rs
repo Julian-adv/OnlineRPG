@@ -137,6 +137,8 @@ struct PlayerAttackContext {
     /// explicitly on a landed hit.
     from_range: bool,
     weapon: EquippedWeapon,
+    /// The round this shot spends, for weapons that spend one.
+    ammo: Option<LoadedAmmo>,
 }
 
 /// The wielded main-hand weapon as combat reads it. Resolved once per request,
@@ -150,6 +152,17 @@ struct EquippedWeapon {
     range: Option<f32>,
     /// Ability the hit and damage bonus read, or `None` to keep STR.
     ability: Option<crate::item_defs::Ability>,
+    /// What this weapon spends per shot, or `None` when firing is free.
+    ammo_kind: Option<String>,
+}
+
+/// The round a ranged shot spends: the bag stack it comes out of, and the
+/// die it adds. Ammunition carries no enchant — it never sits in a slot, so
+/// no scroll can reach it.
+struct LoadedAmmo {
+    instance_id: u64,
+    item_def_id: String,
+    dice: String,
 }
 
 impl Default for EquippedWeapon {
@@ -159,6 +172,7 @@ impl Default for EquippedWeapon {
             enchant: 0,
             range: None,
             ability: None,
+            ammo_kind: None,
         }
     }
 }
@@ -309,10 +323,55 @@ impl super::GameState {
                         enchant: item.enchant,
                         range: def.weapon_range(),
                         ability: def.ranged_ability(),
+                        ammo_kind: def.ammo_kind.clone(),
                     })
                 })
             })
             .unwrap_or_default()
+    }
+
+    /// The round this shot spends: the archer's chosen pile while it lasts,
+    /// otherwise the strongest of the weapon's kind. Falling back *records*
+    /// the new choice, so running a stack dry drops to the next round down
+    /// instead of reading as an empty quiver — and so the archer who picked
+    /// the cheaper arrow keeps firing it until it runs out.
+    ///
+    /// Ties break on the id, only so one bag always picks the same stack: a
+    /// shot that chose differently each time would be untraceable.
+    async fn loaded_ammo(&self, player_id: &PlayerId, kind: &str) -> Option<LoadedAmmo> {
+        let mut inventories = self.inventories.write().await;
+        let inv = inventories.get_mut(player_id)?;
+
+        let of_kind = |item: &ItemInstance| {
+            self.item_defs
+                .get(&item.item_def_id)
+                .filter(|def| def.is_ammo() && def.ammo_kind.as_deref() == Some(kind))
+        };
+        let round = |item: &ItemInstance| {
+            of_kind(item).map(|def| LoadedAmmo {
+                instance_id: item.instance_id,
+                item_def_id: item.item_def_id.clone(),
+                dice: def.dice.clone().unwrap_or_default(),
+            })
+        };
+
+        if let Some(chosen) = inv.active_ammo_stack().and_then(round) {
+            return Some(chosen);
+        }
+
+        let best = inv
+            .bag
+            .iter()
+            .filter(|item| of_kind(item).is_some())
+            .max_by(|a, b| {
+                let avg = |item: &ItemInstance| of_kind(item).map_or(0.0, |d| d.average_damage());
+                avg(a)
+                    .total_cmp(&avg(b))
+                    .then_with(|| b.item_def_id.cmp(&a.item_def_id))
+            })
+            .and_then(round)?;
+        inv.active_ammo = Some(best.item_def_id.clone());
+        Some(best)
     }
 
     /// Tell a client-owned monster's controller to aggro onto the attacker.
@@ -463,6 +522,22 @@ impl super::GameState {
             return Err((AttackRejectReason::OutOfRange, "walled off".into()));
         }
 
+        // Last gate: everything above decides whether the shot could be taken
+        // at all, and an empty quiver should read as "no arrows", not as the
+        // reason the target was unreachable.
+        let ammo = match weapon.ammo_kind.as_deref() {
+            Some(kind) => match self.loaded_ammo(player_id, kind).await {
+                Some(round) => Some(round),
+                None => {
+                    return Err((
+                        AttackRejectReason::OutOfAmmo,
+                        format!("no {kind} in the bag"),
+                    ));
+                }
+            },
+            None => None,
+        };
+
         Ok(PlayerAttackContext {
             monster_type: monster.monster_type,
             monster_position: monster.position,
@@ -473,6 +548,7 @@ impl super::GameState {
             player_level,
             from_range: distance_sq > melee_range.powi(2),
             weapon,
+            ammo,
         })
     }
 
@@ -499,6 +575,7 @@ impl super::GameState {
             player_level,
             from_range,
             weapon,
+            ammo,
         } = match self.validate_player_attack(player_id, &monster_id).await {
             Ok(ctx) => ctx,
             Err((reason, detail)) => {
@@ -516,6 +593,12 @@ impl super::GameState {
         };
         if !self.claim_player_attack_window(player_id).await {
             return;
+        }
+        // Spent once the swing is committed, so a shot refused by any gate
+        // above — or one thrown inside the cooldown — costs nothing.
+        if let Some(round) = &ammo {
+            self.consume_one_and_sync(player_id, round.instance_id)
+                .await;
         }
         // A landed attack (not a rejected one) breaks concentration.
         self.cancel_concentration_if_active(player_id).await;
@@ -543,10 +626,14 @@ impl super::GameState {
             let target_guard = def.map(|d| i32::from(d.guard)).unwrap_or(10);
             let attack_bonus =
                 combat::level_attack_bonus(player_level) + ability_mod + weapon.enchant + hit_mod;
-            let result = combat::roll_attack(
+            // The round rolls its own die on top of the weapon's, as a
+            // monster's wielded weapon does on top of its own damage. The bow
+            // is deliberately a token 1d1: the arrow is what decides the hurt.
+            let result = combat::roll_attack_with_extra_damage_roll(
                 attack_bonus,
                 target_guard,
                 &weapon.dice,
+                ammo.as_ref().map(|round| round.dice.as_str()),
                 ability_mod + weapon.enchant,
             );
             (result.hit, result.roll, result.damage)
@@ -576,6 +663,7 @@ impl super::GameState {
                 hit: result_hit,
                 roll: result_roll,
                 damage: result_damage,
+                ammo_item_def_id: ammo.map(|round| round.item_def_id),
             },
             None,
         )

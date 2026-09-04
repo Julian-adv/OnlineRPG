@@ -2,6 +2,7 @@
   import {
     inventoryStore,
     playerEffectiveStats,
+    wornAmmoDefId,
   } from '../stores/inventoryStore'
   import type { EquipSlot } from '../stores/inventoryStore'
   import { getItemDef, isRangedWeapon, isTwoHanded } from '../data/itemDefs'
@@ -163,12 +164,24 @@
   // live-looking empty socket invites exactly that.
   const mainHandId = $derived($inventoryStore.equipped.main_hand?.item_def_id)
   const heldInLeft = $derived(isRangedWeapon(mainHandId))
-  const sealedHand = $derived(
-    isTwoHanded(mainHandId)
-      ? heldInLeft
-        ? 'main_hand'
-        : 'off_hand'
-      : null
+
+  // The bow is drawn with the right hand, so the arrow it draws belongs in
+  // the right-hand cell — which the bow itself has vacated for the left. The
+  // stack stays in the bag (stackables cannot occupy a slot); this cell shows
+  // which pile the next shot comes from and how much of it is left.
+  /** What the wielded weapon spends, so the quiver cell can say which rounds
+   *  it will take — a dragged bolt must not light up a bow's cell. */
+  const ammoKind = $derived(
+    heldInLeft ? getItemDef(mainHandId ?? '')?.ammoKind : undefined
+  )
+
+  const ammoCell = $derived(
+    (() => {
+      const worn = wornAmmoDefId($inventoryStore)
+      return worn
+        ? ($inventoryStore.bag.find((i) => i.item_def_id === worn) ?? null)
+        : null
+    })()
   )
 
   /** The stored slot a panel cell stands in for. */
@@ -315,35 +328,35 @@
             />
             {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
               {@const stored = slotBehind(slot)}
-              {@const sealed = slot === sealedHand}
-              {@const item = sealed
-                ? undefined
-                : $inventoryStore.equipped[stored]}
+              {@const isQuiverCell = heldInLeft && slot === 'main_hand'}
+              {@const ammo = isQuiverCell ? ammoCell : null}
+              {@const item = ammo ?? $inventoryStore.equipped[stored]}
               {@const def = item ? getItemDef(item.item_def_id) : null}
-              {@const isDropTarget =
-                !sealed &&
-                $dragMeta &&
-                isSlotCompatible($dragMeta.equipSlot, stored)}
+              {@const isDropTarget = isQuiverCell
+                ? $dragMeta !== null && ammoKind !== undefined &&
+                  getItemDef($dragMeta.defId)?.ammoKind === ammoKind
+                : $dragMeta && isSlotCompatible($dragMeta.equipSlot, stored)}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="equip-slot"
                 class:drop-target={isDropTarget}
-                class:sealed
                 style="top:{top}%;left:{left}%"
-                title={sealed
-                  ? 'Both hands are on your weapon'
+                title={isQuiverCell
+                  ? (ammo ? undefined : 'No arrows')
                   : item
                     ? undefined
                     : EQUIP_SLOT_LABELS[slot]}
-                data-equip-slot={sealed ? undefined : stored}
+                data-equip-slot={isQuiverCell ? undefined : stored}
+                data-ammo-kind={isQuiverCell ? ammoKind : undefined}
                 use:itemTooltip={item && def
                   ? { def, item, side: left > 50 ? 'left' : 'right' }
                   : null}
                 ondblclick={() => {
-                  if (item) unequip(stored)
+                  if (ammo) networkManager.sendSelectAmmo(null)
+                  else if (item) unequip(stored)
                 }}
                 onpointerdown={(e: PointerEvent) => {
-                  if (item) onEquipPointerDown(e, stored, item)
+                  if (item && !ammo) onEquipPointerDown(e, stored, item)
                 }}
               >
                 {#if def}
@@ -354,7 +367,9 @@
                     draggable="false"
                   />
                 {/if}
-                {#if item && item.enchant > 0}
+                {#if ammo}
+                  <span class="item-count">{ammo.quantity}</span>
+                {:else if item && item.enchant > 0}
                   <span class="item-enchant">+{item.enchant}</span>
                 {/if}
               </div>
@@ -722,18 +737,6 @@
     box-shadow: 0 0 8px rgba(88, 255, 88, 0.4);
   }
 
-  /* The hand a two-hander occupies: reads as unavailable, not as empty. */
-  .equip-slot.sealed {
-    cursor: default;
-    opacity: 0.4;
-    border-style: dashed;
-    background: rgba(148, 156, 164, 0.12);
-  }
-
-  .equip-slot.sealed:hover {
-    border-color: rgba(255, 255, 255, 0.3);
-    background: rgba(148, 156, 164, 0.12);
-  }
 
   .equip-icon {
     width: var(--equip-icon-size);
@@ -744,6 +747,20 @@
 
   .item-enchant {
     left: 4px;
+  }
+
+  /* How many rounds are left in the chosen pile. Bottom-right, clear of the
+     enchant badge, which no ammunition ever carries. White rather than the
+     gold the coin readouts use: this is a count of arrows, not money. */
+  .item-count {
+    position: absolute;
+    right: 4px;
+    bottom: 2px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffffff;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+    pointer-events: none;
   }
 
   @media (max-width: 600px), (pointer: coarse) {

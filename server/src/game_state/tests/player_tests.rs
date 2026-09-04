@@ -91,6 +91,7 @@ async fn equipped_torch_syncs_live_and_late_join_player_state() {
     game_state.inventories.write().await.insert(
         torch_holder_id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![bag_item(1, "torch", 1)],
             equipped: Default::default(),
         },
@@ -128,6 +129,7 @@ async fn equipped_main_hand_syncs_live_and_late_join_player_state() {
     game_state.inventories.write().await.insert(
         angler_id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![bag_item(1, "fishing_rod", 1)],
             equipped: Default::default(),
         },

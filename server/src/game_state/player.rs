@@ -230,6 +230,7 @@ pub(super) fn build_save_data(
     xp: u64,
     gold: i64,
     satiation: u32,
+    active_ammo: Option<String>,
 ) -> CharacterSaveData {
     CharacterSaveData {
         character_id,
@@ -244,6 +245,7 @@ pub(super) fn build_save_data(
         floor_level: player.floor_level,
         gold,
         satiation,
+        active_ammo,
     }
 }
 
@@ -742,6 +744,9 @@ impl super::GameState {
                     *xp,
                     player_gold.get(player_id).copied().unwrap_or(0),
                     super::hunger::satiation_for_save(&hunger, player_id),
+                    inventories
+                        .get(player_id)
+                        .and_then(|inv| inv.active_ammo.clone()),
                 ));
             }
             if let Some(inventory) = inventories.get(player_id) {
@@ -2143,6 +2148,7 @@ impl super::GameState {
         let gold_map = self.player_gold.read().await;
         let hunger = self.hunger.read().await;
 
+        let inventories = self.inventories.read().await;
         let mut result = Vec::with_capacity(dirty_ids.len());
         for pid in &dirty_ids {
             if let (Some(player), Some((char_id, xp, _))) =
@@ -2150,7 +2156,10 @@ impl super::GameState {
             {
                 let gold = gold_map.get(pid).copied().unwrap_or(0);
                 let satiation = super::hunger::satiation_for_save(&hunger, pid);
-                result.push(build_save_data(player, *char_id, *xp, gold, satiation));
+                let ammo = inventories.get(pid).and_then(|inv| inv.active_ammo.clone());
+                result.push(build_save_data(
+                    player, *char_id, *xp, gold, satiation, ammo,
+                ));
             }
         }
 
@@ -2167,8 +2176,16 @@ impl super::GameState {
         let (char_id, xp, _) = player_chars.get(player_id)?;
         let gold = gold_map.get(player_id).copied().unwrap_or(0);
         let satiation = super::hunger::satiation_for_save(&hunger, player_id);
+        let ammo = self
+            .inventories
+            .read()
+            .await
+            .get(player_id)
+            .and_then(|inv| inv.active_ammo.clone());
 
-        Some(build_save_data(player, *char_id, *xp, gold, satiation))
+        Some(build_save_data(
+            player, *char_id, *xp, gold, satiation, ammo,
+        ))
     }
 
     async fn insert_player_spatial_cell(&self, player_id: &PlayerId, position: &Position) {

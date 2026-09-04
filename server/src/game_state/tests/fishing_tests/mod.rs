@@ -25,6 +25,7 @@ async fn make_angler(game_state: &GameState, name: &str) -> (PlayerId, DirectRx)
     game_state.inventories.write().await.insert(
         id,
         PlayerInventory {
+            active_ammo: None,
             bag: vec![],
             equipped,
         },

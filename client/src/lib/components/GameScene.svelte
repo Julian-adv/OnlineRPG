@@ -58,6 +58,9 @@
   import FishingBobber from './FishingBobber.svelte'
   import ArrowFlight from './Arrow.svelte'
   import { loadGLB } from '../utils/gltfCache'
+  import itemDefs from '../data/itemDefs'
+  import { SvelteMap } from 'svelte/reactivity'
+  import { getObjectModelPath } from '../utils/modelPaths'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
   import {
     arrowsInFlight,
@@ -450,10 +453,17 @@
   // One arrow mesh, cloned per shot. Loaded eagerly rather than on the first
   // shot: a 500 KB fetch starting at the moment of release would miss the
   // flight it was wanted for.
-  let arrowModel = $state<THREE.Group | undefined>(undefined)
-  loadGLB('/models/objects/arrow.glb').then((gltf) => {
-    arrowModel = gltf.scene as THREE.Group
-  })
+  // One mesh per kind of round, cloned per shot. Loaded eagerly rather than
+  // on the first shot: a fetch starting at the moment of release would miss
+  // the flight it was wanted for.
+  const arrowModels = new SvelteMap<string, THREE.Group>()
+  for (const def of Object.values(itemDefs)) {
+    if (!def.ammoKind || !def.worldModel) continue
+    const id = def.id
+    loadGLB(getObjectModelPath(def.worldModel)).then((gltf) => {
+      arrowModels.set(id, gltf.scene as THREE.Group)
+    })
+  }
 
   /** Turn the release-moment requests into flights, now that the bow's world
    *  position can be read off the shooter's model. A request whose bow cannot
@@ -475,6 +485,7 @@
         to: aimPointFor(monster),
         flightMs: request.flightMs,
         launchedAt: performance.now(),
+        ammoItemDefId: request.ammoItemDefId,
       })
     }
   }
@@ -1356,7 +1367,9 @@
     <ArrowFlight
       {shot}
       playerId={shooterId}
-      model={arrowModel}
+      model={shot.ammoItemDefId
+        ? arrowModels.get(shot.ammoItemDefId)
+        : undefined}
       targetOf={() => {
         const target = monsterManager.monsters.get(shot.monsterId)
         return target && target.state !== 'dead' ? aimPointFor(target) : null

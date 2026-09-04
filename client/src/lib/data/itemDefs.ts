@@ -40,6 +40,9 @@ export interface ItemDefinition {
   rangedAbility?: string
   /** Hands the weapon occupies. Absent = 1; 2 seals the off-hand slot. */
   hands?: number
+  /** What a ranged weapon spends, and what a round feeds. Both name the same
+   *  kind; absent on a weapon means firing is free. */
+  ammoKind?: string
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>
@@ -101,11 +104,35 @@ export function isTwoHanded(itemDefId: string | null | undefined): boolean {
   return (itemDefId ? getItemDef(itemDefId)?.hands : undefined) === 2
 }
 
-/** Mean damage roll (dice + enchant); 0 for non-weapons. */
-export function averageDamage(def: ItemDefinition, enchant = 0): number {
-  const m = def.category === 'weapon' ? def.dice?.match(/^(\d+)d(\d+)$/) : null
-  if (!m) return 0
-  return (Number(m[1]) * (Number(m[2]) + 1)) / 2 + enchant
+/** Mean roll of a round's die; 0 for anything that is not ammunition. The
+ *  server ranks the quiver the same way (`ItemDefinition::average_damage`) —
+ *  from the dice rather than a tier column, so an order can never disagree
+ *  with the damage it stands for. */
+export function ammoAverageDamage(def: ItemDefinition): number {
+  return def.category === 'ammo' ? meanRoll(def.dice) : 0
+}
+
+/** Mean roll of a dice notation, or 0 when there isn't one. */
+function meanRoll(dice: string | undefined): number {
+  const m = dice?.match(/^(\d+)d(\d+)$/)
+  return m ? (Number(m[1]) * (Number(m[2]) + 1)) / 2 : 0
+}
+
+/** Mean damage roll (dice + enchant); 0 for non-weapons.
+ *
+ *  A ranged weapon is only half the roll — the round adds the other die, and
+ *  the bow's own die is a token 1d1. Quoting the bow alone would read as
+ *  worthless beside any blade, so `ammo` (the def of the chosen round) is
+ *  folded in. Ammunition never carries an enchant: it cannot be equipped, so
+ *  no scroll can reach it. */
+export function averageDamage(
+  def: ItemDefinition,
+  enchant = 0,
+  ammo?: ItemDefinition
+): number {
+  if (def.category !== 'weapon') return 0
+  const round = def.ammoKind && ammo?.ammoKind === def.ammoKind ? ammo : undefined
+  return meanRoll(def.dice) + meanRoll(round?.dice) + enchant
 }
 
 /** Tooltip lines for what an item does: `guard` (with any armor enchant folded
@@ -137,7 +164,9 @@ export function compareStats(
   def: ItemDefinition,
   enchant: number,
   equipped: ItemDefinition,
-  equippedEnchant: number
+  equippedEnchant: number,
+  /** The chosen round, so a bow is compared with what it actually fires. */
+  ammo?: ItemDefinition
 ): StatDelta[] {
   const out: StatDelta[] = []
   const push = (label: string, delta: number, lowerIsBetter = false) => {
@@ -147,7 +176,8 @@ export function compareStats(
   push('Weight', def.weight - equipped.weight, true)
   push(
     'Damage',
-    averageDamage(def, enchant) - averageDamage(equipped, equippedEnchant)
+    averageDamage(def, enchant, ammo) -
+      averageDamage(equipped, equippedEnchant, ammo)
   )
   push(
     'Guard',

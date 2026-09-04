@@ -126,7 +126,9 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      an older client cannot decode a served plate.
 /// v52: live instrument performance (`StartInstrument`/`InstrumentNotes` and
 ///      the corresponding nearby-player start/note broadcasts).
-pub const PROTOCOL_VERSION: u32 = 52;
+/// v53: `PlayerAttacked.ammo_item_def_id` — which round a ranged shot spent,
+///      so the arrow drawn in flight is the one that left the quiver.
+pub const PROTOCOL_VERSION: u32 = 53;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from
@@ -549,6 +551,7 @@ mod tests {
                 hit: true,
                 roll: 18,
                 damage: 5,
+                ammo_item_def_id: None,
             },
             ServerMessage::MonsterProvoked {
                 player_id: 1.into(),
