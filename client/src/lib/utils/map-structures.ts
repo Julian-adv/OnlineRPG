@@ -1,6 +1,7 @@
 import type { DungeonEntranceDef } from '../data/dungeonDefs'
 import type { HouseMapFootprint } from '../types/housing'
 import { unwrapWorldXNear } from '../terrain/world-wrap'
+import { LAND_PLOT_SIZE, TILE_DIM } from '../terrain/terrain-constants'
 
 /** Map rotation so screen-up matches walking up (tracks the camera's initial yaw). */
 export const MAP_ROTATE_ANGLE = -Math.PI / 4
@@ -44,6 +45,57 @@ export function drawHouseMapFootprints(
       ctx.strokeRect(p.x, p.y, drawWidth, drawDepth)
     }
   }
+  ctx.restore()
+}
+
+const LAND_GRID_MIN_PLOT_PX = 4
+
+function drawWorldGrid(
+  ctx: CanvasRenderingContext2D,
+  spacing: number,
+  offset: number,
+  size: number,
+  transform: MapCanvasTransform
+) {
+  const sizePx = size * transform.scale
+  const first = (v: number) =>
+    Math.ceil((v - offset) / spacing) * spacing + offset
+  ctx.beginPath()
+  for (
+    let x = first(transform.viewLeft);
+    x <= transform.viewLeft + size;
+    x += spacing
+  ) {
+    const px = (x - transform.viewLeft) * transform.scale
+    ctx.moveTo(px, 0)
+    ctx.lineTo(px, sizePx)
+  }
+  for (
+    let z = first(transform.viewTop);
+    z <= transform.viewTop + size;
+    z += spacing
+  ) {
+    const py = (z - transform.viewTop) * transform.scale
+    ctx.moveTo(0, py)
+    ctx.lineTo(sizePx, py)
+  }
+  ctx.stroke()
+}
+
+/** Debug overlay: 32 m plot lines, with the 64 m tile edges drawn over them. */
+export function drawLandPlotGrid(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  transform: MapCanvasTransform
+) {
+  if (LAND_PLOT_SIZE * transform.scale < LAND_GRID_MIN_PLOT_PX) return
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'
+  ctx.lineWidth = 0.75
+  drawWorldGrid(ctx, LAND_PLOT_SIZE, 0, size, transform)
+  ctx.strokeStyle = 'rgba(255, 230, 120, 0.85)'
+  ctx.lineWidth = 1.5
+  drawWorldGrid(ctx, TILE_DIM, TILE_DIM / 2, size, transform)
   ctx.restore()
 }
 

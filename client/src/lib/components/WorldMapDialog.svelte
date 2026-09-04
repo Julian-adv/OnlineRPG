@@ -66,7 +66,7 @@
   import { assetUrl } from '../utils/assetUrl'
   import { gameStore, isAdminUser } from '../stores/gameStore'
   import { partyRoster, partyPositions } from '../stores/partyStore'
-  import { worldMapVisible } from '../stores/debugStore'
+  import { worldMapVisible, gridVisible } from '../stores/debugStore'
   import { discoveredDungeonIds } from '../stores/dungeonStore'
   import { houseMapFootprints } from '../stores/housingMapStore'
   import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
@@ -86,6 +86,7 @@
   import {
     MAP_ROTATE_ANGLE,
     drawHouseMapFootprints,
+    drawLandPlotGrid,
     headingToMapAngle,
   } from '../utils/map-structures'
   import { teleportLocalPlayer } from '../utils/teleport'
@@ -178,6 +179,7 @@
     const cx = camX
     const cz = camZ
     const houses = $houseMapFootprints
+    const landGrid = $gridVisible
     const cw = containerW
     const ch = containerH
     const dpr = Math.min(
@@ -309,12 +311,16 @@
       }
 
       atlasCtx.setTransform(dpr, 0, 0, dpr, ATLAS_PADDING_PX, ATLAS_PADDING_PX)
-      drawHouseMapFootprints(atlasCtx, houses, {
+      const atlasTransform = {
         centerX: cx,
         viewLeft: expandedViewLeft,
         viewTop: expandedViewTop,
         scale,
-      })
+      }
+      if (landGrid) {
+        drawLandPlotGrid(atlasCtx, expandedViewWorldSize, atlasTransform)
+      }
+      drawHouseMapFootprints(atlasCtx, houses, atlasTransform)
 
       ctx.clearRect(0, 0, cw, ch)
       ctx.fillStyle = OUT_OF_WORLD_OCEAN
