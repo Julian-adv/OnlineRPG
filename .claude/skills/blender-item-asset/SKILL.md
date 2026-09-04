@@ -1,6 +1,6 @@
 ---
 name: blender-item-asset
-description: Meshy 등에서 받은 GLB/FBX를 Blender로 가져와 게임용 아이템 애셋으로 만든다 — 기존 애셋과 비교해 스케일 결정·적용, 원점 바닥 중심, Meshy emissive 제거, 텍스처 512² 축소, client/public/models/ 로 GLB export, 128×128 아이콘 렌더, 원화 배치, pc5090으로 산출물 복사, pc5090의 doc/assets/items.md 또는 props.md에 유래 기록까지. "이 glb 임포트해서 스케일 맞춰줘", "아이템 애셋 추가", "아이콘 렌더링해줘" 같은 요청에 사용한다.
+description: Meshy 등에서 받은 GLB/FBX를 Blender로 가져와 게임용 아이템 애셋으로 만든다 — 기존 애셋과 비교해 스케일 결정·적용, 원점 바닥 중심, Meshy emissive 제거, 텍스처 512² 축소·WebP export, client/public/models/ 로 GLB export, 128×128 아이콘 렌더, 원화 배치, pc5090으로 산출물 복사, pc5090의 doc/assets/items.md 또는 props.md에 유래 기록까지. "이 glb 임포트해서 스케일 맞춰줘", "아이템 애셋 추가", "아이콘 렌더링해줘" 같은 요청에 사용한다.
 argument-hint: [입력 glb/fbx 경로] [애셋 이름]
 ---
 
@@ -265,9 +265,12 @@ bpy.context.view_layer.objects.active = o
 
 out = rf"{REPO}\client\public\models\<카테고리>\{NAME}.glb"
 bpy.ops.export_scene.gltf(filepath=out, export_format='GLB', use_selection=True,
-                          export_apply=True, export_yup=True, export_animations=False)
+                          export_apply=True, export_yup=True, export_animations=False,
+                          export_image_format='WEBP', export_image_quality=90)
 result = {"bytes": os.path.getsize(out)}
 ```
+
+`export_image_format='WEBP'`가 없으면 텍스처가 PNG로 나가 512²라도 파일의 대부분을 차지한다(기존 아이템 1 MB대 → WebP면 200 KB대). 노멀맵도 WebP q90으로 충분하다.
 
 검증 — `emissiveFactor`가 없어야 하고(없으면 기본 [0,0,0]), 치수가 STEP 3 값과 맞아야 한다:
 
@@ -344,7 +347,7 @@ ssh pc5090 "cd ~/work/OnlineRPG && git diff --stat doc/assets/"          # 4) �
 
 항목 형식 (기존 줄을 그대로 따를 것):
 
-> - `<name>.glb` — Meshy.ai (유료 생성, `<생성일>`, "`<프롬프트 제목>`"). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 `<축>` `<TARGET>`m로 스케일 적용(W×H×D, `<비교 기준>`), 원점=바닥 중심, 텍스처 512²로 축소, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (`<오늘 날짜>`)
+> - `<name>.glb` — Meshy.ai (유료 생성, `<생성일>`, "`<프롬프트 제목>`"). 완전 소유권·상업 OK (characters.md License 참조). GLB를 Blender로 임포트해 `<축>` `<TARGET>`m로 스케일 적용(W×H×D, `<비교 기준>`), 원점=바닥 중심, 텍스처 512² WebP q90, 검은 emissive 제거. 아이콘은 Cycles 직교 측면·위 각도 렌더 512²→128² (`<오늘 날짜>`)
 >     - 원화는 ChatGPT 이미지 생성 (ChatGPT Pro 20x, `<생성일>`) `![원화](../images/<name>.png)`
 
 `items.csv`에 아직 안 붙였으면 끝에 `아직 items.csv 미연결 **[미사용]**`을 덧붙인다. 쓰이지 않게 된 애셋은 **[미사용]** 표기.

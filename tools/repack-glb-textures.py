@@ -26,13 +26,13 @@ Run:  uv run tools/repack-glb-textures.py client/public/models/characters
 """
 import argparse
 import io
-import json
-import struct
 import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+from lib.glb import read_glb, view_bytes, write_glb
 
 NORMAL_MAX = 1024
 MR_MAX = 1024
@@ -42,49 +42,6 @@ MR_QUALITY = 90
 BASE_QUALITY = 92
 FLAT_TILT_DEG = 0.5
 CONST_STD = 0.5
-
-GLB_MAGIC = 0x46546C67
-CHUNK_JSON = 0x4E4F534A
-CHUNK_BIN = 0x004E4942
-
-
-def read_glb(path):
-    data = path.read_bytes()
-    magic, _version, length = struct.unpack_from('<III', data, 0)
-    if magic != GLB_MAGIC:
-        raise ValueError(f'not a glb: {path}')
-    off, gltf, binary = 12, None, b''
-    while off < length:
-        clen, ctype = struct.unpack_from('<II', data, off)
-        chunk = data[off + 8:off + 8 + clen]
-        if ctype == CHUNK_JSON:
-            gltf = json.loads(chunk.decode('utf-8'))
-        elif ctype == CHUNK_BIN:
-            binary = chunk
-        off += 8 + clen
-        off += (-off) % 4
-    return gltf, binary
-
-
-def write_glb(path, gltf, binary):
-    js = json.dumps(gltf, separators=(',', ':')).encode('utf-8')
-    js += b' ' * ((-len(js)) % 4)
-    binary += b'\x00' * ((-len(binary)) % 4)
-    total = 12 + 8 + len(js) + (8 + len(binary) if binary else 0)
-    with path.open('wb') as f:
-        f.write(struct.pack('<III', GLB_MAGIC, 2, total))
-        f.write(struct.pack('<II', len(js), CHUNK_JSON))
-        f.write(js)
-        if binary:
-            f.write(struct.pack('<II', len(binary), CHUNK_BIN))
-            f.write(binary)
-
-
-def view_bytes(gltf, binary, index):
-    bv = gltf['bufferViews'][index]
-    start = bv.get('byteOffset', 0)
-    return binary[start:start + bv['byteLength']]
-
 
 def to_jpeg(image, max_size, quality, original):
     """Returns the encoded bytes, or None when it would not be an improvement.

@@ -24,7 +24,7 @@ echo "==> git pull"
 git pull --ff-only
 
 echo "==> assets"
-bash tools/fetch-assets.sh
+bash tools/fetch-assets.sh client/public
 
 # Untracked (real names): synced from the dev host in the /deploy preflight.
 # The server logs "Loaded N banned character name(s)" at restart.

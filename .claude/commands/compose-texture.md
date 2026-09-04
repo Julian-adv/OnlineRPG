@@ -46,7 +46,7 @@ Common layout patterns:
 
 Apply the SAME compositing operation to all three map types (diffuse, normal, ARM) to keep PBR consistency.
 
-Output to: `client/public/textures/housing/{output_name}/`
+Output to: `assets/textures-src/housing/{output_name}/` (원본 보관; HF 동기화)
 
 ### Step 3: Create .gltf File
 
@@ -60,10 +60,11 @@ The .gltf must have:
 ### Step 4: Package as GLB
 
 ```bash
-npx @gltf-transform/cli copy {output_name}.gltf ../../{output_name}.glb
+npx @gltf-transform/cli copy {output_name}.gltf ../{output_name}.glb
+python3 tools/repack-material-glbs.py
 ```
 
-The output GLB goes to `client/public/textures/housing/{output_name}.glb`
+The source GLB goes to `assets/textures-src/housing/{output_name}.glb`; the repack writes the shipped WebP version to `client/public/textures/housing/{output_name}.glb` (rule in CLAUDE.md, details in doc/assets/environment.md).
 
 ### Step 5: Register in Housing Catalog (optional)
 

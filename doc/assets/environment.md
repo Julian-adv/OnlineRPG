@@ -11,6 +11,11 @@
 
 ## Terrain Textures
 
+`client/public/textures/**/*.glb`는 배포본이다: 원본(Poly Haven 1k GLB)은 `assets/textures-src/`(HF 동기화)에 두고
+`python3 tools/repack-material-glbs.py`로 재생성한다 — 샘플 메시·specular 제거, 모든 맵 WebP q90(노멀맵 포함; 렌더 A/B에서 무손실 대비 0.3/255 이내),
+palette 전용 레이어는 아틀라스 크기인 512로 축소. 270 MB → 31 MB (2026-09-05).
+white-cloud.jpg도 같은 폴더의 원본(5964px)을 2048px q85로 줄인 것.
+
 - 자갈: https://polyhaven.com/a/gravel_floor — **[미사용]** 도로는 gravel_road 사용 (palette.json), 참조 없음
 - 잔디: https://polyhaven.com/a/rocky_terrain_02
 - 눈: https://polyhaven.com/a/snow_02
