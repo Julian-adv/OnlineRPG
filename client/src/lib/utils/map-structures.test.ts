@@ -35,7 +35,7 @@ function stubCtx() {
 const transform = { centerX: 0, viewLeft: 0, viewTop: 0, scale: 1 }
 
 describe('drawLandPlotGrid', () => {
-  it('draws 32 m plot lines, then thick tile edges on odd multiples of 32', () => {
+  it('draws 32 m plot lines', () => {
     const { ctx, lines } = stubCtx()
     drawLandPlotGrid(ctx, 128, transform)
     const vertical = lines
@@ -47,8 +47,6 @@ describe('drawLandPlotGrid', () => {
       [64, 0.75],
       [96, 0.75],
       [128, 0.75],
-      [32, 1.5],
-      [96, 1.5],
     ])
   })
 

@@ -64,9 +64,9 @@
 
 <script lang="ts">
   import { assetUrl } from '../utils/assetUrl'
-  import { gameStore, isAdminUser } from '../stores/gameStore'
+  import { gameStore, isAdminUser, addChatMessage } from '../stores/gameStore'
   import { partyRoster, partyPositions } from '../stores/partyStore'
-  import { worldMapVisible, gridVisible } from '../stores/debugStore'
+  import { worldMapVisible, landPlotsVisible } from '../stores/debugStore'
   import { discoveredDungeonIds } from '../stores/dungeonStore'
   import { houseMapFootprints } from '../stores/housingMapStore'
   import { DUNGEON_ENTRANCES } from '../data/dungeonDefs'
@@ -86,10 +86,20 @@
   import {
     MAP_ROTATE_ANGLE,
     drawHouseMapFootprints,
+    drawLandPlotCells,
     drawLandPlotGrid,
+    plotsLegible,
+    type LandGradeRegion,
     headingToMapAngle,
   } from '../utils/map-structures'
   import { teleportLocalPlayer } from '../utils/teleport'
+  import {
+    getCachedLandGrades,
+    landGradeVersion,
+    requestLandGrades,
+    setLandGrade,
+  } from '../stores/landGradeStore'
+  import { nextGrade, plotAddress } from '../terrain/landPlots'
   import SelfMarker from './SelfMarker.svelte'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
@@ -179,7 +189,8 @@
     const cx = camX
     const cz = camZ
     const houses = $houseMapFootprints
-    const landGrid = $gridVisible
+    const landGrid = $landPlotsVisible
+    void $landGradeVersion
     const cw = containerW
     const ch = containerH
     const dpr = Math.min(
@@ -246,6 +257,8 @@
     }
 
     const promises: Promise<LoadedRegion | null>[] = []
+    const gradeRegions: LandGradeRegion[] = []
+    const wantGrades = landGrid && plotsLegible(scale)
     for (let rz = expRegionMinRz; rz <= expRegionMaxRz; rz++) {
       if (rz < WORLD_MIN_REGION_Z || rz > WORLD_MAX_REGION_Z) continue
       for (let rx = expRegionMinRx; rx <= expRegionMaxRx; rx++) {
@@ -262,6 +275,11 @@
             }
           })
         )
+        if (wantGrades) {
+          const grades = getCachedLandGrades(rx, rz)
+          if (grades) gradeRegions.push({ rx, rz, grades })
+          else requestLandGrades(rx, rz)
+        }
       }
     }
 
@@ -318,6 +336,7 @@
         scale,
       }
       if (landGrid) {
+        drawLandPlotCells(atlasCtx, gradeRegions, atlasTransform)
         drawLandPlotGrid(atlasCtx, expandedViewWorldSize, atlasTransform)
       }
       drawHouseMapFootprints(atlasCtx, houses, atlasTransform)
@@ -653,11 +672,31 @@
       event.stopPropagation()
       return
     }
-    const teleportRequested = event.ctrlKey && $isAdminUser
-    if (!teleportRequested) return
-    event.preventDefault()
-    event.stopPropagation()
-    teleportAt(event.clientX, event.clientY)
+    if (!$isAdminUser) return
+    if (event.ctrlKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      teleportAt(event.clientX, event.clientY)
+    } else if ($landPlotsVisible) {
+      event.preventDefault()
+      event.stopPropagation()
+      cyclePlotAt(event.clientX, event.clientY)
+    }
+  }
+
+  function cyclePlotAt(clientX: number, clientY: number) {
+    const p = screenToWorld(clientX, clientY)
+    if (!p || !plotsLegible(p.scale)) return
+    const addr = plotAddress(p.x, p.z)
+    const grades = getCachedLandGrades(addr.rx, addr.rz)
+    if (!grades) return
+    const next = nextGrade(grades[addr.index])
+    setLandGrade(addr.rx, addr.rz, addr.index, next).catch((e: Error) => {
+      addChatMessage({
+        text: `Land grade save failed: ${e.message}`,
+        sender: 'system',
+      })
+    })
   }
 
   // macOS turns Ctrl+click into a contextmenu event (no click fires at all),
@@ -669,13 +708,12 @@
     teleportAt(event.clientX, event.clientY)
   }
 
-  function teleportAt(clientX: number, clientY: number) {
-    if (!$isAdminUser) return
-    // Invert worldToScreen against the view actually on screen, so a click
-    // during an in-flight pan/zoom lands where the admin sees, not where the
-    // camera already moved.
+  // Invert worldToScreen against the view actually on screen, so a click
+  // during an in-flight pan/zoom lands where the admin sees, not where the
+  // camera already moved.
+  function screenToWorld(clientX: number, clientY: number) {
     const view = renderedView
-    if (!containerEl || !view) return
+    if (!containerEl || !view) return null
 
     const rect = containerEl.getBoundingClientRect()
     const pixelX = clientX - rect.left
@@ -689,7 +727,14 @@
       (pixelX - view.width / 2) / scale,
       (pixelY - view.height / 2) / scale
     )
-    teleportLocalPlayer(view.camX + delta.x, 0, view.camZ + delta.z)
+    return { x: view.camX + delta.x, z: view.camZ + delta.z, scale }
+  }
+
+  function teleportAt(clientX: number, clientY: number) {
+    if (!$isAdminUser) return
+    const p = screenToWorld(clientX, clientY)
+    if (!p) return
+    teleportLocalPlayer(p.x, 0, p.z)
     close()
   }
 
@@ -759,6 +804,22 @@
             <circle cx="12" cy="12" r="1.5" class="center-dot"></circle>
           </svg></button
         >
+        {#if $isAdminUser}
+          <button
+            type="button"
+            class="ctrl-btn center-btn"
+            class:active={$landPlotsVisible}
+            onclick={() => ($landPlotsVisible = !$landPlotsVisible)}
+            title="Toggle Land Plots"
+            aria-label="Toggle land plots"
+            aria-pressed={$landPlotsVisible}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3.5" y="3.5" width="17" height="17" rx="1"></rect>
+              <path d="M12 3.5v17M3.5 12h17"></path>
+            </svg></button
+          >
+        {/if}
       </div>
       <button
         type="button"
@@ -773,6 +834,7 @@
     <div
       class="map-container"
       class:dragging={isDragging}
+      class:editing={$landPlotsVisible && $isAdminUser}
       bind:this={containerEl}
       onpointerdown={handlePointerDown}
       onclick={handleMapClick}
@@ -988,6 +1050,11 @@
     padding: 0;
   }
 
+  .ctrl-btn.active {
+    border-color: #f0ce78;
+    color: #f0ce78;
+  }
+
   .center-btn svg {
     width: 19px;
     height: 19px;
@@ -1061,6 +1128,10 @@
 
   .map-container.dragging {
     cursor: grabbing;
+  }
+
+  .map-container.editing {
+    cursor: default;
   }
 
   .map-canvas {

@@ -547,6 +547,30 @@ impl TerrainIO {
         write_terrain_file(&path, json_str.as_bytes()).await
     }
 
+    pub async fn read_land_grades(&self, rx: i32, rz: i32) -> std::io::Result<Option<Vec<u8>>> {
+        match fs::read(coords::land_grade_path(&self.base_dir, rx, rz)).await {
+            Ok(data) if data.len() == crate::land::REGION_PLOTS => Ok(Some(data)),
+            Ok(_) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("land grades ({rx}, {rz}): wrong size"),
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn write_land_grades(&self, rx: i32, rz: i32, data: &[u8]) -> std::io::Result<()> {
+        if data.len() != crate::land::REGION_PLOTS
+            || data.iter().any(|&g| g > crate::land::GRADE_PRIME)
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "land grades: expected 1024 bytes of grades 0..=2",
+            ));
+        }
+        write_terrain_file(&coords::land_grade_path(&self.base_dir, rx, rz), data).await
+    }
+
     /// Read object data for a region. Returns empty JSON object if file not found.
     pub async fn read_object(&self, rx: i32, rz: i32) -> std::io::Result<serde_json::Value> {
         Self::read_region_json(coords::object_path(&self.base_dir, rx, rz)).await

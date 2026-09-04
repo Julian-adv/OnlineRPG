@@ -108,6 +108,12 @@ pub fn zone_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
         .join(format!("r{:+03}_{:+03}.json", rx, rz))
 }
 
+/// Build filesystem path for a region land-grade file (one byte per plot).
+pub fn land_grade_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
+    base.join("land-grades")
+        .join(format!("r{:+03}_{:+03}.bin", rx, rz))
+}
+
 /// Build filesystem path for a region object JSON file.
 pub fn object_path(base: &Path, rx: i32, rz: i32) -> PathBuf {
     base.join("objects")
