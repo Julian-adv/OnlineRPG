@@ -611,6 +611,14 @@ impl super::GameState {
                         .await;
                 }
             } else {
+                // Loot lands where the monster fell, which is not where the
+                // registry has it: that only advances on the brain's tick, and
+                // a bow kills a monster mid-charge, metres along from its last
+                // sync. Read the brain before `brain_death` drops it.
+                let corpse_position = self
+                    .brain_position_now(&monster_id)
+                    .await
+                    .unwrap_or(monster_position);
                 self.brain_death(&monster_id).await;
                 let def = self.monster_defs.get(&monster_type);
                 // Depth-scaled dungeon monsters count as their effective level.
@@ -628,9 +636,9 @@ impl super::GameState {
                     player_name,
                     monster_type,
                     effective_level.unwrap_or(0),
-                    monster_position.x,
-                    monster_position.z,
-                    crate::dungeon_defs::place_label(&monster_position, monster_floor_level),
+                    corpse_position.x,
+                    corpse_position.z,
+                    crate::dungeon_defs::place_label(&corpse_position, monster_floor_level),
                     dropped_weapon_item_def_id.as_deref().unwrap_or("none")
                 );
                 self.send_direct_message_to_players_within_position(
@@ -652,9 +660,9 @@ impl super::GameState {
                     // behind a wall would be lost.
                     let drop_position = self
                         .loot_drop_position(
-                            monster_position,
+                            corpse_position,
                             monster_floor_level,
-                            dropped_weapon_position(monster_position),
+                            dropped_weapon_position(corpse_position),
                         )
                         .await;
                     Some(GroundItem {
@@ -685,7 +693,7 @@ impl super::GameState {
                 self.spawn_kill_loot_after_impact(
                     weapon_drop,
                     monster_drops,
-                    monster_position,
+                    corpse_position,
                     monster_floor_level,
                     effective_level,
                 );
