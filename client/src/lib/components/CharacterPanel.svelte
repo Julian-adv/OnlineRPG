@@ -5,7 +5,7 @@
     wornAmmoDefId,
   } from '../stores/inventoryStore'
   import type { EquipSlot } from '../stores/inventoryStore'
-  import { getItemDef, isRangedWeapon, isTwoHanded } from '../data/itemDefs'
+  import { getItemDef, isRangedWeapon } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
   import type {
     CharacterAttributes,
@@ -333,7 +333,8 @@
               {@const item = ammo ?? $inventoryStore.equipped[stored]}
               {@const def = item ? getItemDef(item.item_def_id) : null}
               {@const isDropTarget = isQuiverCell
-                ? $dragMeta !== null && ammoKind !== undefined &&
+                ? $dragMeta !== null &&
+                  ammoKind !== undefined &&
                   getItemDef($dragMeta.defId)?.ammoKind === ammoKind
                 : $dragMeta && isSlotCompatible($dragMeta.equipSlot, stored)}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -342,7 +343,9 @@
                 class:drop-target={isDropTarget}
                 style="top:{top}%;left:{left}%"
                 title={isQuiverCell
-                  ? (ammo ? undefined : 'No arrows')
+                  ? ammo
+                    ? undefined
+                    : 'No arrows'
                   : item
                     ? undefined
                     : EQUIP_SLOT_LABELS[slot]}
@@ -736,7 +739,6 @@
     background: rgba(88, 160, 88, 0.4);
     box-shadow: 0 0 8px rgba(88, 255, 88, 0.4);
   }
-
 
   .equip-icon {
     width: var(--equip-icon-size);

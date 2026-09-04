@@ -7,7 +7,7 @@
 
   interface Props {
     position: THREE.Vector3
-    camera: THREE.OrthographicCamera | undefined
+    camera: THREE.Camera | undefined
     message: string
   }
 

@@ -109,15 +109,6 @@ fn resolves_as_hit(roll_total: i32, attack_bonus: i32, target_guard: i32) -> boo
     roll_total + attack_bonus > target_guard
 }
 
-pub fn roll_attack(
-    attack_bonus: i32,
-    target_guard: i32,
-    damage_roll: &str,
-    damage_bonus: i32,
-) -> AttackResult {
-    roll_attack_with_extra_damage_roll(attack_bonus, target_guard, damage_roll, None, damage_bonus)
-}
-
 pub fn roll_attack_with_extra_damage_roll(
     attack_bonus: i32,
     target_guard: i32,

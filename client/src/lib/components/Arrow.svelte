@@ -53,7 +53,8 @@
     // proportionally longer rather than stopping short of where it is aimed.
     const span = shot.hit
       ? shot.flightMs
-      : shot.flightMs * (from.distanceTo(missTo) / Math.max(from.distanceTo(aim), 0.001))
+      : shot.flightMs *
+        (from.distanceTo(missTo) / Math.max(from.distanceTo(aim), 0.001))
     const t = elapsed / Math.max(span, 1)
 
     if (t >= 1) {

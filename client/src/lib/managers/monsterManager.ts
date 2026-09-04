@@ -406,7 +406,8 @@ class MonsterManager {
       // Asked for at the release frame so the scene reads the bow where the
       // draw ends. GameScene owns the launch: it has the player models.
       window.setTimeout(
-        () => requestArrow({ playerId, monsterId, hit, flightMs, ammoItemDefId }),
+        () =>
+          requestArrow({ playerId, monsterId, hit, flightMs, ammoItemDefId }),
         PLAYER_RANGED_IMPACT_DELAY_MS
       )
     } else if (!hit) {
@@ -421,7 +422,9 @@ class MonsterManager {
     if (isLocalPlayerAttack) {
       monster.pendingDamageText = {
         delay: ranged
-          ? PLAYER_RANGED_IMPACT_DELAY_MS + flightMs + DAMAGE_TEXT_AFTER_IMPACT_MS
+          ? PLAYER_RANGED_IMPACT_DELAY_MS +
+            flightMs +
+            DAMAGE_TEXT_AFTER_IMPACT_MS
           : PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
         damage,
         hit,

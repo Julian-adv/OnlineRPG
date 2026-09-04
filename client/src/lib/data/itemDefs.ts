@@ -131,7 +131,8 @@ export function averageDamage(
   ammo?: ItemDefinition
 ): number {
   if (def.category !== 'weapon') return 0
-  const round = def.ammoKind && ammo?.ammoKind === def.ammoKind ? ammo : undefined
+  const round =
+    def.ammoKind && ammo?.ammoKind === def.ammoKind ? ammo : undefined
   return meanRoll(def.dice) + meanRoll(round?.dice) + enchant
 }
 

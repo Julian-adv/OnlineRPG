@@ -32,7 +32,9 @@
   /** The round this weapon would actually draw, or undefined when it draws
    *  none — either it is not a ranged weapon or the quiver is empty. */
   const drawnRound = $derived(
-    def.ammoKind && chosenAmmo?.ammoKind === def.ammoKind ? chosenAmmo : undefined
+    def.ammoKind && chosenAmmo?.ammoKind === def.ammoKind
+      ? chosenAmmo
+      : undefined
   )
   const deltas = $derived(
     compare

@@ -987,24 +987,7 @@ impl AuthService {
         Ok(inserted == 1)
     }
 
-    /// Set the shown title. `Some` must be an earned title; otherwise the
-    /// row is left alone and false comes back.
-    /// Which pile the archer draws from. `None` clears the choice, which puts
-    /// the next shot back on the strongest round in the bag.
-    pub fn set_active_ammo(
-        &self,
-        character_id: i64,
-        item_def_id: Option<&str>,
-    ) -> Result<(), AuthError> {
-        let conn = self.open_connection()?;
-        conn.execute(
-            "UPDATE characters SET active_ammo = ?2 WHERE id = ?1",
-            params![character_id, item_def_id],
-        )?;
-        Ok(())
-    }
-
-    /// The saved choice, or `None` when the character has never made one.
+    /// The archer's saved ammo choice, or `None` when never chosen.
     pub fn active_ammo(&self, character_id: i64) -> Result<Option<String>, AuthError> {
         let conn = self.open_connection()?;
         let value = conn
@@ -1018,6 +1001,8 @@ impl AuthService {
         Ok(value)
     }
 
+    /// Set the shown title. `Some` must be an earned title; otherwise the
+    /// row is left alone and false comes back.
     pub fn set_active_title(
         &self,
         character_id: i64,

@@ -174,8 +174,7 @@
           itemDefId,
           forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
         )
-      }
-      else poseOffHandProp(prop)
+      } else poseOffHandProp(prop)
       bone.add(prop)
       heldProps.push(prop)
 
