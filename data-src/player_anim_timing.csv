@@ -2,6 +2,9 @@ id,delayMs,comment
 player_attack_impact,540,slash1 blade lands - hit/miss sfx and monster flinch
 player_attack_interval,1380,slash1 cadence with server-arrival jitter allowance
 player_attack_damage_text,750,damage number pops after a slash1 hit
+player_ranged_impact,780,bow_shoot arrow leaves - the bow arm starts its recoil at 0.767-0.800s
+player_ranged_flight,333,arrow flight at the bow's full 10m range - the server's fixed allowance before loot falls
+player_ranged_draw,460,bow-draw.ogg starts - 0.52s long so it runs under the loose and tails off just after
 sword_miss,450,whiff sfx on a missed slash1 swing
 prop_swing_impact,660,barrel/crate shatters as the slash1 blade lands
 fishing_cast_swing,1600,fishing_cast rod whips forward - whoosh plays and splash follows CAST_MS later

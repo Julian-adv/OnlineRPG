@@ -56,7 +56,14 @@
   import GameSceneMealsLayer from './game-scene/GameSceneMealsLayer.svelte'
   import GameSceneTipHatsLayer from './game-scene/GameSceneTipHatsLayer.svelte'
   import FishingBobber from './FishingBobber.svelte'
+  import ArrowFlight from './Arrow.svelte'
+  import { loadGLB } from '../utils/gltfCache'
   import { fishingBobbers, myFishing } from '../stores/fishingStore'
+  import {
+    arrowsInFlight,
+    launchArrow,
+    takeArrowRequests,
+  } from '../stores/arrowStore'
   import { instrumentPanelVisible } from '../stores/instrumentStore'
   import MapEditorCursor from './map-editor/MapEditorCursor.svelte'
   import ZoneOverlay from './map-editor/ZoneOverlay.svelte'
@@ -439,6 +446,51 @@
 
   // References to PlayerModel components
   let currentPlayerModel = $state<PlayerModel | null>(null)
+
+  // One arrow mesh, cloned per shot. Loaded eagerly rather than on the first
+  // shot: a 500 KB fetch starting at the moment of release would miss the
+  // flight it was wanted for.
+  let arrowModel = $state<THREE.Group | undefined>(undefined)
+  loadGLB('/models/objects/arrow.glb').then((gltf) => {
+    arrowModel = gltf.scene as THREE.Group
+  })
+
+  /** Turn the release-moment requests into flights, now that the bow's world
+   *  position can be read off the shooter's model. A request whose bow cannot
+   *  be resolved (model still loading, shooter out of view) is dropped rather
+   *  than fired from the player's feet. */
+  function launchRequestedArrows() {
+    for (const request of takeArrowRequests()) {
+      const isLocal = request.playerId === currentPlayer?.id
+      const index = [...otherPlayers.keys()].indexOf(request.playerId)
+      const bow = isLocal
+        ? (currentPlayerModel?.getBowWorld() ?? null)
+        : (otherPlayerModels[index]?.getBowWorld() ?? null)
+      const monster = monsterManager.monsters.get(request.monsterId)
+      if (!bow || !monster) continue
+      launchArrow(request.playerId, {
+        monsterId: request.monsterId,
+        hit: request.hit,
+        from: { x: bow.x, y: bow.y, z: bow.z },
+        to: aimPointFor(monster),
+        flightMs: request.flightMs,
+        launchedAt: performance.now(),
+      })
+    }
+  }
+
+  /** Chest height on the monster, from the same per-monster scale the damage
+   *  number is placed with. */
+  function aimPointFor(monster: {
+    position: { x: number; y: number; z: number }
+    scale?: number
+  }) {
+    return {
+      x: monster.position.x,
+      y: monster.position.y + 1.0 * (monster.scale ?? 1),
+      z: monster.position.z,
+    }
+  }
   let otherPlayerModels = $state<(PlayerModel | undefined)[]>([])
 
   // Reference to PlayerControl and PlayersLayer components
@@ -587,6 +639,8 @@
         'currentPlayerAnimation',
         performance.now() - currentPlayerAnimationStart
       )
+
+      launchRequestedArrows()
 
       // Update other player model animations
       const otherPlayerAnimationStart = performance.now()
@@ -1294,6 +1348,21 @@
   <GameSceneStallsLayer bind:this={stallsLayerRef} />
   <GameSceneMealsLayer bind:this={mealsLayerRef} />
   <GameSceneTipHatsLayer bind:this={tipHatsLayerRef} />
+
+  <!-- Keyed per flight, not per shooter: the same key would have Svelte reuse
+       the component for the next shot, and its launch point is read once at
+       creation — every arrow after the first would leave the first one's bow. -->
+  {#each [...$arrowsInFlight] as [shooterId, shot] (`${shooterId}:${shot.launchedAt}`)}
+    <ArrowFlight
+      {shot}
+      playerId={shooterId}
+      model={arrowModel}
+      targetOf={() => {
+        const target = monsterManager.monsters.get(shot.monsterId)
+        return target && target.state !== 'dead' ? aimPointFor(target) : null
+      }}
+    />
+  {/each}
 
   {#each [...$fishingBobbers] as [playerId, bobber] (playerId)}
     <!-- Both position objects are mutated in place upstream, so the line

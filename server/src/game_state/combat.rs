@@ -57,6 +57,19 @@ fn anim_delay_ms(id: &str) -> u64 {
 pub(super) static PLAYER_ATTACK_IMPACT_DELAY: LazyLock<Duration> =
     LazyLock::new(|| Duration::from_millis(anim_delay_ms("player_attack_impact")));
 
+// How long into the shot the arrow leaves, plus how long it then flies. A bow
+// looses much later in its clip than a blade lands, and the arrow the clients
+// draw takes a further moment to arrive, so loot must not fall while the
+// archer is still drawing or the shaft is still in the air. The flight is the
+// allowance at full range: the clients scale theirs by the actual distance,
+// and loot landing up to that much later than a close shot's arrow is not
+// something anyone can see.
+pub(super) static PLAYER_RANGED_IMPACT_DELAY: LazyLock<Duration> = LazyLock::new(|| {
+    Duration::from_millis(
+        anim_delay_ms("player_ranged_impact") + anim_delay_ms("player_ranged_flight"),
+    )
+});
+
 // Slash1 cadence (clip lasts 1,533ms) minus a server-arrival jitter allowance.
 pub(super) static PLAYER_ATTACK_INTERVAL_MS: LazyLock<u64> =
     LazyLock::new(|| anim_delay_ms("player_attack_interval"));
@@ -171,10 +184,11 @@ impl super::GameState {
         origin: Position,
         floor_level: i8,
         monster_level: Option<u8>,
+        impact_delay: Duration,
     ) {
         let game_state = self.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(*PLAYER_ATTACK_IMPACT_DELAY).await;
+            tokio::time::sleep(impact_delay).await;
             if let Some(item) = weapon_drop {
                 game_state.spawn_ground_item(item).await;
             }
@@ -696,6 +710,11 @@ impl super::GameState {
                     corpse_position,
                     monster_floor_level,
                     effective_level,
+                    if weapon.ability.is_some() {
+                        *PLAYER_RANGED_IMPACT_DELAY
+                    } else {
+                        *PLAYER_ATTACK_IMPACT_DELAY
+                    },
                 );
 
                 self.drain_hunger_for_kill(player_id).await;

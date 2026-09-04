@@ -10,6 +10,7 @@ import type { MonsterData } from '../types/Monster'
 import type { ServerMonster } from '../network/networkTypes'
 import { getMonsterDef } from '../data/monsterDefs'
 import { getItemDef, isRangedWeapon } from '../data/itemDefs'
+import { flightMsFor, requestArrow } from '../stores/arrowStore'
 import {
   getMaterialHitSoundUrl,
   getMaterialMissSoundUrl,
@@ -33,6 +34,9 @@ import {
 } from '../terrain/world-wrap'
 import {
   PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
+  DAMAGE_TEXT_AFTER_IMPACT_MS,
+  PLAYER_RANGED_DRAW_DELAY_MS,
+  PLAYER_RANGED_IMPACT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_IMPACT_DELAY_MS,
   DEFAULT_MONSTER_ATTACK_COOLDOWN_MS,
   PLAYER_ATTACK_IMPACT_DELAY_MS,
@@ -344,18 +348,45 @@ class MonsterManager {
     const monster = this.monsters.get(monsterId)
     if (!monster || monster.state === 'dead') return
 
-    // Set impact delay for the shared player slash animation to land.
-    monster.impactDelay = PLAYER_ATTACK_IMPACT_DELAY_MS
-    monster.targetPlayerId = playerId
-    monster.isLastHitSuccess = hit
-    const isLocalPlayerAttack = playerId === get(gameStore).currentPlayer?.id
+    // Whose weapon this was. `PlayerMainHandChanged` broadcasts a remote
+    // player's main hand and `gameStore` keeps it — it is what draws their
+    // weapon on their model — so a remote shot resolves the same as a local
+    // one, from the bag or from that.
+    const state = get(gameStore)
+    const isLocalPlayerAttack = playerId === state.currentPlayer?.id
     const weaponItemDefId = isLocalPlayerAttack
       ? get(inventoryStore).equipped.main_hand?.item_def_id
-      : undefined
+      : (state.otherPlayers.get(playerId)?.mainHand ?? undefined)
+    const ranged = isRangedWeapon(weaponItemDefId)
+
+    // A ranged shot resolves when its arrow lands, so everything the impact
+    // drives waits out the flight on top of the release.
+    const shooter = isLocalPlayerAttack
+      ? state.currentPlayer?.position
+      : remotePlayerManager.players.get(playerId)?.position
+    const flightMs = ranged
+      ? flightMsFor(
+          Math.hypot(
+            monster.position.x - (shooter?.x ?? monster.position.x),
+            monster.position.z - (shooter?.z ?? monster.position.z)
+          )
+        )
+      : 0
+    monster.impactDelay = ranged
+      ? PLAYER_RANGED_IMPACT_DELAY_MS + flightMs
+      : PLAYER_ATTACK_IMPACT_DELAY_MS
+    monster.targetPlayerId = playerId
+    monster.isLastHitSuccess = hit
     const weaponMaterial = weaponItemDefId
       ? getItemDef(weaponItemDefId)?.material
       : undefined
-    if (hit && isLocalPlayerAttack) {
+    // A ranged hit stays silent at impact. The material table answers "what
+    // does this weapon sound like striking that target", and a bow's `wood` is
+    // its stave, not the arrow — with no rule for it the lookup falls through
+    // to the default blade-on-leather thwack, which drowned the loose. The
+    // release and the damage number carry the feedback until an arrow-impact
+    // sound exists.
+    if (hit && isLocalPlayerAttack && !ranged) {
       const monsterMaterial = getMonsterDef(monster.type)?.material
       monster.pendingSwordHitSoundUrl = getMaterialHitSoundUrl(
         weaponMaterial,
@@ -364,13 +395,19 @@ class MonsterManager {
     } else {
       monster.pendingSwordHitSoundUrl = undefined
     }
-    // For a bow the loose is the whoosh, and it plays on a hit too.
+    // For a bow the loose is the whoosh, and it plays on a hit too — at the
+    // frame the arrow leaves, which is also when the shot resolves.
     if (isRangedWeapon(weaponItemDefId)) {
-      playBowSound('draw')
-      playBowSound('release', SWORD_MISS_DELAY_MS)
+      playBowSound('draw', PLAYER_RANGED_DRAW_DELAY_MS)
+      playBowSound('release', PLAYER_RANGED_IMPACT_DELAY_MS)
+      // Asked for at the release frame so the scene reads the bow where the
+      // draw ends. GameScene owns the launch: it has the player models.
+      window.setTimeout(
+        () => requestArrow({ playerId, monsterId, hit, flightMs }),
+        PLAYER_RANGED_IMPACT_DELAY_MS
+      )
     } else if (!hit) {
-      // Every swing that misses whooshes, another player's included; their
-      // weapon is unknown here so it falls back to the default miss sound.
+      // Every swing that misses whooshes, another player's included.
       playSwordMissSound(
         getMaterialMissSoundUrl(weaponMaterial),
         SWORD_MISS_DELAY_MS
@@ -380,7 +417,9 @@ class MonsterManager {
     monster.pendingDamage = damage
     if (isLocalPlayerAttack) {
       monster.pendingDamageText = {
-        delay: PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
+        delay: ranged
+          ? PLAYER_RANGED_IMPACT_DELAY_MS + flightMs + DAMAGE_TEXT_AFTER_IMPACT_MS
+          : PLAYER_ATTACK_DAMAGE_TEXT_DELAY_MS,
         damage,
         hit,
       }

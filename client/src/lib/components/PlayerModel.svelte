@@ -381,6 +381,16 @@
     return rodTipNode?.getWorldPosition(rodTipScratch) ?? null
   }
 
+  const bowScratch = new THREE.Vector3()
+
+  /** Where an arrow leaves: the grip of the held bow, which is the model's
+   *  origin. Null when the hand is empty or holds something else, so the
+   *  caller can fall back rather than spawn an arrow out of thin air. */
+  export function getBowWorld(): THREE.Vector3 | null {
+    if (!weaponObject || !isRangedWeapon(attachedWeaponItemId)) return null
+    return weaponObject.getWorldPosition(bowScratch)
+  }
+
   function detachWeapon() {
     if (weaponObject && weaponObject.parent) {
       weaponObject.parent.remove(weaponObject)

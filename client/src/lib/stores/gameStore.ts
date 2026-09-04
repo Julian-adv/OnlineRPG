@@ -7,6 +7,7 @@ import { resetInventoryStore } from './inventoryStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
 import { resetFriendStores } from './friendStore'
+import { clearArrows } from './arrowStore'
 import { resetFishingStore } from './fishingStore'
 import { resetDiscoveredDungeons } from './dungeonStore'
 import { resetHungerStore } from './hungerStore'
@@ -168,6 +169,7 @@ export const resetGameStore = () => {
   resetInventoryStore()
   resetSkillsStore()
   resetFishingStore()
+  clearArrows()
   resetPartyStores()
   resetFriendStores()
   resetDiscoveredDungeons()
