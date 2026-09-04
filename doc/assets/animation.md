@@ -36,6 +36,17 @@
     두 클립 다 타격 시점이 ≈0.75–0.8s라 gnoll `attackImpactDelay` 750 / `attackDamageTextDelay` 850.
     1700ms 쿨다운보다 짧아 스윙 사이에 `combat_idle`이 잠깐 들어간다.
 
+- 활 쏘기 (combat_ranged pack, `bow_shoot`, 원거리 무기 공격 — [COMBAT.md](../COMBAT.md) 원거리 전투)
+  - Standing Aim Recoil https://www.mixamo.com/#/?query=standing+aim&type=Motion%2CMotionPack
+    2026-09-04 Mixamo. `assets/bow_shoot.fbx`(22f @30fps = 0.73s).
+  - 이 FBX의 리그는 24본에 `Spine01`·`Spine02`·`neck`·`headfront` 같은 비표준 이름을 쓰고 척추가
+    `Hips→Spine02→Spine01→Spine` 순서라 Mixamo 표준과 반대다. 이름이 아니라 계층 위치로 짝지어야 해서
+    `import_mixamo_animation(..., bone_aliases=...)`로 33본 `Armature`에 bake했다 (23/33 매칭;
+    손가락 본은 원본에 없어 rest 유지 — 시위를 쥐는 손가락 동작은 없다).
+  - 액션이 둘(1프레임 `clip0|baselayer` 더미 포함) 들어온다. `import_mixamo_animation`은 프레임 폭이
+    가장 넓은 것을 고르므로 그대로 두면 된다.
+  - fake user를 켜서 `assets/all_animation.blend`에 저장한 뒤 `export_animations.py -- --packs combat_ranged`로 export.
+
 - Standing React Small From Front 02 https://www.mixamo.com/#/?query=standing+react&type=Motion%2CMotionPack
   (combat_melee pack, `hit`, 플레이어 피격 리액션 + 공용 팩 몬스터 `animHit`)
   - 2026-08-23 Mixamo, Without Skin(65본), 24f/0.8s. `assets/Standing React Small From Front 02.fbx`를
@@ -209,3 +220,11 @@
   평평한 던전 바닥에서 발이 파묻혀 보인다 (지형은 굴곡·풀이 가려준다).
   델타는 기존 커브에 더해지므로 같은 명령을 다시 돌려도 결과가 같다.
   원본 Mixamo 커브가 필요하면 FBX를 다시 받아 `bake_root_location=True`로 재임포트할 것.
+
+## Ranged Combat
+
+- combat_ranged.glb — 클립 `bow_shoot` 하나 (22프레임 @30fps = 0.73초). 소스와 가공 내역은 위
+  [Mixamo Animations](#mixamo-animations)의 "활 쏘기" 항목 참조. Mixamo 라이선스: 무료·로열티 없음·상업 OK,
+  원본 파일 단독 재배포 금지 (characters.md License 표).
+  33본 `Armature`에서 뽑는다 — offhand·fishing과 같이 런타임 리타게팅 없이 그대로 재생하는 팩이라서다.
+  팩이 없으면 근접 slash로 폴백한다(`PlayerModel.svelte`).

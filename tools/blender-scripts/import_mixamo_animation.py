@@ -68,6 +68,7 @@ def _retarget_bake(
     target_arm,
     out_action_name: str,
     bake_root_location: bool = True,
+    bone_aliases: dict | None = None,
 ) -> bpy.types.Action:
     """source_arm의 pose를 target_arm에 맞춰 retarget하여 새 액션 생성.
 
@@ -93,6 +94,14 @@ def _retarget_bake(
     src_name_by_stripped = {
         prefix_pat.sub("", b.name): b.name for b in source_arm.pose.bones
     }
+    # Mixamo 이름을 벗어난 리그를 위한 수동 매핑(source 본 -> target 본). 이름이
+    # 아니라 계층 위치로 짝지어야 하는 경우가 있다 — 척추 순서가 뒤집힌 리그를
+    # 이름만 보고 맞추면 상체가 비틀린다.
+    for src_bone, tgt_bone in (bone_aliases or {}).items():
+        if src_bone in source_arm.pose.bones:
+            src_name_by_stripped[tgt_bone] = src_bone
+        else:
+            print(f"  WARNING: alias source bone '{src_bone}' not in this rig")
     shared = [
         (tb.name, src_name_by_stripped[tb.name])
         for tb in target_arm.pose.bones
@@ -220,6 +229,7 @@ def import_mixamo_animation(
     target_armature_name: str = TARGET_ARMATURE_NAME,
     save: bool = True,
     bake_root_location: bool = True,
+    bone_aliases: dict | None = None,
 ) -> None:
     """Mixamo FBX를 import하여 target armature용 action으로 변환.
 
@@ -229,6 +239,7 @@ def import_mixamo_animation(
         target_armature_name: 타겟 T-pose armature (기본: "Armature")
         save: 완료 후 .blend 파일 저장 여부
         bake_root_location: Hips location을 bake할지 (기본 True)
+        bone_aliases: Mixamo 이름이 아닌 리그용 {source 본: target 본} 매핑
 
     """
     if not os.path.isfile(fbx_path):
@@ -265,7 +276,12 @@ def import_mixamo_animation(
         raise RuntimeError("FBX import did not create an armature")
     if not new_actions:
         raise RuntimeError("FBX import did not create any animation action")
-    imported_action_name = sorted(new_actions)[0]
+    # 한 FBX에 액션이 여러 개 들어오기도 한다(1프레임 baselayer 더미 등).
+    # 알파벳순 첫 번째는 임의라, 프레임 폭이 가장 넓은 것을 실제 클립으로 본다.
+    imported_action_name = max(
+        new_actions,
+        key=lambda n: bpy.data.actions[n].frame_range[1] - bpy.data.actions[n].frame_range[0],
+    )
     print(f"  Imported: armature='{imported_arm_name}', action='{imported_action_name}'")
 
     # --- Step 2: Normalize transforms (X-90° rotation, 0.01 scale, ground-align feet) ---
@@ -277,7 +293,8 @@ def import_mixamo_animation(
     source_arm = bpy.data.objects[imported_arm_name]
     source_action = bpy.data.actions[imported_action_name]
     _retarget_bake(
-        source_arm, source_action, target_arm, action_name, bake_root_location
+        source_arm, source_action, target_arm, action_name, bake_root_location,
+        bone_aliases
     )
 
     # --- Step 4: Cleanup ---

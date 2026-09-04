@@ -9,7 +9,7 @@ import { remotePlayerManager } from './remotePlayerManager'
 import type { MonsterData } from '../types/Monster'
 import type { ServerMonster } from '../network/networkTypes'
 import { getMonsterDef } from '../data/monsterDefs'
-import { getItemDef } from '../data/itemDefs'
+import { getItemDef, isRangedWeapon } from '../data/itemDefs'
 import {
   getMaterialHitSoundUrl,
   getMaterialMissSoundUrl,
@@ -21,6 +21,7 @@ import type { Position } from '../utils/movementUtils'
 import type { TerrainHeightManager } from './terrainHeightManager'
 import {
   playMonsterDeathSound,
+  playBowSound,
   playSwordHitSound,
   playSwordMissSound,
 } from './sfxManager'
@@ -363,9 +364,13 @@ class MonsterManager {
     } else {
       monster.pendingSwordHitSoundUrl = undefined
     }
-    // Every swing that misses whooshes, another player's included; their
-    // weapon is unknown here so it falls back to the default miss sound.
-    if (!hit) {
+    // For a bow the loose is the whoosh, and it plays on a hit too.
+    if (isRangedWeapon(weaponItemDefId)) {
+      playBowSound('draw')
+      playBowSound('release', SWORD_MISS_DELAY_MS)
+    } else if (!hit) {
+      // Every swing that misses whooshes, another player's included; their
+      // weapon is unknown here so it falls back to the default miss sound.
       playSwordMissSound(
         getMaterialMissSoundUrl(weaponMaterial),
         SWORD_MISS_DELAY_MS

@@ -188,3 +188,14 @@ Both were generated and processed exactly like the monster cries above.
   on pc5090; prompt: "The sound of monsters waking up and howling deep within
   the dungeon"). Trimmed to 4.64 s with a 150 ms tail fade, −3 dB gain,
   resampled 48→44.1 kHz.
+
+## Bow
+
+- bow-draw.ogg, bow-release.ogg — 활 시위를 당기는 소리와 화살이 떠나는 소리, generated with
+  [ElevenLabs Sound Effects](https://elevenlabs.io/sound-effects) on 2026-09-04
+  (free tier, own generation; 원본 `bow-draw.mp3`·`bow-release.mp3`를
+  `~/assets_original/sfx/`에 보관, 48 kHz 스테레오 mp3 각 1.0초).
+  `tools/trim-sfx.py` 규격으로 가공: 모노 44.1 kHz, 80 ms 테일 페이드, 피크 ≈ −3 dB, ogg q5.
+  draw는 0.52초로 잘랐다 — 원본 0.59초·0.72초의 짧은 transient 두 개는 별도 release 파일과 겹치고,
+  루스가 `sword_miss`(450 ms)에 울리므로 draw가 그보다 길면 안 된다. release는 0.35초(감쇠 끝까지, +5.0 dB 정규화).
+  `sfxManager.ts`의 `BOW_SOUNDS`가 참조한다: draw는 스윙 시작, release는 화살이 떠나는 프레임.

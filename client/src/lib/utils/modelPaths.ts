@@ -28,6 +28,7 @@ export const PINK_MAID_CHARACTER_MODEL_PATH = '/models/characters/pink_maid.glb'
 export const CHARACTER_ANIMATION_PACK_PATHS = {
   locomotion: '/models/animations/locomotion.glb',
   combatMelee: '/models/animations/combat_melee.glb',
+  combatRanged: '/models/animations/combat_ranged.glb',
   social: '/models/animations/social.glb',
   offhand: '/models/animations/offhand.glb',
   fishing: '/models/animations/fishing.glb',

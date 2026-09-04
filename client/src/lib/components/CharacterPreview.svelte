@@ -22,6 +22,8 @@
   import { isTorchItemDefId } from '../stores/inventoryStore'
   import {
     FALLBACK_TORCH_TIP_LOCAL_OFFSET,
+    forearmLength,
+    mainHandBoneFor,
     poseMainHandProp,
     poseOffHandProp,
     resolveTipNode,
@@ -152,19 +154,27 @@
   function attachHeldItem(
     characterRoot: THREE.Object3D,
     itemDefId: string | null | undefined,
-    boneName: 'RightHand' | 'LeftHand'
+    mainHand: boolean
   ): void {
     if (!itemDefId) return
     const worldModel = getItemDef(itemDefId)?.worldModel
     if (!worldModel) return
 
     const gen = equipGeneration
+    // A bow is held in the left hand, so the slot no longer fixes the bone.
+    const boneName = mainHand ? mainHandBoneFor(itemDefId) : 'LeftHand'
     loadGLB(getWeaponModelPath(worldModel)).then((gltf) => {
       const bone = findBoneByName(characterRoot, boneName)
       if (gen !== equipGeneration || !bone) return
 
       const prop = gltf.scene.clone()
-      if (boneName === 'RightHand') poseMainHandProp(prop, itemDefId)
+      if (mainHand) {
+        poseMainHandProp(
+          prop,
+          itemDefId,
+          forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
+        )
+      }
       else poseOffHandProp(prop)
       bone.add(prop)
       heldProps.push(prop)
@@ -205,8 +215,8 @@
     characterRoot: THREE.Object3D,
     worn: VisibleEquipment | undefined
   ): void {
-    attachHeldItem(characterRoot, worn?.main_hand, 'RightHand')
-    attachHeldItem(characterRoot, worn?.off_hand, 'LeftHand')
+    attachHeldItem(characterRoot, worn?.main_hand, true)
+    attachHeldItem(characterRoot, worn?.off_hand, false)
 
     const capeColor = capeColorOf(worn?.back, worn?.back_color)
     if (!capeColor) return

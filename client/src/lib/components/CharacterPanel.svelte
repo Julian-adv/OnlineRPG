@@ -4,7 +4,7 @@
     playerEffectiveStats,
   } from '../stores/inventoryStore'
   import type { EquipSlot } from '../stores/inventoryStore'
-  import { getItemDef } from '../data/itemDefs'
+  import { getItemDef, isRangedWeapon, isTwoHanded } from '../data/itemDefs'
   import { networkManager } from '../network/socket'
   import type {
     CharacterAttributes,
@@ -156,6 +156,27 @@
     ][]
   ).flatMap(([slot, pos]) => (pos ? [{ slot, ...pos }] : []))
 
+  // A bow is held in the bow hand, so the panel shows it in the off-hand cell
+  // — the same rule `mainHandBoneFor` uses for the model, so the two agree.
+  // The hand it does not occupy is greyed while a two-hander is wielded: the
+  // server refuses an equip there (`Both hands are on your weapon`), and a
+  // live-looking empty socket invites exactly that.
+  const mainHandId = $derived($inventoryStore.equipped.main_hand?.item_def_id)
+  const heldInLeft = $derived(isRangedWeapon(mainHandId))
+  const sealedHand = $derived(
+    isTwoHanded(mainHandId)
+      ? heldInLeft
+        ? 'main_hand'
+        : 'off_hand'
+      : null
+  )
+
+  /** The stored slot a panel cell stands in for. */
+  function slotBehind(cell: EquipSlot): EquipSlot {
+    if (heldInLeft && cell === 'off_hand') return 'main_hand'
+    return cell
+  }
+
   const xpInfo = $derived(levelProgress(level, currentXp))
 
   function unequip(slot: EquipSlot) {
@@ -293,25 +314,36 @@
               }}
             />
             {#each VISIBLE_SLOTS as { slot, top, left } (slot)}
-              {@const item = $inventoryStore.equipped[slot]}
+              {@const stored = slotBehind(slot)}
+              {@const sealed = slot === sealedHand}
+              {@const item = sealed
+                ? undefined
+                : $inventoryStore.equipped[stored]}
               {@const def = item ? getItemDef(item.item_def_id) : null}
               {@const isDropTarget =
-                $dragMeta && isSlotCompatible($dragMeta.equipSlot, slot)}
+                !sealed &&
+                $dragMeta &&
+                isSlotCompatible($dragMeta.equipSlot, stored)}
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
                 class="equip-slot"
                 class:drop-target={isDropTarget}
+                class:sealed
                 style="top:{top}%;left:{left}%"
-                title={item ? undefined : EQUIP_SLOT_LABELS[slot]}
-                data-equip-slot={slot}
+                title={sealed
+                  ? 'Both hands are on your weapon'
+                  : item
+                    ? undefined
+                    : EQUIP_SLOT_LABELS[slot]}
+                data-equip-slot={sealed ? undefined : stored}
                 use:itemTooltip={item && def
                   ? { def, item, side: left > 50 ? 'left' : 'right' }
                   : null}
                 ondblclick={() => {
-                  if (item) unequip(slot)
+                  if (item) unequip(stored)
                 }}
                 onpointerdown={(e: PointerEvent) => {
-                  if (item) onEquipPointerDown(e, slot, item)
+                  if (item) onEquipPointerDown(e, stored, item)
                 }}
               >
                 {#if def}
@@ -688,6 +720,19 @@
     border-color: rgba(88, 255, 88, 0.8);
     background: rgba(88, 160, 88, 0.4);
     box-shadow: 0 0 8px rgba(88, 255, 88, 0.4);
+  }
+
+  /* The hand a two-hander occupies: reads as unavailable, not as empty. */
+  .equip-slot.sealed {
+    cursor: default;
+    opacity: 0.4;
+    border-style: dashed;
+    background: rgba(148, 156, 164, 0.12);
+  }
+
+  .equip-slot.sealed:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    background: rgba(148, 156, 164, 0.12);
   }
 
   .equip-icon {

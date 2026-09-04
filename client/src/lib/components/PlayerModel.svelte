@@ -61,6 +61,7 @@
     CLASS_IDLE_CLIP_NAMES,
     FishingAnimationName,
     OffhandAnimationName,
+    RangedAnimationName,
     SIT_TALK_CHANCE,
     SitAnimationName,
     TORCH_IDLE_CLIP_NAMES,
@@ -76,6 +77,8 @@
   import {
     FALLBACK_TORCH_TIP_LOCAL_OFFSET,
     MANDOLIN_ITEM_DEF_ID,
+    forearmLength,
+    mainHandBoneFor,
     poseMainHandProp,
     poseOffHandProp,
     resolveTipNode,
@@ -89,7 +92,7 @@
   import { loadGLB } from '../utils/gltfCache'
   import { pickRandom } from '../utils/randomUtils'
   import { inventoryStore, isTorchItemDefId } from '../stores/inventoryStore'
-  import { capeColorOf, getItemDef } from '../data/itemDefs'
+  import { capeColorOf, getItemDef, isRangedWeapon } from '../data/itemDefs'
   import { capeDyePreview } from '../stores/capeDyeStore'
   import { capeTexturePreview } from '../stores/capeTextureStore'
   import { capeTextureUrl } from '../utils/networkUtils'
@@ -315,6 +318,7 @@
     )
   )
   let offhandClips = new SvelteMap<string, THREE.AnimationClip>()
+  let rangedClips = new SvelteMap<string, THREE.AnimationClip>()
   let socialClipsByName = new SvelteMap<string, THREE.AnimationClip>()
   let socialLoadPromise: Promise<void> | null = null
   let lastAnimKey: string | undefined
@@ -344,14 +348,19 @@
     characterRoot: THREE.Object3D,
     itemDefId: string
   ): void {
-    const rightHandBone = findBoneByName(characterRoot, 'RightHand')
-    if (!rightHandBone) {
-      console.warn('Could not find right hand bone for weapon attachment')
+    const boneName = mainHandBoneFor(itemDefId)
+    const handBone = findBoneByName(characterRoot, boneName)
+    if (!handBone) {
+      console.warn(`Could not find ${boneName} bone for weapon attachment`)
       return
     }
 
     weaponObject = gltfScene.clone()
-    poseMainHandProp(weaponObject, itemDefId)
+    poseMainHandProp(
+      weaponObject,
+      itemDefId,
+      forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
+    )
     if (itemDefId === 'fishing_rod') {
       rodTipNode = resolveTipNode(
         weaponObject,
@@ -359,7 +368,7 @@
         FALLBACK_ROD_TIP_LOCAL_OFFSET
       )
     }
-    rightHandBone.add(weaponObject)
+    handBone.add(weaponObject)
   }
 
   let rodTipNode: THREE.Object3D | null = null
@@ -433,6 +442,8 @@
     attachedWeaponItemId = null
 
     if (!itemDefId) return
+
+    if (isRangedWeapon(itemDefId)) loadRangedAnimations()
 
     const itemDef = getItemDef(itemDefId)
     if (!itemDef?.worldModel) return
@@ -696,7 +707,8 @@
   const resolveClipByName = (name: string) =>
     socialClipsByName.get(name) ??
     validAnimationsByName.get(name) ??
-    offhandClips.get(name)
+    offhandClips.get(name) ??
+    rangedClips.get(name)
 
   let classIdleClips: THREE.AnimationClip[] = []
   let classIdleClipsResolved = false
@@ -719,6 +731,22 @@
     const current = currentAction?.getClip()
     const pool = classIdleClips.filter((c) => c !== current)
     return pickRandom(pool.length > 0 ? pool : classIdleClips)
+  }
+
+  let rangedLoadPromise: Promise<void> | null = null
+
+  /** The ranged pack is optional: without it the shot falls back to the melee
+   *  slash, so a missing GLB must not break the swing. */
+  function loadRangedAnimations(): Promise<void> {
+    if (rangedLoadPromise) return rangedLoadPromise
+    rangedLoadPromise = loadGLB(CHARACTER_ANIMATION_PACK_PATHS.combatRanged)
+      .then((gltf) => {
+        for (const clip of getGltfAnimations(gltf))
+          rangedClips.set(clip.name, clip)
+        if (mixer && playerState === 'attack') playAnimationForState()
+      })
+      .catch(() => {})
+    return rangedLoadPromise
   }
 
   let offhandLoadPromise: Promise<void> | null = null
@@ -790,7 +818,10 @@
       clip =
         torchMoveClip ?? validAnimations[selectMovementAnimation(movementMode)]
     } else if (playerState === 'attack') {
-      clip = validAnimations[AnimationIndex.SLASH1]
+      clip =
+        (isRangedWeapon(equippedMainHandItemId)
+          ? rangedClips.get(RangedAnimationName.SHOOT)
+          : undefined) ?? validAnimations[AnimationIndex.SLASH1]
     } else if (playerState === 'jump') {
       // One-shot feedback when slope is too steep to climb. After the clip
       // finishes, PlayerControl flips the state back to idle/moving and we

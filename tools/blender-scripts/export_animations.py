@@ -71,6 +71,9 @@ EXPORT_PACKS = {
         "fishing_cast",
         "fishing_idle",
     ],
+    "combat_ranged": [
+        "bow_shoot",
+    ],
 }
 
 # The primary armature name whose mesh and skeleton should be exported.

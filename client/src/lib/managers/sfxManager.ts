@@ -54,6 +54,14 @@ const PLAYER_DEATH_SOUNDS: Record<Gender, SoundSpec> = {
   male: { url: '/sounds/player-death-male.ogg', volume: 0.5, pool: 2 },
 }
 
+// Bow draw and loose. Pool 2: the next shot can start while the last is
+// still ringing.
+const BOW_SOUNDS = {
+  draw: { url: '/sounds/bow-draw.ogg', volume: 0.4, pool: 2 },
+  release: { url: '/sounds/bow-release.ogg', volume: 0.5, pool: 2 },
+} as const
+export type BowSound = keyof typeof BOW_SOUNDS
+
 const DUNGEON_SOUNDS = {
   reset: { url: '/sounds/dungeon-roar.ogg', volume: 0.5, pool: 1 },
 } as const
@@ -270,6 +278,21 @@ export function preloadDungeonSounds() {
 
 export function playDungeonSound(kind: DungeonSound) {
   playSound(DUNGEON_SOUNDS[kind])
+}
+
+export function preloadBowSounds() {
+  preloadSounds(BOW_SOUNDS)
+}
+
+/** `delayMs` lines the loose up with the release frame of the shot clip, the
+ *  same moment the melee whoosh uses. */
+export function playBowSound(kind: BowSound, delayMs = 0) {
+  if (!canUseAudio()) return
+  if (delayMs > 0) {
+    window.setTimeout(() => playBowSound(kind), delayMs)
+    return
+  }
+  playSound(BOW_SOUNDS[kind])
 }
 
 export function preloadFishingSounds() {
