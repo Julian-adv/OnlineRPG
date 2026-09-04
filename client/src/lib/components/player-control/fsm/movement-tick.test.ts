@@ -198,6 +198,7 @@ function baseInput() {
       update: vi.fn(),
     },
     cooldownMs: 1500,
+    attackRange: 2,
     chaseGoal: null,
     chasePathing: directPathing(),
     getMonsterInfo: vi.fn(),

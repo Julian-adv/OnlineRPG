@@ -1171,3 +1171,237 @@ async fn stale_monster_attack_is_rejected_as_invalid_target() {
         expect_attack_rejected(&mut attacker_rx, target, AttackRejectReason::InvalidTarget);
     }
 }
+
+// --- Ranged attacks (doc/COMBAT.md 원거리 전투) ---
+
+/// An archer at the origin: `weapon` in hand and the given attribute spread,
+/// with a direct channel to read the attack broadcast off.
+async fn setup_archer(
+    game_state: &GameState,
+    weapon: &str,
+    attrs: CharacterAttributes,
+) -> DirectRx {
+    let player_id = pid("archer");
+    game_state.add_player(make_player("archer", 0.0, 0.5)).await;
+    let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+    inv.equipped.insert(
+        EquipSlot::MainHand,
+        ItemInstance {
+            instance_id: 1,
+            item_def_id: weapon.to_string(),
+            quantity: 1,
+            enchant: 0,
+            cape_color: None,
+            cape_texture: None,
+        },
+    );
+    game_state.inventories.write().await.insert(player_id, inv);
+    game_state
+        .player_characters
+        .write()
+        .await
+        .insert(player_id, (1, 0, attrs));
+    game_state.register_direct_channel(&player_id).await
+}
+
+/// Attributes with one ability raised to 30 (+10) and the rest at 10 (+0), so
+/// which modifier the roll used is readable straight off the damage.
+fn attrs_with(str_score: u8, dex: u8) -> CharacterAttributes {
+    CharacterAttributes {
+        r#str: str_score,
+        dex,
+        con: 10,
+        int: 10,
+        wis: 10,
+        cha: 10,
+        guard: 0,
+    }
+}
+
+fn at(x: f32) -> Position {
+    Position { x, y: 0.0, z: 0.5 }
+}
+
+/// The next broadcast must be this monster's attack result.
+fn expect_attacked(rx: &mut DirectRx, expected_id: &str) -> (bool, u32) {
+    match rx.try_recv() {
+        Ok(ServerMessage::PlayerAttacked {
+            monster_id,
+            hit,
+            damage,
+            ..
+        }) => {
+            assert_eq!(monster_id, expected_id);
+            (hit, damage)
+        }
+        other => panic!("Expected a PlayerAttacked broadcast, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_bow_reaches_its_declared_range() {
+    let game_state = make_test_game_state("bow_range_reaches");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(9.5), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    let (hit, _) = expect_attacked(&mut rx, "far");
+    assert!(hit, "a +10 attack bonus always clears guard 10");
+}
+
+/// The server trails the walking player by the network lag, so a shot loosed
+/// the moment the chase stops at 10m reads as slightly farther here. Melee has
+/// always had that allowance; folding it into a `max` against the weapon range
+/// swallowed it, and every shot taken at the edge was refused.
+#[tokio::test]
+async fn a_bow_shot_at_its_range_survives_the_lag_the_server_trails_by() {
+    let game_state = make_test_game_state("bow_range_lag_allowance");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("edge".to_string(), make_monster("edge", at(10.6), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "edge".to_string())
+        .await;
+
+    let (hit, _) = expect_attacked(&mut rx, "edge");
+    assert!(hit);
+}
+
+#[tokio::test]
+async fn a_bow_shot_past_its_range_is_rejected() {
+    let game_state = make_test_game_state("bow_range_rejects");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("beyond".to_string(), make_monster("beyond", at(11.5), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "beyond".to_string())
+        .await;
+
+    expect_attack_rejected(&mut rx, "beyond", AttackRejectReason::OutOfRange);
+}
+
+/// A melee weapon keeps the 2m reach (plus lag tolerance) it always had, so
+/// an empty `range` column changes nothing.
+#[tokio::test]
+async fn a_melee_weapon_keeps_its_hardcoded_reach() {
+    let game_state = make_test_game_state("melee_reach_unchanged");
+    let mut rx = setup_archer(&game_state, "dagger", attrs_with(30, 10)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(5.0), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    expect_attack_rejected(&mut rx, "far", AttackRejectReason::OutOfRange);
+}
+
+#[tokio::test]
+async fn a_bow_shot_through_a_wall_is_rejected() {
+    let game_state = make_test_game_state("bow_walled_off");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state.sync_region_furniture(0, 0, &[table_placement(4.5, 0.5)]);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("behind".to_string(), make_monster("behind", at(8.5), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "behind".to_string())
+        .await;
+
+    expect_attack_rejected(&mut rx, "behind", AttackRejectReason::OutOfRange);
+}
+
+/// DEX 30 (+10) with STR 10 (+0): a 1d6 bow can only reach 11 damage through
+/// the DEX modifier.
+#[tokio::test]
+async fn a_ranged_hit_rolls_on_the_weapons_ability() {
+    let game_state = make_test_game_state("bow_rolls_dex");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(8.0), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    let (hit, damage) = expect_attacked(&mut rx, "far");
+    assert!(hit);
+    assert!(damage >= 11, "1d6 + DEX(+10), got {damage}");
+}
+
+/// The mirror image: STR 30 (+10) with DEX 10 (+0) on a melee weapon.
+#[tokio::test]
+async fn a_melee_hit_still_rolls_on_str() {
+    let game_state = make_test_game_state("melee_rolls_str");
+    let mut rx = setup_archer(&game_state, "dagger", attrs_with(30, 10)).await;
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("near".to_string(), make_monster("near", at(1.5), 0));
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "near".to_string())
+        .await;
+
+    let (hit, damage) = expect_attacked(&mut rx, "near");
+    assert!(hit);
+    assert!(damage >= 11, "1d4 + STR(+10), got {damage}");
+}
+
+/// A shot that lands from outside melee reach must wake the monster onto the
+/// shooter: its owner otherwise only applies the hit at its own impact frame.
+#[tokio::test]
+async fn a_landed_shot_from_range_provokes_the_target() {
+    let game_state = make_test_game_state("bow_hit_provokes");
+    let _rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    let controller_id = pid("monster_controller");
+    let mut controller_rx = game_state.register_direct_channel(&controller_id).await;
+    {
+        let mut monster = make_monster("far", at(8.0), 0);
+        monster.owner_id = Some(controller_id);
+        monster.health = 100;
+        game_state
+            .monsters
+            .write()
+            .await
+            .insert("far".to_string(), monster);
+    }
+
+    game_state
+        .broadcast_player_attack(&pid("archer"), "far".to_string())
+        .await;
+
+    let provoked = std::iter::from_fn(|| controller_rx.try_recv().ok()).any(|msg| {
+        matches!(
+            msg,
+            ServerMessage::MonsterProvoked { player_id, monster_id }
+                if player_id == pid("archer") && monster_id == "far"
+        )
+    });
+    assert!(provoked, "a landed shot from 8m must aggro the target");
+}

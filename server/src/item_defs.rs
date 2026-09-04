@@ -124,6 +124,53 @@ pub struct ItemDefinition {
     /// Phoenix talisman only — max-HP percentage restored by a revive.
     #[serde(rename = "reviveHpPercent", default)]
     pub revive_hp_percent: Option<u32>,
+    /// Weapon reach in meters. Absent means melee: the hardcoded reach in
+    /// `validate_player_attack` (doc/COMBAT.md 원거리 전투).
+    #[serde(default)]
+    pub range: Option<f32>,
+    /// Ability whose modifier drives a ranged weapon's hit and damage rolls
+    /// instead of STR.
+    #[serde(rename = "rangedAbility", default)]
+    ranged_ability: Option<String>,
+    /// Hands the weapon occupies. Absent = 1; 2 locks the off-hand slot.
+    #[serde(default)]
+    pub hands: Option<u8>,
+}
+
+/// The attribute a weapon's attack and damage bonus is read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ability {
+    Str,
+    Dex,
+    Con,
+    Int,
+    Wis,
+    Cha,
+}
+
+impl Ability {
+    fn parse(token: &str) -> Option<Self> {
+        match token {
+            "str" => Some(Ability::Str),
+            "dex" => Some(Ability::Dex),
+            "con" => Some(Ability::Con),
+            "int" => Some(Ability::Int),
+            "wis" => Some(Ability::Wis),
+            "cha" => Some(Ability::Cha),
+            _ => None,
+        }
+    }
+
+    pub fn score(&self, attrs: &onlinerpg_shared::character::CharacterAttributes) -> u8 {
+        match self {
+            Ability::Str => attrs.r#str,
+            Ability::Dex => attrs.dex,
+            Ability::Con => attrs.con,
+            Ability::Int => attrs.int,
+            Ability::Wis => attrs.wis,
+            Ability::Cha => attrs.cha,
+        }
+    }
 }
 
 /// Eating food or fish: what it feeds, whether it grills first, and what
@@ -248,6 +295,30 @@ impl ItemDefinition {
         }
     }
 
+    /// Reach in meters if this weapon declares one, else `None` (melee).
+    pub fn weapon_range(&self) -> Option<f32> {
+        if self.is_weapon() {
+            self.range.filter(|r| r.is_finite() && *r > 0.0)
+        } else {
+            None
+        }
+    }
+
+    /// The ability a ranged weapon rolls with; `None` for melee weapons, which
+    /// keep STR. An unknown token fails the boot in `load()`.
+    pub fn ranged_ability(&self) -> Option<Ability> {
+        if self.is_weapon() {
+            self.ranged_ability.as_deref().and_then(Ability::parse)
+        } else {
+            None
+        }
+    }
+
+    /// Occupies both hands, so the off-hand slot must stay empty.
+    pub fn is_two_handed(&self) -> bool {
+        self.hands.unwrap_or(1) >= 2
+    }
+
     /// The effect of using this item from the bag, or `None` if it isn't a
     /// consumable.
     pub fn use_effect(&self) -> Option<UseEffect> {
@@ -345,6 +416,18 @@ impl ItemDefs {
             assert!(
                 !(def.stackable && def.equip_slot.is_some()),
                 "item '{}' is both stackable and equippable",
+                def.id
+            );
+            // A typo would silently drop the shot back onto STR.
+            assert!(
+                def.ranged_ability.is_none() || def.ranged_ability().is_some(),
+                "item '{}': unknown rangedAbility '{}'",
+                def.id,
+                def.ranged_ability.as_deref().unwrap_or_default()
+            );
+            assert!(
+                def.hands.is_none_or(|hands| (1..=2).contains(&hands)),
+                "item '{}': hands must be 1 or 2",
                 def.id
             );
         }
@@ -482,6 +565,23 @@ mod tests {
             .into_iter()
             .map(|(id, _)| id)
             .collect()
+    }
+
+    /// The three ranged columns come off items.csv, and an empty `range`
+    /// leaves a weapon melee — the backward-compatible default.
+    #[test]
+    fn ranged_columns_parse_and_default_to_melee() {
+        let defs = ItemDefs::load();
+
+        let bow = defs.get("bow").expect("bow item def");
+        assert_eq!(bow.weapon_range(), Some(10.0));
+        assert_eq!(bow.ranged_ability(), Some(Ability::Dex));
+        assert!(bow.is_two_handed());
+
+        let sword = defs.get("iron_sword").expect("iron_sword item def");
+        assert_eq!(sword.weapon_range(), None);
+        assert_eq!(sword.ranged_ability(), None);
+        assert!(!sword.is_two_handed());
     }
 
     #[test]

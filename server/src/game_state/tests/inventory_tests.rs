@@ -146,3 +146,91 @@ async fn dropping_from_a_stack_sheds_one_unit() {
         .is_empty());
     assert_eq!(game_state.ground_items.read().await.len(), 3);
 }
+
+// --- Two-handed weapons (doc/COMBAT.md 원거리 전투) ---
+
+/// A player carrying a bow and a shield in the bag, plus a direct channel for
+/// the refusal message.
+async fn setup_two_hand_wielder(game_state: &GameState) -> DirectRx {
+    game_state
+        .add_player(make_player("wielder", 0.0, 0.0))
+        .await;
+    let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+    inv.bag.push(bag_item(1, "bow", 1));
+    inv.bag.push(bag_item(2, "wooden_shield", 1));
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("wielder"), inv);
+    game_state.register_direct_channel(&pid("wielder")).await
+}
+
+#[tokio::test]
+async fn equipping_a_two_hander_empties_the_off_hand() {
+    let game_state = make_test_game_state("two_hand_clears_off_hand");
+    let _rx = setup_two_hand_wielder(&game_state).await;
+
+    game_state.equip_item(&pid("wielder"), 2).await;
+    game_state.equip_item(&pid("wielder"), 1).await;
+
+    let inventories = game_state.inventories.read().await;
+    let inv = &inventories[&pid("wielder")];
+    assert_eq!(
+        inv.equipped_def_id(EquipSlot::MainHand).as_deref(),
+        Some("bow")
+    );
+    assert!(
+        !inv.equipped.contains_key(&EquipSlot::OffHand),
+        "the bow must claim the shield's hand"
+    );
+    assert!(
+        inv.bag.iter().any(|i| i.item_def_id == "wooden_shield"),
+        "the displaced shield goes back to the bag, not nowhere"
+    );
+}
+
+#[tokio::test]
+async fn an_off_hand_equip_is_refused_under_a_two_hander() {
+    let game_state = make_test_game_state("two_hand_blocks_off_hand");
+    let _rx = setup_two_hand_wielder(&game_state).await;
+
+    game_state.equip_item(&pid("wielder"), 1).await;
+    game_state.equip_item(&pid("wielder"), 2).await;
+
+    let inventories = game_state.inventories.read().await;
+    let inv = &inventories[&pid("wielder")];
+    assert!(
+        !inv.equipped.contains_key(&EquipSlot::OffHand),
+        "no off-hand item may join a two-hander"
+    );
+    assert!(inv.bag.iter().any(|i| i.item_def_id == "wooden_shield"));
+}
+
+/// A one-handed weapon leaves the off-hand alone, so the rule costs today's
+/// sword-and-shield nothing.
+#[tokio::test]
+async fn a_one_handed_weapon_keeps_the_off_hand() {
+    let game_state = make_test_game_state("one_hand_keeps_off_hand");
+    game_state
+        .add_player(make_player("wielder", 0.0, 0.0))
+        .await;
+    let mut inv: onlinerpg_shared::inventory::PlayerInventory = Default::default();
+    inv.bag.push(bag_item(1, "iron_sword", 1));
+    inv.bag.push(bag_item(2, "wooden_shield", 1));
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(pid("wielder"), inv);
+
+    game_state.equip_item(&pid("wielder"), 1).await;
+    game_state.equip_item(&pid("wielder"), 2).await;
+
+    let inventories = game_state.inventories.read().await;
+    let inv = &inventories[&pid("wielder")];
+    assert_eq!(
+        inv.equipped_def_id(EquipSlot::OffHand).as_deref(),
+        Some("wooden_shield")
+    );
+}

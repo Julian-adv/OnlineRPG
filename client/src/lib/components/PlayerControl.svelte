@@ -12,6 +12,7 @@
   import {
     playPropSound,
     preloadFishingSounds,
+    preloadBowSounds,
     preloadPropSounds,
     preloadMonsterDeathSounds,
     preloadPlayerDeathSounds,
@@ -41,7 +42,7 @@
   } from '../stores/debugStore'
   import { localTorchEquipped, inventoryStore } from '../stores/inventoryStore'
   import { hungerState, SPRINT_MIN_SATIATION } from '../stores/hungerStore'
-  import { getItemDef } from '../data/itemDefs'
+  import { getItemDef, weaponRangeMeters } from '../data/itemDefs'
   import {
     DEFAULT_MOVEMENT_CONFIG,
     SPRINT_SPEED_MULT,
@@ -693,6 +694,13 @@
     }
   }
 
+  /** Reach of the wielded weapon. The server gates on the same items.json
+   *  column, so click-to-attack, the chase break-off and the rejection all
+   *  agree on one distance. */
+  function equippedAttackRange(): number {
+    return weaponRangeMeters($inventoryStore.equipped.main_hand?.item_def_id)
+  }
+
   /** Whether a wall stands between two points — the server's own gate on every
    *  blow. Also the movement tick's `attackLineBlocked`. */
   function attackLineBlocked(from: Position, to: Position, floor: number) {
@@ -1004,6 +1012,7 @@
       cooldownMs:
         (attackCooldown ? attackCooldown * 1000 : 1500) /
         ($hungerState?.attackMult ?? 1),
+      attackRange: equippedAttackRange(),
       chasePathing,
       getMonsterInfo: (monsterId) => {
         const monsterData = monsterManager.monsters.get(monsterId)
@@ -1801,7 +1810,11 @@
       const m = movingState()
       if (m) m.approach = null
     }
-    dispatchQueuedPlayerControlEvent(event, createPlayerControlEventActions())
+    dispatchQueuedPlayerControlEvent(
+      event,
+      createPlayerControlEventActions(),
+      equippedAttackRange()
+    )
   }
 
   const playerControlMachine = createLocalPlayerControlMachine({
@@ -1926,6 +1939,7 @@
     preloadPlayerHurtSounds()
     preloadPlayerDeathSounds()
     preloadPropSounds()
+    preloadBowSounds()
     preloadFishingSounds()
 
     const removeInputListeners = inputHandler.setupEventListeners(

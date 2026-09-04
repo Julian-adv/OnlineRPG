@@ -190,6 +190,7 @@ max_hp += hp_gain
 
 - `guard`가 곧 명중 목표값이다.
 - 플레이어 `attack_bonus = level / 2`(내림) + STR modifier + 무기 인챈트 + 디버프 `hitMod` 합(취기, [DEBUFF.md](DEBUFF.md))
+  — 무기가 `rangedAbility`를 선언하면 STR 대신 그 능력치를 쓴다(아래 "원거리 전투")
 - 몬스터 `attack_bonus = level` — 플레이어보다 가파르다. 플레이어 guard는
   레벨이 아니라 장비로 오르기 때문이다(아래 "장소 명중 보너스").
   `attackBonus`를 monsters.csv에 적으면 그 값이 우선하고, 던전 깊이
@@ -325,6 +326,55 @@ guard 40짜리 플레이어를 코볼트가 한 번 맞히려면 평균 400회, 
 주사위 표기법: `{count}d{sides}` (예: `1d6`, `2d8`, `3d4`)
 
 - 구현: [server/src/game/combat.rs](../server/src/game/combat.rs)
+
+---
+
+## 원거리 전투 (Ranged Combat)
+
+무기가 `range`를 선언하면 그 거리까지 **히트스캔**으로 때린다. 화살 같은
+투사체는 날아가지 않고, 공격 시점에 즉시 판정한다.
+
+### 무기 데이터 (data-src/items.csv)
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `range` | f32? | 사거리(m). 비우면 근접 — 서버의 고정 2m 리치를 그대로 쓴다 |
+| `rangedAbility` | string? | 명중·대미지 보너스를 읽을 능력치 (`dex`, `int`, ...). 비우면 STR |
+| `hands` | u8? | 무기가 차지하는 손. 비우면 1, `2`면 오프핸드를 봉인한다 |
+
+활(`bow`): `main_hand`, `hands 2`, `range 10`, `rangedAbility dex`, `1d6`.
+
+### 사거리 게이트
+
+`validate_player_attack`이 `max(근접 리치, 무기 range)`로 판정한다. 벽 검사
+(`attack_line_blocked`)는 근접과 동일하게 걸리므로, 벽·닫힌 문·가구로 막힌
+칸 너머로는 쏠 수 없다. 사거리 밖 공격은 종전대로
+`PLAYER_ATTACK_PROVOKE_RANGE_METERS`(10m) 안에서 어그로만 끈다.
+
+클라이언트도 같은 `data/items.json` 열을 읽는다(`weaponRangeMeters`). 클릭
+공격·추격 중단·거절 판정이 한 정의를 공유하므로 서버와 어긋나지 않는다.
+추격은 사거리 끝에서 멈춰 서서 쏜다(카이팅 없음).
+
+### 능력치 기반 보너스
+
+`rangedAbility`가 있으면 히트 롤의 attack bonus와 대미지 보너스를 STR 대신
+그 능력치의 modifier로 계산한다. 그 외 판정 경로는 근접과 완전히 같다.
+
+### 명중 시 어그로
+
+거절된 공격만 어그로를 끌던 종전 경로로는 원거리에서 *명중한* 공격이 몬스터를
+깨우지 못한다. 근접 리치 밖에서 명중하면 `MonsterProvoked`를 몬스터 소유
+클라이언트에 따로 보낸다(서버 AI는 `brain_hit`로 이미 깨어난다).
+
+### 양손 무기
+
+`hands: 2` 무기를 착용하면 오프핸드 아이템이 가방으로 내려가고, 착용 중에는
+오프핸드 착용 요청이 거절된다. 규칙은 착용 로직에 있어 앞으로 추가될 어떤
+양손 무기에도 그대로 적용된다.
+
+- 구현: [server/src/game_state/combat.rs](../server/src/game_state/combat.rs),
+  [server/src/game_state/inventory.rs](../server/src/game_state/inventory.rs),
+  [client/src/lib/data/itemDefs.ts](../client/src/lib/data/itemDefs.ts)
 
 ---
 

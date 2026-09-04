@@ -1,6 +1,5 @@
 import type { Position } from '../utils/movementUtils'
 import { startBattleMusic, stopBattleMusic } from './bgmManager'
-import { PLAYER_ATTACK_RANGE_METERS } from '../data/combatTiming'
 
 export interface MonsterInfo {
   state?: string
@@ -72,7 +71,9 @@ export class CombatController {
   }
 
   /** A `lineBlocked` target counts as out of range: the server refuses a blow
-   *  through a wall, so keep chasing rather than swing into rejections. */
+   *  through a wall, so keep chasing rather than swing into rejections.
+   *  `attackRange` is the equipped weapon's reach, so a bow stops the chase at
+   *  its own distance and shoots from there. */
   update(
     deltaTime: number,
     playerPos: Position,
@@ -81,7 +82,8 @@ export class CombatController {
     isMoving: boolean,
     cooldownMs: number,
     currentPlayerState: string,
-    lineBlocked: boolean
+    lineBlocked: boolean,
+    attackRange: number
   ): CombatUpdateResult {
     if (!this._targetMonsterId) return { action: 'none' }
 
@@ -103,7 +105,7 @@ export class CombatController {
     const dx = monsterObjPos.x - playerPos.x
     const dz = monsterObjPos.z - playerPos.z
     const dist = Math.sqrt(dx * dx + dz * dz)
-    const inRange = dist <= PLAYER_ATTACK_RANGE_METERS && !lineBlocked
+    const inRange = dist <= attackRange && !lineBlocked
 
     if (isMoving) {
       // CHASING phase

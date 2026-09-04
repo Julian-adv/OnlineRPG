@@ -10,7 +10,6 @@ import {
   type Position,
 } from '../../../utils/movementUtils'
 import { shortestWrappedDeltaX } from '../../../terrain/world-wrap'
-import { PLAYER_ATTACK_RANGE_METERS } from '../../../data/combatTiming'
 import {
   buildAttackState,
   buildIdleAfterAttack,
@@ -108,14 +107,19 @@ export interface CombatControllerLike {
     isMoving: boolean,
     cooldownMs: number,
     currentPlayerState: string,
-    lineBlocked: boolean
+    lineBlocked: boolean,
+    attackRange: number
   ): CombatUpdateResult
 }
 
-function withinAttackRange(from: Position, to: Position): boolean {
+function withinAttackRange(
+  from: Position,
+  to: Position,
+  attackRange: number
+): boolean {
   const dx = shortestWrappedDeltaX(from.x, to.x)
   const dz = to.z - from.z
-  return dx * dx + dz * dz <= PLAYER_ATTACK_RANGE_METERS ** 2
+  return dx * dx + dz * dz <= attackRange ** 2
 }
 
 /** Whether a wall stands between the two points on `floor`. */
@@ -135,6 +139,9 @@ export interface TickCombatInput {
   chaseGoal: Position | null
   movementState: MovementState | null
   cooldownMs: number
+  /** Reach of the equipped weapon (`weaponRangeMeters`), which the server
+   *  gates on too. */
+  attackRange: number
   pathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
@@ -165,6 +172,7 @@ export function tickCombat({
   chaseGoal,
   movementState,
   cooldownMs,
+  attackRange,
   pathing,
   getMonsterInfo,
   findMonsterPosition,
@@ -179,7 +187,7 @@ export function tickCombat({
   const monsterPos = findMonsterPosition(targetId)
   const lineBlocked =
     !!monsterPos &&
-    withinAttackRange(playerPos, monsterPos) &&
+    withinAttackRange(playerPos, monsterPos, attackRange) &&
     attackLineBlocked(playerPos, monsterPos, pathing.currentFloor)
   const result = combatController.update(
     deltaTime,
@@ -189,7 +197,8 @@ export function tickCombat({
     isMoving,
     cooldownMs,
     playerStateName,
-    lineBlocked
+    lineBlocked,
+    attackRange
   )
 
   switch (result.action) {
@@ -305,6 +314,7 @@ interface RunCombatFrameInput {
   chaseGoal: Position | null
   movementState: MovementState | null
   cooldownMs: number
+  attackRange: number
   pathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
@@ -324,6 +334,7 @@ export function runCombatFrame({
   chaseGoal,
   movementState,
   cooldownMs,
+  attackRange,
   pathing,
   getMonsterInfo,
   findMonsterPosition,
@@ -347,6 +358,7 @@ export function runCombatFrame({
     chaseGoal,
     movementState,
     cooldownMs,
+    attackRange,
     pathing,
     getMonsterInfo,
     findMonsterPosition,

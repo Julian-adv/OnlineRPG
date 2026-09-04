@@ -188,6 +188,8 @@ interface RunPlayerMovementTickInput {
   isInCombat: boolean
   combatController: CombatControllerLike
   cooldownMs: number
+  /** Equipped weapon's reach; the chase breaks off here. */
+  attackRange: number
   chasePathing: Pathing
   getMonsterInfo: (monsterId: string) => MonsterInfo | undefined
   findMonsterPosition: (monsterId: string) => Position | undefined
@@ -236,6 +238,7 @@ export function runPlayerMovementTick({
   isInCombat,
   combatController,
   cooldownMs,
+  attackRange,
   chasePathing,
   getMonsterInfo,
   findMonsterPosition,
@@ -276,6 +279,7 @@ export function runPlayerMovementTick({
     chaseGoal,
     movementState,
     cooldownMs,
+    attackRange,
     pathing: chasePathing,
     getMonsterInfo,
     findMonsterPosition,

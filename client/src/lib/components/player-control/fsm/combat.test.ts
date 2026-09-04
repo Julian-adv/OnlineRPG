@@ -18,6 +18,12 @@ import {
   type CombatTickOutcome,
 } from './combat'
 import { directPathing } from './pathing.fixture'
+import { CombatController } from '../../../managers/combatController'
+
+vi.mock('../../../managers/bgmManager', () => ({
+  startBattleMusic: vi.fn(),
+  stopBattleMusic: vi.fn(),
+}))
 
 function actions(): CombatOutcomeActions {
   return {
@@ -178,6 +184,7 @@ describe('tickCombat', () => {
       chaseGoal: null,
       movementState: null,
       cooldownMs: 1500,
+      attackRange: 2,
       pathing: directPathing(),
       getMonsterInfo: vi.fn(),
       attackLineBlocked: () => false,
@@ -206,6 +213,7 @@ describe('tickCombat', () => {
       chaseGoal: null,
       movementState: null,
       cooldownMs: 1500,
+      attackRange: 2,
       pathing: directPathing(),
       getMonsterInfo: vi.fn(() => ({ state: 'idle' })),
       attackLineBlocked: () => false,
@@ -237,6 +245,7 @@ describe('tickCombat', () => {
       chaseGoal: null,
       movementState: null,
       cooldownMs: 1500,
+      attackRange: 2,
       pathing: directPathing(),
       getMonsterInfo: vi.fn(() => ({ state: 'idle' })),
       attackLineBlocked: () => false,
@@ -361,6 +370,7 @@ describe('runCombatFrame', () => {
         chaseGoal: null,
         movementState: null,
         cooldownMs: 1500,
+        attackRange: 2,
         pathing: directPathing(),
         getMonsterInfo: vi.fn(),
         attackLineBlocked: () => false,
@@ -388,6 +398,7 @@ describe('runCombatFrame', () => {
         chaseGoal: null,
         movementState: null,
         cooldownMs: 1500,
+        attackRange: 2,
         pathing: directPathing(),
         getMonsterInfo: vi.fn(),
         attackLineBlocked: () => false,
@@ -528,5 +539,97 @@ describe('ensureAttackState', () => {
         attackCounter: 3,
       },
     })
+  })
+})
+
+// The bow's reach; the server gates the same shot on items.json `range`.
+const BOW_RANGE = 10
+
+/** `tickCombat` over the real controller, with a monster `distance` metres
+ *  away along +x. */
+function tickAtRange({
+  controller,
+  distance,
+  attackRange,
+  isMoving,
+  lineBlocked = false,
+}: {
+  controller: CombatController
+  distance: number
+  attackRange: number
+  isMoving: boolean
+  lineBlocked?: boolean
+}): CombatTickOutcome {
+  return tickCombat({
+    combatController: controller,
+    deltaTime: 5000,
+    playerPos,
+    playerStateName: isMoving ? 'moving' : 'idle',
+    isMoving,
+    currentSpeed: 1,
+    chaseGoal: null,
+    movementState: null,
+    cooldownMs: 1500,
+    attackRange,
+    pathing: directPathing(),
+    getMonsterInfo: () => ({ state: 'idle' }),
+    attackLineBlocked: () => lineBlocked,
+    findMonsterPosition: () => ({ x: distance, y: 0, z: 0 }),
+    sendPlayerMove: vi.fn(),
+  })
+}
+
+describe('tickCombat at the equipped weapon range', () => {
+  it('breaks the chase off at the bow range instead of walking into melee', () => {
+    const controller = new CombatController()
+    controller.beginCombat('m1', false)
+
+    expect(
+      tickAtRange({
+        controller,
+        distance: 9,
+        attackRange: BOW_RANGE,
+        isMoving: true,
+      })
+    ).toEqual({ kind: 'reached_attack_range', monsterId: 'm1' })
+  })
+
+  it('keeps chasing at the same distance with a melee weapon', () => {
+    const controller = new CombatController()
+    controller.beginCombat('m1', false)
+
+    expect(
+      tickAtRange({ controller, distance: 9, attackRange: 2, isMoving: true })
+        .kind
+    ).toBe('chasing_unchanged')
+  })
+
+  it('stands and shoots once stopped inside the bow range', () => {
+    const controller = new CombatController()
+    controller.beginCombat('m1', true)
+
+    expect(
+      tickAtRange({
+        controller,
+        distance: 9,
+        attackRange: BOW_RANGE,
+        isMoving: false,
+      })
+    ).toMatchObject({ kind: 'attack_cycle', monsterId: 'm1' })
+  })
+
+  it('walks at a target the shot cannot clear rather than shooting the wall', () => {
+    const controller = new CombatController()
+    controller.beginCombat('m1', false)
+
+    expect(
+      tickAtRange({
+        controller,
+        distance: 9,
+        attackRange: BOW_RANGE,
+        isMoving: true,
+        lineBlocked: true,
+      }).kind
+    ).toBe('chasing_unchanged')
   })
 })

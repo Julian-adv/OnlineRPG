@@ -578,6 +578,15 @@ impl super::GameState {
         }
     }
 
+    /// Whether the wielded main-hand weapon claims both hands, sealing the
+    /// off-hand slot.
+    fn main_hand_is_two_handed(&self, inv: &PlayerInventory) -> bool {
+        inv.equipped
+            .get(&EquipSlot::MainHand)
+            .and_then(|item| self.item_defs.get(&item.item_def_id))
+            .is_some_and(|def| def.is_two_handed())
+    }
+
     pub async fn equip_item(&self, player_id: &PlayerId, instance_id: u64) {
         if self
             .reject_if_trade_reserved(player_id, instance_id, "equip")
@@ -613,6 +622,15 @@ impl super::GameState {
                 }
             };
 
+            // Two-handed weapons own the off-hand slot: equipping one empties
+            // it, and nothing may move back in while it is wielded.
+            if equip_slot == EquipSlot::OffHand && self.main_hand_is_two_handed(inv) {
+                drop(inventories);
+                self.send_system_message(player_id, "Both hands are on your weapon")
+                    .await;
+                return;
+            }
+
             let target_slot = if inv.equipped.contains_key(&equip_slot) {
                 equip_slot
                     .alternate()
@@ -623,10 +641,22 @@ impl super::GameState {
             };
 
             let item = inv.bag.remove(bag_idx);
+            let two_handed = self
+                .item_defs
+                .get(&item.item_def_id)
+                .is_some_and(|def| def.is_two_handed());
             if let Some(old_item) = inv.equipped.insert(target_slot, item) {
                 inv.bag.push(old_item);
             }
-            let torch_on = (target_slot == EquipSlot::OffHand).then(|| inv.is_torch_lit());
+            let mut off_hand_cleared = false;
+            if two_handed && target_slot == EquipSlot::MainHand {
+                if let Some(displaced) = inv.equipped.remove(&EquipSlot::OffHand) {
+                    inv.bag.push(displaced);
+                    off_hand_cleared = true;
+                }
+            }
+            let torch_on =
+                (target_slot == EquipSlot::OffHand || off_hand_cleared).then(|| inv.is_torch_lit());
             (inv.clone(), torch_on)
         };
 

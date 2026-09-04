@@ -109,7 +109,7 @@ describe('dispatchPlayerControlEvent', () => {
       approach,
     }
 
-    dispatchPlayerControlEvent(event, actions)
+    dispatchPlayerControlEvent(event, actions, 2)
 
     expect(actions.requestMove).toHaveBeenCalledWith(
       { x: 1, y: 2, z: 3 },
@@ -120,8 +120,12 @@ describe('dispatchPlayerControlEvent', () => {
   it('routes animation events', () => {
     const actions = makeActions()
 
-    dispatchPlayerControlEvent({ type: 'anim_pickup_grab' }, actions)
-    dispatchPlayerControlEvent({ type: 'anim_interaction_finished' }, actions)
+    dispatchPlayerControlEvent({ type: 'anim_pickup_grab' }, actions, 2)
+    dispatchPlayerControlEvent(
+      { type: 'anim_interaction_finished' },
+      actions,
+      2
+    )
 
     expect(actions.onPickupGrab).toHaveBeenCalledOnce()
     expect(actions.onInteractionFinished).toHaveBeenCalledOnce()
@@ -137,7 +141,8 @@ describe('dispatchPlayerControlEvent', () => {
 
     dispatchPlayerControlEvent(
       { type: 'canvas_intent', intent, editorMode: false },
-      actions
+      actions,
+      2
     )
 
     expect(actions.moveToGround).toHaveBeenCalledWith(

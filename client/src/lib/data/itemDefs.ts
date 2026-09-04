@@ -1,5 +1,6 @@
 import itemsJson from '../../../../data/items.json'
 import type { EquipSlot } from '../network/networkTypes'
+import { PLAYER_ATTACK_RANGE_METERS } from './combatTiming'
 
 export interface ItemDefinition {
   id: string
@@ -32,6 +33,13 @@ export interface ItemDefinition {
   /** Cloth colour of the procedural cape, e.g. `#6d1720`. Its presence is what
    *  makes a back-slot item a cape rather than, say, a quiver. */
   capeColor?: string
+  /** Weapon reach in meters. Absent means melee — see `weaponRangeMeters`. */
+  range?: number
+  /** Ability whose modifier the server rolls a ranged weapon's hit and damage
+   *  with (`dex` for the bow). Its presence is what makes a weapon ranged. */
+  rangedAbility?: string
+  /** Hands the weapon occupies. Absent = 1; 2 seals the off-hand slot. */
+  hands?: number
 }
 
 const itemDefs = itemsJson as Record<string, ItemDefinition>
@@ -68,6 +76,29 @@ export function displayName(def: ItemDefinition, enchant = 0): string {
 /** Guard while equipped, with the armor enchant folded in as combat resolves it. */
 export function effectiveGuard(def: ItemDefinition, enchant = 0): number {
   return (def.guard ?? 0) + (def.category === 'armor' ? enchant : 0)
+}
+
+/** Reach of the weapon in `itemDefId`: its declared `range`, else the melee
+ *  reach. The server gates every swing on the same items.json column, so
+ *  click-to-attack, the chase break-off and the rejection all agree with it. */
+export function weaponRangeMeters(
+  itemDefId: string | null | undefined
+): number {
+  const def = itemDefId ? getItemDef(itemDefId) : undefined
+  const range = def?.category === 'weapon' ? def.range : undefined
+  return range && range > 0 ? range : PLAYER_ATTACK_RANGE_METERS
+}
+
+/** A weapon that resolves on an ability instead of STR — the `rangedAbility`
+ *  column is what makes it ranged, on the client as on the server. */
+export function isRangedWeapon(itemDefId: string | null | undefined): boolean {
+  const def = itemDefId ? getItemDef(itemDefId) : undefined
+  return def?.category === 'weapon' && !!def.rangedAbility
+}
+
+/** A weapon that claims both hands: no off-hand item alongside it. */
+export function isTwoHanded(itemDefId: string | null | undefined): boolean {
+  return (itemDefId ? getItemDef(itemDefId)?.hands : undefined) === 2
 }
 
 /** Mean damage roll (dice + enchant); 0 for non-weapons. */

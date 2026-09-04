@@ -19,7 +19,8 @@ describe('CombatController', () => {
       false,
       1500,
       'attack',
-      false
+      false,
+      2
     )
 
     expect(result).toEqual({
@@ -41,7 +42,8 @@ describe('CombatController', () => {
       false,
       1500,
       'attack',
-      false
+      false,
+      2
     )
 
     expect(result).toEqual({
@@ -63,7 +65,8 @@ describe('CombatController', () => {
       false,
       1500,
       'attack',
-      false
+      false,
+      2
     )
 
     expect(result).toEqual({
@@ -85,7 +88,8 @@ describe('CombatController', () => {
       false,
       1500,
       'attack',
-      true
+      true,
+      2
     )
 
     expect(result).toEqual({

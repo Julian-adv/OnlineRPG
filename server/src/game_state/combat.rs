@@ -28,8 +28,10 @@ const WEAPON_DROP_OFFSET_METERS: f32 = 2.0;
 // authoritative: clients may request an attack directly without chasing.
 const PLAYER_MELEE_ATTACK_RANGE_METERS: f32 = 2.0;
 // The server walks the player at client speed and so trails it by the network
-// lag; a swing thrown on arrival must not be refused for that.
-const PLAYER_MELEE_RANGE_TOLERANCE_METERS: f32 = 1.0;
+// lag; a blow thrown on arrival must not be refused for that. It belongs to
+// every reach, not just the melee one — a bow that stops at its own 10m and
+// looses would otherwise be refused for the same trailing metre.
+const PLAYER_RANGE_TOLERANCE_METERS: f32 = 1.0;
 // Out-of-range swings may still pull aggro when the monster is plausibly
 // nearby, but farther requests are ignored to prevent remote provocation.
 pub(super) const PLAYER_ATTACK_PROVOKE_RANGE_METERS: f32 = 10.0;
@@ -115,8 +117,37 @@ struct PlayerAttackContext {
     monster_position: Position,
     monster_floor_level: i8,
     monster_level_override: Option<u8>,
+    monster_owner_id: Option<PlayerId>,
     player_name: String,
     player_level: u32,
+    /// The swing left melee reach behind, so the target has to be woken
+    /// explicitly on a landed hit.
+    from_range: bool,
+    weapon: EquippedWeapon,
+}
+
+/// The wielded main-hand weapon as combat reads it. Resolved once per request,
+/// under the one `inventories` read the range gate already needs.
+struct EquippedWeapon {
+    /// Unarmed falls back to D&D 5e improvised 1d2.
+    dice: String,
+    /// An enchanted weapon (+N) adds its enchant to attack and damage rolls.
+    enchant: i32,
+    /// Reach in meters, or `None` for melee.
+    range: Option<f32>,
+    /// Ability the hit and damage bonus read, or `None` to keep STR.
+    ability: Option<crate::item_defs::Ability>,
+}
+
+impl Default for EquippedWeapon {
+    fn default() -> Self {
+        Self {
+            dice: "1d2".to_string(),
+            enchant: 0,
+            range: None,
+            ability: None,
+        }
+    }
 }
 
 struct PlayerAttackTarget {
@@ -252,6 +283,43 @@ impl super::GameState {
         self.effective_stats(player_id).await.cha
     }
 
+    async fn equipped_weapon(&self, player_id: &PlayerId) -> EquippedWeapon {
+        let inventories = self.inventories.read().await;
+        inventories
+            .get(player_id)
+            .and_then(|inv| inv.equipped.get(&EquipSlot::MainHand))
+            .and_then(|item| {
+                self.item_defs.get(&item.item_def_id).and_then(|def| {
+                    def.damage_dice().map(|dice| EquippedWeapon {
+                        dice: dice.to_string(),
+                        enchant: item.enchant,
+                        range: def.weapon_range(),
+                        ability: def.ranged_ability(),
+                    })
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Tell a client-owned monster's controller to aggro onto the attacker.
+    /// Server-side brains wake through `brain_hit` instead.
+    async fn notify_monster_provoked(
+        &self,
+        monster_id: &str,
+        player_id: &PlayerId,
+        owner_id: Option<PlayerId>,
+    ) {
+        let Some(owner_id) = owner_id else { return };
+        self.send_direct_message(
+            &owner_id,
+            ServerMessage::MonsterProvoked {
+                player_id: *player_id,
+                monster_id: monster_id.to_string(),
+            },
+        )
+        .await;
+    }
+
     /// Runs every gate on a `PlayerAttack` request. `Err` is the coarse reason
     /// acked back to the attacker plus the gate detail the single call site
     /// logs, so a new gate can never silently drop a request. Side effect: an
@@ -315,7 +383,14 @@ impl super::GameState {
         // monsters on another floor, but gate here too so a stale monster
         // id can't drive a cross-floor hit (the original bug: a surface
         // guard striking a monster on the dungeon floor beneath it).
-        let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_MELEE_RANGE_TOLERANCE_METERS;
+        let melee_range = PLAYER_MELEE_ATTACK_RANGE_METERS + PLAYER_RANGE_TOLERANCE_METERS;
+        // A weapon that declares a `range` (items.csv) shoots that far; the
+        // clients gate on the same column, so the two never drift. The lag
+        // allowance rides on top of whichever reach is in play rather than
+        // being folded into the melee one, which `max` would swallow whole.
+        let weapon = self.equipped_weapon(player_id).await;
+        let attack_range = PLAYER_MELEE_ATTACK_RANGE_METERS.max(weapon.range.unwrap_or(0.0))
+            + PLAYER_RANGE_TOLERANCE_METERS;
         let reach = |target: Position| {
             reachable_dist_sq(player_position, player_floor, target, monster.floor_level)
         };
@@ -334,7 +409,7 @@ impl super::GameState {
         // The registry trails a running monster by up to a sync interval, so
         // a swing it refuses is re-judged where the brain has the monster.
         let mut gate_position = monster.position;
-        if distance_sq > melee_range.powi(2) {
+        if distance_sq > attack_range.powi(2) {
             if let Some(now) = self.brain_position_now(monster_id).await {
                 let Some(d) = reach(now) else {
                     return Err((
@@ -354,26 +429,20 @@ impl super::GameState {
                 player_floor,
             )
         };
-        if distance_sq > melee_range.powi(2) {
+        if distance_sq > attack_range.powi(2) {
             // A swing at a monster behind a shut door must not reach it as
             // aggro either.
             if distance_sq <= PLAYER_ATTACK_PROVOKE_RANGE_METERS.powi(2) && !walled_off() {
                 if self.server_monster_ai() {
                     self.brain_hit(monster_id, player_id, false, 0).await;
-                } else if let Some(owner_id) = monster.owner_id {
-                    self.send_direct_message(
-                        &owner_id,
-                        ServerMessage::MonsterProvoked {
-                            player_id: *player_id,
-                            monster_id: monster_id.to_string(),
-                        },
-                    )
-                    .await;
+                } else {
+                    self.notify_monster_provoked(monster_id, player_id, monster.owner_id)
+                        .await;
                 }
             }
             return Err((
                 AttackRejectReason::OutOfRange,
-                format!("dist {:.1}m > {:.1}m", distance_sq.sqrt(), melee_range),
+                format!("dist {:.1}m > {:.1}m", distance_sq.sqrt(), attack_range),
             ));
         }
         if walled_off() {
@@ -385,8 +454,11 @@ impl super::GameState {
             monster_position: monster.position,
             monster_floor_level: monster.floor_level,
             monster_level_override: monster.level_override,
+            monster_owner_id: monster.owner_id,
             player_name,
             player_level,
+            from_range: distance_sq > melee_range.powi(2),
+            weapon,
         })
     }
 
@@ -408,8 +480,11 @@ impl super::GameState {
             monster_position,
             monster_floor_level,
             monster_level_override,
+            monster_owner_id,
             player_name,
             player_level,
+            from_range,
+            weapon,
         } = match self.validate_player_attack(player_id, &monster_id).await {
             Ok(ctx) => ctx,
             Err((reason, detail)) => {
@@ -432,27 +507,18 @@ impl super::GameState {
         self.cancel_concentration_if_active(player_id).await;
         debug!("Player {} attacking monster {}", player_name, monster_id);
 
-        // Unarmed falls back to D&D 5e improvised 1d2. An enchanted
-        // weapon (+N) adds its enchant to attack and damage rolls.
-        let (weapon_dice, weapon_enchant): (String, i32) = {
-            let inventories = self.inventories.read().await;
-            inventories
-                .get(player_id)
-                .and_then(|inv| inv.equipped.get(&EquipSlot::MainHand))
-                .and_then(|item| {
-                    self.item_defs
-                        .get(&item.item_def_id)
-                        .and_then(|def| def.damage_dice())
-                        .map(|dice| (dice.to_string(), item.enchant))
-                })
-                .unwrap_or_else(|| ("1d2".to_string(), 0))
-        };
-
-        let str_mod = {
+        // A ranged weapon rolls on the ability it declares (DEX for the bow);
+        // everything else keeps STR.
+        let ability_mod = {
             let chars = self.player_characters.read().await;
             chars
                 .get(player_id)
-                .map(|(_, _, attrs)| combat::ability_modifier(attrs.r#str))
+                .map(|(_, _, attrs)| {
+                    combat::ability_modifier(match weapon.ability {
+                        Some(ability) => ability.score(attrs),
+                        None => attrs.r#str,
+                    })
+                })
                 .unwrap_or(0)
         };
 
@@ -462,12 +528,12 @@ impl super::GameState {
             let def = self.monster_defs.get(&monster_type);
             let target_guard = def.map(|d| i32::from(d.guard)).unwrap_or(10);
             let attack_bonus =
-                combat::level_attack_bonus(player_level) + str_mod + weapon_enchant + hit_mod;
+                combat::level_attack_bonus(player_level) + ability_mod + weapon.enchant + hit_mod;
             let result = combat::roll_attack(
                 attack_bonus,
                 target_guard,
-                &weapon_dice,
-                str_mod + weapon_enchant,
+                &weapon.dice,
+                ability_mod + weapon.enchant,
             );
             (result.hit, result.roll, result.damage)
         };
@@ -538,6 +604,12 @@ impl super::GameState {
             if !is_dead {
                 self.brain_hit(&monster_id, player_id, true, result_damage)
                     .await;
+                // A client-owned brain only applies the hit at its own impact
+                // frame; a shot landed from outside melee reach must aggro now.
+                if from_range && !self.server_monster_ai() {
+                    self.notify_monster_provoked(&monster_id, player_id, monster_owner_id)
+                        .await;
+                }
             } else {
                 self.brain_death(&monster_id).await;
                 let def = self.monster_defs.get(&monster_type);

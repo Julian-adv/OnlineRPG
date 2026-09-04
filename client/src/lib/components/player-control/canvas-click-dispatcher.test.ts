@@ -4,6 +4,7 @@ import {
   dispatchCanvasClickIntent,
   type CanvasClickActions,
 } from './canvas-click-dispatcher'
+import { PLAYER_ATTACK_RANGE_METERS } from '../../data/combatTiming'
 
 function makeActions() {
   return {
@@ -33,7 +34,12 @@ describe('dispatchCanvasClickIntent tip hats', () => {
       position: { x: 1, y: 0, z: 2 },
     }
 
-    dispatchCanvasClickIntent(intent, false, actions)
+    dispatchCanvasClickIntent(
+      intent,
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
 
     expect(actions.tipHat).toHaveBeenCalledWith(intent)
   })
@@ -50,7 +56,12 @@ describe('dispatchCanvasClickIntent prop handling', () => {
       position: { x: 1, y: 0, z: 2 },
     }
 
-    dispatchCanvasClickIntent(intent, false, actions)
+    dispatchCanvasClickIntent(
+      intent,
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
 
     expect(actions.breakProp).toHaveBeenCalledWith(intent)
     expect(actions.openProp).not.toHaveBeenCalled()
@@ -66,7 +77,12 @@ describe('dispatchCanvasClickIntent prop handling', () => {
       position: { x: 1, y: 0, z: 2 },
     }
 
-    dispatchCanvasClickIntent(intent, false, actions)
+    dispatchCanvasClickIntent(
+      intent,
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
 
     expect(actions.openProp).toHaveBeenCalledWith(intent)
     expect(actions.breakProp).not.toHaveBeenCalled()
@@ -82,7 +98,12 @@ describe('dispatchCanvasClickIntent walk-up interactions', () => {
       position: { x: 1, y: 0, z: 2 },
     }
 
-    dispatchCanvasClickIntent(intent, false, actions)
+    dispatchCanvasClickIntent(
+      intent,
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
 
     expect(actions.pickupItem).toHaveBeenCalledWith(intent)
   })
@@ -98,7 +119,12 @@ describe('dispatchCanvasClickIntent walk-up interactions', () => {
       position: { x: 30, y: 0, z: 0 },
     }
 
-    dispatchCanvasClickIntent(intent, false, actions)
+    dispatchCanvasClickIntent(
+      intent,
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
 
     expect(actions.toggleDoor).toHaveBeenCalledWith(intent)
     expect(actions.moveToGround).not.toHaveBeenCalled()
@@ -114,7 +140,12 @@ describe('dispatchCanvasClickIntent meals', () => {
       position: { x: 1, y: 0.75, z: 2 },
     }
 
-    dispatchCanvasClickIntent(intent, false, actions)
+    dispatchCanvasClickIntent(
+      intent,
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
 
     expect(actions.eatMeal).toHaveBeenCalledWith(intent)
   })

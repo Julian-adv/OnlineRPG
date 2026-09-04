@@ -1,6 +1,5 @@
 import type { Position } from '../../utils/movementUtils'
 import type { ClickIntent } from '../../managers/inputHandler'
-import { PLAYER_ATTACK_RANGE_METERS } from '../../data/combatTiming'
 
 type DoorIntent = Extract<ClickIntent, { type: 'toggle_door' }>
 type DungeonDoorIntent = Extract<ClickIntent, { type: 'toggle_dungeon_door' }>
@@ -15,7 +14,7 @@ type StallIntent = Extract<ClickIntent, { type: 'stall' }>
 type MealIntent = Extract<ClickIntent, { type: 'meal' }>
 
 export interface CanvasClickActions {
-  /** Player is at melee range — start the attack swing immediately. */
+  /** Player is within the weapon's reach — attack immediately. */
   attackInRange(monsterId: string): void
   /** Out of range — chase the monster, attacking on arrival. */
   chaseAndAttack(monsterId: string, hitPoint: Position): void
@@ -45,16 +44,19 @@ export interface CanvasClickActions {
   eatMeal(intent: MealIntent): void
 }
 
+/** `attackRange` is the equipped weapon's reach (`weaponRangeMeters`), so a
+ *  bow shoots from where the click landed instead of walking into melee. */
 export function dispatchCanvasClickIntent(
   intent: ClickIntent,
   isMapEditorMode: boolean,
-  actions: CanvasClickActions
+  actions: CanvasClickActions,
+  attackRange: number
 ): void {
   if (isMapEditorMode && intent.type !== 'move_to_ground') return
 
   switch (intent.type) {
     case 'attack_monster':
-      if (intent.distance < PLAYER_ATTACK_RANGE_METERS) {
+      if (intent.distance < attackRange) {
         actions.attackInRange(intent.monsterId)
       } else {
         actions.chaseAndAttack(intent.monsterId, intent.hitPoint)
