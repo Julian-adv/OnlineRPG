@@ -1210,7 +1210,11 @@
 
   function handleClickToMove(
     clickPosition: Position,
-    options: { approach?: PendingApproach | null; sprinting?: boolean } = {}
+    options: {
+      approach?: PendingApproach | null
+      sprinting?: boolean
+      stopAtHouseEntrance?: boolean
+    } = {}
   ) {
     // Any fresh movement cancels a pending prop break/open (breakProp/openProp
     // re-arm it after their own walk-up call below).
@@ -1225,6 +1229,36 @@
       const radius = staggerRadius(get(activeDebuffs), Date.now())
       if (radius > 0) clickPosition = staggerTarget(clickPosition, radius)
     }
+    const routePath = options.stopAtHouseEntrance
+      ? (
+          startX: number,
+          startZ: number,
+          startFloor: number,
+          goalX: number,
+          goalZ: number,
+          goalFloor: number
+        ) => {
+          const result = findPath(
+            startX,
+            startZ,
+            startFloor,
+            goalX,
+            goalZ,
+            goalFloor
+          )
+          return {
+            ...result,
+            waypoints: currentPlayer
+              ? housingManager.stopPathAtHouseEntrance(
+                  currentPlayer.position,
+                  startFloor,
+                  clickPosition,
+                  result.waypoints
+                )
+              : result.waypoints,
+          }
+        }
+      : findPath
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /
     // dungeonManager.startFloorAt), which differs from the clicked room's floor, so
@@ -1238,7 +1272,7 @@
       hasKeyboardInput: inputHandler.hasKeysPressed,
       currentFloor: currentPassabilityFloor(),
       getFloorAt: getFloorAtForClick,
-      findPath,
+      findPath: routePath,
       waypointHeight,
       sendPlayerMove,
       startSpeed: currentSpeed,
@@ -1802,6 +1836,7 @@
         }
         handleClickToMove(target, {
           sprinting,
+          stopAtHouseEntrance: true,
         })
       },
       castFishing: (intent) => {

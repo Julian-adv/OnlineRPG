@@ -5,6 +5,7 @@ import {
   resolveStairFloor,
   shouldIgnoreImplicitHouseFloorChange,
   stairLandingTargetAt,
+  stopPathAtHouseEntrance,
 } from './housing-queries'
 import type { HouseData, RoomData } from '../types/housing'
 
@@ -162,5 +163,51 @@ describe('implicit housing floor changes', () => {
   it('allows stair clicks and outdoor house entry', () => {
     expect(shouldIgnoreImplicitHouseFloorChange('h', 1, 0, true)).toBe(false)
     expect(shouldIgnoreImplicitHouseFloorChange(null, 0, 1, false)).toBe(false)
+  })
+})
+describe('stopPathAtHouseEntrance', () => {
+  it('stops a route shortly after it enters the clicked house', () => {
+    const result = stopPathAtHouseEntrance(
+      house(),
+      { x: 2, y: 0, z: -2 },
+      0,
+      { x: 2, y: 0.05, z: 4 },
+      [{ x: 2, z: 4, floor: 0 }]
+    )
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ x: 2, floor: 0 })
+    expect(result[0].z).toBeCloseTo(0.75)
+  })
+
+  it('keeps the full route when the player is already inside', () => {
+    const waypoints = [{ x: 2, z: 4, floor: 0 }]
+    expect(
+      stopPathAtHouseEntrance(
+        house(),
+        { x: 2, y: 0.05, z: 1 },
+        0,
+        { x: 2, y: 0.05, z: 4 },
+        waypoints
+      )
+    ).toBe(waypoints)
+  })
+
+  it('preserves the approach to the door before appending the indoor stop', () => {
+    expect(
+      stopPathAtHouseEntrance(
+        house(),
+        { x: -2, y: 0, z: -2 },
+        0,
+        { x: 2, y: 0.05, z: 4 },
+        [
+          { x: 2, z: -1, floor: 0 },
+          { x: 2, z: 4, floor: 0 },
+        ]
+      )
+    ).toEqual([
+      { x: 2, z: -1, floor: 0 },
+      { x: 2, z: 0.75, floor: 0 },
+    ])
   })
 })

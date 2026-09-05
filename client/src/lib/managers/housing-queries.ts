@@ -276,6 +276,152 @@ export function stairLandingTargetAt(
   }
 }
 
+interface HousePathWaypoint {
+  x: number
+  z: number
+  floor: number
+}
+
+function containsHouseFloorPoint(
+  house: HouseData,
+  floor: number,
+  x: number,
+  z: number
+): boolean {
+  return house.rooms.some(
+    (room) =>
+      room.roomType !== 'stairwell' &&
+      room.floorLevel === floor &&
+      roomContainsXZ(house, room, x, z)
+  )
+}
+
+function segmentRectEntry(
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number
+): number | null {
+  const dx = x1 - x0
+  const dz = z1 - z0
+  let enter = 0
+  let exit = 1
+  for (const [p, q] of [
+    [-dx, x0 - minX],
+    [dx, maxX - x0],
+    [-dz, z0 - minZ],
+    [dz, maxZ - z0],
+  ] as const) {
+    if (Math.abs(p) <= 1e-9) {
+      if (q < 0) return null
+      continue
+    }
+    const t = q / p
+    if (p < 0) enter = Math.max(enter, t)
+    else exit = Math.min(exit, t)
+    if (enter > exit) return null
+  }
+  return enter
+}
+
+function firstHouseEntryOnSegment(
+  house: HouseData,
+  floor: number,
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number
+): number | null {
+  const inset = 0.05
+  let first: number | null = null
+  for (const room of house.rooms) {
+    if (room.roomType === 'stairwell' || room.floorLevel !== floor) continue
+    const minX = house.origin.x + room.localX
+    const minZ = house.origin.z + room.localZ
+    const entry = segmentRectEntry(
+      x0,
+      z0,
+      x1,
+      z1,
+      minX + inset,
+      minX + room.sizeX - inset,
+      minZ + inset,
+      minZ + room.sizeZ - inset
+    )
+    if (entry !== null && (first === null || entry < first)) first = entry
+  }
+  return first
+}
+
+export function stopPathAtHouseEntrance(
+  housesById: ReadonlyMap<string, HouseData>,
+  current: { x: number; y: number; z: number },
+  currentFloor: number,
+  target: { x: number; y: number; z: number },
+  waypoints: HousePathWaypoint[],
+  insideDistance = 0.7
+): HousePathWaypoint[] {
+  if (currentFloor !== 0 || waypoints.length === 0) return waypoints
+  const targetHouse = findHouseAtPoint(housesById, target.x, target.y, target.z)
+  if (
+    !targetHouse ||
+    containsHouseFloorPoint(targetHouse, currentFloor, current.x, current.z)
+  ) {
+    return waypoints
+  }
+
+  const result: HousePathWaypoint[] = []
+  let previous = { x: current.x, z: current.z, floor: currentFloor }
+  let remainingInside = insideDistance
+  let entered = false
+
+  for (const waypoint of waypoints) {
+    const dx = waypoint.x - previous.x
+    const dz = waypoint.z - previous.z
+    const distance = Math.hypot(dx, dz)
+    let startT = 0
+
+    if (!entered) {
+      const entry = firstHouseEntryOnSegment(
+        targetHouse,
+        previous.floor,
+        previous.x,
+        previous.z,
+        waypoint.x,
+        waypoint.z
+      )
+      if (entry === null) {
+        result.push(waypoint)
+        previous = waypoint
+        continue
+      }
+      entered = true
+      startT = entry
+    }
+
+    const available = distance * (1 - startT)
+    if (distance > 1e-6 && available >= remainingInside) {
+      const stopT = startT + remainingInside / distance
+      result.push({
+        x: previous.x + dx * stopT,
+        z: previous.z + dz * stopT,
+        floor: waypoint.floor,
+      })
+      return result
+    }
+
+    remainingInside -= available
+    result.push(waypoint)
+    previous = waypoint
+  }
+
+  return result
+}
+
 export interface RoomAABB {
   minX: number
   maxX: number

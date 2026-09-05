@@ -39,6 +39,7 @@ import {
   houseFloorHeightAt,
   isPointUnderHouseXZ,
   stairLandingTargetAt,
+  stopPathAtHouseEntrance,
   type RoomAABB,
 } from './housing-queries'
 
@@ -115,6 +116,20 @@ export class HousingManager {
     )
   }
 
+  stopPathAtHouseEntrance(
+    current: { x: number; y: number; z: number },
+    currentFloor: number,
+    target: { x: number; y: number; z: number },
+    waypoints: { x: number; z: number; floor: number }[]
+  ): { x: number; z: number; floor: number }[] {
+    return stopPathAtHouseEntrance(
+      this.housesById,
+      current,
+      currentFloor,
+      target,
+      waypoints
+    )
+  }
   /**
    * Drop chunks beyond `EVICT_RADIUS` of (wx, wz), undoing `loadChunksAround`.
    * Without this the cache grows by one chunk per chunk walked and never
