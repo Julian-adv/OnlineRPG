@@ -38,6 +38,7 @@ import {
   findSupportingHouse,
   hasFloorSupport,
   houseFloorHeightAt,
+  isHouseWallBlockingSegment,
   isPointUnderHouseXZ,
   stairLandingTargetAt,
   stopPathAtHouseEntrance,
@@ -338,6 +339,23 @@ export class HousingManager {
     const room = this.housesById.get(door.houseId)?.rooms[door.roomIndex]
     return (
       !!room && !!getWallByDir(room, door.wallDir)[door.segmentIndex]?.isOpen
+    )
+  }
+
+  isHouseWallBlockingSegment(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floorLevel: number
+  ): boolean {
+    return isHouseWallBlockingSegment(
+      this.housesById,
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floorLevel
     )
   }
 

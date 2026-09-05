@@ -51,7 +51,14 @@ export function planApproach(
   if (canActNow && distance <= spec.range) return { kind: 'act_now' }
 
   const standSpot = positionShortOfTarget(from, spec.position, spec.stopShort)
-  if (spec.stopShort > 0 && routeQuality(standSpot) === 'found') {
+  const standDx = shortestWrappedDeltaX(from.x, standSpot.x)
+  const standDz = standSpot.z - from.z
+  const standSpotMoves = Math.hypot(standDx, standDz) > 1e-6
+  if (
+    spec.stopShort > 0 &&
+    standSpotMoves &&
+    routeQuality(standSpot) === 'found'
+  ) {
     return { kind: 'walk', target: standSpot }
   }
 

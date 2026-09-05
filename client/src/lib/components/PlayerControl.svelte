@@ -1554,7 +1554,7 @@
     }
 
     const canAct = (position: Pick<Position, 'x' | 'z'>) =>
-      !housingManager.attackLineBlocked(
+      !housingManager.isHouseWallBlockingSegment(
         position.x,
         position.z,
         intent.position.x,

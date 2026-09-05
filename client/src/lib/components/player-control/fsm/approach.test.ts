@@ -41,6 +41,13 @@ describe('planApproach', () => {
     )
   })
 
+  it('walks to the target when a forced approach starts inside stop-short', () => {
+    expect(planApproach({ x: 9, z: 0 }, spec, routable, false)).toEqual({
+      kind: 'walk',
+      target: spec.position,
+    })
+  })
+
   // A stand spot inside the wall the target sits behind gets only a partial
   // route, which walks the player into that wall. Aiming at the target routes
   // them around it instead.

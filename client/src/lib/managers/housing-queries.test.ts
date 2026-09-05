@@ -3,6 +3,7 @@ import {
   assistStairMovementDirection,
   findClosedDoorOnSegment,
   houseFloorHeightAt,
+  isHouseWallBlockingSegment,
   resolveStairFloor,
   shouldIgnoreImplicitHouseFloorChange,
   stairLandingTargetAt,
@@ -216,6 +217,24 @@ describe('findClosedDoorOnSegment', () => {
     ).toBeNull()
   })
 })
+
+describe('isHouseWallBlockingSegment', () => {
+  it('allows interaction through an open door', () => {
+    expect(
+      isHouseWallBlockingSegment(houseWithNorthDoor(true), 1.5, -2, 1.5, 2, 0)
+    ).toBe(false)
+  })
+
+  it('blocks interaction through a closed door or solid wall', () => {
+    expect(
+      isHouseWallBlockingSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 0)
+    ).toBe(true)
+    expect(
+      isHouseWallBlockingSegment(houseWithNorthDoor(), 0.5, -2, 0.5, 2, 0)
+    ).toBe(true)
+  })
+})
+
 describe('stopPathAtHouseEntrance', () => {
   it('stops a route shortly after it enters the clicked house', () => {
     const result = stopPathAtHouseEntrance(

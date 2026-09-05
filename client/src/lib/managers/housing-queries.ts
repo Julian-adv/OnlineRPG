@@ -641,6 +641,52 @@ export function findClosedDoorOnSegment(
   return nearest
 }
 
+export function isHouseWallBlockingSegment(
+  housesById: ReadonlyMap<string, HouseData>,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  floorLevel: number
+): boolean {
+  for (const house of housesById.values()) {
+    for (const room of house.rooms) {
+      if (room.floorLevel !== floorLevel) continue
+      const roomX = house.origin.x + room.localX
+      const roomZ = house.origin.z + room.localZ
+
+      for (const wallDir of ['north', 'south', 'east', 'west'] as const) {
+        const segments = getWallByDir(room, wallDir)
+        const alongX = wallDir === 'north' || wallDir === 'south'
+        const wall =
+          (alongX ? house.origin.z : house.origin.x) +
+          wallLineCoord(room, wallDir)
+
+        for (
+          let segmentIndex = 0;
+          segmentIndex < segments.length;
+          segmentIndex++
+        ) {
+          const segment = segments[segmentIndex]
+          if (
+            segment.variant === 'open' ||
+            (isDoorVariant(segment.variant) && segment.isOpen)
+          ) {
+            continue
+          }
+          const start = (alongX ? roomX : roomZ) + segmentIndex
+          const t = alongX
+            ? crossingAtAxisWall(fromZ, fromX, toZ, toX, wall, start)
+            : crossingAtAxisWall(fromX, fromZ, toX, toZ, wall, start)
+          if (t !== null) return true
+        }
+      }
+    }
+  }
+
+  return false
+}
+
 /** Find an existing house that shares an edge with the given room footprint. */
 export function findAdjacentHouse(
   housesById: ReadonlyMap<string, HouseData>,
