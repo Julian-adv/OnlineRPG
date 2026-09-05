@@ -733,7 +733,10 @@
   export function getDoorMeshes(): THREE.Object3D[] {
     const result: THREE.Object3D[] = []
     for (const h of houses.values()) {
-      for (const door of h.doors) result.push(door.pivot)
+      for (const door of h.doors) {
+        result.push(door.pivot)
+        if (door.clickTarget) result.push(door.clickTarget)
+      }
     }
     return result
   }

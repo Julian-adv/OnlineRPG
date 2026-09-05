@@ -147,12 +147,17 @@ export function buildHouseGroup(
   }
 
   for (const door of allDoors) {
-    door.pivot.userData = {
+    const userData = {
       doorHouseId: house.id,
       doorRoomIndex: door.roomIndex,
       doorWallDir: door.wallDir,
       doorSegmentIndex: door.segmentIndex,
       doorFloorLevel: door.floorLevel,
+    }
+    door.pivot.userData = userData
+    if (door.clickTarget) {
+      door.clickTarget.userData = { ...userData, housingSurface: 'wall' }
+      houseGroup.add(door.clickTarget)
     }
     houseGroup.add(door.pivot)
   }

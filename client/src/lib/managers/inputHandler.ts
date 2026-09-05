@@ -473,14 +473,14 @@ class InputHandler {
     // resolve to the wrong floor.
     if (context.doorMeshes?.length > 0) {
       const doorHits = raycaster.intersectObjects(context.doorMeshes, true)
-      if (doorHits.length > 0) {
-        const hitPoint = doorHits[0].point
+      for (const hit of doorHits) {
+        const hitPoint = hit.point
         const position = {
           x: hitPoint.x,
           y: context.playerPosition.y,
           z: hitPoint.z,
         }
-        let obj: THREE.Object3D | null = doorHits[0].object
+        let obj: THREE.Object3D | null = hit.object
         while (obj) {
           const d = obj.userData
           if (d && d.dungeonDoorKey) {

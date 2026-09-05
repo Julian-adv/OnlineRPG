@@ -230,6 +230,40 @@ describe('processCanvasClick cast-vs-walk', () => {
     expect(intent.type).toBe('move_to_ground')
   })
 
+  it('uses a door hit on the visible floor after an overlapping lower floor', () => {
+    const makeDoor = (y: number, floor: number, roomIndex: number) => {
+      const door = new THREE.Mesh(new THREE.PlaneGeometry(2, 2))
+      door.rotateX(-Math.PI / 2)
+      door.position.y = y
+      door.userData = {
+        doorHouseId: 'house',
+        doorRoomIndex: roomIndex,
+        doorWallDir: 'south',
+        doorSegmentIndex: 0,
+        doorFloorLevel: floor,
+      }
+      door.updateMatrixWorld(true)
+      return door
+    }
+    const lowerFloorDoor = makeDoor(5, 0, 0)
+    const visibleFloorDoor = makeDoor(4, 1, 1)
+
+    const intent = inputHandler.processCanvasClick(
+      centerClick(),
+      contextWith({
+        doorMeshes: [lowerFloorDoor, visibleFloorDoor],
+        playerPosition: { x: 0, y: 4, z: 0 },
+        playerVisualFloorLevel: 1,
+      })
+    )
+
+    expect(intent).toMatchObject({
+      type: 'toggle_door',
+      houseId: 'house',
+      roomIndex: 1,
+    })
+  })
+
   it('uses a nearby stair hit instead of the ground under the pointer', () => {
     const { camera, ground } = groundScene()
     const stair = new THREE.Group()
