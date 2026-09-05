@@ -74,10 +74,31 @@ async fn sell_items_batch_sells_partial_quantity_and_records_one_buyback_per_uni
         .await;
 
     assert_eq!(game_state.get_player_gold(&pid("seller")).await, 720);
-    let inventories = game_state.inventories.read().await;
-    let bag = &inventories[&pid("seller")].bag;
-    assert_eq!(bag.len(), 1, "the remaining 2 units stay as one stack");
-    assert_eq!(bag[0].quantity, 2);
+    {
+        let inventories = game_state.inventories.read().await;
+        let bag = &inventories[&pid("seller")].bag;
+        assert_eq!(bag.len(), 1, "the remaining 2 units stay as one stack");
+        assert_eq!(bag[0].quantity, 2);
+    }
+
+    // Payouts ignore the index (still 240 at 150%) but never exceed the
+    // cheapest possible buy: at 50%, 600 * 50% * 75% = 225.
+    for (index, expected) in [(150, 240), (50, 225)] {
+        let before = game_state.get_player_gold(&pid("seller")).await;
+        game_state.set_price_index_percent(index).await;
+        game_state
+            .sell_items(
+                &pid("seller"),
+                &pid("npc_rica"),
+                vec![BagLineItem {
+                    instance_id: 7,
+                    qty: 1,
+                }],
+            )
+            .await;
+        let after = game_state.get_player_gold(&pid("seller")).await;
+        assert_eq!(after - before, expected, "index {index}");
+    }
 }
 
 #[tokio::test]

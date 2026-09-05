@@ -23,4 +23,15 @@ export function getMerchantByNpcName(
   return byNpcName.get(npcName)
 }
 
+const stocked = new Set(
+  Object.values(merchantDefs).flatMap((def) =>
+    def.catalog.split(';').map((id) => id.trim())
+  )
+)
+
+/** Whether any merchant shelf carries the item. */
+export function isStockedByAnyMerchant(itemDefId: string): boolean {
+  return stocked.has(itemDefId)
+}
+
 export default merchantDefs

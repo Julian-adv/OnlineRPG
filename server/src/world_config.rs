@@ -45,12 +45,6 @@ pub struct PricingConfig {
     pub index_max: f64,
 }
 
-impl PricingConfig {
-    pub fn index_min_percent(&self) -> u32 {
-        (self.index_min * 100.0).round() as u32
-    }
-}
-
 impl Default for PricingConfig {
     fn default() -> Self {
         Self {

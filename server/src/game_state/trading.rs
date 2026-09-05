@@ -8,7 +8,9 @@ use onlinerpg_shared::messages::{
 use tracing::info;
 
 use super::combat::reachable_dist_sq;
-use super::deals::{buy_price, deal_half_band_pct, resident_half_band_pct, sell_payout, DealEntry};
+use super::deals::{
+    buy_price, cheapest_buy, deal_half_band_pct, resident_half_band_pct, sell_payout, DealEntry,
+};
 use super::inventory::{draw_from_bag, stack_into_bag, BagInsert, Draw};
 use super::StoredBuyback;
 
@@ -556,15 +558,35 @@ impl super::GameState {
         self.mark_inventory_dirty(npc_player_id).await;
     }
 
-    /// Merchant consumables carry the price index (doc/PRICING.md).
-    fn buy_base_price(&self, def: &TraderDef, item_def_id: &str, index_pct: u32) -> Option<i64> {
+    /// Unit base for a merchant buy: consumables on a merchant shelf carry
+    /// the price index (doc/PRICING.md).
+    pub(super) fn trade_base_price(
+        &self,
+        def: &TraderDef,
+        item_def_id: &str,
+        index_pct: u32,
+    ) -> Option<i64> {
         let item = self.item_defs.get(item_def_id)?;
-        let indexed = item.consumable && matches!(def, TraderDef::Merchant(_));
+        let indexed = item.consumable
+            && matches!(def, TraderDef::Merchant(_))
+            && merchant_defs().stocked(item_def_id);
         Some(onlinerpg_shared::pricing::indexed_base_price(
             item.base_price?,
             indexed,
             index_pct,
         ))
+    }
+
+    /// Ceiling on a merchant's payout: the max-haggled buy of the same item,
+    /// so a low price index never opens buy-low, sell-high. Residents pay
+    /// wishlist premiums on purpose (doc/ECONOMY.md), bounded by their wallet.
+    pub(super) fn sell_cap(&self, def: &TraderDef, item_def_id: &str, index_pct: u32) -> i64 {
+        match def {
+            TraderDef::Merchant(_) => self
+                .trade_base_price(def, item_def_id, index_pct)
+                .map_or(i64::MAX, cheapest_buy),
+            TraderDef::Resident(_) => i64::MAX,
+        }
     }
 
     /// Buy one unit of `item_def_id` from a trading NPC. Merchants create
@@ -599,7 +621,7 @@ impl super::GameState {
         }
 
         let index_pct = self.price_index_percent().await;
-        let Some(base_price) = self.buy_base_price(&def, item_def_id, index_pct) else {
+        let Some(base_price) = self.trade_base_price(&def, item_def_id, index_pct) else {
             return self
                 .send_trade_error(player_id, "That item has no price")
                 .await;
@@ -852,7 +874,7 @@ impl super::GameState {
                     }
                 }
             }
-            let Some(base_price) = self.buy_base_price(&def, &req.item_def_id, index_pct) else {
+            let Some(base_price) = self.trade_base_price(&def, &req.item_def_id, index_pct) else {
                 return self
                     .send_trade_error(player_id, "That item has no price")
                     .await;
@@ -1140,6 +1162,8 @@ impl super::GameState {
                 .send_trade_error(player_id, "They will not buy that")
                 .await;
         };
+        let index_pct = self.price_index_percent().await;
+        let sell_cap = self.sell_cap(&def, &item_def_id, index_pct);
 
         let rate = match &def {
             TraderDef::Merchant(m) => m.sell_rate_percent,
@@ -1163,6 +1187,7 @@ impl super::GameState {
             base_price,
             rate,
             deal.as_ref().map_or(0, |d| d.modifier_pct),
+            sell_cap,
         );
 
         let item_weight = self.item_defs.weight(&item_def_id);
@@ -1410,6 +1435,7 @@ impl super::GameState {
                 .send_trade_error(player_id, "Invalid batch quantity")
                 .await;
         };
+        let index_pct = self.price_index_percent().await;
         let npc_name = def.npc_name().to_string();
         let is_resident = matches!(def, TraderDef::Resident(_));
         let rate = match &def {
@@ -1425,6 +1451,7 @@ impl super::GameState {
             cape_color: Option<String>,
             cape_texture: Option<String>,
             base_price: i64,
+            sell_cap: i64,
             deal_taken: Option<DealEntry>,
             payout: i64,
         }
@@ -1499,6 +1526,7 @@ impl super::GameState {
                         .await;
                 }
             }
+            let sell_cap = self.sell_cap(&def, &item_def_id, index_pct);
             plans.push(Plan {
                 instance_id: req.instance_id,
                 qty: req.qty,
@@ -1507,6 +1535,7 @@ impl super::GameState {
                 cape_color,
                 cape_texture,
                 base_price,
+                sell_cap,
                 deal_taken: None,
                 payout: 0,
             });
@@ -1546,8 +1575,9 @@ impl super::GameState {
                 plan.base_price,
                 rate,
                 deal.as_ref().map_or(0, |d| d.modifier_pct),
+                plan.sell_cap,
             ) * deal_units as i64
-                + sell_payout(plan.base_price, rate, 0) * normal_units as i64;
+                + sell_payout(plan.base_price, rate, 0, plan.sell_cap) * normal_units as i64;
             plan.deal_taken = deal;
             plan.payout = payout;
             total_payout += payout;
@@ -1624,7 +1654,7 @@ impl super::GameState {
         let mut recorded = Vec::new();
         if !is_resident {
             for plan in &plans {
-                let unit_price = sell_payout(plan.base_price, rate, 0);
+                let unit_price = sell_payout(plan.base_price, rate, 0, plan.sell_cap);
                 for _ in 0..plan.qty {
                     recorded.push(BuybackEntry {
                         entry_id: next_unit_id,
@@ -1694,11 +1724,11 @@ impl super::GameState {
         }
         let npc_gold = self.get_player_gold(npc_player_id).await;
         for plan in &plans {
-            let normal_payout = sell_payout(plan.base_price, rate, 0);
+            let normal_payout = sell_payout(plan.base_price, rate, 0, plan.sell_cap);
             for unit in 0..plan.qty {
                 let unit_payout = if unit == 0 {
                     plan.deal_taken.as_ref().map_or(normal_payout, |deal| {
-                        sell_payout(plan.base_price, rate, deal.modifier_pct)
+                        sell_payout(plan.base_price, rate, deal.modifier_pct, plan.sell_cap)
                     })
                 } else {
                     normal_payout

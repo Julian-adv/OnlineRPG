@@ -40,15 +40,11 @@ const MERCHANT_DAILY_DISCOUNT_BUDGET: i64 = 10_000;
 /// Total discount value a player may receive per game day across merchants.
 const PLAYER_DAILY_DISCOUNT_CAP: i64 = 4_000;
 
-/// Money-pump invariant: even at maximum band width, the cheapest possible
-/// buy must still cost more than the best possible sell pays out, so no
-/// sequence of LLM decisions can make buy→sell profitable.
-pub(crate) fn band_invariant_holds(sell_rate_percent: u32, index_min_percent: u32) -> bool {
-    let min_buy_pct_of_base =
-        i64::from(100 - DEAL_MAX_HALF_BAND_PCT) * i64::from(index_min_percent);
-    let max_sell_pct_of_base =
-        i64::from(sell_rate_percent) * i64::from(100 + DEAL_MAX_HALF_BAND_PCT);
-    min_buy_pct_of_base > max_sell_pct_of_base
+/// At index 100 the max-haggled sell must stay under the max-haggled buy, so
+/// the advertised flat sell rate is honest whenever the index is normal
+/// (below that, `cheapest_buy` caps the payout).
+pub(crate) fn band_invariant_holds(sell_rate_percent: u32) -> bool {
+    (100 - DEAL_MAX_HALF_BAND_PCT) * 100 > sell_rate_percent as i32 * (100 + DEAL_MAX_HALF_BAND_PCT)
 }
 
 /// Half-width of the price band for a player with the given CHA. Higher
@@ -70,9 +66,21 @@ pub(crate) fn buy_price(base_price: i64, modifier_pct: i32) -> i64 {
     (base_price * (100 + i64::from(modifier_pct)) / 100).max(1)
 }
 
+/// Max-haggled buy; the ceiling on merchant payouts.
+pub(crate) fn cheapest_buy(buy_base: i64) -> i64 {
+    buy_price(buy_base, -DEAL_MAX_HALF_BAND_PCT)
+}
+
 /// Unit payout a player receives when selling at `modifier_pct`.
-pub(crate) fn sell_payout(base_price: i64, sell_rate_percent: u32, modifier_pct: i32) -> i64 {
-    (base_price * i64::from(sell_rate_percent) * (100 + i64::from(modifier_pct)) / 10_000).max(1)
+pub(crate) fn sell_payout(
+    base_price: i64,
+    sell_rate_percent: u32,
+    modifier_pct: i32,
+    cap: i64,
+) -> i64 {
+    (base_price * i64::from(sell_rate_percent) * (100 + i64::from(modifier_pct)) / 10_000)
+        .min(cap)
+        .max(1)
 }
 
 /// A granted deal in words. Which sign favors the player flips with the
@@ -95,17 +103,6 @@ pub(crate) fn deal_notice(
         DealKind::Sell => format!("{pct}% under the usual price for your {item_name}"),
     };
     format!("{merchant_name} offers you {offer} ({mins} min).")
-}
-
-/// What a deal costs the merchant relative to undiscounted prices. Markups
-/// (buy modifier > 0) and lowball sell offers cost nothing.
-fn deal_cost(base_price: i64, sell_rate_percent: u32, kind: DealKind, modifier_pct: i32) -> i64 {
-    match kind {
-        DealKind::Buy => (base_price - buy_price(base_price, modifier_pct)).max(0),
-        DealKind::Sell => (sell_payout(base_price, sell_rate_percent, modifier_pct)
-            - sell_payout(base_price, sell_rate_percent, 0))
-        .max(0),
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -266,10 +263,12 @@ impl super::GameState {
         let Some(def) = trader_def_by_name(&merchant_name) else {
             return reject("you have nothing to trade with").await;
         };
-        let Some(base_price) = self
+        let index_pct = self.price_index_percent().await;
+        let Some((base_price, buy_base)) = self
             .item_defs
             .get(item_def_id)
             .and_then(|item| item.base_price)
+            .zip(self.trade_base_price(&def, item_def_id, index_pct))
         else {
             return reject("that item has no price").await;
         };
@@ -281,7 +280,16 @@ impl super::GameState {
             Err(why) => return reject(why).await,
         };
         let applied = modifier_pct.clamp(-half_band, half_band);
-        let cost = deal_cost(base_price, rate, kind, applied);
+        // What the deal costs the merchant against undiscounted prices;
+        // markups and lowball sell offers cost nothing.
+        let cost = match kind {
+            DealKind::Buy => buy_base - buy_price(buy_base, applied),
+            DealKind::Sell => {
+                let cap = self.sell_cap(&def, item_def_id, index_pct);
+                sell_payout(base_price, rate, applied, cap) - sell_payout(base_price, rate, 0, cap)
+            }
+        }
+        .max(0);
 
         let now_ms = Self::now_ms();
         let game_day = self.current_game_day();

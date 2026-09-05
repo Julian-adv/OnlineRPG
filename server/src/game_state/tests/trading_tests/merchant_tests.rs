@@ -2,14 +2,11 @@ use super::*;
 
 #[test]
 fn haggling_band_invariant_boundary() {
-    // At index 100, 60% is the first rate where max haggled sell
-    // (60% * 1.25) meets min haggled buy (75%); the index floor of 90
-    // pulls that boundary down to 54%.
-    assert!(deals::band_invariant_holds(40, 100));
-    assert!(deals::band_invariant_holds(59, 100));
-    assert!(!deals::band_invariant_holds(60, 100));
-    assert!(deals::band_invariant_holds(53, 90));
-    assert!(!deals::band_invariant_holds(54, 90));
+    // 60% is the first rate where max haggled sell (60% * 1.25) meets min
+    // haggled buy (75%).
+    assert!(deals::band_invariant_holds(40));
+    assert!(deals::band_invariant_holds(59));
+    assert!(!deals::band_invariant_holds(60));
 }
 
 #[test]
@@ -557,7 +554,7 @@ async fn cross_floor_shop_actions_leave_economy_state_unchanged() {
 }
 
 #[tokio::test]
-async fn the_price_index_scales_only_consumable_buys() {
+async fn the_price_index_scales_shelf_consumable_buys_and_only_caps_sells() {
     let game_state = make_test_game_state("price_index_buys");
     let (mut buyer_rx, _npc_rx) = setup_haggle(&game_state, 10, 1_000_000).await;
     game_state
@@ -587,6 +584,41 @@ async fn the_price_index_scales_only_consumable_buys() {
     drain(&mut buyer_rx);
     let after_shield = game_state.get_player_gold(&pid("buyer")).await;
     assert_eq!(after_potion - after_shield, base("wooden_shield"));
+
+    // Selling stays off the index: 40% of the plain base at index 150 for
+    // a shelf consumable, a durable and a raw fish alike ...
+    let sold = [
+        (1, "healing_potion"),
+        (2, "wooden_shield"),
+        (3, "raw_trout"),
+    ];
+    {
+        let mut inventories = game_state.inventories.write().await;
+        let inv = inventories.get_mut(&pid("buyer")).unwrap();
+        for (instance_id, id) in sold.into_iter().chain([(4, "healing_potion")]) {
+            inv.bag.push(bag_item(instance_id, id, 1));
+        }
+    }
+    let mut gold = game_state.get_player_gold(&pid("buyer")).await;
+    for (instance_id, id) in sold {
+        game_state
+            .sell_item(&pid("buyer"), &pid("npc_rica"), instance_id)
+            .await;
+        drain(&mut buyer_rx);
+        let now = game_state.get_player_gold(&pid("buyer")).await;
+        assert_eq!(now - gold, base(id) * 40 / 100, "{id}");
+        gold = now;
+    }
+
+    // ... but never above the cheapest possible buy: at the 50% floor a
+    // potion's max-haggled buy is base * 50% * 75%, under the 40% payout.
+    game_state.set_price_index_percent(50).await;
+    game_state
+        .sell_item(&pid("buyer"), &pid("npc_rica"), 4)
+        .await;
+    drain(&mut buyer_rx);
+    let now = game_state.get_player_gold(&pid("buyer")).await;
+    assert_eq!(now - gold, base("healing_potion") * 50 / 100 * 75 / 100);
 }
 
 /// On the meeting night the meeting entry outranks the bed entry, so the

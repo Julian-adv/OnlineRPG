@@ -1,3 +1,7 @@
+/** Widest haggling band either way; must match DEAL_MAX_HALF_BAND_PCT in
+ *  server/src/game_state/deals.rs. */
+export const DEAL_MAX_HALF_BAND_PCT = 25
+
 /** Server-validated maximum player↔merchant distance for any shop
  *  interaction. Must match MAX_TRADE_DISTANCE in
  *  server/src/game_state/trading.rs. */
