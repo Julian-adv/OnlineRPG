@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   isPartyTabLine,
+  unreadChatCount,
   unreadPartyCount,
   whisperChatEntry,
 } from './chat-format'
@@ -57,6 +58,27 @@ describe('unreadPartyCount', () => {
     // Ids only grow, so evicting 1 and 3 leaves the unread 5 counted once.
     expect(unreadPartyCount(TRANSCRIPT.slice(3), 4, 'Miru')).toBe(1)
     expect(unreadPartyCount([], 4, 'Miru')).toBe(0)
+  })
+})
+
+describe('unreadChatCount', () => {
+  const TRANSCRIPT = [
+    { sender: 'remote' as const, name: 'Rica', id: 1 },
+    { sender: 'local' as const, name: 'Miru', id: 2 },
+    { sender: 'party' as const, name: 'Miru', id: 3 },
+    { sender: 'whisper' as const, name: 'To Rica', id: 4 },
+    { sender: 'whisper' as const, name: 'From Rica', id: 5 },
+    { sender: 'system' as const, id: 6 },
+  ]
+
+  it('counts incoming and system lines newer than the collapsed baseline', () => {
+    expect(unreadChatCount(TRANSCRIPT, 0, 'Miru')).toBe(3)
+    expect(unreadChatCount(TRANSCRIPT, 5, 'Miru')).toBe(1)
+    expect(unreadChatCount(TRANSCRIPT, 6, 'Miru')).toBe(0)
+  })
+
+  it('does not count messages sent by the current player', () => {
+    expect(unreadChatCount(TRANSCRIPT.slice(1, 4), 0, 'Miru')).toBe(0)
   })
 })
 
