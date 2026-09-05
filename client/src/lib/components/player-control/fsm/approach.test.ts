@@ -84,4 +84,10 @@ describe('resolveApproach', () => {
   it('drops an approach left behind on another dungeon floor', () => {
     expect(resolveApproach(pending, { x: 10, z: 0 }, 2)).toBe(false)
   })
+
+  it('drops an in-range approach when an obstacle still blocks the action', () => {
+    expect(
+      resolveApproach({ ...pending, canAct: () => false }, { x: 8.5, z: 0 }, 1)
+    ).toBe(false)
+  })
 })

@@ -31,6 +31,7 @@ import {
   collectRoomAABBsInRegion,
   findAdjacentHouse,
   findAllRoomsAtPoint,
+  findClosedDoorOnSegment,
   findHouseAtPoint,
   findNearestDoor,
   findRoomAtPoint,
@@ -41,6 +42,7 @@ import {
   stairLandingTargetAt,
   stopPathAtHouseEntrance,
   type RoomAABB,
+  type ClosedHouseDoor,
 } from './housing-queries'
 
 // Re-export for external consumers
@@ -313,6 +315,30 @@ export class HousingManager {
   /** Find the nearest door segment within maxDist of (x, z). */
   findNearestDoor(x: number, z: number, y: number, maxDist: number) {
     return findNearestDoor(this.housesById, x, z, y, maxDist)
+  }
+
+  findClosedDoorOnSegment(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floorLevel: number
+  ): ClosedHouseDoor | null {
+    return findClosedDoorOnSegment(
+      this.housesById,
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floorLevel
+    )
+  }
+
+  isDoorOpen(door: ClosedHouseDoor): boolean {
+    const room = this.housesById.get(door.houseId)?.rooms[door.roomIndex]
+    return (
+      !!room && !!getWallByDir(room, door.wallDir)[door.segmentIndex]?.isOpen
+    )
   }
 
   /** Get all currently loaded houses. */

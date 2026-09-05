@@ -324,6 +324,13 @@
   let propSwingCounter = 0
   let propBreakTimer: ReturnType<typeof setTimeout> | null = null
   let propSwingIdleTimer: ReturnType<typeof setTimeout> | null = null
+  let doorInteractionRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+  function clearDoorInteractionRetry() {
+    if (!doorInteractionRetryTimer) return
+    clearTimeout(doorInteractionRetryTimer)
+    doorInteractionRetryTimer = null
+  }
 
   function clearPropSwingTimers() {
     if (propBreakTimer) {
@@ -1057,6 +1064,7 @@
   }
 
   function updateKeyboardMovement(deltaTime: number) {
+    if (inputHandler.hasKeysPressed) clearDoorInteractionRetry()
     const rawDirection = inputHandler.getMovementDirection()
     const direction =
       rawDirection && currentPlayer
@@ -1456,7 +1464,8 @@
   function approachAndAct(
     spec: ApproachSpec,
     act: () => void,
-    canActNow = true
+    canActNow = true,
+    canAct?: PendingApproach['canAct']
   ) {
     if (!currentPlayer || currentPlayer.health <= 0) return
 
@@ -1474,7 +1483,7 @@
 
     combatController.cancelCombat()
     handleClickToMove(plan.target, {
-      approach: { spec, depth: get(currentDungeonDepth), act },
+      approach: { spec, depth: get(currentDungeonDepth), canAct, act },
     })
   }
 
@@ -1493,15 +1502,73 @@
     )
   }
 
-  function interactObject(
+  function openDoorThenRetryObject(
+    door: NonNullable<
+      ReturnType<typeof housingManager.findClosedDoorOnSegment>
+    >,
     intent: Extract<ClickIntent, { type: 'interact_object' }>
   ) {
+    clearDoorInteractionRetry()
+    networkManager.sendToggleDoor(
+      door.houseId,
+      door.roomIndex,
+      door.wallDir,
+      door.segmentIndex
+    )
+
+    let attempts = 0
+    const retry = () => {
+      doorInteractionRetryTimer = null
+      if (housingManager.isDoorOpen(door)) {
+        interactObject(intent, true)
+        return
+      }
+      attempts++
+      if (attempts < 20) doorInteractionRetryTimer = setTimeout(retry, 100)
+    }
+    doorInteractionRetryTimer = setTimeout(retry, 100)
+  }
+
+  function interactObject(
+    intent: Extract<ClickIntent, { type: 'interact_object' }>,
+    forceWalk = false
+  ) {
+    if (!currentPlayer) return
+    const floor = currentPassabilityFloor()
+    const door = housingManager.findClosedDoorOnSegment(
+      currentPlayer.position.x,
+      currentPlayer.position.z,
+      intent.position.x,
+      intent.position.z,
+      floor
+    )
+    if (door) {
+      approachAndAct(
+        {
+          position: { ...door.position, y: currentPlayer.position.y },
+          ...HOUSE_DOOR_APPROACH,
+        },
+        () => openDoorThenRetryObject(door, intent)
+      )
+      return
+    }
+
+    const canAct = (position: Pick<Position, 'x' | 'z'>) =>
+      !housingManager.attackLineBlocked(
+        position.x,
+        position.z,
+        intent.position.x,
+        intent.position.z,
+        floor
+      )
     approachAndAct(
       {
         position: intent.position,
         ...approachForInteraction(intent.interaction),
       },
-      () => enterInteraction(intent)
+      () => enterInteraction(intent),
+      !forceWalk && canAct(currentPlayer.position),
+      canAct
     )
   }
 
@@ -1869,6 +1936,7 @@
     // no movement of its own (a cast, an in-reach interaction). A click that
     // hit nothing at all shouldn't cancel the walk the player is already on.
     if (event.type === 'canvas_intent' && event.intent.type !== 'none') {
+      clearDoorInteractionRetry()
       const m = movingState()
       if (m) m.approach = null
     }
@@ -2044,6 +2112,7 @@
       clearStandUpTimer()
       clearJumpFeedbackTimer()
       clearPropSwingTimers()
+      clearDoorInteractionRetry()
       // The store outlives this component (character select, logout).
       lastEmoteSync = null
       localEmoteAnim.set(null)

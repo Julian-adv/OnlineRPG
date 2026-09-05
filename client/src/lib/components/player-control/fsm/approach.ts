@@ -26,6 +26,7 @@ export interface PendingApproach {
   spec: ApproachSpec
   /** Dungeon depth the target sits on; a mismatch drops the approach. */
   depth: number
+  canAct?: (position: Pick<Position, 'x' | 'z'>) => boolean
   act: () => void
 }
 
@@ -69,6 +70,7 @@ export function resolveApproach(
   depth: number
 ): boolean {
   if (depth !== pending.depth) return false
+  if (pending.canAct && !pending.canAct(player)) return false
   const { position, range } = pending.spec
   const dx = shortestWrappedDeltaX(player.x, position.x)
   const dz = position.z - player.z

@@ -6,7 +6,12 @@ import {
   getStairwellYOffset,
   type WallDirection,
 } from '../utils/house-geometry'
-import { getWallByDir, isOpenable, wallLineCoord } from './housing-passability'
+import {
+  getWallByDir,
+  isDoorVariant,
+  isOpenable,
+  wallLineCoord,
+} from './housing-passability'
 
 /** Whether (x, z) lies within a room's footprint, optionally inset by margin. */
 export function roomContainsXZ(
@@ -552,6 +557,88 @@ export function findNearestDoor(
   }
 
   return best
+}
+
+export interface ClosedHouseDoor {
+  houseId: string
+  roomIndex: number
+  wallDir: WallDirection
+  segmentIndex: number
+  position: { x: number; z: number }
+}
+
+function crossingAtAxisWall(
+  fromAxis: number,
+  fromAlong: number,
+  toAxis: number,
+  toAlong: number,
+  wall: number,
+  segmentStart: number
+): number | null {
+  const axisDelta = toAxis - fromAxis
+  if (Math.abs(axisDelta) <= 1e-9) return null
+  const t = (wall - fromAxis) / axisDelta
+  if (t <= 1e-6 || t >= 1 - 1e-6) return null
+  const along = fromAlong + (toAlong - fromAlong) * t
+  return along >= segmentStart - 1e-6 && along <= segmentStart + 1 + 1e-6
+    ? t
+    : null
+}
+
+export function findClosedDoorOnSegment(
+  housesById: ReadonlyMap<string, HouseData>,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  floorLevel: number
+): ClosedHouseDoor | null {
+  let nearest: ClosedHouseDoor | null = null
+  let nearestT = Infinity
+
+  for (const house of housesById.values()) {
+    for (let roomIndex = 0; roomIndex < house.rooms.length; roomIndex++) {
+      const room = house.rooms[roomIndex]
+      if (room.floorLevel !== floorLevel) continue
+      const roomX = house.origin.x + room.localX
+      const roomZ = house.origin.z + room.localZ
+
+      for (const wallDir of ['north', 'south', 'east', 'west'] as const) {
+        const segments = getWallByDir(room, wallDir)
+        const alongX = wallDir === 'north' || wallDir === 'south'
+        const wall =
+          (alongX ? house.origin.z : house.origin.x) +
+          wallLineCoord(room, wallDir)
+
+        for (
+          let segmentIndex = 0;
+          segmentIndex < segments.length;
+          segmentIndex++
+        ) {
+          const segment = segments[segmentIndex]
+          if (!isDoorVariant(segment.variant) || segment.isOpen) continue
+          const start = (alongX ? roomX : roomZ) + segmentIndex
+          const t = alongX
+            ? crossingAtAxisWall(fromZ, fromX, toZ, toX, wall, start)
+            : crossingAtAxisWall(fromX, fromZ, toX, toZ, wall, start)
+          if (t === null || t >= nearestT) continue
+
+          nearestT = t
+          nearest = {
+            houseId: house.id,
+            roomIndex,
+            wallDir,
+            segmentIndex,
+            position: alongX
+              ? { x: start + 0.5, z: wall }
+              : { x: wall, z: start + 0.5 },
+          }
+        }
+      }
+    }
+  }
+
+  return nearest
 }
 
 /** Find an existing house that shares an edge with the given room footprint. */

@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
   assistStairMovementDirection,
+  findClosedDoorOnSegment,
   houseFloorHeightAt,
   resolveStairFloor,
   shouldIgnoreImplicitHouseFloorChange,
   stairLandingTargetAt,
   stopPathAtHouseEntrance,
 } from './housing-queries'
-import type { HouseData, RoomData } from '../types/housing'
+import type { HouseData, RoomData, WallConfig } from '../types/housing'
 
 const WALL_HEIGHT = 3
 const FLOOR_THICKNESS = 0.1
@@ -48,6 +49,27 @@ function house(): ReadonlyMap<string, HouseData> {
     ],
   } as unknown as HouseData
   return new Map([['h', h]])
+}
+
+function houseWithNorthDoor(isOpen = false): ReadonlyMap<string, HouseData> {
+  const solid = () => ({ variant: 'solid' as const, texture: 0 })
+  const wall: WallConfig[] = Array.from({ length: 4 }, solid)
+  wall[1] = { variant: 'door', texture: 0, isOpen }
+  const h = {
+    id: 'door-house',
+    origin: { x: 0, y: 0, z: 0 },
+    rooms: [
+      room({
+        sizeX: 4,
+        sizeZ: 4,
+        wallNorth: wall,
+        wallSouth: Array.from({ length: 4 }, solid),
+        wallEast: Array.from({ length: 4 }, solid),
+        wallWest: Array.from({ length: 4 }, solid),
+      }),
+    ],
+  } as unknown as HouseData
+  return new Map([[h.id, h]])
 }
 
 const at = (floor: number, x: number, z: number) =>
@@ -163,6 +185,35 @@ describe('implicit housing floor changes', () => {
   it('allows stair clicks and outdoor house entry', () => {
     expect(shouldIgnoreImplicitHouseFloorChange('h', 1, 0, true)).toBe(false)
     expect(shouldIgnoreImplicitHouseFloorChange(null, 0, 1, false)).toBe(false)
+  })
+})
+
+describe('findClosedDoorOnSegment', () => {
+  it('finds a closed door crossed on the way to an indoor object', () => {
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 0)
+    ).toEqual({
+      houseId: 'door-house',
+      roomIndex: 0,
+      wallDir: 'north',
+      segmentIndex: 1,
+      position: { x: 1.5, z: 0 },
+    })
+  })
+
+  it('ignores open doors and solid wall segments', () => {
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(true), 1.5, -2, 1.5, 2, 0)
+    ).toBeNull()
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(), 0.5, -2, 0.5, 2, 0)
+    ).toBeNull()
+  })
+
+  it('does not open a door on another floor', () => {
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 1)
+    ).toBeNull()
   })
 })
 describe('stopPathAtHouseEntrance', () => {
