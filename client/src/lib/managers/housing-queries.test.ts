@@ -9,7 +9,7 @@ import {
   shouldIgnoreImplicitHouseFloorChange,
   stairLandingTargetAt,
   stopPathAtHouseEntrance,
-  wallApproachPosition,
+  wallApproachPositions,
 } from './housing-queries'
 import type { HouseData, RoomData, WallConfig } from '../types/housing'
 
@@ -240,14 +240,29 @@ describe('findClosedDoorOnPath', () => {
   })
 })
 
-describe('wallApproachPosition', () => {
-  it('keeps the approach point on the player side of a wall', () => {
+describe('wallApproachPositions', () => {
+  it('keeps every candidate on the player side and within interaction range', () => {
+    const north = wallApproachPositions(
+      { x: 2, z: 4 },
+      { x: 2, z: 7 },
+      'north',
+      1
+    )
+    const west = wallApproachPositions(
+      { x: 2, z: 4 },
+      { x: -1, z: 4 },
+      'west',
+      1
+    )
+
+    expect(north[0]).toEqual({ x: 2, z: 5 })
+    expect(west[0]).toEqual({ x: 1, z: 4 })
     expect(
-      wallApproachPosition({ x: 2, z: 4 }, { x: 2, z: 7 }, 'north', 1)
-    ).toEqual({ x: 2, z: 5 })
+      north.every((p) => p.z === 5 && Math.hypot(p.x - 2, p.z - 4) < 1.5)
+    ).toBe(true)
     expect(
-      wallApproachPosition({ x: 2, z: 4 }, { x: -1, z: 4 }, 'west', 1)
-    ).toEqual({ x: 1, z: 4 })
+      west.every((p) => p.x === 1 && Math.hypot(p.x - 2, p.z - 4) < 1.5)
+    ).toBe(true)
   })
 })
 

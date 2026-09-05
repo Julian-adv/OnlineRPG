@@ -63,7 +63,7 @@
   import { housingManager } from '../managers/housingManager'
   import {
     shouldIgnoreImplicitHouseFloorChange,
-    wallApproachPosition,
+    wallApproachPositions,
   } from '../managers/housing-queries'
   import { findPath } from '../managers/pathfinding'
   import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
@@ -1507,11 +1507,11 @@
     )
   }
 
-  function openDoorThenRetryObject(
+  function openDoorThenRetry(
     door: NonNullable<
       ReturnType<typeof housingManager.findClosedDoorOnSegment>
     >,
-    intent: Extract<ClickIntent, { type: 'interact_object' }>
+    retryAction: () => void
   ) {
     clearDoorInteractionRetry()
     networkManager.sendToggleDoor(
@@ -1525,7 +1525,7 @@
     const retry = () => {
       doorInteractionRetryTimer = null
       if (housingManager.isDoorOpen(door)) {
-        interactObject(intent, true)
+        retryAction()
         return
       }
       attempts++
@@ -1554,7 +1554,7 @@
           position: { ...door.position, y: player.position.y },
           ...HOUSE_DOOR_APPROACH,
         },
-        () => openDoorThenRetryObject(door, intent)
+        () => openDoorThenRetry(door, () => interactObject(intent, true))
       )
       return
     }
@@ -1624,28 +1624,84 @@
         position: { ...routeDoor.position, y: player.position.y },
         ...HOUSE_DOOR_APPROACH,
       },
-      () => openDoorThenRetryObject(routeDoor, intent)
+      () => openDoorThenRetry(routeDoor, () => interactObject(intent, true))
     )
   }
 
   function toggleDoor(intent: Extract<ClickIntent, { type: 'toggle_door' }>) {
     if (intent.isWindow && currentPlayer) {
-      const target = wallApproachPosition(
-        intent.position,
-        currentPlayer.position,
-        intent.wallDir,
-        HOUSE_DOOR_APPROACH.stopShort
-      )
-      const position = { ...target, y: currentPlayer.position.y }
-      if (routeQuality(position) !== 'found') return
-      approachAndAct({ position, range: 0.35, stopShort: 0 }, () =>
+      const player = currentPlayer
+      const floor = currentPassabilityFloor()
+      const toggle = () =>
         networkManager.sendToggleDoor(
           intent.houseId,
           intent.roomIndex,
           intent.wallDir,
           intent.segmentIndex
         )
+      const dx = shortestWrappedDeltaX(player.position.x, intent.position.x)
+      const dz = intent.position.z - player.position.z
+      if (
+        Math.hypot(dx, dz) <= HOUSE_DOOR_APPROACH.range &&
+        !housingManager.isHouseWallBlockingSegment(
+          player.position.x,
+          player.position.z,
+          intent.position.x,
+          intent.position.z,
+          floor
+        )
+      ) {
+        toggle()
+        return
+      }
+      for (const target of wallApproachPositions(
+        intent.position,
+        player.position,
+        intent.wallDir,
+        HOUSE_DOOR_APPROACH.stopShort
+      )) {
+        const position = { ...target, y: player.position.y }
+        if (routeQuality(position) !== 'found') continue
+        approachAndAct({ position, range: 0.35, stopShort: 0 }, toggle)
+        return
+      }
+
+      let openRoute: { x: number; z: number }[] = []
+      housingManager.withClosedDoorsOpen(floor, () => {
+        for (const target of wallApproachPositions(
+          intent.position,
+          player.position,
+          intent.wallDir,
+          HOUSE_DOOR_APPROACH.stopShort
+        )) {
+          const result = findPath(
+            player.position.x,
+            player.position.z,
+            floor,
+            target.x,
+            target.z,
+            floor
+          )
+          if (!result.found) continue
+          openRoute = result.waypoints
+          break
+        }
+      })
+      const routeDoor = housingManager.findClosedDoorOnPath(
+        player.position.x,
+        player.position.z,
+        openRoute,
+        floor
       )
+      if (routeDoor) {
+        approachAndAct(
+          {
+            position: { ...routeDoor.position, y: player.position.y },
+            ...HOUSE_DOOR_APPROACH,
+          },
+          () => openDoorThenRetry(routeDoor, () => toggleDoor(intent))
+        )
+      }
       return
     }
     approachAndAct({ position: intent.position, ...HOUSE_DOOR_APPROACH }, () =>

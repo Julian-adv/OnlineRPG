@@ -567,21 +567,28 @@ export interface ClosedHouseDoor {
   position: { x: number; z: number }
 }
 
-export function wallApproachPosition(
+export function wallApproachPositions(
   wall: { x: number; z: number },
   player: { x: number; z: number },
   wallDir: WallDirection,
   distance: number
-): { x: number; z: number } {
+): { x: number; z: number }[] {
+  const offsets = [0, -0.4, 0.4, -0.8, 0.8]
   if (wallDir === 'north' || wallDir === 'south') {
     const fallback = wallDir === 'north' ? 1 : -1
     const side = Math.sign(player.z - wall.z) || fallback
-    return { x: wall.x, z: wall.z + side * distance }
+    return offsets.map((offset) => ({
+      x: wall.x + offset,
+      z: wall.z + side * distance,
+    }))
   }
 
   const fallback = wallDir === 'west' ? 1 : -1
   const side = Math.sign(player.x - wall.x) || fallback
-  return { x: wall.x + side * distance, z: wall.z }
+  return offsets.map((offset) => ({
+    x: wall.x + side * distance,
+    z: wall.z + offset,
+  }))
 }
 
 function crossingAtAxisWall(
