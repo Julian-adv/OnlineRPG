@@ -22,6 +22,14 @@
   슬롯 식별자를 `OBArmature`로 설정 → 임시 Armature/액션 정리 → `.blend` 저장을
   한 번에 수행한다.
 
+- `export_character.py`
+
+  Mixamo 스킨 FBX + 같은 메시의 Meshy GLB로 캐릭터 GLB를 만든다: 애니 제거 →
+  transform 정규화·키 맞춤·발 원점 → `mixamorig:` 제거 → Meshy 머티리얼 이식(UV 일치 검증)
+  → emissive 제거·normal/MR 1024² → WebP q90 GLB export → 본 노드 float 오차 scale 제거.
+  헤드리스(`blender -b -P ... -- --fbx ... --glb ... --name ... --out ...`)와 세션 안
+  exec 양쪽을 지원한다. steward(2026-09-05)부터 사용.
+
 ## Import Tips
 
 - .glb를 import 할 때 거대한 구가 나타나는 경우 bone shape scale을 0.01로 하면 거대한 구체가 나타나는 것을 방지할 수 있다.
