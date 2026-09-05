@@ -236,6 +236,14 @@ export type ClientMessage =
   | 'PickupStarted'
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
+  | {
+      UseLandDocument: {
+        instance_id: number
+        tile_x: number
+        tile_z: number
+        quadrant: number
+      }
+    }
   | { DyeCape: { instance_id: number; color: string } }
   | { ApplyCapeTexture: { instance_id: number; texture: string } }
   | { ReportCapeTexture: { player_id: number } }

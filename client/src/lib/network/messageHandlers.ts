@@ -36,6 +36,10 @@ import {
   playerEffectiveStats,
 } from '../stores/inventoryStore'
 import { capeDyeDialog } from '../stores/capeDyeStore'
+import {
+  landClaimDialog,
+  applyLandClaimPreview,
+} from '../stores/landClaimStore'
 import { capeTextureDialog } from '../stores/capeTextureStore'
 import { setCapeUploadToken } from '../utils/networkUtils'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
@@ -1282,6 +1286,30 @@ export function handleServerMessage(
 
     case 'CapeDyePrompt': {
       capeDyeDialog.set({ instanceId: data.instance_id })
+      break
+    }
+
+    case 'LandClaimPrompt': {
+      applyLandClaimPreview(data)
+      break
+    }
+
+    case 'LandClaimed': {
+      landClaimDialog.update((claim) =>
+        claim ? { ...claim, status: 'claimed' } : null
+      )
+      addChatMessage({
+        text: 'This plot is now part of your homestead. One Land Deed was consumed.',
+        sender: 'system',
+      })
+      break
+    }
+
+    case 'LandRejected': {
+      landClaimDialog.update((claim) =>
+        claim ? { ...claim, status: 'rejected', reason: data.reason } : null
+      )
+      addChatMessage({ text: data.reason, sender: 'system' })
       break
     }
 

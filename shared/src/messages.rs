@@ -521,6 +521,12 @@ pub enum ClientMessage {
     UseItem {
         instance_id: u64,
     },
+    UseLandDocument {
+        instance_id: u64,
+        tile_x: i32,
+        tile_z: i32,
+        quadrant: u8,
+    },
     /// Dye the worn cape with `color` (`#rrggbb`), spending the dye at
     /// `instance_id`. Answers a `CapeDyePrompt`; the server re-checks
     /// everything (doc/CAPE_CUSTOMIZATION.md).
@@ -1199,6 +1205,22 @@ pub enum ServerMessage {
     /// no pending state — `DyeCape` re-checks everything.
     CapeDyePrompt {
         instance_id: u64,
+    },
+    LandClaimPrompt {
+        instance_id: u64,
+        tile_x: i32,
+        tile_z: i32,
+        quadrant: u8,
+        reason: Option<String>,
+    },
+    LandClaimed {
+        estate_id: i64,
+        tile_x: i32,
+        tile_z: i32,
+        quadrant: u8,
+    },
+    LandRejected {
+        reason: String,
     },
     /// Same for a cape transfer kit: a cape is on and the kit is in the bag,
     /// so the client may open its image picker. Nothing is spent until

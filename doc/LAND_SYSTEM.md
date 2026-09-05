@@ -1,6 +1,6 @@
 # Land System: 영지
 
-> 상태: 일부 구현 — 구획 등급 편집·땅문서 판매, 영지 등록은 미구현 (2026-09-05)
+> 상태: 일부 구현 — 구획 등급 편집·땅문서 판매·사용·개척지 등록 구현 (2026-09-05)
 
 2026-09-05: 앨더마크 광장에 서 있는 Land Registrar `Aldwin`과 Land Deed
 판매를 추가했다. 기본 가격은 **50,000c(5g)**이며 전용 `land_deed.glb` 모델과
@@ -9,7 +9,22 @@ Land Deed는 겹치지 않는 아이템으로, 가방에서 문서 한 장이 �
 상점에서는 수량 선택 없이 클릭당 한 장씩 구매 목록에 추가한다.
 사용 조건은 **캐릭터 10레벨 이상**이며 상점·가방 툴팁에도 표시한다. 구매·보관에는
 레벨 제한이 없다.
-현재 문서는 구매·보관만 가능하고 영지 등록·소모는 아직 미구현이다.
+가방에서 문서를 더블클릭하면 캐릭터가 서 있는 32×32m 구획에 지형을 따라
+그리드를 표시하고 **Claim this plot?** 대화상자를 연다. 미리보기 시에도 서버가
+등록 조건을 검사하며, 조건에 맞지 않으면 빨간색 그리드와 거부 이유를 표시하고
+등록 버튼을 숨긴다. 미리보기가 열린 상태에서 이동하면 정지 약 0.35초 후
+현재 위치의 구획과 등록 가능 여부를 갱신한다. 갱신 중에는 등록 버튼을 비활성화한다.
+**Claim plot**을 누르면 서버가 조건을 다시 검사하고 영지 소유권과 문서 한 장 소모를 같은 DB 트랜잭션으로
+저장한다. 취소하거나 등록에 실패하면 문서는 남는다. 성공은 초록색 그리드로,
+실패는 이유와 함께 표시한다.
+
+확인 시 서버가 문서 보유·거래 예약 여부, 생존·지상 층·10레벨 이상, 월드 범위,
+선택 구획에 계속 서 있는지, 개척지 등급·미소유 여부, 계정당 영지 하나,
+변 인접 확장·16구획·8×8 경계 상자를 검사한다. 같은 계정의 다른 캐릭터가
+소유한 개척지는 확장할 수 없다. X축 월드 이음새에서도 인접 확장을 허용한다.
+등급은 등록 시 편집 파일을 읽고 파일이 없으면 고리 기본값을 사용한다.
+소유권은 `land_estates`·`land_plots`에 저장되어 서버 재시작 후에도 유지된다.
+왕실 사패·지도 소유 표시·영지 해제·유지비는 아직 미구현이다.
 실행 설정은 `agent-client/data/config.toml.example`의 `steward` 항목을 따른다.
 
 플레이어가 월드의 땅 한 구획을 소유하고, 그 안에서 집과 가구를 배치하는
@@ -95,7 +110,7 @@ Registrar다.
   파일이 없는 리전은 고리 계산값을 낸다. 편집본이 기준이다.
 - 저장은 `data/terrain/land-grades/r±xx_±zz.bin`, 리전당 1,024바이트.
   `GET/PUT /api/terrain/land-grades/{rx}/{rz}`, PUT은 다른 지형 쓰기처럼 어드민
-  토큰. 서버가 청구·배치 검증에 쓸 때는 부팅 시 전부 로드한다(1MB).
+  토큰. 현재 청구는 등록할 리전 파일을 매번 읽어 운영자 편집을 반영한다.
 - **길·강은 구획을 거부하지 않는다.** 길가·강가 구획을 원하는 플레이어가 있다.
   대신 집·가구를 놓을 때 풋프린트가 도로·다리·물 셀을 덮으면 거부한다
   (HOUSE_BUILDING.md의 배치 검증에 셀 종류 검사를 추가). 경사도 같은 방식으로
@@ -286,6 +301,7 @@ zone 파일은 운영자가 그리는 설정으로 남긴다.
 CREATE TABLE land_estates (
   id            INTEGER PRIMARY KEY,
   owner_id      INTEGER NOT NULL REFERENCES characters(id),
+  account_name  TEXT NOT NULL REFERENCES accounts(player_name),
   name          TEXT,
   grade         INTEGER NOT NULL,     -- LandGrade 바이트 (1 homestead | 2 crown)
   source        TEXT NOT NULL,        -- purchase | auction | tournament | grant
@@ -293,7 +309,8 @@ CREATE TABLE land_estates (
   treasury      INTEGER NOT NULL,     -- 영지 지갑 잔액
   missed        INTEGER NOT NULL DEFAULT 0,  -- 연속 미납 횟수. 상태는 여기서 파생
   free_months   INTEGER NOT NULL DEFAULT 1, -- 남은 면제 납기 수
-  created_at    INTEGER NOT NULL
+  created_at    INTEGER NOT NULL,
+  UNIQUE (account_name, grade)
 );
 
 CREATE TABLE land_plots (
@@ -320,17 +337,23 @@ CREATE TABLE land_bids (
 );
 ```
 
-- 메모리: `(tile_x, tile_z, q) → estate_id` 해시맵과 `owner_id → estate_id`
-  인덱스. 부팅 시 전부 로드. 구획 행이 수십만이어도 수 MB.
+- 현재 소유·계정 한도 조회는 DB 인덱스를 사용한다. 동일 구획 등록 경쟁은
+  쓰기 트랜잭션과 구획 기본 키로 직렬화한다. 향후 배치·지도에는
+  `(tile_x, tile_z, q) → estate_id` 메모리 인덱스를 추가할 수 있다.
 - 집 파일(`HouseData`)에 `estate_id`를 추가한다. `owner_id` 문자열은 그대로 두되
   권한 판정은 영지 소유자로 한다.
 
 ## 프로토콜
 
-- `ClientMessage::UseLandDocument { instance_id }`, `LandDeposit { amount }`, `LandWithdraw { amount }`,
+- 구현됨: `UseItem { instance_id }` → `LandClaimPrompt { instance_id, tile_x, tile_z, quadrant }`.
+  확인 시 `UseLandDocument { instance_id, tile_x, tile_z, quadrant }` →
+  `LandClaimed { estate_id, tile_x, tile_z, quadrant }` 또는 `LandRejected { reason }`.
+  미리보기 응답의 `reason`은 등록 불가 이유이며, 가능하면 `null`이다.
+  좌표는 확인한 구획을 고정하며 서버의 현재 위치와 일치해야 한다. 프로토콜 v55.
+- 후속: `LandDeposit { amount }`, `LandWithdraw { amount }`,
   `LandBid { auction_id, amount }`, `LandBidCancel { auction_id }`,
   `LandDemolish`.
-- `ServerMessage::LandState { plot }` (입장 시 + 변경 시, 소유자에게),
+- 후속: `ServerMessage::LandState { plot }` (입장 시 + 변경 시, 소유자에게),
   `LandRejected { reason }`, `LandAuctionResult { auction_id, won }`.
 - 땅문서·사패 인스턴스 필드 `plot_target: Option<(i32, i32, u8)>` (사패는 고정
   구획, 땅문서는 None).
@@ -338,8 +361,8 @@ CREATE TABLE land_bids (
 
 ## 성능
 
-- 소유 조회 O(1). 집 배치·가구 배치 검증은 영지 경계 AABB 하나만 추가.
-- 등급 파일은 부팅 시 1MB 로드. 청구·배치 검증은 배열 조회 1회.
+- 소유 조회는 구획 기본 키 인덱스를 사용한다. 집·가구의 영지 경계 검증은 후속.
+- 현재 청구 시 해당 리전 등급 파일 1KB를 읽는다. 배치 검증용 캐시는 후속.
 - 납기 배치는 큰 달 삭에 5만 행 순회 1회. 잔액 비교와 정수 증감뿐이라 초 단위.
 - 경매 마감은 회의 틱에 편승. 입찰은 DB 쓰기 1회.
 - 영지 5만 개가 맵에 흩어지면 집 밀도는 왕령 주변에만 몰린다. 왕령 수는
@@ -352,8 +375,8 @@ CREATE TABLE land_bids (
 2. **최초 스펙: 땅문서 구매 + 문서 사용 + 지도.**
    - 땅문서·사패 아이템 정의. 사패는 정의만 두고 얻는 경로는 없음.
    - 관리 NPC가 땅문서를 골드로 판매.
-   - `UseLandDocument { instance_id }` 한 메시지로 두 문서를 처리. 공통 검사
-     6가지, `land_estates`·`land_plots` 등록, 인접 확장.
+   - Land Deed 확인 UI, 서버 조건 검사, `land_estates`·`land_plots` 등록,
+     인접 확장과 문서 원자적 소모는 **구현됨**. 왕실 사패 지원은 후속.
    - 소유 상태를 합친 `/api/land/region` REST와 월드맵의 소유 구획 표시.
      구획 클릭 조회는 이 단계에 포함, 미니맵 테두리는 다음.
    - 유지비·지갑·쇠퇴는 넣지 않는다. 대신 이 단계에서는 영지 삭제

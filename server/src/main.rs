@@ -457,6 +457,7 @@ async fn main() -> ExitCode {
         world_drop_defs,
         initial_game_time,
         Arc::clone(&housing_io),
+        Arc::clone(&terrain_io),
         no_spawn_zones,
         dungeon_defs,
         height_sampler,

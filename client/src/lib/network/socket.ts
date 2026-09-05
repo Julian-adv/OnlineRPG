@@ -12,6 +12,7 @@ import { gameStore, resetGameStore, serverNotice } from '../stores/gameStore'
 import { resetPartyStores } from '../stores/partyStore'
 import { resetFriendStores } from '../stores/friendStore'
 import { resetPlayerTrade } from '../stores/playerTradeStore'
+import { resetLandClaimPreview, type LandClaim } from '../stores/landClaimStore'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { monsterManager } from '../managers/monsterManager'
 import {
@@ -231,6 +232,7 @@ class NetworkManager {
     }
 
     this.socket.onclose = (event) => {
+      resetLandClaimPreview()
       console.log('Disconnected from server', event.code, event.reason)
       gameStore.update((state) => ({ ...state, isConnected: false }))
 
@@ -696,6 +698,13 @@ class NetworkManager {
   sendUseItem(instanceId: number) {
     if (!this.isNetworkableInstanceId(instanceId, 'use')) return
     this.sendMessage({ UseItem: { instance_id: instanceId } })
+  }
+
+  sendLandClaim(claim: LandClaim) {
+    const { instance_id, tile_x, tile_z, quadrant } = claim
+    this.sendMessage({
+      UseLandDocument: { instance_id, tile_x, tile_z, quadrant },
+    })
   }
 
   /** Spend the dye at `instanceId` on the worn cape. */

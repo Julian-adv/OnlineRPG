@@ -237,6 +237,7 @@ mod friends;
 pub(crate) mod hunger;
 mod instrument;
 mod inventory;
+mod land;
 mod monster;
 mod monster_ai;
 mod party;
@@ -400,6 +401,7 @@ pub struct GameState {
     #[cfg(test)]
     ambient_spawns_enabled: Arc<std::sync::atomic::AtomicBool>,
     housing_io: Arc<HousingIO>,
+    terrain_io: Arc<onlinerpg_terrain::io::TerrainIO>,
     /// Uploaded cape textures: what a worn `cape_texture` is checked against
     /// and where reports land (doc/CAPE_CUSTOMIZATION.md).
     cape_textures: Arc<crate::cape_texture::CapeTextureStore>,
@@ -640,6 +642,7 @@ impl GameState {
         world_drop_defs: crate::world_drop_defs::WorldDropDefs,
         initial_datetime: crate::types::GameDateTime,
         housing_io: Arc<HousingIO>,
+        terrain_io: Arc<onlinerpg_terrain::io::TerrainIO>,
         no_spawn_zones: Vec<NoSpawnZone>,
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
         height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
@@ -651,6 +654,7 @@ impl GameState {
         let dungeon_discovery_cells = Arc::new(dungeon::discovery_cells(&dungeon_defs));
 
         Self {
+            terrain_io,
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),

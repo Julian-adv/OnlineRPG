@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use onlinerpg_shared::dungeon::entrances;
 use onlinerpg_shared::shortest_world_delta_x;
 use onlinerpg_terrain::defaults::TILE_DIM;
-use onlinerpg_terrain::land::{plot_origin, LandGrade, PLOT_SIZE, REGION_PLOTS};
+use onlinerpg_terrain::land::{plot_origin, LandGrade, PlotAddr, PLOT_SIZE, REGION_PLOTS};
 use serde::Deserialize;
 
 const REGION_METERS: f32 = 16.0 * TILE_DIM as f32;
@@ -55,7 +55,7 @@ static ANCHORS: LazyLock<Vec<Anchor>> = LazyLock::new(|| {
         .collect()
 });
 
-fn grade_at(anchors: &[&Anchor], cx: f32, cz: f32) -> LandGrade {
+fn grade_at<'a>(anchors: impl IntoIterator<Item = &'a Anchor>, cx: f32, cz: f32) -> LandGrade {
     let mut grade = LandGrade::Homestead;
     for a in anchors {
         let dx = shortest_world_delta_x(a.x, cx);
@@ -69,6 +69,12 @@ fn grade_at(anchors: &[&Anchor], cx: f32, cz: f32) -> LandGrade {
         }
     }
     grade
+}
+
+pub fn default_grade(addr: PlotAddr) -> LandGrade {
+    let (x, z) = plot_origin(addr.rx, addr.rz, addr.index);
+    let half = PLOT_SIZE as f32 / 2.0;
+    grade_at(ANCHORS.iter(), x as f32 + half, z as f32 + half)
 }
 
 pub fn default_grades(rx: i32, rz: i32) -> Vec<u8> {
@@ -92,7 +98,7 @@ pub fn default_grades(rx: i32, rz: i32) -> Vec<u8> {
     (0..REGION_PLOTS)
         .map(|i| {
             let (px, pz) = plot_origin(rx, rz, i);
-            grade_at(&near, px as f32 + half, pz as f32 + half) as u8
+            grade_at(near.iter().copied(), px as f32 + half, pz as f32 + half) as u8
         })
         .collect()
 }
@@ -127,5 +133,14 @@ mod tests {
         assert!(default_grades(10, -10)
             .iter()
             .all(|&g| g == LandGrade::Homestead as u8));
+    }
+
+    #[test]
+    fn single_plot_grades_match_region_grades() {
+        for (rx, rz) in [(-2, 4), (-1, 4), (0, 0), (10, -10), (-16, 0), (15, 0)] {
+            for (index, grade) in default_grades(rx, rz).into_iter().enumerate() {
+                assert_eq!(default_grade(PlotAddr { rx, rz, index }) as u8, grade);
+            }
+        }
     }
 }

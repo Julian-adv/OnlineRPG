@@ -31,6 +31,8 @@
   import RespawnDialog from './RespawnDialog.svelte'
   import TipHatDialog from './TipHatDialog.svelte'
   import CapeDyeDialog from './CapeDyeDialog.svelte'
+  import LandClaimDialog from './LandClaimDialog.svelte'
+  import { landClaimDialog } from '../stores/landClaimStore'
   import { capeDyeDialog } from '../stores/capeDyeStore'
   import CapeTextureDialog from './CapeTextureDialog.svelte'
   import { capeTextureDialog } from '../stores/capeTextureStore'
@@ -396,6 +398,10 @@
     }}
     onCancel={() => capeDyeDialog.set(null)}
   />
+{/if}
+
+{#if $landClaimDialog}
+  <LandClaimDialog />
 {/if}
 
 {#if $capeTextureDialog}

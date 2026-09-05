@@ -26,6 +26,7 @@ mod house_floor_tests;
 mod hunger_tests;
 mod instrument_tests;
 mod inventory_tests;
+mod land_tests;
 mod meal_tests;
 mod monster_ai_tests;
 mod movement_tests;
@@ -397,6 +398,12 @@ fn make_game_state_with_zones(
         world_drop_defs,
         GameState::default_start_datetime(),
         housing_io,
+        Arc::new(onlinerpg_terrain::io::TerrainIO::new(
+            std::env::temp_dir().join(format!(
+                "onlinerpg_{test_name}_terrain_{}",
+                uuid::Uuid::new_v4()
+            )),
+        )),
         no_spawn_zones,
         dungeon_defs,
         Arc::new(onlinerpg_terrain::height::HeightSampler::new(height)),
