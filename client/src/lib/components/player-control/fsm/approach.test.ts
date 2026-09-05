@@ -68,6 +68,27 @@ describe('planApproach', () => {
     expect(plan.target.x).toBeCloseTo(8.5)
   })
 
+  it('routes to another side of an object when a wall blocks the near side', () => {
+    const plan = planApproach(
+      { x: 0, z: 0 },
+      spec,
+      routable,
+      false,
+      (position) => position.z > 0.5
+    )
+
+    expect(plan.kind).toBe('walk')
+    if (plan.kind !== 'walk') return
+    expect(plan.target.z).toBeGreaterThan(0.5)
+    expect(Math.hypot(plan.target.x - 10, plan.target.z)).toBeCloseTo(1.5)
+  })
+
+  it('refuses an object approach when every reachable side is walled off', () => {
+    expect(
+      planApproach({ x: 0, z: 0 }, spec, routable, false, () => false)
+    ).toEqual({ kind: 'unreachable' })
+  })
+
   it('refuses to move when nothing about the target routes at all', () => {
     expect(planApproach({ x: 0, z: 0 }, spec, () => 'none')).toEqual({
       kind: 'unreachable',

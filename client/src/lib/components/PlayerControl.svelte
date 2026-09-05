@@ -1473,7 +1473,8 @@
       currentPlayer.position,
       spec,
       routeQuality,
-      canActNow
+      canActNow,
+      canAct
     )
     if (plan.kind === 'unreachable') return
     if (plan.kind === 'act_now') {
