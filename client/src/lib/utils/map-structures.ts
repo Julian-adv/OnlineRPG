@@ -57,7 +57,8 @@ PLOT_GRADE_FILL[LandGrade.Crown] = 'rgba(255, 196, 64, 0.5)'
 export interface LandGradeRegion {
   rx: number
   rz: number
-  grades: Uint8Array
+  grades: Uint8Array | null
+  owners?: Map<number, string>
 }
 
 const LAND_GRID_MIN_PLOT_PX = 4
@@ -70,7 +71,8 @@ export function plotsLegible(scale: number): boolean {
 export function drawLandPlotCells(
   ctx: CanvasRenderingContext2D,
   regions: LandGradeRegion[],
-  transform: MapCanvasTransform
+  transform: MapCanvasTransform,
+  playerName: string | null = null
 ) {
   if (!plotsLegible(transform.scale)) return
   const cellPx = LAND_PLOT_SIZE * transform.scale
@@ -80,7 +82,14 @@ export function drawLandPlotCells(
     const origin = plotOrigin(region.rx, region.rz, 0)
     const base = worldToCanvas(origin.x, origin.z, transform)
     for (let i = 0; i < REGION_PLOTS; i++) {
-      const fill = PLOT_GRADE_FILL[region.grades[i]]
+      const owner = region.owners?.get(i)
+      let fill = region.grades ? PLOT_GRADE_FILL[region.grades[i]] : null
+      if (owner !== undefined) {
+        fill =
+          owner === playerName
+            ? 'rgba(64, 196, 96, 0.5)'
+            : 'rgba(220, 64, 64, 0.5)'
+      }
       if (!fill) continue
       if (fill !== fillStyle) ctx.fillStyle = fillStyle = fill
       const tile = i >> 2

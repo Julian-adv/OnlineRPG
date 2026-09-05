@@ -79,4 +79,43 @@ describe('drawLandPlotGrid', () => {
     const o = plotOrigin(addr.rx, addr.rz, addr.index)
     expect(rects).toEqual([[o.x, o.z, 32, 32]])
   })
+
+  it('prioritizes owner colors over grades, including before grades load', () => {
+    const fills: string[] = []
+    const ctx = {
+      save() {},
+      restore() {},
+      fillStyle: '',
+      fillRect() {
+        fills.push(this.fillStyle)
+      },
+    }
+    const grades = new Uint8Array(REGION_PLOTS).fill(LandGrade.Homestead)
+    grades[0] = LandGrade.Crown
+    grades[1] = LandGrade.Reserved
+    grades[2] = LandGrade.Crown
+    drawLandPlotCells(
+      ctx as unknown as CanvasRenderingContext2D,
+      [
+        {
+          rx: 0,
+          rz: 0,
+          grades,
+          owners: new Map([
+            [0, 'Alice'],
+            [1, 'Bob'],
+          ]),
+        },
+        { rx: 1, rz: 0, grades: null, owners: new Map([[0, 'Alice']]) },
+      ],
+      transform,
+      'Alice'
+    )
+    expect(fills).toEqual([
+      'rgba(64, 196, 96, 0.5)',
+      'rgba(220, 64, 64, 0.5)',
+      'rgba(255, 196, 64, 0.5)',
+      'rgba(64, 196, 96, 0.5)',
+    ])
+  })
 })

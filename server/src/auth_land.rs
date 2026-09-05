@@ -1,10 +1,42 @@
 use super::{AuthError, AuthService, CharacterSaveData, ItemRow};
-use onlinerpg_terrain::coords::WORLD_TILES_X;
+use onlinerpg_terrain::coords::{tile_to_region, WORLD_TILES_X};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use serde::Serialize;
 
 const WORLD_PLOTS_X: i32 = WORLD_TILES_X * 2;
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnedLandPlot {
+    pub rx: i32,
+    pub rz: i32,
+    pub index: usize,
+    pub owner_name: String,
+}
+
 impl AuthService {
+    pub fn owned_land_plots(&self) -> Result<Vec<OwnedLandPlot>, AuthError> {
+        let conn = self.open_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT p.tile_x, p.tile_z, p.quadrant, c.character_name
+             FROM land_plots p
+             JOIN land_estates e ON e.id=p.estate_id
+             JOIN characters c ON c.id=e.owner_id",
+        )?;
+        let plots = stmt.query_map([], |row| {
+            let tx: i32 = row.get(0)?;
+            let tz: i32 = row.get(1)?;
+            let quadrant: usize = row.get(2)?;
+            Ok(OwnedLandPlot {
+                rx: tile_to_region(tx),
+                rz: tile_to_region(tz),
+                index: (tz.rem_euclid(16) * 16 + tx.rem_euclid(16)) as usize * 4 + quadrant,
+                owner_name: row.get(3)?,
+            })
+        })?;
+        Ok(plots.collect::<Result<Vec<_>, _>>()?)
+    }
+
     pub(super) fn ensure_land_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS land_estates (

@@ -678,23 +678,27 @@ async fn main() -> ExitCode {
     // Start terrain REST API server. No CORS layer on purpose: browsers only
     // reach this API same-origin through the vite proxy.
     let terrain_port = args.terrain_port.unwrap_or(args.port + 1);
-    let terrain_app = terrain_router(Arc::clone(&terrain_io), Arc::clone(&game_state))
-        .merge(housing_router(
-            Arc::clone(&housing_io),
-            terrain_io,
-            Arc::clone(&game_state),
-        ))
-        .merge(npc_router(npc_io, Arc::clone(&game_state)))
-        .merge(announcements_router(announcement_store))
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&auth_ctx),
-            api_auth::require_admin_for_writes,
-        ))
-        // Merged after the admin layer on purpose: uploading a cape texture is
-        // a player action, authorised by the session token the server hands
-        // out at login rather than by the admin allowlist.
-        .merge(cape_texture_router(cape_textures, Arc::clone(&auth_ctx)))
-        .layer(CompressionLayer::new());
+    let terrain_app = terrain_router(
+        Arc::clone(&terrain_io),
+        Arc::clone(&game_state),
+        Arc::clone(&auth_service),
+    )
+    .merge(housing_router(
+        Arc::clone(&housing_io),
+        terrain_io,
+        Arc::clone(&game_state),
+    ))
+    .merge(npc_router(npc_io, Arc::clone(&game_state)))
+    .merge(announcements_router(announcement_store))
+    .layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&auth_ctx),
+        api_auth::require_admin_for_writes,
+    ))
+    // Merged after the admin layer on purpose: uploading a cape texture is
+    // a player action, authorised by the session token the server hands
+    // out at login rather than by the admin allowlist.
+    .merge(cape_texture_router(cape_textures, Arc::clone(&auth_ctx)))
+    .layer(CompressionLayer::new());
     let terrain_addr = format!("{}:{}", args.api_bind, terrain_port);
     let mut api_task = JoinSet::new();
     match TcpListener::bind(&terrain_addr).await {

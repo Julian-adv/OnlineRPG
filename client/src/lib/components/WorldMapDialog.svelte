@@ -63,6 +63,7 @@
 </script>
 
 <script lang="ts">
+  import { SvelteMap } from 'svelte/reactivity'
   import { assetUrl } from '../utils/assetUrl'
   import { gameStore, isAdminUser, addChatMessage } from '../stores/gameStore'
   import { partyRoster, partyPositions } from '../stores/partyStore'
@@ -78,6 +79,7 @@
   } from '../stores/graphicsSettings'
   import {
     wrapWorldX,
+    wrapRegionX,
     unwrapWorldXNear,
     WORLD_MIN_REGION_Z,
     WORLD_MAX_REGION_Z,
@@ -99,7 +101,13 @@
     requestLandGrades,
     setLandGrade,
   } from '../stores/landGradeStore'
-  import { nextGrade, plotAddress } from '../terrain/landPlots'
+  import {
+    nextGrade,
+    plotAddress,
+    type OwnedLandPlot,
+  } from '../terrain/landPlots'
+  import { regionKey } from '../terrain/terrain-constants'
+  import { getTerrainApiUrl } from '../utils/networkUtils'
   import SelfMarker from './SelfMarker.svelte'
 
   const graphicsPreset = $derived(getEffectivePreset($graphicsQuality))
@@ -117,6 +125,7 @@
   let playerX = $derived(wrapWorldX($gameStore.currentPlayer?.position.x ?? 0))
   let playerZ = $derived($gameStore.currentPlayer?.position.z ?? 0)
   let playerHeading = $derived($gameStore.currentPlayer?.rotation ?? 0)
+  const currentPlayerName = $derived($gameStore.currentPlayer?.name ?? null)
 
   // --- Camera state (world coordinates of view center) ---
   let camX = $state(0)
@@ -125,6 +134,54 @@
   // --- Zoom state (in regions/km) ---
   let zoomSpan = $state(DEFAULT_ZOOM)
   let initializedForOpen = $state(false)
+  let ownedPlots = $state<OwnedLandPlot[]>([])
+  const ownersByRegion = $derived.by(() => {
+    const regions = new SvelteMap<string, Map<number, string>>()
+    for (const plot of ownedPlots) {
+      const key = regionKey(plot.rx, plot.rz)
+      let owners = regions.get(key)
+      if (!owners) regions.set(key, (owners = new SvelteMap()))
+      owners.set(plot.index, plot.ownerName)
+    }
+    return regions
+  })
+
+  $effect(() => {
+    if (!$worldMapVisible || !$landPlotsVisible) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    let reportedError = false
+    async function refreshOwnership() {
+      try {
+        const response = await fetch(
+          `${getTerrainApiUrl()}/api/terrain/land-ownership`,
+          {
+            signal: controller.signal,
+            cache: 'no-store',
+          }
+        )
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const plots: OwnedLandPlot[] = await response.json()
+        if (!controller.signal.aborted) ownedPlots = plots
+      } catch {
+        if (!controller.signal.aborted && !reportedError) {
+          reportedError = true
+          addChatMessage({
+            text: 'Failed to load land ownership.',
+            sender: 'system',
+          })
+        }
+      } finally {
+        if (!controller.signal.aborted)
+          timer = setTimeout(refreshOwnership, 30_000)
+      }
+    }
+    void refreshOwnership()
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  })
 
   // Restore saved view state or center on player when dialog opens
   $effect(() => {
@@ -190,6 +247,8 @@
     const cz = camZ
     const houses = $houseMapFootprints
     const landGrid = $landPlotsVisible
+    const ownership = ownersByRegion
+    const playerName = currentPlayerName
     void $landGradeVersion
     const cw = containerW
     const ch = containerH
@@ -277,8 +336,9 @@
         )
         if (wantGrades) {
           const grades = getCachedLandGrades(rx, rz)
-          if (grades) gradeRegions.push({ rx, rz, grades })
-          else requestLandGrades(rx, rz)
+          const owners = ownership.get(regionKey(wrapRegionX(rx), rz))
+          gradeRegions.push({ rx, rz, grades, owners })
+          if (!grades) requestLandGrades(rx, rz)
         }
       }
     }
@@ -336,7 +396,7 @@
         scale,
       }
       if (landGrid) {
-        drawLandPlotCells(atlasCtx, gradeRegions, atlasTransform)
+        drawLandPlotCells(atlasCtx, gradeRegions, atlasTransform, playerName)
         drawLandPlotGrid(atlasCtx, expandedViewWorldSize, atlasTransform)
       }
       drawHouseMapFootprints(atlasCtx, houses, atlasTransform)
@@ -542,6 +602,14 @@
   })
 
   // --- Zoom controls ---
+  function toggleLandPlots() {
+    $landPlotsVisible = !$landPlotsVisible
+    if ($landPlotsVisible) {
+      useDefaultZoomOnOpen = false
+      zoomSpan = MIN_ZOOM
+    }
+  }
+
   function zoomIn() {
     useDefaultZoomOnOpen = false
     zoomSpan = Math.max(MIN_ZOOM, zoomSpan - 1)
@@ -618,6 +686,27 @@
 
   function handlePointerUp() {
     isDragging = false
+  }
+
+  let hoverPointer = $state<{ x: number; y: number } | null>(null)
+  const hoveredOwner = $derived.by(() => {
+    if (!$landPlotsVisible || isDragging || !hoverPointer) return null
+    const p = screenToWorld(hoverPointer.x, hoverPointer.y)
+    if (!p || !plotsLegible(p.scale)) return null
+    const addr = plotAddress(p.x, p.z)
+    const name = ownersByRegion
+      .get(regionKey(addr.rx, addr.rz))
+      ?.get(addr.index)
+    if (!name) return null
+    return {
+      name,
+      left: Math.max(0, Math.min(p.pixelX + 12, containerW - 180)),
+      top: Math.max(0, Math.min(p.pixelY + 16, containerH - 40)),
+    }
+  })
+
+  function handleMapHover(event: PointerEvent) {
+    hoverPointer = { x: event.clientX, y: event.clientY }
   }
 
   $effect(() => {
@@ -727,7 +816,13 @@
       (pixelX - view.width / 2) / scale,
       (pixelY - view.height / 2) / scale
     )
-    return { x: view.camX + delta.x, z: view.camZ + delta.z, scale }
+    return {
+      x: view.camX + delta.x,
+      z: view.camZ + delta.z,
+      scale,
+      pixelX,
+      pixelY,
+    }
   }
 
   function teleportAt(clientX: number, clientY: number) {
@@ -804,22 +899,20 @@
             <circle cx="12" cy="12" r="1.5" class="center-dot"></circle>
           </svg></button
         >
-        {#if $isAdminUser}
-          <button
-            type="button"
-            class="ctrl-btn center-btn"
-            class:active={$landPlotsVisible}
-            onclick={() => ($landPlotsVisible = !$landPlotsVisible)}
-            title="Toggle Land Plots"
-            aria-label="Toggle land plots"
-            aria-pressed={$landPlotsVisible}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3.5" y="3.5" width="17" height="17" rx="1"></rect>
-              <path d="M12 3.5v17M3.5 12h17"></path>
-            </svg></button
-          >
-        {/if}
+        <button
+          type="button"
+          class="ctrl-btn center-btn"
+          class:active={$landPlotsVisible}
+          onclick={toggleLandPlots}
+          title="Toggle Land Plots"
+          aria-label="Toggle land plots"
+          aria-pressed={$landPlotsVisible}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="3.5" width="17" height="17" rx="1"></rect>
+            <path d="M12 3.5v17M3.5 12h17"></path>
+          </svg></button
+        >
       </div>
       <button
         type="button"
@@ -837,6 +930,8 @@
       class:editing={$landPlotsVisible && $isAdminUser}
       bind:this={containerEl}
       onpointerdown={handlePointerDown}
+      onpointermove={handleMapHover}
+      onpointerleave={() => (hoverPointer = null)}
       onclick={handleMapClick}
       oncontextmenu={handleMapContextMenu}
     >
@@ -890,11 +985,34 @@
           />
         {/if}
       </div>
+      {#if hoveredOwner}
+        <div
+          class="plot-owner-tooltip"
+          role="tooltip"
+          style="left: {hoveredOwner.left}px; top: {hoveredOwner.top}px;"
+        >
+          {hoveredOwner.name}
+        </div>
+      {/if}
     </div>
   </div>
 </div>
 
 <style>
+  .plot-owner-tooltip {
+    position: absolute;
+    z-index: 5;
+    max-width: 160px;
+    padding: 6px 9px;
+    border: 1px solid var(--wm-gold);
+    border-radius: 4px;
+    background: rgba(8, 11, 9, 0.95);
+    color: var(--wm-paper);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+  }
+
   .backdrop {
     position: absolute;
     inset: 0;

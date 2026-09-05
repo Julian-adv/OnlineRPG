@@ -87,6 +87,15 @@ async fn land_expansion_wraps_across_the_world_seam() {
             .len(),
         18
     );
+    let plots = auth.owned_land_plots().unwrap();
+    assert_eq!(plots.len(), 2);
+    for (x, z) in [(16351.0, 1.0), (-16415.0, 1.0)] {
+        let addr = plot_addr(x, z);
+        assert!(plots.iter().any(|plot| plot.rx == addr.rx
+            && plot.rz == addr.rz
+            && plot.index == addr.index
+            && plot.owner_name == "Settler"));
+    }
 }
 
 #[tokio::test]
