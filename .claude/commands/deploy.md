@@ -44,7 +44,7 @@ loads it; syncing after costs prod a second restart.
   scp data/banned_names.txt prod:~/work/OnlineRPG/data/banned_names.txt
   ```
   Identical files → say so and skip the scp.
-- **Terrain or housing edited on this host?** `data/terrain/` and
+- **Terrain and housing sync — check both every deploy.** `data/terrain/` and
   `data/housing/` are not in git, so the deploy does not carry them. Sync
   **before** launching so the deploy's restart loads them — syncing after
   costs prod a second restart (server + agent-client, which caches houses
@@ -53,15 +53,25 @@ loads it; syncing after costs prod a second restart.
     do **not** add `--checksum` — 1.16M files, it reads every one). Review
     the transferred-files count (a handful is normal), rerun with `--apply`,
     then spot-check an md5sum on prod.
-  - Housing (furniture placements live inside each house JSON): the sync
-    script excludes `data/housing/` on purpose — the server writes live
-    state (door open/close) into these files and prod is authoritative.
-    List candidates with
-    `rsync -ain data/housing/ prod:work/OnlineRPG/data/housing/`, keep only
-    the files actually edited here, and for each: fetch prod's copy and
-    diff it (prod-only changes — placed furniture, new houses — would be
-    lost), back it up on prod as `<file>.bak-YYYYMMDD`, then scp the local
-    file over. Never bulk-apply housing.
+  - Housing: houses, rooms, and furniture placements all live in the
+    per-house JSONs under `data/housing/`; the sync script excludes the
+    directory on purpose because the server writes live state (door
+    open/close) into these files and prod is authoritative. Handle one file
+    at a time, never a bulk rsync. Diff both directions, deletions included:
+    ```bash
+    rsync -ain --delete data/housing/ prod:work/OnlineRPG/data/housing/
+    ```
+    Ignore `*.bak-*` lines and `t`-only (mtime) lines. What remains:
+    - `<f+++` / `<f.s` (new or changed here): fetch prod's copy and diff it —
+      prod-only changes (placed furniture, new houses, doors) would be lost;
+      merge if both sides changed. Back it up on prod as
+      `<file>.bak-YYYYMMDD`, then scp the local file over.
+    - `*deleting <house>.json` (removed here): confirm the house is gone from
+      the local editor on purpose, check the prod copy's `ownerId` and
+      furniture (a player-owned house is not deleted without asking), then
+      `mv` it to `<file>.bak-YYYYMMDD` on prod. Do not leave it — its terrain
+      edits (grass regrown, flattening undone) do ride the terrain sync, so a
+      house left behind stands on regrown grass.
   Nothing to sync when neither directory has local edits — say so and move on.
 
 ## 2. Launch the deploy, detached
