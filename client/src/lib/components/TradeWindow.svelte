@@ -13,7 +13,11 @@
   import { inventoryStore, playerGold } from '../stores/inventoryStore'
   import { getItemDef, type ItemDefinition } from '../data/itemDefs'
   import { getNpcCapabilities } from '../data/traderDefs'
-  import { MAX_TRADE_DISTANCE_METERS } from '../data/tradeConstants'
+  import { isStockedByAnyMerchant } from '../data/merchantDefs'
+  import {
+    DEAL_MAX_HALF_BAND_PCT,
+    MAX_TRADE_DISTANCE_METERS,
+  } from '../data/tradeConstants'
   import GoldAmount from './GoldAmount.svelte'
   import { itemTooltip } from '../actions/itemTooltip'
   import { draggablePanel } from '../actions/draggablePanel'
@@ -138,10 +142,11 @@
     return kind === 'buy' ? pct > 0 : pct < 0
   }
 
-  // Mirrors the server's integer price math (deals.rs / buy_base_price).
+  // Mirrors the server's integer price math (deals.rs / trade_base_price).
   function indexedBase(def: ItemDefinition): number {
     const base = def.basePrice ?? 0
-    if (!session || !def.consumable) return base
+    if (!session || !def.consumable || !isStockedByAnyMerchant(def.id))
+      return base
     return Math.max(1, Math.floor((base * session.priceIndexPercent) / 100))
   }
 
@@ -151,12 +156,12 @@
 
   function sellPrice(def: ItemDefinition, pct: number): number {
     if (!session) return 0
-    return Math.max(
-      1,
-      Math.floor(
-        ((def.basePrice ?? 0) * session.sellRatePercent * (100 + pct)) / 10000
-      )
+    const payout = Math.floor(
+      ((def.basePrice ?? 0) * session.sellRatePercent * (100 + pct)) / 10000
     )
+    // Merchants never pay above the cheapest possible buy (server sell_cap).
+    const cap = isResident ? Infinity : buyPrice(def, -DEAL_MAX_HALF_BAND_PCT)
+    return Math.max(1, Math.min(payout, cap))
   }
 
   const buyTotal = $derived(

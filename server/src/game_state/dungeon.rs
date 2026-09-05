@@ -146,13 +146,6 @@ pub(super) struct SpawnSlot {
     pub is_boss: bool,
 }
 
-impl SpawnSlot {
-    /// A slain boss, waiting on the dungeon reset rather than a timer.
-    fn held_until_reset(&self) -> bool {
-        self.respawn_at_ms == BOSS_RESPAWN_NEVER
-    }
-}
-
 /// Reverse index entry: which dungeon slot a live monster belongs to.
 pub(super) struct DungeonMonsterRef {
     pub entrance_id: String,
@@ -1458,12 +1451,9 @@ impl GameState {
                 .filter(|id| !id.is_empty())
                 .collect();
             if remaining.is_none() {
-                // A slain boss keeps its slot; only reset_dungeons frees it.
-                // A living boss despawns with the floor, so its slot is freed.
-                for slot in fr.slots.iter_mut().filter(|s| !s.held_until_reset()) {
+                // Timers stay, so leave-and-re-enter is not a free respawn.
+                for slot in &mut fr.slots {
                     slot.alive_monster_id = None;
-                    // Empty floors repopulate instantly on next entry.
-                    slot.respawn_at_ms = 0;
                 }
             }
             (remaining, alive)

@@ -6,7 +6,7 @@
 use onlinerpg_shared::pricing::{PricingNotice, Trend};
 use onlinerpg_shared::{PlayerId, ServerMessage};
 
-use crate::state::{SharedState, NPC_SIGHT_RADIUS};
+use crate::state::{storey_name, SharedState, FLOOR_ZERO_HINT, NPC_SIGHT_RADIUS};
 use onlinerpg_shared::schedule::ScheduleEntry;
 
 fn within_event_range(state: &SharedState, x: f32, z: f32) -> bool {
@@ -362,7 +362,7 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
             let floor = match *floor_level {
                 0 => "the surface".to_string(),
                 f if f < 0 => format!("dungeon floor {}", f.unsigned_abs()),
-                f => format!("floor {f}"),
+                f => format!("the {}", storey_name(f as u8)),
             };
             Some(format!(
                 "[Teleported] You were teleported to ({:.0}, {:.0}) on {floor}. Your old \
@@ -445,12 +445,29 @@ pub(crate) fn format_event(state: &SharedState, msg: &ServerMessage) -> Option<S
         }
         ServerMessage::PlayerRespawned { player } => {
             let is_self = state.self_player_id.as_ref() == Some(&player.id);
-            if !is_self && !within_event_range(state, player.position.x, player.position.z) {
-                return None;
+            if !is_self {
+                if !within_event_range(state, player.position.x, player.position.z) {
+                    return None;
+                }
+                return Some(format!(
+                    "[Respawn] {} HP {}/{}",
+                    player.name, player.health, player.max_health
+                ));
             }
+            let (x, z) = (player.position.x, player.position.z);
+            let place = match state.storey_at(x, z, player.floor_level) {
+                Some(storey) if player.floor_level > 0 => format!(
+                    "in a sick-room bed on the {storey} of a building at ({x:.0}, {z:.0}) — \
+                     {FLOOR_ZERO_HINT}"
+                ),
+                Some(storey) => {
+                    format!("in a bed on the {storey} of a building at ({x:.0}, {z:.0})")
+                }
+                None => format!("at ({x:.0}, {z:.0}) on the surface"),
+            };
             Some(format!(
-                "[Respawn] {} HP {}/{}",
-                player.name, player.health, player.max_health
+                "[Respawn] You died and woke {place}. HP {}/{}.",
+                player.health, player.max_health
             ))
         }
         ServerMessage::XpGained {
@@ -699,6 +716,22 @@ fn price_change_phrase(pct: i32, past: bool) -> String {
     }
 }
 
+pub(super) fn dining_arrival_event(label: &str, serves_self: bool) -> String {
+    let order = if serves_self {
+        "your own meal, once every guest has theirs. The kitchen is yours: serve yourself one \
+         dish and one drink with your own name as the player"
+    } else {
+        "call your order to the inn maid in your own words — one dish and one drink from the \
+         kitchen"
+    };
+    format!(
+        "[Schedule] You have sat down for {label} — {order} ({}). The house feeds its \
+         regulars: no coins, no haggling, nothing from your own bag. Stay seated; the plate \
+         is eaten by itself once it lands.",
+        crate::item_defs::menu_line()
+    )
+}
+
 pub(super) fn meeting_arrival_event() -> String {
     "[Schedule] You have arrived at the merchants' price meeting. Greet the other \
      merchants and open the talk about where prices should go."
@@ -741,6 +774,19 @@ fn format_schedule_context(
 #[cfg(test)]
 mod tests {
     use super::{build_prompt, caught_line, format_event, record_conversation};
+
+    #[test]
+    fn the_dining_cue_names_the_meal_and_the_menu() {
+        let cue = super::dining_arrival_event("eating dinner on the inn's ground floor", false);
+        assert!(cue.contains("sat down for eating dinner"), "{cue}");
+        assert!(
+            cue.contains("chicken_curry") && cue.contains("beer"),
+            "{cue}"
+        );
+        assert!(cue.contains("inn maid"), "{cue}");
+        let own = super::dining_arrival_event("eating dinner on the inn's ground floor", true);
+        assert!(own.contains("your own name"), "{own}");
+    }
 
     #[test]
     fn the_host_closes_with_the_servers_decision() {
@@ -821,6 +867,65 @@ mod tests {
         assert!(prompt.contains("Language: Korean"), "{prompt}");
         let prompt = build_prompt(&state, &[], &[], &[], None, None, None, None);
         assert!(!prompt.contains("TONIGHT'S TALE"), "{prompt}");
+    }
+
+    /// Waking in the inn's sick room is a change of place the LLM cannot see
+    /// from a bare HP line: it must know it is upstairs and indoors before
+    /// it aims at the hunting ground it died in.
+    #[test]
+    fn a_self_respawn_says_where_and_on_which_floor() {
+        use crate::state::tests::{house, room};
+        use onlinerpg_shared::housing::RoomType;
+        use onlinerpg_shared::Position;
+
+        let (mut state, _rx) = test_state();
+        let mut me = test_player(0.0, 0.0);
+        me.id = PlayerId::from(1);
+        state.self_player_id = Some(me.id);
+        state.self_player = Some(me.clone());
+        let inn = house(
+            "inn",
+            Position {
+                x: -1448.0,
+                y: 0.0,
+                z: 4753.0,
+            },
+            vec![room(0, 1, RoomType::Normal)],
+        );
+        state.world_cache.write().unwrap().add_house(inn);
+
+        me.position = Position {
+            x: -1446.7,
+            y: 4.4,
+            z: 4754.9,
+        };
+        me.floor_level = 1;
+        let line = format_event(
+            &state,
+            &ServerMessage::PlayerRespawned { player: me.clone() },
+        )
+        .expect("own respawn is always reported");
+        assert!(line.contains("sick-room bed on the 2nd floor"), "{line}");
+        assert!(line.contains(crate::state::FLOOR_ZERO_HINT), "{line}");
+
+        me.position = Position {
+            x: 10.0,
+            y: 0.0,
+            z: 10.0,
+        };
+        me.floor_level = 0;
+        let line = format_event(
+            &state,
+            &ServerMessage::PlayerRespawned { player: me.clone() },
+        )
+        .unwrap();
+        assert!(line.contains("on the surface"), "{line}");
+
+        let mut other = test_player(3.0, 0.0);
+        other.id = PlayerId::from(2);
+        other.name = "Brann".to_string();
+        let line = format_event(&state, &ServerMessage::PlayerRespawned { player: other }).unwrap();
+        assert!(line.starts_with("[Respawn] Brann HP"), "{line}");
     }
 
     /// A tune someone strikes up nearby is worth a prompt line — the title is

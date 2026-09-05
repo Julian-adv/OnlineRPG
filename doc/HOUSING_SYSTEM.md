@@ -10,6 +10,9 @@
   - https://www.youtube.com/watch?v=5jvJUPrmS18&t=5s
   - https://www.youtube.com/watch?v=zBVPcr7VjyQ
 
+플레이어가 설계도로 집을 짓는 흐름은 [HOUSE_BUILDING.md](HOUSE_BUILDING.md),
+영지 소유·분배·지도 표시는 [LAND_SYSTEM.md](LAND_SYSTEM.md).
+
 ## Data Model
 
 ### HouseData

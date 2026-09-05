@@ -197,6 +197,15 @@ impl SharedState {
             .map(|(id, p)| (*id, p.is_official_npc))
     }
 
+    pub fn names_self(&self, name_or_id: &str) -> bool {
+        name_or_id.eq_ignore_ascii_case("me")
+            || name_or_id.eq_ignore_ascii_case("myself")
+            || self
+                .self_player
+                .as_ref()
+                .is_some_and(|p| p.name.eq_ignore_ascii_case(name_or_id))
+    }
+
     /// The nearest NPC merchant on our floor, for trade actions that omit a
     /// merchant name. Usually there is exactly one in range, so guessing is
     /// safe and spares the LLM from naming it.

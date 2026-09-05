@@ -14,6 +14,7 @@ mod game_state;
 mod google_auth;
 mod housing;
 mod item_defs;
+mod land_grades;
 mod merchant_defs;
 mod monster_defs;
 mod npc_defs;

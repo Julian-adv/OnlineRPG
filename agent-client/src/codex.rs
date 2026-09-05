@@ -30,7 +30,7 @@ fn default_model() -> String {
 }
 
 fn default_reasoning_effort() -> String {
-    "low".to_string()
+    "medium".to_string()
 }
 
 fn default_system_prompt_file() -> String {
@@ -614,7 +614,10 @@ impl CodexInvoker {
         system_prompt: String,
         app_server: CodexAppServer,
     ) -> anyhow::Result<Self> {
-        info!("Codex invoker ready (model={})", config.model);
+        info!(
+            "Codex invoker ready (model={}, effort={})",
+            config.model, config.reasoning_effort
+        );
         Ok(Self {
             config: config.clone(),
             system_prompt,
@@ -753,7 +756,7 @@ mod tests {
             let turn = read_request(&mut requests).await;
             assert_eq!(turn["method"], "turn/start");
             assert_eq!(turn["params"]["threadId"], "thread-1");
-            assert_eq!(turn["params"]["effort"], "low");
+            assert_eq!(turn["params"]["effort"], "medium");
             assert_eq!(turn["params"]["input"][0]["text"], "system\n\nevent");
             write_message(
                 &mut server_output,

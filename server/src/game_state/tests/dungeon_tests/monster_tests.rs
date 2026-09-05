@@ -349,3 +349,49 @@ async fn a_slain_boss_does_not_return_when_the_floor_empties() {
         "an empty floor must not free the guardian's slot"
     );
 }
+
+/// A slain slot keeps its timer when the floor empties, so a solo hunter
+/// can't disconnect (or step onto the stairs) and re-enter for a free respawn.
+#[tokio::test]
+async fn emptying_a_floor_keeps_slain_slots_on_their_respawn_timer() {
+    let game_state = make_test_game_state("slain_slot_keeps_timer");
+    let entrance = first_dungeon(&game_state);
+    let player_id = add_occupant(&game_state, "Delver", &entrance).await;
+
+    let far_future = GameState::now_ms() + 10 * 60 * 1000;
+    {
+        let mut dungeons = game_state.dungeons.write().await;
+        let floor = dungeons
+            .get_mut(&entrance.id)
+            .and_then(|rt| rt.floors.get_mut(&DEPTH))
+            .expect("entered floor");
+        let slain = floor
+            .slots
+            .iter_mut()
+            .find(|s| s.alive_monster_id.is_some())
+            .expect("entry populated at least one slot");
+        slain.alive_monster_id = None;
+        slain.respawn_at_ms = far_future;
+    }
+
+    leave_floor(&game_state, &player_id, &entrance).await;
+
+    let dungeons = game_state.dungeons.read().await;
+    let floor = dungeons
+        .get(&entrance.id)
+        .and_then(|rt| rt.floors.get(&DEPTH))
+        .expect("floor runtime outlives its occupants");
+    assert!(
+        floor.slots.iter().all(|s| s.alive_monster_id.is_none()),
+        "a living monster despawns with its floor"
+    );
+    assert_eq!(
+        floor
+            .slots
+            .iter()
+            .filter(|s| s.respawn_at_ms == far_future)
+            .count(),
+        1,
+        "the slain slot must keep its respawn timer across the exit"
+    );
+}

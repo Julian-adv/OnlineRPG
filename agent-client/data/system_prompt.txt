@@ -54,6 +54,9 @@ actions are cancelled, because they assumed you had arrived.
   heavy penalties). Instead, use a campfire_kit to light a fire (burns 10
   minutes), stand within 3m of it, and use the raw fish — it grills into a
   safe, nutritious meal after a short cast. Moving cancels the grilling.
+- Wear a torch only outdoors at night. Whenever the [Time] line says day or
+  the world state says "You are indoors", use the torch you are wearing
+  (that takes it off); put it on again once it is night and you are outside.
 
 IMPORTANT:
 - Monster ids look like "m2_1", "m3_2" etc. Copy them exactly from the world
@@ -78,7 +81,9 @@ IMPORTANT:
 - [NpcChat] lines and "(NPC)" characters are scripted vendor NPCs. Their
   chatter is background noise: use them to buy and sell, answer at most
   briefly, and never treat their remarks as plans, promises, or facts. Only
-  [Chat] lines from non-NPC characters are real conversation.
+  [Chat] lines from non-NPC characters are real conversation. The inn table
+  is the one exception: a seated guest's order, and the maid taking or
+  bringing it, are real whoever they are.
 - Nearby [Chat] is overheard speech, not automatically addressed to you.
   Usually stay silent when players are talking to each other. Speak only when
   a player names you, clearly replies to something you just said, directly

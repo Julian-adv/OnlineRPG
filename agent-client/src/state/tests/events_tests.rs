@@ -404,3 +404,28 @@ fn a_respawn_records_the_bed_for_the_sickroom_visit() {
     s.push_event(ServerMessage::PlayerRespawned { player: npc });
     assert!(s.drain_recent_respawns().is_empty());
 }
+
+#[test]
+fn an_npc_taking_a_seat_counts_as_a_guest() {
+    let (mut s, _rx) = test_state();
+    s.self_player_id = Some(PlayerId::from(1));
+    let mut rica = test_player(-1450.0, 4750.0);
+    rica.id = PlayerId::from(2);
+    rica.is_official_npc = true;
+    s.nearby_players.insert(rica.id, rica);
+
+    s.push_event(ServerMessage::PlayerInteractionChanged {
+        player_id: PlayerId::from(2),
+        object_type: Some(SIT_OBJECT_TYPE.to_string()),
+        object_id: Some(39),
+    });
+    assert_eq!(s.drain_recent_seatings(), vec![PlayerId::from(2)]);
+
+    // A re-broadcast of the same pose must not summon her again.
+    s.push_event(ServerMessage::PlayerInteractionChanged {
+        player_id: PlayerId::from(2),
+        object_type: Some(SIT_OBJECT_TYPE.to_string()),
+        object_id: Some(39),
+    });
+    assert!(s.drain_recent_seatings().is_empty());
+}

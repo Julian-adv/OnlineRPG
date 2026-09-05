@@ -84,6 +84,15 @@ DB(`character_items(item_def_id, enchant, equip_slot, quantity)` + `characters`)
 - 같은 디렉터리에 `game_data-backup-*.db`가 있다. `find … -name "*.db" | head -1`로 잡지 말고 경로를 고정한다.
 - `characters(character_name, account_name, level, xp, gold, class, created_at, last_seen_at, admin_role)`. `last_seen_at`은 2026-08-29부터 채워지므로 그 이전 창의 액티브는 저널 `joined the game` 이름으로 잡는다(저널 보존 약 20일 — `journalctl -o short-iso | head -1`로 시작일 확인).
 - 상위 레벨 20명, 레벨 분포, 액티브 캐릭/계정 수, 골드 합·평균·중앙값·구간 분포, 전체 골드 대비 액티브 비중. 레벨 대비 골드 과다인 캐릭을 표시.
+- **계정 수 (매번 §1 표에 기록)**: `accounts(player_name, created_at, google_sub)`에는 last_seen이 없으므로 액티브는 `characters.last_seen_at`으로 계정을 묶는다.
+  ```
+  select (select count(*) from accounts) total,
+         (select count(*) from accounts where created_at >= strftime('%s','<창 시작 KST→UTC 아님, 그대로>')) new_in_window,
+         (select count(*) from accounts where created_at >= strftime('%s','now')-7*86400) new_7d,
+         (select count(distinct account_name) from characters where last_seen_at >= strftime('%s','<창 시작>')) active_in_window,
+         (select count(*) from accounts where player_name not in (select account_name from characters)) no_character;
+  ```
+  직전 노트의 총계와 차이 = 창 안 가입 수인지 대조한다(삭제된 계정이 있으면 어긋난다). `strftime('%s', ...)`의 인자는 UTC로 해석되므로 창 시작 시각을 **UTC 문자열**로 넣는다.
 
 ## 7. 봇·멀티 계정
 
@@ -110,6 +119,6 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/tal
 
 ## 9. 노트 구성
 
-1. 창·재시작 이력 → 2. 전체 상태 → 3. 플레이어에게 보였던 문제 → 4. 수상하지만 무해 → 5. 사소 → 6. 대역폭 → 7. 경제 → 8. 인챈트 → 8-1. 영웅담 후보(원장에 붙인 줄) → 9. 상위/액티브 플레이어 → 10. 봇 → 11. 직전 점검표 대조 → 12. 후속 후보 → 13. 조회 메모(이번에 새로 알게 된 경로·문구·함정).
+1. 창·재시작 이력 → 2. 전체 상태(계정 총계·신규·액티브 포함) → 3. 플레이어에게 보였던 문제 → 4. 수상하지만 무해 → 5. 사소 → 6. 대역폭 → 7. 경제 → 8. 인챈트 → 8-1. 영웅담 후보(원장에 붙인 줄) → 9. 상위/액티브 플레이어 → 10. 봇 → 11. 직전 점검표 대조 → 12. 후속 후보 → 13. 조회 메모(이번에 새로 알게 된 경로·문구·함정).
 
 사용자에게는 표 위주로 짧게 보고한다. 숫자는 사용자가 툴 출력을 못 보므로 본문에 직접 적는다. 추정은 추정이라고 쓰고, 나중에 틀린 게 드러나면 정정한다.

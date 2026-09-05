@@ -1,6 +1,8 @@
 import type { DungeonEntranceDef } from '../data/dungeonDefs'
 import type { HouseMapFootprint } from '../types/housing'
 import { unwrapWorldXNear } from '../terrain/world-wrap'
+import { LAND_PLOT_SIZE, REGION_SIZE } from '../terrain/terrain-constants'
+import { LandGrade, plotOrigin, REGION_PLOTS } from '../terrain/landPlots'
 
 /** Map rotation so screen-up matches walking up (tracks the camera's initial yaw). */
 export const MAP_ROTATE_ANGLE = -Math.PI / 4
@@ -44,6 +46,93 @@ export function drawHouseMapFootprints(
       ctx.strokeRect(p.x, p.y, drawWidth, drawDepth)
     }
   }
+  ctx.restore()
+}
+
+const PLOT_GRADE_FILL: (string | null)[] = []
+PLOT_GRADE_FILL[LandGrade.Reserved] = 'rgba(40, 40, 40, 0.55)'
+PLOT_GRADE_FILL[LandGrade.Homestead] = null
+PLOT_GRADE_FILL[LandGrade.Crown] = 'rgba(255, 196, 64, 0.5)'
+
+export interface LandGradeRegion {
+  rx: number
+  rz: number
+  grades: Uint8Array
+}
+
+const LAND_GRID_MIN_PLOT_PX = 4
+
+/** Below this zoom the plot overlay is neither drawn nor editable. */
+export function plotsLegible(scale: number): boolean {
+  return LAND_PLOT_SIZE * scale >= LAND_GRID_MIN_PLOT_PX
+}
+
+export function drawLandPlotCells(
+  ctx: CanvasRenderingContext2D,
+  regions: LandGradeRegion[],
+  transform: MapCanvasTransform
+) {
+  if (!plotsLegible(transform.scale)) return
+  const cellPx = LAND_PLOT_SIZE * transform.scale
+  ctx.save()
+  let fillStyle: string | null = null
+  for (const region of regions) {
+    const origin = plotOrigin(region.rx, region.rz, 0)
+    const base = worldToCanvas(origin.x, origin.z, transform)
+    for (let i = 0; i < REGION_PLOTS; i++) {
+      const fill = PLOT_GRADE_FILL[region.grades[i]]
+      if (!fill) continue
+      if (fill !== fillStyle) ctx.fillStyle = fillStyle = fill
+      const tile = i >> 2
+      const col = (tile % REGION_SIZE) * 2 + (i & 1)
+      const row = Math.floor(tile / REGION_SIZE) * 2 + ((i >> 1) & 1)
+      ctx.fillRect(base.x + col * cellPx, base.y + row * cellPx, cellPx, cellPx)
+    }
+  }
+  ctx.restore()
+}
+
+function drawWorldGrid(
+  ctx: CanvasRenderingContext2D,
+  spacing: number,
+  size: number,
+  transform: MapCanvasTransform
+) {
+  const sizePx = size * transform.scale
+  const first = (v: number) => Math.ceil(v / spacing) * spacing
+  ctx.beginPath()
+  for (
+    let x = first(transform.viewLeft);
+    x <= transform.viewLeft + size;
+    x += spacing
+  ) {
+    const px = (x - transform.viewLeft) * transform.scale
+    ctx.moveTo(px, 0)
+    ctx.lineTo(px, sizePx)
+  }
+  for (
+    let z = first(transform.viewTop);
+    z <= transform.viewTop + size;
+    z += spacing
+  ) {
+    const py = (z - transform.viewTop) * transform.scale
+    ctx.moveTo(0, py)
+    ctx.lineTo(sizePx, py)
+  }
+  ctx.stroke()
+}
+
+/** Debug overlay: 32 m plot lines. */
+export function drawLandPlotGrid(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  transform: MapCanvasTransform
+) {
+  if (!plotsLegible(transform.scale)) return
+  ctx.save()
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)'
+  ctx.lineWidth = 0.75
+  drawWorldGrid(ctx, LAND_PLOT_SIZE, size, transform)
   ctx.restore()
 }
 

@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tracing::info;
 
@@ -27,6 +27,7 @@ impl MerchantDefinition {
 /// so the stable identity the server sees is the character name.
 pub struct MerchantDefs {
     by_npc_name: HashMap<String, MerchantDefinition>,
+    stocked: HashSet<String>,
 }
 
 impl MerchantDefs {
@@ -35,15 +36,11 @@ impl MerchantDefs {
         let by_id: HashMap<String, MerchantDefinition> =
             serde_json::from_str(data).expect("Failed to parse merchants.json");
 
-        // Money-pump invariant: even with maximum haggling in both
-        // directions and the price index at its floor, buying must always
-        // cost more than selling pays.
-        let index_min = crate::world_config::world_config()
-            .pricing
-            .index_min_percent();
+        // The advertised flat sell rate must hold at index 100; lower
+        // indexes are covered by the payout cap.
         for def in by_id.values() {
             assert!(
-                crate::game_state::band_invariant_holds(def.sell_rate_percent, index_min),
+                crate::game_state::band_invariant_holds(def.sell_rate_percent),
                 "merchant {} sellRatePercent {} breaks the haggling band invariant",
                 def.id,
                 def.sell_rate_percent
@@ -51,16 +48,28 @@ impl MerchantDefs {
         }
 
         info!("Loaded {} merchant definition(s)", by_id.len());
+        let stocked = by_id
+            .values()
+            .flat_map(|m| m.catalog.iter().cloned())
+            .collect();
         let by_npc_name = by_id
             .into_values()
             .map(|def| (def.npc_name.clone(), def))
             .collect();
 
-        Self { by_npc_name }
+        Self {
+            by_npc_name,
+            stocked,
+        }
     }
 
     pub fn get_by_npc_name(&self, npc_name: &str) -> Option<&MerchantDefinition> {
         self.by_npc_name.get(npc_name)
+    }
+
+    /// Whether any merchant shelf carries the item.
+    pub fn stocked(&self, item_def_id: &str) -> bool {
+        self.stocked.contains(item_def_id)
     }
 }
 

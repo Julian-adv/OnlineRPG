@@ -159,11 +159,17 @@ impl GameState {
         let near = self
             .players_within_position(&maid_position, floor_level, MEAL_SERVICE_RADIUS_M, None)
             .await;
+        // Staff at their own meal serve the chair they sit on.
         let guest = {
             let players = self.players.read().await;
-            near.iter()
-                .filter_map(|(id, _)| players.get(id))
-                .find(|p| seated_on(p, chair_object_id, floor_level))
+            players
+                .get(player_id)
+                .filter(|p| seated_on(p, chair_object_id, floor_level))
+                .or_else(|| {
+                    near.iter()
+                        .filter_map(|(id, _)| players.get(id))
+                        .find(|p| seated_on(p, chair_object_id, floor_level))
+                })
                 .map(|p| (p.id, p.name.clone(), p.position))
         };
         let Some((guest_id, guest_name, guest_position)) = guest else {

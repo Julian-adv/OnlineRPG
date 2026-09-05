@@ -182,7 +182,7 @@ npm run dev -- --port 10004
 
 ```bash
 cd agent-client
-cargo watch -i "data/prompts/memory/" -x run
+cargo watch -i "data/npcs/**/memory.txt" -i "data/npcs/**/favor.json" -x run
 ```
 
 ### 6. 共有コード変更時の WASM 自動再ビルド（推奨）

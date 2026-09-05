@@ -26,6 +26,7 @@ mod walk;
 
 pub(crate) use prompt::format_event;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -189,6 +190,8 @@ pub struct DriverConfig {
     /// Walk over to guests who sit down on a chair nearby and take their
     /// order. For NPCs that wait tables (the inn maid).
     pub serve_tables: bool,
+    /// Character names of every table-waiting NPC: never anyone's guest.
+    pub maid_names: HashSet<String>,
     /// Curated order-taking spots for known chairs.
     pub tables: Vec<VisitSpot>,
     /// Shared with the process's other NPCs so only one answers each call.
@@ -207,6 +210,39 @@ fn visit_entry(spot: &VisitSpot, label: &str) -> ScheduleEntry {
         label: Some(label.to_string()),
         ..Default::default()
     }
+}
+
+fn is_staff(
+    s: &SharedState,
+    pid: &onlinerpg_shared::PlayerId,
+    maid_names: &HashSet<String>,
+) -> bool {
+    s.nearby_players
+        .get(pid)
+        .is_some_and(|p| maid_names.contains(&p.name))
+}
+
+/// A meal seat just reached needs a cue: nothing else wakes an NPC at the
+/// table, and the idle poll is an hour away.
+async fn announce_seat(
+    state: &Arc<Mutex<SharedState>>,
+    schedule: &[ScheduleEntry],
+    active: Option<usize>,
+    serve_tables: bool,
+) {
+    let Some(entry) = active.map(|i| &schedule[i]) else {
+        return;
+    };
+    if entry.action.as_deref() != Some(crate::state::SIT_OBJECT_TYPE) {
+        return;
+    }
+    state
+        .lock()
+        .await
+        .push_ambient_event(prompt::dining_arrival_event(
+            entry.display_label(),
+            serve_tables,
+        ));
 }
 
 /// The seated guest's name and a schedule entry standing beside them,
@@ -357,6 +393,7 @@ pub async fn llm_driver(
         schedule,
         sickroom,
         serve_tables,
+        maid_names,
         tables,
         claims,
         api_base_url,
@@ -495,6 +532,7 @@ pub async fn llm_driver(
         active_schedule =
             check_schedule_transition(&state, &schedule, active_schedule, due, &label).await;
         sync_tales(&mut tales, &schedule, active_schedule.0, &label);
+        announce_seat(&state, &schedule, active_schedule.0, serve_tables).await;
     }
 
     // Send initial world state unless the NPC is asleep, or it only thinks
@@ -706,6 +744,9 @@ pub async fn llm_driver(
                 } else {
                     let mut won = None;
                     for pid in seatings.into_iter().rev() {
+                        if is_staff(&s, &pid, &maid_names) {
+                            continue;
+                        }
                         let Some((name, entry)) = table_entry(&s, &pid, &tables) else {
                             continue;
                         };
@@ -733,10 +774,11 @@ pub async fn llm_driver(
                     format!(
                         "[Guest] {name} just took a seat at one of your tables and \
                          you are on your way over — no move action needed. Greet \
-                         them in your own words and take their order. A dish they \
-                         ask for, you bring with the serve action; other goods they \
-                         buy by clicking you to open your shop. If they have already \
-                         left the seat, let it go."
+                         them in your own words and take their order; if they have \
+                         already called it out, skip the asking and bring it. A dish \
+                         they ask for, you bring with the serve action; other goods \
+                         they buy by clicking you to open your shop. If they have \
+                         already left the seat, let it go."
                     ),
                     entry,
                 ));
@@ -767,16 +809,32 @@ pub async fn llm_driver(
         // Drained whoever we are, so a non-maid's stray `serve` is answered
         // instead of sitting queued behind a gate that never opens.
         if attack_target.is_none() {
+            let mut own_plates: Vec<(u32, Vec<String>)> = Vec::new();
             let trips: Vec<(ServeRequest, ScheduleEntry)> = {
                 let mut s = state.lock().await;
                 let pending = std::mem::take(&mut s.pending_serve);
                 let mut trips = Vec::new();
                 for req in pending {
                     let order = req.dishes.join(" and ");
+                    let own = s.self_player_id == Some(req.guest_id);
                     if !serve_tables {
                         s.push_agent_event(format!(
                             "[ServeFailed] You don't serve tables here — {} will have to buy \
                              the {order} or ask the inn staff.",
+                            req.guest_name
+                        ));
+                    } else if own {
+                        // Already at the table: the plate lands where we sit.
+                        match s.own_chair() {
+                            Some(chair) => own_plates.push((chair, req.dishes)),
+                            None => s.push_agent_event(
+                                "[ServeFailed] Sit down at a table first, then serve yourself."
+                                    .to_string(),
+                            ),
+                        }
+                    } else if is_staff(&s, &req.guest_id, &maid_names) {
+                        s.push_agent_event(format!(
+                            "[ServeFailed] {} is staff, not a guest — she feeds herself.",
                             req.guest_name
                         ));
                     } else if !claims.try_claim(
@@ -804,6 +862,20 @@ pub async fn llm_driver(
                 }
                 trips
             };
+            if !own_plates.is_empty() {
+                let mut s = state.lock().await;
+                for (chair_object_id, dishes) in own_plates {
+                    for dish in dishes {
+                        let cmd = onlinerpg_shared::ClientMessage::ServeMeal {
+                            chair_object_id,
+                            item_def_id: dish,
+                        };
+                        if let Err(e) = s.send_command(cmd).await {
+                            error!("Failed to send serve: {e}");
+                        }
+                    }
+                }
+            }
             if !trips.is_empty() {
                 // The kitchen is the regular post; a due sit or sleep entry
                 // is no kitchen, so the plates then come straight over.
@@ -902,31 +974,34 @@ pub async fn llm_driver(
         // === A plate served to us: eat it once settled in the chair ===
         {
             let mut s = state.lock().await;
-            let mine = s
-                .self_player
-                .as_ref()
-                .filter(|p| p.object_type.as_deref() == Some(crate::state::SIT_OBJECT_TYPE))
-                .and_then(|p| p.object_id)
-                .and_then(|chair| {
-                    s.meals
-                        .values()
-                        .find(|m| {
-                            Some(m.for_player) == s.self_player_id
-                                && m.chair_object_id == chair
-                                && !m.eaten
-                        })
-                        .map(|m| (m.id, m.item_def_id.clone()))
-                });
+            let mine = s.own_chair().and_then(|chair| {
+                s.meals
+                    .values()
+                    .find(|m| {
+                        Some(m.for_player) == s.self_player_id
+                            && m.chair_object_id == chair
+                            && !m.eaten
+                    })
+                    .map(|m| (m.id, m.item_def_id.clone()))
+            });
             my_plates.retain(|id, _| s.meals.contains_key(id));
             if let Some((meal_id, dish)) = mine {
                 match my_plates.get(&meal_id) {
                     None => {
+                        // The second plate of one order needs no second thank-you.
+                        let first = my_plates.is_empty();
                         my_plates.insert(meal_id, Some(Instant::now()));
-                        s.push_ambient_event(format!(
-                            "[Meal] A plate of {dish} was set in front of you. Thank whoever \
-                             brought it in your own words; you eat it by yourself in a \
-                             moment — no action needed."
-                        ));
+                        if first {
+                            s.push_ambient_event(format!(
+                                "[Meal] A plate of {dish} was set in front of you; you eat it by \
+                                 yourself in a moment — no action needed. If someone brought \
+                                 it, thank them in your own words."
+                            ));
+                        } else {
+                            s.push_ambient_event_quiet(format!(
+                                "[Meal] A plate of {dish} joins it — no action needed."
+                            ));
+                        }
                     }
                     Some(Some(since)) if since.elapsed() >= EAT_DELAY => {
                         my_plates.insert(meal_id, None);
@@ -993,6 +1068,7 @@ pub async fn llm_driver(
                         check_schedule_transition(&state, &schedule, active_schedule, due, &label)
                             .await;
                     sync_tales(&mut tales, &schedule, active_schedule.0, &label);
+                    announce_seat(&state, &schedule, active_schedule.0, serve_tables).await;
                 }
             }
         }
@@ -1511,6 +1587,7 @@ mod tests {
                 floor_level: 1,
             }],
             serve_tables: false,
+            maid_names: HashSet::new(),
             tables: Vec::new(),
             claims: Arc::default(),
             api_base_url: "http://127.0.0.1:9".to_string(),
@@ -1578,6 +1655,7 @@ mod tests {
             schedule: Vec::new(),
             sickroom: Vec::new(),
             serve_tables: true,
+            maid_names: HashSet::new(),
             tables: Vec::new(),
             claims: Arc::default(),
             api_base_url: "http://127.0.0.1:9".to_string(),

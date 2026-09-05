@@ -157,7 +157,7 @@ fn world_state_caps_the_ground_item_list() {
 #[test]
 fn door_toggle_keeps_house_walls_in_step_with_the_edges() {
     use onlinerpg_shared::housing::{
-        HouseData, PassabilityGrid, RoomData, WallConfig, WallDirection, WallVariant,
+        PassabilityGrid, RoomType, WallConfig, WallDirection, WallVariant,
     };
 
     let wall = |variant| WallConfig {
@@ -166,43 +166,24 @@ fn door_toggle_keeps_house_walls_in_step_with_the_edges() {
         is_open: false,
     };
     let room = RoomData {
-        room_type: Default::default(),
-        roof_type: Default::default(),
-        roof_ridge_dir: Default::default(),
-        stair_reversed: false,
-        local_x: 0,
-        local_z: 0,
         size_x: 1,
         size_z: 1,
-        floor_level: 0,
-        floor_texture: 0,
-        roof_texture: 0,
-        wall_height: 3.0,
         wall_north: vec![wall(WallVariant::WithDoor)],
         wall_south: vec![wall(WallVariant::Solid)],
         wall_east: vec![wall(WallVariant::Solid)],
         wall_west: vec![wall(WallVariant::Solid)],
+        ..room(0, 0, RoomType::default())
     };
-
-    let house = HouseData {
-        id: "h".to_string(),
-        owner_id: "test".to_string(),
-        origin: onlinerpg_shared::Position {
-            x: 10.0,
-            y: 0.0,
-            z: 10.0,
-        },
-        rooms: vec![room],
-        passability: vec![PassabilityGrid {
-            floor_level: 0,
-            origin_x: 0,
-            origin_z: 0,
-            width: 1,
-            depth: 1,
-            // All four edges walled (N=1, E=2, S=4, W=8), door shut.
-            cells: vec![1 | 2 | 4 | 8],
-        }],
-    };
+    let mut house = house("h", p(10.0, 0.0, 10.0), vec![room]);
+    house.passability = vec![PassabilityGrid {
+        floor_level: 0,
+        origin_x: 0,
+        origin_z: 0,
+        width: 1,
+        depth: 1,
+        // All four edges walled (N=1, E=2, S=4, W=8), door shut.
+        cells: vec![1 | 2 | 4 | 8],
+    }];
 
     let mut world = WorldCache::new();
     world.add_house(house);
@@ -298,4 +279,91 @@ fn world_state_names_the_dungeon_entrances() {
     assert!(lines[0].contains("Old Crypt"), "{lines:?}");
     assert!(lines[1].contains("Orc Warrens"), "{lines:?}");
     assert!(lines[2].contains("Ogre Stronghold"), "{lines:?}");
+}
+
+/// The prompt names the storey only while we stand inside a room's
+/// footprint on our own floor; outdoors and underground say nothing.
+#[test]
+fn world_state_names_the_storey_when_indoors() {
+    use onlinerpg_shared::housing::RoomType;
+
+    let (mut s, _rx) = test_state();
+    s.world_cache.write().unwrap().add_house(house(
+        "inn",
+        p(100.0, 0.0, 100.0),
+        vec![
+            room(0, 0, RoomType::default()),
+            room(0, 1, RoomType::default()),
+            room(4, 0, RoomType::Stairwell),
+        ],
+    ));
+
+    s.self_player = Some(test_player(102.0, 102.0));
+    assert!(s
+        .format_world_state()
+        .contains("You are indoors (ground floor)"));
+
+    s.self_floor_level = 1;
+    assert!(s
+        .format_world_state()
+        .contains("You are indoors (2nd floor)"));
+
+    s.self_player = Some(test_player(106.0, 102.0));
+    assert!(
+        s.format_world_state()
+            .contains("You are indoors (2nd floor)"),
+        "a stairwell holds the floor above it"
+    );
+
+    s.self_floor_level = 0;
+    s.self_player = Some(test_player(120.0, 120.0));
+    assert!(!s.format_world_state().contains("indoors"));
+
+    s.self_player = Some(test_player(102.0, 102.0));
+    s.self_floor_level = -1;
+    assert!(!s.format_world_state().contains("indoors"));
+}
+
+/// A coordinate move walks on the storey the LLM names, else the floor we
+/// stand on — and is refused up front when no such spot is on that floor.
+#[test]
+fn a_coordinate_off_the_floor_it_would_walk_on_is_refused_before_any_walk() {
+    use onlinerpg_shared::housing::RoomType;
+    use onlinerpg_shared::Position;
+
+    let (mut s, _rx) = test_state();
+    let inn = house(
+        "inn",
+        Position {
+            x: -1448.0,
+            y: 0.0,
+            z: 4753.0,
+        },
+        vec![room(0, 1, RoomType::Normal)],
+    );
+    s.world_cache.write().unwrap().add_house(inn);
+    let mut me = test_player(-1446.7, 4754.9);
+    me.floor_level = 1;
+    s.self_player = Some(me);
+    s.self_floor_level = 1;
+
+    let outside = (-1450.0, 4720.0);
+    let refused = s
+        .resolve_goal_floor(outside.0, outside.1, None)
+        .unwrap_err();
+    assert!(refused.contains("not on the 2nd floor"), "{refused}");
+    assert_eq!(s.resolve_goal_floor(outside.0, outside.1, Some(0)), Ok(0));
+    assert_eq!(
+        s.resolve_goal_floor(-1445.5, 4755.5, None),
+        Ok(1),
+        "same room"
+    );
+    let refused = s
+        .resolve_goal_floor(outside.0, outside.1, Some(1))
+        .unwrap_err();
+    assert!(refused.contains("no 2nd floor at that spot"), "{refused}");
+    assert!(s.resolve_goal_floor(-1445.5, 4755.5, Some(-1)).is_err());
+
+    s.self_floor_level = 0;
+    assert_eq!(s.resolve_goal_floor(outside.0, outside.1, None), Ok(0));
 }

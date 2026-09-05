@@ -87,7 +87,7 @@
 | `firewood` | Firewood | 스택 가능 | 5c | 모닥불 하나를 만들 때 1개 소비 |
 | `campfire_kit` | Campfire Kit | 스택 가능 | 50c | 재료·도구 없이 모닥불 하나를 즉시 설치 |
 
-- 벌목용 도끼는 `category: "weapon"`, `dice: "1d4"`,
+- 벌목용 도끼는 `category: "weapon"`, `weaponType: "axe"`, `dice: "1d4"`,
   `gatheringTool: "woodcutting"`으로 둔다. 전투에서는 힘 보정과 무기 강화 수치를
   적용하는 정상 근접 무기지만, 피해는 단검·횃불과 같은 최저 무기군이다. 맨손
   `1d2`보다는 낫고 낡은 검·창의 `1d6`, 철검의 `1d8`보다 약하다. 무기 강화는

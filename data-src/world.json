@@ -20,7 +20,7 @@
     "targetDailyGrowth": 0.002,
     "gain": 0.5,
     "maxStepPerMeeting": 0.1,
-    "indexMin": 0.9,
+    "indexMin": 0.5,
     "indexMax": 2.0
   },
   "ambientSpawns": [

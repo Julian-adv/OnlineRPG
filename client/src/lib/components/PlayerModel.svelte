@@ -494,7 +494,7 @@
     detachOffhand()
     detachTorchFire()
     attachedOffhandItemId = null
-    if (mixer) playAnimationForState()
+    replayForOffhand()
 
     if (!itemDefId) return
 
@@ -512,10 +512,18 @@
         attachTorchFire()
         await loadOffhandAnimations()
         if (gen !== offhandAttachGeneration) return
-        if (mixer) playAnimationForState()
+        replayForOffhand()
       }
     })
   })
+
+  /** Only idle and movement clips have torch variants; restarting anything
+   *  else (a seat, an emote, a swing) would snap the player back to its start. */
+  function replayForOffhand() {
+    if (!mixer) return
+    if (playerState === 'idle' || playerState === 'moving')
+      playAnimationForState()
+  }
 
   // ── Back cape ───────────────────────────────────────────
   let capeRig: CapeRig | null = null

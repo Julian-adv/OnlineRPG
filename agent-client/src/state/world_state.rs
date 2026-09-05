@@ -25,6 +25,18 @@ impl SharedState {
             .and_then(|id| self.stalls.values().find(|s| s.owner == id))
     }
 
+    /// The storey of the building standing at `(x, z)` on `floor_level`,
+    /// named; `None` outdoors or underground.
+    pub fn storey_at(&self, x: f32, z: f32, floor_level: i8) -> Option<&'static str> {
+        let floor = u8::try_from(floor_level).ok()?;
+        let world = self.world_cache.read().unwrap();
+        world.is_indoors(x, z, floor).then(|| storey_name(floor))
+    }
+
+    fn indoor_floor(&self, position: &Position) -> Option<&'static str> {
+        self.storey_at(position.x, position.z, self.self_floor_level)
+    }
+
     pub fn format_world_state(&self) -> String {
         let mut lines = Vec::new();
 
@@ -40,6 +52,9 @@ impl SharedState {
                 p.position.y,
                 p.position.z
             ));
+            if let Some(floor) = self.indoor_floor(&p.position) {
+                lines.push(format!("You are indoors ({floor})"));
+            }
             if p.health == 0 {
                 lines.push(
                     "You are DEFEATED (HP 0). You do NOT recover on your own and most \
@@ -320,5 +335,19 @@ impl SharedState {
         } else {
             lines.join("\n")
         }
+    }
+}
+
+/// How a move leaves an upper storey, quoted wherever the LLM is told it is
+/// upstairs.
+pub const FLOOR_ZERO_HINT: &str =
+    "add \"floor\": 0 to your move to reach the outdoors — you take the stairs on your own";
+
+pub fn storey_name(floor: u8) -> &'static str {
+    match floor {
+        0 => "ground floor",
+        1 => "2nd floor",
+        2 => "3rd floor",
+        _ => "an upper floor",
     }
 }

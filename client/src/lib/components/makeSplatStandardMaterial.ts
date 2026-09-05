@@ -41,7 +41,12 @@ import {
   type SplatAtlasSet,
 } from '../utils/splatLayerLoader'
 import { MAX_PALETTE } from '../terrain/splat-encoding'
-import { SPLAT_PADDED_DIM, TILE_DIM } from '../terrain/terrain-constants'
+import {
+  LAND_PLOT_SIZE,
+  REGION_CELLS,
+  SPLAT_PADDED_DIM,
+  TILE_DIM,
+} from '../terrain/terrain-constants'
 
 export type SplatLayer = {
   map: THREE.Texture // Albedo (sRGB)
@@ -327,23 +332,20 @@ export function makeSplatStandardMaterial({
     const b = blended.toVar()
     const gridActive = smoothstep(float(0.49), float(0.51), brush.gridVisible)
 
-    const gridCoords = fLocalUv.mul(64.0)
-    const grid1 = abs(fract(gridCoords.sub(0.5)).sub(0.5)).div(
-      fwidth(gridCoords)
-    )
-    const line1 = float(1).sub(min(min(grid1.x, grid1.y), float(1)))
-    const grid64 = abs(fract(fLocalUv.sub(0.5)).sub(0.5)).div(fwidth(fLocalUv))
-    const line64 = float(1).sub(min(min(grid64.x, grid64.y), float(1)))
-    const regionCoords = vWorldXZ.add(32.0).div(1024.0)
-    const gridRegion = abs(fract(regionCoords.sub(0.5)).sub(0.5)).div(
-      fwidth(regionCoords)
-    )
-    const lineRegion = float(1).sub(
-      min(min(gridRegion.x, gridRegion.y), float(1))
-    )
+    // Antialiased 1-px line where coords cross an integer
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gridLine = (coords: any) => {
+      const g = abs(fract(coords.sub(0.5)).sub(0.5)).div(fwidth(coords))
+      return float(1).sub(min(min(g.x, g.y), float(1)))
+    }
+    const line1 = gridLine(fLocalUv.mul(TILE_DIM))
+    const line64 = gridLine(fLocalUv)
+    const linePlot = gridLine(vWorldXZ.div(LAND_PLOT_SIZE))
+    const lineRegion = gridLine(vWorldXZ.add(TILE_DIM / 2).div(REGION_CELLS))
 
-    b.assign(mix(b, mix(b, vec3(0, 0, 0), line1.mul(0.3)), gridActive))
-    b.assign(mix(b, mix(b, vec3(1, 0, 0), line64), gridActive))
+    b.assign(mix(b, vec3(0, 0, 0), line1.mul(0.3).mul(gridActive)))
+    b.assign(mix(b, vec3(1, 1, 1), linePlot.mul(0.7).mul(gridActive)))
+    b.assign(mix(b, vec3(1, 0, 0), line64.mul(gridActive)))
     b.assign(mix(b, vec3(0.886, 0.725, 0.231), lineRegion.mul(gridActive)))
 
     const bDist = distance(vWorldXZ, vec2(brush.center))

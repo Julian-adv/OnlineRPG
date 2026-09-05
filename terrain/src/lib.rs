@@ -2,6 +2,7 @@ pub mod coords;
 pub mod defaults;
 pub mod height;
 pub mod io;
+pub mod land;
 pub mod splat;
 mod tile_cache;
 pub mod trees;

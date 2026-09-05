@@ -68,7 +68,7 @@ P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
   "targetDailyGrowth": 0.002,
   "gain": 0.5,
   "maxStepPerMeeting": 0.1,
-  "indexMin": 0.9,
+  "indexMin": 0.5,
   "indexMax": 2.0,
   "activeDays": 30
 }
@@ -80,10 +80,10 @@ P_new  = clamp(P_new, P_min, P_max)       -- 전체 범위 (초기 0.9 ~ 2.0)
 
 ## 적용 범위와 불변식
 
-- `P`는 **상인 구매가**, 그중 **소비재**(consumable, 물약·숫돌·음식·주문서 등)에만 곱한다. 장비·염료 같은 내구재는 고정. 거주 NPC(Karl 등)의 재고 판매와 되사기(buyback, 받은 금액 그대로)도 지수 밖이다 — 거주 재고는 유한해서 차익이 캡 된다.
-- **판매가(`basePrice × sellRatePercent`)는 `P`를 곱하지 않는다.** 판매가에도 곱하면 싱크와 함께 파우셋이 커져 제어 효과가 상쇄된다.
+- `P`는 **상인 구매가**, 그중 **진열대 소비재**(consumable, 물약·숫돌·음식·주문서 등)에만 곱한다. 장비·염료 같은 내구재는 고정. 거주 NPC(Karl 등)의 재고 판매와 되사기(buyback, 받은 금액 그대로)도 지수 밖이다 — 거주 재고는 유한해서 차익이 캡 된다.
+- **판매가(`basePrice × sellRatePercent`)는 `P`를 곱하지 않는다.** 판매가에도 곱하면 싱크와 함께 파우셋이 줄어 물가를 내리는 효과가 반감된다. 대신 상인은 그 물건의 **최저 흥정 구매가**(`cheapest_buy`)를 넘겨 사 주지 않는다. 거주 NPC의 위시리스트 프리미엄은 의도된 차익이라 예외.
 - 흥정 밴드([ECONOMY.md](ECONOMY.md#원칙-llm이-제안하고-서버가-집행한다))는 `P` 적용 **후** 가격에 계산한다.
-- 머니 펌프 불변식을 `P` 포함으로 다시 세운다: `basePrice × P_min × 밴드최저 > basePrice × sellRate × 밴드최고`. sellRate 40%, 밴드 ±25%p면 `P_min × 0.75 > 0.65` → `P_min > 0.87`. **따라서 `indexMin`은 0.9 이상**이어야 한다. 서버가 부팅 시 설정을 검증한다.
+- 머니 펌프 불변식: 위 클램프로 `P`와 무관하게 사고팔기 차익 ≤ 0 (`the_price_index_scales_shelf_consumable_buys_and_only_caps_sells`, 배치는 `sell_items_batch_*`). 부팅 시 검증하는 `밴드최저 > sellRate × 밴드최고`는 `P = 1`에서 클램프가 걸리지 않는다는 설정 점검. `indexMin`은 0.5 (2026-09-05, 신규 유입으로 1인당 골드가 내려가는데 0.9 바닥에 막혀 회의가 무력했음).
 - 가격은 정수로 반올림, 최소 1 코퍼.
 
 ## 프로토콜

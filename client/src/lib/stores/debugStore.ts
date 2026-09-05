@@ -7,6 +7,7 @@ export const celestialDebugVisible = writable(false)
 export const mapEditorMode = writable(false)
 export const gridVisible = writable(false)
 export const worldMapVisible = writable(false)
+export const landPlotsVisible = writable(false)
 export const inventoryVisible = writable(false)
 export const characterPanelVisible = writable(false)
 export type CharacterPanelTab = 'stats' | 'skills' | 'status' | 'titles'

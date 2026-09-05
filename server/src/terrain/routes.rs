@@ -77,6 +77,10 @@ pub fn terrain_router(terrain_io: Arc<TerrainIO>, game_state: Arc<GameState>) ->
             get(get_minimap).put(put_minimap),
         )
         .route("/api/terrain/zones/{rx}/{rz}", get(get_zone).put(put_zone))
+        .route(
+            "/api/terrain/land-grades/{rx}/{rz}",
+            get(get_land_grades).put(put_land_grades),
+        )
         .route("/api/terrain/trees/{x}/{z}", get(get_trees))
         .route("/api/terrain/river-field/{x}/{z}", get(get_river_field))
         .route("/api/terrain/water-field/{x}/{z}", get(get_water_field))
@@ -399,6 +403,46 @@ async fn put_minimap(
         error!("Failed to write minimap ({}, {}): {}", rx, rz, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn get_land_grades(
+    Path((rx, rz)): Path<(i32, i32)>,
+    State(terrain): State<Arc<TerrainIO>>,
+) -> Result<Response, StatusCode> {
+    let data = terrain.read_land_grades(rx, rz).await.map_err(|e| {
+        error!("Failed to read land grades ({}, {}): {}", rx, rz, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let data = data.unwrap_or_else(|| crate::land_grades::default_grades(rx, rz));
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        data,
+    )
+        .into_response())
+}
+
+async fn put_land_grades(
+    Path((rx, rz)): Path<(i32, i32)>,
+    State(terrain): State<Arc<TerrainIO>>,
+    body: Bytes,
+) -> Result<StatusCode, (StatusCode, String)> {
+    terrain
+        .write_land_grades(rx, rz, &body)
+        .await
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::InvalidData => (StatusCode::BAD_REQUEST, e.to_string()),
+            _ => {
+                error!("Failed to write land grades ({}, {}): {}", rx, rz, e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Internal server error".to_string(),
+                )
+            }
+        })?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -191,6 +191,20 @@ async fn only_official_npcs_serve_and_only_to_a_seated_guest_in_reach() {
 }
 
 #[tokio::test]
+async fn a_seated_maid_serves_her_own_chair() {
+    let game_state = make_test_game_state("meal_self_serve");
+    game_state.sync_region_furniture(0, 0, &inn_table());
+    let maid = make_maid(&game_state, "miriel", 101.0, 51.0).await;
+    sit(&game_state, &maid, 43).await;
+
+    game_state.serve_meal(&maid, 43, "chicken_rice").await;
+    let served = meals(&game_state).await;
+    assert_eq!(served.len(), 1);
+    assert_eq!(served[0].for_player, maid);
+    assert_eq!(served[0].chair_object_id, 43);
+}
+
+#[tokio::test]
 async fn eating_fills_satiation_and_needs_the_plates_own_chair() {
     let game_state = make_test_game_state("meal_eat");
     game_state.sync_region_furniture(0, 0, &inn_table());

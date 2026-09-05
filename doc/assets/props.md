@@ -56,6 +56,8 @@ Poly Haven에서 받은 .gltf를 Blender에서 .glb로 다시 export
 
 ## Dungeon Textures
 
+하우징·던전 GLB 텍스처도 `tools/repack-material-glbs.py`로 만든 배포본이다(원본 `assets/textures-src/`, 규칙은 environment.md Terrain Textures 참조).
+
 Poly Haven 벽 텍스처. `rock_wall_10`만 배선됨 (`housing-textures.ts`).
 
 - rock_wall_10 https://polyhaven.com/a/rock_wall_10 — 던전 복도 벽 (사용 중, CC0)

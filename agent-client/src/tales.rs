@@ -44,6 +44,15 @@ fn item_name(id: &str) -> &str {
     crate::item_defs::get(id).map_or(id, |d| d.name.as_str())
 }
 
+fn trick_name(id: &str) -> &str {
+    match id {
+        "respawn_reset" => {
+            "stepping out of the floor and straight back in so the slain beasts rose again at once"
+        }
+        other => other,
+    }
+}
+
 /// One ledger line: `DATE KIND NAME [arg | key=value]...`, whitespace
 /// separated.
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +104,7 @@ impl Deed {
     pub fn mood(&self) -> &'static str {
         match self.kind.as_str() {
             "enchant_break" | "boss_death" => "tragic",
+            "exploit" => "mocking",
             _ => "heroic",
         }
     }
@@ -174,6 +184,14 @@ impl Deed {
                 format!("{name} earned the title \"{title}\".")
             }
             "rich" => format!("{name}'s coffers now outweigh everyone else's in the realm."),
+            "exploit" => {
+                let trick = trick_name(self.arg(0).unwrap_or("a trick"));
+                let climb = match (self.field("from"), self.field("to")) {
+                    (Some(a), Some(b)) => format!(" from level {a} to {b}"),
+                    _ => String::new(),
+                };
+                format!("{name} climbed{climb}{} by {trick}.", self.in_place())
+            }
             other => {
                 let rest: Vec<&str> = self
                     .args
@@ -384,12 +402,13 @@ mod tests {
 2026-09-02  farthest       Eir    near=brovik  dist=6300
 2026-09-02  rain_dance     Fenn   wet
 garbage
+2026-09-04  exploit        Gorm   respawn_reset  ogre_stronghold  from=20  to=25
 ";
 
     #[test]
     fn tabs_and_spaces_both_parse_and_bad_lines_are_skipped() {
         let deeds = parse_ledger(LEDGER);
-        assert_eq!(deeds.len(), 7, "{deeds:?}");
+        assert_eq!(deeds.len(), 8, "{deeds:?}");
         assert_eq!(deeds[0].name, "Alder");
         assert!(deeds[0].flag("first"));
         assert_eq!(deeds[1].arg(1), Some("+9"));
@@ -419,6 +438,11 @@ garbage
             "{}",
             deeds[6].render()
         );
+        let cheat = deeds[7].render();
+        assert!(cheat.contains("from level 20 to 25"), "{cheat}");
+        assert!(cheat.contains("straight back in"), "{cheat}");
+        assert!(cheat.contains("Ogre Stronghold"), "{cheat}");
+        assert_eq!(deeds[7].mood(), "mocking");
     }
 
     #[test]

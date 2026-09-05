@@ -5,6 +5,7 @@
     getItemDef,
     statLabels,
     type ItemDefinition,
+    weaponTypeLabel,
   } from '../data/itemDefs'
   import { inventoryStore } from '../stores/inventoryStore'
 
@@ -75,6 +76,9 @@
     <span>Weight: {def.weight}</span>
     {#if def.equipSlot}
       <span>Slot: {def.equipSlot.replace(/_/g, ' ')}</span>
+    {/if}
+    {#if def.weaponType}
+      <span>Type: {weaponTypeLabel(def.weaponType)}</span>
     {/if}
     {#if def.category === 'weapon' && def.dice}
       <!-- A bow's own die is a token; the round it draws carries the rest, so
