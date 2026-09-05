@@ -598,6 +598,56 @@ impl SharedState {
         )
     }
 
+    /// The passability floor a coordinate move walks on: the storey the LLM
+    /// named, else the floor we stand on — or why the coordinate is no goal
+    /// there. Refusing up front spares a walk that could only end at the
+    /// nearest wall.
+    pub fn resolve_goal_floor(&self, x: f32, z: f32, storey: Option<i32>) -> Result<u8, String> {
+        let here = self.self_floor_level;
+        let Some(storey) = storey else {
+            if here > 0 && self.storey_at(x, z, here).is_none() {
+                return Err(format!(
+                    "it is not on the {} you are standing on — {FLOOR_ZERO_HINT}",
+                    storey_name(here as u8)
+                ));
+            }
+            if here < 0 {
+                if let Some(d) = self.dungeon_here().filter(|d| !d.footprint_contains(x, z)) {
+                    return Err(format!(
+                        "it is not on floor {} of {} — it lies outside the dungeon. Come back \
+                         up with {{\"type\": \"move\", \"depth\": 0}} first",
+                        here.unsigned_abs(),
+                        d.name
+                    ));
+                }
+            }
+            return Ok(self.passability_floor());
+        };
+        if here < 0 {
+            return Err(
+                "\"floor\" names a building storey, but you are underground — come back \
+                        up with {\"type\": \"move\", \"depth\": 0} first"
+                    .to_string(),
+            );
+        }
+        if storey < 0 {
+            return Err(
+                "a floor below 0 is a dungeon floor — name the dungeon with \"depth\" instead"
+                    .to_string(),
+            );
+        }
+        let Ok(floor) = i8::try_from(storey) else {
+            return Err(format!("there is no floor {storey} anywhere"));
+        };
+        if floor > 0 && self.storey_at(x, z, floor).is_none() {
+            return Err(format!(
+                "there is no {} at that spot",
+                storey_name(floor as u8)
+            ));
+        }
+        Ok(passability_floor_for_level(floor))
+    }
+
     /// Find a smoothed path from current position to the goal.
     pub fn find_path_to(&self, goal_x: f32, goal_z: f32, goal_floor: u8) -> PathResult {
         let (start_x, start_z) = match &self.self_player {

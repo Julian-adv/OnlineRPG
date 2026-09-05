@@ -1323,6 +1323,7 @@ pub(super) async fn handle_response(
             direction,
             distance,
             depth,
+            floor,
             sprint,
         } = action
         {
@@ -1491,44 +1492,55 @@ pub(super) async fn handle_response(
                 }
                 Some(MoveTarget::Dungeon { .. }) => unreachable!("handled above"),
                 None => {
-                    // A bare coordinate carries no floor, so stay on the one
-                    // we're on rather than dropping to the ground floor.
-                    let (goal, floor) = {
+                    let goal = {
                         let s = state.lock().await;
                         let pp = s.self_player.as_ref().map(|p| &p.position);
-                        (
-                            resolve_move_goal(x, z, direction, distance, pp),
-                            s.passability_floor(),
-                        )
+                        resolve_move_goal(x, z, direction, distance, pp)
                     };
                     match goal {
-                        Ok((gx, gz)) => match execute_move(state, gx, gz, floor, sprint).await {
-                            MoveResult::Arrived => {
-                                info!("Agent arrived at ({gx:.1}, {gz:.1})");
-                                let mut s = state.lock().await;
-                                s.push_agent_event(format!(
+                        Ok((gx, gz)) => {
+                            let path_floor = state.lock().await.resolve_goal_floor(gx, gz, *floor);
+                            let path_floor = match path_floor {
+                                Ok(f) => f,
+                                Err(why) => {
+                                    warn!(
+                                        "move: refused ({gx:.1}, {gz:.1}) floor {floor:?}: {why}"
+                                    );
+                                    let mut s = state.lock().await;
+                                    s.push_agent_event(format!(
+                                        "[MoveFailed] You cannot go to ({gx:.1}, {gz:.1}): {why}."
+                                    ));
+                                    continue;
+                                }
+                            };
+                            match execute_move(state, gx, gz, path_floor, sprint).await {
+                                MoveResult::Arrived => {
+                                    info!("Agent arrived at ({gx:.1}, {gz:.1})");
+                                    let mut s = state.lock().await;
+                                    s.push_agent_event(format!(
                                     "[Arrived] You reached ({gx:.1}, {gz:.1}). Look around and \
                                      decide your next move."
                                 ));
-                            }
-                            MoveResult::Blocked => {
-                                warn!("Path blocked to ({gx:.1}, {gz:.1})");
-                                let mut s = state.lock().await;
-                                s.push_agent_event(format!(
-                                    "[MoveFailed] No route to ({gx:.1}, {gz:.1}) — a wall or a \
-                                     shut door stands in the way. Try a different goal."
+                                }
+                                MoveResult::Blocked => {
+                                    warn!("Path blocked to ({gx:.1}, {gz:.1})");
+                                    let mut s = state.lock().await;
+                                    s.push_agent_event(format!(
+                                    "[MoveFailed] No route to ({gx:.1}, {gz:.1}) on this floor. \
+                                     Pick another goal."
                                 ));
-                            }
-                            MoveResult::Died => warn!("Died on the way to ({gx:.1}, {gz:.1})"),
-                            MoveResult::Error => {
-                                error!("Move error to ({gx:.1}, {gz:.1})");
-                                let mut s = state.lock().await;
-                                s.push_agent_event(format!(
-                                    "[MoveFailed] Something went wrong on the way to \
+                                }
+                                MoveResult::Died => warn!("Died on the way to ({gx:.1}, {gz:.1})"),
+                                MoveResult::Error => {
+                                    error!("Move error to ({gx:.1}, {gz:.1})");
+                                    let mut s = state.lock().await;
+                                    s.push_agent_event(format!(
+                                        "[MoveFailed] Something went wrong on the way to \
                                      ({gx:.1}, {gz:.1})."
-                                ));
+                                    ));
+                                }
                             }
-                        },
+                        }
                         Err(GoalError::BadDirection(dir)) => {
                             warn!("move: '{dir}' is not a direction");
                             let mut s = state.lock().await;

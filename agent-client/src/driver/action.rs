@@ -44,8 +44,12 @@ pub(super) enum AgentAction {
         // Dungeon floor to end up on: 1..N counted downward, 0 = surface.
         // Without coordinates the walk targets that floor's stair landing,
         // which is how the agent enters and descends a dungeon.
-        #[serde(alias = "dungeon_depth", alias = "floor", alias = "floor_level")]
+        #[serde(alias = "dungeon_depth")]
         depth: Option<i32>,
+        // Building storey the coordinates are on: 0 ground, 1 = 2nd floor.
+        // Unset takes the floor we stand on.
+        #[serde(alias = "storey")]
+        floor: Option<i32>,
         /// Unset = the agent's `always_sprint` default; false walks instead.
         sprint: Option<bool>,
     },
@@ -406,7 +410,12 @@ pub(super) const ACTION_SPECS: &[ActionSpec] = &[
   To an item lying on the ground, so you can pick it up:
   {"type": "move", "target": 6043}
   To a place, using exact coordinates from the world state:
-  {"type": "move", "x": 10.0, "y": 0.0, "z": -5.0}
+  {"type": "move", "x": 10.0, "z": -5.0}
+  Coordinates are taken on the floor you stand on; add "floor" for another
+  storey — 0 is the ground and everything outdoors, 1 the 2nd floor, 2 the
+  3rd. Indoors upstairs, "floor": 0 goes anywhere outside — you take the
+  stairs on your own:
+  {"type": "move", "x": -1450.0, "z": 4720.0, "floor": 0}
   Or by direction and distance:
   {"type": "move", "direction": "north", "distance": 10.0}
   Directions are exactly these eight words: north, south, east, west,
@@ -1237,11 +1246,12 @@ pub(super) fn action_to_command(
             direction,
             distance,
             depth,
+            floor,
             ..
         } => {
-            // Name-targeted and dungeon-floor moves need SharedState (name
+            // Name-targeted and floor-aware moves need SharedState (name
             // resolution, layouts); handled in `execute::handle_response`.
-            if target.is_some() || depth.is_some() {
+            if target.is_some() || depth.is_some() || floor.is_some() {
                 return None;
             }
             let (gx, gz) = resolve_move_goal(x, z, direction, distance, player_pos).ok()?;
@@ -1352,6 +1362,22 @@ mod tests {
 
     /// "Unset" must stay distinguishable from `false`: only the former takes
     /// the agent's default.
+    #[test]
+    fn a_move_names_a_building_floor_apart_from_a_dungeon_depth() {
+        let AgentAction::Move { floor, depth, .. } = parse_single_action(
+            r#"{"actions": [{"type": "move", "x": 1.0, "z": 2.0, "floor": 0}]}"#,
+        ) else {
+            panic!("not a move");
+        };
+        assert_eq!((floor, depth), (Some(0), None));
+        let AgentAction::Move { floor, depth, .. } = parse_single_action(
+            r#"{"actions": [{"type": "move", "target": "Old Crypt", "depth": 1}]}"#,
+        ) else {
+            panic!("not a move");
+        };
+        assert_eq!((floor, depth), (None, Some(1)));
+    }
+
     #[test]
     fn the_sprint_opt_out_parses_on_every_walking_action() {
         let sprint_of = |json: &str| match parse_single_action(json) {
@@ -2372,6 +2398,7 @@ mod tests {
                 direction: None,
                 distance: None,
                 depth: None,
+                floor: None,
                 sprint: None,
             },
             AgentAction::Attack {

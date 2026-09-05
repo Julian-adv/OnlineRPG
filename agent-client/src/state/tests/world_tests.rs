@@ -323,3 +323,47 @@ fn world_state_names_the_storey_when_indoors() {
     s.self_floor_level = -1;
     assert!(!s.format_world_state().contains("indoors"));
 }
+
+/// A coordinate move walks on the storey the LLM names, else the floor we
+/// stand on — and is refused up front when no such spot is on that floor.
+#[test]
+fn a_coordinate_off_the_floor_it_would_walk_on_is_refused_before_any_walk() {
+    use onlinerpg_shared::housing::RoomType;
+    use onlinerpg_shared::Position;
+
+    let (mut s, _rx) = test_state();
+    let inn = house(
+        "inn",
+        Position {
+            x: -1448.0,
+            y: 0.0,
+            z: 4753.0,
+        },
+        vec![room(0, 1, RoomType::Normal)],
+    );
+    s.world_cache.write().unwrap().add_house(inn);
+    let mut me = test_player(-1446.7, 4754.9);
+    me.floor_level = 1;
+    s.self_player = Some(me);
+    s.self_floor_level = 1;
+
+    let outside = (-1450.0, 4720.0);
+    let refused = s
+        .resolve_goal_floor(outside.0, outside.1, None)
+        .unwrap_err();
+    assert!(refused.contains("not on the 2nd floor"), "{refused}");
+    assert_eq!(s.resolve_goal_floor(outside.0, outside.1, Some(0)), Ok(0));
+    assert_eq!(
+        s.resolve_goal_floor(-1445.5, 4755.5, None),
+        Ok(1),
+        "same room"
+    );
+    let refused = s
+        .resolve_goal_floor(outside.0, outside.1, Some(1))
+        .unwrap_err();
+    assert!(refused.contains("no 2nd floor at that spot"), "{refused}");
+    assert!(s.resolve_goal_floor(-1445.5, 4755.5, Some(-1)).is_err());
+
+    s.self_floor_level = 0;
+    assert_eq!(s.resolve_goal_floor(outside.0, outside.1, None), Ok(0));
+}
