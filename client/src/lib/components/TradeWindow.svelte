@@ -48,9 +48,7 @@
     dealPct?: number
   }
 
-  /** A row awaiting a quantity choice, shown via QuantityPopup. Clicking a
-   *  buy/sell row with more than one unit available opens this instead of
-   *  stacking one unit per click. */
+  /** A row awaiting a quantity choice. */
   interface PendingAdd {
     kind: 'buy' | 'sell'
     itemDefId: string
@@ -213,7 +211,7 @@
       stockMax !== undefined
         ? Math.max(1, stockMax - reservedBuyQty(itemDefId))
         : affordableQty(unitPrice)
-    if (max <= 1) {
+    if (!def.stackable || max <= 1) {
       addBuyUnits(itemDefId, unitPrice, 1)
       return
     }

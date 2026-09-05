@@ -6,6 +6,29 @@
 
 ## Scripts
 
+- `export_item_asset.py`
+
+  정적인 GLB/glTF/FBX 아이템을 하나의 메쉬로 합쳐 회전·크기를 적용하고 바닥 중앙에 원점을 둔다.
+  텍스처는 종횡비를 유지하며 최대 512px로 축소하고, WebP q90 GLB와 투명 128px 아이콘,
+  512px 미리보기 및 packed `.blend`를 만든다. 리깅·shape key 모델과 손잡이 원점이 필요한 무기는 별도 작업한다.
+  모델은 `client/public/models/CATEGORY/NAME.glb`, 아이콘은 `client/public/items/CATEGORY/NAME.png`,
+  작업 파일은 `assets/NAME/`에 저장한다. 원본은 수정하지 않는다.
+
+  Land Deed 재현 명령 (저장소 루트에서 실행):
+
+  ```bash
+  blender -b --python-exit-code 1 -P tools/blender-scripts/export_item_asset.py -- \
+    --source assets/land_deed/Meshy_AI_Blackridge_Estate_Dee_0905071232_texture.glb \
+    --name land_deed --size 0.5 --rotation -90 0 0 \
+    --icon-rotation 28 -8 -12 --exposure -1.2
+  ```
+
+  `--size`는 회전 후 가장 긴 변의 미터 단위 길이이며, `--size-axis x|y|z`로 기준 축을 바꿀 수 있다.
+  축과 회전은 Blender Z-up 기준이다. `--category` 기본값은 `objects`이며,
+  `--texture-size`로 텍스처 최대 변 길이, `--keep-emission`으로 의도된 발광 유지를 지정한다.
+  아이콘용 복사본은 일정 크기로 정규화한 뒤 촬영하므로 게임 모델 크기와 독립적으로 노출을 조절할 수 있다.
+  `--output-root /tmp/item-preview`로 별도 디렉토리에 결과를 만들고, `--help`로 전체 인자를 확인한다.
+
 - `fix_mixamo_transforms.py`
 
   mixamo에서 import한 armature와 mesh가 각각 scale이 0.01, 100.0으로 되어 있는 것을 1.0, 1.0으로 맞춰준다.
