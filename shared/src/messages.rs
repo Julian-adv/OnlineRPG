@@ -527,6 +527,17 @@ pub enum ClientMessage {
         tile_z: i32,
         quadrant: u8,
     },
+    LandAccount {
+        merchant_player_id: PlayerId,
+    },
+    LandDeposit {
+        merchant_player_id: PlayerId,
+        amount: i64,
+    },
+    LandWithdraw {
+        merchant_player_id: PlayerId,
+        amount: i64,
+    },
     /// Dye the worn cape with `color` (`#rrggbb`), spending the dye at
     /// `instance_id`. Answers a `CapeDyePrompt`; the server re-checks
     /// everything (doc/CAPE_CUSTOMIZATION.md).
@@ -1221,6 +1232,19 @@ pub enum ServerMessage {
     },
     LandRejected {
         reason: String,
+    },
+    LandAccountState {
+        merchant_player_id: PlayerId,
+        treasury: i64,
+        plots: u32,
+        monthly_tax: i64,
+        next_tax: i64,
+        next_due: crate::GameDateTime,
+        due_in_seconds: u64,
+        missed: u32,
+        recovery_cost: i64,
+        free_months: u32,
+        error: Option<String>,
     },
     /// Same for a cape transfer kit: a cape is on and the kit is in the bag,
     /// so the client may open its image picker. Nothing is spent until

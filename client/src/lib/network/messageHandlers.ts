@@ -1,5 +1,10 @@
 import { get } from 'svelte/store'
 import {
+  landAccount,
+  landAccountError,
+  landTransferPending,
+} from '../stores/landAccountStore'
+import {
   gameStore,
   updatePlayer,
   addChatMessage,
@@ -1605,6 +1610,14 @@ export function handleServerMessage(
       } else {
         pendingTradeOffer.set({ session, offeredAt: Date.now() })
       }
+      break
+    }
+
+    case 'LandAccountState': {
+      if (get(shopSession)?.merchantPlayerId !== data.merchant_player_id) break
+      landTransferPending.set(false)
+      landAccountError.set(data.error ?? null)
+      if (!data.error) landAccount.set(data)
       break
     }
 

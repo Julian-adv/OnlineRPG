@@ -236,6 +236,9 @@ export type ClientMessage =
   | 'PickupStarted'
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
+  | { LandAccount: { merchant_player_id: number } }
+  | { LandDeposit: { merchant_player_id: number; amount: number } }
+  | { LandWithdraw: { merchant_player_id: number; amount: number } }
   | {
       UseLandDocument: {
         instance_id: number

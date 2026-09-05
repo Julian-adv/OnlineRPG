@@ -2,7 +2,7 @@ use crate::types::{CharacterAttributes, GameDateTime};
 #[path = "auth_land.rs"]
 mod land;
 use crate::world_config::world_config;
-pub use land::OwnedLandPlot;
+pub use land::{LandAccount, OwnedLandPlot};
 use onlinerpg_shared::inventory::EquipSlot;
 use onlinerpg_shared::messages::FriendEntry;
 use onlinerpg_shared::xp;

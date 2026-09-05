@@ -1,6 +1,20 @@
 # Land System: 영지
 
-> 상태: 일부 구현 — 구획 등급 편집·땅문서 판매·사용·개척지 등록 구현 (2026-09-05)
+> 상태: 일부 구현 — 구획 등급 편집·땅문서 판매·사용·개척지 등록·세금 계좌 구현 (2026-09-05)
+
+2026-09-05: Aldwin의 화면을 부동산 관리 화면으로 분리했다. 잡동사니 판매 목록은
+없으며 서버도 단건·일괄 판매와 판매 흥정을 거부한다. 왼쪽 땅문서 아래에 세금
+계좌 잔액·다음 납기(게임 날짜와 실시간 잔여 시간)·예정액·연체 상태를 표시한다.
+오른쪽 소지금을 클릭하면 입금, 왼쪽 계좌를 클릭하면 출금 금액을 입력한다.
+`1g 20s 30c` 형식과 copper 숫자를 받으며 영지를 등록해야 계좌를 사용할 수 있다.
+입출금은 캐릭터 골드·인벤토리와 같은 DB 트랜잭션으로 저장한다.
+
+월초 자동 징수, 첫 납기 면제, 8납기 이상 비활동 판정, 미납 횟수 증가,
+입금 시 전액 복구와 다음 납기 면제를 구현했다. `land_tax_periods`에 영지별
+마지막 정산 월을 저장해 재시작 시 중복 징수를 막는다. 기존 영지는 기능이 처음
+실행된 월부터 계산하며 과거 세금은 소급하지 않는다. 화면의 쇠퇴 단계별 페널티
+안내는 아래 설계 기준이다. 건축·가구·문 제약과 폐허 렌더, 6회 미납 시 실제
+영지 해제·집 삭제·가구 회수는 아직 후속 구현이다.
 
 2026-09-05: 앨더마크 광장에 서 있는 Land Registrar `Aldwin`과 Land Deed
 판매를 추가했다. 기본 가격은 **50,000c(5g)**이며 전용 `land_deed.glb` 모델과
@@ -24,7 +38,7 @@ Land Deed는 겹치지 않는 아이템으로, 가방에서 문서 한 장이 �
 소유한 개척지는 확장할 수 없다. X축 월드 이음새에서도 인접 확장을 허용한다.
 등급은 등록 시 편집 파일을 읽고 파일이 없으면 고리 기본값을 사용한다.
 소유권은 `land_estates`·`land_plots`에 저장되어 서버 재시작 후에도 유지된다.
-왕실 사패·지도 소유 표시·영지 해제·유지비는 아직 미구현이다.
+왕실 사패·영지 해제는 아직 미구현이다.
 실행 설정은 `agent-client/data/config.toml.example`의 `steward` 항목을 따른다.
 
 플레이어가 월드의 땅 한 구획을 소유하고, 그 안에서 집과 가구를 배치하는
@@ -349,9 +363,12 @@ CREATE TABLE land_bids (
   확인 시 `UseLandDocument { instance_id, tile_x, tile_z, quadrant }` →
   `LandClaimed { estate_id, tile_x, tile_z, quadrant }` 또는 `LandRejected { reason }`.
   미리보기 응답의 `reason`은 등록 불가 이유이며, 가능하면 `null`이다.
-  좌표는 확인한 구획을 고정하며 서버의 현재 위치와 일치해야 한다. 프로토콜 v55.
-- 후속: `LandDeposit { amount }`, `LandWithdraw { amount }`,
-  `LandBid { auction_id, amount }`, `LandBidCancel { auction_id }`,
+  좌표는 확인한 구획을 고정하며 서버의 현재 위치와 일치해야 한다. 프로토콜 v56.
+- 구현됨: `LandAccount { merchant_player_id }`,
+  `LandDeposit { merchant_player_id, amount }`, `LandWithdraw { merchant_player_id, amount }`
+  → `LandAccountState` (잔액·구획 수·월세액·다음 납기와 예정액·미납 횟수·복구 비용·오류).
+  현재 캐릭터 소유 개척지 계좌만 관리하며 Aldwin과의 거리·층·공식 NPC 여부를 검사한다.
+- 후속: `LandBid { auction_id, amount }`, `LandBidCancel { auction_id }`,
   `LandDemolish`.
 - 후속: `ServerMessage::LandState { plot }` (입장 시 + 변경 시, 소유자에게),
   `LandRejected { reason }`, `LandAuctionResult { auction_id, won }`.
@@ -379,10 +396,9 @@ CREATE TABLE land_bids (
      인접 확장과 문서 원자적 소모는 **구현됨**. 왕실 사패 지원은 후속.
    - 소유 상태를 합친 `/api/land/region` REST와 월드맵의 소유 구획 표시.
      구획 클릭 조회는 이 단계에 포함, 미니맵 테두리는 다음.
-   - 유지비·지갑·쇠퇴는 넣지 않는다. 대신 이 단계에서는 영지 삭제
-     `LandDemolish`만 둔다.
-3. **유지비** — 영지 지갑, 납기 배치, 활동 조건, 쇠퇴·해제 시 집·가구 정리.
-   실서버 공개 전에 필요.
+   - 영지 삭제 `LandDemolish`는 후속이다.
+3. **유지비** — 영지 지갑, 납기 배치, 활동 조건과 연체 상태·복구는 구현됨.
+   쇠퇴 제약 적용·해제 시 집·가구 정리는 후속이며 실서버 공개 전에 필요.
 4. **영지 안 건축** — 집·가구 배치를 영지 경계로 검증. HOUSE_BUILDING.md의
    설계도 사용을 영지 안으로 제한. 에디터 개방은 그 문서의 2단계.
 5. **왕령 경매** — 대기열, 밀봉 입찰, 회의 틱 마감, 환급, 사패 지급.

@@ -485,3 +485,165 @@ async fn land_preview_checks_level_grades_and_ownership_without_spending() {
         19
     );
 }
+
+#[tokio::test]
+async fn land_tax_account_transfers_persist_and_reject_invalid_requests() {
+    let game = make_test_game_state("land_account_transfer");
+    let (auth, path) = make_test_auth_with_path("land_account_transfer");
+    let account = auth.login_google("land-account-transfer").unwrap();
+    let (character, mut rx) = land_owner(&game, &auth, &account, "Settler").await;
+    let owner = pid("Settler");
+    let steward = pid("npc_steward");
+    let mut npc = make_player("npc_steward", 1.0, 1.0);
+    npc.name = "Aldwin".to_string();
+    npc.is_official_npc = true;
+    game.add_player(npc).await;
+    game.player_gold.write().await.insert(owner, 10_000);
+    game.land_account_action(&owner, &steward, Some((100, true)), &auth)
+        .await;
+    assert_eq!(game.player_gold.read().await[&owner], 10_000);
+    claim_at(&game, &auth, "Settler", 1, 1.0, 1.0).await;
+    drain(&mut rx);
+    game.land_account_action(&owner, &steward, Some((6_000, true)), &auth)
+        .await;
+    assert_eq!(game.player_gold.read().await[&owner], 4_000);
+    assert_eq!(auth.land_account(character).unwrap().treasury, 6_000);
+    assert!(drain(&mut rx).iter().any(|m| matches!(
+        m,
+        ServerMessage::LandAccountState {
+            treasury: 6_000,
+            monthly_tax: 2_000,
+            next_tax: 0,
+            plots: 1,
+            free_months: 1,
+            error: None,
+            ..
+        }
+    )));
+    game.land_account_action(&owner, &steward, Some((1_000, false)), &auth)
+        .await;
+    assert_eq!(game.player_gold.read().await[&owner], 5_000);
+    let reopened = crate::auth::AuthService::new(path.clone()).unwrap();
+    assert_eq!(reopened.land_account(character).unwrap().treasury, 5_000);
+    assert_eq!(reopened.load_inventory(character).unwrap().len(), 19);
+    let conn = rusqlite::Connection::open(path).unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT gold FROM characters WHERE id=?1",
+            [character],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        5_000
+    );
+    for (amount, deposit) in [
+        (0, true),
+        (-1, false),
+        (5_001, true),
+        (5_001, false),
+        (i64::MAX, true),
+    ] {
+        game.land_account_action(&owner, &steward, Some((amount, deposit)), &auth)
+            .await;
+        assert_eq!(game.player_gold.read().await[&owner], 5_000);
+        assert_eq!(auth.land_account(character).unwrap().treasury, 5_000);
+    }
+    game.players
+        .write()
+        .await
+        .get_mut(&steward)
+        .unwrap()
+        .position
+        .x = 100.0;
+    game.land_account_action(&owner, &steward, Some((100, true)), &auth)
+        .await;
+    assert_eq!(game.player_gold.read().await[&owner], 5_000);
+    game.players
+        .write()
+        .await
+        .get_mut(&steward)
+        .unwrap()
+        .position
+        .x = 1.0;
+    conn.execute_batch("CREATE TRIGGER fail_tax_inventory BEFORE INSERT ON character_items BEGIN SELECT RAISE(FAIL, 'test failure'); END;").unwrap();
+    game.land_account_action(&owner, &steward, Some((100, true)), &auth)
+        .await;
+    assert_eq!(game.player_gold.read().await[&owner], 5_000);
+    assert_eq!(auth.land_account(character).unwrap().treasury, 5_000);
+    assert!(drain(&mut rx).iter().any(|m| matches!(m, ServerMessage::LandAccountState { error: Some(reason), .. } if reason.contains("could not be saved"))));
+}
+
+#[tokio::test]
+async fn land_tax_rollover_exemption_recovery_and_restart_are_consistent() {
+    let game = make_test_game_state("land_tax_rollover");
+    let (auth, path) = make_test_auth_with_path("land_tax_rollover");
+    let account = auth.login_google("land-tax-rollover").unwrap();
+    let (character, _) = land_owner(&game, &auth, &account, "Settler").await;
+    claim_at(&game, &auth, "Settler", 1, 1.0, 1.0).await;
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let month: i64 = conn
+        .query_row("SELECT month FROM land_tax_periods", [], |row| row.get(0))
+        .unwrap();
+    conn.execute("UPDATE land_estates SET treasury=2000", [])
+        .unwrap();
+    auth.collect_land_taxes(month + 1, &[character]).unwrap();
+    let state = auth.land_account(character).unwrap();
+    assert_eq!(
+        (state.treasury, state.free_months, state.missed),
+        (2000, 0, 0)
+    );
+    auth.collect_land_taxes(month + 2, &[character]).unwrap();
+    assert_eq!(auth.land_account(character).unwrap().treasury, 0);
+    let reopened = crate::auth::AuthService::new(path).unwrap();
+    reopened
+        .collect_land_taxes(month + 2, &[character])
+        .unwrap();
+    assert_eq!(reopened.land_account(character).unwrap().missed, 0);
+    reopened
+        .collect_land_taxes(month + 4, &[character])
+        .unwrap();
+    let state = reopened.land_account(character).unwrap();
+    assert_eq!((state.missed, state.recovery_cost()), (2, 6000));
+    let mut save = game.get_player_save_data(&pid("Settler")).await.unwrap();
+    save.gold = 10_000;
+    let rows = auth.load_inventory(character).unwrap();
+    let (gold, state) = auth
+        .transfer_land_gold(save, &rows, 4000, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!((gold, state.treasury, state.missed), (6000, 4000, 2));
+    let mut save = game.get_player_save_data(&pid("Settler")).await.unwrap();
+    save.gold = gold;
+    let (_, state) = auth
+        .transfer_land_gold(save, &rows, 2000, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!((state.treasury, state.missed, state.free_months), (0, 0, 1));
+    auth.collect_land_taxes(month + 5, &[character]).unwrap();
+    assert_eq!(auth.land_account(character).unwrap().missed, 0);
+    auth.collect_land_taxes(month + 6, &[character]).unwrap();
+    assert_eq!(auth.land_account(character).unwrap().missed, 1);
+}
+
+#[tokio::test]
+async fn land_tax_inactive_owner_misses_payment_despite_funded_account() {
+    let game = make_test_game_state("land_tax_inactive");
+    let (auth, path) = make_test_auth_with_path("land_tax_inactive");
+    let account = auth.login_google("land-tax-inactive").unwrap();
+    let (character, _) = land_owner(&game, &auth, &account, "Settler").await;
+    claim_at(&game, &auth, "Settler", 1, 1.0, 1.0).await;
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let month: i64 = conn
+        .query_row("SELECT month FROM land_tax_periods", [], |row| row.get(0))
+        .unwrap();
+    conn.execute("UPDATE land_estates SET treasury=100000, free_months=0", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE characters SET last_seen_at=0 WHERE id=?1",
+        [character],
+    )
+    .unwrap();
+    auth.collect_land_taxes(month + 1, &[]).unwrap();
+    let state = auth.land_account(character).unwrap();
+    assert_eq!((state.treasury, state.missed), (100000, 1));
+}

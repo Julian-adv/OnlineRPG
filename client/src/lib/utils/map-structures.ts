@@ -79,6 +79,7 @@ export function drawLandPlotCells(
   ctx.save()
   let fillStyle: string | null = null
   for (const region of regions) {
+    if (!region.grades && !region.owners?.size) continue
     const origin = plotOrigin(region.rx, region.rz, 0)
     const base = worldToCanvas(origin.x, origin.z, transform)
     for (let i = 0; i < REGION_PLOTS; i++) {

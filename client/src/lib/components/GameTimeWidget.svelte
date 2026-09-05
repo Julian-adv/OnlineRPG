@@ -22,6 +22,7 @@
 </script>
 
 <script lang="ts">
+  import { MONTH_NAMES } from '../data/gameCalendar'
   import { calendarShown } from '../stores/inventoryStore'
   import { currentDungeonDepth, isUnderground } from '../stores/dungeonStore'
   import { getSolarDaylightWindow } from '../utils/celestialSimulation'
@@ -57,21 +58,6 @@
   const ECLIPSE_NEW_MOON_THRESHOLD = 0.15
   const ECLIPSE_ANGLE_THRESHOLD_RAD = 0.2 // ~11.5°
   const ECLIPSE_X_OVERLAP_THRESHOLD_PERCENT = 15
-
-  const MONTH_NAMES = [
-    'Dawnmere',
-    'Reson',
-    'Verdant',
-    'Highsun',
-    'Emberfall',
-    'Redrain',
-    'Harvestwind',
-    'Gloam',
-    'Riftwane',
-    'Mistveil',
-    'Frostrest',
-    'Afterglow',
-  ] as const
 
   interface MoonVisualDefinition extends MoonDefinition {
     sizePx: number
@@ -225,7 +211,7 @@
       MONTH_NAMES[gameTimeState.date.month - 1] ??
       `Month ${gameTimeState.date.month}`
     const day = gameTimeState.date.day.toString().padStart(2, '0')
-    return `${gameTimeState.date.year} ${monthName} ${day}`
+    return `${gameTimeState.date.year} Month ${gameTimeState.date.month} (${monthName}) ${day}`
   }
 
   function formatGameTime() {

@@ -130,7 +130,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 ///      so the arrow drawn in flight is the one that left the quiver.
 /// v54: Land Deed preview, confirmed claims, and registration results.
 /// v55: Land claim previews include the reason a plot cannot be claimed.
-pub const PROTOCOL_VERSION: u32 = 55;
+/// v56: Land tax account state, deposits, and withdrawals.
+pub const PROTOCOL_VERSION: u32 = 56;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

@@ -13,6 +13,133 @@ pub(super) fn plot_key(addr: PlotAddr) -> (i32, i32, u8) {
 }
 
 impl GameState {
+    pub async fn tick_land_taxes(&self, auth: &AuthService) {
+        let month = self
+            .current_game_day()
+            .div_euclid(super::time::GAME_DAYS_PER_MONTH);
+        let mut last = self.land_tax_last_month.lock().await;
+        if *last == Some(month) {
+            return;
+        }
+        let online = self
+            .player_characters
+            .read()
+            .await
+            .values()
+            .map(|(id, _, _)| *id)
+            .collect::<Vec<_>>();
+        let auth = auth.clone();
+        match auth_db(move || auth.collect_land_taxes(month, &online)).await {
+            Ok(()) => *last = Some(month),
+            Err(error) => tracing::warn!(%error, "Failed to collect land taxes"),
+        }
+    }
+
+    pub async fn land_account_action(
+        &self,
+        player_id: &PlayerId,
+        merchant_id: &PlayerId,
+        transfer: Option<(i64, bool)>,
+        auth: &AuthService,
+    ) {
+        let result = self
+            .try_land_account_action(player_id, merchant_id, transfer, auth)
+            .await;
+        let (account, error) = match result {
+            Ok(account) => (account, None),
+            Err(reason) => (Default::default(), Some(reason.to_string())),
+        };
+        let now = self.current_total_game_seconds();
+        let month_seconds = super::time::GAME_DAYS_PER_MONTH * super::time::GAME_SECONDS_PER_DAY;
+        let next = (now.div_euclid(month_seconds) + 1) * month_seconds;
+        self.send_direct_message(
+            player_id,
+            ServerMessage::LandAccountState {
+                merchant_player_id: *merchant_id,
+                treasury: account.treasury,
+                plots: account.plots,
+                monthly_tax: account.monthly_tax(),
+                next_tax: if account.free_months > 0 {
+                    0
+                } else {
+                    account.monthly_tax()
+                },
+                next_due: Self::total_game_seconds_to_datetime(next),
+                due_in_seconds: ((next - now) as f64 / super::time::GAME_SECONDS_PER_REAL_SECOND)
+                    .ceil() as u64,
+                missed: account.missed,
+                recovery_cost: account.recovery_cost(),
+                free_months: account.free_months,
+                error,
+            },
+        )
+        .await;
+    }
+
+    async fn try_land_account_action(
+        &self,
+        player_id: &PlayerId,
+        merchant_id: &PlayerId,
+        transfer: Option<(i64, bool)>,
+        auth: &AuthService,
+    ) -> Result<crate::auth::LandAccount, &'static str> {
+        if !self
+            .validate_trader(player_id, merchant_id)
+            .await?
+            .is_land_registrar()
+        {
+            return Err("Visit the Land Registrar to manage your tax account.");
+        }
+        self.tick_land_taxes(auth).await;
+        let auth = auth.clone();
+        let Some((amount, deposit)) = transfer else {
+            let character_id = self
+                .player_characters
+                .read()
+                .await
+                .get(player_id)
+                .map(|(id, _, _)| *id)
+                .ok_or("Character not found.")?;
+            return auth_db(move || auth.land_account(character_id))
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "Failed to read land account");
+                    "Tax account is temporarily unavailable."
+                });
+        };
+        let _persistence = self.persistence_lock.lock().await;
+        if self
+            .reject_if_trading(player_id, "transfer tax funds")
+            .await
+        {
+            return Err("Finish your player trade before transferring tax funds.");
+        }
+        let mut character = self
+            .get_player_save_data(player_id)
+            .await
+            .ok_or("Character not found.")?;
+        let mut gold = self.player_gold.write().await;
+        let balance = gold.get_mut(player_id).ok_or("Gold balance not found.")?;
+        character.gold = *balance;
+        let inventories = self.inventories.read().await;
+        let inventory = inventories.get(player_id).ok_or("Inventory not found.")?;
+        let rows = serialize_inventory(inventory);
+        let (updated, account) =
+            auth_db(move || auth.transfer_land_gold(character, &rows, amount, deposit))
+                .await
+                .map_err(|error| {
+                    tracing::warn!(%error, "Failed to transfer land gold");
+                    "Transfer could not be saved. Your gold was not moved."
+                })??;
+        *balance = updated;
+        drop(inventories);
+        drop(gold);
+        self.mark_dirty(player_id).await;
+        self.send_direct_message(player_id, ServerMessage::GoldUpdate { gold: updated })
+            .await;
+        Ok(account)
+    }
+
     pub async fn try_preview_land_claim(
         &self,
         player_id: &PlayerId,
@@ -153,6 +280,7 @@ impl GameState {
         plot: (i32, i32, u8),
         auth: &AuthService,
     ) -> Result<i64, &'static str> {
+        self.tick_land_taxes(auth).await;
         if self.trade_reserved_quantity(player_id, instance_id).await > 0 {
             return Err("This Land Deed is reserved for trade.");
         }
@@ -182,7 +310,10 @@ impl GameState {
         updated.bag.remove(index);
         let rows = serialize_inventory(&updated);
         let auth = auth.clone();
-        let estate_id = auth_db(move || auth.claim_homestead(&character, plot, &rows))
+        let month = self
+            .current_game_day()
+            .div_euclid(super::time::GAME_DAYS_PER_MONTH);
+        let estate_id = auth_db(move || auth.claim_homestead(&character, plot, &rows, month))
             .await
             .map_err(|error| {
                 tracing::warn!(%error, "Failed to commit land claim");

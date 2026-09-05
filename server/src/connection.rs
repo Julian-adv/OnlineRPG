@@ -1781,6 +1781,44 @@ async fn handle_client_message(
             }
         }
 
+        ClientMessage::LandAccount { merchant_player_id } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .land_account_action(id, &merchant_player_id, None, auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::LandDeposit {
+            merchant_player_id,
+            amount,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .land_account_action(
+                        id,
+                        &merchant_player_id,
+                        Some((amount, true)),
+                        auth_service,
+                    )
+                    .await;
+            }
+        }
+        ClientMessage::LandWithdraw {
+            merchant_player_id,
+            amount,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .land_account_action(
+                        id,
+                        &merchant_player_id,
+                        Some((amount, false)),
+                        auth_service,
+                    )
+                    .await;
+            }
+        }
+
         ClientMessage::ApplyCapeTexture {
             instance_id,
             texture,

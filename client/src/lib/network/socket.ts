@@ -707,6 +707,17 @@ class NetworkManager {
     })
   }
 
+  sendLandAccount(merchantPlayerId: number) {
+    this.sendMessage({ LandAccount: { merchant_player_id: merchantPlayerId } })
+  }
+
+  sendLandTransfer(merchantPlayerId: number, amount: number, deposit: boolean) {
+    const transfer = { merchant_player_id: merchantPlayerId, amount }
+    this.sendMessage(
+      deposit ? { LandDeposit: transfer } : { LandWithdraw: transfer }
+    )
+  }
+
   /** Spend the dye at `instanceId` on the worn cape. */
   sendDyeCape(instanceId: number, color: string) {
     if (!this.isNetworkableInstanceId(instanceId, 'dye')) return

@@ -19,6 +19,13 @@
     MAX_TRADE_DISTANCE_METERS,
   } from '../data/tradeConstants'
   import GoldAmount from './GoldAmount.svelte'
+  import LandTaxDetails from './LandTaxDetails.svelte'
+  import LandGoldDialog from './LandGoldDialog.svelte'
+  import {
+    landAccount,
+    landAccountError,
+    landTransferPending,
+  } from '../stores/landAccountStore'
   import { itemTooltip } from '../actions/itemTooltip'
   import { draggablePanel } from '../actions/draggablePanel'
   import { networkManager } from '../network/socket'
@@ -30,25 +37,48 @@
   } from './inventoryGroups'
 
   const session = $derived($shopSession)
+  const isRegistrar = $derived(
+    session !== null &&
+      getNpcCapabilities(session.merchantName).traderId === 'steward'
+  )
+  let transfer = $state<'deposit' | 'withdraw' | null>(null)
+
+  $effect(() => {
+    const merchantId = isRegistrar ? session?.merchantPlayerId : undefined
+    landAccount.set(null)
+    landAccountError.set(null)
+    landTransferPending.set(false)
+    transfer = null
+    if (merchantId === undefined) return
+    networkManager.sendLandAccount(merchantId)
+    const timer = setInterval(() => {
+      if (!get(landTransferPending)) networkManager.sendLandAccount(merchantId)
+    }, 8000)
+    return () => clearInterval(timer)
+  })
+
+  function confirmTransfer(amount: number) {
+    if (!session || !transfer || $landTransferPending) return
+    landTransferPending.set(true)
+    landAccountError.set(null)
+    networkManager.sendLandTransfer(
+      session.merchantPlayerId,
+      amount,
+      transfer === 'deposit'
+    )
+    transfer = null
+  }
 
   interface CartEntry {
     kind: 'buy' | 'sell' | 'buyback'
     itemDefId: string
-    /** Bag group key for a sell entry; backing instances resolve on confirm. */
     groupKey?: string
-    /** Buyback entry backing a buyback entry; absent otherwise. */
     entryId?: number
     qty: number
-    /** Per-unit price, fixed when the entry is added (prices cannot change
-     *  within a shop session). */
     unitPrice: number
-    /** Haggled modifier baked into unitPrice. Deal entries are single-use
-     *  (the server consumes the deal on the first traded unit), so they
-     *  stay at qty 1. */
     dealPct?: number
   }
 
-  /** A row awaiting a quantity choice. */
   interface PendingAdd {
     kind: 'buy' | 'sell'
     itemDefId: string
@@ -64,10 +94,6 @@
   let portraitFailed = $state(false)
   let now = $state(Date.now())
 
-  // Reset the cart only when the merchant actually changes (a different shop
-  // opens, or the window closes) — NOT on every ShopState refresh for the same
-  // merchant. An NPC can push a refresh via its own dialogue/actions/deals, and
-  // that must not wipe the items the player has staged to sell.
   let lastMerchantId: number | null = null
   $effect(() => {
     const id = session?.merchantPlayerId ?? null
@@ -84,13 +110,8 @@
     return traderId ? assetUrl(`/portraits/${traderId}.webp`) : null
   })
 
-  /** Resident traders (wishlist, real stock) vs merchants (catalog). */
   const isResident = $derived(session !== null && session.wishlist.length > 0)
 
-  // The server rejects trades beyond MAX_TRADE_DISTANCE_METERS; close the
-  // window at the same range so the player isn't left with a shop that only
-  // errors. A trading NPC is held in place server-side (TradeBusy) while its
-  // window is open, so this only triggers when the *player* walks away.
   $effect(() => {
     if (!session) return
     const merchantId = session.merchantPlayerId
@@ -111,11 +132,8 @@
     return () => clearInterval(timer)
   })
 
-  // Residents only buy their wishlist; merchants buy anything priced.
-  // Grouped/sorted the same way the bag grid is: same-def stackable stacks
-  // (potions, scrolls, food) merge into one row instead of one per fragment.
   const sellEntries = $derived.by((): SelectableGroup[] => {
-    if (!session) return []
+    if (!session || isRegistrar) return []
     const wishlist = session.wishlist
     return groupBagForSelection($inventoryStore.bag).filter((group) => {
       const basePrice = getItemDef(group.itemDefId)?.basePrice ?? 0
@@ -126,7 +144,6 @@
     })
   })
 
-  /** Live haggled modifier for an item, 0 when none (or expired). */
   function dealPct(itemDefId: string, kind: DealKind): number {
     if (!session) return 0
     const deal = $shopDeals[dealKey(session.merchantPlayerId, itemDefId, kind)]
@@ -134,8 +151,6 @@
     return deal.modifierPct
   }
 
-  /** True when a modifier works against the player (red badge):
-   *  paying more on a buy, or being paid less on a sell. */
   function isMarkup(kind: DealKind, pct: number): boolean {
     return kind === 'buy' ? pct > 0 : pct < 0
   }
@@ -174,18 +189,11 @@
       0
     )
   )
-  /** Net gold the player must pay; negative means the player earns gold.
-   *  Residents pay sells out of a finite hidden wallet — the server rejects
-   *  the trade ("They cannot afford that right now") when it runs dry. */
   const netCost = $derived(buyTotal - sellTotal)
   const canConfirm = $derived(cart.length > 0 && netCost <= $playerGold)
 
-  /** Pre-selected buy amount; a stock or gold cap below this wins. */
   const DEFAULT_BUY_QTY = 10
 
-  /** Buying a catalog item has no owned "stack" to bound quantity by, so the
-   *  popup caps at what the player can currently afford — a UX convenience
-   *  only; the server re-validates gold/weight for real on confirm. */
   function affordableQty(unitPrice: number): number {
     return Math.max(1, Math.floor($playerGold / Math.max(1, unitPrice)))
   }
@@ -311,7 +319,6 @@
     })
   }
 
-  /** Each buyback entry is one unit; it can only be staged once. */
   function inCartBuyback(entryId: number): boolean {
     return cart.some((e) => e.kind === 'buyback' && e.entryId === entryId)
   }
@@ -323,22 +330,18 @@
     }
   }
 
-  /** Units of this bag group already reserved in the cart. */
   function reservedQty(groupKey: string): number {
     return cart
       .filter((e) => e.kind === 'sell' && e.groupKey === groupKey)
       .reduce((sum, e) => sum + e.qty, 0)
   }
 
-  /** Buy units of this def already in the cart (caps resident stock buys). */
   function reservedBuyQty(itemDefId: string): number {
     return cart
       .filter((e) => e.kind === 'buy' && e.itemDefId === itemDefId)
       .reduce((sum, e) => sum + e.qty, 0)
   }
 
-  /** Deal entries first, so the server's single-use modifier lands on the
-   *  unit the cart priced with it. */
   function dealsFirst(entries: CartEntry[]): CartEntry[] {
     return [...entries].sort(
       (a, b) => Number(Boolean(b.dealPct)) - Number(Boolean(a.dealPct))
@@ -347,9 +350,6 @@
 
   function onConfirm() {
     if (!session || !canConfirm) return
-    // A shared allocator so a deal-priced row and a plain row for the same
-    // item def (same group) deplete one pool instead of each independently
-    // draining the group's full instance list.
     const allocator = createGroupAllocator()
     const sellItems = dealsFirst(cart.filter((e) => e.kind === 'sell'))
       .filter((e) => e.groupKey !== undefined)
@@ -385,8 +385,9 @@
 {#if session}
   <div
     class="trade-window"
+    class:estate-window={isRegistrar}
     role="dialog"
-    aria-label="Trade"
+    aria-label={isRegistrar ? 'Real estate' : 'Trade'}
     data-panel="trade"
     use:draggablePanel={'trade'}
   >
@@ -401,9 +402,11 @@
     {/if}
     <div class="panel-header" data-drag-handle>
       <span class="panel-title">
-        {isResident
-          ? `Trade with ${session.merchantName}`
-          : `${session.merchantName}'s Shop`}
+        {isRegistrar
+          ? `${session.merchantName} · Real Estate`
+          : isResident
+            ? `Trade with ${session.merchantName}`
+            : `${session.merchantName}'s Shop`}
       </span>
       <button class="close-btn" onclick={() => shopSession.set(null)}
         >&times;</button
@@ -412,7 +415,7 @@
 
     <div class="trade-columns">
       <div class="trade-column">
-        <div class="column-title">Buy</div>
+        <div class="column-title">{isRegistrar ? 'Land documents' : 'Buy'}</div>
         <div class="item-list">
           {#each session.catalog as itemDefId (itemDefId)}
             {@const def = getItemDef(itemDefId)}
@@ -475,7 +478,7 @@
               <div class="empty-note">Nothing for sale</div>
             {/if}
           {/each}
-          {#if session.buyback.length > 0}
+          {#if !isRegistrar && session.buyback.length > 0}
             <div class="column-title buyback-title">Buy back</div>
             {#each session.buyback as entry (entry.entryId)}
               {@const def = getItemDef(entry.itemDefId)}
@@ -503,14 +506,31 @@
             {/each}
           {/if}
         </div>
+        {#if isRegistrar}<LandTaxDetails
+            onwithdraw={() => (transfer = 'withdraw')}
+          />{/if}
       </div>
 
       <div class="trade-column cart-column">
-        <div class="cart-line cart-current">
-          <span class="cart-label">Current</span>
-          <GoldAmount copper={$playerGold} />
-        </div>
-        <div class="column-title">Cart</div>
+        {#if isRegistrar}
+          <button
+            class="wallet-button"
+            disabled={!$landAccount?.plots ||
+              $playerGold <= 0 ||
+              $landTransferPending}
+            onclick={() => (transfer = 'deposit')}
+            title="Deposit gold into your tax account"
+          >
+            <span>Your gold</span><GoldAmount copper={$playerGold} />
+          </button>
+          <p class="deposit-hint">Click your gold to deposit.</p>
+        {:else}
+          <div class="cart-line cart-current">
+            <span class="cart-label">Current</span>
+            <GoldAmount copper={$playerGold} />
+          </div>
+        {/if}
+        <div class="column-title">{isRegistrar ? 'Purchase' : 'Cart'}</div>
         <div class="item-list">
           {#each cart as entry (entry.kind + ':' + (entry.groupKey ?? entry.entryId ?? entry.itemDefId) + (entry.dealPct ? ':deal' : ''))}
             {@const def = getItemDef(entry.itemDefId)}
@@ -577,55 +597,68 @@
         </div>
       </div>
 
-      <div class="trade-column">
-        <div class="column-title">Sell ({session.sellRatePercent}%)</div>
-        <div class="item-list">
-          {#each sellEntries as group (group.key)}
-            {@const def = getItemDef(group.itemDefId)}
-            {#if def}
-              {@const reserved = reservedQty(group.key)}
-              {@const pct = dealPct(group.itemDefId, 'sell')}
-              <button
-                class="item-row"
-                disabled={reserved >= group.totalQty}
-                onclick={() => addSell(group, def)}
-                use:itemTooltip={{
-                  def,
-                  item: {
-                    instance_id: group.instances[0].instanceId,
-                    item_def_id: group.itemDefId,
-                    quantity: group.totalQty,
-                    enchant: group.enchant,
-                  },
-                  side: 'right',
-                }}
-              >
-                <img
-                  class="item-icon"
-                  src="/items/{def.icon}"
-                  alt=""
-                  draggable="false"
-                />
-                <span class="item-name">
-                  {def.name}{group.totalQty > 1 ? ` ×${group.totalQty}` : ''}
-                </span>
-                {#if pct !== 0}
-                  <span class="deal-badge" class:markup={isMarkup('sell', pct)}
-                    >{pct > 0 ? '+' : ''}{pct}%</span
-                  >
-                {/if}
-                <span class="item-price"
-                  ><GoldAmount copper={sellPrice(def, pct)} /></span
+      {#if !isRegistrar}
+        <div class="trade-column">
+          <div class="column-title">Sell ({session.sellRatePercent}%)</div>
+          <div class="item-list">
+            {#each sellEntries as group (group.key)}
+              {@const def = getItemDef(group.itemDefId)}
+              {#if def}
+                {@const reserved = reservedQty(group.key)}
+                {@const pct = dealPct(group.itemDefId, 'sell')}
+                <button
+                  class="item-row"
+                  disabled={reserved >= group.totalQty}
+                  onclick={() => addSell(group, def)}
+                  use:itemTooltip={{
+                    def,
+                    item: {
+                      instance_id: group.instances[0].instanceId,
+                      item_def_id: group.itemDefId,
+                      quantity: group.totalQty,
+                      enchant: group.enchant,
+                    },
+                    side: 'right',
+                  }}
                 >
-              </button>
-            {/if}
-          {:else}
-            <div class="empty-note">Nothing to sell</div>
-          {/each}
+                  <img
+                    class="item-icon"
+                    src="/items/{def.icon}"
+                    alt=""
+                    draggable="false"
+                  />
+                  <span class="item-name">
+                    {def.name}{group.totalQty > 1 ? ` ×${group.totalQty}` : ''}
+                  </span>
+                  {#if pct !== 0}
+                    <span
+                      class="deal-badge"
+                      class:markup={isMarkup('sell', pct)}
+                      >{pct > 0 ? '+' : ''}{pct}%</span
+                    >
+                  {/if}
+                  <span class="item-price"
+                    ><GoldAmount copper={sellPrice(def, pct)} /></span
+                  >
+                </button>
+              {/if}
+            {:else}
+              <div class="empty-note">Nothing to sell</div>
+            {/each}
+          </div>
         </div>
-      </div>
+      {/if}
     </div>
   </div>
+{/if}
+
+{#if session && isRegistrar && transfer}
+  <LandGoldDialog
+    deposit={transfer === 'deposit'}
+    max={transfer === 'deposit' ? $playerGold : ($landAccount?.treasury ?? 0)}
+    onconfirm={confirmTransfer}
+    oncancel={() => (transfer = null)}
+  />
 {/if}
 
 <QuantityPopup
@@ -639,6 +672,57 @@
 />
 
 <style>
+  .estate-window .trade-column {
+    width: 260px;
+  }
+  .estate-window .trade-columns {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .estate-window .item-list {
+    flex-shrink: 0;
+  }
+  .estate-window .cart-column {
+    width: 240px;
+  }
+  .wallet-button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 9px;
+    font: inherit;
+    color: #e7d7ae;
+    border: 1px solid #cbb77855;
+    border-radius: 4px;
+    background: #cbb77812;
+    cursor: pointer;
+  }
+  .wallet-button:hover:not(:disabled) {
+    background: #cbb77825;
+  }
+  .wallet-button:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  .deposit-hint {
+    color: #8999a7;
+    font-size: 12px;
+    margin: 6px 0 12px;
+  }
+  @media (max-width: 600px) {
+    .estate-window .trade-columns {
+      flex-direction: column;
+    }
+    .estate-window .trade-column,
+    .estate-window .cart-column {
+      width: min(280px, 75vw);
+      padding: 0;
+      border: 0;
+    }
+  }
+
   .trade-window {
     position: fixed;
     left: 50%;
