@@ -142,6 +142,7 @@ export type ClickIntent =
   | { type: 'none' }
 
 export interface RaycastContext {
+  groundOnly?: boolean
   camera: THREE.Camera
   monsterMeshes: THREE.Group[]
   npcMeshes: THREE.Object3D[]
@@ -347,6 +348,14 @@ class InputHandler {
   processCanvasClick(event: MouseEvent, context: RaycastContext): ClickIntent {
     if (get(instrumentPanelVisible)) return { type: 'none' }
     const rect = (event.target as HTMLCanvasElement).getBoundingClientRect()
+    const raycaster = new Raycaster()
+    const centerNDC = new Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    )
+    raycaster.setFromCamera(centerNDC, context.camera)
+    if (context.groundOnly)
+      return this.processGroundClick(event, context, raycaster)
 
     // Check intersection with monsters
     if (context.monsterMeshes.length > 0) {
@@ -405,13 +414,6 @@ class InputHandler {
       )
       if (npcIntent) return npcIntent
     }
-
-    const raycaster = new Raycaster()
-    const centerNDC = new Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    )
-    raycaster.setFromCamera(centerNDC, context.camera)
 
     // Check intersection with door meshes. No distance gate: the player walks
     // up to a far door and opens it on arrival. The door face is vertical, so
@@ -612,30 +614,26 @@ class InputHandler {
       }
     }
 
-    // Check intersection with ground meshes. During floor/scene transitions
-    // (notably dungeon death -> surface respawn), the control layer can be
-    // mounted before the visible ground mesh list has caught up. Fall back to
-    // the player's current horizontal plane so a valid canvas click still
-    // becomes a move request instead of silently producing `none`.
+    return this.processGroundClick(event, context, raycaster)
+  }
+
+  private processGroundClick(
+    event: MouseEvent,
+    context: RaycastContext,
+    raycaster: Raycaster
+  ): ClickIntent {
     const intersects = raycaster.intersectObjects(context.groundMeshes, true)
 
-    // Hits are sorted nearest-first. A house's outer walls/roof sit between the
-    // isometric camera and the interior floor, so the naive closest hit would
-    // land the player on the south/west wall when they click a floor tile to
-    // walk inside. Skip wall/roof hits and take the first floor/terrain surface
-    // behind them (pathfinding then routes around solid walls to the door).
+    // Skip walls and roofs to select the walkable surface behind them.
     const groundHit = intersects.find((hit) => !isHouseWall(hit.object))
     if (groundHit) {
-      // Rod + water surface above the clicked terrain: cast, don't walk.
-      // The water field (not "y < 0") makes rivers castable; the server
-      // re-validates, so this only decides cast-vs-walk.
       const waterSurface = context.waterSurfaceAt?.(
         groundHit.point.x,
         groundHit.point.z
       )
-      // Out-of-range water falls through to a walk (mirrors the server's
-      // XZ range check) instead of sending a cast it would reject.
+      // Distant water remains a move request.
       if (
+        !context.groundOnly &&
         context.canCastFishing &&
         waterSurface !== undefined &&
         waterSurface - groundHit.point.y > min_fishable_depth_m() &&

@@ -860,6 +860,7 @@ impl super::GameState {
             .filter(|(id, _)| nearby_player_set.contains(*id) && *id != &player_id)
             .map(|(_, player)| player.clone())
             .collect();
+        drop(current_players);
 
         let monsters: HashMap<String, crate::types::Monster> = self
             .monsters
@@ -936,6 +937,20 @@ impl super::GameState {
             .collect();
 
         let mut msgs = Vec::new();
+        let fences = self.fences.read().await;
+        msgs.push(ServerMessage::FenceVisibility {
+            added: if player_floor == 0 {
+                fences
+                    .nearby(&player_position)
+                    .into_iter()
+                    .cloned()
+                    .collect()
+            } else {
+                vec![]
+            },
+            removed: vec![],
+        });
+        drop(fences);
         if !other_players.is_empty()
             || !monsters.is_empty()
             || !ground_items.is_empty()
@@ -2404,6 +2419,37 @@ impl super::GameState {
         for item in items_entered {
             self.send_direct_message(player_id, ServerMessage::GroundItemAppeared { item })
                 .await;
+        }
+
+        {
+            let fences = self.fences.read().await;
+            let mut candidates: HashMap<_, _> = fences
+                .nearby(old_position)
+                .into_iter()
+                .map(|f| (f.edge, f))
+                .collect();
+            candidates.extend(
+                fences
+                    .nearby(&player.position)
+                    .into_iter()
+                    .map(|f| (f.edge, f)),
+            );
+            let (left, entered) = aoi_diff(
+                candidates.into_values(),
+                |f| (f.edge.center(f.y), 0),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            if !left.is_empty() || !entered.is_empty() {
+                self.send_direct_message(
+                    player_id,
+                    ServerMessage::FenceVisibility {
+                        added: entered.into_iter().cloned().collect(),
+                        removed: left.into_iter().map(|f| f.edge).collect(),
+                    },
+                )
+                .await;
+            }
         }
 
         let (fires_left, fires_entered) = {

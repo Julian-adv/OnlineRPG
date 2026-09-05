@@ -10,6 +10,7 @@
   import HousingEditorPanel from './map-editor/HousingEditorPanel.svelte'
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
+  import FencePlacementBar from './FencePlacementBar.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
   import HungerIndicator from './HungerIndicator.svelte'
   import LevelBadge from './LevelBadge.svelte'
@@ -133,6 +134,8 @@
     panel.update((v) => !v)
   }
 </script>
+
+<FencePlacementBar />
 
 <div class="game-hud" style:--cluster-width="{clusterWidth}px">
   <ServerNotice />

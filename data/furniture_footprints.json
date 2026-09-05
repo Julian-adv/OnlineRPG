@@ -41,6 +41,12 @@
     "minZ": -0.487,
     "maxZ": 0.487
   },
+  "wooden_fence": {
+    "minX": -0.5,
+    "maxX": 0.5,
+    "minZ": -0.062,
+    "maxZ": 0.062
+  },
   "rustic_bed": {
     "minX": -0.453,
     "maxX": 0.453,

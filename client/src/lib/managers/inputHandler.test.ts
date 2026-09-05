@@ -103,6 +103,39 @@ describe('processCanvasClick cast-vs-walk', () => {
     }
   })
 
+  it('moves through NPC hits when fence placement requests ground only', () => {
+    const npc = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2))
+    npc.position.y = 1
+    npc.userData.npcPlayerId = 7
+    npc.updateMatrixWorld(true)
+    const context = contextWith({ npcMeshes: [npc] })
+    expect(inputHandler.processCanvasClick(centerClick(), context).type).toBe(
+      'interact_npc'
+    )
+    const intent = inputHandler.processCanvasClick(centerClick(true), {
+      ...context,
+      groundOnly: true,
+    })
+    expect(intent.type).toBe('move_to_ground')
+    if (intent.type === 'move_to_ground') {
+      expect(intent.position.y).toBeCloseTo(0)
+      expect(intent.sprinting).toBe(true)
+    }
+  })
+
+  it('moves instead of fishing when fence placement requests ground only', () => {
+    expect(
+      inputHandler.processCanvasClick(
+        centerClick(),
+        contextWith({
+          groundOnly: true,
+          canCastFishing: true,
+          waterSurfaceAt: () => 1,
+        })
+      ).type
+    ).toBe('move_to_ground')
+  })
+
   it('walks when no rod is equipped, even over water', () => {
     const intent = inputHandler.processCanvasClick(
       centerClick(),

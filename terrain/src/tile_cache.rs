@@ -71,13 +71,27 @@ impl<V> TileCache<V> {
     /// Insert unless a concurrent loader won the race (first value sticks).
     /// Over capacity, evicts the stalest-generation entry.
     pub async fn insert_if_absent(&self, key: (i32, i32), value: V) {
+        self.insert(key, value, false).await;
+    }
+
+    pub async fn replace(&self, key: (i32, i32), value: V) {
+        self.insert(key, value, true).await;
+    }
+
+    async fn insert(&self, key: (i32, i32), value: V, replace: bool) {
         let mut map = self.map.write().await;
+        let value = Entry {
+            value,
+            generation: AtomicU64::new(self.generation.load(Ordering::Relaxed)),
+        };
         match map.entry(key) {
-            MapEntry::Occupied(_) => return,
-            MapEntry::Vacant(slot) => slot.insert(Entry {
-                value,
-                generation: AtomicU64::new(self.generation.load(Ordering::Relaxed)),
-            }),
+            MapEntry::Occupied(mut slot) => {
+                if replace {
+                    slot.insert(value);
+                }
+                return;
+            }
+            MapEntry::Vacant(slot) => slot.insert(value),
         };
 
         if map.len() <= self.capacity {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { fenceMode } from '../stores/fenceStore'
   import { useThrelte } from '@threlte/core'
   import * as THREE from 'three'
   import { gameStore, hoverTarget, type LocalPlayer } from '../stores/gameStore'
@@ -1644,7 +1645,9 @@
   }
 
   function processClickIntent(event: MouseEvent): ClickIntent {
+    const groundOnly = get(fenceMode) !== null
     const intent = inputHandler.processCanvasClick(event, {
+      groundOnly,
       camera,
       monsterMeshes,
       npcMeshes,
@@ -1668,7 +1671,10 @@
           ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,
       waterSurfaceAt,
     })
-    if (intent.type === 'move_to_ground' || intent.type === 'none') {
+    if (
+      !groundOnly &&
+      (intent.type === 'move_to_ground' || intent.type === 'none')
+    ) {
       return (
         hoveredMonsterAttackIntent() ?? hoveredNpcInteractIntent() ?? intent
       )
@@ -1723,7 +1729,8 @@
 
   function handleCanvasClickIntent(event: MouseEvent) {
     if (event.button === 0 && $cameraRotationEnabled) return
-    const editorMode = $mapEditorMode || $housingEditorMode
+    const editorMode =
+      $mapEditorMode || $housingEditorMode || get(fenceMode) !== null
     if (event.button === 2 && !editorMode) {
       handleNpcContextMenu(event)
       return
@@ -1876,6 +1883,10 @@
   }
 
   function runHover(event: MouseEvent) {
+    if (get(fenceMode)) {
+      clearHover()
+      return
+    }
     lastHoverRaycast = performance.now()
     const target = inputHandler.processHover(event, {
       camera,
@@ -1933,6 +1944,15 @@
   currentDungeonDepth.subscribe(() => clearHover())
 
   onMount(() => {
+    const unsubscribeFenceMode = fenceMode.subscribe((mode) => {
+      if (!mode) return
+      clearStandUpTimer()
+      clearPropSwingTimers()
+      currentSpeed = 0
+      clickSprinting = false
+      transitionTo('idle')
+      updatePlayerState()
+    })
     preloadSwordHitSound()
     preloadSwordMissSound()
     preloadMonsterDeathSounds()
@@ -1974,6 +1994,7 @@
 
     return () => {
       removeInputListeners()
+      unsubscribeFenceMode()
       canvas.removeEventListener('pointermove', handlePointerHover)
       canvas.removeEventListener('pointerleave', handlePointerLeave)
       clearHover()

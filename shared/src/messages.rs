@@ -527,6 +527,11 @@ pub enum ClientMessage {
         tile_z: i32,
         quadrant: u8,
     },
+    EditFence {
+        edge: crate::fence::FenceEdge,
+        place: bool,
+    },
+    StartFenceMode,
     LandAccount {
         merchant_player_id: PlayerId,
     },
@@ -1223,6 +1228,17 @@ pub enum ServerMessage {
         tile_z: i32,
         quadrant: u8,
         reason: Option<String>,
+    },
+    FenceMode {
+        owner_id: i64,
+        plots: Vec<crate::fence::FencePlot>,
+    },
+    FenceVisibility {
+        added: Vec<crate::fence::Fence>,
+        removed: Vec<crate::fence::FenceEdge>,
+    },
+    FenceEditResult {
+        error: Option<String>,
     },
     LandClaimed {
         estate_id: i64,

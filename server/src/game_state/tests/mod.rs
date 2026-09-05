@@ -20,6 +20,7 @@ mod collision_tests;
 mod combat_tests;
 mod dungeon_tests;
 mod enchant_tests;
+mod fence_tests;
 mod fishing_tests;
 mod friend_tests;
 mod house_floor_tests;

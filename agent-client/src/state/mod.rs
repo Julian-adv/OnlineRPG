@@ -3,6 +3,16 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 /// Turns a merchant spends at the price meeting, the last one closing it.
 pub const MEETING_TURNS: u32 = 5;
 
+impl Drop for SharedState {
+    fn drop(&mut self) {
+        if let Some(id) = self.self_player_id {
+            if let Ok(mut world) = self.world_cache.write() {
+                world.remove_fence_view(id);
+            }
+        }
+    }
+}
+
 impl SharedState {
     pub fn enter_meeting(&mut self, host: bool) {
         self.meeting_turns = Some(0);

@@ -42,6 +42,14 @@ import {
 } from '../stores/inventoryStore'
 import { capeDyeDialog } from '../stores/capeDyeStore'
 import {
+  applyFenceVisibility,
+  fenceMode,
+  fencePending,
+  fenceError,
+  resetFences,
+} from '../stores/fenceStore'
+import { inventoryVisible } from '../stores/debugStore'
+import {
   landClaimDialog,
   applyLandClaimPreview,
 } from '../stores/landClaimStore'
@@ -503,6 +511,7 @@ export function handleServerMessage(
     }
 
     case 'JoinSuccess': {
+      resetFences()
       const serverPlayer: ServerPlayer = data.player
       console.log('Join successful, received player data:', serverPlayer)
       isAdminUser.set(data.is_admin === true)
@@ -1298,6 +1307,18 @@ export function handleServerMessage(
       applyLandClaimPreview(data)
       break
     }
+    case 'FenceMode':
+      fenceMode.set(data)
+      inventoryVisible.set(false)
+      fenceError.set(null)
+      break
+    case 'FenceVisibility':
+      applyFenceVisibility(data.added, data.removed)
+      break
+    case 'FenceEditResult':
+      fencePending.set(false)
+      fenceError.set(data.error ?? null)
+      break
 
     case 'LandClaimed': {
       landClaimDialog.update((claim) =>

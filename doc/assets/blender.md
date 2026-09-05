@@ -29,6 +29,10 @@
   아이콘용 복사본은 일정 크기로 정규화한 뒤 촬영하므로 게임 모델 크기와 독립적으로 노출을 조절할 수 있다.
   `--output-root /tmp/item-preview`로 별도 디렉토리에 결과를 만들고, `--help`로 전체 인자를 확인한다.
 
+  가구는 카탈로그의 `solid: true` 등록 후 `node tools/measure-furniture-footprints.mjs`로
+  충돌 영역을 갱신한다. WebP GLB 측정에는 `@gltf-transform/core`와
+  `@gltf-transform/extensions`가 필요하다 (`npm install --prefix tools --no-save --package-lock=false @gltf-transform/core@4.4.2 @gltf-transform/extensions@4.4.2`).
+
 - `fix_mixamo_transforms.py`
 
   mixamo에서 import한 armature와 mesh가 각각 scale이 0.01, 100.0으로 되어 있는 것을 1.0, 1.0으로 맞춰준다.

@@ -447,7 +447,9 @@ impl ItemDefs {
             );
             // Land Deeds use the authenticated registration handler.
             assert!(
-                def.consumable == (def.use_effect().is_some() || def.id == "land_deed"),
+                def.consumable
+                    == (def.use_effect().is_some()
+                        || matches!(def.id.as_str(), "land_deed" | "wooden_fence")),
                 "item '{}': consumable flag out of step with its use handler",
                 def.id
             );

@@ -10,6 +10,7 @@ pub mod character;
 pub mod debuff;
 pub mod dungeon;
 pub mod entity;
+pub mod fence;
 pub mod fishing;
 pub mod fnv;
 pub mod furniture;
@@ -131,7 +132,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v54: Land Deed preview, confirmed claims, and registration results.
 /// v55: Land claim previews include the reason a plot cannot be claimed.
 /// v56: Land tax account state, deposits, and withdrawals.
-pub const PROTOCOL_VERSION: u32 = 56;
+/// v57: persistent cell-edge fences, placement mode and inventory recovery.
+pub const PROTOCOL_VERSION: u32 = 57;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

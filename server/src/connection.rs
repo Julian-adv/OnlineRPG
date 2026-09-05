@@ -1754,8 +1754,11 @@ async fn handle_client_message(
         ClientMessage::UseItem { instance_id } => {
             if let Some(id) = &state.player_id {
                 if !game_state
-                    .try_preview_land_claim(id, instance_id, auth_service)
+                    .try_start_fence_mode(id, instance_id, auth_service)
                     .await
+                    && !game_state
+                        .try_preview_land_claim(id, instance_id, auth_service)
+                        .await
                 {
                     game_state.use_item(id, instance_id).await;
                 }
@@ -1778,6 +1781,16 @@ async fn handle_client_message(
                 game_state
                     .claim_land(id, instance_id, (tile_x, tile_z, quadrant), auth_service)
                     .await;
+            }
+        }
+        ClientMessage::EditFence { edge, place } => {
+            if let Some(id) = &state.player_id {
+                game_state.edit_fence(id, edge, place, auth_service).await;
+            }
+        }
+        ClientMessage::StartFenceMode => {
+            if let Some(id) = &state.player_id {
+                game_state.start_fence_mode(id, auth_service).await;
             }
         }
 

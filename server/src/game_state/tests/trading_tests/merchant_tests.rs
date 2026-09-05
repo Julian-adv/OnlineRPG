@@ -22,7 +22,9 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
     let mut buyer_rx = game_state.register_direct_channel(&buyer).await;
     game_state.open_shop(&buyer, &steward, true).await;
     match buyer_rx.try_recv().unwrap() {
-        ServerMessage::ShopState { catalog, .. } => assert_eq!(catalog, vec!["land_deed"]),
+        ServerMessage::ShopState { catalog, .. } => {
+            assert_eq!(catalog, vec!["land_deed", "wooden_fence"])
+        }
         other => panic!("Expected Aldwin's shop, got {other:?}"),
     }
 

@@ -1,4 +1,6 @@
 use crate::types::{CharacterAttributes, GameDateTime};
+#[path = "auth_fence.rs"]
+mod fence;
 #[path = "auth_land.rs"]
 mod land;
 use crate::world_config::world_config;
@@ -762,6 +764,7 @@ impl AuthService {
         )?;
         Self::ensure_character_item_columns(conn)?;
         Self::ensure_land_schema(conn)?;
+        Self::ensure_fence_schema(conn)?;
 
         // Every inventory read and every save's DELETE filters on character_id;
         // without this SQLite full-scans the table once per character.

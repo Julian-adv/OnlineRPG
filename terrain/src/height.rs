@@ -149,6 +149,23 @@ impl HeightSampler {
         self.cache.len().await
     }
 
+    pub async fn update_tile(&self, tx: i32, tz: i32, raw: &[u8]) -> std::io::Result<()> {
+        if raw.len() != defaults::HEIGHTMAP_SIZE {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid heightmap size",
+            ));
+        }
+        let heights = raw
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        self.cache.replace((tx, tz), heights).await;
+        Ok(())
+    }
+
     /// Evict tiles not sampled since the previous sweep.
     pub async fn sweep_stale_tiles(&self) -> usize {
         self.cache.sweep_stale().await

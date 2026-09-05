@@ -415,7 +415,9 @@
 
     <div class="trade-columns">
       <div class="trade-column">
-        <div class="column-title">{isRegistrar ? 'Land documents' : 'Buy'}</div>
+        <div class="column-title">
+          {isRegistrar ? 'Estate supplies' : 'Buy'}
+        </div>
         <div class="item-list">
           {#each session.catalog as itemDefId (itemDefId)}
             {@const def = getItemDef(itemDefId)}

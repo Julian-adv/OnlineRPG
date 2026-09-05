@@ -468,6 +468,10 @@ async fn main() -> ExitCode {
     ));
     game_state.load_npc_schedules(&npc_io).await;
     game_state.load_pricing(&auth_service).await;
+    if let Err(err) = game_state.load_fences(&auth_service).await {
+        error!("Failed to load fences: {}", err);
+        return ExitCode::FAILURE;
+    }
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.
     if let Err(err) = game_state.init_passability(&terrain_io).await {

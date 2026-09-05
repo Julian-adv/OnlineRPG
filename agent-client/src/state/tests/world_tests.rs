@@ -1,5 +1,44 @@
 use super::*;
 
+#[test]
+fn fence_visibility_is_shared_without_one_npc_removing_anothers_collision() {
+    use onlinerpg_shared::fence::{Fence, FenceAxis, FenceEdge};
+    use onlinerpg_shared::pathfinding::is_movement_blocked;
+    let mut world = WorldCache::new();
+    let edge = FenceEdge {
+        x: 2,
+        z: 1,
+        axis: FenceAxis::Z,
+    };
+    let fence = Fence {
+        edge,
+        y: 0.0,
+        owner_id: 1,
+    };
+    world.update_fences(1.into(), &[fence.clone()], &[]);
+    world.update_fences(2.into(), &[fence], &[]);
+    world.update_fences(1.into(), &[], &[edge]);
+    assert!(is_movement_blocked(
+        world.passability_cache(),
+        1.5,
+        1.5,
+        2.5,
+        1.5,
+        0,
+        Some(0.05)
+    ));
+    world.remove_fence_view(2.into());
+    assert!(!is_movement_blocked(
+        world.passability_cache(),
+        1.5,
+        1.5,
+        2.5,
+        1.5,
+        0,
+        Some(0.05)
+    ));
+}
+
 /// A schedule pose authored on the bed itself must not reach A* as the
 /// goal — the bed seals its own cells and the search could never enter
 /// them. The walk goal steps to the nearest open neighbour; open ground

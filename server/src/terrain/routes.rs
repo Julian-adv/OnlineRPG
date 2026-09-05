@@ -16,8 +16,7 @@ use onlinerpg_terrain::coords;
 use super::io::TerrainIO;
 use crate::game_state::GameState;
 
-/// The objects route also feeds the game state's furniture passability,
-/// so it carries both IO and game state.
+/// Routes that update runtime collision along with terrain files.
 #[derive(Clone)]
 struct ObjectsState {
     terrain: Arc<TerrainIO>,
@@ -39,6 +38,10 @@ pub fn terrain_router(
         .with_state(auth);
     let objects_router = Router::new()
         .route(
+            "/api/terrain/height/{x}/{z}",
+            get(get_heightmap).put(put_heightmap),
+        )
+        .route(
             "/api/terrain/objects/{rx}/{rz}",
             get(get_object).put(put_object),
         )
@@ -47,10 +50,6 @@ pub fn terrain_router(
             game_state,
         });
     Router::new()
-        .route(
-            "/api/terrain/height/{x}/{z}",
-            get(get_heightmap).put(put_heightmap),
-        )
         .route(
             "/api/terrain/splat/{x}/{z}",
             get(get_splatmap).put(put_splatmap),
@@ -118,9 +117,9 @@ async fn get_land_ownership(
 
 async fn get_heightmap(
     Path((x, z)): Path<(i32, i32)>,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_heightmap(x, z).await.map_err(|e| {
+    let data = state.terrain.read_heightmap(x, z).await.map_err(|e| {
         error!("Failed to read heightmap ({}, {}): {}", x, z, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -129,11 +128,12 @@ async fn get_heightmap(
 
 async fn put_heightmap(
     Path((x, z)): Path<(i32, i32)>,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
     body: Bytes,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    terrain
-        .write_heightmap(x, z, &body)
+    state
+        .game_state
+        .save_terrain_heightmap(x, z, &body)
         .await
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::InvalidData => (StatusCode::BAD_REQUEST, e.to_string()),

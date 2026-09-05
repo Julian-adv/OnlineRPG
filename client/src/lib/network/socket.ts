@@ -13,6 +13,8 @@ import { resetPartyStores } from '../stores/partyStore'
 import { resetFriendStores } from '../stores/friendStore'
 import { resetPlayerTrade } from '../stores/playerTradeStore'
 import { resetLandClaimPreview, type LandClaim } from '../stores/landClaimStore'
+import { resetFences } from '../stores/fenceStore'
+import type { FenceEdge } from '../terrain/fenceEdges'
 import { remotePlayerManager } from '../managers/remotePlayerManager'
 import { monsterManager } from '../managers/monsterManager'
 import {
@@ -232,6 +234,7 @@ class NetworkManager {
     }
 
     this.socket.onclose = (event) => {
+      resetFences()
       resetLandClaimPreview()
       console.log('Disconnected from server', event.code, event.reason)
       gameStore.update((state) => ({ ...state, isConnected: false }))
@@ -705,6 +708,14 @@ class NetworkManager {
     this.sendMessage({
       UseLandDocument: { instance_id, tile_x, tile_z, quadrant },
     })
+  }
+
+  sendEditFence(edge: FenceEdge, place: boolean) {
+    this.sendMessage({ EditFence: { edge, place } })
+  }
+
+  sendStartFenceMode() {
+    this.sendMessage('StartFenceMode')
   }
 
   sendLandAccount(merchantPlayerId: number) {
