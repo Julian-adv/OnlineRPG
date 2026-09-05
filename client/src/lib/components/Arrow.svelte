@@ -1,17 +1,10 @@
 <script lang="ts">
-  // One arrow in flight, from the bow to whatever the shot already decided.
-  // Purely a tracer: the server resolved the shot at release, so this never
-  // changes an outcome — it makes the delay before the damage number honest,
-  // which until now was a fixed wait with nothing on screen to explain it.
-  //
-  // A hit steers onto the target's current position each frame, so a monster
-  // that charges 2.7 m mid-flight (scp939 at 8 m/s) is still struck. A miss
-  // holds its release-time bearing and flies past. All motion mutates the
-  // group directly — no per-frame reactive state, as in FishingBobber.
+  // Visual tracer: hits track the target; misses keep their launch bearing.
   import { T, useTask } from '@threlte/core'
   import { Group, Quaternion, Vector3 } from 'three'
   import type { ArrowShot } from '../stores/arrowStore'
   import { landArrow } from '../stores/arrowStore'
+  import { unwrapWorldXNear } from '../terrain/world-wrap'
 
   interface Props {
     shot: ArrowShot
@@ -23,6 +16,7 @@
   }
 
   let { shot, playerId, model, targetOf }: Props = $props()
+  const arrowModel = $derived(model?.clone())
 
   /** How far past the target a miss carries before it is dropped. */
   const OVERSHOOT_METERS = 3
@@ -30,7 +24,11 @@
   let group: Group | undefined = $state()
 
   const from = new Vector3(shot.from.x, shot.from.y, shot.from.z)
-  const aim = new Vector3(shot.to.x, shot.to.y, shot.to.z)
+  const aim = new Vector3(
+    unwrapWorldXNear(from.x, shot.to.x),
+    shot.to.y,
+    shot.to.z
+  )
   // A miss keeps the bearing it left with, carried past the target.
   const missTo = aim
     .clone()
@@ -62,10 +60,7 @@
       return
     }
 
-    // A dead target ends the flight wherever it has got to: there is nothing
-    // left to strike, and an arrow still crossing the gap to a monster that
-    // has already dropped reads as a shot the kill never stopped. The killing
-    // shot is unaffected — its own death is held back until this arrow lands.
+    // Killing shots keep their target alive visually until impact.
     const live = targetOf()
     if (!live) {
       landArrow(playerId)
@@ -73,9 +68,7 @@
     }
 
     if (shot.hit) {
-      // Re-aim every frame: the outcome says this arrow connects, so it has
-      // to end on the target wherever it has run to.
-      target.set(live.x, live.y, live.z)
+      target.set(unwrapWorldXNear(from.x, live.x), live.y, live.z)
     } else {
       target.copy(missTo)
     }
@@ -89,8 +82,8 @@
   })
 </script>
 
-{#if model}
+{#if arrowModel}
   <T is={Group} bind:ref={group}>
-    <T is={model} />
+    <T is={arrowModel} dispose={false} />
   </T>
 {/if}

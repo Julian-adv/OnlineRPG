@@ -359,7 +359,9 @@
     poseMainHandProp(
       weaponObject,
       itemDefId,
-      forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
+      boneName === 'LeftHand'
+        ? forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
+        : undefined
     )
     if (itemDefId === 'fishing_rod') {
       rodTipNode = resolveTipNode(

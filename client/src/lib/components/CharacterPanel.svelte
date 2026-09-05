@@ -330,7 +330,9 @@
               {@const stored = slotBehind(slot)}
               {@const isQuiverCell = heldInLeft && slot === 'main_hand'}
               {@const ammo = isQuiverCell ? ammoCell : null}
-              {@const item = ammo ?? $inventoryStore.equipped[stored]}
+              {@const item = isQuiverCell
+                ? ammo
+                : $inventoryStore.equipped[stored]}
               {@const def = item ? getItemDef(item.item_def_id) : null}
               {@const isDropTarget = isQuiverCell
                 ? $dragMeta !== null &&
@@ -342,12 +344,10 @@
                 class="equip-slot"
                 class:drop-target={isDropTarget}
                 style="top:{top}%;left:{left}%"
-                title={isQuiverCell
-                  ? ammo
-                    ? undefined
-                    : 'No arrows'
-                  : item
-                    ? undefined
+                title={item
+                  ? undefined
+                  : isQuiverCell
+                    ? 'No arrows'
                     : EQUIP_SLOT_LABELS[slot]}
                 data-equip-slot={isQuiverCell ? undefined : stored}
                 data-ammo-kind={isQuiverCell ? ammoKind : undefined}

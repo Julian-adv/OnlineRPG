@@ -333,8 +333,7 @@ export function makeSplatStandardMaterial({
     const gridActive = smoothstep(float(0.49), float(0.51), brush.gridVisible)
 
     // Antialiased 1-px line where coords cross an integer
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const gridLine = (coords: any) => {
+    const gridLine = (coords: Node<'vec2'>) => {
       const g = abs(fract(coords.sub(0.5)).sub(0.5)).div(fwidth(coords))
       return float(1).sub(min(min(g.x, g.y), float(1)))
     }

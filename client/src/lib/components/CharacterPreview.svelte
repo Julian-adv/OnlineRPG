@@ -172,7 +172,9 @@
         poseMainHandProp(
           prop,
           itemDefId,
-          forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
+          boneName === 'LeftHand'
+            ? forearmLength(characterRoot, boneName, `${modelPath}:${boneName}`)
+            : undefined
         )
       } else poseOffHandProp(prop)
       bone.add(prop)

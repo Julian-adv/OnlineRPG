@@ -450,25 +450,17 @@
   // References to PlayerModel components
   let currentPlayerModel = $state<PlayerModel | null>(null)
 
-  // One arrow mesh, cloned per shot. Loaded eagerly rather than on the first
-  // shot: a 500 KB fetch starting at the moment of release would miss the
-  // flight it was wanted for.
-  // One mesh per kind of round, cloned per shot. Loaded eagerly rather than
-  // on the first shot: a fetch starting at the moment of release would miss
-  // the flight it was wanted for.
+  // Preload each arrow model; ArrowFlight clones it per shot.
   const arrowModels = new SvelteMap<string, THREE.Group>()
   for (const def of Object.values(itemDefs)) {
-    if (!def.ammoKind || !def.worldModel) continue
+    if (def.category !== 'ammo' || !def.ammoKind || !def.worldModel) continue
     const id = def.id
     loadGLB(getObjectModelPath(def.worldModel)).then((gltf) => {
       arrowModels.set(id, gltf.scene as THREE.Group)
     })
   }
 
-  /** Turn the release-moment requests into flights, now that the bow's world
-   *  position can be read off the shooter's model. A request whose bow cannot
-   *  be resolved (model still loading, shooter out of view) is dropped rather
-   *  than fired from the player's feet. */
+  /** Launch from the bow at release time; skip unavailable models or targets. */
   function launchRequestedArrows() {
     for (const request of takeArrowRequests()) {
       const isLocal = request.playerId === currentPlayer?.id

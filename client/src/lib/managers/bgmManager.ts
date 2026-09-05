@@ -31,6 +31,7 @@ function releaseElement(el: HTMLAudioElement) {
 }
 
 const loads = new WeakMap<HTMLAudioElement, number>()
+let disposed = false
 
 /** Load `file` into `el` and play it, unless a newer load on the same element
  *  or `stillWanted()` says the moment has passed. */
@@ -42,7 +43,7 @@ async function attachTrack(
   const seq = (loads.get(el) ?? 0) + 1
   loads.set(el, seq)
   const src = await loadBgmSrc(file)
-  if (loads.get(el) !== seq || !stillWanted()) {
+  if (disposed || loads.get(el) !== seq || !stillWanted()) {
     releaseSrc(src)
     return
   }
@@ -196,7 +197,7 @@ function playNext() {
 }
 
 function playTrack() {
-  if (mode !== 'normal') return
+  if (disposed || mode !== 'normal') return
   if (get(bgmMuted) || playlistQuiet()) {
     currentBgmTrack.set('')
     return
@@ -214,7 +215,7 @@ function playTrack() {
     audio.addEventListener('ended', playNext)
     audio.addEventListener('error', playNext)
     audio.addEventListener('playing', () => {
-      currentBgmTrack.set(audio!.dataset.trackName ?? '')
+      currentBgmTrack.set(audio?.dataset.trackName ?? '')
     })
   }
 
@@ -230,7 +231,7 @@ function playTrack() {
 let started = false
 
 export function startBgm() {
-  if (started) return
+  if (disposed || started) return
   started = true
   shufflePlaylist()
   playNext()
@@ -243,7 +244,7 @@ let battleFadeTimer: ReturnType<typeof setInterval> | undefined
 let battleQuietTimer: ReturnType<typeof setTimeout> | undefined
 
 export function startBattleMusic() {
-  if (mode === 'battle') return
+  if (disposed || mode === 'battle') return
   mode = 'battle'
   // A recital cannot outrank a fight: a listener's copy waits to rejoin
   // after; the performer ends it, and their client tells the server so the
@@ -564,6 +565,7 @@ export function playPerformance(
   onEnded?: () => void,
   offsetSecs = 0
 ): boolean {
+  if (disposed) return false
   const file = bgmFileFor(track)
   if (!file) return false
 
@@ -656,7 +658,7 @@ export function fadeOutPerformance() {
   )
 }
 
-bgmVolume.subscribe((v) => {
+const unsubscribeVolume = bgmVolume.subscribe((v) => {
   clearTimeout(volumeSaveTimer)
   volumeSaveTimer = setTimeout(
     () => storageSet(STORAGE_KEY_VOLUME, String(v)),
@@ -672,7 +674,7 @@ bgmVolume.subscribe((v) => {
   }
 })
 
-bgmMuted.subscribe((m) => {
+const unsubscribeMuted = bgmMuted.subscribe((m) => {
   storageSet(STORAGE_KEY_MUTED, String(m))
   applyAudioSettings(audio)
   applyAudioSettings(battleAudio)
@@ -683,3 +685,32 @@ bgmMuted.subscribe((m) => {
     resumeAfterUnmute()
   }
 })
+
+export function disposeBgm() {
+  disposed = true
+  started = false
+  unsubscribeVolume()
+  unsubscribeMuted()
+  clearTimeout(volumeSaveTimer)
+  clearTimeout(quietTimer)
+  clearTimeout(battleLingerTimer)
+  clearTimeout(battleQuietTimer)
+  clearTimeout(liveNotesTimer)
+  clearInterval(battleFadeTimer)
+  clearInterval(playlistFadeTimer)
+  dropPerformance()
+  if (audio) {
+    audio.removeEventListener('ended', playNext)
+    audio.removeEventListener('error', playNext)
+  }
+  for (const el of [audio, battleAudio]) {
+    if (!el) continue
+    el.pause()
+    releaseElement(el)
+  }
+  audio = null
+  battleAudio = null
+  currentBgmTrack.set('')
+}
+
+if (import.meta.hot) import.meta.hot.dispose(disposeBgm)

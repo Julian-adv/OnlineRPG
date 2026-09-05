@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { BGM_TRACKS } from '../data/bgmTracks'
 
 type Bgm = typeof import('./bgmManager')
 
@@ -19,6 +20,7 @@ class FakeAudio {
     this.paused = true
   })
   addEventListener = vi.fn()
+  removeEventListener = vi.fn()
   removeAttribute = vi.fn()
   load = vi.fn()
   constructor() {
@@ -45,6 +47,13 @@ beforeEach(async () => {
   vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:test/${++n}`)
   vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
   bgm = await import('./bgmManager')
+})
+
+afterEach(() => {
+  bgm.disposeBgm()
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('bgmManager fetches tracks whole and plays them from a blob', () => {
@@ -100,5 +109,71 @@ describe('bgmManager fetches tracks whole and plays them from a blob', () => {
     ended()
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test/1')
     expect(el.removeAttribute).toHaveBeenCalledWith('src')
+  })
+
+  it('disposes playlist, battle, and performance audio before module replacement', async () => {
+    bgm.startBgm()
+    await flush()
+    bgm.playPerformance(BGM_TRACKS[0])
+    await flush()
+    bgm.startBattleMusic()
+    await flush()
+    const elements = [...FakeAudio.created]
+    const sources = elements.map((el) => el.src)
+
+    bgm.disposeBgm()
+
+    for (const el of elements) {
+      expect(el.paused).toBe(true)
+      expect(el.removeAttribute).toHaveBeenCalledWith('src')
+    }
+    for (const src of sources) {
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith(src)
+    }
+    vi.resetModules()
+    bgm = await import('./bgmManager')
+    bgm.startBgm()
+    await flush()
+    expect(FakeAudio.created.filter((el) => !el.paused)).toHaveLength(1)
+  })
+
+  it.each(['startBgm', 'startBattleMusic'] as const)(
+    'does not play a pending %s download after disposal',
+    async (start) => {
+      let resolveFetch!: (v: unknown) => void
+      fetchMock.mockImplementationOnce(
+        () => new Promise((resolve) => (resolveFetch = resolve))
+      )
+      bgm[start]()
+      const el = FakeAudio.created[0]
+      bgm.disposeBgm()
+      resolveFetch({ ok: true, blob: async () => new Blob(['x']) })
+      await flush()
+
+      expect(el.play).not.toHaveBeenCalled()
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test/1')
+    }
+  )
+
+  it('cancels fades, delayed playback, and settings subscriptions on disposal', async () => {
+    bgm.startBgm()
+    await flush()
+    bgm.startBattleMusic()
+    await flush()
+    vi.useFakeTimers()
+    bgm.stopBattleMusic()
+    bgm.holdLiveInstrumentQuiet()
+    bgm.bgmVolume.set(0.5)
+    const playCounts = FakeAudio.created.map((el) => el.play.mock.calls.length)
+
+    bgm.disposeBgm()
+    bgm.bgmVolume.set(0.8)
+    bgm.bgmMuted.set(true)
+    bgm.bgmMuted.set(false)
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.runAllTimersAsync()
+    expect(FakeAudio.created.map((el) => el.play.mock.calls.length)).toEqual(
+      playCounts
+    )
   })
 })

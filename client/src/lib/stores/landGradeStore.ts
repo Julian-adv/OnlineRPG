@@ -6,7 +6,7 @@ import { wrapRegionX } from '../terrain/world-wrap'
 
 const FAILED_RETRY_MS = 5000
 
-const cache = new Map<string, Uint8Array>()
+const cache = new Map<string, Uint8Array<ArrayBuffer>>()
 const inflight = new Set<string>()
 const failedAt = new Map<string, number>()
 

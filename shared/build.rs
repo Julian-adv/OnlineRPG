@@ -23,8 +23,8 @@ fn main() {
     for path in &inputs {
         println!("cargo:rerun-if-changed={}", path.display());
         let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("layout input {path:?}: {e}"));
-        // Path included, so moving code between these files still counts.
-        hash = fnv1a64(hash, path.to_string_lossy().bytes());
+        // Normalize separators so Windows and Unix builds agree.
+        hash = fnv1a64(hash, path.to_string_lossy().replace('\\', "/").bytes());
         // CR dropped: the Windows agent-client build must hash the same source.
         hash = fnv1a64(hash, bytes.into_iter().filter(|b| *b != b'\r'));
     }

@@ -584,24 +584,25 @@ impl super::GameState {
         }
     }
 
-    /// The strongest round the bag holds for whatever now sits in `slot`, or
-    /// `None` when that is not a weapon that spends any. Ranked on the mean
-    /// roll of the dice so the order cannot disagree with the damage.
-    fn best_ammo_in_bag(&self, inv: &PlayerInventory, slot: EquipSlot) -> Option<String> {
-        let kind = inv
-            .equipped
-            .get(&slot)
-            .and_then(|item| self.item_defs.get(&item.item_def_id))
-            .and_then(|def| def.ammo_kind.clone())?;
+    /// Prefer highest average damage, then the lowest item definition ID.
+    pub(super) fn best_ammo_in_bag<'a>(
+        &self,
+        inv: &'a PlayerInventory,
+        kind: &str,
+    ) -> Option<&'a ItemInstance> {
         inv.bag
             .iter()
             .filter_map(|item| {
                 let def = self.item_defs.get(&item.item_def_id)?;
-                (def.is_ammo() && def.ammo_kind.as_deref() == Some(kind.as_str()))
-                    .then(|| (item.item_def_id.clone(), def.average_damage()))
+                (def.is_ammo() && def.ammo_kind.as_deref() == Some(kind))
+                    .then(|| (item, def.average_damage()))
             })
-            .max_by(|(a_id, a), (b_id, b)| a.total_cmp(b).then_with(|| b_id.cmp(a_id)))
-            .map(|(id, _)| id)
+            .max_by(|(a, a_damage), (b, b_damage)| {
+                a_damage
+                    .total_cmp(b_damage)
+                    .then_with(|| b.item_def_id.cmp(&a.item_def_id))
+            })
+            .map(|(item, _)| item)
     }
 
     /// Whether the wielded main-hand weapon claims both hands, sealing the
@@ -681,12 +682,15 @@ impl super::GameState {
                     off_hand_cleared = true;
                 }
             }
-            // Picking up a bow should not also mean picking an arrow, so the
-            // strongest is chosen here — but only when nothing valid already
-            // is. An archer who deliberately dropped to the cheaper arrow
-            // keeps that across an unequip.
+            // Keep the player's choice while its stack remains in the bag.
             if inv.active_ammo_stack().is_none() {
-                inv.active_ammo = self.best_ammo_in_bag(inv, target_slot);
+                inv.active_ammo = inv
+                    .equipped
+                    .get(&target_slot)
+                    .and_then(|item| self.item_defs.get(&item.item_def_id))
+                    .and_then(|def| def.ammo_kind.as_deref())
+                    .and_then(|kind| self.best_ammo_in_bag(inv, kind))
+                    .map(|item| item.item_def_id.clone());
             }
             let torch_on =
                 (target_slot == EquipSlot::OffHand || off_hand_cleared).then(|| inv.is_torch_lit());

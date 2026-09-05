@@ -330,14 +330,7 @@ impl super::GameState {
             .unwrap_or_default()
     }
 
-    /// The round this shot spends: the archer's chosen pile while it lasts,
-    /// otherwise the strongest of the weapon's kind. Falling back *records*
-    /// the new choice, so running a stack dry drops to the next round down
-    /// instead of reading as an empty quiver — and so the archer who picked
-    /// the cheaper arrow keeps firing it until it runs out.
-    ///
-    /// Ties break on the id, only so one bag always picks the same stack: a
-    /// shot that chose differently each time would be untraceable.
+    /// Use the chosen stack, or select and remember the strongest matching ammo.
     async fn loaded_ammo(&self, player_id: &PlayerId, kind: &str) -> Option<LoadedAmmo> {
         let mut inventories = self.inventories.write().await;
         let inv = inventories.get_mut(player_id)?;
@@ -359,17 +352,7 @@ impl super::GameState {
             return Some(chosen);
         }
 
-        let best = inv
-            .bag
-            .iter()
-            .filter(|item| of_kind(item).is_some())
-            .max_by(|a, b| {
-                let avg = |item: &ItemInstance| of_kind(item).map_or(0.0, |d| d.average_damage());
-                avg(a)
-                    .total_cmp(&avg(b))
-                    .then_with(|| b.item_def_id.cmp(&a.item_def_id))
-            })
-            .and_then(round)?;
+        let best = self.best_ammo_in_bag(inv, kind).and_then(round)?;
         inv.active_ammo = Some(best.item_def_id.clone());
         Some(best)
     }
@@ -522,20 +505,26 @@ impl super::GameState {
             return Err((AttackRejectReason::OutOfRange, "walled off".into()));
         }
 
-        // Last gate: everything above decides whether the shot could be taken
-        // at all, and an empty quiver should read as "no arrows", not as the
-        // reason the target was unreachable.
-        let ammo = match weapon.ammo_kind.as_deref() {
-            Some(kind) => match self.loaded_ammo(player_id, kind).await {
-                Some(round) => Some(round),
-                None => {
-                    return Err((
-                        AttackRejectReason::OutOfAmmo,
-                        format!("no {kind} in the bag"),
-                    ));
-                }
-            },
-            None => None,
+        // Report target restrictions before checking ammunition.
+        let ammo = if let Some(kind) = weapon.ammo_kind.as_deref() {
+            let round = self.loaded_ammo(player_id, kind).await.ok_or_else(|| {
+                (
+                    AttackRejectReason::OutOfAmmo,
+                    format!("no {kind} in the bag"),
+                )
+            })?;
+            if self
+                .reject_if_trade_reserved(player_id, round.instance_id, "use")
+                .await
+            {
+                return Err((
+                    AttackRejectReason::OutOfAmmo,
+                    "ammunition is reserved for trade".into(),
+                ));
+            }
+            Some(round)
+        } else {
+            None
         };
 
         Ok(PlayerAttackContext {

@@ -3,10 +3,7 @@ import { ammoAverageDamage, getItemDef, isConsumable } from '../data/itemDefs'
 
 type Category = EquipSlot | 'ammo' | 'dungeon_key' | 'consumable' | 'misc'
 
-// Mirrors the equip-slot ordering used in CharacterPanel's paperdoll layout.
-// Ammunition breaks that mirror on purpose: it wears no slot, but it is what
-// the main hand spends, so it sits with the bow rather than adrift in `misc`
-// where a boot could come between two kinds of arrow.
+// Follow CharacterPanel's slot order, with ammo beside the main hand.
 const CATEGORY_ORDER: Category[] = [
   'head',
   'main_hand',
@@ -30,6 +27,7 @@ const CATEGORY_ORDER: Category[] = [
 
 /** Kinds that earn their own run in the bag despite wearing no slot. */
 const UNWORN_CATEGORIES: Category[] = ['ammo', 'dungeon_key']
+const nameCollator = new Intl.Collator(undefined, { numeric: true })
 
 function categoryOf(itemDefId: string): Category {
   const def = getItemDef(itemDefId)
@@ -60,17 +58,14 @@ export function compareInventoryOrder(
   const defA = getItemDef(itemDefIdA)
   const defB = getItemDef(itemDefIdB)
 
-  // Rounds run strongest first, which is also the one a shot takes by
-  // default — reading the quiver top-down answers "what am I firing?".
+  // Sort ammo by damage, matching the default selection.
   const damageDiff =
     (defB ? ammoAverageDamage(defB) : 0) - (defA ? ammoAverageDamage(defA) : 0)
   if (damageDiff !== 0) return damageDiff
 
-  // Numeric collation so "(10F)" follows "(5F)" instead of leading it, which
-  // is the whole order a run of dungeon keys has.
   const nameA = defA?.name ?? itemDefIdA
   const nameB = defB?.name ?? itemDefIdB
-  const nameDiff = nameA.localeCompare(nameB, undefined, { numeric: true })
+  const nameDiff = nameCollator.compare(nameA, nameB)
   return nameDiff !== 0 ? nameDiff : quantityB - quantityA
 }
 

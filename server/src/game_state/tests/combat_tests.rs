@@ -1258,6 +1258,67 @@ fn expect_attacked(rx: &mut DirectRx, expected_id: &str) -> (bool, u32) {
 }
 
 #[tokio::test]
+async fn a_bow_cannot_spend_trade_reserved_ammo() {
+    let game_state = make_test_game_state("bow_reserved_ammo");
+    let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;
+    let archer = pid("archer");
+    let buyer = pid("buyer");
+    game_state.add_player(make_player("buyer", 1.0, 0.5)).await;
+    game_state.request_player_trade(&archer, "buyer").await;
+    game_state.respond_player_trade(&buyer, &archer, true).await;
+    game_state
+        .set_player_trade_offer(
+            &archer,
+            vec![onlinerpg_shared::messages::PlayerTradeSlot {
+                instance_id: 10,
+                quantity: 20,
+            }],
+            0,
+        )
+        .await;
+    assert_eq!(game_state.trade_reserved_quantity(&archer, 10).await, 20);
+    game_state
+        .monsters
+        .write()
+        .await
+        .insert("far".to_string(), make_monster("far", at(8.0), 0));
+
+    game_state
+        .broadcast_player_attack(&archer, "far".to_string())
+        .await;
+
+    let messages = drain(&mut rx);
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        ServerMessage::PlayerAttackRejected { monster_id, reason }
+            if monster_id == "far" && *reason == AttackRejectReason::OutOfAmmo
+    )));
+    assert!(!messages
+        .iter()
+        .any(|message| matches!(message, ServerMessage::PlayerAttacked { .. })));
+    assert_eq!(
+        game_state.inventories.read().await[&archer].bag[0].quantity,
+        20
+    );
+    assert!(!game_state
+        .last_player_attacks
+        .read()
+        .await
+        .contains_key(&archer));
+
+    game_state.set_player_trade_offer(&archer, vec![], 0).await;
+    game_state
+        .broadcast_player_attack(&archer, "far".to_string())
+        .await;
+
+    expect_attacked(&mut rx, "far");
+    assert_eq!(
+        game_state.inventories.read().await[&archer].bag[0].quantity,
+        19
+    );
+}
+
+#[tokio::test]
 async fn a_bow_reaches_its_declared_range() {
     let game_state = make_test_game_state("bow_range_reaches");
     let mut rx = setup_archer(&game_state, "bow", attrs_with(10, 30)).await;

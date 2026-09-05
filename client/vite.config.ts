@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { Agent } from 'node:https'
 import { execSync } from 'node:child_process'
 import { defineConfig, loadEnv } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
@@ -26,8 +27,16 @@ export default defineConfig(({ mode }) => {
   // which fails because the Rust server only listens on 127.0.0.1, causing
   // the proxy to reset every /ws and /api request.
   const backendHost = env.VITE_BACKEND_HOST ?? '127.0.0.1'
-  const apiTarget = `http://${backendHost}:10007`
-  const wsTarget = `ws://${backendHost}:10006`
+  const apiTarget = env.VITE_API_TARGET ?? `http://${backendHost}:10007`
+  const wsTarget = env.VITE_WS_TARGET ?? `ws://${backendHost}:10006`
+  const proxyAgent = env.VITE_PROXY_CA
+    ? new Agent({
+        ca: fs.readFileSync(env.VITE_PROXY_CA),
+        ...(env.VITE_PROXY_SERVERNAME
+          ? { servername: env.VITE_PROXY_SERVERNAME }
+          : {}),
+      })
+    : undefined
 
   const httpsKey = env.VITE_HTTPS_KEY
   const httpsCert = env.VITE_HTTPS_CERT
@@ -65,6 +74,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: 10004,
+      strictPort: true,
       https,
       hmr,
       // No global Cache-Control here: it only ever applied to transformed
@@ -74,8 +84,13 @@ export default defineConfig(({ mode }) => {
       // revalidation is the right policy for dev.
       proxy: {
         // All REST endpoints share one backend, so a single prefix covers them.
-        '/api': { target: apiTarget, changeOrigin: true },
-        '/ws': { target: wsTarget, ws: true, changeOrigin: true },
+        '/api': { target: apiTarget, changeOrigin: true, agent: proxyAgent },
+        '/ws': {
+          target: wsTarget,
+          ws: true,
+          changeOrigin: true,
+          agent: proxyAgent,
+        },
       },
     },
     build: { target: 'esnext' },
