@@ -134,6 +134,12 @@ amulet_of_life_saving·ring_of_regeneration은 성능이 강력해 확정 파밍
 
 원칙: **무기는 체스트에 넣지 않는다.** 획득 경로는 "그 무기를 든 몬스터가 드랍"으로 통일 — 몬스터가 든 무기가 곧 드랍템이라 시각적으로 예고된다. 시작 무기 worn_iron_sword(1d6)에서 출발해 티어당 한 단씩 오르며, 1d8(iron_sword)이 첫 파밍 목표다.
 
+`items.csv`의 `category=weapon`은 피해·인챈트 판정에 쓰는 상위 분류이고,
+`weaponType`은 무기군을 나타내는 하위 분류다. 현재 값은 `sword`,
+`short_sword`, `dagger`, `spear`, `mace`, `club`, `torch`이며 향후 무기를 위해
+`axe`, `staff`, `bow`, `crossbow`도 예약한다. 타입 자체는 사거리·양손 여부·공격
+애니메이션을 결정하지 않으며, 그런 동작은 별도 속성으로 둔다.
+
 ### 티어별 무기
 
 | 티어 | 무기 | dice | basePrice | 획득처 | 상태 |
