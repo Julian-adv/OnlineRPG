@@ -66,6 +66,8 @@ export interface DoorMeshInfo {
   pivot: THREE.Group
   /** Fixed window opening target that remains clickable while shutters move. */
   clickTarget?: THREE.Object3D
+  interactionPosition: { x: number; z: number }
+  isWindow: boolean
   roomIndex: number
   wallDir: WallDirection
   segmentIndex: number

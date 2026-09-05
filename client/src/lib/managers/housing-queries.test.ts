@@ -2,12 +2,14 @@ import { describe, it, expect } from 'vitest'
 import {
   assistStairMovementDirection,
   findClosedDoorOnSegment,
+  findClosedDoorOnPath,
   houseFloorHeightAt,
   isHouseWallBlockingSegment,
   resolveStairFloor,
   shouldIgnoreImplicitHouseFloorChange,
   stairLandingTargetAt,
   stopPathAtHouseEntrance,
+  wallApproachPosition,
 } from './housing-queries'
 import type { HouseData, RoomData, WallConfig } from '../types/housing'
 
@@ -215,6 +217,37 @@ describe('findClosedDoorOnSegment', () => {
     expect(
       findClosedDoorOnSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 1)
     ).toBeNull()
+  })
+})
+
+describe('findClosedDoorOnPath', () => {
+  it('finds a door on a detour when the direct line crosses solid wall', () => {
+    expect(
+      findClosedDoorOnPath(
+        houseWithNorthDoor(),
+        0.5,
+        -2,
+        [
+          { x: 1.5, z: -1 },
+          { x: 1.5, z: 2 },
+        ],
+        0
+      )
+    ).toMatchObject({
+      houseId: 'door-house',
+      segmentIndex: 1,
+    })
+  })
+})
+
+describe('wallApproachPosition', () => {
+  it('keeps the approach point on the player side of a wall', () => {
+    expect(
+      wallApproachPosition({ x: 2, z: 4 }, { x: 2, z: 7 }, 'north', 1)
+    ).toEqual({ x: 2, z: 5 })
+    expect(
+      wallApproachPosition({ x: 2, z: 4 }, { x: -1, z: 4 }, 'west', 1)
+    ).toEqual({ x: 1, z: 4 })
   })
 })
 

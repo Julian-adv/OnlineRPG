@@ -567,6 +567,23 @@ export interface ClosedHouseDoor {
   position: { x: number; z: number }
 }
 
+export function wallApproachPosition(
+  wall: { x: number; z: number },
+  player: { x: number; z: number },
+  wallDir: WallDirection,
+  distance: number
+): { x: number; z: number } {
+  if (wallDir === 'north' || wallDir === 'south') {
+    const fallback = wallDir === 'north' ? 1 : -1
+    const side = Math.sign(player.z - wall.z) || fallback
+    return { x: wall.x, z: wall.z + side * distance }
+  }
+
+  const fallback = wallDir === 'west' ? 1 : -1
+  const side = Math.sign(player.x - wall.x) || fallback
+  return { x: wall.x + side * distance, z: wall.z }
+}
+
 function crossingAtAxisWall(
   fromAxis: number,
   fromAlong: number,
@@ -639,6 +656,31 @@ export function findClosedDoorOnSegment(
   }
 
   return nearest
+}
+
+export function findClosedDoorOnPath(
+  housesById: ReadonlyMap<string, HouseData>,
+  fromX: number,
+  fromZ: number,
+  waypoints: readonly { x: number; z: number }[],
+  floorLevel: number
+): ClosedHouseDoor | null {
+  let x = fromX
+  let z = fromZ
+  for (const waypoint of waypoints) {
+    const door = findClosedDoorOnSegment(
+      housesById,
+      x,
+      z,
+      waypoint.x,
+      waypoint.z,
+      floorLevel
+    )
+    if (door) return door
+    x = waypoint.x
+    z = waypoint.z
+  }
+  return null
 }
 
 export function isHouseWallBlockingSegment(

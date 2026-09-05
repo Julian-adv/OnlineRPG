@@ -32,6 +32,7 @@ import {
   findAdjacentHouse,
   findAllRoomsAtPoint,
   findClosedDoorOnSegment,
+  findClosedDoorOnPath,
   findHouseAtPoint,
   findNearestDoor,
   findRoomAtPoint,
@@ -333,6 +334,68 @@ export class HousingManager {
       toZ,
       floorLevel
     )
+  }
+
+  findClosedDoorOnPath(
+    fromX: number,
+    fromZ: number,
+    waypoints: readonly { x: number; z: number }[],
+    floorLevel: number
+  ): ClosedHouseDoor | null {
+    return findClosedDoorOnPath(
+      this.housesById,
+      fromX,
+      fromZ,
+      waypoints,
+      floorLevel
+    )
+  }
+
+  withClosedDoorsOpen<T>(floorLevel: number, fn: () => T): T {
+    const closed: {
+      houseId: string
+      room: HouseData['rooms'][number]
+      wallDir: WallDirection
+      segmentIndex: number
+    }[] = []
+
+    try {
+      for (const house of this.housesById.values()) {
+        for (const room of house.rooms) {
+          if (room.floorLevel !== floorLevel) continue
+          for (const wallDir of ALL_WALL_DIRS) {
+            const wall = getWallByDir(room, wallDir)
+            for (
+              let segmentIndex = 0;
+              segmentIndex < wall.length;
+              segmentIndex++
+            ) {
+              const segment = wall[segmentIndex]
+              if (!isDoorVariant(segment.variant) || segment.isOpen) continue
+              closed.push({ houseId: house.id, room, wallDir, segmentIndex })
+              passability_update_door(
+                house.id,
+                room,
+                wallDir,
+                segmentIndex,
+                true
+              )
+            }
+          }
+        }
+      }
+      return fn()
+    } finally {
+      for (const door of closed) {
+        passability_update_door(
+          door.houseId,
+          door.room,
+          door.wallDir,
+          door.segmentIndex,
+          false
+        )
+      }
+    }
   }
 
   isDoorOpen(door: ClosedHouseDoor): boolean {

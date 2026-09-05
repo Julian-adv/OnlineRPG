@@ -608,6 +608,8 @@ export function collectWallSegments(
 
             doors.push({
               pivot,
+              interactionPosition: { x: ox, z: oz },
+              isWindow: false,
               roomIndex,
               wallDir: dir,
               segmentIndex: segIdx,
@@ -687,6 +689,8 @@ export function collectWallSegments(
             doors.push({
               pivot,
               clickTarget: side === -1 ? clickTarget : undefined,
+              interactionPosition: { x: ox, z: oz },
+              isWindow: true,
               roomIndex,
               wallDir: dir,
               segmentIndex: i,

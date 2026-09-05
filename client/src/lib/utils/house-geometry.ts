@@ -153,6 +153,11 @@ export function buildHouseGroup(
       doorWallDir: door.wallDir,
       doorSegmentIndex: door.segmentIndex,
       doorFloorLevel: door.floorLevel,
+      doorInteractionPosition: {
+        x: house.origin.x + door.interactionPosition.x,
+        z: house.origin.z + door.interactionPosition.z,
+      },
+      doorIsWindow: door.isWindow,
     }
     door.pivot.userData = userData
     if (door.clickTarget) {

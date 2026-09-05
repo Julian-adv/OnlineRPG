@@ -87,6 +87,7 @@ export type ClickIntent =
       wallDir: WallDirection
       segmentIndex: number
       position: Position
+      isWindow?: boolean
     }
   | {
       type: 'toggle_dungeon_door'
@@ -496,13 +497,21 @@ class InputHandler {
             d.doorHouseId &&
             d.doorFloorLevel === context.playerVisualFloorLevel
           ) {
+            const interactionPosition = d.doorInteractionPosition as
+              | { x: number; z: number }
+              | undefined
             return {
               type: 'toggle_door',
               houseId: d.doorHouseId,
               roomIndex: d.doorRoomIndex,
               wallDir: d.doorWallDir,
               segmentIndex: d.doorSegmentIndex,
-              position,
+              position: {
+                x: interactionPosition?.x ?? position.x,
+                y: position.y,
+                z: interactionPosition?.z ?? position.z,
+              },
+              isWindow: d.doorIsWindow === true,
             }
           }
           obj = obj.parent
