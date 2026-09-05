@@ -191,3 +191,10 @@ account = "npc_inn_maid"
 gender = "female"
 llm = "codex"
 serve_tables = true
+
+# Land registrar stays at the town square.
+[[npcs]]
+id = "steward"
+account = "npc_steward"
+gender = "male"
+llm = "codex"

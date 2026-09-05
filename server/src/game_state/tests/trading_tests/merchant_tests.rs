@@ -1,5 +1,52 @@
 use super::*;
 
+#[tokio::test]
+async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
+    let game_state = make_test_game_state("steward_land_deed");
+    let buyer = pid("buyer");
+    let steward = pid("npc_steward");
+    game_state
+        .add_player(make_npc("npc_steward", "Aldwin", 0.0, 0.0))
+        .await;
+    game_state.add_player(make_player("buyer", 1.0, 0.0)).await;
+    for (player, character_id, gold) in [(&buyer, 1, 50_000), (&steward, 2, 0)] {
+        game_state
+            .register_player_character(player, character_id, 0, attrs_with_cha(10), gold, None)
+            .await;
+    }
+    game_state
+        .inventories
+        .write()
+        .await
+        .insert(buyer, PlayerInventory::default());
+    let mut buyer_rx = game_state.register_direct_channel(&buyer).await;
+    game_state.open_shop(&buyer, &steward, true).await;
+    match buyer_rx.try_recv().unwrap() {
+        ServerMessage::ShopState { catalog, .. } => assert_eq!(catalog, vec!["land_deed"]),
+        other => panic!("Expected Aldwin's shop, got {other:?}"),
+    }
+
+    game_state.buy_item(&buyer, &steward, "land_deed").await;
+    assert_eq!(game_state.player_gold.read().await[&buyer], 0);
+    assert_eq!(game_state.player_gold.read().await[&steward], 0);
+    {
+        let inventories = game_state.inventories.read().await;
+        let bag = &inventories[&buyer].bag;
+        assert_eq!(bag.len(), 1);
+        assert_eq!(bag[0].item_def_id, "land_deed");
+        assert_eq!(bag[0].quantity, 1);
+    }
+
+    while buyer_rx.try_recv().is_ok() {}
+    game_state.buy_item(&buyer, &steward, "land_deed").await;
+    expect_trade_error(&mut buyer_rx, "gold");
+    assert_eq!(
+        game_state.inventories.read().await[&buyer].bag[0].quantity,
+        1
+    );
+    assert_eq!(game_state.player_gold.read().await[&buyer], 0);
+}
+
 #[test]
 fn haggling_band_invariant_boundary() {
     // 60% is the first rate where max haggled sell (60% * 1.25) meets min

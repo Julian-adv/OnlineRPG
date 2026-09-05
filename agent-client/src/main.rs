@@ -650,11 +650,12 @@ always_sprint = true
         assert!(config.npcs[3].always_sprint(), "registry override wins");
     }
 
-    /// Every registry NPC must find the prompt files the directory convention
-    /// promises. A missing one is a startup crash on the server, in the dark.
+    /// Registry NPCs must resolve to existing prompt files.
     #[test]
     fn registry_npcs_resolve_to_prompt_files_that_exist() {
-        for id in ["karl", "rica", "signe"] {
+        for id in [
+            "karl", "rica", "signe", "wick", "miriel", "cocoly", "steward",
+        ] {
             let config = parse(&format!(
                 "server = \"ws://127.0.0.1:10006\"\n\n[[npcs]]\nid = \"{id}\"\n"
             ));
