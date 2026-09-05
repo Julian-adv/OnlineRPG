@@ -120,6 +120,7 @@ export function buildHouseGroup(
     const stair = new THREE.Group()
     stair.name = `stair_f${fl}`
     stair.userData.housingSurface = 'floor'
+    stair.userData.housingStairFloor = fl
     mergedMeshCount += addMergedMeshes(front, entries.front)
     mergedMeshCount += addMergedMeshes(back, entries.back)
     mergedMeshCount += addMergedMeshes(floor, entries.floor)

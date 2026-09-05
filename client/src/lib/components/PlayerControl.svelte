@@ -55,11 +55,13 @@
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import {
     playerFloorOffset,
+    playerInsideHouseId,
     playerVisualFloorLevel,
   } from '../stores/housingStore'
   import { currentDungeonDepth } from '../stores/dungeonStore'
   import { dungeonManager } from '../managers/dungeonManager'
   import { housingManager } from '../managers/housingManager'
+  import { shouldIgnoreImplicitHouseFloorChange } from '../managers/housing-queries'
   import { findPath } from '../managers/pathfinding'
   import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
   import {
@@ -1055,6 +1057,15 @@
   }
 
   function updateKeyboardMovement(deltaTime: number) {
+    const rawDirection = inputHandler.getMovementDirection()
+    const direction =
+      rawDirection && currentPlayer
+        ? housingManager.assistStairMovementDirection(
+            get(playerVisualFloorLevel),
+            currentPlayer.position,
+            rawDirection
+          )
+        : rawDirection
     runKeyboardFrame({
       currentPlayer,
       hasKeysPressed: inputHandler.hasKeysPressed,
@@ -1062,7 +1073,7 @@
       interactionExit: getInteractionExitKind(playerState),
       hasMovementTarget: movingState() !== null,
       isInCombat: combatController.isInCombat,
-      direction: inputHandler.getMovementDirection(),
+      direction,
       config: movementConfig(),
       deltaTimeSeconds: deltaTime / 1000,
       sampleHeight,
@@ -1214,7 +1225,6 @@
       const radius = staggerRadius(get(activeDebuffs), Date.now())
       if (radius > 0) clickPosition = staggerTarget(clickPosition, radius)
     }
-
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /
     // dungeonManager.startFloorAt), which differs from the clicked room's floor, so
@@ -1662,6 +1672,8 @@
         z: currentPlayer!.position.z,
       },
       playerVisualFloorLevel: get(playerVisualFloorLevel),
+      resolveHousingStairTarget: (floorLevel, x, y, z, stairFloor) =>
+        housingManager.stairLandingTargetAt(floorLevel, x, y, z, stairFloor),
       isMonsterDead,
       canCastFishing:
         getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
@@ -1768,14 +1780,29 @@
       eatMeal,
       breakProp,
       openProp,
-      moveToGround: (position, sprinting) => {
+      moveToGround: (position, sprinting, viaHousingStair) => {
         combatController.cancelCombat()
         const snapped = dungeonManager.snapDescentWallClick(
           position.x,
           position.z,
           position.y
         )
-        handleClickToMove(snapped ?? position, { sprinting })
+        const target = snapped ?? position
+        const currentFloor = currentPassabilityFloor()
+        const targetFloor = getFloorAtForClick(target.x, target.z, target.y)
+        if (
+          shouldIgnoreImplicitHouseFloorChange(
+            get(playerInsideHouseId),
+            currentFloor,
+            targetFloor,
+            viaHousingStair
+          )
+        ) {
+          return
+        }
+        handleClickToMove(target, {
+          sprinting,
+        })
       },
       castFishing: (intent) => {
         if (!currentPlayer || currentPlayer.health <= 0) return

@@ -229,6 +229,36 @@ describe('processCanvasClick cast-vs-walk', () => {
 
     expect(intent.type).toBe('move_to_ground')
   })
+
+  it('uses a nearby stair hit instead of the ground under the pointer', () => {
+    const { camera, ground } = groundScene()
+    const stair = new THREE.Group()
+    stair.userData.housingStairFloor = 0
+    const landing = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7))
+    landing.rotateX(-Math.PI / 2)
+    landing.position.set(1.28, 0.2, 0)
+    stair.add(landing)
+    stair.updateMatrixWorld(true)
+    const target = { x: 3.5, y: 3.15, z: 3.75 }
+    const resolveHousingStairTarget = vi.fn(() => target)
+
+    const intent = inputHandler.processCanvasClick(
+      centerClick(),
+      contextWith({
+        camera,
+        groundMeshes: [ground, stair],
+        resolveHousingStairTarget,
+      })
+    )
+
+    expect(resolveHousingStairTarget).toHaveBeenCalled()
+    expect(intent).toEqual({
+      type: 'move_to_ground',
+      sprinting: false,
+      position: target,
+      viaHousingStair: true,
+    })
+  })
 })
 
 describe('shouldSuppressContextMenu', () => {

@@ -61,6 +61,18 @@ const CLICK_RAY_OFFSETS = [
   { dx: -10, dy: 0 },
 ]
 
+const STAIR_CLICK_RAY_OFFSETS = [
+  { dx: 0, dy: 0 },
+  { dx: 0, dy: -14 },
+  { dx: 14, dy: 0 },
+  { dx: 0, dy: 14 },
+  { dx: -14, dy: 0 },
+  { dx: 10, dy: -10 },
+  { dx: 10, dy: 10 },
+  { dx: -10, dy: 10 },
+  { dx: -10, dy: -10 },
+]
+
 export type ClickIntent =
   | {
       type: 'attack_monster'
@@ -133,7 +145,12 @@ export type ClickIntent =
       propId: number
       position: Position
     }
-  | { type: 'move_to_ground'; position: Position; sprinting: boolean }
+  | {
+      type: 'move_to_ground'
+      position: Position
+      sprinting: boolean
+      viaHousingStair?: boolean
+    }
   | {
       /** Rod equipped + clicked point is underwater terrain: cast, don't walk. */
       type: 'cast_fishing'
@@ -165,6 +182,13 @@ export interface RaycastContext {
   /** Baked water surface height at a world XZ (sea level where none). Lets a
    *  cast fire over rivers, whose beds sit above sea level, not just ocean. */
   waterSurfaceAt?: (x: number, z: number) => number
+  resolveHousingStairTarget?: (
+    floorLevel: number,
+    x: number,
+    y: number,
+    z: number,
+    stairFloor: number
+  ) => Position | null
 }
 
 /** What the cursor is over: a placed object carrying display text (e.g. a
@@ -317,6 +341,36 @@ class InputHandler {
 
       const result = resolve(hits[0])
       if (result !== null) return result
+    }
+    return null
+  }
+
+  private raycastHousingStair(
+    event: MouseEvent,
+    rect: DOMRect,
+    context: RaycastContext
+  ): Position | null {
+    if (!context.resolveHousingStairTarget) return null
+    const raycaster = new Raycaster()
+    for (const offset of STAIR_CLICK_RAY_OFFSETS) {
+      const mouseNDC = new Vector2(
+        ((event.clientX - rect.left + offset.dx) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top + offset.dy) / rect.height) * 2 + 1
+      )
+      raycaster.setFromCamera(mouseNDC, context.camera)
+      const hits = raycaster.intersectObjects(context.groundMeshes, true)
+      for (const hit of hits) {
+        const stair = findAncestorWithUserData(hit.object, 'housingStairFloor')
+        if (!stair) continue
+        const target = context.resolveHousingStairTarget(
+          context.playerVisualFloorLevel,
+          hit.point.x,
+          hit.point.y,
+          hit.point.z,
+          stair.userData.housingStairFloor as number
+        )
+        if (target) return target
+      }
     }
     return null
   }
@@ -609,6 +663,16 @@ class InputHandler {
             z: stallPosition.z,
           },
         }
+      }
+    }
+
+    const stairTarget = this.raycastHousingStair(event, rect, context)
+    if (stairTarget) {
+      return {
+        type: 'move_to_ground',
+        sprinting: sprintRequested(event.shiftKey),
+        position: stairTarget,
+        viaHousingStair: true,
       }
     }
 

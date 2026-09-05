@@ -33,7 +33,10 @@
   } from '../../utils/house-geo-utils'
   import { getWallByDir } from '../../managers/housingManager'
   import { housingManager } from '../../managers/housingManager'
-  import { roomContainsXZ } from '../../managers/housing-queries'
+  import {
+    resolveStairFloor,
+    roomContainsXZ,
+  } from '../../managers/housing-queries'
   import { furnitureManager } from '../../managers/furnitureManager'
   import {
     TERRAIN_TILE_SIZE,
@@ -439,17 +442,19 @@
         const entryFloor = room.floorLevel
         const exitFloor = room.floorLevel + 1
         const entryFloorY =
-          terrainComp + floorYBase(entryFloor, room.wallHeight)
-        // Hysteresis: transition at 95% of stairwell rise to avoid flickering
-        const exitThreshold =
-          entryFloorY +
-          (terrainComp + floorYBase(exitFloor, room.wallHeight) - entryFloorY) *
-            0.95
-        if (playerInsideFloor <= entryFloor) {
-          effectiveFloor = newOffset >= exitThreshold ? exitFloor : entryFloor
-        } else {
-          effectiveFloor = newOffset <= exitThreshold ? entryFloor : exitFloor
-        }
+          terrainComp +
+          floorYBase(entryFloor, room.wallHeight) +
+          FLOOR_THICKNESS / 2
+        const exitFloorY =
+          terrainComp +
+          floorYBase(exitFloor, room.wallHeight) +
+          FLOOR_THICKNESS / 2
+        const progress = (newOffset - entryFloorY) / (exitFloorY - entryFloorY)
+        effectiveFloor = resolveStairFloor(
+          entryFloor,
+          playerInsideFloor,
+          progress
+        )
       } else if (floorResult) {
         const room = floorResult.house.rooms[floorResult.roomIndex]
         insideId = id

@@ -26,6 +26,7 @@ import {
   passability_is_circle_blocked,
 } from '../wasm/onlinerpg_shared'
 import {
+  assistStairMovementDirection,
   checkOverlap,
   collectRoomAABBsInRegion,
   findAdjacentHouse,
@@ -37,6 +38,7 @@ import {
   hasFloorSupport,
   houseFloorHeightAt,
   isPointUnderHouseXZ,
+  stairLandingTargetAt,
   type RoomAABB,
 } from './housing-queries'
 
@@ -341,6 +343,36 @@ export class HousingManager {
   /** Ground Y on a given house floor at (x, z), stairwell ramps included. */
   floorHeightAt(floorLevel: number, x: number, z: number): number | null {
     return houseFloorHeightAt(this.housesById, floorLevel, x, z)
+  }
+
+  assistStairMovementDirection(
+    floorLevel: number,
+    position: { x: number; y: number; z: number },
+    direction: { x: number; z: number }
+  ) {
+    return assistStairMovementDirection(
+      this.housesById,
+      floorLevel,
+      position,
+      direction
+    )
+  }
+
+  stairLandingTargetAt(
+    floorLevel: number,
+    x: number,
+    y: number,
+    z: number,
+    stairFloor?: number
+  ) {
+    return stairLandingTargetAt(
+      this.housesById,
+      floorLevel,
+      x,
+      y,
+      z,
+      stairFloor
+    )
   }
 
   /**

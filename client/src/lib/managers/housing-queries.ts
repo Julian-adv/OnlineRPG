@@ -1,6 +1,7 @@
 import type { HouseData, RoomData } from '../types/housing'
 import {
   FLOOR_THICKNESS,
+  LANDING_DEPTH,
   floorYBase,
   getStairwellYOffset,
   type WallDirection,
@@ -119,6 +120,160 @@ export function houseFloorHeightAt(
     }
   }
   return stairY ?? flatY
+}
+
+interface StairCandidate {
+  house: HouseData
+  room: RoomData
+}
+
+export function resolveStairFloor(
+  entryFloor: number,
+  currentFloor: number,
+  progress: number
+): number {
+  if (currentFloor <= entryFloor) {
+    return progress >= 0.88 ? entryFloor + 1 : entryFloor
+  }
+  return progress <= 0.12 ? entryFloor : entryFloor + 1
+}
+
+export function shouldIgnoreImplicitHouseFloorChange(
+  insideHouseId: string | null,
+  currentFloor: number,
+  targetFloor: number,
+  viaStair: boolean
+): boolean {
+  return insideHouseId !== null && !viaStair && currentFloor !== targetFloor
+}
+
+function nearestStairAt(
+  housesById: ReadonlyMap<string, HouseData>,
+  floorLevel: number,
+  x: number,
+  y: number,
+  z: number,
+  stairFloor?: number
+): StairCandidate | null {
+  let best: StairCandidate | null = null
+  let bestDistance = Infinity
+  for (const house of housesById.values()) {
+    for (const room of house.rooms) {
+      if (
+        room.roomType !== 'stairwell' ||
+        (stairFloor !== undefined && room.floorLevel !== stairFloor) ||
+        floorLevel < room.floorLevel ||
+        floorLevel > room.floorLevel + 1 ||
+        !roomContainsXZ(house, room, x, z)
+      ) {
+        continue
+      }
+      const stairY =
+        house.origin.y +
+        getStairwellYOffset(room, house.origin.x, house.origin.z, x, z)
+      const distance = Math.abs(stairY - y)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = { house, room }
+      }
+    }
+  }
+  return best
+}
+
+export function assistStairMovementDirection(
+  housesById: ReadonlyMap<string, HouseData>,
+  floorLevel: number,
+  position: { x: number; y: number; z: number },
+  direction: { x: number; z: number }
+): { x: number; z: number } {
+  const match = nearestStairAt(
+    housesById,
+    floorLevel,
+    position.x,
+    position.y,
+    position.z
+  )
+  if (!match) return direction
+
+  const { house, room } = match
+  const alongZ = room.sizeZ >= room.sizeX
+  const length = alongZ ? room.sizeZ : room.sizeX
+  const width = alongZ ? room.sizeX : room.sizeZ
+  const alongPosition = alongZ
+    ? position.z - (house.origin.z + room.localZ)
+    : position.x - (house.origin.x + room.localX)
+  const edgeDistance = Math.max(
+    0,
+    Math.min(alongPosition, length - alongPosition)
+  )
+  const edgeT = Math.min(1, edgeDistance / LANDING_DEPTH)
+  const edgeWeight = edgeT * edgeT * (3 - 2 * edgeT)
+  const alongInput = alongZ ? direction.z : direction.x
+  const lateralInput = alongZ ? direction.x : direction.z
+  const driveWeight = Math.min(1, Math.abs(alongInput) * Math.SQRT2)
+  const weight = edgeWeight * driveWeight
+  if (weight <= 0) return direction
+
+  const lateralPosition = alongZ
+    ? position.x - (house.origin.x + room.localX + room.sizeX / 2)
+    : position.z - (house.origin.z + room.localZ + room.sizeZ / 2)
+  const halfWidth = Math.max(width / 2, 0.01)
+  const deadZone = Math.min(0.15, halfWidth * 0.3)
+  const excess = Math.max(0, Math.abs(lateralPosition) - deadZone)
+  const usableHalfWidth = Math.max(halfWidth - deadZone, 0.01)
+  const centerPull =
+    -Math.sign(lateralPosition) *
+    Math.min(1, excess / usableHalfWidth) *
+    0.35 *
+    Math.abs(alongInput)
+  const correctedLateral =
+    lateralInput * (1 - 0.7 * weight) + centerPull * weight
+  const originalLength = Math.hypot(direction.x, direction.z)
+  const correctedLength = Math.hypot(alongInput, correctedLateral)
+  if (correctedLength <= 1e-6) return direction
+  const scale = originalLength / correctedLength
+
+  return alongZ
+    ? { x: correctedLateral * scale, z: alongInput * scale }
+    : { x: alongInput * scale, z: correctedLateral * scale }
+}
+
+export function stairLandingTargetAt(
+  housesById: ReadonlyMap<string, HouseData>,
+  floorLevel: number,
+  x: number,
+  y: number,
+  z: number,
+  stairFloor?: number
+): { x: number; y: number; z: number } | null {
+  const match = nearestStairAt(housesById, floorLevel, x, y, z, stairFloor)
+  if (!match) return null
+
+  const { house, room } = match
+  const upperFloor = room.floorLevel + 1
+  const targetFloor =
+    floorLevel === room.floorLevel ? upperFloor : room.floorLevel
+  const alongZ = room.sizeZ >= room.sizeX
+  const length = alongZ ? room.sizeZ : room.sizeX
+  const targetUpper = targetFloor === upperFloor
+  const targetAtMax = targetUpper !== (room.stairReversed ?? false)
+  const along = targetAtMax ? length - LANDING_DEPTH / 2 : LANDING_DEPTH / 2
+  const targetX = alongZ
+    ? house.origin.x + room.localX + room.sizeX / 2
+    : house.origin.x + room.localX + along
+  const targetZ = alongZ
+    ? house.origin.z + room.localZ + along
+    : house.origin.z + room.localZ + room.sizeZ / 2
+
+  return {
+    x: targetX,
+    y:
+      house.origin.y +
+      floorYBase(targetFloor, room.wallHeight) +
+      FLOOR_THICKNESS / 2,
+    z: targetZ,
+  }
 }
 
 export interface RoomAABB {

@@ -131,6 +131,41 @@ describe('dispatchCanvasClickIntent walk-up interactions', () => {
   })
 })
 
+describe('dispatchCanvasClickIntent ground movement', () => {
+  it('marks ordinary ground movement as an implicit floor route', () => {
+    const actions = makeActions()
+    const position = { x: 1, y: 0, z: 2 }
+
+    dispatchCanvasClickIntent(
+      { type: 'move_to_ground', position, sprinting: false },
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
+
+    expect(actions.moveToGround).toHaveBeenCalledWith(position, false, false)
+  })
+
+  it('preserves an explicit housing stair route', () => {
+    const actions = makeActions()
+    const position = { x: 1, y: 3, z: 2 }
+
+    dispatchCanvasClickIntent(
+      {
+        type: 'move_to_ground',
+        position,
+        sprinting: false,
+        viaHousingStair: true,
+      },
+      false,
+      actions,
+      PLAYER_ATTACK_RANGE_METERS
+    )
+
+    expect(actions.moveToGround).toHaveBeenCalledWith(position, false, true)
+  })
+})
+
 describe('dispatchCanvasClickIntent meals', () => {
   it('routes a meal intent to eatMeal', () => {
     const actions = makeActions()
