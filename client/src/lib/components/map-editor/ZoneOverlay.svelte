@@ -13,6 +13,14 @@
   import type { ZoneData } from '../../managers/zoneManager'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
 
+  let {
+    data,
+    readOnly = false,
+  }: {
+    data?: ZoneData
+    readOnly?: boolean
+  } = $props()
+
   const NO_SPAWN_COLOR = new THREE.Color(0xff4444)
   const SPAWN_COLOR = new THREE.Color(0x4488ff)
   const PREVIEW_COLOR = new THREE.Color(0xffcc00)
@@ -27,25 +35,19 @@
     border: THREE.BufferGeometry | null
   }
 
-  let zoneData = $state<ZoneData>({ monsterSpawns: [], noSpawnZones: [] })
-  let drawStart = $state<{ x: number; z: number } | null>(null)
-  let cursorPos = $state<{ worldX: number; worldZ: number } | null>(null)
-  let tool = $state('')
-  let heightMgr = $state<TerrainHeightManager | null>(null)
-  let hovered = $state<{ type: 'noSpawn' | 'spawn'; index: number } | null>(
-    null
+  const zoneData = $derived(data ?? $currentZoneData)
+  const drawStart = $derived($zoneDrawStart)
+  const cursorPos = $derived($hoveredCell)
+  const tool = $derived($editorTool)
+  const heightMgr = $derived($editorHeightManager)
+  const hovered = $derived(readOnly ? null : $hoveredZoneIndex)
+  let heightRevision = $state(0)
+
+  $effect(() =>
+    heightMgr?.onHeightChanged(() => {
+      heightRevision++
+    })
   )
-
-  editorTool.subscribe((v) => (tool = v))
-  zoneDrawStart.subscribe((v) => (drawStart = v))
-  editorHeightManager.subscribe((v) => (heightMgr = v))
-  hoveredZoneIndex.subscribe((v) => (hovered = v))
-  hoveredCell.subscribe((v) => {
-    cursorPos = v ? { worldX: v.worldX, worldZ: v.worldZ } : null
-  })
-  currentZoneData.subscribe((v) => (zoneData = v))
-
-  // --- Geometry builders ---
 
   function buildFillGeometry(
     mgr: TerrainHeightManager,
@@ -143,18 +145,17 @@
     }
   }
 
-  // --- Static zone meshes: only rebuild when zoneData or heightMgr changes ---
-
   let prevStaticGeos: ZoneMesh[] = []
 
   let staticMeshes = $derived.by(() => {
-    if (tool !== 'zone' || !heightMgr) {
+    if ((!readOnly && tool !== 'zone') || !heightMgr) {
       disposeGeos(prevStaticGeos)
       prevStaticGeos = []
       return []
     }
 
     const mgr = heightMgr
+    void heightRevision
     const result: ZoneMesh[] = []
 
     const noSpawnZones = zoneData.noSpawnZones ?? []
@@ -170,7 +171,7 @@
       })
     }
 
-    const spawnZones = zoneData.monsterSpawns ?? []
+    const spawnZones = readOnly ? [] : (zoneData.monsterSpawns ?? [])
     for (let i = 0; i < spawnZones.length; i++) {
       const z = spawnZones[i]
       const hi = hovered?.type === 'spawn' && hovered.index === i
@@ -188,12 +189,10 @@
     return result
   })
 
-  // --- Preview mesh: rebuilt on cursor move during drawing ---
-
   let prevPreviewGeos: ZoneMesh | null = null
 
   let previewMesh = $derived.by((): ZoneMesh | null => {
-    if (tool !== 'zone' || !heightMgr || !drawStart || !cursorPos) {
+    if (readOnly || tool !== 'zone' || !heightMgr || !drawStart || !cursorPos) {
       if (prevPreviewGeos) {
         prevPreviewGeos.fill?.dispose()
         prevPreviewGeos.border?.dispose()

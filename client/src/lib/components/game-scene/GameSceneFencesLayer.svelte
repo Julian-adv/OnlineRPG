@@ -12,6 +12,7 @@
     fenceError,
     fenceTarget,
     fenceCount,
+    showFenceNoSpawnZones,
     stopFenceMode,
     refreshFenceHeights,
   } from '../../stores/fenceStore'
@@ -37,6 +38,8 @@
   import { LAND_PLOT_SIZE } from '../../terrain/terrain-constants'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { LocalPlayer } from '../../stores/gameStore'
+  import { isAdminUser } from '../../stores/gameStore'
+  import GameSceneFenceZonesLayer from './GameSceneFenceZonesLayer.svelte'
 
   let {
     heightManager,
@@ -218,7 +221,7 @@
     const reason =
       existing && existing.owner_id !== mode.owner_id
         ? 'This fence belongs to another player'
-        : !existing && !fenceOnOwnedPlot(edge, mode.plots)
+        : !existing && !get(isAdminUser) && !fenceOnOwnedPlot(edge, mode.plots)
           ? 'Choose an edge on your estate'
           : !existing && !get(fenceCount)
             ? 'No fences left · Click a placed fence to recover it'
@@ -378,3 +381,7 @@
 </script>
 
 <T is={group} />
+
+{#if $isAdminUser && $fenceMode && $showFenceNoSpawnZones && player && $currentDungeonDepth < 1}
+  <GameSceneFenceZonesLayer {player} />
+{/if}

@@ -12,9 +12,11 @@
     fenceError,
     fenceTarget,
     fenceCount,
+    showFenceNoSpawnZones,
     stopFenceMode,
   } from '../stores/fenceStore'
   import type { LandscapingTool } from '../terrain/landscaping'
+  import { isAdminUser } from '../stores/gameStore'
   import SplatBrushPanel from './map-editor/SplatBrushPanel.svelte'
   import { draggablePanel } from '../actions/draggablePanel'
 
@@ -57,6 +59,12 @@
     {#if $landscapingMode.tool === 'Fence'}
       <div class="fence-content">
         <strong>Wooden Fence · {$fenceCount} in bag</strong>
+        {#if $isAdminUser}
+          <label class="zone-toggle">
+            <input type="checkbox" bind:checked={$showFenceNoSpawnZones} />
+            Show no-spawn zones
+          </label>
+        {/if}
       </div>
     {:else}
       <SplatBrushPanel
@@ -166,5 +174,14 @@
     padding: 12px 16px;
     font-family: 'Courier New', monospace;
     font-size: 12px;
+  }
+  .zone-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .zone-toggle input {
+    accent-color: #e2b93b;
   }
 </style>

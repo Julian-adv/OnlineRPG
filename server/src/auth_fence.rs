@@ -36,6 +36,27 @@ impl AuthService {
                 tx.execute_batch(&format!("ALTER TABLE land_fences DROP COLUMN {column};"))?;
             }
         }
+        let has_installer: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('land_fences') WHERE name='installer_id')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_installer {
+            tx.execute_batch(
+                "CREATE TABLE land_fences_new (
+                    x INTEGER NOT NULL, z INTEGER NOT NULL,
+                    axis INTEGER NOT NULL CHECK (axis IN (0, 1)),
+                    estate_id INTEGER REFERENCES land_estates(id) ON DELETE CASCADE,
+                    installer_id INTEGER REFERENCES characters(id) ON DELETE CASCADE,
+                    CHECK ((estate_id IS NOT NULL) != (installer_id IS NOT NULL)),
+                    PRIMARY KEY (x, z, axis)
+                );
+                INSERT INTO land_fences_new (x,z,axis,estate_id)
+                    SELECT x,z,axis,estate_id FROM land_fences;
+                DROP TABLE land_fences;
+                ALTER TABLE land_fences_new RENAME TO land_fences;",
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -43,8 +64,8 @@ impl AuthService {
     pub fn load_fences(&self) -> Result<Vec<FenceRecord>, AuthError> {
         let conn = self.open_connection()?;
         let mut stmt = conn.prepare(
-            "SELECT f.x, f.z, f.axis, e.owner_id FROM land_fences f
-             JOIN land_estates e ON e.id=f.estate_id",
+            "SELECT f.x, f.z, f.axis, COALESCE(e.owner_id, f.installer_id) FROM land_fences f
+             LEFT JOIN land_estates e ON e.id=f.estate_id",
         )?;
         let fences = stmt
             .query_map([], |row| {
@@ -91,13 +112,15 @@ impl AuthService {
         inventory: &[ItemRow],
         fence: &Fence,
         place: bool,
+        is_admin: bool,
     ) -> Result<Result<(), &'static str>, AuthError> {
         let mut conn = self.open_connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let edge = fence.edge;
         let existing: Option<i64> = tx
             .query_row(
-                "SELECT e.owner_id FROM land_fences f JOIN land_estates e ON e.id=f.estate_id
+                "SELECT COALESCE(e.owner_id, f.installer_id) FROM land_fences f
+                 LEFT JOIN land_estates e ON e.id=f.estate_id
                  WHERE f.x=?1 AND f.z=?2 AND f.axis=?3",
                 params![edge.x, edge.z, axis_id(edge.axis)],
                 |row| row.get(0),
@@ -122,14 +145,15 @@ impl AuthService {
                     break;
                 }
             }
-            let Some(estate_id) = estate else {
+            if estate.is_none() && !is_admin {
                 return Ok(Err(
                     "Place fences on your own estate. Overdue estates cannot add fences.",
                 ));
-            };
+            }
+            let installer = estate.is_none().then_some(character.character_id);
             tx.execute(
-                "INSERT INTO land_fences (x,z,axis,estate_id) VALUES (?1,?2,?3,?4)",
-                params![edge.x, edge.z, axis_id(edge.axis), estate_id],
+                "INSERT INTO land_fences (x,z,axis,estate_id,installer_id) VALUES (?1,?2,?3,?4,?5)",
+                params![edge.x, edge.z, axis_id(edge.axis), estate, installer],
             )?;
         } else {
             match existing {

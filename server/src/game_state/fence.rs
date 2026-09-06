@@ -307,9 +307,10 @@ impl GameState {
         edge: FenceEdge,
         place: bool,
         auth: &AuthService,
+        is_admin: bool,
     ) {
         let error = self
-            .try_edit_fence(player_id, edge, place, auth)
+            .try_edit_fence(player_id, edge, place, auth, is_admin)
             .await
             .err()
             .map(str::to_string);
@@ -323,6 +324,7 @@ impl GameState {
         edge: FenceEdge,
         place: bool,
         auth: &AuthService,
+        is_admin: bool,
     ) -> Result<(), &'static str> {
         if !edge.valid() {
             return Err("Invalid fence edge.");
@@ -419,7 +421,7 @@ impl GameState {
         let rows = serialize_inventory(&updated);
         let auth = auth.clone();
         let saved = fence.clone();
-        auth_db(move || auth.save_fence_edit(&character, &rows, &saved, place))
+        auth_db(move || auth.save_fence_edit(&character, &rows, &saved, place, is_admin))
             .await
             .map_err(|error| {
                 tracing::warn!(%error, "Failed to save fence edit");

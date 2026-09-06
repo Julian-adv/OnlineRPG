@@ -84,9 +84,19 @@ async fn fence_migration_preserves_ownership_and_reloads_current_terrain_height(
     let (auth, path) = make_test_auth_with_path("fence_height_migration");
     let (owner_id, _) = owner(&game, &auth, "Builder").await;
     claim(&game, &auth, "Builder").await;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("ALTER TABLE land_fences ADD COLUMN y REAL NOT NULL DEFAULT -123;
+    db.execute_batch("ALTER TABLE land_fences RENAME TO saved_fences;
+        CREATE TABLE land_fences (
+            x INTEGER NOT NULL, z INTEGER NOT NULL,
+            axis INTEGER NOT NULL CHECK (axis IN (0, 1)),
+            estate_id INTEGER NOT NULL REFERENCES land_estates(id) ON DELETE CASCADE,
+            PRIMARY KEY (x, z, axis)
+        );
+        INSERT INTO land_fences SELECT x,z,axis,estate_id FROM saved_fences;
+        DROP TABLE saved_fences;
+        ALTER TABLE land_fences ADD COLUMN y REAL NOT NULL DEFAULT -123;
         ALTER TABLE land_fences ADD COLUMN owner_id INTEGER REFERENCES characters(id) ON DELETE CASCADE;")
         .unwrap();
     db.execute("UPDATE land_fences SET owner_id=?1", [owner_id])
@@ -142,7 +152,7 @@ async fn fence_migration_preserves_ownership_and_reloads_current_terrain_height(
     });
     assert!((visible[0].y - 12.0).abs() < 0.01);
     drop(fences);
-    game.edit_fence(&pid("Builder"), EDGE, false, &migrated)
+    game.edit_fence(&pid("Builder"), EDGE, false, &migrated, false)
         .await;
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(migrated.load_fences().unwrap().is_empty());
@@ -160,7 +170,8 @@ async fn fence_heights_and_collision_follow_saved_terrain_across_tile_edges() {
         axis: FenceAxis::X,
     };
     for edge in [EDGE, border] {
-        game.edit_fence(&pid("Builder"), edge, true, &auth).await;
+        game.edit_fence(&pid("Builder"), edge, true, &auth, false)
+            .await;
     }
     drain(&mut rx);
     game.save_terrain_heightmap(0, 0, &uniform_heightmap(9.0))
@@ -252,7 +263,8 @@ async fn fence_place_recover_and_restart_preserve_inventory_and_edges() {
     assert!(drain(&mut rx)
         .iter()
         .any(|m| matches!(m, ServerMessage::LandscapingMode { plots, .. } if !plots.is_empty())));
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 99);
     assert!(blocked(&game));
     assert!(!is_movement_blocked(
@@ -274,7 +286,8 @@ async fn fence_place_recover_and_restart_preserve_inventory_and_edges() {
     game.load_player_inventory(&pid("Builder"), character_id, &auth)
         .await;
     assert_eq!(quantity(&game, "Builder").await, 99);
-    game.edit_fence(&pid("Builder"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(!blocked(&game));
     assert!(auth.load_fences().unwrap().is_empty());
@@ -290,8 +303,10 @@ async fn fences_cannot_be_stolen_and_overdue_land_can_only_recover() {
     let (character_id, _) = owner(&game, &auth, "Builder").await;
     claim(&game, &auth, "Builder").await;
     owner(&game, &auth, "Visitor").await;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
-    game.edit_fence(&pid("Visitor"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
+    game.edit_fence(&pid("Visitor"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Visitor").await, 100);
     assert!(blocked(&game));
     let db = rusqlite::Connection::open(path).unwrap();
@@ -300,10 +315,17 @@ async fn fences_cannot_be_stolen_and_overdue_land_can_only_recover() {
         [character_id],
     )
     .unwrap();
-    game.edit_fence(&pid("Builder"), FenceEdge { z: 2, ..EDGE }, true, &auth)
-        .await;
+    game.edit_fence(
+        &pid("Builder"),
+        FenceEdge { z: 2, ..EDGE },
+        true,
+        &auth,
+        false,
+    )
+    .await;
     assert_eq!(quantity(&game, "Builder").await, 99);
-    game.edit_fence(&pid("Builder"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(!blocked(&game));
 }
@@ -315,7 +337,8 @@ async fn fence_recovery_follows_the_estate_owner_instead_of_the_installer() {
     let (installer, mut builder_rx) = owner(&game, &auth, "Builder").await;
     claim(&game, &auth, "Builder").await;
     let (new_owner, mut visitor_rx) = owner(&game, &auth, "Visitor").await;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     let db = rusqlite::Connection::open(path).unwrap();
     db.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
     db.execute(
@@ -325,7 +348,8 @@ async fn fence_recovery_follows_the_estate_owner_instead_of_the_installer() {
     .unwrap();
     assert_eq!(auth.load_fences().unwrap()[0].owner_id, new_owner);
 
-    game.edit_fence(&pid("Builder"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 99);
     assert!(blocked(&game));
     drain(&mut builder_rx);
@@ -343,7 +367,8 @@ async fn fence_recovery_follows_the_estate_owner_instead_of_the_installer() {
     db.execute("DELETE FROM characters WHERE id=?1", [installer])
         .unwrap();
     assert_eq!(auth.load_fences().unwrap().len(), 1);
-    game.edit_fence(&pid("Visitor"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Visitor"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Visitor").await, 101);
     assert!(auth.load_fences().unwrap().is_empty());
     assert!(!blocked(&game));
@@ -362,14 +387,16 @@ async fn last_fence_can_be_recovered_with_an_empty_bag() {
         .unwrap()
         .bag[0]
         .quantity = 1;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 0);
     drain(&mut rx);
     game.start_fence_mode(&pid("Builder"), &auth).await;
     assert!(drain(&mut rx)
         .iter()
         .any(|m| matches!(m, ServerMessage::LandscapingMode { .. })));
-    game.edit_fence(&pid("Builder"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 1);
 }
 
@@ -379,10 +406,12 @@ async fn failed_inventory_save_restores_removed_fence() {
     let (auth, path) = make_test_auth_with_path("fence_inventory_rollback");
     owner(&game, &auth, "Builder").await;
     claim(&game, &auth, "Builder").await;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     let db = rusqlite::Connection::open(path).unwrap();
     db.execute_batch("CREATE TRIGGER fail_fence_inventory BEFORE DELETE ON character_items BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
-    game.edit_fence(&pid("Builder"), EDGE, false, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 99);
     assert!(blocked(&game));
     assert_eq!(auth.load_fences().unwrap().len(), 1);
@@ -394,7 +423,8 @@ async fn fence_visibility_follows_join_movement_and_world_wrap() {
     let auth = make_test_auth("fence_visibility");
     owner(&game, &auth, "Builder").await;
     claim(&game, &auth, "Builder").await;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     let mut viewer = make_player("Viewer", 1.5, 2.5);
     viewer.position.y = 5.05;
     let messages = game.add_player(viewer).await;
@@ -446,17 +476,63 @@ async fn duplicate_and_concurrent_fence_requests_never_duplicate_items() {
     claim(&game, &auth, "Builder").await;
     let id = pid("Builder");
     tokio::join!(
-        game.edit_fence(&id, EDGE, true, &auth),
-        game.edit_fence(&id, EDGE, true, &auth)
+        game.edit_fence(&id, EDGE, true, &auth, false),
+        game.edit_fence(&id, EDGE, true, &auth, false)
     );
     assert_eq!(quantity(&game, "Builder").await, 99);
     assert_eq!(auth.load_fences().unwrap().len(), 1);
     tokio::join!(
-        game.edit_fence(&id, EDGE, false, &auth),
-        game.edit_fence(&id, EDGE, false, &auth)
+        game.edit_fence(&id, EDGE, false, &auth, false),
+        game.edit_fence(&id, EDGE, false, &auth, false)
     );
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(auth.load_fences().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn admin_fences_outside_estates_persist_and_can_only_be_recovered_by_the_owner() {
+    let game = make_flat_world_game_state("admin_fence_village");
+    let (auth, path) = make_test_auth_with_path("admin_fence_village");
+    let (admin_id, mut rx) = owner(&game, &auth, "Admin").await;
+    owner(&game, &auth, "Visitor").await;
+    game.terrain_io
+        .write_land_grades(0, 0, &vec![LandGrade::Reserved as u8; REGION_PLOTS])
+        .await
+        .unwrap();
+    assert!(auth.owned_land_plots().unwrap().is_empty());
+
+    game.edit_fence(&pid("Visitor"), EDGE, true, &auth, false)
+        .await;
+    assert!(auth.load_fences().unwrap().is_empty());
+    assert_eq!(quantity(&game, "Visitor").await, 100);
+
+    game.start_fence_mode(&pid("Admin"), &auth).await;
+    game.edit_fence(&pid("Admin"), EDGE, true, &auth, true)
+        .await;
+    assert_eq!(quantity(&game, "Admin").await, 99);
+    assert!(blocked(&game));
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::FenceEditResult { error: None })));
+
+    let reopened = crate::auth::AuthService::new(path).unwrap();
+    let saved = reopened.load_fences().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].edge, EDGE);
+    assert_eq!(saved[0].owner_id, admin_id);
+    let restarted = make_flat_world_game_state("admin_fence_village_restart");
+    restarted.load_fences(&reopened).await.unwrap();
+    assert!(blocked(&restarted));
+
+    game.edit_fence(&pid("Visitor"), EDGE, false, &reopened, false)
+        .await;
+    assert_eq!(quantity(&game, "Visitor").await, 100);
+    assert_eq!(reopened.load_fences().unwrap().len(), 1);
+    game.edit_fence(&pid("Admin"), EDGE, false, &reopened, true)
+        .await;
+    assert_eq!(quantity(&game, "Admin").await, 100);
+    assert!(reopened.load_fences().unwrap().is_empty());
+    assert!(!blocked(&game));
 }
 
 #[tokio::test]
@@ -464,7 +540,8 @@ async fn fences_require_owned_land_life_and_available_inventory() {
     let game = make_flat_world_game_state("fence_reject");
     let auth = make_test_auth("fence_reject");
     let (_, mut rx) = owner(&game, &auth, "Builder").await;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(auth.load_fences().unwrap().is_empty());
     claim(&game, &auth, "Builder").await;
@@ -475,7 +552,8 @@ async fn fences_require_owned_land_life_and_available_inventory() {
             ..EDGE
         },
     ] {
-        game.edit_fence(&pid("Builder"), edge, true, &auth).await;
+        game.edit_fence(&pid("Builder"), edge, true, &auth, false)
+            .await;
     }
     game.players
         .write()
@@ -483,7 +561,8 @@ async fn fences_require_owned_land_life_and_available_inventory() {
         .get_mut(&pid("Builder"))
         .unwrap()
         .health = 0;
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     game.players
         .write()
         .await
@@ -497,7 +576,8 @@ async fn fences_require_owned_land_life_and_available_inventory() {
         .unwrap()
         .bag
         .clear();
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     assert!(auth.load_fences().unwrap().is_empty());
     assert!(
         drain(&mut rx)
@@ -522,7 +602,8 @@ async fn fence_editing_reaches_the_whole_estate_and_notifies_the_owner() {
     }
     drain(&mut rx);
     let edge = FenceEdge { x: 31, ..EDGE };
-    game.edit_fence(&pid("Builder"), edge, true, &auth).await;
+    game.edit_fence(&pid("Builder"), edge, true, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 99);
     assert_eq!(auth.load_fences().unwrap()[0].edge, edge);
     assert!(drain(&mut rx).iter().any(|m| matches!(
@@ -537,7 +618,8 @@ async fn fence_editing_reaches_the_whole_estate_and_notifies_the_owner() {
         0,
         Some(5.05)
     ));
-    game.edit_fence(&pid("Builder"), edge, false, &auth).await;
+    game.edit_fence(&pid("Builder"), edge, false, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(auth.load_fences().unwrap().is_empty());
     assert!(drain(&mut rx).iter().any(|m| matches!(
@@ -562,7 +644,8 @@ async fn failed_fence_save_rolls_back_inventory_and_collision() {
     claim(&game, &auth, "Builder").await;
     let db = rusqlite::Connection::open(path).unwrap();
     db.execute_batch("CREATE TRIGGER fail_fence BEFORE INSERT ON land_fences BEGIN SELECT RAISE(ABORT, 'test failure'); END;").unwrap();
-    game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
+    game.edit_fence(&pid("Builder"), EDGE, true, &auth, false)
+        .await;
     assert_eq!(quantity(&game, "Builder").await, 100);
     assert!(!blocked(&game));
     assert!(auth.load_fences().unwrap().is_empty());

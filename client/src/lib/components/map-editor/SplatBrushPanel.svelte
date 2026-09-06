@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte'
   import {
     brushSize,
     brushStrength,
@@ -23,17 +22,7 @@
 
   const THUMB_SIZE = 64
 
-  let size = $state(3)
-  let strength = $state(8)
-  let layer = $state(0)
   let thumbnails = $state<Record<string, string>>({})
-
-  const subscriptions = [
-    brushSize.subscribe((v) => (size = v)),
-    brushStrength.subscribe((v) => (strength = v)),
-    splatLayer.subscribe((v) => (layer = v)),
-  ]
-  onDestroy(() => subscriptions.forEach((unsubscribe) => unsubscribe()))
 
   async function loadThumbnails() {
     const canvas = document.createElement('canvas')
@@ -84,7 +73,7 @@
       {@const swatch = `rgb(${cfg.minimapColor[0]}, ${cfg.minimapColor[1]}, ${cfg.minimapColor[2]})`}
       <button
         class="grid-item"
-        class:selected={layer === i}
+        class:selected={$splatLayer === i}
         disabled={availableLayers !== undefined && !availableLayers.includes(i)}
         onclick={() => selectLayer(i)}
         title={availableLayers !== undefined && !availableLayers.includes(i)
@@ -109,11 +98,11 @@
       min="1"
       max="20"
       step="1"
-      value={size * 2}
+      value={$brushSize * 2}
       title="Full width in cells (1 cell = 1 metre)"
       oninput={onSizeChange}
     />
-    <span class="value">{size * 2}</span>
+    <span class="value">{$brushSize * 2}</span>
   </div>
 
   <div class="control-row">
@@ -124,10 +113,10 @@
       min="1"
       max="10"
       step="1"
-      value={strength}
+      value={$brushStrength}
       oninput={onStrengthChange}
     />
-    <span class="value">{strength.toFixed(1)}</span>
+    <span class="value">{$brushStrength.toFixed(1)}</span>
   </div>
 </div>
 

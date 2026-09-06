@@ -199,7 +199,7 @@ account = "npc_steward"
 gender = "male"
 llm = "codex"
 
-# Estate architect sells fences and landscaping supplies on the town square.
+# Estate architect sells landscaping supplies by day and sleeps in bed 71 at night.
 [[npcs]]
 id = "estate_architect"
 account = "npc_estate_architect"

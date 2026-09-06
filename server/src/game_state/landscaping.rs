@@ -195,11 +195,7 @@ impl GameState {
             .ok_or("That palette is no longer in your bag.")?;
         let slot = landscaping::palette_for_item(&item.item_def_id)
             .ok_or("That item is not a landscaping palette.")?;
-        let name = self
-            .item_defs
-            .get(&item.item_def_id)
-            .map(|def| def.name.clone())
-            .unwrap_or_else(|| item.item_def_id.clone());
+        let name = self.item_name(&item.item_def_id);
         let mut updated = inventory.clone();
         consume_one(&mut updated, instance_id);
         let rows = serialize_inventory(&updated);
@@ -367,6 +363,9 @@ impl GameState {
             if changed {
                 updates.push(tile);
             }
+        }
+        if updates.is_empty() {
+            return Ok(());
         }
         let mut saved = Vec::new();
         let mut error = None;

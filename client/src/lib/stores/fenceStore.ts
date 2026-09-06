@@ -14,6 +14,7 @@ export const fenceMode = derived(landscapingMode, (mode) =>
   mode?.tool === 'Fence' ? mode : null
 )
 export const fencePending = writable(false)
+export const showFenceNoSpawnZones = writable(false)
 export const fenceError = writable<string | null>(null)
 export const fenceTarget = writable<{
   edge: FenceEdge
@@ -57,6 +58,7 @@ export function refreshFenceHeights(
 
 export function stopFenceMode() {
   stopLandscapingMode()
+  showFenceNoSpawnZones.set(false)
   fenceTarget.set(null)
   fenceError.set(null)
 }

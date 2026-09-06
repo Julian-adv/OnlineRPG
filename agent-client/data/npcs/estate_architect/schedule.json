@@ -1,11 +1,20 @@
 {
   "schedule": [
     {
-      "at": "0:00",
-      "pos": [-1464.0, 1.1, 4745.5],
-      "rotation": -90.0,
+      "at": "day",
+      "pos": [-1450.0, 1.1, 4761.8],
+      "rotation": -91.7,
       "floor_level": 0,
-      "label": "estate architect's post on the town square"
+      "label": "standing at the landscaping shop beside the backyard floor samples"
+    },
+    {
+      "at": "night",
+      "pos": [-1451.768, 1.05, 4758.83],
+      "rotation": 90.0,
+      "floor_level": 0,
+      "label": "sleeping in bed 71 at the landscaping shop",
+      "action": "bed",
+      "object_id": 71
     }
   ]
 }

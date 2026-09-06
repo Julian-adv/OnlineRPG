@@ -1788,7 +1788,9 @@ async fn handle_client_message(
         }
         ClientMessage::EditFence { edge, place } => {
             if let Some(id) = &state.player_id {
-                game_state.edit_fence(id, edge, place, auth_service).await;
+                game_state
+                    .edit_fence(id, edge, place, auth_service, state.is_admin)
+                    .await;
             }
         }
         ClientMessage::StartFenceMode => {
