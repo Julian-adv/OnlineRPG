@@ -198,7 +198,7 @@ mod tests {
             y: 0.0,
             owner_id: 1,
         };
-        sync_passability(&mut cache, "other", &[fence.clone()]);
+        sync_passability(&mut cache, "other", std::slice::from_ref(&fence));
         sync_passability(&mut cache, "fences", &[fence]);
         sync_passability(&mut cache, "fences", &[]);
         assert!(is_movement_blocked(

@@ -15,7 +15,7 @@ fn fence_visibility_is_shared_without_one_npc_removing_anothers_collision() {
         y: 0.0,
         owner_id: 1,
     };
-    world.update_fences(1.into(), &[fence.clone()], &[]);
+    world.update_fences(1.into(), std::slice::from_ref(&fence), &[]);
     world.update_fences(2.into(), &[fence], &[]);
     world.update_fences(1.into(), &[], &[edge]);
     assert!(is_movement_blocked(
