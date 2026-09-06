@@ -654,6 +654,20 @@ async fn run_npc_session(
 /// before the reader task starts, so both paths go through here.
 async fn handle_incoming(state: &Arc<Mutex<SharedState>>, label: &str, msg: ServerMessage) {
     let mut s = state.lock().await;
+    if let ServerMessage::LandscapeChanged { tiles } = &msg {
+        for tile in tiles {
+            s.splat_sampler
+                .update_tile(tile.tile_x, tile.tile_z, &tile.splat)
+                .await;
+        }
+        return;
+    }
+    if let ServerMessage::LandscapeInvalidated { tiles } = &msg {
+        for &(tx, tz) in tiles {
+            s.splat_sampler.invalidate_tile(tx, tz).await;
+        }
+        return;
+    }
     if matches!(msg, ServerMessage::GameTimeSync { .. }) {
         let _ = s.send_background_command(ClientMessage::Heartbeat).await;
         s.push_event(msg);

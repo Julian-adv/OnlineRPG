@@ -239,6 +239,12 @@ export type ClientMessage =
   | { UseItem: { instance_id: number } }
   | { EditFence: { edge: FenceEdge; place: boolean } }
   | 'StartFenceMode'
+  | 'StartLandscapingMode'
+  | {
+      EditLandscape: {
+        stroke: import('../terrain/landscaping').LandscapingStroke
+      }
+    }
   | { LandAccount: { merchant_player_id: number } }
   | { LandDeposit: { merchant_player_id: number; amount: number } }
   | { LandWithdraw: { merchant_player_id: number; amount: number } }

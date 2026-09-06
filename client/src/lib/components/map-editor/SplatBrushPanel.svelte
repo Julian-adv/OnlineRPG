@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte'
   import {
     brushSize,
     brushStrength,
@@ -10,9 +11,13 @@
   interface Props {
     title?: string
     hint?: string
+    availableLayers?: number[]
   }
-  let { title = 'Splat Brush', hint = '(click to select slot)' }: Props =
-    $props()
+  let {
+    title = 'Splat Brush',
+    hint = '(click to select slot)',
+    availableLayers,
+  }: Props = $props()
 
   const THUMB_SIZE = 64
 
@@ -21,9 +26,12 @@
   let layer = $state(0)
   let thumbnails = $state<Record<string, string>>({})
 
-  brushSize.subscribe((v) => (size = v))
-  brushStrength.subscribe((v) => (strength = v))
-  splatLayer.subscribe((v) => (layer = v))
+  const subscriptions = [
+    brushSize.subscribe((v) => (size = v)),
+    brushStrength.subscribe((v) => (strength = v)),
+    splatLayer.subscribe((v) => (layer = v)),
+  ]
+  onDestroy(() => subscriptions.forEach((unsubscribe) => unsubscribe()))
 
   async function loadThumbnails() {
     const canvas = document.createElement('canvas')
@@ -75,8 +83,11 @@
       <button
         class="grid-item"
         class:selected={layer === i}
+        disabled={availableLayers !== undefined && !availableLayers.includes(i)}
         onclick={() => selectLayer(i)}
-        title={label}
+        title={availableLayers !== undefined && !availableLayers.includes(i)
+          ? `${label} · Learn its sample book from Aldwin`
+          : label}
       >
         {#if thumbnails[cfg.texture]}
           <img class="grid-thumb" src={thumbnails[cfg.texture]} alt="" />
@@ -186,6 +197,11 @@
 
   .grid-item.selected {
     border-color: #e2b93b;
+  }
+
+  .grid-item:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 
   .grid-thumb {

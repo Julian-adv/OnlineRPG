@@ -102,7 +102,7 @@ pub(crate) fn atomic_write_with_injected_failure(
     commit_or_cleanup(&temp_path, path, write_result)
 }
 
-async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+pub(crate) async fn write_terrain_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -173,6 +173,9 @@ impl TerrainIO {
     }
 
     pub async fn read_splatmap(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>> {
+        if let Some(tile) = self.read_landscaping_tile(tx, tz).await? {
+            return Ok(tile.splat);
+        }
         let path = coords::splatmap_path(&self.base_dir, tx, tz);
         match fs::read(&path).await {
             Ok(data) if data.len() == defaults::SPLATMAP_SIZE => Ok(data),
@@ -200,6 +203,10 @@ impl TerrainIO {
                     data.len()
                 ),
             ));
+        }
+        if let Some(mut tile) = self.read_landscaping_tile(tx, tz).await? {
+            tile.splat = data.to_vec();
+            return self.write_landscaping_tile(&tile).await;
         }
         let path = coords::splatmap_path(&self.base_dir, tx, tz);
         write_terrain_file(&path, data).await
@@ -298,7 +305,10 @@ impl TerrainIO {
     pub async fn read_grass(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
         let path = coords::grass_path(&self.base_dir, tx, tz);
         match fs::read(&path).await {
-            Ok(data) => Ok(Some(data)),
+            Ok(data) => match self.read_landscaping_tile(tx, tz).await? {
+                Some(tile) => crate::landscaping::filter_vegetation(data, &tile.cleared).map(Some),
+                None => Ok(Some(data)),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
@@ -359,7 +369,10 @@ impl TerrainIO {
     pub async fn read_trees(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
         let path = coords::tree_path(&self.base_dir, tx, tz);
         match fs::read(&path).await {
-            Ok(data) => Ok(Some(data)),
+            Ok(data) => match self.read_landscaping_tile(tx, tz).await? {
+                Some(tile) => crate::landscaping::filter_vegetation(data, &tile.cleared).map(Some),
+                None => Ok(Some(data)),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
@@ -448,6 +461,7 @@ impl TerrainIO {
     pub async fn delete_region(&self, rx: i32, rz: i32) -> std::io::Result<()> {
         let height_dir = coords::height_region_dir(&self.base_dir, rx, rz);
         let splat_dir = coords::splat_region_dir(&self.base_dir, rx, rz);
+        let landscaping_dir = coords::landscaping_region_dir(&self.base_dir, rx, rz);
         let grass_dir = coords::grass_region_dir(&self.base_dir, rx, rz);
         let tree_dir = coords::tree_region_dir(&self.base_dir, rx, rz);
         let orig_height_dir = coords::original_height_region_dir(&self.base_dir, rx, rz);
@@ -457,6 +471,7 @@ impl TerrainIO {
         for dir in [
             &height_dir,
             &splat_dir,
+            &landscaping_dir,
             &grass_dir,
             &tree_dir,
             &orig_height_dir,

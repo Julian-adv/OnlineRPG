@@ -43,11 +43,17 @@ import {
 import { capeDyeDialog } from '../stores/capeDyeStore'
 import {
   applyFenceVisibility,
-  fenceMode,
   fencePending,
   fenceError,
   resetFences,
 } from '../stores/fenceStore'
+import {
+  openLandscapingMode,
+  landscapingMode,
+  landscapingPending,
+  landscapingError,
+} from '../stores/landscapingStore'
+import type { LandscapingTile } from '../terrain/landscaping'
 import { inventoryVisible } from '../stores/debugStore'
 import {
   landClaimDialog,
@@ -120,7 +126,11 @@ import {
   MAX_PENDING_FRIEND_REQUESTS,
 } from '../stores/friendStore'
 import { enqueueConsent } from '../stores/consentQueue'
-import { editorTreeDataManager } from '../stores/editorStore'
+import {
+  editorTreeDataManager,
+  editorGrassDataManager,
+  editorSplatManager,
+} from '../stores/editorStore'
 import { discoveredDungeonIds } from '../stores/dungeonStore'
 import { requestCameraReset } from '../stores/cameraStore'
 import { setServerGameTime } from '../stores/timeStore'
@@ -1306,10 +1316,46 @@ export function handleServerMessage(
       applyLandClaimPreview(data)
       break
     }
-    case 'FenceMode':
-      fenceMode.set(data)
+    case 'LandscapingMode':
+      openLandscapingMode(data)
       inventoryVisible.set(false)
       fenceError.set(null)
+      break
+    case 'LandscapingPaletteUnlocked':
+      landscapingMode.update((mode) =>
+        mode ? { ...mode, palette: data.palette } : null
+      )
+      break
+    case 'LandscapeChanged':
+      for (const tile of data.tiles as LandscapingTile[]) {
+        get(editorSplatManager)?.setSplatmap(
+          tile.tile_x,
+          tile.tile_z,
+          new Uint8Array(tile.splat)
+        )
+        const mask = new Uint8Array(tile.cleared)
+        get(editorGrassDataManager)?.applyLandscapingMask(
+          tile.tile_x,
+          tile.tile_z,
+          mask
+        )
+        get(editorTreeDataManager)?.applyLandscapingMask(
+          tile.tile_x,
+          tile.tile_z,
+          mask
+        )
+      }
+      break
+    case 'LandscapeInvalidated':
+      for (const [tx, tz] of data.tiles as [number, number][]) {
+        get(editorSplatManager)?.invalidateLandscaping(tx, tz)
+        get(editorGrassDataManager)?.invalidateLandscaping(tx, tz)
+        get(editorTreeDataManager)?.invalidateLandscaping(tx, tz)
+      }
+      break
+    case 'LandscapeEditResult':
+      landscapingPending.set(false)
+      landscapingError.set(data.error ?? null)
       break
     case 'FenceVisibility':
       applyFenceVisibility(data.added, data.removed)

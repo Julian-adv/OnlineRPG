@@ -99,6 +99,11 @@ impl HttpTiles {
         if let Some(cached) = self.read_cached(&path).await {
             return Ok(Some(cached));
         }
+        self.read_fresh(tx, tz).await
+    }
+
+    pub async fn read_fresh(&self, tx: i32, tz: i32) -> std::io::Result<Option<Vec<u8>>> {
+        let path = self.cache_path(tx, tz);
         match self.fetch(tx, tz).await {
             Ok(Some(data)) => {
                 if let Err(e) = Self::write_cached(&path, &data).await {

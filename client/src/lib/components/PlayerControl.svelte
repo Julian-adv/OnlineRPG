@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { fenceMode } from '../stores/fenceStore'
+  import { landscapingMode } from '../stores/landscapingStore'
   import { useThrelte } from '@threlte/core'
   import * as THREE from 'three'
   import { gameStore, hoverTarget, type LocalPlayer } from '../stores/gameStore'
@@ -1868,7 +1868,7 @@
   }
 
   function processClickIntent(event: MouseEvent): ClickIntent {
-    const groundOnly = get(fenceMode) !== null
+    const groundOnly = get(landscapingMode) !== null
     const intent = inputHandler.processCanvasClick(event, {
       groundOnly,
       camera,
@@ -1955,7 +1955,7 @@
   function handleCanvasClickIntent(event: MouseEvent) {
     if (event.button === 0 && $cameraRotationEnabled) return
     const editorMode =
-      $mapEditorMode || $housingEditorMode || get(fenceMode) !== null
+      $mapEditorMode || $housingEditorMode || get(landscapingMode) !== null
     if (event.button === 2 && !editorMode) {
       handleNpcContextMenu(event)
       return
@@ -2125,7 +2125,7 @@
   }
 
   function runHover(event: MouseEvent) {
-    if (get(fenceMode)) {
+    if (get(landscapingMode)) {
       clearHover()
       return
     }
@@ -2186,7 +2186,7 @@
   currentDungeonDepth.subscribe(() => clearHover())
 
   onMount(() => {
-    const unsubscribeFenceMode = fenceMode.subscribe((mode) => {
+    const unsubscribeLandscapingMode = landscapingMode.subscribe((mode) => {
       if (!mode) return
       clearStandUpTimer()
       clearPropSwingTimers()
@@ -2236,7 +2236,7 @@
 
     return () => {
       removeInputListeners()
-      unsubscribeFenceMode()
+      unsubscribeLandscapingMode()
       canvas.removeEventListener('pointermove', handlePointerHover)
       canvas.removeEventListener('pointerleave', handlePointerLeave)
       clearHover()

@@ -238,7 +238,7 @@ impl GameState {
         true
     }
 
-    async fn refresh_fence_owners(
+    pub(super) async fn refresh_fence_owners(
         &self,
         player_id: &PlayerId,
         auth: &AuthService,
@@ -292,41 +292,12 @@ impl GameState {
     }
 
     pub async fn start_fence_mode(&self, player_id: &PlayerId, auth: &AuthService) {
-        if self
-            .reject_if_defeated(player_id, "You must be alive to place fences.")
-            .await
-            || self.reject_if_trading(player_id, "place fences").await
-        {
-            return;
-        }
-        self.tick_land_taxes(auth).await;
-        if let Err(error) = self.refresh_fence_owners(player_id, auth).await {
-            tracing::warn!(%error, "Failed to refresh fence ownership");
-            self.send_system_message(player_id, "Fence placement is temporarily unavailable.")
-                .await;
-            return;
-        }
-        let Some(owner_id) = self
-            .player_characters
-            .read()
-            .await
-            .get(player_id)
-            .map(|(id, _, _)| *id)
-        else {
-            return;
-        };
-        let auth = auth.clone();
-        match auth_db(move || auth.fence_plots(owner_id)).await {
-            Ok(plots) => {
-                self.send_direct_message(player_id, ServerMessage::FenceMode { owner_id, plots })
-                    .await
-            }
-            Err(error) => {
-                tracing::warn!(%error, "Failed to load fence permissions");
-                self.send_system_message(player_id, "Fence placement is temporarily unavailable.")
-                    .await;
-            }
-        }
+        self.start_landscaping_mode(
+            player_id,
+            auth,
+            onlinerpg_shared::landscaping::LandscapingTool::Fence,
+        )
+        .await;
     }
 
     pub async fn edit_fence(

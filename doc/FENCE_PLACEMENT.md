@@ -4,9 +4,9 @@
 
 알드윈(Aldwin)의 판매 목록에서 수량을 지정해 구매할 수 있다.
 
-## 영지 꾸미기 통합 계획
+## 영지 꾸미기 통합
 
-설계 확정, 미구현 (2026-09-06). [영지 설계 §4](LAND_SYSTEM.md#4-영지-꾸미기-조경사의-도구함)의
+구현 (2026-09-06). [영지 설계 §4](LAND_SYSTEM.md#4-영지-꾸미기-조경사의-도구함)의
 **조경사의 도구함** 화면에 바닥·길·울타리 탭을 두고 목책 배치를 울타리 탭으로 옮긴다.
 목책 더블클릭도 같은 화면의 울타리 탭으로 연결하며, 기존 설치된 목책을 통한
 회수 진입을 유지한다. 목책 진입만으로 도구함의 바닥·길 편집 권한을 얻지는 않는다.
@@ -53,5 +53,5 @@ SQLite `land_fences`는 `(x,z,axis,estate_id)`만 저장하며 기본 키는 `(x
 서버는 32m 구획으로 목책을 인덱싱하고, 접속·이동·설치·회수 시 주변 플레이어에게 변경분을 보낸다.
 브라우저는 인스턴스 렌더링을 사용하며, 브라우저 WASM과 NPC 클라이언트도 동일한 충돌을 적용한다.
 
-프로토콜 v57: `StartFenceMode`, `EditFence`, `FenceMode`, `FenceVisibility`, `FenceEditResult`.
+프로토콜 v58: `StartFenceMode`, `EditFence`, `LandscapingMode`, `FenceVisibility`, `FenceEditResult`.
 일반 가구 설치·회수와 영지 강제 해제 시 회수함 처리는 별도이며 [영지 설계](LAND_SYSTEM.md)를 따른다.

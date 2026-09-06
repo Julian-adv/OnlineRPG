@@ -1,19 +1,18 @@
 import { derived, get, writable } from 'svelte/store'
 import { passability_set_fences } from '../wasm/onlinerpg_shared'
 import { inventoryStore } from './inventoryStore'
-import { wrapWorldX } from '../terrain/world-wrap'
 import {
-  fenceKey,
-  type Fence,
-  type FenceEdge,
-  type FencePlot,
-} from '../terrain/fenceEdges'
+  landscapingMode,
+  landscapingPending,
+  stopLandscapingMode,
+} from './landscapingStore'
+import { wrapWorldX } from '../terrain/world-wrap'
+import { fenceKey, type Fence, type FenceEdge } from '../terrain/fenceEdges'
 
 export const fences = writable(new Map<string, Fence>())
-export const fenceMode = writable<{
-  owner_id: number
-  plots: FencePlot[]
-} | null>(null)
+export const fenceMode = derived(landscapingMode, (mode) =>
+  mode?.tool === 'Fence' ? mode : null
+)
 export const fencePending = writable(false)
 export const fenceError = writable<string | null>(null)
 export const fenceTarget = writable<{
@@ -57,7 +56,7 @@ export function refreshFenceHeights(
 }
 
 export function stopFenceMode() {
-  fenceMode.set(null)
+  stopLandscapingMode()
   fenceTarget.set(null)
   fenceError.set(null)
 }
@@ -66,5 +65,6 @@ export function resetFences() {
   if (get(fences).size) passability_set_fences([])
   fences.set(new Map())
   fencePending.set(false)
+  landscapingPending.set(false)
   stopFenceMode()
 }

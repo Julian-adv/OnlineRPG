@@ -3,11 +3,14 @@ import {
   decodeGrassData,
   encodeGrassBuffer,
   removeGrassInRect,
+  filterGrassData,
   type GrassPlacementData,
 } from '../utils/grass-data'
 import { worldRectToTileBounds } from '../components/game-scene/terrain-utils'
 import { tileKey } from './terrain-height-types'
 import type { TerrainHeightManager } from './terrainHeightManager'
+import { clearedCellAt } from '../terrain/landscaping'
+import { wrapTileX } from '../terrain/world-wrap'
 
 export interface GrassCarveRect {
   minX: number
@@ -25,6 +28,7 @@ export class TerrainGrassDataManager {
   private missingTiles = new Set<string>()
   private terrainApiUrl: string
   private generation = 0
+  private landscapingMasks = new Map<string, Uint8Array>()
   private tileUpdateListeners: ((tileX: number, tileZ: number) => void)[] = []
   private heightManager: TerrainHeightManager
   private _suppressListeners = false
@@ -69,38 +73,50 @@ export class TerrainGrassDataManager {
     if (existing) return existing
 
     const gen = this.generation
-    const promise = (async () => {
-      try {
-        const url = `${this.terrainApiUrl}/api/terrain/grass/${tileX}/${tileZ}`
-        const response = await fetch(url)
-        if (gen !== this.generation) return null
-        if (response.status === 404) {
-          this.missingTiles.add(key)
-          return null
-        }
-        if (!response.ok) {
-          console.error(
-            `Failed to load grass data (${tileX}, ${tileZ}): ${response.status}`
-          )
-          return null
-        }
-        const buffer = await response.arrayBuffer()
-        if (gen !== this.generation) return null
-        let heightmap = this.heightManager.getHeightmap(tileX, tileZ)
-        if (!heightmap) {
-          heightmap = await this.heightManager.loadHeightmap(tileX, tileZ)
+    const promise = Promise.resolve().then(
+      async (): Promise<GrassPlacementData | null> => {
+        try {
+          const url = `${this.terrainApiUrl}/api/terrain/grass/${tileX}/${tileZ}`
+          const response = await fetch(url)
           if (gen !== this.generation) return null
+          if (this.inflight.get(key) !== promise)
+            return this.loadGrassData(tileX, tileZ)
+          if (response.status === 404) {
+            this.missingTiles.add(key)
+            return null
+          }
+          if (!response.ok) {
+            console.error(
+              `Failed to load grass data (${tileX}, ${tileZ}): ${response.status}`
+            )
+            return null
+          }
+          const buffer = await response.arrayBuffer()
+          if (gen !== this.generation) return null
+          if (this.inflight.get(key) !== promise)
+            return this.loadGrassData(tileX, tileZ)
+          let heightmap = this.heightManager.getHeightmap(tileX, tileZ)
+          if (!heightmap) {
+            heightmap = await this.heightManager.loadHeightmap(tileX, tileZ)
+            if (gen !== this.generation) return null
+            if (this.inflight.get(key) !== promise)
+              return this.loadGrassData(tileX, tileZ)
+          }
+          const data = this.filterLandscaping(
+            tileX,
+            tileZ,
+            decodeGrassData(buffer, tileX, tileZ, heightmap)
+          )
+          this.cache.set(key, data)
+          return data
+        } catch (e) {
+          console.error(`Grass data fetch error (${tileX}, ${tileZ}):`, e)
+          return null
+        } finally {
+          if (this.inflight.get(key) === promise) this.inflight.delete(key)
         }
-        const data = decodeGrassData(buffer, tileX, tileZ, heightmap)
-        this.cache.set(key, data)
-        return data
-      } catch (e) {
-        console.error(`Grass data fetch error (${tileX}, ${tileZ}):`, e)
-        return null
-      } finally {
-        this.inflight.delete(key)
       }
-    })()
+    )
     this.inflight.set(key, promise)
     return promise
   }
@@ -252,6 +268,7 @@ export class TerrainGrassDataManager {
     tileZ: number,
     data: GrassPlacementData
   ): Promise<void> {
+    data = this.filterLandscaping(tileX, tileZ, data)
     const key = tileKey(tileX, tileZ)
     this.cache.set(key, data)
     this.missingTiles.delete(key)
@@ -283,7 +300,54 @@ export class TerrainGrassDataManager {
     return this.cache.get(tileKey(tileX, tileZ)) ?? null
   }
 
+  private filterLandscaping(
+    tileX: number,
+    tileZ: number,
+    data: GrassPlacementData
+  ) {
+    const mask = this.landscapingMasks.get(tileKey(wrapTileX(tileX), tileZ))
+    return mask
+      ? (filterGrassData(data, (x, z) =>
+          clearedCellAt(mask, tileX, tileZ, x, z)
+        ) ?? data)
+      : data
+  }
+
+  applyLandscapingMask(tileX: number, tileZ: number, mask: Uint8Array) {
+    const key = tileKey(wrapTileX(tileX), tileZ)
+    const previous = this.landscapingMasks.get(key)
+    if (
+      previous?.length === mask.length &&
+      mask.every((byte, i) => byte === previous[i])
+    )
+      return
+    this.landscapingMasks.set(key, mask)
+    for (const [key, data] of this.cache) {
+      const [tx, tz] = key.split(',').map(Number)
+      if (wrapTileX(tx) !== wrapTileX(tileX) || tz !== tileZ) continue
+      const filtered = this.filterLandscaping(tx, tz, data)
+      if (filtered === data) continue
+      this.cache.set(key, filtered)
+      for (const cb of this.tileUpdateListeners) cb(tx, tz)
+    }
+  }
+
   /** Invalidate cache for a tile. */
+  invalidateLandscaping(tileX: number, tileZ: number): void {
+    this.landscapingMasks.delete(tileKey(wrapTileX(tileX), tileZ))
+    for (const key of [
+      ...this.cache.keys(),
+      ...this.missingTiles,
+      ...this.inflight.keys(),
+    ]) {
+      const [tx, tz] = key.split(',').map(Number)
+      if (wrapTileX(tx) === wrapTileX(tileX) && tz === tileZ) {
+        this.inflight.delete(key)
+        this.invalidate(tx, tz)
+      }
+    }
+  }
+
   invalidate(tileX: number, tileZ: number): void {
     const key = tileKey(tileX, tileZ)
     this.cache.delete(key)
@@ -297,6 +361,7 @@ export class TerrainGrassDataManager {
     this.originalGrass.clear()
     this.missingTiles.clear()
     this.inflight.clear()
+    this.landscapingMasks.clear()
   }
 
   /** Evict cached data for tiles not in the given set. */

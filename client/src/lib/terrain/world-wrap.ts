@@ -45,3 +45,7 @@ export function wrapRegionX(rx: number): number {
     half
   )
 }
+
+export function wrapTileX(tx: number): number {
+  return ((((tx + 256) % 512) + 512) % 512) - 256
+}

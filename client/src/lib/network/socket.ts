@@ -718,6 +718,16 @@ class NetworkManager {
     this.sendMessage('StartFenceMode')
   }
 
+  sendStartLandscapingMode() {
+    this.sendMessage('StartLandscapingMode')
+  }
+
+  sendEditLandscape(
+    stroke: import('../terrain/landscaping').LandscapingStroke
+  ) {
+    this.sendMessage({ EditLandscape: { stroke } })
+  }
+
   sendLandAccount(merchantPlayerId: number) {
     this.sendMessage({ LandAccount: { merchant_player_id: merchantPlayerId } })
   }

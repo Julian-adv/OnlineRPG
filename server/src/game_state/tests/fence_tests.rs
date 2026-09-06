@@ -251,7 +251,7 @@ async fn fence_place_recover_and_restart_preserve_inventory_and_edges() {
     assert!(game.try_start_fence_mode(&pid("Builder"), 2, &auth).await);
     assert!(drain(&mut rx)
         .iter()
-        .any(|m| matches!(m, ServerMessage::FenceMode { plots, .. } if !plots.is_empty())));
+        .any(|m| matches!(m, ServerMessage::LandscapingMode { plots, .. } if !plots.is_empty())));
     game.edit_fence(&pid("Builder"), EDGE, true, &auth).await;
     assert_eq!(quantity(&game, "Builder").await, 99);
     assert!(blocked(&game));
@@ -332,7 +332,7 @@ async fn fence_recovery_follows_the_estate_owner_instead_of_the_installer() {
     drain(&mut visitor_rx);
     game.start_fence_mode(&pid("Visitor"), &auth).await;
     let messages = drain(&mut visitor_rx);
-    assert!(messages.iter().any(|m| matches!(m, ServerMessage::FenceMode { owner_id, plots } if *owner_id == new_owner && !plots.is_empty())));
+    assert!(messages.iter().any(|m| matches!(m, ServerMessage::LandscapingMode { owner_id, plots, .. } if *owner_id == new_owner && !plots.is_empty())));
     for messages in [&messages, &drain(&mut builder_rx)] {
         assert!(messages
             .iter()
@@ -368,7 +368,7 @@ async fn last_fence_can_be_recovered_with_an_empty_bag() {
     game.start_fence_mode(&pid("Builder"), &auth).await;
     assert!(drain(&mut rx)
         .iter()
-        .any(|m| matches!(m, ServerMessage::FenceMode { .. })));
+        .any(|m| matches!(m, ServerMessage::LandscapingMode { .. })));
     game.edit_fence(&pid("Builder"), EDGE, false, &auth).await;
     assert_eq!(quantity(&game, "Builder").await, 1);
 }

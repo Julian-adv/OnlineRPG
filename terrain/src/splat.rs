@@ -31,6 +31,7 @@ impl SplatTiles for TerrainIO {
 pub struct SplatSampler {
     cache: TileCache<Vec<u8>>,
     tiles: Box<dyn SplatTiles>,
+    revision: tokio::sync::RwLock<u64>,
 }
 
 impl SplatSampler {
@@ -38,6 +39,7 @@ impl SplatSampler {
         Self {
             cache: TileCache::new(TILE_CACHE_CAPACITY),
             tiles: Box::new(tiles),
+            revision: tokio::sync::RwLock::new(0),
         }
     }
 
@@ -58,14 +60,21 @@ impl SplatSampler {
     }
 
     async fn ensure_tile(&self, tx: i32, tz: i32) -> std::io::Result<()> {
-        if self.cache.contains(&(tx, tz)).await {
+        loop {
+            let before = *self.revision.read().await;
+            if self.cache.contains(&(tx, tz)).await {
+                return Ok(());
+            }
+            let raw = self.tiles.read_splat(tx, tz).await?;
+            let revision = self.revision.read().await;
+            if *revision != before {
+                continue;
+            }
+            self.cache
+                .insert_if_absent((tx, tz), Self::decode_dominant(&raw))
+                .await;
             return Ok(());
         }
-        let raw = self.tiles.read_splat(tx, tz).await?;
-        self.cache
-            .insert_if_absent((tx, tz), Self::decode_dominant(&raw))
-            .await;
-        Ok(())
     }
 
     /// Dominant palette slot at a world position. Cells are 1m; tiles span
@@ -97,5 +106,24 @@ impl SplatSampler {
 
     pub async fn sweep_stale_tiles(&self) -> usize {
         self.cache.sweep_stale().await
+    }
+
+    pub async fn invalidate_tile(&self, tx: i32, tz: i32) {
+        let mut revision = self.revision.write().await;
+        *revision += 1;
+        self.cache
+            .remove(&(crate::coords::wrap_tile_x(tx), tz))
+            .await;
+    }
+
+    pub async fn update_tile(&self, tx: i32, tz: i32, raw: &[u8]) {
+        let mut revision = self.revision.write().await;
+        *revision += 1;
+        self.cache
+            .replace(
+                (crate::coords::wrap_tile_x(tx), tz),
+                Self::decode_dominant(raw),
+            )
+            .await;
     }
 }

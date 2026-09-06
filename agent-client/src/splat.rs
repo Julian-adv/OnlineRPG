@@ -33,7 +33,7 @@ impl HttpSplatTiles {
 #[async_trait::async_trait]
 impl SplatTiles for HttpSplatTiles {
     async fn read_splat(&self, tx: i32, tz: i32) -> std::io::Result<Vec<u8>> {
-        match self.0.read(tx, tz).await? {
+        match self.0.read_fresh(tx, tz).await? {
             Some(data) => Ok(data),
             // The splat endpoint answers unbaked tiles with a default 200,
             // so a 404 means the URL is wrong — surface it.

@@ -532,6 +532,10 @@ pub enum ClientMessage {
         place: bool,
     },
     StartFenceMode,
+    StartLandscapingMode,
+    EditLandscape {
+        stroke: crate::landscaping::LandscapingStroke,
+    },
     LandAccount {
         merchant_player_id: PlayerId,
     },
@@ -1229,9 +1233,24 @@ pub enum ServerMessage {
         quadrant: u8,
         reason: Option<String>,
     },
-    FenceMode {
+    LandscapingMode {
         owner_id: i64,
         plots: Vec<crate::fence::FencePlot>,
+        palette: Vec<u8>,
+        has_toolbox: bool,
+        tool: crate::landscaping::LandscapingTool,
+    },
+    LandscapingPaletteUnlocked {
+        palette: Vec<u8>,
+    },
+    LandscapeChanged {
+        tiles: Vec<crate::landscaping::LandscapingTile>,
+    },
+    LandscapeInvalidated {
+        tiles: Vec<(i32, i32)>,
+    },
+    LandscapeEditResult {
+        error: Option<String>,
     },
     FenceVisibility {
         added: Vec<crate::fence::Fence>,

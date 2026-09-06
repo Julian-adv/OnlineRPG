@@ -42,6 +42,10 @@ pub fn terrain_router(
             get(get_heightmap).put(put_heightmap),
         )
         .route(
+            "/api/terrain/splat/{x}/{z}",
+            get(get_splatmap).put(put_splatmap),
+        )
+        .route(
             "/api/terrain/objects/{rx}/{rz}",
             get(get_object).put(put_object),
         )
@@ -50,10 +54,6 @@ pub fn terrain_router(
             game_state,
         });
     Router::new()
-        .route(
-            "/api/terrain/splat/{x}/{z}",
-            get(get_splatmap).put(put_splatmap),
-        )
         .route(
             "/api/terrain/height-original/{x}/{z}",
             get(get_original_heightmap).put(put_original_heightmap),
@@ -251,22 +251,30 @@ async fn ensure_original_grass(
 
 async fn get_splatmap(
     Path((x, z)): Path<(i32, i32)>,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
 ) -> Result<Response, StatusCode> {
-    let data = terrain.read_splatmap(x, z).await.map_err(|e| {
+    let data = state.terrain.read_splatmap(x, z).await.map_err(|e| {
         error!("Failed to read splatmap ({}, {}): {}", x, z, e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], data).into_response())
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        data,
+    )
+        .into_response())
 }
 
 async fn put_splatmap(
     Path((x, z)): Path<(i32, i32)>,
-    State(terrain): State<Arc<TerrainIO>>,
+    State(state): State<ObjectsState>,
     body: Bytes,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    terrain
-        .write_splatmap(x, z, &body)
+    state
+        .game_state
+        .save_terrain_splatmap(x, z, &body)
         .await
         .map_err(|e| match e.kind() {
             std::io::ErrorKind::InvalidData => (StatusCode::BAD_REQUEST, e.to_string()),
@@ -286,7 +294,10 @@ async fn get_grass(
     request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    serve_revalidated(
+    serve_vegetation(
+        &terrain,
+        x,
+        z,
         coords::grass_path(terrain.base_dir(), x, z),
         &request_headers,
     )
@@ -539,11 +550,67 @@ async fn get_trees(
     request_headers: axum::http::HeaderMap,
     State(terrain): State<Arc<TerrainIO>>,
 ) -> Result<Response, StatusCode> {
-    serve_revalidated(
+    serve_vegetation(
+        &terrain,
+        x,
+        z,
         coords::tree_path(terrain.base_dir(), x, z),
         &request_headers,
     )
     .await
+}
+
+async fn serve_vegetation(
+    terrain: &TerrainIO,
+    x: i32,
+    z: i32,
+    path: std::path::PathBuf,
+    headers: &axum::http::HeaderMap,
+) -> Result<Response, StatusCode> {
+    let tile = terrain.read_landscaping_tile(x, z).await.map_err(|error| {
+        error!(%error, "Failed to read landscaping tile");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let mut response = if let Some(tile) = tile {
+        let raw = match tokio::fs::read(&path).await {
+            Ok(raw) => Some(raw),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                error!(%error, "Failed to read vegetation tile");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+        };
+        if let Some(raw) = raw {
+            let bytes = onlinerpg_terrain::landscaping::filter_vegetation(raw, &tile.cleared)
+                .map_err(|error| {
+                    error!(%error, "Failed to filter landscaping vegetation");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            let etag = format!("\"{:x}\"", sha2::Sha256::digest(&bytes));
+            if headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok())
+                == Some(etag.as_str())
+            {
+                (StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response()
+            } else {
+                (
+                    [(header::ETAG, etag)],
+                    [(header::CONTENT_TYPE, "application/octet-stream")],
+                    bytes,
+                )
+                    .into_response()
+            }
+        } else {
+            StatusCode::NOT_FOUND.into_response()
+        }
+    } else {
+        serve_revalidated(path, headers).await?
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "public, no-cache".parse().unwrap());
+    Ok(response)
 }
 
 async fn get_river_field(

@@ -74,6 +74,10 @@ impl<V> TileCache<V> {
         self.insert(key, value, false).await;
     }
 
+    pub async fn remove(&self, key: &(i32, i32)) {
+        self.map.write().await.remove(key);
+    }
+
     pub async fn replace(&self, key: (i32, i32), value: V) {
         self.insert(key, value, true).await;
     }

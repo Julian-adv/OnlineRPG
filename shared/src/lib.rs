@@ -17,6 +17,7 @@ pub mod furniture;
 pub mod housing;
 pub mod hunger;
 pub mod inventory;
+pub mod landscaping;
 pub mod meal;
 pub mod messages;
 pub mod monster_ai;
@@ -133,7 +134,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v55: Land claim previews include the reason a plot cannot be claimed.
 /// v56: Land tax account state, deposits, and withdrawals.
 /// v57: persistent cell-edge fences, placement mode and inventory recovery.
-pub const PROTOCOL_VERSION: u32 = 57;
+/// v58: estate landscaping tools, permanent palettes and terrain updates.
+pub const PROTOCOL_VERSION: u32 = 58;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

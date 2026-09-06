@@ -23,7 +23,17 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
     game_state.open_shop(&buyer, &steward, true).await;
     match buyer_rx.try_recv().unwrap() {
         ServerMessage::ShopState { catalog, .. } => {
-            assert_eq!(catalog, vec!["land_deed", "wooden_fence"])
+            assert_eq!(catalog.len(), 10);
+            for id in [
+                "land_deed",
+                "wooden_fence",
+                onlinerpg_shared::landscaping::TOOLBOX_ITEM,
+            ] {
+                assert!(catalog.iter().any(|item| item == id));
+            }
+            for (_, id) in onlinerpg_shared::landscaping::PALETTE_ITEMS {
+                assert!(catalog.iter().any(|item| item == id));
+            }
         }
         other => panic!("Expected Aldwin's shop, got {other:?}"),
     }

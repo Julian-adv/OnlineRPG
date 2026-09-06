@@ -240,6 +240,7 @@ pub(crate) mod hunger;
 mod instrument;
 mod inventory;
 mod land;
+mod landscaping;
 mod monster;
 mod monster_ai;
 mod party;

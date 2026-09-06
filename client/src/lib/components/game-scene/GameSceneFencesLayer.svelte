@@ -21,6 +21,8 @@
     cameraRotationEnabled,
   } from '../../stores/debugStore'
   import { currentDungeonDepth } from '../../stores/dungeonStore'
+  import { landscapingMode } from '../../stores/landscapingStore'
+  import { playerTrade } from '../../stores/playerTradeStore'
   import { playerVisualFloorLevel } from '../../stores/housingStore'
   import {
     fenceCenter,
@@ -80,7 +82,7 @@
   group.add(grid)
 
   function updateGrid() {
-    const mode = get(fenceMode)
+    const mode = get(landscapingMode)
     grid.visible = !!mode && !!player
     if (!mode || !player) return
     if (
@@ -282,6 +284,7 @@
     }
     const click = (event: MouseEvent) => {
       if (get(cameraRotationEnabled)) return
+      if (get(landscapingMode) && !get(fenceMode)) return
       if (!get(fenceMode)) {
         if (
           event.button !== 2 ||
@@ -321,7 +324,7 @@
       networkManager.sendEditFence(target.edge, !target.removing)
     }
     const escape = (event: KeyboardEvent) => {
-      if (event.code !== 'Escape' || !get(fenceMode)) return
+      if (event.code !== 'Escape' || !get(landscapingMode)) return
       event.preventDefault()
       event.stopImmediatePropagation()
       stopFenceMode()
@@ -350,13 +353,14 @@
   useTask((delta) => {
     group.visible = get(currentDungeonDepth) < 1
     if (
-      get(fenceMode) &&
+      get(landscapingMode) &&
       (!player ||
         player.health <= 0 ||
         get(playerVisualFloorLevel) !== 0 ||
         get(currentDungeonDepth) > 0 ||
         get(mapEditorMode) ||
-        get(housingEditorMode))
+        get(housingEditorMode) ||
+        get(playerTrade))
     )
       stopFenceMode()
     if (fenceHeightsDirty) {

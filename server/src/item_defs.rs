@@ -449,7 +449,8 @@ impl ItemDefs {
             assert!(
                 def.consumable
                     == (def.use_effect().is_some()
-                        || matches!(def.id.as_str(), "land_deed" | "wooden_fence")),
+                        || matches!(def.id.as_str(), "land_deed" | "wooden_fence")
+                        || onlinerpg_shared::landscaping::is_landscaping_item(&def.id)),
                 "item '{}': consumable flag out of step with its use handler",
                 def.id
             );

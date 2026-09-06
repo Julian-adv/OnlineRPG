@@ -66,6 +66,16 @@ pub fn splat_region_dir(base: &Path, rx: i32, rz: i32) -> PathBuf {
     base.join("splat").join(region_dir_name(rx, rz))
 }
 
+pub fn landscaping_region_dir(base: &Path, rx: i32, rz: i32) -> PathBuf {
+    base.join("landscaping").join(region_dir_name(rx, rz))
+}
+
+pub fn landscaping_path(base: &Path, tx: i32, tz: i32) -> PathBuf {
+    let tx = wrap_tile_x(tx);
+    landscaping_region_dir(base, tile_to_region(tx), tile_to_region(tz))
+        .join(format!("l_{tx:+05}_{tz:+05}.bin"))
+}
+
 /// Build filesystem path for a grass placement data file.
 pub fn grass_path(base: &Path, tx: i32, tz: i32) -> PathBuf {
     let tx = wrap_tile_x(tx);

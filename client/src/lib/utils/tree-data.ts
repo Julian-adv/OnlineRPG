@@ -1,3 +1,5 @@
+import { filterVegetationInstances } from './vegetation-instances'
+
 /**
  * Tree placement data: binary encode/decode and placement computation.
  *
@@ -92,6 +94,19 @@ function packTreeBuffer(
   body.set(tree2Data, tree1Data.length)
 
   return { tree1Count, tree2Count, buffer }
+}
+
+export function filterTreeData(
+  data: TreePlacementData,
+  shouldRemove: (x: number, z: number) => boolean
+): TreePlacementData | null {
+  const tree1 = getTreeInstanceData(data, 'tree1')
+  const tree2 = getTreeInstanceData(data, 'tree2')
+  const filtered1 = filterVegetationInstances(tree1, shouldRemove)
+  const filtered2 = filterVegetationInstances(tree2, shouldRemove)
+  return filtered1 === tree1 && filtered2 === tree2
+    ? null
+    : packTreeBuffer(filtered1, filtered2)
 }
 
 export function computeTreePlacement(

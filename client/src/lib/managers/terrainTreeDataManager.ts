@@ -1,7 +1,13 @@
 import { getTerrainApiUrl } from '../utils/networkUtils'
-import { decodeTreeData, type TreePlacementData } from '../utils/tree-data'
+import {
+  decodeTreeData,
+  filterTreeData,
+  type TreePlacementData,
+} from '../utils/tree-data'
 import { tileKey } from './terrain-height-types'
 import type { TerrainHeightManager } from './terrainHeightManager'
+import { clearedCellAt } from '../terrain/landscaping'
+import { wrapTileX } from '../terrain/world-wrap'
 
 export class TerrainTreeDataManager {
   private cache = new Map<string, TreePlacementData>()
@@ -9,6 +15,7 @@ export class TerrainTreeDataManager {
   private missingTiles = new Set<string>()
   private terrainApiUrl: string
   private generation = 0
+  private landscapingMasks = new Map<string, Uint8Array>()
   private heightManager: TerrainHeightManager
   private invalidateListeners: (() => void)[] = []
   private tileUpdateListeners: ((tileX: number, tileZ: number) => void)[] = []
@@ -33,44 +40,103 @@ export class TerrainTreeDataManager {
     if (existing) return existing
 
     const gen = this.generation
-    const promise = (async () => {
-      try {
-        const url = `${this.terrainApiUrl}/api/terrain/trees/${tileX}/${tileZ}`
-        const response = await fetch(url)
-        if (gen !== this.generation) return null
-        if (response.status === 404) {
-          this.missingTiles.add(key)
-          return null
-        }
-        if (!response.ok) {
-          console.error(
-            `Failed to load tree data (${tileX}, ${tileZ}): ${response.status}`
-          )
-          return null
-        }
-        const buffer = await response.arrayBuffer()
-        if (gen !== this.generation) return null
-        let heightmap = this.heightManager.getHeightmap(tileX, tileZ)
-        if (!heightmap) {
-          heightmap = await this.heightManager.loadHeightmap(tileX, tileZ)
+    const promise = Promise.resolve().then(
+      async (): Promise<TreePlacementData | null> => {
+        try {
+          const url = `${this.terrainApiUrl}/api/terrain/trees/${tileX}/${tileZ}`
+          const response = await fetch(url)
           if (gen !== this.generation) return null
+          if (this.inflight.get(key) !== promise)
+            return this.loadTreeData(tileX, tileZ)
+          if (response.status === 404) {
+            this.missingTiles.add(key)
+            return null
+          }
+          if (!response.ok) {
+            console.error(
+              `Failed to load tree data (${tileX}, ${tileZ}): ${response.status}`
+            )
+            return null
+          }
+          const buffer = await response.arrayBuffer()
+          if (gen !== this.generation) return null
+          if (this.inflight.get(key) !== promise)
+            return this.loadTreeData(tileX, tileZ)
+          let heightmap = this.heightManager.getHeightmap(tileX, tileZ)
+          if (!heightmap) {
+            heightmap = await this.heightManager.loadHeightmap(tileX, tileZ)
+            if (gen !== this.generation) return null
+            if (this.inflight.get(key) !== promise)
+              return this.loadTreeData(tileX, tileZ)
+          }
+          const data = this.filterLandscaping(
+            tileX,
+            tileZ,
+            decodeTreeData(buffer, tileX, tileZ, heightmap)
+          )
+          this.cache.set(key, data)
+          return data
+        } catch (e) {
+          console.error(`Tree data fetch error (${tileX}, ${tileZ}):`, e)
+          return null
+        } finally {
+          if (this.inflight.get(key) === promise) this.inflight.delete(key)
         }
-        const data = decodeTreeData(buffer, tileX, tileZ, heightmap)
-        this.cache.set(key, data)
-        return data
-      } catch (e) {
-        console.error(`Tree data fetch error (${tileX}, ${tileZ}):`, e)
-        return null
-      } finally {
-        this.inflight.delete(key)
       }
-    })()
+    )
     this.inflight.set(key, promise)
     return promise
   }
 
   getCachedTreeData(tileX: number, tileZ: number): TreePlacementData | null {
     return this.cache.get(tileKey(tileX, tileZ)) ?? null
+  }
+
+  private filterLandscaping(
+    tileX: number,
+    tileZ: number,
+    data: TreePlacementData
+  ) {
+    const mask = this.landscapingMasks.get(tileKey(wrapTileX(tileX), tileZ))
+    return mask
+      ? (filterTreeData(data, (x, z) =>
+          clearedCellAt(mask, tileX, tileZ, x, z)
+        ) ?? data)
+      : data
+  }
+
+  applyLandscapingMask(tileX: number, tileZ: number, mask: Uint8Array) {
+    const key = tileKey(wrapTileX(tileX), tileZ)
+    const previous = this.landscapingMasks.get(key)
+    if (
+      previous?.length === mask.length &&
+      mask.every((byte, i) => byte === previous[i])
+    )
+      return
+    this.landscapingMasks.set(key, mask)
+    for (const [key, data] of this.cache) {
+      const [tx, tz] = key.split(',').map(Number)
+      if (wrapTileX(tx) !== wrapTileX(tileX) || tz !== tileZ) continue
+      const filtered = this.filterLandscaping(tx, tz, data)
+      if (filtered === data) continue
+      this.cache.set(key, filtered)
+      for (const cb of this.tileUpdateListeners) cb(tx, tz)
+    }
+  }
+
+  invalidateLandscaping(tileX: number, tileZ: number): void {
+    this.landscapingMasks.delete(tileKey(wrapTileX(tileX), tileZ))
+    for (const key of [
+      ...this.cache.keys(),
+      ...this.missingTiles,
+      ...this.inflight.keys(),
+    ]) {
+      const [tx, tz] = key.split(',').map(Number)
+      if (wrapTileX(tx) === wrapTileX(tileX) && tz === tileZ) {
+        this.inflight.delete(key)
+        this.invalidate(tx, tz)
+      }
+    }
   }
 
   invalidate(tileX: number, tileZ: number): void {
@@ -121,6 +187,7 @@ export class TerrainTreeDataManager {
     this.cache.clear()
     this.missingTiles.clear()
     this.inflight.clear()
+    this.landscapingMasks.clear()
     for (const cb of this.invalidateListeners) cb()
   }
 

@@ -3,6 +3,7 @@ import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
 import { worldToTileCoord } from './terrain-height-types'
 import { smoothstep, SPLAT_PADDED_DIM } from '../terrain/terrain-constants'
+import { wrapTileX } from '../terrain/world-wrap'
 import {
   BYTES_PER_CELL,
   applyBrush,
@@ -15,7 +16,7 @@ const PAD = SPLAT_PADDED_DIM // 66 — interior is [1..TILE_DIM]×[1..TILE_DIM]
 const PADDED_BYTES = PAD * PAD * BYTES_PER_CELL
 
 function tileKey(tileX: number, tileZ: number): string {
-  return `${tileX},${tileZ}`
+  return `${wrapTileX(tileX)},${tileZ}`
 }
 
 export function paddedOffset(cx: number, cz: number): number {
@@ -268,46 +269,54 @@ export class TerrainSplatManager {
     const cached = this.textures.get(key)
     if (cached) return cached
 
-    const inflight = this.inflightSplatmaps.get(key)
-    if (inflight) return inflight
-
-    const defaultFallback = (): THREE.DataTexture => {
-      // V2 default: all zeros → every cell is 100% palette slot 0.
-      const data = new Uint8Array(TILE_DIM * TILE_DIM * BYTES_PER_CELL)
-      this.splatmaps.set(key, data)
+    const finishTexture = () => {
       const texture = this.createTexture(tileX, tileZ)
       this.textures.set(key, texture)
       this.refreshNeighborBorders(tileX, tileZ)
       return texture
     }
+    if (this.splatmaps.has(key)) return finishTexture()
 
-    const promise = (async () => {
-      try {
-        const url = `${this.terrainApiUrl}/api/terrain/splat/${tileX}/${tileZ}`
-        const response = await fetch(url)
-        if (!response.ok) {
-          console.error(
-            `Failed to load splatmap (${tileX}, ${tileZ}): ${response.status}`
-          )
+    const inflight = this.inflightSplatmaps.get(key)
+    if (inflight) return inflight
+
+    const defaultFallback = (): THREE.DataTexture => {
+      const updated = this.textures.get(key)
+      if (updated) return updated
+      // V2 default: all zeros → every cell is 100% palette slot 0.
+      const data = new Uint8Array(TILE_DIM * TILE_DIM * BYTES_PER_CELL)
+      if (!this.splatmaps.has(key)) this.splatmaps.set(key, data)
+      return finishTexture()
+    }
+
+    const promise = Promise.resolve().then(
+      async (): Promise<THREE.DataTexture> => {
+        try {
+          const url = `${this.terrainApiUrl}/api/terrain/splat/${tileX}/${tileZ}`
+          const response = await fetch(url)
+          if (!response.ok) {
+            console.error(
+              `Failed to load splatmap (${tileX}, ${tileZ}): ${response.status}`
+            )
+            return defaultFallback()
+          }
+          const buffer = await response.arrayBuffer()
+          if (this.inflightSplatmaps.get(key) !== promise)
+            return this.loadSplatmap(tileX, tileZ)
+          const data = new Uint8Array(buffer)
+          const updated = this.textures.get(key)
+          if (updated) return updated
+          if (!this.splatmaps.has(key)) this.splatmaps.set(key, data)
+          return finishTexture()
+        } catch (e) {
+          console.error(`Splatmap fetch error (${tileX}, ${tileZ}):`, e)
           return defaultFallback()
+        } finally {
+          if (this.inflightSplatmaps.get(key) === promise)
+            this.inflightSplatmaps.delete(key)
         }
-        const buffer = await response.arrayBuffer()
-        const data = new Uint8Array(buffer)
-        this.splatmaps.set(key, data)
-        const texture = this.createTexture(tileX, tileZ)
-        this.textures.set(key, texture)
-        // Neighbors that already had textures used a fallback border (own
-        // edge copy). Now that this tile's real data is present, rebuild
-        // their borders so seams that cross into this tile look correct.
-        this.refreshNeighborBorders(tileX, tileZ)
-        return texture
-      } catch (e) {
-        console.error(`Splatmap fetch error (${tileX}, ${tileZ}):`, e)
-        return defaultFallback()
-      } finally {
-        this.inflightSplatmaps.delete(key)
       }
-    })()
+    )
     this.inflightSplatmaps.set(key, promise)
     return promise
   }
@@ -547,6 +556,11 @@ export class TerrainSplatManager {
       this.saveTimer = null
     }
     await this.saveDirtyTiles()
+  }
+
+  invalidateLandscaping(tileX: number, tileZ: number) {
+    this.inflightSplatmaps.delete(tileKey(tileX, tileZ))
+    this.unloadTile(tileX, tileZ)
   }
 
   unloadTile(tileX: number, tileZ: number) {
