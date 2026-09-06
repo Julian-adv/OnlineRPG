@@ -1,0 +1,16 @@
+{
+  "storage_chest": {
+    "id": "storage_chest",
+    "modelId": "chest_animated",
+    "capacityKg": 50,
+    "snapStep": 0.5,
+    "rotationStep": 90,
+    "footprintWidth": 1.476,
+    "footprintDepth": 0.616,
+    "minFloor": 0,
+    "maxFloor": 3,
+    "floorEdgeClearance": 0.1,
+    "indoorCollisionRadius": 0.28,
+    "outdoorCollisionRadius": 0.55
+  }
+}

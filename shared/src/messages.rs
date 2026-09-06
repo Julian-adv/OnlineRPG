@@ -532,6 +532,24 @@ pub enum ClientMessage {
         place: bool,
     },
     StartFenceMode,
+    PlaceEstateChest {
+        instance_id: u64,
+        position: Position,
+        rotation_deg: f32,
+        floor_level: i8,
+    },
+    OpenEstateChest {
+        chest_id: i64,
+    },
+    TransferEstateItems {
+        chest_id: i64,
+        deposits: Vec<BagLineItem>,
+        withdrawals: Vec<BagLineItem>,
+        expected_revision: u64,
+    },
+    RecoverEstateChest {
+        chest_id: i64,
+    },
     LandAccount {
         merchant_player_id: PlayerId,
     },
@@ -1238,6 +1256,23 @@ pub enum ServerMessage {
         removed: Vec<crate::fence::FenceEdge>,
     },
     FenceEditResult {
+        error: Option<String>,
+    },
+    EstateChestMode {
+        instance_id: u64,
+        item_def_id: String,
+        owner_id: i64,
+        plots: Vec<crate::fence::FencePlot>,
+    },
+    EstateChestVisibility {
+        added: Vec<crate::estate_storage::EstateChest>,
+        removed: Vec<i64>,
+    },
+    EstateChestEditResult {
+        error: Option<String>,
+    },
+    EstateChestState {
+        state: Option<crate::estate_storage::EstateChestState>,
         error: Option<String>,
     },
     LandClaimed {

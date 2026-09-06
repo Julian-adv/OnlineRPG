@@ -57,6 +57,7 @@ export function buildHouseGroup(
   const houseGroup = new THREE.Group()
   houseGroup.position.set(house.origin.x, house.origin.y, house.origin.z)
   houseGroup.name = `house_${house.id}`
+  houseGroup.userData.housingPlacementHouseId = house.id
 
   const stairwellFootprints = collectFootprints(
     house.rooms,
@@ -117,6 +118,7 @@ export function buildHouseGroup(
     const floor = new THREE.Group()
     floor.name = `floor_f${fl}`
     floor.userData.housingSurface = 'floor'
+    floor.userData.housingPlacementFloorLevel = fl
     const stair = new THREE.Group()
     stair.name = `stair_f${fl}`
     stair.userData.housingSurface = 'floor'

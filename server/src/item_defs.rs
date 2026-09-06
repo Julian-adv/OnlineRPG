@@ -47,6 +47,14 @@ pub enum WeaponType {
     Torch,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthenticatedUseAction {
+    EstateStorage,
+    EstateFence,
+    LandClaim,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct ItemDefinition {
@@ -119,6 +127,8 @@ pub struct ItemDefinition {
     /// boot if it ever disagrees with the `use_effect` dispatch.
     #[serde(default)]
     pub consumable: bool,
+    #[serde(rename = "useAction", default)]
+    pub authenticated_use_action: Option<AuthenticatedUseAction>,
     /// Satiation restored when eaten (doc/HUNGER.md). Present on food and fish.
     #[serde(default)]
     pub nutrition: Option<u32>,
@@ -416,6 +426,29 @@ impl ItemDefs {
         let mut defs: HashMap<String, ItemDefinition> =
             serde_json::from_str(data).expect("Failed to parse items.json");
 
+        for storage in onlinerpg_shared::estate_storage::estate_storage_defs().values() {
+            let item = defs.get(&storage.id).unwrap_or_else(|| {
+                panic!("estate storage '{}' has no item definition", storage.id)
+            });
+            assert_eq!(
+                item.category.as_deref(),
+                Some("furniture"),
+                "estate storage '{}' must be furniture",
+                storage.id
+            );
+            assert!(
+                item.consumable,
+                "estate storage '{}' must be usable from the bag",
+                storage.id
+            );
+            assert_eq!(
+                item.authenticated_use_action,
+                Some(AuthenticatedUseAction::EstateStorage),
+                "estate storage '{}' must use the estate_storage action",
+                storage.id
+            );
+        }
+
         // A typo in `effects` would silently strip an item's whole point, so
         // resolve the tokens up front and fail the boot on an unknown one.
         for def in defs.values_mut() {
@@ -445,14 +478,19 @@ impl ItemDefs {
                 "item '{}' has a chestTier but is not chest-eligible equipment",
                 def.id
             );
-            // Land Deeds use the authenticated registration handler.
+            let authenticated_use = def.authenticated_use_action.is_some();
             assert!(
-                def.consumable
-                    == (def.use_effect().is_some()
-                        || matches!(def.id.as_str(), "land_deed" | "wooden_fence")),
+                def.consumable == (def.use_effect().is_some() || authenticated_use),
                 "item '{}': consumable flag out of step with its use handler",
                 def.id
             );
+            if def.authenticated_use_action == Some(AuthenticatedUseAction::EstateStorage) {
+                assert!(
+                    onlinerpg_shared::estate_storage::is_estate_storage_item(&def.id),
+                    "item '{}': estate_storage action needs an estate storage definition",
+                    def.id
+                );
+            }
             // `equip_item` moves a whole bag entry into the slot and equipped
             // rows save as quantity 1, so the rest of a stack would vanish.
             assert!(
@@ -637,6 +675,23 @@ mod tests {
         assert_eq!(sword.weapon_range(), None);
         assert_eq!(sword.ranged_ability(), None);
         assert!(!sword.is_two_handed());
+    }
+
+    #[test]
+    fn authenticated_item_use_is_data_driven() {
+        let defs = ItemDefs::load();
+        assert_eq!(
+            defs.get("storage_chest").unwrap().authenticated_use_action,
+            Some(AuthenticatedUseAction::EstateStorage)
+        );
+        assert_eq!(
+            defs.get("wooden_fence").unwrap().authenticated_use_action,
+            Some(AuthenticatedUseAction::EstateFence)
+        );
+        assert_eq!(
+            defs.get("land_deed").unwrap().authenticated_use_action,
+            Some(AuthenticatedUseAction::LandClaim)
+        );
     }
 
     #[test]

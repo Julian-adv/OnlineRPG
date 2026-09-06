@@ -35,6 +35,7 @@ const SHIELD = { equipSlot: 'off_hand' as const }
 const SWORD = { equipSlot: 'main_hand' as const }
 const MAIL = { equipSlot: 'chest' as const }
 const POTION = { consumable: true }
+const STORAGE = { useAction: 'estate_storage' as const }
 
 describe('resolveQuickslot', () => {
   it('acts on exactly the bound level when it is carried (#148)', () => {
@@ -196,6 +197,19 @@ describe('quickslotAction', () => {
       []
     )
     expect(quickslotAction(POTION, empty)).toBeNull()
+  })
+
+  it('uses a placement item from its data action', () => {
+    const resolved = resolveQuickslot(
+      { defId: 'storage_chest', enchant: 0 },
+      STORAGE,
+      {},
+      [item(8, 'storage_chest')]
+    )
+    expect(quickslotAction(STORAGE, resolved)).toEqual({
+      kind: 'use',
+      instanceId: 8,
+    })
   })
 })
 

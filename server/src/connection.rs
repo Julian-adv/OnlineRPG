@@ -7,6 +7,7 @@ use crate::game_state::{
     KickNotice,
 };
 use crate::google_auth::GoogleAuthVerifier;
+use crate::item_defs::AuthenticatedUseAction;
 use crate::types::{
     new_player, Character, CharacterAttributes, CharacterClass, ClientKind, ClientMessage,
     PlayerId, Position, ServerMessage,
@@ -1753,14 +1754,23 @@ async fn handle_client_message(
 
         ClientMessage::UseItem { instance_id } => {
             if let Some(id) = &state.player_id {
-                if !game_state
-                    .try_start_fence_mode(id, instance_id, auth_service)
-                    .await
-                    && !game_state
-                        .try_preview_land_claim(id, instance_id, auth_service)
-                        .await
-                {
-                    game_state.use_item(id, instance_id).await;
+                match game_state.authenticated_use_action(id, instance_id).await {
+                    Some(AuthenticatedUseAction::EstateStorage) => {
+                        game_state
+                            .try_start_estate_chest_mode(id, instance_id, auth_service)
+                            .await;
+                    }
+                    Some(AuthenticatedUseAction::EstateFence) => {
+                        game_state
+                            .try_start_fence_mode(id, instance_id, auth_service)
+                            .await;
+                    }
+                    Some(AuthenticatedUseAction::LandClaim) => {
+                        game_state
+                            .try_preview_land_claim(id, instance_id, auth_service)
+                            .await;
+                    }
+                    None => game_state.use_item(id, instance_id).await,
                 }
             }
         }
@@ -1791,6 +1801,58 @@ async fn handle_client_message(
         ClientMessage::StartFenceMode => {
             if let Some(id) = &state.player_id {
                 game_state.start_fence_mode(id, auth_service).await;
+            }
+        }
+        ClientMessage::PlaceEstateChest {
+            instance_id,
+            position,
+            rotation_deg,
+            floor_level,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .place_estate_chest(
+                        id,
+                        instance_id,
+                        position,
+                        rotation_deg,
+                        floor_level,
+                        auth_service,
+                    )
+                    .await;
+            }
+        }
+        ClientMessage::OpenEstateChest { chest_id } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .open_estate_chest(id, chest_id, auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::TransferEstateItems {
+            chest_id,
+            deposits,
+            withdrawals,
+            expected_revision,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .transfer_estate_items(
+                        id,
+                        chest_id,
+                        deposits,
+                        withdrawals,
+                        expected_revision,
+                        auth_service,
+                    )
+                    .await;
+            }
+        }
+        ClientMessage::RecoverEstateChest { chest_id } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .recover_estate_chest(id, chest_id, auth_service)
+                    .await;
             }
         }
 

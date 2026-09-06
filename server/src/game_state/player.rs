@@ -957,6 +957,16 @@ impl super::GameState {
             removed: vec![],
         });
         drop(fences);
+        let estate_chests = self.estate_chests.read().await;
+        msgs.push(ServerMessage::EstateChestVisibility {
+            added: estate_chests
+                .nearby(&player_position, player_floor)
+                .into_iter()
+                .cloned()
+                .collect(),
+            removed: vec![],
+        });
+        drop(estate_chests);
         if !other_players.is_empty()
             || !monsters.is_empty()
             || !ground_items.is_empty()
@@ -2456,6 +2466,37 @@ impl super::GameState {
                     ServerMessage::FenceVisibility {
                         added: entered.into_iter().cloned().collect(),
                         removed: left.into_iter().map(|f| f.edge).collect(),
+                    },
+                )
+                .await;
+            }
+        }
+
+        {
+            let chests = self.estate_chests.read().await;
+            let mut candidates: HashMap<_, _> = chests
+                .nearby(old_position, old_floor)
+                .into_iter()
+                .map(|chest| (chest.id, chest))
+                .collect();
+            candidates.extend(
+                chests
+                    .nearby(&player.position, new_floor)
+                    .into_iter()
+                    .map(|chest| (chest.id, chest)),
+            );
+            let (left, entered) = aoi_diff(
+                candidates.into_values(),
+                |chest| (chest.position, chest.floor_level),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            if !left.is_empty() || !entered.is_empty() {
+                self.send_direct_message(
+                    player_id,
+                    ServerMessage::EstateChestVisibility {
+                        added: entered.into_iter().cloned().collect(),
+                        removed: left.into_iter().map(|chest| chest.id).collect(),
                     },
                 )
                 .await;

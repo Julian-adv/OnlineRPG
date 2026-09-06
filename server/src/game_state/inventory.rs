@@ -1,5 +1,5 @@
 use crate::auth::{AuthService, ItemRow};
-use crate::item_defs::UseEffect;
+use crate::item_defs::{AuthenticatedUseAction, UseEffect};
 use crate::types::{PlayerId, ServerMessage};
 use onlinerpg_shared::inventory::{EquipSlot, GroundItem, ItemInstance, PlayerInventory};
 use onlinerpg_shared::messages::BagLineItem;
@@ -761,6 +761,22 @@ impl super::GameState {
             self.set_player_torch(player_id, false).await;
         }
         self.abort_fishing_if_rod_lost(player_id).await;
+    }
+
+    pub async fn authenticated_use_action(
+        &self,
+        player_id: &PlayerId,
+        instance_id: u64,
+    ) -> Option<AuthenticatedUseAction> {
+        let inventories = self.inventories.read().await;
+        let item = inventories
+            .get(player_id)?
+            .bag
+            .iter()
+            .find(|item| item.instance_id == instance_id && item.quantity > 0)?;
+        self.item_defs
+            .get(&item.item_def_id)?
+            .authenticated_use_action
     }
 
     /// Use a consumable from the bag: resolve its effect and dispatch to the

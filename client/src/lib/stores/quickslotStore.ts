@@ -1,6 +1,6 @@
 import { writable } from 'svelte/store'
 import type { EquipSlot, ItemInstance } from '../network/networkTypes'
-import { isConsumable, type ItemDefinition } from '../data/itemDefs'
+import { isUsable, type ItemDefinition } from '../data/itemDefs'
 import { wornOfDef } from './inventoryStore'
 
 export const QUICKSLOT_COUNT = 10
@@ -22,7 +22,10 @@ export type CarriedItem = Pick<
   'instance_id' | 'item_def_id' | 'enchant' | 'quantity'
 >
 
-type QuickslotDef = Pick<ItemDefinition, 'equipSlot' | 'consumable'>
+type QuickslotDef = Pick<
+  ItemDefinition,
+  'equipSlot' | 'consumable' | 'useAction'
+>
 
 /** Bound level if carried, else the nearest (ties high); null bound = highest. */
 function pickBagLevel(bound: number | null, levels: number[]): number | null {
@@ -86,7 +89,7 @@ export function quickslotAction(
   if (!resolved.bagItem) return null
   const instanceId = resolved.bagItem.instance_id
   if (def.equipSlot) return { kind: 'equip', instanceId }
-  if (isConsumable(def)) return { kind: 'use', instanceId }
+  if (isUsable(def)) return { kind: 'use', instanceId }
   return null
 }
 

@@ -16,6 +16,10 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::pathfinding::{build_furniture_passability, FurniturePiece, RuntimePassability};
+use crate::{
+    housing::{HouseData, RoomType},
+    shortest_world_delta_x,
+};
 
 /// Model-local XZ footprint of an object, in metres (the GLB's world-space XZ
 /// bounding box). Deserialised from the embedded footprint table.
@@ -65,6 +69,104 @@ pub fn solid_occupancy(type_id: &str) -> Option<OccupancyRect> {
     footprints().get(type_id).copied()
 }
 
+pub fn point_in_house_floor(house: &HouseData, x: f32, z: f32, floor_level: u8) -> bool {
+    let x = house.origin.x + shortest_world_delta_x(house.origin.x, x);
+    house.rooms.iter().any(|room| {
+        room.room_type == RoomType::Normal
+            && room.floor_level == floor_level
+            && x >= house.origin.x + room.local_x as f32
+            && x <= house.origin.x + room.local_x as f32 + room.size_x as f32
+            && z >= house.origin.z + room.local_z as f32
+            && z <= house.origin.z + room.local_z as f32 + room.size_z as f32
+    })
+}
+
+fn rotated_occupancy_bounds(
+    occupancy: &OccupancyRect,
+    x: f32,
+    z: f32,
+    rotation_deg: f32,
+) -> (f32, f32, f32, f32) {
+    let radians = rotation_deg.to_radians();
+    let cos = radians.cos();
+    let sin = radians.sin();
+    let world = |local_x: f32, local_z: f32| {
+        (
+            x + local_x * cos + local_z * sin,
+            z - local_x * sin + local_z * cos,
+        )
+    };
+    [
+        world(occupancy.min_x, occupancy.min_z),
+        world(occupancy.max_x, occupancy.min_z),
+        world(occupancy.max_x, occupancy.max_z),
+        world(occupancy.min_x, occupancy.max_z),
+    ]
+    .iter()
+    .fold(
+        (
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ),
+        |(min_x, max_x, min_z, max_z), (corner_x, corner_z)| {
+            (
+                min_x.min(*corner_x),
+                max_x.max(*corner_x),
+                min_z.min(*corner_z),
+                max_z.max(*corner_z),
+            )
+        },
+    )
+}
+
+pub fn occupancy_fits_house_floor(
+    house: &HouseData,
+    occupancy: &OccupancyRect,
+    x: f32,
+    z: f32,
+    rotation_deg: f32,
+    floor_level: u8,
+    edge_clearance: f32,
+) -> bool {
+    let x = house.origin.x + shortest_world_delta_x(house.origin.x, x);
+    let bounds = rotated_occupancy_bounds(occupancy, x, z, rotation_deg);
+    let clearance_bounds = (
+        bounds.0 - edge_clearance,
+        bounds.1 + edge_clearance,
+        bounds.2 - edge_clearance,
+        bounds.3 + edge_clearance,
+    );
+    let intersection = |area: (f32, f32, f32, f32), room: &crate::housing::RoomData| {
+        let min_x = house.origin.x + room.local_x as f32;
+        let max_x = min_x + room.size_x as f32;
+        let min_z = house.origin.z + room.local_z as f32;
+        let max_z = min_z + room.size_z as f32;
+        (area.1.min(max_x) - area.0.max(min_x)).max(0.0)
+            * (area.3.min(max_z) - area.2.max(min_z)).max(0.0)
+    };
+    let floor_area: f32 = house
+        .rooms
+        .iter()
+        .filter(|room| room.room_type == RoomType::Normal && room.floor_level == floor_level)
+        .map(|room| intersection(clearance_bounds, room))
+        .sum();
+    let crosses_stairs = house
+        .rooms
+        .iter()
+        .filter(|room| {
+            room.room_type == RoomType::Stairwell
+                && floor_level >= room.floor_level
+                && floor_level <= room.floor_level.saturating_add(1)
+        })
+        .any(|room| intersection(clearance_bounds, room) > 0.0001);
+    !crosses_stairs
+        && floor_area
+            >= (clearance_bounds.1 - clearance_bounds.0) * (clearance_bounds.3 - clearance_bounds.2)
+                - 0.0001
+}
+
 /// A placed object, reduced to the fields collision needs. Deserialises straight
 /// from the region-object JSON and the client's `ObjectPlacement` — unknown
 /// fields (`id`, `rotationX`, `text`) are ignored — so both the wasm and the
@@ -85,6 +187,26 @@ pub struct FurniturePlacement {
     pub rotation_deg: f32,
     #[serde(default)]
     pub floor_level: u8,
+}
+
+pub fn placements_overlap(first: &FurniturePlacement, second: &FurniturePlacement) -> bool {
+    if first.floor_level != second.floor_level {
+        return false;
+    }
+    let (Some(first_occupancy), Some(second_occupancy)) = (
+        solid_occupancy(&first.type_id),
+        solid_occupancy(&second.type_id),
+    ) else {
+        return false;
+    };
+    let first_bounds =
+        rotated_occupancy_bounds(&first_occupancy, first.x, first.z, first.rotation_deg);
+    let second_x = first.x + shortest_world_delta_x(first.x, second.x);
+    let second_bounds =
+        rotated_occupancy_bounds(&second_occupancy, second_x, second.z, second.rotation_deg);
+    (first_bounds.1.min(second_bounds.1) - first_bounds.0.max(second_bounds.0)).max(0.0)
+        * (first_bounds.3.min(second_bounds.3) - first_bounds.2.max(second_bounds.2)).max(0.0)
+        > 0.0001
 }
 
 /// Fraction of a 1m cell's area the furniture must cover for the cell to be
@@ -266,6 +388,25 @@ mod tests {
     }
 
     #[test]
+    fn placement_overlap_uses_rotated_footprints_and_floor() {
+        let chest = |id, x, rotation_deg, floor_level| FurniturePlacement {
+            id,
+            type_id: "chest_animated".to_string(),
+            x,
+            y: 0.0,
+            z: 3.0,
+            rotation_deg,
+            floor_level,
+        };
+        let placed = chest(1, 3.0, 0.0, 0);
+
+        assert!(placements_overlap(&placed, &chest(2, 3.0, 0.0, 0)));
+        assert!(placements_overlap(&placed, &chest(2, 3.5, 90.0, 0)));
+        assert!(!placements_overlap(&placed, &chest(2, 4.476, 0.0, 0)));
+        assert!(!placements_overlap(&placed, &chest(2, 3.0, 0.0, 1)));
+    }
+
+    #[test]
     fn full_x_shallow_z_neighbour_stays_open() {
         // A table shifted toward +Z spans the z=1 row's full width (X = 100%) but
         // only clips it ~29% deep, so its overlap AREA there is ~0.29 < 40% and
@@ -362,5 +503,43 @@ mod tests {
         let occ = solid_occupancy("ammobox").unwrap();
         let cells = footprint_cells(&occ, 10.05, 20.05, 0.0);
         assert!(!cells.is_empty());
+    }
+
+    #[test]
+    fn house_floor_fit_rotates_inward_and_excludes_stairs() {
+        let house: HouseData = serde_json::from_value(serde_json::json!({
+            "id": "r+00_+00_1",
+            "ownerId": "test",
+            "origin": { "x": 0.0, "y": 0.0, "z": 0.0 },
+            "rooms": [
+                {
+                    "roomType": "normal", "localX": 0, "localZ": 0,
+                    "sizeX": 6, "sizeZ": 6, "floorLevel": 0,
+                    "floorTexture": 0, "roofTexture": 0, "wallHeight": 3.0,
+                    "wallNorth": [], "wallSouth": [], "wallEast": [], "wallWest": []
+                },
+                {
+                    "roomType": "stairwell", "localX": 4, "localZ": 1,
+                    "sizeX": 1, "sizeZ": 4, "floorLevel": 0,
+                    "floorTexture": 0, "roofTexture": 0, "wallHeight": 3.0,
+                    "wallNorth": [], "wallSouth": [], "wallEast": [], "wallWest": []
+                }
+            ]
+        }))
+        .unwrap();
+        let chest = solid_occupancy("chest_animated").unwrap();
+
+        assert!(!occupancy_fits_house_floor(
+            &house, &chest, 0.5, 3.0, 0.0, 0, 0.1
+        ));
+        assert!(occupancy_fits_house_floor(
+            &house, &chest, 0.5, 3.0, 90.0, 0, 0.1
+        ));
+        assert!(!occupancy_fits_house_floor(
+            &house, &chest, 4.5, 3.0, 0.0, 0, 0.1
+        ));
+        assert!(!occupancy_fits_house_floor(
+            &house, &chest, 0.308, 3.0, 90.0, 0, 0.1
+        ));
     }
 }
