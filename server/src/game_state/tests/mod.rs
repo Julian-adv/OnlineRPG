@@ -17,6 +17,7 @@ mod cape_dye_tests;
 mod cape_texture_tests;
 mod chat_tests;
 mod collision_tests;
+mod combat_audit_tests;
 mod combat_tests;
 mod dungeon_tests;
 mod enchant_tests;
@@ -73,7 +74,7 @@ fn expect_attack_rejected(
     }
 }
 
-fn make_player(id: &str, x: f32, z: f32) -> Player {
+pub(super) fn make_player(id: &str, x: f32, z: f32) -> Player {
     Player {
         id: pid(id),
         name: id.to_string(),

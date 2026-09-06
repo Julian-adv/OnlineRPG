@@ -1212,7 +1212,9 @@ impl super::GameState {
             players.get_mut(player_id).and_then(|player| {
                 (player.health > 0 && player.health < player.max_health).then(|| {
                     let amount = crate::game::combat::roll_dice(dice);
+                    let old_health = player.health;
                     player.health = (player.health + amount).min(player.max_health);
+                    self.combat_audit.health(old_health, player, "potion");
                     (
                         player.health,
                         player.max_health,

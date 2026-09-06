@@ -225,6 +225,10 @@ struct Args {
     #[arg(long, env = "STATE_DIR", default_value = "./data")]
     state_dir: PathBuf,
 
+    /// Days to retain combat audit logs; targets remain enabled until removed.
+    #[arg(long, env = "COMBAT_AUDIT_RETENTION_DAYS", default_value_t = 30, value_parser = clap::value_parser!(u16).range(1..))]
+    combat_audit_retention_days: u16,
+
     /// Directory holding per-NPC schedule files. The map editor writes here
     /// over REST, so it is server-owned state even though it lives under
     /// `agent-client/` in a source checkout.
@@ -467,6 +471,13 @@ async fn main() -> ExitCode {
         Arc::clone(&cape_textures),
     ));
     game_state.load_npc_schedules(&npc_io).await;
+    game_state
+        .tick_combat_audit(
+            args.state_dir.clone(),
+            args.combat_audit_retention_days,
+            false,
+        )
+        .await;
     game_state.load_pricing(&auth_service).await;
     if let Err(err) = game_state.load_fences(&auth_service).await {
         error!("Failed to load fences: {}", err);
@@ -486,6 +497,23 @@ async fn main() -> ExitCode {
     let (drain_shutdown_tx, drain_shutdown) = watch::channel(());
     let (connection_shutdown_tx, connection_shutdown) = watch::channel(());
     let mut background = JoinSet::new();
+    let audit_game_state = Arc::clone(&game_state);
+    let audit_state_dir = args.state_dir.clone();
+    let audit_retention_days = args.combat_audit_retention_days;
+    background.spawn(run_ticks(
+        "combat audit",
+        Duration::from_secs(1),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&audit_game_state);
+            let state_dir = audit_state_dir.clone();
+            async move {
+                game_state
+                    .tick_combat_audit(state_dir, audit_retention_days, false)
+                    .await
+            }
+        },
+    ));
 
     // Player movement simulation: walks pending move intents toward their
     // targets at capped speed (server-authoritative positions, F-006).
@@ -794,6 +822,13 @@ async fn main() -> ExitCode {
     drain(&mut connections, "Connection").await;
 
     game_state.persist_shutdown_snapshot(&auth_service).await;
+    game_state
+        .tick_combat_audit(
+            args.state_dir.clone(),
+            args.combat_audit_retention_days,
+            true,
+        )
+        .await;
 
     drain(&mut api_task, "Terrain API").await;
 
@@ -830,6 +865,17 @@ mod tests {
             "npcs live outside --state-dir and need their own flag"
         );
         assert_eq!(args.terrain_dir, "./data/terrain");
+    }
+
+    #[test]
+    fn combat_audit_retention_must_be_positive() {
+        let args = Args::try_parse_from(["onlinerpg-server", "--combat-audit-retention-days", "7"])
+            .unwrap();
+        assert_eq!(args.combat_audit_retention_days, 7);
+        assert!(
+            Args::try_parse_from(["onlinerpg-server", "--combat-audit-retention-days", "0",])
+                .is_err()
+        );
     }
 
     /// Every state path must follow --state-dir. Missing one would leave that

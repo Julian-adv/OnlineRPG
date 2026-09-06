@@ -116,6 +116,21 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/tal
 - `most_xp`: DB `SELECT character_name, level, xp FROM characters WHERE level >= 5`를 `~/work/notes/openmmo-YYYY-MM-DD-xp.tsv`로 남기고 직전 tsv와 xp 차이 1위를 적는다. 같은 사람이 이어지면 새 줄 대신 `streak=N` 줄 하나.
 - 같은 사람의 같은 종류 사건은 첫 번과 스트릭만. 개명(`renamed to`)·삭제(`Character id=N deleted`)가 보이면 원장의 그 이름을 고치거나 줄을 지운다 — 원장을 고쳐 쓰는 유일한 경우.
 - 봇도 동일하게 오른다. `npc_` 계정만 제외. 금액·IP·계정명은 원장에 넣지 않는다.
+- 최대 영지 후보는 아래 읽기 전용 조회로 구한다. 구획은32×32m이며 왕령은 제외한다. 최대값이 동률이면 각 소유자를 `DATE largest_estate NAME plots=N tied=true`로, 단독이면 `tied=false`로 기록한다. 결과가 없으면 후보도 없다. 현재 캐릭터명과 기존 원장을 대조하고, 같은 소유자의 같은 규모를 매일 중복 기록하지 않는다. 면적은 토지 소유만 뜻하며 집·농장·정복을 지어내지 않는다.
+  ```sql
+  WITH sizes AS (
+    SELECT e.id AS estate_id, c.character_name, COUNT(*) AS plots
+    FROM land_estates e
+    JOIN land_plots p ON p.estate_id = e.id
+    JOIN characters c ON c.id = e.owner_id
+    WHERE e.grade = 1 AND substr(c.account_name, 1, 4) != 'npc_'
+    GROUP BY e.id, c.character_name
+  )
+  SELECT estate_id, character_name, plots, plots * 1024 AS area_m2
+  FROM sizes
+  WHERE plots = (SELECT MAX(plots) FROM sizes)
+  ORDER BY estate_id;
+  ```
 
 ## 9. 노트 구성
 

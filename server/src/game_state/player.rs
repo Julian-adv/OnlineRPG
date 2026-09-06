@@ -392,6 +392,10 @@ impl super::GameState {
             let mut map = self.player_characters.write().await;
             map.insert(*player_id, (character_id, xp, attributes));
         }
+        self.combat_audit.register(*player_id, character_id);
+        if let Some(player) = self.players.read().await.get(player_id) {
+            self.combat_audit.observe(player);
+        }
         {
             let mut gold_map = self.player_gold.write().await;
             gold_map.insert(*player_id, gold);
@@ -403,6 +407,7 @@ impl super::GameState {
     }
 
     pub async fn unregister_player_character(&self, player_id: &PlayerId) {
+        self.combat_audit.logout(player_id);
         {
             let mut map = self.player_characters.write().await;
             map.remove(player_id);
@@ -826,6 +831,7 @@ impl super::GameState {
 
         {
             let mut players = self.players.write().await;
+            self.combat_audit.observe(&player);
             players.insert(player_id, player.clone());
         }
         {
@@ -1028,6 +1034,7 @@ impl super::GameState {
             .await;
         let removed_player = {
             let mut players = self.players.write().await;
+            self.combat_audit.logout(player_id);
             players.remove(player_id)
         };
         if let Some(player) = &removed_player {
@@ -1884,7 +1891,9 @@ impl super::GameState {
                 .collect();
             let free_bed = beds.iter().find(|bed| !taken.contains(&bed.id));
             let player = players.get_mut(player_id).expect("looked up above");
+            let old_health = player.health;
             player.health = player.max_health;
+            self.combat_audit.health(old_health, player, "respawn");
             let old_floor = player.floor_level;
             let old_position = player.position;
             player.floor_level = respawn.floor_level;
@@ -1949,6 +1958,7 @@ impl super::GameState {
                 return false;
             };
             player.health = (player.max_health * hp_percent / 100).max(1);
+            self.combat_audit.health(0, player, "revive");
             player.clone()
         };
         info!("Player {} ({}) revived in place", revived.name, revived.id);

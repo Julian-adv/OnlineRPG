@@ -224,6 +224,7 @@ pub(crate) mod ambient_spawn;
 mod chat;
 pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
+mod combat_audit;
 mod consent;
 mod deals;
 mod debuff;
@@ -329,6 +330,7 @@ pub(crate) struct ServerGroundItem {
 
 #[derive(Clone)]
 pub struct GameState {
+    combat_audit: Arc<combat_audit::CombatAudit>,
     players: Arc<RwLock<HashMap<PlayerId, Player>>>,
     /// Lowercased name → online player id, updated by `add_player`/
     /// `remove_player` right after the roster under its own lock (never held
@@ -658,6 +660,7 @@ impl GameState {
 
         Self {
             terrain_io,
+            combat_audit: Arc::new(combat_audit::CombatAudit::default()),
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),

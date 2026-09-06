@@ -683,6 +683,8 @@ impl super::GameState {
                     died = monster.health == 0;
                 }
                 if died {
+                    self.combat_audit
+                        .kill(player_id, &monster_id, &monster_type);
                     // Through the registry so the kill frees its spawn slot now,
                     // not when the corpse is swept 60s later.
                     monsters.mark_dead(&monster_id);
@@ -903,8 +905,9 @@ impl super::GameState {
                         }
                     }
                     p.max_health = updated_max_hp;
-                    // Level-up always fully restores current HP to max HP.
+                    let old_health = p.health;
                     p.health = p.max_health;
+                    self.combat_audit.health(old_health, p, "level_up");
                     leveled.push(*player_id);
                 }
                 notices.push((
@@ -965,6 +968,8 @@ impl super::GameState {
         target_player_id: &PlayerId,
     ) {
         if self.server_monster_ai() {
+            let mut audit = self.combat_audit.attack(*target_player_id, true);
+            audit.reason = "client_disabled";
             return;
         }
         self.monster_attack(Some(attacker_player_id), monster_id, target_player_id)
@@ -991,15 +996,21 @@ impl super::GameState {
         }
         let now = Self::now_ms();
         let mut monster_data = None;
+        let mut audit = self
+            .combat_audit
+            .attack(*target_player_id, attacker.is_some());
 
         {
             let mut monsters = self.monsters.write().await;
             if let Some(monster) = monsters.get_mut(monster_id) {
+                audit.monster(monster_id, &monster.monster_type);
+                audit.reason = "not_controllable";
                 let controllable = match attacker {
                     Some(attacker) => monster.is_controllable_by(attacker),
                     None => monster.state != MonsterState::Dead,
                 };
                 if controllable {
+                    audit.reason = "cooldown";
                     let def = self.monster_defs.get(&monster.monster_type);
                     let attack_cooldown_ms =
                         def.map(|d| u64::from(d.attack_cooldown)).unwrap_or(1500);
@@ -1057,7 +1068,7 @@ impl super::GameState {
             return;
         };
 
-        // 2. Check if target player exists and can take damage
+        audit.reason = "target_not_damageable";
         let (target_player_name, target_position, target_floor_level);
         {
             let players = self.players.read().await;
@@ -1071,11 +1082,7 @@ impl super::GameState {
             }
         }
 
-        // 3. The monster must actually be able to reach the target. Ownership
-        // alone is not enough: any player can spawn a monster next to themselves
-        // and become its owner, so without this the pair (monster_id, arbitrary
-        // target_player_id) would deal real damage at unlimited range to anyone
-        // whose id the attacker can name.
+        audit.reason = "unreachable_floor";
         let Some(distance_sq) = reachable_dist_sq(
             monster_position,
             monster_floor_level,
@@ -1086,6 +1093,7 @@ impl super::GameState {
         };
         let max_range = monster_attack_range + MONSTER_ATTACK_RANGE_TOLERANCE_METERS;
         if distance_sq > max_range.powi(2) {
+            audit.reason = "out_of_range";
             debug!(
                 "Rejected monster attack {:.0}m away: monster {} -> player {}",
                 distance_sq.sqrt(),
@@ -1100,6 +1108,7 @@ impl super::GameState {
             target_position,
             monster_floor_level,
         ) {
+            audit.reason = "wall";
             debug!(
                 "Rejected monster attack through a wall: monster {} -> player {}",
                 monster_id, target_player_name
@@ -1127,6 +1136,7 @@ impl super::GameState {
         let mut did_die = false;
         let mut current_health = 0;
         let mut target_loc: Option<(Position, i8)> = None;
+        audit.reason = "target_disappeared_or_dead";
 
         {
             let mut players = self.players.write().await;
@@ -1136,6 +1146,7 @@ impl super::GameState {
                 }
 
                 player.last_combat_at = now;
+                let old_health = player.health;
 
                 if result.hit {
                     player.health = player.health.saturating_sub(result.damage);
@@ -1144,6 +1155,7 @@ impl super::GameState {
                     }
                 }
                 current_health = player.health;
+                audit.resolved(old_health, player, result.hit);
                 target_loc = Some((player.position, player.floor_level));
             }
         }
@@ -1269,6 +1281,7 @@ impl super::GameState {
                     if player.health > 0 && player.health < player.max_health {
                         let old_health = player.health;
                         player.health = (player.health + amount).min(player.max_health);
+                        self.combat_audit.health(old_health, player, "natural");
 
                         if player.health != old_health {
                             regen_dirty.push(player_id);
@@ -1309,6 +1322,7 @@ impl super::GameState {
     /// then the XP penalty. One chokepoint so future death sources can't
     /// forget a side effect.
     pub(super) async fn on_player_died(&self, player_id: &PlayerId, cause: &str) {
+        self.combat_audit.death(player_id);
         if let Some((position, _, floor_level, name)) = self.player_pose(player_id).await {
             let place = crate::dungeon_defs::place_label(&position, floor_level);
             info!(
@@ -1394,9 +1408,12 @@ impl super::GameState {
                     }
                 }
 
+                let old_health = player.health;
                 if player.health > player.max_health {
                     player.health = player.max_health;
                 }
+                self.combat_audit
+                    .health(old_health, player, "death_penalty");
 
                 current_hp_for_msg = player.health;
                 max_hp_for_msg = player.max_health;

@@ -87,6 +87,7 @@ data/announcements/*.md
 
 # Banned character names: contains real names, kept out of the public repo
 data/banned_names.txt
+data/combat-audit.txt
 
 # Terrain generator preview output
 preview_out/

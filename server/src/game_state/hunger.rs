@@ -360,7 +360,9 @@ impl super::GameState {
                 if player.health == 0 || player.health >= player.max_health {
                     continue;
                 }
+                let old_health = player.health;
                 player.health = player.health.saturating_add(amount).min(player.max_health);
+                self.combat_audit.health(old_health, player, "food");
                 messages.push((
                     pid,
                     player.position,
