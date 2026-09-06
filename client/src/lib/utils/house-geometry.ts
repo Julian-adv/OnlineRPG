@@ -120,6 +120,7 @@ export function buildHouseGroup(
     const stair = new THREE.Group()
     stair.name = `stair_f${fl}`
     stair.userData.housingSurface = 'floor'
+    stair.userData.housingStairFloor = fl
     mergedMeshCount += addMergedMeshes(front, entries.front)
     mergedMeshCount += addMergedMeshes(back, entries.back)
     mergedMeshCount += addMergedMeshes(floor, entries.floor)
@@ -146,12 +147,22 @@ export function buildHouseGroup(
   }
 
   for (const door of allDoors) {
-    door.pivot.userData = {
+    const userData = {
       doorHouseId: house.id,
       doorRoomIndex: door.roomIndex,
       doorWallDir: door.wallDir,
       doorSegmentIndex: door.segmentIndex,
       doorFloorLevel: door.floorLevel,
+      doorInteractionPosition: {
+        x: house.origin.x + door.interactionPosition.x,
+        z: house.origin.z + door.interactionPosition.z,
+      },
+      doorIsWindow: door.isWindow,
+    }
+    door.pivot.userData = userData
+    if (door.clickTarget) {
+      door.clickTarget.userData = { ...userData, housingSurface: 'wall' }
+      houseGroup.add(door.clickTarget)
     }
     houseGroup.add(door.pivot)
   }

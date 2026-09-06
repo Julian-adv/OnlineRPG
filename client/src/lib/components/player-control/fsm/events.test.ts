@@ -147,6 +147,7 @@ describe('dispatchPlayerControlEvent', () => {
 
     expect(actions.moveToGround).toHaveBeenCalledWith(
       { x: 4, y: 5, z: 6 },
+      false,
       false
     )
   })

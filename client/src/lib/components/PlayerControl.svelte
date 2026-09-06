@@ -56,11 +56,17 @@
   import type { TerrainHeightManager } from '../managers/terrainHeightManager'
   import {
     playerFloorOffset,
+    playerInsideHouseId,
     playerVisualFloorLevel,
   } from '../stores/housingStore'
   import { currentDungeonDepth } from '../stores/dungeonStore'
   import { dungeonManager } from '../managers/dungeonManager'
   import { housingManager } from '../managers/housingManager'
+  import {
+    shouldIgnoreImplicitHouseFloorChange,
+    wallApproachPositions,
+    type ClosedHouseDoor,
+  } from '../managers/housing-queries'
   import { findPath } from '../managers/pathfinding'
   import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
   import {
@@ -323,6 +329,13 @@
   let propSwingCounter = 0
   let propBreakTimer: ReturnType<typeof setTimeout> | null = null
   let propSwingIdleTimer: ReturnType<typeof setTimeout> | null = null
+  let doorInteractionRetryTimer: ReturnType<typeof setTimeout> | null = null
+
+  function clearDoorInteractionRetry() {
+    if (!doorInteractionRetryTimer) return
+    clearTimeout(doorInteractionRetryTimer)
+    doorInteractionRetryTimer = null
+  }
 
   function clearPropSwingTimers() {
     if (propBreakTimer) {
@@ -1056,6 +1069,16 @@
   }
 
   function updateKeyboardMovement(deltaTime: number) {
+    if (inputHandler.hasKeysPressed) clearDoorInteractionRetry()
+    const rawDirection = inputHandler.getMovementDirection()
+    const direction =
+      rawDirection && currentPlayer
+        ? housingManager.assistStairMovementDirection(
+            get(playerVisualFloorLevel),
+            currentPlayer.position,
+            rawDirection
+          )
+        : rawDirection
     runKeyboardFrame({
       currentPlayer,
       hasKeysPressed: inputHandler.hasKeysPressed,
@@ -1063,7 +1086,7 @@
       interactionExit: getInteractionExitKind(playerState),
       hasMovementTarget: movingState() !== null,
       isInCombat: combatController.isInCombat,
-      direction: inputHandler.getMovementDirection(),
+      direction,
       config: movementConfig(),
       deltaTimeSeconds: deltaTime / 1000,
       sampleHeight,
@@ -1200,7 +1223,11 @@
 
   function handleClickToMove(
     clickPosition: Position,
-    options: { approach?: PendingApproach | null; sprinting?: boolean } = {}
+    options: {
+      approach?: PendingApproach | null
+      sprinting?: boolean
+      stopAtHouseEntrance?: boolean
+    } = {}
   ) {
     // Any fresh movement cancels a pending prop break/open (breakProp/openProp
     // re-arm it after their own walk-up call below).
@@ -1215,7 +1242,36 @@
       const radius = staggerRadius(get(activeDebuffs), Date.now())
       if (radius > 0) clickPosition = staggerTarget(clickPosition, radius)
     }
-
+    const routePath = options.stopAtHouseEntrance
+      ? (
+          startX: number,
+          startZ: number,
+          startFloor: number,
+          goalX: number,
+          goalZ: number,
+          goalFloor: number
+        ) => {
+          const result = findPath(
+            startX,
+            startZ,
+            startFloor,
+            goalX,
+            goalZ,
+            goalFloor
+          )
+          return {
+            ...result,
+            waypoints: currentPlayer
+              ? housingManager.stopPathAtHouseEntrance(
+                  currentPlayer.position,
+                  startFloor,
+                  clickPosition,
+                  result.waypoints
+                )
+              : result.waypoints,
+          }
+        }
+      : findPath
     // Start A* from the player's current passability floor — on a stair shaft
     // that is the shaft's keyed (lower) floor (see currentPassabilityFloor /
     // dungeonManager.startFloorAt), which differs from the clicked room's floor, so
@@ -1229,7 +1285,7 @@
       hasKeyboardInput: inputHandler.hasKeysPressed,
       currentFloor: currentPassabilityFloor(),
       getFloorAt: getFloorAtForClick,
-      findPath,
+      findPath: routePath,
       waypointHeight,
       sendPlayerMove,
       startSpeed: currentSpeed,
@@ -1413,26 +1469,29 @@
   function approachAndAct(
     spec: ApproachSpec,
     act: () => void,
-    canActNow = true
+    canActNow = true,
+    canAct?: PendingApproach['canAct']
   ) {
-    if (!currentPlayer || currentPlayer.health <= 0) return
+    if (!currentPlayer || currentPlayer.health <= 0) return 'ignored'
 
     const plan = planApproach(
       currentPlayer.position,
       spec,
       routeQuality,
-      canActNow
+      canActNow,
+      canAct
     )
-    if (plan.kind === 'unreachable') return
+    if (plan.kind === 'unreachable') return 'unreachable'
     if (plan.kind === 'act_now') {
       act()
-      return
+      return 'act_now'
     }
 
     combatController.cancelCombat()
     handleClickToMove(plan.target, {
-      approach: { spec, depth: get(currentDungeonDepth), act },
+      approach: { spec, depth: get(currentDungeonDepth), canAct, act },
     })
+    return 'walk'
   }
 
   function pickupItem(
@@ -1450,26 +1509,190 @@
     )
   }
 
-  function interactObject(
-    intent: Extract<ClickIntent, { type: 'interact_object' }>
+  function openDoorThenRetry(door: ClosedHouseDoor, retryAction: () => void) {
+    clearDoorInteractionRetry()
+    networkManager.sendToggleDoor(
+      door.houseId,
+      door.roomIndex,
+      door.wallDir,
+      door.segmentIndex
+    )
+
+    let attempts = 0
+    const retry = () => {
+      doorInteractionRetryTimer = null
+      if (housingManager.isDoorOpen(door)) {
+        retryAction()
+        return
+      }
+      attempts++
+      if (attempts < 20) doorInteractionRetryTimer = setTimeout(retry, 100)
+    }
+    doorInteractionRetryTimer = setTimeout(retry, 100)
+  }
+
+  function approachDoorThenRetry(
+    door: ClosedHouseDoor,
+    retryAction: () => void
   ) {
+    if (!currentPlayer) return
     approachAndAct(
       {
-        position: intent.position,
-        ...approachForInteraction(intent.interaction),
+        position: { ...door.position, y: currentPlayer.position.y },
+        ...HOUSE_DOOR_APPROACH,
       },
-      () => enterInteraction(intent)
+      () => openDoorThenRetry(door, retryAction)
     )
   }
 
+  function interactObject(
+    intent: Extract<ClickIntent, { type: 'interact_object' }>,
+    forceWalk = false
+  ) {
+    if (!currentPlayer) return
+    const player = currentPlayer
+    const floor = currentPassabilityFloor()
+    const door = housingManager.findClosedDoorOnSegment(
+      player.position.x,
+      player.position.z,
+      intent.position.x,
+      intent.position.z,
+      floor
+    )
+    if (door) {
+      approachDoorThenRetry(door, () => interactObject(intent, true))
+      return
+    }
+
+    const canAct = (position: Pick<Position, 'x' | 'z'>) =>
+      !housingManager.isHouseWallBlockingSegment(
+        position.x,
+        position.z,
+        intent.position.x,
+        intent.position.z,
+        floor
+      )
+    const spec = {
+      position: intent.position,
+      ...approachForInteraction(intent.interaction),
+    }
+    const approach = approachAndAct(
+      spec,
+      () => enterInteraction(intent),
+      !forceWalk && canAct(player.position),
+      canAct
+    )
+    if (approach !== 'unreachable') return
+
+    const openRoute = housingManager.withClosedDoorsOpen(floor, () => {
+      const routeWithOpenDoors = (target: Position) => {
+        const result = findPath(
+          player.position.x,
+          player.position.z,
+          floor,
+          target.x,
+          target.z,
+          floor
+        )
+        if (result.found) return 'found'
+        return result.waypoints.length > 0 ? 'partial' : 'none'
+      }
+      const plan = planApproach(
+        player.position,
+        spec,
+        routeWithOpenDoors,
+        false,
+        canAct
+      )
+      if (plan.kind !== 'walk') return []
+      const result = findPath(
+        player.position.x,
+        player.position.z,
+        floor,
+        plan.target.x,
+        plan.target.z,
+        floor
+      )
+      return result.found ? result.waypoints : []
+    })
+
+    const routeDoor = housingManager.findClosedDoorOnPath(
+      player.position.x,
+      player.position.z,
+      openRoute,
+      floor
+    )
+    if (!routeDoor) return
+    approachDoorThenRetry(routeDoor, () => interactObject(intent, true))
+  }
+
   function toggleDoor(intent: Extract<ClickIntent, { type: 'toggle_door' }>) {
-    approachAndAct({ position: intent.position, ...HOUSE_DOOR_APPROACH }, () =>
+    const toggle = () =>
       networkManager.sendToggleDoor(
         intent.houseId,
         intent.roomIndex,
         intent.wallDir,
         intent.segmentIndex
       )
+    if (intent.isWindow && currentPlayer) {
+      const player = currentPlayer
+      const floor = currentPassabilityFloor()
+      const dx = shortestWrappedDeltaX(player.position.x, intent.position.x)
+      const dz = intent.position.z - player.position.z
+      if (
+        Math.hypot(dx, dz) <= HOUSE_DOOR_APPROACH.range &&
+        !housingManager.isHouseWallBlockingSegment(
+          player.position.x,
+          player.position.z,
+          intent.position.x,
+          intent.position.z,
+          floor
+        )
+      ) {
+        toggle()
+        return
+      }
+      const targets = wallApproachPositions(
+        intent.position,
+        player.position,
+        intent.wallDir,
+        HOUSE_DOOR_APPROACH.stopShort
+      )
+      for (const target of targets) {
+        const position = { ...target, y: player.position.y }
+        if (routeQuality(position) !== 'found') continue
+        approachAndAct({ position, range: 0.35, stopShort: 0 }, toggle)
+        return
+      }
+
+      const openRoute = housingManager.withClosedDoorsOpen(floor, () => {
+        for (const target of targets) {
+          const result = findPath(
+            player.position.x,
+            player.position.z,
+            floor,
+            target.x,
+            target.z,
+            floor
+          )
+          if (result.found) return result.waypoints
+        }
+        return []
+      })
+      const routeDoor = housingManager.findClosedDoorOnPath(
+        player.position.x,
+        player.position.z,
+        openRoute,
+        floor
+      )
+      if (routeDoor) {
+        approachDoorThenRetry(routeDoor, () => toggleDoor(intent))
+      }
+      return
+    }
+    approachAndAct(
+      { position: intent.position, ...HOUSE_DOOR_APPROACH },
+      toggle
     )
   }
 
@@ -1665,6 +1888,8 @@
         z: currentPlayer!.position.z,
       },
       playerVisualFloorLevel: get(playerVisualFloorLevel),
+      resolveHousingStairTarget: (floorLevel, x, y, z, stairFloor) =>
+        housingManager.stairLandingTargetAt(floorLevel, x, y, z, stairFloor),
       isMonsterDead,
       canCastFishing:
         getItemDef(get(inventoryStore).equipped.main_hand?.item_def_id ?? '')
@@ -1775,14 +2000,30 @@
       eatMeal,
       breakProp,
       openProp,
-      moveToGround: (position, sprinting) => {
+      moveToGround: (position, sprinting, viaHousingStair) => {
         combatController.cancelCombat()
         const snapped = dungeonManager.snapDescentWallClick(
           position.x,
           position.z,
           position.y
         )
-        handleClickToMove(snapped ?? position, { sprinting })
+        const target = snapped ?? position
+        const currentFloor = currentPassabilityFloor()
+        const targetFloor = getFloorAtForClick(target.x, target.z, target.y)
+        if (
+          shouldIgnoreImplicitHouseFloorChange(
+            get(playerInsideHouseId),
+            currentFloor,
+            targetFloor,
+            viaHousingStair
+          )
+        ) {
+          return
+        }
+        handleClickToMove(target, {
+          sprinting,
+          stopAtHouseEntrance: true,
+        })
       },
       castFishing: (intent) => {
         if (!currentPlayer || currentPlayer.health <= 0) return
@@ -1814,6 +2055,7 @@
     // no movement of its own (a cast, an in-reach interaction). A click that
     // hit nothing at all shouldn't cancel the walk the player is already on.
     if (event.type === 'canvas_intent' && event.intent.type !== 'none') {
+      clearDoorInteractionRetry()
       const m = movingState()
       if (m) m.approach = null
     }
@@ -2003,6 +2245,7 @@
       clearStandUpTimer()
       clearJumpFeedbackTimer()
       clearPropSwingTimers()
+      clearDoorInteractionRetry()
       // The store outlives this component (character select, logout).
       lastEmoteSync = null
       localEmoteAnim.set(null)

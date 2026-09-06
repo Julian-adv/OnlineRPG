@@ -41,6 +41,9 @@ const FRAME_SIDE_FRAC = 0.1 // side strip width as fraction of segment width
 const FRAME_BOTTOM_FRAC = 0.05 // bottom strip height fraction
 const FRAME_DIAG_THICKNESS = 0.06 // diagonal beam thickness in meters
 const SHUTTER_BORDER = 0.045 // shutter border frame thickness (used for side-face UV)
+const WINDOW_CLICK_MATERIAL = new THREE.MeshBasicMaterial({
+  side: THREE.DoubleSide,
+})
 
 // Shared temp matrix for frame diagonal geometry (single-threaded, sync only)
 const _frameMat = new THREE.Matrix4()
@@ -605,6 +608,8 @@ export function collectWallSegments(
 
             doors.push({
               pivot,
+              interactionPosition: { x: ox, z: oz },
+              isWindow: false,
               roomIndex,
               wallDir: dir,
               segmentIndex: segIdx,
@@ -647,6 +652,17 @@ export function collectWallSegments(
             }
           }
           const shutterMat = getHousingMaterial(SHUTTER_PANEL_TEXTURE_IDX)
+          const clickTarget = new THREE.Mesh(
+            new THREE.PlaneGeometry(openW, WINDOW_HEIGHT),
+            WINDOW_CLICK_MATERIAL
+          )
+          clickTarget.visible = false
+          clickTarget.position.set(
+            ox,
+            yBase + WINDOW_BOTTOM + WINDOW_HEIGHT / 2,
+            oz
+          )
+          if (!dirInfo.isNS) clickTarget.rotation.y = Math.PI / 2
 
           for (const side of [-1, 1] as const) {
             const panelX = (dirInfo.isNS ? -side : side) * (halfW / 2 - inset)
@@ -672,6 +688,9 @@ export function collectWallSegments(
 
             doors.push({
               pivot,
+              clickTarget: side === -1 ? clickTarget : undefined,
+              interactionPosition: { x: ox, z: oz },
+              isWindow: true,
               roomIndex,
               wallDir: dir,
               segmentIndex: i,

@@ -1,11 +1,18 @@
 import type { HouseData, RoomData } from '../types/housing'
 import {
   FLOOR_THICKNESS,
+  LANDING_DEPTH,
   floorYBase,
   getStairwellYOffset,
   type WallDirection,
 } from '../utils/house-geometry'
-import { getWallByDir, isOpenable, wallLineCoord } from './housing-passability'
+import {
+  ALL_WALL_DIRS,
+  getWallByDir,
+  isDoorVariant,
+  isOpenable,
+  wallLineCoord,
+} from './housing-passability'
 
 /** Whether (x, z) lies within a room's footprint, optionally inset by margin. */
 export function roomContainsXZ(
@@ -119,6 +126,306 @@ export function houseFloorHeightAt(
     }
   }
   return stairY ?? flatY
+}
+
+interface StairCandidate {
+  house: HouseData
+  room: RoomData
+}
+
+export function resolveStairFloor(
+  entryFloor: number,
+  currentFloor: number,
+  progress: number
+): number {
+  if (currentFloor <= entryFloor) {
+    return progress >= 0.88 ? entryFloor + 1 : entryFloor
+  }
+  return progress <= 0.12 ? entryFloor : entryFloor + 1
+}
+
+export function shouldIgnoreImplicitHouseFloorChange(
+  insideHouseId: string | null,
+  currentFloor: number,
+  targetFloor: number,
+  viaStair: boolean
+): boolean {
+  return insideHouseId !== null && !viaStair && currentFloor !== targetFloor
+}
+
+function nearestStairAt(
+  housesById: ReadonlyMap<string, HouseData>,
+  floorLevel: number,
+  x: number,
+  y: number,
+  z: number,
+  stairFloor?: number
+): StairCandidate | null {
+  let best: StairCandidate | null = null
+  let bestDistance = Infinity
+  for (const house of housesById.values()) {
+    for (const room of house.rooms) {
+      if (
+        room.roomType !== 'stairwell' ||
+        (stairFloor !== undefined && room.floorLevel !== stairFloor) ||
+        floorLevel < room.floorLevel ||
+        floorLevel > room.floorLevel + 1 ||
+        !roomContainsXZ(house, room, x, z)
+      ) {
+        continue
+      }
+      const stairY =
+        house.origin.y +
+        getStairwellYOffset(room, house.origin.x, house.origin.z, x, z)
+      const distance = Math.abs(stairY - y)
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = { house, room }
+      }
+    }
+  }
+  return best
+}
+
+export function assistStairMovementDirection(
+  housesById: ReadonlyMap<string, HouseData>,
+  floorLevel: number,
+  position: { x: number; y: number; z: number },
+  direction: { x: number; z: number }
+): { x: number; z: number } {
+  const match = nearestStairAt(
+    housesById,
+    floorLevel,
+    position.x,
+    position.y,
+    position.z
+  )
+  if (!match) return direction
+
+  const { house, room } = match
+  const alongZ = room.sizeZ >= room.sizeX
+  const length = alongZ ? room.sizeZ : room.sizeX
+  const width = alongZ ? room.sizeX : room.sizeZ
+  const alongPosition = alongZ
+    ? position.z - (house.origin.z + room.localZ)
+    : position.x - (house.origin.x + room.localX)
+  const edgeDistance = Math.max(
+    0,
+    Math.min(alongPosition, length - alongPosition)
+  )
+  const edgeT = Math.min(1, edgeDistance / LANDING_DEPTH)
+  const edgeWeight = edgeT * edgeT * (3 - 2 * edgeT)
+  const alongInput = alongZ ? direction.z : direction.x
+  const lateralInput = alongZ ? direction.x : direction.z
+  const driveWeight = Math.min(1, Math.abs(alongInput) * Math.SQRT2)
+  const weight = edgeWeight * driveWeight
+  if (weight <= 0) return direction
+
+  const lateralPosition = alongZ
+    ? position.x - (house.origin.x + room.localX + room.sizeX / 2)
+    : position.z - (house.origin.z + room.localZ + room.sizeZ / 2)
+  const halfWidth = Math.max(width / 2, 0.01)
+  const deadZone = Math.min(0.15, halfWidth * 0.3)
+  const excess = Math.max(0, Math.abs(lateralPosition) - deadZone)
+  const usableHalfWidth = Math.max(halfWidth - deadZone, 0.01)
+  const centerPull =
+    -Math.sign(lateralPosition) *
+    Math.min(1, excess / usableHalfWidth) *
+    0.35 *
+    Math.abs(alongInput)
+  const correctedLateral =
+    lateralInput * (1 - 0.7 * weight) + centerPull * weight
+  const originalLength = Math.hypot(direction.x, direction.z)
+  const correctedLength = Math.hypot(alongInput, correctedLateral)
+  if (correctedLength <= 1e-6) return direction
+  const scale = originalLength / correctedLength
+
+  return alongZ
+    ? { x: correctedLateral * scale, z: alongInput * scale }
+    : { x: alongInput * scale, z: correctedLateral * scale }
+}
+
+export function stairLandingTargetAt(
+  housesById: ReadonlyMap<string, HouseData>,
+  floorLevel: number,
+  x: number,
+  y: number,
+  z: number,
+  stairFloor?: number
+): { x: number; y: number; z: number } | null {
+  const match = nearestStairAt(housesById, floorLevel, x, y, z, stairFloor)
+  if (!match) return null
+
+  const { house, room } = match
+  const upperFloor = room.floorLevel + 1
+  const targetFloor =
+    floorLevel === room.floorLevel ? upperFloor : room.floorLevel
+  const alongZ = room.sizeZ >= room.sizeX
+  const length = alongZ ? room.sizeZ : room.sizeX
+  const targetUpper = targetFloor === upperFloor
+  const targetAtMax = targetUpper !== (room.stairReversed ?? false)
+  const along = targetAtMax ? length - LANDING_DEPTH / 2 : LANDING_DEPTH / 2
+  const targetX = alongZ
+    ? house.origin.x + room.localX + room.sizeX / 2
+    : house.origin.x + room.localX + along
+  const targetZ = alongZ
+    ? house.origin.z + room.localZ + along
+    : house.origin.z + room.localZ + room.sizeZ / 2
+
+  return {
+    x: targetX,
+    y:
+      house.origin.y +
+      floorYBase(targetFloor, room.wallHeight) +
+      FLOOR_THICKNESS / 2,
+    z: targetZ,
+  }
+}
+
+interface HousePathWaypoint {
+  x: number
+  z: number
+  floor: number
+}
+
+function containsHouseFloorPoint(
+  house: HouseData,
+  floor: number,
+  x: number,
+  z: number
+): boolean {
+  return house.rooms.some(
+    (room) =>
+      room.roomType !== 'stairwell' &&
+      room.floorLevel === floor &&
+      roomContainsXZ(house, room, x, z)
+  )
+}
+
+function segmentRectEntry(
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  minX: number,
+  maxX: number,
+  minZ: number,
+  maxZ: number
+): number | null {
+  const dx = x1 - x0
+  const dz = z1 - z0
+  let enter = 0
+  let exit = 1
+  for (const [p, q] of [
+    [-dx, x0 - minX],
+    [dx, maxX - x0],
+    [-dz, z0 - minZ],
+    [dz, maxZ - z0],
+  ] as const) {
+    if (Math.abs(p) <= 1e-9) {
+      if (q < 0) return null
+      continue
+    }
+    const t = q / p
+    if (p < 0) enter = Math.max(enter, t)
+    else exit = Math.min(exit, t)
+    if (enter > exit) return null
+  }
+  return enter
+}
+
+function firstHouseEntryOnSegment(
+  house: HouseData,
+  floor: number,
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number
+): number | null {
+  const inset = 0.05
+  let first: number | null = null
+  for (const room of house.rooms) {
+    if (room.roomType === 'stairwell' || room.floorLevel !== floor) continue
+    const minX = house.origin.x + room.localX
+    const minZ = house.origin.z + room.localZ
+    const entry = segmentRectEntry(
+      x0,
+      z0,
+      x1,
+      z1,
+      minX + inset,
+      minX + room.sizeX - inset,
+      minZ + inset,
+      minZ + room.sizeZ - inset
+    )
+    if (entry !== null && (first === null || entry < first)) first = entry
+  }
+  return first
+}
+
+export function stopPathAtHouseEntrance(
+  housesById: ReadonlyMap<string, HouseData>,
+  current: { x: number; y: number; z: number },
+  currentFloor: number,
+  target: { x: number; y: number; z: number },
+  waypoints: HousePathWaypoint[],
+  insideDistance = 0.7
+): HousePathWaypoint[] {
+  if (currentFloor !== 0 || waypoints.length === 0) return waypoints
+  const targetHouse = findHouseAtPoint(housesById, target.x, target.y, target.z)
+  if (
+    !targetHouse ||
+    containsHouseFloorPoint(targetHouse, currentFloor, current.x, current.z)
+  ) {
+    return waypoints
+  }
+
+  const result: HousePathWaypoint[] = []
+  let previous = { x: current.x, z: current.z, floor: currentFloor }
+  let remainingInside = insideDistance
+  let entered = false
+
+  for (const waypoint of waypoints) {
+    const dx = waypoint.x - previous.x
+    const dz = waypoint.z - previous.z
+    const distance = Math.hypot(dx, dz)
+    let startT = 0
+
+    if (!entered) {
+      const entry = firstHouseEntryOnSegment(
+        targetHouse,
+        previous.floor,
+        previous.x,
+        previous.z,
+        waypoint.x,
+        waypoint.z
+      )
+      if (entry === null) {
+        result.push(waypoint)
+        previous = waypoint
+        continue
+      }
+      entered = true
+      startT = entry
+    }
+
+    const available = distance * (1 - startT)
+    if (distance > 1e-6 && available >= remainingInside) {
+      const stopT = startT + remainingInside / distance
+      result.push({
+        x: previous.x + dx * stopT,
+        z: previous.z + dz * stopT,
+        floor: waypoint.floor,
+      })
+      return result
+    }
+
+    remainingInside -= available
+    result.push(waypoint)
+    previous = waypoint
+  }
+
+  return result
 }
 
 export interface RoomAABB {
@@ -251,6 +558,183 @@ export function findNearestDoor(
   }
 
   return best
+}
+
+export interface ClosedHouseDoor {
+  houseId: string
+  roomIndex: number
+  wallDir: WallDirection
+  segmentIndex: number
+  position: { x: number; z: number }
+}
+
+export function wallApproachPositions(
+  wall: { x: number; z: number },
+  player: { x: number; z: number },
+  wallDir: WallDirection,
+  distance: number
+): { x: number; z: number }[] {
+  const offsets = [0, -0.4, 0.4, -0.8, 0.8]
+  if (wallDir === 'north' || wallDir === 'south') {
+    const fallback = wallDir === 'north' ? 1 : -1
+    const side = Math.sign(player.z - wall.z) || fallback
+    return offsets.map((offset) => ({
+      x: wall.x + offset,
+      z: wall.z + side * distance,
+    }))
+  }
+
+  const fallback = wallDir === 'west' ? 1 : -1
+  const side = Math.sign(player.x - wall.x) || fallback
+  return offsets.map((offset) => ({
+    x: wall.x + side * distance,
+    z: wall.z + offset,
+  }))
+}
+
+function crossingAtAxisWall(
+  fromAxis: number,
+  fromAlong: number,
+  toAxis: number,
+  toAlong: number,
+  wall: number,
+  segmentStart: number
+): number | null {
+  const axisDelta = toAxis - fromAxis
+  if (Math.abs(axisDelta) <= 1e-9) return null
+  const t = (wall - fromAxis) / axisDelta
+  if (t <= 1e-6 || t >= 1 - 1e-6) return null
+  const along = fromAlong + (toAlong - fromAlong) * t
+  return along >= segmentStart - 1e-6 && along <= segmentStart + 1 + 1e-6
+    ? t
+    : null
+}
+
+export function findClosedDoorOnSegment(
+  housesById: ReadonlyMap<string, HouseData>,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  floorLevel: number
+): ClosedHouseDoor | null {
+  let nearest: ClosedHouseDoor | null = null
+  let nearestT = Infinity
+
+  for (const house of housesById.values()) {
+    for (let roomIndex = 0; roomIndex < house.rooms.length; roomIndex++) {
+      const room = house.rooms[roomIndex]
+      if (room.floorLevel !== floorLevel) continue
+      const roomX = house.origin.x + room.localX
+      const roomZ = house.origin.z + room.localZ
+
+      for (const wallDir of ALL_WALL_DIRS) {
+        const segments = getWallByDir(room, wallDir)
+        const alongX = wallDir === 'north' || wallDir === 'south'
+        const wall =
+          (alongX ? house.origin.z : house.origin.x) +
+          wallLineCoord(room, wallDir)
+
+        for (
+          let segmentIndex = 0;
+          segmentIndex < segments.length;
+          segmentIndex++
+        ) {
+          const segment = segments[segmentIndex]
+          if (!isDoorVariant(segment.variant) || segment.isOpen) continue
+          const start = (alongX ? roomX : roomZ) + segmentIndex
+          const t = alongX
+            ? crossingAtAxisWall(fromZ, fromX, toZ, toX, wall, start)
+            : crossingAtAxisWall(fromX, fromZ, toX, toZ, wall, start)
+          if (t === null || t >= nearestT) continue
+
+          nearestT = t
+          nearest = {
+            houseId: house.id,
+            roomIndex,
+            wallDir,
+            segmentIndex,
+            position: alongX
+              ? { x: start + 0.5, z: wall }
+              : { x: wall, z: start + 0.5 },
+          }
+        }
+      }
+    }
+  }
+
+  return nearest
+}
+
+export function findClosedDoorOnPath(
+  housesById: ReadonlyMap<string, HouseData>,
+  fromX: number,
+  fromZ: number,
+  waypoints: readonly { x: number; z: number }[],
+  floorLevel: number
+): ClosedHouseDoor | null {
+  let x = fromX
+  let z = fromZ
+  for (const waypoint of waypoints) {
+    const door = findClosedDoorOnSegment(
+      housesById,
+      x,
+      z,
+      waypoint.x,
+      waypoint.z,
+      floorLevel
+    )
+    if (door) return door
+    x = waypoint.x
+    z = waypoint.z
+  }
+  return null
+}
+
+export function isHouseWallBlockingSegment(
+  housesById: ReadonlyMap<string, HouseData>,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  floorLevel: number
+): boolean {
+  for (const house of housesById.values()) {
+    for (const room of house.rooms) {
+      if (room.floorLevel !== floorLevel) continue
+      const roomX = house.origin.x + room.localX
+      const roomZ = house.origin.z + room.localZ
+
+      for (const wallDir of ALL_WALL_DIRS) {
+        const segments = getWallByDir(room, wallDir)
+        const alongX = wallDir === 'north' || wallDir === 'south'
+        const wall =
+          (alongX ? house.origin.z : house.origin.x) +
+          wallLineCoord(room, wallDir)
+
+        for (
+          let segmentIndex = 0;
+          segmentIndex < segments.length;
+          segmentIndex++
+        ) {
+          const segment = segments[segmentIndex]
+          if (
+            segment.variant === 'open' ||
+            (isDoorVariant(segment.variant) && segment.isOpen)
+          ) {
+            continue
+          }
+          const start = (alongX ? roomX : roomZ) + segmentIndex
+          const t = alongX
+            ? crossingAtAxisWall(fromZ, fromX, toZ, toX, wall, start)
+            : crossingAtAxisWall(fromX, fromZ, toX, toZ, wall, start)
+          if (t !== null) return true
+        }
+      }
+    }
+  }
+
+  return false
 }
 
 /** Find an existing house that shares an edge with the given room footprint. */

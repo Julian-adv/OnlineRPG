@@ -43,25 +43,31 @@ pub(super) fn wrapped_block_info<'a>(
     floor_level: u8,
     y: f32,
 ) -> Option<pathfinding::BlockInfo<'a>> {
-    let y = collision_y(cache, from_x, from_z, to_x, to_z, floor_level, y);
-    wrapped_block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y)
+    let on_stairs = floor_level <= onlinerpg_shared::housing::MAX_FLOOR_LEVEL
+        && (pathfinding::in_stairwell_span(cache, from_x, from_z, y)
+            || pathfinding::in_stairwell_span(cache, to_x, to_z, y));
+    let (dx, dz) = (to_x - from_x, to_z - from_z);
+    let steps = if on_stairs {
+        // A server tick can rise above furniture before crossing its cell edge.
+        (dx.hypot(dz) / 0.1).ceil().max(1.0) as usize
+    } else {
+        1
+    };
+    let (mut x, mut z) = (from_x, from_z);
+    for i in 1..=steps {
+        let t = i as f32 / steps as f32;
+        let (next_x, next_z) = (from_x + dx * t, from_z + dz * t);
+        let step_y = collision_y(cache, x, z, next_x, next_z, floor_level, y);
+        if let Some(info) = wrapped_block_info_at(cache, x, z, next_x, next_z, floor_level, step_y)
+        {
+            return Some(info);
+        }
+        (x, z) = (next_x, next_z);
+    }
+    None
 }
 
-/// The Y to test obstacles against, derived from the cache rather than taken
-/// from the client.
-///
-/// `obstacle_reaches_y` stops applying an obstacle once the mover is above it,
-/// and the storey is only ever inferred back from that same Y — so a client
-/// reporting a hand's breadth over the wall tops walks through every wall and
-/// table on the floor, and no amount of X/Z simulation catches it. A storey has
-/// one real floor height: take it from the storey the swept leg crosses.
-///
-/// Two cases keep the reported Y: a leg crossing no floor at all — open
-/// terrain, a bridge deck, where there is nothing to derive from and nothing to
-/// collide with — and a climber mid-flight (`in_stairwell_span`).
-///
-/// The no-floor case is tested first because it is the common one, and it
-/// settles the answer on its own.
+/// Derive collision height from the floor or stair ramp; retain Y off-grid.
 fn collision_y(
     cache: &pathfinding::PassabilityCache,
     from_x: f32,
@@ -77,13 +83,13 @@ fn collision_y(
         return reported;
     };
     if pathfinding::in_stairwell_span(cache, from_x, from_z, reported) {
-        return reported;
+        return pathfinding::storey_ground_y(cache, floor_level, from_x, from_z, reported)
+            .unwrap_or(reported);
     }
     floor_y
 }
 
-/// The seam sweep itself, at a Y the caller has already derived — so a step and
-/// the slide candidates it falls back to are judged at one height.
+/// Check both seam representations at the sampled collision height.
 fn wrapped_block_info_at<'a>(
     cache: &'a pathfinding::PassabilityCache,
     from_x: f32,
@@ -147,13 +153,11 @@ pub(super) fn resolve_step<'a>(
     y: f32,
 ) -> StepOutcome<'a> {
     const EPS: f32 = 1e-6;
-    let y = collision_y(cache, from_x, from_z, to_x, to_z, floor_level, y);
-    let Some(info) = wrapped_block_info_at(cache, from_x, from_z, to_x, to_z, floor_level, y)
-    else {
+    let Some(info) = wrapped_block_info(cache, from_x, from_z, to_x, to_z, floor_level, y) else {
         return StepOutcome::Clear;
     };
     let clear =
-        |tx, tz| wrapped_block_info_at(cache, from_x, from_z, tx, tz, floor_level, y).is_none();
+        |tx, tz| wrapped_block_info(cache, from_x, from_z, tx, tz, floor_level, y).is_none();
     let (dx, dz) = ((to_x - from_x).abs(), (to_z - from_z).abs());
     let x_ok = dx > EPS && clear(to_x, from_z);
     // Both axes open means only the exact diagonal grazed a corner tip; keep the
@@ -560,9 +564,10 @@ impl super::GameState {
 
 #[cfg(test)]
 mod tests {
-    use super::collision_y;
+    use super::{collision_y, wrapped_block_info};
     use onlinerpg_shared::pathfinding::{
-        PassabilityCache, RuntimeFloorGrid, RuntimePassability, StairwellInfo,
+        build_furniture_passability, FurniturePiece, PassabilityCache, RuntimeFloorGrid,
+        RuntimePassability, StairwellInfo,
     };
 
     /// One storey at y_base 0 over cells x 0..2, z 0..4, with a stairwell up to
@@ -620,14 +625,43 @@ mod tests {
         assert_eq!(collision_y(&cache, 1.5, 0.5, 1.5, 1.5, 0, 0.0), 0.0);
     }
 
-    /// The exemption. Without it a climber is pulled down to the storey it is
-    /// keyed to and the tables under the stairs block it.
     #[test]
-    fn a_climber_mid_flight_keeps_its_reported_height() {
+    fn a_climber_mid_flight_uses_the_ramp_height() {
         let cache = two_storey_cache();
-        assert_eq!(collision_y(&cache, 0.5, 0.5, 0.5, 1.5, 0, 2.0), 2.0);
+        assert_eq!(collision_y(&cache, 0.5, 2.0, 0.5, 2.5, 0, 2.0), 1.55);
         // Above the flight entirely: no flight to be on.
         assert_eq!(collision_y(&cache, 0.5, 0.5, 0.5, 1.5, 0, 1000.0), 0.0);
+    }
+
+    #[test]
+    fn a_climber_clears_furniture_after_rising_during_a_step() {
+        let mut cache = two_storey_cache();
+        let furniture = build_furniture_passability(&[FurniturePiece {
+            cells: vec![(0, 2)],
+            floor_level: 0,
+            y_base: 0.0,
+            wall_height: 1.0,
+        }])
+        .unwrap();
+        cache.insert("furniture".into(), furniture);
+
+        assert!(wrapped_block_info(&cache, 0.5, 1.4, 0.5, 2.3, 0, 0.9).is_none());
+        assert!(wrapped_block_info(&cache, 0.5, 2.3, 0.5, 1.4, 0, 1.9).is_none());
+    }
+
+    #[test]
+    fn stair_furniture_still_blocks_before_the_climber_rises_above_it() {
+        let mut cache = two_storey_cache();
+        let furniture = build_furniture_passability(&[FurniturePiece {
+            cells: vec![(0, 1)],
+            floor_level: 0,
+            y_base: 0.0,
+            wall_height: 1.0,
+        }])
+        .unwrap();
+        cache.insert("furniture".into(), furniture);
+
+        assert!(wrapped_block_info(&cache, 0.5, 0.5, 0.5, 2.3, 0, 0.0).is_some());
     }
 
     #[test]

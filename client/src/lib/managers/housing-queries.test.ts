@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { houseFloorHeightAt } from './housing-queries'
-import type { HouseData, RoomData } from '../types/housing'
+import {
+  assistStairMovementDirection,
+  findClosedDoorOnSegment,
+  findClosedDoorOnPath,
+  houseFloorHeightAt,
+  isHouseWallBlockingSegment,
+  resolveStairFloor,
+  shouldIgnoreImplicitHouseFloorChange,
+  stairLandingTargetAt,
+  stopPathAtHouseEntrance,
+  wallApproachPositions,
+} from './housing-queries'
+import type { HouseData, RoomData, WallConfig } from '../types/housing'
 
 const WALL_HEIGHT = 3
 const FLOOR_THICKNESS = 0.1
@@ -43,6 +54,27 @@ function house(): ReadonlyMap<string, HouseData> {
   return new Map([['h', h]])
 }
 
+function houseWithNorthDoor(isOpen = false): ReadonlyMap<string, HouseData> {
+  const solid = () => ({ variant: 'solid' as const, texture: 0 })
+  const wall: WallConfig[] = Array.from({ length: 4 }, solid)
+  wall[1] = { variant: 'door', texture: 0, isOpen }
+  const h = {
+    id: 'door-house',
+    origin: { x: 0, y: 0, z: 0 },
+    rooms: [
+      room({
+        sizeX: 4,
+        sizeZ: 4,
+        wallNorth: wall,
+        wallSouth: Array.from({ length: 4 }, solid),
+        wallEast: Array.from({ length: 4 }, solid),
+        wallWest: Array.from({ length: 4 }, solid),
+      }),
+    ],
+  } as unknown as HouseData
+  return new Map([[h.id, h]])
+}
+
 const at = (floor: number, x: number, z: number) =>
   houseFloorHeightAt(house(), floor, x, z)
 
@@ -80,5 +112,220 @@ describe('houseFloorHeightAt', () => {
   it('returns the flat floor away from the stairwell, and null off-house', () => {
     expect(at(0, 1, 2)).toBeCloseTo(FLOOR_THICKNESS / 2, 5)
     expect(at(0, 99, 99)).toBeNull()
+  })
+})
+
+describe('housing stair assistance', () => {
+  it('keeps the upper floor until a descending player reaches the bottom', () => {
+    expect(resolveStairFloor(0, 0, 0.87)).toBe(0)
+    expect(resolveStairFloor(0, 0, 0.88)).toBe(1)
+    expect(resolveStairFloor(0, 1, 0.13)).toBe(1)
+    expect(resolveStairFloor(0, 1, 0.12)).toBe(0)
+  })
+
+  it('dampens lateral input while climbing', () => {
+    const direction = assistStairMovementDirection(
+      house(),
+      0,
+      { x: 3.85, y: 1.5, z: 2 },
+      { x: 0.707, z: 0.707 }
+    )
+
+    expect(direction.x).toBeLessThan(0.15)
+    expect(direction.z).toBeGreaterThan(0.98)
+    expect(Math.hypot(direction.x, direction.z)).toBeCloseTo(
+      Math.hypot(0.707, 0.707),
+      5
+    )
+  })
+
+  it('pulls straight movement toward the stair center', () => {
+    const direction = assistStairMovementDirection(
+      house(),
+      0,
+      { x: 3.85, y: 1.5, z: 2 },
+      { x: 0, z: 1 }
+    )
+
+    expect(direction.x).toBeLessThan(0)
+    expect(direction.z).toBeGreaterThan(0.95)
+  })
+
+  it('keeps pure sideways input available for leaving the stairs', () => {
+    const direction = { x: 1, z: 0 }
+    expect(
+      assistStairMovementDirection(
+        house(),
+        0,
+        { x: 3.5, y: 1.5, z: 2 },
+        direction
+      )
+    ).toEqual(direction)
+  })
+
+  it('turns a lower-floor stair click into the upper landing center', () => {
+    expect(stairLandingTargetAt(house(), 0, 3.5, 2, 2)).toEqual({
+      x: 3.5,
+      y: 3.15,
+      z: 3.75,
+    })
+  })
+
+  it('turns an upper-floor stair click into the lower landing center', () => {
+    expect(stairLandingTargetAt(house(), 1, 3.5, 2, 2)).toEqual({
+      x: 3.5,
+      y: 0.05,
+      z: 0.25,
+    })
+  })
+})
+
+describe('implicit housing floor changes', () => {
+  it('rejects ordinary clicks on another floor while inside a house', () => {
+    expect(shouldIgnoreImplicitHouseFloorChange('h', 1, 0, false)).toBe(true)
+  })
+
+  it('allows stair clicks and outdoor house entry', () => {
+    expect(shouldIgnoreImplicitHouseFloorChange('h', 1, 0, true)).toBe(false)
+    expect(shouldIgnoreImplicitHouseFloorChange(null, 0, 1, false)).toBe(false)
+  })
+})
+
+describe('findClosedDoorOnSegment', () => {
+  it('finds a closed door crossed on the way to an indoor object', () => {
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 0)
+    ).toEqual({
+      houseId: 'door-house',
+      roomIndex: 0,
+      wallDir: 'north',
+      segmentIndex: 1,
+      position: { x: 1.5, z: 0 },
+    })
+  })
+
+  it('ignores open doors and solid wall segments', () => {
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(true), 1.5, -2, 1.5, 2, 0)
+    ).toBeNull()
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(), 0.5, -2, 0.5, 2, 0)
+    ).toBeNull()
+  })
+
+  it('does not open a door on another floor', () => {
+    expect(
+      findClosedDoorOnSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 1)
+    ).toBeNull()
+  })
+})
+
+describe('findClosedDoorOnPath', () => {
+  it('finds a door on a detour when the direct line crosses solid wall', () => {
+    expect(
+      findClosedDoorOnPath(
+        houseWithNorthDoor(),
+        0.5,
+        -2,
+        [
+          { x: 1.5, z: -1 },
+          { x: 1.5, z: 2 },
+        ],
+        0
+      )
+    ).toMatchObject({
+      houseId: 'door-house',
+      segmentIndex: 1,
+    })
+  })
+})
+
+describe('wallApproachPositions', () => {
+  it('keeps every candidate on the player side and within interaction range', () => {
+    const north = wallApproachPositions(
+      { x: 2, z: 4 },
+      { x: 2, z: 7 },
+      'north',
+      1
+    )
+    const west = wallApproachPositions(
+      { x: 2, z: 4 },
+      { x: -1, z: 4 },
+      'west',
+      1
+    )
+
+    expect(north[0]).toEqual({ x: 2, z: 5 })
+    expect(west[0]).toEqual({ x: 1, z: 4 })
+    expect(
+      north.every((p) => p.z === 5 && Math.hypot(p.x - 2, p.z - 4) < 1.5)
+    ).toBe(true)
+    expect(
+      west.every((p) => p.x === 1 && Math.hypot(p.x - 2, p.z - 4) < 1.5)
+    ).toBe(true)
+  })
+})
+
+describe('isHouseWallBlockingSegment', () => {
+  it('allows interaction through an open door', () => {
+    expect(
+      isHouseWallBlockingSegment(houseWithNorthDoor(true), 1.5, -2, 1.5, 2, 0)
+    ).toBe(false)
+  })
+
+  it('blocks interaction through a closed door or solid wall', () => {
+    expect(
+      isHouseWallBlockingSegment(houseWithNorthDoor(), 1.5, -2, 1.5, 2, 0)
+    ).toBe(true)
+    expect(
+      isHouseWallBlockingSegment(houseWithNorthDoor(), 0.5, -2, 0.5, 2, 0)
+    ).toBe(true)
+  })
+})
+
+describe('stopPathAtHouseEntrance', () => {
+  it('stops a route shortly after it enters the clicked house', () => {
+    const result = stopPathAtHouseEntrance(
+      house(),
+      { x: 2, y: 0, z: -2 },
+      0,
+      { x: 2, y: 0.05, z: 4 },
+      [{ x: 2, z: 4, floor: 0 }]
+    )
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ x: 2, floor: 0 })
+    expect(result[0].z).toBeCloseTo(0.75)
+  })
+
+  it('keeps the full route when the player is already inside', () => {
+    const waypoints = [{ x: 2, z: 4, floor: 0 }]
+    expect(
+      stopPathAtHouseEntrance(
+        house(),
+        { x: 2, y: 0.05, z: 1 },
+        0,
+        { x: 2, y: 0.05, z: 4 },
+        waypoints
+      )
+    ).toBe(waypoints)
+  })
+
+  it('preserves the approach to the door before appending the indoor stop', () => {
+    expect(
+      stopPathAtHouseEntrance(
+        house(),
+        { x: -2, y: 0, z: -2 },
+        0,
+        { x: 2, y: 0.05, z: 4 },
+        [
+          { x: 2, z: -1, floor: 0 },
+          { x: 2, z: 4, floor: 0 },
+        ]
+      )
+    ).toEqual([
+      { x: 2, z: -1, floor: 0 },
+      { x: 2, z: 0.75, floor: 0 },
+    ])
   })
 })

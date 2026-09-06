@@ -69,7 +69,7 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/gol
 
 로그 문구(모두 `game_state::inventory` / `combat`):
 - 드롭: `Bonus drops ["scroll_of_enchant_weapon", …] at (x,z) PLACE` — 플레이어명 없음, 한 줄에 여러 아이템 가능하니 **장 수는 id 등장 횟수**로 센다.
-- 처치: `Player NAME killed TYPE (lvl N) at (x,z) PLACE; weapon drop: …` — `lvl`은 유효레벨. `world_drop.csv`는 ≤8 0.5%, >8 1%(종류당)이므로 기대 드롭 = 0.005×(≤8 킬) + 0.01×(>8 킬), 종류당 하나씩.
+- 처치: `Player NAME killed TYPE (lvl N) at (x,z) PLACE; weapon drop: …` — `lvl`은 유효레벨. 조사 당시 배포본의 `world_drop.csv`에서 종류별 `lowLevelChance`, `chance`, `lowLevelMaxLevel`을 읽어 기대 드롭을 계산한다. 창 안에 확률 변경 배포가 있으면 전후를 나눠 합산한다. 로컬 최신 설정을 과거 로그에 적용하지 않는다.
 - 시도: `NAME consumed scroll_of_enchant_(weapon|armor) at PLACE`. 결과: `NAME enchanted ITEM to +N` / `NAME destroyed ITEM enchanting at +N`(+N은 시도 전 값).
 
 적을 것: 처치 수(장소별), 드롭 장 수(종류·장소별)와 킬당 실측률 대 설정 기대값, 시도 수와 성공/파괴 비율, 개인별 시도 상위, 파괴 목록(누가 무엇을 +몇에서), 창 안 최고 도달값, 상인 판매·P2P 건수.

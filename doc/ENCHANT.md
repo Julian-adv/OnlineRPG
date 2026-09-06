@@ -8,8 +8,8 @@
 
 | 주문서 | 대상 | +N 효과 | 카테고리 | 가격 | 월드 드랍 |
 | ------ | ---- | ------- | -------- | ---: | --------: |
-| Scroll of Enchant Weapon | 장착한 주무기 | 명중·피해 굴림에 +N | `enchant_scroll` | 1,200c | 1% (유효레벨 8 이하 0.5%) |
-| Scroll of Enchant Armor | 착용 방어구 중 **무작위 1개** | guard에 +N | `enchant_armor_scroll` | 1,200c | 1% (유효레벨 8 이하 0.5%) |
+| Scroll of Enchant Weapon | 장착한 주무기 | 명중·피해 굴림에 +N | `enchant_scroll` | 1,200c | 0.9% (유효레벨 8 이하 0.45%) |
+| Scroll of Enchant Armor | 착용 방어구 중 **무작위 1개** | guard에 +N | `enchant_armor_scroll` | 1,200c | 0.9% (유효레벨 8 이하 0.45%) |
 
 - 정의: [data-src/items.csv](../data-src/items.csv), 드랍률: [data-src/world_drop.csv](../data-src/world_drop.csv)
 - 상인은 팔지 않는다. 획득 경로는 월드 드랍뿐이고, 되팔기는 가능하다.
@@ -151,7 +151,8 @@
 - **공급**: `world_drop.csv`의 드랍률. 방어구는 부위 수만큼 수요가 크므로
   무기와 같은 1%로 시작했고, 프로드 텔레메트리(7일 4.4만 킬 = 주문서 800장)를
   보고 저렙 감산을 넣었다 — `lowLevelChance`/`lowLevelMaxLevel` 두 칸으로
-  유효레벨 8 이하의 사냥감은 0.5%만 굴린다. 유효레벨은 던전 심도 보정을 거친
+  유효레벨 8 이하의 사냥감에 낮은 확률을 적용한다. 2026-09-06 재고 축적을 완화하기 위해
+  두 주문서 모두 일반 1%→0.9%, 저렙 0.5%→0.45%로 10%씩 낮췄다. 유효레벨은 던전 심도 보정을 거친
   값이므로(`monster_level_for_depth`) 깊은 층의 코볼트는 저렙으로 새지 않는다.
   상자·통은 레벨이 없어 전체 확률로 굴린다 — 던전 인스턴스당 1회뿐이라
   파밍 경로가 되지 않는다.

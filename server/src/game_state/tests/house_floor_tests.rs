@@ -165,6 +165,39 @@ async fn a_storey_change_on_the_stairs_is_accepted_both_ways() {
     assert_eq!(game_state.players.read().await[&player_id].floor_level, 0);
 }
 
+#[tokio::test]
+async fn stairway_movement_clears_furniture_below_the_ramp() {
+    use onlinerpg_shared::pathfinding::{build_furniture_passability, FurniturePiece};
+
+    let (game_state, player_id) =
+        house_with_player("storey_above_furniture", "climber", 10.5, 10.5, 0).await;
+    let furniture = build_furniture_passability(&[FurniturePiece {
+        cells: vec![(10, 12)],
+        floor_level: 0,
+        y_base: 0.0,
+        wall_height: 1.0,
+    }])
+    .unwrap();
+    game_state
+        .passability_write()
+        .insert("furniture:test".into(), furniture);
+    let mut rx = game_state.register_direct_channel(&player_id).await;
+
+    for (z, y, floor) in [(13.75, 3.1, 1), (10.25, 0.0, 0)] {
+        game_state
+            .update_player_position(&player_id, move_to(10.5, y, z, floor), false)
+            .await;
+        for _ in 0..20 {
+            game_state.tick_player_movement(0.2).await;
+        }
+        let players = game_state.players.read().await;
+        let player = &players[&player_id];
+        assert_eq!(player.position.z, z, "must reach the landing");
+        assert_eq!(player.floor_level, floor);
+        assert!(first_correction(&mut rx).is_none());
+    }
+}
+
 /// A storey held where nothing of it stands under the mover (the room was
 /// edited away) releases to the ground; otherwise the client, which no longer
 /// believes in the storey, has every move refused.

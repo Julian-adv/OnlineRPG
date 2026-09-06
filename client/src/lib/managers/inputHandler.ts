@@ -61,6 +61,18 @@ const CLICK_RAY_OFFSETS = [
   { dx: -10, dy: 0 },
 ]
 
+const STAIR_CLICK_RAY_OFFSETS = [
+  { dx: 0, dy: 0 },
+  { dx: 0, dy: -14 },
+  { dx: 14, dy: 0 },
+  { dx: 0, dy: 14 },
+  { dx: -14, dy: 0 },
+  { dx: 10, dy: -10 },
+  { dx: 10, dy: 10 },
+  { dx: -10, dy: 10 },
+  { dx: -10, dy: -10 },
+]
+
 export type ClickIntent =
   | {
       type: 'attack_monster'
@@ -75,6 +87,7 @@ export type ClickIntent =
       wallDir: WallDirection
       segmentIndex: number
       position: Position
+      isWindow?: boolean
     }
   | {
       type: 'toggle_dungeon_door'
@@ -133,7 +146,12 @@ export type ClickIntent =
       propId: number
       position: Position
     }
-  | { type: 'move_to_ground'; position: Position; sprinting: boolean }
+  | {
+      type: 'move_to_ground'
+      position: Position
+      sprinting: boolean
+      viaHousingStair?: boolean
+    }
   | {
       /** Rod equipped + clicked point is underwater terrain: cast, don't walk. */
       type: 'cast_fishing'
@@ -166,6 +184,13 @@ export interface RaycastContext {
   /** Baked water surface height at a world XZ (sea level where none). Lets a
    *  cast fire over rivers, whose beds sit above sea level, not just ocean. */
   waterSurfaceAt?: (x: number, z: number) => number
+  resolveHousingStairTarget?: (
+    floorLevel: number,
+    x: number,
+    y: number,
+    z: number,
+    stairFloor: number
+  ) => Position | null
 }
 
 /** What the cursor is over: a placed object carrying display text (e.g. a
@@ -322,6 +347,36 @@ class InputHandler {
     return null
   }
 
+  private raycastHousingStair(
+    event: MouseEvent,
+    rect: DOMRect,
+    context: RaycastContext
+  ): Position | null {
+    if (!context.resolveHousingStairTarget) return null
+    const raycaster = new Raycaster()
+    for (const offset of STAIR_CLICK_RAY_OFFSETS) {
+      const mouseNDC = new Vector2(
+        ((event.clientX - rect.left + offset.dx) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top + offset.dy) / rect.height) * 2 + 1
+      )
+      raycaster.setFromCamera(mouseNDC, context.camera)
+      const hits = raycaster.intersectObjects(context.groundMeshes, true)
+      for (const hit of hits) {
+        const stair = findAncestorWithUserData(hit.object, 'housingStairFloor')
+        if (!stair) continue
+        const target = context.resolveHousingStairTarget(
+          context.playerVisualFloorLevel,
+          hit.point.x,
+          hit.point.y,
+          hit.point.z,
+          stair.userData.housingStairFloor as number
+        )
+        if (target) return target
+      }
+    }
+    return null
+  }
+
   /** Which remote player, if any, sits under the cursor. Its own raycast
    *  rather than a `ClickIntent`: only the right-click menu asks, and folding
    *  players into the click intents would turn every left-click on a passer-by
@@ -421,14 +476,14 @@ class InputHandler {
     // resolve to the wrong floor.
     if (context.doorMeshes?.length > 0) {
       const doorHits = raycaster.intersectObjects(context.doorMeshes, true)
-      if (doorHits.length > 0) {
-        const hitPoint = doorHits[0].point
+      for (const hit of doorHits) {
+        const hitPoint = hit.point
         const position = {
           x: hitPoint.x,
           y: context.playerPosition.y,
           z: hitPoint.z,
         }
-        let obj: THREE.Object3D | null = doorHits[0].object
+        let obj: THREE.Object3D | null = hit.object
         while (obj) {
           const d = obj.userData
           if (d && d.dungeonDoorKey) {
@@ -444,13 +499,21 @@ class InputHandler {
             d.doorHouseId &&
             d.doorFloorLevel === context.playerVisualFloorLevel
           ) {
+            const interactionPosition = d.doorInteractionPosition as
+              | { x: number; z: number }
+              | undefined
             return {
               type: 'toggle_door',
               houseId: d.doorHouseId,
               roomIndex: d.doorRoomIndex,
               wallDir: d.doorWallDir,
               segmentIndex: d.doorSegmentIndex,
-              position,
+              position: {
+                x: interactionPosition?.x ?? position.x,
+                y: position.y,
+                z: interactionPosition?.z ?? position.z,
+              },
+              isWindow: d.doorIsWindow === true,
             }
           }
           obj = obj.parent
@@ -611,6 +674,16 @@ class InputHandler {
             z: stallPosition.z,
           },
         }
+      }
+    }
+
+    const stairTarget = this.raycastHousingStair(event, rect, context)
+    if (stairTarget) {
+      return {
+        type: 'move_to_ground',
+        sprinting: sprintRequested(event.shiftKey),
+        position: stairTarget,
+        viaHousingStair: true,
       }
     }
 

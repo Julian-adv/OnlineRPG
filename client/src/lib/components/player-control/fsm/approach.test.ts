@@ -41,6 +41,13 @@ describe('planApproach', () => {
     )
   })
 
+  it('walks to the target when a forced approach starts inside stop-short', () => {
+    expect(planApproach({ x: 9, z: 0 }, spec, routable, false)).toEqual({
+      kind: 'walk',
+      target: spec.position,
+    })
+  })
+
   // A stand spot inside the wall the target sits behind gets only a partial
   // route, which walks the player into that wall. Aiming at the target routes
   // them around it instead.
@@ -59,6 +66,27 @@ describe('planApproach', () => {
     expect(plan.kind).toBe('walk')
     if (plan.kind !== 'walk') return
     expect(plan.target.x).toBeCloseTo(8.5)
+  })
+
+  it('routes to another side of an object when a wall blocks the near side', () => {
+    const plan = planApproach(
+      { x: 0, z: 0 },
+      spec,
+      routable,
+      false,
+      (position) => position.z > 0.5
+    )
+
+    expect(plan.kind).toBe('walk')
+    if (plan.kind !== 'walk') return
+    expect(plan.target.z).toBeGreaterThan(0.5)
+    expect(Math.hypot(plan.target.x - 10, plan.target.z)).toBeCloseTo(1.5)
+  })
+
+  it('refuses an object approach when every reachable side is walled off', () => {
+    expect(
+      planApproach({ x: 0, z: 0 }, spec, routable, false, () => false)
+    ).toEqual({ kind: 'unreachable' })
   })
 
   it('refuses to move when nothing about the target routes at all', () => {
@@ -83,5 +111,11 @@ describe('resolveApproach', () => {
 
   it('drops an approach left behind on another dungeon floor', () => {
     expect(resolveApproach(pending, { x: 10, z: 0 }, 2)).toBe(false)
+  })
+
+  it('drops an in-range approach when an obstacle still blocks the action', () => {
+    expect(
+      resolveApproach({ ...pending, canAct: () => false }, { x: 8.5, z: 0 }, 1)
+    ).toBe(false)
   })
 })

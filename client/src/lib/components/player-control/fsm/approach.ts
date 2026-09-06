@@ -1,4 +1,4 @@
-import { shortestWrappedDeltaX } from '../../../terrain/world-wrap'
+import { shortestWrappedDeltaX, wrapWorldX } from '../../../terrain/world-wrap'
 import {
   positionShortOfTarget,
   type Position,
@@ -26,6 +26,7 @@ export interface PendingApproach {
   spec: ApproachSpec
   /** Dungeon depth the target sits on; a mismatch drops the approach. */
   depth: number
+  canAct?: (position: Pick<Position, 'x' | 'z'>) => boolean
   act: () => void
 }
 
@@ -42,7 +43,8 @@ export function planApproach(
   from: Pick<Position, 'x' | 'z'>,
   spec: ApproachSpec,
   routeQuality: (target: Position) => RouteQuality,
-  canActNow = true
+  canActNow = true,
+  canAct?: (position: Pick<Position, 'x' | 'z'>) => boolean
 ): ApproachPlan {
   const dx = shortestWrappedDeltaX(from.x, spec.position.x)
   const dz = spec.position.z - from.z
@@ -50,8 +52,39 @@ export function planApproach(
   if (canActNow && distance <= spec.range) return { kind: 'act_now' }
 
   const standSpot = positionShortOfTarget(from, spec.position, spec.stopShort)
-  if (spec.stopShort > 0 && routeQuality(standSpot) === 'found') {
+  const standDx = shortestWrappedDeltaX(from.x, standSpot.x)
+  const standDz = standSpot.z - from.z
+  const standSpotMoves = Math.hypot(standDx, standDz) > 1e-6
+  if (
+    spec.stopShort > 0 &&
+    standSpotMoves &&
+    (!canAct || canAct(standSpot)) &&
+    routeQuality(standSpot) === 'found'
+  ) {
     return { kind: 'walk', target: standSpot }
+  }
+
+  if (canAct && spec.stopShort > 0) {
+    const baseAngle = Math.atan2(-dx, -dz)
+    for (const offset of [
+      Math.PI / 4,
+      -Math.PI / 4,
+      Math.PI / 2,
+      -Math.PI / 2,
+      (Math.PI * 3) / 4,
+      (-Math.PI * 3) / 4,
+      Math.PI,
+    ]) {
+      const angle = baseAngle + offset
+      const candidate = {
+        x: wrapWorldX(spec.position.x + Math.sin(angle) * spec.stopShort),
+        y: spec.position.y,
+        z: spec.position.z + Math.cos(angle) * spec.stopShort,
+      }
+      if (!canAct(candidate) || routeQuality(candidate) !== 'found') continue
+      return { kind: 'walk', target: candidate }
+    }
+    return { kind: 'unreachable' }
   }
 
   // The stand spot is trigonometry and knows nothing of walls. Aiming at the
@@ -72,5 +105,8 @@ export function resolveApproach(
   const { position, range } = pending.spec
   const dx = shortestWrappedDeltaX(player.x, position.x)
   const dz = position.z - player.z
-  return dx * dx + dz * dz <= range * range
+  return (
+    dx * dx + dz * dz <= range * range &&
+    (!pending.canAct || pending.canAct(player))
+  )
 }

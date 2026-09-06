@@ -64,6 +64,10 @@ export const WALL_DIR_INFO: Record<WallDirection, WallDirInfo> = {
 export interface DoorMeshInfo {
   /** Hinge pivot group (rotate .rotation.y to open/close) */
   pivot: THREE.Group
+  /** Fixed window opening target that remains clickable while shutters move. */
+  clickTarget?: THREE.Object3D
+  interactionPosition: { x: number; z: number }
+  isWindow: boolean
   roomIndex: number
   wallDir: WallDirection
   segmentIndex: number

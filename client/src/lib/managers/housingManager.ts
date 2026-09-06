@@ -26,18 +26,25 @@ import {
   passability_is_circle_blocked,
 } from '../wasm/onlinerpg_shared'
 import {
+  assistStairMovementDirection,
   checkOverlap,
   collectRoomAABBsInRegion,
   findAdjacentHouse,
   findAllRoomsAtPoint,
+  findClosedDoorOnSegment,
+  findClosedDoorOnPath,
   findHouseAtPoint,
   findNearestDoor,
   findRoomAtPoint,
   findSupportingHouse,
   hasFloorSupport,
   houseFloorHeightAt,
+  isHouseWallBlockingSegment,
   isPointUnderHouseXZ,
+  stairLandingTargetAt,
+  stopPathAtHouseEntrance,
   type RoomAABB,
+  type ClosedHouseDoor,
 } from './housing-queries'
 
 // Re-export for external consumers
@@ -113,6 +120,20 @@ export class HousingManager {
     )
   }
 
+  stopPathAtHouseEntrance(
+    current: { x: number; y: number; z: number },
+    currentFloor: number,
+    target: { x: number; y: number; z: number },
+    waypoints: { x: number; z: number; floor: number }[]
+  ): { x: number; z: number; floor: number }[] {
+    return stopPathAtHouseEntrance(
+      this.housesById,
+      current,
+      currentFloor,
+      target,
+      waypoints
+    )
+  }
   /**
    * Drop chunks beyond `EVICT_RADIUS` of (wx, wz), undoing `loadChunksAround`.
    * Without this the cache grows by one chunk per chunk walked and never
@@ -298,6 +319,109 @@ export class HousingManager {
     return findNearestDoor(this.housesById, x, z, y, maxDist)
   }
 
+  findClosedDoorOnSegment(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floorLevel: number
+  ): ClosedHouseDoor | null {
+    return findClosedDoorOnSegment(
+      this.housesById,
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floorLevel
+    )
+  }
+
+  findClosedDoorOnPath(
+    fromX: number,
+    fromZ: number,
+    waypoints: readonly { x: number; z: number }[],
+    floorLevel: number
+  ): ClosedHouseDoor | null {
+    return findClosedDoorOnPath(
+      this.housesById,
+      fromX,
+      fromZ,
+      waypoints,
+      floorLevel
+    )
+  }
+
+  withClosedDoorsOpen<T>(floorLevel: number, fn: () => T): T {
+    const closed: {
+      houseId: string
+      room: HouseData['rooms'][number]
+      wallDir: WallDirection
+      segmentIndex: number
+    }[] = []
+
+    try {
+      for (const house of this.housesById.values()) {
+        for (const room of house.rooms) {
+          if (room.floorLevel !== floorLevel) continue
+          for (const wallDir of ALL_WALL_DIRS) {
+            const wall = getWallByDir(room, wallDir)
+            for (
+              let segmentIndex = 0;
+              segmentIndex < wall.length;
+              segmentIndex++
+            ) {
+              const segment = wall[segmentIndex]
+              if (!isDoorVariant(segment.variant) || segment.isOpen) continue
+              closed.push({ houseId: house.id, room, wallDir, segmentIndex })
+              passability_update_door(
+                house.id,
+                room,
+                wallDir,
+                segmentIndex,
+                true
+              )
+            }
+          }
+        }
+      }
+      return fn()
+    } finally {
+      for (const door of closed) {
+        passability_update_door(
+          door.houseId,
+          door.room,
+          door.wallDir,
+          door.segmentIndex,
+          false
+        )
+      }
+    }
+  }
+
+  isDoorOpen(door: ClosedHouseDoor): boolean {
+    const room = this.housesById.get(door.houseId)?.rooms[door.roomIndex]
+    return (
+      !!room && !!getWallByDir(room, door.wallDir)[door.segmentIndex]?.isOpen
+    )
+  }
+
+  isHouseWallBlockingSegment(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floorLevel: number
+  ): boolean {
+    return isHouseWallBlockingSegment(
+      this.housesById,
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floorLevel
+    )
+  }
+
   /** Get all currently loaded houses. */
   getAllHouses(): HouseData[] {
     return Array.from(this.housesById.values())
@@ -341,6 +465,36 @@ export class HousingManager {
   /** Ground Y on a given house floor at (x, z), stairwell ramps included. */
   floorHeightAt(floorLevel: number, x: number, z: number): number | null {
     return houseFloorHeightAt(this.housesById, floorLevel, x, z)
+  }
+
+  assistStairMovementDirection(
+    floorLevel: number,
+    position: { x: number; y: number; z: number },
+    direction: { x: number; z: number }
+  ) {
+    return assistStairMovementDirection(
+      this.housesById,
+      floorLevel,
+      position,
+      direction
+    )
+  }
+
+  stairLandingTargetAt(
+    floorLevel: number,
+    x: number,
+    y: number,
+    z: number,
+    stairFloor?: number
+  ) {
+    return stairLandingTargetAt(
+      this.housesById,
+      floorLevel,
+      x,
+      y,
+      z,
+      stairFloor
+    )
   }
 
   /**
