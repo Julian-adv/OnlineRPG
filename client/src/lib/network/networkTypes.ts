@@ -239,6 +239,24 @@ export type ClientMessage =
   | { UseItem: { instance_id: number } }
   | { EditFence: { edge: FenceEdge; place: boolean } }
   | 'StartFenceMode'
+  | {
+      PlaceEstateChest: {
+        instance_id: number
+        position: Position
+        rotation_deg: number
+        floor_level: number
+      }
+    }
+  | { OpenEstateChest: { chest_id: number } }
+  | {
+      TransferEstateItems: {
+        chest_id: number
+        deposits: BagLineItem[]
+        withdrawals: BagLineItem[]
+        expected_revision: number
+      }
+    }
+  | { RecoverEstateChest: { chest_id: number } }
   | { LandAccount: { merchant_player_id: number } }
   | { LandDeposit: { merchant_player_id: number; amount: number } }
   | { LandWithdraw: { merchant_player_id: number; amount: number } }
@@ -318,6 +336,27 @@ export type PlayerInventory = {
   /** Which bag stack the next shot draws from. Ammunition is stackable and
    *  so cannot sit in an equip slot; this names the pile instead. */
   active_ammo?: string | null
+}
+
+export type EstateChest = {
+  id: number
+  estate_id: number
+  owner_id: number
+  item_def_id: string
+  position: Position
+  rotation_deg: number
+  floor_level: number
+  overdue: boolean
+  revision: number
+}
+
+export type EstateChestState = {
+  chest_id: number
+  item_def_id: string
+  revision: number
+  max_weight: number
+  can_deposit: boolean
+  items: ItemInstance[]
 }
 
 /** Trained-skill ids (shared `SkillId` wire strings). */

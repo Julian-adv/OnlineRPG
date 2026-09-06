@@ -1,6 +1,7 @@
 # Land System: 영지
 
 목책의 중첩 보관·셀 변 설치·회수는 [FENCE_PLACEMENT.md](FENCE_PLACEMENT.md)에 구현되어 있다 (2026-09-06).
+영지 보관함의 보관·회수·층별 가구 배치 규칙은 [ESTATE_STORAGE.md](ESTATE_STORAGE.md)에 기록한다.
 
 > 상태: 일부 구현 — 구획 등급 편집·땅문서 판매·사용·개척지 등록·세금 계좌 구현 (2026-09-05)
 

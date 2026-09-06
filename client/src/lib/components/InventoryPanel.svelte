@@ -4,16 +4,11 @@
     playerGold,
     carryWeight,
     maxCarryWeight,
-    formatKg,
     wornAmmoDefId,
   } from '../stores/inventoryStore'
   import { hungerState } from '../stores/hungerStore'
   import type { ItemInstance } from '../stores/inventoryStore'
-  import {
-    getItemDef,
-    isConsumable,
-    type ItemDefinition,
-  } from '../data/itemDefs'
+  import { getItemDef, isUsable, type ItemDefinition } from '../data/itemDefs'
   import GoldAmount from './GoldAmount.svelte'
   import { networkManager } from '../network/socket'
   import type { EquipSlot } from '../network/networkTypes'
@@ -33,6 +28,7 @@
   import { playerTrade, reservedQuantity } from '../stores/playerTradeStore'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
   import { draggablePanel } from '../actions/draggablePanel'
+  import WeightBar from './WeightBar.svelte'
 
   interface Props {
     visible: boolean
@@ -43,7 +39,6 @@
   let { visible, str, onClose }: Props = $props()
 
   const maxWeight = $derived(maxCarryWeight(str, $hungerState))
-  const weightRatio = $derived(maxWeight > 0 ? $carryWeight / maxWeight : 0)
 
   // The worn quiver is drawn in the paperdoll's hand cell, so showing it here
   // too would put one stack in two places.
@@ -133,7 +128,7 @@
     const def = getItemDef(slot.item_def_id)
     if (def?.equipSlot) {
       networkManager.sendEquipItem(slot.instance_id)
-    } else if (def && isConsumable(def)) {
+    } else if (def && isUsable(def)) {
       networkManager.sendUseItem(slot.instance_id)
     } else if (def?.ammoKind) {
       // Ammunition has no `equipSlot` — a stackable cannot hold one — so it
@@ -338,19 +333,7 @@
       {/each}
     </div>
 
-    <div
-      class="weight-bar"
-      class:heavy={weightRatio >= 0.9}
-      class:full={weightRatio >= 1}
-    >
-      <div
-        class="weight-fill"
-        style="width: {Math.min(weightRatio, 1) * 100}%"
-      ></div>
-      <span class="weight-text"
-        >{formatKg($carryWeight)} / {formatKg(maxWeight)} kg</span
-      >
-    </div>
+    <WeightBar current={$carryWeight} max={maxWeight} label="Bag weight" />
   </div>
 {/if}
 
@@ -419,55 +402,6 @@
 
   .close-btn:hover {
     color: #fff;
-  }
-
-  .weight-bar {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 16px;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid rgba(255, 255, 255, 0.15);
-    box-sizing: content-box;
-  }
-
-  .weight-fill {
-    position: absolute;
-    left: 0;
-    bottom: 0;
-    height: 16px;
-    border-radius: 4px;
-    background: linear-gradient(90deg, #1f3648, #36526b);
-    transition: width 120ms ease;
-  }
-
-  .weight-bar.heavy .weight-fill {
-    background: linear-gradient(90deg, #4f3a1c, #6a5732);
-  }
-
-  .weight-bar.full .weight-fill {
-    background: linear-gradient(90deg, #492822, #6c3e34);
-  }
-
-  .weight-bar::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 16px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.08);
-  }
-
-  .weight-text {
-    position: relative;
-    font-size: 11px;
-    font-weight: 700;
-    color: #9fb2c3;
-    text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
   }
 
   .gold-display {
@@ -627,21 +561,6 @@
 
     .panel-title {
       font-size: 13px;
-    }
-
-    .weight-bar {
-      height: 14px;
-      margin-top: 6px;
-      padding-top: 6px;
-    }
-
-    .weight-fill,
-    .weight-bar::before {
-      height: 14px;
-    }
-
-    .weight-text {
-      font-size: 10px;
     }
 
     .close-btn {

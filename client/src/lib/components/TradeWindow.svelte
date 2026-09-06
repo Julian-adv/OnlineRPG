@@ -1,4 +1,5 @@
 <script lang="ts">
+  import './tradePanel.css'
   import { get } from 'svelte/store'
   import { assetUrl } from '../utils/assetUrl'
   import {
@@ -725,27 +726,6 @@
     }
   }
 
-  .trade-window {
-    position: fixed;
-    left: 50%;
-    top: 45%;
-    transform: translate(-50%, -50%);
-    z-index: 40;
-    display: flex;
-    flex-direction: column;
-    backdrop-filter: blur(4px);
-    padding: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 10px;
-    background: rgba(6, 10, 14, 0.88);
-    color: #e6edf3;
-    font-family: 'Courier New', monospace;
-    font-size: 12px;
-    pointer-events: auto;
-    max-width: calc(100vw - 32px);
-    max-height: 70vh;
-  }
-
   .merchant-portrait {
     position: absolute;
     left: 0;
@@ -756,49 +736,6 @@
     filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
   }
 
-  .panel-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-    margin-bottom: 8px;
-  }
-
-  .panel-title {
-    font-size: 14px;
-    font-weight: 700;
-    color: #f0c040;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    color: #9fb2c3;
-    font-size: 18px;
-    cursor: pointer;
-    padding: 0 2px;
-    line-height: 1;
-  }
-
-  .close-btn:hover {
-    color: #fff;
-  }
-
-  .trade-columns {
-    display: flex;
-    gap: 16px;
-    overflow: hidden;
-  }
-
-  .trade-column {
-    display: flex;
-    flex-direction: column;
-    width: 230px;
-    min-width: 0;
-  }
-
   .cart-column {
     width: 210px;
     padding: 0 10px;
@@ -806,74 +743,10 @@
     border-right: 1px solid rgba(255, 255, 255, 0.12);
   }
 
-  .column-title {
-    font-size: 12px;
-    font-weight: 700;
-    color: #9fb2c3;
-    padding-bottom: 4px;
-  }
-
   .buyback-title {
     margin-top: 8px;
     padding-top: 6px;
     border-top: 1px solid rgba(255, 255, 255, 0.15);
-  }
-
-  .item-list {
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    max-height: 50vh;
-    scrollbar-width: none;
-  }
-
-  .item-list::-webkit-scrollbar {
-    display: none;
-  }
-
-  .item-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 4px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 4px;
-    background: none;
-    color: inherit;
-    font-family: inherit;
-    font-size: inherit;
-    text-align: left;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition:
-      background 150ms ease,
-      border-color 150ms ease;
-  }
-
-  .item-row:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  .item-row:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  .item-icon {
-    width: 28px;
-    height: 28px;
-    image-rendering: pixelated;
-    flex-shrink: 0;
-  }
-
-  .item-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .item-price {
@@ -957,53 +830,9 @@
     color: #8ae29a;
   }
 
-  .confirm-btn {
-    margin-top: 4px;
-    background: rgba(60, 90, 60, 0.85);
-    color: #d6f0d6;
-    border: 1px solid rgba(140, 220, 140, 0.35);
-    border-radius: 4px;
-    padding: 4px 14px;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-      background 150ms ease,
-      color 150ms ease;
-  }
-
-  .confirm-btn:hover:not(:disabled) {
-    background: rgba(80, 120, 80, 0.95);
-    color: #fff;
-  }
-
-  .confirm-btn:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-
-  .empty-note {
-    color: #6b7d8d;
-    padding: 6px 4px;
-  }
-
   @media (max-width: 600px), (pointer: coarse) {
-    .trade-window {
-      top: 40%;
-      max-height: 60vh;
-    }
-
     .merchant-portrait {
       display: none;
-    }
-
-    .trade-columns {
-      gap: 10px;
-    }
-
-    .trade-column {
-      width: 170px;
     }
 
     .cart-column {
@@ -1011,18 +840,8 @@
       padding: 0 6px;
     }
 
-    .item-row {
-      min-height: 36px;
-    }
-
     .confirm-btn {
       min-height: 30px;
-    }
-
-    .close-btn {
-      min-width: 32px;
-      min-height: 32px;
-      font-size: 22px;
     }
   }
 </style>

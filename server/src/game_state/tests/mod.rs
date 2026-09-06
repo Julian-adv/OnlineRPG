@@ -21,6 +21,7 @@ mod combat_audit_tests;
 mod combat_tests;
 mod dungeon_tests;
 mod enchant_tests;
+mod estate_storage_tests;
 mod fence_tests;
 mod fishing_tests;
 mod friend_tests;

@@ -29,10 +29,9 @@
     fenceOnOwnedPlot,
     nearestFenceEdge,
     type Fence,
-    type FencePlot,
   } from '../../terrain/fenceEdges'
-  import { unwrapWorldXNear, wrapWorldX } from '../../terrain/world-wrap'
-  import { LAND_PLOT_SIZE } from '../../terrain/terrain-constants'
+  import { unwrapWorldXNear } from '../../terrain/world-wrap'
+  import { EstatePlacementGrid } from '../../terrain/estatePlacement'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { LocalPlayer } from '../../stores/gameStore'
 
@@ -62,65 +61,15 @@
   let lastWrapX = Infinity
   let cursor: { x: number; y: number } | null = null
   let disposed = false
-  let lastGridPlots: FencePlot[] | null = null
-  let lastGridWrapX = Infinity
-  let gridDirty = true
   let fenceHeightsDirty = false
-  const gridMaterial = new THREE.LineDashedMaterial({
-    color: '#b7ae93',
-    transparent: true,
-    opacity: 0.2,
-    dashSize: 0.15,
-    gapSize: 0.1,
-    depthTest: false,
-  })
-  const grid = new THREE.LineSegments(new THREE.BufferGeometry(), gridMaterial)
-  grid.visible = false
-  grid.renderOrder = 10
-  group.add(grid)
+  const grid = new EstatePlacementGrid((x, z) =>
+    heightManager.groundYOrNull(x, z)
+  )
+  group.add(grid.object)
 
   function updateGrid() {
     const mode = get(fenceMode)
-    grid.visible = !!mode && !!player
-    if (!mode || !player) return
-    if (
-      mode.plots === lastGridPlots &&
-      Math.abs(player.position.x - lastGridWrapX) < 100 &&
-      !gridDirty
-    )
-      return
-    lastGridPlots = mode.plots
-    lastGridWrapX = player.position.x
-    gridDirty = false
-    const positions: number[] = []
-    const plots = new Set(mode.plots.map((plot) => `${plot.x},${plot.z}`))
-    const segment = (x1: number, z1: number, x2: number, z2: number) => {
-      const y1 = heightManager.groundYOrNull(wrapWorldX(x1), z1)
-      const y2 = heightManager.groundYOrNull(wrapWorldX(x2), z2)
-      if (y1 === null || y2 === null) return
-      positions.push(x1, y1 + 0.04, z1, x2, y2 + 0.04, z2)
-    }
-    for (const plot of mode.plots) {
-      const x = unwrapWorldXNear(player.position.x, plot.x)
-      const west = plots.has(`${wrapWorldX(plot.x - LAND_PLOT_SIZE)},${plot.z}`)
-      const south = plots.has(`${plot.x},${plot.z - LAND_PLOT_SIZE}`)
-      for (let offset = 0; offset <= LAND_PLOT_SIZE; offset++) {
-        for (let step = 0; step < LAND_PLOT_SIZE; step++) {
-          if (offset > 0 || !west)
-            segment(x + offset, plot.z + step, x + offset, plot.z + step + 1)
-          if (offset > 0 || !south)
-            segment(x + step, plot.z + offset, x + step + 1, plot.z + offset)
-        }
-      }
-    }
-    grid.geometry.dispose()
-    grid.geometry = new THREE.BufferGeometry()
-    grid.geometry.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(positions, 3)
-    )
-    grid.computeLineDistances()
-    grid.geometry.computeBoundingSphere()
+    grid.update(!!mode && !!player, mode?.plots ?? [], player?.position.x ?? 0)
   }
 
   function rebuild() {
@@ -238,7 +187,7 @@
 
   onMount(() => {
     const unsubscribeHeight = heightManager.onHeightChanged(() => {
-      gridDirty = true
+      grid.markDirty()
       fenceHeightsDirty = true
     })
     loadGLB('/models/objects/wooden_fence.glb')
@@ -340,8 +289,7 @@
       window.removeEventListener('keydown', escape, true)
       instances?.dispose()
       if (ghost) (ghost.material as THREE.Material).dispose()
-      grid.geometry.dispose()
-      gridMaterial.dispose()
+      grid.dispose()
       stopFenceMode()
     }
   })

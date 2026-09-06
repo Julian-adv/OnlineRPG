@@ -38,6 +38,7 @@
   import GameSceneHousingLayer from './game-scene/GameSceneHousingLayer.svelte'
   import GameSceneLandClaimLayer from './game-scene/GameSceneLandClaimLayer.svelte'
   import GameSceneFencesLayer from './game-scene/GameSceneFencesLayer.svelte'
+  import GameSceneEstateChestsLayer from './game-scene/GameSceneEstateChestsLayer.svelte'
   import GameSceneDungeonLayer from './game-scene/GameSceneDungeonLayer.svelte'
   import { isUnderground } from '../stores/dungeonStore'
   import { damageTextPool } from '../effects/damage-text-pool'
@@ -1208,6 +1209,12 @@
 <GameSceneFencesLayer
   heightManager={terrainHeightManager}
   {terrainMeshes}
+  player={currentPlayer ?? null}
+/>
+<GameSceneEstateChestsLayer
+  heightManager={terrainHeightManager}
+  {terrainMeshes}
+  housingGroup={housingLayerRef?.getGroup()}
   player={currentPlayer ?? null}
 />
 

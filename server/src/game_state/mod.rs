@@ -234,6 +234,7 @@ pub(crate) use deals::band_invariant_holds;
 #[cfg(test)]
 pub(crate) use debuff::WET_DEBUFF_ID;
 mod dungeon;
+mod estate_storage;
 mod fence;
 mod friends;
 pub(crate) mod hunger;
@@ -463,6 +464,7 @@ pub struct GameState {
     /// salary tick after boot.
     npc_salary_last_day: Arc<RwLock<Option<i64>>>,
     land_tax_last_month: Arc<tokio::sync::Mutex<Option<i64>>>,
+    estate_chests: Arc<RwLock<estate_storage::EstateChestIndex>>,
     fences: Arc<RwLock<fence::FenceIndex>>,
     /// Price index + meeting bookkeeping (doc/PRICING.md), mirrored in DB.
     pricing: Arc<RwLock<crate::auth::PricingState>>,
@@ -727,6 +729,7 @@ impl GameState {
             deal_ledgers: Arc::new(RwLock::new(deals::DealLedgers::default())),
             npc_salary_last_day: Arc::new(RwLock::new(None)),
             land_tax_last_month: Arc::new(tokio::sync::Mutex::new(None)),
+            estate_chests: Arc::new(RwLock::new(estate_storage::EstateChestIndex::default())),
             fences: Arc::new(RwLock::new(fence::FenceIndex::default())),
             pricing: Arc::new(RwLock::new(Default::default())),
             dungeon_reset_last_epoch: Arc::new(RwLock::new(None)),

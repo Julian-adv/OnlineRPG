@@ -102,7 +102,10 @@ export const localTorchEquipped = derived(inventoryStore, (inv) => {
   return isTorchItemDefId(id)
 })
 
-function itemWeight(item: ItemInstance, armorMult: number): number {
+export function carriedItemWeight(
+  item: Pick<ItemInstance, 'item_def_id' | 'quantity'>,
+  armorMult: number
+): number {
   const def = getItemDef(item.item_def_id)
   const mult = def?.category === 'armor' ? armorMult : 1
   return (def?.weight ?? 1) * mult * item.quantity
@@ -118,9 +121,9 @@ export const carryWeight = derived(
       debuffs.filter((d) => d.until > now).map((d) => d.id)
     )
     let total = 0
-    for (const item of inv.bag) total += itemWeight(item, armorMult)
+    for (const item of inv.bag) total += carriedItemWeight(item, armorMult)
     for (const item of Object.values(inv.equipped)) {
-      if (item) total += itemWeight(item, armorMult)
+      if (item) total += carriedItemWeight(item, armorMult)
     }
     return total
   }

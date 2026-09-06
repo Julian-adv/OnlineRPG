@@ -18,6 +18,11 @@ export const WEAPON_TYPE_LABELS = {
 
 export type WeaponType = keyof typeof WEAPON_TYPE_LABELS
 
+export type AuthenticatedUseAction =
+  | 'estate_storage'
+  | 'estate_fence'
+  | 'land_claim'
+
 export interface ItemDefinition {
   id: string
   name: string
@@ -43,6 +48,10 @@ export interface ItemDefinition {
   /** Usable from the bag — the items.csv flag, which the server validates
    * against its `use_effect` dispatch at boot. */
   consumable?: boolean
+  /** Server-authoritative workflow started when this item is used. */
+  useAction?: AuthenticatedUseAction
+  /** Blocks player trade and estate storage. */
+  untradeable?: boolean
   /** Satiation restored when eaten (doc/HUNGER.md). */
   nutrition?: number
   /** Phoenix talisman: max-HP percentage restored by a revive. */
@@ -210,6 +219,12 @@ export function compareStats(
 
 export function isConsumable(def: Pick<ItemDefinition, 'consumable'>): boolean {
   return def.consumable === true
+}
+
+export function isUsable(
+  def: Pick<ItemDefinition, 'consumable' | 'useAction'>
+): boolean {
+  return def.consumable === true || def.useAction !== undefined
 }
 
 export default itemDefs

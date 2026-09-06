@@ -492,6 +492,10 @@ async fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    if let Err(err) = game_state.load_estate_chests(&auth_service).await {
+        error!("Failed to load estate storage chests: {}", err);
+        return ExitCode::FAILURE;
+    }
     // Stops the listeners, the REST API and every periodic task; connections
     // outlive it so players still see the shutdown notice.
     let (drain_shutdown_tx, drain_shutdown) = watch::channel(());

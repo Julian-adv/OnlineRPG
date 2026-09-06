@@ -10,7 +10,8 @@
   import HousingEditorPanel from './map-editor/HousingEditorPanel.svelte'
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
-  import FencePlacementBar from './FencePlacementBar.svelte'
+  import EstatePlacementBar from './EstatePlacementBar.svelte'
+  import EstateStorageWindow from './EstateStorageWindow.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
   import HungerIndicator from './HungerIndicator.svelte'
   import LevelBadge from './LevelBadge.svelte'
@@ -135,7 +136,7 @@
   }
 </script>
 
-<FencePlacementBar />
+<EstatePlacementBar />
 
 <div class="game-hud" style:--cluster-width="{clusterWidth}px">
   <ServerNotice />
@@ -190,6 +191,7 @@
       onClose={() => inventoryVisible.set(false)}
     />
     <TradeWindow />
+    <EstateStorageWindow str={selectedCharacter.attributes.str} />
     <PlayerTradeWindow />
     <TradeOfferToast />
     <PartyInviteToast />
