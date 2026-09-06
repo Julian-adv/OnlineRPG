@@ -1,5 +1,10 @@
 import { get } from 'svelte/store'
 import {
+  landAccount,
+  landAccountError,
+  landTransferPending,
+} from '../stores/landAccountStore'
+import {
   gameStore,
   updatePlayer,
   addChatMessage,
@@ -36,6 +41,18 @@ import {
   playerEffectiveStats,
 } from '../stores/inventoryStore'
 import { capeDyeDialog } from '../stores/capeDyeStore'
+import {
+  applyFenceVisibility,
+  fenceMode,
+  fencePending,
+  fenceError,
+  resetFences,
+} from '../stores/fenceStore'
+import { inventoryVisible } from '../stores/debugStore'
+import {
+  landClaimDialog,
+  applyLandClaimPreview,
+} from '../stores/landClaimStore'
 import { capeTextureDialog } from '../stores/capeTextureStore'
 import { setCapeUploadToken } from '../utils/networkUtils'
 import { hungerState, grilling, type HungerBand } from '../stores/hungerStore'
@@ -494,6 +511,7 @@ export function handleServerMessage(
     }
 
     case 'JoinSuccess': {
+      resetFences()
       const serverPlayer: ServerPlayer = data.player
       console.log('Join successful, received player data:', serverPlayer)
       isAdminUser.set(data.is_admin === true)
@@ -998,17 +1016,16 @@ export function handleServerMessage(
     }
 
     case 'PlayerAttackRejected': {
-      // The server no longer has this monster: drop our ghost copy so nothing
-      // (auto-attack, re-click, local AI) can swing at it again.
       if (data.reason === 'invalid_target') {
         if (combatController.targetMonsterId === data.monster_id) {
           combatController.cancelCombat()
         }
-        monsterManager.remove(data.monster_id)
+        const monster = monsterManager.monsters.get(data.monster_id)
+        // Corpse rejections must not cut short impact or death animations.
+        if (monster && monster.state !== 'dead' && !monster.isDeadPending) {
+          monsterManager.remove(data.monster_id)
+        }
       }
-      // An empty quiver does not fix itself between swings, so the auto-attack
-      // loop would just refuse once a second forever. Stop, as a dead target
-      // does — the target itself is still there, so it stays on screen.
       if (data.reason === 'out_of_ammo') {
         combatController.cancelCombat()
       }
@@ -1282,6 +1299,42 @@ export function handleServerMessage(
 
     case 'CapeDyePrompt': {
       capeDyeDialog.set({ instanceId: data.instance_id })
+      break
+    }
+
+    case 'LandClaimPrompt': {
+      applyLandClaimPreview(data)
+      break
+    }
+    case 'FenceMode':
+      fenceMode.set(data)
+      inventoryVisible.set(false)
+      fenceError.set(null)
+      break
+    case 'FenceVisibility':
+      applyFenceVisibility(data.added, data.removed)
+      break
+    case 'FenceEditResult':
+      fencePending.set(false)
+      fenceError.set(data.error ?? null)
+      break
+
+    case 'LandClaimed': {
+      landClaimDialog.update((claim) =>
+        claim ? { ...claim, status: 'claimed' } : null
+      )
+      addChatMessage({
+        text: 'This plot is now part of your homestead. One Land Deed was consumed.',
+        sender: 'system',
+      })
+      break
+    }
+
+    case 'LandRejected': {
+      landClaimDialog.update((claim) =>
+        claim ? { ...claim, status: 'rejected', reason: data.reason } : null
+      )
+      addChatMessage({ text: data.reason, sender: 'system' })
       break
     }
 
@@ -1577,6 +1630,14 @@ export function handleServerMessage(
       } else {
         pendingTradeOffer.set({ session, offeredAt: Date.now() })
       }
+      break
+    }
+
+    case 'LandAccountState': {
+      if (get(shopSession)?.merchantPlayerId !== data.merchant_player_id) break
+      landTransferPending.set(false)
+      landAccountError.set(data.error ?? null)
+      if (!data.error) landAccount.set(data)
       break
     }
 

@@ -489,7 +489,9 @@ impl super::GameState {
                     if !player.is_damageable(now) {
                         return None;
                     }
+                    let old_health = player.health;
                     player.health = player.health.saturating_sub(amount);
+                    self.combat_audit.health(old_health, player, "debuff");
                     Some(Hit {
                         pid,
                         cause,

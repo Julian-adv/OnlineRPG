@@ -392,6 +392,10 @@ impl super::GameState {
             let mut map = self.player_characters.write().await;
             map.insert(*player_id, (character_id, xp, attributes));
         }
+        self.combat_audit.register(*player_id, character_id);
+        if let Some(player) = self.players.read().await.get(player_id) {
+            self.combat_audit.observe(player);
+        }
         {
             let mut gold_map = self.player_gold.write().await;
             gold_map.insert(*player_id, gold);
@@ -403,6 +407,7 @@ impl super::GameState {
     }
 
     pub async fn unregister_player_character(&self, player_id: &PlayerId) {
+        self.combat_audit.logout(player_id);
         {
             let mut map = self.player_characters.write().await;
             map.remove(player_id);
@@ -826,6 +831,7 @@ impl super::GameState {
 
         {
             let mut players = self.players.write().await;
+            self.combat_audit.observe(&player);
             players.insert(player_id, player.clone());
         }
         {
@@ -860,6 +866,7 @@ impl super::GameState {
             .filter(|(id, _)| nearby_player_set.contains(*id) && *id != &player_id)
             .map(|(_, player)| player.clone())
             .collect();
+        drop(current_players);
 
         let monsters: HashMap<String, crate::types::Monster> = self
             .monsters
@@ -936,6 +943,20 @@ impl super::GameState {
             .collect();
 
         let mut msgs = Vec::new();
+        let fences = self.fences.read().await;
+        msgs.push(ServerMessage::FenceVisibility {
+            added: if player_floor == 0 {
+                fences
+                    .nearby(&player_position)
+                    .into_iter()
+                    .cloned()
+                    .collect()
+            } else {
+                vec![]
+            },
+            removed: vec![],
+        });
+        drop(fences);
         if !other_players.is_empty()
             || !monsters.is_empty()
             || !ground_items.is_empty()
@@ -1013,6 +1034,7 @@ impl super::GameState {
             .await;
         let removed_player = {
             let mut players = self.players.write().await;
+            self.combat_audit.logout(player_id);
             players.remove(player_id)
         };
         if let Some(player) = &removed_player {
@@ -1869,7 +1891,9 @@ impl super::GameState {
                 .collect();
             let free_bed = beds.iter().find(|bed| !taken.contains(&bed.id));
             let player = players.get_mut(player_id).expect("looked up above");
+            let old_health = player.health;
             player.health = player.max_health;
+            self.combat_audit.health(old_health, player, "respawn");
             let old_floor = player.floor_level;
             let old_position = player.position;
             player.floor_level = respawn.floor_level;
@@ -1934,6 +1958,7 @@ impl super::GameState {
                 return false;
             };
             player.health = (player.max_health * hp_percent / 100).max(1);
+            self.combat_audit.health(0, player, "revive");
             player.clone()
         };
         info!("Player {} ({}) revived in place", revived.name, revived.id);
@@ -2404,6 +2429,37 @@ impl super::GameState {
         for item in items_entered {
             self.send_direct_message(player_id, ServerMessage::GroundItemAppeared { item })
                 .await;
+        }
+
+        {
+            let fences = self.fences.read().await;
+            let mut candidates: HashMap<_, _> = fences
+                .nearby(old_position)
+                .into_iter()
+                .map(|f| (f.edge, f))
+                .collect();
+            candidates.extend(
+                fences
+                    .nearby(&player.position)
+                    .into_iter()
+                    .map(|f| (f.edge, f)),
+            );
+            let (left, entered) = aoi_diff(
+                candidates.into_values(),
+                |f| (f.edge.center(f.y), 0),
+                (old_position, old_floor),
+                (&player.position, new_floor),
+            );
+            if !left.is_empty() || !entered.is_empty() {
+                self.send_direct_message(
+                    player_id,
+                    ServerMessage::FenceVisibility {
+                        added: entered.into_iter().cloned().collect(),
+                        removed: left.into_iter().map(|f| f.edge).collect(),
+                    },
+                )
+                .await;
+            }
         }
 
         let (fires_left, fires_entered) = {

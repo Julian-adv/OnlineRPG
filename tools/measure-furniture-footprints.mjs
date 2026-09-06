@@ -1,27 +1,8 @@
 /**
- * Measure the XZ ground footprint (world-space bounding box) of every solid
- * furniture GLB and write it to data/furniture_footprints.json — the single
- * source of truth the shared `furniture` crate embeds at compile time
- * (`include_str!`), so the browser (wasm), the agent-client and the server all
- * collide against identical footprints.
- *
- * Authoring source is the catalog's `"solid": true` flag. Runs automatically as
- * the first step of `build:wasm`; it self-skips (a few stat() calls, no GLB
- * reads) when the output is already newer than the catalog and every solid GLB,
- * so builds only re-measure when furniture actually changed.
- *
- *   node tools/measure-furniture-footprints.mjs           # regenerate if stale
- *   node tools/measure-furniture-footprints.mjs --force   # regenerate always
- *
- * `@gltf-transform/core` (the GLB reader) is imported lazily and only when a
- * re-measure is actually needed, so the common build path — up-to-date footprints
- * (the committed output) — never requires it. If a re-measure IS needed but the
- * package is missing, the build is not broken: with an existing output we warn
- * and keep the committed footprints (fresh clone / CI without the tool deps);
- * only a re-measure with no output at all is a hard error.
- *
- * (Mirrors tools/sample-bridge-decks.mjs — headless GLB reads via gltf-transform,
- * no browser/three needed.)
+ * Measure solid catalog GLBs into data/furniture_footprints.json for shared Rust.
+ * build:wasm regenerates stale footprints; --force always regenerates them.
+ * Requires @gltf-transform/core and @gltf-transform/extensions when measuring.
+ * Without these tool dependencies, warn and keep existing output.
  */
 import { readFile, writeFile, stat } from "fs/promises";
 import { fileURLToPath } from "url";
@@ -126,17 +107,17 @@ if (!FORCE) {
   }
 }
 
-// A re-measure is needed. The GLB reader is an undeclared tool dependency
-// (repo-root node_modules, not part of client's install), so guard its absence:
-// keep the committed footprints rather than breaking the build.
+// Keep committed footprints when optional measurement dependencies are missing.
 let NodeIO;
+let EXTTextureWebP;
 try {
   ({ NodeIO } = await import("@gltf-transform/core"));
+  ({ EXTTextureWebP } = await import("@gltf-transform/extensions"));
 } catch (err) {
   const haveOutput = (await mtimeMs(OUT_PATH)) > -Infinity;
   if (haveOutput) {
     console.warn(
-      "furniture footprints may be stale: @gltf-transform/core is not installed, " +
+      "furniture footprints may be stale: gltf-transform tool dependencies are unavailable, " +
         "so they could not be re-measured. Keeping the existing " +
         "data/furniture_footprints.json. Install the tool deps and re-run with " +
         "--force to refresh (e.g. after changing a solid furniture GLB).",
@@ -144,14 +125,14 @@ try {
     process.exit(0);
   }
   console.error(
-    "Cannot generate data/furniture_footprints.json: @gltf-transform/core is " +
-      "not installed and no existing footprint table was found.\n" +
+    "Cannot generate data/furniture_footprints.json: gltf-transform tool dependencies are " +
+      "unavailable and no existing footprint table was found.\n" +
       `  ${err?.message ?? err}`,
   );
   process.exit(1);
 }
 
-const io = new NodeIO();
+const io = new NodeIO().registerExtensions([EXTTextureWebP]);
 const round = (v) => +v.toFixed(3);
 
 const out = {};

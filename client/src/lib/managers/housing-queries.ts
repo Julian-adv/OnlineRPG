@@ -7,6 +7,7 @@ import {
   type WallDirection,
 } from '../utils/house-geometry'
 import {
+  ALL_WALL_DIRS,
   getWallByDir,
   isDoorVariant,
   isOpenable,
@@ -627,7 +628,7 @@ export function findClosedDoorOnSegment(
       const roomX = house.origin.x + room.localX
       const roomZ = house.origin.z + room.localZ
 
-      for (const wallDir of ['north', 'south', 'east', 'west'] as const) {
+      for (const wallDir of ALL_WALL_DIRS) {
         const segments = getWallByDir(room, wallDir)
         const alongX = wallDir === 'north' || wallDir === 'south'
         const wall =
@@ -704,7 +705,7 @@ export function isHouseWallBlockingSegment(
       const roomX = house.origin.x + room.localX
       const roomZ = house.origin.z + room.localZ
 
-      for (const wallDir of ['north', 'south', 'east', 'west'] as const) {
+      for (const wallDir of ALL_WALL_DIRS) {
         const segments = getWallByDir(room, wallDir)
         const alongX = wallDir === 'north' || wallDir === 'south'
         const wall =

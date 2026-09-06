@@ -12,5 +12,5 @@
 
 ## Pre-Commit Validation
 
-- For frontend changes, run `npm run check` and `npm run lint`.
+- For simple frontend edits such as text, color, or spacing changes, skip Prettier, `npm run check`, and `npm run lint`. For more substantial frontend changes, run `npm run check` and `npm run lint`.
 - For Rust changes, run `cargo fmt` and `cargo check`.

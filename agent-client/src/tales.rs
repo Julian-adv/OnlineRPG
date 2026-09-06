@@ -1,7 +1,4 @@
-//! Heroic tales (doc/HEROIC_TALES.md): a ledger of true deeds the audit
-//! appends to, from which the bard's evening set draws a few to sing.
-//! The code picks and rotates; the LLM only embellishes the one line it
-//! is handed.
+//! Draw true deeds from the ledger for the bard to embellish and sing.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -105,6 +102,7 @@ impl Deed {
         match self.kind.as_str() {
             "enchant_break" | "boss_death" => "tragic",
             "exploit" => "mocking",
+            "xp_lead" => "competitive",
             _ => "heroic",
         }
     }
@@ -154,6 +152,21 @@ impl Deed {
                 }
                 s
             }
+            "xp_lead" => {
+                let mut s = match self.field("prev") {
+                    Some(prev) => format!(
+                        "{name} overtook {prev} to take first place in the realm's experience rankings."
+                    ),
+                    None => format!("{name} took first place in the realm's experience rankings."),
+                };
+                if let Some(level) = self.field("tied_level") {
+                    s.push_str(&format!(" They were tied at level {level}."));
+                }
+                if self.flag("close") {
+                    s.push_str(" The experience gap was narrow when observed.");
+                }
+                s
+            }
             "most_levels" => {
                 let gained = self.arg(0).unwrap_or("+?").trim_start_matches('+');
                 match self.field("reached") {
@@ -169,6 +182,17 @@ impl Deed {
                     if n > 1 {
                         s.push_str(&format!(" That makes {n} days running."));
                     }
+                }
+                s
+            }
+            "largest_estate" => {
+                let mut s = if self.flag("tied") {
+                    format!("{name} shared the lead for the largest player homestead in the realm.")
+                } else {
+                    format!("{name} held the largest player homestead in the realm.")
+                };
+                if let Some(plots) = self.field("plots") {
+                    s.push_str(&format!(" The estate covered {plots} claimed plots."));
                 }
                 s
             }
@@ -443,6 +467,37 @@ garbage
         assert!(cheat.contains("straight back in"), "{cheat}");
         assert!(cheat.contains("Ogre Stronghold"), "{cheat}");
         assert_eq!(deeds[7].mood(), "mocking");
+    }
+
+    #[test]
+    fn an_experience_lead_is_a_rivalry_not_a_new_level_record() {
+        let deed =
+            Deed::parse("2026-09-06 xp_lead Alder prev=Cyra tied_level=33 close=true").unwrap();
+        let prompt = prompt_section(&deed, Lang::Korean);
+        assert!(prompt.contains("Alder overtook Cyra to take first place"));
+        assert!(prompt.contains("experience rankings"));
+        assert!(prompt.contains("tied at level 33"));
+        assert!(prompt.contains("gap was narrow when observed"));
+        assert!(prompt.contains("Mood: competitive"));
+        assert!(prompt.contains("Language: Korean"));
+        assert!(!prompt.contains("higher than anyone"));
+
+        let deed = Deed::parse("2026-09-06 xp_lead Alder prev=Cyra").unwrap();
+        assert!(!deed.render().contains("tied at level"));
+        assert!(!deed.render().contains("gap was narrow"));
+    }
+
+    #[test]
+    fn largest_estates_distinguish_an_outright_lead_from_a_tie() {
+        let deed = Deed::parse("2026-09-07 largest_estate Alder plots=16").unwrap();
+        assert_eq!(
+            deed.render(),
+            "Alder held the largest player homestead in the realm. The estate covered 16 claimed plots. (2026-09-07)"
+        );
+        assert_eq!(deed.mood(), "heroic");
+        let tied = Deed::parse("2026-09-07 largest_estate Alder plots=16 tied=true").unwrap();
+        assert!(tied.render().contains("shared the lead"));
+        assert!(!tied.render().contains("held the largest"));
     }
 
     #[test]

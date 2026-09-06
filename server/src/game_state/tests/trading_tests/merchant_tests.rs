@@ -22,7 +22,9 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
     let mut buyer_rx = game_state.register_direct_channel(&buyer).await;
     game_state.open_shop(&buyer, &steward, true).await;
     match buyer_rx.try_recv().unwrap() {
-        ServerMessage::ShopState { catalog, .. } => assert_eq!(catalog, vec!["land_deed"]),
+        ServerMessage::ShopState { catalog, .. } => {
+            assert_eq!(catalog, vec!["land_deed", "wooden_fence"])
+        }
         other => panic!("Expected Aldwin's shop, got {other:?}"),
     }
 
@@ -45,6 +47,37 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
         1
     );
     assert_eq!(game_state.player_gold.read().await[&buyer], 0);
+}
+
+#[tokio::test]
+async fn steward_rejects_single_and_batch_item_sales() {
+    let game = make_test_game_state("steward_no_sales");
+    let buyer = pid("buyer");
+    let steward = pid("npc_steward");
+    game.add_player(make_npc("npc_steward", "Aldwin", 0.0, 0.0))
+        .await;
+    game.add_player(make_player("buyer", 1.0, 0.0)).await;
+    game.inventories.write().await.insert(
+        buyer,
+        PlayerInventory {
+            bag: vec![bag_item(1, "land_deed", 1)],
+            ..Default::default()
+        },
+    );
+    let mut rx = game.register_direct_channel(&buyer).await;
+    game.sell_item(&buyer, &steward, 1).await;
+    expect_trade_error(&mut rx, "does not buy");
+    game.sell_items(
+        &buyer,
+        &steward,
+        vec![onlinerpg_shared::messages::BagLineItem {
+            instance_id: 1,
+            qty: 1,
+        }],
+    )
+    .await;
+    expect_trade_error(&mut rx, "does not buy");
+    assert_eq!(game.inventories.read().await[&buyer].bag.len(), 1);
 }
 
 #[test]

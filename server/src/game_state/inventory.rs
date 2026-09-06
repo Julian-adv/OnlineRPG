@@ -241,7 +241,7 @@ const WHETSTONE_OIL_ITEM_ID: &str = "whetstone_oil";
 /// Remove one unit of `instance_id` from the bag, dropping the instance when
 /// the stack empties.
 /// Returns the removed unit's def id, so callers can log without rescanning.
-fn consume_one(inv: &mut PlayerInventory, instance_id: u64) -> Option<String> {
+pub(super) fn consume_one(inv: &mut PlayerInventory, instance_id: u64) -> Option<String> {
     let idx = inv.bag.iter().position(|i| i.instance_id == instance_id)?;
     let def_id = inv.bag[idx].item_def_id.clone();
     if inv.bag[idx].quantity > 1 {
@@ -1212,7 +1212,9 @@ impl super::GameState {
             players.get_mut(player_id).and_then(|player| {
                 (player.health > 0 && player.health < player.max_health).then(|| {
                     let amount = crate::game::combat::roll_dice(dice);
+                    let old_health = player.health;
                     player.health = (player.health + amount).min(player.max_health);
+                    self.combat_audit.health(old_health, player, "potion");
                     (
                         player.health,
                         player.max_health,

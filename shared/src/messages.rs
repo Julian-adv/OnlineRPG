@@ -521,6 +521,28 @@ pub enum ClientMessage {
     UseItem {
         instance_id: u64,
     },
+    UseLandDocument {
+        instance_id: u64,
+        tile_x: i32,
+        tile_z: i32,
+        quadrant: u8,
+    },
+    EditFence {
+        edge: crate::fence::FenceEdge,
+        place: bool,
+    },
+    StartFenceMode,
+    LandAccount {
+        merchant_player_id: PlayerId,
+    },
+    LandDeposit {
+        merchant_player_id: PlayerId,
+        amount: i64,
+    },
+    LandWithdraw {
+        merchant_player_id: PlayerId,
+        amount: i64,
+    },
     /// Dye the worn cape with `color` (`#rrggbb`), spending the dye at
     /// `instance_id`. Answers a `CapeDyePrompt`; the server re-checks
     /// everything (doc/CAPE_CUSTOMIZATION.md).
@@ -1199,6 +1221,46 @@ pub enum ServerMessage {
     /// no pending state — `DyeCape` re-checks everything.
     CapeDyePrompt {
         instance_id: u64,
+    },
+    LandClaimPrompt {
+        instance_id: u64,
+        tile_x: i32,
+        tile_z: i32,
+        quadrant: u8,
+        reason: Option<String>,
+    },
+    FenceMode {
+        owner_id: i64,
+        plots: Vec<crate::fence::FencePlot>,
+    },
+    FenceVisibility {
+        added: Vec<crate::fence::Fence>,
+        removed: Vec<crate::fence::FenceEdge>,
+    },
+    FenceEditResult {
+        error: Option<String>,
+    },
+    LandClaimed {
+        estate_id: i64,
+        tile_x: i32,
+        tile_z: i32,
+        quadrant: u8,
+    },
+    LandRejected {
+        reason: String,
+    },
+    LandAccountState {
+        merchant_player_id: PlayerId,
+        treasury: i64,
+        plots: u32,
+        monthly_tax: i64,
+        next_tax: i64,
+        next_due: crate::GameDateTime,
+        due_in_seconds: u64,
+        missed: u32,
+        recovery_cost: i64,
+        free_months: u32,
+        error: Option<String>,
     },
     /// Same for a cape transfer kit: a cape is on and the kit is in the bag,
     /// so the client may open its image picker. Nothing is spent until

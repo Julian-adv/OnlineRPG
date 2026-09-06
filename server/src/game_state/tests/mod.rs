@@ -17,15 +17,18 @@ mod cape_dye_tests;
 mod cape_texture_tests;
 mod chat_tests;
 mod collision_tests;
+mod combat_audit_tests;
 mod combat_tests;
 mod dungeon_tests;
 mod enchant_tests;
+mod fence_tests;
 mod fishing_tests;
 mod friend_tests;
 mod house_floor_tests;
 mod hunger_tests;
 mod instrument_tests;
 mod inventory_tests;
+mod land_tests;
 mod meal_tests;
 mod monster_ai_tests;
 mod movement_tests;
@@ -71,7 +74,7 @@ fn expect_attack_rejected(
     }
 }
 
-fn make_player(id: &str, x: f32, z: f32) -> Player {
+pub(super) fn make_player(id: &str, x: f32, z: f32) -> Player {
     Player {
         id: pid(id),
         name: id.to_string(),
@@ -397,6 +400,12 @@ fn make_game_state_with_zones(
         world_drop_defs,
         GameState::default_start_datetime(),
         housing_io,
+        Arc::new(onlinerpg_terrain::io::TerrainIO::new(
+            std::env::temp_dir().join(format!(
+                "onlinerpg_{test_name}_terrain_{}",
+                uuid::Uuid::new_v4()
+            )),
+        )),
         no_spawn_zones,
         dungeon_defs,
         Arc::new(onlinerpg_terrain::height::HeightSampler::new(height)),

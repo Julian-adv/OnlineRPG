@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { fenceMode } from '../stores/fenceStore'
   import { useThrelte } from '@threlte/core'
   import * as THREE from 'three'
   import { gameStore, hoverTarget, type LocalPlayer } from '../stores/gameStore'
@@ -64,6 +65,7 @@
   import {
     shouldIgnoreImplicitHouseFloorChange,
     wallApproachPositions,
+    type ClosedHouseDoor,
   } from '../managers/housing-queries'
   import { findPath } from '../managers/pathfinding'
   import { PROP_SWING_IMPACT_MS } from '../data/combatTiming'
@@ -1507,12 +1509,7 @@
     )
   }
 
-  function openDoorThenRetry(
-    door: NonNullable<
-      ReturnType<typeof housingManager.findClosedDoorOnSegment>
-    >,
-    retryAction: () => void
-  ) {
+  function openDoorThenRetry(door: ClosedHouseDoor, retryAction: () => void) {
     clearDoorInteractionRetry()
     networkManager.sendToggleDoor(
       door.houseId,
@@ -1534,6 +1531,20 @@
     doorInteractionRetryTimer = setTimeout(retry, 100)
   }
 
+  function approachDoorThenRetry(
+    door: ClosedHouseDoor,
+    retryAction: () => void
+  ) {
+    if (!currentPlayer) return
+    approachAndAct(
+      {
+        position: { ...door.position, y: currentPlayer.position.y },
+        ...HOUSE_DOOR_APPROACH,
+      },
+      () => openDoorThenRetry(door, retryAction)
+    )
+  }
+
   function interactObject(
     intent: Extract<ClickIntent, { type: 'interact_object' }>,
     forceWalk = false
@@ -1549,13 +1560,7 @@
       floor
     )
     if (door) {
-      approachAndAct(
-        {
-          position: { ...door.position, y: player.position.y },
-          ...HOUSE_DOOR_APPROACH,
-        },
-        () => openDoorThenRetry(door, () => interactObject(intent, true))
-      )
+      approachDoorThenRetry(door, () => interactObject(intent, true))
       return
     }
 
@@ -1579,8 +1584,7 @@
     )
     if (approach !== 'unreachable') return
 
-    let openRoute: { x: number; z: number }[] = []
-    housingManager.withClosedDoorsOpen(floor, () => {
+    const openRoute = housingManager.withClosedDoorsOpen(floor, () => {
       const routeWithOpenDoors = (target: Position) => {
         const result = findPath(
           player.position.x,
@@ -1600,7 +1604,7 @@
         false,
         canAct
       )
-      if (plan.kind !== 'walk') return
+      if (plan.kind !== 'walk') return []
       const result = findPath(
         player.position.x,
         player.position.z,
@@ -1609,7 +1613,7 @@
         plan.target.z,
         floor
       )
-      if (result.found) openRoute = result.waypoints
+      return result.found ? result.waypoints : []
     })
 
     const routeDoor = housingManager.findClosedDoorOnPath(
@@ -1619,26 +1623,20 @@
       floor
     )
     if (!routeDoor) return
-    approachAndAct(
-      {
-        position: { ...routeDoor.position, y: player.position.y },
-        ...HOUSE_DOOR_APPROACH,
-      },
-      () => openDoorThenRetry(routeDoor, () => interactObject(intent, true))
-    )
+    approachDoorThenRetry(routeDoor, () => interactObject(intent, true))
   }
 
   function toggleDoor(intent: Extract<ClickIntent, { type: 'toggle_door' }>) {
+    const toggle = () =>
+      networkManager.sendToggleDoor(
+        intent.houseId,
+        intent.roomIndex,
+        intent.wallDir,
+        intent.segmentIndex
+      )
     if (intent.isWindow && currentPlayer) {
       const player = currentPlayer
       const floor = currentPassabilityFloor()
-      const toggle = () =>
-        networkManager.sendToggleDoor(
-          intent.houseId,
-          intent.roomIndex,
-          intent.wallDir,
-          intent.segmentIndex
-        )
       const dx = shortestWrappedDeltaX(player.position.x, intent.position.x)
       const dz = intent.position.z - player.position.z
       if (
@@ -1654,26 +1652,21 @@
         toggle()
         return
       }
-      for (const target of wallApproachPositions(
+      const targets = wallApproachPositions(
         intent.position,
         player.position,
         intent.wallDir,
         HOUSE_DOOR_APPROACH.stopShort
-      )) {
+      )
+      for (const target of targets) {
         const position = { ...target, y: player.position.y }
         if (routeQuality(position) !== 'found') continue
         approachAndAct({ position, range: 0.35, stopShort: 0 }, toggle)
         return
       }
 
-      let openRoute: { x: number; z: number }[] = []
-      housingManager.withClosedDoorsOpen(floor, () => {
-        for (const target of wallApproachPositions(
-          intent.position,
-          player.position,
-          intent.wallDir,
-          HOUSE_DOOR_APPROACH.stopShort
-        )) {
+      const openRoute = housingManager.withClosedDoorsOpen(floor, () => {
+        for (const target of targets) {
           const result = findPath(
             player.position.x,
             player.position.z,
@@ -1682,10 +1675,9 @@
             target.z,
             floor
           )
-          if (!result.found) continue
-          openRoute = result.waypoints
-          break
+          if (result.found) return result.waypoints
         }
+        return []
       })
       const routeDoor = housingManager.findClosedDoorOnPath(
         player.position.x,
@@ -1694,23 +1686,13 @@
         floor
       )
       if (routeDoor) {
-        approachAndAct(
-          {
-            position: { ...routeDoor.position, y: player.position.y },
-            ...HOUSE_DOOR_APPROACH,
-          },
-          () => openDoorThenRetry(routeDoor, () => toggleDoor(intent))
-        )
+        approachDoorThenRetry(routeDoor, () => toggleDoor(intent))
       }
       return
     }
-    approachAndAct({ position: intent.position, ...HOUSE_DOOR_APPROACH }, () =>
-      networkManager.sendToggleDoor(
-        intent.houseId,
-        intent.roomIndex,
-        intent.wallDir,
-        intent.segmentIndex
-      )
+    approachAndAct(
+      { position: intent.position, ...HOUSE_DOOR_APPROACH },
+      toggle
     )
   }
 
@@ -1886,7 +1868,9 @@
   }
 
   function processClickIntent(event: MouseEvent): ClickIntent {
+    const groundOnly = get(fenceMode) !== null
     const intent = inputHandler.processCanvasClick(event, {
+      groundOnly,
       camera,
       monsterMeshes,
       npcMeshes,
@@ -1912,7 +1896,10 @@
           ?.category === 'fishing_rod' && currentPassabilityFloor() === 0,
       waterSurfaceAt,
     })
-    if (intent.type === 'move_to_ground' || intent.type === 'none') {
+    if (
+      !groundOnly &&
+      (intent.type === 'move_to_ground' || intent.type === 'none')
+    ) {
       return (
         hoveredMonsterAttackIntent() ?? hoveredNpcInteractIntent() ?? intent
       )
@@ -1967,7 +1954,8 @@
 
   function handleCanvasClickIntent(event: MouseEvent) {
     if (event.button === 0 && $cameraRotationEnabled) return
-    const editorMode = $mapEditorMode || $housingEditorMode
+    const editorMode =
+      $mapEditorMode || $housingEditorMode || get(fenceMode) !== null
     if (event.button === 2 && !editorMode) {
       handleNpcContextMenu(event)
       return
@@ -2137,6 +2125,10 @@
   }
 
   function runHover(event: MouseEvent) {
+    if (get(fenceMode)) {
+      clearHover()
+      return
+    }
     lastHoverRaycast = performance.now()
     const target = inputHandler.processHover(event, {
       camera,
@@ -2194,6 +2186,15 @@
   currentDungeonDepth.subscribe(() => clearHover())
 
   onMount(() => {
+    const unsubscribeFenceMode = fenceMode.subscribe((mode) => {
+      if (!mode) return
+      clearStandUpTimer()
+      clearPropSwingTimers()
+      currentSpeed = 0
+      clickSprinting = false
+      transitionTo('idle')
+      updatePlayerState()
+    })
     preloadSwordHitSound()
     preloadSwordMissSound()
     preloadMonsterDeathSounds()
@@ -2235,6 +2236,7 @@
 
     return () => {
       removeInputListeners()
+      unsubscribeFenceMode()
       canvas.removeEventListener('pointermove', handlePointerHover)
       canvas.removeEventListener('pointerleave', handlePointerLeave)
       clearHover()

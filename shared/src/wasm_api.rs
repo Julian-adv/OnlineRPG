@@ -225,6 +225,14 @@ pub fn furniture_is_solid(type_id: &str) -> bool {
 }
 
 #[wasm_bindgen]
+pub fn passability_set_fences(val: JsValue) -> Result<(), JsError> {
+    let fences: Vec<crate::fence::Fence> = serde_wasm_bindgen::from_value(val)
+        .map_err(|e| JsError::new(&format!("Invalid fences: {e}")))?;
+    with_cache_mut(|cache| crate::fence::sync_passability(cache, "player-fences", &fences));
+    Ok(())
+}
+
+#[wasm_bindgen]
 pub fn passability_update_door(
     house_id: &str,
     room_val: JsValue,

@@ -1753,13 +1753,82 @@ async fn handle_client_message(
 
         ClientMessage::UseItem { instance_id } => {
             if let Some(id) = &state.player_id {
-                game_state.use_item(id, instance_id).await;
+                if !game_state
+                    .try_start_fence_mode(id, instance_id, auth_service)
+                    .await
+                    && !game_state
+                        .try_preview_land_claim(id, instance_id, auth_service)
+                        .await
+                {
+                    game_state.use_item(id, instance_id).await;
+                }
             }
         }
 
         ClientMessage::DyeCape { instance_id, color } => {
             if let Some(id) = &state.player_id {
                 game_state.dye_cape(id, instance_id, &color).await;
+            }
+        }
+
+        ClientMessage::UseLandDocument {
+            instance_id,
+            tile_x,
+            tile_z,
+            quadrant,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .claim_land(id, instance_id, (tile_x, tile_z, quadrant), auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::EditFence { edge, place } => {
+            if let Some(id) = &state.player_id {
+                game_state.edit_fence(id, edge, place, auth_service).await;
+            }
+        }
+        ClientMessage::StartFenceMode => {
+            if let Some(id) = &state.player_id {
+                game_state.start_fence_mode(id, auth_service).await;
+            }
+        }
+
+        ClientMessage::LandAccount { merchant_player_id } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .land_account_action(id, &merchant_player_id, None, auth_service)
+                    .await;
+            }
+        }
+        ClientMessage::LandDeposit {
+            merchant_player_id,
+            amount,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .land_account_action(
+                        id,
+                        &merchant_player_id,
+                        Some((amount, true)),
+                        auth_service,
+                    )
+                    .await;
+            }
+        }
+        ClientMessage::LandWithdraw {
+            merchant_player_id,
+            amount,
+        } => {
+            if let Some(id) = &state.player_id {
+                game_state
+                    .land_account_action(
+                        id,
+                        &merchant_player_id,
+                        Some((amount, false)),
+                        auth_service,
+                    )
+                    .await;
             }
         }
 

@@ -1,6 +1,7 @@
 import type { MonsterData } from '../types/Monster'
 import type { WallDirection } from '../utils/house-geometry'
 import type { ClientEnvReport } from '../utils/clientEnvReport'
+import type { FenceEdge } from '../terrain/fenceEdges'
 
 export type Position = {
   x: number
@@ -236,6 +237,19 @@ export type ClientMessage =
   | 'PickupStarted'
   | { PickupItem: { instance_id: number } }
   | { UseItem: { instance_id: number } }
+  | { EditFence: { edge: FenceEdge; place: boolean } }
+  | 'StartFenceMode'
+  | { LandAccount: { merchant_player_id: number } }
+  | { LandDeposit: { merchant_player_id: number; amount: number } }
+  | { LandWithdraw: { merchant_player_id: number; amount: number } }
+  | {
+      UseLandDocument: {
+        instance_id: number
+        tile_x: number
+        tile_z: number
+        quadrant: number
+      }
+    }
   | { DyeCape: { instance_id: number; color: string } }
   | { ApplyCapeTexture: { instance_id: number; texture: string } }
   | { ReportCapeTexture: { player_id: number } }

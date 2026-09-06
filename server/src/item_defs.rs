@@ -445,11 +445,12 @@ impl ItemDefs {
                 "item '{}' has a chestTier but is not chest-eligible equipment",
                 def.id
             );
-            // The clients' bag-use UX keys off the CSV flag; the server acts
-            // on `use_effect`. Fail the boot the moment they disagree.
+            // Land Deeds use the authenticated registration handler.
             assert!(
-                def.consumable == def.use_effect().is_some(),
-                "item '{}': consumable flag out of step with its use_effect",
+                def.consumable
+                    == (def.use_effect().is_some()
+                        || matches!(def.id.as_str(), "land_deed" | "wooden_fence")),
+                "item '{}': consumable flag out of step with its use handler",
                 def.id
             );
             // `equip_item` moves a whole bag entry into the slot and equipped

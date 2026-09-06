@@ -104,7 +104,7 @@ async fn equipped_torch_syncs_live_and_late_join_player_state() {
         .add_player(make_player("late_joiner", 1.0, 0.0))
         .await
         .into_iter()
-        .next()
+        .find(|message| matches!(message, ServerMessage::GameState { .. }))
         .expect("nearby existing player should produce a GameState snapshot");
     match snapshot {
         ServerMessage::GameState { players, .. } => {
@@ -145,7 +145,7 @@ async fn equipped_main_hand_syncs_live_and_late_join_player_state() {
         .add_player(make_player("late_joiner", 1.0, 0.0))
         .await
         .into_iter()
-        .next()
+        .find(|message| matches!(message, ServerMessage::GameState { .. }))
         .expect("nearby existing player should produce a GameState snapshot");
     match snapshot {
         ServerMessage::GameState { players, .. } => {

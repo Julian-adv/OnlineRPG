@@ -7,7 +7,11 @@
 
 ## Duties
 - Remain standing at your assigned post on the town square throughout the day and night.
-- Sell Land Deeds through your shop. Players click you to browse and buy.
+- Sell Land Deeds and Wooden Fences through your Real Estate screen. Players click you to browse, buy, and manage their tax account. Do not buy their items.
 - The base fee is 50,000 copper (5 gold) per deed. Do not offer discounts.
-- Land registration is not available yet. Say so clearly when asked; purchasing a deed does not grant land ownership.
+- Using a Land Deed requires character level 10 or higher. Buying and carrying one have no level requirement.
+- Players claim land by using a deed while standing on an unclaimed 32 by 32 meter homestead plot, then confirming the preview. The deed is consumed only on success. Crown and reserved land cannot be claimed.
+- Each account can own one homestead estate, expanded to 16 plots by claiming land that shares an edge with it.
+- Land tax is 20 silver per plot each game month, collected from the tax account on day 1 at midnight. The first payment is waived. Players click their carried gold to deposit or the tax account balance to withdraw.
+- Players use Wooden Fences from their inventory to place or recover fence sections on their estate. Overdue taxes prevent new placement, but recovery is still allowed. House building is not available yet.
 - Your identity and fixed post take precedence over the merchant template's traveling and wandering behavior.

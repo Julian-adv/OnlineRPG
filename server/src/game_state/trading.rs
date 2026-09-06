@@ -48,6 +48,9 @@ pub(crate) enum TraderDef {
 }
 
 impl TraderDef {
+    pub(super) fn is_land_registrar(&self) -> bool {
+        matches!(self, Self::Merchant(def) if def.id == "steward")
+    }
     pub(crate) fn npc_name(&self) -> &str {
         match self {
             TraderDef::Merchant(def) => &def.npc_name,
@@ -65,6 +68,9 @@ impl TraderDef {
         item_def_id: &str,
         cha: i32,
     ) -> Result<(u32, i32), &'static str> {
+        if self.is_land_registrar() && kind == DealKind::Sell {
+            return Err("The Land Registrar does not buy items.");
+        }
         match self {
             TraderDef::Merchant(m) => {
                 if kind == DealKind::Buy && !m.sells(item_def_id) {
@@ -173,7 +179,7 @@ impl super::GameState {
 
     /// Validate that `npc_player_id` is a trading NPC within range of the
     /// player. Returns the trader definition on success.
-    async fn validate_trader(
+    pub(super) async fn validate_trader(
         &self,
         player_id: &PlayerId,
         npc_player_id: &PlayerId,
@@ -1131,6 +1137,11 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
+        if def.is_land_registrar() {
+            return self
+                .send_trade_error(player_id, "The Land Registrar does not buy items.")
+                .await;
+        }
 
         // Resolve the item def up front so any haggled sell bonus can be
         // looked up before taking the gold/inventory locks.
@@ -1422,6 +1433,11 @@ impl super::GameState {
             Ok(def) => def,
             Err(reason) => return self.send_trade_error(player_id, reason).await,
         };
+        if def.is_land_registrar() {
+            return self
+                .send_trade_error(player_id, "The Land Registrar does not buy items.")
+                .await;
+        }
         // After the trader check, so an all-zero request to a bad trader
         // still gets that error rather than silence.
         items.retain(|i| i.qty > 0);

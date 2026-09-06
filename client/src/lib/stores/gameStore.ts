@@ -4,6 +4,7 @@ import type { Vector3 } from 'three'
 import type { CharacterClass, Gender } from '../network/networkTypes'
 import type { HoverTarget } from '../managers/inputHandler'
 import { resetInventoryStore } from './inventoryStore'
+import { resetLandClaimPreview } from './landClaimStore'
 import { resetSkillsStore } from './skillsStore'
 import { resetPartyStores } from './partyStore'
 import { resetFriendStores } from './friendStore'
@@ -159,6 +160,7 @@ export const isAdminUser = writable(false)
 export const serverNotice = writable<string | null>(null)
 
 export const resetGameStore = () => {
+  resetLandClaimPreview()
   gameStore.set({
     ...initialGameState,
     otherPlayers: new SvelteMap(),

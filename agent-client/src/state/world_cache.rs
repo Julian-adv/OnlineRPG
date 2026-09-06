@@ -25,6 +25,10 @@ pub struct WorldCache {
     /// to the furniture piece (a seated guest's broadcast position is where
     /// they stood when they clicked the chair, not the chair itself).
     furniture_placements: HashMap<(i32, i32), Vec<FurniturePlacement>>,
+    fence_views: HashMap<
+        PlayerId,
+        HashMap<onlinerpg_shared::fence::FenceEdge, onlinerpg_shared::fence::Fence>,
+    >,
 }
 
 impl WorldCache {
@@ -39,6 +43,7 @@ impl WorldCache {
             fetched_house_chunks: HashSet::new(),
             fetched_furniture_regions: HashSet::new(),
             furniture_placements: HashMap::new(),
+            fence_views: HashMap::new(),
         }
     }
 
@@ -210,6 +215,33 @@ impl WorldCache {
 
     pub fn passability_cache(&self) -> &PassabilityCache {
         &self.passability_cache
+    }
+
+    pub fn update_fences(
+        &mut self,
+        viewer: PlayerId,
+        added: &[onlinerpg_shared::fence::Fence],
+        removed: &[onlinerpg_shared::fence::FenceEdge],
+    ) {
+        let view = self.fence_views.entry(viewer).or_default();
+        for edge in removed {
+            view.remove(edge);
+        }
+        for fence in added {
+            view.insert(fence.edge, fence.clone());
+        }
+        let fences: Vec<_> = view.values().cloned().collect();
+        onlinerpg_shared::fence::sync_passability(
+            &mut self.passability_cache,
+            &format!("fence-view:{viewer}"),
+            &fences,
+        );
+    }
+
+    pub fn remove_fence_view(&mut self, viewer: PlayerId) {
+        self.fence_views.remove(&viewer);
+        self.passability_cache
+            .remove(&format!("fence-view:{viewer}"));
     }
 
     pub fn houses(&self) -> &HashMap<String, HouseData> {

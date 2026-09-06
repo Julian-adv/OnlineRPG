@@ -20,6 +20,10 @@ export interface PlotAddr {
   index: number
 }
 
+export interface OwnedLandPlot extends PlotAddr {
+  ownerName: string
+}
+
 /** Tile index and quadrant bit along one axis. */
 function tileAndQuadrant(world: number): [number, number] {
   const tile = Math.floor((world + TILE_DIM / 2) / TILE_DIM)

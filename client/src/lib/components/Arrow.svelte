@@ -1,6 +1,7 @@
 <script lang="ts">
   // Visual tracer: hits track the target; misses keep their launch bearing.
   import { T, useTask } from '@threlte/core'
+  import { untrack } from 'svelte'
   import { Group, Quaternion, Vector3 } from 'three'
   import type { ArrowShot } from '../stores/arrowStore'
   import { landArrow } from '../stores/arrowStore'
@@ -23,11 +24,16 @@
 
   let group: Group | undefined = $state()
 
-  const from = new Vector3(shot.from.x, shot.from.y, shot.from.z)
+  const launchShot = untrack(() => shot)
+  const from = new Vector3(
+    launchShot.from.x,
+    launchShot.from.y,
+    launchShot.from.z
+  )
   const aim = new Vector3(
-    unwrapWorldXNear(from.x, shot.to.x),
-    shot.to.y,
-    shot.to.z
+    unwrapWorldXNear(from.x, launchShot.to.x),
+    launchShot.to.y,
+    launchShot.to.z
   )
   // A miss keeps the bearing it left with, carried past the target.
   const missTo = aim
@@ -47,8 +53,7 @@
     if (!group) return
 
     const elapsed = performance.now() - shot.launchedAt
-    // A miss flies the same span plus its overshoot, so it stays in the air
-    // proportionally longer rather than stopping short of where it is aimed.
+    // Extend miss flight time in proportion to the overshoot.
     const span = shot.hit
       ? shot.flightMs
       : shot.flightMs *

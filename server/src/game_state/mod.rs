@@ -224,6 +224,7 @@ pub(crate) mod ambient_spawn;
 mod chat;
 pub(crate) use chat::{parse_admin_command, parse_notice_command};
 mod combat;
+mod combat_audit;
 mod consent;
 mod deals;
 mod debuff;
@@ -233,10 +234,12 @@ pub(crate) use deals::band_invariant_holds;
 #[cfg(test)]
 pub(crate) use debuff::WET_DEBUFF_ID;
 mod dungeon;
+mod fence;
 mod friends;
 pub(crate) mod hunger;
 mod instrument;
 mod inventory;
+mod land;
 mod monster;
 mod monster_ai;
 mod party;
@@ -250,7 +253,7 @@ mod skills;
 pub(crate) use skills::skills_from_rows;
 mod meal;
 mod stall;
-mod time;
+pub(crate) mod time;
 mod tip_hat;
 mod titles;
 mod trading;
@@ -327,6 +330,7 @@ pub(crate) struct ServerGroundItem {
 
 #[derive(Clone)]
 pub struct GameState {
+    combat_audit: Arc<combat_audit::CombatAudit>,
     players: Arc<RwLock<HashMap<PlayerId, Player>>>,
     /// Lowercased name → online player id, updated by `add_player`/
     /// `remove_player` right after the roster under its own lock (never held
@@ -400,6 +404,7 @@ pub struct GameState {
     #[cfg(test)]
     ambient_spawns_enabled: Arc<std::sync::atomic::AtomicBool>,
     housing_io: Arc<HousingIO>,
+    terrain_io: Arc<onlinerpg_terrain::io::TerrainIO>,
     /// Uploaded cape textures: what a worn `cape_texture` is checked against
     /// and where reports land (doc/CAPE_CUSTOMIZATION.md).
     cape_textures: Arc<crate::cape_texture::CapeTextureStore>,
@@ -457,6 +462,8 @@ pub struct GameState {
     /// Last game day NPC salaries were paid for; `None` until the first
     /// salary tick after boot.
     npc_salary_last_day: Arc<RwLock<Option<i64>>>,
+    land_tax_last_month: Arc<tokio::sync::Mutex<Option<i64>>>,
+    fences: Arc<RwLock<fence::FenceIndex>>,
     /// Price index + meeting bookkeeping (doc/PRICING.md), mirrored in DB.
     pricing: Arc<RwLock<crate::auth::PricingState>>,
     /// Last `night_epoch` the dungeons were reset on. `None` until the first
@@ -640,6 +647,7 @@ impl GameState {
         world_drop_defs: crate::world_drop_defs::WorldDropDefs,
         initial_datetime: crate::types::GameDateTime,
         housing_io: Arc<HousingIO>,
+        terrain_io: Arc<onlinerpg_terrain::io::TerrainIO>,
         no_spawn_zones: Vec<NoSpawnZone>,
         dungeon_defs: crate::dungeon_defs::DungeonDefs,
         height_sampler: Arc<onlinerpg_terrain::height::HeightSampler>,
@@ -651,6 +659,8 @@ impl GameState {
         let dungeon_discovery_cells = Arc::new(dungeon::discovery_cells(&dungeon_defs));
 
         Self {
+            terrain_io,
+            combat_audit: Arc::new(combat_audit::CombatAudit::default()),
             players: Arc::new(RwLock::new(HashMap::new())),
             player_ids_by_name: Arc::new(RwLock::new(HashMap::new())),
             movement_intents: Arc::new(RwLock::new(HashMap::new())),
@@ -716,6 +726,8 @@ impl GameState {
             deals: Arc::new(RwLock::new(HashMap::new())),
             deal_ledgers: Arc::new(RwLock::new(deals::DealLedgers::default())),
             npc_salary_last_day: Arc::new(RwLock::new(None)),
+            land_tax_last_month: Arc::new(tokio::sync::Mutex::new(None)),
+            fences: Arc::new(RwLock::new(fence::FenceIndex::default())),
             pricing: Arc::new(RwLock::new(Default::default())),
             dungeon_reset_last_epoch: Arc::new(RwLock::new(None)),
             dungeon_defs,

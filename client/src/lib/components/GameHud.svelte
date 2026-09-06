@@ -10,6 +10,7 @@
   import HousingEditorPanel from './map-editor/HousingEditorPanel.svelte'
   import CharacterPanel from './CharacterPanel.svelte'
   import InventoryPanel from './InventoryPanel.svelte'
+  import FencePlacementBar from './FencePlacementBar.svelte'
   import QuickslotBar from './QuickslotBar.svelte'
   import HungerIndicator from './HungerIndicator.svelte'
   import LevelBadge from './LevelBadge.svelte'
@@ -31,6 +32,8 @@
   import RespawnDialog from './RespawnDialog.svelte'
   import TipHatDialog from './TipHatDialog.svelte'
   import CapeDyeDialog from './CapeDyeDialog.svelte'
+  import LandClaimDialog from './LandClaimDialog.svelte'
+  import { landClaimDialog } from '../stores/landClaimStore'
   import { capeDyeDialog } from '../stores/capeDyeStore'
   import CapeTextureDialog from './CapeTextureDialog.svelte'
   import { capeTextureDialog } from '../stores/capeTextureStore'
@@ -131,6 +134,8 @@
     panel.update((v) => !v)
   }
 </script>
+
+<FencePlacementBar />
 
 <div class="game-hud" style:--cluster-width="{clusterWidth}px">
   <ServerNotice />
@@ -396,6 +401,10 @@
     }}
     onCancel={() => capeDyeDialog.set(null)}
   />
+{/if}
+
+{#if $landClaimDialog}
+  <LandClaimDialog />
 {/if}
 
 {#if $capeTextureDialog}

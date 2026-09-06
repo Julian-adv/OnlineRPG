@@ -102,9 +102,11 @@ export function resolveApproach(
   depth: number
 ): boolean {
   if (depth !== pending.depth) return false
-  if (pending.canAct && !pending.canAct(player)) return false
   const { position, range } = pending.spec
   const dx = shortestWrappedDeltaX(player.x, position.x)
   const dz = position.z - player.z
-  return dx * dx + dz * dz <= range * range
+  return (
+    dx * dx + dz * dz <= range * range &&
+    (!pending.canAct || pending.canAct(player))
+  )
 }

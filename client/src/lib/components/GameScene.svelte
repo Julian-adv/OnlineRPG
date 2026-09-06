@@ -36,6 +36,8 @@
   import GameSceneTreeLayer from './game-scene/GameSceneTreeLayer.svelte'
   import GameSceneWindParticles from './game-scene/GameSceneWindParticles.svelte'
   import GameSceneHousingLayer from './game-scene/GameSceneHousingLayer.svelte'
+  import GameSceneLandClaimLayer from './game-scene/GameSceneLandClaimLayer.svelte'
+  import GameSceneFencesLayer from './game-scene/GameSceneFencesLayer.svelte'
   import GameSceneDungeonLayer from './game-scene/GameSceneDungeonLayer.svelte'
   import { isUnderground } from '../stores/dungeonStore'
   import { damageTextPool } from '../effects/damage-text-pool'
@@ -1198,6 +1200,16 @@
     playerPosition={currentPlayer?.position ?? null}
   />
 {/if}
+
+<GameSceneLandClaimLayer
+  heightManager={terrainHeightManager}
+  playerPosition={currentPlayer?.position ?? null}
+/>
+<GameSceneFencesLayer
+  heightManager={terrainHeightManager}
+  {terrainMeshes}
+  player={currentPlayer ?? null}
+/>
 
 <GameSceneDungeonLayer
   bind:this={dungeonLayerRef}

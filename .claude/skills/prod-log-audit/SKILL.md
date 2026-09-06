@@ -69,7 +69,7 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/gol
 
 로그 문구(모두 `game_state::inventory` / `combat`):
 - 드롭: `Bonus drops ["scroll_of_enchant_weapon", …] at (x,z) PLACE` — 플레이어명 없음, 한 줄에 여러 아이템 가능하니 **장 수는 id 등장 횟수**로 센다.
-- 처치: `Player NAME killed TYPE (lvl N) at (x,z) PLACE; weapon drop: …` — `lvl`은 유효레벨. `world_drop.csv`는 ≤8 0.5%, >8 1%(종류당)이므로 기대 드롭 = 0.005×(≤8 킬) + 0.01×(>8 킬), 종류당 하나씩.
+- 처치: `Player NAME killed TYPE (lvl N) at (x,z) PLACE; weapon drop: …` — `lvl`은 유효레벨. 조사 당시 배포본의 `world_drop.csv`에서 종류별 `lowLevelChance`, `chance`, `lowLevelMaxLevel`을 읽어 기대 드롭을 계산한다. 창 안에 확률 변경 배포가 있으면 전후를 나눠 합산한다. 로컬 최신 설정을 과거 로그에 적용하지 않는다.
 - 시도: `NAME consumed scroll_of_enchant_(weapon|armor) at PLACE`. 결과: `NAME enchanted ITEM to +N` / `NAME destroyed ITEM enchanting at +N`(+N은 시도 전 값).
 
 적을 것: 처치 수(장소별), 드롭 장 수(종류·장소별)와 킬당 실측률 대 설정 기대값, 시도 수와 성공/파괴 비율, 개인별 시도 상위, 파괴 목록(누가 무엇을 +몇에서), 창 안 최고 도달값, 상인 판매·P2P 건수.
@@ -116,6 +116,21 @@ ssh prod 'journalctl -u openmmo-server --since "<KST>" -o cat | python3 /tmp/tal
 - `most_xp`: DB `SELECT character_name, level, xp FROM characters WHERE level >= 5`를 `~/work/notes/openmmo-YYYY-MM-DD-xp.tsv`로 남기고 직전 tsv와 xp 차이 1위를 적는다. 같은 사람이 이어지면 새 줄 대신 `streak=N` 줄 하나.
 - 같은 사람의 같은 종류 사건은 첫 번과 스트릭만. 개명(`renamed to`)·삭제(`Character id=N deleted`)가 보이면 원장의 그 이름을 고치거나 줄을 지운다 — 원장을 고쳐 쓰는 유일한 경우.
 - 봇도 동일하게 오른다. `npc_` 계정만 제외. 금액·IP·계정명은 원장에 넣지 않는다.
+- 최대 영지 후보는 아래 읽기 전용 조회로 구한다. 구획은32×32m이며 왕령은 제외한다. 최대값이 동률이면 각 소유자를 `DATE largest_estate NAME plots=N tied=true`로, 단독이면 `tied=false`로 기록한다. 결과가 없으면 후보도 없다. 현재 캐릭터명과 기존 원장을 대조하고, 같은 소유자의 같은 규모를 매일 중복 기록하지 않는다. 면적은 토지 소유만 뜻하며 집·농장·정복을 지어내지 않는다.
+  ```sql
+  WITH sizes AS (
+    SELECT e.id AS estate_id, c.character_name, COUNT(*) AS plots
+    FROM land_estates e
+    JOIN land_plots p ON p.estate_id = e.id
+    JOIN characters c ON c.id = e.owner_id
+    WHERE e.grade = 1 AND substr(c.account_name, 1, 4) != 'npc_'
+    GROUP BY e.id, c.character_name
+  )
+  SELECT estate_id, character_name, plots, plots * 1024 AS area_m2
+  FROM sizes
+  WHERE plots = (SELECT MAX(plots) FROM sizes)
+  ORDER BY estate_id;
+  ```
 
 ## 9. 노트 구성
 

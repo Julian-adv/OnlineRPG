@@ -128,6 +128,7 @@ impl SharedState {
             | ServerMessage::GroundItemRemoved { .. }
             | ServerMessage::GroundItemQuantityChanged { .. }
             | ServerMessage::TradeBusy { .. } => EventUrgency::Noise,
+            ServerMessage::FenceVisibility { .. } => EventUrgency::Noise,
 
             // Urgent: another player attacks a monster (so we can join in)
             ServerMessage::PlayerAttacked { player_id, .. } => {
@@ -321,6 +322,9 @@ impl SharedState {
         // Update tracked state from certain messages
         match &msg {
             ServerMessage::JoinSuccess { player, .. } => {
+                if let Some(id) = self.self_player_id {
+                    self.world_cache.write().unwrap().remove_fence_view(id);
+                }
                 self.in_game = true;
                 self.self_player_id = Some(player.id);
                 self.self_player = Some(player.clone());
@@ -732,6 +736,14 @@ impl SharedState {
             }
             ServerMessage::StallRemoved { stall_id } => {
                 self.stalls.remove(stall_id);
+            }
+            ServerMessage::FenceVisibility { added, removed } => {
+                if let Some(id) = self.self_player_id {
+                    self.world_cache
+                        .write()
+                        .unwrap()
+                        .update_fences(id, added, removed);
+                }
             }
             ServerMessage::TradeBusy { busy } => {
                 self.trade_busy = *busy;

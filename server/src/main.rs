@@ -125,6 +125,7 @@ async fn time_sync_tick(game_state: &GameState, auth_service: &Arc<AuthService>,
 
     // Pay NPC trader salaries on game-day rollover (economy phase 3)
     game_state.tick_npc_salaries().await;
+    game_state.tick_land_taxes(auth_service).await;
 
     // Merchants' price meeting on Serin's dark evening (doc/PRICING.md).
     game_state.tick_pricing_meeting(auth_service).await;
@@ -223,6 +224,10 @@ struct Args {
     /// unaffected when the flag is omitted.
     #[arg(long, env = "STATE_DIR", default_value = "./data")]
     state_dir: PathBuf,
+
+    /// Days to retain combat audit logs; targets remain enabled until removed.
+    #[arg(long, env = "COMBAT_AUDIT_RETENTION_DAYS", default_value_t = 30, value_parser = clap::value_parser!(u16).range(1..))]
+    combat_audit_retention_days: u16,
 
     /// Directory holding per-NPC schedule files. The map editor writes here
     /// over REST, so it is server-owned state even though it lives under
@@ -457,6 +462,7 @@ async fn main() -> ExitCode {
         world_drop_defs,
         initial_game_time,
         Arc::clone(&housing_io),
+        Arc::clone(&terrain_io),
         no_spawn_zones,
         dungeon_defs,
         height_sampler,
@@ -465,7 +471,18 @@ async fn main() -> ExitCode {
         Arc::clone(&cape_textures),
     ));
     game_state.load_npc_schedules(&npc_io).await;
+    game_state
+        .tick_combat_audit(
+            args.state_dir.clone(),
+            args.combat_audit_retention_days,
+            false,
+        )
+        .await;
     game_state.load_pricing(&auth_service).await;
+    if let Err(err) = game_state.load_fences(&auth_service).await {
+        error!("Failed to load fences: {}", err);
+        return ExitCode::FAILURE;
+    }
     // Server-side collision data for the movement sim: houses, solid
     // furniture and dungeon layouts, mirroring what clients build.
     if let Err(err) = game_state.init_passability(&terrain_io).await {
@@ -480,6 +497,23 @@ async fn main() -> ExitCode {
     let (drain_shutdown_tx, drain_shutdown) = watch::channel(());
     let (connection_shutdown_tx, connection_shutdown) = watch::channel(());
     let mut background = JoinSet::new();
+    let audit_game_state = Arc::clone(&game_state);
+    let audit_state_dir = args.state_dir.clone();
+    let audit_retention_days = args.combat_audit_retention_days;
+    background.spawn(run_ticks(
+        "combat audit",
+        Duration::from_secs(1),
+        drain_shutdown.clone(),
+        move || {
+            let game_state = Arc::clone(&audit_game_state);
+            let state_dir = audit_state_dir.clone();
+            async move {
+                game_state
+                    .tick_combat_audit(state_dir, audit_retention_days, false)
+                    .await
+            }
+        },
+    ));
 
     // Player movement simulation: walks pending move intents toward their
     // targets at capped speed (server-authoritative positions, F-006).
@@ -677,23 +711,27 @@ async fn main() -> ExitCode {
     // Start terrain REST API server. No CORS layer on purpose: browsers only
     // reach this API same-origin through the vite proxy.
     let terrain_port = args.terrain_port.unwrap_or(args.port + 1);
-    let terrain_app = terrain_router(Arc::clone(&terrain_io), Arc::clone(&game_state))
-        .merge(housing_router(
-            Arc::clone(&housing_io),
-            terrain_io,
-            Arc::clone(&game_state),
-        ))
-        .merge(npc_router(npc_io, Arc::clone(&game_state)))
-        .merge(announcements_router(announcement_store))
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::clone(&auth_ctx),
-            api_auth::require_admin_for_writes,
-        ))
-        // Merged after the admin layer on purpose: uploading a cape texture is
-        // a player action, authorised by the session token the server hands
-        // out at login rather than by the admin allowlist.
-        .merge(cape_texture_router(cape_textures, Arc::clone(&auth_ctx)))
-        .layer(CompressionLayer::new());
+    let terrain_app = terrain_router(
+        Arc::clone(&terrain_io),
+        Arc::clone(&game_state),
+        Arc::clone(&auth_service),
+    )
+    .merge(housing_router(
+        Arc::clone(&housing_io),
+        terrain_io,
+        Arc::clone(&game_state),
+    ))
+    .merge(npc_router(npc_io, Arc::clone(&game_state)))
+    .merge(announcements_router(announcement_store))
+    .layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&auth_ctx),
+        api_auth::require_admin_for_writes,
+    ))
+    // Merged after the admin layer on purpose: uploading a cape texture is
+    // a player action, authorised by the session token the server hands
+    // out at login rather than by the admin allowlist.
+    .merge(cape_texture_router(cape_textures, Arc::clone(&auth_ctx)))
+    .layer(CompressionLayer::new());
     let terrain_addr = format!("{}:{}", args.api_bind, terrain_port);
     let mut api_task = JoinSet::new();
     match TcpListener::bind(&terrain_addr).await {
@@ -784,6 +822,13 @@ async fn main() -> ExitCode {
     drain(&mut connections, "Connection").await;
 
     game_state.persist_shutdown_snapshot(&auth_service).await;
+    game_state
+        .tick_combat_audit(
+            args.state_dir.clone(),
+            args.combat_audit_retention_days,
+            true,
+        )
+        .await;
 
     drain(&mut api_task, "Terrain API").await;
 
@@ -820,6 +865,17 @@ mod tests {
             "npcs live outside --state-dir and need their own flag"
         );
         assert_eq!(args.terrain_dir, "./data/terrain");
+    }
+
+    #[test]
+    fn combat_audit_retention_must_be_positive() {
+        let args = Args::try_parse_from(["onlinerpg-server", "--combat-audit-retention-days", "7"])
+            .unwrap();
+        assert_eq!(args.combat_audit_retention_days, 7);
+        assert!(
+            Args::try_parse_from(["onlinerpg-server", "--combat-audit-retention-days", "0",])
+                .is_err()
+        );
     }
 
     /// Every state path must follow --state-dir. Missing one would leave that
