@@ -185,9 +185,9 @@
 
   let scrollFrame: number | undefined
 
-  // Reading scrollHeight forces a layout flush, so defer it to the next frame
-  // and coalesce bursts: a run of combat messages costs one flush, not one each.
+  // Coalesce scrolling into one layout read per frame.
   $effect(() => {
+    if (collapsed) return
     const len =
       activeTab === 'all'
         ? chatMessages.length
@@ -197,7 +197,9 @@
     if (!chatContainer || !len || scrollFrame !== undefined) return
     scrollFrame = requestAnimationFrame(() => {
       scrollFrame = undefined
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight
+      if (!collapsed && chatContainer) {
+        chatContainer.scrollTop = chatContainer.scrollHeight
+      }
     })
   })
 
@@ -393,21 +395,28 @@
   onmouseleave={() => setHovering(false)}
   use:draggablePanel={'chat'}
 >
-  <div class="tabs" class:collapsed data-drag-handle>
+  <div class="tabs" data-drag-handle>
     <span class="chat-title">Chat</span>
     {#if collapsed}
       {#if collapsedUnread > 0}
         <span class="collapsed-unread">{collapsedUnread} new</span>
       {/if}
-      <button
-        class="panel-toggle"
-        aria-label="Expand chat"
-        aria-expanded="false"
-        onclick={() => expandChat()}
-      >
-        ▴
-      </button>
     {:else}
+      {#if isTranslatorApiSupported() && activeTab !== 'combat'}
+        <select
+          class="translate-lang-select"
+          value={$translationEnabled
+            ? $translationTargetLanguage
+            : TRANSLATE_OFF}
+          onchange={handleTranslateLangChange}
+          title="Translate chat"
+        >
+          <option value={TRANSLATE_OFF}>Translate to…</option>
+          {#each TRANSLATION_LANGUAGES as lang (lang.code)}
+            <option value={lang.code}>{lang.label}</option>
+          {/each}
+        </select>
+      {/if}
       <button
         class="tab"
         class:active={activeTab === 'all'}
@@ -435,31 +444,31 @@
       >
         Combat
       </button>
-      <button
-        class="panel-toggle"
-        aria-label="Minimize chat"
-        aria-expanded="true"
-        onclick={collapseChat}
-      >
-        ▾
-      </button>
     {/if}
+    <button
+      class="panel-toggle"
+      aria-label={collapsed ? 'Expand chat' : 'Minimize chat'}
+      aria-expanded={!collapsed}
+      onclick={() => (collapsed ? expandChat() : collapseChat())}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="16"
+        height="16"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.75"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d={collapsed ? 'm10 8 4 4-4 4' : 'm8 10 4 4 4-4'} />
+      </svg>
+    </button>
   </div>
 
-  <div class="chat-body" class:collapsed-hidden={collapsed}>
-    {#if isTranslatorApiSupported() && activeTab !== 'combat'}
-      <select
-        class="translate-lang-select"
-        value={$translationEnabled ? $translationTargetLanguage : TRANSLATE_OFF}
-        onchange={handleTranslateLangChange}
-        title="Translate chat"
-      >
-        <option value={TRANSLATE_OFF}>Default (Off)</option>
-        {#each TRANSLATION_LANGUAGES as lang (lang.code)}
-          <option value={lang.code}>{lang.label}</option>
-        {/each}
-      </select>
-    {/if}
+  <div class="chat-body">
     {#snippet chatRow(entry: (typeof chatMessages)[number])}
       <div
         class="message"
@@ -516,11 +525,7 @@
     </div>
   </div>
 
-  <div
-    class="chat-input"
-    class:disconnected={!isConnected}
-    class:collapsed-hidden={collapsed}
-  >
+  <div class="chat-input" class:disconnected={!isConnected}>
     <div class="channel-wrap">
       {#if channelMenuOpen}
         <div class="channel-menu" role="menu">
@@ -646,8 +651,8 @@
     box-shadow: inset 0 -2px #742a2a;
   }
 
-  .chat-body.collapsed-hidden,
-  .chat-input.collapsed-hidden {
+  .chat-panel.collapsed .chat-body,
+  .chat-panel.collapsed .chat-input {
     display: none;
   }
 
@@ -664,7 +669,7 @@
     transition: opacity 700ms ease;
   }
 
-  .tabs.collapsed {
+  .chat-panel.collapsed .tabs {
     height: 100%;
     border-bottom: none;
     border-radius: 8px;
@@ -729,17 +734,15 @@
 
   .panel-toggle {
     align-self: stretch;
+    display: grid;
+    place-items: center;
     min-width: 34px;
-    padding: 0 10px;
+    padding: 0 8px;
     border: none;
-    border-left: 1px solid rgba(74, 85, 104, 0.75);
-    background: rgba(45, 55, 72, 0.65);
+    background: transparent;
     color: #a0aec0;
-    font-size: 11px;
     cursor: pointer;
-    transition:
-      color 0.15s,
-      background 0.15s;
+    transition: color 0.15s;
   }
 
   .panel-toggle:focus {
@@ -747,12 +750,7 @@
   }
 
   .panel-toggle:hover {
-    background: rgba(66, 153, 225, 0.2);
-    color: #ffffff;
-  }
-
-  .tabs.collapsed .panel-toggle {
-    border-radius: 0 7px 7px 0;
+    color: #e2e8f0;
   }
 
   /* Party blue, matching the channel it counts. */
@@ -1029,18 +1027,55 @@
   }
 
   .translate-lang-select {
-    position: absolute;
-    top: 4px;
-    right: 6px;
-    z-index: 1;
-    padding: 2px 6px;
+    appearance: none;
+    color-scheme: dark;
+    align-self: center;
+    min-width: 0;
+    margin-right: 6px;
+    padding: 2px 22px 2px 6px;
     border: none;
     border-radius: 4px;
     background: rgba(45, 55, 72, 0.9);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 6 6 6-6 6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 12px;
     color: #e2e8f0;
     font-size: 11px;
     max-width: 110px;
     cursor: pointer;
+  }
+
+  .translate-lang-select:open {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a0aec0' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  }
+
+  .translate-lang-select option {
+    background: #181818;
+    color: #e2e8f0;
+  }
+
+  @supports (appearance: base-select) {
+    .translate-lang-select,
+    .translate-lang-select::picker(select) {
+      appearance: base-select;
+    }
+
+    .translate-lang-select::picker-icon {
+      display: none;
+    }
+
+    .translate-lang-select::picker(select) {
+      border: 1px solid #4a5568;
+      border-radius: 8px;
+      background: #181818;
+      overflow: hidden auto;
+    }
+
+    .translate-lang-select option:hover,
+    .translate-lang-select option:focus {
+      background: #2d3748;
+    }
   }
 
   .send-btn {

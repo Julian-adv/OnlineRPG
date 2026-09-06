@@ -30,9 +30,9 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
   }
 
   function rightReserve(rect: DOMRect) {
-    const firstButton = dragHandle.querySelector('button')
-    return firstButton
-      ? rect.right - firstButton.getBoundingClientRect().left
+    const firstControl = dragHandle.querySelector('button, select')
+    return firstControl
+      ? rect.right - firstControl.getBoundingClientRect().left
       : 0
   }
 
@@ -56,7 +56,7 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
 
   function onPointerDown(e: PointerEvent) {
     if (e.button !== 0 || endDrag) return
-    if ((e.target as HTMLElement).closest('button')) return
+    if ((e.target as HTMLElement).closest('button, select')) return
 
     raisePanel(id)
     const rect = node.getBoundingClientRect()
@@ -126,12 +126,15 @@ export function draggablePanel(node: HTMLElement, id: PanelId) {
 
   handle.addEventListener('pointerdown', onPointerDown)
   window.addEventListener('resize', apply)
+  const resizeObserver = new ResizeObserver(apply)
+  resizeObserver.observe(node)
 
   return {
     destroy() {
       endDrag?.()
       unsubOrder()
       unsubPos()
+      resizeObserver.disconnect()
       handle.removeEventListener('pointerdown', onPointerDown)
       window.removeEventListener('resize', apply)
     },

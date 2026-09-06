@@ -7,6 +7,9 @@
 - https://icon-sets.iconify.design/fa6-solid/handshake-simple/ — social corner button in GameHud.svelte
 - https://icon-sets.iconify.design/fa6-solid/face-smile/ — Emotes entry in the social flyout, GameHud.svelte
 - GitHub mark (octicon mark-github, MIT) — inline SVG in LoginScreen.svelte
+- **[미사용]** Chat expand/collapse filled icons — Font Awesome Free 6.7.2 by Fonticons, Inc., [circle-chevron-right](https://github.com/FortAwesome/Font-Awesome/blob/6.x/svgs/solid/circle-chevron-right.svg) and [circle-chevron-down](https://github.com/FortAwesome/Font-Awesome/blob/6.x/svgs/solid/circle-chevron-down.svg); [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), free tier, added and replaced 2026-09-06 with outline icons.
+- Chat expand/collapse outline icons — original inline SVG circles and chevrons authored with OpenAI Codex in `ChatPanel.svelte`; workspace-provided tier (exact tier not exposed), 2026-09-06; project-owned, no external source. Transparent fill with strokes matching the surrounding text colors, displayed at 16px.
+- Chat translation dropdown chevrons — original SVG chevrons authored with OpenAI Codex as CSS backgrounds in `ChatPanel.svelte`; workspace-provided tier (exact tier not exposed), 2026-09-06; project-owned, no external source. Right when closed, down when open, displayed at 12px.
 
 ## World map
 
