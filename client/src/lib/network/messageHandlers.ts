@@ -1016,17 +1016,16 @@ export function handleServerMessage(
     }
 
     case 'PlayerAttackRejected': {
-      // The server no longer has this monster: drop our ghost copy so nothing
-      // (auto-attack, re-click, local AI) can swing at it again.
       if (data.reason === 'invalid_target') {
         if (combatController.targetMonsterId === data.monster_id) {
           combatController.cancelCombat()
         }
-        monsterManager.remove(data.monster_id)
+        const monster = monsterManager.monsters.get(data.monster_id)
+        // Corpse rejections must not cut short impact or death animations.
+        if (monster && monster.state !== 'dead' && !monster.isDeadPending) {
+          monsterManager.remove(data.monster_id)
+        }
       }
-      // An empty quiver does not fix itself between swings, so the auto-attack
-      // loop would just refuse once a second forever. Stop, as a dead target
-      // does — the target itself is still there, so it stays on screen.
       if (data.reason === 'out_of_ammo') {
         combatController.cancelCombat()
       }
