@@ -86,7 +86,7 @@
         disabled={availableLayers !== undefined && !availableLayers.includes(i)}
         onclick={() => selectLayer(i)}
         title={availableLayers !== undefined && !availableLayers.includes(i)
-          ? `${label} · Learn its sample book from Aldwin`
+          ? `${label} · Learn its sample book from Rowan`
           : label}
       >
         {#if thumbnails[cfg.texture]}

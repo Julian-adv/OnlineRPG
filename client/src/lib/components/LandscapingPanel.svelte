@@ -77,7 +77,7 @@
                   : 'Choose the start of your path'
                 : 'Drag to paint inside your estate'))}</span
         >
-        <small>Painting is free · Learn more materials from Aldwin</small>
+        <small>Painting is free · Learn more materials from Rowan</small>
       </div>
     {/if}
     <small class="footer">Your estate only · Esc to finish</small>

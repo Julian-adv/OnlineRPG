@@ -23,17 +23,7 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
     game_state.open_shop(&buyer, &steward, true).await;
     match buyer_rx.try_recv().unwrap() {
         ServerMessage::ShopState { catalog, .. } => {
-            assert_eq!(catalog.len(), 10);
-            for id in [
-                "land_deed",
-                "wooden_fence",
-                onlinerpg_shared::landscaping::TOOLBOX_ITEM,
-            ] {
-                assert!(catalog.iter().any(|item| item == id));
-            }
-            for (_, id) in onlinerpg_shared::landscaping::PALETTE_ITEMS {
-                assert!(catalog.iter().any(|item| item == id));
-            }
+            assert_eq!(catalog, vec!["land_deed"]);
         }
         other => panic!("Expected Aldwin's shop, got {other:?}"),
     }
@@ -57,6 +47,43 @@ async fn steward_sells_land_deeds_and_burns_the_purchase_gold() {
         1
     );
     assert_eq!(game_state.player_gold.read().await[&buyer], 0);
+}
+
+#[tokio::test]
+async fn estate_architect_sells_landscaping_supplies() {
+    let game = make_test_game_state("estate_architect_shop");
+    let buyer = pid("buyer");
+    let architect = pid("npc_estate_architect");
+    game.add_player(make_npc("npc_estate_architect", "Rowan", 0.0, 0.0))
+        .await;
+    game.add_player(make_player("buyer", 1.0, 0.0)).await;
+    game.register_player_character(&buyer, 1, 0, attrs_with_cha(10), 20_000, None)
+        .await;
+    game.inventories
+        .write()
+        .await
+        .insert(buyer, PlayerInventory::default());
+    let mut rx = game.register_direct_channel(&buyer).await;
+    game.open_shop(&buyer, &architect, true).await;
+    let mut supplies = vec!["wooden_fence", onlinerpg_shared::landscaping::TOOLBOX_ITEM];
+    supplies.extend(onlinerpg_shared::landscaping::PALETTE_ITEMS.map(|(_, id)| id));
+    match rx.try_recv().unwrap() {
+        ServerMessage::ShopState { catalog, .. } => {
+            assert_eq!(catalog.len(), supplies.len());
+            for id in &supplies {
+                assert!(catalog.iter().any(|item| item == id));
+            }
+            assert!(!catalog.iter().any(|item| item == "land_deed"));
+        }
+        other => panic!("Expected Rowan's shop, got {other:?}"),
+    }
+    for id in supplies {
+        game.buy_item(&buyer, &architect, id).await;
+        assert!(game.inventories.read().await[&buyer]
+            .bag
+            .iter()
+            .any(|item| item.item_def_id == id && item.quantity == 1));
+    }
 }
 
 #[tokio::test]

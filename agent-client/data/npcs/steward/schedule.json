@@ -1,11 +1,40 @@
 {
   "schedule": [
     {
-      "at": "0:00",
-      "pos": [-1464.0, 1.1, 4748.5],
-      "rotation": -90.0,
+      "at": "day",
+      "pos": [-1450.55, 1.25, 4743.6],
+      "rotation": 270.0,
       "floor_level": 0,
-      "label": "land registrar's post on the town square"
+      "label": "seated at the land registrar's desk on the ground floor",
+      "action": "chair",
+      "object_id": 61
+    },
+    {
+      "at": "dinner",
+      "pos": [-1444.25, 1.3, 4751.65],
+      "rotation": 270.0,
+      "floor_level": 0,
+      "label": "eating dinner on the inn's ground floor",
+      "action": "chair",
+      "object_id": 44
+    },
+    {
+      "at": "night",
+      "pos": [-1452.4, 4.4, 4745.25],
+      "rotation": 270.0,
+      "floor_level": 1,
+      "label": "sleeping in the land registrar's bedroom on the 2nd floor",
+      "action": "bed",
+      "object_id": 60
+    },
+    {
+      "at": "breakfast",
+      "pos": [-1444.25, 1.3, 4751.65],
+      "rotation": 270.0,
+      "floor_level": 0,
+      "label": "eating breakfast on the inn's ground floor",
+      "action": "chair",
+      "object_id": 44
     }
   ]
 }

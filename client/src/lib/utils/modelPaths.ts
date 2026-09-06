@@ -25,6 +25,8 @@ export const NIGHT_MERCHANT_CHARACTER_MODEL_PATH =
 export const MAID_CHARACTER_MODEL_PATH = '/models/characters/maid.glb'
 export const PINK_MAID_CHARACTER_MODEL_PATH = '/models/characters/pink_maid.glb'
 export const STEWARD_CHARACTER_MODEL_PATH = '/models/characters/steward.glb'
+export const ESTATE_ARCHITECT_CHARACTER_MODEL_PATH =
+  '/models/characters/estate_architect.glb'
 
 export const CHARACTER_ANIMATION_PACK_PATHS = {
   locomotion: '/models/animations/locomotion.glb',
@@ -39,10 +41,7 @@ export function getWeaponModelPath(worldModel: string): string {
   return `/models/${worldModel}`
 }
 
-/** URL for an object-catalog GLB. `model` is the catalog `ObjectDef.model`,
- *  already relative to /models/ (e.g. "objects/bed.glb", "weapons/sword.glb").
- *  All object-model loaders route through here so the base path lives in one
- *  place. */
+/** Object catalog paths are relative to /models/. */
 export function getObjectModelPath(model: string): string {
   return `/models/${model}`
 }
@@ -78,12 +77,12 @@ const CLASS_GENDER_MODELS: Partial<
   maid: { female: MAID_CHARACTER_MODEL_PATH },
 }
 
-/** Dedicated looks for named official NPCs, overriding the class model.
- *  Keyed by NPC character name, same as getMerchantByNpcName. */
+/** Named NPC models override their class model. */
 const NPC_MODEL_OVERRIDES: Record<string, string> = {
   Wick: NIGHT_MERCHANT_CHARACTER_MODEL_PATH,
   Cocoly: PINK_MAID_CHARACTER_MODEL_PATH,
   Aldwin: STEWARD_CHARACTER_MODEL_PATH,
+  Rowan: ESTATE_ARCHITECT_CHARACTER_MODEL_PATH,
 }
 
 export function getNpcModelPath(npcName: string): string | undefined {

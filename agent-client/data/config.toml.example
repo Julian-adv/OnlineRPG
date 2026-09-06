@@ -192,9 +192,16 @@ gender = "female"
 llm = "codex"
 serve_tables = true
 
-# Land registrar stays at the town square.
+# Land registrar works at his desk by day and sleeps upstairs at night.
 [[npcs]]
 id = "steward"
 account = "npc_steward"
+gender = "male"
+llm = "codex"
+
+# Estate architect sells fences and landscaping supplies on the town square.
+[[npcs]]
+id = "estate_architect"
+account = "npc_estate_architect"
 gender = "male"
 llm = "codex"

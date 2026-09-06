@@ -665,7 +665,14 @@ always_sprint = true
     #[test]
     fn registry_npcs_resolve_to_prompt_files_that_exist() {
         for id in [
-            "karl", "rica", "signe", "wick", "miriel", "cocoly", "steward",
+            "karl",
+            "rica",
+            "signe",
+            "wick",
+            "miriel",
+            "cocoly",
+            "steward",
+            "estate_architect",
         ] {
             let config = parse(&format!(
                 "server = \"ws://127.0.0.1:10006\"\n\n[[npcs]]\nid = \"{id}\"\n"

@@ -1,0 +1,11 @@
+{
+  "schedule": [
+    {
+      "at": "0:00",
+      "pos": [-1464.0, 1.1, 4745.5],
+      "rotation": -90.0,
+      "floor_level": 0,
+      "label": "estate architect's post on the town square"
+    }
+  ]
+}
