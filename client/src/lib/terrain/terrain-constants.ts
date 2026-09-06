@@ -52,3 +52,7 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
   return t * t * (3 - 2 * t)
 }
+
+export function brushInnerRadius(radius: number): number {
+  return Math.max(radius * 0.3, Math.min(Math.SQRT1_2, radius * 0.75))
+}

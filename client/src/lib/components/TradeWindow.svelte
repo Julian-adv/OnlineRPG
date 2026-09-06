@@ -669,6 +669,7 @@
   icon={pendingAdd?.def.icon ?? ''}
   max={pendingAdd?.max ?? 1}
   defaultQty={pendingAdd?.defaultQty}
+  stepSize={pendingAdd?.kind === 'buy' ? 10 : 1}
   onConfirm={confirmPendingAdd}
   onCancel={cancelPendingAdd}
 />

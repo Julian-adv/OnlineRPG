@@ -135,7 +135,8 @@ pub const NPC_TOKEN_FILENAME: &str = "npc_token";
 /// v56: Land tax account state, deposits, and withdrawals.
 /// v57: persistent cell-edge fences, placement mode and inventory recovery.
 /// v58: estate landscaping tools, permanent palettes and terrain updates.
-pub const PROTOCOL_VERSION: u32 = 58;
+/// v59: fractional landscaping radii for one-cell brush widths.
+pub const PROTOCOL_VERSION: u32 = 59;
 
 /// Fingerprint of the dungeon layout generator this build compiled, stamped by
 /// `build.rs`. Layouts never travel the wire — both sides generate them from

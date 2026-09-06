@@ -6,6 +6,7 @@ import type { TerrainGrassDataManager } from '../managers/terrainGrassDataManage
 import type { TerrainTreeDataManager } from '../managers/terrainTreeDataManager'
 import type { ZoneManager, ZoneData } from '../managers/zoneManager'
 import type { NpcScheduleData } from '../managers/npcScheduleManager'
+import type { ShopSignStyleId } from '../utils/shop-sign'
 
 export interface HoveredCell {
   tileX: number
@@ -19,6 +20,7 @@ export interface HoveredCell {
 export const hoveredCell = writable<HoveredCell | null>(null)
 
 // Height brush settings
+// Radius in metres; terrain paint controls display the full width.
 export const brushSize = writable<number>(3)
 export const brushStrength = writable<number>(8)
 export const brushRaiseMode = writable<boolean>(true)
@@ -140,6 +142,7 @@ export interface ObjectDef {
   /** Procedural builder id (e.g. "shopSign"). When set, geometry is generated
    *  in code instead of loaded from a GLB. */
   procedural?: string
+  shopSignStyle?: ShopSignStyleId
   interaction?: string
   interactOffset?: Position
   /** Absolute world Y to spawn new placements at, overriding the terrain-based

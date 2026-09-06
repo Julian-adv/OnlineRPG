@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   NEIGHBOR_OFFSETS_9,
+  TerrainSplatManager,
   paddedOffset,
   writePaddedRange,
 } from './terrainSplatManager'
@@ -35,6 +36,23 @@ function decodeCellAt(padded: Uint8Array, pcx: number, pcz: number) {
   const cx = padded[off + 2]
   return [cx, cz] as const
 }
+
+describe('splat texture coordinates', () => {
+  it('keeps rows in +Z order for shader grid-corner sampling', async () => {
+    const manager = new TerrainSplatManager()
+    manager.setSplatmap(0, 0, tagged64())
+    const texture = await manager.loadSplatmap(0, 0)
+    try {
+      expect(texture.flipY).toBe(false)
+      const data = texture.image.data as Uint8Array
+      expect(decodeCellAt(data, 33, 1)).toEqual([32, 0])
+      expect(decodeCellAt(data, 33, 33)).toEqual([32, 32])
+      expect(decodeCellAt(data, 33, 64)).toEqual([32, 63])
+    } finally {
+      await manager.destroy()
+    }
+  })
+})
 
 describe('writePaddedRange', () => {
   it('interior offset copies own data at [1..64]×[1..64]', () => {

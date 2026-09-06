@@ -55,7 +55,7 @@ fn road() -> LandscapingStroke {
     LandscapingStroke {
         start: [4.0, 4.0],
         end: Some([10.0, 4.0]),
-        radius: 2,
+        radius: 2.0,
         strength: 10,
         palette: 5,
     }
@@ -69,7 +69,8 @@ async fn paint(
     success: bool,
 ) {
     drain(rx);
-    game.edit_landscape(&pid("Gardener"), stroke, auth).await;
+    game.edit_landscape(&pid("Gardener"), stroke, auth, false)
+        .await;
     assert!(drain(rx).iter().any(|msg| matches!(msg, ServerMessage::LandscapeEditResult { error } if error.is_none() == success)));
 }
 
@@ -195,13 +196,13 @@ async fn landscaping_toolbox_is_reusable_and_palette_consumption_is_atomic_and_c
     claim(&game, &auth).await;
     drain(&mut rx);
     assert!(
-        game.try_use_landscaping_item(&pid("Gardener"), 2, &auth)
+        game.try_use_landscaping_item(&pid("Gardener"), 2, &auth, false)
             .await
     );
     assert!(drain(&mut rx).iter().any(|msg| matches!(msg, ServerMessage::LandscapingMode { palette, has_toolbox: true, .. } if palette == &vec![0, 5])));
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch("CREATE TRIGGER reject_palette BEFORE INSERT ON character_landscaping_palettes BEGIN SELECT RAISE(ABORT, 'test'); END;").unwrap();
-    game.try_use_landscaping_item(&pid("Gardener"), 3, &auth)
+    game.try_use_landscaping_item(&pid("Gardener"), 3, &auth, false)
         .await;
     assert_eq!(auth.landscaping_palette(owner).unwrap(), vec![0, 5]);
     assert_eq!(
@@ -217,7 +218,7 @@ async fn landscaping_toolbox_is_reusable_and_palette_consumption_is_atomic_and_c
     );
     db.execute_batch("DROP TRIGGER reject_palette").unwrap();
     for _ in 0..2 {
-        game.try_use_landscaping_item(&pid("Gardener"), 3, &auth)
+        game.try_use_landscaping_item(&pid("Gardener"), 3, &auth, false)
             .await;
     }
     let reloaded = crate::auth::AuthService::new(path).unwrap();
@@ -256,7 +257,8 @@ async fn landscaping_rejects_visitors_and_items_reserved_in_player_trade() {
     let (_, mut rx) = gardener(&game, &auth, "Gardener").await;
     claim(&game, &auth).await;
     let (_, mut visitor_rx) = gardener(&game, &auth, "Visitor").await;
-    game.edit_landscape(&pid("Visitor"), road(), &auth).await;
+    game.edit_landscape(&pid("Visitor"), road(), &auth, false)
+        .await;
     assert!(drain(&mut visitor_rx)
         .iter()
         .any(|msg| matches!(msg, ServerMessage::LandscapeEditResult { error: Some(_) })));
@@ -264,7 +266,7 @@ async fn landscaping_rejects_visitors_and_items_reserved_in_player_trade() {
     game.respond_player_trade(&pid("Visitor"), &pid("Gardener"), true)
         .await;
     paint(&game, &auth, &mut rx, road(), false).await;
-    game.try_use_landscaping_item(&pid("Gardener"), 3, &auth)
+    game.try_use_landscaping_item(&pid("Gardener"), 3, &auth, false)
         .await;
     assert_eq!(
         game.get_player_inventory(&pid("Gardener"))
@@ -283,6 +285,71 @@ async fn landscaping_rejects_visitors_and_items_reserved_in_player_trade() {
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+async fn landscaping_admin_can_open_toolbox_and_clear_trees_on_unowned_ground() {
+    let game = make_flat_world_game_state("landscaping_admin");
+    let auth = make_test_auth("landscaping_admin");
+    let (_, mut rx) = gardener(&game, &auth, "Gardener").await;
+    let id = pid("Gardener");
+    assert!(auth.owned_land_plots().unwrap().is_empty());
+    game.try_use_landscaping_item(&id, 2, &auth, false).await;
+    assert!(!drain(&mut rx)
+        .iter()
+        .any(|msg| matches!(msg, ServerMessage::LandscapingMode { .. })));
+    game.try_use_landscaping_item(&id, 2, &auth, true).await;
+    assert!(drain(&mut rx).iter().any(|msg| matches!(msg, ServerMessage::LandscapingMode { plots, has_toolbox: true, .. } if plots.is_empty())));
+
+    let mut trees = Vec::new();
+    trees.extend_from_slice(&onlinerpg_shared::tree_format::TREE_V1_MAGIC.to_le_bytes());
+    trees.extend_from_slice(&2u32.to_le_bytes());
+    trees.extend_from_slice(&0u32.to_le_bytes());
+    for (x, z) in [(38.5f32, 36.5f32), (52.5, 52.5)] {
+        for value in [x, z] {
+            trees.extend_from_slice(&((value / 64.0 * 65535.0) as u16).to_le_bytes());
+        }
+        trees.extend_from_slice(&[0, 128]);
+    }
+    game.terrain_io.write_trees(0, 0, &trees).await.unwrap();
+    paint(&game, &auth, &mut rx, road(), false).await;
+    game.edit_landscape(&id, road(), &auth, true).await;
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|msg| matches!(msg, ServerMessage::LandscapeEditResult { error: None })));
+    assert_eq!(game.splat_sampler.dominant_at(6.0, 4.0).await.unwrap(), 5);
+    let filtered = game.terrain_io.read_trees(0, 0).await.unwrap().unwrap();
+    assert_eq!(u32::from_le_bytes(filtered[4..8].try_into().unwrap()), 1);
+    assert_eq!(
+        filtered.len(),
+        trees.len() - onlinerpg_shared::tree_format::TREE_V1_BYTES_PER_INSTANCE
+    );
+    paint(&game, &auth, &mut rx, road(), false).await;
+
+    for (health, floor, palette) in [(0, 0, 5), (100, 1, 5), (100, 0, 1)] {
+        {
+            let mut players = game.players.write().await;
+            let player = players.get_mut(&id).unwrap();
+            player.health = health;
+            player.floor_level = floor;
+        }
+        game.edit_landscape(&id, LandscapingStroke { palette, ..road() }, &auth, true)
+            .await;
+        assert!(drain(&mut rx)
+            .iter()
+            .any(|msg| matches!(msg, ServerMessage::LandscapeEditResult { error: Some(_) })));
+    }
+    game.inventories
+        .write()
+        .await
+        .get_mut(&id)
+        .unwrap()
+        .bag
+        .clear();
+    game.edit_landscape(&id, road(), &auth, true).await;
+    assert!(drain(&mut rx)
+        .iter()
+        .any(|msg| matches!(msg, ServerMessage::LandscapeEditResult { error: Some(_) })));
 }
 
 #[tokio::test]

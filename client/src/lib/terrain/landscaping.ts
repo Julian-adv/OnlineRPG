@@ -1,8 +1,21 @@
-import { smoothstep } from './terrain-constants'
+import {
+  brushInnerRadius,
+  LAND_PLOT_SIZE,
+  smoothstep,
+} from './terrain-constants'
 import type { FencePlot } from './fenceEdges'
-import { shortestWrappedDeltaX, wrapWorldX } from './world-wrap'
+import {
+  shortestWrappedDeltaX,
+  wrapWorldX,
+  WORLD_MIN_X,
+  WORLD_MAX_X,
+} from './world-wrap'
 
 export type LandscapingTool = 'Ground' | 'Road' | 'Fence'
+
+export function snapBrushCoordinate(value: number, radius: number): number {
+  return radius < 1 ? Math.round(value) : value
+}
 
 export interface LandscapingStroke {
   start: [number, number]
@@ -21,7 +34,13 @@ export interface LandscapingTile {
 
 export function ownsEstatePosition(plots: FencePlot[], x: number, z: number) {
   x = wrapWorldX(x)
-  return plots.some((p) => x >= p.x && x < p.x + 32 && z >= p.z && z < p.z + 32)
+  return plots.some(
+    (p) =>
+      x >= p.x &&
+      x < p.x + LAND_PLOT_SIZE &&
+      z >= p.z &&
+      z < p.z + LAND_PLOT_SIZE
+  )
 }
 
 export function ownsEstateSample(plots: FencePlot[], x: number, z: number) {
@@ -32,16 +51,22 @@ export function ownsEstateSample(plots: FencePlot[], x: number, z: number) {
 
 export function landscapingSamples(
   stroke: LandscapingStroke,
-  plots: FencePlot[]
+  plots: FencePlot[] | null
 ) {
-  const [x1, z1] = stroke.start
-  const end = stroke.end ?? stroke.start
+  const [x1, z1] = stroke.start.map((v) =>
+    snapBrushCoordinate(v, stroke.radius)
+  )
+  const end = (stroke.end ?? stroke.start).map((v) =>
+    snapBrushCoordinate(v, stroke.radius)
+  )
   const dx = shortestWrappedDeltaX(x1, end[0])
   const dz = end[1] - z1
   if (Math.hypot(dx, dz) > 362.1) return []
   const lengthSq = dx * dx + dz * dz
   const outer = stroke.radius + 1.5
-  const samples: { x: number; z: number; weight: number }[] = []
+  const inner = brushInnerRadius(stroke.radius)
+  const samples: { x: number; z: number; weight: number; fringe: boolean }[] =
+    []
   for (
     let z = Math.floor(Math.min(z1, end[1]) - outer);
     z <= Math.floor(Math.max(z1, end[1]) + outer);
@@ -57,11 +82,16 @@ export function landscapingSamples(
           ? Math.max(0, Math.min(1, ((x - x1) * dx + (z - z1) * dz) / lengthSq))
           : 0
       const distance = Math.hypot(x - (x1 + t * dx), z - (z1 + t * dz))
-      if (distance > outer || !ownsEstateSample(plots, x, z)) continue
-      const weight = stroke.end
-        ? 1 - smoothstep(0, stroke.radius * 0.7, distance - stroke.radius * 0.3)
-        : Math.exp((-distance * distance) / (2 * (stroke.radius / 2.5) ** 2))
-      samples.push({ x, z, weight: distance > stroke.radius ? 0.05 : weight })
+      if (
+        distance > outer ||
+        z < WORLD_MIN_X ||
+        z >= WORLD_MAX_X ||
+        (plots !== null && !ownsEstateSample(plots, x, z))
+      )
+        continue
+      const weight = 1 - smoothstep(inner, stroke.radius, distance)
+      const fringe = distance > stroke.radius
+      samples.push({ x, z, weight: fringe ? 0.05 : weight, fringe })
     }
   }
   return samples

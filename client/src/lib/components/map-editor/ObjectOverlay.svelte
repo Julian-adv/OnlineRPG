@@ -37,7 +37,11 @@
     type FireParticles,
   } from '../../effects/fire-particles'
   import { getObjectModelPath } from '../../utils/modelPaths'
-  import { buildShopSignBoard, buildShopSignText } from '../../utils/shop-sign'
+  import {
+    buildShopSignBoard,
+    buildShopSignText,
+    getShopSignStyle,
+  } from '../../utils/shop-sign'
   import type { Unsubscriber } from 'svelte/store'
   import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 
@@ -133,27 +137,22 @@
   >()
   const loadingModels = new SvelteSet<string>()
 
-  /** Build a procedural object template (text-less; text is added per instance
-   *  in rebuild). Returns null for unknown builder ids. */
-  function buildProceduralModel(kind: string): THREE.Group | null {
-    if (kind === 'shopSign') return buildShopSignBoard()
+  function buildProceduralModel(def: ObjectDef): THREE.Group | null {
+    if (def.procedural === 'shopSign') {
+      return buildShopSignBoard(getShopSignStyle(def.shopSignStyle).board)
+    }
     return null
   }
 
-  /** Cache of baked sign-text meshes keyed by `type\0text`. buildShopSignText
-   *  allocates a CanvasTexture + node material + geometry that the disposer must
-   *  skip (WebGPU sampler crash on dispose), so building one per rebuild would
-   *  leak GPU memory on every editor interaction (dragging the Rot slider fires
-   *  rebuild() dozens of times/sec). Build once per unique text and hand out
-   *  clones — a Mesh clone shares geometry/material/texture, so no new GPU
-   *  resources are allocated. */
+  // Share GPU resources across rebuilds; disposing sign text breaks WebGPU samplers.
   const signTextCache = new SvelteMap<string, THREE.Mesh>()
 
   function getSignText(type: string, text: string): THREE.Object3D {
     const key = `${type}\u0000${text}`
     let base = signTextCache.get(key)
     if (!base) {
-      base = buildShopSignText(text)
+      const style = getShopSignStyle(catalogById.get(type)?.shopSignStyle)
+      base = buildShopSignText(text, style.board, style.text)
       signTextCache.set(key, base)
     }
     // Clone shares the cached geometry/material/texture; a Mesh can only have
@@ -172,15 +171,9 @@
     try {
       let model: THREE.Group | null
       if (def.procedural) {
-        // Procedural objects (e.g. shop signs) build their geometry in code and
-        // register it into the same template cache the GLB path uses, so
-        // cloning, preview, selection box and per-instance text all work
-        // unchanged. Defer past any in-progress rebuild() before mutating the
-        // cache and re-running it, exactly as the GLB path's `await loadGLB`
-        // does — otherwise a synchronous rebuild() call from inside rebuild()'s
-        // own loop would re-enter and duplicate placements.
+        // Defer to avoid re-entering rebuild() and duplicating placements.
         await Promise.resolve()
-        model = buildProceduralModel(def.procedural)
+        model = buildProceduralModel(def)
       } else {
         if (!def.model) return null
         const gltf = await loadGLB(getObjectModelPath(def.model))

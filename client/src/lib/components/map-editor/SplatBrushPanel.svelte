@@ -12,11 +12,13 @@
     title?: string
     hint?: string
     availableLayers?: number[]
+    sizeLabel?: string
   }
   let {
     title = 'Splat Brush',
     hint = '(click to select slot)',
     availableLayers,
+    sizeLabel = 'Size',
   }: Props = $props()
 
   const THUMB_SIZE = 64
@@ -59,7 +61,7 @@
 
   function onSizeChange(event: Event) {
     const value = parseInt((event.target as HTMLInputElement).value)
-    brushSize.set(value)
+    brushSize.set(value / 2)
   }
 
   function onStrengthChange(event: Event) {
@@ -100,17 +102,18 @@
   </div>
 
   <div class="control-row">
-    <label for="splat-brush-size">Size</label>
+    <label for="splat-brush-size">{sizeLabel}</label>
     <input
       id="splat-brush-size"
       type="range"
       min="1"
-      max="10"
+      max="20"
       step="1"
-      value={size}
+      value={size * 2}
+      title="Full width in cells (1 cell = 1 metre)"
       oninput={onSizeChange}
     />
-    <span class="value">{size}</span>
+    <span class="value">{size * 2}</span>
   </div>
 
   <div class="control-row">

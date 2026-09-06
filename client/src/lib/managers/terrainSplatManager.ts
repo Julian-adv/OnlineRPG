@@ -2,7 +2,11 @@ import * as THREE from 'three'
 import { apiFetch, getTerrainApiUrl } from '../utils/networkUtils'
 import { TERRAIN_TILE_SIZE } from '../components/game-scene/terrain-utils'
 import { worldToTileCoord } from './terrain-height-types'
-import { smoothstep, SPLAT_PADDED_DIM } from '../terrain/terrain-constants'
+import {
+  brushInnerRadius,
+  smoothstep,
+  SPLAT_PADDED_DIM,
+} from '../terrain/terrain-constants'
 import { wrapTileX } from '../terrain/world-wrap'
 import {
   BYTES_PER_CELL,
@@ -257,9 +261,8 @@ export class TerrainSplatManager {
     texture.minFilter = THREE.NearestFilter
     texture.magFilter = THREE.NearestFilter
     texture.generateMipmaps = false
-    // PlaneGeometry UV v=0 is maxZ, v=1 is minZ (v decreases with Z).
-    // flipY=true so data row 0 maps to v=1 (minZ), matching cz=0 = minZ.
-    texture.flipY = true
+    // The shader converts plane UVs to +Z before addressing grid corners.
+    texture.flipY = false
     texture.needsUpdate = true
     return texture
   }
@@ -425,7 +428,7 @@ export class TerrainSplatManager {
     if (lenSq < 1e-6) return []
 
     // Flat-core falloff: fully saturate within innerR, smoothstep to 0 at radius.
-    const innerR = radius * 0.3
+    const innerR = brushInnerRadius(radius)
     const outerR = radius + FRINGE_PAD
 
     const minWorldX = Math.min(x1, x2) - outerR

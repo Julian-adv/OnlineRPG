@@ -296,6 +296,7 @@ impl GameState {
             player_id,
             auth,
             onlinerpg_shared::landscaping::LandscapingTool::Fence,
+            false,
         )
         .await;
     }

@@ -8,12 +8,21 @@
     max: number
     /** Pre-selected amount; defaults to `max`. */
     defaultQty?: number
+    stepSize?: number
     onConfirm: (qty: number) => void
     onCancel: () => void
   }
 
-  let { visible, itemName, icon, max, defaultQty, onConfirm, onCancel }: Props =
-    $props()
+  let {
+    visible,
+    itemName,
+    icon,
+    max,
+    defaultQty,
+    stepSize = 1,
+    onConfirm,
+    onCancel,
+  }: Props = $props()
 
   let qty = $state(1)
   let inputEl = $state<HTMLInputElement | null>(null)
@@ -38,10 +47,20 @@
     qty = clamp(value)
   }
 
-  // +/- wraps between 1 and max; typed values clamp.
   function step(delta: number) {
+    if (stepSize > 1) {
+      qty = clamp(qty + delta)
+      return
+    }
     const zeroBased = qty - 1 + delta
     qty = (((zeroBased % max) + max) % max) + 1
+  }
+
+  function onWheel(event: WheelEvent) {
+    if (stepSize === 1 || event.ctrlKey || event.deltaY === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    step(event.deltaY < 0 ? stepSize : -stepSize)
   }
 
   function confirm() {
@@ -67,18 +86,27 @@
         <img class="item-icon" src="/items/{icon}" alt="" draggable="false" />
         <span class="item-name">{itemName}</span>
       </div>
-      <div class="qty-row">
-        <button class="step-btn" onclick={() => step(-1)}>−</button>
+      <div class="qty-row" onwheel={onWheel}>
+        <button
+          class="step-btn"
+          aria-label="Decrease quantity by {stepSize}"
+          onclick={() => step(-stepSize)}>−</button
+        >
         <input
           bind:this={inputEl}
           class="qty-input"
           type="number"
           min="1"
+          step="1"
           {max}
           value={qty}
           oninput={onInput}
         />
-        <button class="step-btn" onclick={() => step(1)}>+</button>
+        <button
+          class="step-btn"
+          aria-label="Increase quantity by {stepSize}"
+          onclick={() => step(stepSize)}>+</button
+        >
       </div>
       <div class="max-note">of {max}</div>
       <div class="popup-actions">
@@ -144,8 +172,12 @@
   }
 
   .step-btn {
+    display: grid;
+    place-items: center;
     width: 32px;
     height: 32px;
+    padding: 0;
+    line-height: 1;
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 4px;

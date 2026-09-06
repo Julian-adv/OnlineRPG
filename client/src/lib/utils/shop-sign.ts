@@ -1,35 +1,16 @@
 import * as THREE from 'three'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
-import { getHousingMaterial } from './housing-textures'
+import { getHousingMaterial, HOUSING_TEXTURES } from './housing-textures'
 import { WOOD_TEXTURE_IDX } from './house-geo-utils'
 
 /** Metres of board covered by one repeat of the wood texture (tunable). */
 const BOARD_TEX_TILE = 0.6
 
-/**
- * Procedural arched shop sign — a wooden board shaped like a rainbow arch (∩)
- * with the shop name running along the arch (e.g. "Rica's General Store").
- *
- * Generated in code rather than authored as a GLB so the shop name stays a
- * plain data string (editable in the map editor) instead of a baked-per-name
- * asset, and so the dimensions/curvature are tunable parameters. The board
- * template is shared and cloned by the object overlay; the text mesh is built
- * per placement from that placement's `text` field.
- *
- * Geometry: an annular sector (ring segment) whose flat face lies in the XY
- * plane and faces +Z (the readable front). The board arcs *upward* — the centre
- * is higher than the ends — and the `thickness` is the front-to-back depth.
- *
- * The text is drawn as ordinary straight text on a canvas and mapped onto a
- * matching annular ribbon in front of the face; the annular UV mapping is what
- * bends the letters into the arch (each glyph tilts to the local tangent), so
- * the text curvature always matches the board.
- *
- * Local space: origin at the bounding-box centre. Placement rotation (editor
- * `R`) turns the +Z face toward the street.
- */
+// Shared board templates with editable text on the +Z face.
 
 export interface ShopSignParams {
+  shape: 'arch' | 'plaque' | 'oval'
+  texture: string
   /** Horizontal chord of the arch centreline (m). */
   width: number
   /** Radial band width — how "tall" the arch strip itself is (m). */
@@ -44,6 +25,8 @@ export interface ShopSignParams {
 }
 
 export const SHOP_SIGN_DEFAULTS: ShopSignParams = {
+  shape: 'arch',
+  texture: 'housing/wood_shutter_1k',
   width: 3,
   height: 0.5,
   thickness: 0.1,
@@ -70,6 +53,51 @@ export const SHOP_SIGN_TEXT_DEFAULTS: ShopSignTextParams = {
   outlineWidth: 12,
 }
 
+interface ShopSignStyle {
+  board: Partial<ShopSignParams>
+  text: Partial<ShopSignTextParams>
+}
+
+export const SHOP_SIGN_STYLES = {
+  classic: { board: {}, text: {} },
+  plank: {
+    board: {
+      shape: 'plaque',
+      texture: 'housing/wood_planks_1k',
+      height: 0.72,
+      thickness: 0.12,
+    },
+    text: { widthFrac: 0.84, fillColor: '#fff2d2' },
+  },
+  oval: {
+    board: {
+      shape: 'oval',
+      texture: 'housing/dark_wooden_planks_1k',
+      width: 2.8,
+      height: 1,
+      thickness: 0.14,
+    },
+    text: { widthFrac: 0.8, heightFrac: 0.5, fillColor: '#f5d48b' },
+  },
+  weathered: {
+    board: {
+      texture: 'housing/weathered_planks_1k',
+      height: 0.58,
+      rise: 0.16,
+      thickness: 0.12,
+    },
+    text: { widthFrac: 0.92, fillColor: '#fff5df', outlineColor: '#38352e' },
+  },
+} satisfies Record<string, ShopSignStyle>
+
+export type ShopSignStyleId = keyof typeof SHOP_SIGN_STYLES
+
+export function getShopSignStyle(
+  style: ShopSignStyleId = 'classic'
+): ShopSignStyle {
+  return SHOP_SIGN_STYLES[style] ?? SHOP_SIGN_STYLES.classic
+}
+
 interface Arch {
   /** Inner / centreline / outer radii. */
   ri: number
@@ -88,21 +116,15 @@ function computeArch(p: ShopSignParams): Arch {
   const phi = Math.asin(Math.min(1, p.width / 2 / rc)) // half angular span
   const ro = rc + p.height / 2
   const ri = rc - p.height / 2
-  // Curvature centre is at the local origin before recentring: the highest
-  // point is the outer edge at the top, the lowest are the inner edge at the
-  // ends. Shift so that midpoint sits on y=0.
   const maxY = ro
   const minY = ri * Math.cos(phi)
   const yOff = -(maxY + minY) / 2
   return { ri, rc, ro, phi, yOff }
 }
 
-/**
- * Extruded annular-sector geometry with explicit per-face outward normals.
- * Rendered DoubleSide so triangle winding never affects visibility, and normals
- * are supplied directly so lighting is correct regardless of winding.
- */
+// Extruded arch with outward-facing normals and winding.
 function buildBoardGeometry(p: ShopSignParams): THREE.BufferGeometry {
+  if (p.shape !== 'arch') return buildPlaqueGeometry(p)
   const { ri, rc, ro, phi, yOff } = computeArch(p)
   const hz = p.thickness / 2
 
@@ -125,11 +147,7 @@ function buildBoardGeometry(p: ShopSignParams): THREE.BufferGeometry {
     uvC: number[],
     uvD: number[]
   ) => {
-    // Orient the winding so the triangle's geometric front matches the outward
-    // normal n. MeshStandardMaterial flips the shading normal by gl_FrontFacing,
-    // so a face wound backwards relative to n renders as if lit from behind
-    // (dark under a light on its front). Auto-correcting keeps every face lit
-    // from its outward side regardless of how the corners were listed.
+    // Match winding to the outward normal for correct lighting.
     const abx = b[0] - a[0]
     const aby = b[1] - a[1]
     const abz = b[2] - a[2]
@@ -275,20 +293,56 @@ function buildBoardGeometry(p: ShopSignParams): THREE.BufferGeometry {
   return geo
 }
 
+function buildPlaqueGeometry(p: ShopSignParams): THREE.BufferGeometry {
+  const shape = new THREE.Shape()
+  const w = p.width / 2
+  const h = p.height / 2
+  if (p.shape === 'oval') {
+    shape.absellipse(0, 0, w, h, 0, Math.PI * 2, false, 0)
+  } else {
+    const cut = p.height * 0.2
+    shape.moveTo(-w + cut, -h)
+    shape.lineTo(w - cut, -h)
+    shape.lineTo(w, -h + cut)
+    shape.lineTo(w, h - cut)
+    shape.lineTo(w - cut, h)
+    shape.lineTo(-w + cut, h)
+    shape.lineTo(-w, h - cut)
+    shape.lineTo(-w, -h + cut)
+    shape.closePath()
+  }
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth: p.thickness,
+    bevelEnabled: false,
+    steps: 1,
+    curveSegments: p.segments,
+  })
+  geo.translate(0, 0, -p.thickness / 2)
+  const uv = geo.getAttribute('uv')
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, uv.getX(i) / BOARD_TEX_TILE, uv.getY(i) / BOARD_TEX_TILE)
+  }
+  geo.computeBoundingBox()
+  geo.computeBoundingSphere()
+  return geo
+}
+
 /** Build the shared, text-less board template (a group with one mesh). */
 export function buildShopSignBoard(
   params: Partial<ShopSignParams> = {}
 ): THREE.Group {
   const p = { ...SHOP_SIGN_DEFAULTS, ...params }
   const geo = buildBoardGeometry(p)
-  // Same shared material the house doors use (wood_shutter). It updates in place
-  // once housing textures finish loading, so the sign always matches the doors.
-  const mat = getHousingMaterial(WOOD_TEXTURE_IDX)
+  const textureIndex = HOUSING_TEXTURES.findIndex(
+    (entry) => entry.glb === p.texture
+  )
+  const mat = getHousingMaterial(
+    textureIndex < 0 ? WOOD_TEXTURE_IDX : textureIndex
+  )
   const mesh = new THREE.Mesh(geo, mat)
   mesh.castShadow = true
   mesh.receiveShadow = true
-  // Shared housing material — the object overlay's disposer must skip it, else
-  // disposing a removed sign would break every door using this material.
+  // Shared materials must survive placement removal.
   mesh.userData.isSignBoard = true
   const group = new THREE.Group()
   group.name = 'shop-sign-board'
@@ -312,12 +366,7 @@ function renderNameCanvas(
   canvas.height = chpx
   const ctx = canvas.getContext('2d')!
 
-  // Fit the text tightly into the canvas box: grow it to fill whichever axis
-  // is the binding constraint, leaving only enough margin for the outline.
-  // (The old logic capped by height and merely shrank on overflow, so short
-  // names left large horizontal margins unused.)
-  // Outline extends ~outlineWidth/2 past the glyphs on every side, so reserve
-  // outlineWidth total on each axis.
+  // Fit both axes, reserving space for the outline.
   const pad = tp.outlineWidth
   const maxW = Math.max(1, cw - pad)
   const maxH = Math.max(8, chpx - pad)
@@ -347,16 +396,7 @@ function renderNameCanvas(
   return canvas
 }
 
-/**
- * Build a per-instance curved text mesh: an annular ribbon sitting just in
- * front of the board's arched face. Straight canvas text is bent into the arch
- * purely by the ribbon's UV mapping, so it always tracks the board curvature.
- *
- * NOTE: the returned mesh is flagged `userData.isSignText` so the overlay's
- * material disposer skips it — disposing a MeshBasicNodeMaterial+CanvasTexture
- * pair crashes the WebGPU sampler bindings (see TextLabel.svelte); we let GC
- * reclaim it instead.
- */
+// Cache text meshes: disposing their canvas materials breaks WebGPU samplers.
 export function buildShopSignText(
   text: string,
   boardParams: Partial<ShopSignParams> = {},
@@ -364,7 +404,10 @@ export function buildShopSignText(
 ): THREE.Mesh {
   const bp = { ...SHOP_SIGN_DEFAULTS, ...boardParams }
   const tp = { ...SHOP_SIGN_TEXT_DEFAULTS, ...textParams }
-  const { rc, phi, yOff } = computeArch(bp)
+  const curved = bp.shape === 'arch'
+  const { rc, phi, yOff } = curved
+    ? computeArch(bp)
+    : { rc: 0, phi: 0, yOff: 0 }
 
   const phiT = phi * tp.widthFrac
   const bandH = bp.height * tp.heightFrac
@@ -373,7 +416,7 @@ export function buildShopSignText(
   const z = bp.thickness / 2 + 0.012 // 12mm proud of the wood to avoid z-fight
 
   // --- Canvas texture (straight text; the ribbon supplies the arch) ---
-  const arcLen = rc * 2 * phiT
+  const arcLen = curved ? rc * 2 * phiT : bp.width * tp.widthFrac
   const canvas = renderNameCanvas(text, arcLen, bandH, tp)
   const texture = new THREE.CanvasTexture(canvas)
   texture.minFilter = THREE.LinearFilter
@@ -386,11 +429,7 @@ export function buildShopSignText(
   mat.depthWrite = false
   mat.side = THREE.DoubleSide
 
-  // --- Annular ribbon geometry ---
-  // u runs left→right of the arch (a: -phiT→+phiT; −X is viewer-left when the
-  // +Z face is viewed head-on). v runs inner→outer, i.e. bottom→top of the
-  // letters (outer radius = top of the arch).
-  const N = Math.max(8, Math.round(bp.segments * tp.widthFrac))
+  const N = curved ? Math.max(8, Math.round(bp.segments * tp.widthFrac)) : 1
   const pos: number[] = []
   const uv: number[] = []
   const nor: number[] = []
@@ -400,10 +439,18 @@ export function buildShopSignText(
     const a = -phiT + 2 * phiT * u
     const s = Math.sin(a)
     const c = Math.cos(a)
-    pos.push(rti * s, rti * c + yOff, z)
+    pos.push(
+      curved ? rti * s : (u - 0.5) * arcLen,
+      curved ? rti * c + yOff : -bandH / 2,
+      z
+    )
     uv.push(u, 0)
     nor.push(0, 0, 1)
-    pos.push(rto * s, rto * c + yOff, z)
+    pos.push(
+      curved ? rto * s : (u - 0.5) * arcLen,
+      curved ? rto * c + yOff : bandH / 2,
+      z
+    )
     uv.push(u, 1)
     nor.push(0, 0, 1)
   }

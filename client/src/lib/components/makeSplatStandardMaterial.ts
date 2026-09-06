@@ -186,20 +186,14 @@ export function makeSplatStandardMaterial({
 
   const vertexNode = Fn(() => {
     const localUv = uv()
-    vUvSplat.assign(localUv.mul(uSplatScale))
+    vUvSplat.assign(vec2(localUv.x, localUv.y.oneMinus()).mul(uSplatScale))
     const worldPos4 = modelWorldMatrix.mul(vec4(positionLocal, 1.0))
     vWorldXZ.assign(worldPos4.xz)
     return positionLocal
   })()
 
-  // Splat pixel = cell corner (grid vertex); see `doc/SPLATMAP_V2.md`
-  // §6. Bilerp-of-resolved-corners smooths palette-pair boundaries (e.g.
-  // (SAND,GROUND) ↔ (GROUND,DIRT)) that a nearest-cell approach snapped
-  // at a half-cell seam.
-  //
-  // Texture is SPLAT_PADDED_DIM²; the tile's 64×64 data lives at
-  // interior [1..TILE_DIM]. The +1.5 texel shift lands cell 0 on
-  // interior pixel 1 instead of padding pixel 0.
+  // Resolve grid corners in +X/+Z order, then interpolate their palette weights.
+  // +1.5 addresses texel centers after the one-pixel border.
   const SPLAT_TEXEL = 1.0 / SPLAT_PADDED_DIM
 
   const cellPos = vUvSplat.mul(float(TILE_DIM))

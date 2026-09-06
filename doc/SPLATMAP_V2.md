@@ -142,7 +142,8 @@ pixel3+-------------+-------------+---
 각 코너 픽셀이 독립적으로 `(primary, secondary, blend)` 를 갖는다. 렌더 픽셀은 네 코너 각각을 `mix(atlas[primary], atlas[secondary], blend)` 로 resolve한 뒤 bilerp한다. 가중치를 "팔레트 슬롯별"로 따지지 않고 최종 색만 섞기 때문에 이웃 코너의 팔레트 페어가 달라도 seam이 생기지 않는다.
 
 ```glsl
-vec2 cellPos = vUv * TILE_DIM;              // splat[c]은 셀 c의 TL 코너
+vec2 gridUv = vec2(vUv.x, 1.0 - vUv.y);    // PlaneGeometry UV → +X/+Z
+vec2 cellPos = gridUv * TILE_DIM;
 vec2 baseUv  = (floor(cellPos) + 1.5)
              / SPLAT_PADDED_DIM;           // +1 padding, +0.5 texel center
 vec2 frac    = fract(cellPos);
@@ -163,6 +164,7 @@ vec3 color = c00*w00 + c10*w10 + c01*w01 + c11*w11;
 
 ### 특성
 
+- **좌표 방향**: splat 텍스처는 `flipY = false`로 업로드하고, 셰이더에서 UV의 V축을 뒤집은 뒤 셀 좌표를 계산한다. 데이터 행은 월드 +Z 순서이며 패딩을 포함한 텍스처 좌표를 다시 뒤집지 않는다.
 - **팔레트 페어가 달라도 seam 없음**: 코너마다 resolved color를 bilerp하므로 `(SAND, GROUND)` ↔ `(GROUND, DIRT)` 같은 페어 경계도 한 셀 전체에 걸쳐 선형 전환.
 - **셀 중심 = 네 코너 평균**: 셀 `(c, r)` 의 중심 렌더 픽셀은 `splat[c,r], splat[c+1,r], splat[c,r+1], splat[c+1,r+1]` 네 resolved color의 동일 가중 평균.
 - **데이터 의미**: 베이커가 셀 `(c, r)` 에 써 넣은 값은 해당 셀의 **TL 코너** 값으로 해석된다 (시각적으로 0.5 m 시프트). 셀 크기 1 m 대비 무시 가능.

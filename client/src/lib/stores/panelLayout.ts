@@ -10,6 +10,7 @@ export const PANEL_IDS = [
   'emotes',
   'trade',
   'playerTrade',
+  'landscaping',
 ] as const
 
 export type PanelId = (typeof PANEL_IDS)[number]

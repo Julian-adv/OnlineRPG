@@ -4,7 +4,6 @@
     landscapingPending,
     landscapingError,
     landscapingHint,
-    landscapingRoadStart,
     hasLandscapingToolbox,
     selectLandscapingTool,
   } from '../stores/landscapingStore'
@@ -17,15 +16,29 @@
   } from '../stores/fenceStore'
   import type { LandscapingTool } from '../terrain/landscaping'
   import SplatBrushPanel from './map-editor/SplatBrushPanel.svelte'
+  import { draggablePanel } from '../actions/draggablePanel'
 
   const tabs: LandscapingTool[] = ['Ground', 'Road', 'Fence']
 </script>
 
 {#if $landscapingMode}
-  <div class="landscaping-panel">
-    <div class="panel-header">
+  {@const status =
+    $landscapingMode.tool === 'Fence'
+      ? $fencePending
+        ? 'Saving…'
+        : ($fenceError ?? $fenceTarget?.reason)
+      : $landscapingPending
+        ? 'Saving…'
+        : ($landscapingError ?? $landscapingHint)}
+  <div class="landscaping-panel" use:draggablePanel={'landscaping'}>
+    <div class="panel-header" data-drag-handle>
       <strong>Estate Landscaping</strong>
-      <button onclick={stopFenceMode}>Done</button>
+      <button
+        class="close-btn"
+        aria-label="Close landscaping"
+        title="Close (Esc)"
+        onclick={stopFenceMode}>×</button
+      >
     </div>
     <div class="tabs" role="tablist" aria-label="Landscaping tools">
       {#each tabs as tab (tab)}
@@ -44,19 +57,10 @@
     {#if $landscapingMode.tool === 'Fence'}
       <div class="fence-content">
         <strong>Wooden Fence · {$fenceCount} in bag</strong>
-        <span role="status"
-          >{$fencePending
-            ? 'Saving…'
-            : ($fenceError ??
-              $fenceTarget?.reason ??
-              ($fenceTarget?.removing
-                ? 'Click to recover this fence'
-                : 'Point at a cell edge and click to place'))}</span
-        >
-        <small>Left-click to place or recover · Right-click to move</small>
       </div>
     {:else}
       <SplatBrushPanel
+        sizeLabel={$landscapingMode.tool === 'Road' ? 'Width' : 'Size'}
         title={$landscapingMode.tool === 'Ground'
           ? 'Ground Brush'
           : 'Road Tool'}
@@ -65,22 +69,10 @@
           : '(click two points)'}
         availableLayers={$landscapingMode.palette}
       />
-      <div class="paint-status" role="status">
-        <span
-          >{$landscapingPending
-            ? 'Saving…'
-            : ($landscapingError ??
-              $landscapingHint ??
-              ($landscapingMode.tool === 'Road'
-                ? $landscapingRoadStart
-                  ? 'Choose the end of your path'
-                  : 'Choose the start of your path'
-                : 'Drag to paint inside your estate'))}</span
-        >
-        <small>Painting is free · Learn more materials from Rowan</small>
-      </div>
     {/if}
-    <small class="footer">Your estate only · Esc to finish</small>
+    {#if status}
+      <div class="paint-status" role="status">{status}</div>
+    {/if}
   </div>
 {/if}
 
@@ -93,7 +85,6 @@
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 120px);
     overflow: auto;
-    border: 1px solid #b49860;
     border-radius: 8px;
     background: #211c16ed;
     color: #f3e8d2;
@@ -103,8 +94,10 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 24px;
-    padding: 10px 14px;
+    gap: 12px;
+    padding: 4px 8px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
   }
   button {
     cursor: pointer;
@@ -113,6 +106,23 @@
     border: 1px solid #766247;
     border-radius: 4px;
     padding: 5px 14px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .close-btn {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .close-btn:hover {
+    background: #3a3024;
   }
   button:disabled {
     opacity: 0.4;
@@ -120,24 +130,41 @@
   }
   .tabs {
     display: flex;
-    gap: 5px;
-    padding: 0 12px 8px;
+    gap: 2px;
+    margin: 0 0 4px;
+    padding: 2px;
+    background: rgba(0, 0, 0, 0.7);
   }
-  .tabs .active {
-    background: #745b32;
-    border-color: #c6a56a;
+  .tabs button {
+    flex: 1;
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    color: #888;
+    letter-spacing: 0.5px;
+    transition:
+      background 150ms ease,
+      color 150ms ease;
+  }
+  .tabs button:hover:not(:disabled) {
+    color: #ccc;
+  }
+  .tabs button.active {
+    background: rgba(226, 185, 59, 0.25);
+    color: #e2b93b;
+  }
+  .landscaping-panel :global(.splat-brush-panel) {
+    border: none;
+    border-block: 1px solid rgba(226, 185, 59, 0.3);
+    border-radius: 0;
+    box-shadow: none;
   }
   .fence-content,
   .paint-status {
     display: grid;
     gap: 6px;
     padding: 12px 16px;
-  }
-  small {
-    color: #c7baa4;
-  }
-  .footer {
-    display: block;
-    padding: 0 16px 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
   }
 </style>

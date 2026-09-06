@@ -1754,7 +1754,7 @@ async fn handle_client_message(
         ClientMessage::UseItem { instance_id } => {
             if let Some(id) = &state.player_id {
                 if !game_state
-                    .try_use_landscaping_item(id, instance_id, auth_service)
+                    .try_use_landscaping_item(id, instance_id, auth_service, state.is_admin)
                     .await
                     && !game_state
                         .try_start_fence_mode(id, instance_id, auth_service)
@@ -1803,13 +1803,16 @@ async fn handle_client_message(
                         id,
                         auth_service,
                         onlinerpg_shared::landscaping::LandscapingTool::Ground,
+                        state.is_admin,
                     )
                     .await;
             }
         }
         ClientMessage::EditLandscape { stroke } => {
             if let Some(id) = &state.player_id {
-                game_state.edit_landscape(id, stroke, auth_service).await;
+                game_state
+                    .edit_landscape(id, stroke, auth_service, state.is_admin)
+                    .await;
             }
         }
 

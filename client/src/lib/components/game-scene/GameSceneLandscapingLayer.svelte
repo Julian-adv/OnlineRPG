@@ -21,11 +21,14 @@
   import {
     landscapingSamples,
     ownsEstatePosition,
+    snapBrushCoordinate,
     type LandscapingStroke,
   } from '../../terrain/landscaping'
   import { wrapWorldX, unwrapWorldXNear } from '../../terrain/world-wrap'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
   import type { LocalPlayer } from '../../stores/gameStore'
+  import { isAdminUser } from '../../stores/gameStore'
+  import { LandscapingStrokes } from '../../terrain/landscaping-strokes'
 
   let {
     heightManager,
@@ -55,6 +58,7 @@
   let previewKey = ''
   let currentStroke: LandscapingStroke | null = null
   let canPaint = false
+  const strokes = new LandscapingStrokes()
 
   function updatePreview() {
     const mode = get(landscapingMode)
@@ -86,18 +90,24 @@
       previewKey = ''
       return
     }
-    const point: [number, number] = [wrapWorldX(hit.point.x), hit.point.z]
+    const radius = get(brushSize)
+    const point: [number, number] = [
+      wrapWorldX(snapBrushCoordinate(hit.point.x, radius)),
+      snapBrushCoordinate(hit.point.z, radius),
+    ]
     const start = mode.tool === 'Road' ? get(landscapingRoadStart) : null
     currentStroke = {
       start: start ?? point,
       end: start ? point : null,
-      radius: get(brushSize),
+      radius,
       strength: get(brushStrength),
       palette: get(splatLayer),
     }
+    const isAdmin = get(isAdminUser)
     const reason = !get(hasLandscapingToolbox)
       ? "Carry a Landscaper's Toolbox to paint"
-      : !ownsEstatePosition(mode.plots, player.position.x, player.position.z)
+      : !isAdmin &&
+          !ownsEstatePosition(mode.plots, player.position.x, player.position.z)
         ? 'Stand inside your estate to paint'
         : !mode.palette.includes(currentStroke.palette)
           ? 'Learn this material before painting'
@@ -105,23 +115,30 @@
     const key = JSON.stringify([
       currentStroke,
       mode.plots,
+      isAdmin,
       reason,
       Math.round(player.position.x / 100),
     ])
     if (key === previewKey) return
     previewKey = key
-    const samples = landscapingSamples(currentStroke, mode.plots)
-    canPaint = reason === null && samples.length > 0
+    const samples = landscapingSamples(
+      currentStroke,
+      isAdmin ? null : mode.plots
+    )
+    const paintedSamples = samples.filter(
+      (sample) => !sample.fringe && sample.weight > 0
+    )
+    canPaint = reason === null && paintedSamples.length > 0
     landscapingHint.set(
       reason ??
-        (samples.length === 0
+        (paintedSamples.length === 0
           ? 'Choose editable ground inside your estate'
           : null)
     )
     const positions: number[] = []
     const append = (x: number, z: number) =>
       positions.push(x, heightManager.getHeightAtWorldPosition(x, z) + 0.06, z)
-    for (const sample of samples) {
+    for (const sample of paintedSamples) {
       const x = unwrapWorldXNear(player.position.x, sample.x)
       const z = sample.z
       const half = sample.weight > 0.1 ? 0.46 : 0.25
@@ -140,20 +157,24 @@
     )
     preview.geometry.computeBoundingSphere()
     material.color.set(canPaint ? '#83dba1' : '#ed7265')
-    preview.visible = samples.length > 0
+    preview.visible = paintedSamples.length > 0
   }
 
   function sendStroke() {
-    if (!currentStroke || !canPaint || get(landscapingPending)) return
+    if (get(landscapingPending)) return false
+    const stroke = strokes.take()
+    if (!stroke) return false
     landscapingPending.set(true)
     landscapingError.set(null)
-    networkManager.sendEditLandscape(currentStroke)
+    networkManager.sendEditLandscape(stroke)
+    return true
   }
 
   onMount(() => {
     const canvas = renderer.domElement
     const unsubscribe = landscapingMode.subscribe(() => {
       painting = false
+      strokes.clear()
       previewKey = ''
     })
     const unsubscribeHeight = heightManager.onHeightChanged(() => {
@@ -163,14 +184,21 @@
       cursor = { x: event.clientX, y: event.clientY }
     }
     const leave = () => {
+      strokes.finish()
       cursor = null
       painting = false
       preview.visible = false
     }
-    const up = (event: MouseEvent) => {
-      if (event.button === 0) painting = false
+    const up = (event: PointerEvent) => {
+      if (event.button !== 0 || !painting) return
+      cursor = { x: event.clientX, y: event.clientY }
+      updatePreview()
+      if (currentStroke && canPaint) strokes.move(currentStroke)
+      strokes.finish()
+      painting = false
+      sendStroke()
     }
-    const down = (event: MouseEvent) => {
+    const down = (event: PointerEvent) => {
       const mode = get(landscapingMode)
       if (
         !mode ||
@@ -183,32 +211,37 @@
       event.stopImmediatePropagation()
       cursor = { x: event.clientX, y: event.clientY }
       updatePreview()
-      if (!currentStroke || !canPaint || get(landscapingPending)) return
+      if (!currentStroke || !canPaint) return
       if (mode.tool === 'Road') {
         if (!get(landscapingRoadStart)) {
           landscapingRoadStart.set(currentStroke.start)
         } else {
+          strokes.addRoad(currentStroke)
           sendStroke()
           landscapingRoadStart.set(null)
         }
       } else {
         painting = true
+        strokes.begin(currentStroke)
         sendStroke()
       }
       elapsed = 0
     }
     canvas.addEventListener('pointermove', move)
     canvas.addEventListener('pointerleave', leave)
-    canvas.addEventListener('mousedown', down, true)
-    window.addEventListener('mouseup', up)
+    canvas.addEventListener('pointercancel', leave)
+    // Handle painting before OrbitControls captures the pointer on the wrapper.
+    canvas.addEventListener('pointerdown', down, true)
+    window.addEventListener('pointerup', up)
     window.addEventListener('blur', leave)
     return () => {
       unsubscribe()
       unsubscribeHeight()
       canvas.removeEventListener('pointermove', move)
       canvas.removeEventListener('pointerleave', leave)
-      canvas.removeEventListener('mousedown', down, true)
-      window.removeEventListener('mouseup', up)
+      canvas.removeEventListener('pointercancel', leave)
+      canvas.removeEventListener('pointerdown', down, true)
+      window.removeEventListener('pointerup', up)
       window.removeEventListener('blur', leave)
       preview.geometry.dispose()
       material.dispose()
@@ -217,14 +250,17 @@
 
   useTask((delta) => {
     updatePreview()
+    if (painting) {
+      if (currentStroke && canPaint) {
+        strokes.move(currentStroke)
+      } else {
+        strokes.finish()
+        painting = false
+      }
+    }
     elapsed += delta
-    if (
-      painting &&
-      get(landscapingMode)?.tool === 'Ground' &&
-      elapsed >= 0.15
-    ) {
+    if (elapsed >= 0.1 && sendStroke()) {
       elapsed = 0
-      sendStroke()
     }
   })
 </script>

@@ -374,6 +374,12 @@ Phase 1은 골드만. 소유자별 타이머 없이 달력에 맞춰 걷는다.
 
 ### 영지 경계와 서버 검증
 
+- 바닥 `Size`와 도로 `Width`는 전체 폭(1칸 = 1m)이다. 1~20칸을 내부 반경
+  0.5~10m로 변환하며, 1칸 도구는 가장 가까운 격자에 맞춘다. 미리보기는 실제로
+  칠하는 격자를 표시하며 가장자리 블렌딩용 보조 격자는 숨긴다.
+- 관리자 캐릭터는 Toolbox의 바닥·길 편집에서 소유권과 영지 경계 제한을 건너뛴다.
+  서버가 인증한 관리자 권한을 사용하며, 미소유지·다른 소유자의 영지도 편집할 수 있다.
+  도구함 소지·해금 재질·생존·야외 조건과 목책 소유권 검사는 유지한다.
 - 도구함은 현재 캐릭터의 영지 안에서만 사용할 수 있다. 영지를 벗어나면
   바닥·길 편집을 적용하지 않는다.
 - 브러시가 경계에 걸치면 **자기 영지 안쪽 부분만 적용**한다. 미리보기도
@@ -398,7 +404,7 @@ Phase 1은 골드만. 소유자별 타이머 없이 달력에 맞춰 걷는다.
 
 ### 저장과 동기화
 
-프로토콜 v58: `StartLandscapingMode`, `EditLandscape`, `LandscapingMode`,
+프로토콜 v59: 조경 반경은 소수(float)를 지원한다. `StartLandscapingMode`, `EditLandscape`, `LandscapingMode`,
 `LandscapingPaletteUnlocked`, `LandscapeChanged`, `LandscapeInvalidated`, `LandscapeEditResult`.
 해금 재질은 `character_landscaping_palettes(character_id, palette_slot)`에 저장한다.
 지형은 `landscaping/r±xx_±zz/l_±xxxx_±zzzz.bin`에 타일별로 원자적 교체한다.

@@ -6,7 +6,7 @@
     editorTool,
     roadDrawStart,
     editorHeightManager,
-    hoveredCell,
+    brushWorldPos,
     brushSize,
   } from '../../stores/editorStore'
   import type { TerrainHeightManager } from '../../managers/terrainHeightManager'
@@ -123,7 +123,7 @@
       $editorTool !== 'road' ||
       !$editorHeightManager ||
       !$roadDrawStart ||
-      !$hoveredCell
+      !$brushWorldPos
     ) {
       return false
     }
@@ -131,8 +131,8 @@
       $editorHeightManager,
       $roadDrawStart.x,
       $roadDrawStart.z,
-      $hoveredCell.worldX,
-      $hoveredCell.worldZ,
+      $brushWorldPos.x,
+      $brushWorldPos.z,
       $brushSize
     )
   })

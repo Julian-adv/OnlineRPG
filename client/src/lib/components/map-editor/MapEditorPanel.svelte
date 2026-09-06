@@ -57,7 +57,11 @@
   {:else if $editorTool === 'splat'}
     <SplatBrushPanel />
   {:else if $editorTool === 'road'}
-    <SplatBrushPanel title="Road Tool" hint="(click two points)" />
+    <SplatBrushPanel
+      title="Road Tool"
+      hint="(click two points)"
+      sizeLabel="Width"
+    />
   {:else if $editorTool === 'zone'}
     <ZoneBrushPanel />
   {:else if $editorTool === 'npc'}

@@ -436,6 +436,26 @@
           <span class="info-label">Floor:</span>
           <span class="info-value">{selectedPlacement.floorLevel + 1}F</span>
         </div>
+        {#if selectedDef?.procedural === 'shopSign'}
+          <label class="text-field">
+            <span class="info-label">Style:</span>
+            <select
+              class="text-input"
+              value={selectedPlacement.type}
+              onchange={(e) => {
+                applyPatch({
+                  type: e.currentTarget.value,
+                  text: textDraft.trim() || undefined,
+                })
+                scheduleSave()
+              }}
+            >
+              {#each catalog.filter((item) => item.procedural === 'shopSign') as sign (sign.id)}
+                <option value={sign.id}>{sign.name}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
         {#if selectedDef?.textLabel}
           <div class="text-field">
             <span class="info-label">Text:</span>
@@ -467,18 +487,6 @@
     {:else}
       <div class="draw-hint">Click a placed object to select</div>
     {/if}
-  {/if}
-
-  {#if placements.length > 0}
-    <div class="section-label">Placed ({placements.length})</div>
-    <div class="placement-list">
-      {#each placements as p (p.id)}
-        <div class="placement-row" class:active={p.id === selectedPlacementId}>
-          <span class="placement-type">{p.type}</span>
-          <span class="placement-pos">{formatPos(p)}</span>
-        </div>
-      {/each}
-    </div>
   {/if}
 </div>
 
@@ -735,41 +743,6 @@
 
   .delete-btn:hover {
     background: rgba(255, 60, 60, 0.35);
-  }
-
-  .placement-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: 100px;
-    overflow-y: auto;
-  }
-
-  .placement-row {
-    display: flex;
-    gap: 6px;
-    padding: 3px 6px;
-    border-radius: 3px;
-    font-size: 10px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
-  .placement-row.active {
-    background: rgba(68, 204, 255, 0.15);
-    border-color: rgba(68, 204, 255, 0.4);
-  }
-
-  .placement-type {
-    color: #e2b93b;
-    font-weight: bold;
-    width: 50px;
-    flex-shrink: 0;
-  }
-
-  .placement-pos {
-    color: #888;
-    flex: 1;
   }
 
   .draw-hint {

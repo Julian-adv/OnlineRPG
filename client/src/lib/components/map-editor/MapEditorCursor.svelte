@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as THREE from 'three'
+  import { snapBrushCoordinate } from '../../terrain/landscaping'
   import { onMount } from 'svelte'
   import {
     hoveredCell,
@@ -254,13 +255,17 @@
 
     hoveredCell.set({ tileX, tileZ, cellX, cellZ, worldX, worldZ })
     lastWorldPos = { x: hit.point.x, z: hit.point.z }
+    if (currentTool === 'splat' || currentTool === 'road') {
+      lastWorldPos.x = snapBrushCoordinate(lastWorldPos.x, currentBrushSize)
+      lastWorldPos.z = snapBrushCoordinate(lastWorldPos.z, currentBrushSize)
+    }
     // Only show brush overlay for height/splat tools
     if (
       currentTool === 'height' ||
       currentTool === 'splat' ||
       currentTool === 'road'
     ) {
-      brushWorldPos.set({ x: hit.point.x, z: hit.point.z })
+      brushWorldPos.set(lastWorldPos)
     } else {
       brushWorldPos.set(null)
     }
@@ -691,6 +696,8 @@
   }
 
   function handleRoadClick(worldX: number, worldZ: number) {
+    worldX = snapBrushCoordinate(worldX, currentBrushSize)
+    worldZ = snapBrushCoordinate(worldZ, currentBrushSize)
     if (!currentRoadDrawStart) {
       roadDrawStart.set({ x: worldX, z: worldZ })
       return
@@ -894,7 +901,11 @@
     if (event.ctrlKey) {
       event.preventDefault()
       const delta = event.deltaY > 0 ? -1 : 1
-      const newSize = Math.max(1, Math.min(10, currentBrushSize + delta))
+      const step = currentTool === 'splat' || currentTool === 'road' ? 0.5 : 1
+      const newSize = Math.max(
+        step,
+        Math.min(10, currentBrushSize + delta * step)
+      )
       brushSize.set(newSize)
     } else {
       if (!camera) return

@@ -107,9 +107,17 @@
     - 원화: ChatGPT 이미지 생성, ChatGPT Pro 20x, 2026-09-05. 라이선스: 사용자 소유 생성물(기존 ChatGPT 원화 출처 기준). 원래 파일명 `ChatGPT Image 2026년 9월 5일 오후 08_51_36.png`에서 내용 변경 없이 이동. ![원화](../images/items/wooden_fence.png)
     - Blender 5.2.0 LTS에서 X축 가로폭 1m로 균등 스케일 적용. 원본도 폭 1m여서 배율은 1.0이며, 최종 크기는 1.000 × 0.914 × 0.124m (W×H×D). 세운 자세 유지, 회전 0·스케일 1 적용, 원점은 바닥 중앙. 사용자 지정 1m 구간을 기준으로 하며 높이·두께는 원본 비율 유지.
     - 게임 모델 `client/public/models/objects/wooden_fence.glb`: 메시 1개, 삼각형 2,179개, base color·metallic/roughness·normal 2048²→512², WebP q90 내장, 발광 제거, 219,424 bytes. Blender 재임포트로 크기·원점·스케일·텍스처 확인.
-    - 아이콘 `client/public/items/objects/wooden_fence.png`: Cycles 투명 직교 렌더 512²→128² RGBA. 큰 미리보기와 packed 작업 파일은 `assets/wooden_fence/wooden_fence-render.png`, `assets/wooden_fence/wooden_fence.blend`.
+    - 아이콘 `client/public/items/objects/wooden_fence.png`: Cycles 투명 직교 렌더 512²→128² RGBA. 2026-09-07 Blender 5.2.0 LTS에서 세로 기둥이 화면 수직축과 일치하도록 아이콘 회전을 조정해 재렌더링했다. 가로대의 원근 기울기는 유지한다. 큰 미리보기와 packed 작업 파일은 `assets/wooden_fence/wooden_fence-render.png`, `assets/wooden_fence/wooden_fence.blend`.
     - `items.csv`의 `wooden_fence`, `category=furniture`, material wood, 무게 0.01, basePrice 100(1실버), 중첩·사용 가능. 2026-09-06부터 [목책 배치 모드](../FENCE_PLACEMENT.md)에서 1m 셀의 변에 설치·회수하며 해당 변만 통행을 차단한다. 카탈로그 `solid=true`의 일반 가구 풋프린트는 맵 에디터 배치용이고 플레이어 목책에는 별도 변 충돌을 적용한다.
-    - 재현 명령: `blender -b --python-exit-code 1 -P tools/blender-scripts/export_item_asset.py -- --source assets/wooden_fence/Meshy_AI_Rustic_Wooden_Fence_F_0905115448_texture.glb --name wooden_fence --size 1 --size-axis x --icon-rotation -75 -8 -8 --exposure -1.2`
+    - 재현 명령: `blender -b --python-exit-code 1 -P tools/blender-scripts/export_item_asset.py -- --source assets/wooden_fence/Meshy_AI_Rustic_Wooden_Fence_F_0905115448_texture.glb --name wooden_fence --size 1 --size-axis x --icon-rotation -75 -25 -6.460664 --exposure -1.2`
+- Landscaping Sample Book 아이콘 6종 — 기존 Poly Haven 지형 재질(CC0, [원본 출처](environment.md#terrain-textures))을 자체 정사각형 평면에 적용해 Blender 5.2.0 LTS에서 렌더링(2026-09-07). `shared/palette.json`의 판매 재질을 사용하며 base color·normal·roughness를 유지한다. 아이콘용 평면 0.5m, UV 0–1, 회전 (25°, −8°, −12°), 노출 −1.2, Cycles 투명 직교 렌더 512²→128² RGBA.
+    - `client/public/items/objects/landscaping_palette_sand.png` ← `client/public/textures/sandy_gravel_02_1k.glb`
+    - `client/public/items/objects/landscaping_palette_red_soil.png` ← `client/public/textures/red_laterite_soil_stones_1k.glb`
+    - `client/public/items/objects/landscaping_palette_gravel.png` ← `client/public/textures/gravel_road_1k.glb`
+    - `client/public/items/objects/landscaping_palette_pebbles.png` ← `client/public/textures/ganges_river_pebbles_1k.glb`
+    - `client/public/items/objects/landscaping_palette_stone_path.png` ← `client/public/textures/stone_pathway_1k.glb`
+    - `client/public/items/objects/landscaping_palette_paving.png` ← `client/public/textures/patterned_paving_02_1k.glb`
+    - 큰 미리보기·packed 작업 파일: `assets/landscaping_samples/landscaping_palette_*.png`, `*.blend`. 재현: `blender -b --python-exit-code 1 -P tools/blender-scripts/render_landscaping_icons.py`. 공용 `scroll_of_return.png`는 다른 아이템에서 계속 사용한다.
 - landscaping_toolbox.glb / landscaping_toolbox.png (조경사의 도구함) — 사용자 제공 Meshy.ai 생성 모델, Premium 등급(사용자 확인), 2026-09-06(제공 파일명·작업일 기준). 원본 `assets/landscaping_toolbox/Meshy_AI__0906115517_texture.glb`. 라이선스: Meshy 생성물 약관 적용.
     - 원화: 사용자 제공 ChatGPT 생성 이미지, ChatGPT Pro 20x(사용자 확인), 2026-09-06(파일명 기준). 라이선스: ChatGPT 생성물 약관 적용. `assets/ChatGPT Image 2026년 9월 6일 오후 08_23_49.png`를 변경 없이 이동했다. 원화와 원본 GLB는 이동 전후 SHA-256 일치를 확인했다. ![원화](../images/items/landscaping_toolbox.png)
     - Blender 5.2.0 LTS에서 원본의 세운 자세를 유지하고 X축 가로폭 0.65m로 균등 스케일 적용(원본 폭 1m, 배율 0.65). 최종 크기 0.650 × 0.514 × 0.485m (W×H×D), 원점=바닥 중앙, 회전 0·스케일 1. 실측 비교: 기존 chest.glb 폭 1.476m, crate.glb 폭 1.128m, campfire_kit.glb 폭 0.450m. 휴대 도구함으로 상자 가구보다 작게 하되 바닥에서 붓·삽·손잡이가 식별되도록 모닥불 키트보다 크게 잡았다.

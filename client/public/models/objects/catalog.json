@@ -126,6 +126,30 @@
     "defaultY": 4.16
   },
   {
+    "id": "shop_sign_plank",
+    "name": "Shop Sign (Plank)",
+    "procedural": "shopSign",
+    "shopSignStyle": "plank",
+    "textLabel": true,
+    "defaultY": 4.16
+  },
+  {
+    "id": "shop_sign_oval",
+    "name": "Shop Sign (Dark Oval)",
+    "procedural": "shopSign",
+    "shopSignStyle": "oval",
+    "textLabel": true,
+    "defaultY": 4.16
+  },
+  {
+    "id": "shop_sign_weathered",
+    "name": "Shop Sign (Weathered Arch)",
+    "procedural": "shopSign",
+    "shopSignStyle": "weathered",
+    "textLabel": true,
+    "defaultY": 4.16
+  },
+  {
     "id": "barrel",
     "name": "Barrel",
     "model": "objects/barrel.glb",

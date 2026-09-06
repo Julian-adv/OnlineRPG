@@ -31,6 +31,7 @@ impl GameState {
         player_id: &PlayerId,
         instance_id: u64,
         auth: &AuthService,
+        is_admin: bool,
     ) -> bool {
         let item_id = self
             .inventories
@@ -45,7 +46,7 @@ impl GameState {
             .map(|item| item.item_def_id.clone());
         match item_id.as_deref() {
             Some(TOOLBOX_ITEM) => {
-                self.start_landscaping_mode(player_id, auth, LandscapingTool::Ground)
+                self.start_landscaping_mode(player_id, auth, LandscapingTool::Ground, is_admin)
                     .await
             }
             Some(id) if landscaping::palette_for_item(id).is_some() => {
@@ -66,8 +67,12 @@ impl GameState {
         player_id: &PlayerId,
         auth: &AuthService,
         tool: LandscapingTool,
+        is_admin: bool,
     ) {
-        if let Err(error) = self.try_start_landscaping_mode(player_id, auth, tool).await {
+        if let Err(error) = self
+            .try_start_landscaping_mode(player_id, auth, tool, is_admin)
+            .await
+        {
             self.send_system_message(player_id, error).await;
         }
     }
@@ -77,6 +82,7 @@ impl GameState {
         player_id: &PlayerId,
         auth: &AuthService,
         tool: LandscapingTool,
+        is_admin: bool,
     ) -> Result<(), &'static str> {
         if self
             .reject_if_trading(player_id, "decorate your estate")
@@ -130,7 +136,9 @@ impl GameState {
             if !has_toolbox {
                 return Err("Carry a Landscaper's Toolbox to paint your estate.");
             }
-            if !landscaping::owns_position(&plots, player.position.x, player.position.z) {
+            if !is_admin
+                && !landscaping::owns_position(&plots, player.position.x, player.position.z)
+            {
                 return Err("Use the toolbox inside your own estate with no overdue taxes.");
             }
         }
@@ -240,9 +248,10 @@ impl GameState {
         player_id: &PlayerId,
         stroke: LandscapingStroke,
         auth: &AuthService,
+        is_admin: bool,
     ) {
         let error = self
-            .try_edit_landscape(player_id, stroke, auth)
+            .try_edit_landscape(player_id, stroke, auth, is_admin)
             .await
             .err()
             .map(str::to_string);
@@ -255,6 +264,7 @@ impl GameState {
         player_id: &PlayerId,
         stroke: LandscapingStroke,
         auth: &AuthService,
+        is_admin: bool,
     ) -> Result<(), &'static str> {
         if !stroke.valid() {
             return Err("Invalid brush settings or road length.");
@@ -295,10 +305,10 @@ impl GameState {
         if player.health == 0 || player.floor_level != 0 {
             return Err("Stand on outdoor ground while alive to decorate your estate.");
         }
-        if !landscaping::owns_position(&plots, player.position.x, player.position.z) {
+        if !is_admin && !landscaping::owns_position(&plots, player.position.x, player.position.z) {
             return Err("Stand inside your own estate with no overdue taxes to paint.");
         }
-        let samples = stroke.samples(&plots);
+        let samples = stroke.samples(if is_admin { None } else { Some(&plots) });
         if samples.is_empty() {
             return Err("This brush does not cover editable ground on your estate.");
         }
